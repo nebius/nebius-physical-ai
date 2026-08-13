@@ -1,3 +1,4 @@
+# DEMO ONLY — isolated envgen fan-out fixture, not the canonical 14-stage engine.
 apiVersion: npa.workflow/v0.0.1
 kind: Workflow
 
@@ -24,8 +25,8 @@ kind: Workflow
 metadata:
   name: sim2real-envgen-shards
   description: >
-    Sim2Real raw environment generation sharded across concurrent workers, then an
-    80/20 train/held-out split over the combined catalog.
+    DEMO ONLY: isolated raw-environment fan-out and split fixture; it does not run
+    the canonical 14-stage Sim2Real engine.
 
 config:
   bucket: example-bucket

@@ -55,7 +55,7 @@ while true; do
   fi
 
   echo "--- [4/8] plan dynamic specs (sim2real + creative) ---"
-  for spec in "${SPECS}/sim2real-vlm-rl.yaml" "${CREATIVE}"; do
+  for spec in "${SPECS}/sim2real.yaml" "${CREATIVE}"; do
     base=$(basename "$spec")
     echo "plan: ${base}"
     if ! "${NPA}" workbench workflow plan-spec "${spec}" \

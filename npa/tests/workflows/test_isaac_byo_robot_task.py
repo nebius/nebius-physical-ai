@@ -82,7 +82,9 @@ def test_overrides_falls_back_to_zero_init_when_names_missing():
 
 
 def test_overrides_falls_back_when_names_qpos_mismatch():
-    ov = rt.robot_articulation_overrides(_byo_spec(joint_names=["a", "b"], home_qpos=[0.1]))
+    ov = rt.robot_articulation_overrides(
+        _byo_spec(joint_names=["a", "b"], home_qpos=[0.1])
+    )
     assert ov["init_joint_pos"] == {".*": 0.0}
 
 
@@ -94,7 +96,9 @@ def test_overrides_uses_local_path_when_usd_path_absent():
 
 def test_overrides_gains_are_bounded():
     # Garbage-huge gains are clamped, not passed through to a degenerate drive.
-    spec = _byo_spec(kp=[1e12, 1e12], kv=[1e12, 1e12], force_upper=[1e12], force_lower=[])
+    spec = _byo_spec(
+        kp=[1e12, 1e12], kv=[1e12, 1e12], force_upper=[1e12], force_lower=[]
+    )
     ov = rt.robot_articulation_overrides(spec)
     assert ov["stiffness"] == rt.STIFFNESS_MAX
     assert ov["damping"] == rt.DAMPING_MAX
@@ -135,14 +139,18 @@ def test_gripper_actuator_group_respects_spec_gains_above_floor():
     # A spec that declares stronger gripper gains keeps them (only the floor is a
     # minimum), and they are still clamped to the global bounds.
     ov = rt.robot_articulation_overrides(
-        _gripper_spec(gripper_kp=[900.0, 900.0], gripper_kv=[90.0], gripper_force=[500.0])
+        _gripper_spec(
+            gripper_kp=[900.0, 900.0], gripper_kv=[90.0], gripper_force=[500.0]
+        )
     )
     ga = ov["gripper_actuator"]
     assert ga["stiffness"] == 900.0
     assert ga["damping"] == 90.0
     assert ga["effort_limit"] == 500.0
     # Below-floor spec gains are raised to the floor (never weaken the hold).
-    ov2 = rt.robot_articulation_overrides(_gripper_spec(gripper_kp=[1.0], gripper_force=[1.0]))
+    ov2 = rt.robot_articulation_overrides(
+        _gripper_spec(gripper_kp=[1.0], gripper_force=[1.0])
+    )
     assert ov2["gripper_actuator"]["stiffness"] == rt.GRIPPER_STIFFNESS_FLOOR
     assert ov2["gripper_actuator"]["effort_limit"] == rt.GRIPPER_EFFORT_FLOOR
 
@@ -316,13 +324,16 @@ def test_module_source_is_self_contained():
 def test_train_wrapper_enforces_boot_before_isaac_imports():
     s = rt.TRAIN_WRAPPER_SCRIPT
     # AppLauncher boot MUST precede any isaaclab/isaac_byo_robot_task import.
-    boot = s.index("AppLauncher(headless=True).app")
+    boot = s.index("app = AppLauncher(")
     assert boot < s.index("import isaaclab_tasks")
     assert boot < s.index("import isaac_byo_robot_task")
     assert s.index("import isaaclab_tasks") < s.index("robotmod.register")
+    assert '"--portable-root /tmp/npa-isaac-kit"' in s
     # trains via the rsl_rl runner and emits the done/ckpt markers
     assert "OnPolicyRunner" in s and "runner.learn" in s
     assert "ROBOT_TRAIN_DONE" in s
+    assert "ROBOT_ENTROPY_ANNEALED" in s
+    assert "runner.alg.entropy_coef = float(ENT_FINAL)" in s
     # A resumed run must name its explicit final checkpoint with the runner's
     # absolute iteration rather than overwrite model_<added iterations>.pt.
     assert 'getattr(runner, "current_learning_iteration", ITERS)' in s
@@ -335,3 +346,13 @@ def test_train_wrapper_enforces_boot_before_isaac_imports():
     assert "ROBOT_COMPAT" in s
     assert "ROBOT_TASK_INCOMPATIBLE" in s
     assert "task_robot_compatible=" in s
+
+
+def test_train_wrapper_applies_zero_seed_to_env_and_ppo():
+    s = rt.TRAIN_WRAPPER_SCRIPT
+    seed_block = s.split("# Seed 0 is valid", 1)[1].split("# Keep PPO exploring", 1)[0]
+    assert "if SEED:" not in seed_block
+    assert "env_cfg.seed = SEED" in seed_block
+    assert "torch.manual_seed(SEED)" in seed_block
+    assert 'acfg["seed"] = SEED' in seed_block
+    assert 'print("ROBOT_SEED_APPLIED", SEED' in seed_block

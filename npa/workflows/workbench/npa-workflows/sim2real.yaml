@@ -1,0 +1,365 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# Canonical Sim2Real graph. This file is executed by the ordinary
+# `npa workbench workflow ... --runtime` planner/renderer/SkyPilot path.
+# Every image is an operator input and must be registry-qualified and immutable
+# for execution; the stage adapters fail closed otherwise.
+metadata:
+  name: sim2real
+  description: >
+    Compositional 14-stage Sim2Real workflow: validate a task-aligned trigger,
+    consume the Isaac task contract, run Cosmos Transfer, parallel EnvGen,
+    sealed train/validation/gold split, Isaac rollouts, parallel Cosmos Reason,
+    genuine BYO Isaac PPO, validation-only checkpoint selection, untouched gold
+    evaluation, an honest external seam, and Rerun plus MCAP finalization.
+
+config:
+  source_sha: ""
+  require_baked_npa: "1"
+  bucket: example-bucket
+  prefix: "sim2real/{{run.id}}"
+  root_uri: "s3://{{config.bucket}}/{{config.prefix}}"
+  decision_uri: "s3://{{config.bucket}}/{{config.prefix}}/outer_loop/decision.json"
+  trigger_uri: "s3://{{config.bucket}}/sim2real-triggers/{{run.id}}/"
+  seed_manifest_uri: "s3://{{config.bucket}}/sim2real-triggers/{{run.id}}/dataset-manifest.json"
+  dataset_id: npa/isaac-lift-cube-franka-seed-v1
+  task_id: Isaac-Lift-Cube-Franka-v0
+  assets_uri: ""
+  scene_spec_uri: ""
+
+  # Production-quality defaults remain available; a reduced live piping proof
+  # overrides these without changing component, split, or strict metric contracts.
+  outer_iterations: "3"
+  inner_iterations: "3"
+  # Production runs may promote as soon as the strict Stage 11 predicate passes.
+  # Effectiveness/proof runs disable this honestly with --var allow_early_exit=0.
+  allow_early_exit: "1"
+  env_count: "10000"
+  train_fraction: "0.8"
+  shard_count: "2"
+  envgen_seed: "42"
+  rollout_count: "64"
+  steps_per_rollout: "32"
+  ppo_num_envs: "1024"
+  ppo_iterations: "500"
+  ppo_steps_per_env: "24"
+  validation_count: "64"
+  gold_count: "64"
+  threshold: "0.50"
+  capture_fps: "10"
+  capture_width: "640"
+  capture_height: "480"
+  png_compress_level: "2"
+  reason2_model: nvidia/Cosmos-Reason2-8B
+  reason3_model: nvidia/Cosmos-Reason2-2B
+
+  # Required live inputs. The controller image is the purpose-built CPU-only
+  # stage adapter, never a Genesis/trainer runtime. Empty defaults keep this
+  # repository portable; runtime preflight and every stage reject
+  # mutable/missing task images.
+  controller_image: ""
+  transfer_image: ""
+  envgen_image: ""
+  reason_image: ""
+  isaac_image: ""
+  viewer_image: ""
+  isaac_cache_pvc: ""
+  # Operator-supplied NVIDIA acceptance. Empty defaults are deliberate: the
+  # image and workflow fail closed rather than accepting terms on the user's behalf.
+  omni_kit_accept_eula: ""
+  isaacsim_accept_eula: ""
+  gpu_queue: sim2real-gpu
+  gpu_priority_class: sim2real-production
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 8
+    memory: 32Gi
+    image: "{{config.controller_image}}"
+  transfer-gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 16
+    memory: 128Gi
+    image: "{{config.transfer_image}}"
+    kubernetes:
+      pod_config:
+        metadata:
+          labels:
+            kueue.x-k8s.io/queue-name: "{{config.gpu_queue}}"
+        spec:
+          priorityClassName: "{{config.gpu_priority_class}}"
+  envgen-gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 8
+    memory: 32Gi
+    image: "{{config.envgen_image}}"
+    kubernetes:
+      pod_config:
+        metadata:
+          labels:
+            kueue.x-k8s.io/queue-name: "{{config.gpu_queue}}"
+        spec:
+          priorityClassName: "{{config.gpu_priority_class}}"
+  reason-gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 16
+    memory: 128Gi
+    image: "{{config.reason_image}}"
+    kubernetes:
+      pod_config:
+        metadata:
+          labels:
+            kueue.x-k8s.io/queue-name: "{{config.gpu_queue}}"
+        spec:
+          priorityClassName: "{{config.gpu_priority_class}}"
+  isaac-gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 16
+    memory: 128Gi
+    image: "{{config.isaac_image}}"
+    kubernetes:
+      provision_timeout: 2400
+      pod_config:
+        metadata:
+          labels:
+            kueue.x-k8s.io/queue-name: "{{config.gpu_queue}}"
+        spec:
+          priorityClassName: "{{config.gpu_priority_class}}"
+          containers:
+            - name: ray-node
+              env:
+                - name: NPA_SIM2REAL_ISAAC_CACHE_PVC
+                  value: "{{config.isaac_cache_pvc}}"
+                - name: NPA_ISAAC_CACHE_DIR
+                  value: /opt/isaac-cache
+                - name: NPA_ISAAC_CACHE_READONLY
+                  value: "1"
+                - name: NPA_ISAAC_BOOTSTRAP_OFFLINE
+                  value: "1"
+                - name: NPA_BAKED_PYTHON
+                  value: /opt/npa/sim/venv/bin/python
+                - name: OMNI_KIT_ACCEPT_EULA
+                  value: "{{config.omni_kit_accept_eula}}"
+                - name: ISAACSIM_ACCEPT_EULA
+                  value: "{{config.isaacsim_accept_eula}}"
+              volumeMounts:
+                - name: npa-isaac-runtime-cache
+                  mountPath: /opt/isaac-cache
+                  readOnly: true
+          volumes:
+            - name: npa-isaac-runtime-cache
+              persistentVolumeClaim:
+                claimName: "{{config.isaac_cache_pvc}}"
+                readOnly: true
+  viewer-cpu:
+    cloud: kubernetes
+    cpus: 8
+    memory: 32Gi
+    image: "{{config.viewer_image}}"
+    kubernetes:
+      pod_config:
+        spec:
+          containers:
+            - name: ray-node
+              resources:
+                requests:
+                  ephemeral-storage: 8Gi
+                limits:
+                  ephemeral-storage: 16Gi
+
+initial: stage-01-trigger
+
+states:
+  stage-01-trigger:
+    description: Stage 1 - validate the real task-aligned trigger and seed manifest.
+    resources: cpu
+    trigger:
+      uri: "{{config.trigger_uri}}"
+      pollSeconds: 15
+      maxPolls: 0
+      minObjects: 1
+    run:
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "1", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --trigger-uri, "{{config.trigger_uri}}", --seed-manifest-uri, "{{config.seed_manifest_uri}}", --dataset-id, "{{config.dataset_id}}", --task-id, "{{config.task_id}}"]
+    outputs:
+      - {uri: "{{config.root_uri}}/stage_01_trigger/trigger.json", schema: npa.sim2real.trigger.v1}
+    next: stage-02-assets
+
+  stage-02-assets:
+    description: Stage 2 - consume the normalized task, assets, robot, camera, and strict-success contract.
+    resources: cpu
+    inputs:
+      - {uri: "{{config.root_uri}}/stage_01_trigger/trigger.json", schema: npa.sim2real.trigger.v1}
+    run:
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "2", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --assets-uri, "{{config.assets_uri}}", --scene-spec-uri, "{{config.scene_spec_uri}}"]
+    outputs:
+      - {uri: "{{config.root_uri}}/stage_02_assets/task-contract.json", schema: npa.sim2real.task_contract.v1}
+    next: stage-03-transfer
+
+  stage-03-transfer:
+    description: Stage 3 - real input-conditioned Cosmos Transfer 2.5 augmentation.
+    resources: transfer-gpu
+    inputs:
+      - {uri: "{{config.trigger_uri}}", schema: npa.sim2real.task_seed_dataset.v1}
+    run:
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "3", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --trigger-uri, "{{config.trigger_uri}}", --assets-uri, "{{config.assets_uri}}", --scene-spec-uri, "{{config.scene_spec_uri}}"]
+    outputs:
+      - {uri: "{{config.root_uri}}/augment/manifest.json", schema: npa.cosmos2.transfer.v1}
+    next: stage-04-wave
+
+  stage-04-wave:
+    description: Stage 4 - parallel raw environment generation in standard workflow GPU tasks.
+    parallel: [stage-04-shard-0, stage-04-shard-1]
+    # v0.0.1 groups are explicit. This generic assertion makes shard_count=2 an
+    # honest validate/plan/submit contract instead of silently under-fanning out.
+    parallelCount: "{{config.shard_count}}"
+    maxConcurrency: 2
+    next: stage-05-split
+
+  stage-04-shard-0:
+    description: Raw EnvGen shard 0/2.
+    resources: envgen-gpu
+    run:
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "4", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --env-count, "{{config.env_count}}", --shard-index, "0", --shard-count, "{{config.shard_count}}", --seed, "{{config.envgen_seed}}"]
+    outputs:
+      - {uri: "{{config.root_uri}}/envs/raw/raw-shard-00-summary.json", schema: npa.sim2real.raw_env_shard_summary.v1}
+      - {uri: "{{config.root_uri}}/components/lanes/stage_04/shard-00000.json", schema: npa.sim2real.component_lane_record.v1}
+
+  stage-04-shard-1:
+    description: Raw EnvGen shard 1/2.
+    resources: envgen-gpu
+    run:
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "4", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --env-count, "{{config.env_count}}", --shard-index, "1", --shard-count, "{{config.shard_count}}", --seed, "{{config.envgen_seed}}"]
+    outputs:
+      - {uri: "{{config.root_uri}}/envs/raw/raw-shard-01-summary.json", schema: npa.sim2real.raw_env_shard_summary.v1}
+      - {uri: "{{config.root_uri}}/components/lanes/stage_04/shard-00001.json", schema: npa.sim2real.component_lane_record.v1}
+
+  stage-05-split:
+    description: Stage 5 - curate and seal disjoint train, validation, and untouched gold scenarios.
+    resources: cpu
+    run:
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "5", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --env-count, "{{config.env_count}}", --train-fraction, "{{config.train_fraction}}", --shard-count, "{{config.shard_count}}", --seed, "{{config.envgen_seed}}", --envgen-image, "{{config.envgen_image}}"]
+    outputs:
+      - {uri: "{{config.root_uri}}/envs/manifest/split-manifest.json", schema: npa.sim2real.split_manifest.v2}
+    next: stage-06-tokens
+
+  stage-06-tokens:
+    description: Stage 6 - publish the explicit token/scenario S3 handoff manifest.
+    resources: cpu
+    run:
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "6", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}"]
+    outputs:
+      - {uri: "{{config.root_uri}}/tokens/manifest.json", schema: npa.sim2real.token_scenario_manifest.v1}
+    next: outer-loop
+
+  outer-loop:
+    description: Standard durable outer loop; Stage 11 writes its ordinary decision artifact.
+    loop:
+      max: "{{config.outer_iterations}}"
+      until: promote_checkpoint
+    sequence: [inner-loop, stage-10-gold, stage-11-decision]
+    next: stage-12-external-seam
+
+  inner-loop:
+    description: Standard durable inner loop over Isaac rollout, dual Reason, and PPO.
+    loop:
+      max: "{{config.inner_iterations}}"
+    sequence: [stage-07-rollouts, stage-08-wave, stage-09-ppo]
+
+  stage-07-rollouts:
+    description: Stage 7 - real Isaac policy rollouts with event-local multi-camera observations.
+    resources: isaac-gpu
+    params:
+      outer_iteration: "{{loop.outer-loop}}"
+      inner_iteration: "{{loop.inner-loop}}"
+    run:
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "7", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --task-id, "{{config.task_id}}", --outer-iteration, "{{config.outer_iteration}}", --inner-iteration, "{{config.inner_iteration}}", --rollout-count, "{{config.rollout_count}}", --steps-per-rollout, "{{config.steps_per_rollout}}", --capture-fps, "{{config.capture_fps}}", --capture-width, "{{config.capture_width}}", --capture-height, "{{config.capture_height}}", --png-compress-level, "{{config.png_compress_level}}"]
+    outputs:
+      - {uri: "{{config.root_uri}}/actions/train/outer-{{loop.outer-loop}}/iter-{{loop.inner-loop}}/rollouts-result.json", schema: npa.sim2real.policy_rollouts.v1}
+
+  stage-08-wave:
+    description: Stage 8 - parallel real Cosmos Reason lanes over the exact Stage 7 events.
+    parallel: [stage-08-reason2, stage-08-reason3]
+    maxConcurrency: 2
+
+  stage-08-reason2:
+    description: Real Cosmos Reason2 evaluation lane.
+    resources: reason-gpu
+    params: {outer_iteration: "{{loop.outer-loop}}", inner_iteration: "{{loop.inner-loop}}"}
+    run:
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "8", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --outer-iteration, "{{config.outer_iteration}}", --inner-iteration, "{{config.inner_iteration}}", --reason-lane, reason2, --reason-model, "{{config.reason2_model}}", --threshold, "{{config.threshold}}"]
+    outputs:
+      - {uri: "{{config.root_uri}}/vlm_eval/train/outer-{{loop.outer-loop}}/iter-{{loop.inner-loop}}/reason2.json", schema: npa.sim2real.cosmos_reason_lane.v1}
+      - {uri: "{{config.root_uri}}/components/lanes/stage_08/reason2-o{{loop.outer-loop}}-i{{loop.inner-loop}}.json", schema: npa.sim2real.component_lane_record.v1}
+
+  stage-08-reason3:
+    description: Real Cosmos Reason3 evaluation lane.
+    resources: reason-gpu
+    params: {outer_iteration: "{{loop.outer-loop}}", inner_iteration: "{{loop.inner-loop}}"}
+    run:
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "8", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --outer-iteration, "{{config.outer_iteration}}", --inner-iteration, "{{config.inner_iteration}}", --reason-lane, reason3, --reason-model, "{{config.reason3_model}}", --threshold, "{{config.threshold}}"]
+    outputs:
+      - {uri: "{{config.root_uri}}/vlm_eval/train/outer-{{loop.outer-loop}}/iter-{{loop.inner-loop}}/reason3.json", schema: npa.sim2real.cosmos_reason_lane.v1}
+      - {uri: "{{config.root_uri}}/components/lanes/stage_08/reason3-o{{loop.outer-loop}}-i{{loop.inner-loop}}.json", schema: npa.sim2real.component_lane_record.v1}
+
+  stage-09-ppo:
+    description: Stage 9 - merge Reason signals, run genuine BYO Isaac RSL-RL PPO, and select with validation only.
+    resources: isaac-gpu
+    params: {outer_iteration: "{{loop.outer-loop}}", inner_iteration: "{{loop.inner-loop}}"}
+    run:
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "9", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --task-id, "{{config.task_id}}", --outer-iteration, "{{config.outer_iteration}}", --inner-iteration, "{{config.inner_iteration}}", --threshold, "{{config.threshold}}", --ppo-num-envs, "{{config.ppo_num_envs}}", --ppo-iterations, "{{config.ppo_iterations}}", --ppo-steps-per-env, "{{config.ppo_steps_per_env}}", --validation-count, "{{config.validation_count}}", --capture-fps, "{{config.capture_fps}}", --capture-width, "{{config.capture_width}}", --capture-height, "{{config.capture_height}}", --png-compress-level, "{{config.png_compress_level}}"]
+    outputs:
+      - {uri: "{{config.root_uri}}/inner_loop/outer-{{loop.outer-loop}}/evidence.json", schema: npa.sim2real.inner_loop_evidence.v1}
+
+  stage-10-gold:
+    description: Stage 10 - real Isaac held-out evaluation on only the untouched gold split.
+    resources: isaac-gpu
+    params: {outer_iteration: "{{loop.outer-loop}}"}
+    run:
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "10", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --task-id, "{{config.task_id}}", --outer-iteration, "{{config.outer_iteration}}", --gold-count, "{{config.gold_count}}", --capture-fps, "{{config.capture_fps}}", --capture-width, "{{config.capture_width}}", --capture-height, "{{config.capture_height}}", --png-compress-level, "{{config.png_compress_level}}"]
+    outputs:
+      - {uri: "{{config.root_uri}}/eval/gold-heldout/outer-{{loop.outer-loop}}/report.json", schema: npa.sim2real.heldout_eval.v1}
+
+  stage-11-decision:
+    description: Stage 11 - record strict 5 cm stable-placement efficacy and standard loop decision.
+    resources: cpu
+    writesDecision: true
+    params: {outer_iteration: "{{loop.outer-loop}}"}
+    run:
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "11", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --outer-iteration, "{{config.outer_iteration}}", --threshold, "{{config.threshold}}", --allow-early-exit, "{{config.allow_early_exit}}"]
+    outputs:
+      - {uri: "{{config.decision_uri}}", schema: npa.sim2real.threshold_decision.v1}
+
+  stage-12-external-seam:
+    description: Stage 12 - documented external physical validation SEAM; intentionally not WORKS.
+    resources: cpu
+    run:
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "12", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}"]
+    outputs:
+      - {uri: "{{config.root_uri}}/external_validation/seam.json", schema: npa.sim2real.external_validation_seam.v1}
+    next: stage-13-retrigger
+
+  stage-13-retrigger:
+    description: Stage 13 - persist the bounded-loop retrigger record.
+    resources: cpu
+    run:
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "13", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --outer-iteration, "{{loop.outer-loop}}", --trigger-uri, "{{config.trigger_uri}}"]
+    outputs:
+      - {uri: "{{config.root_uri}}/retrigger/record.json", schema: npa.sim2real.retrigger_record.v1}
+    next: stage-14-visualize
+
+  stage-14-visualize:
+    description: Stage 14 - final report plus non-empty Rerun and MCAP with gold multi-camera lineage.
+    resources: viewer-cpu
+    run:
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "14", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --outer-iteration, "{{loop.outer-loop}}"]
+    outputs:
+      - {uri: "{{config.root_uri}}/reports/sim2real-report.json", schema: npa.sim2real.e2e_report.v1}
+      - {uri: "{{config.root_uri}}/reports/sim2real.rrd", schema: application/vnd.rerun.rrd}
+      - {uri: "{{config.root_uri}}/reports/sim2real.mcap", schema: application/mcap}
+    terminal: true

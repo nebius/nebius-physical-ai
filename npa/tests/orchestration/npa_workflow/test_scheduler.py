@@ -18,3 +18,16 @@ def test_scheduler_plan_includes_resources() -> None:
     task = payload["tasks"][0]
     assert task["resources"]["accelerators"] == "H100:1"
     assert task["command"]
+
+
+def test_scheduler_uses_interpreter_resolved_image_profile() -> None:
+    spec = load_spec(SPECS / "sim2real.yaml")
+    digest = "registry.example/npa/isaac@sha256:" + "a" * 64
+    spec.config["isaac_image"] = digest
+    spec.config["outer_iterations"] = "1"
+    spec.config["inner_iterations"] = "1"
+    plan = build_plan(spec, run_id="resolved-resource")
+    step = next(item for item in plan.steps if item.state == "stage-07-rollouts")
+    assert step.resources_profile["image"] == digest
+    payload = build_scheduler_plan(spec, [step], run_id="resolved-resource")
+    assert payload["tasks"][0]["image"] == digest

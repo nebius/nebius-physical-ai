@@ -7,7 +7,7 @@ kind: Workflow
 # hardening loop -> publish), then a terminal insights ingestion stage that
 # non-invasively scans the run prefix and lands metrics + lineage into the
 # append-only store, then a dashboard stage that rolls up the run. Modeled on
-# sim2real-vlm-rl.yaml (loop + writesDecision gate + loop-back transition).
+# the standard workflow loop + writesDecision gate + loop-back transition.
 
 metadata:
   name: hardening-with-insights

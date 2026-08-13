@@ -236,8 +236,13 @@ def fake_runtime(mocker, satisfied_preflight):
     return captured
 
 
-def test_submit_runtime_passes_options_and_emits_json(fake_runtime) -> None:
-    config_path = REPO_ROOT / "npa" / "workflows" / "workbench" / "config.yaml"
+def test_submit_runtime_passes_options_and_emits_json(
+    fake_runtime, tmp_path: Path
+) -> None:
+    sky_config = tmp_path / "sky.yaml"
+    sky_config.write_text("kubernetes: {}\n", encoding="utf-8")
+    sky_bin = tmp_path / "sky"
+    sky_bin.write_text("#!/bin/sh\n", encoding="utf-8")
     result = RUNNER.invoke(
         app,
         [
@@ -251,7 +256,9 @@ def test_submit_runtime_passes_options_and_emits_json(fake_runtime) -> None:
             "--var",
             "bucket=rt-bucket",
             "--config-path",
-            str(config_path),
+            str(sky_config),
+            "--sky-bin",
+            str(sky_bin),
             "--registry",
             "cr.example.invalid/reg",
             "--poll-seconds",
@@ -279,7 +286,8 @@ def test_submit_runtime_passes_options_and_emits_json(fake_runtime) -> None:
     assert options.cancel_on_timeout is False
     # A run without an explicit --resume-run is always fresh.
     assert options.resume is False
-    assert options.config_path == config_path
+    assert options.config_path == sky_config
+    assert options.sky_bin == str(sky_bin)
     # --var reaches the spec's config, not just the renderer.
     assert fake_runtime["spec"].config["max_images"] == "1"
     assert fake_runtime["render_options"].registry == "cr.example.invalid/reg"
@@ -336,6 +344,51 @@ def test_submit_runtime_refreshes_pull_secret_before_driver(
     assert result.exit_code == 0, result.output
     assert events[0] == ("refresh", "token-factory-parallel-fanout.skypilot.yaml")
     assert events[1] == ("driver", "rt-pull-secret-order")
+
+
+def test_submit_runtime_pinned_no_source_preserves_registry_render_error(
+    mocker, monkeypatch: pytest.MonkeyPatch, satisfied_preflight
+) -> None:
+    """A fail-fast render error must not be masked by cleanup bookkeeping."""
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        NpaWorkflowRenderError,
+    )
+
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._plan_requires_npa_source",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._preflight_submit_images",
+        lambda *_args, **_kwargs: {},
+    )
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submit.prepare_npa_workflow_for_submit",
+        side_effect=NpaWorkflowRenderError("expected registry mismatch"),
+    )
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--run-id",
+            "rt-pinned-registry-error",
+            "--runtime",
+            "--no-stage-src",
+            "--var",
+            "bucket=rt-bucket",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "expected registry mismatch" in result.output
+    assert "referenced before assignment" not in result.output
+    assert "UnexpectedError" not in result.output
 
 
 def test_submit_runtime_passes_per_tool_image_override(fake_runtime) -> None:
@@ -608,6 +661,7 @@ def test_submit_without_runtime_uses_the_one_shot_path(
     assert resumed.exit_code == 0, resumed.output
     assert "status: SUBMITTED" in resumed.output
     assert submit_mock.call_count == 2
+
 
 def test_submit_can_preserve_managed_registry_secret(
     mocker, monkeypatch, satisfied_preflight

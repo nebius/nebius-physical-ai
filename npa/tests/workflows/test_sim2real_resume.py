@@ -42,7 +42,9 @@ def test_trainer_command_env_carries_tag_and_resume_uri(tmp_path, monkeypatch):
 
     monkeypatch.setattr(engine, "_run_component_command", fake_run)
     monkeypatch.setattr(
-        engine, "_read_component_json", lambda *a, **k: _update("s3://ck/new.pt").to_dict()
+        engine,
+        "_read_component_json",
+        lambda *a, **k: _update("s3://ck/new.pt").to_dict(),
     )
 
     config = Sim2RealLoopConfig(run_id="r", byo_trainer_command="python trainer.py")
@@ -67,11 +69,14 @@ def test_trainer_command_env_omits_resume_when_none(tmp_path, monkeypatch):
     monkeypatch.setattr(
         engine,
         "_run_component_command",
-        lambda command, *, cwd, env, component, timeout_s=7200: captured.update(env=dict(env))
-        or {"returncode": 0},
+        lambda command, *, cwd, env, component, timeout_s=7200: (
+            captured.update(env=dict(env)) or {"returncode": 0}
+        ),
     )
     monkeypatch.setattr(
-        engine, "_read_component_json", lambda *a, **k: _update("s3://ck/new.pt").to_dict()
+        engine,
+        "_read_component_json",
+        lambda *a, **k: _update("s3://ck/new.pt").to_dict(),
     )
     config = Sim2RealLoopConfig(run_id="r", byo_trainer_command="python trainer.py")
     engine._run_trainer_via_command(
@@ -90,9 +95,18 @@ def test_inner_loop_compounds_checkpoint_across_iterations(tmp_path, monkeypatch
     """Inner iter 2 resumes from inner iter 1's checkpoint; evidence surfaces the last."""
     seen_resume: list[str] = []
 
-    def fake_trainer(signal_batch_path, *, config, output_dir, initial_reward_head,
-                     initial_action_bias, train_envs_dir=None, resume_checkpoint_uri="",
-                     outer_iteration=1, iteration=1):
+    def fake_trainer(
+        signal_batch_path,
+        *,
+        config,
+        output_dir,
+        initial_reward_head,
+        initial_action_bias,
+        train_envs_dir=None,
+        resume_checkpoint_uri="",
+        outer_iteration=1,
+        iteration=1,
+    ):
         seen_resume.append(resume_checkpoint_uri)
         return _update(f"s3://ck/outer-{outer_iteration:02d}-iter-{iteration:02d}.pt")
 
@@ -101,32 +115,47 @@ def test_inner_loop_compounds_checkpoint_across_iterations(tmp_path, monkeypatch
     import npa.workflows.sim2real_stages as stages
 
     monkeypatch.setattr(
-        stages, "run_policy_rollouts",
+        stages,
+        "run_policy_rollouts",
         lambda *a, **k: [{"rollout_id": "rollout-0000", "frames_dir": str(tmp_path)}],
     )
     monkeypatch.setattr(
-        engine, "evaluate_rollout_with_vlm",
-        lambda rollout, *, output_dir, config: {"rollout_id": rollout["rollout_id"], "score": 0.5},
+        engine,
+        "evaluate_rollout_with_vlm",
+        lambda rollout, *, output_dir, config: {
+            "rollout_id": rollout["rollout_id"],
+            "score": 0.5,
+        },
     )
     monkeypatch.setattr(
-        engine, "_convert_eval_to_signal",
+        engine,
+        "_convert_eval_to_signal",
         lambda evaluation, *, config, output_dir: {
-            "schema": "x", "rollout_id": evaluation["rollout_id"],
-            "mean_reward": 0.5, "score": 0.5, "advantages": [0.1],
+            "schema": "x",
+            "rollout_id": evaluation["rollout_id"],
+            "mean_reward": 0.5,
+            "score": 0.5,
+            "advantages": [0.1],
             "per_step": [{"reward": 0.5}, {"reward": 0.7}],
         },
     )
     monkeypatch.setattr(
-        engine, "_signal_training_imports",
+        engine,
+        "_signal_training_imports",
         lambda: (lambda batch: batch, lambda *a, **k: _update("")),
     )
 
     config = Sim2RealLoopConfig(
-        run_id="r", output_dir=tmp_path, byo_trainer_command="python trainer.py",
+        run_id="r",
+        output_dir=tmp_path,
+        byo_trainer_command="python trainer.py",
         inner_iterations=2,
     )
     evidence = engine.run_inner_loop(
-        config, local_dir=tmp_path, initial_quality=0.4, outer_iteration=3,
+        config,
+        local_dir=tmp_path,
+        initial_quality=0.4,
+        outer_iteration=3,
         resume_checkpoint_uri="s3://ck/prior-outer.pt",
     )
     # iter1 resumes from the prior outer checkpoint; iter2 from iter1's fresh checkpoint.
@@ -141,8 +170,9 @@ def test_runner_carries_checkpoint_across_outer_iterations(tmp_path, monkeypatch
     """state.last_checkpoint_uri feeds outer N+1 with outer N's produced checkpoint."""
     calls: list[tuple[int, str]] = []
 
-    def fake_outer(config, *, local_dir, outer_iteration, initial_quality,
-                   resume_checkpoint_uri=""):
+    def fake_outer(
+        config, *, local_dir, outer_iteration, initial_quality, resume_checkpoint_uri=""
+    ):
         calls.append((outer_iteration, resume_checkpoint_uri))
         produced = f"s3://ck/outer-{outer_iteration:02d}.pt"
         return {
@@ -161,7 +191,16 @@ def test_runner_carries_checkpoint_across_outer_iterations(tmp_path, monkeypatch
     config = Sim2RealLoopConfig(run_id="r", output_dir=tmp_path, outer_iterations=3)
     workflow = Sim2RealWorkflow(config)
     # Seed initial persisted state (as run_preamble would).
-    WorkflowState(run_id="r", local_artifact_dir=tmp_path, current_quality=0.4).save()
+    WorkflowState(
+        run_id="r",
+        local_artifact_dir=tmp_path,
+        current_quality=0.4,
+        task_contract_uri="s3://contracts/lift-cube.json",
+        task_contract_digest="sha256:task-contract",
+        validation_env_count=1000,
+        heldout_env_count=1000,
+        gold_heldout_env_count=1000,
+    ).save()
 
     workflow.run_outer_iteration(outer_iteration=1)
     workflow.run_outer_iteration(outer_iteration=2)
@@ -171,4 +210,9 @@ def test_runner_carries_checkpoint_across_outer_iterations(tmp_path, monkeypatch
     assert calls[1] == (2, "s3://ck/outer-01.pt")  # resumes outer 1's policy
     assert calls[2] == (3, "s3://ck/outer-02.pt")  # resumes outer 2's policy
     # Final state persists the latest checkpoint.
-    assert WorkflowState.load(tmp_path).last_checkpoint_uri == "s3://ck/outer-03.pt"
+    resumed = WorkflowState.load(tmp_path)
+    assert resumed.last_checkpoint_uri == "s3://ck/outer-03.pt"
+    assert resumed.task_contract_uri == "s3://contracts/lift-cube.json"
+    assert resumed.task_contract_digest == "sha256:task-contract"
+    assert resumed.validation_env_count == 1000
+    assert resumed.gold_heldout_env_count == 1000

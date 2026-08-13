@@ -246,11 +246,8 @@ def test_a_config_token_lets_submit_choose_the_block_size(tmp_path: Path) -> Non
 def test_a_config_token_resolving_to_nonsense_still_fails(tmp_path: Path) -> None:
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
-    spec = merge_config_overrides(_token_spec(tmp_path), {"augment_nodes": "lots"})
-    step = next(s for s in build_plan(spec, run_id="probe").steps if s.state == "augment")
-
     with pytest.raises(NpaWorkflowError, match="must be an integer"):
-        num_nodes_for_step(spec, step)
+        merge_config_overrides(_token_spec(tmp_path), {"augment_nodes": "lots"})
 
 
 def test_a_gang_stage_provisions_a_cluster_that_can_hold_it(tmp_path: Path) -> None:
@@ -271,7 +268,11 @@ def test_paidf_augment_scales_from_one_pod_to_a_gang(monkeypatch: pytest.MonkeyP
 
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/prefix/npa")
     blueprint = (
-        Path(__file__).resolve().parents[3] / "workflows" / "physical-ai-data-factory.yaml"
+        Path(__file__).resolve().parents[3]
+        / "workflows"
+        / "workbench"
+        / "npa-workflows"
+        / "physical-ai-data-factory.yaml"
     )
     spec = load_spec(blueprint)
 

@@ -17,13 +17,10 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from npa.guardrails.skypilot import (
-    env_names_for_yaml,
-    env_refs_for_yaml,
-    unresolved_image_placeholders,
-)
-from npa.guardrails.three_tier import callback_parameters, option_flags
-from npa.workflows.sim2real_loop import Sim2RealLoopConfig
+import yaml
+
+from npa.guardrails.skypilot import unresolved_image_placeholders
+from npa.workflows.sim2real.models import Sim2RealLoopConfig
 
 PASS = "PASS"
 WARN = "WARN"
@@ -32,7 +29,7 @@ SKIP = "SKIP"
 
 CLI_MODULE = "npa.cli.workbench.sim2real"
 CLI_CALLBACK = "run_command"
-RUNBOOK_YAML = Path("npa/workflows/workbench/sim2real/runbook.yaml")
+RUNBOOK_YAML = Path("npa/workflows/workbench/npa-workflows/sim2real.yaml")
 
 
 @dataclass(frozen=True)
@@ -75,10 +72,21 @@ SIM2REAL_SEAMS: tuple[Seam, ...] = (
     Seam("trainer_image", "trainer_image", "--trainer-image", "TRAINER_IMAGE"),
     Seam("vlm_image", "vlm_image", "--vlm-image", "VLM_IMAGE"),
     Seam("eval_image", "eval_image", "--eval-image", "EVAL_IMAGE"),
+    Seam(
+        "k8s_isaac_cache_pvc",
+        "k8s_isaac_cache_pvc",
+        "--k8s-isaac-cache-pvc",
+        "NPA_SIM2REAL_ISAAC_CACHE_PVC",
+        required=True,
+    ),
     Seam("vlm_model", "vlm_model", "--vlm-model", "VLM_MODEL"),
     Seam("threshold", "threshold", "--threshold", "SUCCESS_THRESHOLD"),
-    Seam("inner_iterations", "inner_iterations", "--inner-iterations", "INNER_ITERATIONS"),
-    Seam("outer_iterations", "outer_iterations", "--outer-iterations", "OUTER_ITERATIONS"),
+    Seam(
+        "inner_iterations", "inner_iterations", "--inner-iterations", "INNER_ITERATIONS"
+    ),
+    Seam(
+        "outer_iterations", "outer_iterations", "--outer-iterations", "OUTER_ITERATIONS"
+    ),
     Seam(
         "loop_of_loops_iterations",
         "loop_of_loops_iterations",
@@ -86,8 +94,18 @@ SIM2REAL_SEAMS: tuple[Seam, ...] = (
         "LOOP_OF_LOOPS_ITERATIONS",
     ),
     Seam("rollout_count", "rollout_count", "--rollout-count", "ROLLOUT_COUNT"),
-    Seam("steps_per_rollout", "steps_per_rollout", "--steps-per-rollout", "STEPS_PER_ROLLOUT"),
-    Seam("heldout_env_count", "heldout_env_count", "--heldout-env-count", "HELDOUT_ENV_COUNT"),
+    Seam(
+        "steps_per_rollout",
+        "steps_per_rollout",
+        "--steps-per-rollout",
+        "STEPS_PER_ROLLOUT",
+    ),
+    Seam(
+        "heldout_env_count",
+        "heldout_env_count",
+        "--heldout-env-count",
+        "HELDOUT_ENV_COUNT",
+    ),
 )
 
 # Container images a real run must be able to pull.
@@ -147,33 +165,58 @@ class KubeResult:
 
 
 def coherence_failures(repo_root: Path) -> list[str]:
-    """Return three-tier coherence failures for the sim2real seams.
+    """Return canonical compositional-workflow contract failures."""
 
-    Validates, for each seam, that the CLI flag exists on ``sim2real run``, the
-    YAML env is both declared and referenced in the runbook, and the SDK/config
-    field is a real ``Sim2RealLoopConfig`` field (the SDK forwards overrides by
-    field name).
-    """
-
+    path = repo_root / RUNBOOK_YAML
+    if not path.is_file():
+        return [f"canonical workflow missing: {RUNBOOK_YAML}"]
+    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
     failures: list[str] = []
-    cli_params = callback_parameters(CLI_MODULE, CLI_CALLBACK)
-    cli_flags: set[str] = set()
-    for param in cli_params.values():
-        cli_flags |= option_flags(param)
-    config_field_names = {f.name for f in fields(Sim2RealLoopConfig)}
-    yaml_path = repo_root / RUNBOOK_YAML
-    yaml_envs = env_names_for_yaml(yaml_path)
-    yaml_refs = env_refs_for_yaml(yaml_path)
-
-    for seam in SIM2REAL_SEAMS:
-        if seam.cli_flag not in cli_flags:
-            failures.append(f"{seam.name}: CLI flag missing: {seam.cli_flag}")
-        if seam.config_field not in config_field_names:
-            failures.append(f"{seam.name}: SDK/config field missing: {seam.config_field}")
-        if seam.yaml_env not in yaml_envs:
-            failures.append(f"{seam.name}: YAML env missing: {seam.yaml_env}")
-        elif seam.yaml_env not in yaml_refs:
-            failures.append(f"{seam.name}: YAML env not referenced: {seam.yaml_env}")
+    if (
+        payload.get("apiVersion") != "npa.workflow/v0.0.1"
+        or payload.get("kind") != "Workflow"
+    ):
+        failures.append("canonical YAML is not an npa.workflow/v0.0.1 Workflow")
+    config = dict(payload.get("config") or {})
+    required_config = {
+        "source_sha",
+        "bucket",
+        "root_uri",
+        "trigger_uri",
+        "controller_image",
+        "transfer_image",
+        "envgen_image",
+        "reason_image",
+        "isaac_image",
+        "viewer_image",
+        "isaac_cache_pvc",
+        "gpu_queue",
+        "gpu_priority_class",
+    }
+    missing_config = sorted(required_config - set(config))
+    if missing_config:
+        failures.append(f"canonical config inputs missing: {missing_config}")
+    stages: set[int] = set()
+    commands: list[str] = []
+    for state in (payload.get("states") or {}).values():
+        argv = list((state.get("run") or {}).get("argv") or [])
+        commands.extend(str(item) for item in argv)
+        if "--stage" in argv:
+            stages.add(int(argv[argv.index("--stage") + 1]))
+    if stages != set(range(1, 15)):
+        failures.append(f"canonical stage adapters are incomplete: {sorted(stages)}")
+    joined = " ".join(commands)
+    for forbidden in (
+        "run_preamble",
+        "run_inner_loop",
+        "run_single_outer_iteration",
+        "run_finalize",
+        "k8s_submit",
+    ):
+        if forbidden in joined:
+            failures.append(
+                f"canonical workflow calls retired orchestrator: {forbidden}"
+            )
     return failures
 
 
@@ -181,19 +224,19 @@ def check_coherence(repo_root: Path) -> CheckResult:
     failures = coherence_failures(repo_root)
     if failures:
         return CheckResult(
-            name="three-tier-coherence",
+            name="compositional-workflow-coherence",
             status=FAIL,
-            summary=f"{len(failures)} seam(s) are not coherent across CLI, SDK, and YAML.",
+            summary=f"{len(failures)} canonical workflow contract failure(s).",
             remedy=(
-                "Keep each seam wired through the CLI flag, the SDK/config field, "
-                "and the runbook env. See npa/workflows/workbench/sim2real/README.md."
+                "Keep all 14 stages and immutable runtime inputs on the standard "
+                "npa.workflow surface. See npa/workflows/workbench/sim2real/README.md."
             ),
             details=tuple(failures),
         )
     return CheckResult(
-        name="three-tier-coherence",
+        name="compositional-workflow-coherence",
         status=PASS,
-        summary=f"All {len(SIM2REAL_SEAMS)} BYO seams map 1:1 across CLI, SDK, and YAML.",
+        summary="Canonical npa.workflow exposes all 14 stateless stage adapters and runtime inputs.",
     )
 
 
@@ -397,7 +440,9 @@ def check_tokens(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckRe
     have_ngc = bool(getattr(creds, "ngc_api_key", ""))
     missing: list[str] = []
     if not have_hf:
-        missing.append("HF_TOKEN (gated VLM / model repos used by the eval and VLM images)")
+        missing.append(
+            "HF_TOKEN (gated VLM / model repos used by the eval and VLM images)"
+        )
     if not have_ngc:
         missing.append("NGC_API_KEY (NGC-hosted base images and weights)")
     if missing:
@@ -467,6 +512,112 @@ def check_cluster(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckR
             details=(_short(can_i.stderr or can_i.stdout),),
         )
 
+    service_account = config.k8s_service_account or "agent-sa"
+    service_account_user = f"system:serviceaccount:{namespace}:{service_account}"
+    controller_patch = runner(
+        [
+            "auth",
+            "can-i",
+            "patch",
+            "jobs.batch",
+            f"--as={service_account_user}",
+            "-n",
+            namespace,
+        ]
+    )
+    if (
+        controller_patch.returncode != 0
+        or controller_patch.stdout.strip().lower() != "yes"
+    ):
+        return CheckResult(
+            name="cluster",
+            status=FAIL,
+            summary=(
+                f"Service account {service_account!r} cannot patch Jobs in "
+                f"namespace {namespace!r}."
+            ),
+            remedy=(
+                "Grant the Sim2Real controller Role the 'patch' verb on "
+                "batch/jobs. Durable reconciliation records structured heartbeats "
+                "and adopts exact-identity Jobs through the Kubernetes API."
+            ),
+            details=(_short(controller_patch.stderr or controller_patch.stdout),),
+        )
+
+    kueue_observe = runner(
+        [
+            "auth",
+            "can-i",
+            "list",
+            "workloads.kueue.x-k8s.io",
+            f"--as={service_account_user}",
+            "-n",
+            namespace,
+        ]
+    )
+    if kueue_observe.returncode != 0 or kueue_observe.stdout.strip().lower() != "yes":
+        return CheckResult(
+            name="cluster",
+            status=FAIL,
+            summary=(
+                f"Service account {service_account!r} cannot list Kueue Workloads "
+                f"in namespace {namespace!r}."
+            ),
+            remedy=(
+                "Grant the Sim2Real controller Role the 'list' verb on "
+                "kueue.x-k8s.io/workloads. Durable reconciliation must observe "
+                "the generated Workload admission, flavor, and terminal state."
+            ),
+            details=(_short(kueue_observe.stderr or kueue_observe.stdout),),
+        )
+
+    cache_pvc = config.k8s_isaac_cache_pvc.strip()
+    pvc_result = runner(["get", "pvc", cache_pvc, "-n", namespace, "-o", "json"])
+    if pvc_result.returncode != 0:
+        return CheckResult(
+            name="cluster",
+            status=FAIL,
+            summary=(
+                f"Isaac runtime-cache PVC {cache_pvc!r} is not readable in "
+                f"namespace {namespace!r}."
+            ),
+            remedy=(
+                "Create the shared cache PVC, warm it on a CPU node with the exact "
+                "Isaac image, and rerun preflight. GPU Jobs never fetch dependencies."
+            ),
+            details=(_short(pvc_result.stderr or pvc_result.stdout),),
+        )
+    try:
+        import json
+
+        pvc = json.loads(pvc_result.stdout)
+    except (TypeError, ValueError):
+        pvc = {}
+    spec = pvc.get("spec") or {}
+    status = pvc.get("status") or {}
+    access_modes = {str(item) for item in spec.get("accessModes") or []}
+    if (
+        status.get("phase") != "Bound"
+        or not str(spec.get("volumeName") or "").strip()
+        or "ReadWriteMany" not in access_modes
+    ):
+        return CheckResult(
+            name="cluster",
+            status=FAIL,
+            summary=(
+                f"Isaac runtime-cache PVC {cache_pvc!r} is not a Bound RWX claim."
+            ),
+            remedy=(
+                "Use a Bound ReadWriteMany volume so one CPU warm Job can publish "
+                "the content-addressed closure for read-only GPU consumers."
+            ),
+            details=(
+                f"phase={status.get('phase')!r}",
+                f"volumeName={spec.get('volumeName')!r}",
+                f"accessModes={sorted(access_modes)!r}",
+            ),
+        )
+
     gpu_resource = config.k8s_gpu_resource or "nvidia.com/gpu"
     nodes = runner(["get", "nodes", "-o", "json"])
     if nodes.returncode != 0:
@@ -496,7 +647,7 @@ def check_cluster(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckR
         status=PASS,
         summary=(
             f"Context {context!r}: {gpu_total} schedulable {gpu_resource} across "
-            f"{node_count} node(s)."
+            f"{node_count} node(s); Isaac cache PVC {cache_pvc!r} is Bound RWX."
         ),
     )
 
@@ -578,7 +729,10 @@ def format_check_report(results: list[CheckResult], *, output_json: bool) -> str
 
     if output_json:
         return json.dumps(
-            {"checks": [result.as_dict() for result in results], "ok": not has_failure(results)},
+            {
+                "checks": [result.as_dict() for result in results],
+                "ok": not has_failure(results),
+            },
             indent=2,
             sort_keys=True,
         )

@@ -23,6 +23,13 @@ from npa.orchestration.npa_workflow.src_staging import (
 )
 
 runner = CliRunner()
+PAIDF_SPEC = (
+    Path(__file__).resolve().parents[3]
+    / "workflows"
+    / "workbench"
+    / "npa-workflows"
+    / "physical-ai-data-factory.yaml"
+)
 
 
 class FakeStorageClient:
@@ -407,11 +414,7 @@ def test_submit_rejects_malformed_explicit_source_before_state(
     state_root = tmp_path / "workflow-runs"
     monkeypatch.setattr(first_run_state, "DEFAULT_ROOT", state_root)
     monkeypatch.setenv("NPA_SRC_S3_URI", "not-an-s3-uri")
-    spec = (
-        Path(__file__).resolve().parents[3]
-        / "workflows"
-        / "physical-ai-data-factory.yaml"
-    )
+    spec = PAIDF_SPEC
 
     result = runner.invoke(
         app,
@@ -453,11 +456,7 @@ def test_plan_only_stage_src_plans_without_uploading(
         "npa.orchestration.npa_workflow.src_staging.stage_npa_source",
         return_value="s3://real-bucket/npa-src/npa/",
     )
-    spec = (
-        Path(__file__).resolve().parents[3]
-        / "workflows"
-        / "physical-ai-data-factory.yaml"
-    )
+    spec = PAIDF_SPEC
 
     result = runner.invoke(
         app,
@@ -487,11 +486,7 @@ def test_plan_only_stage_src_can_describe_a_placeholder_bucket(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
-    spec = (
-        Path(__file__).resolve().parents[3]
-        / "workflows"
-        / "physical-ai-data-factory.yaml"
-    )
+    spec = PAIDF_SPEC
 
     result = runner.invoke(
         app,
@@ -527,11 +522,7 @@ def test_real_submit_persists_no_submit_ledger_before_source_staging(
     from npa.orchestration.npa_workflow.first_run_state import RunPreparation
     from npa.workflows.data_factory_input import PreparedPaidfInput
 
-    spec = (
-        Path(__file__).resolve().parents[3]
-        / "workflows"
-        / "physical-ai-data-factory.yaml"
-    )
+    spec = PAIDF_SPEC
     monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
     monkeypatch.delenv("NPA_E2E_NPA_SRC_S3_URI", raising=False)
     stage = mocker.patch(
@@ -594,11 +585,7 @@ def test_source_upload_failure_preserves_durable_no_submit_ledger(
 ) -> None:
     from npa.orchestration.npa_workflow.first_run_state import RunPreparation
 
-    spec = (
-        Path(__file__).resolve().parents[3]
-        / "workflows"
-        / "physical-ai-data-factory.yaml"
-    )
+    spec = PAIDF_SPEC
     monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
     mocker.patch("npa.cli.workbench.workflow._submit_prerequisites", return_value=[])
     mocker.patch("npa.cli.workbench.workflow._preflight_submit_images")
@@ -655,11 +642,7 @@ def test_input_preflight_failure_prevents_source_upload_after_durable_ledger(
     from npa.orchestration.npa_workflow.first_run_state import RunPreparation
     from npa.workflows.data_factory_input import PaidfInputError
 
-    spec = (
-        Path(__file__).resolve().parents[3]
-        / "workflows"
-        / "physical-ai-data-factory.yaml"
-    )
+    spec = PAIDF_SPEC
     monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
     mocker.patch("npa.cli.workbench.workflow._submit_prerequisites", return_value=[])
     mocker.patch("npa.cli.workbench.workflow._preflight_submit_images")

@@ -125,12 +125,13 @@ def resolve_spec_path(name: str) -> Path:
         pytest.fail(f"spec {name!r} not found in any npa.workflow spec root")
     return path
 
+
 ALL_GOLDEN_SPECS = sorted(
     [
         "vlm-eval-single.yaml",
         "tokenfactory-rollout-judge.yaml",
         "tokenfactory-cosmos-gate.yaml",
-        "sim2real-vlm-rl.yaml",
+        "sim2real.yaml",
         "bdd100k-pipeline.yaml",
     ]
 )
@@ -141,7 +142,7 @@ DYNAMIC_SPECS = frozenset(
         "dataset-of-record-smoke.yaml",
         "dataset-ingest-curate.yaml",
         "hardening-with-insights.yaml",
-        "sim2real-vlm-rl.yaml",
+        "sim2real.yaml",
         "tokenfactory-cosmos-gate.yaml",
         "rl-policy-training-sim-success.yaml",
         "physical-ai-data-factory.yaml",
@@ -236,7 +237,9 @@ def seed_live_workflow_inputs(
         # One small image per shard prefix so all three fan-out members have real
         # Token Factory work to do concurrently.
         for shard in ("shard-a", "shard-b", "shard-c"):
-            _seed_images(client, bucket=bucket, prefix=f"{marker}/images/{shard}/", count=2)
+            _seed_images(
+                client, bucket=bucket, prefix=f"{marker}/images/{shard}/", count=2
+            )
         return
 
     if spec_name == "token-factory-trigger-watch.yaml":
@@ -259,7 +262,10 @@ def seed_live_workflow_inputs(
         )
         return
 
-    if spec_name in ("token-factory-cosmos-reason.yaml", "tokenfactory-cosmos-gate.yaml"):
+    if spec_name in (
+        "token-factory-cosmos-reason.yaml",
+        "tokenfactory-cosmos-gate.yaml",
+    ):
         try:
             from PIL import Image, ImageDraw
         except ImportError as exc:  # pragma: no cover
@@ -271,7 +277,9 @@ def seed_live_workflow_inputs(
             image = Image.new("RGB", (320, 240), (200, 200, 200))
             draw = ImageDraw.Draw(image)
             draw.rectangle([0, 180, 320, 240], fill=(120, 90, 60))
-            draw.rectangle([120 + index * 10, 100, 200 + index * 10, 180], fill=(180, 40, 40))
+            draw.rectangle(
+                [120 + index * 10, 100, 200 + index * 10, 180], fill=(180, 40, 40)
+            )
             buf = BytesIO()
             image.save(buf, format="PNG")
             client.put_object(
@@ -394,7 +402,9 @@ def seed_live_workflow_inputs(
     if spec_name == "insights-smoke.yaml":
         # This spec reads a SHARED fixture prefix (`insights-fixtures/run/`), not a
         # run-scoped one, so seeding is idempotent and safe to repeat.
-        _seed_insights_run_prefix(client, bucket=bucket, prefix="insights-fixtures/run/")
+        _seed_insights_run_prefix(
+            client, bucket=bucket, prefix="insights-fixtures/run/"
+        )
         return
 
     if spec_name == "insights-aggregate.yaml":
@@ -429,7 +439,9 @@ def seed_live_workflow_inputs(
         _seed_scene_frame(client, bucket=bucket, marker=marker)
         src = os.environ.get("NPA_E2E_LEROBOT_POLICY_SRC", "").strip()
         if not src:
-            pytest.skip("NPA_E2E_LEROBOT_POLICY_SRC not set; see tokenfactory-rollout-judge-combo")
+            pytest.skip(
+                "NPA_E2E_LEROBOT_POLICY_SRC not set; see tokenfactory-rollout-judge-combo"
+            )
         _seed_prefix_from_source(src, bucket, f"{marker}/policy/", client)
         return
 
@@ -485,7 +497,9 @@ def _seed_images(client, *, bucket: str, prefix: str, count: int = 2) -> None:
         image = Image.new("RGB", (320, 240), (30, 30, 30))
         draw = ImageDraw.Draw(image)
         draw.rectangle([0, 190, 320, 240], fill=(90, 70, 50))
-        draw.rectangle([40 + index * 30, 120, 120 + index * 30, 190], fill=(200, 60, 60))
+        draw.rectangle(
+            [40 + index * 30, 120, 120 + index * 30, 190], fill=(200, 60, 60)
+        )
         draw.rectangle([240, 120, 300, 190], fill=(40, 200, 40))
         buf = BytesIO()
         image.save(buf, format="PNG")
@@ -675,7 +689,9 @@ def _seed_object_from_source(source: str, bucket: str, dest_key: str, client) ->
     client.upload_file(str(local), bucket, dest_key)
 
 
-def _seed_prefix_from_source(source: str, bucket: str, dest_prefix: str, client) -> None:
+def _seed_prefix_from_source(
+    source: str, bucket: str, dest_prefix: str, client
+) -> None:
     """Copy a real dataset (``s3://`` prefix or local dir) into ``dest_prefix``."""
 
     source = source.strip()
@@ -703,7 +719,9 @@ def _seed_prefix_from_source(source: str, bucket: str, dest_prefix: str, client)
 
     local_root = Path(source.replace("file://", ""))
     if not local_root.is_dir():
-        pytest.fail(f"live fixture source {source!r} is not an s3:// URI or a directory")
+        pytest.fail(
+            f"live fixture source {source!r} is not an s3:// URI or a directory"
+        )
     uploaded = 0
     for item in sorted(local_root.rglob("*")):
         if item.is_file():
@@ -859,7 +877,7 @@ def materialize_live_spec(
     # Keep per-spec prefix tokens but anchor runs under a shared e2e root.
     text = re.sub(
         r'(prefix:\s*")([^"]*)(")',
-        lambda m: f'{m.group(1)}{marker}/{name.replace(".yaml", "")}{m.group(3)}',
+        lambda m: f"{m.group(1)}{marker}/{name.replace('.yaml', '')}{m.group(3)}",
         text,
         count=1,
     )
@@ -939,7 +957,11 @@ def _relax_all_cpu_mem_floors(text: str, *, cpus: str, memory: str) -> str:
     for line in text.splitlines(keepends=True):
         if re.match(r"^(\s*)cpus:\s*\S+", line):
             indent = re.match(r"^(\s*)", line).group(1)  # type: ignore[union-attr]
-            out.append(f"{indent}cpus: {cpus}\n" if line.endswith("\n") else f"{indent}cpus: {cpus}")
+            out.append(
+                f"{indent}cpus: {cpus}\n"
+                if line.endswith("\n")
+                else f"{indent}cpus: {cpus}"
+            )
             continue
         if re.match(r"^(\s*)memory:\s*\S+", line):
             indent = re.match(r"^(\s*)", line).group(1)  # type: ignore[union-attr]
@@ -948,6 +970,7 @@ def _relax_all_cpu_mem_floors(text: str, *, cpus: str, memory: str) -> str:
             continue
         out.append(line)
     return "".join(out)
+
 
 def _force_accelerators_on_cpu_profiles(text: str, accelerators: str) -> str:
     """Add ``accelerators`` to named resource profiles that lack them.
@@ -1145,6 +1168,7 @@ def parse_runtime_json(result: Result, forbidden: Iterable[str]) -> dict[str, An
     payload = _json_document_from_stream(result.output or "")
     assert isinstance(payload, dict)
     return payload
+
 
 def _s3_prefix_has_objects(client, bucket: str, prefix: str) -> bool:
     response = client.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1)

@@ -15,7 +15,11 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     render_skypilot_yaml,
     secret_env_hints_for_plan,
 )
-from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec, load_spec
+from npa.orchestration.npa_workflow.spec import (
+    NpaWorkflowSpec,
+    load_spec,
+    validate_spec,
+)
 
 
 @dataclass(frozen=True)
@@ -44,7 +48,7 @@ def merge_config_overrides(
     merged = dict(spec.config)
     for key, value in overrides.items():
         merged[key] = value
-    return NpaWorkflowSpec(
+    merged_spec = NpaWorkflowSpec(
         api_version=spec.api_version,
         kind=spec.kind,
         metadata=dict(spec.metadata),
@@ -54,6 +58,11 @@ def merge_config_overrides(
         initial=spec.initial,
         states=dict(spec.states),
     )
+    # Overrides can change loop bounds, parallel cardinality assertions, and other
+    # values that validation resolves. Revalidate here so plan/run/submit all reject
+    # an invalid override before rendering or provisioning anything.
+    validate_spec(merged_spec)
+    return merged_spec
 
 
 #: Backwards-compatible private alias.
@@ -95,7 +104,9 @@ def prepare_npa_workflow_for_submit(
     """
 
     if not run_id.strip():
-        raise NpaWorkflowError("run_id is required when preparing an npa.workflow for submit")
+        raise NpaWorkflowError(
+            "run_id is required when preparing an npa.workflow for submit"
+        )
 
     spec = load_spec(yaml_path)
     spec = merge_config_overrides(spec, config_overrides)
@@ -106,7 +117,7 @@ def prepare_npa_workflow_for_submit(
             "promote_checkpoint|loop_back (or set config.plan_assume_decision)"
         )
 
-    plan = build_plan(spec, run_id=run_id, assume_decision=resolved_assume or None)
+    plan = build_plan(spec, run_id=run_id, assume_decision=resolved_assume or "")
     opts = render_options or SkypilotRenderOptions()
     yaml_text = render_skypilot_yaml(spec, plan, run_id=run_id, options=opts)
     assert_no_unresolved_placeholders(yaml_text)

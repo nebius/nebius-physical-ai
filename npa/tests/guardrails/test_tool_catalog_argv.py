@@ -34,8 +34,6 @@ from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 #: against a Typer signature. Pinned so the set can shrink but not silently grow.
 NON_CLI_ARGV = frozenset(
     {
-        "workbench.data_transform.improvement_summary",
-        "workbench.data_transform.rollout_contract",
         "workbench.dataset.report_rejection",
         "workbench.dataset.write_quality_decision",
         "workbench.lancedb.backfill_cpu_bundle",
@@ -160,7 +158,9 @@ def test_non_cli_argv_entries_are_pinned() -> None:
         f"prefer an `npa ...` invocation, or pin them explicitly: {sorted(unexpected)}"
     )
     stale = NON_CLI_ARGV - actual
-    assert not stale, f"NON_CLI_ARGV lists entries that no longer exist: {sorted(stale)}"
+    assert not stale, (
+        f"NON_CLI_ARGV lists entries that no longer exist: {sorted(stale)}"
+    )
 
 
 #: Options typed as a plain ``str`` whose value genuinely IS a format word. Verified by
@@ -185,15 +185,21 @@ def test_no_tool_ref_argv_passes_a_format_word_to_a_path_option() -> None:
     }
     assert not mismatches, (
         "toolRef argv passes a literal value its CLI option cannot mean:\n"
-        + "\n".join(f"  {ref}: {problems}" for ref, problems in sorted(mismatches.items()))
+        + "\n".join(
+            f"  {ref}: {problems}" for ref, problems in sorted(mismatches.items())
+        )
     )
 
 
 def test_sonic_eval_argv_separates_the_result_path_from_the_format() -> None:
     argv = [str(token) for token in TOOL_CATALOG["workbench.sonic.eval"].argv_template]
 
-    assert "--output" in argv and argv[argv.index("--output") + 1] == "{{config.eval_uri}}"
-    assert "--output-format" in argv and argv[argv.index("--output-format") + 1] == "json"
+    assert (
+        "--output" in argv and argv[argv.index("--output") + 1] == "{{config.eval_uri}}"
+    )
+    assert (
+        "--output-format" in argv and argv[argv.index("--output-format") + 1] == "json"
+    )
 
 
 def test_format_style_str_options_are_still_str_typed() -> None:
@@ -283,9 +289,14 @@ def test_isaac_lab_rl_tool_refs_use_the_real_flag_names() -> None:
     train = argv_template_flags(TOOL_CATALOG["workbench.rl.policy_train"].argv_template)
     assert "--learning-rate" not in train and "--batch-size" not in train
     assert "--input-path" not in train
-    assert {"--task", "--steps", "--num-envs", "--override", "--data-path", "--output-path"} <= set(
-        train
-    )
+    assert {
+        "--task",
+        "--steps",
+        "--num-envs",
+        "--override",
+        "--data-path",
+        "--output-path",
+    } <= set(train)
 
     evaluate = argv_template_flags(
         TOOL_CATALOG["workbench.rl.evaluate_policy"].argv_template
@@ -355,4 +366,6 @@ def test_the_audit_would_catch_the_original_bash_defect() -> None:
         "bdd100k",
     )
 
-    assert argv_flag_drift("workbench.lancedb.create_failure_views", broken) == ("--table",)
+    assert argv_flag_drift("workbench.lancedb.create_failure_views", broken) == (
+        "--table",
+    )

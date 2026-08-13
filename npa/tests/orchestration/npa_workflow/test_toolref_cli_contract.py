@@ -51,20 +51,33 @@ CHECKED_TOOLREFS = [
     ),
     ("workbench.cosmos3.generate", "npa.cli.workbench.cosmos3", "generate"),
     ("workbench.cosmos3.reason", "npa.cli.workbench.cosmos3", "reason"),
-    ("workbench.cosmos_curate.curate", "npa.cli.workbench.cosmos_curate", "curate-augmented"),
-    ("workbench.cosmos_evaluator.evaluate", "npa.cli.workbench.cosmos_evaluator", "evaluate"),
-    ("workbench.fiftyone.curate_augmented", "npa.cli.fiftyone", "curate-augmented"),
+    (
+        "workbench.cosmos_curate.curate",
+        "npa.cli.workbench.cosmos_curate",
+        "curate-augmented",
+    ),
+    (
+        "workbench.cosmos_evaluator.evaluate",
+        "npa.cli.workbench.cosmos_evaluator",
+        "evaluate",
+    ),
+    (
+        "workbench.fiftyone.curate_augmented",
+        "npa.cli.fiftyone",
+        "curate-augmented",
+    ),
     ("workbench.token_factory.caption", "npa.cli.workbench.token_factory", "caption"),
     ("workbench.token_factory.generate", "npa.cli.workbench.token_factory", "generate"),
     ("workbench.token_factory.reason", "npa.cli.workbench.token_factory", "reason"),
     ("workbench.vlm_eval.run", "npa.cli.workbench.vlm_eval", "run"),
-    ("workbench.sim2real.run", "npa.cli.workbench.sim2real", "run"),
     ("workbench.nurec.visualize", "npa.cli.nurec", "visualize"),
 ]
 
 
 @pytest.mark.parametrize(("tool_ref", "module_path", "command_name"), CHECKED_TOOLREFS)
-def test_toolref_flags_are_real_cli_options(tool_ref: str, module_path: str, command_name: str) -> None:
+def test_toolref_flags_are_real_cli_options(
+    tool_ref: str, module_path: str, command_name: str
+) -> None:
     cli_opts = _cli_option_names(module_path, command_name)
     for flag in _toolref_flags(tool_ref):
         assert flag in cli_opts, (
@@ -84,7 +97,13 @@ def test_every_toolref_the_data_factory_submits_is_checked() -> None:
 
     from npa.orchestration.npa_workflow.spec import load_spec
 
-    blueprint = Path(__file__).resolve().parents[3] / "workflows" / "physical-ai-data-factory.yaml"
+    blueprint = (
+        Path(__file__).resolve().parents[3]
+        / "workflows"
+        / "workbench"
+        / "npa-workflows"
+        / "physical-ai-data-factory.yaml"
+    )
     states = yaml.safe_load(blueprint.read_text(encoding="utf-8"))["states"]
     submitted = {
         state["toolRef"]
@@ -114,7 +133,13 @@ def test_visualize_stage_uses_prebuilt_rerun_image_without_runtime_install() -> 
 
     repo = Path(__file__).resolve().parents[3]
     blueprint = yaml.safe_load(
-        (repo / "workflows" / "physical-ai-data-factory.yaml").read_text(encoding="utf-8")
+        (
+            repo
+            / "workflows"
+            / "workbench"
+            / "npa-workflows"
+            / "physical-ai-data-factory.yaml"
+        ).read_text(encoding="utf-8")
     )
     state = blueprint["states"]["visualize"]
     assert state["toolRef"] == "workbench.nurec.visualize"

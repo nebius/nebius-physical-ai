@@ -8,10 +8,17 @@ from typing import Any, Callable
 
 from npa.orchestration.npa_workflow.artifacts import require_input_artifacts
 from npa.orchestration.npa_workflow.catalog import argv_for_tool
-from npa.orchestration.npa_workflow.decisions import normalize_decision, refresh_context_decision
+from npa.orchestration.npa_workflow.decisions import (
+    normalize_decision,
+    refresh_context_decision,
+)
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.predicates import evaluate_predicate
-from npa.orchestration.npa_workflow.run_state import RunManifest, RunStateStore, store_for_config
+from npa.orchestration.npa_workflow.run_state import (
+    RunManifest,
+    RunStateStore,
+    store_for_config,
+)
 from npa.orchestration.npa_workflow.spec import (
     NpaWorkflowSpec,
     StateSpec,
@@ -77,6 +84,7 @@ class RunContext:
     run: dict[str, Any]
     last_decision: str = ""
     state_outputs: dict[str, dict[str, str]] = field(default_factory=dict)
+    loop_iterations: dict[str, int] = field(default_factory=dict)
     outer_iteration: int = 0
     inner_iteration: int = 0
 
@@ -137,7 +145,8 @@ def run_workflow(
     artifact_checker: Any | None = None,
     state_store: RunStateStore | None = None,
     step_executor: Any | None = None,
-    trigger_waiter: Callable[[StateSpec, str, "RunContext"], dict[str, Any]] | None = None,
+    trigger_waiter: Callable[[StateSpec, str, "RunContext"], dict[str, Any]]
+    | None = None,
 ) -> dict[str, Any]:
     """Plan or execute a workflow.
 
@@ -169,7 +178,9 @@ def run_workflow(
         try:
             store.write_manifest(manifest)
         except Exception as exc:
-            raise NpaWorkflowError(f"failed to persist workflow manifest: {exc}") from exc
+            raise NpaWorkflowError(
+                f"failed to persist workflow manifest: {exc}"
+            ) from exc
 
     results: list[dict[str, Any]] = []
     status = "planned"
@@ -245,7 +256,9 @@ def _make_context(spec: NpaWorkflowSpec, *, run_id: str) -> RunContext:
     return RunContext(config=config, run=run)
 
 
-def _resolve_config_strings(config: dict[str, Any], *, run: dict[str, Any]) -> dict[str, Any]:
+def _resolve_config_strings(
+    config: dict[str, Any], *, run: dict[str, Any]
+) -> dict[str, Any]:
     resolved: dict[str, Any] = dict(config)
     for _ in range(4):
         changed = False
@@ -298,6 +311,7 @@ def _expand_state(
             max_iter = resolve_config_int(state.loop.max or 1, ctx.config)
             for iteration in range(1, max_iter + 1):
                 ctx.outer_iteration = iteration
+                ctx.loop_iterations[state.name] = iteration
                 ctx.last_decision = ""
                 for child in state.sequence:
                     _expand_state(
@@ -342,11 +356,14 @@ def _expand_state(
         max_iter = resolve_config_int(state.loop.max or 1, ctx.config)
         for iteration in range(1, max_iter + 1):
             ctx.inner_iteration = iteration
+            ctx.loop_iterations[state.name] = iteration
             _append_state_step(
                 spec, state, ctx, plan, iteration=iteration, loop_label=loop_label
             )
             ctx.last_decision = assume_decision
-            if state.loop.until and evaluate_predicate(state.loop.until, ctx.as_predicate_context()):
+            if state.loop.until and evaluate_predicate(
+                state.loop.until, ctx.as_predicate_context()
+            ):
                 break
         next_name = _resolve_transition(state, ctx) or state.next
         if next_name:
@@ -397,6 +414,7 @@ def state_config(state: StateSpec, ctx: RunContext) -> dict[str, Any]:
                 config=ctx.config,
                 run=ctx.run,
                 state_outputs=ctx.state_outputs,
+                loop_iterations=ctx.loop_iterations,
             )
         else:
             overlay[key] = value
@@ -473,6 +491,7 @@ def build_step(
                 config=config,
                 run=ctx.run,
                 state_outputs=ctx.state_outputs,
+                loop_iterations=ctx.loop_iterations,
             ),
             "schema": artifact.schema,
         }
@@ -493,6 +512,7 @@ def build_step(
             config=config,
             run=ctx.run,
             state_outputs=ctx.state_outputs,
+            loop_iterations=ctx.loop_iterations,
         ),
         outputs=outputs,
         inputs=_resolved_inputs(state, ctx),
@@ -507,6 +527,7 @@ def _resources_profile(
     config: dict[str, Any],
     run: dict[str, Any],
     state_outputs: dict[str, dict[str, str]],
+    loop_iterations: dict[str, int],
 ) -> dict[str, Any]:
     raw = spec.resources.get(profile) or spec.resources.get("default") or {}
     if not isinstance(raw, dict):
@@ -517,6 +538,7 @@ def _resources_profile(
         config=config,
         run=run,
         state_outputs=state_outputs,
+        loop_iterations=loop_iterations,
     )
 
 
@@ -529,6 +551,7 @@ def _resolved_inputs(state: StateSpec, ctx: RunContext) -> list[dict[str, str]]:
                 config=config,
                 run=ctx.run,
                 state_outputs=ctx.state_outputs,
+                loop_iterations=ctx.loop_iterations,
             ),
             "schema": artifact.schema,
         }
@@ -541,7 +564,8 @@ def _record_state_outputs(state: StateSpec, ctx: RunContext, step: PlanStep) -> 
     if not step.outputs:
         return
     ctx.state_outputs[state.name] = {
-        f"output_{index}": output["uri"] for index, output in enumerate(step.outputs, start=1)
+        f"output_{index}": output["uri"]
+        for index, output in enumerate(step.outputs, start=1)
     }
     primary = step.outputs[0]["uri"]
     ctx.state_outputs[state.name]["uri"] = primary
@@ -554,7 +578,9 @@ def _refresh_decision(
     read_s3: bool = False,
 ) -> None:
     if read_s3:
-        ctx.last_decision = refresh_context_decision(ctx.as_predicate_context(), reader=reader)
+        ctx.last_decision = refresh_context_decision(
+            ctx.as_predicate_context(), reader=reader
+        )
 
 
 def _execute_state_machine(
@@ -568,7 +594,8 @@ def _execute_state_machine(
     decision_reader: Any | None,
     artifact_checker: Any | None,
     step_executor: Any | None = None,
-    trigger_waiter: Callable[[StateSpec, str, "RunContext"], dict[str, Any]] | None = None,
+    trigger_waiter: Callable[[StateSpec, str, "RunContext"], dict[str, Any]]
+    | None = None,
     loop_label: str = "",
     follow_transitions: bool = True,
     results_out: list[dict[str, Any]] | None = None,
@@ -619,6 +646,7 @@ def _execute_state_machine(
             max_iter = resolve_config_int(state.loop.max or 1, ctx.config)
             for iteration in range(1, max_iter + 1):
                 ctx.outer_iteration = iteration
+                ctx.loop_iterations[state.name] = iteration
                 ctx.last_decision = ""
                 for child in state.sequence:
                     _execute_state_machine(
@@ -704,6 +732,7 @@ def _execute_state_machine(
         max_iter = resolve_config_int(state.loop.max or 1, ctx.config)
         for iteration in range(1, max_iter + 1):
             ctx.inner_iteration = iteration
+            ctx.loop_iterations[state.name] = iteration
             record = _run_single_state(
                 spec,
                 state,
@@ -718,11 +747,15 @@ def _execute_state_machine(
             )
             results.append(record)
             if record.get("status") == "failed":
-                raise NpaWorkflowError(str(record.get("error") or f"state {state.name} failed"))
+                raise NpaWorkflowError(
+                    str(record.get("error") or f"state {state.name} failed")
+                )
             _refresh_decision(ctx, reader=decision_reader, read_s3=False)
             if not ctx.last_decision:
                 ctx.last_decision = assume_decision
-            if state.loop.until and evaluate_predicate(state.loop.until, ctx.as_predicate_context()):
+            if state.loop.until and evaluate_predicate(
+                state.loop.until, ctx.as_predicate_context()
+            ):
                 break
         next_name = _resolve_transition(state, ctx) or state.next
         if next_name:
@@ -869,7 +902,8 @@ def _run_single_state(
     on_step: Callable[[PlanStep], None] | None,
     artifact_checker: Any | None,
     step_executor: Any | None = None,
-    trigger_waiter: Callable[[StateSpec, str, "RunContext"], dict[str, Any]] | None = None,
+    trigger_waiter: Callable[[StateSpec, str, "RunContext"], dict[str, Any]]
+    | None = None,
 ) -> dict[str, Any]:
     plan = ExecutionPlan(
         workflow=spec.name,
@@ -952,6 +986,7 @@ def wait_for_trigger(
         config=state_config(state, ctx),
         run=ctx.run,
         state_outputs=ctx.state_outputs,
+        loop_iterations=ctx.loop_iterations,
     )
     return waiter(state, uri, ctx)
 
@@ -965,6 +1000,7 @@ def _resolved_run(state: StateSpec, ctx: RunContext) -> tuple[list[str], str, st
                 config=config,
                 run=ctx.run,
                 state_outputs=ctx.state_outputs,
+                loop_iterations=ctx.loop_iterations,
             )
             for token in argv_for_tool(state.tool_ref)
         ]
@@ -976,9 +1012,16 @@ def _resolved_run(state: StateSpec, ctx: RunContext) -> tuple[list[str], str, st
         config=config,
         run=ctx.run,
         state_outputs=ctx.state_outputs,
+        loop_iterations=ctx.loop_iterations,
     )
     argv = [
-        resolve_tokens(token, config=config, run=ctx.run, state_outputs=ctx.state_outputs)
+        resolve_tokens(
+            token,
+            config=config,
+            run=ctx.run,
+            state_outputs=ctx.state_outputs,
+            loop_iterations=ctx.loop_iterations,
+        )
         for token in state.run.argv
     ]
     return argv, shell, ""

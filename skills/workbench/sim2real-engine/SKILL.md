@@ -1,75 +1,56 @@
 ---
 name: sim2real-engine
-description: Use when navigating, reviewing, or changing the Sim2Real staged pipeline engine — stage map, preamble/inner/outer/finalize entrypoints, K8s sibling jobs, and S3 artifact contracts.
+description: Use when navigating, reviewing, or changing the compositional Sim2Real workflow, stateless stage adapters, durable standard-runtime resume, ComponentRecords, and S3 lineage.
 ---
 
-# Sim2Real Engine
+# Compositional Sim2Real engine
 
-## When To Use
+The canonical engine surface is the ordinary workflow
+`npa/workflows/workbench/npa-workflows/sim2real.yaml`. Its leaf states call
+`npa.workflows.sim2real.workflow_stage`; S3/content-addressed evidence primitives
+live in `workflow_io`. The shared `npa_workflow` interpreter/runtime owns loops,
+parallel waves, SkyPilot jobs, ledger persistence, and resume.
 
-Load this skill when you need the **canonical 14-stage map** for the VLM-to-RL
-Sim2Real loop, not the older generic sim-to-real workflow YAMLs. Use it for
-engine edits, monitor/status alignment, walkthrough docs, and debugging sibling
-K8s jobs (`s2r-*`).
+The small `engine.py` facade and bounded `legacy_*` modules remain compatibility
+surfaces for archived runs. New canonical states must never call
+`run_preamble`, `run_inner_loop`, `run_single_outer_iteration`, `run_finalize`,
+or spawn sibling Jobs.
 
-## Source Files
+## Stage map
 
-| File | Role |
-| --- | --- |
-| `npa/src/npa/workflows/sim2real/engine.py` | Stage glue, K8s siblings, inner/outer/finalize |
-| `npa/src/npa/workflows/sim2real_stages.py` | Mandatory preamble stages 3–7 helpers |
-| `npa/src/npa/workflows/sim2real/monitor.py` | `_STAGE_SPECS` S3 marker rules for live status |
-| `npa/src/npa/workflows/sim2real/runner.py` | `Sim2RealWorkflow` orchestration CLI entry |
-| `npa/src/npa/workflows/sim2real_assets.py` | Stage 2 assets consumption |
+| Stage | Canonical record | Adapter boundary |
+| ---: | --- | --- |
+| 1 | `stage_01_trigger` | task-aligned trigger/seed validation |
+| 2 | `stage_02_assets` | task/assets/camera/strict-success contract |
+| 3 | `stage_03_augment` | real Cosmos Transfer 2.5 |
+| 4 | `stage_04_envs_raw` | parallel raw EnvGen shards |
+| 5 | `stage_05_envs_train` | sealed train/validation/gold split |
+| 6 | `stage_06_tokens` | explicit S3 token/scenario manifest |
+| 7 | `stage_07_actions_train` | real Isaac multi-camera rollout |
+| 8 | `stage_08_vlm_eval_train` | parallel real Reason2/Reason3 lanes |
+| 9 | `stage_09_training_signal` | temporal merge, real PPO, validation selection |
+| 10 | `stage_10_eval_heldout` | exact-checkpoint untouched-gold Isaac eval |
+| 11 | `stage_11_outer_loop` | strict metric + standard decision artifact |
+| 12 | `stage_12_external_validation` | designed external `SEAM` |
+| 13 | `stage_13_retrigger` | retrigger/loop record |
+| 14 | `stage_14_rerun_viz` | final report, RRD, and MCAP |
 
-## Stage Map
+## Invariants
 
-| Stage | Monitor name | Entrypoint | Primary artifacts |
-| --- | --- | --- | --- |
-| 1 | `stage_01_trigger` | `run_preamble` | `stage_01_trigger/trigger.json` |
-| 2 | `stage_02_assets` | `run_preamble` → `run_assets_stage` | `stage_02_assets/consumed_*_spec.json` |
-| 3 | `stage_03_augment` | `run_preamble` → `run_augment_stage` | `augment/manifest.json` |
-| 4 | `stage_04_envs_raw` | `run_envgen_split_stage` | `envs/raw/` |
-| 5 | `stage_05_envs_train` | `run_envgen_split_stage` | `envs/train/envs.jsonl` |
-| 6 | `stage_06_tokens` | `run_envgen_split_stage` | `tokens/manifest.json` |
-| 7 | `stage_07_actions_train` | `run_inner_loop` → `run_policy_rollouts` | `actions/train/` |
-| 8 | `stage_08_vlm_eval_train` | `run_inner_loop` → `evaluate_rollout_with_vlm` | `vlm_eval/train/` |
-| 9 | `stage_09_training_signal` | `run_inner_loop` (signal + trainer) | `training_signal/train/` |
-| 10 | `stage_10_eval_heldout` | `run_single_outer_iteration` → `run_heldout_eval` | `eval/heldout/report.json` |
-| 11 | `stage_11_outer_loop` | `run_single_outer_iteration` → `threshold_decision` | `outer_loop/decision.json` |
-| 12 | `stage_12_external_validation_stub` | `run_finalize` | `stage_12_external_validation/external_stub.json` |
-| 13 | `stage_13_retrigger` | `run_finalize` | `stage_13_retrigger/retrigger.json` |
-| 14 | `stage_14_rerun_viz` | `run_finalize` → `_run_sim2real_viz_stage` | `reports/sim2real.rrd` (+ `reports/sim2real.mcap`) |
-
-## Phase Boundaries
-
-- **Preamble (1–6):** `run_preamble` — trigger, assets, augment, envgen split, tokens.
-- **Outer iteration (7–11):** `run_single_outer_iteration` — one inner loop (7–9),
-  held-out eval (10), threshold decision (11). Repeats for `outer_iterations`.
-- **Finalize (12–14 + report):** `run_finalize` — external-validation stub,
-  loop-of-loops retrigger record, local Rerun `.rrd` plus a Lichtblick/Foxglove
-  `.mcap` of the same rollout data (`NPA_SIM2REAL_MCAP`, default on when rerun is
-  on), `sim2real-report.json`, optional S3 upload.
-
-Stages 4–6 share one component name in monitor: `stage_04_06_env_gen_split_tokens`.
-
-## Gotchas
-
-- Monitor infers stage 01 from later artifacts (`infer_from_later=True`); early
-  stages may show `PENDING` while later stages succeed — trust `current_stage`.
-- K8s sibling job names embed only the first 22 characters of `run_id`.
-- Registry-qualified images gate K8s execution; placeholders fall back to local
-  reference paths (SEAM tier in component records).
-- `npa/workflows/workbench/sim2real/runbook.yaml` passes explicit trainer, VLM,
-  and evaluator image fallbacks on the CLI, so those values override the Python
-  defaults. Keep them synchronized with `[tool.npa.supported-tools]`; the
-  contract is guarded by `tests/workflows/test_sim2real_image_pins.py` and the
-  stale-tag audit.
-- Do not hardcode bucket names, tenant IDs, or registry paths in engine code.
+- Use named `{{loop.*}}` tokens for iteration-scoped S3 paths.
+- Every real stage publishes `WORKS`; Stage 12 alone publishes `SEAM`.
+  Canonical pointers have immutable content-addressed history.
+- GPU images are immutable and source-attested. Isaac rollout/train/eval use
+  `NPA_SIM2REAL_INLINE_TASK=1` inside the workflow-owned GPU task.
+- Train, validation, and gold digests are disjoint. Checkpoint ranking reads
+  validation only; Stage 10 reads gold only and preserves exact render lineage.
+- Temporal rewards remain bounded and simulator-grounded. Strict success remains
+  stable placement within 5 cm. Pipeline success and policy quality are distinct.
+- Final RRD/MCAP use configured capture FPS and contain non-empty multi-camera,
+  progress, policy, and evaluation evidence.
 
 ## Verify
 
-```bash
-npa/.venv/bin/ruff check npa/src/npa/workflows/sim2real/engine.py
-npa/.venv/bin/python -m pytest npa/tests/workflows/sim2real/ -q --tb=no
-```
+Validate and plan the canonical YAML, run the focused compositional workflow and
+Isaac payload tests, then run repository-required lint/type/docs/guardrails. A
+live proof must use the same standard `workflow submit --runtime` path.

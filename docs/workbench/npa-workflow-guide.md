@@ -9,8 +9,8 @@ three ways: YAML file, CLI, and Python SDK.
 # Validate structure and closed toolRef / predicate registries
 npa workbench workflow validate-spec npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml
 
-# Expand loops/branches into a step plan (dry-run)
-npa workbench workflow plan-spec npa/workflows/workbench/npa-workflows/sim2real-vlm-rl.yaml \
+# Expand loops/branches in the demo-only Sim2Real DSL fixture (dry-run)
+npa workbench workflow plan-spec npa/workflows/workbench/npa-workflows/sim2real.yaml \
   --run-id demo --assume-decision loop_back
 
 # Plan + optional scheduler hints + S3 run manifest
@@ -54,7 +54,7 @@ Reference specs (all pytest-guarded):
 | `vlm-eval-single.yaml` | Single `toolRef`, terminal state |
 | `token-factory-caption.yaml` | Zero-GPU Token Factory caption |
 | `tokenfactory-rollout-judge.yaml` | Serial two-tool chain with `inputs`/`outputs` |
-| `sim2real-vlm-rl.yaml` | Nested loops + dynamic `transitions` |
+| `sim2real.yaml` | Canonical compositional 14-stage Sim2Real runtime; requires immutable component images and task-aligned S3 inputs for execution |
 | `bdd100k-pipeline.yaml` | AV failure-mode pipeline — ingest → backfill → train → eval |
 | `av-night-scene-hardening.yaml` | AV night-scene hardening — fan-out into two per-view detector train→eval branches |
 | `cosmos-synth-fanout-curation.yaml` | Fan-out Cosmos Transfer 2.5 synthetic-data shards → Voxel51 (FiftyOne) curation |
@@ -105,6 +105,7 @@ states:
 | `sequence` | Ordered sub-states (optionally inside `loop`) |
 | `parallel` | Fan-out group: members launch concurrently (SkyPilot JobGroup) and the group's `next` state is the barrier |
 | `maxConcurrency` | Cap on concurrent members of a `parallel` group (int or `{{config.attr}}`); larger groups are submitted in batches |
+| `parallelCount` | Optional validate-time cardinality assertion (int or `{{config.attr}}`); rejects a config override that does not equal the explicit `parallel` member count before plan/submit |
 | `params` | Per-state config overlay used when resolving that state's tokens (how N sweep members share one `toolRef`) |
 | `trigger` | `{uri, pollSeconds, maxPolls, minObjects}` — the runtime driver waits for objects at `uri` before running this state |
 | `loop.max` | Fixed iteration count (`int` or `config.attr`) |

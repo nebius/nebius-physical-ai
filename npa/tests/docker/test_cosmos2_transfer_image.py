@@ -20,8 +20,12 @@ ROOT = Path(__file__).resolve().parents[3]
 IMAGE_DIR = ROOT / "npa" / "docker" / "workbench" / "cosmos2-transfer"
 DOCKERFILE = IMAGE_DIR / "Dockerfile"
 SOURCE_SHA = "67d56b7d550a3911024a32dc23ae0bae5258e633"
-BUILD_BASE_SHA = "sha256:3986465b3dd3b4d602c07061f2cff417e0bfb24810129408d4eb12e111015a6c"
-RUNTIME_BASE_SHA = "sha256:9175fa92f96de35a8cfb9493f0dfcf9435c7a597e9d95ad41d2cae382a95e3f9"
+BUILD_BASE_SHA = (
+    "sha256:3986465b3dd3b4d602c07061f2cff417e0bfb24810129408d4eb12e111015a6c"
+)
+RUNTIME_BASE_SHA = (
+    "sha256:9175fa92f96de35a8cfb9493f0dfcf9435c7a597e9d95ad41d2cae382a95e3f9"
+)
 EXACT_TAG = "2.5.1-skypilot-ready-20260801T053000Z"
 
 
@@ -38,7 +42,9 @@ def test_source_base_uv_and_python_are_immutable() -> None:
     assert re.search(r"UV_IMAGE=\S+@sha256:[0-9a-f]{64}", text)
     assert "COSMOS_PYTHON_VERSION=3.10.18" in text
     assert "UBUNTU_SNAPSHOT=20260801T053000Z" in text
-    assert text.count("URIs: https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/") == 2
+    assert (
+        text.count("URIs: https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/") == 2
+    )
     assert "/etc/apt/sources.list.d/*.sources" in text
     assert "archive.ubuntu.com" not in text
     assert "security.ubuntu.com" not in text
@@ -65,15 +71,30 @@ def test_lfs_media_models_and_build_credentials_are_excluded() -> None:
 
     overrides = (IMAGE_DIR / "security-overrides.txt").read_text(encoding="utf-8")
     assert "nltk-3.10.0-py3-none-any.whl" in overrides
-    assert "sha256=54ff84d4916d3ef127e8953bee0023f6a6b320b75d634a19e06ef056d3d244bf" in overrides
+    assert (
+        "sha256=54ff84d4916d3ef127e8953bee0023f6a6b320b75d634a19e06ef056d3d244bf"
+        in overrides
+    )
     assert "defusedxml-0.7.1-py2.py3-none-any.whl" in overrides
-    assert "sha256=a352e7e428770286cc899e2542b6cdaedb2b4953ff269a210103ec58f6198a61" in overrides
+    assert (
+        "sha256=a352e7e428770286cc899e2542b6cdaedb2b4953ff269a210103ec58f6198a61"
+        in overrides
+    )
     assert "pip-26.2-py3-none-any.whl" in overrides
-    assert "sha256=931c303696af6fa3417112103b1cad26890e5a07eccb5b99783700e33f2b8aad" in overrides
+    assert (
+        "sha256=931c303696af6fa3417112103b1cad26890e5a07eccb5b99783700e33f2b8aad"
+        in overrides
+    )
     assert "msgpack-1.2.1-cp310-cp310-manylinux" in overrides
-    assert "sha256=83efa1c898e0fc5380fc0cabbf75164c52e3b5cbb45973710d75821928380c73" in overrides
+    assert (
+        "sha256=83efa1c898e0fc5380fc0cabbf75164c52e3b5cbb45973710d75821928380c73"
+        in overrides
+    )
     assert "setuptools-83.0.0-py3-none-any.whl" in overrides
-    assert "sha256=29b23c360f22f414dc7336bb39178cc7bcbf6021ed2733cde173f09dba19abb3" in overrides
+    assert (
+        "sha256=29b23c360f22f414dc7336bb39178cc7bcbf6021ed2733cde173f09dba19abb3"
+        in overrides
+    )
     assert "files.pythonhosted.org" in overrides
     assert overrides.count("#sha256=") == 5
     assert re.search(
@@ -100,14 +121,18 @@ def test_forbidden_payload_guard_rejects_weight_and_media(tmp_path: Path) -> Non
 
     weight = clean / "tiny.pt"
     weight.write_bytes(b"not harmless")
-    proc = subprocess.run(["bash", str(guard), str(clean)], capture_output=True, text=True)
+    proc = subprocess.run(
+        ["bash", str(guard), str(clean)], capture_output=True, text=True
+    )
     assert proc.returncode != 0
     assert "model/checkpoint" in proc.stderr
     weight.unlink()
 
     allowed_site = clean / "lib" / "python3.10" / "site-packages"
     allowed_site.mkdir(parents=True)
-    (allowed_site / "_virtualenv.pth").write_text("import _virtualenv\n", encoding="utf-8")
+    (allowed_site / "_virtualenv.pth").write_text(
+        "import _virtualenv\n", encoding="utf-8"
+    )
     (allowed_site / "distutils-precedence.pth").write_text(
         "import _distutils_hack\n", encoding="utf-8"
     )
@@ -117,27 +142,39 @@ def test_forbidden_payload_guard_rejects_weight_and_media(tmp_path: Path) -> Non
     subprocess.run(["bash", str(guard), str(clean)], check=True)
 
     (allowed_site / "unclassified.pth").write_bytes(b"not a path config")
-    proc = subprocess.run(["bash", str(guard), str(clean)], capture_output=True, text=True)
+    proc = subprocess.run(
+        ["bash", str(guard), str(clean)], capture_output=True, text=True
+    )
     assert proc.returncode != 0
     assert "unclassified.pth" in proc.stderr
     (allowed_site / "unclassified.pth").unlink()
 
     (clean / "sample.mp4").write_bytes(b"media")
-    proc = subprocess.run(["bash", str(guard), str(clean)], capture_output=True, text=True)
+    proc = subprocess.run(
+        ["bash", str(guard), str(clean)], capture_output=True, text=True
+    )
     assert proc.returncode != 0
     assert "upstream media" in proc.stderr
     (clean / "sample.mp4").unlink()
 
-    skimage_data = clean / ".venv" / "lib" / "python3.10" / "site-packages" / "skimage" / "data"
+    skimage_data = (
+        clean / ".venv" / "lib" / "python3.10" / "site-packages" / "skimage" / "data"
+    )
     skimage_data.mkdir(parents=True)
-    proc = subprocess.run(["bash", str(guard), str(clean)], capture_output=True, text=True)
+    proc = subprocess.run(
+        ["bash", str(guard), str(clean)], capture_output=True, text=True
+    )
     assert proc.returncode != 0
     assert "scikit-image data/fetch" in proc.stderr
     skimage_data.rmdir()
 
-    wandb_bin = clean / ".venv" / "lib" / "python3.10" / "site-packages" / "wandb" / "bin"
+    wandb_bin = (
+        clean / ".venv" / "lib" / "python3.10" / "site-packages" / "wandb" / "bin"
+    )
     wandb_bin.mkdir(parents=True)
-    proc = subprocess.run(["bash", str(guard), str(clean)], capture_output=True, text=True)
+    proc = subprocess.run(
+        ["bash", str(guard), str(clean)], capture_output=True, text=True
+    )
     assert proc.returncode != 0
     assert "W&B native service" in proc.stderr
 
@@ -222,8 +259,16 @@ def test_procedural_fixture_is_real_multistep_video(tmp_path: Path) -> None:
     assert spec["video_path"] == str(Path(result["video_path"]).resolve())
     probe = subprocess.run(
         [
-            "ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0",
-            "-show_entries", "stream=width,height,nb_read_frames", "-of", "json",
+            "ffprobe",
+            "-v",
+            "error",
+            "-count_frames",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height,nb_read_frames",
+            "-of",
+            "json",
             result["video_path"],
         ],
         check=True,
@@ -242,7 +287,10 @@ def test_exact_pin_golden_eval_and_workflow_use_the_legal_path() -> None:
             encoding="utf-8"
         )
     )["containers"]["cosmos2-transfer"]
-    assert golden["golden_eval"]["command"] == "bash /opt/cosmos2-transfer/smoke_functional.sh"
+    assert (
+        golden["golden_eval"]["command"]
+        == "bash /opt/cosmos2-transfer/smoke_functional.sh"
+    )
     assert "procedural input" in golden["safety"]["notes"]
     assert "built outside this repo" not in golden["safety"]["notes"]
     argv = TOOL_CATALOG["workbench.cosmos2.transfer_execute"].argv_template
@@ -258,7 +306,10 @@ def test_exact_pin_golden_eval_and_workflow_use_the_legal_path() -> None:
             / "cosmos2-transfer.yaml"
         ).read_text(encoding="utf-8")
     )
-    assert workflow["states"]["transfer"]["toolRef"] == "workbench.cosmos2.transfer_execute"
+    assert (
+        workflow["states"]["transfer"]["toolRef"]
+        == "workbench.cosmos2.transfer_execute"
+    )
     assert workflow["config"]["trigger_uri"].endswith("/input/")
     assert workflow["resources"]["transfer-gpu"]["accelerators"] == "RTXPRO6000:1"
     pod_spec = workflow["resources"]["transfer-gpu"]["kubernetes"]["pod_config"]["spec"]

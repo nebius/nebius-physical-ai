@@ -537,12 +537,27 @@ def cancel_workflow_job(
     job_id: str,
     run_id: str,
     cluster: str = "",
+    isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
     timeout: int = 900,
     poll_seconds: float = 10.0,
     also_down_cluster: bool = True,
 ) -> dict[str, Any]:
+    from npa.orchestration.skypilot._bin import resolve_config
+    from npa.orchestration.skypilot.cleanup import sky_environment
+
+    runtime = resolve_config(
+        sky_bin=sky_bin,
+        global_config_path=config_path,
+        isolated_config_dir=isolated_config_dir,
+    )
+    executable = str(runtime.sky_bin)
+    env = sky_environment(runtime.isolated_config_dir)
+    if runtime.global_config_path is not None:
+        env["SKYPILOT_GLOBAL_CONFIG"] = str(runtime.global_config_path)
     cancel = subprocess.run(
-        [sky_bin, "jobs", "cancel", "--yes", str(job_id)],
+        [executable, "jobs", "cancel", "--yes", str(job_id)],
+        env=env,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -551,14 +566,15 @@ def cancel_workflow_job(
     )
     cluster_name = cluster or run_id
     down = subprocess.CompletedProcess(
-        [sky_bin, "down", "--yes", cluster_name],
+        [executable, "down", "--yes", cluster_name],
         0,
         stdout="not requested",
         stderr="",
     )
     if also_down_cluster:
         down = subprocess.run(
-            [sky_bin, "down", "--yes", cluster_name],
+            [executable, "down", "--yes", cluster_name],
+            env=env,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -569,7 +585,8 @@ def cancel_workflow_job(
     last_status = ""
     while also_down_cluster and time.monotonic() < deadline:
         status = subprocess.run(
-            [sky_bin, "status", "--refresh"],
+            [executable, "status", "--refresh"],
+            env=env,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

@@ -9,6 +9,9 @@ from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec
 
 
 def resources_for_step(spec: NpaWorkflowSpec, step: PlanStep) -> dict[str, Any]:
+    # The interpreter resolves config/run/loop tokens while materializing the
+    # step.  Prefer that immutable snapshot so the scheduler executes exactly
+    # what ``plan-spec`` displayed, including per-state image digests.
     if step.resources_profile:
         return dict(step.resources_profile)
     profile = step.resources or "default"
@@ -82,6 +85,7 @@ def build_scheduler_plan(
         "workflow": spec.name,
         "run_id": run_id,
         "tasks": [
-            build_scheduler_task(spec, step, run_id=run_id, image=image) for step in steps
+            build_scheduler_task(spec, step, run_id=run_id, image=image)
+            for step in steps
         ],
     }

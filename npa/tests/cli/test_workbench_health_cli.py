@@ -40,7 +40,7 @@ def test_health_static_checks_pass_with_bucket() -> None:
         ],
     )
     assert result.exit_code == 0
-    assert "three-tier-coherence" in result.output
+    assert "compositional-workflow-coherence" in result.output
     assert "PASS" in result.output
 
 
@@ -61,7 +61,7 @@ def test_health_checks_all_expands_to_full_set() -> None:
     )
     assert "unknown check" not in result.output
     assert "config" in result.output
-    assert "three-tier-coherence" in result.output
+    assert "compositional-workflow-coherence" in result.output
 
 
 def test_health_fails_without_required_bucket(monkeypatch) -> None:
@@ -100,7 +100,10 @@ def test_health_json_output_is_valid() -> None:
     assert result.exit_code == 0
     payload = json.loads(result.output)
     assert payload["ok"] is True
-    assert {c["name"] for c in payload["checks"]} == {"config", "three-tier-coherence"}
+    assert {c["name"] for c in payload["checks"]} == {
+        "config",
+        "compositional-workflow-coherence",
+    }
 
 
 def test_health_rejects_unknown_check() -> None:

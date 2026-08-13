@@ -56,11 +56,12 @@ authentication error such as `401 Unauthorized`.
 Root cause: Nebius IAM-backed registry tokens expire, and an old
 `npa-nebius-registry` pull secret can remain in the namespace.
 
-Mitigation: Sim2Real sibling Kubernetes Jobs now call
-`ensure_registry_pull_secret_for_images()` immediately before each `kubectl
-apply`, in addition to the initial `k8s_submit` refresh. Manual workaround if
-needed: refresh the registry token and recreate the `npa-nebius-registry`
-image pull secret in the SkyPilot namespace, normally `default`.
+Mitigation: the standard workflow runtime refreshes registry credentials while
+submitting its SkyPilot tasks. Manual workaround if needed: refresh the registry
+token and recreate the `npa-nebius-registry` image pull secret in the SkyPilot
+namespace, normally `default`. The older per-stage sibling-Job refresh helper is
+retained only for archived pre-standard-runtime replay and is scheduled for
+removal under the Sim2Real legacy compatibility contract.
 
 Category for follow-up: security.
 

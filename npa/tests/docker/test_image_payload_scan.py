@@ -18,9 +18,12 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import json
+import subprocess
 import sys
 import tarfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -96,7 +99,9 @@ def test_scanner_flags_real_kit_payload(path: str) -> None:
 @pytest.mark.parametrize("path", ALLOWED_PATHS)
 def test_scanner_allows_what_the_images_actually_ship(path: str) -> None:
     why = scanner.classify_path(path)
-    assert why is None, f"legitimate path wrongly flagged as Kit payload: {path} ({why})"
+    assert why is None, (
+        f"legitimate path wrongly flagged as Kit payload: {path} ({why})"
+    )
 
 
 def test_the_shim_is_allowed_but_a_kit_tree_at_the_same_root_is_not() -> None:
@@ -120,7 +125,10 @@ def test_allowlist_is_small_and_explicit() -> None:
         assert prefix.startswith("opt/npa/docker/workbench/"), prefix
         assert prefix.endswith("/"), f"{prefix} must be a directory prefix"
     # The allowlist must not admit a Kit tree hidden under an allowed prefix.
-    assert scanner.classify_path("opt/npa/docker/workbench/common/isaacsim/kit/libcarb.so") is None
+    assert (
+        scanner.classify_path("opt/npa/docker/workbench/common/isaacsim/kit/libcarb.so")
+        is None
+    )
     # ... which is acceptable only because that prefix is ours and contains no payload;
     # assert the payload signatures themselves still fire outside it.
     assert scanner.classify_path("opt/other/isaacsim/kit/libcarb.so")
@@ -165,13 +173,16 @@ def test_report_verdict_and_exit_semantics() -> None:
     report = scanner.ScanReport(image="example:tag", source="registry")
     assert report.clean
     assert report.to_dict()["verdict"] == "clean"
+    assert report.to_dict()["scan_complete"] is True
 
     report.payload_hits.append({"path": "isaac-sim/kit/libcarb.so", "why": "carb"})
     assert not report.clean
     assert report.to_dict()["verdict"] == "omniverse-payload-detected"
 
     history_only = scanner.ScanReport(image="example:tag", source="registry")
-    history_only.history_hits.append({"command": "RUN pip install isaacsim", "why": "x"})
+    history_only.history_hits.append(
+        {"command": "RUN pip install isaacsim", "why": "x"}
+    )
     assert not history_only.clean, "a baking layer alone must fail the scan"
 
 
@@ -219,16 +230,18 @@ def test_oci_layout_tarball_scans_root_level_blob_layers(tmp_path: Path) -> None
 
 
 def _sonic_dockerfile() -> str:
-    return (REPO_ROOT / "npa" / "docker" / "workbench" / "sonic" / "Dockerfile").read_text(
-        encoding="utf-8"
-    )
+    return (
+        REPO_ROOT / "npa" / "docker" / "workbench" / "sonic" / "Dockerfile"
+    ).read_text(encoding="utf-8")
 
 
 def _instructions_only(dockerfile_text: str) -> str:
     """Drop comment lines. These Dockerfiles document what they deliberately do NOT do, so
     prose naming a removed instruction must not read as that instruction being present."""
     return "\n".join(
-        line for line in dockerfile_text.splitlines() if not line.lstrip().startswith("#")
+        line
+        for line in dockerfile_text.splitlines()
+        if not line.lstrip().startswith("#")
     )
 
 
@@ -246,7 +259,9 @@ def test_weight_shaped_paths_are_reported_not_flagged_as_kit_payload() -> None:
 def test_report_lists_weight_shaped_paths_without_failing() -> None:
     report = scanner.ScanReport(image="example:tag", source="registry")
     report.weight_shaped_paths.append("opt/sonic/x/policy.onnx")
-    assert report.clean, "weight-shaped paths are informational, not a Kit-payload failure"
+    assert report.clean, (
+        "weight-shaped paths are informational, not a Kit-payload failure"
+    )
     assert report.to_dict()["weight_shaped_paths"] == ["opt/sonic/x/policy.onnx"]
 
 
@@ -265,7 +280,10 @@ def test_sonic_build_checks_weights_by_content_not_extension() -> None:
         "the weight check must recognise git-LFS pointers by their magic string"
     )
     assert "NPA_SONIC_LFS_POINTERS_ONLY" in dockerfile
-    assert "real model weights baked into the image (not LFS pointers, not an " in dockerfile
+    assert (
+        "real model weights baked into the image (not LFS pointers, not an "
+        in dockerfile
+    )
     # And smudging must be disabled, which is what actually keeps the tensors out.
     assert "GIT_LFS_SKIP_SMUDGE=1" in dockerfile, (
         "`git lfs install --system` makes a plain `git checkout` download every tracked "
@@ -312,10 +330,12 @@ def test_the_one_allowlisted_source_asset_is_named_and_size_bounded() -> None:
     dockerfile = _sonic_dockerfile()
     assert "ALLOWED_SOURCE_ASSETS" in dockerfile
     assert "gear_sonic/trl/utils/smplx/body_model/coco_aug_dict.pth" in dockerfile
-    assert "ALLOWED_SOURCE_ASSET_MAX_BYTES" in dockerfile, "the exception must be size-bounded"
+    assert "ALLOWED_SOURCE_ASSET_MAX_BYTES" in dockerfile, (
+        "the exception must be size-bounded"
+    )
     instructions = _instructions_only(dockerfile)
     # A wildcard or suffix-wide exemption would defeat the whole check.
-    for forbidden in ("*.pth", "*.pt", "smplx/**", 'suffix in ALLOWED'):
+    for forbidden in ("*.pth", "*.pt", "smplx/**", "suffix in ALLOWED"):
         assert forbidden not in instructions, (
             f"the allowlist must name exact paths, found {forbidden!r}"
         )
@@ -331,7 +351,7 @@ def test_history_matching_ignores_comments_inside_heredocs() -> None:
     tempting fix is to loosen the pattern until it stops firing.
     """
     command = (
-        'RUN python - <<PY\n'
+        "RUN python - <<PY\n"
         "    # See install_isaac_runtime_base.sh: a driverless builder reports an empty\n"
         "    # arch list, so the per-device check happens on GPU (isaac-bootstrap verify\n"
         "    # / the golden eval).\n"
@@ -383,7 +403,9 @@ def test_scanner_flags_omniverse_asset_paths() -> None:
 # --------------------------------------------------------------------------------------
 
 
-def _fake_registry(monkeypatch, *, history: list[str], entries: list[str]) -> dict[str, int]:
+def _fake_registry(
+    monkeypatch, *, history: list[str], entries: list[str]
+) -> dict[str, int]:
     """Stub the two registry readers and count which ones actually get called."""
     calls = {"history": 0, "export": 0}
 
@@ -453,3 +475,76 @@ def test_full_scan_remains_the_default(monkeypatch) -> None:
     assert calls["export"] == 1
     assert report.entries_scanned == 2
     assert report.history_only is False
+
+
+def _empty_tar_stream() -> io.BytesIO:
+    payload = io.BytesIO()
+    with tarfile.open(fileobj=payload, mode="w"):
+        pass
+    payload.seek(0)
+    return payload
+
+
+def test_registry_export_failure_is_fatal_after_a_valid_partial_tar(
+    monkeypatch,
+) -> None:
+    """A truncated export must never become a clean redistribution report."""
+
+    class FailedExport:
+        stdout = _empty_tar_stream()
+
+        @staticmethod
+        def wait() -> int:
+            return 17
+
+    monkeypatch.setattr(scanner, "_require", lambda _tool: "/usr/bin/crane")
+    monkeypatch.setattr(
+        scanner.subprocess, "Popen", lambda *_args, **_kwargs: FailedExport()
+    )
+
+    with pytest.raises(subprocess.CalledProcessError, match="exit status 17"):
+        list(scanner._iter_crane_export("registry.example/image:tag"))
+
+
+def test_registry_config_failure_is_fatal(monkeypatch) -> None:
+    monkeypatch.setattr(scanner, "_require", lambda _tool: "/usr/bin/crane")
+    monkeypatch.setattr(
+        scanner.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=9, stdout=""),
+    )
+
+    with pytest.raises(subprocess.CalledProcessError, match="exit status 9"):
+        scanner._image_history("registry.example/image:tag")
+
+
+def test_registry_digest_failure_is_fatal(monkeypatch) -> None:
+    responses = iter(
+        (
+            SimpleNamespace(returncode=0, stdout=json.dumps({"history": []})),
+            SimpleNamespace(returncode=11, stdout=""),
+        )
+    )
+    monkeypatch.setattr(scanner, "_require", lambda _tool: "/usr/bin/crane")
+    monkeypatch.setattr(
+        scanner.subprocess, "run", lambda *_args, **_kwargs: next(responses)
+    )
+
+    with pytest.raises(subprocess.CalledProcessError, match="exit status 11"):
+        scanner._image_history("registry.example/image:tag")
+
+
+def test_registry_digest_must_be_a_sha256(monkeypatch) -> None:
+    responses = iter(
+        (
+            SimpleNamespace(returncode=0, stdout=json.dumps({"history": []})),
+            SimpleNamespace(returncode=0, stdout="not-a-digest\n"),
+        )
+    )
+    monkeypatch.setattr(scanner, "_require", lambda _tool: "/usr/bin/crane")
+    monkeypatch.setattr(
+        scanner.subprocess, "run", lambda *_args, **_kwargs: next(responses)
+    )
+
+    with pytest.raises(RuntimeError, match="invalid linux/amd64 image digest"):
+        scanner._image_history("registry.example/image:tag")

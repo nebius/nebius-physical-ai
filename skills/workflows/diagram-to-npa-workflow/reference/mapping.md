@@ -14,11 +14,11 @@ Match diagram/step language (left) to a cataloged tool (right).
 | "Cosmos Transfer", "augment", "synthetic variants", "lighting/texture perturbation" | `workbench.cosmos2.transfer_conditioned_execute` | video-bearing `trigger_uri` → `augment_uri` + `augmented_frames_uri: "{{config.augment_uri}}manifest.json"` |
 | "Cosmos reason", "scene reasoning", "Token Factory", "plan" | `workbench.token_factory.reason` | `scene_uri` → `plan_uri` |
 | "Isaac Lab envgen", "raw environments", "generate 1K/8K envs", "scenes+physics" | `workbench.sim2real_envgen.raw_shard` | `raw_envs_uri`, `env_count` |
-| "LeRobot training image generates actions", "policy rollouts", "action-conditioned envs" | `workbench.sim2real.policy_rollouts` | `rollouts_uri` |
+| "LeRobot training image generates actions", "policy rollouts", "action-conditioned envs" | real `run.shell` stage adapter (`workflow_stage --stage 7`) | explicit run-scoped rollout URI |
 | "VLM evaluation", "success/failure judgment", "critique", "reward signal source" | `workbench.vlm_eval.run` | `rollouts_uri` → `scores_uri`, `vlm_backend` |
-| "Isaac Lab eval framework", "held-out eval", "results report", "success rate on test envs" | `workbench.sim2real.heldout_eval` | `heldout_report_uri` |
+| "Isaac Lab eval framework", "held-out eval", "results report", "success rate on test envs" | real `run.shell` stage adapter (`workflow_stage --stage 10`) | explicit gold report URI |
 | "threshold", "good/bad", "promote or train more", "decision" | `workbench.sim2real.write_decision` | `decision_uri`, `default_decision` |
-| "checkpoint", "promote to S3", "finalize", "candidate for deployment", "retrigger record" | `workbench.sim2real.finalize` | `finalize_report_uri` |
+| "checkpoint", "promote to S3", "finalize", "candidate for deployment", "retrigger record" | real `run.shell` adapters (Stages 11–14) | decision, retrigger, RRD/MCAP, final report URIs |
 | "train RL policy" (generic sim RL, not VLM-in-loop) | `workbench.rl.policy_train` | `task_name`, `train_dataset_uri` → `checkpoint_uri` |
 | "evaluate policy on held-out episodes" | `workbench.rl.evaluate_policy` | `checkpoint_uri` → `eval_report_uri` |
 | "success gate on threshold" (RL) | `workbench.rl.write_success_decision` | `success_threshold`, `decision_uri` |
@@ -100,7 +100,8 @@ The user warned "there will be some discrepancy." Apply these rules and leave a
 
 ## Sim2real worked example (13 steps → spec)
 
-The provided write-up + diagram map to `examples/sim2real-vlm-rl-from-diagram.yaml`:
+The provided write-up + diagram map to the canonical
+`npa/workflows/workbench/npa-workflows/sim2real.yaml`:
 
 | Step (write-up) | Diagram box | State | `toolRef` |
 | --- | --- | --- | --- |
@@ -109,12 +110,12 @@ The provided write-up + diagram map to `examples/sim2real-vlm-rl-from-diagram.ya
 | 4 Load sim assets into Isaac | *(feeds envgen)* | *(assets_uri input on `envgen`)* | — |
 | 5 Raw env generation (Isaac Lab) | Isaac Lab Envgen box | `envgen` | `workbench.sim2real_envgen.raw_shard` |
 | 6 80/20 split | split diamond | *(split manifest output of `envgen`; `train_fraction` config)* | — |
-| 7 LeRobot generates actions on train envs | 8K TrainEnvs → LeRobot | `rollouts` (in `inner`) | `workbench.sim2real.policy_rollouts` |
+| 7 LeRobot generates actions on train envs | 8K TrainEnvs → LeRobot | `stage-07-rollouts` (in `inner-loop`) | `workflow_stage --stage 7` |
 | 8 VLM evaluation on training | VLM Eval box (inner loop) | `vlm-score` (in `inner`) | `workbench.vlm_eval.run` |
 | 9 VLM critique → RL update | inner back-edge | *(inner loop `loop.max`; reward wired via BYO trainer in engine)* | — |
-| 10 Isaac Lab eval framework | Eval framework → Results Report | `heldout` | `workbench.sim2real.heldout_eval` |
+| 10 Isaac Lab eval framework | Eval framework → Results Report | `stage-10-gold` | `workflow_stage --stage 10` |
 | 11A/11B Good/Bad threshold | Threshold diamond | `decide` | `workbench.sim2real.write_decision` |
-| 11A promote → checkpoint to S3 | Checkpoint → S3 | `finalize` (promote path) | `workbench.sim2real.finalize` |
+| 11A record checkpoint decision and finish | Checkpoint → S3 | `stage-11-decision` through `stage-14-visualize` | `workflow_stage --stage 11..14` |
 | 11B fail → more RL | outer back-edge | `decide` `loop_back` → `outer` | — |
 | 12 Real-world test | Real-world Test box | *(recorded in finalize manifest)* | — |
 | 13 Retrigger (real data → Step 1) | retrigger arrow | `finalize` (terminal; new run re-enters) | — |

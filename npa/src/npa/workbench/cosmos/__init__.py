@@ -6,27 +6,29 @@ import os as _os
 
 from npa._sdk import make_cli_wrapper
 
-if _os.environ.get("NPA_SKIP_EAGER_IMPORTS", "").strip().lower() not in (
+_LIGHT_IMPORT = _os.environ.get("NPA_SKIP_EAGER_IMPORTS", "").strip().lower() in (
     "1",
     "true",
     "yes",
-):
+)
+
+if not _LIGHT_IMPORT:
     from npa.workbench.cosmos.cosmos3 import (
         Cosmos3AccessConfig as Cosmos3AccessConfig,
         Cosmos3AccessError as Cosmos3AccessError,
         Cosmos3CheckResult as Cosmos3CheckResult,
         Cosmos3FetchResult as Cosmos3FetchResult,
         Cosmos3ServeConfig as Cosmos3ServeConfig,
-        build_cosmos3_inference_args,
-        check_cosmos3_access,
-        fetch_cosmos3_artifacts,
+        build_cosmos3_inference_args as build_cosmos3_inference_args,
+        check_cosmos3_access as check_cosmos3_access,
+        fetch_cosmos3_artifacts as fetch_cosmos3_artifacts,
     )
     from npa.workbench.cosmos.generate import (
         GENERATE_MODES as GENERATE_MODES,
         Cosmos3GenerateError as Cosmos3GenerateError,
-        cosmos3_generate_available,
-        generate_plan,
-        run_cosmos3_generate,
+        cosmos3_generate_available as cosmos3_generate_available,
+        generate_plan as generate_plan,
+        run_cosmos3_generate as run_cosmos3_generate,
     )
 
 ensure_ingress = make_cli_wrapper(
@@ -57,13 +59,18 @@ system_info = make_cli_wrapper(
     "npa.cli.cosmos", "system_info_cmd", "Show Cosmos system information."
 )
 
-__all__ = [
-    "check_cosmos3_access",
-    "fetch_cosmos3_artifacts",
-    "build_cosmos3_inference_args",
-    "cosmos3_generate_available",
-    "generate_plan",
-    "run_cosmos3_generate",
+__all__ = (
+    []
+    if _LIGHT_IMPORT
+    else [
+        "check_cosmos3_access",
+        "fetch_cosmos3_artifacts",
+        "build_cosmos3_inference_args",
+        "cosmos3_generate_available",
+        "generate_plan",
+        "run_cosmos3_generate",
+    ]
+) + [
     "ensure_ingress",
     "register_byovm",
     "check",

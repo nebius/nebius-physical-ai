@@ -323,7 +323,9 @@ def submit_workflow(
 
         def _readiness():
             if controller_backend != "kubernetes":
-                from npa.orchestration.skypilot.launch_transaction import StabilityResult
+                from npa.orchestration.skypilot.launch_transaction import (
+                    StabilityResult,
+                )
 
                 return StabilityResult(EvidenceState.READY, FailureCategory.NONE)
             assert readiness_probe is not None
@@ -343,7 +345,9 @@ def submit_workflow(
                 cwd=stable_cwd,
             )
 
-        def _launch() -> tuple[subprocess.CompletedProcess[str], list[SkyPilotDiagnosis]]:
+        def _launch() -> tuple[
+            subprocess.CompletedProcess[str], list[SkyPilotDiagnosis]
+        ]:
             try:
                 launch_result, diagnoses = _run_launch(
                     cmd,
@@ -525,8 +529,22 @@ def workflow_status(
         )
 
     status = _status_from_queue_payload(result.stdout, job_id)
+    if not status:
+        # A successful queue response is authoritative: if the recorded id is
+        # absent, the managed-jobs controller has lost (or garbage-collected) its
+        # execution record.  Treating this as UNKNOWN makes an unbounded runtime
+        # poll forever and prevents the durable NPA ledger from resubmitting the
+        # incomplete wave after a controller restart.
+        return WorkflowResult(
+            status="FAILED_CONTROLLER",
+            job_id=job_id,
+            returncode=result.returncode,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            error=f"managed job {job_id} is absent from the successful queue response",
+        )
     return WorkflowResult(
-        status=status or "UNKNOWN",
+        status=status,
         job_id=job_id,
         returncode=result.returncode,
         stdout=result.stdout,
@@ -563,6 +581,8 @@ def workflow_task_statuses(
         "--output",
         "json",
     ]
+    if runtime_config.global_config_path is not None:
+        cmd[3:3] = ["--config", str(runtime_config.global_config_path)]
     result = subprocess.run(
         cmd,
         env=sky_environment(runtime_config.isolated_config_dir),
@@ -634,15 +654,18 @@ def find_job_ids_by_name(
         global_config_path=config_path,
         isolated_config_dir=isolated_config_dir,
     )
+    cmd = [
+        str(ensure_skypilot_version(runtime_config.sky_bin)),
+        "jobs",
+        "queue",
+        "--all",
+        "--output",
+        "json",
+    ]
+    if runtime_config.global_config_path is not None:
+        cmd[3:3] = ["--config", str(runtime_config.global_config_path)]
     result = subprocess.run(
-        [
-            str(ensure_skypilot_version(runtime_config.sky_bin)),
-            "jobs",
-            "queue",
-            "--all",
-            "--output",
-            "json",
-        ],
+        cmd,
         env=sky_environment(runtime_config.isolated_config_dir),
         cwd=_stable_sky_cwd(runtime_config.isolated_config_dir),
         text=True,
