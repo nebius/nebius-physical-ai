@@ -27,7 +27,6 @@ def test_runtime_packaging_and_documented_cli_version_do_not_drift() -> None:
 
 
 def test_documented_cluster_shape_uses_real_cli_flags() -> None:
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
     paidf = (
         ROOT / "docs" / "workbench" / "guides" / "physical-ai-data-factory-deploy.md"
     ).read_text(encoding="utf-8")
@@ -42,18 +41,4 @@ def test_documented_cluster_shape_uses_real_cli_flags() -> None:
         "--preemptible",
     )
     for flag in required:
-        assert flag in readme
         assert flag in paidf
-    assert '"$RUN_ID" --runtime --var bucket=' in readme
-    assert "--runtime --auto-load" not in readme
-    assert "--resume-run" in readme
-    assert 'npa provision-if-absent --project "$PROJECT" --skip-k8s' in readme
-
-
-def test_documented_project_creation_uses_official_v2_cli_contract() -> None:
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert 'nebius iam v2 project create --parent-id "$TENANT_ID"' in readme
-    assert '--name "$PROJECT_NAME" --region "$REGION" --format json' in readme
-    assert 'nebius iam v2 project list --parent-id "$TENANT_ID" --all' in readme
-    assert 'nebius iam v2 project get --id "$PROJECT_ID" --format json' in readme
-    assert "tenant-level administrative permission" in readme

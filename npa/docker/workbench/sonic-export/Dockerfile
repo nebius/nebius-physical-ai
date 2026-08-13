@@ -30,6 +30,7 @@ RUN pip install --index-url https://download.pytorch.org/whl/cpu "torch==2.12.1"
 
 COPY npa/pyproject.toml /opt/npa/pyproject.toml
 COPY npa/src /opt/npa/src
+COPY npa/workflows /opt/npa/workflows
 # Installs npa's base deps (pyarrow, boto3, ...) plus the [sonic] onnx toolchain.
 RUN pip install "/opt/npa[sonic]"
 

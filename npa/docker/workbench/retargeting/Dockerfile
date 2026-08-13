@@ -33,6 +33,7 @@ RUN git clone --filter=blob:none --sparse "${SONIC_REPO_URL}" "${SONIC_HOME}" \
 
 COPY pyproject.toml /opt/npa/pyproject.toml
 COPY src/npa /opt/npa/src/npa
+COPY workflows /opt/npa/workflows
 
 RUN python -m pip install --no-cache-dir --upgrade pip setuptools wheel \
     && python -m pip install --no-cache-dir --no-deps -e /opt/npa \

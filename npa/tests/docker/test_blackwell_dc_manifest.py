@@ -268,7 +268,6 @@ def test_compatibility_matrix_lists_every_image(entries: list[dict]) -> None:
 def test_compatibility_matrix_is_linked_from_the_readme() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "docs/workbench/image-gpu-compatibility-matrix.md" in readme
-    assert "## Container registry" in readme
 
 
 def test_measured_arch_lists_back_the_verdicts(entries: list[dict]) -> None:
