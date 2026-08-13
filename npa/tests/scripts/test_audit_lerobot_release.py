@@ -41,6 +41,10 @@ Requires-Dist: torch<2.12.0,>=2.7
 Requires-Dist: torchvision<0.27.0,>=0.22.0
 Requires-Dist: torchcodec<0.12.0,>=0.3.0; extra == "dataset"
 Requires-Dist: diffusers<0.40.0,>=0.38.0; extra == "diffusers-dep"
+Requires-Dist: transformers<5.6.0,>=5.4.0; extra == "transformers-dep"
+Requires-Dist: lerobot[diffusers-dep]; extra == "diffusion"
+Requires-Dist: lerobot[transformers-dep]; extra == "smolvla"
+Requires-Dist: lerobot[transformers-dep]; extra == "libero"
 """
 
 ENTRY_POINTS = """[console_scripts]
@@ -197,6 +201,46 @@ def test_lower_bound_pin_below_declared_ceiling_is_caught(monkeypatch, wheel):
     # `diffusers>=0.30.0` floors below the declared >=0.38.0 floor.
     report = _run(monkeypatch, wheel, manifest={"diffusers_pin": "diffusers>=0.30.0"})
     assert _status(report, "manifest torch pins") == "FAIL"
+
+
+def _gate_diffusion_on_diffusers(wheel: Path) -> None:
+    """Mirror 0.6.x, which enforces the extra inside ``DiffusionPolicy.__init__``."""
+
+    (wheel / "lerobot/policies/diffusion/modeling_diffusion.py").write_text(
+        "class DiffusionPolicy:\n"
+        "    def __init__(self, config):\n"
+        '        require_package("diffusers", extra="diffusion")\n',
+        encoding="utf-8",
+    )
+
+
+def test_policy_extra_missing_from_manifest_is_caught(monkeypatch, wheel):
+    # The module still imports; only construction fails. Checking the import
+    # surface cannot see this, which is exactly how it shipped in 0.6.0.
+    _gate_diffusion_on_diffusers(wheel)
+    report = _run(monkeypatch, wheel, manifest={"pip_extras": "training,evaluation,pusht,libero"})
+    assert _status(report, "import-surface") == "PASS"
+    assert _status(report, "policy-extras") == "FAIL"
+
+
+def test_policy_extra_present_in_manifest_passes(monkeypatch, wheel):
+    # `diffusion` only reaches diffusers through `lerobot[diffusers-dep]`, so
+    # this also proves the self-referential extra graph is walked.
+    _gate_diffusion_on_diffusers(wheel)
+    report = _run(monkeypatch, wheel, manifest={"pip_extras": "pusht,diffusion"})
+    assert _status(report, "policy-extras") == "PASS"
+
+
+def test_policy_extras_skipped_when_version_unknown_to_manifest(monkeypatch, wheel):
+    _gate_diffusion_on_diffusers(wheel)
+    report = _run(monkeypatch, wheel, manifest=None)
+    assert _status(report, "policy-extras") == "PASS"
+
+
+def test_ungated_policy_needs_no_extra(monkeypatch, wheel):
+    # ACT declares no require_package gate, so a bare install can construct it.
+    report = _run(monkeypatch, wheel, manifest={"pip_extras": "pusht"})
+    assert _status(report, "policy-extras") == "PASS"
 
 
 def test_repo_manifest_versions_are_all_auditable():

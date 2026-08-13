@@ -34,16 +34,19 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import re
 import shutil
 import sys
 import urllib.error
 import urllib.request
 import zipfile
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
 from packaging.version import Version
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -101,6 +104,21 @@ CALLABLE_PARAMS: tuple[tuple[str, str, tuple[str, ...], str], ...] = (
 
 # Console scripts this repo shells out to.
 REQUIRED_ENTRY_POINTS = ("lerobot-train", "lerobot-eval")
+
+# Policy types this repo trains or evaluates, and the module that implements
+# each. LeRobot 0.6.x enforces optional dependencies at *construction* time
+# (``require_package`` inside ``__init__``), so a policy whose extra is missing
+# still imports cleanly and only fails once ``make_policy`` runs. Checking the
+# import surface alone cannot see that; this maps each policy to its gates.
+POLICY_MODULES: tuple[tuple[str, str, str], ...] = (
+    ("act", "lerobot/policies/act/modeling_act.py", "npa/genesis/eval_student.py"),
+    (
+        "diffusion",
+        "lerobot/policies/diffusion/modeling_diffusion.py",
+        "npa/genesis/eval_student.py, golden evals",
+    ),
+    ("smolvla", "lerobot/policies/smolvla/modeling_smolvla.py", "npa/genesis/eval_student.py"),
+)
 
 # Dataset layout version our adapters write; a bump here means every
 # npa/adapter/*_lerobot.py writer needs migrating.
@@ -272,6 +290,80 @@ def _declared_bounds(root: Path) -> dict[str, str]:
     return bounds
 
 
+def _extra_requirements(root: Path) -> tuple[dict[str, list[Requirement]], list[Requirement]]:
+    """Split ``Requires-Dist`` into per-extra requirements and unconditional ones."""
+
+    per_extra: dict[str, list[Requirement]] = {}
+    base: list[Requirement] = []
+    for line in (_dist_info(root) / "METADATA").read_text(encoding="utf-8").splitlines():
+        if not line.startswith("Requires-Dist:"):
+            continue
+        req = Requirement(line.split(":", 1)[1].strip())
+        extras = re.findall(r'extra\s*==\s*[\'"]([^\'"]+)[\'"]', str(req.marker or ""))
+        if extras:
+            for extra in extras:
+                per_extra.setdefault(extra, []).append(req)
+        else:
+            base.append(req)
+    return per_extra, base
+
+
+def _extra_closure(root: Path, extras: Iterable[str]) -> set[str]:
+    """Distributions installed by ``pip install lerobot[<extras>]``.
+
+    Extras reference each other (``training`` -> ``dataset``, ``diffusion`` ->
+    ``diffusers-dep``), so this walks the self-referential graph to a fixpoint.
+    """
+
+    per_extra, base = _extra_requirements(root)
+    provided = {canonicalize_name(req.name) for req in base}
+    queue = list(extras)
+    seen: set[str] = set()
+    while queue:
+        extra = queue.pop()
+        if extra in seen:
+            continue
+        seen.add(extra)
+        for req in per_extra.get(extra, []):
+            if canonicalize_name(req.name) == "lerobot":
+                queue.extend(req.extras)
+            else:
+                provided.add(canonicalize_name(req.name))
+    return provided
+
+
+def _require_package_gates(root: Path, relpath: str) -> list[tuple[str, str]]:
+    """``(package, extra)`` pairs a module demands at construction time."""
+
+    path = root / relpath
+    if not path.exists():
+        return []
+    gates: list[tuple[str, str]] = []
+    for node in ast.walk(_parse(path)):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        if name != "require_package" or not node.args:
+            continue
+        pkg = node.args[0]
+        if not isinstance(pkg, ast.Constant) or not isinstance(pkg.value, str):
+            continue
+        extra = next(
+            (
+                kw.value.value
+                for kw in node.keywords
+                if kw.arg == "extra"
+                and isinstance(kw.value, ast.Constant)
+                and isinstance(kw.value.value, str)
+            ),
+            "",
+        )
+        if (pkg.value, extra) not in gates:
+            gates.append((pkg.value, extra))
+    return gates
+
+
 def _entry_points(root: Path) -> set[str]:
     path = _dist_info(root) / "entry_points.txt"
     if not path.exists():
@@ -340,6 +432,44 @@ def check_entry_points(root: Path, report: Report) -> None:
         else f"missing {missing}",
     )
     report.add("available-entry-points", True, ", ".join(extra) or "none")
+
+
+def check_policy_extras(root: Path, report: Report, manifest_entry: dict[str, Any] | None) -> None:
+    """Do the manifest's extras actually let every policy we use be constructed?"""
+
+    if manifest_entry is None:
+        report.add(
+            "policy-extras",
+            True,
+            "version not in lerobot_version_manifest.json -- no extras declared yet",
+        )
+        return
+
+    declared = [e.strip() for e in str(manifest_entry.get("pip_extras", "")).split(",") if e.strip()]
+    provided = _extra_closure(root, declared)
+
+    problems: list[str] = []
+    satisfied: list[str] = []
+    for policy, relpath, provenance in POLICY_MODULES:
+        missing = [
+            f"{pkg} (add extra '{extra}')"
+            for pkg, extra in _require_package_gates(root, relpath)
+            if canonicalize_name(pkg) not in provided
+        ]
+        if missing:
+            problems.append(f"--policy.type={policy} needs {', '.join(missing)} <- {provenance}")
+        else:
+            satisfied.append(policy)
+
+    report.add(
+        "policy-extras",
+        not problems,
+        f"lerobot[{','.join(declared)}] constructs {satisfied or 'no policies'}"
+        if not problems
+        else "; ".join(problems)
+        + " -- these gates fire in __init__, so the policy imports and only"
+        " fails when make_policy() runs",
+    )
 
 
 def check_dataset_format(root: Path, report: Report) -> None:
@@ -479,6 +609,7 @@ def audit(version: str, cache_dir: Path, *, offline: bool) -> Report:
     check_signatures(root, report)
     check_entry_points(root, report)
     check_dataset_format(root, report)
+    check_policy_extras(root, report, manifest_entry)
     check_cli_flags(root, report, manifest_entry)
     check_dependency_bounds(root, report, manifest_entry)
     return report
