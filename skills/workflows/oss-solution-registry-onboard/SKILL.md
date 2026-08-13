@@ -342,6 +342,39 @@ runs are postprocessed into a verified Rerun recording that embeds the exact
 MP4 alongside static run evidence; see `skills/tools/wan2-2/SKILL.md` and
 `docs/workbench/wan2.2.md`.
 
+### Lightricks LTX-2.5 (`byof-ltx2.yaml`)
+
+Pinned upstream source:
+`Lightricks/LTX-2@fd4ded7f2d88d3da713abcdd4ad41ecc4a9314ca`; gated checkpoint
+set: `Lightricks/LTX-2.5`. **Nothing here is live**: the `npa-ltx2` image has
+not been built and no GPU has run it. The entry exists so the contract is
+reviewable before evidence, not so it can be mistaken for evidence.
+
+Read this one before onboarding any non-OSI model, because it breaks the habit
+the other entries teach. The LTX-2.x Community License Agreement (2026-08-11)
+licenses the **source** as well as the weights, so "bake the code, fetch the
+weights" would have made the image non-redistributable. `npa-ltx2` bakes
+neither; both arrive at run time under the operator's own acceptance. The
+licence also restricts what the Outputs may be used for, which is why two of the
+four hard-gate capabilities are licence capabilities:
+
+- `ltx2_5_text_to_video` (real `python -m ltx_pipelines.distilled` generation)
+- `ltx2_5_decoded_mp4_validation` (decode the pixels; reject an unreadable
+  container, a flat render, and one still repeated)
+- `ltx2_5_license_gate_refusal` (`ltx-runtime assert-refusal` proves, in the run
+  itself and before any fetch, that a scrubbed declaration refuses with exit 78
+  and writes nothing to either cache)
+- `ltx2_5_license_provenance_stamp` (the accepted declaration is stamped into
+  `npa.ltx2.provenance.v1` and travels with the video)
+
+The primary artifact is `ltx2_5_text_to_video.json`. The workflow does not stop
+at generation: `npa workbench ltx2 gate` sits between curation and LeRobot
+policy training and fails the run when the declared use class is commercial,
+because Attachment A(18) forbids training another model on LTX Outputs for
+commercial use. Not claimed: image-to-video, audio-to-video, and LoRA
+fine-tuning. See `npa/docker/workbench/ltx2/REDISTRIBUTION.md` and
+`docs/workbench/ltx2.md`.
+
 ### Multi-GPU solutions
 
 When a solution's accepted capability is only meaningful across multiple GPUs

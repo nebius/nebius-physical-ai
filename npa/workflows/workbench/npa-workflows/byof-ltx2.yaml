@@ -48,11 +48,24 @@ config:
     export LTX2_PROMPT_B64="{{config.prompt|base64}}"
     export LTX2_OUT="${NPA_SMOKE_OUTPUT_DIR:-/workspace/out}"
     export LTX2_MODELS="${NPA_LTX_MODEL_CACHE:-/workspace/model-cache/ltx-2.5}"
+    mkdir -p "${LTX2_OUT}"
 
-    # Both fetches refuse (exit 78) unless the operator declared. Nothing above
-    # this line has touched the network.
+    # First, and before anything is fetched: prove in this run, on this image,
+    # that the licence gate refuses when the declaration is scrubbed. It has to
+    # run first because it also asserts both caches are still empty, which stops
+    # a "refusal" that merely reused an already-populated cache from passing.
+    ltx-runtime assert-refusal | tee "${LTX2_OUT}/ltx2_5_license_refusal.txt"
+
+    # Now the two gated fetches. Each refuses with exit 78 unless the operator
+    # declared entity class and use class (Lightricks) and accepted the CUDA
+    # runtime terms (NVIDIA).
     ltx-runtime ensure
     ltx-runtime fetch-weights
+
+    # The accepted declaration, as the tested licensing module computes it. This
+    # is what gets embedded in the capability artifact and what the downstream
+    # `npa workbench ltx2 gate` state re-checks before the trainer runs.
+    ltx-runtime provenance > "${LTX2_OUT}/ltx2_5_declaration.json"
 
     ltx-runtime exec python - <<'PY'
     import base64
@@ -62,7 +75,6 @@ config:
 
     models = Path(os.environ["LTX2_MODELS"])
     out = Path(os.environ["LTX2_OUT"])
-    out.mkdir(parents=True, exist_ok=True)
     video = out / "ltx2_5_text_to_video.mp4"
 
     # Upstream's own documented entrypoint at the pinned ref: the distilled
@@ -100,13 +112,71 @@ config:
     )
     PY
 
-    # A file that exists proves nothing; decode it. An MP4 that ffprobe cannot
-    # read, or that carries no frames, is a failure the smoke must not pass.
-    /opt/npa/ltx2/validate_video.py \
-      --video "${LTX2_OUT}/ltx2_5_text_to_video.mp4" \
-      --min-frames 24 \
-      --artifact "${LTX2_OUT}/ltx2_5_text_to_video.json" \
-      --capability "${BYOF_CAPABILITY_NAME}"
+    # A file that exists proves nothing. This decodes the pixels through the
+    # repo's own unit-tested video_check module (copied into the image), which
+    # rejects an unreadable container, a flat single-colour render, and one
+    # still frame repeated.
+    python3 - <<'PY'
+    import json
+    import os
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, "/opt/npa/ltx2")
+    import video_check
+
+    out = Path(os.environ["LTX2_OUT"])
+    capability = os.environ.get("BYOF_CAPABILITY_NAME", "ltx2_5_text_to_video")
+    artifact_name = os.environ.get("BYOF_SMOKE_ARTIFACT_NAME", "ltx2_5_text_to_video.json")
+    capabilities_exercised = []
+    deferred = []
+
+    refusal = (out / "ltx2_5_license_refusal.txt").read_text(encoding="utf-8")
+    if "NPA_LTX_BOOTSTRAP_REFUSES_WITHOUT_DECLARATION_OK" in refusal:
+        capabilities_exercised.append("ltx2_5_license_gate_refusal")
+
+    declaration = json.loads((out / "ltx2_5_declaration.json").read_text(encoding="utf-8"))
+    if declaration.get("schema") == "npa.ltx2.provenance.v1":
+        capabilities_exercised.append("ltx2_5_license_provenance_stamp")
+
+    check = video_check.validate_video(
+        out / "ltx2_5_text_to_video.mp4", min_frames=24, capability=capability
+    )
+    capabilities_exercised.append("ltx2_5_text_to_video")
+    capabilities_exercised.append("ltx2_5_decoded_mp4_validation")
+
+    result = {
+        "solution": "ltx2.5",
+        "capability": capability,
+        "capabilities_exercised": capabilities_exercised,
+        "weights_baked": False,
+        "source_baked": False,
+        "evidence": check.as_dict(),
+        "license": declaration,
+        "deferred": deferred,
+        "not_claimed": [
+            "ltx2_5_image_to_video",
+            "ltx2_5_audio_to_video",
+            "ltx2_5_lora_fine_tuning",
+        ],
+    }
+    (out / artifact_name).write_text(
+        json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+
+    required = {
+        capability,
+        "ltx2_5_decoded_mp4_validation",
+        "ltx2_5_license_gate_refusal",
+        "ltx2_5_license_provenance_stamp",
+    }
+    missing = required.difference(capabilities_exercised)
+    if missing or deferred:
+        raise SystemExit(
+            f"LTX-2.5 capability hard gate failed: missing={sorted(missing)}, deferred={deferred}"
+        )
+    PY
   solution_name: "ltx2.5"
   capability_name: "ltx2_5_text_to_video"
   smoke_artifact_name: "ltx2_5_text_to_video.json"

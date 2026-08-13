@@ -59,6 +59,8 @@ CHECKED_TOOLREFS = [
     ("workbench.vlm_eval.run", "npa.cli.workbench.vlm_eval", "run"),
     ("workbench.sim2real.run", "npa.cli.workbench.sim2real", "run"),
     ("workbench.nurec.visualize", "npa.cli.nurec", "visualize"),
+    ("workbench.ltx2.stamp", "npa.cli.workbench.ltx2", "stamp"),
+    ("workbench.ltx2.gate", "npa.cli.workbench.ltx2", "gate"),
 ]
 
 
