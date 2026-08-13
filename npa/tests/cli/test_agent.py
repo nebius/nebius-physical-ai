@@ -1782,7 +1782,9 @@ def test_direct_run_load_cancels_background_discovery_and_uses_exact_artifacts()
     assert "Exact run loading takes precedence" in source
     assert "await loadArtifactsForSelectedRun(runRef || runId, null, exactEntry" in source
     assert "if (loaded && activeArtifactInventory.length)" in source
-    assert 'refreshArtifactRuns("", { singlePage: true })' in source
+    assert 'const artifactsPromise = refreshArtifactRuns("", {' in source
+    assert "singlePage: true," in source
+    assert "background: true," in source
     assert "Render the authoritative workflow timeline before attempting" in source
     assert "!context.deferPreferredViewer && preferred" in source
     assert "deferPreferredViewer: true" in source
@@ -1903,7 +1905,8 @@ def test_bootstrap_visualize_run_selector_lists_discovered_runs() -> None:
     assert 'id="panelRerun"' in source
     assert 'id="runIdSelect"' in source
     # Generic discovery feeds the discovered-runs set (server-search unions in).
-    assert "discoveredArtifactRuns = runs;" in source
+    assert "discoveredArtifactRuns = [...runs];" in source
+    assert '(cursor ? " · loading more…" : "")' in source
     # The run selector is a UNION of known + discovered runs (does not clobber).
     assert "mergeRunsLatestFirst(knownAvailableRuns, discoveredArtifactRuns)" in source
     assert 'fillRunSelectOptionsRich(document.getElementById("runIdSelect")' in source

@@ -2995,6 +2995,55 @@
           if (refreshId === accessRefreshRequestId) accessRefreshController = null;
         }
       }
+      const uiListenerRegistry = new WeakMap();
+      const controlActionInFlight = new WeakSet();
+      function addUiListenerOnce(element, type, key, handler, options) {
+        if (!element) return false;
+        let registered = uiListenerRegistry.get(element);
+        if (!registered) {
+          registered = new Set();
+          uiListenerRegistry.set(element, registered);
+        }
+        const listenerKey = String(type) + ":" + String(key);
+        if (registered.has(listenerKey)) return false;
+        try {
+          element.addEventListener(type, handler, options);
+          registered.add(listenerKey);
+          return true;
+        } catch (err) {
+          console.error("Unable to bind UI control " + String(key), err);
+          showToast("Unable to bind control: " + String(key), "error");
+          return false;
+        }
+      }
+      async function runControlAction(element, action) {
+        if (controlActionInFlight.has(element)) return false;
+        controlActionInFlight.add(element);
+        const wasDisabled = Boolean(element && element.disabled);
+        if (element) {
+          element.disabled = true;
+          element.setAttribute("aria-busy", "true");
+        }
+        try {
+          return await action();
+        } finally {
+          controlActionInFlight.delete(element);
+          if (element && element.isConnected) {
+            element.disabled = wasDisabled;
+            element.setAttribute("aria-busy", "false");
+          }
+        }
+      }
+      function initializeUiFeature(label, initialize) {
+        try {
+          initialize();
+          return true;
+        } catch (err) {
+          console.error("UI feature initialization failed: " + String(label), err);
+          showToast(String(label) + " is unavailable; other controls remain active.", "error");
+          return false;
+        }
+      }
       function bindClick(id, fn, label) {
         const el = document.getElementById(id);
         if (!el) {
@@ -3002,13 +3051,13 @@
           showToast("Missing control: " + id, "error");
           return;
         }
-        el.addEventListener("click", async (event) => {
+        addUiListenerOnce(el, "click", "action-" + id, async (event) => {
           event.preventDefault();
           const actionLabel = String(label || id);
           setStatus(actionLabel + "...");
           showToast(actionLabel, "info");
         try {
-          const result = await fn(event);
+          const result = await runControlAction(el, () => fn(event));
           if (result === false) {
             setStatus("Ready");
             return;
@@ -3023,7 +3072,10 @@
           }
         });
       }
+      let uiWiringStarted = false;
       function wireUi() {
+        if (uiWiringStarted) return false;
+        uiWiringStarted = true;
         bindClick("tenantResourcesRefresh", async () => {
           await refreshTenantResources(true);
         }, "Refresh tenant resources");
@@ -3042,7 +3094,7 @@
         if (chatScrollBottomBtn) {
           chatScrollBottomBtn.addEventListener("click", () => scrollChatToBottom(true));
         }
-        updateChatScrollButton();
+        initializeUiFeature("Chat scroll state", updateChatScrollButton);
         document.querySelectorAll(".main-tab[data-tab]").forEach((btn) => {
           btn.addEventListener("click", () => {
             const next = String(btn.getAttribute("data-tab") || "main");
@@ -3114,10 +3166,12 @@
             }
           });
         });
-        setRenderMode("rerun");
+        // Viewer state is optional. A browser-specific DOM/WebGL failure here
+        // must never abort the rest of this monolithic static-control pass.
+        initializeUiFeature("Initial viewer", () => setRenderMode("rerun"));
         bindClick("downloadMcap", downloadMcap);
         bindClick("foxgloveOpenWeb", openFoxgloveWeb);
-        syncFoxgloveWebAction();
+        initializeUiFeature("Foxglove Web action", syncFoxgloveWebAction);
         const mobileToggle = document.getElementById("mobilePanelsToggle");
         if (mobileToggle) {
           mobileToggle.addEventListener("click", () => {
@@ -3197,7 +3251,11 @@
             target.click();
           });
         }
-        bindClick("artifactRefreshRuns", refreshArtifactRuns, "Discover artifact runs");
+        bindClick(
+          "artifactRefreshRuns",
+          () => refreshArtifactRuns("", { interactive: true }),
+          "Discover artifact runs"
+        );
         bindClick("artifactLoadRunArtifacts", loadArtifactsForSelectedRun, "List run artifacts");
         bindClick("loadRerunViewer", () => loadRerunViewer(), "Reload Rerun data");
         bindClick("describeVisual", describeVisual, "Describe this");
@@ -7209,6 +7267,7 @@
         return merged;
       }
       let defaultRunDiscoveryPromise = null;
+      let foregroundRunDiscoveryCount = 0;
       function refreshArtifactRuns(query, options) {
         const q = typeof query === "string" ? query.trim() : "";
         const opts = options && typeof options === "object" ? options : {};
@@ -7235,6 +7294,11 @@
         // and union the matches into the discovered list.
         const q = typeof query === "string" ? query.trim() : "";
         const opts = options && typeof options === "object" ? options : {};
+        const isBackground = Boolean(opts.background);
+        // A delayed boot-time first-page request must not supersede an explicit
+        // Discover/search/list action that the operator already started.
+        if (isBackground && foregroundRunDiscoveryCount > 0) return false;
+        if (!isBackground) foregroundRunDiscoveryCount += 1;
         if (opts.resourceBucket || opts.projectId) {
           activeArtifactBrowseScope = {
             resourceBucket: String(opts.resourceBucket || "").trim(),
@@ -7252,6 +7316,7 @@
         if (localController) artifactRunsAbortController = localController;
         const signal = opts.signal || (localController && localController.signal);
         const runs = [];
+        let merged = [];
         let data = null;
         let cursor = "";
         try {
@@ -7265,26 +7330,42 @@
             runs.push(...(Array.isArray(data.runs) ? data.runs : []));
             cursor = String(data.next_cursor || "");
             if (opts.singlePage) cursor = "";
+            // Publish every page immediately. Previously the browser buffered
+            // the entire tenant/bucket walk, so a 0.3-second first page remained
+            // invisible for minutes and all run-dependent controls looked inert.
+            if (q) {
+              const identity = (r) => String((r && r.run_ref) || "") || [
+                String((r && r.source_type) || "artifact_storage"),
+                String((r && r.project_id) || ""),
+                String((r && r.bucket) || ""),
+                String((r && r.resolved_prefix) || ""),
+                String((r && r.run_id) || ""),
+              ].join("|");
+              const byId = new Map((discoveredArtifactRuns || []).map((r) => [identity(r), r]));
+              for (const r of runs) byId.set(identity(r), r);
+              discoveredArtifactRuns = [...byId.values()];
+            } else {
+              discoveredArtifactRuns = [...runs];
+            }
+            merged = applyMergedRunSelectors(activeRunEntryKey || activeRunId);
+            const status = document.getElementById("artifactDiscoverStatus");
+            if (status) {
+              const scoped = scope.resourceBucket
+                ? " · project " + String(scope.projectId || "unknown") + " · bucket " + String(scope.resourceBucket)
+                : "";
+              status.textContent =
+                "Runs (latest first): " + String(merged.length) +
+                " consolidated · discovered " + String(runs.length) +
+                (cursor ? " · loading more…" : "") + scoped;
+            }
           } while (cursor);
         } finally {
           if (artifactRunsAbortController === localController) artifactRunsAbortController = null;
+          if (!isBackground) foregroundRunDiscoveryCount = Math.max(0, foregroundRunDiscoveryCount - 1);
         }
-        if (q) {
-          const identity = (r) => String((r && r.run_ref) || "") || [
-            String((r && r.source_type) || "artifact_storage"),
-            String((r && r.project_id) || ""),
-            String((r && r.bucket) || ""),
-            String((r && r.resolved_prefix) || ""),
-            String((r && r.run_id) || ""),
-          ].join("|");
-          const byId = new Map((discoveredArtifactRuns || []).map((r) => [identity(r), r]));
-          for (const r of runs) byId.set(identity(r), r);
-          discoveredArtifactRuns = [...byId.values()];
-        } else {
-          discoveredArtifactRuns = runs;
-        }
-        // API already returns latest-first; keep that order when merging.
-        const merged = applyMergedRunSelectors(activeRunEntryKey || activeRunId);
+        // API already returns latest-first; the final pass removes the loading
+        // marker and records access/incomplete-discovery diagnostics.
+        merged = applyMergedRunSelectors(activeRunEntryKey || activeRunId);
         const status = document.getElementById("artifactDiscoverStatus");
         if (status) {
           const trunc = data.pagination_complete === false ? " (discovery incomplete)" : "";
@@ -7293,7 +7374,7 @@
             : "";
           status.textContent =
             "Runs (latest first): " + String(merged.length) +
-            " consolidated · discovered " + String(data.total_runs || 0) + trunc +
+            " consolidated · discovered " + String(runs.length) + trunc +
             (data.access && data.access.status ? " · access " + String(data.access.status) : "") + scoped;
         }
         return { data, runs, merged };
@@ -7701,14 +7782,17 @@
         if (loadMore) {
           loadMore.addEventListener("click", async (event) => {
             event.preventDefault();
-            loadMore.disabled = true;
-            await loadArtifactsForSelectedRun(runRef || runId, {
-              artifacts,
-              next_cursor: data.next_cursor,
-              resolved_prefix: data.resolved_prefix,
-              bucket: data.bucket,
-              project_id: data.project_id,
-            });
+            try {
+              await runControlAction(loadMore, () => loadArtifactsForSelectedRun(runRef || runId, {
+                artifacts,
+                next_cursor: data.next_cursor,
+                resolved_prefix: data.resolved_prefix,
+                bucket: data.bucket,
+                project_id: data.project_id,
+              }));
+            } catch (err) {
+              showToast("Load next artifact page failed: " + String((err && err.message) || err), "error");
+            }
           });
         }
         list.querySelectorAll("button[data-action='load-artifact']").forEach((btn) => {
@@ -9645,8 +9729,14 @@
           // request exhaustive discovery explicitly, and exact run IDs bypass
           // discovery entirely. Avoid walking a large historical bucket while
           // an operator is trying to load a specific run.
-          const artifactsPromise = refreshPromise
-            .then(() => refreshArtifactRuns("", { singlePage: true }))
+          // Start a bounded first page immediately. It is independent of core
+          // session/status hydration and is lower priority than explicit user
+          // discovery, so operators see selectable runs without waiting for a
+          // tenant-wide walk and can safely take over at any time.
+          const artifactsPromise = refreshArtifactRuns("", {
+            singlePage: true,
+            background: true,
+          })
             .catch((_artifactErr) => {
             // artifact discovery is optional when S3 credentials are missing.
           });
@@ -9654,17 +9744,24 @@
             console.warn("access discovery failed", accessErr);
           });
           if (document.body.classList.contains("mobile-agent")) {
-            await Promise.all([refreshPromise, artifactsPromise, accessPromise, warmPromise]);
+            // Optional access, artifact, and viewer warmups stay in the
+            // background. A slow network must not hold the whole mobile UI in
+            // its preparing state.
+            await refreshPromise;
             hideRerunBundleCover();
             setStatus("Ready");
             showToast("Mobile chat ready", "success");
+            void artifactsPromise;
+            void accessPromise;
+            void warmPromise;
           } else {
-            // UI is usable once session, status, and access refresh finish.
-            // Artifact discovery continues in the background and fills both
-            // run pickers when its tenant-wide page arrives.
-            await Promise.all([refreshPromise, accessPromise]);
+            // Core session/status hydration is enough to mark the workbench
+            // ready. Optional access and artifact discovery continue without
+            // blocking any control.
+            await refreshPromise;
             setStatus("Ready");
             showToast("Workbench ready", "success");
+            void accessPromise;
             // Pre-warm the Lichtblick SPA bundle so opening it later only swaps the data
             // source (no first-load app download). Best-effort; needs the sidecar.
             const lb = document.getElementById("lichtblickFrame");

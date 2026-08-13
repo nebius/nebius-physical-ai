@@ -74,20 +74,29 @@ def test_boot_page_warms_before_mount() -> None:
     boot = ui_html.split("async function bootPage")[1].split(
         "function startPeriodicRefresh"
     )[0]
+    # Core hydration controls first paint; optional access/artifact calls must
+    # never hold the workbench in a preparing state or prevent event handlers
+    # from being used on a slow network.
+    assert "await refreshPromise" in boot
+    assert "void artifactsPromise" in boot
+    assert "void accessPromise" in boot
     assert (
         "await Promise.all([refreshPromise, artifactsPromise, accessPromise, warmPromise])"
-        in boot
+        not in boot
     )
     assert "await ensureFrankaRerunLoaded()" in boot
     # A restored run can require an expensive exact lookup across tenant S3.
     # Desktop first paint stays independent of that background discovery.
-    assert (
-        'then(() => refreshArtifactRuns("", { singlePage: true }))' in boot
-    )
-    assert "await Promise.all([refreshPromise, accessPromise])" in boot
+    assert 'const artifactsPromise = refreshArtifactRuns("", {' in boot
+    assert "singlePage: true," in boot
+    assert "background: true," in boot
     assert (
         "if (defaultRunDiscoveryPromise) return defaultRunDiscoveryPromise" in ui_html
     )
+    # Rerun itself still warms before mount, while unrelated UI controls are
+    # already ready and optional data discovery continues in the background.
+    assert "await warmPromise" in boot
+    assert boot.index("await warmPromise") < boot.index("await ensureFrankaRerunLoaded()")
     # Must not race mount with warm anymore.
     assert (
         "Promise.all([refreshPromise, artifactsPromise, warmPromise, mountPromise])"

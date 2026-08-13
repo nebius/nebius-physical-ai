@@ -209,6 +209,139 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#simRunId").should("contain.text", "mock-run");
   });
 
+  it("keeps downstream controls wired when optional startup and viewer initialization fail", () => {
+    let discoveryRequests = 0;
+    cy.intercept("GET", "/api/access*", {
+      delay: 900,
+      statusCode: 503,
+      body: { detail: "simulated optional access startup failure" },
+    }).as("optionalAccessFailure");
+    cy.intercept("GET", "/api/foxglove/config", {
+      delay: 700,
+      statusCode: 503,
+      body: { detail: "simulated optional viewer startup failure" },
+    }).as("optionalFoxgloveFailure");
+    cy.intercept("GET", "/api/artifacts/runs*", (req) => {
+      discoveryRequests += 1;
+      req.reply({
+        delay: 650,
+        body: {
+          runs: [{
+            run_id: "startup-resilience-run",
+            run_ref: "npa1_startup_resilience",
+            last_modified: "2026-08-13T00:00:00Z",
+            artifact_count: 1,
+            has_viewable: true,
+          }],
+          total_runs: 1,
+          pagination_complete: true,
+          next_cursor: "",
+          access: { status: "available" },
+        },
+      });
+    }).as("resilientArtifactRuns");
+
+    cy.visit("/", {
+      onBeforeLoad(win) {
+        // Reproduce the reported monolithic-wiring failure: one synchronous
+        // optional viewer exception used to abort wireUi before chat, workflow,
+        // artifact, and viewer actions received their handlers.
+        const originalToggle = win.DOMTokenList.prototype.toggle;
+        let injected = false;
+        win.DOMTokenList.prototype.toggle = function toggle(token, ...args) {
+          if (!injected && token === "is-active-viewer") {
+            injected = true;
+            win.DOMTokenList.prototype.toggle = originalToggle;
+            throw new Error("simulated optional viewer initialization failure");
+          }
+          return originalToggle.call(this, token, ...args);
+        };
+      },
+    });
+
+    // These controls are all wired after initial viewer setup in wireUi.
+    cy.get("#chatActionS3").click();
+    cy.get("#chatInput").should("contain.value", "configure S3");
+    cy.get("#workflowValidate").click();
+    cy.wait("@workflowValidate");
+    cy.get("#workflowValidate").should("be.enabled").and("have.attr", "aria-busy", "false");
+    cy.get("#tabRerun").click();
+    cy.get("#renderModeFoxglove").click();
+    cy.wait("@optionalFoxgloveFailure");
+    cy.get("#tabMain").click();
+    cy.get("#chatActionCosmos").click();
+    cy.get("#chatInput").should("contain.value", "Cosmos3");
+
+    // Repeated activation while the request is pending must issue exactly one
+    // backend request and must restore the control state on completion.
+    cy.wait("@resilientArtifactRuns");
+    cy.then(() => { discoveryRequests = 0; });
+    cy.get("#artifactRefreshRuns").then(($button) => {
+      $button[0].click();
+      $button[0].click();
+    });
+    cy.wait("@resilientArtifactRuns");
+    cy.get("#artifactRefreshRuns").should("be.enabled").and("have.attr", "aria-busy", "false");
+    cy.then(() => expect(discoveryRequests, "single-flight discovery requests").to.eq(1));
+  });
+
+  it("renders the first discovery page while a later page is delayed", () => {
+    cy.intercept("GET", "/api/artifacts/runs*", (req) => {
+      const cursor = new URL(req.url).searchParams.get("cursor");
+      if (!cursor) {
+        req.reply({
+          delay: 120,
+          body: {
+            runs: [{
+              run_id: "progressive-first-page",
+              run_ref: "npa1_progressive_first",
+              last_modified: "2026-08-13T00:00:00Z",
+              artifact_count: 1,
+              has_viewable: true,
+            }],
+            total_runs: 2,
+            pagination_complete: false,
+            next_cursor: "second-page",
+            access: { status: "available" },
+          },
+        });
+        return;
+      }
+      req.reply({
+        delay: 2200,
+        body: {
+          runs: [{
+            run_id: "progressive-second-page",
+            run_ref: "npa1_progressive_second",
+            last_modified: "2026-08-12T00:00:00Z",
+            artifact_count: 1,
+            has_viewable: true,
+          }],
+          total_runs: 2,
+          pagination_complete: true,
+          next_cursor: "",
+          access: { status: "available" },
+        },
+      });
+    }).as("progressiveArtifactRuns");
+
+    cy.visit("/");
+    cy.wait("@progressiveArtifactRuns"); // bounded boot page
+    cy.get("#tabRerun").click();
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@progressiveArtifactRuns"); // first interactive page
+    cy.get('#runIdSelect option[data-run-id="progressive-first-page"]')
+      .should("exist");
+    cy.get("#artifactDiscoverStatus")
+      .should("contain.text", "loading more");
+    cy.get("#artifactRefreshRuns").should("be.disabled").and("have.attr", "aria-busy", "true");
+    cy.wait("@progressiveArtifactRuns"); // delayed second page
+    cy.get('#runIdSelect option[data-run-id="progressive-second-page"]')
+      .should("exist");
+    cy.get("#artifactDiscoverStatus").should("not.contain.text", "loading more");
+    cy.get("#artifactRefreshRuns").should("be.enabled").and("have.attr", "aria-busy", "false");
+  });
+
   it("selects one escaped project detail at a time and preserves the stable project ID", () => {
     const projectCapabilities = (artifactStatus, artifactReason, readStatus, readReason, submitStatus, submitReason) => ({
       project_metadata: { status: "available", reason: "Project identity was returned by tenant discovery." },
@@ -1385,6 +1518,7 @@ describe("NPA agent UI with mocked APIs", () => {
       cy.get("#chatSend").click();
       cy.wait("@chat");
     }
+    cy.get("#chatLog .msg-row").should("have.length.at.least", 12);
     // Each new message auto-scrolls to the bottom, so the arrow is hidden.
     cy.get("#chatScrollBottom").should("have.attr", "hidden");
 
@@ -1976,6 +2110,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#tabRerun").click();
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@qualifiedRuns");
+    cy.get("#artifactRefreshRuns").should("be.enabled").and("have.attr", "aria-busy", "false");
     cy.get("#runIdSelect option").then(($opts) => {
       const values = [...$opts].map((option) => option.value).filter(Boolean);
       expect(values).to.include(REF_A);
