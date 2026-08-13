@@ -63,7 +63,9 @@ class TestStamp:
         assert written["schema"] == PROVENANCE_SCHEMA
         assert written["run_id"] == "run-1"
         assert written["outputs"][0]["uri"].endswith(".mp4")
-        assert written["restrictions"]["derived_model_training"] == "non-commercial-only"
+        assert (
+            written["restrictions"]["derived_model_training"] == "non-commercial-only"
+        )
 
     def test_an_undeclared_run_cannot_produce_a_manifest(self, tmp_path: Path) -> None:
         with pytest.raises(LtxLicenseError):
@@ -340,7 +342,9 @@ class TestTheGateIsBoundToItsArtifacts:
         path.write_text(json.dumps(record.as_dict()), encoding="utf-8")
         return path
 
-    def test_a_manifest_that_covers_the_artifact_clears_it(self, tmp_path: Path) -> None:
+    def test_a_manifest_that_covers_the_artifact_clears_it(
+        self, tmp_path: Path
+    ) -> None:
         video = "s3://bucket/run-a/ltx2_5_text_to_video.mp4"
         manifest = self._manifest(tmp_path / "manifest.json", outputs=[video])
 
@@ -380,3 +384,45 @@ class TestTheGateIsBoundToItsArtifacts:
         assert gate_module.gate_run(
             manifest_uri=str(manifest), consumer="trainer"
         ).decision.allowed
+
+    def test_the_runs_weight_identity_reaches_the_manifest_of_record(
+        self, tmp_path: Path
+    ) -> None:
+        """The gate reads the stamped manifest, not the container's declaration.
+
+        The generation container resolves the gated repo's ref to a commit and
+        records it. `stamp` was building a fresh record without it, so the
+        artifact of record always said `revision: unrecorded` and listed no
+        files — while the answer sat in the document `stamp` had just opened to
+        reconcile against.
+        """
+
+        from npa.workbench.ltx2.licensing import LicenseDeclaration, ProvenanceRecord
+
+        revision = "0f1e2d3c4b5a69788796a5b4c3d2e1f009182736"
+        files = ["vae/ltx-2.5-video-vae-bf16.safetensors"]
+        run_record = ProvenanceRecord(
+            declaration=LicenseDeclaration(
+                entity_class="community", use_class="non-commercial"
+            ),
+            run_id="generation",
+            model_files=tuple(files),
+            weights_revision=revision,
+        )
+        declaration = tmp_path / "ltx2_5_declaration.json"
+        declaration.write_text(json.dumps(run_record.as_dict()), encoding="utf-8")
+
+        result = gate_module.stamp_run(
+            run_id="r1",
+            outputs=[str(tmp_path / "v.mp4")],
+            manifest_uri=str(tmp_path / "manifest.json"),
+            env={
+                ACCEPT_ENV: "YES",
+                ENTITY_CLASS_ENV: "community",
+                USE_CLASS_ENV: "non-commercial",
+            },
+            declaration_uri=str(declaration),
+        )
+
+        assert result.manifest["weights"]["revision"] == revision
+        assert result.manifest["weights"]["files"] == files

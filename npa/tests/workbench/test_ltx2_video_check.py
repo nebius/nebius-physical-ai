@@ -275,8 +275,63 @@ class TestPartialDegeneration:
 
         result = validate_video(clip, min_frames=24)
 
-        assert result.moving_pair_fraction >= 0.5
-        assert result.textured_frame_fraction >= 0.5
+        # Assert against the dataclass defaults' opposite: a real clip moves in
+        # essentially every pair, so `>= 0.5` would have passed even when these
+        # fields were never assigned and kept their 1.0 defaults.
+        assert 0.5 <= result.moving_pair_fraction <= 1.0
+        assert 0.5 <= result.textured_frame_fraction <= 1.0
+        # And the evidence has to survive serialization, since the artifact is
+        # what a reviewer reads, not the in-process object.
+        decode = result.as_dict()["decode"]
+        assert decode["moving_pair_fraction"] == result.moving_pair_fraction
+        assert decode["textured_frame_fraction"] == result.textured_frame_fraction
+
+    def test_the_recorded_fraction_is_measured_not_defaulted(
+        self, tmp_path: Path
+    ) -> None:
+        """A clip that passes with a frozen tail must record a fraction below 1.
+
+        `moving_pair_fraction` and `textured_frame_fraction` defaulted to 1.0 and
+        were never assigned from the measurement, so every `>= 0.5` assertion
+        held vacuously against the default. A clip that is mostly-but-not-all
+        motion is the case that can only pass if the value is real.
+        """
+
+        moving = _synthesize(tmp_path / "m.mp4", "life=size=64x64:rate=24", seconds="3")
+        frozen = _synthesize(
+            tmp_path / "f.mp4", "testsrc=size=64x64:rate=24", seconds="2"
+        )
+        held = tmp_path / "held.mp4"
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-y",
+                "-i",
+                str(frozen),
+                "-vf",
+                "select=eq(n\\,0),loop=loop=23:size=1:start=0",
+                "-r",
+                "24",
+                "-pix_fmt",
+                "yuv420p",
+                str(held),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        clip = self._concat(tmp_path / "mostly-moving.mp4", [moving, held])
+
+        result = validate_video(clip, min_frames=24)
+
+        assert 0.5 <= result.moving_pair_fraction < 1.0, (
+            "a clip with a frozen tail should record a measured fraction strictly "
+            "below the 1.0 dataclass default"
+        )
+        assert result.as_dict()["decode"]["moving_pair_fraction"] == (
+            result.moving_pair_fraction
+        )
 
 
 class TestBoundaries:

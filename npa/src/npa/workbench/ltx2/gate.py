@@ -76,7 +76,7 @@ def _reconcile_with_the_run(
     *,
     declaration_uri: str,
     storage: Any | None,
-) -> None:
+) -> Mapping[str, Any]:
     """Require this state's declaration to match the one the generation ran under.
 
     ``stamp`` executes in a different container, on a different node, with its own
@@ -131,6 +131,7 @@ def _reconcile_with_the_run(
             "Refusing to overwrite the run's own record. Re-run generation under "
             "the declaration you mean, or fix this state's environment."
         )
+    return recorded
 
 
 def stamp_run(
@@ -152,15 +153,31 @@ def stamp_run(
     """
 
     declaration: LicenseDeclaration = declaration_from_env(env)
+    weights_revision = ""
+    recorded_files: tuple[str, ...] = ()
     if declaration_uri:
-        _reconcile_with_the_run(
+        recorded = _reconcile_with_the_run(
             declaration, declaration_uri=declaration_uri, storage=storage
         )
+        # Carry the run's own weight identity into the manifest of record. The
+        # generation container resolved the gated repo's ref to a commit and
+        # wrote it down; without this the stamped manifest — the artifact the
+        # gate actually reads — said "unrecorded" and listed no files, while the
+        # answer sat in the document this function had just opened.
+        weights = recorded.get("weights")
+        if isinstance(weights, Mapping):
+            candidate = str(weights.get("revision") or "")
+            if candidate and candidate != "unrecorded":
+                weights_revision = candidate
+            listed = weights.get("files")
+            if isinstance(listed, list):
+                recorded_files = tuple(str(item) for item in listed)
     record = ProvenanceRecord(
         declaration=declaration,
         run_id=run_id,
         outputs=tuple(outputs),
-        model_files=tuple(model_files or ()),
+        model_files=tuple(model_files or ()) or recorded_files,
+        weights_revision=weights_revision,
     )
     payload = record.as_dict()
     written = write_json(

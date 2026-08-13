@@ -89,6 +89,11 @@ class VideoCheck:
             "decode": {
                 "max_frame_deviation": self.max_frame_deviation,
                 "max_frame_delta": self.max_frame_delta,
+                # The fractions, not just the maxima: a clip that moves once and
+                # then freezes has a healthy max_frame_delta, so the maxima alone
+                # cannot tell a real generation from a plausible-looking one.
+                "moving_pair_fraction": self.moving_pair_fraction,
+                "textured_frame_fraction": self.textured_frame_fraction,
                 "probe_size": PROBE_SIZE,
             },
             "checks_passed": list(self.checks),
@@ -281,6 +286,8 @@ def validate_video(
         duration_seconds=round(duration, 3),
         max_frame_deviation=round(max_deviation, 4),
         max_frame_delta=round(max_delta, 4),
+        moving_pair_fraction=round(moving_fraction, 4),
+        textured_frame_fraction=round(textured_fraction, 4),
         capability=capability,
         checks=[
             "container_readable",
@@ -288,6 +295,8 @@ def validate_video(
             f"frame_count_at_least_{min_frames}",
             "frames_not_flat",
             "frames_not_identical",
+            f"textured_frames_at_least_{MIN_TEXTURED_FRAME_FRACTION:.0%}",
+            f"moving_pairs_at_least_{MIN_MOVING_PAIR_FRACTION:.0%}",
         ],
     )
 

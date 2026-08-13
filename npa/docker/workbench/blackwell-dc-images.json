@@ -226,7 +226,7 @@
       "torch": "not baked; the operator-owned runtime volume resolves upstream LTX-2's own cu132 torch pin (packages/ltx-core/pyproject.toml) after both the LTX and NVIDIA terms are accepted",
       "source_compiled_extensions": [],
       "smoke": "bash /opt/npa/ltx2/smoke.sh proves health, both fetch refusals, and the absence of any LTX or CUDA payload; `npa workbench ltx2 stamp` then `gate` refuses to clear a manifest for a trainer when the declared use class is commercial (Attachment A(18)). Generation itself is the BYOF workflow, not a CLI subcommand.",
-      "notes": "The image itself is CPU-only and carries zero Lightricks bytes, so nothing about datacenter Blackwell has been measured for it. The runtime closure LTX-2 resolves is expected to carry sm_100 because its torch pin comes from the cu128/cu130 index, but that is an expectation from the wheel index, not a measurement: this image has not been built or run on any GPU. natten, if the operator enables that extra, is a source-compiled CUDA extension and must be checked against TORCH_CUDA_ARCH_LIST on first B200 build."
+      "notes": "The image itself is CPU-only and carries zero Lightricks bytes, so nothing about datacenter Blackwell has been measured. It HAS been built and byte-scanned (payload scan clean over 18 archives at the digest recorded in docs/workbench/ltx2.md); what is missing is a GPU run, which needs the operator's own LTX-2.x declaration. Keep validation at pending-build until that produces a result."
     },
     {
       "name": "npa-cosmos3-reason",

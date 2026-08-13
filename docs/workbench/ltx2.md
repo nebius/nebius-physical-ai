@@ -128,8 +128,10 @@ npa/.venv/bin/npa workbench workflow plan-spec \
 
 ## Dev VM runbook
 
-Nothing below has been executed. Each step produces the evidence the next one
-depends on, and the tree records no accepted digest until they have all run.
+Steps 1-3 have been executed; see "Validated on the dev VM" below for what they
+produced. Steps 4-6 have not: they need the operator's own declaration, which
+nobody else may make. Each step produces the evidence the next one depends on,
+and the tree records no accepted digest until they have all run.
 
 **1. Build.** Requires Docker and a registry you control. The build itself
 proves the refusal works and that proving it downloaded nothing; it fails if any

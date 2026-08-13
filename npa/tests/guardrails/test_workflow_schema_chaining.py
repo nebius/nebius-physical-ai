@@ -20,7 +20,8 @@ from __future__ import annotations
 from npa.orchestration.npa_workflow import load_spec
 from npa.orchestration.npa_workflow.blueprints import iter_npa_workflow_specs
 
-#: Violations that already existed when this lint was written, recorded so the
+#: Violations that already existed when this lint was written: 16 state/schema
+#: pairs across ten specs. Recorded so the
 #: gate can be turned on now rather than after someone finds time to fix ten
 #: other people's specs. Shrink it by making the producer declare the schema its
 #: consumer names, or by correcting the consumer; never grow it to admit a new
@@ -118,6 +119,13 @@ def test_no_new_state_reads_a_schema_nothing_upstream_produces() -> None:
         "spec describes a data flow that does not exist:\n  "
         + "\n  ".join(f"{spec}: {state} reads {schema}" for spec, state, schema in new)
     )
+
+
+def test_the_baseline_is_the_size_its_comment_claims() -> None:
+    """A count in prose drifts; this keeps the comment honest as the list shrinks."""
+
+    assert len(KNOWN_GAPS) == 16
+    assert len({row[0] for row in KNOWN_GAPS}) == 10
 
 
 def test_the_known_gap_list_does_not_go_stale() -> None:
