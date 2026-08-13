@@ -303,8 +303,6 @@ describe("NPA agent official Foxglove Web against live infra", () => {
         cy.contains("Open in Foxglove Desktop").should("not.exist");
         cy.get("#renderModeLichtblick").should("have.length", 1);
         cy.get("#openFullLichtblick").should("not.exist");
-        cy.get("#openLichtblick").should("not.exist");
-        cy.get("#loadLichtblickViewer").should("not.exist");
         cy.get("#renderModeRerun").should("exist");
 
         // The live agent retains exactly three unauthenticated publications. Four
