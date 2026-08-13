@@ -198,7 +198,7 @@ Because the runtime-fetch images **refuse to run** without the operator's EULA a
 promoting them onto the canonical tags is not a neutral swap. Four layers had to be taught
 to forward that acceptance: the golden-eval runner, the shared serverless job-env builder
 (`build_serverless_job_env`, which every `--runtime serverless` CLI path goes through), the
-SkyPilot templates, and the K8s sim2real Isaac sibling jobs.
+SkyPilot templates, and the canonical Sim2Real standard-workflow Isaac resource profile.
 
 **Promote only after that plumbing is on the default branch.** Anyone running from a branch
 without it who pulls a canonical tag gets an image their code cannot consent to, and the job

@@ -65,7 +65,9 @@ class Harness:
     exercised too. A fake ``git`` fabricates the Isaac Lab source layout.
     """
 
-    def __init__(self, tmp_path: Path, *, pip_fails: bool = False, pip_delay: int = 0) -> None:
+    def __init__(
+        self, tmp_path: Path, *, pip_fails: bool = False, pip_delay: int = 0
+    ) -> None:
         self.root = tmp_path
         self.cache = tmp_path / "cache"
         self.bin = tmp_path / "bin"
@@ -278,8 +280,12 @@ def test_bootstrap_refuses_when_only_one_variable_is_set(
     assert not harness.downloaded_anything()
 
 
-@pytest.mark.parametrize("value", ["no", "NO", "0", "false", "", "  ", "maybe", "Yes please"])
-def test_bootstrap_rejects_values_that_are_not_acceptance(tmp_path: Path, value: str) -> None:
+@pytest.mark.parametrize(
+    "value", ["no", "NO", "0", "false", "", "  ", "maybe", "Yes please"]
+)
+def test_bootstrap_rejects_values_that_are_not_acceptance(
+    tmp_path: Path, value: str
+) -> None:
     harness = Harness(tmp_path)
     result = harness.run(
         "ensure", OMNI_KIT_ACCEPT_EULA=value, ISAACSIM_ACCEPT_EULA=value
@@ -293,7 +299,9 @@ def test_bootstrap_accepts_the_documented_affirmative_values(
     tmp_path: Path, value: str
 ) -> None:
     harness = Harness(tmp_path)
-    result = harness.run("ensure", OMNI_KIT_ACCEPT_EULA=value, ISAACSIM_ACCEPT_EULA=value)
+    result = harness.run(
+        "ensure", OMNI_KIT_ACCEPT_EULA=value, ISAACSIM_ACCEPT_EULA=value
+    )
     assert result.returncode == 0, result.stderr
     assert harness.downloaded_anything(), "acceptance should let the install proceed"
 
@@ -317,11 +325,15 @@ def test_status_needs_no_acceptance_and_no_network(tmp_path: Path) -> None:
 
 def test_ensure_is_idempotent_and_makes_no_calls_when_warm(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
-    first = harness.run("ensure", OMNI_KIT_ACCEPT_EULA="YES", ISAACSIM_ACCEPT_EULA="YES")
+    first = harness.run(
+        "ensure", OMNI_KIT_ACCEPT_EULA="YES", ISAACSIM_ACCEPT_EULA="YES"
+    )
     assert first.returncode == 0, first.stderr
 
     harness.calls.unlink()
-    second = harness.run("ensure", OMNI_KIT_ACCEPT_EULA="YES", ISAACSIM_ACCEPT_EULA="YES")
+    second = harness.run(
+        "ensure", OMNI_KIT_ACCEPT_EULA="YES", ISAACSIM_ACCEPT_EULA="YES"
+    )
 
     assert second.returncode == 0, second.stderr
     assert second.stdout == first.stdout, "the same cache tree must be reused"
@@ -374,17 +386,27 @@ def test_readonly_mode_never_attempts_a_write(tmp_path: Path) -> None:
 def test_a_failed_install_publishes_nothing(tmp_path: Path) -> None:
     """Fail loudly rather than leaving a half-installed cache for the next pod."""
     harness = Harness(tmp_path, pip_fails=True)
-    result = harness.run("ensure", OMNI_KIT_ACCEPT_EULA="YES", ISAACSIM_ACCEPT_EULA="YES")
+    result = harness.run(
+        "ensure", OMNI_KIT_ACCEPT_EULA="YES", ISAACSIM_ACCEPT_EULA="YES"
+    )
 
     assert result.returncode != 0
-    assert not (harness.cache / "current").exists(), "current must not point at a failure"
-    assert not list((harness.cache / "v").glob("*/.complete")), "no tree may be marked complete"
-    assert not list((harness.cache / "v").glob("*.tmp.*")), "temp trees must be cleaned up"
+    assert not (harness.cache / "current").exists(), (
+        "current must not point at a failure"
+    )
+    assert not list((harness.cache / "v").glob("*/.complete")), (
+        "no tree may be marked complete"
+    )
+    assert not list((harness.cache / "v").glob("*.tmp.*")), (
+        "temp trees must be cleaned up"
+    )
 
 
 def test_manifest_records_what_was_installed(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
-    result = harness.run("ensure", OMNI_KIT_ACCEPT_EULA="YES", ISAACSIM_ACCEPT_EULA="YES")
+    result = harness.run(
+        "ensure", OMNI_KIT_ACCEPT_EULA="YES", ISAACSIM_ACCEPT_EULA="YES"
+    )
     assert result.returncode == 0, result.stderr
 
     manifest = json.loads((Path(result.stdout.strip()) / "MANIFEST.json").read_text())
@@ -392,13 +414,19 @@ def test_manifest_records_what_was_installed(tmp_path: Path) -> None:
     assert manifest["isaacsim_version"] == "5.1.0.0"
     assert manifest["isaaclab_version"] == "2.3.2.post1"
     assert manifest["index_url"] == "https://pypi.nvidia.com"
+    assert len(manifest["cache_stamp"]) == 64
+    assert Path(result.stdout.strip()).name == manifest["cache_stamp"]
     # The digest of the wheel manifest ties a cache tree to a reviewed pin set.
     assert len(manifest["wheels_file_sha256"]) == 64
+    assert len(manifest["bootstrap_sha256"]) == 64
+    assert len(manifest["oss_dependencies_sha256"]) == 64
 
 
 def test_current_symlink_points_at_the_completed_tree(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
-    result = harness.run("ensure", OMNI_KIT_ACCEPT_EULA="YES", ISAACSIM_ACCEPT_EULA="YES")
+    result = harness.run(
+        "ensure", OMNI_KIT_ACCEPT_EULA="YES", ISAACSIM_ACCEPT_EULA="YES"
+    )
     assert result.returncode == 0, result.stderr
     current = harness.cache / "current"
     assert current.is_symlink()
@@ -421,10 +449,44 @@ def test_changing_a_pin_changes_the_cache_stamp(tmp_path: Path, override: dict) 
     def stamp(**env: str) -> str:
         result = harness.run("status", **env)
         return next(
-            line for line in result.stdout.splitlines() if line.startswith("expected_tree=")
+            line
+            for line in result.stdout.splitlines()
+            if line.startswith("expected_tree=")
         )
 
     assert stamp() != stamp(**override), override
+
+
+def test_changing_bootstrap_source_changes_the_cache_stamp(tmp_path: Path) -> None:
+    """A controller cannot reuse a closure warmed by older bootstrap logic."""
+
+    harness = Harness(tmp_path / "harness")
+    copied_common = tmp_path / "common"
+    shutil.copytree(COMMON, copied_common)
+    copied_bootstrap = copied_common / "isaac_bootstrap.sh"
+
+    def stamp() -> str:
+        result = subprocess.run(
+            ["bash", str(copied_bootstrap), "status"],
+            env=harness.env(),
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        return next(
+            line
+            for line in result.stdout.splitlines()
+            if line.startswith("expected_tree=")
+        )
+
+    before = stamp()
+    copied_bootstrap.write_text(
+        copied_bootstrap.read_text(encoding="utf-8") + "\n# cache contract v2\n",
+        encoding="utf-8",
+    )
+    assert before != stamp()
 
 
 # --------------------------------------------------------------------------------------
@@ -513,20 +575,30 @@ def test_oss_deps_carry_no_nvidia_isaac_package() -> None:
         requirement = line.split("#", 1)[0].strip().lower()
         if not requirement:
             continue
-        assert not requirement.replace("_", "-").startswith(("isaacsim", "isaaclab")), line
+        assert not requirement.replace("_", "-").startswith(("isaacsim", "isaaclab")), (
+            line
+        )
 
 
 @pytest.mark.parametrize(
     ("package", "why"),
     [
-        ("scipy", "isaacsim.core.utils.numpy.rotations imports scipy.spatial.transform"),
-        ("matplotlib", "isaaclab.envs -> .ui -> widgets.image_plot imports matplotlib.cm"),
+        (
+            "scipy",
+            "isaacsim.core.utils.numpy.rotations imports scipy.spatial.transform",
+        ),
+        (
+            "matplotlib",
+            "isaaclab.envs -> .ui -> widgets.image_plot imports matplotlib.cm",
+        ),
         ("opencv-python-headless", "isaaclab_assets.sensors.gelsight imports cv2"),
         ("boto3", "omni.replicator.core imports botocore.exceptions"),
         ("coverage==7.13.5", "omni.kit.test.test_coverage imports coverage"),
     ],
 )
-def test_oss_deps_include_every_undeclared_isaac_dependency(package: str, why: str) -> None:
+def test_oss_deps_include_every_undeclared_isaac_dependency(
+    package: str, why: str
+) -> None:
     """Regression pins for dependencies nothing in the Isaac wheels declares.
 
     These used to arrive free with the nvcr.io base image, and each was found by running
@@ -538,10 +610,30 @@ def test_oss_deps_include_every_undeclared_isaac_dependency(package: str, why: s
 
 
 def test_isaac_image_normalizes_bootstrap_scripts_for_the_non_root_user() -> None:
-    dockerfile = (COMMON.parent / "isaac-lab" / "Dockerfile").read_text(encoding="utf-8")
-    assert "find /opt/npa/docker/workbench/common -type d -exec chmod 0755" in dockerfile
-    assert "find /opt/npa/docker/workbench/common -type f -exec chmod 0644" in dockerfile
+    dockerfile = (COMMON.parent / "isaac-lab" / "Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        "find /opt/npa/docker/workbench/common -type d -exec chmod 0755" in dockerfile
+    )
+    assert (
+        "find /opt/npa/docker/workbench/common -type f -exec chmod 0644" in dockerfile
+    )
     assert "chmod 0755 /opt/npa/docker/workbench/common/*.sh" in dockerfile
+
+
+def test_base_installer_upgrades_linux_headers_from_the_fixed_snapshot() -> None:
+    """Do not retain the stale kernel-header package inherited from CUDA.
+
+    ``linux-libc-dev`` contains userspace development headers, not the cluster's
+    running kernel.  Even so, the immutable Ubuntu snapshot carries a fixed build,
+    so keeping the older inherited package would leave avoidable critical Trivy
+    findings in every thin Isaac runtime.
+    """
+
+    installer = BASE_INSTALLER.read_text(encoding="utf-8")
+    assert 'UBUNTU_SNAPSHOT="${NPA_UBUNTU_SNAPSHOT:-20260801T053000Z}"' in installer
+    assert "linux-libc-dev=5.15.0-186.196" in installer
 
 
 # --------------------------------------------------------------------------------------
@@ -552,6 +644,26 @@ def test_isaac_image_normalizes_bootstrap_scripts_for_the_non_root_user() -> Non
 def test_shim_and_bootstrap_are_valid_bash() -> None:
     for script in (BOOTSTRAP, SHIM, BASE_INSTALLER):
         subprocess.run(["bash", "-n", str(script)], check=True, timeout=60)
+
+
+def test_readonly_runtime_redirects_kit_portable_state_to_scratch() -> None:
+    bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
+    shim = SHIM.read_text(encoding="utf-8")
+    expected = "--portable-root /tmp/npa-isaac-kit"
+
+    assert expected in bootstrap
+    assert "kit_args=os.environ.get(" in bootstrap
+    assert expected in shim
+    assert "export NPA_ISAAC_KIT_ARGS=" in shim
+    for variable in (
+        "OMNI_USER_DIR",
+        "OMNI_LOG_DIR",
+        "XDG_RUNTIME_DIR",
+        "XDG_CACHE_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+    ):
+        assert f"export {variable}=" in shim
 
 
 def test_shim_propagates_the_refusal_exit_code(tmp_path: Path) -> None:
@@ -593,3 +705,34 @@ def test_base_installer_proves_the_refusal_at_build_time() -> None:
     assert "NPA_ISAAC_BOOTSTRAP_REFUSES_WITHOUT_EULA_OK" in text
     assert "NPA_NO_BAKED_ISAAC_OK" in text
     assert "-ne 78" in text, "the build must require the documented EX_CONFIG exit code"
+
+
+def test_base_installer_uses_immutable_system_and_bootstrap_inputs() -> None:
+    """The GPU image build must not resolve Python or packaging from moving indexes."""
+    text = BASE_INSTALLER.read_text(encoding="utf-8")
+    assert "NPA_UBUNTU_SNAPSHOT:-20260801T053000Z" in text
+    assert "https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/" in text
+    assert "add-apt-repository" not in text
+    assert "sha256sum --check --strict" in text
+    assert text.count("3.11.15-1+jammy1") >= 9
+    for requirement in (
+        "pip==26.2.1",
+        "setuptools==84.0.0",
+        "wheel==0.47.0",
+        "packaging==26.3",
+    ):
+        assert requirement in text
+    assert "pip install --no-cache-dir --no-deps" in text
+    assert '"$ISAAC_VENV/bin/python" -m pip check' in text
+    assert "pip uninstall --yes wheel" in text
+
+    closure = (COMMON / "isaac-oss-deps.txt").read_text(encoding="utf-8")
+    lines = [
+        line.strip()
+        for line in closure.splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    assert len(lines) >= 120
+    assert all(line.count("==") == 1 for line in lines)
+    assert "packaging==23.2" in lines
+    assert not any(line.lower().startswith("wheel==") for line in lines)

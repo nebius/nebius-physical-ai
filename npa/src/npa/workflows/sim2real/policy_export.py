@@ -293,8 +293,7 @@ def _resolve_activation(torch: Any, activation: str) -> Any:
     attr = _ACTIVATIONS.get(activation.lower())
     if attr is None:
         raise PolicyExportError(
-            f"unsupported activation {activation!r}; supported: "
-            f"{sorted(_ACTIVATIONS)}"
+            f"unsupported activation {activation!r}; supported: {sorted(_ACTIVATIONS)}"
         )
     return getattr(torch.nn, attr)
 
@@ -319,7 +318,9 @@ def load_state_dict_from_checkpoint(checkpoint: Mapping[str, Any]) -> Mapping[st
     )
 
 
-def _build_actor_module(torch: Any, state_dict: Mapping[str, Any], activation: str) -> Any:
+def _build_actor_module(
+    torch: Any, state_dict: Mapping[str, Any], activation: str
+) -> Any:
     """Rebuild the actor MLP (nn.Sequential) from ``actor.<n>.{weight,bias}``."""
 
     nn = torch.nn
@@ -387,7 +388,7 @@ def _detect_normalization(
 def _make_forward_module(torch: Any, actor: Any, norm: Any | None) -> Any:
     nn = torch.nn
 
-    class _PolicyForward(nn.Module):
+    class _PolicyForward(nn.Module):  # type: ignore[name-defined]
         def __init__(self) -> None:
             super().__init__()
             self.actor = actor
@@ -485,9 +486,7 @@ def export_policy_onnx(
     contract_path = out_path / CONTRACT_FILENAME
 
     dynamic_axes = (
-        {input_name: {0: "batch"}, output_name: {0: "batch"}}
-        if dynamic_batch
-        else None
+        {input_name: {0: "batch"}, output_name: {0: "batch"}} if dynamic_batch else None
     )
     # Prefer the legacy TorchScript exporter: it embeds the (small) MLP weights
     # directly into a single self-contained ``policy.onnx`` (the newer dynamo
@@ -516,9 +515,7 @@ def export_policy_onnx(
             "that embeds weights."
         )
 
-    provenance = _checkpoint_provenance(
-        ckpt_path, checkpoint, source=checkpoint_source
-    )
+    provenance = _checkpoint_provenance(ckpt_path, checkpoint, source=checkpoint_source)
     contract = build_policy_contract(
         obs_dim=obs_dim,
         act_dim=act_dim,
@@ -559,14 +556,13 @@ def export_policy_onnx(
 def _checkpoint_provenance(
     ckpt_path: Path, checkpoint: Mapping[str, Any], *, source: str | None
 ) -> dict[str, Any]:
-    import hashlib
+    from npa.workflows.sim2real.hashing import sha256_file
 
-    digest = hashlib.sha256(ckpt_path.read_bytes()).hexdigest()
     train_iter = checkpoint.get("iter")
     return {
         "source": source or str(ckpt_path),
         "filename": ckpt_path.name,
         "size_bytes": ckpt_path.stat().st_size,
-        "sha256": digest,
+        "sha256": sha256_file(ckpt_path),
         "train_iter": int(train_iter) if isinstance(train_iter, int) else None,
     }

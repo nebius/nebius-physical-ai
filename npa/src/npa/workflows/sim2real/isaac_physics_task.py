@@ -22,6 +22,7 @@ on-cluster probe (it imports gymnasium/isaaclab, unavailable off-GPU).
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from typing import Any
 
 NPA_PHYSICS_TASK_ID = "NPA-Lift-Cube-Franka-Physics-v0"
@@ -44,15 +45,17 @@ def clamp(value: Any, lo: float, hi: float, default: float) -> float:
     return max(lo, min(hi, x))
 
 
-def physics_params_from_env(env: dict[str, str] | None = None) -> dict[str, float] | None:
+def physics_params_from_env(
+    env: dict[str, str] | None = None,
+) -> dict[str, float] | None:
     """Build clamped physics params from NPA_GEN_FRICTION / NPA_GEN_MASS_SCALE.
 
     Returns ``None`` when neither is set, so the caller falls back to the stock
     task (the generated env had no physics, or physics injection is disabled).
     """
-    env = os.environ if env is None else env
-    fr = env.get("NPA_GEN_FRICTION")
-    ms = env.get("NPA_GEN_MASS_SCALE")
+    source: Mapping[str, str] = os.environ if env is None else env
+    fr = source.get("NPA_GEN_FRICTION")
+    ms = source.get("NPA_GEN_MASS_SCALE")
     if (fr is None or fr == "") and (ms is None or ms == ""):
         return None
     return {
@@ -122,10 +125,10 @@ def register(params: dict[str, float] | None = None) -> str | None:
 
 
 def module_source() -> str:
-    """Return this module's own source, for shipping into the Isaac container.
+    """Return this module's source for immutable Isaac image assembly.
 
-    The Isaac-Lab image has no ``npa`` package, so the BYO trainer writes this
-    file into the job (via heredoc) and the train wrapper imports it post-boot.
+    The image build writes the source into its baked runtime directory. Jobs
+    only import that digest-attested copy; they never inject application source.
     """
     from pathlib import Path
 
@@ -140,18 +143,24 @@ def module_source() -> str:
 #   (4) run the rsl_rl OnPolicyRunner like stock train.py.
 # It reuses isaac_physics_task.register() (shipped alongside) as the single
 # source of truth for the friction/mass event terms.
-TRAIN_WRAPPER_SCRIPT = r'''
+TRAIN_WRAPPER_SCRIPT = r"""
 import os, sys, traceback
 SYS_DIR = os.environ.get("NPA_PHYS_MODULE_DIR", "/tmp/npa_phys")
 sys.path.insert(0, SYS_DIR)
 NUM_ENVS = int(os.environ.get("PHYS_NUM_ENVS", "64"))
 ITERS = int(os.environ.get("PHYS_ITERS", "2"))
+STEPS_PER_ENV = int(os.environ.get("PHYS_STEPS_PER_ENV", "24"))
 SEED = int(os.environ.get("PHYS_SEED", "0"))
 OUT = os.environ.get("PHYS_OUT_DIR", "/tmp/physrun")
 os.makedirs(OUT, exist_ok=True)
 # (1) boot the sim app FIRST — everything Isaac/pxr must come after this.
 from isaaclab.app import AppLauncher
-app = AppLauncher(headless=True).app
+app = AppLauncher(
+    headless=True,
+    kit_args=os.environ.get(
+        "NPA_ISAAC_KIT_ARGS", "--portable-root /tmp/npa-isaac-kit"
+    ),
+).app
 import torch
 import gymnasium as gym
 # (2) register the stock tasks, then (3) the physics variant (post-boot import).
@@ -174,19 +183,17 @@ try:
         from omni.isaac.lab_rl.rsl_rl import RslRlVecEnvWrapper  # older layout
     from rsl_rl.runners import OnPolicyRunner
     env_cfg = parse_env_cfg(task, device="cuda:0", num_envs=NUM_ENVS)
-    if SEED:
-        try:
-            env_cfg.seed = SEED
-        except Exception as e:
-            print("could not set env_cfg.seed:", repr(e), flush=True)
-        torch.manual_seed(SEED)
+    # Zero is a real reproducibility seed, not an unset sentinel.
+    env_cfg.seed = SEED
+    torch.manual_seed(SEED)
+    print("PHYS_SEED_APPLIED", SEED, flush=True)
     agent_cfg = load_cfg_from_registry(task, "rsl_rl_cfg_entry_point")
     acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
     acfg["max_iterations"] = ITERS
+    acfg["num_steps_per_env"] = STEPS_PER_ENV
     # Guarantee a checkpoint even for a tiny probe run.
     acfg["save_interval"] = max(1, min(int(acfg.get("save_interval", 50) or 50), ITERS))
-    if SEED:
-        acfg["seed"] = SEED
+    acfg["seed"] = SEED
     print("PHYS_AGENT_CFG_KEYS", sorted(acfg.keys()), flush=True)
     env = gym.make(task, cfg=env_cfg)
     # Definitive check that the generated-physics events are LIVE (not a silent
@@ -222,5 +229,4 @@ except Exception:
     print("PHYS_TRAIN_FAILED", flush=True); traceback.print_exc(); os._exit(43)
 sys.stdout.flush(); sys.stderr.flush()
 os._exit(0)
-'''
-
+"""

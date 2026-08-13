@@ -1,4 +1,4 @@
-"""Resolve ``{{config.*}}``, ``{{run.*}}``, and ``{{state.*}}`` tokens in workflow specs."""
+"""Resolve config, run, state-output, and loop tokens in workflow specs."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import re
 from typing import Any, Mapping
 
 _TOKEN_RE = re.compile(
-    r"\{\{\s*(config|run|state)\.([a-zA-Z0-9_.-]+)"
+    r"\{\{\s*(config|run|state|loop)\.([a-zA-Z0-9_.-]+)"
     r"(?:\|([a-zA-Z0-9_-]+))?\s*\}\}"
 )
 
@@ -22,10 +22,12 @@ def resolve_tokens(
     config: Mapping[str, Any],
     run: Mapping[str, Any],
     state_outputs: Mapping[str, Mapping[str, str]] | None = None,
+    loop_iterations: Mapping[str, int] | None = None,
 ) -> str:
     """Substitute supported tokens in ``value``."""
 
     outputs = state_outputs or {}
+    loops = loop_iterations or {}
 
     def _replace(match: re.Match[str]) -> str:
         scope, key, transform = match.group(1), match.group(2), match.group(3)
@@ -43,6 +45,10 @@ def resolve_tokens(
             if not state_map or output_key not in state_map:
                 raise TokenError(f"unknown state token: state.{key}")
             resolved = str(state_map[output_key])
+        elif scope == "loop":
+            if key not in loops:
+                raise TokenError(f"unknown loop token: loop.{key}")
+            resolved = str(loops[key])
         else:  # pragma: no cover - constrained by _TOKEN_RE
             raise TokenError(f"unsupported token scope: {scope}")
         if transform is None:
@@ -60,6 +66,7 @@ def resolve_mapping(
     config: Mapping[str, Any],
     run: Mapping[str, Any],
     state_outputs: Mapping[str, Mapping[str, str]] | None = None,
+    loop_iterations: Mapping[str, int] | None = None,
 ) -> dict[str, Any]:
     """Deep-resolve string tokens in a shallow mapping (one level of values)."""
 
@@ -67,8 +74,55 @@ def resolve_mapping(
     for key, value in data.items():
         if isinstance(value, str):
             resolved[key] = resolve_tokens(
-                value, config=config, run=run, state_outputs=state_outputs
+                value,
+                config=config,
+                run=run,
+                state_outputs=state_outputs,
+                loop_iterations=loop_iterations,
             )
         else:
             resolved[key] = value
     return resolved
+
+
+def resolve_value(
+    value: Any,
+    *,
+    config: Mapping[str, Any],
+    run: Mapping[str, Any],
+    state_outputs: Mapping[str, Mapping[str, str]] | None = None,
+    loop_iterations: Mapping[str, int] | None = None,
+) -> Any:
+    """Recursively resolve tokens in nested resource and pod configuration."""
+
+    if isinstance(value, str):
+        return resolve_tokens(
+            value,
+            config=config,
+            run=run,
+            state_outputs=state_outputs,
+            loop_iterations=loop_iterations,
+        )
+    if isinstance(value, dict):
+        return {
+            key: resolve_value(
+                item,
+                config=config,
+                run=run,
+                state_outputs=state_outputs,
+                loop_iterations=loop_iterations,
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [
+            resolve_value(
+                item,
+                config=config,
+                run=run,
+                state_outputs=state_outputs,
+                loop_iterations=loop_iterations,
+            )
+            for item in value
+        ]
+    return value

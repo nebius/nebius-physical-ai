@@ -18,7 +18,14 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 VARIABLES_TF = REPO_ROOT / "deploy" / "cluster" / "variables.tf"
-QUICKSTART_SPEC = REPO_ROOT / "npa" / "workflows" / "physical-ai-data-factory.yaml"
+QUICKSTART_SPEC = (
+    REPO_ROOT
+    / "npa"
+    / "workflows"
+    / "workbench"
+    / "npa-workflows"
+    / "physical-ai-data-factory.yaml"
+)
 
 #: Headroom a Kubernetes node never offers to pods (kubelet + system reserve).
 #: Nebius presets advertise roughly `vcpu - 0.1` CPU and ~1Gi less memory; keep a

@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from npa.orchestration.npa_workflow.spec import SUPPORTED_API_VERSIONS
 
-SubmitFormat = Literal["sim2real_runbook", "npa.workflow", "skypilot"]
+SubmitFormat = Literal["npa.workflow", "skypilot"]
 
 
 def peek_workflow_document(path: Path) -> dict[str, Any]:
@@ -38,13 +38,12 @@ def is_npa_workflow_spec(path: Path) -> bool:
 def detect_submit_format(path: Path) -> SubmitFormat:
     """Classify a submit target.
 
-    Order: Sim2Real runbook path → ``npa.workflow`` apiVersion → SkyPilot default.
+    Order: ``npa.workflow`` apiVersion → SkyPilot default.
+
+    Sim2Real deliberately has no special detector branch. Its canonical YAML is
+    an ordinary workflow and therefore exercises this exact path in production.
     """
 
-    from npa.workflows.sim2real.k8s_submit import is_sim2real_runbook
-
-    if is_sim2real_runbook(path):
-        return "sim2real_runbook"
     if is_npa_workflow_spec(path):
         return "npa.workflow"
     return "skypilot"

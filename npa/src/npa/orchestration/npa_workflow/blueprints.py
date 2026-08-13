@@ -1,10 +1,10 @@
 """Filesystem locations of the checked-in ``npa.workflow`` blueprint specs.
 
-These YAMLs are repo-tree artifacts (they are intentionally *not* packaged into
-the wheel — see the ``force-include`` list in ``npa/pyproject.toml``). The
-flagship Physical AI Data Factory blueprint lives at the top of the workflow
-tree (``npa/workflows/``) for prominence; the rest of the shown catalog stays
-under ``npa/workflows/workbench/npa-workflows/``.
+These YAMLs are discovered from a source checkout. The prominent Sim2Real
+direct-runbook is also force-included in the wheel. The flagship Physical AI
+Data Factory spec stays at the top of ``npa/workflows/`` in the repo; the rest
+of the declarative shown catalog is under
+``npa/workflows/workbench/npa-workflows/``.
 
 This module is the single source of truth for both roots so spec discovery,
 the smoke/guardrail tests, and the live-submit matrix stay in sync when a spec
@@ -16,6 +16,8 @@ only source-checkout callers (tests, the operator runner) rely on them.
 from __future__ import annotations
 
 from pathlib import Path
+
+import yaml
 
 # blueprints.py -> npa_workflow -> orchestration -> npa -> src -> npa -> <repo root>
 _REPO_ROOT = Path(__file__).resolve().parents[5]
@@ -31,7 +33,9 @@ NPA_WORKFLOW_SPEC_DIRS: tuple[Path, ...] = (
 def npa_workflow_spec_dirs() -> tuple[Path, ...]:
     """Return the existing spec roots (skips missing dirs, e.g. wheel installs)."""
 
-    return tuple(directory for directory in NPA_WORKFLOW_SPEC_DIRS if directory.is_dir())
+    return tuple(
+        directory for directory in NPA_WORKFLOW_SPEC_DIRS if directory.is_dir()
+    )
 
 
 def iter_npa_workflow_specs() -> list[Path]:
@@ -44,7 +48,8 @@ def iter_npa_workflow_specs() -> list[Path]:
     seen: dict[str, Path] = {}
     for directory in npa_workflow_spec_dirs():
         for path in sorted(directory.glob("*.yaml")):
-            seen.setdefault(path.name, path)
+            if _is_npa_workflow_spec(path):
+                seen.setdefault(path.name, path)
     return [seen[name] for name in sorted(seen)]
 
 
@@ -53,6 +58,18 @@ def resolve_npa_workflow_spec(name: str) -> Path | None:
 
     for directory in npa_workflow_spec_dirs():
         candidate = directory / name
-        if candidate.is_file():
+        if candidate.is_file() and _is_npa_workflow_spec(candidate):
             return candidate
     return None
+
+
+def _is_npa_workflow_spec(path: Path) -> bool:
+    """Keep special direct-runbook YAMLs out of the declarative spec catalog."""
+
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return False
+    return isinstance(payload, dict) and str(payload.get("apiVersion", "")).startswith(
+        "npa.workflow/"
+    )

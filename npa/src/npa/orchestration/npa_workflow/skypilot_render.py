@@ -535,10 +535,9 @@ def resolve_task_image(
         for prefix in options.image_overrides:
             if prefix == "*":
                 continue
-            if (
-                (tool_ref == prefix or tool_ref.startswith(prefix + "."))
-                and len(prefix) > len(best_override)
-            ):
+            if (tool_ref == prefix or tool_ref.startswith(prefix + ".")) and len(
+                prefix
+            ) > len(best_override):
                 best_override = prefix
         if best_override:
             resolved = str(options.image_overrides[best_override] or "").strip()
@@ -963,15 +962,15 @@ def default_npa_setup() -> str:
         # staged even though the image ships uv. Let uv target the exact
         # interpreter that `python3` resolves to; unlike activating another
         # interpreter, this preserves the vendor environment and its pins.
-        "  npa_install_python=\"$(command -v python3)\"\n"
-        "  if \"$npa_install_python\" -m pip --version >/dev/null 2>&1; then\n"
-        "    \"$npa_install_python\" -m pip install -q \"$target\" \"$@\" \\\n"
-        "      || \"$npa_install_python\" -m pip install -q \"$target\" \"$@\" --break-system-packages \\\n"
-        "      || \"$npa_install_python\" -m pip install -q \"$target\" \"$@\" --user\n"
+        '  npa_install_python="$(command -v python3)"\n'
+        '  if "$npa_install_python" -m pip --version >/dev/null 2>&1; then\n'
+        '    "$npa_install_python" -m pip install -q "$target" "$@" \\\n'
+        '      || "$npa_install_python" -m pip install -q "$target" "$@" --break-system-packages \\\n'
+        '      || "$npa_install_python" -m pip install -q "$target" "$@" --user\n'
         "  elif command -v uv >/dev/null 2>&1; then\n"
-        "    uv pip install -q --python \"$npa_install_python\" \"$target\" \"$@\"\n"
+        '    uv pip install -q --python "$npa_install_python" "$target" "$@"\n'
         "  else\n"
-        "    echo \"python3 has no pip and uv is unavailable: $npa_install_python\" >&2\n"
+        '    echo "python3 has no pip and uv is unavailable: $npa_install_python" >&2\n'
         "    return 1\n"
         "  fi\n"
         "}\n"
@@ -1256,6 +1255,33 @@ def render_setup_for_tool(
 
     if not options.default_setup:
         return ""
+    require_baked = str(config.get("require_baked_npa") or "").strip().lower()
+    if require_baked in {"1", "true", "yes", "on"}:
+        return (
+            "set -e\n"
+            'npa_baked_python="${NPA_BAKED_PYTHON:-}"\n'
+            'if [ -z "$npa_baked_python" ]; then\n'
+            '  npa_baked_python="$(command -v python3 || true)"\n'
+            "fi\n"
+            'case "$npa_baked_python" in\n'
+            "  /*) ;;\n"
+            '  *) echo "baked NPA interpreter must be an absolute path" >&2; exit 68 ;;\n'
+            "esac\n"
+            'if [ ! -x "$npa_baked_python" ]; then\n'
+            '  echo "baked NPA interpreter is not executable: $npa_baked_python" >&2\n'
+            "  exit 69\n"
+            "fi\n"
+            "\"$npa_baked_python\" - <<'PY'\n"
+            "import os\n"
+            "import npa\n"
+            "actual = os.environ.get('NPA_IMAGE_SOURCE_SHA', '').strip().lower()\n"
+            "expected = os.environ.get('NPA_SIM2REAL_SOURCE_SHA', '').strip().lower()\n"
+            "if len(actual) != 40 or actual != expected:\n"
+            "    raise SystemExit('baked NPA source attestation does not match workflow source SHA')\n"
+            "print('immutable baked NPA runtime verified', actual)\n"
+            "PY\n"
+            "printf '%s\\n' \"$npa_baked_python\" > /tmp/npa-python\n"
+        )
     parts = [default_npa_setup()]
     parts.append(render_vendor_interpreter_setup(tool_vendor_interpreters(tool_ref)))
     extra = tool_pip_extra(tool_ref)
@@ -1453,6 +1479,17 @@ def build_skypilot_task_doc(
         resources["image_id"] = (
             f"docker:{image}" if not image.startswith("docker:") else image
         )
+    require_baked = str(spec.config.get("require_baked_npa") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if require_baked and (not image or "@sha256:" not in image):
+        raise NpaWorkflowRenderError(
+            f"planned step {scheduler_task['name']!r} requires a registry-qualified "
+            "immutable image because config.require_baked_npa is enabled"
+        )
 
     command = list(scheduler_task.get("command") or [])
     if not command:
@@ -1469,6 +1506,15 @@ def build_skypilot_task_doc(
         envs["AWS_ENDPOINT_URL"] = options.aws_endpoint_url
     if image:
         envs["NPA_TASK_IMAGE"] = image.removeprefix("docker:")
+    expected_source_sha = str(spec.config.get("source_sha") or "").strip().lower()
+    if expected_source_sha:
+        if len(expected_source_sha) != 40 or any(
+            char not in "0123456789abcdef" for char in expected_source_sha
+        ):
+            raise NpaWorkflowRenderError(
+                "config.source_sha must be an exact 40-character hexadecimal SHA"
+            )
+        envs["NPA_SIM2REAL_SOURCE_SHA"] = expected_source_sha
     envs.update(isaac_eula_envs(str(scheduler_task.get("tool_ref") or "")))
     # Optional tuning passthrough. The first-class transfer_execute toolRef always
     # conditions on the workflow input; these variables can tune that real path.
@@ -1530,7 +1576,11 @@ def build_skypilot_task_doc(
     import os
 
     src_uri = resolve_src_s3_uri()
-    if not image:
+    if require_baked:
+        # Exact images must contain the full runtime and pinned dependencies. Never
+        # inject a source tree or install packages after a task acquires a GPU.
+        pass
+    elif not image:
         if not src_uri:
             raise NpaWorkflowRenderError(
                 f"planned step {scheduler_task['name']!r} has no workbench image "

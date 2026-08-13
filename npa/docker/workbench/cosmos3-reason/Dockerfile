@@ -2,11 +2,15 @@ ARG BASE_IMAGE=npa-base:cuda13-b300-sm80-sm90-sm100-sm103-sm120-v2-latest
 FROM ${BASE_IMAGE}
 
 ARG COSMOS3_REASON_VERSION=cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z
+ARG NPA_SOURCE_SHA
+ARG UBUNTU_SNAPSHOT=20260801T053000Z
 
 LABEL npa.tool="cosmos3-reason" \
-      npa.version="${COSMOS3_REASON_VERSION}"
+      npa.version="${COSMOS3_REASON_VERSION}" \
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
 
 ENV PYTHONUNBUFFERED=1 \
+    NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     NPA_COSMOS3_REASON_MODEL=nvidia/Cosmos-Predict2.5-2B \
     NPA_COSMOS3_TRANSFER_MODEL=nvidia/Cosmos-Transfer2.5-2B \
     NPA_COSMOS_GUARDRAIL_MODEL=nvidia/Cosmos-Guardrail1 \
@@ -16,8 +20,10 @@ ENV PYTHONUNBUFFERED=1 \
     NPA_COSMOS_REASON2_CACHE=/tmp/hf_home/cosmos-reason2 \
     NPA_COSMOS_REASON3_CACHE=/tmp/hf_home/cosmos-reason2-2b \
     NPA_COSMOS_REASON_CACHE=/tmp/hf_home/cosmos-reason2 \
+    NPA_SKIP_EAGER_IMPORTS=1 \
+    NPA_BAKED_PYTHON=/opt/npa/venv/bin/python \
     HF_HOME=/tmp/hf_home \
-    PYTHONPATH=/opt/npa/src:$PYTHONPATH
+    PYTHONPATH=/opt/npa/src
 
 WORKDIR /workspace
 
@@ -25,20 +31,31 @@ USER root
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
+COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
+COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh \
+    /usr/local/bin/npa-workflow-entrypoint
 
 USER root
 
 # Do not recursively chown the inherited /opt/npa/venv: overlayfs would copy
 # the complete CUDA/PyTorch environment into this child layer.
 RUN mkdir -p /tmp/hf_home/cosmos-reason2 /tmp/hf_home/cosmos-reason2-2b \
-    && python -m pip install tomli \
-    && python -m pip install \
-      "accelerate>=0.33,<2" \
-      "huggingface_hub>=0.24,<2" \
-      "qwen-vl-utils>=0.0.8,<1" \
-      "safetensors>=0.4,<1" \
-      "transformers>=4.51,<5" \
-    && python -m pip install --no-deps -e /opt/npa \
+    && find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
+    && find /opt/npa/src /opt/npa/workflows -type f -exec chmod a+r {} + \
+    && chmod a+r /opt/npa/pyproject.toml \
+    && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
+    && python -m pip install --no-deps \
+      "tomli==2.4.1" \
+      "accelerate==1.14.0" \
+      "huggingface_hub==0.36.0" \
+      "qwen-vl-utils==0.0.14" \
+      "safetensors==0.8.0" \
+      "transformers==4.57.6" \
+    && python -m pip check \
+    && python -c "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-exact-source.pth').write_text('/opt/npa/src\\n', encoding='utf-8')" \
+    && python -c 'import npa.workflows.sim2real.runtime_attestation' \
+    && env -u PYTHONPATH /opt/npa/venv/bin/python -c \
+      'import boto3; from npa.workflows.sim2real.workflow_stage import main; assert callable(main)' \
     && python -m py_compile /opt/npa/src/npa/workflows/sim2real_loop.py \
     && chown -R ubuntu:ubuntu \
       /workspace /tmp/hf_home /opt/npa/src /opt/npa/pyproject.toml
@@ -54,7 +71,16 @@ RUN mkdir -p /tmp/hf_home/cosmos-reason2 /tmp/hf_home/cosmos-reason2-2b \
 # npa-base deliberately purges linux-libc-dev as final-image CVE hardening,
 # leaving its build-time libc6-dev dependency unsatisfied. Repair that
 # relationship temporarily, install everything, then reapply the purge.
-RUN apt-get update \
+RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
+      /etc/apt/sources.list.d/*.sources \
+    && printf '%s\n' \
+      'Types: deb' \
+      "URIs: https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/" \
+      'Suites: jammy jammy-updates jammy-backports jammy-security' \
+      'Components: main restricted universe multiverse' \
+      'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
+      > /etc/apt/sources.list.d/ubuntu.sources \
+    && apt-get update \
     && apt-get install -y --no-install-recommends --fix-broken
 
 RUN apt-get update \
@@ -77,5 +103,4 @@ RUN apt-get update \
 
 USER ubuntu
 
-ENTRYPOINT ["python", "-m", "npa.workflows.sim2real_loop"]
-CMD ["inner-loop", "--help"]
+ENTRYPOINT ["/usr/local/bin/npa-workflow-entrypoint"]

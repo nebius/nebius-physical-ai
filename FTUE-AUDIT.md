@@ -67,9 +67,9 @@ a "non-default S3-compatible endpoint."
   `sky jobs launch` is blocked by the SkyPilot 0.12.2 pre-setup `getcwd()` bug.
   Closing this needs an upstream SkyPilot fix or a thin in-repo materializer that
   renders the runbook to a Kubernetes Job. Out of scope for this pass.~~
-  **Closed:** `npa workbench sim2real materialize` renders the committed
-  runbook to a plain Kubernetes Job
-  (`npa/src/npa/workflows/sim2real/materialize.py`), no operator pack needed.
+  **Superseded:** the direct-controller runbook and materializer were removed.
+  `npa workbench sim2real materialize` now exits with a migration to
+  `npa workbench workflow submit npa/workflows/workbench/npa-workflows/sim2real.yaml --runtime`.
 - **SDK seam discoverability.** `sim2real.run(**overrides)` forwards seams by
   keyword into `build_config_from_env`, so the seams are real and coherent but
   not discoverable from the function signature (and cannot use the inspect-based

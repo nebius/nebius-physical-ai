@@ -25,8 +25,10 @@ articulation.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
+from collections.abc import Mapping
 from typing import Any
 
 STOCK_TASK_ID = "Isaac-Lift-Cube-Franka-v0"
@@ -114,7 +116,9 @@ def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
 
 
-def robot_spec_from_env(env: dict[str, str] | None = None) -> dict[str, Any] | None:
+def robot_spec_from_env(
+    env: Mapping[str, str] | None = None,
+) -> dict[str, Any] | None:
     """Parse the customer robot spec from ``NPA_BYO_ROBOT_SPEC_JSON``.
 
     Returns ``None`` when the env var is unset/empty/invalid OR when the spec is
@@ -122,8 +126,8 @@ def robot_spec_from_env(env: dict[str, str] | None = None) -> dict[str, Any] | N
     (BYO-robot routing disabled or no swap to perform).
     """
 
-    env = os.environ if env is None else env
-    raw = (env.get(ROBOT_SPEC_ENV) or "").strip()
+    source = os.environ if env is None else env
+    raw = (source.get(ROBOT_SPEC_ENV) or "").strip()
     if not raw:
         return None
     try:
@@ -177,12 +181,21 @@ def robot_articulation_overrides(spec: dict[str, Any] | None) -> dict[str, Any]:
     kp = _num_list(spec.get("kp"))
     kv = _num_list(spec.get("kv"))
     if kp:
-        overrides["stiffness"] = round(_clamp(sum(kp) / len(kp), STIFFNESS_MIN, STIFFNESS_MAX), 6)
+        overrides["stiffness"] = round(
+            _clamp(sum(kp) / len(kp), STIFFNESS_MIN, STIFFNESS_MAX), 6
+        )
     if kv:
-        overrides["damping"] = round(_clamp(sum(kv) / len(kv), DAMPING_MIN, DAMPING_MAX), 6)
-    forces = [abs(f) for f in _num_list(spec.get("force_upper")) + _num_list(spec.get("force_lower"))]
+        overrides["damping"] = round(
+            _clamp(sum(kv) / len(kv), DAMPING_MIN, DAMPING_MAX), 6
+        )
+    forces = [
+        abs(f)
+        for f in _num_list(spec.get("force_upper")) + _num_list(spec.get("force_lower"))
+    ]
     if forces:
-        overrides["effort_limit"] = round(_clamp(max(forces), EFFORT_MIN, EFFORT_MAX), 6)
+        overrides["effort_limit"] = round(
+            _clamp(max(forces), EFFORT_MIN, EFFORT_MAX), 6
+        )
 
     # Dedicated gripper drive: when the spec declares finger joints, give them their
     # OWN actuator group with a stiffness/effort FLOOR so the fingers can clamp AND
@@ -196,9 +209,19 @@ def robot_articulation_overrides(spec: dict[str, Any] | None) -> dict[str, Any]:
         g_kp = _num_list(spec.get("gripper_kp"))
         g_kv = _num_list(spec.get("gripper_kv"))
         g_force = [abs(f) for f in _num_list(spec.get("gripper_force"))]
-        g_stiff = max(sum(g_kp) / len(g_kp), GRIPPER_STIFFNESS_FLOOR) if g_kp else GRIPPER_STIFFNESS_FLOOR
-        g_damp = max(sum(g_kv) / len(g_kv), GRIPPER_DAMPING_FLOOR) if g_kv else GRIPPER_DAMPING_FLOOR
-        g_eff = max(max(g_force), GRIPPER_EFFORT_FLOOR) if g_force else GRIPPER_EFFORT_FLOOR
+        g_stiff = (
+            max(sum(g_kp) / len(g_kp), GRIPPER_STIFFNESS_FLOOR)
+            if g_kp
+            else GRIPPER_STIFFNESS_FLOOR
+        )
+        g_damp = (
+            max(sum(g_kv) / len(g_kv), GRIPPER_DAMPING_FLOOR)
+            if g_kv
+            else GRIPPER_DAMPING_FLOOR
+        )
+        g_eff = (
+            max(max(g_force), GRIPPER_EFFORT_FLOOR) if g_force else GRIPPER_EFFORT_FLOOR
+        )
         overrides["gripper_actuator"] = {
             "joint_names": list(gripper_joints),
             "stiffness": round(_clamp(g_stiff, STIFFNESS_MIN, STIFFNESS_MAX), 6),
@@ -286,13 +309,19 @@ def task_retarget_overrides(spec: dict[str, Any] | None) -> dict[str, Any]:
         # the Franka finger pattern (correct only for a Franka-class hand); a
         # non-Franka gripper must declare ``gripper_joint_names`` to retarget the
         # finger joints — recorded as a remaining requirement.
-        gripper_joints = [str(n) for n in (spec.get("gripper_joint_names") or []) if str(n)]
+        gripper_joints = [
+            str(n) for n in (spec.get("gripper_joint_names") or []) if str(n)
+        ]
         try:
-            open_pos = float(spec.get("gripper_open", FRANKA_GRIPPER_OPEN["panda_finger_.*"]))
+            open_pos = float(
+                spec.get("gripper_open", FRANKA_GRIPPER_OPEN["panda_finger_.*"])
+            )
         except (TypeError, ValueError):
             open_pos = FRANKA_GRIPPER_OPEN["panda_finger_.*"]
         try:
-            close_pos = float(spec.get("gripper_close", FRANKA_GRIPPER_CLOSE["panda_finger_.*"]))
+            close_pos = float(
+                spec.get("gripper_close", FRANKA_GRIPPER_CLOSE["panda_finger_.*"])
+            )
         except (TypeError, ValueError):
             close_pos = FRANKA_GRIPPER_CLOSE["panda_finger_.*"]
         if gripper_joints:
@@ -331,9 +360,10 @@ def task_robot_compatibility(
     kind = str(task_kind or "lift").strip().lower()
     needs_gripper = any(k in kind for k in GRIPPER_TASK_KINDS)
 
-    if not isinstance(spec, dict) or str(
-        spec.get("robot_source") or STOCK_ROBOT_SOURCE
-    ) == STOCK_ROBOT_SOURCE:
+    if (
+        not isinstance(spec, dict)
+        or str(spec.get("robot_source") or STOCK_ROBOT_SOURCE) == STOCK_ROBOT_SOURCE
+    ):
         return {
             "task_robot_compatible": True,
             "task_kind": kind,
@@ -377,15 +407,17 @@ def task_robot_compatibility(
     }
 
 
-def task_config_from_env(env: dict[str, str] | None = None) -> dict[str, Any] | None:
+def task_config_from_env(
+    env: Mapping[str, str] | None = None,
+) -> dict[str, Any] | None:
     """Parse the B2-derived robot-aware task config from ``NPA_BYO_TASK_CONFIG_JSON``.
 
     Returns ``None`` when unset/empty/invalid, in which case the variant keeps the
     stock Lift task numbers (articulation swap only).
     """
 
-    env = os.environ if env is None else env
-    raw = (env.get(TASK_CONFIG_ENV) or "").strip()
+    source = os.environ if env is None else env
+    raw = (source.get(TASK_CONFIG_ENV) or "").strip()
     if not raw:
         return None
     try:
@@ -429,7 +461,7 @@ def _scale_triple(value: Any) -> tuple[float, float, float] | None:
         return (s, s, s) if s > 0 else None
     if isinstance(value, (list, tuple)) and len(value) == 3:
         try:
-            triple = tuple(float(v) for v in value)
+            triple = (float(value[0]), float(value[1]), float(value[2]))
         except (TypeError, ValueError):
             return None
         return triple if all(v > 0 for v in triple) else None
@@ -474,7 +506,12 @@ def task_config_overrides(task_cfg: dict[str, Any] | None) -> dict[str, Any]:
     if len(goal_pos) == 3:
         out["goal_pos"] = tuple(goal_pos)
 
-    for key in ("minimal_height_m", "success_distance_m", "gripper_open", "gripper_close"):
+    for key in (
+        "minimal_height_m",
+        "success_distance_m",
+        "gripper_open",
+        "gripper_close",
+    ):
         val = task_cfg.get(key)
         if val is not None:
             try:
@@ -683,7 +720,9 @@ def grasp_lift_hold(
         return _t.zeros(env.num_envs, device=env.device)
 
 
-def register(spec: dict[str, Any] | None = None, task_cfg: dict[str, Any] | None = None) -> str | None:
+def register(
+    spec: dict[str, Any] | None = None, task_cfg: dict[str, Any] | None = None
+) -> str | None:
     """Register the BYO-robot Lift variant in the gym registry; return its id.
 
     No-op (returns ``None``) when there are no articulation overrides (no spec, or
@@ -694,10 +733,20 @@ def register(spec: dict[str, Any] | None = None, task_cfg: dict[str, Any] | None
     spec = spec if spec is not None else robot_spec_from_env()
     overrides = robot_articulation_overrides(spec)
     if not overrides:
-        return None
+        # The stock-Franka canonical path still needs a registered variant when
+        # curated scenarios are present. Returning the stock task here was the
+        # old bypass that left generated records as lineage-only labels.
+        try:
+            import isaac_scenario_task as _scenarios  # noqa: WPS433
+
+            return _scenarios.register_stock()
+        except ModuleNotFoundError:
+            return None
 
     retarget = task_retarget_overrides(spec)
-    task_over = task_config_overrides(task_cfg if task_cfg is not None else task_config_from_env())
+    task_over = task_config_overrides(
+        task_cfg if task_cfg is not None else task_config_from_env()
+    )
     compat = task_robot_compatibility(spec, task_kind="lift")
     print("ROBOT_TASKCFG_PLAN", json.dumps(task_over, default=list), flush=True)
     # Honest, loud signal: a gripperless arm cannot lift no matter the renames. We
@@ -829,7 +878,9 @@ def register(spec: dict[str, Any] | None = None, task_cfg: dict[str, Any] | None
         # (a) action scale: per-step joint-position offset magnitude.
         if "action_scale" in task_over:
             try:
-                arm_action = getattr(getattr(env_cfg, "actions", None), "arm_action", None)
+                arm_action = getattr(
+                    getattr(env_cfg, "actions", None), "arm_action", None
+                )
                 if arm_action is not None and hasattr(arm_action, "scale"):
                     arm_action.scale = float(task_over["action_scale"])
                     applied.append("arm_action.scale")
@@ -845,7 +896,9 @@ def register(spec: dict[str, Any] | None = None, task_cfg: dict[str, Any] | None
                 events = getattr(env_cfg, "events", None)
                 rop = getattr(events, "reset_object_position", None)
                 params = getattr(rop, "params", None)
-                if isinstance(params, dict) and isinstance(params.get("pose_range"), dict):
+                if isinstance(params, dict) and isinstance(
+                    params.get("pose_range"), dict
+                ):
                     params["pose_range"].update(
                         {k: tuple(v) for k, v in task_over["object_init_range"].items()}
                     )
@@ -868,9 +921,9 @@ def register(spec: dict[str, Any] | None = None, task_cfg: dict[str, Any] | None
                     if axis in gr and hasattr(ranges, attr):
                         setattr(ranges, attr, tuple(gr[axis]))
                         set_any = True
-                applied.append("commands.object_pose.ranges") if set_any else skipped.append(
+                applied.append(
                     "commands.object_pose.ranges"
-                )
+                ) if set_any else skipped.append("commands.object_pose.ranges")
             except Exception as exc:  # noqa: BLE001
                 print("ROBOT_TASKCFG_ERR goal_range", repr(exc), flush=True)
                 skipped.append("commands.object_pose.ranges")
@@ -882,33 +935,43 @@ def register(spec: dict[str, Any] | None = None, task_cfg: dict[str, Any] | None
                 rewards = getattr(env_cfg, "rewards", None)
                 mh = float(task_over["minimal_height_m"])
                 touched = []
-                for term_name in ("lifting_object", "object_goal_tracking",
-                                  "object_goal_tracking_fine_grained"):
+                for term_name in (
+                    "lifting_object",
+                    "object_goal_tracking",
+                    "object_goal_tracking_fine_grained",
+                ):
                     term = getattr(rewards, term_name, None)
                     params = getattr(term, "params", None)
                     if isinstance(params, dict) and "minimal_height" in params:
                         params["minimal_height"] = mh
                         touched.append(term_name)
-                applied.append("rewards.minimal_height(%s)" % ",".join(touched)) if touched \
-                    else skipped.append("rewards.minimal_height")
+                applied.append(
+                    "rewards.minimal_height(%s)" % ",".join(touched)
+                ) if touched else skipped.append("rewards.minimal_height")
             except Exception as exc:  # noqa: BLE001
                 print("ROBOT_TASKCFG_ERR minimal_height", repr(exc), flush=True)
                 skipped.append("rewards.minimal_height")
 
         # (e) gripper close/open targets: complement the retarget command exprs
         # with the derived values (no-op when equal to the spec values).
-        gripper_action = getattr(getattr(env_cfg, "actions", None), "gripper_action", None)
+        gripper_action = getattr(
+            getattr(env_cfg, "actions", None), "gripper_action", None
+        )
         if gripper_action is not None and (
             "gripper_open" in task_over or "gripper_close" in task_over
         ):
             try:
-                if "gripper_open" in task_over and hasattr(gripper_action, "open_command_expr"):
+                if "gripper_open" in task_over and hasattr(
+                    gripper_action, "open_command_expr"
+                ):
                     expr = getattr(gripper_action, "open_command_expr", None) or {}
                     if isinstance(expr, dict) and expr:
                         gripper_action.open_command_expr = {
                             k: float(task_over["gripper_open"]) for k in expr
                         }
-                if "gripper_close" in task_over and hasattr(gripper_action, "close_command_expr"):
+                if "gripper_close" in task_over and hasattr(
+                    gripper_action, "close_command_expr"
+                ):
                     expr = getattr(gripper_action, "close_command_expr", None) or {}
                     if isinstance(expr, dict) and expr:
                         gripper_action.close_command_expr = {
@@ -937,7 +1000,9 @@ def register(spec: dict[str, Any] | None = None, task_cfg: dict[str, Any] | None
                     },
                 )
                 setattr(rewards, "dense_lift_progress", term)
-                applied.append("rewards.dense_lift_progress(%s)" % task_over["dense_lift_weight"])
+                applied.append(
+                    "rewards.dense_lift_progress(%s)" % task_over["dense_lift_weight"]
+                )
             except Exception as exc:  # noqa: BLE001
                 print("ROBOT_TASKCFG_ERR dense_lift", repr(exc), flush=True)
                 skipped.append("rewards.dense_lift_progress")
@@ -965,7 +1030,9 @@ def register(spec: dict[str, Any] | None = None, task_cfg: dict[str, Any] | None
                     },
                 )
                 setattr(rewards, "grasp_shaping", term)
-                applied.append("rewards.grasp_shaping(%s)" % task_over["grasp_shaping_weight"])
+                applied.append(
+                    "rewards.grasp_shaping(%s)" % task_over["grasp_shaping_weight"]
+                )
             except Exception as exc:  # noqa: BLE001
                 print("ROBOT_TASKCFG_ERR grasp_shaping", repr(exc), flush=True)
                 skipped.append("rewards.grasp_shaping")
@@ -993,7 +1060,9 @@ def register(spec: dict[str, Any] | None = None, task_cfg: dict[str, Any] | None
                     },
                 )
                 setattr(rewards, "grasp_hold", term)
-                applied.append("rewards.grasp_hold(%s)" % task_over["grasp_hold_weight"])
+                applied.append(
+                    "rewards.grasp_hold(%s)" % task_over["grasp_hold_weight"]
+                )
             except Exception as exc:  # noqa: BLE001
                 print("ROBOT_TASKCFG_ERR grasp_hold", repr(exc), flush=True)
                 skipped.append("rewards.grasp_hold")
@@ -1010,7 +1079,10 @@ def register(spec: dict[str, Any] | None = None, task_cfg: dict[str, Any] | None
                 spawn = getattr(obj, "spawn", None)
                 if spawn is not None and hasattr(spawn, "scale"):
                     spawn.scale = tuple(task_over["object_scale"])
-                    applied.append("scene.object.spawn.scale%s" % (tuple(task_over["object_scale"]),))
+                    applied.append(
+                        "scene.object.spawn.scale%s"
+                        % (tuple(task_over["object_scale"]),)
+                    )
                 else:
                     skipped.append("scene.object.spawn.scale")
             except Exception as exc:  # noqa: BLE001
@@ -1026,7 +1098,11 @@ def register(spec: dict[str, Any] | None = None, task_cfg: dict[str, Any] | None
             spawn = getattr(robot_cfg, "spawn", None)
             new_spawn = sim_utils.UsdFileCfg(usd_path=usd_path)
             # Preserve articulation/rigid props from the task's spawn when present.
-            for attr in ("articulation_props", "rigid_props", "activate_contact_sensors"):
+            for attr in (
+                "articulation_props",
+                "rigid_props",
+                "activate_contact_sensors",
+            ):
                 if hasattr(spawn, attr) and hasattr(new_spawn, attr):
                     setattr(new_spawn, attr, getattr(spawn, attr))
             robot_cfg.spawn = new_spawn
@@ -1089,6 +1165,15 @@ def register(spec: dict[str, Any] | None = None, task_cfg: dict[str, Any] | None
             # B2-derived robot-aware config so the swapped arm actually LEARNS
             # (not just runs). No-op when no derived config was supplied.
             _apply_task_config(self)
+            # Scenario application is orthogonal to embodiment retargeting. It
+            # decorates the BYO variant so stock and custom robots obey the same
+            # task/data contract.
+            try:
+                import isaac_scenario_task as _scenarios  # noqa: WPS433
+
+                _scenarios.install_env_cfg(self)
+            except ModuleNotFoundError:
+                pass
 
     stock_kwargs = gym.spec(STOCK_TASK_ID).kwargs
     gym.register(
@@ -1104,15 +1189,76 @@ def register(spec: dict[str, Any] | None = None, task_cfg: dict[str, Any] | None
 
 
 def module_source() -> str:
-    """Return this module's own source, for shipping into the Isaac container.
+    """Return this module's source for immutable Isaac image assembly.
 
-    The Isaac-Lab image has no ``npa`` package, so the BYO trainer writes this
-    file into the job (via heredoc) and the train wrapper imports it post-boot.
+    The image build writes the source into its baked runtime directory. Jobs
+    only import that digest-attested copy; they never inject application source.
     """
 
     from pathlib import Path
 
     return Path(__file__).read_text(encoding="utf-8")
+
+
+def configure_convergence_action_noise(
+    policy: Any,
+    *,
+    target_std: float,
+    freeze: bool = True,
+) -> dict[str, Any]:
+    """Make resumed PPO sample near the deterministic inference policy.
+
+    RSL-RL validation calls ``act_inference`` and therefore executes the actor
+    mean.  Its training rollout calls ``act`` and samples the policy
+    distribution.  Resume convergence must not claim progress from rare noisy
+    trajectories while leaving that mean untrained.  The canonical Franka
+    policy has a state-independent scalar or log standard deviation; update it
+    exactly after checkpoint load and fail closed for any different policy
+    representation.
+    """
+
+    target = float(target_std)
+    if not math.isfinite(target) or not 0.0 < target <= 1.0:
+        raise ValueError("target_std must be finite and between zero and one")
+    if bool(getattr(policy, "state_dependent_std", False)):
+        raise RuntimeError(
+            "resume convergence does not support state-dependent action noise"
+        )
+    noise_std_type = str(getattr(policy, "noise_std_type", ""))
+    if noise_std_type == "scalar":
+        parameter_name = "std"
+        stored_value = target
+    elif noise_std_type == "log":
+        parameter_name = "log_std"
+        stored_value = math.log(target)
+    else:
+        raise RuntimeError(f"unsupported RSL-RL noise_std_type: {noise_std_type!r}")
+    parameter = getattr(policy, parameter_name, None)
+    if parameter is None or not hasattr(parameter, "detach"):
+        raise RuntimeError(
+            f"RSL-RL policy lacks mutable {parameter_name} action-noise parameter"
+        )
+    detached = parameter.detach()
+    detached.fill_(stored_value)
+    parameter.requires_grad_(not freeze)
+    raw_values = detached.reshape(-1).tolist()
+    if not isinstance(raw_values, list):
+        raw_values = [raw_values]
+    actual_values = [
+        math.exp(float(value)) if noise_std_type == "log" else float(value)
+        for value in raw_values
+    ]
+    if not actual_values or any(
+        not math.isclose(value, target, rel_tol=1.0e-6, abs_tol=1.0e-7)
+        for value in actual_values
+    ):
+        raise RuntimeError("RSL-RL action-noise convergence update did not persist")
+    return {
+        "noise_std_type": noise_std_type,
+        "target_std": target,
+        "parameter_count": len(actual_values),
+        "frozen": bool(freeze),
+    }
 
 
 # Post-boot train wrapper (runs INSIDE the Isaac-Lab container). Same hard
@@ -1124,18 +1270,24 @@ def module_source() -> str:
 #   fallback)  (5) run the rsl_rl OnPolicyRunner like stock train.py.
 # It reuses isaac_byo_robot_task.register() (shipped alongside) as the single
 # source of truth for the articulation overrides.
-TRAIN_WRAPPER_SCRIPT = r'''
-import os, sys, traceback
+TRAIN_WRAPPER_SCRIPT = r"""
+import ast, json, os, sys, traceback
 SYS_DIR = os.environ.get("NPA_ROBOT_MODULE_DIR", "/tmp/npa_robot")
 sys.path.insert(0, SYS_DIR)
 NUM_ENVS = int(os.environ.get("ROBOT_NUM_ENVS", "64"))
 ITERS = int(os.environ.get("ROBOT_ITERS", "2"))
+STEPS_PER_ENV = int(os.environ.get("ROBOT_STEPS_PER_ENV", "24"))
 SEED = int(os.environ.get("ROBOT_SEED", "0"))
 OUT = os.environ.get("ROBOT_OUT_DIR", "/tmp/robotrun")
 os.makedirs(OUT, exist_ok=True)
 # (1) boot the sim app FIRST — everything Isaac/pxr must come after this.
 from isaaclab.app import AppLauncher
-app = AppLauncher(headless=True).app
+app = AppLauncher(
+    headless=True,
+    kit_args=os.environ.get(
+        "NPA_ISAAC_KIT_ARGS", "--portable-root /tmp/npa-isaac-kit"
+    ),
+).app
 import torch
 import gymnasium as gym
 # (2) register the stock tasks, then (3) the BYO-robot variant (post-boot import).
@@ -1169,36 +1321,91 @@ try:
         from omni.isaac.lab_rl.rsl_rl import RslRlVecEnvWrapper  # older layout
     from rsl_rl.runners import OnPolicyRunner
     env_cfg = parse_env_cfg(task, device="cuda:0", num_envs=NUM_ENVS)
-    if SEED:
-        try:
-            env_cfg.seed = SEED
-        except Exception as e:
-            print("could not set env_cfg.seed:", repr(e), flush=True)
-        torch.manual_seed(SEED)
+    # The scenario wrapper is the canonical stock-Franka path. Apply the exact
+    # reward, object, and optimizer contract here so those settings cannot be
+    # lost as provenance-only Hydra arguments on the bypassed train.py branch.
+    reward_overrides = json.loads(os.environ.get("ROBOT_REWARD_OVERRIDES_JSON", "{}") or "{}")
+    reward_applied = {}
+    for key, value in sorted(reward_overrides.items()):
+        parts = str(key).split(".")
+        if len(parts) != 4 or parts[:2] != ["env", "rewards"] or parts[3] != "weight":
+            raise RuntimeError("unsupported wrapper reward override: %s" % key)
+        term = getattr(env_cfg.rewards, parts[2], None)
+        if term is None or not hasattr(term, "weight"):
+            raise RuntimeError("Isaac reward term is unavailable: %s" % parts[2])
+        term.weight = float(value)
+        reward_applied[parts[2]] = float(value)
+    print("ROBOT_REWARD_OVERRIDES_APPLIED", json.dumps(reward_applied, sort_keys=True), flush=True)
+    object_usd = os.environ.get("ROBOT_OBJECT_USD", "").strip()
+    if object_usd:
+        spawn = env_cfg.scene.object.spawn
+        if not hasattr(spawn, "usd_path"):
+            raise RuntimeError("Isaac object spawn cannot consume the task-contract USD")
+        spawn.usd_path = object_usd
+        object_scale = os.environ.get("ROBOT_OBJECT_SCALE", "").strip()
+        if object_scale:
+            scale = ast.literal_eval(object_scale)
+            if not isinstance(scale, (tuple, list)) or len(scale) != 3:
+                raise RuntimeError("ROBOT_OBJECT_SCALE must contain exactly three values")
+            spawn.scale = tuple(float(value) for value in scale)
+        print("ROBOT_OBJECT_USD_APPLIED", object_usd, flush=True)
+    # Seed 0 is valid and is the canonical real-workflow default.  Applying it
+    # unconditionally keeps resumed PPO passes and checkpoint comparisons on a
+    # documented RNG stream instead of silently inheriting process state.
+    env_cfg.seed = SEED
+    torch.manual_seed(SEED)
+    print("ROBOT_SEED_APPLIED", SEED, flush=True)
     agent_cfg = load_cfg_from_registry(task, "rsl_rl_cfg_entry_point")
     acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
     acfg["max_iterations"] = ITERS
+    acfg["num_steps_per_env"] = STEPS_PER_ENV
     # Guarantee a checkpoint even for a tiny probe run.
-    acfg["save_interval"] = max(1, min(int(acfg.get("save_interval", 50) or 50), ITERS))
-    if SEED:
-        acfg["seed"] = SEED
-    # Keep PPO exploring through the grasp bottleneck (same fix as the Franka
-    # default path): without this the action-noise std collapses early and the
-    # swapped arm locks into a reach-and-hover local optimum (the flat-reward
-    # Kinova failure). ROBOT_ENTROPY_COEF="" / "stock" keeps the task default.
+    validation_interval = max(1, int(os.environ.get("ROBOT_VALIDATION_INTERVAL", "100") or 100))
+    acfg["save_interval"] = min(validation_interval, ITERS)
+    acfg["seed"] = SEED
+    # Begin with enough entropy to cross the grasp/lift bottleneck. The trainer
+    # can then anneal it within this pass so stable placement is not defeated by
+    # a permanently high action-noise floor.
+    algo = acfg.get("algorithm")
+    policy_cfg = acfg.get("policy")
+    if not isinstance(algo, dict) or not isinstance(policy_cfg, dict):
+        raise RuntimeError("RSL-RL registry config lacks algorithm/policy dictionaries")
     ENT = os.environ.get("ROBOT_ENTROPY_COEF", "").strip()
     if ENT and ENT.lower() not in ("stock", "default", "none"):
-        try:
-            algo = acfg.get("algorithm")
-            if isinstance(algo, dict):
-                algo["entropy_coef"] = float(ENT)
-                print("ROBOT_ENTROPY_COEF_SET", ENT, flush=True)
-            else:
-                print("ROBOT_ENTROPY_COEF_SKIP no algorithm dict", flush=True)
-        except Exception as e:
-            print("ROBOT_ENTROPY_COEF_ERR", repr(e), flush=True)
+        algo["entropy_coef"] = float(ENT)
+    ENT_FINAL = os.environ.get("ROBOT_ENTROPY_FINAL_COEF", "").strip()
+    ENT_FRACTION = os.environ.get("ROBOT_ENTROPY_ANNEAL_FRACTION", "").strip()
+    CONVERGENCE_STD = os.environ.get("ROBOT_CONVERGENCE_ACTION_NOISE_STD", "").strip()
+    if bool(ENT_FINAL) != bool(ENT_FRACTION):
+        raise RuntimeError("entropy schedule requires both final coefficient and fraction")
+    if ENT_FINAL:
+        ent_initial = float(algo["entropy_coef"])
+        ent_final = float(ENT_FINAL)
+        ent_fraction = float(ENT_FRACTION)
+        if not 0.0 <= ent_final <= ent_initial:
+            raise RuntimeError("final entropy must be between zero and initial entropy")
+        if not 0.0 < ent_fraction < 1.0:
+            raise RuntimeError("entropy anneal fraction must be between zero and one")
+    ppo_lr = os.environ.get("ROBOT_PPO_LEARNING_RATE", "").strip()
+    if ppo_lr:
+        algo["learning_rate"] = float(ppo_lr)
+    init_noise = os.environ.get("ROBOT_INIT_NOISE_STD", "").strip()
+    if init_noise:
+        policy_cfg["init_noise_std"] = float(init_noise)
+    print("ROBOT_PPO_SETTINGS_APPLIED", json.dumps({
+        "learning_rate": algo.get("learning_rate"),
+        "entropy_coef": algo.get("entropy_coef"),
+        "entropy_final_coef": float(ENT_FINAL) if ENT_FINAL else None,
+        "entropy_anneal_fraction": float(ENT_FRACTION) if ENT_FRACTION else None,
+        "init_noise_std": policy_cfg.get("init_noise_std"),
+        "save_interval": acfg["save_interval"],
+    }, sort_keys=True), flush=True)
     print("ROBOT_AGENT_CFG_KEYS", sorted(acfg.keys()), flush=True)
     env = gym.make(task, cfg=env_cfg)
+    if object_usd:
+        got_object_usd = getattr(env.unwrapped.scene["object"].cfg.spawn, "usd_path", None)
+        if got_object_usd != object_usd:
+            raise RuntimeError("task-contract object USD mismatch; refusing stock fallback")
     # Definitive check that the customer robot is LIVE (not a silent stock
     # fallback): when overrides carry a usd_path, the built env's robot spawn USD
     # must equal it. If it doesn't, abort rather than train a Franka silently.
@@ -1222,23 +1429,61 @@ try:
     if resume_ckpt and os.path.isfile(resume_ckpt):
         runner.load(resume_ckpt)
         print("ROBOT_RESUME_LOADED", resume_ckpt, flush=True)
-    runner.learn(num_learning_iterations=ITERS, init_at_random_ep_len=True)
+    if ENT_FINAL and ITERS > 1:
+        exploration_iterations = max(1, min(ITERS - 1, int(round(ITERS * float(ENT_FRACTION)))))
+        convergence_iterations = ITERS - exploration_iterations
+        runner.learn(
+            num_learning_iterations=exploration_iterations,
+            init_at_random_ep_len=True,
+        )
+        if not hasattr(runner.alg, "entropy_coef"):
+            raise RuntimeError("RSL-RL algorithm cannot apply the entropy curriculum")
+        runner.alg.entropy_coef = float(ENT_FINAL)
+        if CONVERGENCE_STD:
+            noise_audit = robotmod.configure_convergence_action_noise(
+                runner.alg.policy,
+                target_std=float(CONVERGENCE_STD),
+                freeze=True,
+            )
+            print(
+                "ROBOT_ACTION_NOISE_CONVERGENCE "
+                + json.dumps(noise_audit, sort_keys=True),
+                flush=True,
+            )
+        print(
+            "ROBOT_ENTROPY_ANNEALED initial=%s final=%s explore_iterations=%d convergence_iterations=%d"
+            % (ENT, ENT_FINAL, exploration_iterations, convergence_iterations),
+            flush=True,
+        )
+        runner.learn(
+            num_learning_iterations=convergence_iterations,
+            init_at_random_ep_len=False,
+        )
+    else:
+        runner.learn(num_learning_iterations=ITERS, init_at_random_ep_len=True)
     # Defensive explicit save (learn saves at save_interval; ensure one exists).
-    # On a resumed run ``current_learning_iteration`` includes the checkpoint's
-    # prior iterations, while ``ITERS`` is only the number added by this run.
-    # Preserve the historical fresh-run ``model_<ITERS>.pt`` name, but never
-    # overwrite an older numeric checkpoint with the resumed final policy.
-    final_iteration = max(
-        ITERS, int(getattr(runner, "current_learning_iteration", ITERS))
-    )
-    final_checkpoint = os.path.join(OUT, "model_%d.pt" % final_iteration)
     try:
-        runner.save(final_checkpoint)
-        print("ROBOT_FINAL_CHECKPOINT", final_checkpoint, flush=True)
+        final_iteration = max(
+            ITERS,
+            int(getattr(runner, "current_learning_iteration", ITERS) or ITERS),
+        )
+        final_path = os.path.join(OUT, "model_%d.pt" % final_iteration)
+        runner.save(final_path)
+        print("ROBOT_FINAL_CHECKPOINT iteration=%d path=%s" % (final_iteration, final_path), flush=True)
     except Exception as e:
         print("explicit save failed (learn may have saved already):", repr(e), flush=True)
     import glob
     ckpts = sorted(glob.glob(os.path.join(OUT, "**", "model_*.pt"), recursive=True))
+    try:
+        import isaac_scenario_task as _scenarios
+        _audit = _scenarios.runtime_audit(env.unwrapped)
+        with open(os.path.join(OUT, "applied-scenarios.json"), "w") as _af:
+            __import__("json").dump(_audit, _af, indent=2, sort_keys=True)
+        print("SCENARIO_RUNTIME_AUDIT", __import__("json").dumps(_audit), flush=True)
+        if _audit.get("coverage_rate", 0.0) < 0.90:
+            raise RuntimeError("training scenario coverage below 90%")
+    except ModuleNotFoundError:
+        pass
     # Final summary (survives any upstream log truncation): task + robot + USD live
     # + checkpoint count.
     print("ROBOT_SUMMARY task=%s robot=%s usd_live=%s ckpts=%d task_robot_compatible=%s"
@@ -1250,4 +1495,4 @@ except Exception:
     print("ROBOT_TRAIN_FAILED", flush=True); traceback.print_exc(); os._exit(43)
 sys.stdout.flush(); sys.stderr.flush()
 os._exit(0)
-'''
+"""

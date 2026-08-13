@@ -8,7 +8,7 @@ Three separate live runs were needed to learn this lesson three times:
   ``<prefix>/report.json`` (run ``npa-wf-cpu-vlm-eval-token-factory-736df0b1``);
 * `mjlab eval` writes ``<prefix>/mjlab_eval.json`` while two specs declared
   ``<prefix>/report.json``.
-* Cosmos Transfer live job 339 reported SUCCEEDED for five stages in four specs,
+* Cosmos Transfer live job 339 reported SUCCEEDED for historical stages,
   but those stages promised ``manifest.json`` while the tool wrote ``index.json``
   with a different schema. The extracted implementation now publishes a canonical
   transfer manifest and retains the reference frame index as a separate contract.
@@ -47,9 +47,13 @@ def _checked_specs() -> tuple[Path, ...]:
 
     return (*iter_npa_workflow_specs(), *DIAGRAM_EXAMPLE_SPECS)
 
+
 #: toolRef prefix -> (argv flag naming the output prefix, dotted `result_uri_for`).
 RESULT_URI_TOOLS: dict[str, tuple[str, str]] = {
-    "workbench.vlm_eval.run": ("--output-path", "npa.workbench.vlm_eval:result_uri_for"),
+    "workbench.vlm_eval.run": (
+        "--output-path",
+        "npa.workbench.vlm_eval:result_uri_for",
+    ),
     "workbench.vlm_eval.loop": (
         "--output-path",
         "npa.workbench.vlm_eval:loop_report_uri_for",
@@ -127,7 +131,6 @@ JOB_339_COSMOS_OUTPUT_LOCATIONS = frozenset(
         ("cosmos-synth-fanout-curation.yaml", "synth-shard-a"),
         ("cosmos-synth-fanout-curation.yaml", "synth-shard-b"),
         ("cosmos2-transfer.yaml", "transfer"),
-        ("sim2real-vlm-rl.yaml", "augment"),
         ("tokenfactory-cosmos-gate.yaml", "augment-scene"),
     }
 )
@@ -211,7 +214,7 @@ CASES = _cases()
 
 
 def test_live_job_339_cosmos_output_regressions_remain_guarded() -> None:
-    """Keep the five historical false-success locations inside the URI/schema guard."""
+    """Keep every still-shipped historical false-success location guarded."""
 
     guarded = {
         (spec_name, state)
@@ -219,8 +222,8 @@ def test_live_job_339_cosmos_output_regressions_remain_guarded() -> None:
         if tool_ref in TRANSFER_TOOLREFS
     }
 
-    assert len(JOB_339_COSMOS_OUTPUT_LOCATIONS) == 5
-    assert len({spec for spec, _ in JOB_339_COSMOS_OUTPUT_LOCATIONS}) == 4
+    assert len(JOB_339_COSMOS_OUTPUT_LOCATIONS) == 4
+    assert len({spec for spec, _ in JOB_339_COSMOS_OUTPUT_LOCATIONS}) == 3
     assert JOB_339_COSMOS_OUTPUT_LOCATIONS <= guarded
 
 
@@ -345,7 +348,7 @@ COSMOS_TO_ENVGEN_SPECS = tuple(
 
 
 def test_there_are_cosmos_to_envgen_contracts_to_check() -> None:
-    assert len(COSMOS_TO_ENVGEN_SPECS) >= 4
+    assert len(COSMOS_TO_ENVGEN_SPECS) >= 2
 
 
 @pytest.mark.parametrize(

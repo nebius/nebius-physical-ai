@@ -127,6 +127,11 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "Commercial Use Agreement reference",
         "no LTX source, weights, or CUDA distribution present in the image",
     ],
+    "sim2real-control": [
+        "canonical compositional stage-adapter module imports",
+        "stage CLI exposes the complete 1-through-14 contract",
+        "exact baked source and immutable-image checks run before stage work",
+    ],
     "envgen": [
         "raw env generation (JSONL contract)",
         "Genesis CUDA env step (mocked in unit gate)",

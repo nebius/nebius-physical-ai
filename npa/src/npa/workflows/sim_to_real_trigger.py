@@ -123,9 +123,13 @@ class TriggerConfig:
         if self.task_cloud not in {"kubernetes", "nebius"}:
             raise SimToRealTriggerError("task_cloud must be 'kubernetes' or 'nebius'")
         if self.controller_backend not in {"kubernetes", "nebius"}:
-            raise SimToRealTriggerError("controller_backend must be 'kubernetes' or 'nebius'")
+            raise SimToRealTriggerError(
+                "controller_backend must be 'kubernetes' or 'nebius'"
+            )
         if self.submit_timeout <= 0:
-            raise SimToRealTriggerError(f"submit_timeout must be positive, got {self.submit_timeout}")
+            raise SimToRealTriggerError(
+                f"submit_timeout must be positive, got {self.submit_timeout}"
+            )
 
     @property
     def normalized_prefix(self) -> str:
@@ -150,7 +154,9 @@ class TriggerConfig:
         if self.watermark_uri:
             return self.watermark_uri
         prefix = self.normalized_prefix
-        key = "/".join(part for part in (prefix, DEFAULT_TRIGGER_WATERMARK_NAME) if part)
+        key = "/".join(
+            part for part in (prefix, DEFAULT_TRIGGER_WATERMARK_NAME) if part
+        )
         return f"s3://{self.s3_bucket}/{key}"
 
     @property
@@ -190,7 +196,9 @@ class TriggerResult:
         """Return a JSON-serializable result payload."""
 
         payload = asdict(self)
-        payload["new_objects"] = [asdict(item) | {"uri": item.uri} for item in self.new_objects]
+        payload["new_objects"] = [
+            asdict(item) | {"uri": item.uri} for item in self.new_objects
+        ]
         payload["watermark"] = self.watermark.to_payload()
         return payload
 
@@ -208,7 +216,9 @@ class WatermarkStore(Protocol):
 class PipelineLauncher(Protocol):
     """Minimal launch contract for the sim-to-real pipeline."""
 
-    def launch(self, config: TriggerConfig, objects: tuple[TriggerObject, ...]) -> PipelineLaunch:
+    def launch(
+        self, config: TriggerConfig, objects: tuple[TriggerObject, ...]
+    ) -> PipelineLaunch:
         """Launch a pipeline run for newly observed objects."""
 
 
@@ -223,13 +233,18 @@ class LocalWatermarkStore:
 
         if not self.path.exists():
             return TriggerWatermark()
-        return TriggerWatermark.from_payload(json.loads(self.path.read_text(encoding="utf-8")))
+        return TriggerWatermark.from_payload(
+            json.loads(self.path.read_text(encoding="utf-8"))
+        )
 
     def save(self, watermark: TriggerWatermark) -> None:
         """Persist a local watermark file."""
 
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(watermark.to_payload(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        self.path.write_text(
+            json.dumps(watermark.to_payload(), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
 
 
 class S3WatermarkStore:
@@ -256,21 +271,30 @@ class S3WatermarkStore:
     def save(self, watermark: TriggerWatermark) -> None:
         """Persist the watermark as JSON in S3."""
 
-        body = json.dumps(watermark.to_payload(), indent=2, sort_keys=True).encode("utf-8") + b"\n"
+        body = (
+            json.dumps(watermark.to_payload(), indent=2, sort_keys=True).encode("utf-8")
+            + b"\n"
+        )
         self.s3_client.put_object(Bucket=self.bucket, Key=self.key, Body=body)
 
 
 class SubprocessPipelineLauncher:
     """Launch the current sim-to-real SkyPilot runner as a subprocess."""
 
-    def launch(self, config: TriggerConfig, objects: tuple[TriggerObject, ...]) -> PipelineLaunch:
+    def launch(
+        self, config: TriggerConfig, objects: tuple[TriggerObject, ...]
+    ) -> PipelineLaunch:
         """Launch or render one pipeline run for a batch of new LeRobot data."""
 
         del objects
         run_id = new_run_id("sim-to-real")
         command = _pipeline_command(config, run_id=run_id)
         completed = subprocess.run(command, check=False, capture_output=True, text=True)
-        status = "rendered" if config.pipeline_render_only and completed.returncode == 0 else "launched"
+        status = (
+            "rendered"
+            if config.pipeline_render_only and completed.returncode == 0
+            else "launched"
+        )
         if completed.returncode != 0:
             raise SimToRealTriggerError(
                 "pipeline launch failed with exit code "
@@ -309,20 +333,55 @@ def build_config_from_env(**overrides: Any) -> TriggerConfig:
                 "NEBIUS_S3_ENDPOINT",
             )
         ),
-        s3_bucket=str(value("s3_bucket", "NPA_TRIGGER_S3_BUCKET", "S3_BUCKET", "NPA_S3_BUCKET")),
-        s3_prefix=str(value("s3_prefix", "NPA_TRIGGER_S3_PREFIX", "S3_PREFIX", "LEROBOT_DATASET_PREFIX")),
+        s3_bucket=str(
+            value("s3_bucket", "NPA_TRIGGER_S3_BUCKET", "S3_BUCKET", "NPA_S3_BUCKET")
+        ),
+        s3_prefix=str(
+            value(
+                "s3_prefix",
+                "NPA_TRIGGER_S3_PREFIX",
+                "S3_PREFIX",
+                "LEROBOT_DATASET_PREFIX",
+            )
+        ),
         watermark_uri=str(value("watermark_uri", "NPA_TRIGGER_WATERMARK_URI")),
         pipeline_yaml=str(value("pipeline_yaml", "NPA_TRIGGER_PIPELINE_YAML")),
         pipeline_bucket=str(value("pipeline_bucket", "NPA_TRIGGER_PIPELINE_BUCKET")),
-        pipeline_s3_prefix=str(value("pipeline_s3_prefix", "NPA_TRIGGER_PIPELINE_S3_PREFIX")),
-        pipeline_input_data_uri=str(value("pipeline_input_data_uri", "NPA_TRIGGER_PIPELINE_INPUT_DATA_URI")),
-        pipeline_render_only=_bool_value(value("pipeline_render_only", "NPA_TRIGGER_PIPELINE_RENDER_ONLY", default=False)),
-        task_cloud=str(value("task_cloud", "NPA_TRIGGER_TASK_CLOUD", default="kubernetes")),
-        controller_backend=str(value("controller_backend", "NPA_TRIGGER_CONTROLLER_BACKEND", default="kubernetes")),
+        pipeline_s3_prefix=str(
+            value("pipeline_s3_prefix", "NPA_TRIGGER_PIPELINE_S3_PREFIX")
+        ),
+        pipeline_input_data_uri=str(
+            value("pipeline_input_data_uri", "NPA_TRIGGER_PIPELINE_INPUT_DATA_URI")
+        ),
+        pipeline_render_only=_bool_value(
+            value(
+                "pipeline_render_only",
+                "NPA_TRIGGER_PIPELINE_RENDER_ONLY",
+                default=False,
+            )
+        ),
+        task_cloud=str(
+            value("task_cloud", "NPA_TRIGGER_TASK_CLOUD", default="kubernetes")
+        ),
+        controller_backend=str(
+            value(
+                "controller_backend",
+                "NPA_TRIGGER_CONTROLLER_BACKEND",
+                default="kubernetes",
+            )
+        ),
         sky_bin=str(value("sky_bin", "NPA_SKYPILOT_BIN")),
         gpu=str(value("gpu", "NPA_GPU_TYPE", default=DEFAULT_GPU_TYPE)),
-        gpu_failover=str(value("gpu_failover", "NPA_GPU_FAILOVER", default=DEFAULT_GPU_FAILOVER)),
-        submit_timeout=int(value("submit_timeout", "NPA_TRIGGER_SUBMIT_TIMEOUT", default=DEFAULT_TRIGGER_SUBMIT_TIMEOUT)),
+        gpu_failover=str(
+            value("gpu_failover", "NPA_GPU_FAILOVER", default=DEFAULT_GPU_FAILOVER)
+        ),
+        submit_timeout=int(
+            value(
+                "submit_timeout",
+                "NPA_TRIGGER_SUBMIT_TIMEOUT",
+                default=DEFAULT_TRIGGER_SUBMIT_TIMEOUT,
+            )
+        ),
     )
 
 
@@ -338,7 +397,9 @@ def run_once(
     config = config or build_config_from_env()
     config.validate()
     client = s3_client or _s3_client_from_config(config)
-    store = watermark_store or watermark_store_for_uri(config.effective_watermark_uri, s3_client=client)
+    store = watermark_store or watermark_store_for_uri(
+        config.effective_watermark_uri, s3_client=client
+    )
     previous = store.load()
     objects = tuple(list_lerobot_objects(config, s3_client=client))
     new_objects = tuple(new_lerobot_objects(objects, previous))
@@ -376,12 +437,19 @@ def watch(
     """Poll repeatedly until a bounded watch condition is reached."""
 
     if poll_interval < 0:
-        raise SimToRealTriggerError(f"poll_interval must be non-negative, got {poll_interval}")
+        raise SimToRealTriggerError(
+            f"poll_interval must be non-negative, got {poll_interval}"
+        )
     results: list[TriggerResult] = []
     launches = 0
     polls = 0
     while True:
-        result = run_once(config, s3_client=s3_client, watermark_store=watermark_store, launcher=launcher)
+        result = run_once(
+            config,
+            s3_client=s3_client,
+            watermark_store=watermark_store,
+            launcher=launcher,
+        )
         results.append(result)
         polls += 1
         if result.launch is not None:
@@ -394,11 +462,15 @@ def watch(
     return results
 
 
-def list_lerobot_objects(config: TriggerConfig, *, s3_client: Any) -> list[TriggerObject]:
+def list_lerobot_objects(
+    config: TriggerConfig, *, s3_client: Any
+) -> list[TriggerObject]:
     """List LeRobot-format objects under the configured S3 prefix."""
 
     objects: list[TriggerObject] = []
-    for item in _iter_s3_objects(s3_client, bucket=config.s3_bucket, prefix=config.normalized_prefix):
+    for item in _iter_s3_objects(
+        s3_client, bucket=config.s3_bucket, prefix=config.normalized_prefix
+    ):
         key = str(item.get("Key") or "")
         if not key or not is_lerobot_key(key, config.normalized_prefix):
             continue
@@ -427,7 +499,9 @@ def is_lerobot_key(key: str, prefix: str = "") -> bool:
         return True
     if relative.startswith("data/") and relative.endswith(".parquet"):
         return True
-    if relative.startswith("videos/") and relative.lower().endswith(LEROBOT_VIDEO_SUFFIXES):
+    if relative.startswith("videos/") and relative.lower().endswith(
+        LEROBOT_VIDEO_SUFFIXES
+    ):
         return True
     return False
 
@@ -465,9 +539,7 @@ def advance_watermark(
     max_time = max(_timestamp(obj.last_modified) for obj in objects)
     cursor_last_modified = _format_timestamp(max_time)
     signatures = {
-        obj.signature
-        for obj in objects
-        if _timestamp(obj.last_modified) == max_time
+        obj.signature for obj in objects if _timestamp(obj.last_modified) == max_time
     }
     if cursor_last_modified == previous.cursor_last_modified:
         signatures.update(previous.cursor_signatures)
@@ -521,8 +593,8 @@ def _pipeline_command(config: TriggerConfig, *, run_id: str) -> list[str]:
     ``sim-to-real-pipeline.yaml`` by editing its documents in place and whose stage ran
     ``npa.workflows.sim_to_real real-loop`` — a module that raises a ``DeprecationWarning``
     pointing at the staged sim2real engine. Watching a bucket is not deprecated, so the watcher
-    stays; what it launches is now the npa.workflow spec for the staged loop, submitted the same
-    way an operator would submit it by hand.
+    stays; what it launches is now the canonical 14-stage runbook, submitted the same way an
+    operator would submit it by hand.
     """
 
     spec = config.pipeline_yaml or str(_default_pipeline_spec())
@@ -534,8 +606,11 @@ def _pipeline_command(config: TriggerConfig, *, run_id: str) -> list[str]:
         spec,
         "--run-id",
         run_id,
+        "--runtime",
         "--var",
         f"bucket={config.effective_pipeline_bucket}",
+        "--s3-endpoint",
+        config.s3_endpoint,
         "--controller-backend",
         config.controller_backend,
         "--submit-timeout",
@@ -544,7 +619,7 @@ def _pipeline_command(config: TriggerConfig, *, run_id: str) -> list[str]:
         "json",
     ]
     if config.input_data_uri:
-        # The spec's stage 1 reads the trigger prefix; that is the whole point of the watch.
+        # Stage 1 reads the trigger prefix; that is the whole point of the watch.
         command.extend(["--var", f"trigger_uri={config.input_data_uri}"])
     pipeline_prefix = _pipeline_prefix(config, run_id=run_id)
     if pipeline_prefix:
@@ -552,13 +627,7 @@ def _pipeline_command(config: TriggerConfig, *, run_id: str) -> list[str]:
     if config.sky_bin:
         command.extend(["--sky-bin", config.sky_bin])
     if config.pipeline_render_only:
-        # `validate-spec` is the submit path's dry run: it resolves every config token and
-        # builds the plan without launching anything.
-        command[3] = "validate-spec"
-        for flag in ("--controller-backend", "--submit-timeout", "--sky-bin"):
-            while flag in command:
-                index = command.index(flag)
-                del command[index : index + 2]
+        command.append("--plan-only")
     return command
 
 
@@ -568,15 +637,15 @@ def _pipeline_prefix(config: TriggerConfig, *, run_id: str) -> str:
     return config.pipeline_s3_prefix.format(run_id=run_id).strip("/")
 
 
-#: The npa.workflow spec the watcher launches: the staged VLM-to-RL loop.
-DEFAULT_PIPELINE_SPEC = "sim2real-vlm-rl.yaml"
+#: The single canonical workflow the watcher launches: the staged VLM-to-RL loop.
+DEFAULT_PIPELINE_SPEC = "workbench/npa-workflows/sim2real.yaml"
 
 
 def _default_pipeline_spec() -> Path:
     """Resolve the shipped spec, from a checkout or an installed wheel alike."""
 
     root = Path(__file__).resolve().parents[3]
-    path = root / "workflows" / "workbench" / "npa-workflows" / DEFAULT_PIPELINE_SPEC
+    path = root / "workflows" / DEFAULT_PIPELINE_SPEC
     if not path.exists():
         raise SimToRealTriggerError(f"sim2real workflow spec not found: {path}")
     return path
@@ -586,7 +655,9 @@ def _s3_client_from_config(config: TriggerConfig) -> Any:
     try:
         import boto3
     except ImportError as exc:
-        raise SimToRealTriggerError("boto3 is required for S3-compatible trigger polling") from exc
+        raise SimToRealTriggerError(
+            "boto3 is required for S3-compatible trigger polling"
+        ) from exc
     return boto3.client(
         "s3",
         endpoint_url=config.s3_endpoint,
@@ -623,12 +694,14 @@ def _relative_key(key: str, prefix: str) -> str:
         return key.lstrip("/")
     prefix_dir = normalized_prefix.rstrip("/") + "/"
     if key.startswith(prefix_dir):
-        return key[len(prefix_dir):]
+        return key[len(prefix_dir) :]
     return key
 
 
 def _watched_uri(config: TriggerConfig) -> str:
-    suffix = f"/{config.normalized_prefix.rstrip('/')}/" if config.normalized_prefix else "/"
+    suffix = (
+        f"/{config.normalized_prefix.rstrip('/')}/" if config.normalized_prefix else "/"
+    )
     return f"s3://{config.s3_bucket}{suffix}"
 
 
@@ -644,7 +717,12 @@ def _is_missing_s3_object(exc: Exception) -> bool:
     code = ""
     if isinstance(response, dict):
         code = str(response.get("Error", {}).get("Code") or "")
-    return code in {"NoSuchKey", "NoSuchBucket", "404", "NotFound"} or exc.__class__.__name__ in {
+    return code in {
+        "NoSuchKey",
+        "NoSuchBucket",
+        "404",
+        "NotFound",
+    } or exc.__class__.__name__ in {
         "NoSuchKey",
         "NoSuchBucket",
     }
@@ -692,9 +770,21 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         sub = subparsers.add_parser(name)
         _add_common_args(sub)
         if name == "watch":
-            sub.add_argument("--poll-interval", type=int, default=int(os.environ.get("NPA_TRIGGER_POLL_INTERVAL", "60")))
-            sub.add_argument("--max-polls", type=int, default=int(os.environ.get("NPA_TRIGGER_MAX_POLLS", "0")))
-            sub.add_argument("--max-launches", type=int, default=int(os.environ.get("NPA_TRIGGER_MAX_LAUNCHES", "0")))
+            sub.add_argument(
+                "--poll-interval",
+                type=int,
+                default=int(os.environ.get("NPA_TRIGGER_POLL_INTERVAL", "60")),
+            )
+            sub.add_argument(
+                "--max-polls",
+                type=int,
+                default=int(os.environ.get("NPA_TRIGGER_MAX_POLLS", "0")),
+            )
+            sub.add_argument(
+                "--max-launches",
+                type=int,
+                default=int(os.environ.get("NPA_TRIGGER_MAX_LAUNCHES", "0")),
+            )
     return parser.parse_args(argv)
 
 
@@ -708,12 +798,18 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--pipeline-s3-prefix", default="")
     parser.add_argument("--pipeline-input-data-uri", default="")
     parser.add_argument("--pipeline-render-only", action="store_true")
-    parser.add_argument("--task-cloud", choices=("kubernetes", "nebius"), default="kubernetes")
-    parser.add_argument("--controller-backend", choices=("kubernetes", "nebius"), default="kubernetes")
+    parser.add_argument(
+        "--task-cloud", choices=("kubernetes", "nebius"), default="kubernetes"
+    )
+    parser.add_argument(
+        "--controller-backend", choices=("kubernetes", "nebius"), default="kubernetes"
+    )
     parser.add_argument("--sky-bin", default="")
     parser.add_argument("--gpu", default=DEFAULT_GPU_TYPE)
     parser.add_argument("--gpu-failover", default=DEFAULT_GPU_FAILOVER)
-    parser.add_argument("--submit-timeout", type=int, default=DEFAULT_TRIGGER_SUBMIT_TIMEOUT)
+    parser.add_argument(
+        "--submit-timeout", type=int, default=DEFAULT_TRIGGER_SUBMIT_TIMEOUT
+    )
 
 
 if __name__ == "__main__":

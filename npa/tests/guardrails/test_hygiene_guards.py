@@ -26,7 +26,9 @@ def _test_paths() -> list[Path]:
 
 def test_no_unsupported_skypilot_down_or_autodown() -> None:
     hits = scan_for_forbidden_teardown(_workflow_and_script_paths())
-    assert not hits, "\n".join(f"{hit.path}:{hit.line_number}: {hit.line}" for hit in hits)
+    assert not hits, "\n".join(
+        f"{hit.path}:{hit.line_number}: {hit.line}" for hit in hits
+    )
 
 
 def test_teardown_guard_catches_broken_fixture(tmp_path: Path) -> None:
@@ -40,7 +42,9 @@ def test_teardown_guard_catches_broken_fixture(tmp_path: Path) -> None:
 
 
 def test_skypilot_launching_scripts_without_sigterm_are_warned() -> None:
-    missing = skypilot_launching_scripts_missing_sigterm(sorted((REPO_ROOT / "npa" / "scripts").glob("*.py")))
+    missing = skypilot_launching_scripts_missing_sigterm(
+        sorted((REPO_ROOT / "npa" / "scripts").glob("*.py"))
+    )
     for path in missing:
         warnings.warn(
             f"SkyPilot-launching script lacks an explicit SIGTERM hook: {path.relative_to(REPO_ROOT)}",
@@ -49,7 +53,9 @@ def test_skypilot_launching_scripts_without_sigterm_are_warned() -> None:
         )
 
 
-def test_calling_the_shared_teardown_helper_counts_as_a_sigterm_hook(tmp_path: Path) -> None:
+def test_calling_the_shared_teardown_helper_counts_as_a_sigterm_hook(
+    tmp_path: Path,
+) -> None:
     """The check matched the literal word, so it flagged scripts that do the right thing.
 
     `install_teardown_signal_handlers` installs SIGTERM/SIGINT handlers that run the
@@ -117,8 +123,12 @@ def _cuda_skip_violations(path: Path) -> list[str]:
         if _is_pytest_skip(node):
             parent = parents.get(node)
             while parent is not None:
-                if isinstance(parent, ast.If) and _mentions_local_cuda(parent.test, source):
-                    violations.append(f"{path}:{node.lineno}: GPU skip depends on local CUDA")
+                if isinstance(parent, ast.If) and _mentions_local_cuda(
+                    parent.test, source
+                ):
+                    violations.append(
+                        f"{path}:{node.lineno}: GPU skip depends on local CUDA"
+                    )
                     break
                 parent = parents.get(parent)
     return violations
@@ -193,8 +203,15 @@ def test_monolith_modules_do_not_grow() -> None:
         # string. Count reviewable Python lines, not the generated payload; the
         # reconciler itself lives in agent_setup_convergence.py.
         "npa/src/npa/cli/agent.py": 3_700,
-        "npa/src/npa/workflows/sim2real_loop.py": 5_800,
-        "npa/src/npa/workflows/sim2real/engine.py": 5_600,
+        "npa/src/npa/workflows/sim2real_loop.py": 100,
+        "npa/src/npa/workflows/sim2real/engine.py": 200,
+        "npa/src/npa/workflows/sim2real/legacy_artifacts.py": 150,
+        "npa/src/npa/workflows/sim2real/legacy_components.py": 1_800,
+        "npa/src/npa/workflows/sim2real/legacy_heldout.py": 1_300,
+        "npa/src/npa/workflows/sim2real/legacy_isaac.py": 1_100,
+        "npa/src/npa/workflows/sim2real/legacy_orchestration.py": 1_150,
+        "npa/src/npa/workflows/sim2real/workflow_stage.py": 1_050,
+        "npa/src/npa/workflows/sim2real/stage_execution.py": 700,
         "npa/src/npa/cli/groot/__init__.py": 4_400,
         "npa/src/npa/cli/fiftyone/__init__.py": 4_250,
         "npa/src/npa/cli/cosmos/__init__.py": 4_050,
@@ -212,17 +229,16 @@ def test_monolith_modules_do_not_grow() -> None:
             # supported interpreter and also handle ordinary multiline strings.
             for node in ast.walk(ast.parse(source, filename=str(path))):
                 is_string = (
-                    isinstance(node, ast.Constant)
-                    and isinstance(node.value, str)
+                    isinstance(node, ast.Constant) and isinstance(node.value, str)
                 ) or isinstance(node, ast.JoinedStr)
                 if is_string and node.end_lineno and node.end_lineno > node.lineno:
-                    generated_lines.update(
-                        range(node.lineno + 1, node.end_lineno + 1)
-                    )
+                    generated_lines.update(range(node.lineno + 1, node.end_lineno + 1))
             lines -= len(generated_lines)
         if lines > cap:
             over.append(f"{rel_path}: {lines} lines > cap {cap}")
-    assert not over, "Monolith size ratchet exceeded — split, don't grow:\n" + "\n".join(over)
+    assert not over, (
+        "Monolith size ratchet exceeded — split, don't grow:\n" + "\n".join(over)
+    )
 
 
 def test_no_silent_except_exception_pass() -> None:

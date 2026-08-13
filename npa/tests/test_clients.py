@@ -24,7 +24,9 @@ def test_http_client_builds_request_and_returns_json(mocker) -> None:
     client = HTTPClient("http://server/", timeout=10, retries=1)
 
     assert client.health() == {"status": "ok"}
-    request.assert_called_once_with("GET", "http://server/health", json=None, timeout=10)
+    request.assert_called_once_with(
+        "GET", "http://server/health", json=None, timeout=10
+    )
 
 
 def test_http_client_fetches_job_status(mocker) -> None:
@@ -36,7 +38,9 @@ def test_http_client_fetches_job_status(mocker) -> None:
         "job_id": "job/1",
         "status": "completed",
     }
-    request.assert_called_once_with("GET", "http://server/jobs/job%2F1", json=None, timeout=3.0)
+    request.assert_called_once_with(
+        "GET", "http://server/jobs/job%2F1", json=None, timeout=3.0
+    )
 
 
 def test_http_client_maps_client_and_server_errors(mocker) -> None:
@@ -91,7 +95,12 @@ def test_storage_client_requires_endpoint() -> None:
 def test_storage_client_lists_checkpoints(mock_s3) -> None:
     paginator = mock_s3.get_paginator.return_value
     paginator.paginate.return_value = [
-        {"CommonPrefixes": [{"Prefix": "checkpoints/job-a/"}, {"Prefix": "checkpoints/job-b/"}]}
+        {
+            "CommonPrefixes": [
+                {"Prefix": "checkpoints/job-a/"},
+                {"Prefix": "checkpoints/job-b/"},
+            ]
+        }
     ]
     client = StorageClient(
         endpoint_url="https://storage",
@@ -127,7 +136,9 @@ def test_storage_client_uploads_and_downloads_directories(
         aws_secret_access_key="secret",
     )
 
-    uploaded = client.upload_directory(str(local), "s3://bucket/base", remote_prefix="run")
+    uploaded = client.upload_directory(
+        str(local), "s3://bucket/base", remote_prefix="run"
+    )
     download_dir = tmp_path / "download"
     downloaded = client.download_directory("s3://bucket/prefix", str(download_dir))
 
@@ -157,9 +168,7 @@ def test_storage_client_downloads_object_via_head_object_when_list_is_empty(
         aws_secret_access_key="secret",
     )
 
-    downloaded = client.download_path(
-        "s3://bucket/prefix/result.json", str(local)
-    )
+    downloaded = client.download_path("s3://bucket/prefix/result.json", str(local))
 
     assert downloaded == str(local)
     mock_s3.head_object.assert_called_once_with(
@@ -170,9 +179,31 @@ def test_storage_client_downloads_object_via_head_object_when_list_is_empty(
     )
 
 
-def test_storage_client_uploads_and_downloads_files(
+def test_storage_client_downloads_exact_object_without_list_or_head(
     tmp_path: Path, mock_s3
 ) -> None:
+    body = mock_s3.get_object.return_value["Body"]
+    body.iter_chunks.return_value = [b"checkpoint", b"-bytes"]
+    client = StorageClient(
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
+    )
+    local = tmp_path / "model.pt"
+
+    downloaded = client.download_file("s3://bucket/checkpoints/model.pt", str(local))
+
+    assert downloaded == str(local)
+    mock_s3.get_object.assert_called_once_with(
+        Bucket="bucket", Key="checkpoints/model.pt"
+    )
+    assert local.read_bytes() == b"checkpoint-bytes"
+    body.close.assert_called_once_with()
+    mock_s3.head_object.assert_not_called()
+    mock_s3.get_paginator.assert_not_called()
+
+
+def test_storage_client_uploads_and_downloads_files(tmp_path: Path, mock_s3) -> None:
     local = tmp_path / "result.json"
     local.write_text("{}")
     paginator = mock_s3.get_paginator.return_value
@@ -325,9 +356,9 @@ def test_ssh_download_file_uses_sftp(tmp_path: Path, mocker) -> None:
     mocker.patch("paramiko.SSHClient", return_value=paramiko_client)
 
     local = tmp_path / "nested" / "out.mp4"
-    result = SSHClient(SSHConfig(host="host", user="ubuntu", key_path="key")).download_file(
-        "/remote/out.mp4", str(local)
-    )
+    result = SSHClient(
+        SSHConfig(host="host", user="ubuntu", key_path="key")
+    ).download_file("/remote/out.mp4", str(local))
 
     assert result == str(local)
     sftp.get.assert_called_once_with("/remote/out.mp4", str(local))
@@ -355,15 +386,15 @@ def test_ssh_private_text_is_owner_only_before_secret_write(mocker) -> None:
     sftp.open.side_effect = lambda path, mode: (
         events.append(("open", path, mode)) or RemoteFile()
     )
-    sftp.chmod.side_effect = lambda path, mode: events.append(
-        ("chmod", path, mode)
-    )
+    sftp.chmod.side_effect = lambda path, mode: events.append(("chmod", path, mode))
     paramiko_client = mocker.MagicMock()
     paramiko_client.open_sftp.return_value = sftp
     mocker.patch("paramiko.SSHClient", return_value=paramiko_client)
 
     client = SSHClient(SSHConfig(host="host", user="ubuntu", key_path="key"))
-    assert client.upload_private_text("SECRET-SENTINEL", "/tmp/private") == "/tmp/private"
+    assert (
+        client.upload_private_text("SECRET-SENTINEL", "/tmp/private") == "/tmp/private"
+    )
 
     assert events[:3] == [
         ("open", "/tmp/private", "wx"),
@@ -518,7 +549,9 @@ def test_nebius_iam_token_from_env(mocker) -> None:
 def test_nebius_iam_token_from_file_when_cli_unconfigured(mocker) -> None:
     mocker.patch("npa.clients.nebius._run", side_effect=NebiusError("no profile"))
     mocker.patch("npa.clients.nebius._env_iam_token", return_value="")
-    mocker.patch("npa.clients.nebius._candidate_iam_token_files", return_value=["/tmp/token"])
+    mocker.patch(
+        "npa.clients.nebius._candidate_iam_token_files", return_value=["/tmp/token"]
+    )
     mocker.patch("npa.clients.nebius._read_iam_token_file", return_value="file-token")
 
     assert nebius.get_iam_token() == "file-token"
@@ -540,9 +573,10 @@ def test_nebius_service_account_reuses_existing(mocker) -> None:
     )
 
     created: list[str] = []
-    assert nebius.ensure_service_account(
-        "project", name="svc", on_created=created.append
-    ) == "sa-id"
+    assert (
+        nebius.ensure_service_account("project", name="svc", on_created=created.append)
+        == "sa-id"
+    )
     assert created == []
     run_json.assert_called_once()
 
@@ -572,9 +606,15 @@ def test_nebius_service_account_creates_when_not_found_despite_saved(mocker) -> 
             {"metadata": {"id": "serviceaccount-new"}},
         ],
     )
-    mocker.patch("npa.clients.nebius._saved_service_account_id", return_value="serviceaccount-saved")
+    mocker.patch(
+        "npa.clients.nebius._saved_service_account_id",
+        return_value="serviceaccount-saved",
+    )
 
-    assert nebius.ensure_service_account("project", name="npa-agent") == "serviceaccount-new"
+    assert (
+        nebius.ensure_service_account("project", name="npa-agent")
+        == "serviceaccount-new"
+    )
     assert run_json.call_count == 2
 
 
@@ -588,9 +628,7 @@ def test_nebius_service_account_reports_ownership_only_when_created(mocker) -> N
     )
     created: list[str] = []
 
-    account_id = nebius.ensure_service_account(
-        "project", on_created=created.append
-    )
+    account_id = nebius.ensure_service_account("project", on_created=created.append)
 
     assert account_id == "serviceaccount-created"
     assert created == ["serviceaccount-created"]
@@ -600,12 +638,16 @@ def test_nebius_service_account_reports_ownership_only_when_created(mocker) -> N
 def test_nebius_bootstrap_returns_verifiable_storage_account_ownership(mocker) -> None:
     mocker.patch("npa.clients.nebius.get_iam_token", return_value="iam")
 
-    def create_account(project_id, name="lerobot-training", *, description="", on_created=None):
+    def create_account(
+        project_id, name="lerobot-training", *, description="", on_created=None
+    ):
         if on_created:
             on_created("serviceaccount-created")
         return "serviceaccount-created"
 
-    mocker.patch("npa.clients.nebius.ensure_service_account", side_effect=create_account)
+    mocker.patch(
+        "npa.clients.nebius.ensure_service_account", side_effect=create_account
+    )
     mocker.patch("npa.clients.nebius.ensure_bucket")
     mocker.patch(
         "npa.clients.nebius.get_bucket_by_name",
@@ -664,7 +706,9 @@ def test_nebius_bootstrap_stops_before_bucket_or_key_when_required_iam_fails(
     mocker.patch("npa.clients.nebius.ensure_service_account", return_value="sa-id")
     mocker.patch(
         "npa.clients.nebius.ensure_storage_capability_binding",
-        side_effect=nebius.NebiusError("rpc error: PermissionDenied desc = No permission"),
+        side_effect=nebius.NebiusError(
+            "rpc error: PermissionDenied desc = No permission"
+        ),
     )
     bucket = mocker.patch("npa.clients.nebius.ensure_bucket", return_value="bucket")
     mocker.patch(
@@ -686,7 +730,9 @@ def test_nebius_bootstrap_stops_before_bucket_or_key_when_required_iam_fails(
     key.assert_not_called()
 
 
-def test_nebius_bootstrap_reuses_saved_storage_on_access_key_permission_denied(mocker) -> None:
+def test_nebius_bootstrap_reuses_saved_storage_on_access_key_permission_denied(
+    mocker,
+) -> None:
     mocker.patch("npa.clients.nebius.get_iam_token", return_value="iam")
     mocker.patch("npa.clients.nebius.ensure_service_account", return_value="sa-id")
     mocker.patch("npa.clients.nebius.ensure_bucket", return_value="bucket")
@@ -847,7 +893,9 @@ def test_access_key_inventory_tolerates_mixed_unrelated_entries(mocker) -> None:
     )
 
 
-def test_access_key_inventory_rejects_conflicting_service_account_shapes(mocker) -> None:
+def test_access_key_inventory_rejects_conflicting_service_account_shapes(
+    mocker,
+) -> None:
     mocker.patch(
         "npa.clients.nebius._run",
         side_effect=[
@@ -1041,7 +1089,9 @@ def test_nebius_plain_text_diagnostics_redact_nested_secret_field_variants() -> 
         assert canary not in redacted
 
 
-def test_nebius_ensure_access_key_does_not_delete_existing_key_without_secret(mocker) -> None:
+def test_nebius_ensure_access_key_does_not_delete_existing_key_without_secret(
+    mocker,
+) -> None:
     existing = {
         "metadata": {"id": "existing-id", "name": "lerobot-access-key"},
         "spec": {"account": {"service_account_id": "sa"}},
@@ -1064,7 +1114,9 @@ def test_nebius_ensure_access_key_does_not_delete_existing_key_without_secret(mo
     run.assert_not_called()
     create_args = run_json.call_args_list[2].args[0]
     assert create_args[:4] == ["iam", "v2", "access-key", "create"]
-    assert create_args[create_args.index("--name") + 1].startswith("lerobot-access-key-")
+    assert create_args[create_args.index("--name") + 1].startswith(
+        "lerobot-access-key-"
+    )
 
 
 def test_nebius_bucket_name_and_bootstrap_order(mocker) -> None:
@@ -1259,7 +1311,10 @@ def test_agent_bootstrap_removes_a_rolled_back_key_on_a_reused_account(
 
 
 def test_resolve_service_account_id_uses_saved_config(mocker) -> None:
-    mocker.patch("npa.clients.nebius._saved_service_account_id", return_value="serviceaccount-saved")
+    mocker.patch(
+        "npa.clients.nebius._saved_service_account_id",
+        return_value="serviceaccount-saved",
+    )
     assert nebius.resolve_service_account_id("project") == "serviceaccount-saved"
 
 
@@ -1268,7 +1323,9 @@ def test_resolve_service_account_id_parses_permission_denied_lookup(mocker) -> N
     mocker.patch(
         "npa.clients.nebius.get_service_account_id_by_name",
         side_effect=lambda _project, name: (
-            "serviceaccount-u00s24wzj2wk8z9tqq" if name == nebius.DEFAULT_SERVICE_ACCOUNT_NAME else None
+            "serviceaccount-u00s24wzj2wk8z9tqq"
+            if name == nebius.DEFAULT_SERVICE_ACCOUNT_NAME
+            else None
         ),
     )
 
@@ -1277,7 +1334,9 @@ def test_resolve_service_account_id_parses_permission_denied_lookup(mocker) -> N
     )
 
 
-def test_get_service_account_id_by_name_parses_id_from_permission_denied(mocker) -> None:
+def test_get_service_account_id_by_name_parses_id_from_permission_denied(
+    mocker,
+) -> None:
     mocker.patch(
         "npa.clients.nebius._run_json",
         side_effect=nebius.NebiusError(
@@ -1291,23 +1350,31 @@ def test_get_service_account_id_by_name_parses_id_from_permission_denied(mocker)
     )
 
 
-def test_strict_service_account_name_lookup_rejects_ambiguous_empty_success(mocker) -> None:
+def test_strict_service_account_name_lookup_rejects_ambiguous_empty_success(
+    mocker,
+) -> None:
     mocker.patch("npa.clients.nebius._run_json", return_value={})
 
-    with pytest.raises(NebiusError, match="presence or absence could not be established"):
+    with pytest.raises(
+        NebiusError, match="presence or absence could not be established"
+    ):
         nebius.get_service_account_id_by_name(
             "project", "lerobot-training", strict=True
         )
 
 
-def test_exact_service_account_verification_rejects_ambiguous_empty_success(mocker) -> None:
+def test_exact_service_account_verification_rejects_ambiguous_empty_success(
+    mocker,
+) -> None:
     mocker.patch("npa.clients.nebius._run_json", return_value={})
 
     with pytest.raises(NebiusError, match="no service-account ID"):
         nebius.service_account_exists("serviceaccount-storage")
 
 
-def test_exact_service_account_identity_verifies_profile_project_and_tenant(mocker) -> None:
+def test_exact_service_account_identity_verifies_profile_project_and_tenant(
+    mocker,
+) -> None:
     run_json = mocker.patch(
         "npa.clients.nebius._run_json",
         side_effect=[
@@ -1349,7 +1416,9 @@ def test_exact_service_account_identity_verifies_profile_project_and_tenant(mock
     ]
 
 
-def test_exact_service_account_identity_never_treats_missing_scope_as_absence(mocker) -> None:
+def test_exact_service_account_identity_never_treats_missing_scope_as_absence(
+    mocker,
+) -> None:
     mocker.patch(
         "npa.clients.nebius._run_json",
         return_value={
@@ -1369,12 +1438,16 @@ def test_exact_service_account_identity_never_treats_missing_scope_as_absence(mo
         )
 
 
-def test_nebius_bootstrap_agent_environment_falls_back_on_permission_denied(mocker) -> None:
+def test_nebius_bootstrap_agent_environment_falls_back_on_permission_denied(
+    mocker,
+) -> None:
     mocker.patch(
         "npa.clients.nebius.bootstrap_environment",
         side_effect=nebius.NebiusError("Permission denied PermissionDenied"),
     )
-    mocker.patch("npa.clients.nebius.get_service_account_id_by_name", return_value="sa-existing")
+    mocker.patch(
+        "npa.clients.nebius.get_service_account_id_by_name", return_value="sa-existing"
+    )
     mocker.patch(
         "npa.clients.nebius._saved_storage_credentials",
         return_value={
@@ -1487,7 +1560,10 @@ def test_nebius_ensure_bucket_reuses_existing_without_create(mocker) -> None:
     mocker.patch("npa.clients.nebius.bucket_exists", return_value=True)
     run = mocker.patch("npa.clients.nebius._run")
 
-    assert nebius.ensure_bucket("project", "npa-bucket-abc", max_size_bytes=123) == "npa-bucket-abc"
+    assert (
+        nebius.ensure_bucket("project", "npa-bucket-abc", max_size_bytes=123)
+        == "npa-bucket-abc"
+    )
     run.assert_not_called()
 
 
@@ -1521,7 +1597,9 @@ def test_nebius_ensure_bucket_reuses_on_already_exists_conflict(mocker) -> None:
     assert nebius.ensure_bucket("project", "npa-bucket-abc") == "npa-bucket-abc"
 
 
-def test_nebius_ensure_bucket_reports_clear_conflict_when_name_taken_elsewhere(mocker) -> None:
+def test_nebius_ensure_bucket_reports_clear_conflict_when_name_taken_elsewhere(
+    mocker,
+) -> None:
     # Name is globally taken but not in this project -> a real, actionable
     # conflict rather than a raw create error.
     mocker.patch("npa.clients.nebius.bucket_exists", return_value=False)
@@ -1552,7 +1630,10 @@ def test_nebius_ensure_bucket_applies_enhanced_storage_class(mocker) -> None:
 def test_nebius_normalize_bucket_storage_class() -> None:
     assert nebius.normalize_bucket_storage_class("") == "standard"
     assert nebius.normalize_bucket_storage_class("enhanced") == "enhanced_throughput"
-    assert nebius.normalize_bucket_storage_class("ENHANCED_THROUGHPUT") == "enhanced_throughput"
+    assert (
+        nebius.normalize_bucket_storage_class("ENHANCED_THROUGHPUT")
+        == "enhanced_throughput"
+    )
 
 
 def test_nebius_ensure_bucket_unlimited_omits_max_size(mocker) -> None:
@@ -1661,8 +1742,22 @@ def test_nebius_list_accessible_projects_spans_tenants(mocker) -> None:
     mocker.patch(
         "npa.clients.nebius.list_projects_in_tenant",
         side_effect=[
-            [{"id": "project-1", "name": "p1", "tenant_id": "tenant-a", "region": "eu-north1"}],
-            [{"id": "project-2", "name": "p2", "tenant_id": "tenant-b", "region": "us-central1"}],
+            [
+                {
+                    "id": "project-1",
+                    "name": "p1",
+                    "tenant_id": "tenant-a",
+                    "region": "eu-north1",
+                }
+            ],
+            [
+                {
+                    "id": "project-2",
+                    "name": "p2",
+                    "tenant_id": "tenant-b",
+                    "region": "us-central1",
+                }
+            ],
         ],
     )
 
@@ -1715,7 +1810,9 @@ def test_nebius_discover_container_registry_prefers_eu_north1(mocker) -> None:
     )
 
 
-def test_nebius_discover_container_registry_falls_back_when_no_eu_north1(mocker) -> None:
+def test_nebius_discover_container_registry_falls_back_when_no_eu_north1(
+    mocker,
+) -> None:
     mocker.patch(
         "npa.clients.nebius._run_json",
         return_value={
@@ -1747,7 +1844,10 @@ def test_nebius_discover_container_registry_best_effort_on_error(mocker) -> None
 def test_nebius_get_project_region_reads_status(mocker) -> None:
     mocker.patch(
         "npa.clients.nebius._run_json",
-        return_value={"status": {"region": "uk-south1"}, "spec": {"region": "eu-north1"}},
+        return_value={
+            "status": {"region": "uk-south1"},
+            "spec": {"region": "eu-north1"},
+        },
     )
 
     assert nebius.get_project_region("project-abc") == "uk-south1"
@@ -1910,21 +2010,29 @@ def _compute_instance_quota_items() -> dict:
 
 
 def test_nebius_compute_instance_quota_matches_region(mocker) -> None:
-    mocker.patch("npa.clients.nebius._run_json", return_value=_compute_instance_quota_items())
+    mocker.patch(
+        "npa.clients.nebius._run_json", return_value=_compute_instance_quota_items()
+    )
 
     assert nebius.get_compute_instance_quota("tenant-x", "us-central1") == (2, 5)
 
 
-def test_nebius_compute_instance_quota_limit_zero_reads_missing_usage_as_zero(mocker) -> None:
+def test_nebius_compute_instance_quota_limit_zero_reads_missing_usage_as_zero(
+    mocker,
+) -> None:
     """A real `limit 0` with no `status.usage` must gate (usage 0 >= limit 0)."""
-    mocker.patch("npa.clients.nebius._run_json", return_value=_compute_instance_quota_items())
+    mocker.patch(
+        "npa.clients.nebius._run_json", return_value=_compute_instance_quota_items()
+    )
 
     usage, limit = nebius.get_compute_instance_quota("tenant-x", "eu-north1")
     assert (usage, limit) == (0, 0)
 
 
 def test_nebius_compute_instance_quota_falls_back_to_region_less(mocker) -> None:
-    mocker.patch("npa.clients.nebius._run_json", return_value=_compute_instance_quota_items())
+    mocker.patch(
+        "npa.clients.nebius._run_json", return_value=_compute_instance_quota_items()
+    )
 
     # No per-region match for uk-south1 -> the tenant-wide allowance is used.
     assert nebius.get_compute_instance_quota("tenant-x", "uk-south1") == (1, 7)
@@ -1934,6 +2042,8 @@ def test_nebius_compute_instance_quota_best_effort_on_error(mocker) -> None:
     mocker.patch("npa.clients.nebius._run_json", side_effect=NebiusError("denied"))
 
     assert nebius.get_compute_instance_quota("tenant-x", "us-central1") == (None, None)
+
+
 def test_lazy_storage_client_does_not_connect_until_it_is_used(monkeypatch) -> None:
     """Holding one must be free; the whole point is local runs need no credentials."""
 
@@ -1944,7 +2054,9 @@ def test_lazy_storage_client_does_not_connect_until_it_is_used(monkeypatch) -> N
     def explode(**kwargs: object) -> object:
         raise AssertionError("built a StorageClient without a remote URI being touched")
 
-    monkeypatch.setattr(storage.StorageClient, "from_environment", staticmethod(explode))
+    monkeypatch.setattr(
+        storage.StorageClient, "from_environment", staticmethod(explode)
+    )
     client = storage.LazyStorageClient()
 
     # Several stdlib paths probe for dunders; forwarding those would connect.

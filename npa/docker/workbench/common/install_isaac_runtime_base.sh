@@ -35,6 +35,9 @@ set -euo pipefail
 TORCH_VERSION="${TORCH_VERSION:-2.9.0}"
 TORCHVISION_VERSION="${TORCHVISION_VERSION:-0.24.0}"
 TORCHAUDIO_VERSION="${TORCHAUDIO_VERSION:-2.9.0}"
+UBUNTU_SNAPSHOT="${NPA_UBUNTU_SNAPSHOT:-20260801T053000Z}"
+PYTHON_VERSION="${NPA_ISAAC_PYTHON_VERSION:-3.11.15-1+jammy1}"
+DEADSNAKES_POOL="${NPA_DEADSNAKES_POOL:-https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu/pool/main/p/python3.11}"
 # cu128 wheels carry sm_120 kernels, which RTX PRO 6000 Blackwell (compute capability
 # 12.0) requires. Verified in-pod: torch._C._cuda_getArchFlags() reports
 # "sm_70 sm_75 sm_80 sm_86 sm_90 sm_100 sm_120".
@@ -57,14 +60,24 @@ export DEBIAN_FRONTEND=noninteractive
 log() { printf '\n=== install_isaac_runtime_base: %s ===\n' "$*"; }
 
 log "system packages"
+rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
+  /etc/apt/sources.list.d/*.sources
+printf '%s\n' \
+  'Types: deb' \
+  "URIs: https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/" \
+  'Suites: jammy jammy-updates jammy-backports jammy-security' \
+  'Components: main restricted universe multiverse' \
+  'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
+  > /etc/apt/sources.list.d/ubuntu.sources
 apt-get update
+# CUDA's Jammy base retains an old linux-libc-dev build. These are development
+# headers rather than the host kernel, but the fixed immutable-snapshot build is
+# available, so upgrade it explicitly instead of carrying avoidable critical CVEs.
 apt-get install -y --no-install-recommends \
   ca-certificates \
   curl \
   git \
   git-lfs \
-  gnupg \
-  software-properties-common \
   libegl1 \
   libgl1 \
   libglu1-mesa \
@@ -72,17 +85,35 @@ apt-get install -y --no-install-recommends \
   libx11-6 \
   libxext6 \
   libxrender1 \
+  linux-libc-dev=5.15.0-186.196 \
   libxt6 `# MaterialX render libs dlopen libXt.so.6; without it Kit logs three
           # "Could not load the dynamic library ... libMaterialXRender*.so" errors` \
   vulkan-tools
 
-# Isaac needs python3.11 exactly; Ubuntu 22.04 ships 3.10.
-add-apt-repository -y ppa:deadsnakes/ppa
-apt-get update
-apt-get install -y --no-install-recommends \
-  python3.11 \
-  python3.11-dev \
-  python3.11-venv
+# Isaac needs python3.11 exactly; Ubuntu 22.04 ships 3.10. Do not add the
+# moving deadsnakes apt repository. Fetch the reviewed version's immutable
+# package paths and verify every byte against the SHA-256 recorded in the PPA
+# Packages index before apt resolves their Ubuntu dependencies from the fixed
+# snapshot above.
+install -d -m 0755 /tmp/npa-python311
+while IFS='|' read -r filename digest; do
+  curl --fail --location --retry 3 \
+    "${DEADSNAKES_POOL}/${filename}" \
+    --output "/tmp/npa-python311/${filename}"
+  printf '%s  %s\n' "$digest" "/tmp/npa-python311/${filename}" | sha256sum --check --strict
+done <<'PYTHON311_DEBS'
+libpython3.11_3.11.15-1+jammy1_amd64.deb|1ef8897f4f56b7e90a2c4bc07b68a7074b77567e4b112ded3331365eb3c10fc2
+libpython3.11-dev_3.11.15-1+jammy1_amd64.deb|1adc394918add62fb6e497382046d67b66d4d73cc887cb8be597d9e623db98ad
+libpython3.11-minimal_3.11.15-1+jammy1_amd64.deb|2242dc4450d5ef4bb51aa162229dcae9f921f13c44322aefc1a132631afe9493
+libpython3.11-stdlib_3.11.15-1+jammy1_amd64.deb|4d9264d06f37fef6515da083efea8f4aed3225b6fcdfaf3ae69fdd22fbaa19fc
+python3.11_3.11.15-1+jammy1_amd64.deb|83432e1464c31af89c0e7df5ca9e4655db1eeb3f0cf2427efb3c4c41d64b9e2e
+python3.11-dev_3.11.15-1+jammy1_amd64.deb|f50550d76be43a305fa894ab001b76de635738ffbbccc381c43bd205b27efccb
+python3.11-minimal_3.11.15-1+jammy1_amd64.deb|7de0e5a79cb46d2c017b3a882980d2ff9d943b3cd2a2c6fdccab6010f1fcd736
+python3.11-venv_3.11.15-1+jammy1_amd64.deb|65edd1c51e458d118bee721d0815e0cbcb940ab351d851037a29f5f07a1beef8
+PYTHON311_DEBS
+apt-get install -y --no-install-recommends /tmp/npa-python311/*.deb
+test "$(dpkg-query -W -f='${Version}' python3.11)" = "$PYTHON_VERSION"
+rm -rf /tmp/npa-python311
 
 if [ "$INSTALL_SKYPILOT_PREREQS" = "1" ]; then
   # SkyPilot's in-pod Kubernetes bootstrap needs a SYSTEM python3 plus rsync, an ssh
@@ -95,10 +126,6 @@ if [ "$INSTALL_SKYPILOT_PREREQS" = "1" ]; then
   chmod 0440 /etc/sudoers.d/99-npa-runtime-user
 fi
 
-# Purge the build-time keyring tooling: it carries fixable CVEs and nothing needs it at
-# run time (the same removal groot already does, mirrored in the CI base-image scan).
-apt-get purge -y --auto-remove \
-  dirmngr gnupg gnupg-utils gnupg2 gpg gpg-agent software-properties-common || true
 rm -rf /var/lib/apt/lists/*
 
 if [ -x "$ISAAC_VENV/bin/python" ]; then
@@ -107,7 +134,12 @@ else
   log "python3.11 venv at ${ISAAC_VENV}"
   python3.11 -m venv "$ISAAC_VENV"
 fi
-"$ISAAC_VENV/bin/python" -m pip install --no-cache-dir --upgrade pip setuptools wheel
+"$ISAAC_VENV/bin/python" -m pip install --no-cache-dir --no-deps \
+  "pip==26.2.1" \
+  "setuptools==84.0.0" \
+  "wheel==0.47.0" \
+  "packaging==26.3"
+"$ISAAC_VENV/bin/python" -m pip check
 
 # Isaac requires exactly python3.11; fail here rather than at first run.
 "$ISAAC_VENV/bin/python" - <<'PY'
@@ -126,28 +158,22 @@ if [ "$SKIP_TORCH" = "1" ]; then
   "$ISAAC_VENV/bin/python" -c 'import torch; print(f"base torch {torch.__version__}")'
 else
   log "PyTorch ${TORCH_VERSION} from ${TORCH_INDEX_URL}"
-  "$ISAAC_VENV/bin/python" -m pip install --no-cache-dir --index-url "$TORCH_INDEX_URL" \
+  "$ISAAC_VENV/bin/python" -m pip install --no-cache-dir --no-deps \
+    --index-url "$TORCH_INDEX_URL" \
     "torch==${TORCH_VERSION}" \
     "torchvision==${TORCHVISION_VERSION}" \
     "torchaudio==${TORCHAUDIO_VERSION}"
 fi
 
 log "OSS dependency closure for Isaac Sim / Isaac Lab"
-# Constrain torch/torchvision/torchaudio/triton/nvidia-* to whatever is already installed,
-# so a transitive requirement (rsl-rl-lib wants torch>=2.6) can never quietly replace the
-# base image's CUDA-matched PyTorch with a generic PyPI build.
-"$ISAAC_VENV/bin/python" - > /tmp/npa-torch-constraints.txt <<'PY'
-from importlib import metadata
-
-for dist in metadata.distributions():
-    name = (dist.metadata["Name"] or "").lower().replace("_", "-")
-    if name in {"torch", "torchvision", "torchaudio", "triton"} or name.startswith("nvidia-"):
-        print(f"{name}==={dist.version}")
-PY
 "$ISAAC_VENV/bin/python" -m pip install --no-cache-dir \
-  -c /tmp/npa-torch-constraints.txt \
+  --no-deps \
   -r "${COMMON_DIR}/isaac-oss-deps.txt"
-rm -f /tmp/npa-torch-constraints.txt
+# wheel is a build tool, not part of the runtime. Removing it resolves the
+# otherwise impossible wheel>=24 / Isaac-Lab<24 packaging constraint without
+# weakening Isaac Lab's declared runtime contract.
+"$ISAAC_VENV/bin/python" -m pip uninstall --yes wheel
+"$ISAAC_VENV/bin/python" -m pip check
 
 log "runtime-fetch bootstrap, wheel manifest, and the /isaac-sim/python.sh shim"
 install -d -m 0755 /opt/npa/bin

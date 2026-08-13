@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from npa.workflows.sim2real_loop import SCHEMA_RL_SIGNAL
+from npa.workflows.sim2real.constants import SCHEMA_RL_SIGNAL
 from npa.workbench.lerobot.policy_container import (
     parse_vlm_signal_batch,
     run_vlm_signal_training_step,
@@ -44,7 +44,9 @@ def check_cuda_available() -> CheckResult:
     import torch
 
     if not torch.cuda.is_available():
-        return CheckResult("cuda available", False, "torch.cuda.is_available() is False")
+        return CheckResult(
+            "cuda available", False, "torch.cuda.is_available() is False"
+        )
     return CheckResult("cuda available", True, torch.cuda.get_device_name(0))
 
 
@@ -69,7 +71,10 @@ def check_vlm_signal_step() -> CheckResult:
 
 
 def main() -> int:
-    checks: list[Callable[[], CheckResult]] = [check_cuda_available, check_vlm_signal_step]
+    checks: list[Callable[[], CheckResult]] = [
+        check_cuda_available,
+        check_vlm_signal_step,
+    ]
     failed = 0
     for check in checks:
         result = check()

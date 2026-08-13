@@ -696,10 +696,7 @@ def test_workflow_list_discovers_npa_workflow_run_manifest(monkeypatch) -> None:
     }
     fake_s3.put_object(
         Bucket="bucket",
-        Key=(
-            "groot-1-7-finetune/groot-run-4gpu/"
-            "npa-workflow/manifest.json"
-        ),
+        Key=("groot-1-7-finetune/groot-run-4gpu/npa-workflow/manifest.json"),
         Body=json.dumps(manifest).encode("utf-8"),
     )
 
@@ -1707,7 +1704,13 @@ def test_prepare_run_persists_current_schema_plan_only_evidence(
     monkeypatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
-    spec = REPO_ROOT / "workflows/physical-ai-data-factory.yaml"
+    spec = (
+        REPO_ROOT
+        / "workflows"
+        / "workbench"
+        / "npa-workflows"
+        / "physical-ai-data-factory.yaml"
+    )
 
     prepared = runner.invoke(
         app,

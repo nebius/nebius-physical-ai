@@ -17,6 +17,11 @@ resources, updates image routing, or reviews render/training placement.
 2. Check the tool-specific skill for hard constraints.
 3. Encode the choice in CLI flags, SDK config, or workflow YAML env/resources.
 4. Keep image variants aligned with GPU selection.
+5. For direct-Kubernetes Jobs, discover `nvidia.com/gpu.product` labels and
+   construct an ordered, compatible candidate list. Move to the next product
+   only for concrete scheduler evidence (`Unschedulable`, insufficient GPU
+   resource, or no matching product/affinity); runtime, pull, credential,
+   checkpoint, and application failures are not placement failures.
 
 ## Three-Tier Contract
 
@@ -68,6 +73,14 @@ verdicts in `npa/docker/workbench/blackwell-dc-images.json`.
   Genesis/Sim2Real tags passed real kernel compilation and physics smokes on
   both B200 and B300; the NVIDIA Isaac vendor stacks and the per-image Cosmos
   blockers in `blackwell-dc-images.json` remain separate constraints.
+- Sim2Real Isaac candidates are only L40S and RTX PRO 6000 label variants.
+  Never add H100/H200 as an Isaac capacity fallback. Non-Isaac Cosmos candidates
+  may use H100/H200 only when the selected image advertises a compatible SM and
+  the component's VRAM/model rules allow it.
+- Record candidate order, skipped/attempted products and scheduler reasons,
+  selected product/node, allocated resource/count, Job name, and runtime image
+  digest in the component provenance. Exhaustion is a blocker, not permission
+  to change tier, backend, image semantics, or execution mode.
 - Terraform's canonical compute outputs are `platform` and `preset`, with
   `cpu_platform`/`cpu_preset` for CPU-only instances. Deprecated
   `gpu_platform`/`gpu_preset` aliases are GPU-only and return null for CPU

@@ -35,9 +35,20 @@ from npa.workflows.sim2real.state import WorkflowState
 class _RecordingWorkflow(Sim2RealWorkflow):
     """Sim2RealWorkflow whose stage methods record calls instead of doing work."""
 
-    def __init__(self, local_dir: Path, *, outer_iterations: int, promote_after: int | None):
+    def __init__(
+        self,
+        local_dir: Path,
+        *,
+        outer_iterations: int,
+        promote_after: int | None,
+        early_exit: bool = True,
+    ):
         # Bypass the real __init__ (config.validate + output dir creation).
-        self.config = SimpleNamespace(outer_iterations=outer_iterations, inner_iterations=1)
+        self.config = SimpleNamespace(
+            outer_iterations=outer_iterations,
+            inner_iterations=1,
+            early_exit=early_exit,
+        )
         self._local_dir = local_dir
         self.calls: list[str] = []
         self._promote_after = promote_after
@@ -59,10 +70,14 @@ class _RecordingWorkflow(Sim2RealWorkflow):
         self.calls.append("preamble")
         return self._make_state(status="preamble_completed", decision=None)
 
-    def run_outer_iteration(self, *, outer_iteration: int, initial_quality=None) -> WorkflowState:  # type: ignore[override]
+    def run_outer_iteration(
+        self, *, outer_iteration: int, initial_quality=None
+    ) -> WorkflowState:  # type: ignore[override]
         self.calls.append(f"outer:{outer_iteration}")
         self._next_outer = outer_iteration + 1
-        promote = self._promote_after is not None and outer_iteration >= self._promote_after
+        promote = (
+            self._promote_after is not None and outer_iteration >= self._promote_after
+        )
         decision = "promote_checkpoint" if promote else "loop_back_to_inner_loop"
         return self._make_state(status="outer_iteration_completed", decision=decision)
 
@@ -103,15 +118,17 @@ def _shipped_outer_loop_spec() -> DagSpec:
     ("outer_iterations", "promote_after"),
     [
         (2, None),  # no promote → run all outer iterations
-        (3, 1),     # promote on first iteration → early exit
-        (3, 2),     # promote on second iteration
+        (3, 1),  # promote on first iteration → early exit
+        (3, 2),  # promote on second iteration
     ],
 )
 def test_dag_parity_with_run_staged(tmp_path, outer_iterations, promote_after):
     """run_dag drives the identical method sequence as run_staged()."""
 
     staged_wf = _RecordingWorkflow(
-        tmp_path / "staged", outer_iterations=outer_iterations, promote_after=promote_after
+        tmp_path / "staged",
+        outer_iterations=outer_iterations,
+        promote_after=promote_after,
     )
     (tmp_path / "staged").mkdir()
     staged_report = staged_wf.run_staged(upload=True)
@@ -126,6 +143,30 @@ def test_dag_parity_with_run_staged(tmp_path, outer_iterations, promote_after):
     assert dag_report["calls"] == staged_report["calls"]
 
 
+def test_fixed_count_mode_ignores_promote_for_both_runners(tmp_path):
+    staged_wf = _RecordingWorkflow(
+        tmp_path / "staged-fixed",
+        outer_iterations=3,
+        promote_after=1,
+        early_exit=False,
+    )
+    (tmp_path / "staged-fixed").mkdir()
+    staged_wf.run_staged()
+
+    dag_wf = _RecordingWorkflow(
+        tmp_path / "dag-fixed",
+        outer_iterations=3,
+        promote_after=1,
+        early_exit=False,
+    )
+    (tmp_path / "dag-fixed").mkdir()
+    run_dag(dag_wf, _shipped_outer_loop_spec())
+
+    expected = ["preamble", "outer:1", "outer:2", "outer:3", "finalize:upload=None"]
+    assert staged_wf.calls == expected
+    assert dag_wf.calls == expected
+
+
 # --------------------------------------------------------------------------- #
 # Spec loading + validation
 # --------------------------------------------------------------------------- #
@@ -137,7 +178,11 @@ def test_shipped_spec_loads_and_validates():
     assert outer.loop.until == "promote_checkpoint"
     assert outer.loop.max_iterations == "config.outer_iterations"
     # acyclic + executors known
-    assert [n.id for n in topological_order(spec)] == ["preamble", "outer_loop", "finalize"]
+    assert [n.id for n in topological_order(spec)] == [
+        "preamble",
+        "outer_loop",
+        "finalize",
+    ]
 
 
 def test_validate_rejects_unknown_executor():

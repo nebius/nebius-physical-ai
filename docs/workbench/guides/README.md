@@ -113,5 +113,5 @@ full VLM→RL loop, data contracts, and cluster operations:
 | [sim2real-workflow.md](sim2real-workflow.md) | Run the loop (quickstart, CLI) |
 | [sim2real-data-contracts.md](sim2real-data-contracts.md) | **Canonical** formats, schemas, S3 layout |
 | [sim2real-customer-assets.md](sim2real-customer-assets.md) | Customer uploads, scorecard |
-| [sim2real-architecture.md](sim2real-architecture.md) | K8s sibling jobs, fallbacks |
+| [sim2real-architecture.md](sim2real-architecture.md) | Standard-runtime graph, loops, parallel waves, resume |
 | [sim2real-demo-script-10min.md](sim2real-demo-script-10min.md) | Presentation walkthrough |

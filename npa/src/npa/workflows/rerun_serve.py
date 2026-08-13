@@ -94,7 +94,9 @@ class RerunServeConfig:
         """nginx basic-auth line using the {SHA} scheme (pure-Python, no apache2-utils)."""
         import hashlib
 
-        digest = base64.b64encode(hashlib.sha1(self.auth_password.encode()).digest()).decode()
+        digest = base64.b64encode(
+            hashlib.sha1(self.auth_password.encode()).digest()
+        ).decode()
         return f"{self.auth_user}:{{SHA}}{digest}\n"
 
     @property
@@ -105,7 +107,9 @@ class RerunServeConfig:
     def rrd_s3_uri(self) -> str:
         if self.rrd_s3_uri_override.strip():
             return self.rrd_s3_uri_override.strip()
-        prefix = "/".join(part.strip("/") for part in (self.s3_prefix, self.run_id) if part)
+        prefix = "/".join(
+            part.strip("/") for part in (self.s3_prefix, self.run_id) if part
+        )
         return f"s3://{self.s3_bucket}/{prefix}/reports/sim2real.rrd"
 
     @property
@@ -211,7 +215,8 @@ def verify_rrd_exists_on_s3(
         client_kwargs["endpoint_url"] = config.s3_endpoint
     client = boto3.client("s3", **client_kwargs)
     try:
-        client.head_object(Bucket=bucket, Key=key)
+        response = client.get_object(Bucket=bucket, Key=key, Range="bytes=0-0")
+        response["Body"].close()
     except ClientError as exc:
         code = exc.response.get("Error", {}).get("Code", "missing")
         raise RerunServeError(
@@ -239,7 +244,9 @@ def deployment_name_for_cluster(cluster_context: str = "") -> str:
     if len(base) <= K8S_NAME_MAX_LEN:
         return base
     digest = re.sub(r"[^a-z0-9]", "", context.lower())[:8] or "ctx"
-    trimmed = slug[: K8S_NAME_MAX_LEN - len(K8S_NAME_PREFIX) - len(digest) - 2].rstrip("-")
+    trimmed = slug[: K8S_NAME_MAX_LEN - len(K8S_NAME_PREFIX) - len(digest) - 2].rstrip(
+        "-"
+    )
     return f"{K8S_NAME_PREFIX}-{trimmed}-{digest}"
 
 
@@ -259,7 +266,9 @@ def resolve_storage_bucket(storage: StorageConfig, *, override: str = "") -> str
         raise RerunServeError(
             "S3 bucket is not configured. Pass --s3-bucket or configure storage.bucket."
         )
-    return bucket_from_s3_uri(configured) if configured.startswith("s3://") else configured
+    return (
+        bucket_from_s3_uri(configured) if configured.startswith("s3://") else configured
+    )
 
 
 def rrd_s3_uri_from_report_uri(report_uri: str) -> str:
@@ -270,9 +279,7 @@ def rrd_s3_uri_from_report_uri(report_uri: str) -> str:
         return uri[: -len("sim2real-report.json")] + "sim2real.rrd"
     if uri.endswith("sim2real-report.json"):
         return uri.replace("sim2real-report.json", "sim2real.rrd")
-    raise RerunServeError(
-        "--report-uri must end with reports/sim2real-report.json"
-    )
+    raise RerunServeError("--report-uri must end with reports/sim2real-report.json")
 
 
 def resolve_cluster_name_from_config() -> str:
@@ -361,14 +368,14 @@ def build_rerun_nginx_config(
     if auth_required:
         auth_lines = (
             f'\n            auth_basic "NPA Rerun";'
-            f'\n            auth_basic_user_file {htpasswd_path};'
+            f"\n            auth_basic_user_file {htpasswd_path};"
         )
         # Unauthenticated health endpoint so the readiness probe passes (GET / is 401).
         health_block = (
-            '\n        location = /healthz {'
-            '\n            auth_basic off;'
+            "\n        location = /healthz {"
+            "\n            auth_basic off;"
             '\n            return 200 "ok";'
-            '\n        }'
+            "\n        }"
         )
     return f"""\
 worker_processes 1;
@@ -417,7 +424,9 @@ def _rerun_serve_command(config: RerunServeConfig) -> str:
     )
 
 
-def public_viewer_url(host: str, *, http_port: int, grpc_port: int = DEFAULT_GRPC_PORT) -> str:
+def public_viewer_url(
+    host: str, *, http_port: int, grpc_port: int = DEFAULT_GRPC_PORT
+) -> str:
     """Return a viewer URL whose gRPC origin matches the HTTP page host."""
 
     host = host.strip()
@@ -527,7 +536,8 @@ def fetch_rrd_sync_token(
         client_kwargs["endpoint_url"] = config.s3_endpoint
     client = boto3.client("s3", **client_kwargs)
     try:
-        response = client.head_object(Bucket=bucket, Key=key)
+        response = client.get_object(Bucket=bucket, Key=key, Range="bytes=0-0")
+        response["Body"].close()
     except ClientError:
         return uri
     etag = str(response.get("ETag") or "").strip('"')
@@ -588,17 +598,19 @@ test -s /data/sim2real.rrd
                 "data": secret_data,
             },
             *(
-                [{
-                    "apiVersion": "v1",
-                    "kind": "Secret",
-                    "metadata": {
-                        "name": config.auth_secret_name,
-                        "namespace": config.namespace,
-                        "labels": labels,
-                    },
-                    "type": "Opaque",
-                    "data": {".htpasswd": _b64(config.htpasswd_line)},
-                }]
+                [
+                    {
+                        "apiVersion": "v1",
+                        "kind": "Secret",
+                        "metadata": {
+                            "name": config.auth_secret_name,
+                            "namespace": config.namespace,
+                            "labels": labels,
+                        },
+                        "type": "Opaque",
+                        "data": {".htpasswd": _b64(config.htpasswd_line)},
+                    }
+                ]
                 if config.auth_enabled
                 else []
             ),
@@ -624,7 +636,11 @@ test -s /data/sim2real.rrd
                     "replicas": 1,
                     "progressDeadlineSeconds": DEPLOYMENT_PROGRESS_DEADLINE_SEC,
                     "strategy": {"type": "Recreate"},
-                    "selector": {"matchLabels": {"app.kubernetes.io/instance": config.deployment_name}},
+                    "selector": {
+                        "matchLabels": {
+                            "app.kubernetes.io/instance": config.deployment_name
+                        }
+                    },
                     "template": {
                         "metadata": {"labels": labels, "annotations": pod_annotations},
                         "spec": {
@@ -634,8 +650,12 @@ test -s /data/sim2real.rrd
                                     "image": config.aws_cli_image,
                                     "imagePullPolicy": "IfNotPresent",
                                     "command": ["/bin/sh", "-c", init_script],
-                                    "envFrom": [{"secretRef": {"name": config.secret_name}}],
-                                    "volumeMounts": [{"name": "rrd-data", "mountPath": "/data"}],
+                                    "envFrom": [
+                                        {"secretRef": {"name": config.secret_name}}
+                                    ],
+                                    "volumeMounts": [
+                                        {"name": "rrd-data", "mountPath": "/data"}
+                                    ],
                                 }
                             ],
                             "containers": [
@@ -643,10 +663,14 @@ test -s /data/sim2real.rrd
                                     "name": "nginx",
                                     "image": DEFAULT_NGINX_IMAGE,
                                     "imagePullPolicy": "IfNotPresent",
-                                    "ports": [{"name": "http", "containerPort": config.port}],
+                                    "ports": [
+                                        {"name": "http", "containerPort": config.port}
+                                    ],
                                     "readinessProbe": {
                                         "httpGet": {
-                                            "path": "/healthz" if config.auth_enabled else "/",
+                                            "path": "/healthz"
+                                            if config.auth_enabled
+                                            else "/",
                                             "port": "http",
                                         },
                                         "initialDelaySeconds": 5,
@@ -659,12 +683,17 @@ test -s /data/sim2real.rrd
                                             "mountPath": "/etc/nginx/nginx.conf",
                                             "subPath": "nginx.conf",
                                         }
-                                    ] + (
-                                        [{
-                                            "name": "nginx-auth",
-                                            "mountPath": "/etc/nginx/auth",
-                                            "readOnly": True,
-                                        }] if config.auth_enabled else []
+                                    ]
+                                    + (
+                                        [
+                                            {
+                                                "name": "nginx-auth",
+                                                "mountPath": "/etc/nginx/auth",
+                                                "readOnly": True,
+                                            }
+                                        ]
+                                        if config.auth_enabled
+                                        else []
                                     ),
                                     "resources": {
                                         "requests": {"cpu": "50m", "memory": "64Mi"},
@@ -681,7 +710,10 @@ test -s /data/sim2real.rrd
                                             "name": "web-internal",
                                             "containerPort": RERUN_INTERNAL_WEB_PORT,
                                         },
-                                        {"name": "grpc", "containerPort": DEFAULT_GRPC_PORT},
+                                        {
+                                            "name": "grpc",
+                                            "containerPort": DEFAULT_GRPC_PORT,
+                                        },
                                     ],
                                     "readinessProbe": {
                                         "httpGet": {
@@ -690,7 +722,9 @@ test -s /data/sim2real.rrd
                                         },
                                         "initialDelaySeconds": (
                                             15
-                                            if _rerun_image_has_preinstalled_cli(config.rerun_image)
+                                            if _rerun_image_has_preinstalled_cli(
+                                                config.rerun_image
+                                            )
                                             else 90
                                         ),
                                         "periodSeconds": 10,
@@ -701,7 +735,11 @@ test -s /data/sim2real.rrd
                                         "limits": {"cpu": "2", "memory": "2Gi"},
                                     },
                                     "volumeMounts": [
-                                        {"name": "rrd-data", "mountPath": "/data", "readOnly": True}
+                                        {
+                                            "name": "rrd-data",
+                                            "mountPath": "/data",
+                                            "readOnly": True,
+                                        }
                                     ],
                                 },
                             ],
@@ -711,14 +749,24 @@ test -s /data/sim2real.rrd
                                     "name": "nginx-config",
                                     "configMap": {"name": config.nginx_configmap_name},
                                 },
-                            ] + (
-                                [{
-                                    "name": "nginx-auth",
-                                    "secret": {
-                                        "secretName": config.auth_secret_name,
-                                        "items": [{"key": ".htpasswd", "path": ".htpasswd"}],
-                                    },
-                                }] if config.auth_enabled else []
+                            ]
+                            + (
+                                [
+                                    {
+                                        "name": "nginx-auth",
+                                        "secret": {
+                                            "secretName": config.auth_secret_name,
+                                            "items": [
+                                                {
+                                                    "key": ".htpasswd",
+                                                    "path": ".htpasswd",
+                                                }
+                                            ],
+                                        },
+                                    }
+                                ]
+                                if config.auth_enabled
+                                else []
                             ),
                         },
                     },
@@ -838,7 +886,9 @@ def apply_rerun_serve(
                 break
             waiter(5)
 
-    return rerun_serve_result(config, status="deployed", public_url=public_url, kubeconfig=kubeconfig)
+    return rerun_serve_result(
+        config, status="deployed", public_url=public_url, kubeconfig=kubeconfig
+    )
 
 
 def destroy_rerun_serve(
@@ -900,7 +950,11 @@ def resolve_kubeconfig_path(*, cluster_name: str, kubeconfig: str) -> str:
         for candidate in env_kube.split(os.pathsep):
             if candidate and Path(candidate).exists():
                 return candidate
-    profile = cluster_name.strip() or resolve_cluster_name_from_config() or DEFAULT_CLUSTER_NAME
+    profile = (
+        cluster_name.strip()
+        or resolve_cluster_name_from_config()
+        or DEFAULT_CLUSTER_NAME
+    )
     for filename in ("kubeconfig.resolved", "kubeconfig"):
         path = Path.home() / ".npa" / "clusters" / profile / filename
         if path.exists():
@@ -911,7 +965,11 @@ def resolve_kubeconfig_path(*, cluster_name: str, kubeconfig: str) -> str:
 def require_kubeconfig(*, cluster_name: str, kubeconfig: str) -> str:
     resolved = resolve_kubeconfig_path(cluster_name=cluster_name, kubeconfig=kubeconfig)
     if not resolved:
-        profile = cluster_name.strip() or resolve_cluster_name_from_config() or DEFAULT_CLUSTER_NAME
+        profile = (
+            cluster_name.strip()
+            or resolve_cluster_name_from_config()
+            or DEFAULT_CLUSTER_NAME
+        )
         raise RerunServeError(
             "No kubeconfig found. Pass --kubeconfig, export KUBECONFIG, or configure "
             f"~/.npa/clusters/{profile}/kubeconfig."
@@ -933,7 +991,7 @@ def _rollout_failure_diagnostics(
         "-l",
         f"app.kubernetes.io/instance={config.deployment_name}",
         "-o",
-        "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}",
+        'jsonpath={range .items[*]}{.metadata.name}{"\\n"}{end}',
     ]
     try:
         pod_names = kubectl(pod_cmd, kubeconfig=kubeconfig).strip().splitlines()
@@ -1013,7 +1071,9 @@ def _default_kubectl(
     return result.stdout
 
 
-def _default_get_service(kind: str, name: str, kubeconfig: str) -> dict[str, Any] | None:
+def _default_get_service(
+    kind: str, name: str, kubeconfig: str
+) -> dict[str, Any] | None:
     import shutil
     import subprocess
 
@@ -1034,7 +1094,9 @@ def _default_get_service(kind: str, name: str, kubeconfig: str) -> dict[str, Any
 
 
 def _service_external_host(service: dict[str, Any]) -> str:
-    for item in service.get("status", {}).get("loadBalancer", {}).get("ingress", []) or []:
+    for item in (
+        service.get("status", {}).get("loadBalancer", {}).get("ingress", []) or []
+    ):
         host = str(item.get("ip") or item.get("hostname") or "").strip()
         if host:
             return host

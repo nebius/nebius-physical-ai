@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from npa.deploy.images import container_image_for_tool, registry_from_env
 
 from npa.workflows.sim2real.constants import (
     DEFAULT_ACTION_ENV_LIMIT,
     DEFAULT_COSMOS2_TRANSFER_TAG,
+    DEFAULT_ENV_COUNT,
     DEFAULT_ENVGEN_SHARD_COUNT,
     DEFAULT_K8S_MAX_PARALLEL_GPUS,
     DEFAULT_ENVGEN_TAG,
@@ -31,14 +34,17 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_ROLLOUT_COUNT,
     DEFAULT_S3_ENDPOINT,
     DEFAULT_SIM_BACKEND,
+    DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE,
     DEFAULT_STEPS_PER_ROLLOUT,
     DEFAULT_THRESHOLD,
     DEFAULT_TRAINER_TAG,
     DEFAULT_TRAIN_FRACTION,
     DEFAULT_VLM_IMAGE_TAG,
+    DEFAULT_VALIDATION_ENVS,
     SIM_BACKEND_ISAAC,
     SIM_BACKENDS,
 )
+
 
 class Sim2RealLoopError(Exception):
     """Raised when the Sim2Real loop cannot produce a valid artifact."""
@@ -51,7 +57,7 @@ class ComponentRecord:
     name: str
     tier: str
     evidence: str
-    artifacts: dict[str, str] = field(default_factory=dict)
+    artifacts: dict[str, Any] = field(default_factory=dict)
     next_action: str = "CONTINUE"
 
 
@@ -68,7 +74,11 @@ class Sim2RealLoopConfig:
     trigger_dataset_id: str = DEFAULT_LEROBOT_DATASET_ID
     action_rollouts_uri: str = ""
     train_envs_uri: str = ""
+    validation_envs_uri: str = ""
     heldout_envs_uri: str = ""
+    gold_heldout_envs_uri: str = ""
+    task_contract_uri: str = ""
+    task_contract_digest: str = ""
     assets_uri: str = ""
     scene_spec_uri: str = ""
     cameras_uri: str = ""
@@ -81,7 +91,7 @@ class Sim2RealLoopConfig:
     robot_preset: str = ""
     augment_image: str = f"npa-cosmos2-transfer:{DEFAULT_COSMOS2_TRANSFER_TAG}"
     envgen_image: str = f"npa-envgen:{DEFAULT_ENVGEN_TAG}"
-    env_count: int = 0
+    env_count: int = DEFAULT_ENV_COUNT
     train_fraction: float = DEFAULT_TRAIN_FRACTION
     envgen_shard_count: int = DEFAULT_ENVGEN_SHARD_COUNT
     action_env_limit: int = DEFAULT_ACTION_ENV_LIMIT
@@ -99,17 +109,22 @@ class Sim2RealLoopConfig:
     vlm_reason3_model: str = DEFAULT_REASON3_MODEL
     vlm_dual_reason: bool = True
     threshold: float = DEFAULT_THRESHOLD
+    # Continue through every configured outer iteration even after a checkpoint
+    # clears the promotion threshold when false. Real qualification runs use this
+    # to prove the complete fixed-count loop rather than only its early-exit path.
+    early_exit: bool = False
     inner_iterations: int = DEFAULT_INNER_ITERATIONS
     outer_iterations: int = DEFAULT_OUTER_ITERATIONS
     loop_of_loops_iterations: int = DEFAULT_LOOP_OF_LOOPS_ITERATIONS
     rollout_count: int = DEFAULT_ROLLOUT_COUNT
     steps_per_rollout: int = DEFAULT_STEPS_PER_ROLLOUT
     heldout_env_count: int = DEFAULT_HELDOUT_ENVS
+    validation_env_count: int = DEFAULT_VALIDATION_ENVS
     seed: int = 42
     upload_artifacts: bool = False
     no_guardrails: bool = False
     signal_loss_weight: float = 1.0
-    learning_rate: float = 0.05
+    learning_rate: float = DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE
     byo_signal_converter: str = ""
     byo_trainer_command: str = ""
     byo_vlm_command: str = ""
@@ -119,13 +134,17 @@ class Sim2RealLoopConfig:
     rerun_enabled: bool = True
     k8s_namespace: str = ""
     k8s_service_account: str = "agent-sa"
-    k8s_image_pull_secrets: str = "agent-sa,ngc-nvcr-imagepullsecret,npa-nebius-registry"
+    k8s_image_pull_secrets: str = (
+        "agent-sa,ngc-nvcr-imagepullsecret,npa-nebius-registry"
+    )
     k8s_env_secret_names: str = "hf-ngc-tokens,npa-storage-credentials"
+    k8s_isaac_cache_pvc: str = "npa-sim2real-isaac-cache"
     k8s_gpu_resource: str = "nvidia.com/gpu"
     k8s_gpu_product: str = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
+    k8s_gpu_candidates: tuple[str, ...] = ()
     k8s_kubeconfig: str = ""
     k8s_context: str = ""
-    k8s_job_timeout_s: int = 7200
+    k8s_job_timeout_s: int = 0
     k8s_max_parallel_gpus: int = DEFAULT_K8S_MAX_PARALLEL_GPUS
     source_repo: str = ""
     source_ref: str = ""
@@ -150,16 +169,32 @@ class Sim2RealLoopConfig:
             raise Sim2RealLoopError("steps_per_rollout must be positive")
         if self.heldout_env_count <= 0:
             raise Sim2RealLoopError("heldout_env_count must be positive")
+        if self.validation_env_count <= 0:
+            raise Sim2RealLoopError("validation_env_count must be positive")
         if self.learning_rate <= 0:
             raise Sim2RealLoopError("learning_rate must be positive")
         if self.signal_loss_weight < 0:
             raise Sim2RealLoopError("signal_loss_weight must be non-negative")
-        if self.k8s_job_timeout_s <= 0:
-            raise Sim2RealLoopError("k8s_job_timeout_s must be positive")
+        if self.k8s_job_timeout_s < 0:
+            raise Sim2RealLoopError(
+                "k8s_job_timeout_s must be non-negative (0 is unlimited)"
+            )
         if self.k8s_max_parallel_gpus <= 0:
             raise Sim2RealLoopError("k8s_max_parallel_gpus must be positive")
         if self.heldout_eval_limit < 0:
             raise Sim2RealLoopError("heldout_eval_limit must be non-negative")
+        if self.sim_backend == SIM_BACKEND_ISAAC:
+            cache_pvc = self.k8s_isaac_cache_pvc.strip()
+            if (
+                not cache_pvc
+                or len(cache_pvc) > 253
+                or not re.fullmatch(
+                    r"[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?", cache_pvc
+                )
+            ):
+                raise Sim2RealLoopError(
+                    "k8s_isaac_cache_pvc must be a DNS-safe PVC name for Isaac runs"
+                )
         if self.env_count < 0:
             raise Sim2RealLoopError("env_count must be non-negative")
         if not 0.0 < self.train_fraction < 1.0:
@@ -172,6 +207,18 @@ class Sim2RealLoopConfig:
             raise Sim2RealLoopError(
                 f"sim_backend must be one of {SIM_BACKENDS}, got {self.sim_backend!r}"
             )
+        from npa.workflows.sim2real.task_contract import validate_task_dataset
+
+        validate_task_dataset(
+            task_id=self.isaac_task,
+            dataset_id=self.trigger_dataset_id,
+            dataset_uri=self.trigger_dataset_uri,
+            real_required=bool(
+                self.s3_bucket
+                and self.sim_backend == SIM_BACKEND_ISAAC
+                and self.byo_trainer_command.strip()
+            ),
+        )
 
     def heldout_backend_image(self) -> str:
         """Return the container image that runs the held-out rollout backend.
@@ -246,4 +293,3 @@ def default_isaac_image(*, registry: str | None = None) -> str:
     if registry or registry_from_env():
         return container_image_for_tool("isaac-lab", registry=registry)
     return f"npa-isaac-lab:{DEFAULT_ISAAC_TAG}"
-

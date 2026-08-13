@@ -14,6 +14,8 @@ DEFAULT_REASON3_MODEL = "nvidia/Cosmos-Reason2-2B"
 DEFAULT_REASON1_CACHE = "/tmp/hf_home/cosmos-reason1"
 DEFAULT_REASON2_CACHE = "/tmp/hf_home/cosmos-reason2"
 DEFAULT_REASON3_CACHE = "/tmp/hf_home/cosmos-reason2-2b"
+DEFAULT_REASON_EVENT_FRAMES = 32
+DEFAULT_REASON_MAX_NEW_TOKENS = 8192
 REFERENCE_VLM_ALIASES = frozenset(
     {"", "npa-cosmos3-reason", "cosmos3-reason", "cosmos-reason", "reason2", "reason3"}
 )
@@ -114,18 +116,40 @@ def vlm_k8s_component(component: str) -> bool:
 
 
 def task_description_from_manifest(manifest: dict[str, Any]) -> str:
+    description = ""
     for key in ("task_description", "task", "instruction", "prompt"):
         value = str(manifest.get(key) or "").strip()
         if value:
-            return value
-    return (
-        "Evaluate whether the robot rollout completes the manipulation task. "
-        "Use the camera frames and the listed actions to judge physical success, "
-        "stability, target alignment, and contact mistakes."
+            description = value
+            break
+    if not description:
+        description = (
+            "Evaluate whether the robot rollout completes the manipulation task. "
+            "Use the camera frames and the listed actions to judge physical success, "
+            "stability, target alignment, and contact mistakes."
+        )
+    augmentation = dict(manifest.get("scenario_source_augmentation") or {})
+    if not any(
+        (
+            manifest.get("scenario_difficulty"),
+            manifest.get("scenario_config_digest"),
+            augmentation.get("lineage_id"),
+        )
+    ):
+        return description
+    context = (
+        f" Scenario difficulty={manifest.get('scenario_difficulty', '')}; "
+        f"applied_config_digest={manifest.get('scenario_config_digest', '')}; "
+        f"Cosmos-Transfer lineage={augmentation.get('lineage_id', '')}. "
+        "The visible frames are authoritative; lineage identifies the domain-"
+        "randomization source and does not imply that Transfer pixels trained the state policy."
     )
+    return description + context
 
 
-def resolve_cosmos_reason_model_id(model: str, *, default: str = DEFAULT_REASON2_MODEL) -> str:
+def resolve_cosmos_reason_model_id(
+    model: str, *, default: str = DEFAULT_REASON2_MODEL
+) -> str:
     candidate = str(model or "").strip()
     if candidate in REFERENCE_VLM_ALIASES:
         env_default = (
@@ -152,17 +176,39 @@ def merge_dual_reason_evaluations(
     success = bool(reason2_eval.get("success")) and bool(reason3_eval.get("success"))
     if not success and score >= threshold:
         success = score >= threshold
-    steps2 = {int(item.get("step", index)): item for index, item in enumerate(reason2_eval.get("per_step") or [])}
-    steps3 = {int(item.get("step", index)): item for index, item in enumerate(reason3_eval.get("per_step") or [])}
+    steps2 = {
+        int(item.get("step", index)): item
+        for index, item in enumerate(reason2_eval.get("per_step") or [])
+    }
+    steps3 = {
+        int(item.get("step", index)): item
+        for index, item in enumerate(reason3_eval.get("per_step") or [])
+    }
     merged_steps: list[dict[str, Any]] = []
     for step in sorted(set(steps2) | set(steps3)):
         left = steps2.get(step, {})
         right = steps3.get(step, {})
-        tags = list(
-            dict.fromkeys(
-                list(left.get("error_tags") or []) + list(right.get("error_tags") or [])
-            )
+        left_tags = _normalize_error_tags(left.get("error_tags") or [])
+        right_tags = _normalize_error_tags(right.get("error_tags") or [])
+        tags = list(dict.fromkeys(left_tags + right_tags))
+        disagreement = bool(left and right and set(left_tags) != set(right_tags))
+        source_values = {
+            str(item.get("critique_source") or "model_per_step")
+            for item in (left, right)
+            if item
+        }
+        confidence = min(
+            float(left.get("confidence", 0.65)) if left else 0.25,
+            float(right.get("confidence", 0.65)) if right else 0.25,
         )
+        if disagreement:
+            confidence *= 0.5
+        if "model_missing" in source_values or "model_malformed" in source_values:
+            confidence = 0.0
+        elif "summary_broadcast" in source_values:
+            # Backward-compatible rejection for artifacts produced before the
+            # per-step fail-closed contract. New inference never emits this.
+            confidence = min(confidence, 0.10)
         critique_parts = [
             part.strip()
             for part in (
@@ -184,6 +230,23 @@ def merge_dual_reason_evaluations(
                 ),
                 "reason2_critique": left.get("critique_text", ""),
                 "reason3_critique": right.get("critique_text", ""),
+                "reason2_tags": left_tags,
+                "reason3_tags": right_tags,
+                "model_disagreement": disagreement,
+                "confidence": round(max(0.0, min(1.0, confidence)), 6),
+                "critique_source": (
+                    "model_missing"
+                    if "model_missing" in source_values
+                    else (
+                        "model_malformed"
+                        if "model_malformed" in source_values
+                        else (
+                            "summary_broadcast"
+                            if "summary_broadcast" in source_values
+                            else "dual_model_per_step"
+                        )
+                    )
+                ),
             }
         )
     summary_parts = [
@@ -192,7 +255,9 @@ def merge_dual_reason_evaluations(
     ]
     return {
         "schema": VLM_EVAL_SCHEMA,
-        "rollout_id": str(reason2_eval.get("rollout_id") or reason3_eval.get("rollout_id") or ""),
+        "rollout_id": str(
+            reason2_eval.get("rollout_id") or reason3_eval.get("rollout_id") or ""
+        ),
         "success": success,
         "score": score,
         "per_step": merged_steps,
@@ -244,7 +309,12 @@ def run_cosmos_reason_vlm(
         raise CosmosReasonError("Cosmos Reason inference requires a CUDA GPU")
 
     cache_dir = prepare_cosmos_reason_cache(model_id=resolved_model)
-    max_frames = int(os.environ.get("NPA_COSMOS_REASON_MAX_FRAMES", "8"))
+    # One primary frame is captured for every decision/event sample. The
+    # canonical task contract requires 32 such samples, so evaluating only the
+    # first eight makes late grasp/place failures invisible to the VLM.
+    max_frames = int(
+        os.environ.get("NPA_COSMOS_REASON_MAX_FRAMES", str(DEFAULT_REASON_EVENT_FRAMES))
+    )
     selected_paths = image_paths[: max(1, max_frames)]
     for path in selected_paths:
         with Image.open(path) as img:
@@ -301,7 +371,15 @@ def run_cosmos_reason_vlm(
     )
     first_device = next(model.parameters()).device
     inputs = inputs.to(first_device)
-    max_new_tokens = int(os.environ.get("NPA_COSMOS_REASON_MAX_NEW_TOKENS", "768"))
+    # A compact 32-entry JSON response does not reliably fit in the old 768-token
+    # budget. Truncation caused otherwise valid models to fall back to a single
+    # rollout summary. Keep this parameterized but make the real default large
+    # enough for the required event-local contract.
+    max_new_tokens = int(
+        os.environ.get(
+            "NPA_COSMOS_REASON_MAX_NEW_TOKENS", str(DEFAULT_REASON_MAX_NEW_TOKENS)
+        )
+    )
     with torch.inference_mode():
         generated = model.generate(
             **inputs,
@@ -362,7 +440,24 @@ def _cosmos_reason_prompt(
     actions: list[dict[str, Any]],
     frame_names: list[str],
 ) -> str:
-    action_excerpt = json.dumps(actions[:16], sort_keys=True)
+    # Simulator ground truth is deliberately excluded: Cosmos labels are
+    # calibrated *against* those measurements after inference and must not see
+    # the answer in their prompt. Only policy actions and temporal identifiers
+    # are model inputs.
+    action_excerpt = json.dumps(
+        [
+            {
+                "step": int(action.get("step", index)),
+                "sim_step": int(action.get("sim_step", action.get("step", index))),
+                "action": list(action.get("action") or []),
+            }
+            for index, action in enumerate(actions[:64])
+        ],
+        sort_keys=True,
+    )
+    expected_steps = [
+        int(action.get("step", index)) for index, action in enumerate(actions[:64])
+    ]
     label = {
         "reason1": "Cosmos-Reason1",
         "reason2": "Cosmos-Reason2",
@@ -373,10 +468,18 @@ def _cosmos_reason_prompt(
         f"Task description: {task_description}\n"
         f"Frame order: {frame_names}\n"
         f"Actions by step: {action_excerpt}\n"
-        "Return JSON only. The JSON must contain: success (boolean), "
+        f"Required per_step indices: {expected_steps}\n"
+        "Return one JSON object only; never use a top-level array. The object "
+        "must contain: success (boolean), "
         "score (number from 0 to 1), summary (natural-language critique), and "
         "per_step (array of objects with step, critique_text, error_tags, "
-        "camera_observation). Use only these error tags when applicable: "
+        "camera_observation, confidence). per_step MUST contain exactly one "
+        "compact, event-specific object for every required index; keep each "
+        "critique_text at 12 words or fewer, and set camera_observation to the "
+        "corresponding frame filename rather than another description; never copy or "
+        "broadcast the rollout summary into step entries. If a step cannot be "
+        "judged visually, use a step-specific 'insufficient visual evidence' "
+        "critique with confidence 0. Use only these error tags when applicable: "
         "collision, missed_target, unstable, late_grasp, minor_alignment, ok. "
         "Judge actual visual rollout behavior, not metadata or requested actions."
     )
@@ -392,56 +495,96 @@ def _parse_cosmos_reason_output(
 ) -> dict[str, Any]:
     payload = _json_object_from_text(model_text)
     if payload is None:
+        payload = _recover_truncated_cosmos_payload(model_text)
+    if payload is None:
         payload = _parse_unstructured_vlm_output(model_text, threshold=threshold)
     if "score" not in payload:
         raise CosmosReasonError(f"{family} output did not include a numeric score")
     score = max(0.0, min(1.0, float(payload["score"])))
     success = bool(payload.get("success", score >= threshold))
     raw_steps = payload.get("per_step") or payload.get("steps") or []
-    if not raw_steps:
-        critique = str(
-            payload.get("summary")
-            or payload.get("critique")
-            or payload.get("critique_text")
-            or model_text
-        ).strip()
-        tags = payload.get("error_tags") or _tags_from_text(critique)
-        raw_steps = [
-            {
-                "step": int(action.get("step", index)),
-                "critique_text": critique,
-                "error_tags": tags,
-                "critique_source": "summary_broadcast",
-                "camera_observation": f"camera-{int(action.get('step', index)):03d}.ppm",
-            }
-            for index, action in enumerate(actions)
-        ]
-    per_step: list[dict[str, Any]] = []
+    expected_actions = {
+        int(action.get("step", index)): action for index, action in enumerate(actions)
+    }
+    model_steps: dict[int, dict[str, Any]] = {}
     for index, raw in enumerate(raw_steps):
         if not isinstance(raw, dict):
-            raw = {"critique_text": str(raw)}
+            continue
+        try:
+            step = int(raw.get("step", index))
+        except (TypeError, ValueError):
+            continue
+        if step in expected_actions and step not in model_steps:
+            model_steps[step] = raw
+
+    # Keep the real rollout-level model result in ``summary``, but never turn it
+    # into fake temporal credit. Truncated or omitted local labels become
+    # explicit zero-confidence rejections whose text identifies their own step.
+    normalized_raw_steps: list[dict[str, Any]] = []
+    for step in expected_actions:
+        raw = model_steps.get(step)
+        if raw is not None:
+            normalized_raw_steps.append(raw)
+            continue
+        normalized_raw_steps.append(
+            {
+                "step": step,
+                "critique_text": (
+                    f"{family} returned no model-local critique for step {step}; "
+                    "simulator state only."
+                ),
+                "error_tags": ["ok"],
+                "critique_source": "model_missing",
+                "confidence": 0.0,
+                "camera_observation": f"camera-{step:03d}.ppm",
+            }
+        )
+    per_step: list[dict[str, Any]] = []
+    for index, raw in enumerate(normalized_raw_steps):
         step = int(raw.get("step", index))
-        tags = raw.get("error_tags") or raw.get("tags") or _tags_from_text(str(raw))
-        if isinstance(tags, str):
-            tags = [tags]
-        normalized_tags = _normalize_error_tags(tags)
         critique = str(
-            raw.get("critique_text")
-            or raw.get("critique")
-            or raw.get("text")
-            or payload.get("summary")
-            or ""
+            raw.get("critique_text") or raw.get("critique") or raw.get("text") or ""
         ).strip()
-        if not critique:
-            raise CosmosReasonError(f"{family} per_step output lacks critique text")
+        malformed = not critique
+        if malformed:
+            critique = (
+                f"{family} returned a malformed critique for step {step}; "
+                "simulator state only."
+            )
+            normalized_tags = ["ok"]
+        else:
+            tags = raw.get("error_tags") or raw.get("tags") or _tags_from_text(critique)
+            if isinstance(tags, str):
+                tags = [tags]
+            normalized_tags = _normalize_error_tags(tags)
+        critique_source = str(raw.get("critique_source") or "model_per_step")
+        if malformed:
+            critique_source = "model_malformed"
         per_step.append(
             {
                 "step": step,
                 "critique_text": critique,
                 "error_tags": normalized_tags,
-                "action": actions[index].get("action", []) if index < len(actions) else [],
+                "action": expected_actions[step].get("action", []),
                 "camera_observation": str(
                     raw.get("camera_observation") or f"camera-{step:03d}.ppm"
+                ),
+                "critique_source": critique_source,
+                "confidence": max(
+                    0.0,
+                    min(
+                        1.0,
+                        float(
+                            0.0
+                            if malformed
+                            else raw.get(
+                                "confidence",
+                                0.10
+                                if raw.get("critique_source") == "summary_broadcast"
+                                else 0.65,
+                            )
+                        ),
+                    ),
                 ),
             }
         )
@@ -462,7 +605,19 @@ def _json_object_from_text(text: str) -> dict[str, Any] | None:
         stripped = re.sub(r"```$", "", stripped).strip()
     try:
         payload = json.loads(stripped)
-        return payload if isinstance(payload, dict) else None
+        if isinstance(payload, dict):
+            return payload
+        # Cosmos commonly wraps its single requested evaluation object in a
+        # one-element JSON array even when the prompt asks for an object. Keep
+        # this narrow: a list of multiple candidate evaluations is ambiguous
+        # and must not be silently selected.
+        if (
+            isinstance(payload, list)
+            and len(payload) == 1
+            and isinstance(payload[0], dict)
+        ):
+            return payload[0]
+        return None
     except json.JSONDecodeError:
         pass
     match = re.search(r"\{.*\}", stripped, flags=re.DOTALL)
@@ -475,16 +630,77 @@ def _json_object_from_text(text: str) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _recover_truncated_cosmos_payload(text: str) -> dict[str, Any] | None:
+    """Recover complete fields and event rows from a token-truncated JSON answer.
+
+    Cosmos occasionally exhausts its generation budget after writing valid event
+    objects but before closing the surrounding array/object. We preserve only
+    fully decodable rows; the caller marks every missing event as rejected at
+    zero confidence. This is intentionally schema-specific rather than a general
+    permissive JSON parser.
+    """
+
+    success_match = re.search(
+        r'"success"\s*:\s*(true|false)', text, flags=re.IGNORECASE
+    )
+    score_match = re.search(
+        r'"score"\s*:\s*(-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)', text
+    )
+    if score_match is None:
+        return None
+    payload: dict[str, Any] = {"score": float(score_match.group(1))}
+    if success_match is not None:
+        payload["success"] = success_match.group(1).lower() == "true"
+
+    decoder = json.JSONDecoder()
+    summary_match = re.search(r'"summary"\s*:\s*', text)
+    if summary_match is not None:
+        try:
+            summary, _ = decoder.raw_decode(text, summary_match.end())
+        except json.JSONDecodeError:
+            summary = ""
+        if isinstance(summary, str):
+            payload["summary"] = summary
+
+    steps_match = re.search(r'"(?:per_step|steps)"\s*:\s*\[', text)
+    if steps_match is not None:
+        cursor = steps_match.end()
+        steps: list[dict[str, Any]] = []
+        while cursor < len(text):
+            while cursor < len(text) and (
+                text[cursor].isspace() or text[cursor] == ","
+            ):
+                cursor += 1
+            if cursor >= len(text) or text[cursor] == "]":
+                break
+            try:
+                item, cursor = decoder.raw_decode(text, cursor)
+            except json.JSONDecodeError:
+                break
+            if isinstance(item, dict):
+                steps.append(item)
+        if steps:
+            payload["per_step"] = steps
+    return payload
+
+
 def _parse_unstructured_vlm_output(text: str, *, threshold: float) -> dict[str, Any]:
     lowered = text.lower()
     score_match = re.search(r"(?:score|confidence|rating)\D+([01](?:\.\d+)?)", lowered)
     if not score_match:
         raise CosmosReasonError("Cosmos Reason output was not parseable JSON")
     score = float(score_match.group(1))
-    if "success" in lowered or "pass" in lowered:
-        success = True
+    explicit_success = re.search(
+        r'["\']?success["\']?\s*[:=]\s*(true|false)',
+        lowered,
+        flags=re.IGNORECASE,
+    )
+    if explicit_success is not None:
+        success = explicit_success.group(1).lower() == "true"
     elif "fail" in lowered or "unsuccess" in lowered:
         success = False
+    elif re.search(r"\b(success|pass(?:ed)?)\b", lowered):
+        success = True
     else:
         success = score >= threshold
     return {

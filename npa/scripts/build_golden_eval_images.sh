@@ -14,6 +14,12 @@ REGISTRY="${REGISTRY:-cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw}"
 PUSH=0
 BUILD_ALL=0
 TOOLS=()
+NPA_SOURCE_SHA="${NPA_SOURCE_SHA:-$(git -C "${NPA_ROOT}" rev-parse HEAD)}"
+if [[ ! "${NPA_SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "ERROR: NPA_SOURCE_SHA must be the exact 40-character checkout SHA" >&2
+  exit 2
+fi
+export NPA_SOURCE_SHA
 
 usage() {
   sed -n '2,8p' "$0"
@@ -67,6 +73,7 @@ build_simple() {
   echo "=== build ${tool} -> ${local_ref} ==="
   docker build --platform linux/amd64 \
     -f "${NPA_ROOT}/${dockerfile}" \
+    --build-arg "NPA_SOURCE_SHA=${NPA_SOURCE_SHA}" \
     -t "${local_ref}" \
     -t "${remote_ref}" \
     "${NPA_ROOT}/npa"

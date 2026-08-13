@@ -68,6 +68,10 @@ class ContainerSpec:
     safety: dict[str, Any]
     golden_eval: GoldenEval
     foundation: bool = False
+    # Infrastructure/runtime image built by this repository but not exposed as a
+    # first-class Workbench tool (for example the standard-workflow control image).
+    internal: bool = False
+    default_tag: str | None = None
     external_build: bool = False
     #: For an image that is a build VARIANT of another tool rather than a tool of its
     #: own, the tool key it derives from. ``npa-sonic-mujoco`` is built FROM
@@ -152,6 +156,8 @@ def load_manifest() -> dict[str, ContainerSpec]:
             safety=dict(raw.get("safety") or {}),
             golden_eval=golden_eval,
             foundation=bool(raw.get("foundation", False)),
+            internal=bool(raw.get("internal", False)),
+            default_tag=raw.get("default_tag"),
             external_build=bool(raw.get("external_build", False)),
             variant_of=raw.get("variant_of"),
             image_variant=raw.get("image_variant"),
@@ -242,6 +248,14 @@ def validate_manifest(
                 report.add(
                     name, f"variant_of names an unknown tool: {spec.variant_of!r}"
                 )
+        if spec.internal:
+            if spec.foundation or spec.variant_of is not None:
+                report.add(
+                    name,
+                    "an internal image cannot also be a foundation or tool variant",
+                )
+            if not str(spec.default_tag or "").strip():
+                report.add(name, "an internal image must declare default_tag")
 
     if expected_tools is not None:
         missing = expected_tools - set(specs)

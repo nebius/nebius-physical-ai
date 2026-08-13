@@ -1,0 +1,37 @@
+# Kubernetes-schedulability prerequisites for an ALREADY BUILT
+# npa-sim2real-control image.
+#
+# The source Dockerfile bakes this closure directly.  This derived recipe exists for
+# the same operational repair path as the other SkyPilot-hosted workbench images:
+#
+#   scripts/build-workbench-image-in-cluster.sh \
+#     --base <registry>/npa-sim2real-control:<tag> \
+#     --tag <registry>/npa-sim2real-control:<tag>-k8s-runtime \
+#     --dockerfile npa/docker/workbench/sim2real-control/Dockerfile.k8s-prereqs
+#
+# SkyPilot replaces the image command with its Kubernetes bootstrap.  That bootstrap
+# needs python3 and rsync, invokes passwordless sudo, installs/starts sshd, and probes
+# with netcat.  Without this closure the task container exits before SkyPilot can query
+# its user, misleadingly surfacing `container not found ("ray-node")` (live
+# compositional attempt 6).  The repaired image remains non-root.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+USER root
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      curl netcat-openbsd openssh-client openssh-server procps rsync sudo \
+    && rm -rf /var/lib/apt/lists/* \
+    && (id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu) \
+    && printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' \
+      > /etc/sudoers.d/99-npa-runtime-user \
+    && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
+    && install -d -m 0755 /var/run/sshd \
+    && python3 -c "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-exact-source.pth').write_text('/opt/npa/src\n', encoding='utf-8')" \
+    && env -u PYTHONPATH python3 -c "from npa.workflows.sim2real.workflow_stage import main; assert callable(main)" \
+    && python3 --version \
+    && rsync --version >/dev/null
+
+USER ubuntu
+ENTRYPOINT ["/usr/local/bin/npa-workflow-entrypoint"]

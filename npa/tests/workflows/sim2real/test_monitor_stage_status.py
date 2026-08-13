@@ -265,9 +265,12 @@ def test_get_sim2real_workflow_status_no_early_pending_when_later_done(
         "npa.workflows.sim2real.monitor.resolve_kubeconfig",
         lambda context: tmp_path / "kubeconfig",
     )
+    k8s_client = MagicMock()
+    k8s_client.snapshot_if_exists.return_value = None
+    k8s_client.list_jobs.return_value = ()
     monkeypatch.setattr(
-        "npa.workflows.sim2real.monitor._kubectl_json",
-        lambda *args, **kwargs: {},
+        "npa.workflows.sim2real.monitor._structured_k8s_client",
+        lambda **kwargs: k8s_client,
     )
     monkeypatch.setattr(
         "npa.workflows.sim2real.monitor._k8s_sibling_summary",

@@ -46,7 +46,9 @@ def _storage() -> StorageConfig:
 
 def test_deployment_name_for_cluster_default_viewer() -> None:
     assert deployment_name_for_cluster() == "npa-rerun-viewer"
-    assert deployment_name_for_run("rtxpro-staged-20260615T040034Z") == "npa-rerun-viewer"
+    assert (
+        deployment_name_for_run("rtxpro-staged-20260615T040034Z") == "npa-rerun-viewer"
+    )
 
 
 def test_deployment_name_for_cluster_slugifies_context() -> None:
@@ -70,7 +72,9 @@ def test_same_cluster_deployment_name_for_different_runs(mocker) -> None:
         aws_access_key_id="ak",
         aws_secret_access_key="sk",
     )
-    assert first.deployment_name == second.deployment_name == "npa-rerun-npa-rtxpro-mk8s"
+    assert (
+        first.deployment_name == second.deployment_name == "npa-rerun-npa-rtxpro-mk8s"
+    )
     assert first.rrd_s3_uri != second.rrd_s3_uri
 
 
@@ -122,7 +126,9 @@ def test_build_config_accepts_custom_run_id(mocker) -> None:
     )
 
 
-def test_default_rerun_image_prefers_generic_env_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_default_rerun_image_prefers_generic_env_alias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("NPA_SIM2REAL_RERUN_IMAGE", "legacy/image:1")
     monkeypatch.setenv("NPA_RERUN_VIEWER_IMAGE", "generic/image:2")
     assert default_rerun_image() == "generic/image:2"
@@ -139,7 +145,9 @@ def test_manifest_sets_progress_deadline(mocker) -> None:
         aws_secret_access_key="sk",
     )
     manifest = build_rerun_serve_manifest(config)
-    deployment = next(item for item in manifest["items"] if item["kind"] == "Deployment")
+    deployment = next(
+        item for item in manifest["items"] if item["kind"] == "Deployment"
+    )
     assert deployment["spec"]["progressDeadlineSeconds"] == 900
 
 
@@ -172,7 +180,10 @@ def test_build_config_accepts_report_uri(mocker) -> None:
         aws_access_key_id="ak",
         aws_secret_access_key="sk",
     )
-    assert config.rrd_s3_uri == "s3://demo-bucket/sim2real-b/sim2real-staged-20260615t180818z/reports/sim2real.rrd"
+    assert (
+        config.rrd_s3_uri
+        == "s3://demo-bucket/sim2real-b/sim2real-staged-20260615t180818z/reports/sim2real.rrd"
+    )
 
 
 def test_rrd_s3_uri_from_report_uri() -> None:
@@ -196,7 +207,9 @@ def test_manifest_contains_init_sync_and_rerun_serve(mocker) -> None:
     kinds = [item["kind"] for item in manifest["items"]]
     assert kinds == ["Secret", "ConfigMap", "Deployment", "Service"]
 
-    deployment = next(item for item in manifest["items"] if item["kind"] == "Deployment")
+    deployment = next(
+        item for item in manifest["items"] if item["kind"] == "Deployment"
+    )
     init_container = deployment["spec"]["template"]["spec"]["initContainers"][0]
     containers = deployment["spec"]["template"]["spec"]["containers"]
     nginx_container = next(c for c in containers if c["name"] == "nginx")
@@ -209,7 +222,9 @@ def test_manifest_contains_init_sync_and_rerun_serve(mocker) -> None:
     assert "pip install" in rerun_container["command"][-1]
     assert "rerun-sdk==0.32.0" in rerun_container["command"][-1]
     assert "--serve-web" in rerun_container["command"][-1]
-    assert f"--web-viewer-port {RERUN_INTERNAL_WEB_PORT}" in rerun_container["command"][-1]
+    assert (
+        f"--web-viewer-port {RERUN_INTERNAL_WEB_PORT}" in rerun_container["command"][-1]
+    )
     assert f"--port {DEFAULT_GRPC_PORT}" in rerun_container["command"][-1]
     assert "--cors-allow-origin" in rerun_container["command"][-1]
     assert rerun_container["command"][-1].endswith("--cors-allow-origin 'http://*:*' ")
@@ -240,9 +255,13 @@ def test_manifest_omits_cors_flag_for_preinstalled_rerun_031_image(mocker) -> No
         aws_secret_access_key="sk",
     )
     manifest = build_rerun_serve_manifest(config)
-    deployment = next(item for item in manifest["items"] if item["kind"] == "Deployment")
+    deployment = next(
+        item for item in manifest["items"] if item["kind"] == "Deployment"
+    )
     rerun_container = next(
-        c for c in deployment["spec"]["template"]["spec"]["containers"] if c["name"] == "rerun"
+        c
+        for c in deployment["spec"]["template"]["spec"]["containers"]
+        if c["name"] == "rerun"
     )
 
     assert "--cors-allow-origin" not in rerun_container["command"][-1]
@@ -276,12 +295,18 @@ def test_manifest_uses_direct_rerun_for_prebuilt_image(mocker) -> None:
         rerun_image="cr.eu-north1.nebius.cloud/demo/npa-rerun-viewer:0.31.4",
     )
     manifest = build_rerun_serve_manifest(config)
-    deployment = next(item for item in manifest["items"] if item["kind"] == "Deployment")
+    deployment = next(
+        item for item in manifest["items"] if item["kind"] == "Deployment"
+    )
     rerun_container = next(
-        c for c in deployment["spec"]["template"]["spec"]["containers"] if c["name"] == "rerun"
+        c
+        for c in deployment["spec"]["template"]["spec"]["containers"]
+        if c["name"] == "rerun"
     )
     assert "pip install" not in rerun_container["command"][-1]
-    assert rerun_container["command"][-1].startswith("rerun /data/sim2real.rrd --serve-web")
+    assert rerun_container["command"][-1].startswith(
+        "rerun /data/sim2real.rrd --serve-web"
+    )
 
 
 def test_build_rerun_nginx_config_sets_static_cache_headers() -> None:
@@ -303,7 +328,9 @@ def test_build_rerun_serve_manifest_includes_rrd_sync_annotation(mocker) -> None
         aws_secret_access_key="sk",
     )
     manifest = build_rerun_serve_manifest(config, rrd_sync_token="abc123etag")
-    deployment = next(item for item in manifest["items"] if item["kind"] == "Deployment")
+    deployment = next(
+        item for item in manifest["items"] if item["kind"] == "Deployment"
+    )
     annotations = deployment["spec"]["template"]["metadata"]["annotations"]
     assert annotations["npa.nebius.com/rrd-sync-token"] == "abc123etag"
 
@@ -320,6 +347,28 @@ def test_fetch_rrd_sync_token_uses_head_object_etag() -> None:
         head_object=lambda **_kwargs: {"ETag": '"etag-from-s3"'},
     )
     assert token == "etag-from-s3"
+
+
+def test_rrd_probe_uses_ranged_get_without_head(mocker) -> None:
+    from npa.workflows.rerun_serve import verify_rrd_exists_on_s3
+
+    config = build_rerun_serve_config(
+        run_id="sim2real-staged-20260615t180818z",
+        s3_bucket="demo-bucket",
+        aws_access_key_id="ak",
+        aws_secret_access_key="sk",
+    )
+    client = mocker.patch("boto3.client").return_value
+
+    verify_rrd_exists_on_s3(config)
+
+    client.get_object.assert_called_once_with(
+        Bucket="demo-bucket",
+        Key="sim2real-b/sim2real-staged-20260615t180818z/reports/sim2real.rrd",
+        Range="bytes=0-0",
+    )
+    client.head_object.assert_not_called()
+    client.get_object.return_value["Body"].close.assert_called_once_with()
 
 
 def test_redact_manifest_hides_secret_values(mocker) -> None:
@@ -376,12 +425,18 @@ def test_apply_rerun_serve_uses_kubectl_runner(mocker) -> None:
 
     assert calls[0][0] == ["apply", "-f", "-"]
     assert json.loads(calls[0][1] or "{}")["kind"] == "List"
-    assert calls[1][0][:3] == ["rollout", "status", f"deployment/{config.deployment_name}"]
+    assert calls[1][0][:3] == [
+        "rollout",
+        "status",
+        f"deployment/{config.deployment_name}",
+    ]
     assert result.status == "deployed"
     assert result.public_url == public_viewer_url(
         "203.0.113.10", http_port=DEFAULT_PORT, grpc_port=DEFAULT_GRPC_PORT
     )
-    assert result.local_url == local_viewer_url(http_port=DEFAULT_PORT, grpc_port=DEFAULT_GRPC_PORT)
+    assert result.local_url == local_viewer_url(
+        http_port=DEFAULT_PORT, grpc_port=DEFAULT_GRPC_PORT
+    )
     assert "port-forward" in result.port_forward_command
     assert f"{DEFAULT_PORT}:{DEFAULT_PORT}" in result.port_forward_command
     assert f"{DEFAULT_GRPC_PORT}:{DEFAULT_GRPC_PORT}" in result.port_forward_command
@@ -498,7 +553,9 @@ def test_should_auto_rerun_serve_gate(
     )
 
 
-def test_should_auto_rerun_serve_respects_disable_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_should_auto_rerun_serve_respects_disable_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("NPA_SIM2REAL_RERUN_SERVE", "0")
     assert not should_auto_rerun_serve(
         rerun_enabled=True,

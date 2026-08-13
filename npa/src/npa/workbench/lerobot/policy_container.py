@@ -50,7 +50,9 @@ DEFAULT_POLICY_OUTPUT_ROOT = "/tmp/npa-lerobot"
 
 
 def _policy_output_root() -> Path:
-    return Path(os.environ.get(POLICY_OUTPUT_ROOT_ENV, "") or DEFAULT_POLICY_OUTPUT_ROOT).resolve()
+    return Path(
+        os.environ.get(POLICY_OUTPUT_ROOT_ENV, "") or DEFAULT_POLICY_OUTPUT_ROOT
+    ).resolve()
 
 
 def jail_output_dir(raw: str | None, *, default_name: str) -> Path:
@@ -73,7 +75,9 @@ def jail_output_dir(raw: str | None, *, default_name: str) -> Path:
             ) from None
     resolved = (root / relative).resolve()
     if resolved != root and root not in resolved.parents:
-        raise PolicyContainerError(f"output_dir {candidate!r} escapes the allowed output root {root}")
+        raise PolicyContainerError(
+            f"output_dir {candidate!r} escapes the allowed output root {root}"
+        )
     return resolved
 
 
@@ -153,6 +157,18 @@ class VlmSignalUpdateResult:
     control: bool
     loss_integration_point: str
     duration_ms: float
+    resume_checkpoint_uri: str = ""
+    resume_checkpoint_sha256: str = ""
+    ppo: dict[str, Any] = field(default_factory=dict)
+    ppo_telemetry: dict[str, Any] = field(default_factory=dict)
+    ppo_telemetry_uri: str = ""
+    ppo_raw_log_uri: str = ""
+    ppo_hyperparameters: dict[str, Any] = field(default_factory=dict)
+    scenario_distribution: dict[str, Any] = field(default_factory=dict)
+    applied_scenario_proof: dict[str, Any] = field(default_factory=dict)
+    applied_scenarios_uri: str = ""
+    periodic_checkpoints: list[dict[str, Any]] = field(default_factory=list)
+    signal_statistics: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -203,12 +219,28 @@ class VlmSignalUpdateResult:
             mean_reward=float(payload.get("mean_reward", 0.0)),
             mean_advantage=float(payload.get("mean_advantage", 0.0)),
             checkpoint_path=str(payload.get("checkpoint_path", "")),
+            resume_checkpoint_uri=str(payload.get("resume_checkpoint_uri", "")),
+            resume_checkpoint_sha256=str(payload.get("resume_checkpoint_sha256", "")),
             signal_count=int(payload.get("signal_count", 0)),
             control=bool(payload.get("control", False)),
             loss_integration_point=str(
                 payload.get("loss_integration_point", "byo_trainer_command")
             ),
             duration_ms=float(payload.get("duration_ms", 0.0)),
+            ppo=dict(payload.get("ppo") or {}),
+            ppo_telemetry=dict(payload.get("ppo_telemetry") or {}),
+            ppo_telemetry_uri=str(payload.get("ppo_telemetry_uri") or ""),
+            ppo_raw_log_uri=str(payload.get("ppo_raw_log_uri") or ""),
+            ppo_hyperparameters=dict(payload.get("ppo_hyperparameters") or {}),
+            scenario_distribution=dict(payload.get("scenario_distribution") or {}),
+            applied_scenario_proof=dict(payload.get("applied_scenario_proof") or {}),
+            applied_scenarios_uri=str(payload.get("applied_scenarios_uri") or ""),
+            periodic_checkpoints=[
+                dict(item)
+                for item in (payload.get("periodic_checkpoints") or [])
+                if isinstance(item, dict)
+            ],
+            signal_statistics=dict(payload.get("signal_statistics") or {}),
         )
 
 
@@ -289,7 +321,9 @@ class LeRobotPolicyRuntime:
     def __init__(self, checkpoint_path: Path | str | None = None) -> None:
         raw_checkpoint = checkpoint_path or os.environ.get("NPA_POLICY_CHECKPOINT", "")
         if not str(raw_checkpoint):
-            raise PolicyContainerError("NPA_POLICY_CHECKPOINT or --checkpoint is required for serving")
+            raise PolicyContainerError(
+                "NPA_POLICY_CHECKPOINT or --checkpoint is required for serving"
+            )
         resolved = Path(raw_checkpoint).expanduser()
         self.checkpoint_path = resolved
         self.validation = validate_lerobot_checkpoint(self.checkpoint_path)
@@ -349,7 +383,9 @@ def build_lerobot_train_command(
     if batch_size <= 0:
         raise PolicyContainerError(f"batch_size must be positive, got {batch_size}")
     if num_workers < 0:
-        raise PolicyContainerError(f"num_workers must be non-negative, got {num_workers}")
+        raise PolicyContainerError(
+            f"num_workers must be non-negative, got {num_workers}"
+        )
     dataset_root = Path(dataset_path)
     repo_id = dataset_repo_id or dataset_root.name
     if save_freq is None:
@@ -402,10 +438,14 @@ def run_lerobot_training(
         raise PolicyContainerError("lerobot-train was not found on PATH")
     dataset_root = Path(dataset_path)
     if not (dataset_root / "meta" / "info.json").exists():
-        raise PolicyContainerError(f"LeRobot dataset is missing meta/info.json: {dataset_root}")
+        raise PolicyContainerError(
+            f"LeRobot dataset is missing meta/info.json: {dataset_root}"
+        )
     out = Path(output_dir)
     if out.exists() and not resume:
-        raise PolicyContainerError(f"output_dir already exists; pass resume=True to continue: {out}")
+        raise PolicyContainerError(
+            f"output_dir already exists; pass resume=True to continue: {out}"
+        )
     out.parent.mkdir(parents=True, exist_ok=True)
     log = Path(log_path) if log_path else out.parent / f"{out.name}.train.log"
     log.parent.mkdir(parents=True, exist_ok=True)
@@ -550,7 +590,9 @@ def run_lerobot_eval(
     avg_max_reward = _optional_float(overall.get("avg_max_reward"))
     score = pc_success if pc_success is not None else _normalized_reward(avg_sum_reward)
     if score is None:
-        raise PolicyContainerError(f"eval_info.json does not contain pc_success or avg_sum_reward: {eval_info_path}")
+        raise PolicyContainerError(
+            f"eval_info.json does not contain pc_success or avg_sum_reward: {eval_info_path}"
+        )
     n_episodes = overall.get("n_episodes")
     return LeRobotEvalResult(
         status="success",
@@ -559,7 +601,9 @@ def run_lerobot_eval(
         output_dir=str(out),
         eval_info_path=str(eval_info_path),
         score=round(float(score), 6),
-        metric_name="pc_success" if pc_success is not None else "normalized_avg_sum_reward",
+        metric_name="pc_success"
+        if pc_success is not None
+        else "normalized_avg_sum_reward",
         pc_success=pc_success,
         avg_sum_reward=avg_sum_reward,
         avg_max_reward=avg_max_reward,
@@ -571,7 +615,9 @@ def run_lerobot_eval(
     )
 
 
-def validate_lerobot_checkpoint(checkpoint_path: Path | str) -> CheckpointValidationResult:
+def validate_lerobot_checkpoint(
+    checkpoint_path: Path | str,
+) -> CheckpointValidationResult:
     """Assert a checkpoint has real, loadable tensor weights."""
 
     checkpoint = Path(checkpoint_path)
@@ -579,18 +625,24 @@ def validate_lerobot_checkpoint(checkpoint_path: Path | str) -> CheckpointValida
         raise PolicyContainerError(f"checkpoint directory does not exist: {checkpoint}")
     weight_file = _find_weight_file(checkpoint)
     if weight_file is None:
-        raise PolicyContainerError(f"checkpoint has no real weight file under {checkpoint}")
+        raise PolicyContainerError(
+            f"checkpoint has no real weight file under {checkpoint}"
+        )
     if weight_file.name == "model.safetensors":
         try:
             from safetensors.torch import load_file
         except ImportError as exc:
-            raise PolicyContainerError("safetensors is required to validate model.safetensors") from exc
+            raise PolicyContainerError(
+                "safetensors is required to validate model.safetensors"
+            ) from exc
         tensors = load_file(str(weight_file), device="cpu")
     else:
         try:
             import torch
         except ImportError as exc:
-            raise PolicyContainerError("torch is required to validate pytorch_model.bin") from exc
+            raise PolicyContainerError(
+                "torch is required to validate pytorch_model.bin"
+            ) from exc
         payload = torch.load(str(weight_file), map_location="cpu")
         tensors = payload if isinstance(payload, dict) else {}
     tensor_count = 0
@@ -600,7 +652,9 @@ def validate_lerobot_checkpoint(checkpoint_path: Path | str) -> CheckpointValida
             tensor_count += 1
             parameter_count += int(value.numel())
     if tensor_count <= 0 or parameter_count <= 0:
-        raise PolicyContainerError(f"checkpoint weight file contains no tensors: {weight_file}")
+        raise PolicyContainerError(
+            f"checkpoint weight file contains no tensors: {weight_file}"
+        )
     return CheckpointValidationResult(
         status="loadable",
         checkpoint_path=str(checkpoint),
@@ -611,10 +665,14 @@ def validate_lerobot_checkpoint(checkpoint_path: Path | str) -> CheckpointValida
     )
 
 
-def parse_feedback_batch(payload: dict[str, Any] | list[dict[str, Any]]) -> list[FeedbackItem]:
+def parse_feedback_batch(
+    payload: dict[str, Any] | list[dict[str, Any]],
+) -> list[FeedbackItem]:
     """Parse `{success, score, rationale}` feedback records."""
 
-    records = payload if isinstance(payload, list) else payload.get("feedback", [payload])
+    records = (
+        payload if isinstance(payload, list) else payload.get("feedback", [payload])
+    )
     if not isinstance(records, list) or not records:
         raise PolicyContainerError("feedback payload must contain at least one record")
     parsed: list[FeedbackItem] = []
@@ -623,7 +681,9 @@ def parse_feedback_batch(payload: dict[str, Any] | list[dict[str, Any]]) -> list
             raise PolicyContainerError("feedback records must be objects")
         missing = [key for key in ("success", "score", "rationale") if key not in item]
         if missing:
-            raise PolicyContainerError(f"feedback record missing required keys: {', '.join(missing)}")
+            raise PolicyContainerError(
+                f"feedback record missing required keys: {', '.join(missing)}"
+            )
         score = float(item["score"])
         if not 0.0 <= score <= 1.0:
             raise PolicyContainerError(f"feedback score must be in [0, 1], got {score}")
@@ -641,7 +701,9 @@ def parse_feedback_batch(payload: dict[str, Any] | list[dict[str, Any]]) -> list
     return parsed
 
 
-def parse_vlm_signal_batch(payload: dict[str, Any] | list[dict[str, Any]]) -> list[VlmRlSignal]:
+def parse_vlm_signal_batch(
+    payload: dict[str, Any] | list[dict[str, Any]],
+) -> list[VlmRlSignal]:
     """Parse the Stage 9 VLM-to-RL training signal schema.
 
     Accepted inputs are a single ``npa.sim2real.rl_signal.v1`` object, a list of
@@ -653,9 +715,15 @@ def parse_vlm_signal_batch(payload: dict[str, Any] | list[dict[str, Any]]) -> li
     elif str(payload.get("schema", "")).startswith("npa.sim2real.rl_signal."):
         records = [payload]
     else:
-        records = payload.get("signals") or payload.get("training_signal") or payload.get("feedback")
+        records = (
+            payload.get("signals")
+            or payload.get("training_signal")
+            or payload.get("feedback")
+        )
     if not isinstance(records, list) or not records:
-        raise PolicyContainerError("VLM signal payload must contain at least one signal record")
+        raise PolicyContainerError(
+            "VLM signal payload must contain at least one signal record"
+        )
 
     parsed: list[VlmRlSignal] = []
     for record in records:
@@ -666,21 +734,29 @@ def parse_vlm_signal_batch(payload: dict[str, Any] | list[dict[str, Any]]) -> li
             raise PolicyContainerError("VLM signal record missing rollout_id")
         raw_steps = record.get("per_step")
         if not isinstance(raw_steps, list) or not raw_steps:
-            raise PolicyContainerError(f"VLM signal {rollout_id} must include non-empty per_step")
+            raise PolicyContainerError(
+                f"VLM signal {rollout_id} must include non-empty per_step"
+            )
         steps: list[VlmSignalStep] = []
         for raw_step in raw_steps:
             if not isinstance(raw_step, dict):
                 raise PolicyContainerError("VLM signal per_step items must be objects")
             if "step" not in raw_step or "reward" not in raw_step:
-                raise PolicyContainerError("VLM signal per_step items require step and reward")
+                raise PolicyContainerError(
+                    "VLM signal per_step items require step and reward"
+                )
             reward = _bounded_float(raw_step["reward"], lower=-1.0, upper=1.0)
             advantage = raw_step.get("advantage")
             tags = raw_step.get("error_tags") or []
             if not isinstance(tags, list):
-                raise PolicyContainerError("VLM signal error_tags must be a list when present")
+                raise PolicyContainerError(
+                    "VLM signal error_tags must be a list when present"
+                )
             target = raw_step.get("target") or {}
             if not isinstance(target, dict):
-                raise PolicyContainerError("VLM signal target must be an object when present")
+                raise PolicyContainerError(
+                    "VLM signal target must be an object when present"
+                )
             steps.append(
                 VlmSignalStep(
                     step=int(raw_step["step"]),
@@ -724,7 +800,9 @@ def run_feedback_training_step(
     if not feedback:
         raise PolicyContainerError("feedback batch is empty")
     if learning_rate <= 0:
-        raise PolicyContainerError(f"learning_rate must be positive, got {learning_rate}")
+        raise PolicyContainerError(
+            f"learning_rate must be positive, got {learning_rate}"
+        )
     output_dir.mkdir(parents=True, exist_ok=True)
     target = sum(_feedback_reward(item) for item in feedback) / float(len(feedback))
     start = time.time()
@@ -732,14 +810,20 @@ def run_feedback_training_step(
     try:
         import torch
 
-        weight = torch.nn.Parameter(torch.tensor([float(initial_weight)], dtype=torch.float32))
+        weight = torch.nn.Parameter(
+            torch.tensor([float(initial_weight)], dtype=torch.float32)
+        )
         optimizer = torch.optim.SGD([weight], lr=float(learning_rate))
-        before_loss = torch.square(torch.sigmoid(weight) - torch.tensor([target], dtype=torch.float32)).mean()
+        before_loss = torch.square(
+            torch.sigmoid(weight) - torch.tensor([target], dtype=torch.float32)
+        ).mean()
         weight_before = float(weight.detach().item())
         optimizer.zero_grad()
         before_loss.backward()
         optimizer.step()
-        after_loss = torch.square(torch.sigmoid(weight) - torch.tensor([target], dtype=torch.float32)).mean()
+        after_loss = torch.square(
+            torch.sigmoid(weight) - torch.tensor([target], dtype=torch.float32)
+        ).mean()
         checkpoint_path = output_dir / "feedback_adapter.pt"
         torch.save(
             {
@@ -818,9 +902,13 @@ def run_vlm_signal_training_step(
     if not signals:
         raise PolicyContainerError("VLM signal batch is empty")
     if learning_rate <= 0:
-        raise PolicyContainerError(f"learning_rate must be positive, got {learning_rate}")
+        raise PolicyContainerError(
+            f"learning_rate must be positive, got {learning_rate}"
+        )
     if signal_loss_weight < 0:
-        raise PolicyContainerError(f"signal_loss_weight must be non-negative, got {signal_loss_weight}")
+        raise PolicyContainerError(
+            f"signal_loss_weight must be non-negative, got {signal_loss_weight}"
+        )
     output_dir.mkdir(parents=True, exist_ok=True)
     flat_steps = [step for signal in signals for step in signal.per_step]
     if not flat_steps:
@@ -855,7 +943,9 @@ def run_vlm_signal_training_step(
     try:
         import torch
 
-        reward_head = torch.nn.Parameter(torch.tensor([float(initial_reward_head)], dtype=torch.float32))
+        reward_head = torch.nn.Parameter(
+            torch.tensor([float(initial_reward_head)], dtype=torch.float32)
+        )
         action_bias = torch.nn.Parameter(
             torch.full((action_dim,), float(initial_action_bias), dtype=torch.float32)
         )
@@ -867,19 +957,29 @@ def run_vlm_signal_training_step(
             predicted_reward = torch.sigmoid(reward_head)
             predicted_action = torch.tanh(action_bias)
             reward_loss = torch.square(predicted_reward - target_reward_tensor).mean()
-            corrective_loss = torch.square(predicted_action - target_action_tensor).mean()
+            corrective_loss = torch.square(
+                predicted_action - target_action_tensor
+            ).mean()
             advantage_term = -float(mean_advantage) * predicted_action.mean()
-            return reward_loss + float(signal_loss_weight) * corrective_loss + 0.1 * advantage_term
+            return (
+                reward_loss
+                + float(signal_loss_weight) * corrective_loss
+                + 0.1 * advantage_term
+            )
 
         before_loss = loss_value()
         reward_head_before = float(reward_head.detach().item())
-        policy_output_before = [float(item) for item in torch.tanh(action_bias.detach()).tolist()]
+        policy_output_before = [
+            float(item) for item in torch.tanh(action_bias.detach()).tolist()
+        ]
         optimizer.zero_grad()
         before_loss.backward()
         optimizer.step()
         after_loss = loss_value()
         reward_head_after = float(reward_head.detach().item())
-        policy_output_after = [float(item) for item in torch.tanh(action_bias.detach()).tolist()]
+        policy_output_after = [
+            float(item) for item in torch.tanh(action_bias.detach()).tolist()
+        ]
         checkpoint_path = output_dir / "vlm_signal_adapter.pt"
         torch.save(
             {
@@ -901,15 +1001,25 @@ def run_vlm_signal_training_step(
         loss_after = float(after_loss.detach().item())
     except ImportError:
         reward_head_before = float(initial_reward_head)
-        policy_output_before = [_tanh(float(initial_action_bias)) for _ in range(action_dim)]
+        policy_output_before = [
+            _tanh(float(initial_action_bias)) for _ in range(action_dim)
+        ]
         reward_prediction = _sigmoid(reward_head_before)
-        reward_gradient = 2.0 * (reward_prediction - reward_target) * reward_prediction * (1.0 - reward_prediction)
+        reward_gradient = (
+            2.0
+            * (reward_prediction - reward_target)
+            * reward_prediction
+            * (1.0 - reward_prediction)
+        )
         reward_head_after = reward_head_before - float(learning_rate) * reward_gradient
-        policy_output_after: list[float] = []
+        policy_output_after = []
         for before, target in zip(policy_output_before, target_vector, strict=False):
             gradient = 2.0 * (before - target) * (1.0 - before * before)
             gradient -= 0.1 * float(mean_advantage) / float(action_dim)
-            bias_after = float(initial_action_bias) - float(learning_rate) * float(signal_loss_weight) * gradient
+            bias_after = (
+                float(initial_action_bias)
+                - float(learning_rate) * float(signal_loss_weight) * gradient
+            )
             policy_output_after.append(_tanh(bias_after))
         loss_before = _reference_signal_loss(
             reward_prediction=reward_prediction,
@@ -951,7 +1061,12 @@ def run_vlm_signal_training_step(
         backend = "python"
 
     policy_delta = math.sqrt(
-        sum((after - before) ** 2 for before, after in zip(policy_output_before, policy_output_after, strict=False))
+        sum(
+            (after - before) ** 2
+            for before, after in zip(
+                policy_output_before, policy_output_after, strict=False
+            )
+        )
     )
     return VlmSignalUpdateResult(
         status="updated",
@@ -980,7 +1095,9 @@ def create_app() -> Any:
     try:
         from fastapi import FastAPI, HTTPException
     except ImportError as exc:
-        raise PolicyContainerError("fastapi is required to serve the policy container") from exc
+        raise PolicyContainerError(
+            "fastapi is required to serve the policy container"
+        ) from exc
 
     app = FastAPI(title="npa-lerobot-policy-container")
     policy: LeRobotPolicyRuntime | None = None
@@ -1001,52 +1118,63 @@ def create_app() -> Any:
     @app.post("/infer")
     async def infer(payload: dict[str, Any]) -> dict[str, Any]:
         if policy is None:
-            raise HTTPException(status_code=503, detail="NPA_POLICY_CHECKPOINT is required for inference")
+            raise HTTPException(
+                status_code=503,
+                detail="NPA_POLICY_CHECKPOINT is required for inference",
+            )
         try:
-            return {"actions": policy.infer(payload), "policy": str(policy.checkpoint_path)}
+            return {
+                "actions": policy.infer(payload),
+                "policy": str(policy.checkpoint_path),
+            }
         except PolicyContainerError as exc:
             raise HTTPException(status_code=501, detail=str(exc)) from exc
 
     @app.post("/rollout")
     async def rollout(payload: dict[str, Any]) -> dict[str, Any]:
         if policy is None:
-            raise HTTPException(status_code=503, detail="NPA_POLICY_CHECKPOINT is required for rollout")
+            raise HTTPException(
+                status_code=503, detail="NPA_POLICY_CHECKPOINT is required for rollout"
+            )
         observations = payload.get("observations", [])
         if not isinstance(observations, list):
             raise HTTPException(status_code=400, detail="observations must be a list")
         try:
-            return {"actions": policy.rollout(observations), "policy": str(policy.checkpoint_path)}
+            return {
+                "actions": policy.rollout(observations),
+                "policy": str(policy.checkpoint_path),
+            }
         except PolicyContainerError as exc:
             raise HTTPException(status_code=501, detail=str(exc)) from exc
 
     @app.post("/feedback/train-step")
     async def feedback_train_step(payload: dict[str, Any]) -> dict[str, Any]:
-        is_signal = bool(payload.get("signals")) or str(payload.get("schema", "")).startswith(
-            "npa.sim2real.rl_signal."
-        )
+        is_signal = bool(payload.get("signals")) or str(
+            payload.get("schema", "")
+        ).startswith("npa.sim2real.rl_signal.")
         try:
             output_dir = jail_output_dir(
                 payload.get("output_dir"),
                 default_name="vlm-signal" if is_signal else "feedback",
             )
             if is_signal:
-                result = run_vlm_signal_training_step(
+                signal_update = run_vlm_signal_training_step(
                     parse_vlm_signal_batch(payload),
                     output_dir=output_dir,
                     learning_rate=float(payload.get("learning_rate") or 0.05),
                     signal_loss_weight=float(payload.get("signal_loss_weight") or 1.0),
                     control=bool(payload.get("control", False)),
                 )
-            else:
-                feedback = parse_feedback_batch(payload)
-                result = run_feedback_training_step(
-                    feedback,
-                    output_dir=output_dir,
-                    learning_rate=float(payload.get("learning_rate") or 0.1),
-                )
+                return signal_update.to_dict()
+            feedback = parse_feedback_batch(payload)
+            feedback_update = run_feedback_training_step(
+                feedback,
+                output_dir=output_dir,
+                learning_rate=float(payload.get("learning_rate") or 0.1),
+            )
         except PolicyContainerError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return result.to_dict()
+        return feedback_update.to_dict()
 
     return app
 
@@ -1078,7 +1206,10 @@ def _materialize_train_dataset(args: argparse.Namespace) -> Path:
     `materialize_lerobot_dataset` (local path / `s3://` / `hf://datasets/<id>` / bare repo id).
     """
 
-    from npa.workflows.lerobot_dataset import LeRobotDatasetError, materialize_lerobot_dataset
+    from npa.workflows.lerobot_dataset import (
+        LeRobotDatasetError,
+        materialize_lerobot_dataset,
+    )
 
     source = (args.dataset_source or "").strip() or (args.dataset_repo_id or "").strip()
     if not source or source == "local/lerobot-dataset":
@@ -1093,7 +1224,9 @@ def _materialize_train_dataset(args: argparse.Namespace) -> Path:
             revision=args.dataset_revision,
         )
     except LeRobotDatasetError as exc:
-        raise PolicyContainerError(f"could not materialize dataset {source!r}: {exc}") from exc
+        raise PolicyContainerError(
+            f"could not materialize dataset {source!r}: {exc}"
+        ) from exc
     if not (dataset / "meta" / "info.json").exists():
         raise PolicyContainerError(
             f"materialized dataset is missing meta/info.json: {dataset} (source {source!r})"
@@ -1137,7 +1270,9 @@ def _materialize_eval_checkpoint(args: argparse.Namespace) -> Path:
         raise PolicyContainerError(
             f"huggingface_hub is required to fetch the policy {repo_id!r}"
         ) from exc
-    target = Path(snapshot_download(repo_id=repo_id, local_dir=cache / repo_id.replace("/", "__")))
+    target = Path(
+        snapshot_download(repo_id=repo_id, local_dir=cache / repo_id.replace("/", "__"))
+    )
     print(f"NPA_LEROBOT_POLICY_READY {target}", flush=True)
     return target
 
@@ -1155,7 +1290,9 @@ def upload_run_artifacts(output_dir: str | Path, artifacts_uri: str) -> str:
         return ""
     from npa.clients.storage import StorageClient
 
-    return StorageClient.from_environment().upload_directory(str(output_dir), artifacts_uri)
+    return StorageClient.from_environment().upload_directory(
+        str(output_dir), artifacts_uri
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1169,7 +1306,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
-    import_cmd = subparsers.add_parser("check-import", help="Import LeRobot and LeRobotDataset.")
+    import_cmd = subparsers.add_parser(
+        "check-import", help="Import LeRobot and LeRobotDataset."
+    )
     import_cmd.set_defaults(_command_name="check-import")
     train_cmd = subparsers.add_parser("train", help="Run real LeRobot policy training.")
     train_cmd.add_argument("--dataset-path", type=Path, default=None)
@@ -1179,17 +1318,25 @@ def build_parser() -> argparse.ArgumentParser:
     # dataset. --dataset-source accepts a local path, an s3:// prefix, `hf://datasets/<id>`
     # or a bare Hugging Face repo id; empty falls back to --dataset-repo-id.
     train_cmd.add_argument("--dataset-source", default="")
-    train_cmd.add_argument("--dataset-revision", default=DEFAULT_PUBLIC_LEROBOT_REVISION)
-    train_cmd.add_argument("--dataset-cache-dir", type=Path, default=Path("/tmp/npa-lerobot-dataset"))
+    train_cmd.add_argument(
+        "--dataset-revision", default=DEFAULT_PUBLIC_LEROBOT_REVISION
+    )
+    train_cmd.add_argument(
+        "--dataset-cache-dir", type=Path, default=Path("/tmp/npa-lerobot-dataset")
+    )
     train_cmd.add_argument("--output-dir", type=Path, required=True)
     train_cmd.add_argument("--steps", type=int, required=True)
     train_cmd.add_argument("--policy-type", default=DEFAULT_POLICY_TYPE)
     train_cmd.add_argument("--batch-size", type=int, default=DEFAULT_TRAIN_BATCH_SIZE)
     train_cmd.add_argument("--num-workers", type=int, default=DEFAULT_TRAIN_NUM_WORKERS)
-    train_cmd.add_argument("--device", default=os.environ.get("LEROBOT_POLICY_DEVICE", "cuda"))
+    train_cmd.add_argument(
+        "--device", default=os.environ.get("LEROBOT_POLICY_DEVICE", "cuda")
+    )
     train_cmd.add_argument("--resume", action="store_true")
     train_cmd.add_argument("--log-path", type=Path, default=None)
-    train_cmd.add_argument("--timeout-seconds", type=int, default=DEFAULT_TRAIN_TIMEOUT_SECONDS)
+    train_cmd.add_argument(
+        "--timeout-seconds", type=int, default=DEFAULT_TRAIN_TIMEOUT_SECONDS
+    )
     train_cmd.add_argument("--data-path", default="")
     train_cmd.add_argument("--override", action="append", default=[])
     train_cmd.add_argument("--wandb", action="store_true")
@@ -1214,29 +1361,45 @@ def build_parser() -> argparse.ArgumentParser:
     eval_cmd.add_argument("--env-type", default="pusht")
     eval_cmd.add_argument("--env-task", default="")
     eval_cmd.add_argument("--episodes", type=int, default=10)
-    eval_cmd.add_argument("--device", default=os.environ.get("LEROBOT_POLICY_DEVICE", "cuda"))
+    eval_cmd.add_argument(
+        "--device", default=os.environ.get("LEROBOT_POLICY_DEVICE", "cuda")
+    )
     eval_cmd.add_argument("--log-path", type=Path, default=None)
-    eval_cmd.add_argument("--timeout-seconds", type=int, default=DEFAULT_EVAL_TIMEOUT_SECONDS)
+    eval_cmd.add_argument(
+        "--timeout-seconds", type=int, default=DEFAULT_EVAL_TIMEOUT_SECONDS
+    )
     # A stage has no shared filesystem, so --checkpoint-path may name something remote: an
     # `hf://` / bare Hugging Face model id (the retired templates used
     # `lerobot/diffusion_pusht`) or an s3:// prefix. It is materialised locally first.
-    eval_cmd.add_argument("--checkpoint-cache-dir", type=Path, default=Path("/tmp/npa-lerobot-policy"))
+    eval_cmd.add_argument(
+        "--checkpoint-cache-dir", type=Path, default=Path("/tmp/npa-lerobot-policy")
+    )
     eval_cmd.add_argument("--rollouts-s3-uri", default="")
-    validate_cmd = subparsers.add_parser("validate-checkpoint", help="Assert a checkpoint has loadable weights.")
+    validate_cmd = subparsers.add_parser(
+        "validate-checkpoint", help="Assert a checkpoint has loadable weights."
+    )
     validate_cmd.add_argument("--checkpoint-path", type=Path, required=True)
-    feedback_cmd = subparsers.add_parser("feedback-step", help="Run one feedback trainer-hook step.")
+    feedback_cmd = subparsers.add_parser(
+        "feedback-step", help="Run one feedback trainer-hook step."
+    )
     feedback_cmd.add_argument("--feedback-json", type=Path, required=True)
     feedback_cmd.add_argument("--output-dir", type=Path, required=True)
     feedback_cmd.add_argument("--learning-rate", type=float, default=0.1)
-    vlm_signal_cmd = subparsers.add_parser("vlm-signal-step", help="Run one VLM-signal trainer-fork step.")
+    vlm_signal_cmd = subparsers.add_parser(
+        "vlm-signal-step", help="Run one VLM-signal trainer-fork step."
+    )
     vlm_signal_cmd.add_argument("--signal-json", type=Path, required=True)
     vlm_signal_cmd.add_argument("--output-dir", type=Path, required=True)
     vlm_signal_cmd.add_argument("--learning-rate", type=float, default=0.05)
     vlm_signal_cmd.add_argument("--signal-loss-weight", type=float, default=1.0)
     vlm_signal_cmd.add_argument("--control", action="store_true")
     serve_cmd = subparsers.add_parser("serve", help="Run the FastAPI policy container.")
-    serve_cmd.add_argument("--host", default=os.environ.get("NPA_POLICY_HOST", "0.0.0.0"))
-    serve_cmd.add_argument("--port", type=int, default=int(os.environ.get("NPA_POLICY_PORT", "8080")))
+    serve_cmd.add_argument(
+        "--host", default=os.environ.get("NPA_POLICY_HOST", "0.0.0.0")
+    )
+    serve_cmd.add_argument(
+        "--port", type=int, default=int(os.environ.get("NPA_POLICY_PORT", "8080"))
+    )
     return parser
 
 
@@ -1244,7 +1407,9 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.command == "check-import":
-        print(json.dumps(assert_lerobot_importable().to_dict(), indent=2, sort_keys=True))
+        print(
+            json.dumps(assert_lerobot_importable().to_dict(), indent=2, sort_keys=True)
+        )
         return 0
     if args.command == "train":
         try:
@@ -1265,7 +1430,7 @@ def main(argv: list[str] | None = None) -> int:
         dataset_path = training_config.data_path or args.dataset_path
         if not dataset_path:
             dataset_path = _materialize_train_dataset(args)
-        result = run_lerobot_training(
+        train_result = run_lerobot_training(
             dataset_path=dataset_path,
             dataset_repo_id=args.dataset_repo_id,
             output_dir=args.output_dir,
@@ -1279,15 +1444,15 @@ def main(argv: list[str] | None = None) -> int:
             timeout_seconds=args.timeout_seconds,
             training_config=training_config,
         )
-        payload = result.to_dict()
+        payload = train_result.to_dict()
         if args.artifacts_s3_uri.strip():
             payload["artifacts_uri"] = upload_run_artifacts(
-                result.output_dir, args.artifacts_s3_uri
+                train_result.output_dir, args.artifacts_s3_uri
             )
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
     if args.command == "eval":
-        result = run_lerobot_eval(
+        eval_result = run_lerobot_eval(
             checkpoint_path=_materialize_eval_checkpoint(args),
             output_dir=args.output_dir,
             env_type=args.env_type,
@@ -1297,42 +1462,44 @@ def main(argv: list[str] | None = None) -> int:
             log_path=args.log_path,
             timeout_seconds=args.timeout_seconds,
         )
-        eval_payload = result.to_dict()
+        eval_payload = eval_result.to_dict()
         if args.rollouts_s3_uri.strip():
             eval_payload["rollouts_uri"] = upload_run_artifacts(
-                result.output_dir, args.rollouts_s3_uri
+                eval_result.output_dir, args.rollouts_s3_uri
             )
         print(json.dumps(eval_payload, indent=2, sort_keys=True))
         return 0
     if args.command == "validate-checkpoint":
-        result = validate_lerobot_checkpoint(args.checkpoint_path)
-        print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+        validation_result = validate_lerobot_checkpoint(args.checkpoint_path)
+        print(json.dumps(validation_result.to_dict(), indent=2, sort_keys=True))
         return 0
     if args.command == "feedback-step":
         payload = json.loads(args.feedback_json.read_text(encoding="utf-8"))
-        result = run_feedback_training_step(
+        feedback_result = run_feedback_training_step(
             parse_feedback_batch(payload),
             output_dir=args.output_dir,
             learning_rate=args.learning_rate,
         )
-        print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+        print(json.dumps(feedback_result.to_dict(), indent=2, sort_keys=True))
         return 0
     if args.command == "vlm-signal-step":
         payload = json.loads(args.signal_json.read_text(encoding="utf-8"))
-        result = run_vlm_signal_training_step(
+        signal_result = run_vlm_signal_training_step(
             parse_vlm_signal_batch(payload),
             output_dir=args.output_dir,
             learning_rate=args.learning_rate,
             signal_loss_weight=args.signal_loss_weight,
             control=args.control,
         )
-        print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+        print(json.dumps(signal_result.to_dict(), indent=2, sort_keys=True))
         return 0
     if args.command == "serve":
         try:
             import uvicorn
         except ImportError as exc:
-            raise PolicyContainerError("uvicorn is required to serve the policy container") from exc
+            raise PolicyContainerError(
+                "uvicorn is required to serve the policy container"
+            ) from exc
         uvicorn.run(create_app(), host=args.host, port=args.port)
         return 0
     return 2
@@ -1357,7 +1524,9 @@ def _bounded_float(value: Any, *, lower: float, upper: float) -> float:
 
 
 def _action_delta(target: dict[str, Any]) -> list[float]:
-    raw = target.get("action_delta") or target.get("delta") or target.get("action_target")
+    raw = (
+        target.get("action_delta") or target.get("delta") or target.get("action_target")
+    )
     if raw is None:
         return []
     if not isinstance(raw, list):
@@ -1365,7 +1534,9 @@ def _action_delta(target: dict[str, Any]) -> list[float]:
     return [_bounded_float(item, lower=-1.0, upper=1.0) for item in raw]
 
 
-def _mean_action_target(action_targets: list[list[float]], *, action_dim: int) -> list[float]:
+def _mean_action_target(
+    action_targets: list[list[float]], *, action_dim: int
+) -> list[float]:
     if action_dim <= 0:
         return [0.0]
     totals = [0.0 for _ in range(action_dim)]
@@ -1374,7 +1545,10 @@ def _mean_action_target(action_targets: list[list[float]], *, action_dim: int) -
         for index, value in enumerate(target[:action_dim]):
             totals[index] += float(value)
             counts[index] += 1
-    return [round(totals[index] / counts[index], 8) if counts[index] else 0.0 for index in range(action_dim)]
+    return [
+        round(totals[index] / counts[index], 8) if counts[index] else 0.0
+        for index in range(action_dim)
+    ]
 
 
 def _reference_signal_loss(
@@ -1396,14 +1570,20 @@ def _reference_signal_loss(
             for output, target in zip(policy_output, target_vector, strict=False)
         ) / float(len(policy_output))
         action_mean = sum(policy_output) / float(len(policy_output))
-    return reward_loss + float(signal_loss_weight) * corrective_loss - 0.1 * float(mean_advantage) * action_mean
+    return (
+        reward_loss
+        + float(signal_loss_weight) * corrective_loss
+        - 0.1 * float(mean_advantage) * action_mean
+    )
 
 
 def _find_lerobot_checkpoint(output_dir: Path) -> Path | None:
     preferred = output_dir / "checkpoints" / "last" / "pretrained_model"
     candidates = [preferred]
     if (output_dir / "checkpoints").exists():
-        candidates.extend(sorted((output_dir / "checkpoints").rglob("pretrained_model"), reverse=True))
+        candidates.extend(
+            sorted((output_dir / "checkpoints").rglob("pretrained_model"), reverse=True)
+        )
     candidates.extend(sorted(output_dir.rglob("pretrained_model"), reverse=True))
     for candidate in candidates:
         if candidate.is_dir() and _find_weight_file(candidate) is not None:
