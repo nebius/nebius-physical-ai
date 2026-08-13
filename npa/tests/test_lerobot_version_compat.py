@@ -25,7 +25,10 @@ def test_supported_versions_include_default_and_060() -> None:
 
 def test_pip_spec_and_train_flags_differ_by_version() -> None:
     assert lerobot_pip_spec("0.5.1") == "lerobot[pusht,libero]==0.5.1"
-    assert lerobot_pip_spec("0.6.0") == "lerobot[training,evaluation,pusht,libero]==0.6.0"
+    assert (
+        lerobot_pip_spec("0.6.0")
+        == "lerobot[training,evaluation,pusht,libero,diffusion,smolvla]==0.6.0"
+    )
     assert train_env_eval_flag("0.5.1") == "eval_freq"
     assert train_env_eval_flag("0.6.0") == "env_eval_freq"
     assert train_env_eval_arg(100, version="0.5.1") == "--eval_freq=100"
@@ -40,6 +43,16 @@ def test_eval_checkpoint_and_torch_pins() -> None:
     )
     assert "torch==2.12.1" in torch_install_pins("0.5.1")
     assert torch_install_pins("0.6.0") == []
+
+
+def test_060_requests_the_extras_its_policies_gate_on() -> None:
+    """0.6.0 moved diffusers/transformers behind extras and enforces them in
+    each policy's ``__init__``, so a missing extra builds fine and only fails
+    once ``make_policy`` runs. 0.5.1 ships both as core dependencies."""
+
+    spec = lerobot_pip_spec("0.6.0")
+    assert "diffusion" in spec, "--policy.type=diffusion needs lerobot[diffusion]"
+    assert "smolvla" in spec, "--policy.type=smolvla needs lerobot[smolvla]"
 
 
 def test_unsupported_version_raises(monkeypatch: pytest.MonkeyPatch) -> None:

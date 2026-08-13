@@ -17,14 +17,14 @@
       "notes": "Default package pin. The image_tag selects the separately validated Python 3.12 / torch 2.9 cu130 B300 build; the VM installer pins below remain the legacy in-place install contract."
     },
     "0.6.0": {
-      "pip_extras": "training,evaluation,pusht,libero",
+      "pip_extras": "training,evaluation,pusht,libero,diffusion,smolvla",
       "train_env_eval_flag": "env_eval_freq",
       "eval_checkpoint_flag": "policy.path",
       "policy_eval_checkpoint_flag": "policy.pretrained_path",
       "torch_pin": null,
       "torchvision_pin": null,
       "diffusers_pin": null,
-      "notes": "Lean install extras; torch must stay <2.12 per upstream. Do not force-upgrade torch after install."
+      "notes": "Lean install extras; torch must stay <2.12 per upstream. Do not force-upgrade torch after install. 0.6.0 moved diffusers and transformers behind extras and enforces them in each policy's __init__, so the diffusion and smolvla extras are required for --policy.type=diffusion and =smolvla; the smolvla extra also supplies num2words."
     }
   }
 }
