@@ -10,11 +10,14 @@ they can make.
 LTX-2.5 is a generative video model. This integration does not represent it as
 an action-conditioned robotics simulator or an action-prediction model.
 
-> **Status: not yet built, not yet run.** The image has never been built, so no
-> bytes have been scanned and no GPU run has produced evidence. `ltx2` is in
-> `UNVALIDATED_PUBLICATION_TOOLS`, so `publish_public` refuses it by name. The
-> licensing classification and every gate below are implemented and tested; the
-> artifact evidence is not. Both live tests are gated off by default.
+> **Status: built and byte-scanned; not yet generated on a GPU.** The image has
+> been built and pushed on the dev VM, the payload scan passes against the
+> pushed digest, and the refusal has been re-proved against those exact bytes
+> pulled back from the registry (see "Validated on the dev VM" below). What has
+> *not* happened is a generation run: that needs the operator's own LTX-2.x
+> declaration, which nobody else may make. `ltx2` therefore stays in
+> `UNVALIDATED_PUBLICATION_TOOLS` — publication needs the GPU capability
+> evidence as well as the byte evidence, and only one of the two exists.
 
 ## Why this image ships nothing
 
@@ -185,6 +188,44 @@ never through a spec or rendered YAML.
 evidence, and remove `ltx2` from `UNVALIDATED_PUBLICATION_TOOLS` in the same
 change. Not before: publishing an image whose payload scan has never run hands
 out a claim we have not earned.
+
+## Validated on the dev VM
+
+Steps 1–3 of the runbook have been executed. The image was built with
+`build.sh --push` and scanned by immutable digest
+`sha256:246c69c0501e30640413ae49113b5f0cdd82e606d21c7f25b7625cf178ebc084`:
+
+| Check | Result |
+| --- | --- |
+| `build.sh --push` | succeeded, including every in-build proof: `health`, `assert-refusal`, no files written under `/workspace`, the ffmpeg moving-clip/flat-clip validator pair, and the no-`ltx_core`/no-`*.safetensors`/no-`nvidia` layer checks |
+| `scan_image_ltx_payload.py <digest>` | `pass` — 18 archives scanned, zero findings |
+| `docker run <digest> ltx-runtime assert-refusal` | printed the marker, exit 0, on bytes pulled fresh from the registry |
+| `docker run <digest> ensure` (undeclared) | exit 78, names the licence gate, "Nothing has been downloaded." |
+| `docker run <digest> fetch-weights` (undeclared) | exit 78 |
+| `docker run <digest> status` | `source: absent`, `weights: absent` |
+| `/opt/npa/ltx2/smoke.sh` in-image | `OK (refusals enforced, no LTX payload present)` |
+
+The first build failed three times, and each failure was a real defect that no
+amount of local shell testing had reached:
+
+1. `COPY --chmod=0444` also set `0444` on the directories BuildKit created for
+   those files, so `/opt/npa/ltx2` had no execute bit and the runtime user got
+   Permission denied on the licensing gate itself.
+2. The entrypoint's `ltx-runtime` arm forwarded the literal word as the mode, so
+   the runbook's own `docker run <image> ltx-runtime assert-refusal` died as an
+   unknown mode.
+3. The build's "the refusal wrote nothing" check searched `/workspace` by depth
+   and tripped over the empty cache mount points created two lines earlier.
+
+A fourth surfaced in the scan: the payload scanner passed empty audited-bytes
+allowlists on the assumption that this image installs no crypto SDK, but it
+installs `openssh-server` and `ffmpeg`, whose binaries carry key-format literals
+and a CUDA/NVENC ELF reference. Those are now audited by path *and* exact
+SHA-256, verified with `dpkg -V` against Debian's package manifests; substituted
+bytes at an audited path still fail as `audited_literal_byte_drift`.
+
+All four are regression-tested without Docker, and each test fails against the
+pre-fix file.
 
 ## Output validation
 
