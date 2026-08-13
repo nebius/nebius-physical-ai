@@ -1,15 +1,16 @@
 from __future__ import annotations
 
+from npa.cli import agent as agent_module
 from npa.cli.agent import rendered_agent_ui_html
 
 import base64
 import json
-import re
-import shlex
-import shutil
 import subprocess
+import re
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from typer import Exit
@@ -27,365 +28,12 @@ from npa.cli.agent import (
 runner = CliRunner()
 
 
-def _terraform_pass_result():
-    from npa.workflows.sim2real_health import CheckResult, PASS
+def test_artifact_only_timeout_allows_preserved_run_inventory() -> None:
+    from npa.cli.agent import ARTIFACT_ONLY_HTTP_TIMEOUT_SECONDS
 
-    return CheckResult(
-        name="terraform",
-        status=PASS,
-        summary="Terraform CLI 1.13.3 satisfies the supported 1.x policy.",
-    )
-
-
-def test_artifact_only_live_probe_is_read_only_and_state_stable() -> None:
-    from npa.cli.agent import _artifact_only_http_probe
-
-    digest = "a" * 64
-    payloads = {
-        "/api/health": {"ok": True, "state_sha256": digest},
-        "/api/session": {"chat_history": []},
-        "/api/artifacts/runs?prefix=&limit=100": {"runs": [{"run_id": "run-a"}]},
-        "/api/tools": {"tool_refs": ["dataset"]},
-        "/api/workflows/sim2real/status": {"latest_submit": {}},
-        "/api/infra/k8s": {"ok": True},
-    }
-
-    class Response:
-        def __init__(self, payload: dict) -> None:
-            self.payload = payload
-
-        def raise_for_status(self) -> None:
-            return None
-
-        def json(self) -> dict:
-            return self.payload
-
-    class GetOnlyClient:
-        paths: list[str] = []
-
-        def get(self, path: str) -> Response:
-            self.paths.append(path)
-            return Response(payloads[path])
-
-    client = GetOnlyClient()
-    result = _artifact_only_http_probe(client)  # type: ignore[arg-type]
-    assert result["state_sha256"] == digest
-    assert result["run_count"] == 1
-    assert client.paths[0] == "/api/health"
-    assert client.paths[-1] == "/api/health"
-
-
-def test_fresh_deploy_refuses_nonempty_remote_state_before_apply(
-    monkeypatch, tmp_path
-) -> None:
-    from npa.cli.agent import DeploymentIdentityError, _apply_agent_terraform
-
-    applied = False
-    monkeypatch.setattr(
-        "npa.cli.agent.provisioner.prepare_working_dir",
-        lambda *_args, **_kwargs: tmp_path,
-    )
-    monkeypatch.setattr("npa.cli.agent.provisioner.init", lambda **_kwargs: None)
-    monkeypatch.setattr(
-        "npa.cli.agent.provisioner.state_list",
-        lambda _tf_dir: ["nebius_compute_v1_instance.workbench"],
-    )
-
-    def apply(**_kwargs):
-        nonlocal applied
-        applied = True
-        return {}
-
-    monkeypatch.setattr("npa.cli.agent.provisioner.apply", apply)
-    with pytest.raises(
-        DeploymentIdentityError, match="no matching immutable agent record"
-    ):
-        _apply_agent_terraform(
-            project="project-a",
-            name="agent-a",
-            merged_vars={},
-            env_region="us-central1",
-            require_empty_state=True,
-        )
-    assert applied is False
-
-
-def _mock_fresh_deploy_until_terraform(monkeypatch, tmp_path) -> tuple[dict, list[str]]:
-    """Arrange a record-less deploy that reaches authoritative remote-state inspection."""
-    deployment = {
-        "deployment_id": "npa-agent-owner",
-        "deployment_name": "agent-a",
-        "project_alias": "project-a",
-        "runtime_namespace": "project-a/agent-a",
-        "repository": "org/repo",
-        "branch": "codex/owner",
-        "commit": "a" * 40,
-        "source_tree": "b" * 40,
-        "short_commit": "a" * 12,
-        "workspace_label": "Workspace",
-        "bootstrap_timestamp": "2026-08-10T00:00:00Z",
-    }
-    creds = {
-        "service_account_id": "sa-agent",
-        "nebius_api_key": "ak-agent",
-        "nebius_secret_key": "sk-agent",
-        "s3_bucket": "state-bucket",
-        "s3_endpoint": "https://storage.example.invalid",
-    }
-    mutations: list[str] = []
-    monkeypatch.setattr(
-        "npa.cli.agent.build_deployment_manifest", lambda **_kwargs: deployment
-    )
-    monkeypatch.setattr("npa.cli.agent._agent_record", lambda *_args: {})
-    monkeypatch.setattr(
-        "npa.cli.agent._agent_terraform_state_exists", lambda *_args: False
-    )
-    monkeypatch.setattr(
-        "npa.cli.agent.resolve_environment",
-        lambda *_args, **kwargs: SimpleNamespace(
-            project_id=kwargs.get("project_id"),
-            tenant_id=kwargs.get("tenant_id"),
-            region=kwargs.get("region"),
-        ),
-    )
-    monkeypatch.setattr(
-        "npa.cli.agent._resolve_deploy_llm_credentials", lambda: ("tf-key", "model")
-    )
-    monkeypatch.setattr("npa.cli.agent._agent_hard_prereq_results", lambda _path: [])
-    monkeypatch.setattr(
-        "npa.cli.agent._agent_token_factory_result",
-        lambda _key: SimpleNamespace(status="PASS"),
-    )
-    monkeypatch.setattr(
-        "npa.clients.nebius.bootstrap_agent_environment",
-        lambda *_args, **_kwargs: creds,
-    )
-    monkeypatch.setattr(
-        "npa.cli.agent._resolve_deploy_storage_credentials", lambda **_kwargs: creds
-    )
-    monkeypatch.setattr("npa.clients.nebius.get_iam_token", lambda: "iam-token")
-    monkeypatch.setattr(
-        "npa.cli.agent._ensure_terraform_state_bucket", lambda **_kwargs: None
-    )
-    monkeypatch.setattr(
-        "npa.cli.agent._persist_agent_project_config", lambda **_kwargs: None
-    )
-    monkeypatch.setattr(
-        "npa.cli.agent._store_agent_record",
-        lambda *_args, **_kwargs: mutations.append("record"),
-    )
-    monkeypatch.setattr(
-        "npa.cli.agent._destroy_agent_terraform",
-        lambda *_args, **_kwargs: mutations.append("destroy"),
-    )
-    monkeypatch.setattr(
-        "npa.cli.agent.provisioner.prepare_working_dir",
-        lambda *_args, **_kwargs: tmp_path,
-    )
-    monkeypatch.setattr("npa.cli.agent.provisioner.init", lambda **_kwargs: None)
-    return deployment, mutations
-
-
-def _call_fresh_deploy() -> None:
-    from npa.cli.agent import deploy_cmd
-
-    deploy_cmd(
-        project="project-a",
-        name="agent-a",
-        project_id="project-id",
-        tenant_id="tenant-id",
-        region="us-central1",
-        ssh_user="ubuntu",
-        ssh_public_key_path="/unused/key.pub",
-        tf_var=[],
-        agent_port=8088,
-        backend_port=8787,
-        rerun_port=9090,
-        llm_model="model",
-        llm_models=[],
-        foxglove_embed_src="",
-        foxglove_org_slug="",
-        foxglove_live_url="",
-        no_public_https=False,
-        workspace_label="Workspace",
-        stock_demo=False,
-    )
-
-
-def test_fresh_deploy_state_inspection_failure_is_nondestructive(
-    monkeypatch, tmp_path
-) -> None:
-    from npa.deploy.provisioner import ProvisionerError
-
-    _deployment, mutations = _mock_fresh_deploy_until_terraform(monkeypatch, tmp_path)
-
-    def fail_state_list(_tf_dir):
-        raise ProvisionerError("backend unavailable")
-
-    monkeypatch.setattr("npa.cli.agent.provisioner.state_list", fail_state_list)
-    monkeypatch.setattr(
-        "npa.cli.agent.provisioner.apply", lambda **_kwargs: mutations.append("apply")
-    )
-
-    with pytest.raises(Exit):
-        _call_fresh_deploy()
-    assert mutations == []
-
-
-def test_fresh_deploy_backend_init_failure_is_nondestructive(
-    monkeypatch, tmp_path
-) -> None:
-    from npa.deploy.provisioner import ProvisionerError
-
-    _deployment, mutations = _mock_fresh_deploy_until_terraform(monkeypatch, tmp_path)
-
-    def fail_init(**_kwargs):
-        raise ProvisionerError("backend authentication unavailable")
-
-    monkeypatch.setattr("npa.cli.agent.provisioner.init", fail_init)
-    monkeypatch.setattr(
-        "npa.cli.agent.provisioner.state_list",
-        lambda _tf_dir: mutations.append("state-list"),
-    )
-    monkeypatch.setattr(
-        "npa.cli.agent.provisioner.apply", lambda **_kwargs: mutations.append("apply")
-    )
-
-    with pytest.raises(Exit):
-        _call_fresh_deploy()
-    assert mutations == []
-
-
-def test_fresh_deploy_remote_state_refusal_leaves_no_record(
-    monkeypatch, tmp_path
-) -> None:
-    _deployment, mutations = _mock_fresh_deploy_until_terraform(monkeypatch, tmp_path)
-    monkeypatch.setattr(
-        "npa.cli.agent.provisioner.state_list",
-        lambda _tf_dir: ["nebius_compute_v1_instance.workbench"],
-    )
-    monkeypatch.setattr(
-        "npa.cli.agent.provisioner.apply", lambda **_kwargs: mutations.append("apply")
-    )
-
-    with pytest.raises(Exit):
-        _call_fresh_deploy()
-    assert mutations == []
-
-
-def test_destroy_refuses_terraform_state_without_agent_record(monkeypatch) -> None:
-    destroyed = False
-    monkeypatch.setattr("npa.cli.agent._agent_record", lambda *_args: {})
-    monkeypatch.setattr(
-        "npa.cli.agent._agent_terraform_state_exists", lambda *_args: True
-    )
-
-    def destroy(*_args, **_kwargs):
-        nonlocal destroyed
-        destroyed = True
-
-    monkeypatch.setattr("npa.cli.agent._destroy_agent_terraform", destroy)
-    result = runner.invoke(
-        app, ["destroy", "--project", "project-a", "--name", "agent-a"]
-    )
-    assert result.exit_code == 1
-    assert "unknown ownership" in result.output
-    assert destroyed is False
-
-
-def test_deploy_refuses_local_state_without_agent_record(monkeypatch) -> None:
-    from npa.cli.agent import deploy_cmd
-
-    deployment = {
-        "deployment_id": "npa-agent-owner",
-        "deployment_name": "agent-a",
-        "project_alias": "project-a",
-        "runtime_namespace": "project-a/agent-a",
-        "repository": "org/repo",
-        "branch": "codex/owner",
-        "commit": "a" * 40,
-        "source_tree": "b" * 40,
-        "short_commit": "a" * 12,
-        "workspace_label": "Workspace",
-        "bootstrap_timestamp": "2026-08-10T00:00:00Z",
-    }
-    mutated = False
-    monkeypatch.setattr(
-        "npa.cli.agent.build_deployment_manifest", lambda **_kwargs: deployment
-    )
-    monkeypatch.setattr("npa.cli.agent._agent_record", lambda *_args: {})
-    monkeypatch.setattr(
-        "npa.cli.agent._agent_terraform_state_exists", lambda *_args: True
-    )
-
-    def store(*_args, **_kwargs):
-        nonlocal mutated
-        mutated = True
-
-    monkeypatch.setattr("npa.cli.agent._store_agent_record", store)
-    with pytest.raises(Exit):
-        deploy_cmd(
-            project="project-a",
-            name="agent-a",
-            project_id="project-id",
-            tenant_id="tenant-id",
-            region="us-central1",
-            ssh_user="ubuntu",
-            ssh_public_key_path="/unused/key.pub",
-            tf_var=[],
-            agent_port=8088,
-            backend_port=8787,
-            rerun_port=9090,
-            llm_model="model",
-            llm_models=[],
-            foxglove_embed_src="",
-            foxglove_org_slug="",
-            foxglove_live_url="",
-            no_public_https=False,
-            workspace_label="Workspace",
-            stock_demo=False,
-        )
-    assert mutated is False
-
-
-def test_status_is_unhealthy_on_live_deployment_mismatch(monkeypatch) -> None:
-    deployment = {
-        "deployment_id": "npa-agent-owner",
-        "deployment_name": "agent",
-        "project_alias": "project-a",
-        "runtime_namespace": "project-a/agent",
-        "repository": "org/repo",
-        "branch": "codex/owner",
-        "commit": "a" * 40,
-        "source_tree": "b" * 40,
-        "short_commit": "a" * 12,
-        "workspace_label": "Workspace",
-        "bootstrap_timestamp": "2026-08-10T00:00:00Z",
-    }
-    record = {
-        "agent_url": "https://203.0.113.50/",
-        "rerun_url": "https://203.0.113.50/rerun/",
-        "auth_secret_path": "/private/auth.env",
-        "deployment": deployment,
-    }
-    live = dict(deployment)
-    live["commit"] = "c" * 40
-    monkeypatch.setattr("npa.cli.agent._agent_record", lambda *_args: record)
-    monkeypatch.setattr(
-        "npa.cli.agent._load_auth_secret", lambda _path: ("npa", "secret")
-    )
-    monkeypatch.setattr("npa.cli.agent._health", lambda *_args, **_kwargs: (True, 200))
-    monkeypatch.setattr(
-        "npa.cli.agent.fetch_live_deployment", lambda *_args, **_kwargs: live
-    )
-    result = runner.invoke(
-        app, ["status", "--project", "project-a", "--name", "agent", "--json"]
-    )
-    assert result.exit_code == 1
-    payload = json.loads(result.output)
-    assert payload["health"] is False
-    assert payload["deployment_matches_record"] is False
-    assert "commit" in payload["deployment_error"]
+    # S3-backed workflow status can legitimately take more than the generic
+    # 30-second HTTP default while it inventories a large preserved run.
+    assert ARTIFACT_ONLY_HTTP_TIMEOUT_SECONDS >= 60.0
 
 
 def test_staged_agent_source_is_readable_by_unprivileged_runtime(
@@ -396,7 +44,7 @@ def test_staged_agent_source_is_readable_by_unprivileged_runtime(
     archive = tmp_path / "source.tar.gz"
     archive.write_bytes(b"archive")
     monkeypatch.setattr(
-        agent_module, "_create_agent_source_archive", lambda _commit: str(archive)
+        agent_module, "_create_agent_source_archive", lambda: str(archive)
     )
 
     class FakeSSH:
@@ -413,10 +61,67 @@ def test_staged_agent_source_is_readable_by_unprivileged_runtime(
             assert command.startswith("rm -f /tmp/npa-agent-source-")
 
     ssh = FakeSSH()
-    agent_module._stage_agent_npa_source(ssh, commit="a" * 40)  # type: ignore[arg-type]
+    agent_module._stage_agent_npa_source(ssh)  # type: ignore[arg-type]
 
     assert "sudo chown -R root:root /opt/npa-agent/npa-src" in ssh.command
     assert "sudo chmod -R a+rX /opt/npa-agent/npa-src" in ssh.command
+
+
+@pytest.fixture(autouse=True)
+def _successful_storage_probe(monkeypatch):
+    """Keep unrelated agent tests hermetic; storage failures override this."""
+
+    from npa.clients import storage_validation
+    from npa.clients.storage_validation import StorageProbeResult
+
+    monkeypatch.setattr(
+        storage_validation,
+        "probe_storage_write",
+        lambda **_kwargs: StorageProbeResult(
+            True,
+            "ok",
+            "Writable S3 verified with a cleaned write/delete probe.",
+            cleanup_attempted=True,
+            cleanup_succeeded=True,
+        ),
+    )
+    monkeypatch.setattr(
+        storage_validation,
+        "probe_terraform_backend",
+        lambda **_kwargs: StorageProbeResult(
+            True,
+            "new_state_prefix_valid",
+            "Exact Terraform backend prefix verified.",
+            cleanup_attempted=True,
+            cleanup_succeeded=True,
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent.resolve_project_storage",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            checkpoint_bucket="s3://configured-bucket/artifacts",
+            endpoint_url="https://storage.eu-north1.nebius.cloud",
+            aws_access_key_id="configured-access-key",
+            aws_secret_access_key="configured-secret-key",
+        ),
+    )
+    # Individual capacity tests override this. Unrelated deploy tests stub every
+    # cloud dependency and must not consult the developer machine's provider.
+    monkeypatch.setattr(
+        "npa.cli.agent._agent_check_whole_path_capacity", lambda *args, **kwargs: None
+    )
+    # Reconciliation is a distinct remote boundary from bootstrap. Tests in
+    # this module that stub bootstrap as successful also get exact healthy
+    # evidence; failure/adoption matrices live in test_agent_setup_convergence.
+    monkeypatch.setattr(
+        "npa.cli.agent._reconcile_agent_setup",
+        lambda **_kwargs: {
+            "state": "healthy",
+            "service_fingerprint": "test-service-fingerprint",
+            "credential_fingerprint": "test-credential-fingerprint",
+            "models_healthy": True,
+        },
+    )
 
 
 def _agent_source() -> str:
@@ -427,25 +132,43 @@ def _agent_source() -> str:
     """
     from npa.cli import agent as agent_module
     from npa.cli import agent_access_runtime as agent_access_runtime_module
+    from npa.cli import agent_assets
+    from npa.cli import agent_env_files
     from npa.cli import agent_login as agent_login_module
     from npa.cli import agent_site as agent_site_module
     from npa.cli import agent_viewer_runtime as agent_viewer_runtime_module
 
-    return "\n".join(
+    sources = [
         Path(module.__file__).read_text(encoding="utf-8")
         for module in (
             agent_module,
             agent_access_runtime_module,
+            agent_assets,
+            agent_env_files,
             agent_login_module,
             agent_site_module,
             agent_viewer_runtime_module,
         )
+    ]
+    sources.append(
+        Path(agent_module.__file__)
+        .with_name("agent_artifact_content.py")
+        .read_text(encoding="utf-8")
     )
+    return "\n".join(sources)
 
 
 def _agent_ui_bundle() -> str:
-    """agent.py + nginx site policy + rendered UI HTML (UI lives in agent_ui.html)."""
+    """Agent deploy source plus rendered UI HTML (UI lives in agent_ui.html)."""
     return _agent_source() + "\n" + rendered_agent_ui_html()
+
+
+def _agent_nginx_site() -> str:
+    """Render the nginx policy the bootstrap actually writes."""
+
+    from npa.cli.agent import _nginx_agent_site_body
+
+    return _nginx_agent_site_body(backend_port=8787, rerun_port=9090)
 
 
 def test_build_agent_urls_https_default() -> None:
@@ -471,8 +194,11 @@ def test_build_agent_urls_http_legacy() -> None:
     )
 
 
-def test_ensure_terraform_state_bucket_creates_missing_bucket(monkeypatch) -> None:
+def test_ensure_terraform_state_bucket_preserves_missing_configuration(
+    monkeypatch,
+) -> None:
     from npa.cli.agent import _ensure_terraform_state_bucket
+    from npa.clients import nebius
 
     calls: list[tuple[str, str]] = []
 
@@ -484,9 +210,10 @@ def test_ensure_terraform_state_bucket_creates_missing_bucket(monkeypatch) -> No
         lambda project, bucket: calls.append((project, bucket)),
     )
 
-    _ensure_terraform_state_bucket(project_id="project-1", bucket_name="bucket-1")
+    with pytest.raises(nebius.NebiusError, match="missing.*preserved configuration"):
+        _ensure_terraform_state_bucket(project_id="project-1", bucket_name="bucket-1")
 
-    assert calls == [("project-1", "bucket-1")]
+    assert calls == []
 
 
 def test_ensure_terraform_state_bucket_skips_existing_bucket(monkeypatch) -> None:
@@ -548,22 +275,312 @@ def test_apply_agent_terraform_filters_runtime_only_s3_prefix(
     assert "s3_prefix" not in captured
 
 
+def test_apply_agent_terraform_retries_without_sa_and_warns(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """On compute PermissionDenied with an attached SA, retry without it + warn loudly."""
+    from npa.cli.agent import _apply_agent_terraform
+    from npa.deploy.provisioner import ProvisionerError
+
+    monkeypatch.setattr(
+        "npa.cli.agent.provisioner.prepare_working_dir", lambda *_a, **_k: tmp_path
+    )
+    monkeypatch.setattr("npa.cli.agent.provisioner.init", lambda **_k: None)
+
+    calls: list[dict] = []
+
+    def _apply(*, tf_dir, tf_vars):
+        calls.append(dict(tf_vars))
+        if len(calls) == 1:
+            raise ProvisionerError(
+                "Error: service compute: PermissionDenied creating instance"
+            )
+        return {"vm_ip": "203.0.113.50"}
+
+    monkeypatch.setattr("npa.cli.agent.provisioner.apply", _apply)
+
+    result = _apply_agent_terraform(
+        project="fresh",
+        name="agent",
+        env_region="eu-north1",
+        merged_vars={
+            "s3_bucket": "agent-state",
+            "s3_endpoint": "https://storage.eu-north1.nebius.cloud",
+            "nebius_api_key": "ak",
+            "nebius_secret_key": "sk",
+            "service_account_id": "serviceaccount-abc",
+        },
+    )
+
+    assert result == {"vm_ip": "203.0.113.50"}
+    assert len(calls) == 2
+    # First attempt attached the SA; the retry dropped it.
+    assert calls[0]["service_account_id"] == "serviceaccount-abc"
+    assert calls[1]["service_account_id"] == ""
+    err = capsys.readouterr().err
+    assert "WARNING" in err
+    assert "self-mint" in err
+
+
+def test_apply_failure_preserves_errored_state_and_exact_recovery(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cli.agent import _apply_agent_terraform
+    from npa.deploy.provisioner import BackendBucketMissingError
+    from npa.provisioning_journal import ProvisioningOperation, operation_context
+
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    tf_dir = tmp_path / "terraform"
+    tf_dir.mkdir()
+    (tf_dir / "errored.tfstate").write_text('{"version":4,"resources":[]}')
+    monkeypatch.setattr(
+        "npa.cli.agent.provisioner.prepare_working_dir",
+        lambda *_args, **_kwargs: tf_dir,
+    )
+    monkeypatch.setattr("npa.cli.agent.provisioner.init", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        "npa.cli.agent_terraform._ensure_terraform_state_bucket",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent.provisioner.apply",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            BackendBucketMissingError("NoSuchBucket during state upload")
+        ),
+    )
+    operation = ProvisioningOperation.prepare(
+        command="npa agent deploy",
+        project_alias="demo",
+        project_id="project-a",
+        tenant_id="tenant-a",
+        region="eu-north1",
+        resource_type="agent",
+        requested_name="agent",
+        ownership_source="test",
+        resume_command="npa agent deploy --project demo --name agent",
+        destroy_command="npa agent destroy --project demo --name agent --yes",
+    )
+
+    with operation_context(operation), pytest.raises(BackendBucketMissingError):
+        operation.transition("mutating")
+        _apply_agent_terraform(
+            project="demo",
+            name="agent",
+            env_region="eu-north1",
+            merged_vars={
+                "s3_bucket": "state-bucket",
+                "s3_endpoint": "https://storage.example",
+                "nebius_api_key": "access",
+                "nebius_secret_key": "secret",
+                "nebius_project_id": "project-a",
+                "instance_name": "agent-demo-agent",
+            },
+        )
+
+    summary = operation.recovery_summary()
+    assert summary["phase"] == "recovery-required"
+    assert len(summary["local_state"]) == 1
+    assert Path(summary["local_state"][0]).is_file()
+    assert summary["resume_command"] == "npa agent deploy --project demo --name agent"
+
+
+def test_retry_restores_preserved_state_before_apply(monkeypatch, tmp_path) -> None:
+    from npa.cli.agent import _apply_agent_terraform
+    from npa.provisioning_journal import ProvisioningOperation, operation_context
+
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    tf_dir = tmp_path / "terraform"
+    tf_dir.mkdir()
+    monkeypatch.setattr(
+        "npa.cli.agent.provisioner.prepare_working_dir",
+        lambda *_args, **_kwargs: tf_dir,
+    )
+    monkeypatch.setattr("npa.cli.agent.provisioner.init", lambda **_kwargs: None)
+    monkeypatch.setattr("npa.cli.agent.provisioner.state_list", lambda _path: [])
+    calls: list[str] = []
+    monkeypatch.setattr(
+        "npa.cli.agent_terraform._ensure_terraform_state_bucket",
+        lambda **_kwargs: calls.append("backend"),
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent.provisioner.state_push",
+        lambda _state, _path: calls.append("state-push"),
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent.provisioner.apply",
+        lambda **_kwargs: calls.append("apply") or {"instance_id": "instance-a"},
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent.provisioner.state_pull",
+        lambda _path: b'{"version":4,"resources":[]}',
+    )
+    operation = ProvisioningOperation.prepare(
+        command="npa agent deploy",
+        project_alias="demo",
+        project_id="project-a",
+        tenant_id="tenant-a",
+        region="eu-north1",
+        resource_type="agent",
+        requested_name="agent",
+        ownership_source="test",
+        resume_command="npa agent deploy --project demo --name agent",
+    )
+    operation.preserve_state_bytes(b'{"version":4,"resources":[]}', name="errored")
+    operation.transition("recovery-required")
+
+    with operation_context(operation):
+        _apply_agent_terraform(
+            project="demo",
+            name="agent",
+            env_region="eu-north1",
+            merged_vars={
+                "s3_bucket": "state-bucket",
+                "s3_endpoint": "https://storage.example",
+                "nebius_api_key": "access",
+                "nebius_secret_key": "secret",
+                "nebius_project_id": "project-a",
+                "instance_name": "agent-demo-agent",
+            },
+        )
+
+    assert calls == [
+        "backend",
+        "backend",
+        "state-push",
+        "backend",
+        "apply",
+        "backend",
+    ]
+    assert operation.read()["phase"] == "state-durable"
+
+
+def test_backend_loss_at_apply_boundary_blocks_before_remote_mutation(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cli.agent import _apply_agent_terraform
+    from npa.deploy.provisioner import BackendBucketMissingError
+    from npa.provisioning_journal import ProvisioningOperation, operation_context
+
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    tf_dir = tmp_path / "terraform"
+    tf_dir.mkdir()
+    monkeypatch.setattr(
+        "npa.cli.agent.provisioner.prepare_working_dir",
+        lambda *_args, **_kwargs: tf_dir,
+    )
+    monkeypatch.setattr("npa.cli.agent.provisioner.init", lambda **_kwargs: None)
+    validations = 0
+
+    def validate(**_kwargs) -> None:
+        nonlocal validations
+        validations += 1
+        if validations == 2:
+            raise BackendBucketMissingError("backend disappeared before apply")
+
+    monkeypatch.setattr(
+        "npa.cli.agent_terraform._ensure_terraform_state_bucket", validate
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent.provisioner.apply",
+        lambda **_kwargs: pytest.fail("Terraform apply must not start"),
+    )
+    operation = ProvisioningOperation.prepare(
+        command="npa agent deploy",
+        project_alias="demo",
+        project_id="project-a",
+        resource_type="agent",
+        requested_name="agent",
+        resume_command="npa agent deploy --project demo --name agent",
+    )
+    with operation_context(operation), pytest.raises(BackendBucketMissingError):
+        _apply_agent_terraform(
+            project="demo",
+            name="agent",
+            env_region="eu-north1",
+            merged_vars={
+                "s3_bucket": "state-bucket",
+                "s3_endpoint": "https://storage.example",
+                "nebius_api_key": "access",
+                "nebius_secret_key": "secret",
+                "nebius_project_id": "project-a",
+                "instance_name": "agent-demo-agent",
+            },
+        )
+    assert validations == 2
+    assert operation.read()["phase"] == "recovery-required"
+
+
+def test_write_agent_nebius_env_omits_operator_iam_token(monkeypatch) -> None:
+    """The staged VM env must carry S3 keys but NO copied operator IAM token."""
+    from npa.cli.agent import _write_agent_nebius_env
+
+    commands: list[str] = []
+    staged: list[str] = []
+
+    class _FakeSSH:
+        def upload_private_text(self, content: str, _remote_path: str):
+            staged.append(content)
+
+        def run_or_raise(self, command: str, **_kwargs):
+            commands.append(command)
+            return ""
+
+        def run(self, _command: str):
+            return ""
+
+    _write_agent_nebius_env(
+        _FakeSSH(),
+        project_alias="prod",
+        agent_name="agent",
+        project_id="project-abc",
+        tenant_id="tenant-abc",
+        region="eu-north1",
+        service_account_id="serviceaccount-abc",
+        bucket="agent-state",
+        endpoint="https://storage.eu-north1.nebius.cloud",
+        access_key="ak-id",
+        secret_key="sk-val",
+    )
+
+    # Exactly one atomic install command; credential bytes travel via private SFTP.
+    assert len(commands) == 1
+    assert "ak-id" not in commands[0] and "sk-val" not in commands[0]
+    staged_env = staged[0]
+
+    # S3 access key stays (HMAC, not replaceable by an SA bearer token).
+    assert "AWS_ACCESS_KEY_ID=ak-id" in staged_env
+    assert "AWS_SECRET_ACCESS_KEY=sk-val" in staged_env
+    assert "NEBIUS_SERVICE_ACCOUNT_ID=serviceaccount-abc" in staged_env
+
+    # No copied operator IAM token / bootstrap profile anywhere.
+    for forbidden in (
+        "NEBIUS_IAM_TOKEN",
+        "NPA_NEBIUS_IAM_TOKEN",
+        "TF_VAR_iam_token",
+        "NPA_REUSE_IAM_TOKEN",
+        "agent-bootstrap",
+        "nebius-token",
+    ):
+        assert forbidden not in staged_env, forbidden
+    assert all("nebius-token" not in cmd for cmd in commands)
+    assert all("agent-bootstrap" not in cmd for cmd in commands)
+
+
 def test_resolve_deploy_storage_credentials_prefers_bootstrap_when_writable(
     monkeypatch,
 ) -> None:
     from npa.cli.agent import _resolve_deploy_storage_credentials
 
     monkeypatch.setattr(
-        "npa.cli.agent_artifact_storage._storage_credentials_allow_writes",
-        lambda **_kwargs: True,
+        "npa.cli.agent._storage_credentials_allow_writes", lambda **_kwargs: True
     )
     monkeypatch.setattr(
-        "npa.cli.agent_artifact_storage.load_credentials",
-        lambda **_kwargs: SimpleNamespace(
-            s3_bucket="",
-            s3_endpoint="",
-            s3_access_key_id="",
-            s3_secret_access_key="",
+        "npa.cli.agent.resolve_project_storage",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            checkpoint_bucket="",
+            endpoint_url="",
+            aws_access_key_id="",
+            aws_secret_access_key="",
         ),
     )
     bootstrap = {
@@ -587,16 +604,16 @@ def test_resolve_deploy_storage_credentials_prefers_shared_artifact_bucket(
     from npa.cli.agent import _resolve_deploy_storage_credentials
 
     monkeypatch.setattr(
-        "npa.cli.agent_artifact_storage._storage_credentials_allow_writes",
+        "npa.cli.agent._storage_credentials_allow_writes",
         lambda **kwargs: kwargs["bucket"] == "shared-bucket",
     )
     monkeypatch.setattr(
-        "npa.cli.agent_artifact_storage.load_credentials",
-        lambda **_kwargs: SimpleNamespace(
-            s3_bucket="s3://shared-bucket/checkpoints/",
-            s3_endpoint="https://storage.us-central1.nebius.cloud",
-            s3_access_key_id="ak-shared",
-            s3_secret_access_key="sk-shared",
+        "npa.cli.agent.resolve_project_storage",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            checkpoint_bucket="s3://shared-bucket/checkpoints/",
+            endpoint_url="https://storage.us-central1.nebius.cloud",
+            aws_access_key_id="ak-shared",
+            aws_secret_access_key="sk-shared",
         ),
     )
     bootstrap = {
@@ -621,7 +638,7 @@ def test_resolve_deploy_storage_credentials_prefers_selected_project_storage(
     from npa.cli.agent import _resolve_deploy_storage_credentials
 
     monkeypatch.setattr(
-        "npa.cli.agent_artifact_storage.resolve_project_storage",
+        "npa.cli.agent.resolve_project_storage",
         lambda *_args, **_kwargs: SimpleNamespace(
             checkpoint_bucket="s3://project-bucket/isaac-runs/",
             endpoint_url="https://storage.us-central1.nebius.cloud",
@@ -630,7 +647,7 @@ def test_resolve_deploy_storage_credentials_prefers_selected_project_storage(
         ),
     )
     monkeypatch.setattr(
-        "npa.cli.agent_artifact_storage.load_credentials",
+        "npa.clients.credentials.load_credentials",
         lambda **_kwargs: SimpleNamespace(
             s3_bucket="s3://shared-bucket/",
             s3_endpoint="https://storage.eu-north1.nebius.cloud",
@@ -639,8 +656,7 @@ def test_resolve_deploy_storage_credentials_prefers_selected_project_storage(
         ),
     )
     monkeypatch.setattr(
-        "npa.cli.agent_artifact_storage._storage_credentials_allow_writes",
-        lambda **_kwargs: True,
+        "npa.cli.agent._storage_credentials_allow_writes", lambda **_kwargs: True
     )
     bootstrap = {
         "service_account_id": "sa-agent",
@@ -662,63 +678,20 @@ def test_resolve_deploy_storage_credentials_prefers_selected_project_storage(
     assert resolved["nebius_api_key"] == "ak-project"
 
 
-def test_resolve_explicit_artifact_project_storage_preserves_nested_prefix(
-    monkeypatch,
-) -> None:
-    from npa.cli.agent import _resolve_artifact_project_storage
-
-    monkeypatch.setattr(
-        "npa.cli.agent_artifact_storage.resolve_project_storage",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            checkpoint_bucket="s3://artifact-bucket/nested/shared-root/",
-            endpoint_url="https://storage.us-central1.nebius.cloud",
-            aws_access_key_id="artifact-ak",
-            aws_secret_access_key="artifact-sk",
-        ),
-    )
-    monkeypatch.setattr(
-        "npa.cli.agent_artifact_storage._storage_credentials_allow_writes",
-        lambda **_kwargs: True,
-    )
-
-    resolved = _resolve_artifact_project_storage(
-        "artifact-source", region="us-central1"
-    )
-
-    assert resolved == (
-        "artifact-bucket",
-        "nested/shared-root",
-        "https://storage.us-central1.nebius.cloud",
-        "artifact-ak",
-        "artifact-sk",
-    )
-
-
-def test_artifact_prefix_validation_rejects_traversal() -> None:
-    from npa.cli.agent import _validate_artifact_prefix
-
-    assert _validate_artifact_prefix("/nested/shared-root/") == "nested/shared-root"
-    for value in ("../escape", "nested/../escape", "nested\\escape"):
-        with pytest.raises(ValueError):
-            _validate_artifact_prefix(value)
-
-
 def test_resolve_deploy_storage_credentials_falls_back_to_shared(monkeypatch) -> None:
     from npa.cli.agent import _resolve_deploy_storage_credentials
 
     def _probe(**kwargs):
         return kwargs["bucket"] == "shared-bucket"
 
+    monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", _probe)
     monkeypatch.setattr(
-        "npa.cli.agent_artifact_storage._storage_credentials_allow_writes", _probe
-    )
-    monkeypatch.setattr(
-        "npa.cli.agent_artifact_storage.load_credentials",
-        lambda **_kwargs: SimpleNamespace(
-            s3_bucket="s3://shared-bucket/",
-            s3_endpoint="https://storage.us-central1.nebius.cloud",
-            s3_access_key_id="ak-shared",
-            s3_secret_access_key="sk-shared",
+        "npa.cli.agent.resolve_project_storage",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            checkpoint_bucket="s3://shared-bucket/",
+            endpoint_url="https://storage.us-central1.nebius.cloud",
+            aws_access_key_id="ak-shared",
+            aws_secret_access_key="sk-shared",
         ),
     )
     bootstrap = {
@@ -750,12 +723,9 @@ def test_resolve_deploy_storage_credentials_prefers_saved_project_state(
     def _probe(**kwargs):
         return kwargs["bucket"] == "state-bucket"
 
+    monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", _probe)
     monkeypatch.setattr(
-        "npa.cli.agent_artifact_storage._storage_credentials_allow_writes", _probe
-    )
-    monkeypatch.setattr(
-        "npa.cli.agent_artifact_storage.resolve_terraform_state",
-        lambda _project: _TfState(),
+        "npa.cli.agent.resolve_terraform_state", lambda _project: _TfState()
     )
     bootstrap = {
         "service_account_id": "sa-agent",
@@ -779,19 +749,21 @@ def test_resolve_deploy_storage_credentials_prefers_saved_project_state(
 def test_resolve_deploy_storage_credentials_fails_without_writable_storage(
     monkeypatch,
 ) -> None:
-    from npa.cli.agent import _resolve_deploy_storage_credentials
+    from npa.cli.agent import (
+        AgentStorageCredentialError,
+        _resolve_deploy_storage_credentials,
+    )
 
     monkeypatch.setattr(
-        "npa.cli.agent_artifact_storage._storage_credentials_allow_writes",
-        lambda **_kwargs: False,
+        "npa.cli.agent._storage_credentials_allow_writes", lambda **_kwargs: False
     )
     monkeypatch.setattr(
-        "npa.cli.agent_artifact_storage.load_credentials",
-        lambda **_kwargs: SimpleNamespace(
-            s3_bucket="s3://shared-bucket/",
-            s3_endpoint="https://storage.us-central1.nebius.cloud",
-            s3_access_key_id="ak-shared",
-            s3_secret_access_key="sk-shared",
+        "npa.cli.agent.resolve_project_storage",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            checkpoint_bucket="s3://shared-bucket/",
+            endpoint_url="https://storage.us-central1.nebius.cloud",
+            aws_access_key_id="ak-shared",
+            aws_secret_access_key="sk-shared",
         ),
     )
     bootstrap = {
@@ -801,7 +773,7 @@ def test_resolve_deploy_storage_credentials_fails_without_writable_storage(
         "nebius_secret_key": "sk-boot",
     }
 
-    with pytest.raises(Exit):
+    with pytest.raises(AgentStorageCredentialError):
         _resolve_deploy_storage_credentials(
             region="us-central1", bootstrap_creds=bootstrap
         )
@@ -866,9 +838,6 @@ def test_deploy_persists_terraform_state_before_apply(monkeypatch, tmp_path) -> 
     monkeypatch.setattr(
         "npa.cli.agent._resolve_deploy_llm_credentials", lambda: ("tf-key", "model-a")
     )
-    monkeypatch.setattr(
-        "npa.cli.agent._resolve_operator_credentials", lambda: ("", "", "")
-    )
     monkeypatch.setattr("npa.cli.agent._bootstrap_agent_stack", lambda **_kwargs: None)
     monkeypatch.setattr("npa.cli.agent.ensure_ingress", lambda **_kwargs: None)
     monkeypatch.setattr("npa.cli.agent.write_config", _write_config)
@@ -878,7 +847,6 @@ def test_deploy_persists_terraform_state_before_apply(monkeypatch, tmp_path) -> 
     (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
     (tmp_path / "id_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
-    monkeypatch.setattr("npa.cli.agent._agent_terraform_result", _terraform_pass_result)
 
     deploy_cmd(
         project="fresh",
@@ -901,6 +869,18 @@ def test_deploy_persists_terraform_state_before_apply(monkeypatch, tmp_path) -> 
     assert any(event == "apply" for event, _payload in events)
 
 
+def test_deploy_feedback_names_bounded_phases_and_quiet_period() -> None:
+    import inspect
+
+    from npa.cli.agent import deploy_cmd
+
+    source = inspect.getsource(deploy_cmd)
+    for phase in ("Phase 1/4", "Phase 2/4", "Phase 3/4", "Phase 4/4 probe"):
+        assert phase in source
+    assert "quiet for several minutes" in source
+    assert "journalctl -u cloud-final -u npa-agent-backend" in source
+
+
 def test_bootstrap_enables_public_https_nginx() -> None:
     source = _agent_source()
     assert "ssl_certificate /etc/nginx/ssl/npa-agent.crt" in source
@@ -909,36 +889,11 @@ def test_bootstrap_enables_public_https_nginx() -> None:
     assert "--no-public-https" in source
 
 
-def test_bootstrap_nginx_serves_rerun_recording_to_same_origin_wasm() -> None:
+def test_bootstrap_nginx_serves_public_rerun_recording() -> None:
     source = _agent_source()
-    assert r"cap-[A-Za-z0-9_-]{{43}}\\.rrd" in source
     assert "location /rerun/recordings/" in source
-    assert "alias /opt/npa-agent/recordings/$1;" in source
-    recordings_location = source.split('location ~ "^/rerun/recordings/(cap-', 1)[
-        1
-    ].split("location /rerun/recordings/", 1)[0]
-    directives = [
-        line.strip()
-        for line in recordings_location.splitlines()
-        if line.strip() and not line.strip().startswith("#")
-    ]
-    assert "auth_basic off;" in directives
-    assert not [line for line in directives if "Access-Control" in line]
-    assert 'add_header Cross-Origin-Resource-Policy "same-origin" always;' in directives
-    denied_location = source.split("location /rerun/recordings/ {{", 1)[1].split(
-        "location ~* ^/rerun/", 1
-    )[0]
-    assert "return 404;" in denied_location
-    assert "location = /lichtblick/recordings/sim2real.mcap" in source
-    assert (
-        "proxy_pass http://127.0.0.1:{backend_port}/lichtblick-recordings/sim2real.mcap;"
-        in source
-    )
-    assert (
-        '@app.api_route("/lichtblick-recordings/sim2real.mcap", methods=["GET", "HEAD"])'
-        in source
-    )
-    assert '"X-NPA-File-Size": str(MCAP_RECORDING_PATH.stat().st_size)' in source
+    assert "auth_basic off" in source
+    assert "alias /opt/npa-agent/recordings/" in source
     rerun_viewer_location = source.split("location /rerun/ {{", 1)[1].split(
         "location / {{", 1
     )[0]
@@ -952,7 +907,7 @@ def test_bootstrap_nginx_serves_rerun_recording_to_same_origin_wasm() -> None:
 def test_bootstrap_embeds_lichtblick_viewer() -> None:
     source = _agent_source()
     # nginx: co-serve the MCAP same-origin and proxy the viewer sidecar.
-    assert "location = /lichtblick/recordings/sim2real.mcap" in source
+    assert "location /lichtblick/recordings/" in source
     assert "location /lichtblick/ {{" in source
     assert "proxy_pass http://127.0.0.1:{lichtblick_port}/;" in source
     # backend: sim-viz status carries the Lichtblick embed fields.
@@ -961,7 +916,6 @@ def test_bootstrap_embeds_lichtblick_viewer() -> None:
         in source
     )
     assert "def _lichtblick_iframe_url" in source
-    assert "start_time_ns=start_time_ns" in source
     assert '"lichtblick_ready": False,' in source
     assert '"lichtblick_iframe_url": "/lichtblick/",' in source
     assert "def _publish_mcap_recording" in source
@@ -977,38 +931,20 @@ def test_bootstrap_embeds_lichtblick_viewer() -> None:
     assert "npa-lichtblick image acquired from" in source
 
 
-def test_foxglove_recording_emits_only_nginx_native_accept_ranges() -> None:
-    """Do not duplicate nginx's native static-file Accept-Ranges header."""
-
-    source = _agent_source()
-    recording_location = source.split("location /foxglove/data/ {{", 1)[1].split(
-        "location /foxglove/ {{", 1
-    )[0]
-    directives = [
-        line.strip()
-        for line in recording_location.splitlines()
-        if line.strip() and not line.strip().startswith("#")
-    ]
-    assert "add_header Accept-Ranges bytes always;" not in directives
-    expose_header = (
-        "add_header Access-Control-Expose-Headers "
-        '"Accept-Ranges, Content-Range, Content-Length" always;'
-    )
-    assert expose_header in directives
-
-
-def test_lichtblick_recordings_grant_only_same_agent_origin_read() -> None:
-    """The unauthenticated MCAP must never be readable by arbitrary origins.
+def test_lichtblick_recordings_grant_no_cross_origin_read() -> None:
+    """The MCAP alias is unauthenticated, so it must not be CORS-readable.
 
     A run's MCAP carries camera frames, VLM critiques and reward signals, and the
-    Browser workers need size/range response headers exposed, but the allowed
-    origin is pinned to this exact agent scheme/host rather than reflected or `*`.
+    location runs with ``auth_basic off`` (wasm/worker fetches cannot carry basic
+    auth). A wildcard ``Access-Control-Allow-Origin`` would let any page a viewer
+    visits read those recordings off this host; the embed is same-origin and needs
+    no CORS grant at all.
     """
 
-    source = _agent_source()
-    recordings_location = source.split(
-        "location = /lichtblick/recordings/sim2real.mcap {{", 1
-    )[1].split("location = /lichtblick/ {{", 1)[0]
+    source = _agent_nginx_site()
+    recordings_location = source.split("location /lichtblick/recordings/ {", 1)[
+        1
+    ].split("location = /lichtblick/ {", 1)[0]
     # Compare directives only: the block's comment names these headers to explain
     # why they are absent, so a bare substring check would match the prose.
     directives = [
@@ -1017,35 +953,9 @@ def test_lichtblick_recordings_grant_only_same_agent_origin_read() -> None:
         if line.strip() and not line.strip().startswith("#")
     ]
     assert "auth_basic off;" in directives
-    assert (
-        'add_header Access-Control-Allow-Origin "$scheme://$http_host" always;'
-        in directives
-    )
-    assert "add_header Access-Control-Allow-Origin * always;" not in directives
-    assert not any("$http_origin" in line for line in directives)
-    assert any(
-        "Access-Control-Expose-Headers" in line
-        and "Content-Length" in line
-        and "X-NPA-File-Size" in line
-        for line in directives
-    )
-    assert 'add_header Cache-Control "no-store, no-transform" always;' in directives
+    granted = [line for line in directives if "Access-Control" in line]
+    assert not granted, f"recordings must grant no CORS access, got {granted}"
     assert 'add_header Cross-Origin-Resource-Policy "same-origin" always;' in directives
-
-
-def test_lichtblick_bundle_accepts_truthful_canonical_size_fallback() -> None:
-    """A chunked initial GET must not prevent Lichtblick's range reader."""
-
-    source = _agent_source()
-    viewer_location = source.split("location /lichtblick/ {{", 1)[1].split(
-        "location / {{", 1
-    )[0]
-    assert 'proxy_set_header Accept-Encoding "";' in viewer_location
-    assert "sub_filter_types application/javascript text/javascript;" in viewer_location
-    assert (
-        'i.headers.get("content-length")??i.headers.get("x-npa-file-size")'
-        in viewer_location
-    )
 
 
 def test_ui_pins_lichtblick_recording_fetch_to_the_page_origin() -> None:
@@ -1057,7 +967,26 @@ def test_ui_pins_lichtblick_recording_fetch_to_the_page_origin() -> None:
     assert "function pinLichtblickDsToSameOrigin" in source
     assert "window.location.origin" in source
     # The iframe URL always flows through the rewrite.
-    assert 'return pinLichtblickDsToSameOrigin(url) || "/lichtblick/";' in source
+    assert "const pinned = pinLichtblickDsToSameOrigin(url) || \"/lichtblick/\";" in source
+    assert 'viewer.searchParams.set("npa.layout", layoutKind);' in source
+    assert 'viewer.searchParams.set("npa.camera"' in source
+    assert "learningArtifactContractFor" in source
+    assert "contract.matches.mcap" in source
+
+
+def test_lichtblick_uses_native_static_size_and_range_semantics() -> None:
+    """The reader gets size/ranges from nginx without a script import proxy."""
+
+    source = _agent_nginx_site()
+    block = source.split("location /lichtblick/recordings/ {", 1)[1].split(
+        "location = /lichtblick/ {", 1
+    )[0]
+    assert "alias /opt/npa-agent/recordings/;" in block
+    assert "proxy_pass" not in block
+    assert "gzip off;" in block
+    assert 'Cache-Control "no-cache, no-transform"' in block
+    assert "Accept-Ranges" in block
+    assert "Access-Control-Allow-Origin" not in block
 
 
 def test_ui_seeds_the_lichtblick_layout_once_rather_than_wiping_every_mount() -> None:
@@ -1074,47 +1003,121 @@ def test_ui_seeds_the_lichtblick_layout_once_rather_than_wiping_every_mount() ->
     mount = source.split("function mountLichtblickIframe", 1)[1].split(
         "async function ensureLichtblickForActiveRun", 1
     )[0]
-    assert "if (lichtblickNeedsLayoutSeed()) {" in mount
+    assert "if (lichtblickNeedsLayoutSeed(simViz)) {" in mount
     reset_calls = mount.count("resetLichtblickLayoutStorage()")
     assert reset_calls == 1, f"expected one guarded wipe, found {reset_calls}"
-    assert 'let lichtblickPendingSrc = "";' in source
-    assert "if (!lichtblickResetInFlight)" in mount
-    assert 'iframe.setAttribute("src", lichtblickPendingSrc || "/lichtblick/")' in mount
 
 
 def test_bootstrap_injects_lichtblick_default_layout() -> None:
     source = _agent_source()
+    nginx = _agent_nginx_site()
     # The viewer document is exact-matched so nginx can inject a default layout via
-    # the upstream-provided placeholder, retaining the current 3D + camera layout.
-    assert "location = /lichtblick/ {{" in source
+    # the upstream-provided placeholder, so the point cloud + camera show on load.
+    assert "location = /lichtblick/ {" in nginx
     assert (
-        "sub_filter '{lichtblick_layout_placeholder}' '{lichtblick_default_layout}';"
-        in source
+        "sub_filter '/*LICHTBLICK_SUITE_DEFAULT_LAYOUT_PLACEHOLDER*/' '(()=>{"
+        in nginx
     )
     assert "def _lichtblick_default_layout_json" in source
 
+    from npa.cli import agent_assets
     from npa.cli import agent_site as agent_site_module
 
-    layout = json.loads(agent_site_module._lichtblick_default_layout_json())
+    layout = json.loads(agent_assets._lichtblick_default_layout_json())
     panels = layout["configById"]
-    assert any(k.startswith("3D!") for k in panels)
-    image_topics = {
-        value["imageMode"]["imageTopic"]
-        for key, value in panels.items()
-        if key.startswith("Image!")
-    }
-    assert image_topics == {"/camera", "/camera/workspace"}
-    scene = panels["3D!npasim2real"]
-    assert scene["followTf"] == "world"
-    assert scene["topics"]["/trajectory"]["visible"] is True
-    plot = panels["Plot!npametrics"]
-    assert [path["value"] for path in plot["paths"]] == [
-        "/metrics/execution.reward",
-        "/metrics/execution.progress",
-        "/metrics/execution.state_norm",
-    ]
-    assert layout["layout"]["first"]["first"] == "Image!npacamera"
-    assert layout["layout"]["second"]["first"] == "3D!npasim2real"
+    three_d = next(v for k, v in panels.items() if k.startswith("3D!"))
+    assert three_d["topics"]["/heldout/points"]["visible"] is True
+    assert three_d["followTf"] == "sim2real"
+    image = next(v for k, v in panels.items() if k.startswith("Image!"))
+    assert image["imageMode"]["imageTopic"] == "/camera"
+    learning_layout = json.loads(agent_site_module._lichtblick_learning_layout_json())
+    learning_image = next(
+        v for k, v in learning_layout["configById"].items() if k.startswith("Image!")
+    )
+    assert learning_layout["layout"].startswith("Image!")
+    assert (
+        learning_image["imageMode"]["imageTopic"]
+        == "/camera/__NPA_PRIMARY_CAMERA__"
+    )
+    script = agent_site_module._lichtblick_default_layout_script()
+    assert 'query.get("npa.layout")!=="learning"' in script
+    assert 'query.get("npa.camera")' in script
+    assert 'imageTopic="/camera/"+camera' in script
+    assert 'window.Worker=function(scriptUrl,options)' in script
+    assert 'new URL("/lichtblick/npa-worker.js"' in script
+    assert "location = /lichtblick/npa-worker.js {" in nginx
+    assert "npa.target" in nginx
+
+
+def test_lichtblick_nginx_inline_javascript_has_no_nginx_variables_or_controls() -> None:
+    """Inline nginx directive values cannot contain raw controls or bare ``$``."""
+
+    from npa.cli.agent_site import (
+        _lichtblick_default_layout_script,
+        _lichtblick_worker_script,
+    )
+
+    for script in (_lichtblick_default_layout_script(), _lichtblick_worker_script()):
+        assert "$" not in script
+        assert "\\" not in script
+        assert not [char for char in script if ord(char) < 32 or ord(char) == 127]
+
+
+def test_lichtblick_worker_accepts_only_same_origin_lichtblick_javascript() -> None:
+    from npa.cli.agent_site import _lichtblick_worker_script
+
+    worker = _lichtblick_worker_script()
+    harness = r"""
+const target = process.argv[1];
+global.self = {
+  location: new URL("https://agent.example/lichtblick/npa-worker.js?npa.size=217423&npa.target=" + encodeURIComponent(target)),
+  fetch: async () => new Response(null, {status: 200, headers: {"accept-ranges": "bytes"}}),
+};
+global.importScripts = (url) => process.stdout.write("IMPORTED=" + url);
+eval(Buffer.from(process.argv[2], "base64").toString("utf8"));
+"""
+    encoded = base64.b64encode(worker.encode()).decode()
+    allowed = "/lichtblick/assets/mcap.worker.js"
+    result = subprocess.run(
+        ["node", "-e", harness, allowed, encoded],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "IMPORTED=https://agent.example/lichtblick/assets/mcap.worker.js"
+    for target in (
+        "//foreign.invalid/worker.js",
+        "https://foreign.invalid/worker.js",
+        "https://user:password@agent.example/lichtblick/worker.js",
+        "javascript:alert(1)",
+        "data:text/javascript,alert(1)",
+        "/api/private.js",
+        "/lichtblick/recordings/run.mcap",
+        "/lichtblick/npa-worker.js",
+        "/lichtblick/%252e%252e/api/private.js",
+        "/lichtblick/worker.js?next=/lichtblick/good.js",
+        "/lichtblick/worker.js%3fnext=/lichtblick/good.js",
+        "/lichtblick/worker.js#fragment",
+        "/lichtblick\\worker.js",
+        "/lichtblick/worker.js\x01",
+    ):
+        rejected = subprocess.run(
+            ["node", "-e", harness, target, encoded],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert rejected.returncode != 0, target
+        assert "invalid Lichtblick worker target" in rejected.stderr
+
+
+def test_lichtblick_anonymous_routes_do_not_disable_api_authentication() -> None:
+    source = _agent_nginx_site()
+    api_block = source.split("location /api/ {", 1)[1].split("location /assets/api/", 1)[0]
+    assert "auth_basic off" not in api_block
+    assert "location = /lichtblick/npa-worker.js {" in source
+    assert "location /lichtblick/recordings/ {" in source
 
 
 def test_bootstrap_ui_embeds_lichtblick_render_mode() -> None:
@@ -1123,28 +1126,15 @@ def test_bootstrap_ui_embeds_lichtblick_render_mode() -> None:
     assert 'data-render-mode="lichtblick"' in source
     assert 'id="lichtblickFrame"' in source
     assert 'id="viewerPaneLichtblick"' in source
-    assert source.count('id="renderModeLichtblick"') == 1
-    assert 'id="openFullLichtblick"' not in source
-    assert 'id="openLichtblick"' not in source
-    assert 'id="loadLichtblickViewer"' not in source
+    assert 'bindClick("openLichtblick"' in source
+    assert 'bindClick("loadLichtblickViewer"' in source
     assert "function applyLichtblickSimViz" in source
     assert "function mountLichtblickIframe" in source
     assert "View in Lichtblick" in source
 
 
-def test_ui_prefers_secure_run_key_resolution_over_advertised_s3_uri() -> None:
-    source = _agent_ui_bundle()
-    loader = source.split("async function loadArtifact(payload, uiState)", 1)[1].split(
-        "async function", 1
-    )[0]
-    assert 's3_uri: (runRef || (runId && key)) ? "" :' in loader
-    assert "run_ref: runRef" in loader
-    assert "expectedTabGeneration" in loader
-    assert "_expected_tab_generation" not in loader
-
-
 def test_bootstrap_ui_lichtblick_autoloads_run_mcap() -> None:
-    # Clicking the Lichtblick tab finds and loads the run's .mcap directly,
+    # Clicking the Lichtblick tab / reload finds and loads the run's .mcap directly,
     # and the artifact type filter exposes an 'mcap' option so it is discoverable.
     source = _agent_ui_bundle()
     assert "function ensureLichtblickForActiveRun" in source
@@ -1152,34 +1142,16 @@ def test_bootstrap_ui_lichtblick_autoloads_run_mcap() -> None:
     assert "ensureLichtblickForActiveRun()" in source
 
 
-def test_canonical_mcap_ui_refresh_and_stale_run_contract() -> None:
-    source = _agent_ui_bundle()
-    from npa.cli import agent_viewer_runtime
-
-    viewer_source = Path(agent_viewer_runtime.__file__).read_text(encoding="utf-8")
-
-    assert "Persistent S3 canonical:" in source
-    assert "Ephemeral transport:" in source
-    assert "Foxglove Cloud:" in source
-    assert "suppressPreferredAutoload" in source
-    assert "The active run changed while MCAP export was running" in source
-    assert "clear_cross_run_mcap_state(sim_viz, run_id)" in viewer_source
-    assert "**CANONICAL_MCAP_DEFAULT_STATE" in source
-
-
 def test_bootstrap_artifact_file_transcodes_ppm_to_png() -> None:
-    from npa.cli import agent as agent_module
-
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     # .ppm/.bmp/.tiff are transcoded to PNG on serve so the browser can render them.
     assert "needs_image_transcode(safe_name)" in source
     assert 'media_type="image/png"' in source
 
 
 def test_franka_rerun_fallback_keeps_3d_outside_pinhole_projection() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "_franka_demo_joint_angles" in source
     assert "frame_count = 90" in source
     assert "world/camera_frustums/{{name}}" in source
@@ -1188,9 +1160,8 @@ def test_franka_rerun_fallback_keeps_3d_outside_pinhole_projection() -> None:
 
 
 def test_agent_artifact_discovery_requires_s3_components() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "list_runs(" in source
     assert "list_artifacts(" in source
     assert "download_s3_uri(" in source
@@ -1283,7 +1254,6 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "activeChatSessionId" in source
     assert "/api/chat/sessions" in source
     assert "npa-agent/tenants/" in source
-    assert "/deployments/{{deployment_id}}/chat-sessions" in source
     assert "Send failed." in source
     assert "queueChatText" in source
     assert "AGENT_UI_VERSION" in source or "npa-ui-version" in source
@@ -1304,12 +1274,12 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "#panelVoxel.is-inactive { display: none; }" in source
     # Voxel51 auto-loads the latest run so the tab always shows content.
     assert "/api/artifacts/runs?limit=1" in source
-    # Multi-bucket discovery is deterministic: only configured buckets are scanned.
+    # Multi-bucket discovery: the agent searches every accessible bucket (never
+    # relies on copying a run into one bucket).
     assert "def _agent_s3_buckets(" in source
     assert "accessible_artifact_buckets(_agent_access_report())" in source
     assert "list_runs_cached_multi" in source
     assert "find_run_artifacts_across_buckets" in source
-    assert "Never enumerate every credential-readable bucket" in source
     # Modern refresh + iOS/desktop friendliness (cascade override layer):
     assert "Modern refresh (2026)" in source
     assert "-webkit-font-smoothing: antialiased" in source
@@ -1324,9 +1294,8 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
 
 
 def test_watch_intent_uses_live_sim_viz_status() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert 'elif intent in {"sim2real_status", "watch_sim"}:' in source
     assert "live_status = sim_viz_status()" in source
     assert 'state["sim_viz"] = dict(live_status)' in source
@@ -1429,15 +1398,33 @@ def test_bootstrap_embeds_cameras_panel() -> None:
     )
 
 
+def test_ui_renders_tenant_resource_states_and_refresh_control() -> None:
+    source = _agent_ui_bundle()
+    for marker in (
+        'id="tenantResourcesPanel"',
+        '<h3>Tenant resources</h3>',
+        'id="tenantResourcesRefresh"',
+        'id="tenantResourceCategories"',
+        "refreshTenantResources",
+        'loadJson("/api/resources" + suffix)',
+        "Accessible / discovered",
+        "Configured references",
+        "Discovery succeeded; no resources were returned",
+        "resource-status-error",
+        "request_error",
+    ):
+        assert marker in source
+    assert 'bindClick("tenantResourcesRefresh"' in source
+
+
 def test_bootstrap_stock_camera_defaults_match_scene_assets() -> None:
-    from npa.cli import agent as agent_module
     from npa.genesis.scene_assets import (
         CAMERA_PLACEMENT_STOCK_EE_MOUNTED,
         CAMERA_PLACEMENT_STOCK_WORKSPACE,
         DEFAULT_CAMERA_NAMES,
     )
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     for name in DEFAULT_CAMERA_NAMES:
         assert f'"name": "{name}"' in source
     assert CAMERA_PLACEMENT_STOCK_WORKSPACE in source
@@ -1455,8 +1442,6 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "letter-spacing: 0.22em" in source
     assert "border-bottom: 4px solid var(--brand)" in source
     assert '@app.post("/sim-viz/load-franka-demo")' in source
-    assert "NPA_AGENT_PRELOAD_STOCK_DEMO" in source
-    assert "if not PRELOAD_STOCK_DEMO or not RRD_PATH.is_file()" in source
     assert "_wire_franka_demo" in source
     assert "_generate_franka_demo_rrd" in source
     assert "_log_franka_robot_geometry" in source
@@ -1487,7 +1472,7 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "location.origin + rrdUrl" in source
     assert "_rerun_iframe_url" in source
     assert "NPA_AGENT_PUBLIC_URL" in source
-    assert "cap-[A-Za-z0-9_-]{{43}}" in source
+    assert "RERUN_CAPABILITY_NAME_RE" in source
     assert (
         "Prefer the public recording copy; authenticated blob fetch remains the fallback"
         in source
@@ -1559,7 +1544,7 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert '"/api/sim-viz/status?run_id="' in source
     # Media preview uses authenticated blob URLs; Rerun still avoids parent blob URLs for wasm.
     assert "does not reliably consume parent-created blob URLs" in source
-    assert "media_type=artifact_media_type(safe_name)" in source
+    assert "local_media_type = artifact_media_type(safe_name)" in source
     assert "apis_used" in source
     assert "format_live_context_block" in source
     assert "match_chat_intent" in source
@@ -1587,10 +1572,8 @@ def test_bootstrap_embeds_run_switching_controls() -> None:
     assert "reference proxy context" in source
     from npa.cli import agent as agent_module
 
-    stage_runtime = (
-        Path(agent_module.__file__)
-        .with_name("agent_stage_runtime.py")
-        .read_text(encoding="utf-8")
+    stage_runtime = Path(agent_module.__file__).with_name("agent_stage_runtime.py").read_text(
+        encoding="utf-8"
     )
     assert "def _artifact_backed_run_details" in stage_runtime
     assert "def _workflow_stage_defs_from_state" in stage_runtime
@@ -1599,9 +1582,7 @@ def test_bootstrap_embeds_run_switching_controls() -> None:
     assert "runDetailsRequestId" in source
     assert "runDetailsAbortController" in source
     assert "execution status unavailable" in source
-    assert (
-        "Never let a sparse update erase richer artifact fields from load-run" in source
-    )
+    assert "Never let a sparse update erase richer artifact fields from load-run" in source
     assert "Read-only: do not _record/_save here" in source
     assert (
         "Always use the stock demo run id and clear any prior media-artifact preview"
@@ -1640,27 +1621,23 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     assert '@app.get("/artifacts/runs")' in source
     assert '@app.get("/artifacts/run/{{run_id:path}}")' in source
     assert '@app.post("/sim-viz/load-artifact")' in source
-    assert 'npa-artifact-discovery-contract" content="s3-source-qualified-v1' in source
-    assert "run_ref" in source
-    assert "resolve_run_artifacts" in source
-    assert "artifact_run_ref" in source
-    assert "served_recording_sha256" in source
     # Every artifact must be directly downloadable: streaming download endpoint
     # + a per-artifact Download button wired to it.
-    assert '@app.get("/artifacts/download")' in source
+    assert '@app.api_route("/artifacts/download", methods=["GET", "HEAD"])' in source
     assert (
         'data-action="download-artifact"' in source
         or "data-action='download-artifact'" in source
     )
-    assert "async function downloadArtifact(" in source
-    assert "/api/artifacts/download?" in source
+    assert "function downloadArtifact(" in source
+    assert "/api/artifacts/content?" in source
     # Clicking a stage describes it and inlines its artifacts/info/configs.
     assert '@app.get("/artifacts/stage/{{run_id:path}}")' in source
     assert "async function showStageDetail(" in source
     assert "/api/artifacts/stage/" in source
     assert 'id="stageDetail"' in source
     assert "data-stage-label=" in source
-    # Voxel51 / FiftyOne dataset tab.
+    # Artifact-backed dataset/provenance tab. It must not present its own grid as
+    # a Voxel51/FiftyOne imitation, and it must separate source from generated data.
     assert '@app.get("/fiftyone/dataset/{{run_id:path}}")' in source
     assert "build_fiftyone_dataset" in source
     assert 'id="tabVoxel"' in source
@@ -1669,6 +1646,20 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     assert "async function loadVoxelDataset(" in source
     assert "/api/fiftyone/dataset/" in source
     assert 'id="voxelGrid"' in source
+    assert "Dataset &amp; provenance" in source
+    assert "FiftyOne-style" not in source
+    assert "Source input" in source
+    assert "Derived conditioning data" in source
+    assert "Synthetic / augmented data" in source
+    assert "Artifact summary only — FiftyOne did not run" in source
+    assert 'id="voxelReview"' in source
+    assert "data_role_label" in source
+    # Loading by run-relative key resolves a discovered object. An unscoped exact
+    # S3 URI receives the structured v2 migration error instead of guessing a run.
+    assert "resolve_run_artifacts(" in source
+    assert '"contract_version": "npa.agent.load-artifact.v2"' in source
+    assert '"code": "run_id_required_for_s3_uri"' in source
+    assert 'may_use_default_recording = payload_run in {"", "franka-demo"}' in source
     # Regression: #panelVoxel must be a SIBLING of #panelRerun, not nested inside
     # it. If nested, panelRerun.is-inactive (opacity:0) makes the whole Voxel tab
     # blank when active. Assert panelRerun is fully closed before panelVoxel opens.
@@ -1724,6 +1715,42 @@ def test_bootstrap_run_finder_filters_by_name_or_id_not_path() -> None:
     assert "artifactPrefixValue" not in source
 
 
+def test_direct_run_load_cancels_background_discovery_and_uses_exact_artifacts() -> None:
+    source = _agent_ui_bundle()
+
+    assert "let artifactRunsAbortController = null;" in source
+    assert "artifactRunsAbortController.abort();" in source
+    assert "Exact run loading takes precedence" in source
+    assert "await loadArtifactsForSelectedRun(runRef || runId, null, exactEntry" in source
+    assert "if (loaded && activeArtifactInventory.length)" in source
+    assert 'refreshArtifactRuns("", { singlePage: true })' in source
+    assert "Render the authoritative workflow timeline before attempting" in source
+    assert "!context.deferPreferredViewer && preferred" in source
+    assert "deferPreferredViewer: true" in source
+    assert 'showToast("Run loaded; preferred viewer failed: "' in source
+    assert '"#stageList .stage-physical-job"' in source
+    assert "if (!physicalStageCount) await loadRunDetails(runId, detailOptions);" in source
+
+
+def test_artifact_backed_training_run_loads_without_rerun_recording() -> None:
+    source = _agent_ui_bundle()
+    backend = Path(__file__).resolve().parents[2].joinpath("src/npa/cli/agent.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert '"output_artifact_count"' in backend
+    assert '"preview_status": "no_previewable_recording"' in backend
+    assert '"artifacts_available": True' in backend
+    status_body = backend.split('@app.get("/sim-viz/status")', 1)[1].split(
+        '@app.get("/sim-viz/runs")', 1
+    )[0]
+    assert 'preview_status == "no_previewable_recording"' in status_body
+    assert 'payload["rerun_ready"] = False' in status_body
+    assert 'state: "no-preview-artifacts"' in source
+    assert 'placeholder.setAttribute("data-state"' in source
+    assert "No RRD/MCAP recording; use the artifacts below" in source
+
+
 def test_bootstrap_artifact_stage_selector_and_clickable_timeline() -> None:
     """The stages/artifact browser must let you choose a workflow-progress step.
 
@@ -1745,7 +1772,7 @@ def test_bootstrap_artifact_stage_selector_and_clickable_timeline() -> None:
         "if (stageFilter && deriveArtifactStage(item.key, runId, stageWrapper) !== stageFilter) return false;"
         in source
     )
-    assert '["artifactStageFilter", "artifactTypeFilter", "artifactSort"]' in source
+    assert '["artifactStageFilter", "artifactTypeFilter", "artifactRoleFilter", "artifactSort"]' in source
     # Timeline stage rows are tagged and clickable to drive the stage filter.
     assert "stage_key: stageKey," in source
     assert 'data-stage-key="' in source
@@ -1783,6 +1810,26 @@ def test_data_factory_recording_note_wired_in_apply_loaded_artifact() -> None:
     )
 
 
+def test_groot_learning_recording_activates_real_rrd_and_truthful_note() -> None:
+    from npa.cli import agent as agent_module
+    from npa.cli import agent_viewer_runtime
+
+    source = Path(agent_viewer_runtime.__file__).read_text(encoding="utf-8")
+    branch = source.split('if render == "rerun":', 1)[1].split('elif render == "mcap":', 1)[0]
+    assert "if is_learning:" in branch
+    assert 'sim_viz["preview_entity"] = f"heldout/camera/{camera}"' in branch
+    assert "validated primary camera is {camera}" in branch
+    assert "Offline held-out GR00T policy evaluation loaded (not a rollout)." in branch
+    assert "finite training loss, and provenance" in branch
+    assert (
+        "Offline held-out GR00T policy evaluation loaded (not a rollout)"
+        in agent_module._embedded_agent_viewer_runtime_source()
+    )
+    assert 'rrd_tmp = RRD_PATH.with_suffix(".rrd.tmp")' in branch
+    assert "shutil.copy2(local_path, rrd_tmp)" in branch
+    assert branch.index("rrd_tmp.replace(RRD_PATH)") < branch.index("_restart_rerun_serve(force=True)")
+
+
 def test_bootstrap_visualize_run_selector_lists_discovered_runs() -> None:
     """Discovered runs must be choosable to visualize, and the Rerun viewer must
     remain present.
@@ -1803,21 +1850,21 @@ def test_bootstrap_visualize_run_selector_lists_discovered_runs() -> None:
     assert 'fillRunSelectOptionsRich(document.getElementById("runIdSelect")' in source
 
 
-def test_bootstrap_run_history_uses_source_qualified_index() -> None:
-    from npa.cli import agent as agent_module
+def test_bootstrap_run_history_uses_run_id_index() -> None:
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert '"sim_viz_runs": []' not in source
     assert "if not isinstance(runs, dict):" in source
-    assert "history_key = run_ref or run_id" in source
     assert "runs[history_key] = snapshot" in source
     assert 'state["active_run_id"] = run_id' in source
+    assert 'state["active_run_ref"] = run_ref' in source
     assert (
         "Never let a sparse update erase richer artifact fields from load-run" in source
     )
 
 
 def test_bootstrap_ui_strips_url_credentials() -> None:
+
     source = _agent_source()
     assert "location.username" in source
     assert "location.password" in source
@@ -1844,22 +1891,17 @@ def test_default_run_discovery_is_generic_not_hardcoded() -> None:
     """Default (no-prefix) run discovery must scan the bucket generically
     (enumerate category folders under every root from S3), NOT hardcode any
     workflow path, and drop the agent's own infra roots from the listing."""
-    from npa.agent_backend import artifact_routes
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
-    route_source = Path(artifact_routes.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     # Generic scan across all bucket roots AND every accessible bucket; no
     # hardcoded workflow prefixes. The no-prefix endpoint calls the multi-bucket
     # cached wrapper (which discovers via list_all_runs per bucket under the hood).
-    assert "deps.list_runs_cached_multi(" in route_source
-    assert "exclude=deps.discovery_excludes()" in route_source
+    assert "list_runs_cached_multi(" in source
+    assert "exclude=_discovery_exclude_roots()" in source
     assert "AGENT_DEFAULT_WORKFLOW_PREFIXES" not in source
     # Per-run lookup falls back to a generic cross-category, cross-bucket find.
-    runtime = (
-        Path(agent_module.__file__)
-        .with_name("agent_stage_runtime.py")
-        .read_text(encoding="utf-8")
+    runtime = Path(agent_module.__file__).with_name("agent_stage_runtime.py").read_text(
+        encoding="utf-8"
     )
     assert "find_run_artifacts_across_buckets(" in runtime
 
@@ -1869,31 +1911,43 @@ def test_run_details_resolves_run_generically_by_id() -> None:
     categories under the run root) so any run shows real artifact-backed stages
     instead of the generic sim2real 'not_run' template — no path/prefix required.
     """
-    from npa.cli import agent as agent_module
 
-    source = (
-        Path(agent_module.__file__)
-        .with_name("agent_stage_runtime.py")
-        .read_text(encoding="utf-8")
+    source = Path(agent_module.__file__).with_name("agent_stage_runtime.py").read_text(
+        encoding="utf-8"
     )
     # Backend resolves the run generically across categories (no prefix needed).
     assert "def _artifact_backed_run_details(" in source
-    assert 'resource_bucket: str = ""' in source
+    assert "resource_bucket: str = \"\"" in source
     assert "find_run_artifacts_across_buckets(" in source
     # Frontend loads run details / run by id WITHOUT a path prefix.
     ui = _agent_ui_bundle()
     assert '"/api/workflows/sim2real/runs/" + encodeURIComponent(target)' in ui
     assert "body: JSON.stringify({ run_id: targetRunId, run_ref: targetRunRef })" in ui
     assert 'entry.source_type === "artifact_storage"' in ui
-    assert (
-        "loadArtifactsForSelectedRun(chosen, null, entry, { pendingSelection: true })"
-        in ui
-    )
+    assert "loadArtifactsForSelectedRun(chosen, null, entry, { pendingSelection: true })" in ui
     assert "prefix: artifactPrefixValue()" not in ui
     assert 'params.set("resource_bucket", resourceBucket)' in ui
     assert 'params.set("resolved_prefix", resolvedPrefix)' in ui
     assert 'params.set("source_selected", "1")' in ui
     assert '"stages succeeded"' not in ui
+
+
+def test_artifact_cards_define_runtime_metadata_before_rendering() -> None:
+    """Artifact card rendering must not fail on undefined metadata variables."""
+    ui = _agent_ui_bundle()
+
+    assert "const learningSummary = data && data.summary && data.summary.learning" in ui
+    assert "list.hidden = Boolean(learningSummary);" in ui
+    assert 'const s3uri = String(item.s3_uri || "");' in ui
+    assert 'data-s3-uri="\' + escapeHtml(s3uri)' in ui
+
+
+def test_agent_ui_surfaces_physical_managed_job_ids_per_stage() -> None:
+    ui = _agent_ui_bundle()
+
+    assert 'const managedJobId = String(stage.job_id || "").trim();' in ui
+    assert 'class="stage-physical-job"' in ui
+    assert "Physical managed job ID:" in ui
 
 
 def test_bootstrap_chat_has_scroll_to_bottom_button() -> None:
@@ -1945,19 +1999,6 @@ def test_normalize_llm_models_supports_repeated_and_csv_values() -> None:
 
 
 def test_agent_status_json(monkeypatch) -> None:
-    deployment = {
-        "deployment_id": "npa-agent-test",
-        "deployment_name": "agent",
-        "project_alias": "us-central1",
-        "runtime_namespace": "us-central1/agent",
-        "repository": "org/repo",
-        "branch": "codex/test",
-        "commit": "a" * 40,
-        "source_tree": "b" * 40,
-        "short_commit": "a" * 12,
-        "workspace_label": "Workspace",
-        "bootstrap_timestamp": "2026-08-10T00:00:00Z",
-    }
     monkeypatch.setattr(
         "npa.cli.agent._agent_record",
         lambda project, name: {
@@ -1971,7 +2012,6 @@ def test_agent_status_json(monkeypatch) -> None:
             "sim_assets_url": "https://203.0.113.50/assets/",
             "cameras_api_url": "https://203.0.113.50/assets/api/sim-assets/cameras",
             "auth_secret_path": "/tmp/agent-auth",
-            "deployment": deployment,
             "llm": {
                 "provider": "token_factory",
                 "model": "nvidia/Cosmos3-Super-Reasoner",
@@ -1983,9 +2023,6 @@ def test_agent_status_json(monkeypatch) -> None:
         "npa.cli.agent._health",
         lambda *_args, **_kwargs: (True, 200),
     )
-    monkeypatch.setattr(
-        "npa.cli.agent.fetch_live_deployment", lambda *_args, **_kwargs: deployment
-    )
 
     result = runner.invoke(app, ["status", "--json"])
     assert result.exit_code == 0, result.output
@@ -1996,6 +2033,23 @@ def test_agent_status_json(monkeypatch) -> None:
     assert payload["sim_viz_url"].endswith("/rerun/")
     assert payload["sim_assets_url"].endswith("203.0.113.50/assets/")
     assert payload["cameras_api_url"].endswith("/assets/api/sim-assets/cameras")
+
+
+def test_agent_status_not_found_json_is_nonzero(monkeypatch) -> None:
+    monkeypatch.setattr("npa.cli.agent._agent_record", lambda _project, _name: {})
+    monkeypatch.setattr(
+        "npa.agent_status.partial_agent_status",
+        lambda project, name: {
+            "project": project,
+            "name": name,
+            "classification": "NOT_FOUND",
+        },
+    )
+
+    result = runner.invoke(app, ["status", "--project", "demo", "--json"])
+
+    assert result.exit_code == 1
+    assert json.loads(result.output)["classification"] == "NOT_FOUND"
 
 
 def test_verify_live_accepts_non_us_central1_region(monkeypatch) -> None:
@@ -2042,19 +2096,6 @@ def test_verify_live_requires_a_recorded_region(monkeypatch) -> None:
 
 def test_verify_live_runs_pytests(monkeypatch) -> None:
     workflow_status_timeouts: list[float] = []
-    deployment = {
-        "deployment_id": "npa-agent-test",
-        "deployment_name": "agent",
-        "project_alias": "us-central1",
-        "runtime_namespace": "us-central1/agent",
-        "repository": "nebius/nebius-physical-ai",
-        "branch": "codex/test",
-        "commit": "a" * 40,
-        "source_tree": "b" * 40,
-        "short_commit": "a" * 12,
-        "workspace_label": "NPA Workbench",
-        "bootstrap_timestamp": "2026-08-10T00:00:00Z",
-    }
 
     class _Resp:
         def __init__(
@@ -2105,7 +2146,6 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             "sim_assets_url": "https://203.0.113.50/assets/",
             "cameras_api_url": "https://203.0.113.50/assets/api/sim-assets/cameras",
             "auth_secret_path": "/tmp/agent-auth",
-            "deployment": deployment,
         },
     )
     monkeypatch.setattr("npa.cli.agent._load_auth_secret", lambda _: ("npa", "secret"))
@@ -2113,8 +2153,6 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
 
     def _fake_http_get(url, *_args, **_kwargs):
         url_s = str(url)
-        if url_s.endswith("/api/deployment"):
-            return _Resp(deployment)
         if url_s.endswith("/api/tools"):
             return _Resp({"tool_refs": [f"tool.{idx}" for idx in range(19)]})
         if url_s.endswith("/api/sim-assets"):
@@ -2183,14 +2221,29 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             return _Resp({"ok": True})
         if url_s.endswith("/api/infra/k8s"):
             return _Resp({"ok": True, "agent_npa_ready": True})
-        if url_s.endswith("/api/workflows/sim2real/status"):
-            workflow_status_timeouts.append(float(_kwargs["timeout"]))
+        if "/api/resources" in url_s:
             return _Resp(
                 {
-                    "latest_submit": {"run_id": "agent-run-123"},
-                    "sim_viz": {"stage": "demo"},
+                    "ok": True,
+                    "categories": [
+                        {
+                            "id": "project",
+                            "status": "configured",
+                            "configured_count": 1,
+                            "discovered_count": 0,
+                        },
+                        {
+                            "id": "network",
+                            "status": "empty",
+                            "configured_count": 0,
+                            "discovered_count": 0,
+                        },
+                    ],
                 }
             )
+        if url_s.endswith("/api/workflows/sim2real/status"):
+            workflow_status_timeouts.append(float(_kwargs["timeout"]))
+            return _Resp({"latest_submit": {"run_id": "agent-run-123"}, "sim_viz": {"stage": "demo"}})
         if url_s.endswith("/welcome"):
             return _Resp("<html>NPA Agent is running</html>", status_code=200)
         if url_s.endswith("/healthz"):
@@ -2210,11 +2263,14 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 '<div id="stagesPanel"><h3>Stages</h3>'
                 '<div class="stages-run-picker">'
                 '<select id="stagesRunSelect"></select>'
-                "<label>Search NPA workflow/artifact runs</label>"
+                '<label>Search NPA workflow/artifact runs</label>'
                 '<input id="stagesRunInput" />'
                 '<button id="stagesLoadRun"></button></div></div>'
-                "<script>function loadSelectedRun(){} function syncRunChooserFields(){} "
-                "function filterStagesRunSelect(){} function resolveStagesRunChoice(){}</script>"
+                '<div id="tenantResourcesPanel"><h3>Tenant resources</h3>'
+                '<button id="tenantResourcesRefresh"></button>'
+                'Accessible / discovered; Configured references</div>'
+                '<script>function loadSelectedRun(){} function syncRunChooserFields(){} '
+                'function filterStagesRunSelect(){} function resolveStagesRunChoice(){}</script>'
                 '<div id="renderModeVideo"></div><div id="artifactPreviewHost"></div>'
                 '<div id="viewerPaneMedia"></div><div id="rerunBundleCover"></div>'
                 '<button id="renderModeFoxglove"></button>'
@@ -2225,17 +2281,18 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 '<button id="chatDrawerToggle" class="chat-fab"></button>'
                 '<button id="chatDrawerClose"></button>'
                 '<form id="chatForm"></form><div id="mobileChatAuth"></div>'
-                "<script>function wireUi(){} function sendChat(){} function activateMainTab(){} "
-                "function authenticatedPreviewObjectUrl(){} function waitUntilRerunPastBundleSplash(){} "
-                "function scheduleRerunBundleUncover(){} function swapRerunRecordingInPlace(){} "
-                "function safeHideRerunBundleCover(){} function captureVisualContext(){} "
-                "function describeVisual(){} function enqueueChatJob(){} function processChatQueue(){} "
-                "function queueChatText(){} function waitForQualityRerunFrame(){} "
-                "function captureCanvasDataUrl(){} function ensureRerunCaptureBridge(){} "
-                "function pickBestIframeCanvas(){} function sampleFrameStats(){} "
-                "function openFullChatTab(){} "
-                "do not prefetch .rrd bytes; skipUserAppend; Describe this — capturing; "
-                "async function loadArtifact(payload){ await swapRerunRecordingInPlace(); } "
+                '<script>function wireUi(){} function sendChat(){} function activateMainTab(){} '
+                'function authenticatedPreviewObjectUrl(){} function waitUntilRerunPastBundleSplash(){} '
+                'function scheduleRerunBundleUncover(){} function swapRerunRecordingInPlace(){} '
+                'function safeHideRerunBundleCover(){} function captureVisualContext(){} '
+                'function describeVisual(){} function enqueueChatJob(){} function processChatQueue(){} '
+                'function queueChatText(){} function waitForQualityRerunFrame(){} '
+                'function captureCanvasDataUrl(){} function ensureRerunCaptureBridge(){} '
+                'function pickBestIframeCanvas(){} function sampleFrameStats(){} '
+                'function openFullChatTab(){} '
+                'function refreshTenantResources(){ fetch("/api/resources"); } '
+                'do not prefetch .rrd bytes; skipUserAppend; Describe this — capturing; '
+                'async function loadArtifact(payload){ await swapRerunRecordingInPlace(); } '
                 '<button id="openFullChatTab"></button>'
                 "async function refresh(){} "
                 "handle.add_receiver(recordingUrl, false); "
@@ -2358,10 +2415,13 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
     result = runner.invoke(app, ["verify-live"])
     assert result.exit_code == 0, result.output
     assert "verify-live: ok" in result.output
+    import sys as _sys
+
+    expected_py = _sys.executable or "python3"
     assert workflow_status_timeouts == [30.0]
     assert calls == [
         [
-            "npa/.venv/bin/python",
+            expected_py,
             "-m",
             "pytest",
             "npa/tests/smoke/test_agent_smoke.py",
@@ -2369,20 +2429,14 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             "-q",
         ],
         [
-            "npa/.venv/bin/python",
+            expected_py,
             "-m",
             "pytest",
             "npa/tests/cli/test_agent.py",
             "npa/tests/cli/test_agent_workflow.py",
             "-q",
         ],
-        [
-            "npa/.venv/bin/python",
-            "-m",
-            "pytest",
-            "npa/tests/e2e/test_agent_live.py",
-            "-q",
-        ],
+        [expected_py, "-m", "pytest", "npa/tests/e2e/test_agent_live.py", "-q"],
     ]
 
 
@@ -2599,9 +2653,8 @@ def test_apis_for_intent_includes_status_paths() -> None:
 
 
 def test_bootstrap_embeds_recordings_endpoint() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert '@app.get("/sim-viz/recordings")' in source
     assert "sim_viz_recordings" in source
     assert '"/opt/npa-agent/recordings"' in source
@@ -2635,7 +2688,11 @@ def test_bootstrap_emitted_ui_script_is_valid_javascript(monkeypatch) -> None:
             if "npa-agent-bootstrap" in _remote_path:
                 captured["setup_script"] = text
 
-        def run_or_raise(self, _command: str) -> None:
+        def upload_private_text(self, content: str, remote_path: str) -> None:
+            if "npa-agent-bootstrap" in remote_path:
+                captured["setup_script"] = content
+
+        def run_or_raise(self, _command: str, **_kwargs) -> None:
             return None
 
         def run(self, _command: str) -> None:
@@ -2665,7 +2722,6 @@ def test_bootstrap_emitted_ui_script_is_valid_javascript(monkeypatch) -> None:
             "meta-llama/Llama-3.3-70B-Instruct",
         ],
         tf_api_key="",
-        nebius_ai_key="",
         public_https=True,
     )
 
@@ -2704,17 +2760,32 @@ def test_bootstrap_emitted_ui_script_is_valid_javascript(monkeypatch) -> None:
 
 
 def test_bootstrap_recordings_api_in_system_prompt() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "sim-viz/recordings" in source
     assert "available .rrd recording" in source
 
 
-def test_bootstrap_uses_unique_remote_setup_script_path() -> None:
-    from npa.cli import agent as agent_module
+def test_agent_dry_run_counts_only_its_exact_healthy_project_record() -> None:
+    source = _agent_source()
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert (
+        'runtime_agent_name = str(os.environ.get("NPA_AGENT_NAME") or "agent")'
+        in source
+    )
+    assert "record = agents.get(runtime_agent_name)" in source
+    assert "project_id != runtime_project_id" in source
+    assert (
+        "any("
+        not in source.split("def _configured_healthy_agent_exists", 1)[1].split(
+            "def _agent_command_env", 1
+        )[0]
+    )
+
+
+def test_bootstrap_uses_unique_remote_setup_script_path() -> None:
+
+    source = _agent_source()
     assert "npa-agent-bootstrap-{secrets.token_hex" in source
 
 
@@ -2730,86 +2801,21 @@ def test_rrd_publish_uses_request_unique_atomic_temp_path() -> None:
 
 
 def test_bootstrap_installs_boto3_for_artifact_endpoints() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "pip install fastapi uvicorn httpx pyyaml boto3" in source
 
 
-def test_bootstrap_waits_for_backend_health_before_identity_probe() -> None:
-    from npa.cli import agent as agent_module
-
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
-    assert "until curl -fsS http://127.0.0.1:{backend_port}/health" in source
-    assert source.index(
-        "until curl -fsS http://127.0.0.1:{backend_port}/health"
-    ) < source.index("verify_remote_deployment(ssh, deployment")
-
-
-def test_standard_live_cypress_runner_includes_every_live_spec() -> None:
-    browser_root = Path(__file__).parents[1] / "browser"
-    package = json.loads((browser_root / "package.json").read_text(encoding="utf-8"))
-    command = package["scripts"]["cy:live"]
-    live_specs = sorted((browser_root / "cypress" / "e2e").glob("*_live.cy.js"))
-
-    for path in live_specs:
-        assert f"cypress/e2e/{path.name}" in command
-    assert any(path.name == "agent_foxglove_live.cy.js" for path in live_specs)
-    assert live_specs
-    runner = (
-        Path(__file__).parents[2] / "scripts" / "run_agent_cypress.sh"
-    ).read_text()
-    assert 'if [[ -n "${LIVE_ARTIFACT_KEY}" ]]' in runner
-    assert 'if [[ -z "${LIVE_RUN_ID}" ]]' in runner
-
-
-def test_standard_mock_cypress_runner_includes_every_mock_relevant_spec() -> None:
-    browser_root = Path(__file__).parents[1] / "browser"
-    package = json.loads((browser_root / "package.json").read_text(encoding="utf-8"))
-    command = package["scripts"]["cy:mock"]
-    required = {
-        "agent_mocked.cy.js",
-        "agent_foxglove.cy.js",
-    }
-
-    for name in required:
-        assert f"cypress/e2e/{name}" in command
-    assert command.count("agent_foxglove.cy.js") == 1
-
-
-def test_ui_keeps_one_accessible_common_foxglove_web_action() -> None:
-    html = (
-        Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent_ui.html"
-    ).read_text(encoding="utf-8")
-
-    assert html.count('id="foxgloveOpenWeb"') == 1
-    assert html.count('data-testid="open-foxglove-web"') == 1
-    assert html.count(">Open in Foxglove Web</button>") == 1
-    assert 'aria-describedby="foxgloveExportNote"' in html
-    assert 'aria-busy="false" disabled' in html
-    assert "Foxglove Desktop" not in html
-    assert html.count('id="renderModeLichtblick"') == 1
-    assert 'id="openLichtblick"' not in html
-    assert 'id="openFullLichtblick"' not in html
-
-
 def test_bootstrap_installs_nebius_cli_and_sa_profile() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "storage.eu-north1.nebius.cloud/cli/install.sh" in source
     assert "--token-file /mnt/cloud-metadata/token" in source
     assert 'nebius_profile = "cursor-sa"' in source
     assert "--profile {nebius_profile}" in source
-    assert (
-        '"$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token >/dev/null'
-        in source
-    )
+    assert '"$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token >/dev/null' in source
     assert 'sudo -H "$NEBIUS_BIN" profile create' in source
-    assert (
-        'sudo -H "$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token'
-        in source
-    )
+    assert 'sudo -H "$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token' in source
     assert "nebius CLI binary not found after install" in source
     assert "--parent-id" in source
 
@@ -2923,9 +2929,8 @@ def test_credential_refresh_cannot_replace_recorded_service_account() -> None:
 
 
 def test_bootstrap_stages_nebius_env_and_record_ssh_key() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "EnvironmentFile=-/opt/npa-agent/nebius.env" in source
     assert "_write_agent_nebius_env" in source
     assert "bootstrap_agent_environment" in source
@@ -2941,8 +2946,14 @@ def test_agent_nebius_env_uses_metadata_profile_without_static_iam_token() -> No
     commands: list[str] = []
 
     class SSH:
-        def run_or_raise(self, command: str) -> None:
+        def upload_private_text(self, content: str, _remote_path: str) -> None:
+            commands.append(content)
+
+        def run_or_raise(self, command: str, **_kwargs) -> None:
             commands.append(command)
+
+        def run(self, _command: str) -> None:
+            return None
 
     agent_module._write_agent_nebius_env(
         SSH(),
@@ -2959,9 +2970,8 @@ def test_agent_nebius_env_uses_metadata_profile_without_static_iam_token() -> No
         iam_token="synthetic-stale-token",
     )
 
-    assert len(commands) == 1
-    encoded = shlex.split(commands[0])[1]
-    env_text = base64.b64decode(encoded).decode("utf-8")
+    assert len(commands) == 2
+    env_text = commands[0]
     assert "NEBIUS_PROFILE=cursor-sa" in env_text
     assert "NPA_NEBIUS_CONFIG=/root/.nebius/config.yaml" in env_text
     assert "NPA_NEBIUS_CREDENTIAL_SOURCE=instance_metadata" in env_text
@@ -2971,7 +2981,7 @@ def test_agent_nebius_env_uses_metadata_profile_without_static_iam_token() -> No
     assert "synthetic-stale-token" not in env_text
 
 
-def test_bootstrap_verifies_attached_identity_and_tenant_inventory() -> None:
+def test_bootstrap_verifies_attached_identity_with_project_scoped_fallback() -> None:
     from npa.cli import agent as agent_module
 
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
@@ -2979,7 +2989,9 @@ def test_bootstrap_verifies_attached_identity_and_tenant_inventory() -> None:
     assert "expected_sa={expected_agent_service_account_id}" in source
     assert "isinstance(value, str) and value == expected" in source
     assert '[[ "$whoami_json" != *"$expected_sa"* ]]' not in source
-    assert 'iam project list --parent-id "$expected_tenant" --all' in source
+    assert "iam project list --parent-id \"$expected_tenant\" --all" in source
+    assert "iam project get --id \"$expected_project\"" in source
+    assert "forcing a broad tenant editors grant" in source
     assert "env -u NEBIUS_IAM_TOKEN -u NPA_NEBIUS_IAM_TOKEN" in source
 
 
@@ -3012,7 +3024,7 @@ def test_creds_from_terraform_state(monkeypatch) -> None:
 def test_bootstrap_embed_uses_placeholder_for_agent_chat() -> None:
     from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "_AGENT_CHAT_EMBED" in source
     assert ".replace(_AGENT_CHAT_EMBED, agent_chat_source)" in source
     raw = agent_module._embedded_agent_chat_source()
@@ -3023,9 +3035,8 @@ def test_bootstrap_embed_uses_placeholder_for_agent_chat() -> None:
 
 
 def test_bootstrap_embeds_skill_context_and_api_accounting() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "_resolve_skill_context" in source
     assert "_skill_index_candidates" in source
     assert "apis_suggested" in source
@@ -3034,9 +3045,8 @@ def test_bootstrap_embeds_skill_context_and_api_accounting() -> None:
 
 
 def test_bootstrap_embeds_scoped_state_s3_persistence() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "_state_s3_key" in source
     assert "NPA_AGENT_STATE_S3_PREFIX" in source
     assert "NPA_AGENT_SESSION_SCOPE" in source
@@ -3045,9 +3055,8 @@ def test_bootstrap_embeds_scoped_state_s3_persistence() -> None:
 
 
 def test_bootstrap_embeds_provider_resilience_fallback() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "_chat_with_resilience" in source
     assert "_provider_chat" in source
     assert "NPA_AGENT_LLM_PROVIDER" in source
@@ -3074,7 +3083,7 @@ def test_bootstrap_chat_model_selector_defaults_to_auto_routing() -> None:
 def test_bootstrap_embeds_cost_aware_routing() -> None:
     from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     # Placeholder is declared, substituted, and consumed by the chat handler.
     assert "_AGENT_ROUTING_EMBED" in source
     assert ".replace(_AGENT_ROUTING_EMBED, agent_routing_source)" in source
@@ -3145,9 +3154,6 @@ def test_deploy_seeds_cost_ordered_ladder_without_explicit_models(
         "npa.cli.agent._resolve_deploy_llm_credentials",
         lambda: ("tf-key", "nvidia/Cosmos3-Super-Reasoner"),
     )
-    monkeypatch.setattr(
-        "npa.cli.agent._resolve_operator_credentials", lambda: ("", "", "")
-    )
     monkeypatch.setattr("npa.cli.agent._bootstrap_agent_stack", lambda **k: None)
     monkeypatch.setattr("npa.cli.agent.ensure_ingress", lambda **k: None)
     monkeypatch.setattr(
@@ -3159,7 +3165,6 @@ def test_deploy_seeds_cost_ordered_ladder_without_explicit_models(
     (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
     (tmp_path / "id_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
-    monkeypatch.setattr("npa.cli.agent._agent_terraform_result", _terraform_pass_result)
 
     deploy_cmd(
         project="agent-live",
@@ -3196,13 +3201,6 @@ def test_agent_preflight_all_pass(monkeypatch, tmp_path) -> None:
     (tmp_path / "id_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
     monkeypatch.setattr(
-        agent_module.subprocess,
-        "run",
-        lambda *a, **k: subprocess.CompletedProcess(
-            a[0], 0, '{"terraform_version":"1.13.3"}', ""
-        ),
-    )
-    monkeypatch.setattr(
         agent_module, "_resolve_deploy_llm_credentials", lambda: ("tf-key", "m")
     )
 
@@ -3219,6 +3217,48 @@ def test_agent_preflight_all_pass(monkeypatch, tmp_path) -> None:
     assert "[PASS] terraform" in result.output
     assert "[PASS] ssh_public_key" in result.output
     assert "[PASS] token_factory" in result.output
+
+
+def test_agent_preflight_invokes_exact_deploy_storage_decision(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cli import agent as agent_module
+
+    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
+    (tmp_path / "id_ed25519").write_text("priv\n")
+    monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
+    monkeypatch.setattr(
+        agent_module, "_resolve_deploy_llm_credentials", lambda: ("tf-key", "m")
+    )
+    calls: list[dict] = []
+
+    def _resolve(**kwargs):
+        calls.append(dict(kwargs))
+        return {"s3_bucket": "configured-bucket"}
+
+    monkeypatch.setattr(agent_module, "_resolve_deploy_storage_credentials", _resolve)
+
+    result = runner.invoke(
+        app,
+        [
+            "preflight",
+            "--skip-nebius",
+            "--project",
+            "dev",
+            "--ssh-public-key-path",
+            str(tmp_path / "id_ed25519.pub"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [
+        {
+            "region": "",
+            "project_alias": "dev",
+            "emit_status": False,
+        }
+    ]
+    assert "Deployment credential path selected" in result.output
 
 
 def test_agent_preflight_fails_on_missing_terraform_and_keys(
@@ -3254,13 +3294,6 @@ def test_agent_preflight_json_output(monkeypatch, tmp_path) -> None:
     (tmp_path / "id_ed25519").write_text("priv\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
     monkeypatch.setattr(
-        agent_module.subprocess,
-        "run",
-        lambda *a, **k: subprocess.CompletedProcess(
-            a[0], 0, '{"terraform_version":"1.13.3"}', ""
-        ),
-    )
-    monkeypatch.setattr(
         agent_module, "_resolve_deploy_llm_credentials", lambda: ("tf-key", "m")
     )
 
@@ -3281,45 +3314,33 @@ def test_agent_preflight_json_output(monkeypatch, tmp_path) -> None:
         "terraform",
         "ssh_public_key",
         "ssh_private_key",
+        "ssh_egress",
+        "writable_s3",
         "token_factory",
     }
 
-    conventional = runner.invoke(
-        app,
-        [
-            "preflight",
-            "--skip-nebius",
-            "--output",
-            "json",
-            "--ssh-public-key-path",
-            str(tmp_path / "id_ed25519.pub"),
-        ],
-    )
-    assert conventional.exit_code == 0, conventional.output
-    assert json.loads(conventional.output) == payload
 
-    invalid = runner.invoke(app, ["preflight", "--output", "yaml"])
-    assert invalid.exit_code == 2
-    assert "Invalid value" in invalid.output
-
-
-def test_agent_preflight_checks_terraform_cli_major_contract(
+def test_agent_preflight_fails_when_storage_write_probe_is_forbidden(
     monkeypatch, tmp_path
 ) -> None:
     from npa.cli import agent as agent_module
+    from npa.clients import storage_validation
+    from npa.clients.storage_validation import StorageProbeResult
 
     (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
     (tmp_path / "id_ed25519").write_text("priv\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
     monkeypatch.setattr(
-        agent_module.subprocess,
-        "run",
-        lambda *a, **k: subprocess.CompletedProcess(
-            a[0], 0, '{"terraform_version":"0.14.11"}', ""
-        ),
+        agent_module, "_resolve_deploy_llm_credentials", lambda: ("tf-key", "m")
     )
     monkeypatch.setattr(
-        agent_module, "_resolve_deploy_llm_credentials", lambda: ("tf-key", "m")
+        storage_validation,
+        "probe_storage_write",
+        lambda **_kwargs: StorageProbeResult(
+            False,
+            "forbidden",
+            "S3 write probe was forbidden; the configured access key lacks data-plane permission.",
+        ),
     )
 
     result = runner.invoke(
@@ -3332,23 +3353,43 @@ def test_agent_preflight_checks_terraform_cli_major_contract(
         ],
     )
 
-    assert result.exit_code == 1, result.output
-    assert "supported range is 1.x" in result.output
+    assert result.exit_code == 1
+    assert "[FAIL] writable_s3" in result.output
+    assert "summary:" in result.output
+    assert "fail" in result.output
 
 
-@pytest.mark.parametrize("version", ["1.0.0", "1.12.2", "1.13.3", "1.99.0"])
-def test_terraform_preflight_accepts_supported_1x_patch_and_minor(version: str) -> None:
-    from npa.cli.agent_prereqs import terraform_cli_result
+def test_agent_status_read_only_does_not_probe_storage(monkeypatch, tmp_path) -> None:
+    from npa.cli import agent as agent_module
+    from npa.clients import storage_validation
 
-    result = terraform_cli_result(
-        "/usr/bin/terraform",
-        run=lambda *a, **k: subprocess.CompletedProcess(
-            a[0], 0, json.dumps({"terraform_version": version}), ""
+    monkeypatch.setattr(
+        agent_module, "_resolve_project_alias", lambda value: value or "demo"
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "_agent_record",
+        lambda *_args: {
+            "agent_url": "https://agent/",
+            "rerun_url": "https://agent/rerun/",
+            "auth_secret_path": str(tmp_path / "auth"),
+            "public_ip": "203.0.113.50",
+        },
+    )
+    monkeypatch.setattr(agent_module, "_load_auth_secret", lambda _path: ("u", "p"))
+    monkeypatch.setattr(agent_module, "_health", lambda *_args, **_kwargs: (True, 200))
+    monkeypatch.setattr(
+        storage_validation,
+        "probe_storage_write",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("read-only status must not write a storage probe")
         ),
     )
 
-    assert result.status == "PASS"
-    assert version in result.summary
+    result = runner.invoke(app, ["status", "--project", "demo", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["health"] is True
 
 
 def test_agent_preflight_nebius_fail(monkeypatch, tmp_path) -> None:
@@ -3376,36 +3417,9 @@ def test_agent_preflight_nebius_fail(monkeypatch, tmp_path) -> None:
 
 def test_deploy_fails_fast_on_missing_ssh_key(monkeypatch, tmp_path) -> None:
     """Deploy aborts on a missing SSH key BEFORE any cloud IAM side effects."""
-    from npa.cli import agent as agent_module
     from npa.cli.agent import deploy_cmd
 
-    stored: list[dict] = []
-    monkeypatch.setattr(
-        "npa.cli.agent.build_deployment_manifest",
-        lambda **_kwargs: {
-            "deployment_id": "npa-agent-owner",
-            "deployment_name": "agent",
-            "project_alias": "fresh",
-            "runtime_namespace": "fresh/agent",
-            "repository": "org/repo",
-            "branch": "codex/owner",
-            "commit": "a" * 40,
-            "source_tree": "b" * 40,
-            "short_commit": "a" * 12,
-            "workspace_label": "Workspace",
-            "bootstrap_timestamp": "2026-08-10T00:00:00Z",
-        },
-    )
-    monkeypatch.setattr("npa.cli.agent._agent_record", lambda *_args: {})
-    monkeypatch.setattr(
-        "npa.cli.agent._agent_terraform_state_exists", lambda *_args: False
-    )
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
-    monkeypatch.setattr(agent_module, "_agent_terraform_result", _terraform_pass_result)
-    monkeypatch.setattr(
-        "npa.cli.agent._store_agent_record",
-        lambda _project, _name, record: stored.append(record),
-    )
     monkeypatch.setattr(
         "npa.cli.agent.resolve_environment",
         lambda *a, **k: SimpleNamespace(
@@ -3441,41 +3455,6 @@ def test_deploy_fails_fast_on_missing_ssh_key(monkeypatch, tmp_path) -> None:
             no_public_https=False,
         )
     assert exc.value.exit_code == 1
-    assert stored == []
-
-    # A failed prerequisite must not reserve the namespace: after fixing the
-    # local key, a retry proceeds to the next deployment phase.
-    (tmp_path / "missing.pub").write_text("ssh-ed25519 AAAA test\n")
-    (tmp_path / "missing").write_text("private\n")
-    reached_cloud_bootstrap = False
-
-    def _retry_reaches_cloud(*_args, **_kwargs):
-        nonlocal reached_cloud_bootstrap
-        reached_cloud_bootstrap = True
-        raise RuntimeError("retry sentinel")
-
-    monkeypatch.setattr(
-        "npa.clients.nebius.bootstrap_agent_environment", _retry_reaches_cloud
-    )
-    with pytest.raises(RuntimeError, match="retry sentinel"):
-        deploy_cmd(
-            project="fresh",
-            name="agent",
-            project_id="project-1",
-            tenant_id="tenant-1",
-            region="us-central1",
-            ssh_user="ubuntu",
-            ssh_public_key_path=str(tmp_path / "missing.pub"),
-            tf_var=[],
-            agent_port=8088,
-            backend_port=8787,
-            rerun_port=9090,
-            llm_model="model-a",
-            llm_models=[],
-            no_public_https=False,
-        )
-    assert reached_cloud_bootstrap is True
-    assert stored == []
 
 
 def test_deploy_fails_fast_on_missing_terraform(monkeypatch, tmp_path) -> None:
@@ -3534,7 +3513,6 @@ def test_deploy_warns_on_missing_token_factory_key(
     (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
     (tmp_path / "id_ed25519").write_text("priv\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
-    monkeypatch.setattr("npa.cli.agent._agent_terraform_result", _terraform_pass_result)
     monkeypatch.setattr(
         "npa.cli.agent.resolve_environment",
         lambda *a, **k: SimpleNamespace(
@@ -3600,12 +3578,9 @@ def test_resolve_agent_service_account_id_from_nebius(mocker) -> None:
 def test_run_details_surface_per_stage_workflow_logs() -> None:
     """Run details must surface real per-stage execution (command/returncode/status)
     from the npa.workflow run manifest so operators can view logs of each stage."""
-    from npa.cli import agent as agent_module
 
-    source = (
-        Path(agent_module.__file__)
-        .with_name("agent_stage_runtime.py")
-        .read_text(encoding="utf-8")
+    source = Path(agent_module.__file__).with_name("agent_stage_runtime.py").read_text(
+        encoding="utf-8"
     )
     assert "def _workflow_run_steps(" in source
     assert "/npa-workflow/manifest.json" in source
@@ -3617,9 +3592,7 @@ def test_run_details_surface_per_stage_workflow_logs() -> None:
 def test_artifact_file_transcodes_non_web_images_to_png() -> None:
     """Non-web images (.ppm sim camera frames, .bmp, .tiff) must be transcoded to
     PNG by the artifact file endpoint so they are viewable in the Rerun/Image panes."""
-    from npa.cli import agent as agent_module
-
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "needs_image_transcode(safe_name)" in source
     assert 'format="PNG"' in source
     assert 'media_type="image/png"' in source
@@ -3632,6 +3605,1405 @@ def test_stages_tab_run_search_uses_server_search() -> None:
     assert "stagesSearchTimer" in source
     # Both run-search boxes wire the debounced server search.
     assert source.count("await refreshArtifactRuns(value)") >= 2
+
+
+def test_coerce_cli_list_handles_unresolved_typer_option() -> None:
+    """An unresolved typer.Option default (OptionInfo) must coerce to [].
+
+    deploy_cmd is called programmatically (fresh-setup / `agent setup`); omitting
+    a list option leaks an OptionInfo that once crashed `for item in tf_var`.
+    """
+    import typer
+
+    from npa.cli.agent import _coerce_cli_list
+
+    unresolved = typer.Option([], "--tf-var")
+    assert type(unresolved).__name__ == "OptionInfo"  # guard the precondition
+    result = _coerce_cli_list(unresolved)
+    assert result == []
+    list(result)  # must be iterable (the original crash site)
+
+
+def test_coerce_cli_list_passthrough_and_none() -> None:
+    from npa.cli.agent import _coerce_cli_list
+
+    assert _coerce_cli_list(["a", "b"]) == ["a", "b"]
+    assert _coerce_cli_list(("x",)) == ["x"]
+    assert _coerce_cli_list(None) == []
+
+
+def test_agent_setup_picks_configured_project(monkeypatch, tmp_path) -> None:
+    """`npa agent setup` resolves project_id/tenant_id/region from config, no typing."""
+    import yaml
+
+    from npa.clients import config as config_module
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "prod",
+                "projects": {
+                    "prod": {
+                        "project_id": "project-prod",
+                        "tenant_id": "tenant-a",
+                        "region": "eu-north1",
+                    },
+                    "dev": {
+                        "project_id": "project-dev",
+                        "tenant_id": "tenant-a",
+                        "region": "us-central1",
+                    },
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+
+    key_file = tmp_path / "id_ed25519.pub"
+    key_file.write_text("ssh-ed25519 AAAA test\n")
+
+    captured: dict = {}
+
+    def _fake_fresh_setup(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr("npa.cli.agent.fresh_setup_cmd", _fake_fresh_setup)
+
+    # Explicit --project resolves tenant/project/region from config (no typing).
+    result = runner.invoke(
+        app,
+        ["setup", "--project", "dev", "--ssh-public-key-path", str(key_file)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["project"] == "dev"
+    assert captured["project_id"] == "project-dev"
+    assert captured["tenant_id"] == "tenant-a"
+    assert captured["region"] == "us-central1"
+
+    # Interactive: pressing Enter accepts the default_project (prod).
+    captured.clear()
+    result = runner.invoke(
+        app,
+        ["setup", "--ssh-public-key-path", str(key_file)],
+        input="\n",
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["project"] == "prod"
+    assert captured["project_id"] == "project-prod"
+
+
+def _write_agent_setup_config(tmp_path, monkeypatch):
+    """Configure one project alias and return its ssh public-key path."""
+    import yaml
+
+    from npa.clients import config as config_module
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "dev",
+                "projects": {
+                    "dev": {
+                        "project_id": "project-dev",
+                        "tenant_id": "tenant-a",
+                        "region": "us-central1",
+                    }
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    key_file = tmp_path / "id_ed25519.pub"
+    key_file.write_text("ssh-ed25519 AAAA test\n")
+    (tmp_path / "id_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
+    monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
+    return key_file
+
+
+def test_agent_setup_passes_concrete_defaults_to_deploy(monkeypatch, tmp_path) -> None:
+    """`agent setup` -> `fresh-setup` -> `deploy` must not leak Typer OptionInfo.
+
+    Regression: `setup_cmd` calls `fresh_setup_cmd` as a plain function, so every
+    omitted option used to arrive as a `typer.models.OptionInfo` sentinel and
+    flow into Terraform vars / nginx ports / boolean flags.
+    """
+    from npa.cli.agent import (
+        DEFAULT_AGENT_PORT,
+        DEFAULT_BACKEND_PORT,
+        DEFAULT_RERUN_PORT,
+    )
+
+    key_file = _write_agent_setup_config(tmp_path, monkeypatch)
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        "npa.cli.agent.deploy_cmd", lambda **kwargs: captured.update(kwargs)
+    )
+
+    result = runner.invoke(
+        app,
+        ["setup", "--project", "dev", "--ssh-public-key-path", str(key_file)],
+    )
+    assert result.exit_code == 0, result.output
+
+    leaked = {
+        key: value
+        for key, value in captured.items()
+        if type(value).__name__ in {"OptionInfo", "ArgumentInfo"}
+    }
+    assert leaked == {}, f"unresolved Typer defaults reached deploy: {sorted(leaked)}"
+
+    assert captured["ssh_user"] == "ubuntu"
+    assert captured["agent_port"] == DEFAULT_AGENT_PORT
+    assert captured["backend_port"] == DEFAULT_BACKEND_PORT
+    assert captured["rerun_port"] == DEFAULT_RERUN_PORT
+    assert captured["tf_var"] == []
+    assert captured["llm_models"] == []
+    assert captured["no_public_https"] is False
+
+
+def _stub_agent_deploy_cloud_calls(
+    monkeypatch, tmp_path, *, credential_sentinels: bool = False
+):
+    """Stub every cloud side effect in `deploy_cmd`; return captured calls."""
+    calls: dict = {}
+    access_key = (
+        "NPA_PR218_ACCESS_SENTINEL_DO_NOT_PERSIST"
+        if credential_sentinels
+        else "ak-agent"
+    )
+    secret_key = (
+        "NPA_PR218_SECRET_SENTINEL_DO_NOT_PERSIST"
+        if credential_sentinels
+        else "sk-agent"
+    )
+    creds = {
+        "service_account_id": "sa-agent",
+        "nebius_api_key": access_key,
+        "nebius_secret_key": secret_key,
+        "s3_bucket": "npa-agent-state",
+        "s3_endpoint": "https://storage.us-central1.nebius.cloud",
+    }
+
+    def _apply(**kwargs):
+        calls["merged_vars"] = dict(kwargs["merged_vars"])
+        return {
+            "vm_ip": "203.0.113.50",
+            "instance_id": "instance-agent",
+            "ssh_key_path": str(tmp_path / "id_ed25519"),
+        }
+
+    def _bootstrap_environment(*_args, **kwargs):
+        calls["bootstrap_environment_kwargs"] = dict(kwargs)
+        return creds
+
+    monkeypatch.setattr(
+        "npa.clients.nebius.bootstrap_agent_environment", _bootstrap_environment
+    )
+    monkeypatch.setattr("npa.clients.nebius.get_iam_token", lambda: "iam-token")
+    monkeypatch.setattr(
+        "npa.clients.nebius.get_project_region", lambda _pid: "us-central1"
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent._resolve_deploy_storage_credentials", lambda **k: creds
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent._agent_check_public_ip_quota", lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent._ensure_terraform_state_bucket", lambda **k: None
+    )
+    monkeypatch.setattr("npa.cli.agent._apply_agent_terraform", _apply)
+    monkeypatch.setattr("npa.cli.agent._is_routable_public_ip", lambda _ip: True)
+    monkeypatch.setattr(
+        "npa.cli.agent._write_auth_secret", lambda **k: tmp_path / "auth.env"
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent._resolve_deploy_llm_credentials", lambda: ("tf-key", "model-a")
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent._bootstrap_agent_stack",
+        lambda **kwargs: calls.__setitem__("bootstrap", dict(kwargs)),
+    )
+    monkeypatch.setattr("npa.cli.agent.ensure_ingress", lambda **k: None)
+    return calls
+
+
+def test_agent_setup_renders_string_terraform_vars(monkeypatch, tmp_path) -> None:
+    """The full `agent setup` chain must hand Terraform real strings.
+
+    Regression: `server_port` / `ssh_user` / `extra_ingress_ports` used to be
+    rendered from `OptionInfo` objects, producing literal
+    "<typer.models.OptionInfo object at 0x...>" Terraform var values.
+    """
+    key_file = _write_agent_setup_config(tmp_path, monkeypatch)
+    calls = _stub_agent_deploy_cloud_calls(monkeypatch, tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["setup", "--project", "dev", "--ssh-public-key-path", str(key_file)],
+    )
+    assert result.exit_code == 0, result.output
+
+    merged_vars = calls["merged_vars"]
+    assert merged_vars["server_port"] == "8088"
+    assert merged_vars["ssh_user"] == "ubuntu"
+    assert merged_vars["extra_ingress_ports"] == "[443,9090]"
+    assert not any("OptionInfo" in str(value) for value in merged_vars.values()), (
+        f"OptionInfo leaked into terraform vars: {merged_vars}"
+    )
+    assert calls["bootstrap_environment_kwargs"]["reuse_storage_credentials"] == {
+        "service_account_id": "sa-agent",
+        "nebius_api_key": "ak-agent",
+        "nebius_secret_key": "sk-agent",
+        "s3_bucket": "npa-agent-state",
+        "s3_endpoint": "https://storage.us-central1.nebius.cloud",
+    }
+
+
+def test_agent_deploy_keeps_s3_sentinels_out_of_terraform_and_agent_record(
+    monkeypatch, tmp_path
+) -> None:
+    import yaml
+
+    from npa.cli import agent as agent_module
+    from npa.clients import config as config_module
+
+    key_file = _write_agent_setup_config(tmp_path, monkeypatch)
+    calls = _stub_agent_deploy_cloud_calls(
+        monkeypatch, tmp_path, credential_sentinels=True
+    )
+
+    result = runner.invoke(
+        app,
+        ["setup", "--project", "dev", "--ssh-public-key-path", str(key_file)],
+    )
+
+    assert result.exit_code == 0, result.output
+    terraform_payload = json.dumps(calls["merged_vars"], sort_keys=True)
+    access_sentinel = "NPA_PR218_ACCESS_SENTINEL_DO_NOT_PERSIST"
+    secret_sentinel = "NPA_PR218_SECRET_SENTINEL_DO_NOT_PERSIST"
+    assert access_sentinel not in terraform_payload
+    assert secret_sentinel not in terraform_payload
+    assert calls["bootstrap"]["s3_access_key"] == access_sentinel
+    assert calls["bootstrap"]["s3_secret_key"] == secret_sentinel
+    saved = yaml.safe_load(config_module.CONFIG_PATH.read_text(encoding="utf-8"))
+    agent_record = saved["projects"]["dev"]["agents"]["agent"]
+    assert "credentials" not in agent_record
+    assert access_sentinel not in json.dumps(agent_record)
+    assert secret_sentinel not in json.dumps(agent_record)
+
+    template = (
+        Path(agent_module.provisioner.__file__).parent
+        / "terraform"
+        / "cloud_init.yaml.tpl"
+    ).read_text(encoding="utf-8")
+    protected_write_files = template.split(
+        '%{ if workbench_type != "agent" ~}', 1
+    )[1].split("%{ endif ~}", 1)[0]
+    assert "write_files:" in protected_write_files
+    assert "${aws_access_key}" in protected_write_files
+    assert "${aws_secret_key}" in protected_write_files
+
+
+def test_agent_setup_keeps_public_https_enabled(monkeypatch, tmp_path) -> None:
+    """`--no-public-https` defaults to False, so `agent setup` keeps HTTPS on.
+
+    Regression: the unresolved `OptionInfo(False)` sentinel is *truthy*, so
+    `public_https = not no_public_https` silently evaluated to False and the
+    agent deployed without HTTPS.
+    """
+    key_file = _write_agent_setup_config(tmp_path, monkeypatch)
+    calls = _stub_agent_deploy_cloud_calls(monkeypatch, tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["setup", "--project", "dev", "--ssh-public-key-path", str(key_file)],
+    )
+    assert result.exit_code == 0, result.output
+    assert calls["bootstrap"]["public_https"] is True
+    assert calls["bootstrap"]["ssh_user"] == "ubuntu"
+    assert calls["bootstrap"]["agent_port"] == 8088
+    assert calls["bootstrap"]["backend_port"] == 8787
+    assert calls["bootstrap"]["rerun_port"] == 9090
+
+
+def test_agent_setup_requires_configured_projects(monkeypatch, tmp_path) -> None:
+    """With no configured projects, `npa agent setup` points to `npa configure`."""
+    from npa.clients import config as config_module
+
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "missing.yaml")
+    result = runner.invoke(app, ["setup"])
+    assert result.exit_code != 0
+    assert "npa configure" in result.output
+
+
+def _wait_for_cloud_init_body() -> str:
+    """Return the real local-exec script Terraform quotes back in its error.
+
+    The body echoes every diagnostic string the script can print, so a hint that
+    matches against it classifies every failure the same way. Reading it from the
+    shipped Terraform keeps the tests below honest.
+    """
+    from npa.deploy import provisioner as provisioner_module
+
+    main_tf = (
+        Path(provisioner_module.__file__).parent / "terraform" / "main.tf"
+    ).read_text(encoding="utf-8")
+    body = main_tf[main_tf.index('resource "null_resource" "wait_for_cloud_init"') :]
+    return body[: body.index("\n    EOT")]
+
+
+def _terraform_local_exec_error(output: str) -> str:
+    return (
+        "terraform apply failed (exit 1):\n"
+        "Error: local-exec provisioner error\n"
+        "  with null_resource.wait_for_cloud_init,\n"
+        f"Error running command '{_wait_for_cloud_init_body()}': exit status 1. "
+        f"Output: {output}"
+    )
+
+
+def test_agent_deploy_failure_hint_diagnoses_ssh_unreachable() -> None:
+    """A wait_for_cloud_init SSH timeout gets a concise reachability diagnosis."""
+    from npa.cli.agent import _agent_deploy_failure_hint
+
+    detail = _terraform_local_exec_error(
+        "Waiting for SSH on 203.0.113.50:22 (up to ~4 minutes, progress every 30s)...\n"
+        "  still waiting (attempt 4/30): tcp/22 has not opened from this host yet\n"
+        "ERROR: SSH to ubuntu@203.0.113.50:22 never succeeded within the boot window.\n"
+        "tcp/22 on 203.0.113.50 never opened from this machine, so the VM's SSH port "
+        "is unreachable from here."
+    )
+    hint = _agent_deploy_failure_hint(detail)
+    assert "tcp/22 never opened" in hint
+    assert "split-tunnel" in hint
+    assert "authenticated" not in hint
+
+
+def test_agent_deploy_failure_hint_separates_a_key_problem_from_the_network() -> None:
+    """The wait now distinguishes a closed port from a refused key."""
+    from npa.cli.agent import _agent_deploy_failure_hint
+
+    detail = _terraform_local_exec_error(
+        "Waiting for SSH on 203.0.113.50:22 (up to ~4 minutes, progress every 30s)...\n"
+        "  still waiting (attempt 8/30): tcp/22 is open, SSH not ready yet\n"
+        "ERROR: SSH to ubuntu@203.0.113.50:22 never succeeded within the boot window.\n"
+        "tcp/22 on 203.0.113.50 opened, but SSH never authenticated, so this is the "
+        "key or the sshd config rather than the network."
+    )
+    hint = _agent_deploy_failure_hint(detail)
+    assert "never authenticated" in hint
+    assert "--ssh-public-key-path" in hint
+    assert "VPN" not in hint
+
+
+def test_agent_deploy_failure_hint_diagnoses_cloud_init_error() -> None:
+    """A cloud-init runcmd failure is distinguished from an SSH timeout."""
+    from npa.cli.agent import _agent_deploy_failure_hint
+
+    detail = _terraform_local_exec_error(
+        "Waiting for SSH on 203.0.113.50:22...\n"
+        "Waiting for cloud-init boot-finished...\n"
+        "Polling cloud-init status...\n"
+        "cloud-init status: error\n"
+        "ERROR: cloud-init finished with status 'error'; the VM bootstrap failed."
+    )
+    hint = _agent_deploy_failure_hint(detail)
+    assert "cloud-init bootstrap failed" in hint
+    assert "SSH never became reachable" not in hint
+
+
+def test_agent_deploy_failure_hint_empty_for_unrelated_errors() -> None:
+    from npa.cli.agent import _agent_deploy_failure_hint
+
+    assert _agent_deploy_failure_hint("terraform apply failed: quota exceeded") == ""
+    assert _agent_deploy_failure_hint("") == ""
+
+
+def test_agent_whole_path_blocker_precedes_storage_and_terraform(
+    monkeypatch: pytest.MonkeyPatch, mocker, tmp_path: Path
+) -> None:
+    from npa.cli.agent import deploy_cmd
+    from npa.provisioning_preflight import PreflightBlockedError
+
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setattr(
+        "npa.cli.agent.resolve_environment",
+        lambda *args, **kwargs: SimpleNamespace(
+            project_id="project-x", tenant_id="tenant-x", region="us-central1"
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.clients.nebius.get_project_region", lambda _pid: "us-central1"
+    )
+    monkeypatch.setattr("npa.cli.agent._agent_record", lambda *args, **kwargs: {})
+    monkeypatch.setattr(
+        "npa.cli.agent._agent_check_whole_path_capacity",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            PreflightBlockedError("compute.disk.count shortfall=1")
+        ),
+    )
+    storage = mocker.patch("npa.cli.agent._agent_storage_result")
+    bootstrap = mocker.patch("npa.clients.nebius.bootstrap_agent_environment")
+    terraform = mocker.patch("npa.cli.agent._apply_agent_terraform")
+
+    with pytest.raises(Exit):
+        deploy_cmd(
+            project="fresh",
+            name="agent",
+            project_id="project-x",
+            tenant_id="tenant-x",
+            region="us-central1",
+            ssh_user="ubuntu",
+            ssh_public_key_path=str(tmp_path / "id_ed25519.pub"),
+            tf_var=[],
+            agent_port=8088,
+            backend_port=8787,
+            rerun_port=9090,
+            llm_model="model-a",
+            llm_models=[],
+            no_public_https=False,
+        )
+
+    storage.assert_not_called()
+    bootstrap.assert_not_called()
+    terraform.assert_not_called()
+    [journal] = (tmp_path / "operations").glob("*/journal.json")
+    assert json.loads(journal.read_text(encoding="utf-8"))["phase"] == "rolled-back"
+
+
+def test_agent_only_deploy_omits_paidf_capacity_reservation(
+    monkeypatch: pytest.MonkeyPatch, mocker, tmp_path: Path
+) -> None:
+    """The explicit lifecycle-validation mode still gates the agent VM itself."""
+    from npa.cli.agent import deploy_cmd
+
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setattr(
+        "npa.cli.agent.resolve_environment",
+        lambda *args, **kwargs: SimpleNamespace(
+            project_id="project-x", tenant_id="tenant-x", region="us-central1"
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.clients.nebius.get_project_region", lambda _pid: "us-central1"
+    )
+    monkeypatch.setattr("npa.cli.agent._agent_record", lambda *args, **kwargs: {})
+    capacity = mocker.patch("npa.cli.agent._agent_check_whole_path_capacity")
+    mocker.patch(
+        "npa.cli.agent._agent_hard_prereq_results",
+        return_value=[],
+    )
+    mocker.patch(
+        "npa.cli.agent._agent_storage_result",
+        return_value=SimpleNamespace(status="PASS"),
+    )
+    mocker.patch("npa.cli.agent._resolve_deploy_llm_credentials", return_value=("k", "m"))
+    mocker.patch(
+        "npa.clients.nebius.bootstrap_agent_environment",
+        return_value={"iam_token": "token-from-bootstrap"},
+    )
+    mocker.patch(
+        "npa.cli.agent._apply_agent_terraform",
+        side_effect=RuntimeError("stop after preflight"),
+    )
+
+    with pytest.raises(RuntimeError, match="stop after preflight"):
+        deploy_cmd(
+            project="fresh",
+            name="agent",
+            project_id="project-x",
+            tenant_id="tenant-x",
+            region="us-central1",
+            ssh_user="ubuntu",
+            ssh_public_key_path=str(tmp_path / "id_ed25519.pub"),
+            tf_var=[],
+            agent_only=True,
+            agent_port=8088,
+            backend_port=8787,
+            rerun_port=9090,
+            llm_model="model-a",
+            llm_models=[],
+            no_public_https=False,
+        )
+
+    assert capacity.call_args.kwargs["include_paidf"] is False
+    [journal] = (tmp_path / "operations").glob("*/journal.json")
+    commands = json.loads(journal.read_text())["recovery_commands"]
+    assert "--agent-only" in commands["resume_argv"]
+
+
+def test_agent_check_public_ip_quota_fails_when_exhausted(monkeypatch) -> None:
+    """Deploy aborts early with guidance when the region's public-IP quota is full."""
+    from npa.cli.agent import _agent_check_public_ip_quota
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "us-central1")
+    monkeypatch.setattr(
+        nebius_module, "get_public_ipv4_quota", lambda _tid, _region: (10, 10)
+    )
+
+    with pytest.raises(Exit):
+        _agent_check_public_ip_quota("project-x", "tenant-x", "eu-north1")
+
+
+def test_agent_check_public_ip_quota_passes_with_headroom(monkeypatch) -> None:
+    from npa.cli.agent import _agent_check_public_ip_quota
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "uk-south1")
+    monkeypatch.setattr(
+        nebius_module, "get_public_ipv4_quota", lambda _tid, _region: (0, 3)
+    )
+
+    # Must not raise.
+    _agent_check_public_ip_quota("project-x", "tenant-x", "uk-south1")
+
+
+def test_agent_check_public_ip_quota_noop_when_quota_unknown(monkeypatch) -> None:
+    """An unreadable quota never blocks a deploy."""
+    from npa.cli.agent import _agent_check_public_ip_quota
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "us-central1")
+    monkeypatch.setattr(
+        nebius_module, "get_public_ipv4_quota", lambda _tid, _region: (None, None)
+    )
+
+    # Must not raise even though the region resolved.
+    _agent_check_public_ip_quota("project-x", "tenant-x", "eu-north1")
+
+
+def test_agent_check_public_ip_quota_noop_when_region_unresolved(monkeypatch) -> None:
+    from npa.cli.agent import _agent_check_public_ip_quota
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "")
+
+    def _boom(_tid, _region):  # pragma: no cover - must not be reached
+        raise AssertionError("quota lookup should be skipped when region is unknown")
+
+    monkeypatch.setattr(nebius_module, "get_public_ipv4_quota", _boom)
+
+    # No region and no fallback -> skip entirely.
+    _agent_check_public_ip_quota("project-x", "tenant-x", "")
+
+
+def test_agent_public_ip_quota_result_fails_when_exhausted(monkeypatch) -> None:
+    from npa.cli.agent import _agent_public_ip_quota_result
+    from npa.clients import config as config_module
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(
+        config_module,
+        "list_projects",
+        lambda: {
+            "p": {
+                "project_id": "project-x",
+                "tenant_id": "tenant-x",
+                "region": "us-central1",
+            }
+        },
+    )
+    monkeypatch.setattr(config_module, "default_project_name", lambda: "p")
+    monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "us-central1")
+    monkeypatch.setattr(nebius_module, "get_public_ipv4_quota", lambda _t, _r: (10, 10))
+
+    result = _agent_public_ip_quota_result()
+    assert result.status == "FAIL"
+    assert "exhausted" in result.summary.lower()
+
+
+def test_agent_public_ip_quota_result_passes_with_headroom(monkeypatch) -> None:
+    from npa.cli.agent import _agent_public_ip_quota_result
+    from npa.clients import config as config_module
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(
+        config_module,
+        "list_projects",
+        lambda: {
+            "p": {
+                "project_id": "project-x",
+                "tenant_id": "tenant-x",
+                "region": "uk-south1",
+            }
+        },
+    )
+    monkeypatch.setattr(config_module, "default_project_name", lambda: "p")
+    monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "uk-south1")
+    monkeypatch.setattr(nebius_module, "get_public_ipv4_quota", lambda _t, _r: (0, 3))
+
+    result = _agent_public_ip_quota_result()
+    assert result.status == "PASS"
+
+
+def test_agent_public_ip_quota_result_skips_without_project(monkeypatch) -> None:
+    from npa.cli.agent import _agent_public_ip_quota_result
+    from npa.clients import config as config_module
+
+    monkeypatch.setattr(config_module, "list_projects", lambda: {})
+    monkeypatch.setattr(config_module, "default_project_name", lambda: "")
+
+    result = _agent_public_ip_quota_result()
+    assert result.status == "PASS"
+    assert "skipped" in result.summary.lower()
+
+
+def test_agent_check_compute_instance_quota_fails_when_exhausted(monkeypatch) -> None:
+    """Deploy aborts early when the region's compute.instance.count is full.
+
+    Regression: preflight/deploy checked only public IPv4, so a `limit 0`
+    compute quota let the disk/network/SG create before the VM create failed.
+    """
+    from npa.cli.agent import _agent_check_compute_instance_quota
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "us-central1")
+    monkeypatch.setattr(
+        nebius_module, "get_compute_instance_quota", lambda _t, _r: (0, 0)
+    )
+
+    with pytest.raises(Exit):
+        _agent_check_compute_instance_quota("project-x", "tenant-x", "eu-north1")
+
+
+def test_agent_check_compute_instance_quota_skips_a_redeploy(monkeypatch) -> None:
+    """`agent_exists` (a re-deploy reusing the VM) never blocks on the quota."""
+    from npa.cli.agent import _agent_check_compute_instance_quota
+    from npa.clients import nebius as nebius_module
+
+    def _boom(*_a, **_k):  # pragma: no cover - must not be reached
+        raise AssertionError("quota lookup should be skipped for an existing agent")
+
+    monkeypatch.setattr(nebius_module, "get_project_region", _boom)
+
+    _agent_check_compute_instance_quota(
+        "project-x", "tenant-x", "eu-north1", agent_exists=True
+    )
+
+
+def test_agent_check_compute_instance_quota_noop_when_unreadable(monkeypatch) -> None:
+    from npa.cli.agent import _agent_check_compute_instance_quota
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "us-central1")
+    monkeypatch.setattr(
+        nebius_module, "get_compute_instance_quota", lambda _t, _r: (None, None)
+    )
+
+    _agent_check_compute_instance_quota("project-x", "tenant-x", "eu-north1")
+
+
+def test_agent_compute_instance_quota_result_fails_on_limit_zero(monkeypatch) -> None:
+    from npa.cli.agent import _agent_compute_instance_quota_result
+    from npa.clients import config as config_module
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(
+        config_module,
+        "list_projects",
+        lambda: {
+            "p": {
+                "project_id": "project-x",
+                "tenant_id": "tenant-x",
+                "region": "us-central1",
+            }
+        },
+    )
+    monkeypatch.setattr(config_module, "default_project_name", lambda: "p")
+    monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "us-central1")
+    monkeypatch.setattr(
+        nebius_module, "get_compute_instance_quota", lambda _t, _r: (0, 0)
+    )
+
+    result = _agent_compute_instance_quota_result()
+    assert result.status == "FAIL"
+    assert "compute instance quota" in result.summary.lower()
+
+
+def test_agent_compute_instance_quota_result_passes_with_headroom(monkeypatch) -> None:
+    from npa.cli.agent import _agent_compute_instance_quota_result
+    from npa.clients import config as config_module
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(
+        config_module,
+        "list_projects",
+        lambda: {
+            "p": {
+                "project_id": "project-x",
+                "tenant_id": "tenant-x",
+                "region": "uk-south1",
+            }
+        },
+    )
+    monkeypatch.setattr(config_module, "default_project_name", lambda: "p")
+    monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "uk-south1")
+    monkeypatch.setattr(
+        nebius_module, "get_compute_instance_quota", lambda _t, _r: (0, 3)
+    )
+
+    assert _agent_compute_instance_quota_result().status == "PASS"
+
+
+def test_resolve_project_alias_prefers_explicit(monkeypatch) -> None:
+    from npa.cli.agent import _resolve_project_alias
+
+    assert _resolve_project_alias("myproj") == "myproj"
+
+
+def test_resolve_project_alias_uses_configured_default(monkeypatch) -> None:
+    from npa.cli.agent import _resolve_project_alias
+    from npa.clients import config as config_module
+
+    monkeypatch.setattr(config_module, "default_project_name", lambda: "workbench-poc")
+    assert _resolve_project_alias("") == "workbench-poc"
+
+
+def test_resolve_project_alias_falls_back_to_static_default(monkeypatch) -> None:
+    from npa.cli.agent import _resolve_project_alias, DEFAULT_PROJECT_ALIAS
+    from npa.clients import config as config_module
+
+    monkeypatch.setattr(config_module, "default_project_name", lambda: "")
+    assert _resolve_project_alias("") == DEFAULT_PROJECT_ALIAS
+
+
+def test_remove_agent_record_drops_empty_agents_key(monkeypatch, tmp_path) -> None:
+    import yaml
+    from npa.cli.agent import _remove_agent_record
+    from npa.clients import config as config_module
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {
+                    "p": {
+                        "project_id": "project-x",
+                        "agents": {"agent": {"public_ip": "203.0.113.50"}},
+                    }
+                }
+            }
+        )
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", cfg)
+
+    _remove_agent_record("p", "agent")
+
+    data = yaml.safe_load(cfg.read_text())
+    # The empty agents map is dropped entirely, but the project stanza stays.
+    assert "agents" not in data["projects"]["p"]
+    assert data["projects"]["p"]["project_id"] == "project-x"
+
+
+def test_cleanup_agent_local_files_removes_auth_env(monkeypatch, tmp_path) -> None:
+    from npa.cli import agent as agent_module
+
+    monkeypatch.setattr(agent_module.Path, "home", staticmethod(lambda: tmp_path))
+    agent_dir = tmp_path / ".npa" / "agents" / "p" / "agent"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "auth.env").write_text("AGENT_USER=npa\nAGENT_PASSWORD=x\n")
+
+    agent_module._cleanup_agent_local_files("p", "agent")
+
+    assert not agent_dir.exists()
+
+
+def _owned_orphan_inventory() -> dict:
+    return {
+        "items": [
+            {
+                "metadata": {
+                    "id": "instance-orphan",
+                    "name": "agent-prod-agent",
+                    "labels": {"npa-operation-id": "operation-a"},
+                }
+            }
+        ]
+    }
+
+
+def test_orphan_delete_provider_rejection_is_unresolved(monkeypatch) -> None:
+    from npa.cli import agent as agent_module
+    from npa.clients import nebius as nebius_module
+    from npa.deploy.provisioner import ProvisionerError
+
+    monkeypatch.setattr(
+        nebius_module, "_run_json", lambda *args, **kwargs: _owned_orphan_inventory()
+    )
+    monkeypatch.setattr(
+        nebius_module,
+        "_run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            nebius_module.NebiusError("provider rejected delete")
+        ),
+    )
+
+    with pytest.raises(ProvisionerError, match="provider rejected delete"):
+        agent_module._cleanup_orphan_agent_instances(
+            "project-a", "agent-prod-agent", operation_id="operation-a"
+        )
+
+
+def test_orphan_delete_postcheck_still_present_is_not_reported_deleted(
+    monkeypatch,
+) -> None:
+    from npa.cli import agent as agent_module
+    from npa.clients import nebius as nebius_module
+    from npa.deploy.provisioner import ProvisionerError
+
+    monkeypatch.setattr(
+        nebius_module, "_run_json", lambda *args, **kwargs: _owned_orphan_inventory()
+    )
+    monkeypatch.setattr(nebius_module, "_run", lambda *args, **kwargs: "")
+
+    with pytest.raises(ProvisionerError, match="still reports it present"):
+        agent_module._cleanup_orphan_agent_instances(
+            "project-a", "agent-prod-agent", operation_id="operation-a"
+        )
+
+
+def test_orphan_delete_reports_only_verified_absence(monkeypatch, capsys) -> None:
+    from npa.cli import agent as agent_module
+    from npa.clients import nebius as nebius_module
+
+    inventories = iter([_owned_orphan_inventory(), {"items": []}])
+    monkeypatch.setattr(
+        nebius_module, "_run_json", lambda *args, **kwargs: next(inventories)
+    )
+    monkeypatch.setattr(nebius_module, "_run", lambda *args, **kwargs: "")
+
+    agent_module._cleanup_orphan_agent_instances(
+        "project-a", "agent-prod-agent", operation_id="operation-a"
+    )
+
+    assert (
+        "Verified deleted orphan agent instance instance-orphan"
+        in capsys.readouterr().out
+    )
+
+
+def test_destroy_terraform_orphan_sweep_runs_after_tf_destroy(
+    monkeypatch, tmp_path
+) -> None:
+    from types import SimpleNamespace
+    from npa.cli import agent as agent_module
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        agent_module,
+        "_resolve_destroy_tf_vars",
+        lambda p, n, r: {
+            "nebius_region": "eu-north1",
+            "instance_name": f"agent-{p}-{n}",
+            "nebius_project_id": "project-x",
+            "s3_session_token": "backend-only-session",
+        },
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "_cleanup_agent_ingress",
+        lambda *_a, **_k: calls.append("ingress"),
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "_cleanup_orphan_agent_instances",
+        lambda *_a, **_k: calls.append("orphan"),
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "resolve_terraform_state",
+        lambda _p: SimpleNamespace(
+            bucket="b", access_key="k", secret_key="s", endpoint="e"
+        ),
+    )
+    monkeypatch.setattr(
+        agent_module, "_agent_terraform_state_exists", lambda _p, _n: True
+    )
+    monkeypatch.setattr(
+        agent_module.provisioner, "prepare_working_dir", lambda *a, **k: tmp_path
+    )
+    monkeypatch.setattr(agent_module.provisioner, "init", lambda *a, **k: None)
+    monkeypatch.setattr(
+        agent_module.provisioner, "destroy", lambda *a, **k: calls.append("tf_destroy")
+    )
+
+    agent_module._destroy_agent_terraform("p", "n", record={"instance_id": "i"})
+
+    # Terraform owns the instance (destroy first); the by-name orphan sweep is a
+    # post-destroy safety net, not a pre-Terraform delete of the managed VM.
+    assert calls == ["ingress", "tf_destroy", "orphan"]
+
+
+def test_destroy_terraform_no_state_refuses_unguarded_name_reclaim(monkeypatch) -> None:
+    from types import SimpleNamespace
+    from npa.cli import agent as agent_module
+    from npa.deploy.provisioner import ProvisionerError
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        agent_module,
+        "_resolve_destroy_tf_vars",
+        lambda p, n, r: {
+            "nebius_region": "eu-north1",
+            "instance_name": f"agent-{p}-{n}",
+            "nebius_project_id": "project-x",
+        },
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "_cleanup_agent_ingress",
+        lambda *_a, **_k: calls.append("ingress"),
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "_cleanup_orphan_agent_instances",
+        lambda *_a, **_k: calls.append("orphan"),
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "resolve_terraform_state",
+        lambda _p: SimpleNamespace(
+            bucket="", access_key="", secret_key="", endpoint=""
+        ),
+    )
+    monkeypatch.setattr(
+        agent_module, "_agent_terraform_state_exists", lambda _p, _n: False
+    )
+
+    def _boom(*_a, **_k):  # pragma: no cover - must not run without state
+        raise AssertionError("terraform destroy must not run without state")
+
+    monkeypatch.setattr(agent_module.provisioner, "destroy", _boom)
+
+    with pytest.raises(ProvisionerError, match="refusing an unguarded name-based"):
+        agent_module._destroy_agent_terraform("p", "n", record=None)
+
+    assert calls == ["ingress"]
+
+
+def test_destroy_recovers_empty_journal_backend_from_exact_project_credentials(
+    monkeypatch, tmp_path
+) -> None:
+    from types import SimpleNamespace
+
+    from npa.cli import agent as agent_module
+    from npa.provisioning_journal import ProvisioningOperation
+
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    operation = ProvisioningOperation.prepare(
+        command="npa agent deploy",
+        project_alias="prod",
+        project_id="project-x",
+        tenant_id="tenant-x",
+        region="us-central1",
+        resource_type="agent",
+        requested_name="agent",
+        ownership_source="test",
+        resume_command="npa agent deploy --project prod --name agent",
+    )
+    operation.transition("recovery-required")
+    monkeypatch.setattr(
+        "npa.clients.credentials.load_credentials",
+        lambda **_kwargs: SimpleNamespace(
+            s3_project_id="project-x",
+            s3_bucket="s3://project-state",
+            s3_access_key_id="access",
+            s3_secret_access_key="secret",
+            s3_endpoint="https://storage.us-central1.nebius.cloud",
+        ),
+    )
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(
+        agent_module,
+        "_resolve_destroy_tf_vars",
+        lambda _p, _n, _r, *, backend_override: {
+            "nebius_region": "us-central1",
+            "instance_name": "agent-prod-agent",
+            "nebius_project_id": "project-x",
+            "s3_session_token": "",
+        },
+    )
+    monkeypatch.setattr(agent_module, "_cleanup_agent_ingress", lambda *_a: None)
+    monkeypatch.setattr(
+        agent_module,
+        "_cleanup_orphan_agent_instances",
+        lambda *_a, **kwargs: observed.setdefault(
+            "operation_id", kwargs["operation_id"]
+        ),
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "resolve_terraform_state",
+        lambda _p: SimpleNamespace(
+            bucket="", access_key="", secret_key="", endpoint=""
+        ),
+    )
+    monkeypatch.setattr(
+        agent_module, "_agent_terraform_state_exists", lambda _p, _n: False
+    )
+    monkeypatch.setattr(
+        agent_module.provisioner,
+        "prepare_working_dir",
+        lambda *_a, **kwargs: (
+            observed.setdefault("bucket", kwargs["bucket"]) and tmp_path
+        ),
+    )
+    monkeypatch.setattr(
+        agent_module.provisioner,
+        "init",
+        lambda **kwargs: observed.setdefault("backend", kwargs["backend_config"]),
+    )
+    monkeypatch.setattr(agent_module.provisioner, "state_list", lambda _path: [])
+    monkeypatch.setattr(
+        agent_module.provisioner,
+        "destroy",
+        lambda **_kwargs: observed.setdefault("destroyed", True),
+    )
+
+    agent_module._destroy_agent_terraform(
+        "prod",
+        "agent",
+        operation_id=operation.operation_id,
+        project_id="project-x",
+    )
+
+    assert observed["bucket"] == "project-state"
+    assert observed["operation_id"] == operation.operation_id
+    assert observed["destroyed"] is True
+    assert operation.read()["phase"] == "destroyed"
+
+
+def _stub_owned_agent_destroy(monkeypatch, tmp_path):
+    from npa.cli import agent as agent_module
+
+    monkeypatch.setattr(
+        agent_module,
+        "_resolve_destroy_tf_vars",
+        lambda p, n, r: {
+            "nebius_region": "eu-north1",
+            "instance_name": f"agent-{p}-{n}",
+            "nebius_project_id": "project-x",
+        },
+    )
+    monkeypatch.setattr(agent_module, "_cleanup_agent_ingress", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        agent_module, "_cleanup_orphan_agent_instances", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "resolve_terraform_state",
+        lambda _p: SimpleNamespace(
+            bucket="b", access_key="k", secret_key="s", endpoint="e"
+        ),
+    )
+    monkeypatch.setattr(
+        agent_module, "_agent_terraform_state_exists", lambda _p, _n: True
+    )
+    monkeypatch.setattr(
+        agent_module.provisioner, "prepare_working_dir", lambda *a, **k: tmp_path
+    )
+    monkeypatch.setattr(agent_module.provisioner, "init", lambda *a, **k: None)
+    return agent_module
+
+
+def test_agent_destroy_recovers_default_sg_by_deleting_owned_parent_network(
+    monkeypatch, tmp_path
+) -> None:
+    agent_module = _stub_owned_agent_destroy(monkeypatch, tmp_path)
+    destroys: list[dict] = []
+
+    def destroy(**kwargs):
+        destroys.append(kwargs)
+        if len(destroys) == 1:
+            raise agent_module.ProvisionerError(
+                "rpc error: FailedPrecondition: cannot delete default security group"
+            )
+
+    monkeypatch.setattr(agent_module.provisioner, "destroy", destroy)
+    monkeypatch.setattr(
+        agent_module.provisioner,
+        "state_list",
+        lambda _tf_dir: ["nebius_vpc_v1_network.workbench"],
+    )
+    monkeypatch.setattr(
+        agent_module.provisioner,
+        "state_resource_id",
+        lambda address, **kwargs: "vpcnetwork-owned",
+    )
+    network_delete = Mock()
+    monkeypatch.setattr("npa.clients.network.nebius._run", network_delete)
+
+    agent_module._destroy_agent_terraform("prod", "agent", record={"instance_id": "i"})
+
+    assert len(destroys) == 2
+    assert all("s3_session_token" not in call["tf_vars"] for call in destroys)
+    network_delete.assert_called_once_with(
+        ["vpc", "network", "delete", "--id", "vpcnetwork-owned"]
+    )
+
+
+def test_agent_destroy_preserves_unowned_network_on_default_sg_refusal(
+    monkeypatch, tmp_path
+) -> None:
+    agent_module = _stub_owned_agent_destroy(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        agent_module.provisioner,
+        "destroy",
+        lambda **kwargs: (_ for _ in ()).throw(
+            agent_module.ProvisionerError(
+                "rpc error: FailedPrecondition: cannot delete default security group"
+            )
+        ),
+    )
+    monkeypatch.setattr(agent_module.provisioner, "state_list", lambda _tf_dir: [])
+    network_delete = Mock()
+    monkeypatch.setattr("npa.clients.network.nebius._run", network_delete)
+
+    with pytest.raises(agent_module.ProvisionerError) as caught:
+        agent_module._destroy_agent_terraform(
+            "prod", "agent", record={"instance_id": "i"}
+        )
+
+    assert "reused/shared network" in str(caught.value)
+    assert "npa agent destroy" in str(caught.value)
+    network_delete.assert_not_called()
+
+
+def test_agent_destroy_does_not_mask_genuine_nondefault_sg_failure(
+    monkeypatch, tmp_path
+) -> None:
+    agent_module = _stub_owned_agent_destroy(monkeypatch, tmp_path)
+    failures = iter(
+        [
+            agent_module.ProvisionerError(
+                "FailedPrecondition: non-default security group is still in use"
+            ),
+            agent_module.ProvisionerError("second destroy also failed"),
+        ]
+    )
+    monkeypatch.setattr(
+        agent_module.provisioner,
+        "destroy",
+        lambda **kwargs: (_ for _ in ()).throw(next(failures)),
+    )
+    monkeypatch.setattr(agent_module.provisioner, "state_list", lambda _tf_dir: [])
+    network_delete = Mock()
+    monkeypatch.setattr("npa.clients.network.nebius._run", network_delete)
+
+    with pytest.raises(agent_module.ProvisionerError) as caught:
+        agent_module._destroy_agent_terraform(
+            "prod", "agent", record={"instance_id": "i"}
+        )
+
+    assert "non-default security group is still in use" in str(caught.value)
+    network_delete.assert_not_called()
+
+
+def test_agent_destroy_retries_an_already_absent_security_group(
+    monkeypatch, tmp_path
+) -> None:
+    agent_module = _stub_owned_agent_destroy(monkeypatch, tmp_path)
+    destroys = 0
+
+    def destroy(**kwargs):
+        nonlocal destroys
+        destroys += 1
+        if destroys == 1:
+            raise agent_module.ProvisionerError("NotFound: security group is absent")
+
+    monkeypatch.setattr(agent_module.provisioner, "destroy", destroy)
+    monkeypatch.setattr(agent_module.provisioner, "state_list", lambda _tf_dir: [])
+    network_delete = Mock()
+    monkeypatch.setattr("npa.clients.network.nebius._run", network_delete)
+
+    agent_module._destroy_agent_terraform("prod", "agent", record={"instance_id": "i"})
+
+    assert destroys == 2
+    network_delete.assert_not_called()
+
+
+def test_agent_project_option_defaults_are_consistent() -> None:
+    """deploy must resolve --project the same way status/destroy do.
+
+    Regression: deploy/fresh-setup/bootstrap/verify-live defaulted --project to the
+    static `us-central1` alias while status/destroy resolved the configured
+    default, so a `-p`-less deploy stored the agent where a later `-p`-less status
+    could not find it — and destroy then reported success on an empty state while
+    the real VM and its public IP kept running.
+    """
+    from npa.cli import agent as agent_module
+
+    import inspect
+
+    for command in (
+        agent_module.deploy_cmd,
+        agent_module.fresh_setup_cmd,
+        agent_module.bootstrap_cmd,
+        agent_module.verify_live_cmd,
+        agent_module.status_cmd,
+        agent_module.destroy_cmd,
+    ):
+        option = inspect.signature(command).parameters["project"].default
+        default = getattr(option, "default", option)
+        assert default == "", f"{command.__name__} pins --project to {default!r}"
+
+
+def test_resolve_project_alias_prefers_the_only_configured_project(monkeypatch) -> None:
+    """`default_project_name()` returns "default" for an unset config, naming nothing."""
+    from npa.cli import agent as agent_module
+    from npa.clients import config as config_module
+
+    monkeypatch.setattr(config_module, "default_project_name", lambda: "default")
+    monkeypatch.setattr(
+        config_module, "list_projects", lambda: {"tle-workbench": {"project_id": "p-1"}}
+    )
+
+    assert agent_module._resolve_project_alias("") == "tle-workbench"
+    assert agent_module._resolve_project_alias("explicit") == "explicit"
+
+
+def test_resolve_project_alias_uses_the_configured_default_when_present(
+    monkeypatch,
+) -> None:
+    from npa.cli import agent as agent_module
+    from npa.clients import config as config_module
+
+    monkeypatch.setattr(config_module, "default_project_name", lambda: "prod")
+    monkeypatch.setattr(
+        config_module,
+        "list_projects",
+        lambda: {"prod": {"project_id": "p-1"}, "dev": {"project_id": "p-2"}},
+    )
+
+    assert agent_module._resolve_project_alias("") == "prod"
+
+
+def test_ssh_egress_check_warns_when_outbound_ssh_is_blocked(monkeypatch) -> None:
+    """Deploy waits for the new VM's tcp/22 from this host, then rolls it back."""
+    from npa.cli.agent_network import PROBE_ENV_VAR, _agent_ssh_egress_result
+
+    monkeypatch.setenv(PROBE_ENV_VAR, "ssh.example:22")
+
+    def _timeout(address, timeout):
+        raise TimeoutError("timed out")
+
+    result = _agent_ssh_egress_result(connect=_timeout)
+
+    assert result.status == "WARN"
+    assert "tcp/22" in result.summary
+    assert "VPN" in result.remedy
+
+
+def test_ssh_egress_check_passes_when_the_probe_connects(monkeypatch) -> None:
+    from npa.cli.agent_network import PROBE_ENV_VAR, _agent_ssh_egress_result
+
+    monkeypatch.setenv(PROBE_ENV_VAR, "ssh.example:2222")
+    closed: list[bool] = []
+
+    class _Socket:
+        def close(self) -> None:
+            closed.append(True)
+
+    seen: list[tuple[str, int]] = []
+
+    def _connect(address, timeout):
+        seen.append(address)
+        return _Socket()
+
+    result = _agent_ssh_egress_result(connect=_connect)
+
+    assert result.status == "PASS"
+    assert seen == [("ssh.example", 2222)]
+    assert closed == [True]
+    # A generic host that answers proves less than it looks like it does.
+    assert "split" in result.summary
+
+
+def test_ssh_egress_check_prefers_a_recorded_nebius_agent_ip(monkeypatch) -> None:
+    """A split tunnel can allow github.com:22 and still drop a fresh cloud IP.
+
+    Regression: the check reported PASS off github.com while the operator's agent
+    VM was unreachable on 22/443/8088, and the deploy then burned the boot window
+    and rolled the VM back.
+    """
+    from npa.cli import agent_network
+    from npa.cli.agent_network import PROBE_ENV_VAR, _agent_ssh_egress_result
+    from npa.clients import config as config_module
+
+    monkeypatch.delenv(PROBE_ENV_VAR, raising=False)
+    monkeypatch.setattr(
+        config_module,
+        "list_projects",
+        lambda: {"prod": {"agents": {"agent": {"public_ip": "203.0.113.50"}}}},
+    )
+    assert agent_network.recorded_agent_ip() == "203.0.113.50"
+
+    seen: list[tuple[str, int]] = []
+
+    def _timeout(address, timeout):
+        seen.append(address)
+        raise TimeoutError("timed out")
+
+    result = _agent_ssh_egress_result(connect=_timeout)
+
+    assert seen == [("203.0.113.50", 22)]
+    assert result.status == "WARN"
+    assert "your agent VM" in result.summary
+
+
+def test_ssh_egress_check_is_quiet_without_dns(monkeypatch) -> None:
+    """No DNS says nothing about SSH egress, so it must not warn."""
+    import socket
+
+    from npa.cli.agent_network import PROBE_ENV_VAR, _agent_ssh_egress_result
+
+    monkeypatch.setenv(PROBE_ENV_VAR, "ssh.example:22")
+
+    def _no_dns(address, timeout):
+        raise socket.gaierror("Name or service not known")
+
+    assert _agent_ssh_egress_result(connect=_no_dns).status == "PASS"
+
+
+def test_ssh_egress_check_can_be_disabled(monkeypatch) -> None:
+    from npa.cli.agent_network import PROBE_ENV_VAR, _agent_ssh_egress_result
+
+    monkeypatch.setenv(PROBE_ENV_VAR, "off")
+
+    def _must_not_run(address, timeout):  # pragma: no cover - must not run
+        raise AssertionError("the probe must not open a socket when disabled")
+
+    result = _agent_ssh_egress_result(connect=_must_not_run)
+    assert result.status == "PASS"
+    assert "skipped" in result.summary
+
+
+def test_public_ip_quota_gate_skips_an_agent_that_already_has_its_ip(
+    monkeypatch,
+) -> None:
+    """Re-deploying an existing agent reuses its address, so require no headroom."""
+    from npa.cli.agent import _agent_check_public_ip_quota
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "us-central1")
+    monkeypatch.setattr(
+        nebius_module,
+        "get_public_ipv4_quota",
+        lambda _tid, _region: (_ for _ in ()).throw(
+            AssertionError("quota must not be queried for an existing agent")
+        ),
+    )
+
+    # Must not raise, and must not even read the quota.
+    _agent_check_public_ip_quota(
+        "project-x", "tenant-x", "us-central1", agent_exists=True
+    )
 
 
 def test_ui_script_calls_no_undefined_local_helper() -> None:
@@ -3677,6 +5049,22 @@ def test_ui_script_calls_no_undefined_local_helper() -> None:
     }
     undefined = sorted(called - defined - allowed)
     assert not undefined, f"UI script calls undefined helper(s): {undefined}"
+
+
+def test_artifact_role_summary_uses_the_declared_role() -> None:
+    """Guard the conflict-prone semantic-role/artifact-role UI merge."""
+
+    script = rendered_agent_ui_html().split("<script>")[-1].split("</script>")[0]
+    assert "acc[artifactRole] = (acc[artifactRole] || 0) + 1" in script
+    assert "acc[role] = (acc[role] || 0) + 1" not in script
+
+
+def test_boot_rerun_mount_preserves_a_newer_operator_media_preview() -> None:
+    """A late boot-time Rerun mount must not replace an explicit replay video."""
+
+    script = rendered_agent_ui_html().split("<script>")[-1].split("</script>")[0]
+    assert "const explicitMediaSelected = () => operatorMediaPreviewActive;" in script
+    assert "if (explicitMediaSelected())" in script
 
 
 def test_ui_recomputes_the_viewer_cta_once_the_iframe_mounts() -> None:

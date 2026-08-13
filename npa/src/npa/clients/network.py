@@ -15,6 +15,104 @@ class NetworkIngressError(Exception):
     """Raised when ingress cannot be resolved or changed."""
 
 
+class NetworkCleanupError(Exception):
+    """Raised when ownership-safe network teardown cannot continue."""
+
+
+_DEFAULT_SECURITY_GROUP_REFUSAL_MARKERS = (
+    "cannotdeletedefaultsecuritygroup",
+    "cantdeletedefaultsecuritygroup",
+    "defaultsecuritygroupcannotbedeleted",
+    "defaultsecuritygroupcantbedeleted",
+    "deletionofdefaultsecuritygroupisnotallowed",
+)
+
+
+def is_default_security_group_delete_refusal(message: str) -> bool:
+    """Whether *message* narrowly identifies the provider's default-SG refusal.
+
+    Nebius documents that only non-default security groups are directly
+    deletable. Match that specific condition without reclassifying ordinary
+    dependency, permission, transport, or non-default security-group failures.
+    """
+
+    text = str(message or "").lower()
+    compact = re.sub(r"[^a-z0-9]", "", text)
+    if re.search(r"\bnon[- ]?default\b", text) or "nondefaultsecuritygroup" in compact:
+        return False
+    if any(marker in compact for marker in _DEFAULT_SECURITY_GROUP_REFUSAL_MARKERS):
+        return True
+    has_default_group = "securitygroup" in compact and "default" in compact
+    has_refusal = any(
+        marker in compact
+        for marker in (
+            "cannotdelete",
+            "cantdelete",
+            "cannotbedeleted",
+            "cantbedeleted",
+            "deletionisnotallowed",
+            "deleteisnotallowed",
+        )
+    )
+    return has_default_group and has_refusal
+
+
+def recover_default_security_group_delete(
+    *,
+    error: str,
+    parent_network_id: str,
+    parent_network_owned: bool,
+    cleanup_action: str,
+    on_status: Callable[[str], None] | None = None,
+) -> bool:
+    """Delete an owned parent network after the provider rejects its default SG.
+
+    Returns ``False`` for unrelated failures. A default security group is a
+    provider-managed child and cannot be deleted directly; deleting its parent
+    network is safe only when Terraform state proves NPA owns that network.
+    """
+
+    if not is_default_security_group_delete_refusal(error):
+        return False
+
+    action = str(cleanup_action or "the existing NPA cleanup action").strip()
+    network_id = str(parent_network_id or "").strip()
+    if not parent_network_owned or not network_id:
+        raise NetworkCleanupError(
+            "Nebius refused direct deletion of a default security group. The "
+            "supported recovery is deletion of its parent network, but that requires "
+            "proof that NPA owns the whole network. No such Terraform ownership proof "
+            "was found, so the reused/shared network and its default security group "
+            f"were preserved. Use {action} only for the owning NPA stack, or ask the "
+            "network owner to remove the parent network."
+        )
+
+    status = on_status or (lambda _message: None)
+    status(
+        "Nebius default security groups cannot be deleted directly; Terraform "
+        f"state proves parent network {network_id} is NPA-owned, so teardown is "
+        "deleting that parent network through the supported provider lifecycle."
+    )
+    try:
+        nebius._run(["vpc", "network", "delete", "--id", network_id])
+    except NebiusError as exc:
+        if nebius.is_not_found(str(exc)):
+            status(
+                f"NPA-owned parent network {network_id} is already absent; continuing."
+            )
+            return True
+        raise NetworkCleanupError(
+            "Nebius refused direct deletion of the default security group, and "
+            f"deleting its NPA-owned parent network {network_id} also failed: {exc}. "
+            f"Fix the reported provider error and retry {action}."
+        ) from exc
+    status(
+        f"Deleted NPA-owned parent network {network_id}; its default security group "
+        "is removed with the network."
+    )
+    return True
+
+
 @dataclass(frozen=True)
 class SecurityGroupIngressResult:
     security_group_id: str
@@ -152,6 +250,9 @@ def ensure_ingress(
     tool: str = "manual",
 ) -> EnsureIngressResult:
     """Ensure TCP ingress from ``source`` to ``ports`` on the target VM security groups."""
+    from npa.lifecycle_intent import forbid_destructive_provisioning
+
+    forbid_destructive_provisioning("ensure_ingress")
     if bool(vm_id) == bool(ip and project_id):
         raise NetworkIngressError("pass exactly one of --vm or (--ip and --project)")
     if ip and not project_id:

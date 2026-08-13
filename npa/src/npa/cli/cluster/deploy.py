@@ -61,6 +61,9 @@ def deploy_cmd(
 
     Wraps `nebius mk8s` cluster/node-group create and get-credentials.
     """
+    from npa.lifecycle_intent import forbid_destructive_provisioning
+
+    forbid_destructive_provisioning("cluster_deploy")
 
     try:
         resolved_project_id = resolve_project_id(project_id)

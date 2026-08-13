@@ -26,7 +26,7 @@
 # USAGE
 #   dev-vm-daily-tests.sh [tier] [git-ref]
 #     tier     one of: unit | e2e | e2e-daily | gpu-daily | e2e-serverless
-#              | live-gpu   (default: unit)
+#              | mutation-live | live-gpu   (default: unit)
 #     git-ref  branch, tag, or sha to test                       (default: main)
 #
 #   e2e-daily is the scheduled default: every day it runs the >= 4-step
@@ -341,6 +341,49 @@ run_gpu_daily() {
   )
 }
 
+run_pr218_safe_contracts() {
+  local py="$1"
+  log "e2e-daily [PR218-safe]: image, queue, identity, CLI, and teardown contracts"
+  (
+    cd "${CI_REPO_DIR}/npa"
+    "$py" -m pytest \
+      tests/guardrails/test_internal_cli_entrypoint.py \
+      tests/orchestration/skypilot/test_image_bootstrap_contract.py \
+      tests/orchestration/skypilot/test_cleanup.py \
+      tests/unit/test_cleanup_identity.py \
+      tests/unit/test_controller_preflight_total.py \
+      tests/unit/test_pr218_integrated_lifecycle.py \
+      -o addopts= -q --tb=short
+  )
+}
+
+run_mutation_live() {
+  local py="$1"
+  [[ -n "${NPA_E2E_PROJECT:-}" ]] || die "mutation-live requires NPA_E2E_PROJECT"
+  [[ -n "${NPA_E2E_CLUSTER_CONTEXT:-}" ]] || die "mutation-live requires NPA_E2E_CLUSTER_CONTEXT"
+  [[ -n "${NPA_E2E_AGENT_NAME:-}" ]] || die "mutation-live requires NPA_E2E_AGENT_NAME"
+  [[ -n "${NPA_E2E_CONTROLLER_TRANSACTION_RUN_ID:-}" ]] \
+    || die "mutation-live requires NPA_E2E_CONTROLLER_TRANSACTION_RUN_ID"
+  log "Tier=mutation-live: explicitly authorized lifecycle/controller/agent mutation"
+  # shellcheck source=/dev/null
+  [[ -f "${HOME}/bin/npa-cloud-env.sh" ]] && . "${HOME}/bin/npa-cloud-env.sh"
+  set -a
+  # shellcheck source=/dev/null
+  [[ -f "${HOME}/.npa/live-e2e.env" ]] && . "${HOME}/.npa/live-e2e.env"
+  set +a
+  export NPA_SKYPILOT_BIN="${NPA_SKYPILOT_BIN:-${HOME}/.npa/skypilot-venv/bin/sky}"
+  (
+    cd "${CI_REPO_DIR}/npa"
+    NPA_INTEGRATION_E2E=1 \
+    NPA_PR218_LIVE_LIFECYCLE=1 \
+    NPA_LIVE_CONTROLLER_LAUNCH_TRANSACTION=1 \
+      "$py" -m pytest \
+        tests/e2e/test_pr218_lifecycle_live.py \
+        tests/e2e/test_controller_launch_transaction_live.py \
+        -o addopts= -q -s --tb=short
+  )
+}
+
 run_e2e_daily() {
   local py="$1"
   log "Tier=e2e-daily: comprehensive >= 4-step workflow coverage + all-image check + rotating S3 e2e subset"
@@ -348,6 +391,7 @@ run_e2e_daily() {
   run_workflow_coverage_gate "$py"
   run_workflow_plan_smoke "$py"
   run_image_reachability "$py"
+  run_pr218_safe_contracts "$py"
   run_e2e_shard "$py"
   # Bounded real-GPU e2e is opt-in on the schedule: one rotating managed-job
   # workflow submit per day when the operator sets NPA_DAILY_ENABLE_GPU=1. The
@@ -385,8 +429,8 @@ main() {
 
   # Validate inputs before any expensive clone/venv work.
   case "$TEST_TIER" in
-    unit | e2e | e2e-daily | gpu-daily | e2e-serverless | live-gpu) ;;
-    *) die "unknown tier '${TEST_TIER}' (expected: unit | e2e | e2e-daily | gpu-daily | e2e-serverless | live-gpu)" ;;
+    unit | e2e | e2e-daily | gpu-daily | e2e-serverless | mutation-live | live-gpu) ;;
+    *) die "unknown tier '${TEST_TIER}' (expected: unit | e2e | e2e-daily | gpu-daily | e2e-serverless | mutation-live | live-gpu)" ;;
   esac
   if [[ "$TEST_TIER" == "live-gpu" && "${NPA_DAILY_ALLOW_LIVE_GPU:-0}" != "1" ]]; then
     die "live-gpu tier requires NPA_DAILY_ALLOW_LIVE_GPU=1; it must never run on a schedule (docs/testing/live-e2e.md)"
@@ -412,8 +456,9 @@ main() {
     e2e-daily) run_e2e_daily "$PY" ;;
     gpu-daily) run_gpu_daily "$PY" ;;
     e2e-serverless) run_e2e_serverless "$PY" ;;
+    mutation-live) run_mutation_live "$PY" ;;
     live-gpu) run_live_gpu ;;
-    *) die "unknown tier '${TEST_TIER}' (expected: unit | e2e | e2e-daily | gpu-daily | e2e-serverless | live-gpu)" ;;
+    *) die "unknown tier '${TEST_TIER}' (expected: unit | e2e | e2e-daily | gpu-daily | e2e-serverless | mutation-live | live-gpu)" ;;
   esac
 
   log "Daily dev-VM tests completed: tier=${TEST_TIER} ref=${GIT_REF}"

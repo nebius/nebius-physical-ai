@@ -14,6 +14,7 @@ from typing import Any
 
 MCAP_MAGIC = b"\x89MCAP0\r\n"
 NS_PER_S = 1_000_000_000
+MAX_SIGNED_TIMESTAMP_NS = (1 << 63) - 1
 
 
 class McapInspectError(RuntimeError):
@@ -29,13 +30,14 @@ class McapInfo:
     valid_magic: bool = False
     message_count: int = 0
     channels: dict[str, int] = field(default_factory=dict)
-    channel_time_ranges: dict[str, dict[str, int]] = field(default_factory=dict)
     schemas: dict[str, str] = field(default_factory=dict)
-    numeric_paths: dict[str, list[str]] = field(default_factory=dict)
     start_time_ns: int = 0
     end_time_ns: int = 0
     duration_s: float = 0.0
     metadata: dict[str, dict[str, str]] = field(default_factory=dict)
+    timestamps_in_int64_domain: bool = True
+    channels_monotonic: bool = True
+    channel_time_ranges: dict[str, dict[str, int]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -44,15 +46,16 @@ class McapInfo:
             "valid_magic": self.valid_magic,
             "message_count": self.message_count,
             "channels": dict(self.channels),
-            "channel_time_ranges": {
-                k: dict(v) for k, v in self.channel_time_ranges.items()
-            },
             "schemas": dict(self.schemas),
-            "numeric_paths": {k: list(v) for k, v in self.numeric_paths.items()},
             "start_time_ns": self.start_time_ns,
             "end_time_ns": self.end_time_ns,
             "duration_s": self.duration_s,
             "metadata": {k: dict(v) for k, v in self.metadata.items()},
+            "timestamps_in_int64_domain": self.timestamps_in_int64_domain,
+            "channels_monotonic": self.channels_monotonic,
+            "channel_time_ranges": {
+                key: dict(value) for key, value in self.channel_time_ranges.items()
+            },
         }
 
 
@@ -111,63 +114,52 @@ def summarize_mcap(path: str | Path) -> McapInfo:
                 info.start_time_ns = int(summary.statistics.message_start_time)
                 info.end_time_ns = int(summary.statistics.message_end_time)
 
-        # Walk messages even when a summary exists so callers can prove per-topic
-        # overlap instead of inferring synchronization from one global duration.
+        # Always inspect the real messages.  Summary statistics alone cannot
+        # prove per-channel ordering and historically hid timestamp overflow.
         handle.seek(0)
         reader = make_reader(handle)
-        counted_directly = not info.message_count
+        counts: dict[str, int] = {}
+        previous_by_topic: dict[str, int] = {}
+        first_timestamp: int | None = None
+        last_timestamp: int | None = None
         for schema, channel, message in reader.iter_messages():
-            if counted_directly:
-                info.message_count += 1
-                info.channels[channel.topic] = info.channels.get(channel.topic, 0) + 1
+            timestamp = int(message.log_time)
+            topic = channel.topic
+            counts[topic] = counts.get(topic, 0) + 1
             if schema is not None:
-                info.schemas[channel.topic] = schema.name
-                if (
-                    channel.topic not in info.numeric_paths
-                    and schema.encoding == "jsonschema"
-                ):
-                    try:
-                        definition = json.loads(schema.data)
-                    except (TypeError, ValueError):
-                        definition = {}
-                    properties = (
-                        definition.get("properties", {})
-                        if isinstance(definition, dict)
-                        else {}
-                    )
-                    info.numeric_paths[channel.topic] = sorted(
-                        str(name)
-                        for name, field_def in properties.items()
-                        if name != "timestamp"
-                        and isinstance(field_def, dict)
-                        and field_def.get("type") in {"number", "integer"}
-                    )
-            info.start_time_ns = (
-                message.log_time
-                if not info.start_time_ns
-                else min(info.start_time_ns, message.log_time)
+                info.schemas[topic] = schema.name
+            if not 0 <= timestamp <= MAX_SIGNED_TIMESTAMP_NS:
+                info.timestamps_in_int64_domain = False
+            previous = previous_by_topic.get(topic)
+            if previous is not None and timestamp < previous:
+                info.channels_monotonic = False
+            previous_by_topic[topic] = timestamp
+            channel_range = info.channel_time_ranges.setdefault(
+                topic, {"start_time_ns": timestamp, "end_time_ns": timestamp}
             )
-            info.end_time_ns = max(info.end_time_ns, message.log_time)
-            topic_range = info.channel_time_ranges.setdefault(
-                channel.topic,
-                {
-                    "start_time_ns": int(message.log_time),
-                    "end_time_ns": int(message.log_time),
-                },
+            channel_range["start_time_ns"] = min(
+                channel_range["start_time_ns"], timestamp
             )
-            topic_range["start_time_ns"] = min(
-                int(topic_range["start_time_ns"]), int(message.log_time)
+            channel_range["end_time_ns"] = max(
+                channel_range["end_time_ns"], timestamp
             )
-            topic_range["end_time_ns"] = max(
-                int(topic_range["end_time_ns"]), int(message.log_time)
+            first_timestamp = (
+                timestamp if first_timestamp is None else min(first_timestamp, timestamp)
             )
+            last_timestamp = (
+                timestamp if last_timestamp is None else max(last_timestamp, timestamp)
+            )
+        info.channels.update(counts)
+        info.message_count = sum(counts.values())
+        info.start_time_ns = 0 if first_timestamp is None else first_timestamp
+        info.end_time_ns = 0 if last_timestamp is None else last_timestamp
 
         handle.seek(0)
         reader = make_reader(handle)
         for record in reader.iter_metadata():
             info.metadata[record.name] = dict(record.metadata)
 
-    if info.end_time_ns and info.start_time_ns:
+    if info.message_count and info.end_time_ns >= info.start_time_ns:
         info.duration_s = round((info.end_time_ns - info.start_time_ns) / NS_PER_S, 3)
     return info
 

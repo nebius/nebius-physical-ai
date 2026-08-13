@@ -97,7 +97,7 @@ agent's Rerun viewer:
 ```bash
 curl -sk -u "$AGENT_USER:$AGENT_PASSWORD" -X POST https://<agent-ip>/api/sim-viz/load-artifact \
   -H 'content-type: application/json' \
-  -d '{"s3_uri": "s3://<bucket>/byof/<run-id>/open_dreamer_world_model.rrd"}'
+  -d '{"run_id":"<run-id>","s3_uri": "s3://<bucket>/byof/<run-id>/open_dreamer_world_model.rrd"}'
 ```
 
 Then open `https://<agent-ip>/rerun/` (see `skills/tools/npa-agent/SKILL.md`).

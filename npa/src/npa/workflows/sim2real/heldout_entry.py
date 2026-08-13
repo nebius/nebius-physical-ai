@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
+import traceback
 
 from npa.workflows.sim2real.constants import (
     DEFAULT_ISAAC_TASK,
@@ -37,22 +39,40 @@ def main() -> int:
     args = parser.parse_args()
     from npa.workflows.sim2real.engine import run_heldout_eval_component_from_s3
 
-    run_heldout_eval_component_from_s3(
-        heldout_envs_uri=args.heldout_envs_uri,
-        inner_evidence_uri=args.inner_evidence_uri,
-        output_uri=args.output_uri,
-        threshold=args.threshold,
-        limit=args.limit,
-        scene_spec_uri=args.scene_spec_uri,
-        cameras_uri=args.cameras_uri,
-        assets_uri=args.assets_uri,
-        byo_mesh_uri=args.byo_mesh_uri,
-        robot_spec_uri=args.robot_spec_uri,
-        robot_source=args.robot_source,
-        robot_preset=args.robot_preset,
-        sim_backend=args.sim_backend,
-        isaac_task=args.isaac_task,
-    )
+    is_isaac = str(args.sim_backend).strip().lower() == "isaac"
+    try:
+        run_heldout_eval_component_from_s3(
+            heldout_envs_uri=args.heldout_envs_uri,
+            inner_evidence_uri=args.inner_evidence_uri,
+            output_uri=args.output_uri,
+            threshold=args.threshold,
+            limit=args.limit,
+            scene_spec_uri=args.scene_spec_uri,
+            cameras_uri=args.cameras_uri,
+            assets_uri=args.assets_uri,
+            byo_mesh_uri=args.byo_mesh_uri,
+            robot_spec_uri=args.robot_spec_uri,
+            robot_source=args.robot_source,
+            robot_preset=args.robot_preset,
+            sim_backend=args.sim_backend,
+            isaac_task=args.isaac_task,
+        )
+    except Exception:  # noqa: BLE001
+        if not is_isaac:
+            raise
+        # Kit can also hang during interpreter teardown after an initialization
+        # failure. Preserve the traceback and make the Kubernetes Job fail now.
+        traceback.print_exc()
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(1)
+    if is_isaac:
+        # Kit can keep non-daemon threads alive or hang during normal interpreter
+        # shutdown. The component has already uploaded report.json and renders;
+        # exit exactly like byo_isaac_eval's established upload-before-exit path.
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
     return 0
 
 

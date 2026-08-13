@@ -11,13 +11,18 @@ from typing import Any
 
 import yaml
 
+from npa.config_schema import (
+    SKYPILOT_CONFIG_KEYS,
+    SKYPILOT_RUNTIME_CONFIG_KEYS,
+    unknown_config_keys,
+)
+
 SkyBin = str | os.PathLike[str] | None
 
 _SETUP_DOC = "docs/orchestration/skypilot-setup.md"
 CONFIG_PATH = Path.home() / ".npa" / "config.yaml"
 REQUIRED_SKYPILOT_VERSION = "0.12.2"
-_SKYPILOT_CONFIG_KEYS = frozenset({"sky_bin", "global_config_path", "isolated_config_dir"})
-_VERSION_CHECK_CACHE: set[str] = set()
+_VERSION_CHECK_CACHE: set[tuple[str, int, int]] = set()
 
 
 @dataclass(frozen=True)
@@ -95,10 +100,11 @@ def resolve_sky_bin(sky_bin: SkyBin = None) -> Path:
 
 
 def ensure_skypilot_version(sky_bin: SkyBin = None) -> Path:
-    """Assert the resolved SkyPilot CLI matches NPA's runtime pin."""
+    """Assert the executable and isolated dependency matrix before mutation."""
 
     sky_path = resolve_sky_bin(sky_bin)
-    cache_key = str(sky_path)
+    stat_result = sky_path.stat()
+    cache_key = (str(sky_path), stat_result.st_ino, stat_result.st_mtime_ns)
     if cache_key in _VERSION_CHECK_CACHE:
         return sky_path
     try:
@@ -116,6 +122,52 @@ def ensure_skypilot_version(sky_bin: SkyBin = None) -> Path:
     if result.returncode != 0 or actual != REQUIRED_SKYPILOT_VERSION:
         raise SkyPilotVersionError(
             f"SkyPilot version mismatch: expected {REQUIRED_SKYPILOT_VERSION}, got {actual}"
+        )
+    python_path = sky_path.parent / "python"
+    try:
+        compatibility = subprocess.run(
+            [
+                str(python_path),
+                "-c",
+                (
+                    "import sys,kubernetes;"
+                    "print(f'{sys.version_info.major}.{sys.version_info.minor} '"
+                    "f'{kubernetes.__version__}')"
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise SkyPilotVersionError(
+            f"Unable to validate the isolated SkyPilot runtime via {python_path}. "
+            "Run `npa skypilot bootstrap`."
+        ) from exc
+    fields = (compatibility.stdout or "").strip().split()
+    py_version = fields[0] if fields else "unknown"
+    kube_version = fields[1] if len(fields) > 1 else "unknown"
+    try:
+        py_tuple = tuple(int(part) for part in py_version.split(".")[:2])
+        kube_major = int(kube_version.split(".", 1)[0])
+    except ValueError as exc:
+        raise SkyPilotVersionError(
+            "SkyPilot runtime compatibility self-check returned malformed version "
+            f"evidence (python={py_version}, kubernetes={kube_version}). Run "
+            "`npa skypilot bootstrap`."
+        ) from exc
+    if (
+        compatibility.returncode != 0
+        or py_tuple < (3, 9)
+        or py_tuple > (3, 12)
+        or kube_major >= 36
+        or kube_version == "32.0.0"
+    ):
+        raise SkyPilotVersionError(
+            "Incompatible isolated SkyPilot runtime: requires Python 3.9-3.12 and "
+            "kubernetes>=20,!=32.0.0,<36; found "
+            f"Python {py_version}, kubernetes {kube_version}. Run "
+            "`npa skypilot bootstrap --python python3.12` before retrying."
         )
     _VERSION_CHECK_CACHE.add(cache_key)
     return sky_path
@@ -162,12 +214,14 @@ def _load_skypilot_file_config(path: Path) -> dict[str, Any]:
         return {}
     if not isinstance(section, dict):
         raise SkyPilotConfigError(f"NPA config skypilot section must be a mapping: {path}")
-    unknown = sorted(set(section) - _SKYPILOT_CONFIG_KEYS)
+    unknown = unknown_config_keys("skypilot", section)
     if unknown:
-        valid = ", ".join(sorted(_SKYPILOT_CONFIG_KEYS))
+        valid = ", ".join(sorted(SKYPILOT_CONFIG_KEYS))
         keys = ", ".join(unknown)
         raise SkyPilotConfigError(f"Unrecognized SkyPilot config key(s): {keys}. Valid keys: {valid}")
-    return section
+    # NPA-owned controller metadata shares the section for atomic persistence,
+    # but never becomes a runtime setting or participates in runtime precedence.
+    return {key: section[key] for key in SKYPILOT_RUNTIME_CONFIG_KEYS if key in section}
 
 
 def _first_config_value(*candidates: tuple[Any, str]) -> tuple[Any | None, str]:

@@ -83,3 +83,11 @@ print(f"staged {uploaded} files -> s3://{bucket}/{prefix}", file=sys.stderr)
 PY
 
 echo "$DEST"
+
+# The staged objects outlive this shell, but NPA_SRC_S3_URI did not: a later
+# submit without the export failed preflight even though the bucket was already
+# populated. Persist it so the next shell resolves it from ~/.npa/config.yaml.
+if [[ "${NPA_STAGE_PERSIST:-1}" == "1" ]] && command -v npa >/dev/null 2>&1; then
+  npa configure --src-s3-uri "$DEST" >&2 || \
+    echo "note: could not persist NPA_SRC_S3_URI; export it manually" >&2
+fi

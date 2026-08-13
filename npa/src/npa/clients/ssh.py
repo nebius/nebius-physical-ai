@@ -254,6 +254,27 @@ class SSHClient:
                 sftp.close()
             client.close()
 
+    def upload_private_text(self, content: str, remote_path: str) -> str:
+        """Create a remote owner-only file without putting content in argv."""
+
+        client = self._connect()
+        sftp = None
+        try:
+            sftp = client.open_sftp()
+            # Paramiko requires ``w`` in addition to ``x``: unlike Python's
+            # built-in open(), bare ``x`` sets CREATE|EXCL but not WRITE.
+            with sftp.open(remote_path, "wx") as remote_file:
+                sftp.chmod(remote_path, 0o600)
+                remote_file.write(content)
+                remote_file.flush()
+            return remote_path
+        except Exception as exc:
+            raise SSHError(f"Private SFTP upload failed for {remote_path}: {exc}") from exc
+        finally:
+            if sftp is not None:
+                sftp.close()
+            client.close()
+
     def upload_directory(self, local_dir: str, remote_dir: str) -> str:
         """Upload a local directory to the VM over SFTP."""
         local_root = Path(local_dir).expanduser()

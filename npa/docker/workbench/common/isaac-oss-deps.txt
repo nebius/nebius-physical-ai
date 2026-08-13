@@ -94,6 +94,10 @@ opencv-python-headless
 #   and somewhere confusing. boto3 pulls botocore and the workbench uses boto3 everywhere
 #   already.
 boto3
+# omni.kit.test -> .test_coverage imports coverage while Kit discovers extension tests.
+# The NVIDIA base environment supplies it implicitly; the thin runtime needs it explicitly
+# so extension discovery does not log a missing dependency and continue partially loaded.
+coverage==7.13.5
 # Kit tooling and rsl_rl's git-provenance logging
 PyYAML>=6.0
 GitPython>=3.1.50

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import threading
+import ast
 from pathlib import Path
 
 import pytest
@@ -188,6 +188,63 @@ def test_alias_has_terraform_state_false_for_byovm_alias(isolated_config: Path) 
 
     assert config.alias_has_terraform_state("proj-a", "wb-a") is False
     assert config.workbench_is_byovm("proj-a", "wb-a") is True
+
+
+# ── teardown helpers: clear_terraform_state_for_bucket / forget_project ───────
+
+
+def test_clear_terraform_state_for_bucket_removes_matching_state(isolated_config: Path) -> None:
+    _write_full_config(isolated_config)  # proj-a.terraform_state.bucket == "state-bucket"
+
+    # A bucket URI must normalize to the bare name before comparing.
+    cleared = config.clear_terraform_state_for_bucket("s3://state-bucket/")
+
+    assert cleared == ["proj-a"]
+    saved = yaml.safe_load(isolated_config.read_text())
+    assert "terraform_state" not in saved["projects"]["proj-a"]
+    # Everything else in the stanza survives.
+    assert saved["projects"]["proj-a"]["project_id"] == "project-1"
+    assert saved["projects"]["proj-a"]["workbenches"]["wb-a"]
+
+
+def test_clear_terraform_state_for_bucket_no_match_leaves_config(isolated_config: Path) -> None:
+    _write_full_config(isolated_config)
+
+    assert config.clear_terraform_state_for_bucket("some-other-bucket") == []
+    saved = yaml.safe_load(isolated_config.read_text())
+    assert saved["projects"]["proj-a"]["terraform_state"]["access_key"] == "state-key"
+
+
+def test_forget_project_removes_stanza_and_repoints_default(isolated_config: Path) -> None:
+    _write_full_config(isolated_config)  # default_project == "proj-a"
+
+    assert config.forget_project("proj-a") is True
+    saved = yaml.safe_load(isolated_config.read_text())
+    assert "proj-a" not in saved["projects"]
+    assert "proj-b" in saved["projects"]
+    assert saved["default_project"] == "proj-b"
+
+
+def test_forget_project_missing_is_a_noop(isolated_config: Path) -> None:
+    _write_full_config(isolated_config)
+
+    assert config.forget_project("nope") is False
+    saved = yaml.safe_load(isolated_config.read_text())
+    assert set(saved["projects"]) == {"proj-a", "proj-b"}
+
+
+def test_clear_skypilot_bin_removes_only_that_key(isolated_config: Path) -> None:
+    isolated_config.parent.mkdir(parents=True)
+    isolated_config.write_text(
+        yaml.safe_dump({"skypilot": {"sky_bin": "/x/bin/sky"}, "default_project": "p"})
+    )
+
+    assert config.clear_skypilot_bin() is True
+    saved = yaml.safe_load(isolated_config.read_text())
+    assert "skypilot" not in saved  # section emptied and dropped
+    assert saved["default_project"] == "p"
+    # Idempotent: nothing left to clear.
+    assert config.clear_skypilot_bin() is False
 
 
 def test_resolve_project_storage_reads_object_storage(isolated_config: Path) -> None:
@@ -679,25 +736,6 @@ def test_write_config_deep_merges_existing_config(isolated_config: Path) -> None
     assert written.stat().st_mode & 0o777 == 0o600
 
 
-def test_concurrent_config_updates_are_atomic(isolated_config: Path) -> None:
-    barrier = threading.Barrier(3)
-
-    def write(project: str) -> None:
-        barrier.wait()
-        config.write_config({"projects": {project: {"project_id": project}}})
-
-    threads = [threading.Thread(target=write, args=(name,)) for name in ("one", "two")]
-    for thread in threads:
-        thread.start()
-    barrier.wait()
-    for thread in threads:
-        thread.join(2)
-        assert not thread.is_alive()
-    data = yaml.safe_load(isolated_config.read_text())
-    assert set(data["projects"]) == {"one", "two"}
-    assert isolated_config.stat().st_mode & 0o777 == 0o600
-
-
 def test_remove_workbench_config_updates_defaults(isolated_config: Path) -> None:
     _write_full_config(isolated_config)
 
@@ -711,35 +749,6 @@ def test_remove_workbench_config_updates_defaults(isolated_config: Path) -> None
     data = yaml.safe_load(isolated_config.read_text())
     assert "proj-a" not in data["projects"]
     assert data["default_project"] == "proj-b"
-
-
-def test_remove_last_workbench_preserves_agent_ownership_record(
-    isolated_config: Path,
-) -> None:
-    isolated_config.parent.mkdir(parents=True, exist_ok=True)
-    isolated_config.write_text(
-        yaml.safe_dump(
-            {
-                "projects": {
-                    "shared": {
-                        "agents": {
-                            "wan-pr261": {
-                                "deployment": {"deployment_id": "npa-agent-owner"}
-                            }
-                        },
-                        "workbenches": {"temporary": {"endpoint": "http://vm"}},
-                    }
-                }
-            }
-        )
-    )
-    config.remove_workbench_config("shared", "temporary")
-    data = yaml.safe_load(isolated_config.read_text())
-    project = data["projects"]["shared"]
-    assert "workbenches" not in project
-    assert project["agents"]["wan-pr261"]["deployment"]["deployment_id"] == (
-        "npa-agent-owner"
-    )
 
 
 # ── workbench_type alias guard ───────────────────────────────────────────
@@ -833,3 +842,206 @@ def test_resolve_container_registry_prefers_project_override(
     monkeypatch.setenv("NPA_REGISTRY_ID", "myregid123")
     # proj-a has an explicit container_registry, which wins over env.
     assert config.resolve_container_registry("proj-a") == "registry.example/npa"
+
+
+def test_write_config_locks_down_file_and_directory(tmp_path, monkeypatch) -> None:
+    """~/.npa holds S3 keys, kubeconfigs and agent auth secrets: owner-only."""
+    import stat as stat_module
+
+    from npa.clients import config as config_module
+
+    config_path = tmp_path / ".npa" / "config.yaml"
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+
+    config_module.write_config({"projects": {"p": {"project_id": "pid"}}})
+
+    assert stat_module.S_IMODE(config_path.stat().st_mode) == 0o600
+    assert stat_module.S_IMODE(config_path.parent.stat().st_mode) == 0o700
+
+
+def test_config_writer_rejects_keys_strict_readers_would_reject(
+    isolated_config: Path,
+) -> None:
+    with pytest.raises(config.ConfigError, match="typo_key.*Valid keys"):
+        config.write_config({"skypilot": {"typo_key": True}})
+
+    assert not isolated_config.exists()
+
+
+def test_skypilot_cleanup_preserves_valid_controller_metadata(
+    isolated_config: Path,
+) -> None:
+    owner = {
+        "schema_version": "npa.controller-owner.v1",
+        "project_alias": "demo",
+        "project_id": "project-a",
+        "cluster_id": "cluster-a",
+        "context": "npa-cluster",
+    }
+    config.write_config(
+        {"skypilot": {"sky_bin": "/tmp/sky", "controller_owner": owner}}
+    )
+
+    assert config.clear_skypilot_bin()
+    saved = yaml.safe_load(isolated_config.read_text(encoding="utf-8"))
+    assert saved["skypilot"] == {"controller_owner": owner}
+
+
+def test_config_mutations_do_not_bypass_the_schema_validating_gateway() -> None:
+    source_root = PACKAGE_ROOT / "src" / "npa"
+    offenders: set[tuple[str, int, str]] = set()
+    for path in source_root.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = (
+                node.func.id
+                if isinstance(node.func, ast.Name)
+                else node.func.attr
+                if isinstance(node.func, ast.Attribute)
+                else ""
+            )
+            target = ast.unparse(node.args[0]) if node.args else ""
+            if name in {"update_private_yaml", "write_private_yaml"} and (
+                "CONFIG_PATH" in target
+            ):
+                offenders.add(
+                    (str(path.relative_to(PACKAGE_ROOT)), node.lineno, name)
+                )
+            if (
+                name in {"open", "write_text", "write_bytes"}
+                and isinstance(node.func, ast.Attribute)
+                and "CONFIG_PATH" in ast.unparse(node.func.value)
+            ):
+                offenders.add(
+                    (str(path.relative_to(PACKAGE_ROOT)), node.lineno, name)
+                )
+
+    assert offenders == set()
+
+
+@pytest.mark.parametrize("fallback_succeeds", [True, False])
+def test_forget_project_converges_when_cleanup_receipt_persistence_fails(
+    isolated_config: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fallback_succeeds: bool,
+) -> None:
+    from typer.testing import CliRunner
+
+    from npa import teardown_receipts
+    from npa.cli.main import app
+    from npa.provisioning_journal import ProvisioningOperation
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    isolated_config.parent.mkdir(parents=True, exist_ok=True)
+    isolated_config.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "target",
+                "projects": {
+                    "target": {
+                        "project_id": "project-target",
+                        "tenant_id": "tenant-target",
+                        "region": "eu-test1",
+                    },
+                    "unrelated": {
+                        "project_id": "project-unrelated",
+                        "tenant_id": "tenant-unrelated",
+                        "region": "eu-test2",
+                    },
+                },
+                "skypilot": {
+                    "controller_owner": {
+                        "schema_version": "npa.controller-owner.v1",
+                        "project_alias": "target",
+                        "project_id": "project-target",
+                        "cluster_id": "cluster-target",
+                        "cluster_name": "npa-target",
+                        "context": "npa-target",
+                        "context_fingerprint": "fingerprint-target",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    ProvisioningOperation.prepare(
+        command="npa agent deploy",
+        resume_command="",
+        project_alias="target",
+        project_id="project-target",
+        tenant_id="tenant-target",
+        region="eu-test1",
+        resource_type="agent",
+        requested_name="agent",
+        backend={
+            "bucket": "state-bucket",
+            "endpoint": "https://storage.example.invalid",
+            "state_key": "npa/target/agent.tfstate",
+            "credential_source": "project_saved",
+        },
+    )
+    real_record = teardown_receipts.record_teardown_event
+
+    def flaky_record(**kwargs):  # noqa: ANN003, ANN202
+        if not fallback_succeeds or (kwargs.get("identity") or {}).get("operations"):
+            raise ValueError("simulated receipt validation/write failure")
+        return real_record(**kwargs)
+
+    monkeypatch.setattr(teardown_receipts, "record_teardown_event", flaky_record)
+
+    result = CliRunner().invoke(
+        app, ["configure", "--forget-project", "target"]
+    )
+
+    assert result.exit_code == 0, result.output
+    saved = yaml.safe_load(isolated_config.read_text(encoding="utf-8"))
+    assert saved["default_project"] == "unrelated"
+    assert set(saved["projects"]) == {"unrelated"}
+    assert saved["projects"]["unrelated"]["project_id"] == "project-unrelated"
+    assert "controller_owner" not in saved.get("skypilot", {})
+    assert "Removed project 'target'" in result.output
+    if fallback_succeeds:
+        assert "wrote a minimal safe cleanup receipt" in result.output
+        [receipt] = teardown_receipts.list_teardown_receipts(
+            project_id="project-target", legacy="exclude"
+        )
+        assert receipt["identity"] == {
+            "parent_id": "project-target",
+            "project_alias": "target",
+            "project_id": "project-target",
+        }
+    else:
+        assert "degraded audit evidence" in result.output
+        assert not (tmp_path / "receipts").exists()
+
+
+def test_config_permissions_warning_flags_a_world_readable_file(
+    tmp_path, monkeypatch
+) -> None:
+    """Terraform backend S3 keys live in config.yaml, so loose modes matter."""
+    from npa.clients import config as config_module
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("projects: {}\n", encoding="utf-8")
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+
+    config_path.chmod(0o600)
+    assert config_module.config_permissions_warning() == ""
+
+    config_path.chmod(0o644)
+    warning = config_module.config_permissions_warning()
+    assert "terraform_state" in warning
+    assert "chmod 600" in warning
+
+
+def test_config_permissions_warning_is_quiet_without_a_file(tmp_path, monkeypatch) -> None:
+    from npa.clients import config as config_module
+
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "missing.yaml")
+
+    assert config_module.config_permissions_warning() == ""

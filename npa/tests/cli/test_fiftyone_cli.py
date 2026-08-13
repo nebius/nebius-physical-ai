@@ -534,7 +534,9 @@ def test_fiftyone_deploy_runtime_container_starts_image(tmp_path: Path, mocker) 
     assert tf_vars["image_family"] == DEFAULT_CPU_IMAGE_FAMILY
     deploy_container.assert_called_once()
     assert deploy_container.call_args.kwargs["container_name"] == "npa-fiftyone"
-    assert deploy_container.call_args.kwargs["image_ref"].endswith("/npa-fiftyone:1.15.0")
+    assert deploy_container.call_args.kwargs["image_ref"].endswith(
+        "/npa-fiftyone:1.15.0.post1"
+    )
     assert deploy_container.call_args.kwargs["gpu"] is False
     wb_cfg = write_config.call_args_list[0].args[0]["projects"]["proj"]["workbenches"]["curate-container"]
     assert wb_cfg["runtime"] == "container"
@@ -1869,3 +1871,72 @@ def test_run_fiftyone_command_error_omits_command(mocker) -> None:
     assert secret_command not in message
     assert "Command failed (exit 5)" in message
     assert "boom detail" in message
+
+
+def test_curate_augmented_requires_real_fiftyone_when_requested(mocker) -> None:
+    curate = mocker.patch(
+        "npa.workflows.data_factory_stages.curate",
+        return_value={
+            "curation_engine": "report-only",
+            "curation_warn": "FiftyOne database unavailable",
+            "written_uri": "s3://bucket/run/curation/report.json",
+        },
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "curate-augmented",
+            "--augment-uri",
+            "s3://bucket/run/cosmos_augmented/",
+            "--report-uri",
+            "s3://bucket/run/curation/report.json",
+            "--curator-report-uri",
+            "s3://bucket/run/curation/cosmos_curator.json",
+            "--dedup-threshold",
+            "0.2",
+            "--require-fiftyone",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "real FiftyOne Brain curation was required" in result.output
+    assert curate.call_args.kwargs["curator_report_uri"].endswith("cosmos_curator.json")
+    assert curate.call_args.kwargs["dedup_threshold"] == 0.2
+
+
+def test_curate_augmented_reports_real_fiftyone_engine(mocker) -> None:
+    mocker.patch(
+        "npa.workflows.data_factory_stages.curate",
+        return_value={
+            "curation_engine": "fiftyone-brain",
+            "clip_ids": ["aug-0"],
+            "curated_kept": 1,
+            "curated_dropped": 0,
+            "fiftyone": {"brain": {"uniqueness": {"mean": 0.7}}},
+            "written_uri": "s3://bucket/run/curation/report.json",
+        },
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "curate-augmented",
+            "--augment-uri",
+            "s3://bucket/run/cosmos_augmented/",
+            "--report-uri",
+            "s3://bucket/run/curation/report.json",
+            "--require-fiftyone",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["engine"] == "fiftyone-brain"

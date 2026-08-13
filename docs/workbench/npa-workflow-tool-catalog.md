@@ -7,6 +7,14 @@ Source of truth: `npa/src/npa/orchestration/npa_workflow/catalog.py`.
 This table must list every `TOOL_CATALOG` key (enforced by
 `npa/tests/orchestration/npa_workflow/test_catalog_doc_sync.py`).
 
+Catalog reachability is fail-closed: every entry is consumed by a shipped spec
+except the explicitly public composition primitives `infra.fleet.deploy`,
+`infra.soperator.deploy`, `workbench.cosmos2.transfer`,
+`workbench.foxglove.convert`, `workbench.insights.record`,
+`workbench.isaac_lab.byof_repo`, `workbench.lerobot.eval`, and
+`workbench.sim2real.run`. The reusable-only list is machine-checked against
+`PUBLIC_REUSABLE_TOOLREFS`; accidental dead entries fail the guardrail.
+
 | toolRef | CLI / module | Typical inputs | Typical outputs | Stub? |
 | --- | --- | --- | --- | --- |
 | `infra.fleet.deploy` | `npa fleet deploy` | `config.fleet_spec` | fleet deploy JSON | no |
@@ -25,16 +33,28 @@ This table must list every `TOOL_CATALOG` key (enforced by
 | `workbench.token_factory.caption` | `npa workbench token-factory caption` | `config.images_uri` | `config.captions_uri` | no |
 | `workbench.token_factory.generate` | `npa workbench token-factory generate` | `config.prompts_uri` | `config.generations_uri` | no |
 | `workbench.cosmos2.transfer` | `npa workbench cosmos2 transfer` | `config.trigger_uri` | `config.augment_uri` | no |
-| `workbench.cosmos2.transfer_execute` | `npa workbench cosmos2 transfer --execute` | supported video under `config.trigger_uri` (required) | `config.augment_uri` | yes (real, input-conditioned Cosmos Transfer 2.5 on GPU; uploads video + frames to S3 and fails closed without input) |
+| `workbench.cosmos2.transfer_execute` | `npa workbench cosmos2 transfer --execute` | supported video or PNG/JPEG frames under `config.trigger_uri` (required) | `config.augment_uri` | yes (real, input-conditioned Cosmos Transfer 2.5 on GPU; uploads video + frames to S3 and fails closed without input) |
 | `workbench.cosmos2.transfer_conditioned_execute` | `npa workbench cosmos2 transfer --execute --condition-on-input` | `config.trigger_uri` | `config.augment_uri` | yes (real input-conditioned Cosmos Transfer 2.5; publishes exact frames in the canonical manifest) |
 | `workbench.cosmos3.generate` | `npa workbench cosmos3 generate` | `config.prompt`, `config.cosmos3_mode`, `config.cosmos3_checkpoint` | `config.output_uri` | yes (real Cosmos 3 omni-model generation on GPU in `npa-cosmos3`; gated weights download at runtime with the operator's HF token) |
 | `workbench.cosmos3.reason` | `npa workbench cosmos3 reason` | `config.scene_uri` | `config.reason_uri` | no |
 | `workbench.cosmos_evaluator.evaluate` | `npa workbench cosmos-evaluator evaluate` | `config.rollouts_uri`, `config.input_uri`, `config.configs_uri` | `config.scores_uri` | yes (real NVIDIA Cosmos Evaluator: hallucination + VLM attribute verification) |
 | `workbench.cosmos_curate.curate` | `npa workbench cosmos-curate curate-augmented` | `config.augment_uri` | `config.curated_clips_uri`, `config.curator_report_uri` | yes (real NVIDIA Cosmos Curator stages: split, transcode, motion score, catalog) |
+| `workbench.fiftyone.curate_augmented` | `npa workbench fiftyone curate-augmented --require-fiftyone` | `config.augment_uri`, `config.curator_report_uri` | `config.curation_report_uri` | no (real FiftyOne Brain uniqueness, similarity, duplicate detection, and PCA review; fails closed) |
 | `workbench.lerobot.eval` | `npa workbench lerobot eval` | `config.checkpoint_uri`, `config.env` | `config.eval_uri` | no |
 | `workbench.retargeting.run` | `npa workbench sonic retargeting run` | `config.motion_uri` | `config.retargeted_uri` | no |
 | `workbench.mjlab.eval` | `npa workbench mjlab eval` | `config.motion_uri`, `config.checkpoint_uri` | `config.mjlab_uri` | no |
 | `workbench.sonic.train` | `npa workbench sonic train` | `config.checkpoint_uri`, `config.data_uri` | training checkpoint | no |
+| `workflow.groot.prepare_split` | `npa.workflows.groot_learning prepare-split` | source GR00T LeRobot dataset | hashed, episode-disjoint train/held-out datasets + split manifest with train-only statistics | no |
+| `workflow.groot.preflight_rigor` | `npa.workflows.groot_learning preflight-rigor` | declared GPU, batch, split, and training-budget configuration | fail-fast absolute-action, effective-batch, cohort, and optimizer-step contract | no |
+| `workbench.groot.baseline_eval` | `npa.workflows.groot_learning baseline-eval` | split manifest, train/held-out datasets, pinned N1.7 base model | zero-update custom-embodiment checkpoint + real held-out predictions/expert actions/metrics | yes (real `Gr00tPolicy.get_action` forwards) |
+| `workbench.groot.finetune` | `npa workbench groot finetune --runtime local` | GR00T-format LeRobot dataset at `config.data_uri`, pinned N1.7 base model, positive `config.gpu_count` | vendor checkpoints + `npa_groot_finetune_manifest.json` at `config.checkpoint_uri` | yes (real upstream multi-GPU trainer) |
+| `workflow.groot.resolve_trained_checkpoint` | `npa.workflows.groot_task_performance resolve-trained-checkpoint` | split/training manifests and uploaded trainer output | step-contract-checked immutable checkpoint reference | no |
+| `workbench.groot.posttrain_eval` | `npa.workflows.groot_learning posttrain-eval` | resolved immutable checkpoint reference and unchanged held-out split | aligned real held-out predictions/expert actions plus aggregate/per-dimension errors | yes (real `Gr00tPolicy.get_action` forwards) |
+| `workflow.groot.compare_learning` | `npa.workflows.groot_learning compare-learning` | baseline/post evaluations, split and real training manifest | structurally fail-closed report with separate pipeline status and `improved`/`not_improved` outcome, plus offline held-out comparison video | no |
+| `workflow.groot.emit_learning_mcap` | `npa.workflows.groot_learning emit-mcap` | completed learning report and aligned evaluation tensors, including `not_improved` | inspected camera/action/error/metric `reports/groot-offline-evaluation.mcap` | no |
+| `workflow.groot.emit_learning_rrd` | `npa.workflows.groot_learning emit-rrd` | completed learning report and aligned evaluation tensors, including `not_improved` | native-archetype `reports/groot-offline-evaluation.rrd` with camera/action/error blueprint | no |
+| `workflow.groot.publish_learning` | `npa.workflows.groot_learning publish` | learning report, MCAP, RRD, video, exact workflow YAML | hashed `publish-manifest.json` and validated report index | no |
+| `workflow.groot.verify_agent_ui` | `npa.workflows.groot_learning verify-agent-ui` | exact run report, RRD, MCAP, deployed agent URL, runtime-only Basic auth | run discovery, artifact association, Rerun/Lichtblick readiness, and byte-range verification report | no |
 | `workbench.sonic.export` | `npa workbench sonic export` | `config.checkpoint_uri` | `config.onnx_uri` | no |
 | `workbench.sonic.eval` | `npa workbench sonic eval` | `config.onnx_uri` | eval report | no |
 | `workbench.lerobot.policy_rollout` | `python3 -m npa.workbench.lerobot.policy_container eval` | `config.policy_checkpoint`, `config.rollout_episodes` | rendered episodes under `config.rollouts_uri` | no |
@@ -47,6 +67,7 @@ This table must list every `TOOL_CATALOG` key (enforced by
 | `workbench.isaac_lab.capture_frames` | `python3 -m npa.workflows.isaac_capture` | `config.isaac_task`, `config.scene_uri`, `config.capture_max_steps`, `config.capture_max_frames` | `<scene_uri>frame_NN.png`, `<scene_uri>isaac_capture_summary.json` | yes |
 | `workbench.sim2real_envgen.actions` | `python3 -m npa.workflows.sim2real_envgen actions` | `config.envgen_root_uri`, `config.train_envs_uri`, `config.actions_uri`, `config.action_limit`, `config.policy_image` | `<actions_uri>actions-summary.json`, `<actions_uri>envs.jsonl` | no |
 | `workbench.sim2real_envgen.split` | `python -m npa.workflows.sim2real_envgen split` | `config.envgen_root_uri`, `config.train_fraction` | `envs/manifest/split-manifest.json` | no |
+| `workbench.sim2real.run` | `npa workbench sim2real run` | trigger dataset, robot/scene config, loop counts, held-out threshold, and resolved sibling namespace/service-account/pull-secret/env-secret/GPU-product/per-stage images | final report + Rerun recording under the run S3 prefix | no |
 | `workbench.sonic.train` | `npa workbench sonic train` | `config.sonic_runtime` (use `local`), `config.checkpoint_uri`, `config.data_uri`, `config.train_iterations` | `config.training_uri` (`checkpoint.pt` + `checkpoint.json`) | no |
 | `workbench.sonic.export` | `npa workbench sonic export` | `config.checkpoint_uri` (local path or `s3://`) | `config.onnx_uri` (+ `.metadata.json` sidecar) | no |
 | `workbench.sonic.eval` | `npa workbench sonic eval` | `config.onnx_uri` (local path or `s3://`), `config.episodes`, `config.env` | `config.eval_uri` | no |

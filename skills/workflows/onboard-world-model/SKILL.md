@@ -169,7 +169,7 @@ Upload the `.rrd` to the run's S3 prefix and load it into a live agent:
 ```bash
 curl -sk -u "$AGENT_USER:$AGENT_PASSWORD" -X POST https://<agent-ip>/api/sim-viz/load-artifact \
   -H 'content-type: application/json' \
-  -d '{"s3_uri": "s3://<bucket>/<prefix>/<model>_world_model.rrd"}'
+  -d '{"run_id":"<run-id>","s3_uri": "s3://<bucket>/<prefix>/<run-id>/<model>_world_model.rrd"}'
 ```
 
 ## Cross-World-Model Gotchas

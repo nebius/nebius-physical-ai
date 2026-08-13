@@ -715,7 +715,12 @@ def test_profile_train_serverless_inline_embeds_script(tmp_path: Path) -> None:
         output_path="s3://bucket/out/",
     )
 
-    assert base64.b64encode(gzip.compress(script.read_bytes())).decode("ascii") in command
+    # Deterministic: gzip would otherwise stamp the current time into the header,
+    # so this compared equal only when both calls landed in the same second.
+    assert (
+        base64.b64encode(gzip.compress(script.read_bytes(), mtime=0)).decode("ascii")
+        in command
+    )
     assert "base64 -d | gzip -dc > /tmp/profile_train.py" in command
     assert "NPA_PROFILE_COMPLETE" in command
 

@@ -8,6 +8,7 @@ monolithic backend template while preserving one auditable critical section.
 from __future__ import annotations
 
 import hashlib
+import shutil
 from pathlib import Path
 
 # NPA_EMBED_STANDALONE_START
@@ -17,15 +18,16 @@ from pathlib import Path
 if __name__ == "npa.cli.agent_viewer_runtime":
     (
         DEFAULT_SIM_VIZ,
+        GROOT_TRAINING_CAMERA_LABEL,
         LICHTBLICK_RECORDING_HTTP_PATH,
         MCAP_RECORDING_PATH,
         NEURAL_RECONSTRUCTION_CAMERA_LABEL,
         NEURAL_RECONSTRUCTION_PREVIEW_ENTITY,
         NEURAL_RECONSTRUCTION_VIEWER_NOTE,
         RECORDING_PATH,
+        RRD_PATH,
         _ARTIFACT_LOAD_LOCK,
         _copy_artifact_preview,
-        clear_cross_run_mcap_state,
         _is_data_factory_recording,
         _is_sim2real_pipeline_recording,
         _lichtblick_iframe_url,
@@ -42,8 +44,9 @@ if __name__ == "npa.cli.agent_viewer_runtime":
         _sim_viz_load_response,
         _sim2real_pipeline_camera_label,
         _wait_rerun_web_viewer_healthy,
+        is_groot_training_recording,
         is_neural_reconstruction_recording,
-    ) = (None,) * 27
+    ) = (None,) * 29
 # NPA_EMBED_STANDALONE_END
 
 
@@ -134,10 +137,7 @@ def _stage_label(stage_key: str) -> str:
     key = str(stage_key or "").strip()
     if key in _STAGE_LABELS:
         return _STAGE_LABELS[key]
-    cleaned = (
-        key.replace("_", " ").replace("/", " / ").replace("-", " ").strip()
-        or "Artifacts"
-    )
+    cleaned = key.replace("_", " ").replace("/", " / ").replace("-", " ").strip() or "Artifacts"
     return cleaned[:1].upper() + cleaned[1:]
 
 
@@ -231,6 +231,7 @@ def _apply_loaded_artifact(
     source_identity: tuple[str, str, str] = ("", "", ""),
     run_ref: str = "",
     requested_camera: str = "",
+    artifact_contract: dict | None = None,
 ) -> dict:
     now = _now_iso()
     sim_viz = dict(DEFAULT_SIM_VIZ)
@@ -239,27 +240,46 @@ def _apply_loaded_artifact(
         sim_viz.update(current)
     # Never let a previous RRD's binding survive a later media load.
     sim_viz.pop("served_recording_sha256", None)
-    clear_cross_run_mcap_state(sim_viz, run_id)
     camera = str(sim_viz.get("camera") or "workspace")
+    contract = artifact_contract if isinstance(artifact_contract, dict) else {}
+    contract_matches = contract.get("matches") if isinstance(contract.get("matches"), dict) else {}
+    learning_paths = {
+        str(path)
+        for semantic in ("rrd", "mcap")
+        for path in contract_matches.get(semantic) or []
+    }
+    is_learning = contract.get("authoritative") is True and any(
+        str(key).endswith("/" + path) or str(key) == path for path in learning_paths
+    )
+    contract_camera = str(contract.get("primary_camera") or "").strip()
     # Keep the data-factory exclusion on one line: npa/tests/cli/test_agent.py
     # guards that exact expression as source text.
-    # fmt: off
     if (
         render == "rerun"
         and _is_sim2real_pipeline_recording(key) and not _is_data_factory_recording(key)
         and not is_neural_reconstruction_recording(key)
     ):
-        # fmt: on
         camera = _sim2real_pipeline_camera_label(camera)
+    elif render == "rerun" and is_learning:
+        camera = contract_camera
+    elif render == "rerun" and is_groot_training_recording(key):
+        # A training-telemetry recording must not inherit a previous policy
+        # rollout's held-out camera label or preview entity.
+        camera = GROOT_TRAINING_CAMERA_LABEL
     elif render == "rerun" and is_neural_reconstruction_recording(key):
         # A NuRec run following Sim2Real must not inherit "heldout-sim".
         camera = NEURAL_RECONSTRUCTION_CAMERA_LABEL
     if requested_camera:
-        camera = (
-            _sim2real_pipeline_camera_label(requested_camera)
-            if _is_sim2real_pipeline_recording(key)
-            else requested_camera
-        )
+        if _is_sim2real_pipeline_recording(key):
+            camera = _sim2real_pipeline_camera_label(requested_camera)
+        elif is_learning:
+            if requested_camera != contract_camera:
+                raise ValueError("requested camera differs from validated GR00T provenance")
+            camera = contract_camera
+        elif is_groot_training_recording(key):
+            camera = GROOT_TRAINING_CAMERA_LABEL
+        else:
+            camera = requested_camera
     resource_bucket, project_id, resolved_prefix = source_identity
     sim_viz.update(
         {
@@ -274,6 +294,10 @@ def _apply_loaded_artifact(
             "artifact_run_ref": str(run_ref or ""),
             "mode": "static",
             "camera": camera,
+            "artifact_contract": contract if is_learning else {},
+            "artifact_contract_authoritative": bool(is_learning),
+            "evaluation_kind": str(contract.get("evaluation_kind") or "") if is_learning else "",
+            "closed_loop": bool(contract.get("closed_loop")) if is_learning else False,
             "bucket": str(resource_bucket or "").strip(),
             "project_id": str(project_id or "").strip(),
             "resolved_prefix": str(resolved_prefix or "").strip(),
@@ -281,9 +305,13 @@ def _apply_loaded_artifact(
     )
     if render == "rerun":
         capability_path = _publish_rrd_recording(local_path)
-        sim_viz["served_recording_sha256"] = hashlib.sha256(
-            RECORDING_PATH.read_bytes()
-        ).hexdigest()
+        # The systemd Rerun service opens RRD_PATH while nginx serves
+        # RECORDING_PATH. Keep both atomically on the selected real artifact.
+        if RRD_PATH.parent.is_dir():
+            rrd_tmp = RRD_PATH.with_suffix(".rrd.tmp")
+            shutil.copy2(local_path, rrd_tmp)
+            rrd_tmp.replace(RRD_PATH)
+        sim_viz["served_recording_sha256"] = hashlib.sha256(RECORDING_PATH.read_bytes()).hexdigest()
         restarted = _restart_rerun_serve(force=True)
         rerun_ready = _wait_rerun_web_viewer_healthy() if restarted else False
         sim_viz["rrd_uri"] = f"file://{RECORDING_PATH}"
@@ -293,7 +321,24 @@ def _apply_loaded_artifact(
             str(sim_viz.get("camera") or "workspace"), recording_path=capability_path
         )
         sim_viz["rerun_ready"] = bool(capability_path) and rerun_ready
-        if _is_data_factory_recording(key):
+        if is_learning:
+            sim_viz["preview_entity"] = f"heldout/camera/{camera}"
+            sim_viz["visualization_note"] = (
+                "Offline held-out GR00T policy evaluation loaded (not a rollout). "
+                f"The validated primary camera is {camera}. The Rerun recording aligns "
+                "persisted held-out frames with expert and baseline/post-training "
+                "predictions, action error, finite training loss, and provenance."
+            )
+        elif is_groot_training_recording(key):
+            sim_viz["preview_entity"] = GROOT_TRAINING_CAMERA_LABEL
+            sim_viz["visualization_note"] = (
+                "GR00T training telemetry loaded. Entities contain representative "
+                "frames decoded from the run's real LeRobot dataset, validated "
+                "training metrics, safe logs, and provenance. Frame time is "
+                "dataset/synthetic-fps, not robot capture time; this is not a "
+                "policy rollout evaluation."
+            )
+        elif _is_data_factory_recording(key):
             sim_viz["preview_entity"] = "augmented"
             sim_viz["visualization_note"] = (
                 "Physical AI Data Factory recording loaded. Entities: input/<clip> "
@@ -327,39 +372,40 @@ def _apply_loaded_artifact(
         if is_mcap:
             _publish_mcap_recording(local_path)
             mcap_url = _lichtblick_recording_url()
-            start_time_ns = 0
-            end_time_ns = 0
-            try:
-                from npa.workbench.foxglove.inspect import summarize_mcap
-
-                mcap_info = summarize_mcap(local_path)
-                start_time_ns = int(mcap_info.start_time_ns)
-                end_time_ns = int(mcap_info.end_time_ns)
-            except (ImportError, OSError, RuntimeError, ValueError):
-                # The artifact was already validated as MCAP by its renderer. A
-                # reader-side timing failure must not suppress the download or
-                # viewer; it only removes the initial seek optimization.
-                pass
             sim_viz["mcap_uri"] = f"file://{MCAP_RECORDING_PATH}"
             sim_viz["artifact_preview_url"] = LICHTBLICK_RECORDING_HTTP_PATH
             sim_viz["artifact_download_url"] = LICHTBLICK_RECORDING_HTTP_PATH
             sim_viz["lichtblick_iframe_url"] = _lichtblick_iframe_url(
                 mcap_url=mcap_url,
-                start_time_ns=start_time_ns,
-                end_time_ns=end_time_ns,
+                mcap_size=MCAP_RECORDING_PATH.stat().st_size,
+                primary_camera=camera if is_learning else "",
             )
             sim_viz["lichtblick_ready"] = MCAP_RECORDING_PATH.is_file()
-            sim_viz["visualization_note"] = (
-                "MCAP recording loaded: it plays in the embedded Lichtblick "
-                "(Foxglove-compatible, OSS) viewer — rollout camera, VLM critiques and "
-                "reward/advantage signals — and the same file is published on a CORS + "
-                "byte-range path for the official Foxglove app."
-            )
+            if is_learning:
+                sim_viz["visualization_note"] = (
+                    "Offline held-out GR00T policy-evaluation MCAP loaded (not a rollout). "
+                    f"The validated primary camera topic is /camera/{camera}; aligned "
+                    "expert/model actions, errors, held-out metrics, loss, and provenance "
+                    "use explicit dataset-index/optimizer-step time domains."
+                )
+            elif is_groot_training_recording(key):
+                sim_viz["visualization_note"] = (
+                    "GR00T training telemetry MCAP loaded in the embedded Lichtblick "
+                    "viewer. It contains real dataset frames, safe training logs, and "
+                    "factual metrics on dataset/synthetic-fps time; it is not a policy "
+                    "rollout or robot-capture recording. The same file is also published "
+                    "on a CORS + byte-range path for Foxglove-compatible clients."
+                )
+            else:
+                sim_viz["visualization_note"] = (
+                    "MCAP recording loaded: it plays in the embedded Lichtblick "
+                    "(Foxglove-compatible, OSS) viewer — rollout camera, VLM critiques and "
+                    "reward/advantage signals — and the same file is published on a CORS + "
+                    "byte-range path for the official Foxglove app."
+                )
         else:
             sim_viz["lichtblick_ready"] = False
-            sim_viz["artifact_preview_url"] = published or _copy_artifact_preview(
-                local_path, key
-            )
+            sim_viz["artifact_preview_url"] = published or _copy_artifact_preview(local_path, key)
             sim_viz["artifact_download_url"] = sim_viz["artifact_preview_url"]
             sim_viz["visualization_note"] = (
                 f"Recording loaded ({Path(key).suffix.lower() or 'unknown'}). Foxglove-family "

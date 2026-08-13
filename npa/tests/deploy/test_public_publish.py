@@ -6,7 +6,7 @@ boundary: whatever is classified non-redistributable must never be selected for 
 registry, and the selector must stay in sync with the packaging contract's
 ``redistribution:`` fields.
 
-``OMNIVERSE_RESTRICTED_TOOLS`` is currently EMPTY — the four Isaac images were
+The four Isaac images are no longer restricted — they were
 re-architected to fetch Isaac Sim / Isaac Lab at first run under the operator's own EULA
 acceptance instead of baking it, so every workbench tool is now publishable. That makes
 the boundary tests the delicate ones: asserting "nothing is restricted" would pass just
@@ -41,8 +41,10 @@ from npa.deploy.images import (
 )
 from npa.deploy.publish_public import (
     PublishItem,
+    _pin_publication_sources as REAL_PUBLICATION_SOURCE_PIN,
     _pin_wan_publication_sources as REAL_WAN_SOURCE_PIN,
     build_publish_plan,
+    verify_bootstrap_publication_source as REAL_BOOTSTRAP_PUBLICATION_GATE,
     verify_wan_publication_source as REAL_WAN_PUBLICATION_GATE,
 )
 
@@ -64,6 +66,16 @@ def _avoid_registry_attestation_reads_in_unrelated_publish_tests(monkeypatch) ->
         publish_public,
         "_pin_wan_publication_sources",
         lambda plan: (list(plan), []),
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "_pin_publication_sources",
+        lambda plan: (list(plan), []),
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "verify_bootstrap_publication_source",
+        lambda item: (True, "test fixture: bootstrap gate verified"),
     )
 
 
@@ -90,6 +102,82 @@ def test_wan_source_tag_is_frozen_before_preflight_and_copy(monkeypatch) -> None
     assert plan[0].source_ref == f"source.example/npa-wan2-2@{digest}"
 
 
+def test_every_publication_source_is_frozen_before_any_gate(monkeypatch) -> None:
+    from npa.deploy import publish_public
+
+    digest = "sha256:" + "b" * 64
+    monkeypatch.setattr(
+        publish_public, "_crane_digest", lambda ref, **_: (True, digest)
+    )
+    plan, failures = REAL_PUBLICATION_SOURCE_PIN(
+        [
+            PublishItem(
+                tool="cosmos2-transfer",
+                source_ref="source.example/npa-cosmos2-transfer:release",
+                target_ref="target.example/npa-cosmos2-transfer:release",
+            )
+        ]
+    )
+    assert failures == []
+    assert plan[0].source_ref.endswith(f"@{digest}")
+
+
+@pytest.mark.parametrize(
+    ("labels", "expected"),
+    [
+        ({}, "missing bootstrap-contract attestation"),
+        (
+            {"org.nebius.npa.skypilot-bootstrap-contract": "stale-contract"},
+            "attestation version mismatch",
+        ),
+    ],
+)
+def test_publication_refuses_missing_or_stale_bootstrap_attestation(
+    monkeypatch, labels, expected
+) -> None:
+    from npa.deploy import publish_public
+
+    digest = "sha256:" + "c" * 64
+    monkeypatch.setattr(
+        publish_public,
+        "_crane_json",
+        lambda args: {"config": {"Labels": labels}},
+    )
+    ok, detail = REAL_BOOTSTRAP_PUBLICATION_GATE(
+        PublishItem(
+            tool="cosmos2-transfer",
+            source_ref=f"source.example/npa-cosmos2-transfer@{digest}",
+            target_ref="target.example/npa-cosmos2-transfer:release",
+        )
+    )
+    assert not ok
+    assert expected in detail
+
+
+def test_publication_accepts_exact_digest_bootstrap_attestation(monkeypatch) -> None:
+    from npa.deploy import publish_public
+    from npa.orchestration.skypilot.image_bootstrap_contract import (
+        ATTESTATION_LABEL,
+        CONTRACT_VERSION,
+    )
+
+    digest = "sha256:" + "d" * 64
+    monkeypatch.setattr(
+        publish_public,
+        "_crane_json",
+        lambda args: {"config": {"Labels": {ATTESTATION_LABEL: CONTRACT_VERSION}}},
+    )
+    ok, detail = REAL_BOOTSTRAP_PUBLICATION_GATE(
+        PublishItem(
+            tool="cosmos2-transfer",
+            source_ref=f"source.example/npa-cosmos2-transfer@{digest}",
+            target_ref="target.example/npa-cosmos2-transfer:release",
+        )
+    )
+    assert ok
+    assert digest in detail
+
+
 def test_isaac_images_are_no_longer_restricted() -> None:
     """Removing baked Omniverse Kit made the Isaac images publishable.
 
@@ -102,8 +190,8 @@ def test_isaac_images_are_no_longer_restricted() -> None:
         assert is_publicly_redistributable(tool), tool
 
 
-def test_no_tool_is_currently_restricted() -> None:
-    """Nothing is excluded any more, which took THREE separate fixes for sonic.
+def test_isaac_tools_are_public_while_cosmos3_serving_is_restricted() -> None:
+    """The Isaac fixes do not imply an unrelated vendor base may be mirrored.
 
     Omniverse Kit was only the first: sonic also baked gated model weights (git-LFS
     smudging) and NVIDIA Omniverse 3D assets (the RoboCasa asset library under
@@ -111,15 +199,14 @@ def test_no_tool_is_currently_restricted() -> None:
     visible in the Dockerfile. The scan that clears it:
     npa-sonic:0.1.2-rtfetch-rc5, 125,655 entries, 16 allowlisted paths, VERDICT clean.
     """
-    assert OMNIVERSE_RESTRICTED_TOOLS == frozenset()
+    assert OMNIVERSE_RESTRICTED_TOOLS == frozenset({"cosmos3-serving"})
     assert OMNIVERSE_RESTRICTED_DERIVED_IMAGES == frozenset()
     for tool in ("isaac-lab", "sonic", "groot"):
         assert is_publicly_redistributable(tool), tool
 
 
 def test_public_set_excludes_every_restricted_tool(monkeypatch) -> None:
-    """The exclusion still works. Monkeypatched, because the real set is empty and an
-    all-inclusive selector would satisfy an assertion over an empty set trivially."""
+    """The exclusion remains effective for canonical tools too."""
     monkeypatch.setattr(
         images, "OMNIVERSE_RESTRICTED_TOOLS", frozenset({"genesis", "cosmos"})
     )
@@ -199,6 +286,20 @@ def test_publish_plan_copies_the_pinned_tag_unchanged() -> None:
         assert source_image == target_image, item
 
 
+def test_publish_plan_uses_the_public_sonic_pin_not_the_default_variant() -> None:
+    plan = build_publish_plan(
+        target_registry="ghcr.io/example/workbench",
+        source_registry="cr.eu-north1.nebius.cloud/example",
+    )
+    sonic = next(item for item in plan if item.tool == "sonic")
+    expected = (
+        "npa-sonic:cuda13-b300-0.1.2-k8s-runtime-"
+        "sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+    )
+    assert sonic.source_ref.endswith(expected)
+    assert sonic.target_ref.endswith(expected)
+
+
 def test_public_registry_defaults_to_ghcr(monkeypatch) -> None:
     monkeypatch.delenv("NPA_PUBLIC_REGISTRY", raising=False)
     assert public_container_registry() == DEFAULT_PUBLIC_CONTAINER_REGISTRY
@@ -220,7 +321,9 @@ def test_publish_plan_targets_public_registry_by_default() -> None:
     # And, since the Isaac re-architecture emptied the restricted set: every image the repo
     # builds is now publishable. This is the assertion that would catch a tool silently
     # dropping out of the plan, which the derived equality above cannot.
-    assert len(plan) == len(CONTAINER_IMAGE_NAMES) - len(OMNIVERSE_RESTRICTED_TOOLS)
+    assert len(plan) == len(CONTAINER_IMAGE_NAMES) - len(
+        set(CONTAINER_IMAGE_NAMES) & set(OMNIVERSE_RESTRICTED_TOOLS)
+    )
     for item in plan:
         assert item.target_ref.startswith(DEFAULT_PUBLIC_CONTAINER_REGISTRY + "/npa-")
     # npa-foxglove-embed carries only MIT (@foxglove/embed) + Apache-2.0 (Caddy)
@@ -232,8 +335,7 @@ def test_restricted_image_names_cover_every_contract_restricted_image() -> None:
     """The operator-facing excluded list must name every restricted image, derived
     variants included, without any caller hardcoding them.
 
-    Both sides are currently empty, which is the property being locked: the code and the
-    packaging contract must agree about what may not be published.
+    The code and packaging contract must agree about what may not be published.
     """
     contract = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
     contract_restricted = {
@@ -265,14 +367,10 @@ def test_contract_marks_the_isaac_images_public_and_runtime_fetch() -> None:
 
 
 def test_the_restriction_mechanism_still_exists() -> None:
-    """Deliberately kept with an empty membership, not deleted.
-
-    The next runtime we cannot ship needs exactly this machinery, and a mechanism that
-    gets deleted when unused has to be rebuilt and re-reviewed under time pressure.
-    """
+    """The build-your-own Cosmos3 serving image exercises this boundary."""
     assert hasattr(images, "OMNIVERSE_RESTRICTED_TOOLS")
     assert hasattr(images, "OMNIVERSE_RESTRICTED_DERIVED_IMAGES")
-    assert omniverse_restricted_image_names() == []
+    assert omniverse_restricted_image_names() == ["cosmos3-serving"]
     for symbol in (
         "is_publicly_redistributable",
         "omniverse_restricted_image_names",
@@ -285,7 +383,7 @@ def test_the_restriction_mechanism_still_exists() -> None:
         in yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))["redistribution"][
             "classes"
         ]
-    ), "the restricted class must survive having no members"
+    ), "the restricted class must remain enforced"
 
 
 def test_selector_matches_packaging_contract_classification() -> None:
@@ -1028,7 +1126,7 @@ def test_crane_copy_skips_a_target_with_the_exact_source_digest(
 
     item = PublishItem(
         tool="lerobot",
-        source_ref="source.example/npa-lerobot:1.0",
+        source_ref="source.example/npa-lerobot@sha256:" + "a" * 64,
         target_ref="target.example/npa-lerobot:1.0",
     )
     monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/usr/bin/crane")
@@ -1099,7 +1197,7 @@ def test_crane_copy_updates_a_target_with_a_different_digest(
 
     item = PublishItem(
         tool="lerobot",
-        source_ref="source.example/npa-lerobot:1.0",
+        source_ref="source.example/npa-lerobot@sha256:" + "a" * 64,
         target_ref="target.example/npa-lerobot:1.0",
     )
     target_reads = iter([(True, "sha256:old"), (True, "sha256:new")])
@@ -1140,7 +1238,7 @@ def test_crane_copy_creates_a_missing_or_pull_denied_target(
 
     item = PublishItem(
         tool="lerobot",
-        source_ref="source.example/npa-lerobot:1.0",
+        source_ref="source.example/npa-lerobot@sha256:" + "a" * 64,
         target_ref="target.example/npa-lerobot:1.0",
     )
     target_reads = iter([(False, target_error), (True, "sha256:new")])
@@ -1163,16 +1261,16 @@ def test_crane_copy_creates_a_missing_or_pull_denied_target(
     assert calls == [["/usr/bin/crane", "copy", item.source_ref, item.target_ref]]
 
 
-def test_wan_copy_refuses_a_mutable_source_tag(monkeypatch) -> None:
+def test_every_copy_refuses_a_mutable_source_tag(monkeypatch) -> None:
     from npa.deploy import publish_public
 
     monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/usr/bin/crane")
     with pytest.raises(RuntimeError, match="pinned by exact OCI digest"):
         publish_public._crane_copy(
             PublishItem(
-                tool="wan2-2",
-                source_ref="source.example/npa-wan2-2:mutable",
-                target_ref="target.example/npa-wan2-2:mutable",
+                tool="cosmos2-transfer",
+                source_ref="source.example/npa-cosmos2-transfer:mutable",
+                target_ref="target.example/npa-cosmos2-transfer:mutable",
             )
         )
 
@@ -1184,7 +1282,7 @@ def test_crane_copy_refuses_an_unknown_target_digest_failure(monkeypatch) -> Non
 
     item = PublishItem(
         tool="lerobot",
-        source_ref="source.example/npa-lerobot:1.0",
+        source_ref="source.example/npa-lerobot@sha256:" + "a" * 64,
         target_ref="target.example/npa-lerobot:1.0",
     )
     digests = {

@@ -100,9 +100,15 @@ def test_isaac_heldout_script_requires_source_tarball() -> None:
 
 def test_envgen_raw_shard_script_invokes_envgen_module_directly() -> None:
     script = _component_job_script("envgen_raw_shard")
+    assert "export NPA_SKIP_EAGER_IMPORTS=1" in script
     assert "python -m npa.workflows.sim2real_envgen raw-shard" in script
     assert "python -m npa.workflows.sim2real python" not in script
     assert "invalid choice" not in script
+
+
+def test_component_script_avoids_optional_sdk_imports() -> None:
+    script = _component_job_script("cosmos2_transfer")
+    assert "export NPA_SKIP_EAGER_IMPORTS=1" in script
 
 
 def test_engine_resolve_isaac_scene_consumed_stock_envelope(tmp_path: Path) -> None:

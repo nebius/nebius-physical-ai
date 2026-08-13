@@ -32,9 +32,22 @@ bash npa/scripts/verify_byof_onboarding_live.sh
 
 `npa agent deploy` provisions a dedicated long-lived **`npa-agent`** service account when
 IAM allows it; otherwise bootstrap reuses existing terraform_state / saved credentials.
-Persists `ssh_key_path` + `credentials` on the agent record and stages
-`llm.env`, `s3.env`, and `nebius.env` on the VM. Bootstrap resolves SSH from
-the agent record (or `--ssh-key` / `NPA_SSH_KEY`) — not from workbench SSH config.
+Persists `ssh_key_path` and non-secret deployment identity on the agent record;
+storage credentials remain only in the owner-only project credential store.
+Bootstrap stages `llm.env`, `s3.env`, and `nebius.env` on the VM and resolves SSH
+from the agent record (or `--ssh-key` / `NPA_SSH_KEY`) — not from workbench SSH config.
+
+Deploy/bootstrap persists pre-mutation through health-verification checkpoints
+and emits secret-free structured heartbeats during long calls. After lost client
+transport, reconcile the exact remote setup marker and authenticated
+`/api/models`: adopt matching healthy evidence, resume incomplete phases, and
+preserve ambiguous/mismatched evidence without replacing the VM.
+
+Agent VM creation is credential-free: Terraform/cloud-init receives no S3 HMAC
+keys, product tokens, or basic-auth password. After the exact VM identity and SSH
+channel are verified, bootstrap stages runtime credentials with owner-only SFTP
+uploads and atomic installs. A client failure resumes staging on that VM; it does
+not recreate the instance or copy secrets into Terraform state/user-data.
 
 All `npa agent …` and `nebius` IAM commands run on the **operator/dev VM**.
 The **agent VM** only receives staged `/opt/npa-agent/*.env` files.
@@ -100,6 +113,8 @@ Intent router in `npa/src/npa/cli/agent_chat.py` (embedded in remote `backend.py
 | `load_franka` | "load franka", "show demo" | sim-viz/load-franka-demo |
 | `find_artifacts` | "what can I view?", "browse artifacts" | artifacts/runs, artifacts/run/{id}, sim-viz/load-artifact |
 | `onboard_solution` | "containerize github repo", "onboard workbench solution" | tools, workflows/validate, workflows/plan |
+| `create_data_factory_workflow` | "create PAIDF YAML", "fan out augmented variants" | workflows/draft, workflows/validate, workflows/plan |
+| `create_vlm_rl_workflow` | "create sim-to-real YAML", "VLM-RL workflow" | workflows/draft, workflows/validate, workflows/plan |
 
 **BYOF onboarding:** load `skills/workflows/byof-onboard/SKILL.md` (source of truth for base profiles, workloads, live verify). Chat replies reference this skill path — do not paste the full procedure into `agent_chat.py`.
 
@@ -110,6 +125,11 @@ Rules:
 - Grounded replies set `"grounded": true` and `"apis_used": ["sim-viz/status", …]`
 - LLM fallback injects `format_live_context_block(state)` JSON snapshot into the system prompt
 - Workflow drafting should pick a template by **intent + workflow capabilities** (sim2real loop-gate, VLM-RL loop, tokenfactory-cosmos gate, or simple two-step), not by hardcoded endpoint-only replies.
+- PAIDF and sim-to-real drafting resolves the staged agent bucket and configured
+  Kubernetes accelerator/profile before rendering. A conflicting requested GPU
+  fails closed; absent infrastructure remains an explicit placeholder/warning.
+- Chat-generated sim-to-real uses `workbench.sim2real.run` (the real staged
+  engine), not the legacy `workbench.sim2real.*` demo/echo toolRefs.
 
 ## Workflow Draft / Validate / Plan / Submit Loop
 
@@ -235,7 +255,10 @@ Body: `{"camera": "workspace"}` → generates `.rrd`, restarts Rerun service, re
   `render` hints. Follow `next_cursor` with the returned `resolved_prefix` and
   `bucket` (as `resource_bucket`) until `truncated=false`; the UI exposes this
   as **Load next artifact page** so large runs do not block the backend.
-- `POST /api/sim-viz/load-artifact` loads an explicit artifact (`s3_uri` or `run_id` + `key`).
+- `POST /api/sim-viz/load-artifact` loads only a discovered inventory object. Send
+  `run_id` (or server-issued `run_ref`) with `s3_uri`, or send `run_id` + `key`.
+  URI-only requests return versioned error `npa.agent.api_error/v1` with code
+  `run_id_required_for_s3_uri`; this deliberately prevents arbitrary S3 reads.
 - Unknown types are still listed and selectable (`render="download"` fallback).
 
 Exact lookup returns `409 ambiguous_run_id` when the same ID has multiple

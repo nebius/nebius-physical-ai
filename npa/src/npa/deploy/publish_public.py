@@ -8,12 +8,10 @@ This tool is license-guarded: it only ever copies tools reported by
 ``images.publicly_publishable_tools()`` and hard-refuses anything in
 ``images.OMNIVERSE_RESTRICTED_TOOLS`` as defence in depth around that selector.
 
-That set is currently empty. It used to hold ``isaac-lab``, ``sonic`` and ``groot``
-(plus the derived ``sonic-mujoco``), which baked NVIDIA Omniverse Kit; those images
-were re-architected to fetch Isaac Sim / Isaac Lab at first run under the operator's
-own EULA acceptance, so every workbench image is now publishable. The refusal is
-kept, and tested against a synthetic restricted tool, for the next runtime we cannot
-ship.
+The Isaac tools were re-architected to fetch Isaac Sim / Isaac Lab at first run
+under the operator's own EULA acceptance and are publishable. The separately
+contracted ``cosmos3-serving`` image remains build-your-own because its pinned
+vendor base has distribution conditions that anonymous GHCR does not establish.
 
 Example (dry run first, then execute):
 
@@ -119,7 +117,11 @@ def build_publish_plan(
             raise ValueError(
                 f"refusing to publish restricted (Omniverse Kit) tool {tool!r} to a public registry"
             )
-        source_ref = container_image_for_tool(tool, registry=source_registry)
+        source_ref = container_image_for_tool(
+            tool,
+            registry=source_registry,
+            tag=images.public_mirror_tag_for_tool(tool),
+        )
         image = source_ref.rsplit("/", 1)[-1]  # npa-<tool>:<tag>
         plan.append(
             PublishItem(
@@ -481,6 +483,36 @@ def verify_wan_publication_source(item: PublishItem) -> tuple[bool, str]:
         return False, str(exc)
 
 
+def verify_bootstrap_publication_source(item: PublishItem) -> tuple[bool, str]:
+    """Require a digest-bound SkyPilot attestation before any public tag write."""
+
+    from npa.orchestration.skypilot.image_bootstrap_contract import (
+        CONTRACT_VERSION,
+        verify_attestation,
+    )
+
+    match = re.search(r"@(sha256:[0-9a-f]{64})$", item.source_ref)
+    if match is None:
+        return False, "publication source is not pinned by immutable digest"
+    digest = match.group(1)
+    try:
+        config = _crane_json(["config", item.source_ref])
+        nested = config.get("config")
+        nested = nested if isinstance(nested, dict) else {}
+        labels = nested.get("Labels")
+        labels = labels if isinstance(labels, dict) else {}
+        evidence = verify_attestation(
+            image=item.source_ref,
+            digest=digest,
+            labels=labels,
+        )
+        if not evidence.ok or evidence.digest != digest:
+            raise RuntimeError(evidence.detail or "bootstrap attestation is incompatible")
+        return True, f"{CONTRACT_VERSION} bound to {digest}"
+    except (KeyError, TypeError, ValueError, RuntimeError) as exc:
+        return False, str(exc)
+
+
 def _crane_manifest_readable(
     ref: str, *, timeout: float = _PREFLIGHT_TIMEOUT_SECONDS
 ) -> tuple[bool, str]:
@@ -514,6 +546,9 @@ def preflight_sources(plan: list[PublishItem]) -> list[tuple[PublishItem, str]]:
     failures: list[tuple[PublishItem, str]] = []
     for item in plan:
         ok, detail = _crane_manifest_readable(item.source_ref)
+        if ok:
+            ok, detail = verify_bootstrap_publication_source(item)
+            detail = f"BOOTSTRAP GATE — {detail}"
         if ok and item.tool == "wan2-2":
             ok, detail = verify_wan_publication_source(item)
             detail = f"WAN GATE — {detail}"
@@ -842,6 +877,29 @@ def _pin_wan_publication_sources(
     return pinned, failures
 
 
+def _pin_publication_sources(
+    plan: list[PublishItem],
+) -> tuple[list[PublishItem], list[tuple[PublishItem, str]]]:
+    """Resolve every mutable source once before license/attestation gates.
+
+    All later inspection and copying uses the returned immutable references, so
+    moving a source tag cannot swap bytes between validation and publication.
+    """
+
+    pinned: list[PublishItem] = []
+    failures: list[tuple[PublishItem, str]] = []
+    for item in plan:
+        ok, detail = _crane_digest(item.source_ref)
+        if not ok:
+            failures.append((item, detail))
+            continue
+        if re.fullmatch(r"sha256:[0-9a-f]{64}", detail) is None:
+            failures.append((item, f"registry returned invalid digest {detail!r}"))
+            continue
+        pinned.append(replace(item, source_ref=f"{_repository(item.source_ref)}@{detail}"))
+    return pinned, failures
+
+
 def _crane_copy(item: PublishItem) -> bool:
     """Copy ``item`` only when the target is absent or has a different digest.
 
@@ -858,11 +916,8 @@ def _crane_copy(item: PublishItem) -> bool:
             "crane not found on PATH; install go-containerregistry crane"
         )
 
-    if (
-        item.tool == "wan2-2"
-        and re.search(r"@sha256:[0-9a-f]{64}$", item.source_ref) is None
-    ):
-        raise RuntimeError("Wan publication source must be pinned by exact OCI digest")
+    if re.search(r"@sha256:[0-9a-f]{64}$", item.source_ref) is None:
+        raise RuntimeError("publication source must be pinned by exact OCI digest")
 
     source_ok, source_detail = _crane_digest(item.source_ref)
     if not source_ok:
@@ -1071,7 +1126,7 @@ def _preflight_or_explain(
     images are dropped from the returned set instead of failing the run, so a young tool
     whose image has not been built yet cannot block the images that are ready.
     """
-    pinned_plan, resolution_failures = _pin_wan_publication_sources(plan)
+    pinned_plan, resolution_failures = _pin_publication_sources(plan)
     failures = resolution_failures + preflight_sources(pinned_plan)
     if not failures:
         return pinned_plan

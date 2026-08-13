@@ -31,6 +31,9 @@ Optional repository **variables** (not secrets) forwarded to the run:
 | --- | --- |
 | `NPA_E2E_SERVERLESS_PROJECT` | Sandbox project id for the `e2e-serverless` tier |
 | `NPA_E2E_PROJECT` | Override the S3 e2e project alias (harness auto-selects `eu-north1` otherwise) |
+| `NPA_E2E_CLUSTER_CONTEXT` | Exact disposable cluster/context for the manual `mutation-live` tier |
+| `NPA_E2E_AGENT_NAME` | Exact disposable agent name for the manual `mutation-live` tier |
+| `NPA_E2E_CONTROLLER_TRANSACTION_RUN_ID` | Unique run ID for the manual controller transaction regression |
 | `NPA_REGISTRY_ID` | Nebius registry id, passed through for image resolution/inspection |
 | `NPA_DAILY_E2E_SHARDS` | Days to spread the S3 e2e suite over (default 7) |
 | `NPA_DAILY_ENABLE_GPU` | Set to `1` to have `e2e-daily` also run one rotating real-GPU workflow submit |
@@ -59,6 +62,7 @@ The runner script accepts a tier and a git ref: `dev-vm-daily-tests.sh [tier]
 | `e2e-daily` | **Scheduled default.** Comprehensive-workflow coverage gate + plans every `npa.workflow` spec + inspects every workbench image in the registry + a **different rotating shard** of the S3 e2e suite each day + (when `NPA_DAILY_ENABLE_GPU=1`) one rotating real-GPU workflow submit (see below) | CPU + a fraction of the S3 e2e suite; optional single self-cleaning GPU job |
 | `gpu-daily` | ONE rotating real-GPU workflow-submit E2E — a different GPU twin each day via a self-cleaning Nebius managed job (`cancel-on-timeout`) | Real GPU spend, bounded to one managed job |
 | `e2e-serverless` | Serverless endpoint/job e2e (`-m e2e_serverless`) | Real serverless spend; requires `NPA_E2E_SERVERLESS_PROJECT`; self-terminating (see [e2e-serverless.md](e2e-serverless.md)) |
+| `mutation-live` | PR lifecycle and controller-transaction tests against exact project/context/agent/run selectors | **Opt-in, manual only** — destructive mutation; rejected from scheduled events |
 | `live-gpu` | Delegates to `scripts/live-e2e.sh` (the full `-m "gpu and e2e"` sky-cluster suite) | **Opt-in, manual only** — real GPU clusters with verified teardown |
 
 The **scheduled** run uses the tier in the workflow `env.SCHEDULED_TEST_TIER`
@@ -209,6 +213,11 @@ bash scripts/dev-vm-daily-tests.sh e2e main
 # Serverless e2e against a sandbox project:
 NPA_E2E_SERVERLESS_PROJECT=project-eXXXXXXXXXXXX \
   bash scripts/dev-vm-daily-tests.sh e2e-serverless main
+
+# Exact disposable lifecycle/controller mutation (all four selectors required):
+NPA_E2E_PROJECT=alias NPA_E2E_CLUSTER_CONTEXT=context \
+NPA_E2E_AGENT_NAME=agent NPA_E2E_CONTROLLER_TRANSACTION_RUN_ID=run-id \
+  bash scripts/dev-vm-daily-tests.sh mutation-live main
 
 # GPU live path (explicit opt-in):
 NPA_DAILY_ALLOW_LIVE_GPU=1 bash scripts/dev-vm-daily-tests.sh live-gpu main

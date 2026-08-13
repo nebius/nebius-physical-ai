@@ -11,6 +11,10 @@ class MissingS3CredentialsError(ValueError):
     """Raised when a serverless job would launch without usable S3 credentials."""
 
 
+class MissingIsaacEulaAcceptanceError(ValueError):
+    """Raised before remote work when explicit Isaac EULA acceptance is absent."""
+
+
 def require_s3_credentials(
     s3_credentials: Mapping[str, str] | None,
     *,
@@ -61,6 +65,33 @@ def require_s3_credentials(
 #: would gut the mechanism the whole runtime-fetch architecture rests on. Unset stays unset,
 #: and the job then fails with the actionable refusal rather than silently consenting.
 ISAAC_EULA_VARS = ("OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA")
+ISAAC_EULA_ACCEPTED_VALUES = frozenset({"YES", "Y", "1", "TRUE"})
+
+
+def require_isaac_eula_acceptance(*, context: str, resume_command: str) -> None:
+    """Refuse before provisioning unless the caller explicitly accepted both terms."""
+
+    missing = [
+        name
+        for name in ISAAC_EULA_VARS
+        if str(os.environ.get(name) or "").strip().upper()
+        not in ISAAC_EULA_ACCEPTED_VALUES
+    ]
+    if not missing:
+        return
+    resume = (
+        "OMNI_KIT_ACCEPT_EULA=YES ISAACSIM_ACCEPT_EULA=YES "
+        f"{resume_command.strip()}"
+    )
+    raise MissingIsaacEulaAcceptanceError(
+        f"Refusing to provision {context}: explicit operator acceptance is missing "
+        f"for {', '.join(missing)}. The required agreements are the NVIDIA "
+        "Omniverse Licence Agreement, NVIDIA Isaac Sim Additional Software and "
+        "Materials Licence, and NVIDIA Software Licence Agreement; official links "
+        "are listed at https://docs.isaacsim.omniverse.nvidia.com/latest/common/licenses.html. "
+        "No expensive action has begun. Accept only those named agreements, then "
+        f"resume exactly with: {resume}"
+    )
 
 
 def isaac_eula_env() -> dict[str, str]:

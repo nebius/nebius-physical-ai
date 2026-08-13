@@ -1,5 +1,14 @@
 # Cosmos Transfer 2.5 release audit — 2026-08-03
 
+> **Historical release only — not a current SkyPilot bootstrap attestation.**
+> The exact index below predates `skypilot-0.12.2-v1`; its linux/amd64 OCI
+> config does not carry
+> `org.nebius.npa.skypilot-bootstrap-contract=skypilot-0.12.2-v1`. Its SBOM and
+> provenance attest what was built, but do not attest the worker bootstrap
+> contract. Current workflow preflight must reject this digest. Keep the digest
+> immutable for provenance; publish a separately named, additive release only
+> after the new digest passes the bootstrap and redistribution gates.
+
 This is an engineering redistribution and release record, not legal advice. It
 qualifies only the exact registry bytes below. Artifact-level license evidence
 and runtime obligations are recorded in

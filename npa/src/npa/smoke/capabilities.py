@@ -61,6 +61,13 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "decodable image artifact produced (capability, not a CUDA probe)",
         "no baked weights: checkpoint fetched with the operator's HF token",
     ],
+    "cosmos3-serving": [
+        "vLLM-Omni serving stack imports in the pinned build",
+        "pin-specific Hugging Face Xet workaround remains justified",
+        "real entrypoint assembles the pinned 8-GPU serve command",
+        "no model checkpoint files are baked into image-owned trees",
+        "separate live evidence: real Cosmos3-Super video generation on 8xH200",
+    ],
     "cosmos3-reason": [
         "real Cosmos-Reason VLM inference on synthetic frames (run_cosmos_reason_vlm)",
         "structured rollout judgment returned (score + success verdict)",

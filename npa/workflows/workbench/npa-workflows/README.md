@@ -16,7 +16,14 @@ npa workbench workflow submit <spec.yaml> --plan-only     # plan + render only
 ```
 
 `npa workbench workflow submit` plans the state graph and launches the run.
-Use `--plan-only` to inspect the planned steps without launching.
+Use `--plan-only` to inspect the planned steps without launching. Successful
+submit output always includes `run_id`; JSON callers receive it as the top-level
+`run_id` field. Runs whose specs configure `bucket` can also be rediscovered:
+
+```bash
+npa workbench workflow list \
+  --s3-bucket <bucket> --workflow-s3-prefix <parent-prefix> --json
+```
 
 Specs with a `parallel:` fan-out group or a loop that must **early-exit on the
 real decision artifact** are submitted with the runtime orchestrator:
@@ -84,6 +91,7 @@ below (see `npa/src/npa/orchestration/npa_workflow/blueprints.py`). Deploy guide
 | `sonic-eval.yaml` | SONIC eval |
 | `sonic-export-eval.yaml` | Export → eval |
 | `sonic-locomotion-finetuning.yaml` | Retarget → train → mjlab |
+| `groot-1-7-finetune.yaml` | Real GR00T data → parameterized 1-to-many-GPU optimizer smoke → immutable checkpoint → aligned offline evaluation → outcome classification → RRD/MCAP → inspected S3 publication → NPA agent viewer handoff; no rollout or statistical-learning claim |
 | `cosmos3-reason.yaml` | Cosmos3 reason |
 | `byof.yaml` | BYOF via `run_byof_repo.py` |
 | `byof-maniskill.yaml` | OSS registry: ManiSkill pinned image + PickCube smoke |
@@ -103,4 +111,5 @@ runbook and routes to direct K8s).
 ## Guide
 
 See `docs/workbench/npa-workflow-guide.md` and
-`docs/workbench/npa-workflow-tool-catalog.md`.
+`docs/workbench/npa-workflow-tool-catalog.md`. For the GR00T training workflow,
+see `docs/workbench/cookbooks/groot-1-7-training.md`.

@@ -1157,18 +1157,6 @@ def test_wait_kubernetes_job_poll_not_found_returns_failed(monkeypatch) -> None:
     sequence = [
         subprocess.CompletedProcess(["get"], 0, "0 0", ""),
         subprocess.CompletedProcess(
-            ["wait"],
-            1,
-            "",
-            "timed out waiting for the condition on jobs/j",
-        ),
-        subprocess.CompletedProcess(
-            ["wait"],
-            1,
-            "",
-            "timed out waiting for the condition on jobs/j",
-        ),
-        subprocess.CompletedProcess(
             ["get"],
             1,
             "",
@@ -1187,6 +1175,120 @@ def test_wait_kubernetes_job_poll_not_found_returns_failed(monkeypatch) -> None:
         )
         == "failed"
     )
+
+
+def test_wait_kubernetes_job_observes_failure_after_initial_probe(monkeypatch) -> None:
+    import subprocess
+
+    sequence = iter(
+        (
+            subprocess.CompletedProcess(["get"], 0, "0 0", ""),
+            subprocess.CompletedProcess(["get"], 0, "0 1", ""),
+        )
+    )
+    monkeypatch.setattr(loop_module, "_kubectl", lambda *args, **kwargs: next(sequence))
+    monkeypatch.setattr(loop_module.time, "sleep", lambda *_args: None)
+
+    assert (
+        loop_module._wait_kubernetes_job(
+            Sim2RealLoopConfig(run_id="r"),
+            namespace="default",
+            job_name="j",
+            timeout_s=60,
+        )
+        == "failed"
+    )
+
+
+def test_isaac_heldout_entry_hard_exits_only_after_component_upload(monkeypatch) -> None:
+    from npa.workflows.sim2real import engine, heldout_entry
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        engine,
+        "run_heldout_eval_component_from_s3",
+        lambda **_kwargs: calls.append("uploaded"),
+    )
+
+    def hard_exit(code: int) -> None:
+        calls.append(f"exit:{code}")
+        raise SystemExit(code)
+
+    monkeypatch.setattr(heldout_entry.os, "_exit", hard_exit)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "heldout_entry",
+            "--heldout-envs-uri",
+            "s3://b/envs.jsonl",
+            "--inner-evidence-uri",
+            "s3://b/inner.json",
+            "--output-uri",
+            "s3://b/report.json",
+            "--sim-backend",
+            "isaac",
+        ],
+    )
+
+    with pytest.raises(SystemExit, match="0"):
+        heldout_entry.main()
+    assert calls == ["uploaded", "exit:0"]
+
+
+def test_isaac_heldout_entry_hard_exits_after_runtime_failure(monkeypatch) -> None:
+    from npa.workflows.sim2real import engine, heldout_entry
+
+    monkeypatch.setattr(
+        engine,
+        "run_heldout_eval_component_from_s3",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("camera failed")),
+    )
+    monkeypatch.setattr(
+        heldout_entry.os,
+        "_exit",
+        lambda code: (_ for _ in ()).throw(SystemExit(code)),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "heldout_entry",
+            "--heldout-envs-uri",
+            "s3://b/envs.jsonl",
+            "--inner-evidence-uri",
+            "s3://b/inner.json",
+            "--output-uri",
+            "s3://b/report.json",
+            "--sim-backend",
+            "isaac",
+        ],
+    )
+
+    with pytest.raises(SystemExit, match="1"):
+        heldout_entry.main()
+
+
+def test_isaac_heldout_camera_capture_is_explicit_opt_in(monkeypatch) -> None:
+    from npa.workflows.sim2real.engine import _heldout_render_frames_enabled
+
+    monkeypatch.delenv("NPA_SIM2REAL_HELDOUT_RENDER_FRAMES", raising=False)
+    assert not _heldout_render_frames_enabled()
+    monkeypatch.setenv("NPA_SIM2REAL_HELDOUT_RENDER_FRAMES", "1")
+    assert _heldout_render_frames_enabled()
+
+def test_component_excerpt_preserves_the_error_head_and_tail() -> None:
+    from npa.workflows.sim2real.engine import _component_excerpt
+
+    excerpt = _component_excerpt("TYPE_ERROR:" + "x" * 2000 + ":TRACE_END", limit=120)
+    assert excerpt.startswith("TYPE_ERROR:")
+    assert excerpt.endswith(":TRACE_END")
+    assert "[component log truncated]" in excerpt
+    assert len(excerpt) == 120
+    line_excerpt = _component_excerpt(
+        "TYPE_ERROR:" + "x" * 2000 + ":TRACE_END", limit=1200
+    )
+    assert "[line truncated]" in line_excerpt
 
 
 def test_sdk_exposes_sim2real_run(tmp_path: Path) -> None:

@@ -189,7 +189,10 @@ def test_monolith_modules_do_not_grow() -> None:
     and tighten the cap — never raise a cap to make room for features.
     """
     caps = {
-        "npa/src/npa/cli/agent.py": 10_100,
+        # agent.py embeds the shipped backend/UI as a generated multiline
+        # string. Count reviewable Python lines, not the generated payload; the
+        # reconciler itself lives in agent_setup_convergence.py.
+        "npa/src/npa/cli/agent.py": 3_700,
         "npa/src/npa/workflows/sim2real_loop.py": 5_800,
         "npa/src/npa/workflows/sim2real/engine.py": 5_600,
         "npa/src/npa/cli/groot/__init__.py": 4_400,
@@ -199,7 +202,24 @@ def test_monolith_modules_do_not_grow() -> None:
     }
     over = []
     for rel_path, cap in caps.items():
-        lines = sum(1 for _ in (REPO_ROOT / rel_path).open())
+        path = REPO_ROOT / rel_path
+        source = path.read_text(encoding="utf-8")
+        lines = len(source.splitlines())
+        if rel_path == "npa/src/npa/cli/agent.py":
+            generated_lines: set[int] = set()
+            # Python 3.14 tokenizes f-strings into FSTRING_* pieces instead of
+            # one STRING token.  AST source spans are stable across every
+            # supported interpreter and also handle ordinary multiline strings.
+            for node in ast.walk(ast.parse(source, filename=str(path))):
+                is_string = (
+                    isinstance(node, ast.Constant)
+                    and isinstance(node.value, str)
+                ) or isinstance(node, ast.JoinedStr)
+                if is_string and node.end_lineno and node.end_lineno > node.lineno:
+                    generated_lines.update(
+                        range(node.lineno + 1, node.end_lineno + 1)
+                    )
+            lines -= len(generated_lines)
         if lines > cap:
             over.append(f"{rel_path}: {lines} lines > cap {cap}")
     assert not over, "Monolith size ratchet exceeded — split, don't grow:\n" + "\n".join(over)

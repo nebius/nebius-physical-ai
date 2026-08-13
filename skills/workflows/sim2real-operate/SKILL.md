@@ -29,22 +29,27 @@ map), use `sim2real-engine` instead; for generic sim-to-real workflow design use
 
 ## Procedure
 
-1. **Configure once.** `~/.npa/config.yaml` (bucket, endpoint, registry,
+1. **Preflight third-party terms before provisioning.** Load
+   `skills/atomic/third-party-eula-preflight/SKILL.md`. For an Isaac backend,
+   require explicit operator acceptance of the named NVIDIA Omniverse Kit and
+   Isaac Sim terms before creating or submitting work; detached runs without it
+   must fail early with the exact resume command.
+2. **Configure once.** `~/.npa/config.yaml` (bucket, endpoint, registry,
    `k8s_context`) + `~/.npa/credentials.yaml` (S3 HMAC, HF/NGC tokens). Generate
    operator files with `<private-operator-pack>/sim2real-rtxpro/setup-local-operator.sh`.
-2. **Seed the trigger** on a new bucket: `seed-stock-trigger.sh`, then set
+3. **Seed the trigger** on a new bucket: `seed-stock-trigger.sh`, then set
    `storage.sim2real_stock_trigger_uri`.
-3. **Sync the cluster storage secret** so pods get the endpoint + keys:
+4. **Sync the cluster storage secret** so pods get the endpoint + keys:
    `<private-operator-pack>/sim2real-rtxpro/sync-cluster-storage-secret.sh`.
-4. **Preflight:** `npa workbench health sim2real --checks all` (accepts `all` or
+5. **Preflight:** `npa workbench health sim2real --checks all` (accepts `all` or
    a comma list: `config,coherence,s3,registry,tokens,cluster`). Expect PASS on
    s3, tokens, cluster; WARN on registry only when `NPA_REGISTRY` is unset.
-5. **Submit:** `INNER_ITERATIONS=… OUTER_ITERATIONS=… submit-k8s-staged-job.sh`
+6. **Submit:** `INNER_ITERATIONS=… OUTER_ITERATIONS=… submit-k8s-staged-job.sh`
    (or `run.sh trigger`). It registry-qualifies every image, refreshes the
    `npa-nebius-registry` pull secret, and preflights the trigger + S3 write.
-6. **Monitor:** `<private-operator-pack>/sim2real-rtxpro/monitor-k8s-job.sh sim2real-<run-id>`
+7. **Monitor:** `<private-operator-pack>/sim2real-rtxpro/monitor-k8s-job.sh sim2real-<run-id>`
    or `npa workbench sim2real status <run-id> --watch`.
-7. **View results:** `run.sh sync <run-id>` (Rerun), or read
+8. **View results:** `run.sh sync <run-id>` (Rerun), or read
    `reports/sim2real-report.json` (`.outer_loop.latest_decision`,
    `.inner_loop.reward_trend`, `.upload.status`).
 

@@ -16,6 +16,20 @@ AGENT_MODULE = Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "ag
 AGENT_CONTRACTS_MODULE = AGENT_MODULE.with_name("agent_contracts.py")
 
 
+def _offline_meta(**overrides: object) -> dict[str, object]:
+    meta: dict[str, object] = {
+        "run_id": "groot17-two-gpu-pipeline-20260811t0131z-example-r11",
+        "artifact_key": "reports/groot-offline-evaluation.rrd",
+        "note": "Offline held-out policy evaluation",
+        "artifact_contract_authoritative": True,
+        "evaluation_kind": "offline held-out policy evaluation",
+        "closed_loop": False,
+        "camera": "front",
+    }
+    meta.update(overrides)
+    return meta
+
+
 def _embedded_ui_html(source: str = "") -> str:
     """Return rendered agent UI HTML (sourced from agent_ui.html)."""
     from npa.cli.agent import rendered_agent_ui_html
@@ -143,6 +157,90 @@ def test_infer_visual_domain_hints_from_metadata_not_uri_allowlist() -> None:
     )
     assert "Domain hints" in prompt
     assert "blank" in prompt.lower()  # guidance warns against false blank calls
+
+
+def test_groot_learning_hint_forbids_rollout_or_sim_inference() -> None:
+    hints = vf.infer_visual_domain_hints(_offline_meta())
+    assert len(hints) == 1
+    hint = hints[0].lower()
+    assert "offline held-out" in hint
+    assert "not a simulator/robot rollout" in hint
+    assert "do not infer synthetic imagery" in hint
+    assert "rollout view in sim" not in hint
+
+
+def test_learning_visual_reply_fails_closed_on_origin_contradictions() -> None:
+    meta = _offline_meta(
+        has_image=True,
+        capture="frame",
+        frame_quality="rendered",
+        origin="Original visual evidence is a persisted held-out LeRobot video.",
+        provenance="Synchronized learning replay — Rerun + MCAP",
+    )
+    assert vf.learning_visual_reply_needs_correction(
+        "This indicates a synthetic simulation; the absence of an original input is expected.",
+        meta,
+    )
+    assert not vf.learning_visual_reply_needs_correction(
+        "The low-resolution camera frame is aligned with expert actions.",
+        meta,
+    )
+    assert not vf.learning_visual_reply_needs_correction(
+        "This frame is not controlling the robot; it is offline evaluation.", meta
+    )
+    reply = vf.truthful_learning_visual_reply(meta)
+    assert "quality-captured viewer frame" in reply
+    assert "will not invent replacement pixel details" in reply
+    assert "does not prove motion, task success, or closed-loop control" in reply
+
+
+def test_operational_two_gpu_offline_context_is_classified_without_a_frame() -> None:
+    meta = _offline_meta(capture="metadata-only", has_image=False)
+
+    assert vf.is_offline_groot_learning_context(meta) is True
+    assert "not simulator/robot rollout" in vf.learning_visual_fact_block(meta)
+    reply = vf.build_metadata_only_visual_reply(meta)
+    assert "offline held-out" in reply.lower()
+    assert "not a physical-robot or closed-loop robot rollout" in reply.lower()
+
+
+def test_offline_semantics_require_authoritative_contract_not_a_filename() -> None:
+    malicious = {
+        "artifact_key": "reports/groot-offline-evaluation.rrd",
+        "note": "closed-loop physical robot rollout",
+    }
+    assert vf.is_offline_groot_learning_context(malicious) is False
+    assert vf.learning_visual_fact_block(malicious) == ""
+
+
+def test_blank_or_unavailable_capture_is_metadata_only() -> None:
+    blank = _offline_meta(
+        has_image=True,
+        capture="frame",
+        frame_quality="blank",
+        frame_blank=True,
+    )
+    reply = vf.truthful_learning_visual_reply(blank)
+    assert "No quality-captured frame was available" in reply
+    assert "did not inspect pixels" in reply
+
+
+def test_metadata_only_describe_keeps_structured_visual_feedback_path() -> None:
+    source = AGENT_MODULE.read_text(encoding="utf-8")
+    assert "if origin_reply and not visual_turn and not has_image_content" in source
+    ui = _embedded_ui_html(source)
+    assert "explicitly an offline held-out policy evaluation" in ui
+    assert "do not infer synthetic imagery or task behavior from the GR00T name" in ui
+    assert "The camera pixels come from the persisted held-out LeRobot observation videos" in ui
+    assert "Never say the original input is absent" in ui
+    assert "rerunRecordingActivatedAt" in ui
+    assert "window.Cypress ? 0 : 8000" in ui
+    fact_block = vf.learning_visual_fact_block(
+        _offline_meta(origin="held-out LeRobot observations")
+    )
+    assert "NON-NEGOTIABLE FACTS FOR THIS LEARNING REPLAY" in fact_block
+    assert "The original visual inputs are present" in fact_block
+    assert "A single frame does not prove motion" in fact_block
 
 
 def test_normalize_messages_for_llm_preserves_image_parts() -> None:

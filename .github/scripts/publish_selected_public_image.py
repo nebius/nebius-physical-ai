@@ -55,7 +55,7 @@ def main() -> int:
     if args.mode == "preflight":
         return 0
 
-    # Preflight returns the digest-frozen Wan item. Do not fall back to ``item`` here:
+    # Preflight returns the digest-frozen item. Do not fall back to ``item`` here:
     # that is the mutable tag-form plan entry and the copy guard correctly rejects it.
     item = publishable[0]
     copied = _crane_copy(item)

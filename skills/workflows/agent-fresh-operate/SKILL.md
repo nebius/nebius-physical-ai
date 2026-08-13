@@ -21,7 +21,16 @@ For chat UX, API shapes, and Rerun iframe behavior, use `npa-agent`. For
 
 - `npa/.venv/bin/npa agent fresh-setup` — initialize project env + deploy + bootstrap
 - `npa/.venv/bin/npa agent destroy` — npa-driven teardown (ingress cleanup, TF destroy, orphan VM delete)
+- If the project stanza is already gone, resume only from the opaque receipt ID
+  printed before removal (`agent destroy --receipt <id> --name <name> --yes`) or
+  from exact `--project-id/--instance-id` provider identity. Conflicting receipt,
+  operation-journal, record, or exact identities stop before deletion; NPA never
+  performs a display-name/prefix VM sweep.
 - `npa/scripts/agent_fresh_setup_loop.sh` — destroy → fresh-setup → smoke chat (loop until success)
+- Exact-name retries after client transport loss adopt a healthy exact VM or
+  resume its first incomplete phase. Do not use `--replace` solely because the
+  final Terraform/SSH response was lost; mismatched or unavailable evidence is
+  indeterminate and resumable.
 - `npa/scripts/agent_mature_verify_loop.sh` — bootstrap-first mature loop (existing agents; not fresh deploy)
 
 All `npa agent …` and `nebius` commands run on the **operator/dev VM** with
@@ -53,7 +62,24 @@ target branch to the dev VM before live tests.
      --region us-central1
    ```
    Expect **compute PermissionDenied with VM SA attachment** on some cross-project
-   profiles; npa retries apply without attached `service_account_id`.
+   profiles; npa retries apply without attached `service_account_id` and now emits
+   a loud WARNING when it does — a VM without an attached SA cannot self-mint IAM
+   tokens and needs an alternative token source (grant the deploying identity
+   `compute.admin`/equivalent, or inject a token on the VM).
+
+   **Agent VM IAM auth = attached service account (not a copied operator token).**
+   The VM authenticates to Nebius IAM using its attached `npa-agent` service
+   account: `get_iam_token()` self-mints fresh tokens from the metadata/token-file
+   sources the SA populates. npa no longer copies the operator's short-lived IAM
+   token onto the VM (no `NEBIUS_IAM_TOKEN`/`TF_VAR_iam_token` in
+   `/opt/npa-agent/nebius.env`, no `/root/.npa/nebius-token`, no `agent-bootstrap`
+   profile) — that token went stale and forced re-bootstrap. S3 access keys and
+   the service API keys (Token Factory / HF / NGC) are still staged: object
+   storage is HMAC-based and cannot use an IAM bearer token, and the product keys
+   are independent of the SA. They are staged only after VM creation through the
+   verified SSH channel; they never enter Terraform/cloud-init/user-data.
+   On-VM Terraform (`npa cluster …`) mints a fresh
+   token at run time via `nebius iam get-access-token`.
 
 4. **Smoke gate (default “done” for fresh deploy).**
    ```bash
@@ -101,12 +127,21 @@ Do not block a smoke deploy on `verify-live` UI wiring markers alone.
 - **Destroy: disk/SG in use.** Orphan cloud VM may exist outside TF state after a
   failed apply/rollback. `npa agent destroy` deletes matching instances by name
   before TF destroy; retry destroy if preconditions fail once.
+- **CPU destroy output.** Canonical Terraform outputs are `platform`/`preset`
+  plus `cpu_platform`/`cpu_preset`. Deprecated `gpu_platform`/`gpu_preset`
+  remain GPU-only machine compatibility fields (null for CPU agents) and are
+  suppressed from human destroy progress, so `cpu-d3` is never presented as a
+  GPU fact.
 - **`fresh-setup --replace`.** Destroy must run **before** updating project env
   (otherwise TF backend keys drift mid-destroy).
 - **502 / SyntaxError on chat.** Re-bootstrap; check embedded `\n` escaping in
   bootstrap `backend.py` template.
-- **Ingress rules.** Stale `allow-npa-*` rules can block security-group delete;
-  destroy path removes npa-managed ingress first.
+- **Ingress rules and default SGs.** Stale `allow-npa-*` rules can block a
+  non-default security-group delete, so destroy removes NPA-managed ingress
+  first. Nebius default security groups cannot be deleted directly; if the
+  provider surfaces that specific refusal, destroy deletes the parent only when
+  this agent's Terraform state proves the whole network is NPA-owned. A
+  reused/shared/unproven network is preserved with an ownership explanation.
 - **Cloud agent → dev VM.** Sync branch (`git pull` or tar/scp), confirm
   `npa agent --help` lists `fresh-setup`, then run live loop on dev VM.
 

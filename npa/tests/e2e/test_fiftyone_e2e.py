@@ -22,7 +22,7 @@ PROJECT_ID = "project-test-00000000000"
 BUCKET = "your-bucket-name"
 ENDPOINT_URL = "https://storage.eu-north1.nebius.cloud"
 WORKBENCH_NAME = "h200"
-IMAGE = "cr.eu-north1.nebius.cloud/your-registry-id/npa-fiftyone:1.15.0"
+IMAGE = "cr.eu-north1.nebius.cloud/your-registry-id/npa-fiftyone:1.15.0.post1"
 DATASET_NAME = "w7e2e-curated"
 INPUT_PATH = "Voxel51/VisDrone2019-DET"
 DATASET_FORMAT = "auto"
@@ -55,7 +55,7 @@ def test_fiftyone_smoke_helper_request_shape() -> None:
         job_name=f"{JOB_PREFIX}-{test_id}",
     )
 
-    assert IMAGE.endswith("/npa-fiftyone:1.15.0")
+    assert IMAGE.endswith("/npa-fiftyone:1.15.0.post1")
     assert INPUT_PATH == "Voxel51/VisDrone2019-DET"
     assert DATASET_NAME == "w7e2e-curated"
     assert "--subnet-id" not in command

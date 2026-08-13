@@ -12,6 +12,12 @@ or workflow image references for NPA workbench tools.
 
 ## Procedure
 
+For SkyPilot workflow images, build/test the versioned bootstrap contract and
+record it in OCI config. Preflight consumes the selected digest, not its tag.
+Keep live-validation tags unique, scan built bytes for restricted payloads, and
+push only to the authorized project registry unless shared publication is
+explicitly requested.
+
 1. Resolve runtime registry settings with `npa configure` or
    `npa.clients.config.resolve_container_registry` or `npa configure`.
 2. Build from the checked-in Dockerfile for the tool; do not invent a detached
@@ -47,13 +53,15 @@ Every image in the packaging contract also declares
 `redistribution: public | restricted`, which decides whether it may leave the
 owning org:
 
-- `public` — OSS-redistributable, may be mirrored to a public registry. **All 19
-  workbench images are currently `public`.**
-- `restricted` — bakes a runtime we may not redistribute. Currently **empty**: the four
+- `public` — OSS-redistributable, may be mirrored to a public registry. Every
+  canonical image in `CONTAINER_IMAGE_NAMES` is currently `public`.
+- `restricted` — bakes a runtime we may not redistribute. The four
   Isaac images (`isaac-lab`, `sonic`, `sonic-mujoco`, `groot`) used to be restricted
   because they baked Omniverse Kit, and were re-architected to fetch Isaac Sim / Isaac
-  Lab at first run under the operator's own EULA acceptance instead. The class and its
-  guards are kept for the next runtime we cannot ship.
+  Lab at first run under the operator's own EULA acceptance instead. The separately
+  contracted `cosmos3-serving` image is now restricted/build-your-own because its
+  pinned vendor base carries derived-distribution conditions that anonymous GHCR does
+  not establish.
 
 When adding an image, set its class. `npa/tests/docker/test_packaging_contract.py` fails
 the build if a Dockerfile **bakes** Omniverse Kit (or is built `FROM` a restricted image)

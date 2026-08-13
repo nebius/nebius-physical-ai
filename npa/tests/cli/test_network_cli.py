@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from typer.testing import CliRunner
 
 from npa.cli.main import app
@@ -124,7 +125,16 @@ def test_network_ensure_ingress_success_with_vm(mocker) -> None:
 
     result = runner.invoke(
         app,
-        ["network", "ensure-ingress", "--vm", "computeinstance-test", "--ports", "8081", "--tool", "cosmos"],
+        [
+            "network",
+            "ensure-ingress",
+            "--vm",
+            "computeinstance-test",
+            "--ports",
+            "8081",
+            "--tool",
+            "cosmos",
+        ],
     )
 
     assert result.exit_code == 0
@@ -198,11 +208,22 @@ def test_network_ensure_ingress_same_name_different_spec_warns(mocker) -> None:
 
     result = runner.invoke(
         app,
-        ["network", "ensure-ingress", "--vm", "computeinstance-test", "--ports", "8081", "--tool", "cosmos"],
+        [
+            "network",
+            "ensure-ingress",
+            "--vm",
+            "computeinstance-test",
+            "--ports",
+            "8081",
+            "--tool",
+            "cosmos",
+        ],
     )
 
     assert result.exit_code == 0
-    assert "already uses name 'allow-npa-cosmos-8081' but does not match" in result.output
+    assert (
+        "already uses name 'allow-npa-cosmos-8081' but does not match" in result.output
+    )
     assert len(_create_calls(calls)) == 1
 
 
@@ -241,7 +262,14 @@ def test_network_ensure_ingress_permission_failure_is_clean(mocker) -> None:
 
     result = runner.invoke(
         app,
-        ["network", "ensure-ingress", "--vm", "computeinstance-test", "--ports", "8081"],
+        [
+            "network",
+            "ensure-ingress",
+            "--vm",
+            "computeinstance-test",
+            "--ports",
+            "8081",
+        ],
     )
 
     assert result.exit_code == 1
@@ -267,14 +295,23 @@ def test_network_ensure_ingress_missing_security_group_is_clean(mocker) -> None:
 
     result = runner.invoke(
         app,
-        ["network", "ensure-ingress", "--vm", "computeinstance-test", "--ports", "8081"],
+        [
+            "network",
+            "ensure-ingress",
+            "--vm",
+            "computeinstance-test",
+            "--ports",
+            "8081",
+        ],
     )
 
     assert result.exit_code == 1
     assert "has no security group references" in result.output
 
 
-def test_network_ensure_ingress_multiple_ports_collapsed_into_single_rule(mocker) -> None:
+def test_network_ensure_ingress_multiple_ports_collapsed_into_single_rule(
+    mocker,
+) -> None:
     calls = _mock_nebius(mocker)
 
     result = runner.invoke(
@@ -307,7 +344,9 @@ def test_network_ensure_ingress_multiple_ports_collapsed_into_single_rule(mocker
     ]
 
 
-def test_network_ensure_ingress_multi_sg_coverage_in_second_group_is_noop(mocker) -> None:
+def test_network_ensure_ingress_multi_sg_coverage_in_second_group_is_noop(
+    mocker,
+) -> None:
     calls = _mock_nebius(
         mocker,
         instance=_instance(security_groups=["sg-one", "sg-two"]),
@@ -319,7 +358,14 @@ def test_network_ensure_ingress_multi_sg_coverage_in_second_group_is_noop(mocker
 
     result = runner.invoke(
         app,
-        ["network", "ensure-ingress", "--vm", "computeinstance-test", "--ports", "8081"],
+        [
+            "network",
+            "ensure-ingress",
+            "--vm",
+            "computeinstance-test",
+            "--ports",
+            "8081",
+        ],
     )
 
     assert result.exit_code == 0
@@ -327,7 +373,9 @@ def test_network_ensure_ingress_multi_sg_coverage_in_second_group_is_noop(mocker
     assert _create_calls(calls) == []
 
 
-def test_network_ensure_ingress_multi_sg_missing_ports_create_on_first_group_only(mocker) -> None:
+def test_network_ensure_ingress_multi_sg_missing_ports_create_on_first_group_only(
+    mocker,
+) -> None:
     calls = _mock_nebius(
         mocker,
         instance=_instance(security_groups=["sg-one", "sg-two"]),
@@ -336,7 +384,14 @@ def test_network_ensure_ingress_multi_sg_missing_ports_create_on_first_group_onl
 
     result = runner.invoke(
         app,
-        ["network", "ensure-ingress", "--vm", "computeinstance-test", "--ports", "8081"],
+        [
+            "network",
+            "ensure-ingress",
+            "--vm",
+            "computeinstance-test",
+            "--ports",
+            "8081",
+        ],
     )
 
     assert result.exit_code == 0
@@ -395,3 +450,201 @@ def test_remove_npa_ingress_rules_deletes_allow_npa_rules(mocker) -> None:
 
     assert deleted == ["rule-npa"]
     run.assert_called_once_with(["vpc", "security-rule", "delete", "--id", "rule-npa"])
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "rpc error: code = FailedPrecondition desc = cannot delete default security group",
+        "Error: default security group cannot be deleted",
+        "operation failed: CannotDeleteDefaultSecurityGroup",
+    ],
+)
+def test_default_security_group_refusal_is_narrowly_classified(message: str) -> None:
+    from npa.clients.network import is_default_security_group_delete_refusal
+
+    assert is_default_security_group_delete_refusal(message)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "FailedPrecondition: security group is assigned to an instance",
+        "PermissionDenied deleting non-default security group",
+        "FailedPrecondition: non-default security group cannot be deleted while in use",
+        "connection reset while deleting security group",
+        "default network route is still in use",
+    ],
+)
+def test_non_default_security_group_failures_are_not_reclassified(message: str) -> None:
+    from npa.clients.network import is_default_security_group_delete_refusal
+
+    assert not is_default_security_group_delete_refusal(message)
+
+
+def test_owned_network_recovers_default_security_group_refusal(mocker) -> None:
+    from npa.clients.network import recover_default_security_group_delete
+
+    run = mocker.patch("npa.clients.network.nebius._run")
+    status: list[str] = []
+
+    recovered = recover_default_security_group_delete(
+        error="FailedPrecondition: cannot delete default security group",
+        parent_network_id="vpcnetwork-owned",
+        parent_network_owned=True,
+        cleanup_action="`npa agent destroy --project prod --yes`",
+        on_status=status.append,
+    )
+
+    assert recovered is True
+    run.assert_called_once_with(
+        ["vpc", "network", "delete", "--id", "vpcnetwork-owned"]
+    )
+    joined = "\n".join(status)
+    assert "cannot be deleted directly" in joined
+    assert "NPA-owned" in joined
+    assert "parent network" in joined
+
+
+def test_unowned_network_is_preserved_after_default_security_group_refusal(
+    mocker,
+) -> None:
+    from npa.clients.network import (
+        NetworkCleanupError,
+        recover_default_security_group_delete,
+    )
+
+    run = mocker.patch("npa.clients.network.nebius._run")
+
+    with pytest.raises(NetworkCleanupError) as caught:
+        recover_default_security_group_delete(
+            error="FailedPrecondition: cannot delete default security group",
+            parent_network_id="vpcnetwork-shared",
+            parent_network_owned=False,
+            cleanup_action="`npa agent destroy --project prod --yes`",
+        )
+
+    run.assert_not_called()
+    message = str(caught.value)
+    assert "reused/shared network" in message
+    assert "proof that NPA owns" in message
+    assert "parent network" in message
+    assert "npa agent destroy" in message
+
+
+def test_owned_parent_network_already_absent_is_idempotent(mocker) -> None:
+    from npa.clients.network import recover_default_security_group_delete
+
+    mocker.patch(
+        "npa.clients.network.nebius._run",
+        side_effect=NebiusError("NotFound: network is already absent"),
+    )
+    status: list[str] = []
+
+    assert recover_default_security_group_delete(
+        error="FailedPrecondition: default security group cannot be deleted",
+        parent_network_id="vpcnetwork-gone",
+        parent_network_owned=True,
+        cleanup_action="`npa agent destroy --project prod --yes`",
+        on_status=status.append,
+    )
+    assert any("already absent" in line for line in status)
+
+
+def test_genuine_security_group_failure_never_deletes_parent_network(mocker) -> None:
+    from npa.clients.network import recover_default_security_group_delete
+
+    run = mocker.patch("npa.clients.network.nebius._run")
+
+    assert not recover_default_security_group_delete(
+        error="FailedPrecondition: non-default security group is still in use",
+        parent_network_id="vpcnetwork-owned",
+        parent_network_owned=True,
+        cleanup_action="`npa agent destroy --project prod --yes`",
+    )
+    run.assert_not_called()
+
+
+def test_delete_project_default_requires_durable_project_ownership(mocker) -> None:
+    from npa.clients import nebius
+
+    mocker.patch(
+        "npa.clients.nebius.get_project_identity",
+        return_value=nebius.ProjectIdentity(
+            "project-a", "demo", "tenant-a", "us-central1", "test"
+        ),
+    )
+    mocker.patch("npa.project_destroy._project_ownership_operation", return_value=None)
+    delete = mocker.patch("npa.clients.nebius.delete_project_default_network")
+
+    result = runner.invoke(
+        app,
+        [
+            "network",
+            "delete-project-default",
+            "--project",
+            "demo",
+            "--project-id",
+            "project-a",
+            "--tenant-id",
+            "tenant-a",
+            "--yes",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "durable NPA project-creation proof" in result.output
+    delete.assert_not_called()
+
+
+def test_delete_project_default_verifies_exact_absence(mocker) -> None:
+    from npa.clients import nebius
+
+    identity = nebius.ProjectDefaultNetworkIdentity(
+        "network-a",
+        "default-network",
+        "subnet-a",
+        "default-subnet-a",
+        "sg-a",
+        "default-security-group-a",
+        "project-a",
+        "test",
+    )
+    mocker.patch(
+        "npa.clients.nebius.get_project_identity",
+        return_value=nebius.ProjectIdentity(
+            "project-a", "demo", "tenant-a", "us-central1", "test"
+        ),
+    )
+    owner = mocker.Mock(operation_id="project-create-a")
+    mocker.patch("npa.project_destroy._project_ownership_operation", return_value=owner)
+    get_topology = mocker.patch(
+        "npa.clients.nebius.get_project_default_network_identity",
+        side_effect=[identity, None],
+    )
+    delete = mocker.patch("npa.clients.nebius.delete_project_default_network")
+    record = mocker.patch("npa.teardown_receipts.record_teardown_event")
+
+    result = runner.invoke(
+        app,
+        [
+            "network",
+            "delete-project-default",
+            "--project",
+            "demo",
+            "--project-id",
+            "project-a",
+            "--tenant-id",
+            "tenant-a",
+            "--yes",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert '"outcome": "verified_deleted"' in result.output
+    delete.assert_called_once_with(identity, profile=None)
+    assert get_topology.call_count == 2
+    assert record.call_count == 2
+    for call in record.call_args_list:
+        assert "outcome" not in call.kwargs["identity"]

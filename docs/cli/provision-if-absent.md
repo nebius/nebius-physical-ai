@@ -17,8 +17,20 @@ Options
 --skip-s3  Do not ensure S3.
 --validate  --skip-validate  Run post-apply Kubernetes validation. [default: validate]
 --sky-smoke  --skip-sky-smoke  Run a SkyPilot GPU smoke task. [default: skip-sky-smoke]
+--gpu-nodes  <int>  Number of GPU nodes, matching `npa cluster up`. -1 keeps the configured value. [default: -1]
+--cpu-nodes  <int>  Number of CPU nodes, matching `npa cluster up`. -1 keeps the configured value. [default: -1]
+--cpu-platform  <str>  CPU node platform, matching `npa cluster up`.
+--cpu-preset  <str>  CPU node preset, matching `npa cluster up`.
+--gpu-platform  <str>  GPU node platform, matching `npa cluster up`.
+--gpu-preset  <str>  GPU node preset, matching `npa cluster up`.
+--preemptible  --on-demand  Run the GPU node group as preemptible, matching `npa cluster up`. This changes the capacity pool but not hard instance/disk/IP
+    quotas; a reclaim stops the node mid-run.
 --dry-run  Resolve settings and print intended actions only.
 --timeout  <int>  Terraform apply timeout in minutes. [default: 120]
+--accelerator  <str>  Requested SkyPilot accelerator (for example RTXPRO6000:1) to gate readiness.
+--gpu-readiness-timeout  <float>  Seconds to wait for SkyPilot GPU discovery without deleting capacity. [default: 600.0]
+--gpu-readiness-poll-interval  <float>  Seconds between SkyPilot GPU discovery checks. [default: 10.0]
+--sky-bin  <str>  Pinned SkyPilot executable.
 --output-format  <text|json>  Output format. [default: text]
 --help  Show this message and exit.
 ```
@@ -36,8 +48,19 @@ Options
 | `--skip-s3` | Do not ensure S3. |
 | `--validate` | --skip-validate  Run post-apply Kubernetes validation. [default: validate] |
 | `--sky-smoke` | --skip-sky-smoke  Run a SkyPilot GPU smoke task. [default: skip-sky-smoke] |
+| `--gpu-nodes` | <int>  Number of GPU nodes, matching `npa cluster up`. -1 keeps the configured value. [default: -1] |
+| `--cpu-nodes` | <int>  Number of CPU nodes, matching `npa cluster up`. -1 keeps the configured value. [default: -1] |
+| `--cpu-platform` | <str>  CPU node platform, matching `npa cluster up`. |
+| `--cpu-preset` | <str>  CPU node preset, matching `npa cluster up`. |
+| `--gpu-platform` | <str>  GPU node platform, matching `npa cluster up`. |
+| `--gpu-preset` | <str>  GPU node preset, matching `npa cluster up`. |
+| `--preemptible` | --on-demand  Run the GPU node group as preemptible, matching `npa cluster up`. This changes the capacity pool but not hard instance/disk/IP quotas; a reclaim stops the node mid-run. |
 | `--dry-run` | Resolve settings and print intended actions only. |
 | `--timeout` | <int>  Terraform apply timeout in minutes. [default: 120] |
+| `--accelerator` | <str>  Requested SkyPilot accelerator (for example RTXPRO6000:1) to gate readiness. |
+| `--gpu-readiness-timeout` | <float>  Seconds to wait for SkyPilot GPU discovery without deleting capacity. [default: 600.0] |
+| `--gpu-readiness-poll-interval` | <float>  Seconds between SkyPilot GPU discovery checks. [default: 10.0] |
+| `--sky-bin` | <str>  Pinned SkyPilot executable. |
 | `--output-format` | <text\|json>  Output format. [default: text] |
 | `--help` | Show this message and exit. |
 

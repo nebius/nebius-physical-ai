@@ -17,7 +17,9 @@ has to distinguish Kit payload from our own 40-line shell script.
 from __future__ import annotations
 
 import importlib.util
+import io
 import sys
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -179,6 +181,31 @@ def test_scanner_is_executable_and_self_documenting() -> None:
     # The reason it cannot simply grep for "isaac" is the single most likely thing for a
     # future reader to try to "simplify"; keep the rationale in the file.
     assert "python.sh" in text and "allowlist" in text.lower()
+
+
+def test_oci_layout_tarball_scans_root_level_blob_layers(tmp_path: Path) -> None:
+    """Docker's containerd image store saves layers as ``blobs/sha256/*``.
+
+    The root-level form must be opened as a nested tar, not counted as one opaque
+    outer member and incorrectly declared clean.
+    """
+    layer_stream = io.BytesIO()
+    with tarfile.open(fileobj=layer_stream, mode="w") as layer:
+        payload = b"kit"
+        member = tarfile.TarInfo("isaac-sim/kit/libcarb.so")
+        member.size = len(payload)
+        layer.addfile(member, io.BytesIO(payload))
+    outer_path = tmp_path / "image.tar"
+    with tarfile.open(outer_path, mode="w") as outer:
+        payload = layer_stream.getvalue()
+        member = tarfile.TarInfo("blobs/sha256/exact-layer")
+        member.size = len(payload)
+        outer.addfile(member, io.BytesIO(payload))
+
+    paths = list(scanner._iter_tarball(outer_path))
+
+    assert "isaac-sim/kit/libcarb.so" in paths
+    assert scanner.classify_path(paths[0])
 
 
 # --------------------------------------------------------------------------------------

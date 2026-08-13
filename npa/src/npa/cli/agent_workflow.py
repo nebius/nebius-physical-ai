@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import tempfile
+from copy import deepcopy
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any
@@ -12,7 +13,7 @@ import yaml
 
 API_VERSION_STABLE = "npa.workflow/v0.0.1"
 API_VERSION_BETA = "npa.workflow/v0.0.1-beta"
-API_VERSION = API_VERSION_BETA
+API_VERSION = API_VERSION_STABLE
 _SUPPORTED_API_VERSIONS = frozenset({API_VERSION_STABLE, API_VERSION_BETA})
 
 _TEMPLATES = (
@@ -24,6 +25,7 @@ _TEMPLATES = (
     "gpu-cross-region",
     "rl-policy-success",
     "physical-ai-data-factory",
+    "sim2real-staged",
 )
 
 
@@ -89,11 +91,15 @@ _TEMPLATE_ALIASES: dict[str, str] = {
     "augment_multiply": "physical-ai-data-factory",
     "multiply": "physical-ai-data-factory",
     "fanout-augment": "physical-ai-data-factory",
+    "sim2real-staged": "sim2real-staged",
+    "sim-to-real": "sim2real-staged",
+    "staged-sim2real": "sim2real-staged",
+    "real-sim2real": "sim2real-staged",
 }
 
 _INTENT_DEFAULT_TEMPLATE: dict[str, str] = {
     "create_workflow": "two-step",
-    "create_vlm_rl_workflow": "vlm-rl-loop",
+    "create_vlm_rl_workflow": "sim2real-staged",
     "create_gate_workflow": "token-factory-gate",
     "create_loop_gate_workflow": "loop-gate",
     "create_rl_policy_workflow": "rl-policy-success",
@@ -165,6 +171,20 @@ _TEMPLATE_KEYWORDS: dict[str, tuple[str, ...]] = {
         "scenario variants",
         "cosmos transfer",
         "amplify",
+    ),
+    "sim2real-staged": (
+        "sim2real",
+        "sim-to-real",
+        "sim to real",
+        "success threshold",
+        "heldout",
+        "held-out",
+        "rollout",
+        "robot preset",
+        "genesis",
+        "isaac task",
+        "vlm-rl",
+        "vlm rl",
     ),
     "two-step": ("two-step", "2-step", "simple", "minimal"),
 }
@@ -262,6 +282,116 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                             "terminal": True,
                         }
                     ),
+                }
+            ),
+        },
+        "sim2real-staged": {
+            "name": "sim2real-staged",
+            "description": (
+                "Full real Sim2Real engine: conditioned augmentation, environment generation, "
+                "policy and VLM learning loops, held-out simulation evaluation, threshold "
+                "decision, artifact upload, and Rerun visualization."
+            ),
+            "config_runtime": OrderedDict(
+                {
+                    "s3_prefix": "sim2real-b",
+                    "trigger_dataset_id": "lerobot/pusht",
+                    "sim_backend": "isaac",
+                    "isaac_task": "Isaac-Lift-Cube-Franka-v0",
+                    "robot_source": "",
+                    "robot_preset": "franka",
+                    "vlm_model": "nvidia/Cosmos-Reason2-8B",
+                    "success_threshold": "0.75",
+                    "inner_iterations": "2",
+                    "outer_iterations": "1",
+                    "loop_of_loops_iterations": "1",
+                    "rollout_count": "3",
+                    "steps_per_rollout": "4",
+                    "heldout_env_count": "8",
+                    "env_count": "10000",
+                    "train_fraction": "0.8",
+                    "envgen_shard_count": "16",
+                    "action_env_limit": "256",
+                    "seed": "42",
+                    # Sibling-job placement is resolved from the selected agent
+                    # backend. Empty values preserve the engine's public defaults;
+                    # generated drafts fill them only from real configuration.
+                    "k8s_namespace": "",
+                    "k8s_service_account": "",
+                    "k8s_image_pull_secrets": "",
+                    "k8s_env_secret_names": "",
+                    "k8s_gpu_product": "",
+                    "augment_image": "",
+                    "envgen_image": "",
+                    "policy_image": "",
+                    "trainer_image": "",
+                    "vlm_image": "",
+                    "eval_image": "",
+                    "isaac_image": "",
+                }
+            ),
+            "config_uri": OrderedDict(
+                {
+                    "trigger_dataset_uri": (
+                        "s3://{{config.bucket}}/sim2real-triggers/{{run.id}}/lerobot-pusht/"
+                    ),
+                    "assets_uri": "",
+                    "scene_spec_uri": "",
+                    "cameras_uri": "",
+                    "robot_spec_uri": "",
+                    "run_root_uri": "s3://{{config.bucket}}/{{config.s3_prefix}}/{{run.id}}/",
+                    "finalize_report_uri": "{{config.run_root_uri}}reports/sim2real-report.json",
+                    "rrd_uri": "{{config.run_root_uri}}reports/sim2real.rrd",
+                }
+            ),
+            "resources": OrderedDict(
+                {
+                    "gpu": OrderedDict(
+                        {
+                            "cloud": "kubernetes",
+                            "accelerators": "RTXPRO6000:1",
+                            "cpus": 16,
+                            "memory": "80Gi",
+                        }
+                    )
+                }
+            ),
+            "initial": "run-sim2real",
+            "states": OrderedDict(
+                {
+                    "run-sim2real": OrderedDict(
+                        {
+                            "description": (
+                                "Run the maintained 14-stage Sim2Real engine. This is a real "
+                                "orchestrator entry point, not the legacy echo/demo toolRefs."
+                            ),
+                            "toolRef": "workbench.sim2real.run",
+                            "resources": "gpu",
+                            "inputs": [
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.trigger_dataset_uri}}",
+                                        "schema": "npa.lerobot.dataset.v1",
+                                    }
+                                )
+                            ],
+                            "outputs": [
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.finalize_report_uri}}",
+                                        "schema": "npa.sim2real.e2e_report.v1",
+                                    }
+                                ),
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.rrd_uri}}",
+                                        "schema": "npa.sim2real.rerun.v1",
+                                    }
+                                ),
+                            ],
+                            "terminal": True,
+                        }
+                    )
                 }
             ),
         },
@@ -1195,6 +1325,8 @@ def _data_factory_spec() -> dict[str, Any]:
         "config_runtime": OrderedDict(
             {
                 "prefix": "physical-ai-data-factory/{{run.id}}",
+                "seed_fixture": "false",
+                "seed_default_input": "false",
                 # What to augment: a free-form hint surfaced as the augment prompt /
                 # input-conditioning subject (the run's real input clips are the base).
                 "augment_subject": "the input robot clips",
@@ -1204,12 +1336,30 @@ def _data_factory_spec() -> dict[str, Any]:
                 # with the gpu resource accelerator count for full utilization.
                 "variant_parallelism": "4",
                 "refinement_iterations": "2",
-                "grade_threshold": "0.5",
-                "default_decision": "promote_checkpoint",
+                "grade_threshold": "0.75",
+                "default_decision": "loop_back",
+                "temporal_consistency_mode": "advisory",
+                "temporal_consistency_threshold": "0.8",
+                "temporal_noise_floor": "0.25",
+                "temporal_blur_ksize": "7",
+                "temporal_regions_json": "",
+                "appearance_fidelity_mode": "advisory",
+                "appearance_fidelity_threshold": "0.8",
+                "appearance_luminance_tolerance": "18.0",
+                "appearance_global_chroma_tolerance": "8.0",
+                "appearance_local_chroma_tolerance": "6.0",
+                "appearance_chroma_instability_tolerance": "4.0",
+                "appearance_blur_ksize": "7",
+                "appearance_max_dimension": "256",
+                "appearance_regions_json": "",
                 "caption_model": "Qwen/Qwen2.5-VL-72B-Instruct",
                 "vlm_backend": "api",
                 "max_images": "8",
                 "max_tokens": "512",
+                "curator_clip_len_s": "3",
+                "curator_min_clip_len_s": "1",
+                "curator_motion_filter": "score-only",
+                "fiftyone_dedup_threshold": "0.10",
             }
         ),
         "config_uri": OrderedDict(
@@ -1226,9 +1376,12 @@ def _data_factory_spec() -> dict[str, Any]:
                 "rollouts_uri": "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/",
                 "scores_uri": "s3://{{config.bucket}}/{{config.prefix}}/grade/",
                 "decision_uri": "s3://{{config.bucket}}/{{config.prefix}}/grade/decision.json",
+                "quality_disposition_uri": "s3://{{config.bucket}}/{{config.prefix}}/grade/quality_disposition.json",
                 "augmented_frames_uri": "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/",
                 "labeled_augmented_uri": "s3://{{config.bucket}}/{{config.prefix}}/labeled_augmented/",
                 "lance_uri": "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/",
+                "curated_clips_uri": "s3://{{config.bucket}}/{{config.prefix}}/curation/cosmos_curator/",
+                "curator_report_uri": "s3://{{config.bucket}}/{{config.prefix}}/curation/cosmos_curator.json",
                 "curation_report_uri": "s3://{{config.bucket}}/{{config.prefix}}/curation/report.json",
                 "run_root_uri": "s3://{{config.bucket}}/{{config.prefix}}/",
                 "rrd_uri": "s3://{{config.bucket}}/{{config.prefix}}/reports/sim2real.rrd",
@@ -1240,9 +1393,9 @@ def _data_factory_spec() -> dict[str, Any]:
                 "gpu": OrderedDict(
                     {
                         "cloud": "kubernetes",
-                        "accelerators": "RTXPRO6000:4",
+                        "accelerators": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:4",
                         "cpus": 16,
-                        "memory": "80Gi",
+                        "memory": "128Gi",
                     }
                 ),
                 "cpu": OrderedDict({"cloud": "kubernetes", "cpus": 4, "memory": "16Gi"}),
@@ -1261,11 +1414,21 @@ def _data_factory_spec() -> dict[str, Any]:
                         "resources": "cpu",
                         "run": OrderedDict(
                             {
-                                "shell": (
-                                    "python3 -c \"from npa.workflows.data_factory_stages import "
-                                    "generate_configs; generate_configs('{{config.configs_uri}}', "
-                                    "'{{config.n_augmentations}}', '{{run.id}}')\""
-                                )
+                                "argv": [
+                                    "python3",
+                                    "-c",
+                                    (
+                                        "import sys; from npa.workflows.data_factory_stages "
+                                        "import generate_configs; generate_configs(*sys.argv[1:])"
+                                    ),
+                                    "{{config.configs_uri}}",
+                                    "{{config.n_augmentations}}",
+                                    "{{run.id}}",
+                                    "{{config.images_uri}}",
+                                    "{{config.seed_default_input}}",
+                                    "{{config.seed_fixture}}",
+                                    "{{config.augment_subject}}",
+                                ]
                             }
                         ),
                         "outputs": [
@@ -1342,7 +1505,7 @@ def _data_factory_spec() -> dict[str, Any]:
                     {
                         "description": (
                             "Augment & Evaluate refinement loop: augment (GPU multiply) -> "
-                            "attribute-verify (VLM) -> quality-gate. Loops back to RE-AUGMENT on "
+                            "Cosmos Evaluator -> quality-gate. Loops back to RE-AUGMENT on "
                             "failure, up to refinement_iterations, and breaks on promote."
                         ),
                         "needs": ["annotate-original"],
@@ -1352,17 +1515,19 @@ def _data_factory_spec() -> dict[str, Any]:
                                 "until": "promote_checkpoint",
                             }
                         ),
-                        "sequence": ["augment", "attribute-verify", "quality-gate"],
-                        "next": "annotate-augmented",
+                        "sequence": ["augment", "evaluate", "quality-gate"],
+                        "next": "quality-disposition",
                     }
                 ),
-                "attribute-verify": OrderedDict(
+                "evaluate": OrderedDict(
                     {
                         "description": (
-                            "VLM-based attribute verification of the augmented clips "
-                            "(Token Factory, --backend api)."
+                            "Evaluate with the real NVIDIA Cosmos Evaluator: Token Factory "
+                            "attribute verification plus hallucinated-motion comparison against "
+                            "the input-conditioned source clip, source-relative temporal "
+                            "consistency, and protected-appearance fidelity."
                         ),
-                        "toolRef": "workbench.vlm_eval.run",
+                        "toolRef": "workbench.cosmos_evaluator.evaluate",
                         "resources": "cpu",
                         "inputs": [
                             OrderedDict(
@@ -1375,8 +1540,8 @@ def _data_factory_spec() -> dict[str, Any]:
                         "outputs": [
                             OrderedDict(
                                 {
-                                    "uri": "{{config.scores_uri}}vlm_eval_stub.json",
-                                    "schema": "npa.workbench.vlm_eval.report.v1",
+                                    "uri": "{{config.scores_uri}}cosmos_evaluator.json",
+                                    "schema": "npa.cosmos_evaluator.report.v1",
                                 }
                             )
                         ],
@@ -1389,7 +1554,7 @@ def _data_factory_spec() -> dict[str, Any]:
                             "loop_back decision that drives the grade loop."
                         ),
                         "writesDecision": True,
-                        "needs": ["attribute-verify"],
+                        "needs": ["evaluate"],
                         "resources": "cpu",
                         "run": OrderedDict(
                             {
@@ -1410,13 +1575,49 @@ def _data_factory_spec() -> dict[str, Any]:
                         ],
                     }
                 ),
+                "quality-disposition": OrderedDict(
+                    {
+                        "description": (
+                            "Fail closed after the refinement loop: persist an auditable "
+                            "accepted/rejected disposition before rejecting a degraded, "
+                            "below-threshold, or hard-check-failing batch."
+                        ),
+                        "needs": ["grade"],
+                        "resources": "cpu",
+                        "run": OrderedDict(
+                            {
+                                "argv": [
+                                    "python3",
+                                    "-c",
+                                    (
+                                        "import sys; from npa.workflows.data_factory_stages "
+                                        "import enforce_quality_disposition; "
+                                        "enforce_quality_disposition(*sys.argv[1:])"
+                                    ),
+                                    "{{config.scores_uri}}",
+                                    "{{config.quality_disposition_uri}}",
+                                    "{{config.grade_threshold}}",
+                                ]
+                            }
+                        ),
+                        "outputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.quality_disposition_uri}}",
+                                    "schema": "npa.data_factory.quality_disposition.v1",
+                                }
+                            )
+                        ],
+                        "next": "annotate-augmented",
+                    }
+                ),
                 "annotate-augmented": OrderedDict(
                     {
                         "description": (
                             "Stage 3 - Pseudo-Label Augmented. Re-caption the promoted augmented "
                             "clips with the same hosted VLM so the amplified set ships labeled."
                         ),
-                        "needs": ["grade"],
+                        "needs": ["quality-disposition"],
                         "resources": "cpu",
                         "run": OrderedDict(
                             {
@@ -1438,6 +1639,39 @@ def _data_factory_spec() -> dict[str, Any]:
                                 }
                             )
                         ],
+                        "next": "cosmos-curate",
+                    }
+                ),
+                "cosmos-curate": OrderedDict(
+                    {
+                        "description": (
+                            "Stage 4a - Cosmos Curator. Run the real NVIDIA Cosmos Curator "
+                            "split, transcode, motion-score, and catalog stages."
+                        ),
+                        "needs": ["annotate-augmented"],
+                        "toolRef": "workbench.cosmos_curate.curate",
+                        # Cosmos Curator prefers NVENC whenever the NVIDIA runtime
+                        # exposes the node's GPU to nvidia-smi.  A CPU-only pod on a
+                        # GPU node can pass that probe while CUDA remains blocked by
+                        # the pod's device allocation, silently producing empty
+                        # clips.  Give the real transcode stage the declared GPU.
+                        "resources": "gpu",
+                        "inputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.augment_uri}}",
+                                    "schema": "npa.cosmos2.transfer.v1",
+                                }
+                            )
+                        ],
+                        "outputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.curator_report_uri}}",
+                                    "schema": "npa.cosmos_curate.curation.v1",
+                                }
+                            )
+                        ],
                         "next": "curate",
                     }
                 ),
@@ -1449,7 +1683,8 @@ def _data_factory_spec() -> dict[str, Any]:
                             "near-duplicate detection + keep/drop) when run in the npa-fiftyone "
                             "image, else degrade to the report-only counts path."
                         ),
-                        "needs": ["annotate-augmented"],
+                        "needs": ["cosmos-curate"],
+                        "toolRef": "workbench.fiftyone.curate_augmented",
                         "resources": "cpu",
                         "inputs": [
                             OrderedDict(
@@ -1459,15 +1694,6 @@ def _data_factory_spec() -> dict[str, Any]:
                                 }
                             )
                         ],
-                        "run": OrderedDict(
-                            {
-                                "shell": (
-                                    "python3 -c \"from npa.workflows.data_factory_stages import "
-                                    "curate; curate('{{config.augment_uri}}', "
-                                    "'{{config.curation_report_uri}}')\""
-                                )
-                            }
-                        ),
                         "outputs": [
                             OrderedDict(
                                 {
@@ -1487,15 +1713,7 @@ def _data_factory_spec() -> dict[str, Any]:
                         ),
                         "needs": ["curate"],
                         "resources": "cpu",
-                        "run": OrderedDict(
-                            {
-                                "shell": (
-                                    "python3 -c \"from npa.workflows.data_factory_viz import "
-                                    "build_run_rrd; print(build_run_rrd('{{config.run_root_uri}}', "
-                                    "'{{config.rrd_uri}}'))\""
-                                )
-                            }
-                        ),
+                        "toolRef": "workbench.nurec.visualize",
                         "outputs": [
                             OrderedDict(
                                 {
@@ -1556,6 +1774,16 @@ def choose_workflow_template(
     scores = {name: 0 for name in _TEMPLATES}
     default_template = _INTENT_DEFAULT_TEMPLATE.get(str(intent or "").strip(), "two-step")
     scores[default_template] += 3
+    if str(intent or "").strip() == "create_vlm_rl_workflow":
+        # Explicit VLM-RL / outer+inner loop language reaches the loop template;
+        # generic Sim2Real authoring stays on the maintained staged engine.
+        if re.search(r"\bvlm\s*[/_-]?\s*rl\b", text) or (
+            re.search(r"\bouter[\s-]+loop\b", text)
+            and re.search(r"\binner[\s-]+loop\b", text)
+        ):
+            scores["vlm-rl-loop"] += 12
+        else:
+            scores["sim2real-staged"] += 10
     for template, keywords in _TEMPLATE_KEYWORDS.items():
         for keyword in keywords:
             if keyword in text:
@@ -1585,6 +1813,10 @@ def choose_workflow_template(
         token in text for token in ("fan out", "fan-out", "fanout", "multiply", "scenario", "variant", "amplify")
     ):
         scores["physical-ai-data-factory"] += 6
+    if re.search(r"\b(?:sim2real|sim[\s-]?to[\s-]?real|sim\s*[- ]?2\s*[- ]?real)\b", text):
+        scores["sim2real-staged"] += 6
+    if re.search(r"\b(?:2[\s-]?step|two[\s-]?step)\b", text):
+        scores["two-step"] += 10
     if "gpu" in text and ("region" in text or "project" in text):
         scores["gpu-cross-region"] += 5
     if "rl" in text and ("policy" in text or "training" in text or "isaac" in text):
@@ -1628,6 +1860,77 @@ _DATA_FACTORY_SUBJECT_RE = re.compile(
     r"(?:\s+(?:and|to|so|then|,|;|\.|with)\b|$)",
     re.IGNORECASE,
 )
+_PERCENT_RE = r"-?(?:\d+(?:\.\d+)?)\s*%?"
+
+_DATA_FACTORY_MAX_AUGMENTATIONS = 64
+_DATA_FACTORY_MAX_GPUS = 8
+
+
+class WorkflowParameterError(ValueError):
+    """A chat parameter was explicit but unsafe or outside supported bounds."""
+
+
+def _named_number(
+    text: str,
+    labels: str,
+    *,
+    integer: bool = False,
+    fraction: bool = False,
+) -> float | int | None:
+    number = r"\d+" if integer else _PERCENT_RE
+    patterns = (
+        rf"(?:{labels})\b\s*(?:of|to|=|:)?\s*({number})",
+        rf"({number})\s*(?:for\s+)?(?:{labels})\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if not match:
+            continue
+        raw = match.group(1).strip()
+        if integer:
+            return int(raw)
+        value = float(raw.rstrip("%"))
+        return value / 100.0 if fraction and raw.endswith("%") else value
+    return None
+
+
+def _named_text(text: str, labels: str) -> str:
+    # Stop before a following named or numeric parameter clause. This keeps
+    # identifiers exact even when two text-valued knobs are adjacent, e.g.
+    # ``isaac task X and trigger dataset id Y and 3 rollouts``.
+    clause = (
+        r"(?=\s*(?:,\s*)?(?:(?:and|with|using|on)\s+)?(?:"
+        r"-?\d+(?:\.\d+)?%?\s+(?:environments?|envs?|rollouts?|steps?|gpus?|shards?|iterations?)"
+        r"|(?:trigger\s+)?dataset\s+id|isaac(?:\s+lab)?\s+task)\b|[,;\n]|$)"
+    )
+    match = re.search(
+        rf"(?:{labels})\b(?:\s+(?:is|of|to)\b\s*|\s*[=:]\s*|\s+)"
+        rf"[\"'`]?(.+?)[\"'`]?{clause}",
+        text,
+        re.IGNORECASE,
+    )
+    return match.group(1).strip(" .") if match else ""
+
+
+def _named_uri(text: str, labels: str) -> str:
+    match = re.search(
+        rf"(?:{labels})\s*(?:is|of|to|=|:)?\s*[\"'`]?((?:s3|https?)://[^\s,;\"'`]+)",
+        text,
+        re.IGNORECASE,
+    )
+    return match.group(1).rstrip(".") if match else ""
+
+
+def _requested_accelerator(text: str) -> str:
+    match = re.search(
+        r"\b(RTX\s*PRO\s*6000|RTXPRO6000|L40S|H100|H200|B200|B300)\b",
+        text,
+        re.IGNORECASE,
+    )
+    if not match:
+        return ""
+    compact = re.sub(r"[\s_-]+", "", match.group(1)).upper()
+    return "RTXPRO6000" if compact in {"RTXPRO6000", "RTX6000PRO"} else compact
 
 
 def _first_int(match: re.Match[str] | None) -> int | None:
@@ -1660,10 +1963,54 @@ def extract_data_factory_params(user_text: str) -> dict[str, Any]:
         count = _first_int(_DATA_FACTORY_COUNT_RE.search(text))
     gpus = _first_int(_DATA_FACTORY_GPU_RE.search(text))
 
+    if count is not None and count > _DATA_FACTORY_MAX_AUGMENTATIONS:
+        raise WorkflowParameterError(
+            f"requested {count} augmentations exceeds the supported ceiling "
+            f"of {_DATA_FACTORY_MAX_AUGMENTATIONS}"
+        )
+    if gpus is not None and gpus > _DATA_FACTORY_MAX_GPUS:
+        raise WorkflowParameterError(
+            f"requested {gpus} GPUs exceeds the supported ceiling of {_DATA_FACTORY_MAX_GPUS}"
+        )
+
     if count is not None and count > 0:
-        params["n_augmentations"] = min(count, 64)
+        params["n_augmentations"] = count
     if gpus is not None and gpus > 0:
-        params["gpu_count"] = min(gpus, 8)
+        params["gpu_count"] = gpus
+
+    refinement = _named_number(text, r"refinement(?:\s+iterations?|\s+passes?)", integer=True)
+    threshold = _named_number(
+        text, r"(?:grade|quality)(?:\s+score)?\s+threshold", fraction=True
+    )
+    clip_len = _named_number(text, r"(?:curator\s+)?clip(?:\s+length|\s+len)?")
+    min_clip_len = _named_number(text, r"minimum\s+clip(?:\s+length|\s+len)?")
+    max_images = _named_number(text, r"max(?:imum)?\s+images?", integer=True)
+    max_tokens = _named_number(text, r"max(?:imum)?\s+tokens?", integer=True)
+    if max_images is None:
+        max_images = _first_int(re.search(r"\bmax(?:imum)?\s+(\d+)\s+images?\b", text, re.I))
+    if max_tokens is None:
+        max_tokens = _first_int(re.search(r"\bmax(?:imum)?\s+(\d+)\s+tokens?\b", text, re.I))
+    if isinstance(refinement, int) and refinement > 0:
+        params["refinement_iterations"] = refinement
+    if isinstance(threshold, float):
+        if not 0 <= threshold <= 1:
+            raise WorkflowParameterError("grade threshold must be between 0 and 1 (or 0% and 100%)")
+        params["grade_threshold"] = threshold
+    if isinstance(clip_len, (int, float)) and clip_len > 0:
+        params["curator_clip_len_s"] = clip_len
+    if isinstance(min_clip_len, (int, float)) and min_clip_len > 0:
+        params["curator_min_clip_len_s"] = min_clip_len
+    if isinstance(max_images, int) and max_images > 0:
+        params["max_images"] = max_images
+    if isinstance(max_tokens, int) and max_tokens > 0:
+        params["max_tokens"] = max_tokens
+    accelerator = _requested_accelerator(text)
+    if accelerator:
+        params["accelerator"] = accelerator
+    if re.search(r"\bmotion\s+filter(?:ing)?\b.{0,20}\b(?:off|none|disabled)\b", text, re.I):
+        params["curator_motion_filter"] = "disabled"
+    elif re.search(r"\bmotion\s+filter(?:ing)?\b.{0,20}\b(?:score|score-only)\b", text, re.I):
+        params["curator_motion_filter"] = "score-only"
 
     subject_match = _DATA_FACTORY_SUBJECT_RE.search(text)
     if subject_match:
@@ -1677,14 +2024,86 @@ def extract_data_factory_params(user_text: str) -> dict[str, Any]:
     return params
 
 
+_SIM2REAL_URI_FIELDS: tuple[tuple[str, str], ...] = (
+    ("trigger_dataset_uri", r"(?:trigger|input)(?:\s+dataset)?\s+uri"),
+    ("assets_uri", r"assets?\s+uri"),
+    ("scene_spec_uri", r"scene(?:\s+spec)?\s+uri"),
+    ("cameras_uri", r"cameras?\s+uri"),
+    ("robot_spec_uri", r"robot(?:\s+spec)?\s+uri"),
+)
+
+
+def extract_sim2real_params(user_text: str) -> dict[str, Any]:
+    """Extract knobs supported by the maintained staged Sim2Real CLI."""
+    text = str(user_text or "").strip()
+    params: dict[str, Any] = {}
+    if not text:
+        return params
+    integer_fields = {
+        "inner_iterations": r"inner(?:\s+loop)?\s+iterations?",
+        "outer_iterations": r"outer(?:\s+loop)?\s+iterations?",
+        "loop_of_loops_iterations": r"loop[-\s]+of[-\s]+loops?\s+iterations?",
+        "rollout_count": r"(?:train\s+)?rollouts?",
+        "steps_per_rollout": r"(?:steps?\s+per\s+rollout|rollout\s+length|(?:train(?:ing)?)\s+steps?)",
+        "heldout_env_count": r"held[-\s]?out\s+env(?:ironment)?s?",
+        "env_count": r"(?:generated\s+)?(?:environments?|envs?)",
+        "envgen_shard_count": r"env(?:ironment)?(?:gen)?\s+shards?",
+        "action_env_limit": r"action\s+env(?:ironment)?s?",
+        "seed": r"(?:random\s+)?seed",
+    }
+    for field, labels in integer_fields.items():
+        value = _named_number(text, labels, integer=True)
+        if isinstance(value, int) and (value > 0 or field == "seed"):
+            params[field] = value
+    threshold = _named_number(
+        text, r"(?:(?:success|held[-\s]?out|evaluation)\s+)?threshold", fraction=True
+    )
+    train_fraction = _named_number(text, r"train(?:ing)?\s+fraction", fraction=True)
+    if isinstance(threshold, float):
+        if not 0 <= threshold <= 1:
+            raise WorkflowParameterError(
+                "success threshold must be between 0 and 1 (or 0% and 100%)"
+            )
+        params["success_threshold"] = threshold
+    if isinstance(train_fraction, float):
+        if not 0 < train_fraction < 1:
+            raise WorkflowParameterError(
+                "training fraction must be greater than 0 and less than 1"
+            )
+        params["train_fraction"] = train_fraction
+    backend = re.search(r"\b(isaac|genesis)\b(?:\s+(?:sim|backend))?", text, re.I)
+    if backend:
+        params["sim_backend"] = backend.group(1).lower()
+    robot = re.search(r"\b(franka|ur5e|ur10e|flexiv)\b", text, re.I)
+    if robot:
+        params["robot_preset"] = robot.group(1).lower()
+    accelerator = _requested_accelerator(text)
+    if accelerator:
+        params["accelerator"] = accelerator
+    gpu_count = _first_int(_DATA_FACTORY_GPU_RE.search(text))
+    if gpu_count and gpu_count > 0:
+        params["gpu_count"] = gpu_count
+    for field, labels in _SIM2REAL_URI_FIELDS:
+        value = _named_uri(text, labels)
+        if value:
+            params[field] = value
+    task = _named_text(text, r"isaac(?:\s+lab)?\s+task")
+    if task:
+        params["isaac_task"] = task
+    dataset_id = _named_text(text, r"(?:trigger\s+)?dataset\s+id")
+    if dataset_id:
+        params["trigger_dataset_id"] = dataset_id
+    return params
+
+
 _DATA_FACTORY_DEFAULT_GPUS = 4
 
 
 def _data_factory_gpu_count(config: OrderedDict[str, Any], params: dict[str, Any]) -> int:
-    """Resolve the GPU accelerator count for a paidf run (>=1, <=8)."""
+    """Resolve the positive GPU accelerator count for a PAIDF run."""
     gpus = params.get("gpu_count")
     if gpus:
-        return max(1, min(int(gpus), 8))
+        return max(1, int(gpus))
     return _DATA_FACTORY_DEFAULT_GPUS
 
 
@@ -1700,9 +2119,233 @@ def _apply_data_factory_params(config: OrderedDict[str, Any], params: dict[str, 
         config["n_augmentations"] = str(int(n_aug))
     if subject:
         config["augment_subject"] = str(subject)
+    for key in (
+        "refinement_iterations",
+        "grade_threshold",
+        "curator_clip_len_s",
+        "curator_min_clip_len_s",
+        "curator_motion_filter",
+        "max_images",
+        "max_tokens",
+    ):
+        if key in params:
+            value = params[key]
+            config[key] = (
+                str(int(value))
+                if isinstance(value, float) and value.is_integer()
+                else str(value)
+            )
     resolved_variants = int(str(config.get("n_augmentations") or "1"))
     gpu_count = _data_factory_gpu_count(config, params)
     config["variant_parallelism"] = str(max(1, min(resolved_variants, gpu_count)))
+
+
+def _apply_sim2real_params(config: OrderedDict[str, Any], params: dict[str, Any]) -> None:
+    if "trigger_dataset_uri" in params and "trigger_uri" in config:
+        config["trigger_uri"] = str(params["trigger_dataset_uri"])
+    if "seed" in params and "envgen_seed" in config:
+        config["envgen_seed"] = str(params["seed"])
+    for key in (
+        "trigger_dataset_uri",
+        "trigger_dataset_id",
+        "assets_uri",
+        "scene_spec_uri",
+        "cameras_uri",
+        "robot_spec_uri",
+        "robot_source",
+        "robot_preset",
+        "sim_backend",
+        "isaac_task",
+        "vlm_model",
+        "success_threshold",
+        "inner_iterations",
+        "outer_iterations",
+        "loop_of_loops_iterations",
+        "rollout_count",
+        "steps_per_rollout",
+        "heldout_env_count",
+        "env_count",
+        "train_fraction",
+        "envgen_shard_count",
+        "action_env_limit",
+        "seed",
+    ):
+        if key in params and key in config:
+            config[key] = str(params[key])
+
+
+def _infra_entry_key(
+    entry: dict[str, Any], project: str = ""
+) -> tuple[int, int, int, str, str]:
+    """Stable preference: explicit default, usable kubeconfig/context, then name."""
+    name = str(entry.get("cluster_name") or entry.get("name") or "")
+    project_match = bool(project and project.lower() in name.lower())
+    return (
+        0 if bool(entry.get("selected") or entry.get("default") or entry.get("is_default")) else 1,
+        0 if project_match else 1,
+        0 if str(entry.get("context") or entry.get("kubeconfig") or "").strip() else 1,
+        name,
+        str(entry.get("context") or ""),
+    )
+
+
+def resolve_workflow_infrastructure(infrastructure: dict[str, Any] | None) -> dict[str, Any]:
+    """Select deterministic, real, non-secret workflow placement facts.
+
+    Configured backends take precedence over locally cached kubeconfigs, which
+    take precedence over cloud discovery. Every fallback is based on an actual
+    inventory entry; this function never synthesizes a cluster identifier.
+    """
+    payload = infrastructure if isinstance(infrastructure, dict) else {}
+    project = str(payload.get("project") or "").strip()
+    configured = payload.get("configured")
+    entries = [item for item in configured if isinstance(item, dict)] if isinstance(configured, list) else []
+    source = "configured"
+    reason = ""
+    if entries:
+        entries.sort(key=lambda item: _infra_entry_key(item, project))
+        entry = entries[0]
+        reason = (
+            f"selected configured backend deterministically from {len(entries)} candidate(s)"
+        )
+    else:
+        local = payload.get("local_clusters")
+        local_entries = [
+            item for item in local
+            if isinstance(item, dict) and bool(item.get("kubeconfig_exists"))
+        ] if isinstance(local, list) else []
+        if local_entries:
+            local_entries.sort(key=lambda item: _infra_entry_key(item, project))
+            entry = local_entries[0]
+            source = "local"
+            reason = f"selected usable cached kubeconfig from {len(local_entries)} candidate(s)"
+        else:
+            cloud = payload.get("cloud_clusters")
+            cloud_entries = [item for item in cloud if isinstance(item, dict)] if isinstance(cloud, list) else []
+            cloud_entries.sort(key=lambda item: _infra_entry_key(item, project))
+            entry = cloud_entries[0] if cloud_entries else {}
+            source = "cloud" if entry else "none"
+            reason = (
+                "identified cloud cluster from live discovery; configure its context/kubeconfig before submit"
+                if entry else "no configured, local, or cloud Kubernetes backend is available"
+            )
+    raw = entry.get("raw") if isinstance(entry.get("raw"), dict) else {}
+    available_raw = raw.get("available_accelerators")
+    available = (
+        [str(value).strip() for value in available_raw if str(value).strip()]
+        if isinstance(available_raw, list)
+        else []
+    )
+    raw_accelerators = raw.get("accelerators")
+    accelerator = str(
+        raw.get("gpu_accelerator")
+        or (raw_accelerators if isinstance(raw_accelerators, str) else "")
+        or raw.get("gpu_product")
+        or (available[0] if len(available) == 1 else "")
+        or ""
+    ).strip()
+    profile = str(entry.get("gpu_profile") or raw.get("gpu_profile") or "").strip().lower()
+    if not accelerator and profile in {"rtxpro", "rtx6000", "rtx-pro"}:
+        accelerator = "RTXPRO6000"
+    return {
+        "project": project,
+        "cluster_name": str(entry.get("cluster_name") or entry.get("name") or "").strip(),
+        "context": str(entry.get("context") or "").strip(),
+        "kubeconfig": str(entry.get("kubeconfig") or "").strip(),
+        "accelerator": accelerator,
+        "available_accelerators": available,
+        "gpu_profile": profile,
+        "source": source,
+        "selection_reason": reason,
+        "k8s_namespace": str(raw.get("namespace") or raw.get("k8s_namespace") or "").strip(),
+        "k8s_service_account": str(raw.get("service_account") or raw.get("k8s_service_account") or "").strip(),
+        "k8s_image_pull_secrets": str(raw.get("image_pull_secrets") or raw.get("k8s_image_pull_secrets") or "").strip(),
+        "k8s_env_secret_names": str(raw.get("env_secret_names") or raw.get("k8s_env_secret_names") or "").strip(),
+        "k8s_gpu_product": str(raw.get("gpu_product") or raw.get("k8s_gpu_product") or "").strip(),
+        "augment_image": str(raw.get("augment_image") or "").strip(),
+        "envgen_image": str(raw.get("envgen_image") or "").strip(),
+        "policy_image": str(raw.get("policy_image") or "").strip(),
+        "trainer_image": str(raw.get("trainer_image") or "").strip(),
+        "vlm_image": str(raw.get("vlm_image") or "").strip(),
+        "eval_image": str(raw.get("eval_image") or "").strip(),
+        "isaac_image": str(raw.get("isaac_image") or "").strip(),
+    }
+
+
+def _gpu_product_for_accelerator(accelerator: str) -> str:
+    family = _accelerator_family(accelerator)
+    if family == "RTXPRO6000":
+        return "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
+    if family == "L40S":
+        return "NVIDIA-L40S"
+    return ""
+
+
+def _accelerator_with_count(accelerator: str, count: int) -> str:
+    base = str(accelerator or "").strip().split(":", 1)[0]
+    # SkyPilot derives this requestable name from the live NVIDIA product label;
+    # keep the compact family spelling for validation and use the discovered
+    # Kubernetes catalog spelling at the scheduling boundary.
+    if _accelerator_family(base) == "RTXPRO6000":
+        base = "RTXPRO-6000-BLACKWELL-SERVER-EDITION"
+    return f"{base}:{max(1, int(count))}" if base else ""
+
+
+def _accelerator_family(accelerator: str) -> str:
+    compact = re.sub(
+        r"[\s_-]+",
+        "",
+        str(accelerator or "").split(":", 1)[0],
+    ).upper()
+    if compact == "RTX6000" or compact.startswith("RTXPRO6000") or "RTX6000BLACKWELL" in compact:
+        return "RTXPRO6000"
+    return compact
+
+
+def _apply_workflow_infrastructure(
+    resources: OrderedDict[str, Any],
+    *,
+    template: str,
+    params: dict[str, Any],
+    infrastructure: dict[str, Any] | None,
+) -> dict[str, str]:
+    resolved = resolve_workflow_infrastructure(infrastructure)
+    gpu = resources.get("gpu")
+    if not isinstance(gpu, dict):
+        return resolved
+    current = str(gpu.get("accelerators") or "")
+    current_count = 1
+    if ":" in current:
+        try:
+            current_count = int(current.rsplit(":", 1)[1])
+        except ValueError:
+            current_count = 1
+    count = int(params.get("gpu_count") or current_count)
+    requested = str(params.get("accelerator") or "").strip()
+    configured = str(resolved.get("accelerator") or "").strip()
+    accelerator = requested or configured or (current if params.get("gpu_count") else "")
+    if accelerator:
+        gpu["accelerators"] = _accelerator_with_count(accelerator, count)
+    elif infrastructure is not None:
+        placeholder = (
+            "<configure-rt-core-accelerator>"
+            if template == "sim2real-staged"
+            else "<configure-gpu-accelerator>"
+        )
+        gpu["accelerators"] = f"{placeholder}:{count}"
+    cluster_name = str(resolved.get("cluster_name") or "").strip()
+    context = str(resolved.get("context") or "").strip()
+    project = str(resolved.get("project") or "").strip()
+    if cluster_name or context:
+        directive: OrderedDict[str, Any] = OrderedDict()
+        directive["clusterName"] = cluster_name or context
+        if context:
+            directive["context"] = context
+        if project:
+            directive["project"] = project
+        directive["skipS3"] = True
+        gpu["deployIfAbsent"] = directive
+    return resolved
 
 
 def _build_spec(
@@ -1711,6 +2354,7 @@ def _build_spec(
     bucket: str,
     name: str | None,
     params: dict[str, Any] | None = None,
+    infrastructure: dict[str, Any] | None = None,
 ) -> OrderedDict[str, Any]:
     catalog = _workflow_specs()
     normalized = _normalize_template(template)
@@ -1722,6 +2366,8 @@ def _build_spec(
     config.update(spec["config_uri"])
     if normalized == "physical-ai-data-factory" and params:
         _apply_data_factory_params(config, params)
+    if normalized in {"sim2real-staged", "two-step"} and params:
+        _apply_sim2real_params(config, params)
     states = OrderedDict()
     for state_name, state_spec in spec["states"].items():
         state_payload: OrderedDict[str, Any] = OrderedDict()
@@ -1744,12 +2390,43 @@ def _build_spec(
     root["kind"] = "Workflow"
     root["metadata"] = OrderedDict({"name": metadata_name, "description": description})
     root["config"] = config
-    resources = spec["resources"]
+    resources = deepcopy(spec["resources"])
     if normalized == "physical-ai-data-factory" and params:
         gpu_count = _data_factory_gpu_count(config, params)
         gpu_res = resources.get("gpu")
         if isinstance(gpu_res, dict) and gpu_count != _DATA_FACTORY_DEFAULT_GPUS:
-            gpu_res["accelerators"] = f"RTXPRO6000:{gpu_count}"
+            gpu_res["accelerators"] = (
+                f"RTXPRO-6000-BLACKWELL-SERVER-EDITION:{gpu_count}"
+            )
+    resolved_infra = _apply_workflow_infrastructure(
+        resources,
+        template=normalized,
+        params=params or {},
+        infrastructure=infrastructure,
+    )
+    if normalized == "sim2real-staged":
+        accelerator = str(
+            (params or {}).get("accelerator") or resolved_infra.get("accelerator") or ""
+        )
+        for key in (
+            "k8s_namespace",
+            "k8s_service_account",
+            "k8s_image_pull_secrets",
+            "k8s_env_secret_names",
+            "augment_image",
+            "envgen_image",
+            "policy_image",
+            "trainer_image",
+            "vlm_image",
+            "eval_image",
+            "isaac_image",
+        ):
+            if resolved_infra.get(key):
+                config[key] = resolved_infra[key]
+        config["k8s_gpu_product"] = (
+            resolved_infra.get("k8s_gpu_product")
+            or _gpu_product_for_accelerator(accelerator)
+        )
     root["resources"] = resources
     root["initial"] = spec["initial"]
     root["states"] = states
@@ -1799,6 +2476,7 @@ def generate_workflow_draft(
     name: str = "",
     capabilities: dict[str, Any] | None = None,
     tool_refs: frozenset[str] | None = None,
+    infrastructure: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Draft workflow YAML by selecting a template from intent/capabilities."""
     if template:
@@ -1807,13 +2485,76 @@ def generate_workflow_draft(
     else:
         selection = choose_workflow_template(user_text=user_text, intent=intent, capabilities=capabilities)
         selected_template = str(selection["template"])
-    params = (
-        extract_data_factory_params(user_text)
-        if selected_template == "physical-ai-data-factory"
-        else None
+    parameter_errors: list[str] = []
+    try:
+        if selected_template == "physical-ai-data-factory":
+            params = extract_data_factory_params(user_text)
+        elif selected_template in {"sim2real-staged", "two-step"}:
+            params = extract_sim2real_params(user_text)
+        else:
+            params = None
+    except WorkflowParameterError as exc:
+        params = None
+        parameter_errors.append(str(exc))
+    resolved_infra = resolve_workflow_infrastructure(infrastructure)
+    warnings: list[str] = []
+    context_errors: list[str] = list(parameter_errors)
+    resolved_bucket = str(bucket or "").strip()
+    if not resolved_bucket:
+        resolved_bucket = "<configure-s3-bucket>"
+        warnings.append("No agent S3 bucket is configured; config.bucket is an explicit placeholder.")
+    requested_accel = str((params or {}).get("accelerator") or "").strip()
+    configured_accel = str(resolved_infra.get("accelerator") or "").strip()
+    available_accels = {
+        _accelerator_family(str(value))
+        for value in (resolved_infra.get("available_accelerators") or [])
+        if str(value).strip()
+    }
+    if requested_accel and available_accels:
+        requested_base = _accelerator_family(requested_accel)
+        if requested_base not in available_accels:
+            context_errors.append(
+                f"requested accelerator {requested_base} is unavailable on the selected "
+                f"backend (available: {', '.join(sorted(available_accels))})"
+            )
+    if requested_accel and configured_accel:
+        requested_base = _accelerator_family(requested_accel)
+        configured_base = _accelerator_family(configured_accel)
+        if requested_base != configured_base:
+            context_errors.append(
+                f"requested accelerator {requested_base} is not the configured profile {configured_base}"
+            )
+    if selected_template == "sim2real-staged" and str((params or {}).get("sim_backend") or "isaac") == "isaac":
+        selected_accel = (requested_accel or configured_accel).upper()
+        if selected_accel and any(name in selected_accel for name in ("H100", "H200", "B200", "B300")):
+            context_errors.append(
+                "Isaac Sim2Real requires an RT-core accelerator (L40S or RTX PRO 6000)"
+            )
+    if infrastructure is not None and not bool((infrastructure or {}).get("has_infra")):
+        warnings.append(
+            "No Kubernetes backend is currently configured; provision or select one before submit."
+        )
+    elif infrastructure is not None and not configured_accel and not requested_accel:
+        warnings.append(
+            "The configured Kubernetes backend does not declare an accelerator; "
+            "the generated resource uses an explicit placeholder."
+        )
+    selection_reason = str(resolved_infra.get("selection_reason") or "").strip()
+    if selection_reason:
+        warnings.append(selection_reason)
+    spec = _build_spec(
+        selected_template,
+        bucket=resolved_bucket,
+        name=name or None,
+        params=params,
+        infrastructure=infrastructure,
     )
-    spec = _build_spec(selected_template, bucket=bucket, name=name or None, params=params)
     yaml_text = _render_spec_yaml(spec)
+    unresolved = sorted(set(re.findall(r"<[^<>\n]+>", yaml_text)))
+    if unresolved:
+        context_errors.append(
+            "unresolved configuration placeholders: " + ", ".join(unresolved)
+        )
     validation = validate_workflow_yaml_text(yaml_text, tool_refs=tool_refs)
     plan: dict[str, Any]
     if validation.get("ok"):
@@ -1824,7 +2565,7 @@ def generate_workflow_draft(
         )
     else:
         plan = {"ok": False, "error": str(validation.get("error") or "validation failed")}
-    runnable = bool(validation.get("ok") and plan.get("ok"))
+    runnable = bool(validation.get("ok") and plan.get("ok") and not context_errors)
     return {
         "template": selected_template,
         "selection": selection,
@@ -1832,6 +2573,10 @@ def generate_workflow_draft(
         "validation": validation,
         "plan": plan,
         "runnable": runnable,
+        "parameters": params or {},
+        "infrastructure": resolved_infra,
+        "warnings": warnings,
+        "context_errors": context_errors,
     }
 
 
@@ -2303,6 +3048,18 @@ def author_workflow_from_goal(
     catalog = frozenset(str(t) for t in (tool_refs or []))
     if not catalog:
         return {"ok": False, "runnable": False, "yaml": "", "error": "no toolRefs available in the live catalog", "tool_refs": []}
+    explicit_refs = list(
+        dict.fromkeys(re.findall(r"\bworkbench\.[A-Za-z0-9_.-]+", str(goal or "")))
+    )
+    unknown_explicit = [ref for ref in explicit_refs if ref not in catalog]
+    if unknown_explicit:
+        return {
+            "ok": False,
+            "runnable": False,
+            "yaml": "",
+            "error": "unknown explicit toolRef(s): " + ", ".join(unknown_explicit),
+            "tool_refs": explicit_refs,
+        }
     # Prefer explicit N-step / arrow / then counts. Only raise to matched-tool
     # count when the operator did not pin an explicit step count.
     n_steps = _desired_step_count(goal)
@@ -2312,7 +3069,11 @@ def author_workflow_from_goal(
     if (not explicit_step_count) and not semantic_stages and len(pre_matched) > n_steps:
         n_steps = max(1, min(len(pre_matched), 6))
     semantic_selected = _select_semantic_tool_refs(goal, catalog, n_steps)
-    if semantic_selected:
+    if explicit_refs:
+        selected = explicit_refs
+        matched = explicit_refs
+        n_steps = len(explicit_refs)
+    elif semantic_selected:
         selected = list(semantic_selected)
         matched = list(semantic_selected)
         target_steps = max(n_steps, len(selected))
@@ -2371,12 +3132,16 @@ def author_workflow_from_goal(
             break
         config_keys.extend(new_keys)
 
-    runnable = bool(validation.get("ok") and plan.get("ok"))
+    unresolved = sorted(set(re.findall(r"<[^<>\n]+>", yaml_text)))
+    runnable = bool(validation.get("ok") and plan.get("ok") and not unresolved and not padded)
     return {
         "ok": runnable,
         "runnable": runnable,
         "template": "catalog-composed",
-        "yaml": yaml_text if runnable else "",
+        # Preserve a structurally valid composed chain for operator repair even
+        # when unresolved values make it intentionally non-runnable. A spec
+        # that itself failed validation is never returned as usable YAML.
+        "yaml": yaml_text if validation.get("ok") else "",
         "validation": validation,
         "plan": plan,
         "tool_refs": selected,
@@ -2387,6 +3152,10 @@ def author_workflow_from_goal(
         "dropped_stages_note": dropped_note,
         "desired_steps": n_steps,
         "data_flow": flow_links,
+        "context_errors": (
+            (["unresolved configuration placeholders: " + ", ".join(unresolved)] if unresolved else [])
+            + (["catalog composition contains unmatched placeholder stages"] if padded else [])
+        ),
     }
 
 
@@ -2409,9 +3178,40 @@ def generate_sim2real_two_step_yaml(
     *,
     bucket: str = "example-bucket",
     name: str = "sim2real-two-step",
+    user_text: str = "",
+    infrastructure: dict[str, Any] | None = None,
 ) -> str:
     """Compatibility wrapper for two-step template generation."""
-    return _render_spec_yaml(_build_spec("two-step", bucket=bucket, name=name))
+    params = extract_sim2real_params(user_text) if user_text else None
+    return _render_spec_yaml(
+        _build_spec(
+            "two-step",
+            bucket=bucket,
+            name=name,
+            params=params,
+            infrastructure=infrastructure,
+        )
+    )
+
+
+def generate_sim2real_staged_yaml(
+    *,
+    bucket: str = "example-bucket",
+    name: str = "sim2real-staged",
+    user_text: str = "",
+    infrastructure: dict[str, Any] | None = None,
+) -> str:
+    """Render the real staged Sim2Real engine workflow with chat parameter overlays."""
+    params = extract_sim2real_params(user_text) if user_text else None
+    return _render_spec_yaml(
+        _build_spec(
+            "sim2real-staged",
+            bucket=bucket,
+            name=name,
+            params=params,
+            infrastructure=infrastructure,
+        )
+    )
 
 
 def generate_sim2real_loop_gate_yaml(
@@ -2482,6 +3282,7 @@ def generate_data_factory_yaml(
     bucket: str = "example-bucket",
     name: str = "physical-ai-data-factory",
     user_text: str = "",
+    infrastructure: dict[str, Any] | None = None,
 ) -> str:
     """Render Physical AI Data Factory (paidf) workflow YAML.
 
@@ -2490,7 +3291,13 @@ def generate_data_factory_yaml(
     """
     params = extract_data_factory_params(user_text) if user_text else None
     return _render_spec_yaml(
-        _build_spec("physical-ai-data-factory", bucket=bucket, name=name, params=params)
+        _build_spec(
+            "physical-ai-data-factory",
+            bucket=bucket,
+            name=name,
+            params=params,
+            infrastructure=infrastructure,
+        )
     )
 
 
@@ -2534,6 +3341,7 @@ def format_workflow_chat_reply(
     plan: dict[str, Any] | None = None,
     runnable: bool | None = None,
     dropped_stages_note: str = "",
+    warnings: list[str] | None = None,
 ) -> str:
     """Markdown reply for chat when a workflow YAML is generated."""
     name = str(validation.get("name") or "unnamed")
@@ -2553,8 +3361,10 @@ def format_workflow_chat_reply(
         "rl-policy-success": "Simulation RL policy training with success gate and publish/fail outcomes",
         "physical-ai-data-factory": (
             "Physical AI Data Factory: annotate → Cosmos Transfer augment & multiply "
-            "(fan out scenarios across GPUs) → VLM grade loop → curate → Rerun visualize"
+            "(fan out scenarios across GPUs) → Cosmos Evaluator gate → Cosmos Curator "
+            "→ FiftyOne review → Rerun visualize"
         ),
+        "sim2real-staged": "Real maintained 14-stage Sim2Real VLM-RL engine",
         "two-step": "2-step Sim2Real pipeline",
     }
     t = str(template or "two-step").strip().lower()
@@ -2588,6 +3398,8 @@ def format_workflow_chat_reply(
         drop_note = str(validation.get("dropped_stages_note") or "").strip()
     if drop_note:
         lines.insert(6, f"- **note**: {drop_note}")
+    for warning in reversed([str(item) for item in (warnings or []) if str(item).strip()]):
+        lines.insert(6, f"- **infrastructure**: {warning}")
     if not validation.get("ok"):
         err = str(validation.get("error") or "validation failed")
         lines.insert(6, f"- **error**: `{err}`")

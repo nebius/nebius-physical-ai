@@ -1,0 +1,230 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: groot-1-7-finetune
+  description: >
+    Validate the real GR00T N1.7 data-to-checkpoint-to-offline-evaluation path,
+    publish synchronized RRD and MCAP diagnostics, and verify the deployed NPA
+    agent viewers. Training is parameterized from one to many GPUs; this short
+    optimizer smoke is operational evidence, not a robot rollout or a claim of
+    statistically meaningful learning.
+
+config:
+  bucket: example-bucket
+  prefix: "groot-1-7-two-gpu-pipeline/{{run.id}}"
+  source_data_uri: "s3://{{config.bucket}}/groot-1-7-finetune/source/data/"
+  baseline_checkpoint_uri: "s3://{{config.bucket}}/{{config.prefix}}/checkpoints/baseline/"
+  base_model: nvidia/GR00T-N1.7-3B
+  robot_embodiment: NEW_EMBODIMENT
+  action_representation: ABSOLUTE
+  gpu_type: RTXPRO6000
+  gpu_count: "2"
+  per_device_batch_size: "1"
+  gradient_accumulation_steps: "1"
+  global_batch_size: "2"
+  minimum_effective_global_batch: "1"
+  minimum_epochs: "0.001"
+  nccl_transport: socket
+  dataloader_num_workers: "0"
+  logging_steps: "1"
+  split_seed: groot17-operational-pipeline-v1
+  train_episodes: "2"
+  heldout_episodes: "1"
+  final_episodes: "0"
+  max_steps: "4"
+  save_steps: "4"
+  save_total_limit: "1"
+  action_horizon: "16"
+  # Five repeats are the deterministic default (one duplicate-seed check plus
+  # independent seeds). GPU inference cost scales linearly with this value.
+  evaluation_repeats: "5"
+  minimum_relative_improvement: "0.10"
+  minimum_skill_score: "0.05"
+  repeat_noise_multiple: "3.0"
+  max_dimension_regression: "0.0"
+  loss_decrease_tolerance: "0.01"
+  agent_url: https://agent.example.invalid
+
+  rigor_preflight_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/access-capacity-preflight.json"
+  train_data_uri: "s3://{{config.bucket}}/{{config.prefix}}/data/train/"
+  heldout_data_uri: "s3://{{config.bucket}}/{{config.prefix}}/data/heldout/"
+  final_data_uri: "s3://{{config.bucket}}/{{config.prefix}}/data/final-unused/"
+  data_uri: "{{config.train_data_uri}}"
+  split_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/split/manifest.json"
+  candidate_checkpoint_uri: "s3://{{config.bucket}}/{{config.prefix}}/checkpoints/candidate/"
+  training_manifest_uri: "{{config.candidate_checkpoint_uri}}npa_groot_finetune_manifest.json"
+  candidate_checkpoint_ref_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/trained-checkpoint.json"
+  offline_baseline_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/offline/baseline/evaluation.json"
+  offline_baseline_arrays_uri: "s3://{{config.bucket}}/{{config.prefix}}/offline/baseline/actions.npz"
+  offline_candidate_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/offline/trained/evaluation.json"
+  offline_candidate_arrays_uri: "s3://{{config.bucket}}/{{config.prefix}}/offline/trained/actions.npz"
+  learning_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/two-gpu-pipeline-report.json"
+  offline_comparison_video_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/offline-heldout-comparison.mp4"
+  mcap_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/groot-offline-evaluation.mcap"
+  rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/groot-offline-evaluation.rrd"
+  offline_mcap_uri: "{{config.mcap_uri}}"
+  offline_rrd_uri: "{{config.rrd_uri}}"
+  comparison_video_uri: "{{config.offline_comparison_video_uri}}"
+  publish_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/publish-manifest.json"
+  agent_ui_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/agent-ui-verification.json"
+  workflow_uri: "s3://{{config.bucket}}/{{config.prefix}}/workflow.yaml"
+
+resources:
+  trainer-gpu:
+    cloud: kubernetes
+    accelerators: "{{config.gpu_type}}:{{config.gpu_count}}"
+    cpus: 32
+    memory: 200Gi
+    kubernetes:
+      pod_config:
+        spec:
+          # The pinned upstream GR00T image writes its uv environment, model cache,
+          # and checkpoint tree below root-owned image paths during startup.
+          # Cluster admission, read-only inputs, and Trivy remain required gates.
+          securityContext: {runAsUser: 0, runAsGroup: 0}
+  evaluator-gpu:
+    cloud: kubernetes
+    accelerators: "{{config.gpu_type}}:1"
+    cpus: 16
+    memory: 96Gi
+    kubernetes:
+      pod_config:
+        spec:
+          # Baseline initialization and the pinned torchcodec/GR00T evaluator write
+          # train-stat-derived processor files below the root-owned checkpoint tree.
+          securityContext: {runAsUser: 0, runAsGroup: 0}
+  artifact-cpu:
+    cloud: kubernetes
+    cpus: 8
+    memory: 32Gi
+
+initial: access_capacity_preflight
+
+states:
+  access_capacity_preflight:
+    description: Validate GPU, batch, split, and optimizer-step settings before any GPU stage.
+    toolRef: workflow.groot.preflight_rigor
+    resources: artifact-cpu
+    outputs:
+      - {uri: "{{config.rigor_preflight_uri}}", schema: npa.groot.rigor_preflight.v1}
+    next: prepare_deterministic_split
+
+  prepare_deterministic_split:
+    description: Materialize a deterministic leakage-free train/held-out split with train-only statistics.
+    toolRef: workflow.groot.prepare_split
+    resources: artifact-cpu
+    inputs:
+      - {uri: "{{config.source_data_uri}}", schema: nvidia.groot.lerobot.v2}
+    outputs:
+      - {uri: "{{config.train_data_uri}}", schema: nvidia.groot.lerobot.v2.train-split}
+      - {uri: "{{config.heldout_data_uri}}", schema: nvidia.groot.lerobot.v2.heldout-split}
+      - {uri: "{{config.split_manifest_uri}}", schema: npa.groot.episode_split.v1}
+    next: baseline_inference_evaluation
+
+  baseline_inference_evaluation:
+    description: Run real seeded GR00T forwards over held-out camera frames using the immutable baseline weights.
+    toolRef: workbench.groot.baseline_eval
+    resources: evaluator-gpu
+    inputs:
+      - {uri: "{{config.split_manifest_uri}}", schema: npa.groot.episode_split.v1}
+    outputs:
+      - {uri: "{{config.baseline_checkpoint_uri}}", schema: nvidia.groot.n1.7.custom-embodiment-checkpoint}
+      - {uri: "{{config.offline_baseline_eval_uri}}", schema: npa.groot.offline_eval.v1}
+      - {uri: "{{config.offline_baseline_arrays_uri}}", schema: numpy.npz}
+    next: distributed_training
+
+  distributed_training:
+    description: Run genuine parameterized multi-GPU GR00T optimizer steps and publish one rank-zero checkpoint.
+    toolRef: workbench.groot.finetune
+    resources: trainer-gpu
+    inputs:
+      - {uri: "{{config.train_data_uri}}", schema: nvidia.groot.lerobot.v2.train-split}
+      - {uri: "{{config.split_manifest_uri}}", schema: npa.groot.episode_split.v1}
+    outputs:
+      - {uri: "{{config.candidate_checkpoint_uri}}", schema: nvidia.groot.n1.7.finetuned-checkpoint}
+      - {uri: "{{config.training_manifest_uri}}", schema: npa.groot.finetune.v1}
+    next: trained_checkpoint_resolution
+
+  trained_checkpoint_resolution:
+    description: Resolve the final checkpoint-N from the completed trainer manifest, verify all ranks and rank-zero publication, and prove trained weights differ.
+    toolRef: workflow.groot.resolve_trained_checkpoint
+    resources: artifact-cpu
+    inputs:
+      - {uri: "{{config.training_manifest_uri}}", schema: npa.groot.finetune.v1}
+      - {uri: "{{config.split_manifest_uri}}", schema: npa.groot.episode_split.v1}
+      - {uri: "{{config.candidate_checkpoint_uri}}", schema: nvidia.groot.n1.7.finetuned-checkpoint}
+      - {uri: "{{config.baseline_checkpoint_uri}}", schema: nvidia.groot.n1.7.custom-embodiment-checkpoint}
+    outputs:
+      - {uri: "{{config.candidate_checkpoint_ref_uri}}", schema: npa.groot.checkpoint_ref.v1}
+    next: post_training_inference_evaluation
+
+  post_training_inference_evaluation:
+    description: Download and load the exact resolved trained checkpoint for the identical held-out evaluation.
+    toolRef: workbench.groot.posttrain_eval
+    resources: evaluator-gpu
+    inputs:
+      - {uri: "{{config.candidate_checkpoint_ref_uri}}", schema: npa.groot.checkpoint_ref.v1}
+    outputs:
+      - {uri: "{{config.offline_candidate_eval_uri}}", schema: npa.groot.offline_eval.v1}
+      - {uri: "{{config.offline_candidate_arrays_uri}}", schema: numpy.npz}
+    next: classify_learning_outcome
+
+  classify_learning_outcome:
+    description: Classify improved or not_improved separately from pipeline success; never promote unsupported learning.
+    toolRef: workflow.groot.compare_learning
+    resources: artifact-cpu
+    inputs:
+      - {uri: "{{config.offline_baseline_eval_uri}}", schema: npa.groot.offline_eval.v1}
+      - {uri: "{{config.offline_candidate_eval_uri}}", schema: npa.groot.offline_eval.v1}
+      - {uri: "{{config.training_manifest_uri}}", schema: npa.groot.finetune.v1}
+    outputs:
+      - {uri: "{{config.learning_report_uri}}", schema: npa.groot.learning.v1}
+      - {uri: "{{config.comparison_video_uri}}", schema: video.mp4.offline-heldout-comparison}
+    next: generate_rrd
+
+  generate_rrd:
+    description: Emit a native nonblank RRD of actual held-out frames, actions, loss, metrics, and checkpoint provenance.
+    toolRef: workflow.groot.emit_learning_rrd
+    resources: artifact-cpu
+    inputs:
+      - {uri: "{{config.learning_report_uri}}", schema: npa.groot.learning.v1}
+    outputs:
+      - {uri: "{{config.rrd_uri}}", schema: rerun.rrd.v1}
+    next: generate_mcap
+
+  generate_mcap:
+    description: Emit equivalent MCAP topics on the RRD dataset-index timebase with producer metadata preserved.
+    toolRef: workflow.groot.emit_learning_mcap
+    resources: artifact-cpu
+    inputs:
+      - {uri: "{{config.learning_report_uri}}", schema: npa.groot.learning.v1}
+    outputs:
+      - {uri: "{{config.mcap_uri}}", schema: mcap.v1}
+    next: publish_artifacts_run_summary
+
+  publish_artifacts_run_summary:
+    description: Independently inspect, hash, and publish every offline diagnostic and the machine-readable run summary.
+    toolRef: workflow.groot.publish_learning
+    resources: artifact-cpu
+    inputs:
+      - {uri: "{{config.learning_report_uri}}", schema: npa.groot.learning.v1}
+      - {uri: "{{config.rrd_uri}}", schema: rerun.rrd.v1}
+      - {uri: "{{config.mcap_uri}}", schema: mcap.v1}
+      - {uri: "{{config.comparison_video_uri}}", schema: video.mp4.offline-heldout-comparison}
+      - {uri: "{{config.workflow_uri}}", schema: npa.workflow.v0.0.1}
+    outputs:
+      - {uri: "{{config.publish_manifest_uri}}", schema: npa.groot.learning_publish.v1}
+    next: agent_ui_load_viewer_verification
+
+  agent_ui_load_viewer_verification:
+    description: Load this run through the deployed NPA agent and verify Rerun, Lichtblick, inventory, and range endpoints.
+    toolRef: workflow.groot.verify_agent_ui
+    resources: artifact-cpu
+    inputs:
+      - {uri: "{{config.publish_manifest_uri}}", schema: npa.groot.learning_publish.v1}
+      - {uri: "{{config.rrd_uri}}", schema: rerun.rrd.v1}
+      - {uri: "{{config.mcap_uri}}", schema: mcap.v1}
+    outputs:
+      - {uri: "{{config.agent_ui_report_uri}}", schema: npa.groot.agent_ui_handoff.v1}
+    terminal: true

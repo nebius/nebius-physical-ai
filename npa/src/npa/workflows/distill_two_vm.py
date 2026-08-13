@@ -877,19 +877,20 @@ def _save_workbench_config(
     # survived from a previous run's config so resolve_config() won't
     # find a dead HTTP endpoint for a VM that never runs a server.
     if not include_endpoint:
-        from npa.clients.config import _load_yaml, CONFIG_PATH
-        import yaml as _yaml
+        from npa.clients.config import update_config_document
 
-        cfg = _load_yaml()
-        wb = (cfg.get("projects", {})
-              .get(PROJECT_ALIAS, {})
-              .get("workbenches", {})
-              .get(spec.name, {}))
-        if "endpoint" in wb:
-            del wb["endpoint"]
-            CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with CONFIG_PATH.open("w") as _f:
-                _yaml.dump(cfg, _f, default_flow_style=False, sort_keys=False)
+        def remove_stale_endpoint(cfg: dict[str, Any]) -> dict[str, Any]:
+            projects = cfg.get("projects", {})
+            project = projects.get(PROJECT_ALIAS, {}) if isinstance(projects, dict) else {}
+            workbenches = (
+                project.get("workbenches", {}) if isinstance(project, dict) else {}
+            )
+            wb = workbenches.get(spec.name, {}) if isinstance(workbenches, dict) else {}
+            if isinstance(wb, dict):
+                wb.pop("endpoint", None)
+            return cfg
+
+        update_config_document(remove_stale_endpoint)
 
 
 # ── Credential resolution ─────────────────────────────────────────────────

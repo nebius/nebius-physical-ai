@@ -240,6 +240,7 @@ def test_names_match_the_real_container_image_names(entries: list[dict]) -> None
         "npa-workbench-cuda-base",
         "npa-sonic-mujoco",
         "npa-sonic-export",
+        "npa-cosmos3-serving",
     }
     unknown = [
         entry["name"]

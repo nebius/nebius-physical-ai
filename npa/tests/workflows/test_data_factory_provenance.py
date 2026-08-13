@@ -78,7 +78,7 @@ def test_provenance_flags_report_only_curation() -> None:
     prov = build_run_provenance(KEYS, run_id=RUN, read_json=read_report_only)
     cur = next(c for c in prov["components"] if c["stage"] == "Curation")
     assert cur.get("engine") == "report_only"
-    assert "npa-fiftyone image" in cur["detail"]
+    assert "FiftyOne Brain did not run" in cur["detail"]
 
 
 def test_provenance_distinguishes_cpu_standin_from_gpu() -> None:
@@ -121,6 +121,85 @@ def test_provenance_only_reports_present_stages() -> None:
     prov = build_run_provenance(keys, run_id=RUN)
     stages = {c["stage"] for c in prov["components"]}
     assert stages == {"Augment"}
+
+
+def test_provenance_uses_truthful_learning_phases_for_groot_offline_eval() -> None:
+    run = "groot17-learning-test"
+    root = f"groot-1-7-finetune/{run}"
+    keys = [
+        f"{root}/data/train/videos/chunk-000/observation.image/episode_000000.mp4",
+        f"{root}/data/heldout/videos/chunk-000/observation.image/episode_000000.mp4",
+        f"{root}/reports/split/manifest.json",
+        f"{root}/checkpoints/baseline/model.safetensors",
+        f"{root}/offline/baseline/evaluation.json",
+        f"{root}/checkpoints/candidate/checkpoint-4/model.safetensors",
+        f"{root}/checkpoints/candidate/npa_groot_finetune_manifest.json",
+        f"{root}/offline/trained/evaluation.json",
+        f"{root}/reports/two-gpu-pipeline-report.json",
+        f"{root}/reports/offline-heldout-comparison.mp4",
+        f"{root}/reports/groot-offline-evaluation.rrd",
+        f"{root}/reports/groot-offline-evaluation.mcap",
+        f"{root}/reports/publish-manifest.json",
+        f"{root}/workflow.yaml",
+    ]
+
+    def read_learning(key: str):
+        if key.endswith("reports/two-gpu-pipeline-report.json"):
+            return {
+                "schema": "npa.groot.learning.v1",
+                "evaluation_kind": "offline held-out policy evaluation",
+                "closed_loop": False,
+                "dataset": {
+                    "camera_names": ["front"],
+                    "source_resolution": "96x96",
+                    "heldout_episodes": 1,
+                    "fps": 10,
+                },
+                "provenance": {"primary_camera": "front"},
+                "training": {"distinct_gpu_count": 7, "coverage_criterion": "one complete pass"},
+                "evaluation": {"metric_name": "action_mse", "real_model_forward": True},
+            }
+        return {}
+
+    prov = build_run_provenance(keys, run_id=run, read_json=read_learning)
+    stages = [component["stage"] for component in prov["components"]]
+    assert stages == [
+        "Prepare leakage-free split",
+        "Baseline held-out inference",
+        "Multi-GPU policy training",
+        "Post-training held-out inference",
+        "Compare learning",
+        "Synchronized learning replay",
+        "Validate and publish",
+    ]
+    assert "Visualize + finalize" not in prov["summary"]
+    assert "not a rollout" in prov["summary"]
+    assert "real Gr00tPolicy forwards" in prov["components"][1]["detail"]
+    assert prov["origin"]["original_present"] is True
+    assert "96x96 native" in prov["origin"]["summary"]
+    assert "not a simulator/robot rollout" in prov["origin"]["summary"]
+
+
+def test_groot_filename_without_authoritative_metadata_is_not_semantic_proof() -> None:
+    run = "ambiguous-groot-name"
+    root = f"arbitrary/{run}"
+    keys = [
+        f"{root}/reports/two-gpu-pipeline-report.json",
+        f"{root}/reports/groot-offline-evaluation.rrd",
+    ]
+
+    prov = build_run_provenance(
+        keys,
+        run_id=run,
+        read_json=lambda _key: {
+            "schema": "attacker.chosen.v1",
+            "evaluation_kind": "offline held-out policy evaluation",
+            "closed_loop": False,
+        },
+    )
+
+    assert "Offline held-out GR00T" not in prov["summary"]
+    assert all(component["stage"] != "Synchronized learning replay" for component in prov["components"])
 
 
 def test_provenance_carries_origin() -> None:
@@ -175,7 +254,7 @@ def test_origin_when_no_original_input_stored() -> None:
     assert "pseudo-labeled those augmented frames" in origin["summary"]
 
 
-def test_origin_when_source_frames_uploaded() -> None:
+def test_origin_when_source_frames_are_operator_provided() -> None:
     keys = [
         f"{PFX}/input/clip0/frame-00000.png",
         f"{PFX}/input/clip0/frame-00001.png",
@@ -183,9 +262,48 @@ def test_origin_when_source_frames_uploaded() -> None:
         f"{PFX}/cosmos_augmented/manifest.json",
         f"{PFX}/cosmos_augmented/aug-{RUN}/frame-00000.png",
     ]
-    origin = build_run_origin(keys, run_id=RUN, read_json=_read_gpu)
+    def read_with_source(key: str):
+        if key.endswith("configs/manifest.json"):
+            return {
+                "input_source": {
+                    "kind": "operator_provided",
+                    "uri": f"s3://bucket/{PFX}/input/",
+                }
+            }
+        return _read_gpu(key)
+
+    keys.insert(0, f"{PFX}/configs/manifest.json")
+    origin = build_run_origin(keys, run_id=RUN, read_json=read_with_source)
     assert origin["original_present"] is True
     assert len(origin["original_inputs"]) == 2
     assert origin["original_inputs"][0]["kind"] == "image"
-    assert "uploaded source" in origin["summary"].lower()
+    assert "user-supplied input" in origin["summary"].lower()
     assert "input/clip0/frame-00000.png" in origin["summary"]
+    assert origin["input_source"]["kind"] == "operator_provided"
+
+
+def test_origin_truthfully_identifies_seeded_fixture_as_run_input() -> None:
+    keys = [
+        f"{PFX}/configs/manifest.json",
+        f"{PFX}/input/frame_0000.png",
+        f"{PFX}/cosmos_augmented/aug-{RUN}/frame-00000.png",
+    ]
+
+    def read_seeded(key: str):
+        if key.endswith("configs/manifest.json"):
+            return {
+                "input_source": {
+                    "kind": "npa_seeded_fixture",
+                    "uri": f"s3://bucket/{PFX}/input/",
+                    "frame_count": 8,
+                }
+            }
+        return {}
+
+    origin = build_run_origin(keys, run_id=RUN, read_json=read_seeded)
+    assert origin["original_present"] is False
+    assert origin["original_inputs"] == []
+    assert origin["input_source"]["kind"] == "npa_seeded_fixture"
+    assert "synthetic seeded fixture" in origin["summary"].lower()
+    assert "not original real-world data" in origin["summary"].lower()
+    assert "uploaded" not in origin["summary"].lower()

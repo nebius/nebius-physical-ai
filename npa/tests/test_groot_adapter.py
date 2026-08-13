@@ -337,6 +337,15 @@ def real_g1_lerobot_dataset(tmp_path: Path) -> Path:
             },
         },
     )
+    source_video = (
+        root
+        / "videos"
+        / "observation.images.color_0"
+        / "chunk-000"
+        / "file-000.mp4"
+    )
+    source_video.parent.mkdir(parents=True)
+    source_video.write_bytes(b"episode-video")
     return root
 
 
@@ -358,9 +367,96 @@ def test_lerobot_to_groot_writes_modality_and_episode_parquets(
     assert modality["annotation"]["human.task_description"]["original_key"] == "task_index"
     assert (out / "data" / "chunk-000" / "episode_000000.parquet").exists()
     assert (out / "data" / "chunk-000" / "episode_000001.parquet").exists()
+    generated_config = out / "meta" / "npa_groot_modality_config.py"
+    assert generated_config.exists()
+    config_text = generated_config.read_text()
+    compile(config_text, str(generated_config), "exec")
+    assert config_text.count("ActionRepresentation.RELATIVE") == 1
+    assert config_text.count("ActionRepresentation.ABSOLUTE") == 1
+    assert 'embodiment_tag = EmbodimentTag.resolve("NEW_EMBODIMENT")' in config_text
     assert '"robot_embodiment": "NEW_EMBODIMENT"' in (
         out / "meta" / "npa_groot_adapter.json"
     ).read_text()
+
+
+def test_lerobot_to_groot_splits_shared_v3_video_file(
+    standard_lerobot_dataset: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    info_path = standard_lerobot_dataset / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    info["video_path"] = "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
+    info["features"]["observation.image"] = {
+        "dtype": "video",
+        "shape": [8, 8, 3],
+        "names": ["height", "width", "channel"],
+    }
+    _write_json(info_path, info)
+
+    episodes_path = (
+        standard_lerobot_dataset / "meta" / "episodes" / "chunk-000" / "file-000.parquet"
+    )
+    episodes = pq.read_table(episodes_path)
+    episodes = episodes.append_column(
+        "videos/observation.image/chunk_index",
+        pa.array([0, 0], type=pa.int64()),
+    )
+    episodes = episodes.append_column(
+        "videos/observation.image/file_index",
+        pa.array([0, 0], type=pa.int64()),
+    )
+    episodes = episodes.append_column(
+        "videos/observation.image/from_timestamp",
+        pa.array([0.0, 0.1], type=pa.float64()),
+    )
+    episodes = episodes.append_column(
+        "videos/observation.image/to_timestamp",
+        pa.array([0.1, 0.2], type=pa.float64()),
+    )
+    pq.write_table(episodes, episodes_path)
+    source_video = (
+        standard_lerobot_dataset
+        / "videos"
+        / "observation.image"
+        / "chunk-000"
+        / "file-000.mp4"
+    )
+    source_video.parent.mkdir(parents=True)
+    source_video.write_bytes(b"shared-video")
+
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: object) -> None:
+        assert kwargs == {"check": True, "capture_output": True, "text": True}
+        commands.append(command)
+        Path(command[-1]).write_bytes(b"episode-video")
+
+    monkeypatch.setattr("npa.adapter.groot.shutil.which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr("npa.adapter.groot.subprocess.run", fake_run)
+
+    out = lerobot_to_groot(
+        standard_lerobot_dataset,
+        tmp_path / "groot-video",
+        robot_embodiment="NEW_EMBODIMENT",
+    )
+
+    assert len(commands) == 2
+    assert [command[command.index("-ss") + 1] for command in commands] == [
+        "0.000000000",
+        "0.100000000",
+    ]
+    assert [command[command.index("-t") + 1] for command in commands] == [
+        "0.100000000",
+        "0.100000000",
+    ]
+    assert all(command[command.index("-i") + 1] == str(source_video) for command in commands)
+    assert (
+        out / "videos" / "chunk-000" / "observation.image" / "episode_000000.mp4"
+    ).read_bytes() == b"episode-video"
+    assert (
+        out / "videos" / "chunk-000" / "observation.image" / "episode_000001.mp4"
+    ).read_bytes() == b"episode-video"
 
 
 def test_lerobot_to_groot_detects_cartesian_actions_and_writes_config(
@@ -384,6 +480,8 @@ def test_lerobot_to_groot_detects_cartesian_actions_and_writes_config(
     generated_config = out / "meta" / "npa_groot_modality_config.py"
     assert generated_config.exists()
     config_text = generated_config.read_text()
+    compile(config_text, str(generated_config), "exec")
+    assert "ActionRepresentation.RELATIVE" not in config_text
     assert "ActionRepresentation.ABSOLUTE" in config_text
     assert 'embodiment_tag = EmbodimentTag.resolve("NEW_EMBODIMENT")' in config_text
 
@@ -508,6 +606,27 @@ def test_lerobot_to_groot_real_g1_writes_canonical_modality(
         0.0,
     ]
     assert stats["action.real_g1.navigate_command"]["std"] == [1.0] * 3
+
+
+def test_lerobot_to_groot_fails_closed_when_declared_video_is_missing(
+    real_g1_lerobot_dataset: Path,
+    tmp_path: Path,
+) -> None:
+    source_video = (
+        real_g1_lerobot_dataset
+        / "videos"
+        / "observation.images.color_0"
+        / "chunk-000"
+        / "file-000.mp4"
+    )
+    source_video.unlink()
+
+    with pytest.raises(GR00TAdapterError, match="Missing source video"):
+        lerobot_to_groot(
+            real_g1_lerobot_dataset,
+            tmp_path / "missing-video",
+            robot_embodiment="REAL_G1",
+        )
 
 
 def test_lerobot_to_groot_ignores_appledouble_sidecar_parquets(

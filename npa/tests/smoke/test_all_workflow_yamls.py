@@ -65,7 +65,10 @@ def test_npa_workflow_cli_validate_and_plan(path: Path) -> None:
         plan_args.extend(["--assume-decision", assume])
     plan = RUNNER.invoke(app, plan_args)
     assert plan.exit_code == 0, plan.output
-    plan_payload = json.loads(plan.output)
+    # Read stdout, not the mixed stream: plan-spec writes diagnostics (e.g. the
+    # placeholder-bucket warning for specs that ship `bucket: example-bucket`)
+    # to stderr, which CliRunner interleaves into `.output`.
+    plan_payload = json.loads(plan.stdout)
     assert plan_payload["steps"], path.name
 
     spec = load_spec(path)

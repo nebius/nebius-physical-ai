@@ -9,11 +9,13 @@ from __future__ import annotations
 import pathlib
 import re
 
+import pytest
 import typer
 import yaml
 
 from npa.orchestration.npa_workflow.blueprints import resolve_npa_workflow_spec
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+from npa.cli.agent_workflow import generate_data_factory_yaml, generate_sim2real_staged_yaml
 
 BLUEPRINT = resolve_npa_workflow_spec("physical-ai-data-factory.yaml")
 assert BLUEPRINT is not None, "physical-ai-data-factory.yaml not found in any spec root"
@@ -66,14 +68,47 @@ def test_blueprint_uses_no_stub_toolrefs() -> None:
             )
 
 
+@pytest.mark.parametrize(
+    "yaml_text",
+    [
+        generate_data_factory_yaml(user_text="fan out 4 variants on 4 GPUs"),
+        generate_sim2real_staged_yaml(user_text="Isaac sim2real with 2 outer iterations"),
+    ],
+)
+def test_agent_generated_blueprints_use_only_real_toolrefs(yaml_text: str) -> None:
+    spec = yaml.safe_load(yaml_text)
+    for name, state in spec["states"].items():
+        tool_ref = state.get("toolRef")
+        if not tool_ref:
+            continue
+        assert tool_ref not in KNOWN_STUB_TOOLREFS, (name, tool_ref)
+        assert TOOL_CATALOG[tool_ref].stub is False, (name, tool_ref)
+
+
+def test_agent_generated_paidf_runs_named_real_components() -> None:
+    spec = yaml.safe_load(generate_data_factory_yaml(user_text="fan out 2 variants on 2 GPUs"))
+    states = spec["states"]
+    assert states["grade"]["sequence"] == ["augment", "evaluate", "quality-gate"]
+    assert states["evaluate"]["toolRef"] == "workbench.cosmos_evaluator.evaluate"
+    assert states["cosmos-curate"]["toolRef"] == "workbench.cosmos_curate.curate"
+    assert states["curate"]["toolRef"] == "workbench.fiftyone.curate_augmented"
+    assert "--curator-report-uri" in TOOL_CATALOG[
+        "workbench.fiftyone.curate_augmented"
+    ].argv_template
+    assert states["visualize"]["toolRef"] == "workbench.nurec.visualize"
+    assert "pip install" not in str(states["visualize"])
+
+
 def test_blueprint_run_shell_stages_are_real() -> None:
     for name, state in _states().items():
         run = state.get("run")
         if not run:
             continue
-        shell = str(run.get("shell", ""))
-        assert any(m in shell for m in REAL_RUN_MARKERS), (
-            f"stage '{name}' run.shell is not a real command/module call: {shell[:100]}"
+        command = str(run.get("shell", "")) or " ".join(
+            str(item) for item in run.get("argv", [])
+        )
+        assert any(m in command for m in REAL_RUN_MARKERS), (
+            f"stage '{name}' run is not a real command/module call: {command[:100]}"
         )
 
 
@@ -84,19 +119,19 @@ def test_augment_runs_real_cosmos_transfer() -> None:
         "augment must run the real Cosmos Transfer 2.5 execute path"
     )
     argv = TOOL_CATALOG["workbench.cosmos2.transfer_execute"].argv_template
-    assert "--execute" in argv, "transfer_execute must pass --execute to run the real model"
+    assert "--execute" in argv, (
+        "transfer_execute must pass --execute to run the real model"
+    )
     assert "--condition-on-input" in argv
     assert "--input-uri" in argv and "--output-uri" in argv
     assert spec["config"]["trigger_uri"] == spec["config"]["input_uri"]
     description = states["augment"]["description"].lower()
-    assert "supported video" in description
-    assert "no bundled upstream media" in description
+    assert "input/conditioning.mp4" in description
+    assert "no bundled or geometric fallback" in description
 
 
 def test_input_conditioned_cosmos_toolref_fails_closed_without_input() -> None:
-    argv = TOOL_CATALOG[
-        "workbench.cosmos2.transfer_conditioned_execute"
-    ].argv_template
+    argv = TOOL_CATALOG["workbench.cosmos2.transfer_conditioned_execute"].argv_template
 
     assert "--execute" in argv
     assert "--condition-on-input" in argv
@@ -114,10 +149,37 @@ def test_evaluate_runs_the_real_cosmos_evaluator() -> None:
     # The hallucination check needs the run's source clip and attribute
     # verification needs the sampled option table, so both must be passed.
     assert "--input-uri" in argv and "--configs-uri" in argv
+    for option in (
+        "--temporal-mode",
+        "--temporal-threshold",
+        "--temporal-noise-floor",
+        "--temporal-blur-ksize",
+        "--temporal-regions-json",
+        "--appearance-mode",
+        "--appearance-threshold",
+        "--appearance-regions-json",
+        "--appearance-luminance-tolerance",
+        "--appearance-global-chroma-tolerance",
+        "--appearance-local-chroma-tolerance",
+        "--appearance-chroma-instability-tolerance",
+        "--appearance-blur-ksize",
+        "--appearance-max-dimension",
+    ):
+        assert option in argv
 
     loop = states["grade"]["loop"]
     assert loop["until"] == "promote_checkpoint"
     assert states["grade"]["sequence"] == ["augment", "evaluate", "quality-gate"]
+    assert states["grade"]["next"] == "quality-disposition"
+    assert states["annotate-augmented"]["needs"] == ["quality-disposition"]
+    assert (
+        "enforce_quality_disposition" in states["quality-disposition"]["run"]["shell"]
+    )
+    assert float(_spec()["config"]["grade_threshold"]) >= 0.75
+    assert float(_spec()["config"]["temporal_consistency_threshold"]) >= 0.8
+    assert _spec()["config"]["temporal_consistency_mode"] == "advisory"
+    assert float(_spec()["config"]["appearance_fidelity_threshold"]) >= 0.8
+    assert _spec()["config"]["appearance_fidelity_mode"] == "advisory"
 
 
 def test_curation_runs_the_real_cosmos_curator_before_review() -> None:
@@ -133,8 +195,11 @@ def test_curation_runs_the_real_cosmos_curator_before_review() -> None:
 
     assert states["cosmos-curate"]["next"] == "curate"
     assert states["curate"]["needs"] == ["cosmos-curate"]
-    # The review stage must actually read the curator's summary, not ignore it.
-    assert "curator_report_uri" in str(states["curate"]["run"]["shell"])
+    assert states["curate"]["toolRef"] == "workbench.fiftyone.curate_augmented"
+    fiftyone_argv = TOOL_CATALOG["workbench.fiftyone.curate_augmented"].argv_template
+    assert fiftyone_argv[:4] == ["npa", "workbench", "fiftyone", "curate-augmented"]
+    assert "--curator-report-uri" in fiftyone_argv
+    assert "--require-fiftyone" in fiftyone_argv
 
 
 def test_quality_gate_reads_the_evaluator_report() -> None:
@@ -160,7 +225,9 @@ def test_blueprint_toolrefs_exist_in_catalog() -> None:
     for name, state in _states().items():
         tool_ref = state.get("toolRef")
         if tool_ref:
-            assert tool_ref in TOOL_CATALOG, f"stage '{name}' toolRef '{tool_ref}' not in catalog"
+            assert tool_ref in TOOL_CATALOG, (
+                f"stage '{name}' toolRef '{tool_ref}' not in catalog"
+            )
 
 
 def _cli_options_for(path_parts: list[str]) -> set[str]:
@@ -192,7 +259,10 @@ def test_blueprint_run_shell_cli_flags_match_real_cli() -> None:
         run = state.get("run") or {}
         shell = str(run.get("shell", ""))
         # Whitespace-collapse the folded YAML scalar, then find npa workbench calls.
-        for match in re.finditer(r"npa\s+workbench\s+(\S+)\s+(\S+)((?:\s+--?\S+|\s+\"[^\"]*\"|\s+\S+)*)", shell):
+        for match in re.finditer(
+            r"npa\s+workbench\s+(\S+)\s+(\S+)((?:\s+--?\S+|\s+\"[^\"]*\"|\s+\S+)*)",
+            shell,
+        ):
             group, cmd, rest = match.group(1), match.group(2), match.group(3)
             flags = re.findall(r"(--[A-Za-z0-9][A-Za-z0-9-]*)", rest)
             if not flags:
@@ -204,7 +274,9 @@ def test_blueprint_run_shell_cli_flags_match_real_cli() -> None:
                     f"which is not a real CLI option ({sorted(cli_opts)}). Fix the run.shell."
                 )
             checked += 1
-    assert checked >= 1, "expected at least one npa-workbench run.shell call to validate"
+    assert checked >= 1, (
+        "expected at least one npa-workbench run.shell call to validate"
+    )
 
 
 # ---------------------------------------------------------------------------------
@@ -228,7 +300,9 @@ def test_nurec_blueprint_toolrefs_exist_in_catalog() -> None:
     for name, state in _nurec_states().items():
         tool_ref = state.get("toolRef")
         if tool_ref:
-            assert tool_ref in TOOL_CATALOG, f"stage '{name}' toolRef '{tool_ref}' not in catalog"
+            assert tool_ref in TOOL_CATALOG, (
+                f"stage '{name}' toolRef '{tool_ref}' not in catalog"
+            )
 
 
 def test_nurec_blueprint_run_shell_stages_are_real() -> None:
@@ -278,7 +352,9 @@ def test_nurec_visualize_stage_builds_the_real_rerun_recording() -> None:
 
 def test_nurec_skypilot_task_has_no_echo_or_manifest_stub_stage() -> None:
     """The submitted SkyPilot task must invoke the real tool for every stage."""
-    doc = next(d for d in yaml.safe_load_all(NUREC_SKYPILOT.read_text(encoding="utf-8")) if d)
+    doc = next(
+        d for d in yaml.safe_load_all(NUREC_SKYPILOT.read_text(encoding="utf-8")) if d
+    )
     run = doc["run"]
 
     for verb in ("check", "fetch", "reconstruct", "render", "visualize", "finalize"):

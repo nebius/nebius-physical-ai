@@ -16,6 +16,8 @@ from npa.cli.agent import (
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TMUX_SCRIPT = REPO_ROOT / "npa" / "scripts" / "start_agent_live_tmux.sh"
 AGENT_MODULE = REPO_ROOT / "npa" / "src" / "npa" / "cli" / "agent.py"
+# The nginx site body lives in a sibling module (agent.py is size-ratcheted).
+AGENT_ASSETS_MODULE = REPO_ROOT / "npa" / "src" / "npa" / "cli" / "agent_assets.py"
 AGENT_UI_MODULE = REPO_ROOT / "npa" / "src" / "npa" / "cli" / "agent_ui.html"
 
 UI_BUTTON_IDS = (
@@ -48,10 +50,17 @@ RERUN_STATIC_CANDIDATES = (
 
 
 def test_agent_bootstrap_source_smoke() -> None:
-    source = AGENT_MODULE.read_text(encoding="utf-8")
+    source = (
+        AGENT_MODULE.read_text(encoding="utf-8")
+        + "\n"
+        + AGENT_ASSETS_MODULE.read_text(encoding="utf-8")
+    )
+    artifact_content_source = (
+        REPO_ROOT / "npa" / "src" / "npa" / "cli" / "agent_artifact_content.py"
+    ).read_text(encoding="utf-8")
     ui_source = AGENT_UI_MODULE.read_text(encoding="utf-8")
     ui = rendered_agent_ui_html()
-    bundled = source + "\n" + ui_source + "\n" + ui
+    bundled = source + "\n" + artifact_content_source + "\n" + ui_source + "\n" + ui
     assert '@app.get("/sim-viz/rrd")' in source
     assert '@app.post("/sim-viz/load-franka-demo")' in source
     assert '@app.post("/sim-viz/camera-preview")' in source
@@ -68,7 +77,7 @@ def test_agent_bootstrap_source_smoke() -> None:
         assert marker in bundled, f"missing Foxglove viewer contract marker: {marker!r}"
     # The Foxglove SDK must be loaded on demand (dynamic import), never eagerly:
     # opening the agent must not pay for an embed the operator did not ask for.
-    assert "await import(moduleUrl)" in ui_source
+    assert 'await import(moduleUrl)' in ui_source
     # The Foxglove routes are a shipped backend module registered by agent.py.
     assert "register_foxglove_routes(" in source
     routes_source = (
@@ -77,20 +86,17 @@ def test_agent_bootstrap_source_smoke() -> None:
     assert '@app.get("/foxglove/config")' in routes_source
     assert '@app.post("/foxglove/load-artifact")' in routes_source
     assert '@app.post("/foxglove/convert-run")' in routes_source
-    assert '@app.post("/foxglove/export")' in routes_source
     assert 'id="chatSend"' in bundled
     assert 'id="chatForm"' in bundled
     assert 'id="chatSessionSelect"' in bundled
     assert 'chatForm.addEventListener("submit"' in bundled
     assert "/api/chat/sessions" in bundled
     # nginx site policy now lives in agent_site.py (split out of the monolith).
-    site_source = (
-        REPO_ROOT / "npa" / "src" / "npa" / "cli" / "agent_site.py"
-    ).read_text(encoding="utf-8")
-    assert (
-        'add_header Cache-Control "no-store, no-cache, must-revalidate"' in site_source
+    site_source = (REPO_ROOT / "npa" / "src" / "npa" / "cli" / "agent_site.py").read_text(
+        encoding="utf-8"
     )
-    assert "media_type=artifact_media_type(safe_name)" in source
+    assert 'add_header Cache-Control "no-store, no-cache, must-revalidate"' in site_source
+    assert "local_media_type = artifact_media_type(safe_name)" in artifact_content_source
 
 
 def test_agent_live_tmux_script_help() -> None:

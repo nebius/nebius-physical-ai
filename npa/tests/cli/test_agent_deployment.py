@@ -150,7 +150,8 @@ def test_remote_verifier_rejects_wrong_runtime(source_repo: Path) -> None:
 
     class FakeSsh:
         def run_or_raise(self, command: str, **_kwargs: object) -> tuple[int, str, str]:
-            assert command == "curl -fsS http://127.0.0.1:8787/deployment"
+            assert "--retry 30 --retry-connrefused" in command
+            assert command.endswith("-fsS http://127.0.0.1:8787/deployment")
             return 0, json.dumps(actual), ""
 
     with pytest.raises(DeploymentIdentityError, match="deployment_id"):

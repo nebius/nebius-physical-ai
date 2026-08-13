@@ -16,8 +16,12 @@ from npa.cluster.config import DEFAULT_REGION
 ControllerBackend = Literal["kubernetes", "nebius"]
 
 DEFAULT_CONTROLLER_BACKEND: ControllerBackend = "kubernetes"
-DEFAULT_K8S_CONTROLLER_CPUS = 4
-DEFAULT_K8S_CONTROLLER_MEMORY_GB = 16
+# Keep the shared controller inside the canonical 8-vCPU/32-GiB PAIDF CPU pool
+# alongside one 4-vCPU/16-GiB stage. This matches SkyPilot's standalone
+# controller shape and leaves Kubernetes reserve instead of silently requiring
+# the old 16-vCPU node upgrade.
+DEFAULT_K8S_CONTROLLER_CPUS = 2
+DEFAULT_K8S_CONTROLLER_MEMORY_GB = 8
 DEFAULT_CONTROLLER_INSTANCE_TYPE = "cpu-e2_2vcpu-8gb"
 DEFAULT_CONTROLLER_CPUS = 2
 DEFAULT_CONTROLLER_MEMORY_GB = 8
@@ -122,7 +126,9 @@ def _apply_controller_region(
     resources.setdefault("region", region)
 
 
-def _controller_resources_for_backend(controller_backend: ControllerBackend) -> dict[str, Any]:
+def _controller_resources_for_backend(
+    controller_backend: ControllerBackend,
+) -> dict[str, Any]:
     if controller_backend == "kubernetes":
         return controller_resources_kubernetes()
     if controller_backend == "nebius":
@@ -155,7 +161,9 @@ def _backend_from_default(default: dict[str, Any]) -> ControllerBackend:
     return "nebius"
 
 
-def _compatible_controller_cloud(resources: dict[str, Any], default: dict[str, Any]) -> bool:
+def _compatible_controller_cloud(
+    resources: dict[str, Any], default: dict[str, Any]
+) -> bool:
     return resources.get("cloud") in {None, default.get("cloud")}
 
 

@@ -420,6 +420,7 @@ const FIELD_IDS = [
   "artifactSort",
   "artifactStageFilter",
   "runsArtifactsPanel",
+  "artifactRunSummary",
   "artifactList",
   "simRunId",
   "simStage",
@@ -801,6 +802,88 @@ function installAgentApiMocks() {
     }
     req.reply({ statusCode: 200, headers: { "content-type": "application/octet-stream" }, body: "mock-bytes" });
   }).as("artifactDownload");
+  cy.intercept({ method: /GET|HEAD/, url: "/api/artifacts/content*" }, (req) => {
+    const url = new URL(req.url);
+    const key = url.searchParams.get("key") || "";
+    const download = url.searchParams.get("download") === "true";
+    if (!download && key.endsWith(".json")) req.alias = "artifactContentJson";
+    else if (!download && key.match(/\.ya?ml$/i)) req.alias = "artifactContentYaml";
+    else if (!download && key.match(/\.(log|txt)$/i)) req.alias = "artifactContentText";
+    else if (!download && key.match(/\.(png|jpe?g|gif|webp)$/i)) req.alias = "artifactContentImage";
+    else if (!download && key.match(/\.(mp4|webm|mov)$/i)) req.alias = "artifactContentVideo";
+    const baseHeaders = {
+      "accept-ranges": "bytes",
+      "cache-control": "private, no-store",
+      "x-content-type-options": "nosniff",
+      "content-disposition": download
+        ? `attachment; filename="${key.split("/").pop() || "artifact.bin"}"`
+        : `inline; filename="${key.split("/").pop() || "artifact.bin"}"`,
+    };
+    if (req.method === "HEAD") {
+      req.reply({ statusCode: 200, headers: { ...baseHeaders, "content-length": "4096" }, body: "" });
+      return;
+    }
+    if (!download && key.endsWith("manifest.json")) {
+      const text = JSON.stringify({ run_id: key.split("/")[0], status: "completed" }, null, 2);
+      req.reply({
+        statusCode: 200,
+        headers: { ...baseHeaders, "content-type": "application/json" },
+        body: { ok: true, render: "json", text, bytes_read: text.length, total_bytes: text.length, truncated: false, redacted: false },
+      });
+      return;
+    }
+    if (!download && key.endsWith(".json")) {
+      const text = JSON.stringify({ run_id: NON_STOCK_RUN_ID, result: "promoted", non_stock: true }, null, 2);
+      req.reply({
+        statusCode: 200,
+        headers: { ...baseHeaders, "content-type": "application/json" },
+        body: { ok: true, render: "json", text, bytes_read: text.length, total_bytes: text.length, truncated: false, redacted: false },
+      });
+      return;
+    }
+    if (!download && key.match(/\.ya?ml$/i)) {
+      const text = "apiVersion: npa.workflow/v0.0.1\nmetadata:\n  name: groot-1-7-finetune\n";
+      req.reply({
+        statusCode: 200,
+        headers: { ...baseHeaders, "content-type": "application/json" },
+        body: { ok: true, render: "text", text, bytes_read: text.length, total_bytes: text.length, truncated: false, redacted: false },
+      });
+      return;
+    }
+    if (!download && key.match(/\.(log|txt)$/i)) {
+      const text = key.endsWith("orchestrator.log")
+        ? "loaded customer scene mesh\npublished non-stock sim2real artifacts\n"
+        : "training completed\ntrain_loss=1.03125\n";
+      req.reply({
+        statusCode: 200,
+        headers: { ...baseHeaders, "content-type": "application/json" },
+        body: { ok: true, render: "text", text, bytes_read: text.length, total_bytes: text.length, truncated: false, redacted: false },
+      });
+      return;
+    }
+    if (!download && key.match(/\.(png|jpe?g|gif|webp)$/i)) {
+      req.reply({ statusCode: 200, headers: { ...baseHeaders, "content-type": "image/png" }, body: "mock-image-bytes" });
+      return;
+    }
+    if (!download && key.match(/\.(mp4|webm|mov)$/i)) {
+      const ranged = Boolean(req.headers.range);
+      req.reply({
+        statusCode: ranged ? 206 : 200,
+        headers: {
+          ...baseHeaders,
+          "content-type": "video/mp4",
+          ...(ranged ? { "content-range": "bytes 0-99/4096", "content-length": "100" } : {}),
+        },
+        body: "mock-video-bytes",
+      });
+      return;
+    }
+    req.reply({
+      statusCode: 200,
+      headers: { ...baseHeaders, "content-type": "application/octet-stream" },
+      body: "mock artifact payload",
+    });
+  }).as("artifactContent");
   cy.intercept("GET", "/api/artifacts/file/*", (req) => {
     const decoded = decodeURIComponent(req.url.split("/").pop() || "");
     if (decoded.includes("sim2real-report.json")) {
@@ -980,6 +1063,62 @@ function installAgentApiMocks() {
     // Other runs: no data-factory provenance (keeps the panel honest/empty).
     req.reply(json({ ok: true, run_id: "", components: [], summary: "", origin: {} }));
   }).as("artifactProvenance");
+  cy.intercept("GET", `/api/fiftyone/dataset/${DF_MOCK_RUN_ID}`, json({
+    run_id: DF_MOCK_RUN_ID,
+    source: {
+      source_kind: "user_supplied",
+      input_origin: "operator_supplied",
+      input_origin_label: "User-supplied input",
+      staged_canonical_s3_uri: `s3://mock/physical-ai-data-factory/${DF_MOCK_RUN_ID}/input/`,
+      asset_license: "operator-managed",
+      sha256: "b".repeat(64),
+    },
+    review: {
+      engine: "fiftyone-brain",
+      real_fiftyone: true,
+      label: "Real FiftyOne Brain review",
+      limitation: "",
+    },
+    summary: {
+      variant_count: 1,
+      source_input_count: 1,
+      original_input_count: 1,
+      conditioning_count: 1,
+      synthetic_augmented_count: 1,
+      curation_engine: "fiftyone-brain",
+      curated_kept: 1,
+    },
+    fields: ["lighting"],
+    visualization: [],
+    samples: [
+      {
+        id: "source.mp4",
+        label: "source.mp4",
+        group: "source",
+        data_role: "source_input",
+        data_role_label: "User-supplied input",
+        video_uri: `s3://mock/${DF_MOCK_RUN_ID}/input/source.mp4`,
+      },
+      {
+        id: "conditioning-frame-0001.png",
+        label: "conditioning-frame-0001.png",
+        group: "conditioning",
+        data_role: "derived_conditioning",
+        data_role_label: "Derived conditioning frame",
+        thumbnail_uri: `s3://mock/${DF_MOCK_RUN_ID}/input/conditioning-frame-0001.png`,
+      },
+      {
+        id: "aug0",
+        label: "aug0",
+        group: "augmented",
+        data_role: "synthetic_augmented",
+        data_role_label: "Synthetic / augmented output",
+        thumbnail_uri: `s3://mock/${DF_MOCK_RUN_ID}/cosmos_augmented/aug0/frame-000000.png`,
+        video_uri: `s3://mock/${DF_MOCK_RUN_ID}/cosmos_augmented/aug0/augmented_video.mp4`,
+        tags: { lighting: "warm" },
+      },
+    ],
+  })).as("dfDataset");
   cy.intercept("POST", "/api/workflows/draft", json({
     ok: true,
     yaml: WORKFLOW_YAML,

@@ -12,6 +12,9 @@ import typer
 
 from npa.clients.credentials import load_credentials
 from npa.workflows.sim2real_loop import (
+    DEFAULT_ACTION_ENV_LIMIT,
+    DEFAULT_ENVGEN_SHARD_COUNT,
+    DEFAULT_ENV_COUNT,
     DEFAULT_HELDOUT_ENVS,
     DEFAULT_INNER_ITERATIONS,
     DEFAULT_LEROBOT_DATASET_ID,
@@ -21,6 +24,7 @@ from npa.workflows.sim2real_loop import (
     DEFAULT_S3_ENDPOINT,
     DEFAULT_STEPS_PER_ROLLOUT,
     DEFAULT_THRESHOLD,
+    DEFAULT_TRAIN_FRACTION,
     build_config_from_env,
     convert_vlm_eval_to_rl_signal,
     run_full_loop,
@@ -124,6 +128,9 @@ def run_command(
     augment_image: str = typer.Option(
         "", "--augment-image", help="BYO augmentation image."
     ),
+    envgen_image: str = typer.Option(
+        "", "--envgen-image", help="BYO environment-generation image."
+    ),
     policy_image: str = typer.Option("", "--policy-image", help="BYO policy image."),
     trainer_image: str = typer.Option(
         "", "--trainer-image", help="BYO VLM-RL trainer image."
@@ -170,6 +177,24 @@ def run_command(
     ),
     heldout_env_count: int = typer.Option(
         DEFAULT_HELDOUT_ENVS, "--heldout-env-count", help="Held-out env count."
+    ),
+    env_count: int = typer.Option(
+        DEFAULT_ENV_COUNT, "--env-count", help="Number of generated simulation environments."
+    ),
+    train_fraction: float = typer.Option(
+        DEFAULT_TRAIN_FRACTION,
+        "--train-fraction",
+        help="Fraction of generated environments used for training.",
+    ),
+    envgen_shard_count: int = typer.Option(
+        DEFAULT_ENVGEN_SHARD_COUNT,
+        "--envgen-shard-count",
+        help="Environment-generation shard count.",
+    ),
+    action_env_limit: int = typer.Option(
+        DEFAULT_ACTION_ENV_LIMIT,
+        "--action-env-limit",
+        help="Maximum generated environments used for policy actions.",
     ),
     seed: int = typer.Option(42, "--seed", help="Deterministic seed."),
     upload_artifacts: bool = typer.Option(
@@ -254,6 +279,7 @@ def run_command(
         robot_source=robot_source,
         robot_preset=robot_preset,
         augment_image=augment_image,
+        envgen_image=envgen_image,
         policy_image=policy_image,
         trainer_image=trainer_image,
         vlm_image=vlm_image,
@@ -269,6 +295,10 @@ def run_command(
         rollout_count=rollout_count,
         steps_per_rollout=steps_per_rollout,
         heldout_env_count=heldout_env_count,
+        env_count=env_count,
+        train_fraction=train_fraction,
+        envgen_shard_count=envgen_shard_count,
+        action_env_limit=action_env_limit,
         seed=seed,
         upload_artifacts=upload_artifacts,
         no_guardrails=no_guardrails,

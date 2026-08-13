@@ -98,7 +98,11 @@ def _render_backend_body(monkeypatch) -> str:
                 except UnicodeDecodeError:
                     pass
 
-        def run_or_raise(self, _command: str) -> None:
+        def upload_private_text(self, content: str, remote_path: str) -> None:
+            if "npa-agent-bootstrap" in remote_path:
+                captured["setup_script"] = content
+
+        def run_or_raise(self, _command: str, **_kwargs) -> None:
             return None
 
         def run(self, _command: str) -> None:
@@ -497,7 +501,11 @@ def test_shipped_agent_backend_memory_module_compiles(monkeypatch) -> None:
                 except UnicodeDecodeError:
                     pass
 
-        def run_or_raise(self, _command: str) -> None:
+        def upload_private_text(self, content: str, remote_path: str) -> None:
+            if "npa-agent-bootstrap" in remote_path:
+                captured["setup_script"] = content
+
+        def run_or_raise(self, _command: str, **_kwargs) -> None:
             return None
 
         def run(self, _command: str) -> None:
@@ -554,7 +562,11 @@ def _capture_setup_script(monkeypatch, *, preload_stock_demo: bool = True) -> st
                 except UnicodeDecodeError:
                     pass
 
-        def run_or_raise(self, _command: str) -> None:
+        def upload_private_text(self, content: str, remote_path: str) -> None:
+            if "npa-agent-bootstrap" in remote_path:
+                captured["setup_script"] = content
+
+        def run_or_raise(self, _command: str, **_kwargs) -> None:
             return None
 
         def run(self, _command: str) -> None:
@@ -937,6 +949,26 @@ def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
         lambda *_args, **_kwargs: pytest.fail("rejected requests must not download"),
     )
     try:
+        with pytest.raises(module.HTTPException) as exc_info:
+            module.sim_viz_load_artifact(
+                {"s3_uri": "s3://configured-bucket/nested/root/run-one/report.rrd"}
+            )
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == {
+            "schema": "npa.agent.api_error/v1",
+            "contract_version": "npa.agent.load-artifact.v2",
+            "code": "run_id_required_for_s3_uri",
+            "message": "run_id or server-issued run_ref is required with s3_uri",
+            "migration": {
+                "required_fields": ["run_id", "s3_uri"],
+                "preferred_fields": ["run_ref", "key"],
+                "discover_via": [
+                    "GET /api/artifacts/runs",
+                    "GET /api/artifacts/run/{run_id_or_run_ref}",
+                ],
+                "security_boundary": "only server-discovered inventory objects may be loaded",
+            },
+        }
         for key in ("../secret", "folder/../secret", "folder\\secret", "bad\x00key"):
             with pytest.raises(module.HTTPException) as exc_info:
                 module._safe_artifact_key(key)
@@ -996,6 +1028,78 @@ def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
     finally:
         sys.modules.pop(module_name, None)
 
+
+def test_artifact_range_response_uses_get_object_metadata_consistently(
+    monkeypatch, tmp_path
+) -> None:
+    import io
+    import sys
+
+    module_name = "npa_rendered_artifact_range_backend"
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name=module_name
+    )
+    artifact = module.Artifact(
+        "run-one",
+        "run-one/report.bin",
+        "s3://bucket/run-one/report.bin",
+        10,
+        "2026-08-01T00:00:00+00:00",
+        "download",
+        False,
+        relative_key="report.bin",
+    )
+
+    class FakeS3:
+        def __init__(self, *, total: int = 10):
+            self.total = total
+
+        def get_object(self, **kwargs):
+            assert kwargs["Range"] == "bytes=0-3"
+            return {
+                "Body": io.BytesIO(b"abcd"),
+                "ContentLength": 4,
+                "ContentRange": f"bytes 0-3/{self.total}",
+            }
+
+    try:
+        s3 = FakeS3()
+        monkeypatch.setattr(
+            module, "_agent_s3_client", lambda: (s3, {"bucket": "bucket"})
+        )
+        monkeypatch.setattr(
+            module,
+            "_resolved_artifact_for_content",
+            lambda *_args, **_kwargs: ("run-one", "bucket", artifact),
+        )
+        request = module.Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/artifacts/content",
+                "headers": [(b"range", b"bytes=0-3")],
+            }
+        )
+        response = module._artifact_content_response(
+            request, run_id="run-one", key=artifact.key
+        )
+        assert response.status_code == 206
+        assert response.headers["content-range"] == "bytes 0-3/10"
+        assert response.headers["content-length"] == "4"
+
+        stale = FakeS3(total=11)
+        monkeypatch.setattr(
+            module, "_agent_s3_client", lambda: (stale, {"bucket": "bucket"})
+        )
+        with pytest.raises(module.HTTPException) as exc_info:
+            module._artifact_content_response(
+                request, run_id="run-one", key=artifact.key
+            )
+        assert exc_info.value.status_code == 409
+        assert "changed since inventory discovery" in exc_info.value.detail
+    finally:
+        sys.modules.pop(module_name, None)
+
     paths = {getattr(route, "path", "") for route in module.app.routes}
     assert callable(module.artifacts_runs)
     assert callable(module.artifacts_for_run)
@@ -1007,9 +1111,96 @@ def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
         "/foxglove/convert-run",
         "/foxglove/export",
         "/foxglove/live",
+        "/resources",
+        "/tenant-resources",
     ):
         assert expected in paths, f"rendered backend did not register {expected}"
 
+    monkeypatch.setattr(
+        module,
+        "_tenant_resource_inventory",
+        lambda *, force_refresh=False: {
+            "ok": True,
+            "force_refresh": force_refresh,
+            "categories": [{"id": "project", "status": "configured"}],
+        },
+    )
+    resource_route = next(route for route in module.app.routes if route.path == "/resources")
+    assert resource_route.endpoint(refresh=True) == {
+        "ok": True,
+        "force_refresh": True,
+        "categories": [{"id": "project", "status": "configured"}],
+    }
+
+    # Legacy project profiles predate the nested ``kubernetes`` block but are
+    # still explicit operator configuration.  The rendered backend must ground
+    # workflow placement from that selected context rather than discover a
+    # different cluster or report ambiguity.
+    monkeypatch.setattr(
+        module,
+        "_load_agent_config_yaml",
+        lambda: {
+            "default_project": "configured-project",
+            "projects": {
+                "configured-project": {
+                    "k8s_context": "configured-context",
+                    "container_registry": "registry.example/project",
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(module, "_agent_cloud_mk8s_clusters", lambda _project="": [])
+    grounded_legacy = module._agent_k8s_backends("configured-project")
+    assert grounded_legacy["configured"] == [
+        {
+            "source": "project_config_legacy",
+            "project": "configured-project",
+            "cluster_name": "configured-context",
+            "context": "configured-context",
+            "kubeconfig": "",
+            "gpu_profile": "",
+            "raw": {"container_registry": "registry.example/project"},
+        }
+    ]
+
+    # Execute the actual rendered chat wiring, not only the pure generator.
+    state = {"workflow_draft": {}}
+    monkeypatch.setattr(module, "_load_state", lambda: state)
+    monkeypatch.setattr(module, "_save_state", lambda payload: state.update(payload))
+    monkeypatch.setattr(module, "_agent_s3_settings", lambda: {"bucket": "configured-bucket"})
+    monkeypatch.setattr(
+        module,
+        "_agent_k8s_backends",
+        lambda: {
+            "project": "configured-project",
+            "has_infra": True,
+            "configured": [
+                {
+                    "cluster_name": "configured-cluster",
+                    "context": "configured-context",
+                    "raw": {"gpu_accelerator": "RTXPRO6000", "namespace": "workflows"},
+                }
+            ],
+            "local_clusters": [],
+            "cloud_clusters": [],
+        },
+    )
+    reply, _used, _suggested, yaml_text, validation, intent = module._maybe_toolground_chat_reply(
+        "create sim2real yaml with isaac task Isaac-Lift-Cube-Franka-v0 and 5000 environments"
+    )
+    assert intent == "create_vlm_rl_workflow"
+    assert validation["ok"] is True
+    assert yaml_text and "bucket: configured-bucket" in yaml_text
+    assert "configured-cluster" in yaml_text
+    assert state["workflow_draft"]["runnable"] is True
+    assert "warnings" not in state["workflow_draft"] or not state["workflow_draft"]["warnings"]
+    assert "Could not generate runnable" not in reply
+
+    monkeypatch.setattr(module, "_agent_s3_settings", lambda: {"bucket": ""})
+    blocked = module._maybe_toolground_chat_reply("create sim2real yaml")
+    assert blocked[3] is None
+    assert blocked[4]["ok"] is False
+    assert "unresolved configuration placeholders" in blocked[0]
     command_secrets = [secrets.token_urlsafe(32) for _index in range(6)]
     public_steps = module._workflow_run_steps(
         [
@@ -1784,6 +1975,19 @@ def test_rendered_backend_labels_nurec_camera_without_inheriting(monkeypatch) ->
     assert 'NEURAL_RECONSTRUCTION_CAMERA_LABEL = "novel-view"' in body
     # The label is applied on the neural-reconstruction branch, not inherited.
     assert "camera = NEURAL_RECONSTRUCTION_CAMERA_LABEL" in body
+
+
+def test_rendered_backend_labels_groot_training_without_rollout_claim(monkeypatch) -> None:
+    body = _render_backend_body(monkeypatch)
+
+    assert 'GROOT_TRAINING_CAMERA_LABEL = "camera"' in body
+    assert "camera = GROOT_TRAINING_CAMERA_LABEL" in body
+    assert "GR00T training telemetry loaded." in body
+    assert "dataset/synthetic-fps, not robot capture time; this is not a " in body
+    assert "policy rollout evaluation." in body
+    assert "GR00T training telemetry MCAP loaded" in body
+    assert "factual metrics on dataset/synthetic-fps time; it is not a policy " in body
+    assert "rollout or robot-capture recording." in body
 
 
 def test_rendered_backend_allows_head_on_the_rrd_blob_probe(monkeypatch) -> None:

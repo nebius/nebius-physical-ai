@@ -30,6 +30,11 @@ convenient reading.
 - Deciding whether something may be published to a public registry
 - Reviewing a PR that does any of the above
 
+Before any provisioning, build, download, or submission that depends on a
+third-party EULA, also load
+`skills/atomic/third-party-eula-preflight/SKILL.md`; licensing classification
+does not itself establish operator consent.
+
 ## The Three Layers
 
 Classify each layer separately. A permissive answer at one layer says nothing
@@ -102,9 +107,9 @@ A conclusion in a PR description is not a control. Encode it:
 - `npa/src/npa/deploy/images.py` — add restricted tools to
   `OMNIVERSE_RESTRICTED_TOOLS` so `publicly_publishable_tools()` and `publish_public`
   exclude them, and so resolving them from a public registry fails loudly. That set is
-  currently **empty**, and deliberately kept that way rather than deleted — a mechanism
-  that is removed when unused has to be rebuilt and re-reviewed under time pressure. Its
-  tests monkeypatch a synthetic restricted tool in, so it cannot rot while unused.
+  currently contains the build-your-own `cosmos3-serving` image. The name is retained
+  for compatibility with the original Omniverse guard; membership covers any vendor
+  runtime whose public redistribution conditions are not satisfied.
 - For a solution's weights/datasets, record the license and the runtime-fetch
   requirement in the capability table from the onboarding skill.
 

@@ -1,0 +1,11 @@
+{
+  "generated_by": "terraform providers lock",
+  "lock_sha256": "a4c5cfec92568ec0259e4605f6afa8f9ec5c6cf06c710bdd044b419f9857cba7",
+  "platforms": [
+    "linux_amd64",
+    "linux_arm64",
+    "darwin_amd64",
+    "darwin_arm64"
+  ],
+  "version": 1
+}

@@ -120,7 +120,7 @@ def test_soft_swap_prefers_quality_without_rrd_prefetch() -> None:
     best = ui.split("async function bestEffortMountRerun")[1].split("async function loadRerunViewer")[0]
     assert 'setRerunMountStatus(RERUN_MOUNT_SUCCESS, "best-effort")' not in best
     assert "best-effort-no-success" in best
-    assert "No .rrd recording for this run yet" in ui
+    assert "No RRD/MCAP recording; use the artifacts below" in ui
     assert "{{ force: true }}" in ui or "{ force: true }" in ui
     assert 'id="stagesOpenRerun"' in ui
     assert 'getElementById("stagesOpenRerun")' in ui

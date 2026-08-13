@@ -51,6 +51,16 @@ NON_CLI_ARGV = frozenset(
         "workbench.sim2real_envgen.split",
         "workbench.sim2real_envgen.actions",
         "workbench.isaac_lab.capture_frames",
+        "workflow.groot.prepare_split",
+        "workflow.groot.preflight_rigor",
+        "workflow.groot.resolve_trained_checkpoint",
+        "workbench.groot.baseline_eval",
+        "workbench.groot.posttrain_eval",
+        "workflow.groot.compare_learning",
+        "workflow.groot.emit_learning_mcap",
+        "workflow.groot.emit_learning_rrd",
+        "workflow.groot.publish_learning",
+        "workflow.groot.verify_agent_ui",
     }
 )
 
@@ -69,6 +79,16 @@ AUDITED_ELSEWHERE = frozenset(
         "workbench.lerobot.policy_rollout",
         "workbench.lerobot.policy_train",
         "workbench.token_factory.triage",
+        "workflow.groot.prepare_split",
+        "workflow.groot.preflight_rigor",
+        "workflow.groot.resolve_trained_checkpoint",
+        "workbench.groot.baseline_eval",
+        "workbench.groot.posttrain_eval",
+        "workflow.groot.compare_learning",
+        "workflow.groot.emit_learning_mcap",
+        "workflow.groot.emit_learning_rrd",
+        "workflow.groot.publish_learning",
+        "workflow.groot.verify_agent_ui",
     }
 )
 

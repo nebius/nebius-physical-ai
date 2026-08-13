@@ -6,6 +6,7 @@ from npa.cli import agent_recordings as R
 
 # Minimal byte fixtures mimicking the entity-path strings embedded in .rrd files.
 _RUN_RRD = b"RRF2\x00...world/table.../heldout/per_env/env-0000.../rollout/0.../scores..."
+_GROOT_RRD = b"RRF2\x00...camera...metrics/loss...metrics/world_size...run/provenance..."
 _DEMO_RRD = b"RRF2\x00...world/franka/base.../franka/gripper...world/table...world/cube...demo/active_camera..."
 _EMPTY = b""
 
@@ -15,9 +16,23 @@ def test_run_recording_detected_as_run_specific():
     assert R.is_stock_demo_recording(_RUN_RRD) is False
 
 
+def test_paidf_recording_detected_as_run_specific():
+    paidf = b"RRF2\x00...input/frame_0000...augmented/aug-paidf-0...pipeline/3_grade..."
+    assert R.recording_has_run_entities(paidf) is True
+    assert R.is_stock_demo_recording(paidf) is False
+
+
 def test_stock_demo_detected_and_not_run_specific():
     assert R.recording_has_run_entities(_DEMO_RRD) is False
     assert R.is_stock_demo_recording(_DEMO_RRD) is True
+
+
+def test_groot_training_recording_detected_as_run_specific():
+    assert R.recording_has_run_entities(_GROOT_RRD) is True
+    assert R.is_stock_demo_recording(_GROOT_RRD) is False
+    assert R.is_groot_training_recording("run/reports/groot-training.rrd") is True
+    assert R.is_groot_training_recording("run/reports/groot-training.mcap") is True
+    assert R.is_groot_training_recording("run/reports/other.rrd") is False
 
 
 def test_empty_or_none_is_not_ready():

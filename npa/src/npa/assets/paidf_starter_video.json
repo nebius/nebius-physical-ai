@@ -1,0 +1,71 @@
+{
+  "schema_version": "npa.paidf.starter-video.v1",
+  "asset_id": "robopro-episode-000000-cam-high",
+  "title": "RoboPro episode 000000, high camera",
+  "source_kind": "upstream_sample",
+  "input_origin": "actual_capture",
+  "input_origin_label": "Upstream real sample",
+  "authenticity": {
+    "classification": "actual_capture",
+    "evidence": "RoboPro documents 15,999 expert teleoperation episodes recorded from three RGB cameras on an Aloha-Agilex robot; episode 000000 is the physical task 'reposition the bottle'.",
+    "dataset_card_url": "https://huggingface.co/datasets/Hoshipu/RoboPro/blob/90ec789bf4018eb9c0f75da9f69aab5c185f0fd0/README.md",
+    "episode_metadata_url": "https://huggingface.co/datasets/Hoshipu/RoboPro/blob/90ec789bf4018eb9c0f75da9f69aab5c185f0fd0/lerobot/roboreal_all_80tasks/meta/episodes.jsonl#L1"
+  },
+  "source": {
+    "authoritative_url": "https://huggingface.co/datasets/Hoshipu/RoboPro",
+    "immutable_revision": "90ec789bf4018eb9c0f75da9f69aab5c185f0fd0",
+    "asset_path": "lerobot/roboreal_all_80tasks/videos/chunk-000/observation.images.cam_high/episode_000000.mp4",
+    "asset_url": "https://huggingface.co/datasets/Hoshipu/RoboPro/resolve/90ec789bf4018eb9c0f75da9f69aab5c185f0fd0/lerobot/roboreal_all_80tasks/videos/chunk-000/observation.images.cam_high/episode_000000.mp4",
+    "episode_metadata_url": "https://huggingface.co/datasets/Hoshipu/RoboPro/resolve/90ec789bf4018eb9c0f75da9f69aab5c185f0fd0/lerobot/roboreal_all_80tasks/meta/episodes.jsonl"
+  },
+  "integrity": {
+    "sha256": "caadec919abfebe7ac7f571f52d0c579dbe86ceacc0d0bdbf9a862ed1a908198",
+    "byte_size": 607681
+  },
+  "media": {
+    "container": "mp4",
+    "codec": "h264",
+    "codec_profile": "High",
+    "width": 640,
+    "height": 480,
+    "duration_seconds": 3.38,
+    "frame_rate": "50/1",
+    "frame_count": 169,
+    "pixel_format": "yuvj420p"
+  },
+  "license": {
+    "spdx_id": "CC-BY-4.0",
+    "name": "Creative Commons Attribution 4.0 International",
+    "url": "https://creativecommons.org/licenses/by/4.0/legalcode",
+    "dataset_license_url": "https://huggingface.co/datasets/Hoshipu/RoboPro/blob/90ec789bf4018eb9c0f75da9f69aab5c185f0fd0/README.md",
+    "attribution": "RoboPro: 80-Task Bimanual Manipulation Demonstrations on Aloha-Agilex, Zhiyuan Li (2026), Hoshipu/RoboPro.",
+    "redistribution_permitted": true,
+    "hosted_service_use_permitted": true,
+    "commercial_use_permitted": true,
+    "field_of_use_restrictions": "none",
+    "acceptance_required": false,
+    "authentication_required": false,
+    "conditions": [
+      "give appropriate credit",
+      "link the license",
+      "indicate modifications",
+      "do not apply additional legal or technical restrictions"
+    ]
+  },
+  "delivery": {
+    "mode": "operator_runtime_fetch",
+    "binary_redistributed_by_npa": false,
+    "cache_environment_variable": "NPA_PAIDF_CACHE_DIR",
+    "offline_environment_variable": "NPA_PAIDF_OFFLINE",
+    "acceptance_environment_variable": "NPA_PAIDF_ACCEPT_LICENSE",
+    "authentication_environment_variable": "HF_TOKEN",
+    "digest_verification_required": true
+  },
+  "cosmos_media_decision": {
+    "selected": false,
+    "reason": "The pinned Cosmos Transfer repository is Apache-2.0 source code, but it does not grant a separate, asset-level license or establish real-capture provenance for every Git LFS example media file. NPA therefore neither bundles nor silently fetches those samples.",
+    "upstream_repository": "https://github.com/nvidia-cosmos/cosmos-transfer2.5",
+    "reviewed_revision": "67d56b7d550a3911024a32dc23ae0bae5258e633",
+    "npa_evidence": "npa/docker/workbench/cosmos2-transfer/REDISTRIBUTION.md"
+  }
+}

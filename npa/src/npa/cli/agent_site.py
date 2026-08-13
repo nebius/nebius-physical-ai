@@ -38,9 +38,7 @@ def foxglove_nginx_locations(*, asset_root: str = FOXGLOVE_ASSET_ROOT) -> str:
     default_type application/octet-stream;
     # Byte ranges carry MCAP playback; a compressed response would break them.
     gzip off;
-    # nginx's static module already emits exactly one `Accept-Ranges: bytes`.
-    # Adding it here produces `bytes, bytes` in browser clients and can make
-    # strict MCAP data-source capability checks reject the recording.
+    add_header Accept-Ranges bytes always;
     add_header Access-Control-Allow-Origin * always;
     add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
     add_header Access-Control-Allow-Headers "Range, If-Range, Content-Type" always;
@@ -73,10 +71,10 @@ LICHTBLICK_DEFAULT_LAYOUT_PLACEHOLDER = (
 def _lichtblick_default_layout_json() -> str:
     """Return the compact JSON for the embedded viewer's default layout.
 
-    A 3D panel exposes either the established ``/heldout/points`` scene or the
-    converter's real ``/trajectory`` state-space cloud, alongside two synchronized
-    cameras and a real execution-metrics Plot. The JSON is single-quote-free so it
-    can be injected as an nginx ``sub_filter`` replacement without escaping.
+    A 3D panel with ``/heldout/points`` made visible (colored by its RGBA fields)
+    and framed on the workspace, alongside an Image panel bound to ``/camera``. The
+    JSON is single-quote-free so it can be injected as an nginx ``sub_filter``
+    replacement without escaping.
 
     ``rgba-fields`` requires the cloud to carry all four of red/green/blue/alpha;
     ``npa.workbench.lichtblick.pack_pointcloud_bytes`` emits the opaque alpha
@@ -94,13 +92,15 @@ def _lichtblick_default_layout_json() -> str:
                     "perspective": True,
                     "phi": 55.0,
                     "target": [0.0, 0.0, 0.0],
+                    # Orbit around the fixed-camera reconstruction's workspace
+                    # centroid so the cloud is framed on load (follow-none).
                     "targetOffset": [2.3, -1.2, -0.15],
                     "thetaOffset": 45.0,
                     "fovy": 45.0,
                     "near": 0.1,
                     "far": 5000.0,
                 },
-                "followTf": "world",
+                "followTf": "sim2real",
                 "followMode": "follow-none",
                 "scene": {},
                 "topics": {
@@ -108,12 +108,7 @@ def _lichtblick_default_layout_json() -> str:
                         "visible": True,
                         "colorMode": "rgba-fields",
                         "pointSize": 4.0,
-                    },
-                    "/trajectory": {
-                        "visible": True,
-                        "colorMode": "rgba-fields",
-                        "pointSize": 7.0,
-                    },
+                    }
                 },
                 "layers": {
                     "npa-grid": {
@@ -133,50 +128,127 @@ def _lichtblick_default_layout_json() -> str:
                 },
             },
             "Image!npacamera": {"imageMode": {"imageTopic": "/camera"}},
-            "Image!npaworkspace": {"imageMode": {"imageTopic": "/camera/workspace"}},
-            "Plot!npametrics": {
-                "paths": [
-                    {"value": "/metrics/execution.reward", "enabled": True},
-                    {"value": "/metrics/execution.progress", "enabled": True},
-                    {"value": "/metrics/execution.state_norm", "enabled": True},
-                ],
-                "showLegend": True,
-                "isSynced": True,
-            },
         },
         "globalVariables": {},
         "userNodes": {},
         "playbackConfig": {"speed": 1.0},
         "layout": {
-            "first": {
-                "first": "Image!npacamera",
-                "second": "Image!npaworkspace",
-                "direction": "column",
-                "splitPercentage": 50,
-            },
-            "second": {
-                "first": "3D!npasim2real",
-                "second": "Plot!npametrics",
-                "direction": "column",
-                "splitPercentage": 62,
-            },
+            "first": "3D!npasim2real",
+            "second": "Image!npacamera",
             "direction": "row",
-            "splitPercentage": 50,
+            "splitPercentage": 62,
         },
     }
     return json.dumps(layout, separators=(",", ":"))
+
+
+def _lichtblick_learning_layout_json() -> str:
+    """Return the replay-first layout for offline policy-learning MCAPs.
+
+    Learning recordings do not contain a reconstructed point cloud. The injected
+    page script replaces the placeholder Image topic with the report-validated
+    ``npa.camera`` query value. Give that factual held-out camera the full canvas;
+    predicted/expert/error series remain available in the Topics sidebar and in
+    the companion Rerun blueprint.
+    """
+
+    layout = {
+        "configById": {
+            "Image!npalearningcamera": {
+                "imageMode": {"imageTopic": "/camera/__NPA_PRIMARY_CAMERA__"}
+            }
+        },
+        "globalVariables": {},
+        "userNodes": {},
+        "playbackConfig": {"speed": 1.0},
+        "layout": "Image!npalearningcamera",
+    }
+    return json.dumps(layout, separators=(",", ":"))
+
+
+def _lichtblick_default_layout_script() -> str:
+    """Select a validated primary-camera layout and size-aware classic worker."""
+
+    learning = _lichtblick_learning_layout_json()
+    sim2real = _lichtblick_default_layout_json()
+    return (
+        '(()=>{const query=new URLSearchParams(window.location.search);'
+        'const hintedSize=Number(query.get("npa.size")||0);'
+        'if(Number.isSafeInteger(hintedSize)&&hintedSize>0&&typeof window.Worker==="function"){'
+        'const NativeWorker=window.Worker;window.Worker=function(scriptUrl,options){'
+        'if(options&&options.type==="module")return new NativeWorker(scriptUrl,options);'
+        'const absolute=new URL(String(scriptUrl),window.location.href).href;'
+        'const wrapped=new URL("/lichtblick/npa-worker.js",window.location.origin);'
+        'wrapped.searchParams.set("npa.size",String(hintedSize));'
+        'wrapped.searchParams.set("npa.target",absolute);'
+        'return new NativeWorker(wrapped.href,options);};window.Worker.prototype=NativeWorker.prototype;}'
+        'if(query.get("npa.layout")!=="learning")return '
+        f"{sim2real};"
+        f"const selected={learning};"
+        'const camera=String(query.get("npa.camera")||"");'
+        'if(!camera||!camera.split("").every((char)=>'
+        '"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-".includes(char)))'
+        'throw new Error("invalid primary camera");'
+        'selected.configById["Image!npalearningcamera"].imageMode.imageTopic="/camera/"+camera;'
+        'return selected;})()'
+    )
+
+
+def _lichtblick_worker_script() -> str:
+    """Validate and import one same-origin Lichtblick worker asset.
+
+    Cypress removes ``Content-Length`` while proxying the initial full MCAP GET.
+    The server-observed size is therefore restored only for that same-origin
+    recording request; byte-range bodies pass through untouched.
+    """
+
+    return (
+        '(()=>{const params=new URLSearchParams(self.location.search);'
+        'const sizeHint=Number(params.get("npa.size")||0);'
+        'const rawTarget=params.get("npa.target")||"";'
+        'const reject=(message)=>{throw new Error("invalid Lichtblick worker target: "+message);};'
+        'const hasUnsafeChar=(value)=>value.split("").some((char)=>'
+        '{const code=char.charCodeAt(0);return code===92||code<32||code===127;});'
+        'if(!rawTarget||hasUnsafeChar(rawTarget)||rawTarget.startsWith("//")||rawTarget.includes("#"))reject("target");'
+        'let target;try{target=new URL(rawTarget,self.location.origin);}catch(_error){reject("url");}'
+        'if((target.protocol!=="http:"&&target.protocol!=="https:")||target.origin!==self.location.origin||'
+        'target.username||target.password||target.search||target.hash)reject("origin");'
+        'let decoded=target.pathname;for(let depth=0;depth<3;depth++){let next;'
+        'try{next=decodeURIComponent(decoded);}catch(_error){reject("encoding");}'
+        'if(next===decoded)break;decoded=next;}'
+        'if(hasUnsafeChar(decoded)||decoded.includes("?")||decoded.includes("#")||'
+        'decoded.split("/").some((part)=>part==="."||part==="..")||'
+        '!decoded.startsWith("/lichtblick/")||decoded.startsWith("/lichtblick/recordings/")||'
+        'decoded==="/lichtblick/npa-worker.js"||!decoded.endsWith(".js"))reject("path");'
+        'if(!Number.isSafeInteger(sizeHint)||sizeHint<=0)reject("size");'
+        'const nativeFetch=self.fetch.bind(self);self.fetch=async(input,init)=>{'
+        'const response=await nativeFetch(input,init);try{'
+        'const rawUrl=typeof input==="string"?input:String((input&&input.url)||input||"");'
+        'const url=new URL(rawUrl,self.location.href);const headersIn=new Headers((init&&init.headers)||undefined);'
+        'if(url.origin===self.location.origin&&url.pathname.startsWith("/lichtblick/recordings/")&&'
+        'url.pathname.endsWith(".mcap")&&!headersIn.has("range")&&'
+        'response.headers.get("accept-ranges")==="bytes"){const headers=new Headers(response.headers);'
+        'headers.set("content-length",String(sizeHint));return new Response(response.body,{'
+        'status:response.status,statusText:response.statusText,headers});}}catch(_error){}return response;};'
+        'importScripts(target.href);})()'
+    )
 
 
 def nginx_agent_site_body(
     *,
     backend_port: int,
     rerun_port: int,
-    ui_version: str,
+    ui_version: str = "",
     lichtblick_port: int = DEFAULT_LICHTBLICK_PORT,
 ) -> str:
     """Shared nginx locations for the agent UI (HTTP and HTTPS server blocks)."""
+    if not ui_version:
+        from npa.cli.agent import AGENT_UI_VERSION
+
+        ui_version = AGENT_UI_VERSION
     foxglove_locations = foxglove_nginx_locations()
-    lichtblick_default_layout = _lichtblick_default_layout_json()
+    lichtblick_default_layout = _lichtblick_default_layout_script()
+    lichtblick_worker = _lichtblick_worker_script()
     lichtblick_layout_placeholder = LICHTBLICK_DEFAULT_LAYOUT_PLACEHOLDER
     return f"""  auth_basic "NPA Agent";
   auth_basic_user_file /etc/nginx/.npa-agent-htpasswd;
@@ -265,36 +337,36 @@ def nginx_agent_site_body(
     proxy_send_timeout 300s;
     add_header Cache-Control "public, max-age=3600" always;
   }}
-  location = /lichtblick/recordings/sim2real.mcap {{
+  location /lichtblick/recordings/ {{
     auth_basic off;
-    proxy_pass http://127.0.0.1:{backend_port}/lichtblick-recordings/sim2real.mcap;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header Range $http_range;
-    proxy_set_header If-Range $http_if_range;
-    proxy_force_ranges on;
+    alias /opt/npa-agent/recordings/;
+    default_type application/octet-stream;
+    # Remote-file readers require the authoritative Content-Length on their
+    # initial GET. Compression changes it to chunked transfer encoding after
+    # browser automation proxies decode the body, so keep native MCAP bytes.
     gzip off;
-    # Keep binary identity intact through browser/test proxies. Transforming the
-    # response to Brotli/chunked removes Content-Length and makes Lichtblick abort
-    # before its first byte-range request.
-    add_header Cache-Control "no-store, no-transform" always;
-    # Lichtblick opens the remote file from a browser worker. Chromium applies
-    # the CORS-exposed-header filter there even when the viewer is reverse-
-    # proxied under this host. Permit only this exact agent origin (never `*`)
-    # and expose the size/range headers its BrowserHttpReader requires.
-    add_header Access-Control-Allow-Origin "$scheme://$http_host" always;
-    add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
-    add_header Access-Control-Allow-Headers "Range, If-Range" always;
-    add_header Access-Control-Expose-Headers "Accept-Ranges, Content-Range, Content-Length, ETag, Last-Modified, X-NPA-File-Size" always;
-    # FileResponse emits one Accept-Ranges header, Content-Length on HEAD, and
-    # Content-Range for partial GETs. Do not duplicate those headers in nginx.
+    add_header Cache-Control "no-cache, no-transform" always;
+    # nginx's static module already emits `Accept-Ranges: bytes`; do NOT add it again
+    # (a duplicate makes the browser join it to "bytes, bytes", which fails Lichtblick's
+    # `headers.get("accept-ranges") === "bytes"` range-support check).
     #
-    # The location is unauthenticated because the worker cannot send basic auth,
-    # so never reflect arbitrary Origin values or use wildcard CORS.
+    # Deliberately NO Access-Control-* headers here. A run's MCAP carries camera
+    # frames, VLM critiques and reward signals, and this location is unauthenticated
+    # (wasm/worker fetches cannot carry basic auth). Granting `Allow-Origin: *` would
+    # let any web page a viewer visits read those recordings off this host. The embed
+    # never needs it: the viewer document is proxied from this same origin under
+    # /lichtblick/ and the UI pins ds.url to window.location.origin, so the fetch is
+    # same-origin — which also makes Accept-Ranges readable without Expose-Headers.
     add_header Cross-Origin-Resource-Policy "same-origin" always;
-    if ($request_method = OPTIONS) {{
-      return 204;
-    }}
+  }}
+  location = /lichtblick/npa-worker.js {{
+    auth_basic off;
+    default_type application/javascript;
+    add_header Cache-Control "no-store" always;
+    add_header Cross-Origin-Resource-Policy "same-origin" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Content-Security-Policy "default-src 'none'; script-src 'self'; connect-src 'self'" always;
+    return 200 '{lichtblick_worker}';
   }}
   location = /lichtblick/ {{
     # Exact-match the viewer document so we can inject the sim2real default layout
@@ -313,25 +385,20 @@ def nginx_agent_site_body(
     sub_filter_types text/html;
     sub_filter '{lichtblick_layout_placeholder}' '{lichtblick_default_layout}';
     add_header Cache-Control "no-store" always;
+    add_header Content-Security-Policy "default-src 'self' blob: data:; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob:; worker-src 'self' blob:; connect-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; frame-ancestors 'self'" always;
+    add_header X-Content-Type-Options "nosniff" always;
   }}
   location /lichtblick/ {{
     auth_basic off;
     proxy_pass http://127.0.0.1:{lichtblick_port}/;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
-    # BrowserHttpReader normally requires Content-Length on its initial GET.
-    # Some browser automation/network intermediaries expose a truthful chunked
-    # response instead. Lichtblick 1.26 has no fallback header, so teach this
-    # pinned static bundle to accept the canonical file's X-NPA-File-Size. The
-    # replacement does not alter the MCAP transport or its subsequent ranges.
-    proxy_set_header Accept-Encoding "";
     proxy_connect_timeout 30s;
     proxy_read_timeout 300s;
     proxy_send_timeout 300s;
-    sub_filter_once on;
-    sub_filter_types application/javascript text/javascript;
-    sub_filter 'const c=i.headers.get("content-length");if(c==null)' 'const c=i.headers.get("content-length")??i.headers.get("x-npa-file-size");if(c==null)';
     add_header Cache-Control "public, max-age=3600" always;
+    add_header Content-Security-Policy "default-src 'self' blob: data:; script-src 'self' 'wasm-unsafe-eval' blob:; worker-src 'self' blob:; connect-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; frame-ancestors 'self'" always;
+    add_header X-Content-Type-Options "nosniff" always;
   }}
   location / {{
     root /opt/npa-agent;

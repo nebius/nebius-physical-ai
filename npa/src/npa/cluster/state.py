@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+import tempfile
 from typing import Any
 
 from npa.cluster.exceptions import ClusterStateError
 
-CLUSTERS_DIR = Path.home() / ".npa" / "clusters"
+CLUSTERS_DIR = Path(
+    os.environ.get("NPA_CONFIG_DIR", "").strip() or (Path.home() / ".npa")
+) / "clusters"
 
 
 @dataclass
@@ -27,6 +31,7 @@ class ClusterState:
     subnet_id: str
     created_at: str
     last_seen_state: str = "UNKNOWN"
+    last_seen_at: str = ""
     node_group_id: str = ""
     endpoint: str = ""
     kubeconfig_path: str = ""
@@ -46,6 +51,7 @@ class ClusterState:
                 subnet_id=str(data.get("subnet_id", "")),
                 created_at=str(data["created_at"]),
                 last_seen_state=str(data.get("last_seen_state", "UNKNOWN")),
+                last_seen_at=str(data.get("last_seen_at", "")),
                 node_group_id=str(data.get("node_group_id", "")),
                 endpoint=str(data.get("endpoint", "")),
                 kubeconfig_path=str(data.get("kubeconfig_path", "")),
@@ -91,7 +97,12 @@ class NodeGroupState:
 
 
 def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def cluster_dir(name: str, *, base_dir: Path | None = None) -> Path:
@@ -108,6 +119,26 @@ def metadata_file(name: str, *, base_dir: Path | None = None) -> Path:
 
 def kubeconfig_file(name: str, *, base_dir: Path | None = None) -> Path:
     return cluster_dir(name, base_dir=base_dir) / "kubeconfig"
+
+
+def existing_kubeconfig(name: str, *, base_dir: Path | None = None) -> Path | None:
+    """Return the kubeconfig npa wrote for cluster/context *name*, if there is one.
+
+    `npa cluster up` / `npa provision-if-absent` write a dedicated kubeconfig
+    under ``~/.npa/clusters/<name>/kubeconfig`` rather than merging into
+    ``~/.kube/config``, so anything that hands a context to kubectl or SkyPilot
+    has to find that file itself.
+    """
+    direct = kubeconfig_file(name, base_dir=base_dir)
+    if direct.is_file():
+        return direct
+    state = load_cluster_state(name, base_dir=base_dir)
+    saved = str(getattr(state, "kubeconfig_path", "") or "") if state else ""
+    if saved:
+        candidate = Path(saved).expanduser()
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def node_groups_dir(cluster_name: str, *, base_dir: Path | None = None) -> Path:
@@ -132,15 +163,15 @@ def save_cluster_state(
     directory = cluster_dir(cluster_state.name, base_dir=base_dir)
     directory.mkdir(parents=True, exist_ok=True)
     path = state_file(cluster_state.name, base_dir=base_dir)
-    path.write_text(json.dumps(asdict(cluster_state), indent=2, sort_keys=True) + "\n")
+    _atomic_json(path, asdict(cluster_state))
     if metadata is not None:
-        metadata_file(cluster_state.name, base_dir=base_dir).write_text(
-            json.dumps(metadata, indent=2, sort_keys=True) + "\n"
-        )
+        _atomic_json(metadata_file(cluster_state.name, base_dir=base_dir), metadata)
     return path
 
 
-def load_cluster_state(name: str, *, base_dir: Path | None = None) -> ClusterState | None:
+def load_cluster_state(
+    name: str, *, base_dir: Path | None = None
+) -> ClusterState | None:
     path = state_file(name, base_dir=base_dir)
     if not path.exists():
         return None
@@ -185,7 +216,9 @@ def save_node_group_state(
         node_group_state.name,
         base_dir=base_dir,
     )
-    path.write_text(json.dumps(asdict(node_group_state), indent=2, sort_keys=True) + "\n")
+    path.write_text(
+        json.dumps(asdict(node_group_state), indent=2, sort_keys=True) + "\n"
+    )
     return path
 
 
@@ -235,6 +268,28 @@ def delete_node_group_state(
     directory = node_groups_dir(cluster_name, base_dir=base_dir)
     if directory.exists() and not any(directory.iterdir()):
         directory.rmdir()
+
+
+def _atomic_json(path: Path, data: dict[str, Any]) -> None:
+    """Crash-safe local state update (old complete file or new complete file)."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, raw_tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    tmp = Path(raw_tmp)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(data, indent=2, sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _optional_int(value: Any) -> int | None:
