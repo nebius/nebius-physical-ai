@@ -201,7 +201,7 @@ out a claim we have not earned.
 
 Steps 1–3 of the runbook have been executed. The image was built with
 `build.sh --push` and scanned by immutable digest
-`sha256:246c69c0501e30640413ae49113b5f0cdd82e606d21c7f25b7625cf178ebc084`:
+`sha256:a31e22a4dfe2cb419df10e4ad63495f1905b73a05b106618005c72413df1e3b3`:
 
 | Check | Result |
 | --- | --- |
@@ -211,6 +211,7 @@ Steps 1–3 of the runbook have been executed. The image was built with
 | `docker run <digest> ensure` (undeclared) | exit 78, names the licence gate, "Nothing has been downloaded." |
 | `docker run <digest> fetch-weights` (undeclared) | exit 78 |
 | `docker run <digest> status` | `source: absent`, `weights: absent` |
+| `docker run <digest> status` after review changes | reports `weights_revision: unknown` — nothing fetched, so no revision is claimed |
 | `/opt/npa/ltx2/smoke.sh` in-image | `OK (refusals enforced, no LTX payload present)` |
 
 The first build failed three times, and each failure was a real defect that no
