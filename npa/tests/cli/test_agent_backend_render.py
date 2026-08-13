@@ -568,6 +568,8 @@ def _import_rendered_backend(monkeypatch, tmp_path, *, module_name: str):
         "retrieval",
         "trace",
         "foxglove",
+        "canonical_mcap",
+        "foxglove_cloud",
         "foxglove_routes",
     ):
         (package / f"{name}.py").write_text(
@@ -594,6 +596,8 @@ def _import_rendered_backend(monkeypatch, tmp_path, *, module_name: str):
         ("sim2real_loop", "def drive_sim2real_loop"),
         ("retrieval", "def build_lance_store"),
         ("trace", "def analyze_traces"),
+        ("canonical_mcap", "def prepare_canonical_mcap"),
+        ("foxglove_cloud", "class FoxgloveCloudClient"),
     ],
 )
 def test_shipped_agent_backend_modules_compile(monkeypatch, module, marker) -> None:
@@ -649,6 +653,8 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
         "retrieval",
         "trace",
         "foxglove",
+        "canonical_mcap",
+        "foxglove_cloud",
         "foxglove_routes",
     ):
         (package / f"{name}.py").write_text(
@@ -1661,6 +1667,8 @@ def test_rendered_backend_loads_real_skill_excerpts(monkeypatch, tmp_path):
         "retrieval",
         "trace",
         "foxglove",
+        "canonical_mcap",
+        "foxglove_cloud",
         "foxglove_routes",
     ):
         (package / f"{name}.py").write_text(

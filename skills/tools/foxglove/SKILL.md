@@ -74,6 +74,7 @@ Published names are random (`<token>-<stem>.mcap`) and pruned to the newest few.
 | `GET /api/foxglove/status` | Readiness + active recording (also grounds the `foxglove_viewer` chat intent) |
 | `POST /api/foxglove/load-artifact` | Load an `.mcap`/`.bag`/`.db3`/`.ulg`/`.ulog` artifact (`s3_uri` or `run_id`+`key`) |
 | `POST /api/foxglove/convert-run` | Convert the active run's local artifacts to MCAP and load it |
+| `POST /api/foxglove/export` | Reuse or convert the active MCAP; download it, or explicitly upload/index it and return the official Foxglove Web recording link |
 | `POST /api/foxglove/live` | Point the viewer at a public `ws://`/`wss://` Foxglove or ROS-bridge URL |
 
 Configuration (no secrets): `NPA_FOXGLOVE_EMBED_SRC`, `NPA_FOXGLOVE_ORG_SLUG`,
@@ -87,12 +88,41 @@ Configuration (no secrets): `NPA_FOXGLOVE_EMBED_SRC`, `NPA_FOXGLOVE_ORG_SLUG`,
 npa workbench foxglove config --output json
 npa workbench foxglove install-sdk --dest /opt/npa-agent/foxglove/sdk
 npa workbench foxglove convert-run --input-path <run-dir> --output-path run.mcap --fps 10
+npa workbench foxglove export-run --input-path <run-dir> --output-path run.mcap
+npa workbench foxglove open --recording-id <indexed-recording-id>
 npa workbench foxglove inspect --input-path run.mcap
 ```
+
+`open` uses Foxglove's official `foxglove-stream` recording deep-link contract.
+Agent export persists exactly one canonical run artifact at
+`<run-prefix>/<run-id>/reports/sim2real.mcap`, with
+`sim2real.mcap.provenance.json` beside it. A valid native MCAP is reused;
+otherwise real S3 run artifacts are converted and the run-list cache is
+invalidated. Lichtblick, the download transport, and Cloud import use identical
+canonical bytes and report the same SHA-256.
+The agent's **Open in Foxglove Web** action uploads the MCAP once under a stable
+content key, reuses unchanged or in-progress imports, waits for indexed
+`complete` state, creates/updates or reuses the shared
+`NPA Physical AI rich visualization v1` layout from the inspected real channel
+schemas, then opens a documented link with `layoutId`, bounded `ds.start` /
+`ds.end`, and an initial `time` 250 ms into the recording. Image, 3D, Plot, and
+Log panels are present only when their compatible real topics exist. Layout API
+denial is an explicit fallback without `layoutId`; never claim immediate visual
+success in that state. A server-side API token is required at
+`tokens.FOXGLOVE_API_TOKEN` in `~/.npa/credentials.yaml` (mode `0600`). It is
+never part of browser config, deep links, subprocess arguments, shared
+workbench env, or the agent's `foxglove.env`. If it is already exported in the
+operator shell, persist it with
+`npa configure --no-interactive --save-env-credentials`; never pass its value as
+an argument.
 
 `convert-run` packs real artifacts into Foxglove well-known schemas:
 `foxglove.CompressedImage` on `/camera/<name>` (PNG/JPEG passed through, PPM/BMP/TIFF
 transcoded), `foxglove.Log` on `/log`, and `npa.RunMetrics.<name>` on `/metrics/<name>`.
+An explicitly declared `npa.foxglove.pointcloud-series.v1` artifact becomes
+`foxglove.PointCloud` on `/trajectory` plus its real frame relationship as
+`foxglove.FrameTransform` on `/tf`; its provenance must describe the coordinate
+semantics and must not imply world geometry when the points represent state space.
 Run artifacts carry no capture time, so frame timestamps come from `--fps` and are
 recorded as `timestamps=synthetic-fps` in the MCAP metadata — never present them as
 sensor time. Needs the optional extra: `pip install "npa[foxglove]"`.
@@ -125,6 +155,10 @@ It has no authentication of its own: keep it cluster-internal or behind an auth 
 - **`ds.url` must be absolute.** The self-hosted viewer's `remote-file` source
   silently ignores a relative URL (no range request, "No data source"), so always
   pin it onto the browsed origin.
+- **Download URLs require public HTTPS.** Refuse relative, HTTP,
+  credential-bearing, loopback, private, link-local, reserved, or metadata
+  targets. Foxglove Web does not use this URL; it opens the indexed Cloud
+  recording, avoiding self-signed agent-IP fetch failures.
 - **No implicit hosted app.** An unset `NPA_FOXGLOVE_EMBED_SRC` means "no official
   app", not `embed.foxglove.dev` — otherwise a stock deploy shows a sign-in wall
   instead of rendering.

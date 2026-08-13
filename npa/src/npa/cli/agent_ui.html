@@ -2030,13 +2030,17 @@
                 <div class="btn-row">
                   <button id="openRerun" class="btn" type="button">Open in Rerun</button>
                   <button id="loadRerunViewer" class="btn btn-primary" type="button">Reload Rerun data</button>
-                  <button id="openLichtblick" class="btn" type="button" title="Open the sim2real MCAP in the embedded Lichtblick viewer">Open in Lichtblick</button>
-                  <button id="loadLichtblickViewer" class="btn" type="button" title="Reload the Lichtblick MCAP recording">Reload Lichtblick data</button>
+                  <button id="openLichtblick" class="btn" type="button" title="Open the active MCAP in the embedded Lichtblick viewer">Open in Lichtblick</button>
+                  <button id="loadLichtblickViewer" class="btn" type="button" title="Reload the embedded Lichtblick MCAP recording">Reload Lichtblick data</button>
                   <button id="describeVisual" class="btn btn-primary" type="button" title="Capture the current viewer and ask the agent for feedback">Describe this</button>
-                  <button id="foxgloveConvertRun" class="btn" type="button" title="Pack this run's local frames, metrics and logs into an MCAP recording for the Foxglove viewer">Convert run → MCAP</button>
+                  <button id="downloadMcap" class="btn" type="button" title="Export the active run as MCAP and download it">Download MCAP</button>
+                  <button id="foxgloveOpenWeb" class="btn" type="button"
+                    data-testid="open-foxglove-web" aria-describedby="foxgloveExportNote"
+                    aria-busy="false" disabled
+                    title="Upload or reuse this MCAP in Foxglove Cloud and open the indexed recording">Open in Foxglove Web</button>
                   <a id="openFullRerun" class="btn" href="/rerun/?hide_welcome_screen=1&theme=dark&camera=workspace" target="_blank" rel="noopener">Open full Rerun</a>
-                  <a id="openFullLichtblick" class="btn" href="/lichtblick/" target="_blank" rel="noopener">Open full Lichtblick</a>
                 </div>
+                <p id="foxgloveExportNote" class="hint" role="status" aria-live="polite">Load a run to export or reuse its canonical MCAP in Foxglove Web.</p>
                 <p id="simvizCta" class="cta">Embedded recording uses a same-origin iframe with a public `.rrd` URL (Rerun wasm cannot send basic auth).</p>
               </div>
               <div id="rerunPlaceholder" class="rerun-placeholder" hidden>
@@ -3008,7 +3012,9 @@
           });
         });
         setRenderMode("rerun");
-        bindClick("foxgloveConvertRun", convertRunToMcap);
+        bindClick("downloadMcap", downloadMcap);
+        bindClick("foxgloveOpenWeb", openFoxgloveWeb);
+        syncFoxgloveWebAction();
         const mobileToggle = document.getElementById("mobilePanelsToggle");
         if (mobileToggle) {
           mobileToggle.addEventListener("click", () => {
@@ -4716,6 +4722,52 @@
       let rerunEnsureInFlight = null;
       let activeRunId = "";
       let activeArtifactRender = "";
+      let foxgloveWebOperation = null;
+      let foxgloveWebOperationSequence = 0;
+      function setFoxgloveWebNote(message, state) {
+        const note = document.getElementById("foxgloveExportNote");
+        if (!note) return;
+        note.hidden = false;
+        note.textContent = String(message || "");
+        note.setAttribute("data-state", String(state || "info"));
+      }
+      function syncFoxgloveWebAction() {
+        const button = document.getElementById("foxgloveOpenWeb");
+        if (!button) return;
+        const runId = String(activeRunId || "").trim();
+        const runRef = String(activeArtifactRunRef || "").trim();
+        const operation = foxgloveWebOperation;
+        let staleOperationCancelled = false;
+        if (operation && (operation.runId !== runId || operation.runRef !== runRef)) {
+          operation.stale = true;
+          if (operation.popup) {
+            try { operation.popup.close(); } catch (_closeErr) { /* best effort */ }
+          }
+          foxgloveWebOperation = null;
+          staleOperationCancelled = true;
+          setFoxgloveWebNote(
+            "The active run changed; the previous Foxglove export was not opened. Retry for " +
+              (runId ? "run " + runId + "." : "the next loaded run."),
+            "warning"
+          );
+        }
+        const current = foxgloveWebOperation;
+        const busy = Boolean(current && current.runId === runId && current.runRef === runRef);
+        button.disabled = !runId || busy;
+        button.setAttribute("aria-busy", busy ? "true" : "false");
+        button.textContent = busy ? "Opening Foxglove Web…" : "Open in Foxglove Web";
+        if (!runId && !busy && !staleOperationCancelled) {
+          setFoxgloveWebNote(
+            "Load a run to export or reuse its canonical MCAP in Foxglove Web.",
+            "idle"
+          );
+        }
+      }
+      function setActiveRunId(nextRunId) {
+        activeRunId = String(nextRunId || "").trim();
+        syncFoxgloveWebAction();
+        return activeRunId;
+      }
       let lastRerunBlobStatus = "pending";
       let lastRerunMountStatus = "pending";
       let lastRerunRecordingUrl = "";
@@ -5061,13 +5113,11 @@
           // Always set Lichtblick-appropriate copy so the shared banner never
           // retains stale Rerun wording from a previous tab, even when hidden.
           cta.textContent = ready
-            ? "Lichtblick (MCAP) recording loaded: camera and reward/advantage signals " +
-              "play in the panels below. The GPU 3D point cloud is on /heldout/points — " +
-              "enable that topic in the 3D panel (Lichtblick hides point clouds by " +
-              "default). The Rerun tab shows the same 3D point cloud automatically."
-            : "No run-specific Lichtblick (MCAP) recording yet. Load a run with a " +
-              "reports/sim2real.mcap to play its camera, reward/advantage signals, and " +
-              "GPU 3D point cloud (topic /heldout/points) here.";
+            ? "Lichtblick loaded the active run's canonical MCAP. The primary real camera " +
+              "is visible now; use Topics to select any additional image, metric, log, or " +
+              "3D channels that are actually present in this recording."
+            : "No canonical MCAP is loaded for this run. Export MCAP to create or reuse " +
+              "the persistent S3 artifact, then open it here.";
           cta.hidden = false;
           return;
         }
@@ -5193,19 +5243,13 @@
       function applyLichtblickSimViz(simViz) {
         currentLichtblickSimViz = simViz || {};
         const ready = Boolean(simViz && (simViz.lichtblick_ready || simViz.mcap_uri));
-        const full = document.getElementById("openFullLichtblick");
-        if (full) full.setAttribute("href", lichtblickIframeUrlFor(simViz));
         const placeholder = document.getElementById("lichtblickPlaceholder");
         if (placeholder) placeholder.hidden = ready;
         // If the Lichtblick pane is already the active viewer, keep it in sync.
         if (activeRenderMode === "lichtblick") mountLichtblickIframe(simViz);
       }
-      // Lichtblick persists the last layout in IndexedDB (lichtblick-layouts) and the
-      // selected layout id in localStorage (studio.profile-data). It only applies our
-      // injected default layout (3D point cloud + camera) when NO layout is saved, so a
-      // returning browser keeps showing the stale built-in default (empty 3D). The embed
-      // is same-origin, so clear that persisted layout to guarantee our default — and the
-      // GPU point cloud — actually render.
+      // Lichtblick persists layouts in IndexedDB. Seed the data-aware default once
+      // so older hardcoded camera/3D panels cannot leak into this viewer contract.
       //
       // Seed it once per UI version rather than on every mount. The wipe only needs to
       // evict a layout saved BEFORE our default existed; once seeded, whatever is stored
@@ -5247,21 +5291,37 @@
         });
       }
       let lichtblickResetInFlight = null;
+      let lichtblickPendingSrc = "";
       function mountLichtblickIframe(simViz) {
         const iframe = document.getElementById("lichtblickFrame");
         if (!iframe) return;
         const placeholder = document.getElementById("lichtblickPlaceholder");
         const ready = Boolean(simViz && (simViz.lichtblick_ready || simViz.mcap_uri));
         const src = lichtblickIframeUrlFor(simViz);
+        // Prewarm, run selection and artifact loading can all request a mount in
+        // quick succession. Keep the newest source so a slower one-time layout
+        // reset cannot restore an earlier blank/prewarm URL over the active run.
+        lichtblickPendingSrc = src;
         if (iframe.getAttribute("src") !== src) {
           if (lichtblickNeedsLayoutSeed()) {
             // Neutralize the frame so Lichtblick releases its IndexedDB handle, wipe the
             // pre-injection layout so the injected default wins, then mount the source.
             try { iframe.setAttribute("src", "about:blank"); } catch (_e) { /* ignore */ }
-            lichtblickResetInFlight = resetLichtblickLayoutStorage().then(() => {
-              markLichtblickLayoutSeeded();
-              iframe.setAttribute("src", src);
-            });
+            if (!lichtblickResetInFlight) {
+              lichtblickResetInFlight = resetLichtblickLayoutStorage()
+                .then(() => {
+                  markLichtblickLayoutSeeded();
+                  iframe.setAttribute("src", lichtblickPendingSrc || "/lichtblick/");
+                })
+                .finally(() => { lichtblickResetInFlight = null; });
+            } else {
+              // The in-flight reset owns the wipe. Once it completes, reassert
+              // the latest source in case its completion raced this request.
+              lichtblickResetInFlight.then(() => {
+                const target = lichtblickPendingSrc || "/lichtblick/";
+                if (iframe.getAttribute("src") !== target) iframe.setAttribute("src", target);
+              });
+            }
           } else {
             // Already seeded: keep whatever layout is stored (ours, or the user's own
             // arrangement) and just point the viewer at the new recording.
@@ -5272,9 +5332,7 @@
         if (placeholder) placeholder.hidden = ready;
       }
       async function ensureLichtblickForActiveRun() {
-        // Load the active run's reports/sim2real.mcap into the embed. The .mcap is one
-        // of many artifacts (easy to miss in the list), so the Lichtblick tab/reload
-        // finds and loads it directly instead of showing an empty viewer.
+        // Load the active run's canonical reports/sim2real.mcap into the embed.
         if (currentLichtblickSimViz && currentLichtblickSimViz.lichtblick_ready) {
           mountLichtblickIframe(currentLichtblickSimViz);
           return;
@@ -5513,36 +5571,166 @@
         if (!foxgloveHandle) return await ensureFoxgloveViewer();
         return await setFoxgloveDataSource(config);
       }
-      async function convertRunToMcap() {
-        // Real conversion on the agent VM (npa.sdk.workbench.foxglove), then the
-        // produced MCAP is published and loaded into the embedded viewer.
+      async function downloadMcap() {
+        // The backend reuses the active published MCAP, or performs the same
+        // conversion as Convert run → MCAP when this run has no recording yet.
         const runId = String(activeRunId || "").trim();
-        setStatus("Converting run artifacts to MCAP…");
-        showToast("Converting run artifacts to MCAP…", "info");
+        const runRef = String(activeArtifactRunRef || "").trim();
+        if (!runId) {
+          showToast("Load a run before downloading MCAP.", "error");
+          return false;
+        }
+        setStatus("Exporting active run to MCAP…");
+        showToast("Preparing MCAP export…", "info");
         try {
-          const data = await apiJson("/api/foxglove/convert-run", {
+          const data = await apiJson("/api/foxglove/export", {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify(runId ? { run_id: runId } : {}),
+            body: JSON.stringify({
+              run_id: runId,
+              ...(runRef ? { run_ref: runRef } : {}),
+            }),
           });
-          const summary = (data && data.summary) || {};
-          activeArtifactRender = "foxglove";
-          setRenderMode("foxglove");
-          hideArtifactPreview();
-          updateRenderedDataSummary(data && data.sim_viz);
-          await refreshFoxgloveViewer();
-          showToast(
-            "MCAP ready: " + String(summary.message_count || 0) + " messages (" +
-              String(summary.frames || 0) + " frames).",
-            "success"
-          );
+          const info = data && data.export;
+          if (!info || !info.available || !info.download_url) {
+            throw new Error(String((info && info.reason) || "MCAP export is unavailable"));
+          }
+          if (
+            String(activeRunId || "").trim() !== runId ||
+            String(activeArtifactRunRef || "").trim() !== runRef
+          ) {
+            throw new Error("The active run changed while MCAP export was running; retry on the selected run.");
+          }
+          const download = document.createElement("a");
+          download.href = String(info.download_url);
+          download.download = String((data && data.run_id) || "npa-run") + ".mcap";
+          download.rel = "noopener";
+          document.body.appendChild(download);
+          download.click();
+          download.remove();
+          if (runId) {
+            await refreshArtifactRuns(runId);
+            await loadArtifactsForSelectedRun(runId, { suppressPreferredAutoload: true });
+          }
+          updateRenderedDataSummary((data && data.sim_viz) || {});
+          showToast("MCAP downloaded.", "success");
           setStatus("Ready");
           return true;
         } catch (err) {
           const message = String((err && err.message) || err);
-          showToast("MCAP conversion failed: " + message, "error");
+          showToast("MCAP export failed: " + message, "error");
           setStatus("Ready");
           return false;
+        }
+      }
+      async function openFoxgloveWeb() {
+        const runId = String(activeRunId || "").trim();
+        const runRef = String(activeArtifactRunRef || "").trim();
+        if (!runId) {
+          setFoxgloveWebNote(
+            "Load a run before opening Foxglove Web; there is no active run to export.",
+            "error"
+          );
+          syncFoxgloveWebAction();
+          return false;
+        }
+        if (foxgloveWebOperation) return false;
+        // This synchronous pre-open runs inside the button's user gesture. It is
+        // required because Cloud indexing is asynchronous and browsers otherwise
+        // block the later navigation. No recording URL or credential is exposed to
+        // the blank tab. A blocked popup is reported before starting an upload.
+        const popup = window.open("about:blank", "_blank");
+        if (!popup) {
+          setFoxgloveWebNote(
+            "The browser blocked the Foxglove Web tab. Allow popups for this agent and retry.",
+            "error"
+          );
+          showToast("Open in Foxglove Web failed: the browser blocked the new tab.", "error");
+          syncFoxgloveWebAction();
+          return false;
+        }
+        popup.opener = null;
+        const operation = {
+          id: ++foxgloveWebOperationSequence,
+          runId,
+          runRef,
+          popup,
+          stale: false,
+        };
+        foxgloveWebOperation = operation;
+        syncFoxgloveWebAction();
+        setFoxgloveWebNote(
+          "Exporting or reusing the canonical MCAP for " + runId + " and waiting for Foxglove indexing…",
+          "loading"
+        );
+        setStatus("Preparing Foxglove Cloud recording…");
+        showToast("Uploading or reusing the indexed Foxglove recording…", "info");
+        try {
+          const data = await apiJson("/api/foxglove/export", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              run_id: runId,
+              ...(runRef ? { run_ref: runRef } : {}),
+              open_web: true,
+            }),
+          });
+          if (
+            operation.stale ||
+            foxgloveWebOperation !== operation ||
+            String(activeRunId || "").trim() !== runId ||
+            String(activeArtifactRunRef || "").trim() !== runRef
+          ) {
+            try { popup.close(); } catch (_closeErr) { /* best effort */ }
+            return false;
+          }
+          const info = data && data.export;
+          if (!info || !info.available || !info.web_url) {
+            throw new Error(String((info && info.reason) || "Foxglove Web is unavailable"));
+          }
+          const reused = Boolean(info.cloud && info.cloud.reused);
+          setFoxgloveWebNote(
+            reused
+              ? "Reused the unchanged indexed Foxglove Cloud recording for " + runId + "."
+              : "Uploaded and indexed the canonical MCAP for " + runId + " in Foxglove Cloud.",
+            "success"
+          );
+          // Navigation is the requested action and must not wait behind a broad
+          // S3 discovery refresh. The already-validated official URL carries no
+          // credentials; artifact refresh below updates the local UI afterward.
+          popup.location.replace(String(info.web_url));
+          updateRenderedDataSummary((data && data.sim_viz) || {});
+          showToast("Opened the indexed recording in Foxglove Web.", "success");
+          setStatus("Ready");
+          // Refresh independently: a tenant-wide S3 walk can be slow and must
+          // not keep this action disabled after the recording already opened.
+          void (async () => {
+            try {
+              await refreshArtifactRuns(runId);
+              if (
+                String(activeRunId || "").trim() !== runId ||
+                String(activeArtifactRunRef || "").trim() !== runRef
+              ) return;
+              await loadArtifactsForSelectedRun(runRef || runId, {
+                suppressPreferredAutoload: true,
+              });
+            } catch (_refreshErr) {
+              // Export/open already succeeded; ordinary artifact refresh UI
+              // owns any discovery diagnostics without hiding this action.
+            }
+          })();
+          return true;
+        } catch (err) {
+          try { popup.close(); } catch (_closeErr) { /* best effort */ }
+          if (operation.stale || foxgloveWebOperation !== operation) return false;
+          const message = String((err && err.message) || err);
+          setFoxgloveWebNote("Foxglove Web could not open " + runId + ": " + message, "error");
+          showToast("Open in Foxglove Web failed: " + message, "error");
+          setStatus("Ready");
+          return false;
+        } finally {
+          if (foxgloveWebOperation === operation) foxgloveWebOperation = null;
+          syncFoxgloveWebAction();
         }
       }
       async function captureFoxgloveContext() {
@@ -6058,13 +6246,13 @@
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ camera: cam }),
           });
-          activeRunId = "franka-demo";
+          setActiveRunId("franka-demo");
           simViz = await waitForRerunReady();
         } else {
           simViz = await waitForRerunReady();
         }
         const runId = String((simViz && simViz.run_id) || activeRunId || "").trim();
-        if (runId) activeRunId = runId;
+        if (runId) setActiveRunId(runId);
         await waitForRerunSuccess(String(simViz.camera || cam), { deadlineMs: 90000, mountAttemptsPerLoop: 4, runId });
         return true;
       }
@@ -6646,7 +6834,7 @@
           runDetailsAbortController.abort();
           runDetailsAbortController = null;
         }
-        activeRunId = "";
+        setActiveRunId("");
         activeRunEntryKey = "";
         activeArtifactRunRef = "";
         activeRunResourceScope = null;
@@ -6860,7 +7048,7 @@
         if (!requestIsCurrent()) return false;
         runId = String(data.run_id || runId).trim();
         runRef = String(data.run_ref || runRef).trim();
-        activeRunId = runId;
+        setActiveRunId(runId);
         activeArtifactRunRef = runRef;
         activeRunEntryKey = String((entry && entry.entry_key) || runRef || "");
         syncRunChooserFields(runId, activeRunEntryKey || runRef);
@@ -7258,10 +7446,29 @@
         const render = String((simViz && simViz.artifact_render) || "");
         if (key || uri) {
           const note = String((simViz && simViz.visualization_note) || "");
+          const canonicalUri = String((simViz && simViz.canonical_mcap_s3_uri) || "");
+          const canonicalHash = String((simViz && simViz.canonical_mcap_sha256) || "");
+          const canonicalSource = String((simViz && simViz.canonical_mcap_source) || "");
+          const canonicalProvenance = (simViz && simViz.canonical_mcap_provenance) || {};
+          const richRun = canonicalProvenance.rich_run || {};
+          const engine = richRun.engine_provenance || {};
+          const limitations = Array.isArray(richRun.limitations)
+            ? richRun.limitations.map((value) => String(value || "")).filter(Boolean)
+            : [];
+          const transport = String((simViz && simViz.transport_state) || "");
+          const cloud = (simViz && simViz.foxglove_cloud) || {};
           node.innerHTML =
             "Rendering: <strong>" + escapeHtml(render || "artifact") + "</strong>" +
             " from run <code>" + escapeHtml(runId) + "</code><br>" +
             "<code>" + escapeHtml(key || uri) + "</code>" +
+            (canonicalUri ? "<br>Persistent S3 canonical: <code>" + escapeHtml(canonicalUri) + "</code>" : "") +
+            (canonicalHash ? "<br>SHA-256: <code>" + escapeHtml(canonicalHash) + "</code> · provenance: " + escapeHtml(canonicalSource || "recorded") : "") +
+            (engine.engine ? "<br>Engine: " + escapeHtml(String(engine.engine)) + (engine.task ? " · task: " + escapeHtml(String(engine.task)) : "") : "") +
+            (richRun.timestamp_semantics ? "<br>Time: " + escapeHtml(String(richRun.timestamp_semantics)) : "") +
+            (richRun.trajectory_semantics ? "<br>3D: " + escapeHtml(String(richRun.trajectory_semantics)) : "") +
+            (limitations.length ? "<br>Limitations: " + escapeHtml(limitations.join(" ")) : "") +
+            (transport ? "<br>Ephemeral transport: " + escapeHtml(transport) : "") +
+            (cloud.import_status ? "<br>Foxglove Cloud: " + escapeHtml(String(cloud.import_status)) + (cloud.reused ? " (reused)" : " (indexed)") : "") +
             (note ? "<br><span class='hint'>" + escapeHtml(note) + "</span>" : "");
         } else {
           node.textContent = "Rendering: no run artifact loaded yet.";
@@ -7312,11 +7519,17 @@
         const isCurrent = () => requestId === artifactLoadRequestId &&
           loadGeneration === artifactLoadGeneration &&
           (!context.isCurrent || context.isCurrent());
+        const runId = String((payload && payload.run_id) || "").trim();
+        const runRef = String((payload && payload.run_ref) || "").trim();
+        const key = String((payload && payload.key) || "").trim();
         const body = {
-          run_id: String((payload && payload.run_id) || "").trim(),
-          run_ref: String((payload && payload.run_ref) || "").trim(),
-          key: String((payload && payload.key) || "").trim(),
-          s3_uri: String((payload && payload.s3_uri) || "").trim(),
+          run_id: runId,
+          run_ref: runRef,
+          key,
+          // A run/key pair lets the backend resolve only across configured agent
+          // buckets. A source-qualified run_ref is stronger still. Preserve direct
+          // URI loading solely when no validated identity exists.
+          s3_uri: (runRef || (runId && key)) ? "" : String((payload && payload.s3_uri) || "").trim(),
         };
         const data = await apiJson("/api/sim-viz/load-artifact", {
           method: "POST",
@@ -7334,7 +7547,7 @@
         activeArtifactRender = render;
         activeArtifactRunRef = String(data.run_ref || body.run_ref || "").trim();
         const loadedRunId = String(simViz.run_id || body.run_id || activeRunId || "").trim();
-        if (loadedRunId) activeRunId = loadedRunId;
+        if (loadedRunId) setActiveRunId(loadedRunId);
         updateRenderedDataSummary(simViz);
         // Mobile: the 3D Rerun wasm viewer isn't supported — open the run's data in
         // the Voxel51 tab instead of mounting the (unsupported) viewer.
@@ -7354,7 +7567,9 @@
           lastRrdUpdatedAt = "";
           // Soft-swap when possible; only force remount if the viewer is not alive.
           if (!(await swapRerunRecordingInPlace(String(simViz.camera || "workspace"), loadedRunId))) {
-            rerunIframeLoaded = false;
+            // Let mountRerunIframe inspect the existing viewer. It can reuse a
+            // display-ready same-run mount even when add_receiver is unavailable;
+            // pre-emptively marking it dead causes a needless second navigation.
             await mountRerunIframeUntilSuccess(String(simViz.camera || "workspace"), 8, loadedRunId);
             // A boot-time mount may have been in flight when the source-aware
             // switch cleared the old frame. The single-flight promise can finish
@@ -7630,7 +7845,7 @@
               setWorkflowYaml(draftYaml, session.workflow_draft.validation || {});
             }
           }
-          activeRunId = String((simViz && (simViz.active_run_id || simViz.run_id)) || activeRunId || "").trim();
+          setActiveRunId((simViz && (simViz.active_run_id || simViz.run_id)) || activeRunId || "");
           syncRerunRecordingCapability(simViz);
           updateRunSelector(simViz);
           // An RRD discovered directly in object storage can have valid sim-viz
@@ -7875,7 +8090,7 @@
           return loadArtifactsForSelectedRun(chosen, null, entry, { pendingSelection: true });
         }
         clearVisibleRunState("Loading " + chosen + "…");
-        activeRunId = chosen;
+        setActiveRunId(chosen);
         activeRunEntryKey = String(entry.entry_key || "");
         syncRunChooserFields(chosen, activeRunEntryKey || activeArtifactRunRef);
         if (entry.source_type === "local_demo") {
@@ -8256,7 +8471,7 @@
           body: JSON.stringify({ run_id: targetRunId, run_ref: targetRunRef }),
         });
         syncRerunRecordingCapability(data && data.sim_viz);
-        activeRunId = targetRunId;
+        setActiveRunId(targetRunId);
         activeArtifactRunRef = String(data.run_ref || targetRunRef || "").trim();
         appendChat("assistant", "Loaded run context (workflow history) — **run_id**: `" + targetRunId + "`.");
         await loadRunDetails(targetRunId, {
@@ -8308,7 +8523,7 @@
           activeArtifactRender = "rerun";
           hideArtifactPreview();
           const runId = String(data.sim_viz.run_id || activeRunId || "").trim();
-          if (runId) activeRunId = runId;
+          if (runId) setActiveRunId(runId);
           await waitForRerunSuccess(String(data.sim_viz.camera || "workspace"), {
             deadlineMs: 90000,
             mountAttemptsPerLoop: 4,
@@ -8326,7 +8541,7 @@
         appendChat("assistant", `Submitted Sim2Real run: **${data.run_id || "unknown"}**`);
         appendChat("assistant", "Watching sim progress: loading the submitted run's Rerun recording.");
         const submittedRunId = String(data.run_id || "").trim();
-        if (submittedRunId) activeRunId = submittedRunId;
+        if (submittedRunId) setActiveRunId(submittedRunId);
         renderRunDetails(data);
         let simViz = (data && data.sim_viz) || {};
         if (!simViz.rrd_uri) {
@@ -8403,7 +8618,7 @@
           if (session && session.deployment) applyDeploymentIdentity(session.deployment);
           activeChatSessionId = String(session.active_chat_session_id || activeChatSessionId || "default");
           if (session && session.sim_viz) {
-            activeRunId = String((session.sim_viz.active_run_id || session.sim_viz.run_id || activeRunId || "")).trim();
+            setActiveRunId(session.sim_viz.active_run_id || session.sim_viz.run_id || activeRunId || "");
             activeArtifactRender = String(session.sim_viz.artifact_render || activeArtifactRender || "");
             updateRenderedDataSummary(session.sim_viz);
           }
@@ -8493,7 +8708,11 @@
           const refreshPromise = refresh().catch((err) => {
             console.warn("initial refresh failed", err);
           });
-          const artifactsPromise = refreshArtifactRuns().catch((_artifactErr) => {
+          // Populate the latest-run picker in the background. An exact q=
+          // lookup for a restored run may inspect every tenant bucket, so it
+          // must not hold first paint or the Rerun safety cover hostage. The
+          // explicit Load/search actions still perform that exact lookup.
+          const artifactsPromise = refreshPromise.then(() => refreshArtifactRuns("")).catch((_artifactErr) => {
             // artifact discovery is optional when S3 credentials are missing.
           });
           const accessPromise = refreshAccess(false).catch((accessErr) => {
@@ -8505,11 +8724,10 @@
             setStatus("Ready");
             showToast("Mobile chat ready", "success");
           } else {
-            // UI is usable once session + refresh + artifact discovery finish, so mark
-            // Ready before the heavy Rerun wasm warm+mount (Chat/Lichtblick are usable
-            // immediately). The Rerun cover logic still runs synchronously below so its
-            // clear-when-canvas-ready behavior stays deterministic.
-            await Promise.all([refreshPromise, artifactsPromise, accessPromise]);
+            // UI is usable once session, status, and access refresh finish.
+            // Artifact discovery continues in the background and fills both
+            // run pickers when its tenant-wide page arrives.
+            await Promise.all([refreshPromise, accessPromise]);
             setStatus("Ready");
             showToast("Workbench ready", "success");
             // Pre-warm the Lichtblick SPA bundle so opening it later only swaps the data
@@ -8518,6 +8736,7 @@
             if (lb && (!lb.getAttribute("src") || lb.getAttribute("src") === "about:blank")) {
               lb.setAttribute("src", "/lichtblick/");
             }
+            void artifactsPromise;
             await warmPromise;
             const mountMode = await ensureFrankaRerunLoaded();
             const iframe = document.getElementById("rerunFrame");
@@ -8535,7 +8754,7 @@
                 if (!safeHideRerunBundleCover(iframe)) {
                   hideRerunBundleCover();
                 }
-              }, 45000);
+              }, 42000);
             }
           }
         } catch (err) {

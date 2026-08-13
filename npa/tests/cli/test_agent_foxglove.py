@@ -23,6 +23,8 @@ from npa.cli.agent_foxglove import (
     data_source_for_state,
     describe_foxglove_context,
     foxglove_status_payload,
+    foxglove_download_export,
+    foxglove_recording_link,
     is_foxglove_artifact,
     live_data_source,
     live_url_allowed,
@@ -150,6 +152,86 @@ def test_remote_file_data_source_shape() -> None:
     assert remote_file_data_source([]) is None
 
 
+def test_foxglove_download_export_keeps_exact_public_url() -> None:
+    recording = "https://agent.example/foxglove/data/a%20run.mcap?part=2"
+    links = foxglove_download_export(recording)
+
+    assert links["available"] is True
+    assert links["download_url"] == recording
+    assert "web_url" not in links
+
+
+def test_foxglove_recording_link_is_web_only_and_round_trips_id() -> None:
+    from urllib.parse import parse_qs, urlparse
+
+    link = foxglove_recording_link("rec_abc123")
+    parsed = urlparse(link["web_url"])
+
+    assert parsed.scheme == "https" and parsed.netloc == "app.foxglove.dev"
+    assert parsed.path == "/~/view"
+    assert parsed.geturl() == link["web_url"]
+    assert parse_qs(parsed.query) == {
+        "ds": ["foxglove-stream"],
+        "ds.recordingId": ["rec_abc123"],
+    }
+    assert "openIn" not in parse_qs(parsed.query)
+    assert "desktop" not in link
+
+
+def test_foxglove_recording_link_uses_documented_layout_range_and_seek() -> None:
+    from urllib.parse import parse_qs, urlparse
+
+    start = 1_786_363_200_000_000_000
+    link = foxglove_recording_link(
+        "rec_rich",
+        layout_id="layout_rich",
+        start_time_ns=start,
+        end_time_ns=start + 9_937_500_000,
+    )
+    query = parse_qs(urlparse(link["web_url"]).query)
+
+    assert query == {
+        "ds": ["foxglove-stream"],
+        "ds.recordingId": ["rec_rich"],
+        "layoutId": ["layout_rich"],
+        "ds.start": ["2026-08-10T12:00:00.000000000Z"],
+        "ds.end": ["2026-08-10T12:00:09.937500000Z"],
+        "time": ["2026-08-10T12:00:00.250000000Z"],
+    }
+    assert link["layout_id"] == "layout_rich"
+    assert "token" not in link["web_url"].lower()
+
+
+@pytest.mark.parametrize(
+    "recording,reason",
+    [
+        ("", "No active"),
+        ("/foxglove/data/x.mcap", "absolute HTTPS"),
+        ("http://agent.example/x.mcap", "absolute HTTPS"),
+        ("https://user:pass@agent.example/x.mcap", "embedded credentials"),
+        ("https://localhost/x.mcap", "public HTTPS"),
+        ("https://127.0.0.1/x.mcap", "public HTTPS"),
+        ("https://10.0.0.2/x.mcap", "public HTTPS"),
+        ("https://169.254.1.1/x.mcap", "public HTTPS"),
+    ],
+)
+def test_foxglove_download_export_rejects_unreachable_or_unsafe_urls(
+    recording: str, reason: str
+) -> None:
+    links = foxglove_download_export(recording)
+    assert links["available"] is False
+    assert reason in links["reason"]
+    assert links["recording_url"] == links["download_url"] == ""
+
+
+def test_foxglove_download_export_absolutizes_agent_recording() -> None:
+    links = foxglove_download_export(
+        "/foxglove/data/random.mcap", origin="https://agent.example"
+    )
+    assert links["available"] is True
+    assert links["recording_url"] == "https://agent.example/foxglove/data/random.mcap"
+
+
 @pytest.mark.parametrize(
     "url,allowed",
     [
@@ -178,9 +260,12 @@ def test_live_data_source_defaults_and_rejection() -> None:
         "protocol": "foxglove-websocket",
         "url": "wss://robot.example.com:8765",
     }
-    assert live_data_source(
-        "wss://robot.example.com:9090", protocol="rosbridge-websocket"
-    )["protocol"] == "rosbridge-websocket"
+    assert (
+        live_data_source(
+            "wss://robot.example.com:9090", protocol="rosbridge-websocket"
+        )["protocol"]
+        == "rosbridge-websocket"
+    )
     # Unknown protocol falls back to the Foxglove WebSocket, never crashes.
     assert live_data_source("wss://a.example.com", protocol="nonsense")["protocol"] == (
         "foxglove-websocket"
@@ -197,9 +282,11 @@ def test_data_source_for_state_prefers_published_recording() -> None:
     }
 
     # No recording: fall back to a configured live URL.
-    live = data_source_for_state({}, origin="https://agent.example", env={
-        "NPA_FOXGLOVE_LIVE_URL": "wss://robot.example.com:8765"
-    })
+    live = data_source_for_state(
+        {},
+        origin="https://agent.example",
+        env={"NPA_FOXGLOVE_LIVE_URL": "wss://robot.example.com:8765"},
+    )
     assert live["type"] == "live"
 
     assert data_source_for_state({}, origin="https://agent.example", env={}) is None
@@ -210,6 +297,29 @@ def test_data_source_for_state_prefers_published_recording() -> None:
         env={"NPA_FOXGLOVE_LIVE_URL": "wss://robot.example.com:8765"},
     )
     assert both["type"] == "remote-file"
+
+
+def test_recording_time_bounds_seed_both_embedded_viewers(tmp_path: Path) -> None:
+    start_ns = 1_700_000_000_000_000_000
+    state = {
+        "foxglove_url": "/foxglove/data/abc-run.mcap",
+        "mcap_uri": "file:///opt/npa-agent/recordings/sim2real.mcap",
+        "canonical_mcap_provenance": {
+            "start_time_ns": start_ns,
+            "end_time_ns": start_ns + 10_000_000_000,
+        },
+    }
+
+    source = data_source_for_state(state, origin="https://agent.example", env={})
+    assert source["startTime"] == (start_ns + 250_000_000) / 1_000_000_000
+
+    config = resolve_foxglove_config(
+        {"NPA_FOXGLOVE_EMBED_SRC": ""},
+        assets_dir=_install_assets(tmp_path),
+        sim_viz=state,
+        self_hosted_ready=True,
+    )
+    assert "time=2023-11-14T22%3A13%3A20.250000000Z" in config["self_hosted_url"]
 
 
 # --------------------------------------------------------------------------- #
@@ -325,6 +435,7 @@ def test_status_payload_and_describe_context(tmp_path: Path) -> None:
     assert status["data_source_type"] == "remote-file"
     assert status["artifact_key"] == "run-7/reports/session.mcap"
     assert status["recording_url"].endswith("/foxglove/data/tok-run.mcap")
+    assert "export" not in status
 
     context = describe_foxglove_context(config, sim_viz)
     assert "cross-origin" in context
@@ -348,7 +459,10 @@ def test_select_viewer_backend_prefers_the_official_app_then_the_oss_viewer() ->
     from npa.agent_backend.foxglove import select_viewer_backend
 
     backend, reason = select_viewer_backend(
-        {}, sdk_ready=True, embed_src="https://embed.foxglove.dev/", self_hosted_ready=True
+        {},
+        sdk_ready=True,
+        embed_src="https://embed.foxglove.dev/",
+        self_hosted_ready=True,
     )
     assert (backend, reason) == ("foxglove-sdk", "")
 
@@ -360,7 +474,10 @@ def test_select_viewer_backend_prefers_the_official_app_then_the_oss_viewer() ->
 
     # SDK assets missing but the OSS viewer is up — still a working viewer.
     backend, reason = select_viewer_backend(
-        {}, sdk_ready=False, embed_src="https://embed.foxglove.dev/", self_hosted_ready=True
+        {},
+        sdk_ready=False,
+        embed_src="https://embed.foxglove.dev/",
+        self_hosted_ready=True,
     )
     assert (backend, reason) == ("self-hosted", "")
 
@@ -403,9 +520,25 @@ def test_self_hosted_viewer_url_uses_the_remote_file_contract() -> None:
     assert self_hosted_viewer_url("") == "/lichtblick/"
 
 
+def test_self_hosted_viewer_url_seeks_into_the_overlap_window() -> None:
+    from npa.agent_backend.foxglove import self_hosted_viewer_url
+
+    url = self_hosted_viewer_url(
+        "/lichtblick/recordings/sim2real.mcap",
+        start_time_ns=1_700_000_000_000_000_000,
+        end_time_ns=1_700_000_010_000_000_000,
+    )
+    assert "ds.start=2023-11-14T22%3A13%3A20.000000000Z" in url
+    assert "ds.end=2023-11-14T22%3A13%3A30.000000000Z" in url
+    assert "time=2023-11-14T22%3A13%3A20.250000000Z" in url
+
+
 def test_config_exposes_the_self_hosted_backend(tmp_path: Path) -> None:
     assets = _install_assets(tmp_path)
-    sim_viz = {"mcap_uri": "file:///opt/npa-agent/recordings/sim2real.mcap", "run_id": "run-9"}
+    sim_viz = {
+        "mcap_uri": "file:///opt/npa-agent/recordings/sim2real.mcap",
+        "run_id": "run-9",
+    }
 
     config = resolve_foxglove_config(
         {"NPA_FOXGLOVE_EMBED_SRC": ""},
@@ -424,7 +557,10 @@ def test_config_exposes_the_self_hosted_backend(tmp_path: Path) -> None:
 
 def test_describe_context_names_the_backend_and_capture_ability(tmp_path: Path) -> None:
     assets = _install_assets(tmp_path)
-    sim_viz = {"mcap_uri": "file:///opt/npa-agent/recordings/sim2real.mcap", "run_id": "run-9"}
+    sim_viz = {
+        "mcap_uri": "file:///opt/npa-agent/recordings/sim2real.mcap",
+        "run_id": "run-9",
+    }
 
     self_hosted = resolve_foxglove_config(
         {"NPA_FOXGLOVE_EMBED_SRC": ""},
@@ -450,12 +586,16 @@ def test_stock_deploy_has_no_implicit_hosted_app(tmp_path: Path) -> None:
     """An unset embed source must not silently point at the account-gated app."""
     assets = _install_assets(tmp_path)
 
-    unset = resolve_foxglove_config({}, assets_dir=assets, sim_viz={}, self_hosted_ready=False)
+    unset = resolve_foxglove_config(
+        {}, assets_dir=assets, sim_viz={}, self_hosted_ready=False
+    )
     assert unset["embed_src"] == ""
     assert unset["viewer_backend"] == ""
     assert "NPA_FOXGLOVE_EMBED_SRC" in unset["reason"]
 
     # ...but with the OSS viewer running the pane still renders.
-    with_oss = resolve_foxglove_config({}, assets_dir=assets, sim_viz={}, self_hosted_ready=True)
+    with_oss = resolve_foxglove_config(
+        {}, assets_dir=assets, sim_viz={}, self_hosted_ready=True
+    )
     assert with_oss["viewer_backend"] == "self-hosted"
     assert with_oss["available"] is True

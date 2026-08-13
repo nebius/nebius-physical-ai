@@ -853,7 +853,8 @@ Workbench is the main product surface. Every tool lives under `npa workbench`
 - **`foxglove`** packs run frames/metrics/logs into MCAP and installs the pinned
   [`@foxglove/embed`](https://docs.foxglove.dev/docs/embed/typescript-sdk) assets
   behind the agent's embedded Foxglove viewer — see
-  [docs/cli/foxglove.md](docs/cli/foxglove.md).
+  [docs/cli/foxglove.md](docs/cli/foxglove.md) and the
+  [canonical export / Foxglove Web contract](docs/workbench/foxglove-export.md).
 - **`trigger`** watches S3-compatible prefixes and retriggers workflows.
 - **`golden-eval`** runs per-container hello-world reruns as a CI gate.
 - Public GHCR releases and exact hardware-specific tags are listed in the

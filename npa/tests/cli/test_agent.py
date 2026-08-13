@@ -543,6 +543,58 @@ def test_write_agent_nebius_env_omits_operator_iam_token(monkeypatch) -> None:
     assert all("agent-bootstrap" not in cmd for cmd in commands)
 
 
+def test_agent_operator_profile_scopes_foxglove_token_to_private_credentials() -> None:
+    from npa.cli.agent import _write_agent_operator_profile
+
+    staged: list[tuple[str, str]] = []
+
+    class _FakeSSH:
+        def upload_private_text(self, content: str, remote_path: str) -> None:
+            staged.append((remote_path, content))
+
+        def run_or_raise(self, _command: str, **_kwargs) -> str:
+            return ""
+
+        def run(self, _command: str) -> str:
+            return ""
+
+    _write_agent_operator_profile(
+        _FakeSSH(),
+        ssh_user="ubuntu",
+        project_alias="prod",
+        project_id="project-abc",
+        tenant_id="tenant-abc",
+        region="eu-north1",
+        tf_api_key="tf-unit-secret",
+        foxglove_api_token="fox-unit-secret",
+        s3_bucket="agent-state",
+        s3_endpoint="https://storage.example",
+        s3_access_key="access",
+        s3_secret_key="secret",
+        service_account_id="serviceaccount-agent",
+    )
+
+    credential_payloads = [
+        content
+        for _path, content in staged
+        if '"FOXGLOVE_API_TOKEN"' in content
+    ]
+    assert len(credential_payloads) == 2
+    assert all(
+        '"FOXGLOVE_API_TOKEN": "fox-unit-secret"' in item
+        for item in credential_payloads
+    )
+    for item in credential_payloads:
+        payload = json.loads(item)
+        project_store = payload["project_credentials"]
+        assert project_store["schema_version"] == "npa.project-credentials.v2"
+        assert project_store["current_project_id"] == "project-abc"
+        project = project_store["projects"]["project-abc"]
+        assert project["aliases"] == ["prod"]
+        assert project["storage"]["bucket"] == "s3://agent-state"
+        assert project["nebius"]["service_account_project_id"] == "project-abc"
+
+
 def test_resolve_deploy_storage_credentials_prefers_bootstrap_when_writable(
     monkeypatch,
 ) -> None:
@@ -986,6 +1038,13 @@ def test_bootstrap_injects_lichtblick_default_layout() -> None:
     assert three_d["followTf"] == "sim2real"
     image = next(v for k, v in panels.items() if k.startswith("Image!"))
     assert image["imageMode"]["imageTopic"] == "/camera"
+
+
+def test_bootstrap_installs_docker_for_fresh_lichtblick_fallback() -> None:
+    source = _agent_source()
+    assert "if ! command -v docker >/dev/null 2>&1; then" in source
+    assert "apt-get install -y docker.io" in source
+    assert "sudo systemctl enable --now docker" in source
 
 
 def test_bootstrap_ui_embeds_lichtblick_render_mode() -> None:
