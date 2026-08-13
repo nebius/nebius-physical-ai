@@ -185,10 +185,13 @@ def test_accelerator_name_override_preserves_each_profile_gpu_count(
 
 
 def test_submit_time_accelerator_override_preserves_profile_gpu_count() -> None:
-    assert normalize_resources(
-        {"accelerators": "RTXPRO6000:8"},
-        accelerator_overrides={"RTXPRO6000:8": "resolved-product"},
-    )["accelerators"] == "resolved-product:8"
+    assert (
+        normalize_resources(
+            {"accelerators": "RTXPRO6000:8"},
+            accelerator_overrides={"RTXPRO6000:8": "resolved-product"},
+        )["accelerators"]
+        == "resolved-product:8"
+    )
 
 
 def test_nebius_cloud_render_injects_docker_secrets(

@@ -968,9 +968,7 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
     import sys
 
     module_name = "npa_rendered_artifact_range_backend"
-    module = _import_rendered_backend(
-        monkeypatch, tmp_path, module_name=module_name
-    )
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
     artifact = module.Artifact(
         "run-one",
         "run-one/report.bin",
@@ -1914,7 +1912,9 @@ def test_rendered_backend_labels_nurec_camera_without_inheriting(monkeypatch) ->
     assert "camera = NEURAL_RECONSTRUCTION_CAMERA_LABEL" in body
 
 
-def test_rendered_backend_labels_groot_training_without_rollout_claim(monkeypatch) -> None:
+def test_rendered_backend_labels_groot_training_without_rollout_claim(
+    monkeypatch,
+) -> None:
     body = _render_backend_body(monkeypatch)
 
     assert 'GROOT_TRAINING_CAMERA_LABEL = "camera"' in body

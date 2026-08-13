@@ -696,10 +696,7 @@ def test_workflow_list_discovers_npa_workflow_run_manifest(monkeypatch) -> None:
     }
     fake_s3.put_object(
         Bucket="bucket",
-        Key=(
-            "groot-1-7-finetune/groot-run-4gpu/"
-            "npa-workflow/manifest.json"
-        ),
+        Key=("groot-1-7-finetune/groot-run-4gpu/npa-workflow/manifest.json"),
         Body=json.dumps(manifest).encode("utf-8"),
     )
 

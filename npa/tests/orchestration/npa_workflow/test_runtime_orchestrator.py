@@ -564,7 +564,9 @@ def test_runtime_persists_exact_submitted_workflow_yaml(tmp_path: Path) -> None:
     assert store.objects["unit-prefix/workflow.yaml"] == workflow_yaml
 
 
-def test_runtime_uses_executor_ledger_store_for_exact_workflow_yaml(tmp_path: Path) -> None:
+def test_runtime_uses_executor_ledger_store_for_exact_workflow_yaml(
+    tmp_path: Path,
+) -> None:
     spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
     store = MemoryStore()
     executor = _executor(spec, store=store)
@@ -583,7 +585,9 @@ def test_runtime_uses_executor_ledger_store_for_exact_workflow_yaml(tmp_path: Pa
     assert store.objects["unit-prefix/workflow.yaml"] == workflow_yaml
 
 
-def test_runtime_rejects_workflow_yaml_without_any_durable_store(tmp_path: Path) -> None:
+def test_runtime_rejects_workflow_yaml_without_any_durable_store(
+    tmp_path: Path,
+) -> None:
     spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
     executor = _executor(spec)
 
@@ -836,7 +840,9 @@ def test_timeout_cancels_the_managed_job(tmp_path: Path) -> None:
 def test_timeout_without_cancel_preserves_the_in_flight_job(tmp_path: Path) -> None:
     spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
     cancels: list[dict[str, Any]] = []
-    options = RuntimeOptions(poll_seconds=0, max_wait_seconds=2, cancel_on_timeout=False)
+    options = RuntimeOptions(
+        poll_seconds=0, max_wait_seconds=2, cancel_on_timeout=False
+    )
     executor = _executor(
         spec,
         status_fn=FakeStatus(["RUNNING"] * 20),
