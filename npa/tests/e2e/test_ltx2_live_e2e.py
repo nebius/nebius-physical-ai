@@ -262,7 +262,6 @@ def test_ltx2_live_gpu_generate_gate_and_decode(
     e2e_project: str | None,
     tmp_path: Path,
 ) -> None:
-    config = _spec_config()
     registry = resolve_container_registry(e2e_project)
     assert registry, "NPA container registry could not be resolved"
 

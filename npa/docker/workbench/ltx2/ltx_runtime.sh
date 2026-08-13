@@ -18,6 +18,17 @@ readonly EX_CONFIG=78
 readonly EX_UNAVAILABLE=69
 readonly EX_SOFTWARE=70
 readonly NVIDIA_ACCEPT_ENV=NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS
+readonly LTX_ACCEPT_ENV=NPA_LTX_ACCEPT_COMMUNITY_LICENSE
+# Every variable that could pre-answer a licensing question, in one place so the
+# refusal proof cannot drift out of sync with the set it has to scrub.
+DECLARATION_ENVS=(
+  "$LTX_ACCEPT_ENV"
+  NPA_LTX_ENTITY_CLASS
+  NPA_LTX_USE_CLASS
+  NPA_LTX_COMMERCIAL_AGREEMENT_REF
+  "$NVIDIA_ACCEPT_ENV"
+  HF_TOKEN
+)
 
 CACHE_ROOT="${NPA_LTX_RUNTIME_CACHE:-/workspace/.cache/npa/ltx2/runtime}"
 MODEL_CACHE="${NPA_LTX_MODEL_CACHE:-/workspace/model-cache/ltx-2.5}"
@@ -149,30 +160,53 @@ fetch_weights() {
   hf download "$WEIGHTS_REPO" "${files[@]}" --local-dir "$MODEL_CACHE"
 }
 
+undeclared() {
+  # Run a command with every acceptance variable scrubbed, so a refusal holds
+  # regardless of what leaked into the builder or the operator's shell.
+  local args=() name
+  for name in "${DECLARATION_ENVS[@]}"; do args+=(-u "$name"); done
+  env "${args[@]}" "$@"
+}
+
+assert_gate() {
+  # Assert that a gate refused *and* that it was the gate we meant. Checking only
+  # the exit code would make this proof vacuous: three independent gates all
+  # refuse with 78, so a licence gate that had been broken open to accept
+  # everything would still "pass" on the strength of NVIDIA's or Hugging Face's
+  # refusal downstream of it. The refusal each gate prints names its own
+  # variable, so that is what identifies which one fired.
+  local what="$1" expect_env="$2" rc=0 out
+  shift 2
+  out="$("$@" 2>&1)" || rc=$?
+  [[ "$rc" == "$EX_CONFIG" ]] \
+    || die "$EX_SOFTWARE" "expected refusal ${EX_CONFIG} from ${what}, got ${rc}"
+  [[ "$out" == *"$expect_env"* ]] \
+    || die "$EX_SOFTWARE" "${what} refused, but not on ${expect_env}: ${out:0:200}"
+}
+
+nvidia_gate_undeclared() { unset "$NVIDIA_ACCEPT_ENV"; require_nvidia_acceptance; }
+hf_gate_undeclared() { unset HF_TOKEN; require_hf_token; }
+
 assert_refusal() {
   # Proves, inside the build and again against the pushed image, that the
   # download path refuses without a declaration — without the build ever running
-  # the download path in a way that could succeed.
-  #
-  # It scrubs every acceptance variable from the child environment first, so the
-  # refusal holds regardless of what leaked into the builder. That also keeps the
-  # build history free of `ltx-runtime ensure`, which the payload scanner treats
-  # as a baked fetch precisely because it normally is one.
-  local rc=0
-  env -u NPA_LTX_ACCEPT_COMMUNITY_LICENSE \
-      -u NPA_LTX_ENTITY_CLASS \
-      -u NPA_LTX_USE_CLASS \
-      -u NPA_LTX_COMMERCIAL_AGREEMENT_REF \
-      -u NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS \
-      -u HF_TOKEN \
-      "$0" ensure >/dev/null 2>&1 || rc=$?
-  [[ "$rc" == "$EX_CONFIG" ]] \
-    || die "$EX_SOFTWARE" "expected refusal ${EX_CONFIG} from 'ensure', got ${rc}"
+  # the download path in a way that could succeed. Scrubbing the acceptance
+  # variables also keeps the build history free of `ltx-runtime ensure`, which
+  # the payload scanner treats as a baked fetch precisely because it normally is
+  # one.
 
-  rc=0
-  env -u NPA_LTX_ACCEPT_COMMUNITY_LICENSE "$0" fetch-weights >/dev/null 2>&1 || rc=$?
-  [[ "$rc" == "$EX_CONFIG" ]] \
-    || die "$EX_SOFTWARE" "expected refusal ${EX_CONFIG} from 'fetch-weights', got ${rc}"
+  # The wired-up paths, through the real entry point. Both must stop on the
+  # Lightricks gate specifically, because it is the one that must run first.
+  assert_gate "'ensure'" "$LTX_ACCEPT_ENV" undeclared "$0" ensure
+  assert_gate "'fetch-weights'" "$LTX_ACCEPT_ENV" undeclared "$0" fetch-weights
+
+  # The two downstream gates, exercised directly. Reaching them through `ensure`
+  # would require a valid declaration, and writing an acceptance value into this
+  # script — even only to test with — is exactly what the image promises never to
+  # contain. assert_gate runs them inside a command substitution, so each unset
+  # below is confined to its own subshell.
+  assert_gate "the NVIDIA runtime gate" "$NVIDIA_ACCEPT_ENV" nvidia_gate_undeclared
+  assert_gate "the gated-weights token check" HF_TOKEN hf_gate_undeclared
 
   [[ -z "$(find "$CACHE_ROOT" -mindepth 1 -print -quit 2>/dev/null)" ]] \
     || die "$EX_SOFTWARE" "refusal wrote to ${CACHE_ROOT}"
