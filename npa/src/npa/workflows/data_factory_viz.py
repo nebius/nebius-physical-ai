@@ -28,12 +28,14 @@ APPLICATION_ID = "physical-ai-data-factory"
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
 #: Run sub-directories materialized from S3 before building a recording. Covers
-#: both producers: the data-factory blueprint (input/cosmos_augmented/labeled_*/
-#: configs/grade/curation) and the NuRec neural-reconstruction workflow
-#: (ncore/reconstruction/novel_views). Missing subtrees are skipped.
+#: both producers: the data-factory blueprint (input/cosmos_augmented/
+#: cosmos_control/labeled_*/configs/grade/curation) and the NuRec
+#: neural-reconstruction workflow (ncore/reconstruction/novel_views). Missing
+#: subtrees are skipped.
 RUN_SUBDIRS = (
     "input",
     "cosmos_augmented",
+    "cosmos_control",
     "labeled_original",
     "labeled_augmented",
     "configs",
@@ -213,6 +215,13 @@ def build_run_rrd(
                 if label:
                     rr.log(entity, rr.TextDocument(f"{d.name}: {label}"), static=True, recording=rec)
 
+        # The conditioning signal each variant was rendered from, as its own
+        # entity tree. A segmentation-conditioned run is only reviewable if the
+        # reviewer can see the segmentation next to the render, and these frames
+        # live outside cosmos_augmented/ precisely so no consumer mistakes a
+        # control map for an augmented frame.
+        logged += _log_control_entities(rr, rec, local)
+
         # Neural-reconstruction runs contribute their own entities: the novel views
         # rendered from the trained Gaussians and NRE's validation renders. Both are
         # no-ops for a data-factory run, which has neither directory.
@@ -322,6 +331,32 @@ def _log_nurec_entities(rr: Any, rec: Any, local: Path) -> int:
     return logged
 
 
+def _log_control_entities(rr: Any, rec: Any, local: Path) -> int:
+    """Log the control maps and region masks under ``cosmos_control/``.
+
+    The augment stage publishes ``<clip>/control_<modality>/frame-*.png`` and, when
+    a region mask was used, ``<clip>/mask_<modality>/frame-*.png``. Each becomes
+    ``control/<clip>/<signal>`` so the segmentation that conditioned a variant sits
+    beside ``augmented/<clip>`` on the same frame timeline.
+    """
+
+    root = local / "cosmos_control"
+    if not root.is_dir():
+        return 0
+    logged = 0
+    for clip_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+        for signal_dir in sorted(p for p in clip_dir.iterdir() if p.is_dir()):
+            frames = _subsample(
+                sorted(_image_files(signal_dir)), RRD_MAX_FRAMES_PER_ENTITY
+            )
+            entity = f"control/{clip_dir.name}/{signal_dir.name}"
+            for frame in frames:
+                _set_frame(rr, rec, _frame_index(frame.stem))
+                _log_frame(rr, rec, entity, _load_rgb(frame))
+                logged += 1
+    return logged
+
+
 def _augmentation_label(clip_dir: Path) -> str:
     meta_path = clip_dir / "metadata.json"
     if not meta_path.is_file():
@@ -390,9 +425,15 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
     if isinstance(aug, dict):
         variants = aug.get("variants") or aug.get("clips") or []
         docs["pipeline/2_augment"] = _json_block("Augment — Cosmos Transfer 2.5 (multiply)", aug)
+        conditioning = f"control={aug.get('control') or 'n/a'}"
+        if aug.get("control_prompt"):
+            conditioning += f" on '{aug['control_prompt']}'"
+        if aug.get("mask_prompt"):
+            conditioning += f", masked to '{aug['mask_prompt']}'"
         stage_log.append(
             f"augment: {aug.get('variant_count', len(variants))} variant(s), "
-            f"mode={aug.get('mode', 'n/a')}, input_conditioned={aug.get('input_conditioned')}"
+            f"mode={aug.get('mode', 'n/a')}, input_conditioned={aug.get('input_conditioned')}, "
+            f"{conditioning}"
         )
 
     # Evaluate & Validate — the hallucination / attribute-verification grade.

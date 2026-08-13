@@ -27,12 +27,25 @@ DEFAULT_REPO = "/opt/cosmos/cosmos-transfer2.5"
 # either an input clip (the preferred path) or an explicit operator-owned spec.
 DEFAULT_SPEC = ""
 
-# Control modalities Cosmos Transfer 2.5 computes ON-THE-FLY from the input
-# ``video_path`` (Canny edge / bilateral blur), so conditioning on an arbitrary
-# input clip needs NO precomputed control asset. depth/seg require a precomputed
-# control file, so they are not used for self-contained input-only conditioning.
-INPUT_AUTO_CONTROLS = ("edge", "vis")
+# Control modalities the pinned Cosmos Transfer 2.5 accepts (upstream CONTROL_KEYS).
+# Every one of them is computed ON-THE-FLY from the input ``video_path`` when no
+# ``control_path`` is given -- Canny edge, bilateral blur, VideoDepthAnything
+# depth, and GroundingDINO+SAM2 segmentation -- so conditioning on an arbitrary
+# input clip needs no precomputed control asset for any modality.
+INPUT_AUTO_CONTROLS = ("edge", "vis", "depth", "seg")
 DEFAULT_INPUT_CONTROL = "edge"
+# ``seg`` is the only modality whose on-the-fly generator is text-driven: upstream
+# feeds ``control_prompt`` to GroundingDINO to pick the objects SAM2 then tracks,
+# and defaults it to the first 128 words of the appearance prompt when unset.
+CONTROL_PROMPT_MODALITIES = ("seg",)
+# Each modality is a separate ControlNet checkpoint, so a seg/depth run downloads
+# weights an edge run never touches. Named here for the operator-facing error.
+CONTROL_MODALITY_MODELS = {
+    "edge": "Canny edge",
+    "vis": "bilateral blur",
+    "depth": "VideoDepthAnything",
+    "seg": "GroundingDINO-base + SAM2",
+}
 DISABLE_CONTENT_GUARDRAILS_ENV = "NPA_COSMOS_DISABLE_CONTENT_GUARDRAILS"
 # Live job 339 reported SUCCEEDED while the spec promised ``manifest.json`` and
 # the then-reference-only tool wrote ``index.json`` with a different schema.
@@ -67,6 +80,29 @@ class FrameExtractionError(RuntimeError):
     """Raised when the frame-extraction subprocess cannot decode a video."""
 
 
+class ControlModalityError(ValueError):
+    """Raised when a caller asks for a control modality the model does not have."""
+
+
+def resolve_control_modality(control: str) -> str:
+    """Return the validated control modality for ``control``.
+
+    Fails closed on an unknown modality. NPA used to silently rewrite anything
+    outside edge/vis to ``edge``, which meant an operator who asked for ``seg``
+    got an edge-conditioned render and no signal that the request was dropped.
+    """
+
+    modality = str(control or DEFAULT_INPUT_CONTROL).strip().lower()
+    if not modality:
+        return DEFAULT_INPUT_CONTROL
+    if modality not in INPUT_AUTO_CONTROLS:
+        raise ControlModalityError(
+            f"unsupported Cosmos Transfer control modality {modality!r}; "
+            f"expected one of {', '.join(INPUT_AUTO_CONTROLS)}"
+        )
+    return modality
+
+
 def _spec_for_input_video(
     repo: Path,
     *,
@@ -76,32 +112,92 @@ def _spec_for_input_video(
     control_weight: float,
     guidance: float,
     name: str,
+    control_asset: str = "",
+    control_prompt: str = "",
+    mask_asset: str = "",
+    mask_prompt: str = "",
 ) -> tuple[str, str]:
     """Write a Cosmos Transfer 2.5 controlnet spec that CONDITIONS ON ``input_video``.
 
-    ``video_path`` is the caller's real input clip; the ``edge``/``vis`` control is
-    computed on-the-fly from it (no precomputed control asset), so the output
-    preserves the input's structure/motion while ``prompt`` drives a new
-    appearance -- i.e. a genuine augmentation of the caller's footage. Returns
+    ``video_path`` is the caller's real input clip; the control signal is computed
+    on-the-fly from it unless ``control_asset`` supplies a precomputed control
+    video, so the output preserves the input's structure/motion while ``prompt``
+    drives a new appearance -- i.e. a genuine augmentation of the caller's footage.
+
+    ``control_prompt`` names the objects on-the-fly ``seg`` should segment.
+    ``mask_asset`` / ``mask_prompt`` write upstream's region mask, a binary
+    spatiotemporal video restricting the control to the white pixels; giving both
+    is rejected because upstream accepts only one. Returns
     ``(spec_path_relative_to_repo, control_modality)``.
     """
     import json as _json
 
-    modality = str(control or DEFAULT_INPUT_CONTROL).strip().lower()
-    if modality not in INPUT_AUTO_CONTROLS:
-        modality = DEFAULT_INPUT_CONTROL
+    modality = resolve_control_modality(control)
+    if mask_asset and mask_prompt:
+        raise ControlModalityError(
+            "give either a precomputed region mask or a mask prompt for "
+            f"{modality!r} control, not both"
+        )
+    if control_prompt and modality not in CONTROL_PROMPT_MODALITIES:
+        raise ControlModalityError(
+            f"{modality!r} control is not text-driven, so a control prompt has no "
+            f"effect; only {', '.join(CONTROL_PROMPT_MODALITIES)} accepts one"
+        )
+    control_config: dict[str, Any] = {"control_weight": float(control_weight)}
+    if control_asset:
+        control_config["control_path"] = str(Path(control_asset).resolve())
+    if control_prompt:
+        control_config["control_prompt"] = control_prompt
+    if mask_asset:
+        control_config["mask_path"] = str(Path(mask_asset).resolve())
+    if mask_prompt:
+        control_config["mask_prompt"] = mask_prompt
     spec = {
         "name": str(name or "npa_input"),
         "prompt": str(prompt or "").strip() or _DEFAULT_INPUT_PROMPT,
         # Absolute path so it resolves regardless of where the spec file lives.
         "video_path": str(Path(input_video).resolve()),
         "guidance": guidance,
-        modality: {"control_weight": float(control_weight)},
+        modality: control_config,
     }
     safe = "".join(c if (c.isalnum() or c in "-_") else "_" for c in str(name or "input"))
     spec_path = repo / f"_npa_input_spec_{safe}.json"
     spec_path.write_text(_json.dumps(spec, indent=2), encoding="utf-8")
     return str(spec_path.relative_to(repo)), modality
+
+
+def _classify_output_videos(
+    out_dir: Path,
+) -> tuple[list[str], dict[str, str], dict[str, str]]:
+    """Split an inference output directory into generated / control / mask videos.
+
+    Upstream writes ``<name>.mp4`` for the generated clip and, per modality,
+    ``<name>_control_<key>.mp4`` plus ``<name>_mask_<key>.mp4`` when a region mask
+    was generated from a prompt. Both sidecars must be excluded from the generated
+    set: a full-frame binary mask compresses well but not always to less than the
+    render, so picking the largest file could publish a mask as the augmentation.
+    """
+
+    import re as _re
+
+    control: dict[str, str] = {}
+    masks: dict[str, str] = {}
+    generated: list[str] = []
+    for path in sorted(glob.glob(str(out_dir / "**" / "*.mp4"), recursive=True)):
+        name = Path(path).name
+        control_match = _re.search(r"_control_([a-z0-9]+)\.mp4$", name)
+        mask_match = _re.search(r"_mask_([a-z0-9]+)\.mp4$", name)
+        if control_match:
+            control.setdefault(control_match.group(1), path)
+        elif mask_match:
+            masks.setdefault(mask_match.group(1), path)
+        elif "control" in name or "_mask" in name:
+            # An unrecognized sidecar shape still must not be mistaken for the
+            # render; keep it out of both the generated set and the typed maps.
+            continue
+        else:
+            generated.append(path)
+    return generated, control, masks
 
 
 def cosmos_transfer_repo() -> Path:
@@ -207,6 +303,10 @@ def run_cosmos_transfer(
     input_video: str | None = None,
     control: str = DEFAULT_INPUT_CONTROL,
     control_weight: float = 1.0,
+    control_asset: str = "",
+    control_prompt: str = "",
+    mask_asset: str = "",
+    mask_prompt: str = "",
     guidance: float = 3.0,
     cuda_visible_devices: str | None = None,
     variant_tag: str = "",
@@ -220,10 +320,16 @@ def run_cosmos_transfer(
     prompt so the sampled appearance actually conditions the augmentation.
 
     When ``input_video`` is provided the transfer is CONDITIONED ON THAT CLIP: a
-    controlnet spec is built with ``video_path`` = the input and an ``edge``/``vis``
-    control computed on-the-fly, so the output is a real augmentation of the
+    controlnet spec is built with ``video_path`` = the input and the ``control``
+    modality computed on-the-fly, so the output is a real augmentation of the
     caller's footage (new appearance from ``prompt``, same structure/motion).
+    ``control_asset`` substitutes a precomputed control video, ``control_prompt``
+    names what on-the-fly ``seg`` segments, and ``mask_asset``/``mask_prompt``
+    restrict the control to a region.
     When ``input_video`` is absent, the caller must provide an operator-owned spec.
+
+    The returned ``control_videos`` / ``mask_videos`` map each modality to the
+    control and region-mask videos upstream wrote next to the generated clip.
     """
 
     repo = cosmos_transfer_repo()
@@ -240,6 +346,10 @@ def run_cosmos_transfer(
             control_weight=control_weight,
             guidance=guidance,
             name=tag,
+            control_asset=control_asset,
+            control_prompt=control_prompt,
+            mask_asset=mask_asset,
+            mask_prompt=mask_prompt,
         )
     else:
         spec = spec or os.environ.get("COSMOS_TRANSFER_SPEC", DEFAULT_SPEC)
@@ -299,31 +409,30 @@ def run_cosmos_transfer(
             except OSError:
                 pass
 
-    videos = [
-        f
-        for f in glob.glob(str(out_abs / "**" / "*.mp4"), recursive=True)
-        if "control" not in Path(f).name
-    ]
+    generated, control_videos, mask_videos = _classify_output_videos(out_abs)
     # Upstream already ran its generated-video guardrail before writing this
     # file. Do not reuse the container golden-eval's 100 KiB heuristic here:
     # a short valid transfer can produce a ~9 KiB video (live job 371). S3
     # publication below still fails closed unless PyAV can decode at least one
     # exact frame, which is the artifact contract consumers need.
     produced = sorted(
-        (f for f in videos if os.path.getsize(f) > 0),
+        (f for f in generated if os.path.getsize(f) > 0),
         key=os.path.getsize,
         reverse=True,
     )
     if not produced:
         raise RuntimeError(f"cosmos-transfer2.5 produced no output video in {out_abs}")
-    control_videos = [
-        f for f in glob.glob(str(out_abs / "**" / "*.mp4"), recursive=True)
-        if "control" in Path(f).name
-    ]
     return {
         "video_path": produced[0],
         "video_bytes": os.path.getsize(produced[0]),
-        "control_path": control_videos[0] if control_videos else "",
+        "control_path": next(iter(control_videos.values()), ""),
+        "control_videos": control_videos,
+        "mask_videos": mask_videos,
+        "control_weight": float(control_weight),
+        "control_prompt": control_prompt,
+        "mask_prompt": mask_prompt,
+        "control_asset": control_asset,
+        "mask_asset": mask_asset,
         "out_dir": str(out_abs),
         "spec": spec,
         "spec_json": spec_json,
@@ -388,6 +497,7 @@ def publish_transfer_clip(
     variant_index: int = 0,
     max_frames: int = 8,
     frames_output_uri: str = "",
+    control_output_uri: str = "",
     require_frames: bool = False,
     storage_client: Any = None,
 ) -> dict[str, Any]:
@@ -400,6 +510,19 @@ def publish_transfer_clip(
         <clip>/augmented_video.mp4
         <clip>/frame-00000.png ... (or ``frames_output_uri/frame-*.png``)
         <clip>/metadata.json      (variables + mode, for the Rerun label)
+
+    When ``control_output_uri`` is set, the conditioning signal itself is
+    published too, under a SIBLING prefix rather than inside ``<clip>/``:
+
+        <control>/<clip>/control_<modality>.mp4        (e.g. the seg map)
+        <control>/<clip>/control_<modality>/frame-*.png
+        <control>/<clip>/mask_<modality>.mp4           (region mask, when used)
+        <control>/<clip>/mask_<modality>/frame-*.png
+
+    The sibling prefix is deliberate: the evaluator enumerates clip directories
+    under ``cosmos_augmented/`` and falls back to the alphabetically first PNG in
+    one, so a ``control/`` child would hand the attribute-verify VLM a
+    segmentation map instead of the augmented frame it must grade.
 
     This is the unit of "multiply": the caller runs one inference per sampled
     appearance combo and publishes each as its own clip, then calls
@@ -435,8 +558,19 @@ def publish_transfer_clip(
     )
     conditioning_clip_uri = str(transfer.get("conditioning_clip_uri") or "")
 
+    control_uris: dict[str, str] = {}
+    control_frames: dict[str, list[str]] = {}
     frame_index: list[dict[str, str]] = []
     with _tempfile.TemporaryDirectory(prefix="npa-cosmos-pub-") as tmp:
+        if control_output_uri:
+            control_uris, control_frames = _publish_control_signal(
+                transfer,
+                control_output_uri,
+                clip=clip,
+                workdir=Path(tmp) / "control",
+                max_frames=max_frames,
+                client=client,
+            )
         frames = extract_frames(transfer["video_path"], Path(tmp) / "frames", max_frames=max_frames)
         if require_frames and not frames:
             raise RuntimeError(
@@ -467,6 +601,10 @@ def publish_transfer_clip(
             "conditioned_input": conditioned_input,
             "conditioning_clip_uri": conditioning_clip_uri,
             "control": conditioned_control,
+            "control_weight": float(transfer.get("control_weight", 0.0) or 0.0),
+            "control_prompt": str(transfer.get("control_prompt") or ""),
+            "mask_prompt": str(transfer.get("mask_prompt") or ""),
+            "control_uris": control_uris,
             "content_guardrails_enabled": content_guardrails_enabled,
         }
         cm = Path(tmp) / "metadata.json"
@@ -487,9 +625,68 @@ def publish_transfer_clip(
         "conditioned_input": conditioned_input,
         "conditioning_clip_uri": conditioning_clip_uri,
         "control": conditioned_control,
+        "control_weight": float(transfer.get("control_weight", 0.0) or 0.0),
+        "control_prompt": str(transfer.get("control_prompt") or ""),
+        "mask_prompt": str(transfer.get("mask_prompt") or ""),
+        "control_uris": control_uris,
+        "control_frames": control_frames,
         "content_guardrails_enabled": content_guardrails_enabled,
         "variables": variables or {},
     }
+
+
+def _publish_control_signal(
+    transfer: dict[str, Any],
+    control_output_uri: str,
+    *,
+    clip: str,
+    workdir: Path,
+    max_frames: int,
+    client: Any,
+) -> tuple[dict[str, str], dict[str, list[str]]]:
+    """Publish the control map and region mask that conditioned one variant.
+
+    Returns ``({artifact_name: video_uri}, {artifact_name: [frame_uri]})`` where
+    the artifact name is ``control_<modality>`` or ``mask_<modality>``. Frame
+    extraction is best-effort: a control map that will not decode is worth
+    reporting as a missing preview, not worth failing a completed render over.
+    """
+
+    if not control_output_uri.startswith("s3://"):
+        raise ValueError(
+            f"control_output_uri must be an s3:// prefix, got: {control_output_uri!r}"
+        )
+    base = control_output_uri if control_output_uri.endswith("/") else control_output_uri + "/"
+    clip_base = f"{base}{clip}/"
+    signals: list[tuple[str, str]] = [
+        (f"control_{modality}", path)
+        for modality, path in sorted((transfer.get("control_videos") or {}).items())
+    ]
+    signals += [
+        (f"mask_{modality}", path)
+        for modality, path in sorted((transfer.get("mask_videos") or {}).items())
+    ]
+
+    uris: dict[str, str] = {}
+    frames: dict[str, list[str]] = {}
+    for name, path in signals:
+        if not path or not os.path.isfile(path):
+            continue
+        video_uri = f"{clip_base}{name}.mp4"
+        client.upload_file(path, video_uri)
+        uris[name] = video_uri
+        try:
+            extracted = extract_frames(path, workdir / name, max_frames=max_frames)
+        except FrameExtractionError:
+            continue
+        frame_uris: list[str] = []
+        for index, frame_path in enumerate(extracted):
+            frame_uri = f"{clip_base}{name}/frame-{index:05d}.png"
+            client.upload_file(str(frame_path), frame_uri)
+            frame_uris.append(frame_uri)
+        if frame_uris:
+            frames[name] = frame_uris
+    return uris, frames
 
 
 def _upload_json(client: Any, document: dict[str, Any], uri: str) -> str:
@@ -549,6 +746,14 @@ def build_run_manifest(
         "conditioned_input": first.get("conditioned_input", ""),
         "conditioning_clip_uri": first.get("conditioning_clip_uri", ""),
         "control": first.get("control", ""),
+        # What actually conditioned the render, so a consumer can tell a
+        # seg-conditioned batch from an edge-conditioned one without re-reading
+        # the spec: the modality's weight, the text that drove on-the-fly
+        # segmentation, and the region mask that limited where it applied.
+        "control_weight": float(first.get("control_weight", 0.0) or 0.0),
+        "control_prompt": str(first.get("control_prompt") or ""),
+        "mask_prompt": str(first.get("mask_prompt") or ""),
+        "control_uris": first.get("control_uris", {}),
         "content_guardrails_enabled": bool(
             first.get("content_guardrails_enabled", True)
         ),
@@ -560,6 +765,7 @@ def build_run_manifest(
                 "prompt": str((c.get("variables") or {}).get("prompt") or ""),
                 "frame_count": int(c.get("frame_count", 0) or 0),
                 "augmented_video_uri": c.get("augmented_video_uri", ""),
+                "control_uris": c.get("control_uris", {}),
             }
             for index, c in enumerate(clips)
         ],
@@ -753,6 +959,7 @@ def publish_transfer_to_s3(
     clip_name: str = "",
     max_frames: int = 8,
     frames_output_uri: str = "",
+    control_output_uri: str = "",
     require_frames: bool = False,
     storage_client: Any = None,
 ) -> dict[str, Any]:
@@ -771,6 +978,7 @@ def publish_transfer_to_s3(
         variables=variables,
         max_frames=max_frames,
         frames_output_uri=frames_output_uri,
+        control_output_uri=control_output_uri,
         require_frames=require_frames,
         storage_client=storage_client,
     )
@@ -949,7 +1157,11 @@ def reference_augment_frames(
 __all__ = [
     "AUGMENTED_FRAMES_INDEX",
     "AUGMENTED_FRAMES_SCHEMA",
+    "CONTROL_MODALITY_MODELS",
+    "CONTROL_PROMPT_MODALITIES",
+    "ControlModalityError",
     "FrameExtractionError",
+    "INPUT_AUTO_CONTROLS",
     "REFERENCE_AUGMENT_MODE",
     "REFERENCE_AUGMENT_STATUS",
     "SHARD_MANIFEST_PREFIX",
@@ -968,6 +1180,7 @@ __all__ = [
     "publish_transfer_clip",
     "publish_transfer_to_s3",
     "reference_augment_frames",
+    "resolve_control_modality",
     "run_cosmos_transfer",
     "shard_manifest_uri_for",
     "transfer_manifest_uri_for",

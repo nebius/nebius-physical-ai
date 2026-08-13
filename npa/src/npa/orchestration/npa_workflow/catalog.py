@@ -387,7 +387,11 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.cosmos2.transfer_execute": ToolEntry(
         name="workbench.cosmos2.transfer_execute",
-        description="Run the REAL Cosmos-Transfer2.5 model (GPU) and upload augmented video + frames to S3.",
+        description=(
+            "Run the REAL Cosmos-Transfer2.5 model (GPU) and upload augmented video "
+            "+ frames to S3, conditioned on the chosen control modality (edge, vis, "
+            "depth, or seg) and optionally restricted to a segmented region."
+        ),
         argv_template=[
             "npa",
             "workbench",
@@ -401,6 +405,24 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{run.id}}",
             "--configs-uri",
             "{{config.configs_uri}}",
+            # Conditioning shape. All four modalities are computed on-the-fly from
+            # the staged input, so `--control seg` needs no asset; the asset and
+            # prompt flags stay empty unless the spec sets them, and empty means
+            # "unset" in the CLI rather than a control the model must honour.
+            "--control",
+            "{{config.augment_control}}",
+            "--control-weight",
+            "{{config.augment_control_weight}}",
+            "--control-asset",
+            "{{config.augment_control_asset_uri}}",
+            "--control-prompt",
+            "{{config.augment_control_prompt}}",
+            "--mask-asset",
+            "{{config.augment_mask_asset_uri}}",
+            "--mask-prompt",
+            "{{config.augment_mask_prompt}}",
+            "--control-output-uri",
+            "{{config.augment_control_uri}}",
             "--condition-on-input",
             "--execute",
         ],

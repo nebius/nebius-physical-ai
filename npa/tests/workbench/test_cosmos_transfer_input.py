@@ -67,12 +67,13 @@ def test_spec_for_input_video_builds_edge_control(tmp_path: Path) -> None:
     assert spec["prompt"] == "rainy night, wet asphalt"
     assert spec["edge"] == {"control_weight": 0.8}
     assert spec["guidance"] == 4
-    # depth/seg need a precomputed control file → fall back to edge for input-only.
+    # depth and seg are on-the-fly too (VideoDepthAnything / GroundingDINO+SAM2),
+    # so an input-only spec can ask for them without any precomputed asset.
     _rel2, modality2 = tx._spec_for_input_video(
         repo, input_video=str(clip), prompt="", control="depth",
         control_weight=1.0, guidance=3, name="run-2",
     )
-    assert modality2 == "edge"
+    assert modality2 == "depth"
 
 
 def test_run_cosmos_transfer_conditions_on_input(tmp_path: Path, monkeypatch) -> None:

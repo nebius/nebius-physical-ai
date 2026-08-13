@@ -328,6 +328,41 @@ def _materialize_input_clip(src: str, *, allow_frame_sequence: bool = False) -> 
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _materialize_control_asset(src: str, *, label: str) -> str:
+    """Resolve a precomputed control/mask video to a local path.
+
+    Unlike the conditioning input, an asset the operator explicitly named must
+    exist: silently continuing would compute the control on-the-fly instead and
+    the run would look like it honoured the asset.
+    """
+
+    value = str(src or "").strip()
+    if not value:
+        return ""
+    if not value.lower().endswith(_VIDEO_EXTS):
+        raise typer.BadParameter(
+            f"{label} must be an mp4/video file, got: {value!r}"
+        )
+    if not value.startswith("s3://"):
+        if not Path(value).is_file():
+            raise typer.BadParameter(f"{label} does not exist: {value!r}")
+        return value
+    import tempfile
+    from urllib.parse import urlsplit
+
+    from npa.clients.storage import StorageClient
+
+    tmp = tempfile.mkdtemp(prefix="npa-cosmos-control-")
+    name = Path(urlsplit(value).path).name or "control.mp4"
+    try:
+        return StorageClient.from_environment().download_path(value, str(Path(tmp) / name))
+    except Exception as exc:  # noqa: BLE001 - sanitize storage failures
+        raise typer.BadParameter(
+            f"could not download {label} from {value!r}; verify the object-storage "
+            "endpoint, credentials, permissions, and that the object exists"
+        ) from exc
+
+
 def _materialize_conditioning_input(
     src: str, *, allow_frame_sequence: bool = False
 ) -> str:
@@ -416,9 +451,46 @@ def transfer_cmd(
     control: str = typer.Option(
         "edge",
         "--control",
-        help="Control modality for input-conditioning: 'edge' or 'vis' (computed on-the-fly).",
+        help="Control modality for input-conditioning: edge, vis, depth, or seg. All "
+        "four are computed on-the-fly from the input clip (Canny / bilateral blur / "
+        "VideoDepthAnything / GroundingDINO+SAM2) unless --control-asset supplies a "
+        "precomputed control video.",
     ),
     control_weight: float = typer.Option(1.0, "--control-weight", help="Control weight for input-conditioning."),
+    control_asset: str = typer.Option(
+        "",
+        "--control-asset",
+        help="Local path or s3:// URI of a PRECOMPUTED control video (e.g. a "
+        "segmentation map) to condition on instead of computing the modality "
+        "on-the-fly.",
+    ),
+    control_prompt: str = typer.Option(
+        "",
+        "--control-prompt",
+        help="Objects on-the-fly 'seg' should segment (e.g. 'robot arm, conveyor, "
+        "bin'). Passed to GroundingDINO to seed SAM2 tracking; upstream defaults to "
+        "the first 128 words of the appearance prompt when unset.",
+    ),
+    mask_asset: str = typer.Option(
+        "",
+        "--mask-asset",
+        help="Local path or s3:// URI of a PRECOMPUTED binary spatiotemporal region "
+        "mask. The control applies only where the mask is white. Mutually exclusive "
+        "with --mask-prompt.",
+    ),
+    mask_prompt: str = typer.Option(
+        "",
+        "--mask-prompt",
+        help="Objects SAM2 should segment into a region mask, restricting the control "
+        "to those pixels (e.g. 'robot arm'). Mutually exclusive with --mask-asset.",
+    ),
+    control_output_uri: str = typer.Option(
+        "",
+        "--control-output-uri",
+        help="s3:// prefix to publish the control map and region mask that "
+        "conditioned each variant, as <prefix>/<clip>/control_<modality>.mp4 plus "
+        "extracted frames. Sibling of --output-uri, never nested inside it.",
+    ),
     guidance: float = typer.Option(3.0, "--guidance", help="Classifier-free guidance for input-conditioning."),
 ) -> None:
     """Build a transfer manifest; pass --execute for real vendor output.
@@ -492,12 +564,34 @@ def transfer_cmd(
                 )
         # Env fallbacks let a submit tune conditioning without changing the toolRef argv.
         control = (os.environ.get("NPA_COSMOS_CONTROL", "").strip() or control)
+        control_asset = (os.environ.get("NPA_COSMOS_CONTROL_ASSET", "").strip() or control_asset)
+        control_prompt = (os.environ.get("NPA_COSMOS_CONTROL_PROMPT", "").strip() or control_prompt)
+        mask_asset = (os.environ.get("NPA_COSMOS_MASK_ASSET", "").strip() or mask_asset)
+        mask_prompt = (os.environ.get("NPA_COSMOS_MASK_PROMPT", "").strip() or mask_prompt)
         _cw = os.environ.get("NPA_COSMOS_CONTROL_WEIGHT", "").strip()
         _g = os.environ.get("NPA_COSMOS_GUIDANCE", "").strip()
         if _cw:
             control_weight = float(_cw)
         if _g:
             guidance = float(_g)
+
+        # Reject an unusable conditioning request before the GPU is held. The spec
+        # builder enforces the same rules, but it only runs after the model and its
+        # weights are loaded, which is minutes of a held accelerator later.
+        from npa.workbench.cosmos.transfer import ControlModalityError, resolve_control_modality
+
+        try:
+            control = resolve_control_modality(control)
+        except ControlModalityError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        if mask_asset and mask_prompt:
+            raise typer.BadParameter(
+                "--mask-asset and --mask-prompt are mutually exclusive; Cosmos "
+                "Transfer takes either a precomputed region mask or a prompt to "
+                "generate one"
+            )
+        control_asset = _materialize_control_asset(control_asset, label="--control-asset")
+        mask_asset = _materialize_control_asset(mask_asset, label="--mask-asset")
 
         if data_factory_mode and output_uri.strip().startswith("s3://"):
             # Augment & MULTIPLY. Run one REAL Cosmos Transfer 2.5 inference per
@@ -547,6 +641,10 @@ def transfer_cmd(
                     input_video=local_input or None,
                     control=control,
                     control_weight=control_weight,
+                    control_asset=control_asset,
+                    control_prompt=control_prompt,
+                    mask_asset=mask_asset,
+                    mask_prompt=mask_prompt,
                     guidance=guidance,
                     cuda_visible_devices=device,
                     variant_tag=variant_run,
@@ -582,6 +680,7 @@ def transfer_cmd(
                         clip_name=clip_name,
                         variables=combo,
                         variant_index=i,
+                        control_output_uri=control_output_uri,
                         require_frames=True,
                     )
                 )
@@ -634,6 +733,12 @@ def transfer_cmd(
             payload["input_conditioned"] = bool(local_input)
             payload["conditioning_clip_uri"] = manifest.get("conditioning_clip_uri", "")
             payload["control_spec"] = manifest["control_spec"]
+            payload["control_weight"] = manifest["control_weight"]
+            payload["control_prompt"] = manifest["control_prompt"]
+            payload["mask_prompt"] = manifest["mask_prompt"]
+            payload["control_uris"] = manifest["control_uris"]
+            if control_output_uri:
+                payload["control_output_uri"] = control_output_uri
             if local_input:
                 payload["input_video"] = local_input
                 payload["control"] = manifest["control"]
@@ -650,6 +755,10 @@ def transfer_cmd(
                 input_video=local_input or None,
                 control=control,
                 control_weight=control_weight,
+                control_asset=control_asset,
+                control_prompt=control_prompt,
+                mask_asset=mask_asset,
+                mask_prompt=mask_prompt,
                 guidance=guidance,
             )
             payload["status"] = TRANSFER_MANIFEST_STATUS
@@ -674,6 +783,7 @@ def transfer_cmd(
                     run_id=run_id,
                     variables=variables,
                     frames_output_uri=output_uri,
+                    control_output_uri=control_output_uri,
                     require_frames=True,
                 )
                 payload["mode"] = TRANSFER_MANIFEST_MODE
@@ -681,6 +791,7 @@ def transfer_cmd(
                 payload["augmented_video_uri"] = manifest["augmented_video_uri"]
                 payload["augmented_frames_uri"] = manifest["augmented_frames_uri"]
                 payload["frame_count"] = manifest["frame_count"]
+                payload["control_uris"] = manifest.get("control_uris", {})
                 payload["manifest_uri"] = transfer_manifest_uri_for(output_uri)
             else:
                 payload["mode"] = TRANSFER_MANIFEST_MODE
