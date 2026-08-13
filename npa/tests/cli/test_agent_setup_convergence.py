@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-import time
+import threading
 from types import SimpleNamespace
 
 import httpx
@@ -156,13 +156,20 @@ def test_blocking_calls_emit_structured_secret_free_heartbeats(monkeypatch, tmp_
         resume_command="",
     )
     events = []
+    periodic_heartbeat = threading.Event()
+
+    def emit(event) -> None:
+        events.append(event)
+        if event["heartbeat_sequence"] > 0:
+            periodic_heartbeat.set()
+
     with operation_heartbeats(
         operation,
         phase="remote_bootstrap",
         interval_seconds=0.01,
-        emit=events.append,
+        emit=emit,
     ):
-        time.sleep(0.035)
+        assert periodic_heartbeat.wait(timeout=1.0)
     assert len(events) >= 2
     assert all(event["operation_phase"] == "remote_bootstrap" for event in events)
     journal = operation.read()
