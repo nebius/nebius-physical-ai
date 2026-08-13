@@ -75,6 +75,7 @@ flowchart TB
     det_train["detection-training: health + system-info"]
     rerun["rerun-viewer: rerun SDK"]
     foxglove["foxglove-embed: SDK + glue + MCAP range serving"]
+    control["sim2real-control: compositional stage CLI"]
   end
   subgraph gpu_gated["GPU-gated smokes"]
     lerobot["lerobot: train + eval PushT"]
@@ -114,6 +115,7 @@ flowchart TB
 | `fiftyone` | `1.15.0.post1` | container-smoke | import+version; CLI; app config (env smoke) | none | ready |
 | `lancedb` | `0.30.3` | server-smoke | server start; create table; vector query; list | optional | ready |
 | `detection-training` | `bdd100k-golden-eval-smoke-*` | server-smoke | server start; `/health`; `/system-info` | optional | ready |
+| `sim2real-control` | `0.1.2` | workflow-smoke | stage adapter import; 1-through-14 CLI contract; exact-source guard | none | ready |
 | `envgen` | `0.1.2` | container-smoke | raw envgen JSONL; Genesis CUDA step | optional | gpu-gated |
 | `reference-policy` | `0.1.2` | container-smoke | policy contract (envgen functional delegate) | optional | gpu-gated |
 | `loop-eval` | `cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | container-smoke | CUDA; FrankaPickPlace rollout step | optional | gpu-gated |
@@ -235,6 +237,7 @@ pipeline. Key safety notes are condensed below.
 | `fiftyone` | dataset curation/visualization (CPU) | `container-smoke` | none | ready |
 | `lancedb` | vector store for AV/perception data | `server-smoke` | optional | ready |
 | `detection-training` | object-detection train/eval service | `server-smoke` | optional | ready |
+| `sim2real-control` | canonical compositional Sim2Real stage adapter | `workflow-smoke` | none | ready |
 | `envgen` | randomized Genesis env generation | `workflow-smoke` | optional | gpu-gated |
 | `reference-policy` | reference policy contract | `workflow-smoke` | optional | gpu-gated |
 | `loop-eval` | sim-to-real full-loop evaluation | `workflow-smoke` | optional | gpu-gated |
@@ -242,6 +245,18 @@ pipeline. Key safety notes are condensed below.
 
 ## Safety review highlights
 
+- **Sim2Real control sudo exception** — the CPU-only control image is a standard
+  SkyPilot 0.12.2 Kubernetes task host. That bootstrap invokes `sudo` for package,
+  service, and shell setup before the user command; an executable allowlist that
+  admits its shell would still be unrestricted root. The container/task pod is
+  therefore the trust boundary. The image runs uid 1000, does not start sshd,
+  bakes no credentials or vendor/GPU runtime, and is prohibited from service or
+  public-ingress use by `packaging-contract.yaml`. The exception expires when the
+  pinned SkyPilot runtime supports rootless Kubernetes bootstrap.
+- **Isaac cache warmer** — the cache Job runs as uid/gid 1000 with an fsGroup-owned
+  PVC, runtime-default seccomp, a read-only root filesystem, no privilege
+  escalation, and all capabilities dropped. Workload pods consume the completed
+  versioned tree read-only; `runAsUser: 0` is forbidden.
 - **`cosmos3` sudo grant** — `cosmos3` runs as `ubuntu` but ships `sudo` +
   `openssh-server` with a NOPASSWD sudoers entry for that user. SkyPilot's
   Kubernetes bootstrap overrides the entrypoint and installs an SSH runtime as
@@ -303,6 +318,7 @@ Run these inside the corresponding built image (or via
 - `fiftyone` — `python -m npa.smoke.test_fiftyone_functional` (env: `test_fiftyone_env`)
 - `lancedb` — `python -m npa.smoke.test_lancedb_functional`
 - `detection-training` — `python -m npa.smoke.test_detection_training_functional`
+- `sim2real-control` — `python -m npa.workflows.sim2real.workflow_stage --help`
 - `envgen` — `python -m npa.workflows.sim2real_envgen --help`
 - `reference-policy` — `python -m npa.workflows.sim2real_envgen policy-contract --help`
 - `loop-eval` — `python -m npa.workflows.sim2real_loop full-loop --help`

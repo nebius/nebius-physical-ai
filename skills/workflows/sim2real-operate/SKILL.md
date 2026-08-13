@@ -10,9 +10,9 @@ Use the one canonical spec:
 `npa/workflows/workbench/npa-workflows/sim2real.yaml`
 
 It is `npa.workflow/v0.0.1`. Always use `npa workbench workflow ... --runtime`;
-there is no direct-Kubernetes Sim2Real submit path. Archived
-`npa.workflows.sim2real.k8s_submit` helpers are compatibility-only and must not
-be used for new evidence.
+there is no direct-Kubernetes Sim2Real submit path. The old materializer and
+`k8s_submit` implementation have been removed; the retained CLI command exits
+with an actionable migration to this canonical spec.
 
 ## Preflight
 

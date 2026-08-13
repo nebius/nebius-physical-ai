@@ -72,6 +72,7 @@ class StateSpec:
     tool_ref: str = ""
     sequence: list[str] = field(default_factory=list)
     parallel: list[str] = field(default_factory=list)
+    parallel_count: Any = None  # int or "{{config.<attr>}}" cardinality assertion
     max_concurrency: Any = None  # int or "{{config.<attr>}}"
     params: dict[str, Any] = field(default_factory=dict)
     trigger: TriggerSpec | None = None
@@ -270,6 +271,7 @@ def _parse_state(
         tool_ref=str(entry.get("toolRef") or entry.get("tool_ref") or ""),
         sequence=[str(item) for item in (entry.get("sequence") or [])],
         parallel=[str(item) for item in (entry.get("parallel") or [])],
+        parallel_count=entry.get("parallelCount", entry.get("parallel_count")),
         max_concurrency=entry.get("maxConcurrency", entry.get("max_concurrency")),
         params=dict(params_raw),
         trigger=trigger,
@@ -442,6 +444,10 @@ def _validate_parallel_group(spec: NpaWorkflowSpec, state: StateSpec) -> None:
     """
 
     if not state.parallel:
+        if state.parallel_count is not None:
+            raise NpaWorkflowError(
+                f"state {state.name}: parallelCount requires a parallel group"
+            )
         if state.max_concurrency is not None:
             raise NpaWorkflowError(
                 f"state {state.name}: maxConcurrency requires a parallel group"
@@ -463,6 +469,16 @@ def _validate_parallel_group(spec: NpaWorkflowSpec, state: StateSpec) -> None:
         )
     if len(set(state.parallel)) != len(state.parallel):
         raise NpaWorkflowError(f"state {state.name}: duplicate parallel member")
+
+    if state.parallel_count is not None:
+        declared_count = resolve_config_int(state.parallel_count, spec.config)
+        actual_count = len(state.parallel)
+        if declared_count != actual_count:
+            raise NpaWorkflowError(
+                f"state {state.name}: parallelCount resolves to {declared_count}, but "
+                f"the group declares {actual_count} members; change the member list or "
+                "use the supported config value before workflow submission"
+            )
 
     for member in state.parallel:
         if member not in spec.states:

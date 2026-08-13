@@ -26,8 +26,9 @@ Authoring skills: `skills/workflows/author-npa-workflow/SKILL.md` (edit) and
 - `npa-workflows/`: the supported declarative `npa.workflow` specs plus the
   [workflow catalog](npa-workflows/README.md). This is the only workflow YAML
   set we show and support.
-- `sim2real/`: the self-contained Sim2Real runbook (guide + YAML colocated); the
-  14-stage engine detects the runbook and routes to direct K8s.
+- `sim2real/`: operator notes and the finite legacy compatibility DAG. The only
+  supported Sim2Real submission spec is `npa-workflows/sim2real.yaml`; it uses
+  the ordinary standard runtime and never routes to direct Kubernetes.
 - `schemas/`: conventions for parameters, artifacts, naming, and runtime
   constraints.
 - `steps/` and `templates/`: legacy placeholders kept for compatibility with
@@ -55,8 +56,8 @@ npa workbench workflow submit \
 
 The legacy `sim_to_real` H100 quickstart and its template are retired: that path ran
 `npa.workflows.sim_to_real real-loop`, which raises a `DeprecationWarning` pointing at the
-staged engine. The single canonical staged-engine YAML is
-[`../sim2real.yaml`](../sim2real.yaml); the deeper reference is
+compositional standard runtime. The single canonical YAML is
+[`npa-workflows/sim2real.yaml`](npa-workflows/sim2real.yaml); the deeper reference is
 [`docs/workbench/guides/sim2real-workflow.md`](../../../docs/workbench/guides/sim2real-workflow.md).
 
 ## Submission Pattern

@@ -347,7 +347,7 @@ def main(argv: list[str] | None = None) -> int:
 
     run_cmd = subparsers.add_parser(
         "run",
-        help="Run the full workflow via Sim2RealWorkflow (canonical orchestrator).",
+        help="Replay the legacy Sim2RealWorkflow path (deprecated compatibility).",
     )
     _add_common_args(run_cmd)
     run_cmd.add_argument(
@@ -363,9 +363,10 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         metavar="SPEC",
         help=(
-            "Execute via the declarative DAG scheduler instead of run_staged(). "
-            "Pass a spec path, or bare --dag for the shipped sim2real.dag.yaml. "
-            "Drives the same stage methods in the same order (parity-checked)."
+            "Replay through the deprecated compatibility DAG instead of "
+            "run_staged(). Pass a spec path, or bare --dag for the shipped "
+            "sim2real.dag.yaml. New runs must use `npa workbench workflow submit` "
+            "with npa-workflows/sim2real.yaml."
         ),
     )
     inner = subparsers.add_parser(

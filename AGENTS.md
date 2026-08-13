@@ -21,7 +21,7 @@ The source of truth is `skills/index.yaml`. The tree is organized as:
 - `skills/tools/dataset/SKILL.md`: dataset-of-record — ingest, validate, curate, and query production sensor data as a versioned, lineage-tracked dataset (FiftyOne curation + LanceDB query index).
 - `skills/tools/foxglove/SKILL.md`: Foxglove embedded viewer — the `@foxglove/embed` TypeScript SDK in the agent UI, MCAP recordings (convert/inspect/publish), and the `npa-foxglove-embed` container.
 - `skills/tools/insights/SKILL.md`: lineage graph + common metrics store over workflow-run artifacts — non-invasive ingest-run, query, compare, lineage traversal, and dashboard (CPU-only, append-only S3 JSONL, LanceDB-optional).
-- `skills/workflows/sim2real-operate/SKILL.md`: operate the staged Sim2Real pipeline on a K8s GPU cluster — runbook, direct-K8s submit, preflight health checks, storage secret sync, and job monitoring.
+- `skills/workflows/sim2real-operate/SKILL.md`: operate the compositional Sim2Real `npa.workflow` through the standard SkyPilot runtime — validate/plan/submit, durable S3 resume, preflight health checks, storage secret sync, and job monitoring.
 - `skills/workflows/agent-fresh-operate/SKILL.md`: npa-driven agent teardown, fresh-setup, tiered verify gates, and deploy failure recovery on the operator/dev VM.
 - `skills/workflows/author-npa-workflow/SKILL.md`: author and validate declarative `npa.workflow/v0.0.1` specs (`validate-spec`, `plan-spec`, toolRef catalog).
 - `skills/workflows/byof-onboard/SKILL.md`: BYOF OSS repo onboarding (Ubuntu/Isaac base, container-verify, agent `onboard_solution`).
@@ -33,7 +33,7 @@ The source of truth is `skills/index.yaml`. The tree is organized as:
 - `skills/workflows/neural-reconstruction/SKILL.md`: NuRec/NRE neural reconstruction on Nebius — NCore V4 capture (incl. deriving the `rig → world` pose edge NRE requires) → 3DGUT Gaussian training → renderable USDZ → rig-offset novel views → `reports/sim2real.rrd`. RT-core GPU only (L40S / RTX PRO 6000, never H100/H200).
 - `skills/atomic/real-components/SKILL.md`: ensure every advertised workbench pipeline stage invokes the real component (Cosmos Transfer, FiftyOne, VLM), not an echo/manifest stub.
 - `skills/atomic/solution-licensing/SKILL.md`: when adding a solution, tool, image, model, or dataset — classify what the artifact actually bakes, decide whether it may be redistributed (`public` vs `restricted`), and record it in the packaging contract where the guards enforce it. Verify the claim against the BUILT image with `npa/scripts/scan_image_omniverse_payload.py`, not by reading the Dockerfile.
-- `skills/workbench/sim2real-engine/SKILL.md`: canonical 14-stage Sim2Real engine map (`run_preamble` / `run_inner_loop` / `run_single_outer_iteration` / `run_finalize`) and K8s sibling job glue.
+- `skills/workbench/sim2real-engine/SKILL.md`: canonical 14-stage Sim2Real graph, stateless adapters, parallel lane joins, ComponentRecords, and durable standard-runtime resume. Retired controller entrypoints remain finite legacy compatibility only.
 
 Compatibility symlinks exist at `.agents/skills` and `.claude/skills`; do not add new skills there directly.
 

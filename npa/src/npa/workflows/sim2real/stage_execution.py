@@ -1,4 +1,10 @@
-"""Durable Stage 7–9 inner-loop execution for the Sim2Real controller."""
+"""Legacy Stage 7–9 execution for pre-standard-runtime compatibility.
+
+Only ``legacy_components`` imports this module. It supports archived callers and
+artifact replay through the finite engine compatibility window (target removal:
+0.5.0, no earlier than 2027-02-01); canonical workflow stages use
+``workflow_stage`` and must not import it.
+"""
 
 from __future__ import annotations
 

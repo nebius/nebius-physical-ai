@@ -10,7 +10,7 @@
 **Duration:** 10 minutes (includes ~30 s buffer)  
 **Data types & artifacts:** [sim2real-data-contracts.md](./sim2real-data-contracts.md)  
 **Runtime:** pre-staged presentation artifacts; canonical live runs use the
-adjacent workflow and in-repo direct-Kubernetes submitter
+adjacent workflow through the standard SkyPilot runtime
 
 Replace placeholders before rehearsal:
 
@@ -46,9 +46,9 @@ s3://<bucket>/<prefix>/<run-id>/
 
    ```bash
    export KUBECONFIG=~/.npa/clusters/<cluster>/kubeconfig
-   INNER_ITERATIONS=3 OUTER_ITERATIONS=3 \
-     <private-operator-pack>/sim2real-rtxpro/submit-k8s-staged-job.sh
-   # note run_id= from output; monitor with monitor-k8s-job.sh
+   npa workbench workflow submit \
+     npa/workflows/workbench/npa-workflows/sim2real.yaml \
+     --runtime --resume --run-id <live-run-id> <operator-vars-and-secrets>
    ```
 
 3. **Optional: pre-stage a loop-back run** — Second run where `eval/gold-heldout/outer-XX/report.json` has `success_rate` below threshold and `outer_loop/loopback.json` exists (for held-out failure narrative).
@@ -63,7 +63,7 @@ Use this table as the backbone of the demo. Every row is a file or prefix you ca
 
 | # | Stage | What happens | NPA artifact (under run root) | Live vs pre-staged |
 | --- | --- | --- | --- | --- |
-| 1 | **Trigger** | Task-aligned Isaac seed manifest validated; run ID resolved | `stage_01_trigger/trigger.json`, `task-dataset-manifest.json` | Pre-staged: static. Live: written in `preamble` first seconds |
+| 1 | **Trigger** | Task-aligned Isaac seed manifest validated; run ID resolved | `stage_01_trigger/trigger.json`, `task-dataset-manifest.json` | Pre-staged: static. Live: first standard-runtime state |
 | 2 | **Sim assets** | Normalize task, stock/BYO robot, object, physics, cameras, and success contract | `stage_02_assets/task-contract.json`, `consumed_*_spec.json` | Contract digest is authoritative in every downstream scenario |
 | 3 | **Augment** | Real Cosmos Transfer output becomes scenario and Cosmos-Reason lineage | `augment/manifest.json` | State PPO does not falsely claim pixels as direct observations |
 | 4 | **Env generation + curation** | Generate configs; reject invalid/unreachable/duplicate cases and measure coverage | `envs/raw/`, `envs/manifest/curation-manifest.json` | Show accepted/rejected counts, reasons, and strata |
@@ -72,7 +72,7 @@ Use this table as the backbone of the demo. Every row is a file or prefix you ca
 | 7 | **Action rollouts** | Exact checkpoint across at least 64 curated scenarios with 32 decision/event samples each | `actions/train/outer-01/iter-01/rollout-*/` | Show applied config digests and simulator reach/contact/grasp/lift/place state |
 | 8 | **VLM critique** | Dual Cosmos-Reason per-step labels calibrate against simulator truth | `vlm_eval/train/outer-01/iter-01/<rollout-id>.json` | Show confidence/disagreement plus bounded shaping |
 | 9 | **RL signal + trainer** | Dense simulator reward + bounded VLM shaping → real 500-iteration RSL-RL PPO; fixed validation ranks checkpoints | `training_signal/train/...`, `byo-trainer/.../ppo-telemetry.json`, `checkpoints/validation-selection/` | Show nonzero temporal credit, PPO curves, and selection proof |
-| 10 | **Gold held-out eval** | Isaac Lab sibling Job loads the validation-selected checkpoint | `eval/gold-heldout/outer-XX/report.json` | **Live:** strict success is 5 cm plus stable placement; 10/15/20 cm remain diagnostics |
+| 10 | **Gold held-out eval** | The admitted Isaac workflow task loads the validation-selected checkpoint | `eval/gold-heldout/outer-XX/report.json` | **Live:** strict success is 5 cm plus stable placement; 10/15/20 cm remain diagnostics |
 | 11 | **Threshold gate** | Compare strict stable-placement `success_rate` to threshold (`0.50`) | `outer_loop/decision.json`; passing gates promote, while every real best checkpoint remains honestly packaged | **Fallback story** (below) |
 | 12 | **Real-world validation (BYO seam)** | Documented external stub | `stage_12_external_validation/external_stub.json` | Always SEAM; customer hook point |
 | 13 | **Retrigger** | Next dataset batch → back to Stage 1 | `stage_13_retrigger/retrigger.json` | Loop-of-loops metadata |
@@ -102,22 +102,23 @@ Canonical URI is in `artifact_uris()` as `stage_14_rerun_viz_rrd`. The full run 
 
 > "This is a **14-stage, inspectable sim-to-real loop**: real robot data triggers the run, simulation generates environments, a VLM critiques rollouts, we convert critique into RL signal, train, evaluate on held-out sim, and either promote a checkpoint or loop back. Every stage writes JSON to object storage — no black box."
 
-Show one slide or browser tab: pipeline diagram from [sim2real-architecture.md](./sim2real-architecture.md) (preamble → outer loop → finalize).
+Show one slide or browser tab: the 14-state graph from [sim2real-architecture.md](./sim2real-architecture.md).
 
-### 0:45–1:30 — Three entry points, one Python module
+### 0:45–1:30 — One compositional workflow
 
-> "SkyPilot runbook, direct Kubernetes submit, and staged CLI subcommands all call the same code: `preamble` → bash outer loop → `finalize`."
+> "One standard workflow owns every state, parallel lane, loop decision, retry,
+> and durable S3 checkpoint."
 
 ```bash
 # What runs on cluster (abbreviated)
-python3 -m npa.workflows.sim2real_loop preamble ...
-python3 -m npa.workflows.sim2real_loop outer-iteration ... --outer-iteration 1
-python3 -m npa.workflows.sim2real_loop finalize ... --upload-artifacts
+npa workbench workflow submit npa/workflows/workbench/npa-workflows/sim2real.yaml \
+  --runtime --resume --run-id <run-id> <operator-vars-and-secrets>
 ```
 
-Mention: RTX PRO cluster uses `submit-k8s-staged-job.sh` because SkyPilot kube context mismatches — same stages, direct Job.
+Mention: RTX PRO/L40S placement, queue admission, and retries remain visible to
+the standard SkyPilot runtime; no stage adapter creates a hidden Job.
 
-### 1:30–3:00 — Stages 1–6 (preamble) — **pre-staged S3**
+### 1:30–3:00 — Stages 1–6 — **pre-staged S3**
 
 Open `s3://<bucket>/<prefix>/<pre-staged-run-id>/`.
 
@@ -141,7 +142,7 @@ Open `s3://<bucket>/<prefix>/<pre-staged-run-id>/`.
 | Trainer evidence | `inner_loop/outer-01/evidence.json` — policy delta, `reward_trend` |
 
 > "Inner loop is VLM → signal → trainer, repeated `INNER_ITERATIONS` times. Policy,
-> VLM, and held-out eval spawn **sibling GPU Jobs** when a bucket is configured
+> VLM, PPO, and held-out evaluation run in their admitted workflow GPU tasks
 > and images are registry-qualified."
 
 If live job not ready: stay on pre-staged paths — same filenames.
@@ -156,7 +157,8 @@ Open `eval/gold-heldout/outer-XX/report.json`:
 "per_env": [ ... ]
 ```
 
-> "Held-out runs on a **pluggable sim backend**. Isaac Lab headless is the platform default (`Isaac-Lift-Cube-Franka-v0`); Genesis remains supported. The sibling Job uses `heldout_backend_image()` — Isaac image for RT-core GPUs, eval image for Genesis."
+> "Held-out evaluation runs in the admitted Isaac Lab workflow task on an
+> RT-core GPU and loads the validation-selected immutable checkpoint."
 
 **Live:** watch held-out Job complete; **fallback:** pre-staged report (see below).
 
@@ -188,7 +190,7 @@ Command to narrate loop-back:
 grep -E 'outer=|decision=' /tmp/sim2real-cluster/<live-run-id>.log
 ```
 
-### 8:00–8:45 — Stages 12–13 (finalize seams)
+### 8:00–8:45 — Stages 12–13 (external seam and retrigger record)
 
 1. `stage_12_external_validation/external_stub.json` — real-robot validation hook.
 2. `stage_13_retrigger/retrigger.json` — restarts Stage 1 only when verified new real failure data or corrected scenario data exists; otherwise records why no retrigger occurred.
@@ -224,7 +226,7 @@ jq '.components[] | select(.name=="stage_14_rerun_viz") | {tier, message}' \
 
 ### 9:30–10:00 — Close
 
-> "Fourteen stages, every artifact addressable on S3, three BYO seams for assets / real-world eval / retrigger, staged CLI for CI and human gates, one module behind runbook and direct K8s submit. Questions?"
+> "Fourteen stages, every artifact addressable on S3, three BYO seams for assets / real-world eval / retrigger, and one ordinary compositional workflow submitted through the standard runtime. Questions?"
 
 ---
 
@@ -260,11 +262,11 @@ print(json.dumps(artifact_uris(build_config_from_env()), indent=2))
 
 | Question | Answer |
 | --- | --- |
-| Why staged subcommands? | Bash (or human) gates between preamble, each outer iteration, and finalize — same state file the runbook uses. |
+| Why a standard workflow? | The runtime owns every loop, wave, retry, and durable S3 checkpoint without a private controller. |
 | What if I bring my own VLM/trainer/eval? | `BYO_*_COMMAND` envs; fails loud if output schema wrong — no silent reference swap. |
-| Genesis vs Isaac? | `--sim-backend genesis\|isaac`; held-out sibling image switches via `heldout_backend_image()`. |
+| Why Isaac here? | The canonical task contract and gold evaluation use Isaac Lab on RTX PRO 6000/L40S. |
 | Why threshold 0.50? | It is the canonical promotion gate; diagnostic 10/15/20 cm rates never lower the strict 5 cm stable-placement requirement. |
-| Where is viz? | Stage 14 (`stage_14_rerun_viz`) in `finalize` — emits `reports/sim2real.rrd` when Rerun is available; tier **WORKS** / **WARN** / **SEAM** in report JSON. |
+| Where is viz? | Stage 14 emits non-empty `reports/sim2real.rrd` and `.mcap`; it fails closed if required evidence cannot be encoded. |
 
 ---
 

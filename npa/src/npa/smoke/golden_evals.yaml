@@ -658,6 +658,32 @@ containers:
       timeout_seconds: 120
       status: ready
 
+  sim2real-control:
+    image: npa-sim2real-control
+    internal: true
+    default_tag: 0.1.2
+    dockerfile: npa/docker/workbench/sim2real-control/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        CPU control-plane adapter used by the canonical compositional Sim2Real
+        workflow for stage contracts, loop decisions, and finalization.
+    safety:
+      runs_as: ubuntu
+      base_image: python:3.11-slim-trixie (digest pinned)
+      network: S3 artifacts and cluster-internal SkyPilot bootstrap only
+      external_fetch: [debian-snapshot-at-build-time, s3-at-runtime]
+      notes: >-
+        The final process user is uid 1000. Passwordless sudo is a finite,
+        task-pod-scoped exception for the pinned SkyPilot 0.12.2 Kubernetes
+        bootstrap; the image starts no service and may not receive public ingress.
+    golden_eval:
+      kind: workflow-smoke
+      command: python -m npa.workflows.sim2real.workflow_stage --help
+      gpu: none
+      timeout_seconds: 60
+      status: ready
+
   envgen:
     image: npa-envgen
     dockerfile: npa/docker/workbench/sim2real-envgen/Dockerfile

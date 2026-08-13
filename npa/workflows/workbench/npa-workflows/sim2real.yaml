@@ -32,6 +32,9 @@ config:
   # overrides these without changing component, split, or strict metric contracts.
   outer_iterations: "3"
   inner_iterations: "3"
+  # Production runs may promote as soon as the strict Stage 11 predicate passes.
+  # Effectiveness/proof runs disable this honestly with --var allow_early_exit=0.
+  allow_early_exit: "1"
   env_count: "10000"
   train_fraction: "0.8"
   shard_count: "2"
@@ -159,6 +162,16 @@ resources:
     cpus: 8
     memory: 32Gi
     image: "{{config.viewer_image}}"
+    kubernetes:
+      pod_config:
+        spec:
+          containers:
+            - name: ray-node
+              resources:
+                requests:
+                  ephemeral-storage: 8Gi
+                limits:
+                  ephemeral-storage: 16Gi
 
 initial: stage-01-trigger
 
@@ -202,6 +215,9 @@ states:
   stage-04-wave:
     description: Stage 4 - parallel raw environment generation in standard workflow GPU tasks.
     parallel: [stage-04-shard-0, stage-04-shard-1]
+    # v0.0.1 groups are explicit. This generic assertion makes shard_count=2 an
+    # honest validate/plan/submit contract instead of silently under-fanning out.
+    parallelCount: "{{config.shard_count}}"
     maxConcurrency: 2
     next: stage-05-split
 
@@ -212,6 +228,7 @@ states:
       argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "4", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --env-count, "{{config.env_count}}", --shard-index, "0", --shard-count, "{{config.shard_count}}", --seed, "{{config.envgen_seed}}"]
     outputs:
       - {uri: "{{config.root_uri}}/envs/raw/raw-shard-00-summary.json", schema: npa.sim2real.raw_env_shard_summary.v1}
+      - {uri: "{{config.root_uri}}/components/lanes/stage_04/shard-00000.json", schema: npa.sim2real.component_lane_record.v1}
 
   stage-04-shard-1:
     description: Raw EnvGen shard 1/2.
@@ -220,6 +237,7 @@ states:
       argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "4", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --env-count, "{{config.env_count}}", --shard-index, "1", --shard-count, "{{config.shard_count}}", --seed, "{{config.envgen_seed}}"]
     outputs:
       - {uri: "{{config.root_uri}}/envs/raw/raw-shard-01-summary.json", schema: npa.sim2real.raw_env_shard_summary.v1}
+      - {uri: "{{config.root_uri}}/components/lanes/stage_04/shard-00001.json", schema: npa.sim2real.component_lane_record.v1}
 
   stage-05-split:
     description: Stage 5 - curate and seal disjoint train, validation, and untouched gold scenarios.
@@ -277,6 +295,7 @@ states:
       argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "8", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --outer-iteration, "{{config.outer_iteration}}", --inner-iteration, "{{config.inner_iteration}}", --reason-lane, reason2, --reason-model, "{{config.reason2_model}}", --threshold, "{{config.threshold}}"]
     outputs:
       - {uri: "{{config.root_uri}}/vlm_eval/train/outer-{{loop.outer-loop}}/iter-{{loop.inner-loop}}/reason2.json", schema: npa.sim2real.cosmos_reason_lane.v1}
+      - {uri: "{{config.root_uri}}/components/lanes/stage_08/reason2-o{{loop.outer-loop}}-i{{loop.inner-loop}}.json", schema: npa.sim2real.component_lane_record.v1}
 
   stage-08-reason3:
     description: Real Cosmos Reason3 evaluation lane.
@@ -286,6 +305,7 @@ states:
       argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "8", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --outer-iteration, "{{config.outer_iteration}}", --inner-iteration, "{{config.inner_iteration}}", --reason-lane, reason3, --reason-model, "{{config.reason3_model}}", --threshold, "{{config.threshold}}"]
     outputs:
       - {uri: "{{config.root_uri}}/vlm_eval/train/outer-{{loop.outer-loop}}/iter-{{loop.inner-loop}}/reason3.json", schema: npa.sim2real.cosmos_reason_lane.v1}
+      - {uri: "{{config.root_uri}}/components/lanes/stage_08/reason3-o{{loop.outer-loop}}-i{{loop.inner-loop}}.json", schema: npa.sim2real.component_lane_record.v1}
 
   stage-09-ppo:
     description: Stage 9 - merge Reason signals, run genuine BYO Isaac RSL-RL PPO, and select with validation only.
@@ -311,7 +331,7 @@ states:
     writesDecision: true
     params: {outer_iteration: "{{loop.outer-loop}}"}
     run:
-      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "11", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --outer-iteration, "{{config.outer_iteration}}", --threshold, "{{config.threshold}}"]
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "11", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --outer-iteration, "{{config.outer_iteration}}", --threshold, "{{config.threshold}}", --allow-early-exit, "{{config.allow_early_exit}}"]
     outputs:
       - {uri: "{{config.decision_uri}}", schema: npa.sim2real.threshold_decision.v1}
 
@@ -328,7 +348,7 @@ states:
     description: Stage 13 - persist the bounded-loop retrigger record.
     resources: cpu
     run:
-      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "13", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --outer-iteration, "{{config.outer_iterations}}", --trigger-uri, "{{config.trigger_uri}}"]
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "13", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --outer-iteration, "{{loop.outer-loop}}", --trigger-uri, "{{config.trigger_uri}}"]
     outputs:
       - {uri: "{{config.root_uri}}/retrigger/record.json", schema: npa.sim2real.retrigger_record.v1}
     next: stage-14-visualize
@@ -337,7 +357,7 @@ states:
     description: Stage 14 - final report plus non-empty Rerun and MCAP with gold multi-camera lineage.
     resources: viewer-cpu
     run:
-      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "14", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --outer-iteration, "{{config.outer_iterations}}"]
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "14", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --outer-iteration, "{{loop.outer-loop}}"]
     outputs:
       - {uri: "{{config.root_uri}}/reports/sim2real-report.json", schema: npa.sim2real.e2e_report.v1}
       - {uri: "{{config.root_uri}}/reports/sim2real.rrd", schema: application/vnd.rerun.rrd}

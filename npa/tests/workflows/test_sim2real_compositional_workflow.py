@@ -3,13 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 import subprocess
 import sys
+from argparse import Namespace
 
 import pytest
 import yaml
+from typer.testing import CliRunner
 
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 from npa.orchestration.npa_workflow.detect import detect_submit_format
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.skypilot_render import (
     SkypilotRenderOptions,
     render_setup_for_tool,
@@ -20,6 +23,14 @@ from npa.workflows.sim2real.workflow_io import (
     write_loop_output,
 )
 from npa.workflows.sim2real.workflow_stage import _authoritative_scene_args
+from npa.orchestration.npa_workflow.submit import merge_config_overrides
+from npa.workflows.sim2real.workflow_stage import (
+    _stage11,
+    _stage14,
+    _stage14_download_plan,
+    _stage9,
+    _stage9_existing_replay,
+)
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -54,6 +65,23 @@ def test_canonical_is_one_standard_compositional_workflow() -> None:
         "k8s_submit",
     ):
         assert forbidden not in rendered_commands
+
+    for state in ("stage-04-shard-0", "stage-04-shard-1"):
+        assert any(
+            "/components/lanes/stage_04/" in output["uri"]
+            for output in payload["states"][state]["outputs"]
+        )
+    for state in ("stage-08-reason2", "stage-08-reason3"):
+        assert any(
+            "/components/lanes/stage_08/" in output["uri"]
+            for output in payload["states"][state]["outputs"]
+        )
+
+    viewer = payload["resources"]["viewer-cpu"]["kubernetes"]["pod_config"]["spec"][
+        "containers"
+    ][0]["resources"]
+    assert viewer["requests"]["ephemeral-storage"] == "8Gi"
+    assert viewer["limits"]["ephemeral-storage"] == "16Gi"
 
 
 def test_retired_monolithic_toolrefs_are_not_catalog_surfaces() -> None:
@@ -171,41 +199,356 @@ def test_loop_outputs_preserve_canonical_lineage_and_runtime_checkpoint(
         )
 
 
-def test_standard_workflow_loop_outputs_match_declared_aliases() -> None:
-    payload = yaml.safe_load(SPEC.read_text())
-    outputs = {
-        state: config["outputs"][0]["uri"]
-        for state, config in payload["states"].items()
-        if state
-        in {
+@pytest.mark.parametrize(
+    ("state", "canonical", "outer_iteration", "inner_iteration"),
+    [
+        (
             "stage-07-rollouts",
+            "s3://unit/run/actions/train/outer-01/iter-01/rollouts-result.json",
+            1,
+            1,
+        ),
+        (
             "stage-08-reason2",
+            "s3://unit/run/vlm_eval/train/outer-01/iter-01/reason2.json",
+            1,
+            1,
+        ),
+        (
             "stage-08-reason3",
+            "s3://unit/run/vlm_eval/train/outer-01/iter-01/reason3.json",
+            1,
+            1,
+        ),
+        (
             "stage-09-ppo",
+            "s3://unit/run/inner_loop/outer-01/evidence.json",
+            1,
+            None,
+        ),
+        (
             "stage-10-gold",
-        }
+            "s3://unit/run/eval/gold-heldout/outer-01/report.json",
+            1,
+            None,
+        ),
+    ],
+)
+def test_each_runtime_loop_output_is_published_by_write_loop_output(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    state: str,
+    canonical: str,
+    outer_iteration: int,
+    inner_iteration: int | None,
+) -> None:
+    payload = yaml.safe_load(SPEC.read_text())
+    declared = (
+        payload["states"][state]["outputs"][0]["uri"]
+        .replace("{{config.root_uri}}", "s3://unit/run")
+        .replace("{{loop.outer-loop}}", "1")
+        .replace("{{loop.inner-loop}}", "1")
+    )
+    writes: list[str] = []
+
+    def record(uri: str, _payload: dict, *, directory: Path) -> str:
+        assert directory.is_relative_to(tmp_path)
+        writes.append(uri)
+        return uri
+
+    monkeypatch.setattr("npa.workflows.sim2real.workflow_io.write_json", record)
+    write_loop_output(
+        canonical,
+        {"state": state},
+        tmp_path,
+        outer_iteration,
+        inner_iteration,
+    )
+
+    assert writes == [canonical, declared]
+
+
+@pytest.mark.parametrize("shard_count", [1, 3, 17])
+def test_shard_count_override_fails_before_plan_or_submit(shard_count: int) -> None:
+    spec = load_spec(SPEC)
+    with pytest.raises(
+        NpaWorkflowError,
+        match=rf"parallelCount resolves to {shard_count}.*2 members",
+    ):
+        merge_config_overrides(spec, {"shard_count": str(shard_count)})
+
+
+def test_shard_count_mismatch_fails_static_spec_validation(tmp_path: Path) -> None:
+    payload = yaml.safe_load(SPEC.read_text())
+    payload["config"]["shard_count"] = "3"
+    invalid = tmp_path / "sim2real-invalid-shards.yaml"
+    invalid.write_text(yaml.safe_dump(payload, sort_keys=False))
+
+    with pytest.raises(
+        NpaWorkflowError, match="parallelCount resolves to 3.*2 members"
+    ):
+        load_spec(invalid)
+
+
+def test_default_shard_count_matches_declared_parallel_lanes() -> None:
+    spec = merge_config_overrides(load_spec(SPEC), {"shard_count": "2"})
+    assert spec.states["stage-04-wave"].parallel_count == "{{config.shard_count}}"
+    assert len(spec.states["stage-04-wave"].parallel) == 2
+
+
+@pytest.mark.parametrize(
+    ("enabled", "success_rate", "expected"),
+    [(True, 0.8, "promote_checkpoint"), (False, 0.8, "loop_back_to_inner_loop")],
+)
+def test_stage11_honors_configurable_early_exit(
+    monkeypatch: pytest.MonkeyPatch,
+    enabled: bool,
+    success_rate: float,
+    expected: str,
+) -> None:
+    decisions: list[dict] = []
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.workflow_stage.read_json",
+        lambda *_args, **_kwargs: {"success_rate": success_rate},
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.workflow_stage.write_json",
+        lambda _uri, payload, **_kwargs: decisions.append(payload) or _uri,
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.workflow_stage.publish_component_record",
+        lambda **_kwargs: {},
+    )
+    args = Namespace(
+        root_uri="s3://unit/run",
+        outer_iteration=1,
+        threshold=0.5,
+        allow_early_exit=enabled,
+        run_id="early-exit",
+    )
+
+    _stage11(args)
+
+    assert decisions[0]["decision"] == expected
+    assert decisions[0]["early_exit_enabled"] is enabled
+
+
+def _stage9_replay_fixture() -> tuple[dict, dict, dict, dict]:
+    validation = {"success_rate": 0.75, "per_env": [{"env_id": "env-1"}]}
+    candidate = {
+        "evaluation_split": "validation",
+        "outer_iteration": 1,
+        "inner_iteration": 1,
+        "training_iteration": 2,
+        "checkpoint_uri": "s3://unit/run/checkpoint.pt",
+        "checkpoint_sha256": "a" * 64,
+        "validation_report_uri": "s3://unit/run/validation.json",
+        "validation_report": validation,
     }
-    expected = {
-        "stage-07-rollouts": (
-            "{{config.root_uri}}/actions/train/outer-1/iter-1/rollouts-result.json"
-        ),
-        "stage-08-reason2": (
-            "{{config.root_uri}}/vlm_eval/train/outer-1/iter-1/reason2.json"
-        ),
-        "stage-08-reason3": (
-            "{{config.root_uri}}/vlm_eval/train/outer-1/iter-1/reason3.json"
-        ),
-        "stage-09-ppo": "{{config.root_uri}}/inner_loop/outer-1/evidence.json",
-        "stage-10-gold": ("{{config.root_uri}}/eval/gold-heldout/outer-1/report.json"),
+    sample_eval = {"rollout_id": "rollout-1", "score": 0.8}
+    sample_signal = {"rollout_id": "rollout-1", "weight": 1.0}
+    iteration = {
+        "iteration": 1,
+        "actions_uri": "s3://unit/run/actions/",
+        "vlm_eval_uri": "s3://unit/run/merged/",
+        "signal_uri": "s3://unit/run/signals/",
+        "trainer_component_invocation": {"mode": "npa_workflow_skypilot_task"},
+        "update": {"checkpoint_path": candidate["checkpoint_uri"]},
+        "sample_vlm_eval": sample_eval,
+        "sample_signal": sample_signal,
     }
-    rendered = {
-        state: uri.replace("{{loop.outer-loop}}", "1").replace(
-            "{{loop.inner-loop}}", "1"
+    from npa.workflows.sim2real.checkpoint_selection import select_best_checkpoint
+
+    selection = select_best_checkpoint([candidate])
+    evidence = {
+        "schema": "npa.sim2real.inner_loop_evidence.v1",
+        "outer_iteration": 1,
+        "iterations": [iteration],
+        "checkpoint_candidates": [candidate],
+        "selected_checkpoint_uri": candidate["checkpoint_uri"],
+        "final_checkpoint_uri": candidate["checkpoint_uri"],
+        "checkpoint_selection": selection,
+        "selected_validation_report": validation,
+    }
+    return evidence, candidate, sample_eval, sample_signal
+
+
+def test_stage9_exact_same_iteration_replay_is_idempotent() -> None:
+    evidence, candidate, sample_eval, sample_signal = _stage9_replay_fixture()
+    result = _stage9_existing_replay(
+        prior=evidence,
+        outer_iteration=1,
+        inner_iteration=1,
+        actions_uri="s3://unit/run/actions/",
+        merged_uri="s3://unit/run/merged/",
+        signal_uri="s3://unit/run/signals/",
+        sample_vlm_eval=sample_eval,
+        sample_signal=sample_signal,
+    )
+    assert result is not None
+    assert result[0] == candidate
+    assert len(evidence["iterations"]) == len(evidence["checkpoint_candidates"]) == 1
+
+
+def test_stage9_conflicting_same_iteration_replay_fails_closed() -> None:
+    evidence, _candidate, sample_eval, sample_signal = _stage9_replay_fixture()
+    with pytest.raises(RuntimeError, match="conflicts with durable evidence"):
+        _stage9_existing_replay(
+            prior=evidence,
+            outer_iteration=1,
+            inner_iteration=1,
+            actions_uri="s3://unit/run/different-actions/",
+            merged_uri="s3://unit/run/merged/",
+            signal_uri="s3://unit/run/signals/",
+            sample_vlm_eval=sample_eval,
+            sample_signal=sample_signal,
         )
-        for state, uri in outputs.items()
+
+
+def test_stage9_retry_republishes_exact_evidence_without_training(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.workbench.cosmos import reason
+    from npa.workflows.sim2real import byo_isaac_trainer, temporal_credit
+    from npa.workflows.sim2real import workflow_stage
+
+    root = "s3://unit/run"
+    evidence, _candidate, sample_eval, sample_signal = _stage9_replay_fixture()
+    iteration = evidence["iterations"][0]
+    iteration.update(
+        {
+            "actions_uri": f"{root}/actions/train/outer-01/iter-01/",
+            "vlm_eval_uri": f"{root}/vlm_eval/train/outer-01/iter-01/merged/",
+            "signal_uri": f"{root}/vlm_eval/train/outer-01/iter-01/signals/",
+        }
+    )
+    lane_base = f"{root}/vlm_eval/train/outer-01/iter-01/"
+    lanes = {
+        lane_base + "reason2.json": {"evaluations": [{"rollout_id": "rollout-1"}]},
+        lane_base + "reason3.json": {"evaluations": [{"rollout_id": "rollout-1"}]},
     }
 
-    assert rendered == expected
+    work = tmp_path / "stage9"
+    work.mkdir()
+    monkeypatch.setattr(workflow_stage, "_work", lambda _stage: work)
+    monkeypatch.setattr(workflow_stage, "list_prefix", lambda _uri: [{"Size": 1}])
+    monkeypatch.setattr(
+        workflow_stage,
+        "read_json",
+        lambda uri, **_kwargs: (
+            evidence if uri.endswith("/evidence.json") else lanes[uri]
+        ),
+    )
+    monkeypatch.setattr(
+        reason, "merge_dual_reason_evaluations", lambda *_a, **_k: sample_eval
+    )
+    monkeypatch.setattr(
+        temporal_credit, "convert_evaluation", lambda _item: sample_signal
+    )
+    monkeypatch.setattr(
+        byo_isaac_trainer,
+        "main",
+        lambda: pytest.fail("an exact replay must not run PPO again"),
+    )
+    writes: list[tuple[str, dict, int]] = []
+    joins: list[dict] = []
+    records: list[dict] = []
+    monkeypatch.setattr(
+        workflow_stage,
+        "write_loop_output",
+        lambda uri, payload, _directory, outer: writes.append((uri, payload, outer)),
+    )
+    monkeypatch.setattr(
+        workflow_stage, "_publish_stage8_join", lambda **kwargs: joins.append(kwargs)
+    )
+    monkeypatch.setattr(
+        workflow_stage,
+        "publish_component_record",
+        lambda **kwargs: records.append(kwargs),
+    )
+
+    _stage9(
+        Namespace(
+            root_uri=root,
+            outer_iteration=1,
+            inner_iteration=1,
+            threshold=0.5,
+            ppo_iterations=2,
+        )
+    )
+
+    assert writes == [(f"{root}/inner_loop/outer-01/evidence.json", evidence, 1)]
+    assert len(evidence["iterations"]) == len(evidence["checkpoint_candidates"]) == 1
+    assert len(joins) == 1
+    assert records[0]["artifacts"]["idempotent_replay"] is True
+
+
+def test_stage14_selects_only_consumed_artifacts_and_cleans_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = "s3://unit/runs/finalize"
+    evidence = {
+        "iterations": [
+            {
+                "iteration": 1,
+                "actions_uri": f"{root}/actions/train/outer-01/iter-01/",
+                "vlm_eval_uri": f"{root}/vlm_eval/train/outer-01/iter-01/merged/",
+                "signal_uri": f"{root}/vlm_eval/train/outer-01/iter-01/signals/",
+            }
+        ]
+    }
+    gold = {
+        "render_lineage": {
+            "canonical_s3_uri": f"{root}/eval/gold-heldout/outer-01/renders/",
+            "local_relative_dir": "eval/gold-heldout/outer-01/renders",
+        }
+    }
+    plan = _stage14_download_plan(
+        root=root, outer_iteration=1, evidence=evidence, gold=gold
+    )
+    assert plan
+    assert all(source != root + "/" for source, _destination, _prefix in plan)
+    assert {destination for _source, destination, _prefix in plan} >= {
+        "augment/frames",
+        "actions/train/outer-01/iter-01",
+        "eval/gold-heldout/outer-01/renders",
+    }
+
+    workspaces: list[Path] = []
+
+    def capture(_args: Namespace, *, root: str, work: Path) -> None:
+        assert root == "s3://unit/run"
+        workspaces.append(work)
+        (work / "proof").write_text("bounded")
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.workflow_stage._stage14_in_work", capture
+    )
+    _stage14(Namespace(root_uri="s3://unit/run"))
+    assert workspaces and not workspaces[0].exists()
+
+
+def test_retired_materialize_command_gives_actionable_migration() -> None:
+    from npa.cli.workbench.sim2real import app
+
+    result = CliRunner().invoke(app, ["materialize"])
+    assert result.exit_code == 2
+    assert "workflow submit" in result.output
+    assert "sim2real.yaml --runtime skypilot" in result.output
+
+    representative_old_call = CliRunner().invoke(
+        app,
+        [
+            "materialize",
+            "legacy-runbook.yaml",
+            "--run-id",
+            "old-run",
+            "--image",
+            "registry.example/old:tag",
+        ],
+    )
+    assert representative_old_call.exit_code == 2
+    assert "workflow submit" in representative_old_call.output
 
 
 def test_stage_adapter_import_does_not_load_legacy_controller() -> None:
@@ -216,10 +559,25 @@ for name in (
     'npa.workflows.sim2real.engine',
     'npa.workflows.sim2real.legacy_orchestration',
     'npa.workflows.sim2real.runner',
+    'npa.workflows.sim2real.scheduler',
+    'npa.workflows.sim2real.stage_execution',
 ):
     assert name not in sys.modules, name
 """
     subprocess.run([sys.executable, "-c", script], check=True)
+
+
+def test_legacy_facade_has_a_finite_compatibility_contract() -> None:
+    from npa.workflows.sim2real import engine
+
+    assert engine.LEGACY_COMPATIBILITY_UNTIL == "2027-02-01"
+    assert engine.LEGACY_REMOVAL_VERSION == "0.5.0"
+    assert engine.LEGACY_SCOPE == (
+        "pre-standard-runtime callers and archived artifact replay"
+    )
+    canonical = SPEC.read_text()
+    for legacy_surface in ("stage_execution", "sim2real.scheduler", "run_staged"):
+        assert legacy_surface not in canonical
 
 
 def test_baked_setup_executes_and_records_the_declared_interpreter(

@@ -94,6 +94,7 @@ states:
 | `sequence` | Ordered sub-states (optionally inside `loop`) |
 | `parallel` | Fan-out group: members launch concurrently (SkyPilot JobGroup) and the group's `next` state is the barrier |
 | `maxConcurrency` | Cap on concurrent members of a `parallel` group (int or `{{config.attr}}`); larger groups are submitted in batches |
+| `parallelCount` | Optional validate-time cardinality assertion (int or `{{config.attr}}`); rejects a config override that does not equal the explicit `parallel` member count before plan/submit |
 | `params` | Per-state config overlay used when resolving that state's tokens (how N sweep members share one `toolRef`) |
 | `trigger` | `{uri, pollSeconds, maxPolls, minObjects}` — the runtime driver waits for objects at `uri` before running this state |
 | `loop.max` | Fixed iteration count (`int` or `config.attr`) |

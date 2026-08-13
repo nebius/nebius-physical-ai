@@ -43,7 +43,7 @@ their existing fail-closed payload in the already admitted workflow task; they
 do not create hidden sibling Jobs. Kubernetes scheduling, retries, queueing,
 credentials, and image pull behavior therefore remain visible to the standard
 runtime. Each GPU resource profile attaches the configurable Kueue LocalQueue
-label and Kubernetes priority class to the SkyPilot Pod, so sibling waves use
+label and Kubernetes priority class to the SkyPilot Pod, so parallel waves use
 observable admission instead of delete/recreate contention. The workflow task
 image must equal the payload's immutable digest.
 
@@ -72,9 +72,10 @@ and replaces source-tarball/package bootstrap with a baked-source attestation.
 The task verifies `NPA_IMAGE_SOURCE_SHA` against the exact workflow SHA before
 it runs; no dependency installation happens after admission.
 
-`engine.py` is now a small compatibility facade for archived direct-controller
-runs. Its implementation is split into bounded, ratcheted legacy
+`engine.py` is a lazy, finite compatibility facade for pre-standard-runtime
+callers and archived artifacts. Its implementation is split into bounded legacy
 orchestration, component/training, held-out-contract, Isaac, and artifact
 modules. The canonical workflow imports none of them and never calls
 `run_preamble`, `run_inner_loop`, `run_single_outer_iteration`, or
-`run_finalize`.
+`run_finalize`. The target removal is NPA 0.5.0, no earlier than 2027-02-01;
+the direct-controller materializer and submit implementation are already gone.

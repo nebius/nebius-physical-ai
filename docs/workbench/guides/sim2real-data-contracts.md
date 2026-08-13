@@ -12,11 +12,11 @@ loop. Other guides link here instead of duplicating tables.
 | **[sim2real-workflow.md](./sim2real-workflow.md)** | Run the loop: quickstart, CLI, local smoke |
 | **This file** | What each artifact *is* (LeRobot vs NPA JSON vs media) |
 | **[sim2real-customer-assets.md](./sim2real-customer-assets.md)** | What the customer uploads (robot, scene, trigger) |
-| **[sim2real-architecture.md](./sim2real-architecture.md)** | Control flow, K8s sibling jobs, fallbacks |
+| **[sim2real-architecture.md](./sim2real-architecture.md)** | Standard-runtime control flow, parallel waves, loops, and resume |
 | **[sim2real-demo-script-10min.md](./sim2real-demo-script-10min.md)** | Presentation walkthrough |
 
-**Code:** `npa/src/npa/workflows/sim2real_loop.py` (`SCHEMA_*` constants),
-`sim2real_envgen.py`, `sim2real_assets.py`.
+**Code:** `npa/src/npa/workflows/sim2real/workflow_stage.py`,
+`workflow_io.py`, `sim2real_envgen.py`, and `sim2real_assets.py`.
 
 ---
 

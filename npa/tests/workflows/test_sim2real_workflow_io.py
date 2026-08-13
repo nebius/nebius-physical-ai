@@ -78,6 +78,56 @@ def test_component_records_are_content_addressed_and_stage12_is_a_seam(
         )
 
 
+def test_parallel_lane_records_preserve_distinct_execution_owners(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    uploads: dict[str, dict[str, object]] = {}
+
+    class FakeStorage:
+        def upload_file(self, local_file: str, uri: str) -> str:
+            uploads[uri] = json.loads(Path(local_file).read_text())
+            return uri
+
+    provenances = [
+        {
+            "image": IMAGE,
+            "source_sha": SOURCE_SHA,
+            "workflow_job": f"managed-job-{index}",
+            "gpu_products": ["NVIDIA RTX PRO 6000"],
+        }
+        for index in range(2)
+    ]
+    monkeypatch.setattr(workflow_io, "storage", lambda: FakeStorage())
+    records = [
+        workflow_io.publish_component_lane_record(
+            root_uri="s3://bucket/run",
+            stage=4,
+            lane=f"shard-{index:05d}",
+            evidence="generated declared shard",
+            artifacts={"shard_index": index},
+            execution_provenance=provenance,
+        )
+        for index, provenance in enumerate(provenances)
+    ]
+    assert [record["artifacts"]["workflow_job"] for record in records] == [
+        "managed-job-0",
+        "managed-job-1",
+    ]
+    assert all(
+        f"s3://bucket/run/components/lanes/stage_04/shard-{index:05d}.json" in uploads
+        for index in range(2)
+    )
+
+    joined = workflow_io.aggregate_parallel_provenance(provenances, stage=4)
+    assert joined["workflow_jobs"] == ["managed-job-0", "managed-job-1"]
+    assert joined["lane_count"] == 2
+
+    conflicting = [dict(item) for item in provenances]
+    conflicting[1]["workflow_job"] = "managed-job-0"
+    with pytest.raises(ValueError, match="incomplete"):
+        workflow_io.aggregate_parallel_provenance(conflicting, stage=4)
+
+
 def test_reduced_proof_records_zero_policy_success_without_failing_pipeline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

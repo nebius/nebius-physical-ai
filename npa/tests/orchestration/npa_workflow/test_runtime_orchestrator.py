@@ -917,6 +917,38 @@ def _trigger_ready(_state, _run_id, _context):
     return {"uri": "s3://unit/trigger/", "objects": 1}
 
 
+def test_canonical_three_iteration_budget_promotes_and_finalizes_outer_one() -> None:
+    spec = _canonical_sim2real_1x1()
+    spec.config.update({"outer_iterations": "3", "allow_early_exit": "1"})
+    submitter = FakeSubmitter()
+    executor = _executor(spec, run_id="canonical-early-one", submitter=submitter)
+
+    report = run_workflow_runtime(
+        spec,
+        run_id="canonical-early-one",
+        executor=executor,
+        options=executor.options,
+        decision_reader=_decision_reader(["promote_checkpoint"]),
+        trigger_waiter=_trigger_ready,
+    )
+
+    assert report.status == "succeeded"
+    assert sum("stage-07-rollouts" in call["tasks"] for call in submitter.calls) == 1
+    decision_yaml = next(
+        call["yaml"]
+        for call in submitter.calls
+        if call["tasks"] == ["stage-11-decision"]
+    )
+    assert "--allow-early-exit" in decision_yaml
+    assert "--allow-early-exit 1" in decision_yaml
+    for state in ("stage-13-retrigger", "stage-14-visualize"):
+        rendered = next(
+            call["yaml"] for call in submitter.calls if call["tasks"] == [state]
+        )
+        assert "--outer-iteration 1" in rendered
+        assert "--outer-iteration 3" not in rendered
+
+
 def test_canonical_resume_replays_stage8_wave_then_restarts_at_stage9() -> None:
     spec = _canonical_sim2real_1x1()
     store = MemoryStore()

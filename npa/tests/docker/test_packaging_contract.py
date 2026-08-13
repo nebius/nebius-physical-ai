@@ -53,7 +53,9 @@ def _normalize_dockerfile(dockerfile_text: str) -> str:
     """
 
     lines = [
-        line for line in dockerfile_text.splitlines() if not line.lstrip().startswith("#")
+        line
+        for line in dockerfile_text.splitlines()
+        if not line.lstrip().startswith("#")
     ]
     joined: list[str] = []
     buffer = ""
@@ -85,7 +87,9 @@ def _bake_matches(dockerfile_text: str, patterns: list[dict]) -> list[str]:
     """
 
     instructions = _normalize_dockerfile(dockerfile_text)
-    return [entry["kind"] for entry in patterns if re.search(entry["pattern"], instructions)]
+    return [
+        entry["kind"] for entry in patterns if re.search(entry["pattern"], instructions)
+    ]
 
 
 def _base_image_refs(dockerfile_text: str) -> list[str]:
@@ -144,9 +148,7 @@ def test_declared_skypilot_images_enforce_the_versioned_build_contract() -> None
         dockerfile = WORKBENCH_DOCKER / item["dockerfile"]
         text = dockerfile.read_text(encoding="utf-8")
         assert version == "skypilot-0.12.2-v1", name
-        assert (
-            f'org.nebius.npa.skypilot-bootstrap-contract="{version}"' in text
-        ), name
+        assert f'org.nebius.npa.skypilot-bootstrap-contract="{version}"' in text, name
         for package in ("openssh-server", "rsync", "sudo"):
             assert package in text, f"{name}: missing {package}"
         assert "NOPASSWD" in text or _final_user(text) in {None, "root", "0"}, name
@@ -190,6 +192,22 @@ def test_public_images_explain_passwordless_root(image_name: str) -> None:
             f"{image_name}: public image grants passwordless root without a narrow "
             "passwordless_root_exemption in packaging-contract.yaml"
         )
+
+
+def test_sim2real_control_root_exception_is_finite_and_task_scoped() -> None:
+    entry = _load_contract()["images"]["sim2real-control"]
+    exception = entry["privilege_exception"]
+    assert exception == {
+        "id": "sim2real-control-skypilot-0.12.2-root-bootstrap",
+        "expires_with": "skypilot-rootless-kubernetes-bootstrap",
+        "scope": "ephemeral-standard-workflow-task-pod",
+        "prohibited_uses": ["service", "public-ingress", "baked-credentials"],
+    }
+    rationale = entry["passwordless_root_exemption"]
+    for boundary in ("CPU-only", "uid 1000", "not started", "trust boundary"):
+        assert boundary in rationale
+
+
 def test_first_class_pinned_dockerfiles_are_covered_by_contract() -> None:
     """A pin plus an in-tree same-name Dockerfile may not bypass legal review.
 
@@ -225,7 +243,9 @@ def test_image_matches_packaging_contract(image_name: str) -> None:
         expected_user = entry.get("final_user")
         final_user = _final_user(text)
         if expected_user:
-            assert final_user == expected_user, f"{image_name}: expected USER {expected_user}, got {final_user}"
+            assert final_user == expected_user, (
+                f"{image_name}: expected USER {expected_user}, got {final_user}"
+            )
         else:
             allowed = set(contract["security"]["allowed_final_users"])
             assert final_user is not None, f"{image_name}: missing final USER"
@@ -233,7 +253,9 @@ def test_image_matches_packaging_contract(image_name: str) -> None:
             if final_user.startswith("$"):
                 assert "ubuntu" in text or "NPA_RUNTIME_USER" in text
             else:
-                assert final_user in allowed, f"{image_name}: final USER {final_user!r} not in {allowed}"
+                assert final_user in allowed, (
+                    f"{image_name}: final USER {final_user!r} not in {allowed}"
+                )
 
     runtime_cmds = _runtime_commands(text)
     if tier.get("entrypoint_must_not_be_bash"):
@@ -252,7 +274,9 @@ def test_image_matches_packaging_contract(image_name: str) -> None:
             assert port in exposed, f"{image_name}: missing EXPOSE {port}"
 
     for pattern in contract["security"].get("secret_patterns", []):
-        assert re.search(pattern, text) is None, f"{image_name}: Dockerfile matches secret pattern {pattern}"
+        assert re.search(pattern, text) is None, (
+            f"{image_name}: Dockerfile matches secret pattern {pattern}"
+        )
 
 
 @pytest.mark.parametrize("image_name", sorted(_load_contract()["images"]))

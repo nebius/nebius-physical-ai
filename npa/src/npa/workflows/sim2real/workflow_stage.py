@@ -11,8 +11,18 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from npa.workflows.sim2real.stage14_finalize import (
+    download_plan as _stage14_download_plan,  # noqa: F401 - compatibility import
+    finalize_in_work as _stage14_in_work,
+)
+from npa.workflows.sim2real.stage9_replay import (
+    existing_replay as _stage9_existing_replay,
+    publish_stage8_join as _publish_stage8_join,
+)
 from npa.workflows.sim2real.workflow_io import (
+    aggregate_parallel_provenance,
     list_prefix,
+    publish_component_lane_record,
     publish_component_record,
     read_json,
     source_sha,
@@ -33,6 +43,17 @@ def _root(args: argparse.Namespace) -> str:
 
 def _work(stage: int) -> Path:
     return Path(tempfile.mkdtemp(prefix=f"npa-s2r-stage-{stage:02d}-"))
+
+
+def _parse_bool(value: str) -> bool:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise argparse.ArgumentTypeError(
+        f"expected a boolean (1/0, true/false, yes/no, on/off), got {value!r}"
+    )
 
 
 def _authoritative_scene_args(root: str) -> list[str]:
@@ -216,6 +237,19 @@ def _stage4(args: argparse.Namespace) -> None:
         proof,
         directory=work / "proof",
     )
+    publish_component_lane_record(
+        root_uri=root,
+        stage=4,
+        lane=f"shard-{args.shard_index:05d}",
+        evidence="This standard-workflow leaf generated one declared raw-environment shard.",
+        artifacts={
+            "raw_envs": f"{root}/envs/raw/",
+            "shard_index": args.shard_index,
+            "shard_count": args.shard_count,
+            "provenance": f"{root}/envs/raw/provenance-{args.shard_index:05d}.json",
+        },
+        execution_provenance=proof["provenance"],
+    )
 
 
 def _stage5(args: argparse.Namespace) -> None:
@@ -273,6 +307,28 @@ def _stage5(args: argparse.Namespace) -> None:
         raise RuntimeError(
             "Stage 4 shard provenance does not match the configured immutable EnvGen image"
         )
+    shard_lane_records = [
+        read_json(
+            f"{root}/components/lanes/stage_04/shard-{index:05d}.json",
+            directory=work / f"shard-lane-{index}",
+        )
+        for index in range(args.shard_count)
+    ]
+    if any(
+        int(item.get("stage") or 0) != 4
+        or item.get("lane") != f"shard-{index:05d}"
+        or int(item.get("artifacts", {}).get("shard_index", -1)) != index
+        or int(item.get("artifacts", {}).get("shard_count") or 0) != args.shard_count
+        or item.get("artifacts", {}).get("image")
+        != shard_provenance[index]["provenance"]["image"]
+        for index, item in enumerate(shard_lane_records)
+    ):
+        raise RuntimeError(
+            "Stage 4 lane records do not match the declared shard fan-out"
+        )
+    joined_provenance = aggregate_parallel_provenance(
+        [item["provenance"] for item in shard_provenance], stage=4
+    )
     publish_component_record(
         root_uri=root,
         stage=4,
@@ -283,9 +339,10 @@ def _stage5(args: argparse.Namespace) -> None:
             "raw_envs": f"{root}/envs/raw/",
             "shard_count": args.shard_count,
             "shard_provenance": shard_provenance,
+            "lane_records": shard_lane_records,
         },
         require_gpu=True,
-        execution_provenance=shard_provenance[0]["provenance"],
+        execution_provenance=joined_provenance,
     )
     publish_component_record(
         root_uri=root,
@@ -474,6 +531,20 @@ def _stage8(args: argparse.Namespace) -> None:
     write_loop_output(
         output_uri, payload, work / "out", args.outer_iteration, args.inner_iteration
     )
+    publish_component_lane_record(
+        root_uri=root,
+        stage=8,
+        lane=f"{args.reason_lane}-o{args.outer_iteration}-i{args.inner_iteration}",
+        evidence="This standard-workflow leaf ran one declared Cosmos Reason evaluation lane.",
+        artifacts={
+            "result": output_uri,
+            "model": args.reason_model,
+            "rollout_count": len(results),
+            "outer_iteration": args.outer_iteration,
+            "inner_iteration": args.inner_iteration,
+        },
+        execution_provenance=payload["provenance"],
+    )
 
 
 def _run_eval(
@@ -545,6 +616,58 @@ def _stage9(args: argparse.Namespace) -> None:
         (signal_dir / f"{rollout_id}.json").write_text(json.dumps(signal, indent=2))
         merged.append(evaluation)
         signals.append(signal)
+    evidence_uri = f"{root}/inner_loop/outer-{args.outer_iteration:02d}/evidence.json"
+    merged_uri = lane_base + "merged/"
+    signal_uri = lane_base + "signals/"
+    actions_uri = (
+        f"{root}/actions/train/outer-{args.outer_iteration:02d}/"
+        f"iter-{args.inner_iteration:02d}/"
+    )
+    prior: dict[str, Any] = {}
+    if list_prefix(evidence_uri):
+        prior = read_json(evidence_uri, directory=work / "prior-evidence")
+    replay = _stage9_existing_replay(
+        prior=prior,
+        outer_iteration=args.outer_iteration,
+        inner_iteration=args.inner_iteration,
+        actions_uri=actions_uri,
+        merged_uri=merged_uri,
+        signal_uri=signal_uri,
+        sample_vlm_eval=merged[0],
+        sample_signal=signals[0],
+    )
+    if replay is not None:
+        candidate, selection, update = replay
+        write_loop_output(evidence_uri, prior, work / "evidence", args.outer_iteration)
+        _publish_stage8_join(
+            root=root,
+            work=work,
+            lane_base=lane_base,
+            reason2=reason2,
+            reason3=reason3,
+            merged_uri=merged_uri,
+            rollout_count=len(merged),
+            outer_iteration=args.outer_iteration,
+            inner_iteration=args.inner_iteration,
+        )
+        publish_component_record(
+            root_uri=root,
+            stage=9,
+            name="stage_09_training_signal",
+            tier="WORKS",
+            evidence="Re-adopted exact durable same-iteration PPO and validation evidence after a standard-runtime Job retry.",
+            artifacts={
+                "evidence": evidence_uri,
+                "checkpoint": selection["checkpoint_uri"],
+                "checkpoint_sha256": selection.get("checkpoint_sha256", ""),
+                "validation_report": candidate["validation_report_uri"],
+                "ppo_iterations": args.ppo_iterations,
+                "component_invocation": update.get("component_invocation"),
+                "idempotent_replay": True,
+            },
+            require_gpu=True,
+        )
+        return
     signal_batch = work / "signal-batch.json"
     signal_batch.write_text(json.dumps({"signals": signals}, indent=2))
     training_output = work / "training-update.json"
@@ -604,20 +727,10 @@ def _stage9(args: argparse.Namespace) -> None:
         "validation_report_uri": validation_uri,
         "validation_report": validation,
     }
-    evidence_uri = f"{root}/inner_loop/outer-{args.outer_iteration:02d}/evidence.json"
-    prior: dict[str, Any] = {}
-    if list_prefix(evidence_uri):
-        prior = read_json(evidence_uri, directory=work / "prior-evidence")
     prior_iterations = list(prior.get("iterations") or [])
-    if any(
-        int(item.get("iteration") or 0) == args.inner_iteration
-        for item in prior_iterations
-    ):
-        raise RuntimeError(
-            f"Stage 9 inner iteration {args.inner_iteration} already exists in evidence"
-        )
     candidates = list(prior.get("checkpoint_candidates") or []) + [candidate]
     selection = select_best_checkpoint(candidates)
+    selected_validation = dict(selection.get("validation_report") or {})
     evidence = {
         "schema": "npa.sim2real.inner_loop_evidence.v1",
         "outer_iteration": args.outer_iteration,
@@ -625,9 +738,9 @@ def _stage9(args: argparse.Namespace) -> None:
         + [
             {
                 "iteration": args.inner_iteration,
-                "actions_uri": f"{root}/actions/train/outer-{args.outer_iteration:02d}/iter-{args.inner_iteration:02d}/",
-                "vlm_eval_uri": lane_base + "merged/",
-                "signal_uri": lane_base + "signals/",
+                "actions_uri": actions_uri,
+                "vlm_eval_uri": merged_uri,
+                "signal_uri": signal_uri,
                 "trainer_component_invocation": update.get("component_invocation"),
                 "update": update,
                 "sample_vlm_eval": merged[0],
@@ -638,13 +751,11 @@ def _stage9(args: argparse.Namespace) -> None:
         "selected_checkpoint_uri": selection["checkpoint_uri"],
         "final_checkpoint_uri": selection["checkpoint_uri"],
         "checkpoint_selection": selection,
-        "selected_validation_report": validation,
+        "selected_validation_report": selected_validation,
         "selected_validation_strict_success": float(
-            validation.get("success_rate") or 0.0
+            selected_validation.get("success_rate") or 0.0
         ),
     }
-    merged_uri = lane_base + "merged/"
-    signal_uri = lane_base + "signals/"
     storage().upload_directory(str(merged_dir), merged_uri)
     storage().upload_directory(str(signal_dir), signal_uri)
     write_json(
@@ -652,21 +763,16 @@ def _stage9(args: argparse.Namespace) -> None:
     )
     write_json(lane_base + "training-update.json", update, directory=work / "training")
     write_loop_output(evidence_uri, evidence, work / "evidence", args.outer_iteration)
-    publish_component_record(
-        root_uri=root,
-        stage=8,
-        name="stage_08_vlm_eval_train",
-        tier="WORKS",
-        evidence="Two parallel real Cosmos Reason lanes evaluated event-local Isaac observations and were deterministically merged.",
-        artifacts={
-            "reason2": lane_base + "reason2.json",
-            "reason3": lane_base + "reason3.json",
-            "merged": merged_uri,
-            "rollout_count": len(merged),
-            "reason_lane_provenance": [reason2["provenance"], reason3["provenance"]],
-        },
-        require_gpu=True,
-        execution_provenance=reason2["provenance"],
+    _publish_stage8_join(
+        root=root,
+        work=work,
+        lane_base=lane_base,
+        reason2=reason2,
+        reason3=reason3,
+        merged_uri=merged_uri,
+        rollout_count=len(merged),
+        outer_iteration=args.outer_iteration,
+        inner_iteration=args.inner_iteration,
     )
     publish_component_record(
         root_uri=root,
@@ -678,7 +784,7 @@ def _stage9(args: argparse.Namespace) -> None:
             "evidence": evidence_uri,
             "checkpoint": selection["checkpoint_uri"],
             "checkpoint_sha256": selection.get("checkpoint_sha256", ""),
-            "validation_report": validation_uri,
+            "validation_report": selection["validation_report_uri"],
             "ppo_iterations": args.ppo_iterations,
             "component_invocation": update.get("component_invocation"),
         },
@@ -828,156 +934,9 @@ def _stage13(args: argparse.Namespace) -> None:
 
 
 def _stage14(args: argparse.Namespace) -> None:
-    from npa.workflows.sim2real_viz import emit_sim2real_mcap, emit_sim2real_rerun
-
-    root, work = _root(args), _work(14)
-    local = work / "run"
-    storage().download_directory(root + "/", str(local))
-    evidence = json.loads(
-        (
-            local / "inner_loop" / f"outer-{args.outer_iteration:02d}" / "evidence.json"
-        ).read_text()
-    )
-    gold = json.loads(
-        (
-            local
-            / "eval"
-            / "gold-heldout"
-            / f"outer-{args.outer_iteration:02d}"
-            / "report.json"
-        ).read_text()
-    )
-    for item in evidence.get("iterations") or []:
-        inner = int(item.get("iteration") or 1)
-        item["actions_dir"] = str(
-            local
-            / "actions"
-            / "train"
-            / f"outer-{args.outer_iteration:02d}"
-            / f"iter-{inner:02d}"
-        )
-        item["vlm_eval_dir"] = str(
-            local
-            / "vlm_eval"
-            / "train"
-            / f"outer-{args.outer_iteration:02d}"
-            / f"iter-{inner:02d}"
-            / "merged"
-        )
-        item["signal_dir"] = str(
-            local
-            / "vlm_eval"
-            / "train"
-            / f"outer-{args.outer_iteration:02d}"
-            / f"iter-{inner:02d}"
-            / "signals"
-        )
-        item["validation_report"] = evidence.get("selected_validation_report") or {}
-    gold["local_renders_dir"] = str(
-        local / str((gold.get("render_lineage") or {}).get("local_relative_dir") or "")
-    )
-    rrd_uri = f"{root}/reports/sim2real.rrd"
-    mcap_uri = f"{root}/reports/sim2real.mcap"
-    report_uri = f"{root}/reports/sim2real-report.json"
-    publish_component_record(
-        root_uri=root,
-        stage=14,
-        name="stage_14_rerun_viz",
-        tier="WORKS",
-        evidence="Finalization is executing in the standard workflow runtime and will publish full Rerun and MCAP evidence.",
-        artifacts={"rrd": rrd_uri, "mcap": mcap_uri, "report": report_uri},
-    )
-    components = [
-        read_json(
-            f"{root}/components/stage_{stage:02d}.json",
-            directory=work / f"component-{stage:02d}",
-        )
-        for stage in range(1, 15)
-    ]
-    if [item["stage"] for item in components] != list(range(1, 15)):
-        raise RuntimeError("Stage 14 requires exactly 14 ordered ComponentRecords")
-    if components[11]["tier"] != "SEAM" or any(
-        item["tier"] != "WORKS" for index, item in enumerate(components) if index != 11
-    ):
-        raise RuntimeError(
-            "ComponentRecord tiers violate the 13 WORKS + Stage 12 SEAM contract"
-        )
-    decision = json.loads((local / "outer_loop" / "decision.json").read_text())
-    report = {
-        "schema": "npa.sim2real.e2e_report.v1",
-        "run_id": args.run_id,
-        "source_sha": source_sha(),
-        "status": "completed",
-        "architecture": "npa.workflow/v0.0.1_compositional_standard_runtime",
-        "component_records": components,
-        "outer_loop": {"decision": decision, "latest_heldout_report": gold},
-        "checkpoint_selection": evidence.get("checkpoint_selection"),
-        "strict_gold_success_rate": float(gold.get("success_rate") or 0.0),
-        "policy_quality_is_pipeline_gate": False,
-        "rrd_uri": rrd_uri,
-        "mcap_uri": mcap_uri,
-    }
-    reports = local / "reports"
-    reports.mkdir(parents=True, exist_ok=True)
-    (reports / "sim2real-report.json").write_text(json.dumps(report, indent=2))
-    run_metadata = {
-        "run_id": args.run_id,
-        "artifact_root": root,
-        "policy_checkpoint": evidence.get("selected_checkpoint_uri", ""),
-        "policy_checkpoint_sha256": gold.get("policy_checkpoint_sha256", ""),
-        "policy_checkpoint_size_bytes": gold.get("policy_checkpoint_size_bytes", 0),
-        "heldout_policy_loaded_for_inference": True,
-        "heldout_policy_checkpoint": evidence.get("selected_checkpoint_uri", ""),
-        "heldout_policy_checkpoint_sha256": gold.get("policy_checkpoint_sha256", ""),
-        "heldout_policy_checkpoint_size_bytes": gold.get(
-            "policy_checkpoint_size_bytes", 0
-        ),
-        "rrd_s3_uri": rrd_uri,
-    }
-    rrd = emit_sim2real_rerun(
-        local_dir=local,
-        inner_evidence=evidence,
-        heldout_report=gold,
-        stage_components=components,
-        outer_history=[
-            {
-                "decision": decision,
-                "checkpoint_uri": evidence.get("selected_checkpoint_uri", ""),
-            }
-        ],
-        run_metadata=run_metadata,
-        output_rrd=reports / "sim2real.rrd",
-        allow_progress_only=False,
-    )
-    mcap = emit_sim2real_mcap(
-        local_dir=local,
-        inner_evidence=evidence,
-        heldout_report=gold,
-        output_mcap=reports / "sim2real.mcap",
-    )
-    for filename, uri in (("sim2real.rrd", rrd_uri), ("sim2real.mcap", mcap_uri)):
-        path = reports / filename
-        if path.stat().st_size <= 0:
-            raise RuntimeError(f"Stage 14 produced empty {filename}")
-        storage().upload_file(str(path), uri)
-    final_record = publish_component_record(
-        root_uri=root,
-        stage=14,
-        name="stage_14_rerun_viz",
-        tier="WORKS",
-        evidence="Published independently decodable Rerun and MCAP recordings with multi-camera gold footage, policy, progress, and evaluation evidence.",
-        artifacts={
-            "rrd": rrd_uri,
-            "rrd_bytes": (reports / "sim2real.rrd").stat().st_size,
-            "rrd_summary": rrd.to_dict(),
-            "mcap": mcap_uri,
-            "mcap_bytes": (reports / "sim2real.mcap").stat().st_size,
-            "mcap_summary": mcap.to_dict(),
-            "report": report_uri,
-        },
-    )
-    report["component_records"][-1] = final_record
-    write_json(report_uri, report, directory=work / "final-report")
+    root = _root(args)
+    with tempfile.TemporaryDirectory(prefix="npa-s2r-stage-14-") as directory:
+        _stage14_in_work(args, root=root, work=Path(directory))
 
 
 _STAGES = {
@@ -1033,7 +992,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--capture-width", default="640")
     parser.add_argument("--capture-height", default="480")
     parser.add_argument("--png-compress-level", default="2")
-    parser.add_argument("--allow-early-exit", action="store_true")
+    parser.add_argument("--allow-early-exit", type=_parse_bool, default=False)
     return parser
 
 

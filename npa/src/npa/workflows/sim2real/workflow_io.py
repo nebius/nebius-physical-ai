@@ -197,6 +197,108 @@ def publish_component_record(
     return payload
 
 
+def publish_component_lane_record(
+    *,
+    root_uri: str,
+    stage: int,
+    lane: str,
+    evidence: str,
+    artifacts: dict[str, Any],
+    require_gpu: bool = True,
+    execution_provenance: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Publish immutable per-lane evidence without impersonating the stage join.
+
+    Parallel leaves own their execution proof. The downstream barrier consumer owns
+    the single canonical ``components/stage_XX.json`` aggregation record, preserving
+    the 14-record audit contract while making every lane independently attributable.
+    """
+
+    safe_lane = lane.strip()
+    if not safe_lane or any(
+        char not in "abcdefghijklmnopqrstuvwxyz0123456789-_" for char in safe_lane
+    ):
+        raise ValueError(f"invalid component lane name: {lane!r}")
+    provenance = dict(execution_provenance or image_provenance(require_gpu=require_gpu))
+    if "@sha256:" not in str(provenance.get("image") or ""):
+        raise ValueError(
+            f"Stage {stage} lane {safe_lane} execution provenance lacks an image digest"
+        )
+    if require_gpu and not provenance.get("gpu_products"):
+        raise ValueError(
+            f"Stage {stage} lane {safe_lane} execution provenance lacks GPU products"
+        )
+    payload = {
+        "schema": "npa.sim2real.component_lane_record.v1",
+        "stage": stage,
+        "lane": safe_lane,
+        "tier": "WORKS",
+        "evidence": evidence,
+        "artifacts": {**artifacts, **provenance},
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    digest = hashlib.sha256(encoded).hexdigest()
+    payload["content_sha256"] = digest
+    work = Path("/tmp/npa-sim2real-component-lane") / f"stage-{stage:02d}-{safe_lane}"
+    prefix = f"{root_uri.rstrip('/')}/components/lanes/stage_{stage:02d}/{safe_lane}"
+    write_json(f"{prefix}/history/{digest}.json", payload, directory=work)
+    write_json(f"{prefix}.json", payload, directory=work)
+    return payload
+
+
+def aggregate_parallel_provenance(
+    provenances: list[dict[str, Any]], *, stage: int
+) -> dict[str, Any]:
+    """Build an honest join provenance record from every parallel leaf."""
+
+    if not provenances:
+        raise ValueError(f"Stage {stage} parallel aggregation has no lane provenance")
+    images = {str(item.get("image") or "") for item in provenances}
+    source_shas = {str(item.get("source_sha") or "") for item in provenances}
+    image = next(iter(images)) if len(images) == 1 else ""
+    repository = image.split("@", 1)[0]
+    registry = repository.split("/", 1)[0]
+    if (
+        len(images) != 1
+        or "/" not in repository
+        or not ("." in registry or ":" in registry or registry == "localhost")
+    ):
+        raise ValueError(
+            f"Stage {stage} parallel lanes do not share one qualified image"
+        )
+    source_sha_value = next(iter(source_shas)) if len(source_shas) == 1 else ""
+    if (
+        "@sha256:" not in image
+        or len(source_sha_value) != 40
+        or any(char not in "0123456789abcdef" for char in source_sha_value)
+    ):
+        raise ValueError(f"Stage {stage} parallel lane provenance is not immutable")
+    gpu_products = sorted(
+        {
+            str(product)
+            for item in provenances
+            for product in (item.get("gpu_products") or [])
+            if str(product)
+        }
+    )
+    workflow_jobs = [str(item.get("workflow_job") or "") for item in provenances]
+    if (
+        not gpu_products
+        or any(not job for job in workflow_jobs)
+        or len(set(workflow_jobs)) != len(provenances)
+    ):
+        raise ValueError(f"Stage {stage} parallel lane provenance is incomplete")
+    return {
+        "image": image,
+        "image_digest": image.split("@", 1)[1],
+        "source_sha": source_sha_value,
+        "workflow_jobs": workflow_jobs,
+        "gpu_products": gpu_products,
+        "lane_count": len(provenances),
+        "execution_mode": "standard_npa_workflow_parallel_join",
+    }
+
+
 def list_prefix(uri: str) -> list[dict[str, Any]]:
     parsed = urlparse(uri)
     paginator = storage().s3.get_paginator("list_objects_v2")

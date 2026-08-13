@@ -71,6 +71,8 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && python -m pip check \
     && python -c "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-exact-source.pth').write_text('/opt/npa/src\n', encoding='utf-8')" \
     && python -m py_compile \
+      /opt/npa/src/npa/workflows/sim2real/stage9_replay.py \
+      /opt/npa/src/npa/workflows/sim2real/stage14_finalize.py \
       /opt/npa/src/npa/workflows/sim2real/workflow_io.py \
       /opt/npa/src/npa/workflows/sim2real/workflow_stage.py \
     && env -u PYTHONPATH python -c "import boto3; from npa.workflows.sim2real.workflow_stage import main; assert callable(main)" \

@@ -5,6 +5,10 @@ its stateless workflow_stage adapters. This facade preserves imports used by
 archived-run inspection and migration tooling; it does not orchestrate the canonical
 workflow. Legacy implementation is split by solution boundary so new work cannot
 accumulate in another monolith.
+
+Compatibility is limited to callers and artifacts created before the canonical
+standard-runtime conversion. It is scheduled for removal no earlier than 0.5.0
+and 2027-02-01; no new workflow may import this module.
 """
 
 # Compatibility deliberately re-exports imported symbols and installs legacy
@@ -26,6 +30,32 @@ import types
 from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    # The runtime facade installs these names from the bounded legacy modules
+    # below. Explicit type-only imports keep that dynamic compatibility surface
+    # reviewable without making canonical code import the legacy implementation.
+    from npa.workflows.sim2real.legacy_components import (
+        _config_from_workflow_state as _config_from_workflow_state,
+        _convert_eval_to_signal as _convert_eval_to_signal,
+        _effective_k8s_parallelism as _effective_k8s_parallelism,
+        _run_trainer_via_command as _run_trainer_via_command,
+        _signal_training_imports as _signal_training_imports,
+        convert_vlm_eval_to_rl_signal as convert_vlm_eval_to_rl_signal,
+        evaluate_rollout_with_vlm as evaluate_rollout_with_vlm,
+        run_inner_loop as run_inner_loop,
+    )
+    from npa.workflows.sim2real.legacy_heldout import (
+        run_heldout_eval as run_heldout_eval,
+    )
+    from npa.workflows.sim2real.legacy_orchestration import (
+        run_finalize as run_finalize,
+    )
+
+
+LEGACY_COMPATIBILITY_UNTIL = "2027-02-01"
+LEGACY_REMOVAL_VERSION = "0.5.0"
+LEGACY_SCOPE = "pre-standard-runtime callers and archived artifact replay"
 
 
 from npa.clients.storage import StorageClient

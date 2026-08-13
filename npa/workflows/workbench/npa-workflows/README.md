@@ -95,10 +95,10 @@ below (see `npa/src/npa/orchestration/npa_workflow/blueprints.py`). Deploy guide
 | `sim2real-two-step.yaml` / `sim2real-two-step-agent.yaml` | **DEMO ONLY** two-state DSL fixtures |
 | `sim2real-envgen-shards.yaml` | **DEMO ONLY** isolated envgen fan-out fixture |
 
-The single canonical Sim2Real **14-stage engine** YAML is
-`npa/workflows/workbench/npa-workflows/sim2real.yaml`. `npa workbench workflow submit`
-detects that exact file and routes it to direct Kubernetes; none of the demo
-specs above can take that route.
+The single canonical Sim2Real YAML is
+`npa/workflows/workbench/npa-workflows/sim2real.yaml`. It is planned, rendered,
+submitted, and resumed by the same standard `npa.workflow` + SkyPilot runtime as
+every other spec; there is no filename detector or direct-Kubernetes bypass.
 
 ## Guide
 

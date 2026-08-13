@@ -1012,7 +1012,7 @@ npa/                       # Python package (CLI + SDK); install with `pip insta
   src/npa/workbench/       # Per-tool implementations (cosmos, lerobot, sonic, ...)
   workflows/workbench/
     npa-workflows/         # Workbench npa.workflow/v0.0.1 specs (author + submit these)
-    sim2real/              # Staged 14-stage sim2real runbook
+    sim2real/              # Canonical 14-stage compositional Sim2Real docs/assets
 docs/                      # Quickstart, architecture, workbench guides, cookbooks
 skills/                    # SKILL.md files for agents and contributors (source of truth)
 deploy/                    # Terraform + cluster provisioning (uses Nebius solutions library)

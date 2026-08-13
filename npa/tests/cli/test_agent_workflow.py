@@ -454,7 +454,7 @@ def test_sim2real_named_text_and_clause_boundaries_are_exact() -> None:
         ("rollout length 3", "--steps-per-rollout", "3"),
         ("12 held-out environments", "--gold-count", "12"),
         ("5000 environments", "--env-count", "5000"),
-        ("16 envgen shards", "--shard-count", "16"),
+        ("2 envgen shards", "--shard-count", "2"),
         ("seed 9", "--seed", "9"),
         ("80% success threshold", "--threshold", "0.8"),
         ("75% train fraction", "--train-fraction", "0.75"),
@@ -474,6 +474,17 @@ def test_each_extracted_sim2real_value_is_one_exact_argv_token(
 
 def test_envgen_shards_do_not_set_environment_count() -> None:
     assert extract_sim2real_params("16 envgen shards") == {"envgen_shard_count": 16}
+
+
+def test_unsupported_envgen_shards_fail_draft_planning() -> None:
+    draft = generate_workflow_draft(
+        user_text="create sim2real workflow with 16 envgen shards",
+        intent="create_vlm_rl_workflow",
+        bucket="bucket",
+    )
+    assert draft["plan"]["ok"] is False
+    assert "parallelCount resolves to 16" in draft["plan"]["error"]
+    assert "declares 2 members" in draft["plan"]["error"]
 
 
 @pytest.mark.parametrize(

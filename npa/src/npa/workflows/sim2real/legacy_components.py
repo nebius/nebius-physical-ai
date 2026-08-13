@@ -855,11 +855,11 @@ def _refresh_registry_pull_secret_for_sibling_job(
     config: Sim2RealLoopConfig,
     namespace: str,
 ) -> None:
-    """Mint a fresh Nebius registry pull secret before each sibling Job apply.
+    """Compatibility-only refresh before an archived sibling Job apply.
 
-    Initial ``k8s_submit`` refreshes once, but long Sim2Real runs launch many
-    later sibling Jobs (augment/train/eval/heldout). IAM registry tokens expire,
-    so stale ``npa-nebius-registry`` secrets cause mid-pipeline ImagePullBackOff.
+    Pre-standard-runtime runs refreshed during the retired ``k8s_submit`` path,
+    but later sibling Jobs could outlive IAM registry tokens. The standard
+    compositional workflow does not import or call this helper.
     """
 
     if _bool_value(os.environ.get("NPA_SIM2REAL_SKIP_REGISTRY_REFRESH", "0")):

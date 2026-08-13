@@ -10,9 +10,71 @@ import sys
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
+from urllib.parse import urlparse
 from typing import Any
 
 from npa.workflows.sim2real.models import Sim2RealLoopError
+
+
+def _result_uri_and_prefix(output_uri: str) -> tuple[str, str]:
+    """Resolve either a result object URI or a directory-style output prefix."""
+
+    normalized = str(output_uri or "").strip()
+    parsed = urlparse(normalized)
+    if parsed.scheme != "s3" or not parsed.netloc or not parsed.path.lstrip("/"):
+        raise Sim2RealLoopError(
+            f"Cosmos Transfer output must be an explicit s3:// URI, got {output_uri!r}"
+        )
+    if normalized.endswith("/"):
+        return normalized + "cosmos2-transfer-result.json", normalized
+    leaf = parsed.path.rsplit("/", 1)[-1]
+    if not leaf:
+        raise Sim2RealLoopError(
+            f"Cosmos Transfer output has no object name: {output_uri!r}"
+        )
+    return normalized, normalized.rsplit("/", 1)[0] + "/"
+
+
+def _frames_prefix(augmented_frames_uri: str) -> str:
+    normalized = str(augmented_frames_uri or "").strip().rstrip("/") + "/"
+    parsed = urlparse(normalized)
+    if parsed.scheme != "s3" or not parsed.netloc or not parsed.path.lstrip("/"):
+        raise Sim2RealLoopError(
+            "Cosmos Transfer frames output must be an explicit s3:// prefix, "
+            f"got {augmented_frames_uri!r}"
+        )
+    return normalized
+
+
+def _validate_real_frame(frame: Any, *, frames_root: str, index: int) -> None:
+    if (
+        not isinstance(frame, dict)
+        or not isinstance(frame.get("frame_id"), str)
+        or not str(frame["frame_id"]).strip()
+        or not isinstance(frame.get("uri"), str)
+    ):
+        raise Sim2RealLoopError(
+            f"real Cosmos-Transfer2.5 returned a malformed frame at index {index}"
+        )
+    uri = str(frame["uri"])
+    parsed_uri = urlparse(uri)
+    parsed_root = urlparse(frames_root)
+    relative = (
+        parsed_uri.path[len(parsed_root.path) :]
+        if parsed_uri.path.startswith(parsed_root.path)
+        else ""
+    )
+    if (
+        parsed_uri.scheme != "s3"
+        or parsed_uri.netloc != parsed_root.netloc
+        or not parsed_uri.path.startswith(parsed_root.path)
+        or not relative
+        or any(part in {"", ".", ".."} for part in relative.split("/"))
+    ):
+        raise Sim2RealLoopError(
+            "real Cosmos-Transfer2.5 returned a frame outside its declared "
+            f"output prefix at index {index}"
+        )
 
 
 def run_cosmos_transfer_component(
@@ -36,11 +98,8 @@ def run_cosmos_transfer_component(
     from npa.workflows.sim2real_stages import resolve_augment_frame_count
 
     client = StorageClient.from_environment()
-    result_uri = output_uri.rstrip("/")
-    if result_uri.endswith("/"):
-        result_uri = f"{result_uri}cosmos2-transfer-result.json"
-    augment_prefix = result_uri.rsplit("/", 1)[0] + "/"
-    frames_root = augmented_frames_uri.rstrip("/") + "/"
+    result_uri, augment_prefix = _result_uri_and_prefix(output_uri)
+    frames_root = _frames_prefix(augmented_frames_uri)
     frame_count = resolve_augment_frame_count()
     manifest = build_cosmos2_transfer_manifest(
         Cosmos2TransferConfig(
@@ -54,6 +113,10 @@ def run_cosmos_transfer_component(
     )
     real = real_runner(client, input_uri, augment_prefix, frames_root, run_id)
     if real is not None:
+        if not isinstance(real, dict):
+            raise Sim2RealLoopError(
+                "real Cosmos-Transfer2.5 returned a malformed result object"
+            )
         frames = real.get("frames")
         if not isinstance(frames, list) or not frames:
             raise Sim2RealLoopError(
@@ -61,16 +124,15 @@ def run_cosmos_transfer_component(
                 "frames list"
             )
         for index_no, frame in enumerate(frames):
-            if not isinstance(frame, dict) or not isinstance(frame.get("uri"), str):
-                raise Sim2RealLoopError(
-                    "real Cosmos-Transfer2.5 returned a malformed frame at "
-                    f"index {index_no}"
-                )
-            if not str(frame["uri"]).startswith(frames_root):
-                raise Sim2RealLoopError(
-                    "real Cosmos-Transfer2.5 returned a frame outside its "
-                    f"declared output prefix at index {index_no}"
-                )
+            _validate_real_frame(frame, frames_root=frames_root, index=index_no)
+        frame_ids = [str(frame["frame_id"]) for frame in frames]
+        frame_uris = [str(frame["uri"]) for frame in frames]
+        if len(set(frame_ids)) != len(frame_ids) or len(set(frame_uris)) != len(
+            frame_uris
+        ):
+            raise Sim2RealLoopError(
+                "real Cosmos-Transfer2.5 returned duplicate frame lineage"
+            )
         if int(real.get("frame_count") or 0) != len(frames):
             raise Sim2RealLoopError(
                 "real Cosmos-Transfer2.5 frame_count does not match frames"

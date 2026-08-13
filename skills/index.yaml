@@ -501,7 +501,7 @@ skills:
         contains: "npa.workflow"
   - name: sim2real-engine
     category: tools
-    when_to_use: "Navigate or change the Sim2Real staged pipeline engine — 14-stage map, preamble/inner/outer/finalize entrypoints, and K8s sibling jobs."
+    when_to_use: "Navigate or change the canonical 14-stage Sim2Real npa.workflow, stateless adapters, parallel lane joins, ComponentRecords, and durable standard-runtime resume."
     path: skills/workbench/sim2real-engine/SKILL.md
     smoke:
       - type: file_exists

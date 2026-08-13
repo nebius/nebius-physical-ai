@@ -70,10 +70,17 @@ spec:
         app: npa-warm-isaac-cache
     spec:
       restartPolicy: Never
-      # Root only so the warmed tree can be owned by root and left read-only for the
-      # workload pods. It is a short-lived init task with no GPU and no network exposure.
+      # The CSI driver applies this fsGroup to the mounted cache, so the image's
+      # unprivileged ubuntu user can atomically publish a versioned tree. Workload pods
+      # subsequently mount the same tree read-only; root is neither needed nor allowed.
       securityContext:
-        runAsUser: 0
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: warm
           # The job's only legitimate writes are into the mounted cache volume, so the
@@ -84,6 +91,7 @@ spec:
           securityContext:
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
+            runAsNonRoot: true
             capabilities:
               drop: ["ALL"]
           # Any of the Isaac images works; they share the bootstrap.

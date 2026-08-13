@@ -27,6 +27,9 @@ For **new creative pipelines**, also load `skills/workflows/generate-npa-workflo
 - **Loops:** `loop.max: "{{config.attr}}"` or integer; `loop.until` for dynamic exit.
 - **Parallel:** `parallel: [<leaf members>]` + optional `maxConcurrency`; the group's
   `next` state is the barrier. Members may not declare `next`/`transitions`.
+  Use optional `parallelCount: "{{config.count}}"` when a public config count
+  must exactly equal the explicit member list; override validation then fails
+  before plan, rendering, or submission instead of silently under-fanning out.
 - **Params:** `params: {k: v}` is a per-state config overlay — how sweep members share
   one `toolRef` and still differ.
 - **Trigger:** `trigger: {uri, pollSeconds, maxPolls, minObjects}` makes the runtime

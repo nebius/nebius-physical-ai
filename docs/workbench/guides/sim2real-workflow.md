@@ -56,6 +56,12 @@ SkyPilot setup login shell is allowed to rebuild its environment. Transfer,
 EnvGen, Reason, Isaac, and visualization each retain their own immutable image
 at the corresponding workflow boundary.
 
+SkyPilot 0.12.2 still performs its Kubernetes bootstrap through passwordless
+`sudo`. For this CPU-only, ephemeral task image the task pod is the security
+boundary; the finite exception and prohibited service/public-ingress uses are
+enforced in `packaging-contract.yaml`. Separately, the Isaac cache warmer runs as
+uid/gid 1000 with an fsGroup-owned PVC and never overrides `runAsUser: 0`.
+
 ```bash
 SPEC=npa/workflows/workbench/npa-workflows/sim2real.yaml
 

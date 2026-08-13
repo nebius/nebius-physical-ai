@@ -3,6 +3,7 @@
 The canonical workflow invokes focused modules such as ``workflow_stage``.
 Archived callers may still import the historical public names from this package;
 those modules are loaded only when the corresponding attribute is requested.
+The compatibility target is removal in 0.5.0, no earlier than 2027-02-01.
 """
 
 from __future__ import annotations

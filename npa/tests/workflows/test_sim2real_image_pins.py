@@ -163,6 +163,24 @@ def test_cpu_controller_is_small_pinned_and_resolver_closed() -> None:
     assert all(line.count("==") == 1 for line in lines)
 
 
+def test_isaac_cache_warmer_is_nonroot_and_uses_fs_group() -> None:
+    root = Path(__file__).resolve().parents[2] / "docker" / "workbench"
+    documents = list(
+        yaml.safe_load_all((root / "common" / "warm-isaac-cache.yaml").read_text())
+    )
+    job = next(item for item in documents if item and item.get("kind") == "Job")
+    pod = job["spec"]["template"]["spec"]
+    security = pod["securityContext"]
+    assert security["runAsNonRoot"] is True
+    assert (
+        security["runAsUser"] == security["runAsGroup"] == security["fsGroup"] == 1000
+    )
+    assert security["seccompProfile"] == {"type": "RuntimeDefault"}
+    container = pod["containers"][0]
+    assert container["securityContext"]["allowPrivilegeEscalation"] is False
+    assert container["securityContext"]["capabilities"]["drop"] == ["ALL"]
+
+
 def test_standard_workflow_entrypoint_execs_orchestrator_argv() -> None:
     script = (
         Path(__file__).resolve().parents[2]
