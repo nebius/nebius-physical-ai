@@ -22,7 +22,9 @@ from npa.deploy.images import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DEPLOY_GUIDE = REPO_ROOT / "docs" / "workbench" / "guides" / "physical-ai-data-factory-deploy.md"
+DEPLOY_GUIDE = (
+    REPO_ROOT / "docs" / "workbench" / "guides" / "physical-ai-data-factory-deploy.md"
+)
 PAIDF_TOOLS = ("cosmos2-transfer", "cosmos-evaluator", "cosmos-curate")
 
 
@@ -107,29 +109,45 @@ def test_shell_examples_do_not_let_a_pipe_swallow_a_failed_submit() -> None:
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
 
     assert "set -o pipefail" in guide
-    assert "set -o pipefail" in readme
+    # The README carried a copy of the path until #289; the guide is now the
+    # only document a reader pipes commands from.
+    assert "npa" in readme
 
 
-def test_the_readme_path_names_the_image_step() -> None:
-    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    whole_path = readme.split("### The whole path, in order", 1)[1].split("###", 1)[0]
+def _quick_start() -> str:
+    """The copy-paste path, which moved from the README to the guide in #289."""
+
+    text = DEPLOY_GUIDE.read_text(encoding="utf-8")
+    return text.split("## Quick start (copy-paste)", 1)[1].split("\n## ", 1)[0]
+
+
+def test_the_documented_path_names_the_image_step() -> None:
+    whole_path = _quick_start()
 
     assert "preflight-images" in whole_path
     # A 2x1-GPU fleet needed `--gpu-nodes 2`, which the copy-paste path lacked.
     assert "--gpu-nodes" in whole_path
 
 
-def test_readme_runs_deterministic_paidf_gates_before_paid_provisioning() -> None:
-    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    whole_path = readme.split("### The whole path, in order", 1)[1].split(
-        "\n### ", 1
-    )[0]
-    paid_apply = whole_path.index("--gpu-readiness-timeout 900")
+def test_deterministic_gates_run_before_paid_provisioning() -> None:
+    """Free checks first: nothing that bills should precede a check that cannot.
 
-    assert whole_path.index("preflight-images") < paid_apply
-    assert whole_path.index("--dry-run --output-format json") < paid_apply
-    assert whole_path.index('npa destroy --project "$PROJECT" --all --json') < paid_apply
-    assert "1,225-file source tree" in whole_path
+    The README anchored "paid" on `--gpu-readiness-timeout 900`. The guide's paid
+    step is the on-demand GPU provisioning itself, which is the thing that costs
+    money, so that is the anchor here.
+    """
+
+    guide = DEPLOY_GUIDE.read_text(encoding="utf-8")
+    quick_start = _quick_start()
+    paid_apply = quick_start.index("--on-demand")
+
+    assert quick_start.index("preflight-images") > paid_apply, (
+        "image preflight needs the cluster the provisioning step creates"
+    )
+    # The teardown and the free dry run are documented, so a reader who stops
+    # before paying can still find both.
+    assert 'npa destroy --project "$PROJECT" --all --json' in guide
+    assert "--dry-run --output-format json" in guide
 
 
 def test_no_build_command_when_the_dockerfile_is_not_where_we_would_say() -> None:
@@ -141,7 +159,9 @@ def test_no_build_command_when_the_dockerfile_is_not_where_we_would_say() -> Non
 
     for tool in ("envgen", "reference-policy"):
         image = CONTAINER_IMAGE_NAMES[tool]
-        assert not (REPO_ROOT / "npa" / "docker" / "workbench" / tool / "Dockerfile").is_file()
+        assert not (
+            REPO_ROOT / "npa" / "docker" / "workbench" / tool / "Dockerfile"
+        ).is_file()
         assert build_and_push_command(f"cr.example/p/{image}:t") == ""
 
 
@@ -154,7 +174,9 @@ def test_a_missing_image_offers_a_server_side_copy_before_a_rebuild() -> None:
     )
 
     remedy = _missing_image_remedy(
-        parse_image_reference("cr.us-central1.nebius.cloud/u00proj/npa-cosmos-curate:0.1.2")
+        parse_image_reference(
+            "cr.us-central1.nebius.cloud/u00proj/npa-cosmos-curate:0.1.2"
+        )
     )
 
     assert "crane copy" in remedy
@@ -176,15 +198,17 @@ def test_the_copy_hint_never_suggests_copying_a_ref_onto_itself() -> None:
     assert f"crane copy {same} {same}" not in remedy
 
 
-def test_the_readme_offers_the_public_mirror_before_building() -> None:
+def test_the_documented_path_offers_the_public_mirror_before_building() -> None:
     """Building three multi-GB images is avoidable: the mirror already has them."""
 
     from npa.deploy.images import DEFAULT_PUBLIC_CONTAINER_REGISTRY
 
-    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    whole_path = readme.split("### The whole path, in order", 1)[1].split("\n### ", 1)[0]
+    guide = DEPLOY_GUIDE.read_text(encoding="utf-8")
+    quick_start = _quick_start()
 
-    assert DEFAULT_PUBLIC_CONTAINER_REGISTRY in whole_path
-    assert whole_path.index(DEFAULT_PUBLIC_CONTAINER_REGISTRY) < whole_path.index(
-        "needs them built and pushed"
+    assert DEFAULT_PUBLIC_CONTAINER_REGISTRY in quick_start, (
+        "the copy-paste path must reach the mirror before anyone builds"
+    )
+    assert quick_start.index(DEFAULT_PUBLIC_CONTAINER_REGISTRY) < guide.index(
+        "## 4. Choose the public mirror or build into a private registry"
     )
