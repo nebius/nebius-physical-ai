@@ -59,8 +59,10 @@ at the corresponding workflow boundary.
 SkyPilot 0.12.2 still performs its Kubernetes bootstrap through passwordless
 `sudo`. For this CPU-only, ephemeral task image the task pod is the security
 boundary; the finite exception and prohibited service/public-ingress uses are
-enforced in `packaging-contract.yaml`. Separately, the Isaac cache warmer runs as
-uid/gid 1000 with an fsGroup-owned PVC and never overrides `runAsUser: 0`.
+enforced in `packaging-contract.yaml`. Separately, the Isaac cache warmer and
+the retained standalone BYO Isaac Job builders run as uid/gid 1000 (the warmer
+uses an fsGroup-owned PVC); none of the Sim2Real Isaac paths may override
+`runAsUser: 0`.
 
 ```bash
 SPEC=npa/workflows/workbench/npa-workflows/sim2real.yaml

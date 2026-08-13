@@ -753,14 +753,17 @@ def build_isaac_rollout_job_manifest(
                 "spec": {
                     "restartPolicy": "Never",
                     "serviceAccountName": service_account,
-                    # Deliberate, scoped privilege: npa-isaac-lab defaults to the
-                    # non-root ``ubuntu`` user, which cannot traverse ``/isaac-sim``,
-                    # so ``python.sh`` resolves empty. runAsGroup/fsGroup do not help
-                    # (the blocked bit is directory execute for other). This stays
-                    # bounded: root inside the container only, never privileged, no
-                    # host namespaces, and no host paths mounted (enforced by
-                    # npa/tests/workflows/test_isaac_job_security_context.py).
-                    "securityContext": {"runAsUser": 0},
+                    # Match the hardened image's uid/gid 1000 runtime contract. The
+                    # image now owns its workspace and installs a traversable Isaac
+                    # shim, so retained standalone jobs no longer need a root override.
+                    "securityContext": {
+                        "runAsNonRoot": True,
+                        "runAsUser": 1000,
+                        "runAsGroup": 1000,
+                        "fsGroup": 1000,
+                        "fsGroupChangePolicy": "OnRootMismatch",
+                        "seccompProfile": {"type": "RuntimeDefault"},
+                    },
                     "imagePullSecrets": [
                         {"name": "agent-sa"},
                         {"name": "ngc-nvcr-imagepullsecret"},
@@ -771,10 +774,13 @@ def build_isaac_rollout_job_manifest(
                             "name": "rollout",
                             "image": image,
                             "imagePullPolicy": image_pull_policy,
-                            # Isaac Lab images launch through /isaac-sim/isaaclab.sh and
-                            # write under the prebuilt workspace; current RTX PRO runtime
-                            # requires root for that path. Keep this scoped to BYO Isaac jobs.
-                            "securityContext": {"runAsUser": 0, "runAsGroup": 0},
+                            "securityContext": {
+                                "runAsNonRoot": True,
+                                "runAsUser": 1000,
+                                "runAsGroup": 1000,
+                                "allowPrivilegeEscalation": False,
+                                "capabilities": {"drop": ["ALL"]},
+                            },
                             "resources": {
                                 "limits": {gpu_resource: "1"},
                                 "requests": {gpu_resource: "1"},
