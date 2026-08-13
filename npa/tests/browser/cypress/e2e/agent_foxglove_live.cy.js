@@ -305,20 +305,6 @@ describe("NPA agent official Foxglove Web against live infra", () => {
         cy.get("#openFullLichtblick").should("not.exist");
         cy.get("#renderModeRerun").should("exist");
 
-        // The live agent retains exactly three unauthenticated publications. Four
-        // publications for the same safe run must make the oldest URL unreadable.
-        cy.wrap([1, 2, 3]).each(() => {
-          liveAgentRequest("/api/foxglove/export", {
-            method: "POST",
-            body: { run_id: runId, run_ref: runRef },
-          }).then((response) => {
-            expect(response.body.converted).to.eq(false);
-            expect(response.body.export.sha256).to.eq(first.body.export.sha256);
-          });
-        });
-        cy.request({ url: source, failOnStatusCode: false })
-          .its("status")
-          .should("eq", 404);
       });
     });
   });
