@@ -30,8 +30,16 @@ config:
     python3 -c "import sapien, sys; v=getattr(sapien,'__version__',''); print('sapien', v, 'python', sys.version); assert v.startswith('3.0.') and int(v.split('.')[2].split('+')[0].split('b')[0] or '0') >= 3, v"
   workload: solution-smoke
   smoke_command: |
-    export NVIDIA_DRIVER_CAPABILITIES="${NVIDIA_DRIVER_CAPABILITIES:-all}"
-    export NVIDIA_VISIBLE_DEVICES="${NVIDIA_VISIBLE_DEVICES:-all}"
+    NVIDIA_DRIVER_CAPABILITIES="$(printenv NVIDIA_DRIVER_CAPABILITIES || true)"
+    if [ -z "$NVIDIA_DRIVER_CAPABILITIES" ]; then
+      NVIDIA_DRIVER_CAPABILITIES=all
+    fi
+    export NVIDIA_DRIVER_CAPABILITIES
+    NVIDIA_VISIBLE_DEVICES="$(printenv NVIDIA_VISIBLE_DEVICES || true)"
+    if [ -z "$NVIDIA_VISIBLE_DEVICES" ]; then
+      NVIDIA_VISIBLE_DEVICES=all
+    fi
+    export NVIDIA_VISIBLE_DEVICES
     export MS_SKIP_ASSET_DOWNLOAD_PROMPT=1
     # Prefer host/container NVIDIA ICD; synthesize one if the image only has stubs.
     # Also ensure EGL vendor + Optimus layer files exist (ManiSkill troubleshooting).
@@ -52,7 +60,7 @@ config:
     ICD
       export VK_ICD_FILENAMES=/tmp/vulkan/icd.d/nvidia_icd.json
     fi
-    export VK_DRIVER_FILES="${VK_ICD_FILENAMES}"
+    export VK_DRIVER_FILES="$VK_ICD_FILENAMES"
     if [ ! -f /usr/share/glvnd/egl_vendor.d/10_nvidia.json ] && [ ! -f /etc/glvnd/egl_vendor.d/10_nvidia.json ]; then
       cat > /tmp/glvnd/egl_vendor.d/10_nvidia.json <<'EGL'
     {
@@ -102,7 +110,7 @@ config:
       echo "=== sapien info ==="
       python3 -c 'import sapien; print("sapien", getattr(sapien, "__version__", "?"))' 2>&1 || true
       python3 -c 'import sapien; print(sapien.render.get_device_summary())' 2>&1 || true
-    } > "${NPA_SMOKE_OUTPUT_DIR}/maniskill_vulkan_diag.txt" 2>&1 || true
+    } > "$NPA_SMOKE_OUTPUT_DIR/maniskill_vulkan_diag.txt" 2>&1 || true
     python3 - <<'PY'
     import json
     import os

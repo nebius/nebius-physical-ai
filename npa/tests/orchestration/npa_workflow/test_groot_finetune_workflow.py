@@ -126,7 +126,7 @@ def test_groot_workflow_reaches_plan_scheduler_and_vendor_render(monkeypatch) ->
         SPEC_PATH,
         run_id="groot-operational-render",
         render_options=SkypilotRenderOptions(
-            registry="cr.example.invalid/workbench",
+            registry="cr.us-central1.nebius.cloud/example-project",
             materialize_registry_secrets=False,
         ),
     )
@@ -154,9 +154,10 @@ def test_groot_workflow_reaches_plan_scheduler_and_vendor_render(monkeypatch) ->
         assert "groot_learning publish" in by_name[STATES[9]]["run"]
         assert "groot_learning verify-agent-ui" in by_name[STATES[10]]["run"]
         assert "[viz]" in by_name[STATES[7]]["setup"]
-        assert by_name[STATES[3]]["config"]["kubernetes"]["pod_config"]["spec"][
-            "securityContext"
-        ] == {"runAsUser": 0, "runAsGroup": 0}
+        for state in (STATES[2], STATES[3], STATES[5]):
+            assert "securityContext" not in yaml.safe_dump(
+                by_name[state].get("config", {})
+            )
     finally:
         prepared.temp_dir.cleanup()
 

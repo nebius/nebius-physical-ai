@@ -51,6 +51,13 @@ def test_force_accelerators_on_cpu_profiles() -> None:
     assert "cpus: 4\n" not in out
 
 
+def test_live_submit_project_args_keep_storage_and_lifecycle_targets_aligned() -> None:
+    helpers = _load_live_helpers()
+
+    assert helpers.project_args("project-alias") == ["--project", "project-alias"]
+    assert helpers.project_args(None) == []
+
+
 def test_submit_live_matrix_specs_exist() -> None:
     missing = [
         case.spec

@@ -49,6 +49,7 @@ from .npa_workflow_live_helpers import (
     materialize_live_spec,
     parse_json_payload,
     parse_runtime_json,
+    project_args,
     seed_live_workflow_inputs,
     seed_trigger_inbox_later,
     selected_submit_cases,
@@ -256,6 +257,7 @@ def test_npa_workflow_submit_live_reaches_terminal(
         "--output-format",
         "json",
     ]
+    plan_args.extend(project_args(e2e_project))
     plan_args.extend(_image_args(case, e2e_registry))
     plan_args.extend(_skypilot_config_args())
     assume = assume_decision_for(case.spec)
@@ -284,6 +286,7 @@ def test_npa_workflow_submit_live_reaches_terminal(
         "--output-format",
         "json",
     ]
+    submit_args.extend(project_args(e2e_project))
     if assume:
         submit_args.extend(["--assume-decision", assume])
     # Workbench images often fail SkyPilot k8s apt-ssh setup, so pins are cleared by default
@@ -398,6 +401,7 @@ def _runtime_submit_args(
     run_id: str,
     registry: str,
     case: SubmitLiveCase,
+    e2e_project: str | None,
     extra_vars: dict[str, str] | None = None,
 ) -> list[str]:
     args = [
@@ -421,6 +425,7 @@ def _runtime_submit_args(
     ]
     if not _cancel_on_timeout():
         args.append("--no-cancel-on-timeout")
+    args.extend(project_args(e2e_project))
     for key, value in [*case.config_vars, *sorted((extra_vars or {}).items())]:
         args.extend(["--var", f"{key}={value}"])
     args.extend(_image_args(case, registry))
@@ -484,7 +489,14 @@ def test_npa_workflow_runtime_live_reaches_terminal(
         )
     try:
         result = RUNNER.invoke(
-            app, _runtime_submit_args(path, run_id=run_id, registry=e2e_registry, case=case)
+            app,
+            _runtime_submit_args(
+                path,
+                run_id=run_id,
+                registry=e2e_registry,
+                case=case,
+                e2e_project=e2e_project,
+            ),
         )
     finally:
         if trigger_seeder is not None:
@@ -666,7 +678,11 @@ def _assert_paidf_status_and_zero_launch_resume(
     assert nonterminal_jobs() == []
 
     resume_args = _runtime_submit_args(
-        path, run_id=run_id, registry=registry, case=case
+        path,
+        run_id=run_id,
+        registry=registry,
+        case=case,
+        e2e_project=e2e_project,
     )
     resume_args.append("--resume")
     resumed = parse_runtime_json(
@@ -709,6 +725,7 @@ def test_npa_workflow_runtime_gate_loop_early_exit_vs_full_budget(
             run_id=run_id,
             registry=e2e_registry,
             case=case,
+            e2e_project=e2e_project,
             extra_vars={"grade_threshold": threshold},
         )
         result = RUNNER.invoke(app, args)
@@ -764,6 +781,7 @@ def test_npa_workflow_submit_plan_only_matrix_no_leak(
         "--output-format",
         "json",
     ]
+    args.extend(project_args(e2e_project))
     assume = assume_decision_for(case.spec)
     if assume:
         args.extend(["--assume-decision", assume])

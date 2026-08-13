@@ -44,7 +44,11 @@ config:
     # Python consumers decode it without evaluating it as shell syntax.
     export WAN22_PROMPT_B64="{{config.prompt|base64}}"
     export WAN22_CONTEXT_IMAGE_URI_B64="{{config.context_image_uri|base64}}"
-    export WAN22_CACHE_DIR="${WAN22_CACHE_DIR:-/workspace/model-cache/wan2.2}"
+    WAN22_CACHE_DIR="$(printenv WAN22_CACHE_DIR || true)"
+    if [ -z "$WAN22_CACHE_DIR" ]; then
+      WAN22_CACHE_DIR=/workspace/model-cache/wan2.2
+    fi
+    export WAN22_CACHE_DIR
     # Validate the config-facing input/capability/artifact contract before the
     # accepted CUDA runtime fetch can create a cache or contact a package index.
     /opt/wan-base/bin/python - <<'PY'
@@ -199,8 +203,18 @@ config:
                 "license_classifiers": license_classifiers,
             }
         )
+    dollar = "$"
+    dpkg_format = (
+        "-f="
+        + dollar
+        + "{Package}\t"
+        + dollar
+        + "{Version}\t"
+        + dollar
+        + "{Architecture}\n"
+    )
     dpkg = subprocess.run(
-        ["dpkg-query", "-W", "-f=${Package}\t${Version}\t${Architecture}\n"],
+        ["dpkg-query", "-W", dpkg_format],
         check=False,
         capture_output=True,
         text=True,

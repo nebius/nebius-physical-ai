@@ -65,7 +65,11 @@ config:
     SMOKE_PKG=/tmp/od_smoke
     mkdir -p "$SMOKE_PKG"
     # Download the real Minecraft/VPT minecraft_vpt shards from the run bucket.
-    export OD_DATASET_KEY=${OD_DATASET_KEY:-datasets/minecraft_vpt_128_64/}
+    OD_DATASET_KEY="$(printenv OD_DATASET_KEY || true)"
+    if [ -z "$OD_DATASET_KEY" ]; then
+      OD_DATASET_KEY=datasets/minecraft_vpt_128_64/
+    fi
+    export OD_DATASET_KEY
     export OD_LOCAL_DATASET=/opt/byof/mc_data
     mkdir -p "$OD_LOCAL_DATASET"
     python3 - <<'PYDL'

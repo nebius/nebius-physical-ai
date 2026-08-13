@@ -10,9 +10,9 @@
 #     --dockerfile npa/docker/workbench/groot/Dockerfile.k8s-prereqs
 #
 # SkyPilot's Kubernetes bootstrap needs a system Python, rsync, an SSH client,
-# and netcat.  The GR00T workflow's pod template explicitly runs the bootstrap
-# as uid 0, so this derived image must not grant the final runtime user an
-# unrestricted passwordless privilege-escalation path.
+# and netcat. The GR00T workflow runs as the image's declared ubuntu user, so
+# this derived image must leave those prerequisites executable without granting
+# the runtime user an unrestricted privilege-escalation path.
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
