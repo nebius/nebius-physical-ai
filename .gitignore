@@ -89,6 +89,9 @@ tmp/
 *.tmp
 *.temp
 
+# Wheel cache for npa/scripts/audit_lerobot_release.py
+.tmp-lerobot-wheels/
+
 # Node dependencies
 node_modules/
 
