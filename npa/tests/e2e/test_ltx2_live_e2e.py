@@ -26,7 +26,6 @@ Status: no live run has happened. The image has not been built. See
 
 from __future__ import annotations
 
-import ast
 import base64
 import hashlib
 import json
@@ -194,59 +193,11 @@ def test_ltx2_spec_plans_the_real_pinned_gpu_workload() -> None:
     assert "disk_size: 500" in profile_text
 
 
-DECLARATION_ENVS = {ACCEPT_ENV, ENTITY_CLASS_ENV, USE_CLASS_ENV}
-DECLARATION_ALIASES = {"ACCEPT_ENV", "ENTITY_CLASS_ENV", "USE_CLASS_ENV"}
-ENV_WRITE_METHODS = {"setenv", "setdefault", "putenv", "update"}
-
-
-def _declaration_env(node: ast.expr) -> str | None:
-    """Return the declaration variable a node names, whether spelled or aliased."""
-
-    if isinstance(node, ast.Constant) and node.value in DECLARATION_ENVS:
-        return str(node.value)
-    if isinstance(node, ast.Name) and node.id in DECLARATION_ALIASES:
-        return node.id
-    return None
-
-
-def test_the_live_tier_never_declares_on_the_operators_behalf() -> None:
-    """Negative control: this file must never *write* a declaration variable.
-
-    Exporting the operator's answers here would make every live run technically
-    valid and legally meaningless: Nebius would be accepting Lightricks' terms
-    on the operator's behalf, which is the one thing the gate exists to prevent.
-    Reads are fine and necessary — the live test asserts on what the operator
-    already declared — so this walks the AST for writes rather than grepping
-    text, which would only catch the spelling a future edit happens to use.
-    """
-
-    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
-    written: list[str] = []
-    for node in ast.walk(tree):
-        targets: list[ast.expr] = []
-        if isinstance(node, ast.Assign):
-            targets = list(node.targets)
-        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
-            targets = [node.target]
-        for target in targets:
-            if isinstance(target, ast.Subscript):
-                name = _declaration_env(target.slice)
-                if name:
-                    written.append(name)
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr in ENV_WRITE_METHODS
-            and node.args
-        ):
-            name = _declaration_env(node.args[0])
-            if name:
-                written.append(name)
-
-    assert written == [], (
-        f"this test assigns the operator's LTX declaration ({sorted(set(written))}); "
-        "only the operator may answer those"
-    )
+# The negative control that used to live here — "this file must never write a
+# declaration" — is now
+# `tests/guardrails/test_live_tests_never_declare_a_licence.py`, which applies it
+# to every live test rather than to this one, and catches the dict-literal and
+# `env=` shapes the local version missed.
 
 
 @pytest.mark.skipif(

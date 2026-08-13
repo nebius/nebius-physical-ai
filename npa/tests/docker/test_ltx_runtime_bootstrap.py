@@ -71,6 +71,12 @@ def image(tmp_path: Path) -> Path:
     shutil.copy2(DOCKER_DIR / "ltx_gate.py", gate_dir / "ltx_gate.py")
     shutil.copy2(LICENSING_MODULE, gate_dir / "licensing.py")
 
+    # The image creates both cache mount points before anything runs. Leaving
+    # them absent here made assert_refusal's "the refusal wrote nothing" checks
+    # pass trivially, on paths that could not have been written to.
+    (root.parent / "cache").mkdir(parents=True, exist_ok=True)
+    (root.parent / "model-cache").mkdir(parents=True, exist_ok=True)
+
     runtime = root / "usr" / "local" / "bin" / "ltx-runtime"
     runtime.parent.mkdir(parents=True)
     shutil.copy2(DOCKER_DIR / "ltx_runtime.sh", runtime)
@@ -181,15 +187,74 @@ class TestTheProofItselfIsMutationTested:
         assert "not on NPA_LTX_ACCEPT_COMMUNITY_LICENSE" in result.stderr
 
     @pytest.mark.parametrize(
-        "function",
-        ["require_nvidia_acceptance", "require_hf_token"],
+        ("function", "expected"),
+        [
+            # B7: assert *why* each mutant was caught. `rc == 70` alone is
+            # satisfied by any error in the script — the same vacuity this proof
+            # was just fixed for one level up.
+            ("require_nvidia_acceptance", "the NVIDIA runtime gate"),
+            ("require_hf_token", "the gated-weights token check"),
+            # B5: `require_ltx_acceptance` is the shell wrapper around the tested
+            # module. Dropping its `|| exit` would leave the module's refusal
+            # unobserved, and nothing covered that.
+            ("require_ltx_acceptance", "NPA_LTX_ACCEPT_COMMUNITY_LICENSE"),
+        ],
     )
     def test_a_downstream_gate_that_accepts_everything_is_caught(
-        self, image: Path, function: str
+        self, image: Path, function: str, expected: str
     ) -> None:
         self._mutate_shell_gate(image, function)
 
         result = run(image, "assert-refusal")
+
+        assert result.returncode == EX_SOFTWARE
+        assert "NPA_LTX_BOOTSTRAP_REFUSES_WITHOUT_DECLARATION_OK" not in result.stdout
+        assert expected in result.stderr, result.stderr
+
+    def test_fetching_before_the_gates_run_is_caught(self, image: Path) -> None:
+        """B6: the ordering property, mutated rather than merely implied.
+
+        Both gates must close before `fetch_source` reaches the network. Until
+        now that was only implied by one test pointing the source remote at a
+        nonexistent path; move the guard calls after the clone begins and the
+        proof should notice.
+        """
+
+        script = image / "usr" / "local" / "bin" / "ltx-runtime"
+        text = script.read_text(encoding="utf-8")
+        guards = "  require_ltx_acceptance\n  require_nvidia_acceptance\n"
+        assert guards in text, "fetch_source no longer opens with both gates"
+        moved = text.replace(guards, "", 1).replace(
+            '  git init -q "$tmp"', guards + '  git init -q "$tmp"', 1
+        )
+        script.write_text(moved, encoding="utf-8")
+
+        result = run(
+            image,
+            "assert-refusal",
+            env={"NPA_LTX_SOURCE_REPO": str(image.parent / "no-such-repo")},
+        )
+
+        assert result.returncode == EX_SOFTWARE
+        assert "NPA_LTX_BOOTSTRAP_REFUSES_WITHOUT_DECLARATION_OK" not in result.stdout
+
+    def test_failing_to_scrub_the_builders_environment_is_caught(
+        self, image: Path
+    ) -> None:
+        """B8: pin the mechanism, not just the outcome.
+
+        `test_the_proof_ignores_acceptance_leaked_into_the_builder` asserts the
+        result but nothing held `undeclared()` to producing it, so the `-u`
+        scrubbing could be dropped and only that outcome would change — silently,
+        on builders where nothing is set.
+        """
+
+        script = image / "usr" / "local" / "bin" / "ltx-runtime"
+        text = script.read_text(encoding="utf-8")
+        assert 'args+=(-u "$name")' in text
+        script.write_text(text.replace('args+=(-u "$name")', "args+=()", 1), "utf-8")
+
+        result = run(image, "assert-refusal", env=DECLARED | {NVIDIA_ACCEPT_ENV: "YES"})
 
         assert result.returncode == EX_SOFTWARE
         assert "NPA_LTX_BOOTSTRAP_REFUSES_WITHOUT_DECLARATION_OK" not in result.stdout
@@ -438,6 +503,83 @@ class TestTheEntrypointDispatch:
         assert self._dispatch(entrypoint, "python", "-c", "pass") == (
             "MODE:exec python -c pass"
         )
+
+
+class TestTheRunbookCommandsReachTheModeTheyClaim:
+    """The runbook is the evidence, so make that a checkable statement.
+
+    `docs/workbench/ltx2.md` tells an operator to prove the refusal with
+    `docker run <image> ltx-runtime ensure` and says it "exits 78, prints the
+    LTX-2.x terms, downloads nothing". Before the entrypoint was fixed it did
+    exit 78 — from the argument parser, not the licence gate. A vacuous 78, in
+    the runbook that exists to show the 78 is real.
+
+    This lifts the `docker run` lines out of the document, strips everything up
+    to the image reference, and dispatches the remaining argv through the same
+    stubbed entrypoint, so the prose cannot drift away from the behaviour.
+    """
+
+    RUNBOOK = Path(__file__).resolve().parents[3] / "docs" / "workbench" / "ltx2.md"
+
+    def _documented_argv(self) -> list[list[str]]:
+        commands: list[list[str]] = []
+        for line in self.RUNBOOK.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if not stripped.startswith("docker run ") or "npa-ltx2" not in stripped:
+                continue
+            parts = stripped.split()
+            image = next(
+                index for index, part in enumerate(parts) if "npa-ltx2" in part
+            )
+            argv = parts[image + 1 :]
+            if argv:
+                commands.append(argv)
+        return commands
+
+    def test_the_runbook_actually_documents_some_commands(self) -> None:
+        assert self._documented_argv(), (
+            "no `docker run ... npa-ltx2 ...` lines found; either the runbook "
+            "moved or this test stopped checking anything"
+        )
+
+    def test_every_documented_command_reaches_a_real_mode(self, tmp_path: Path) -> None:
+        stub = tmp_path / "ltx-runtime-stub"
+        stub.write_text(
+            '#!/usr/bin/env bash\nprintf "MODE:%s\\n" "$1"\n', encoding="utf-8"
+        )
+        stub.chmod(0o755)
+        source = (DOCKER_DIR / "entrypoint.sh").read_text(encoding="utf-8")
+        script = tmp_path / "entrypoint.sh"
+        script.write_text(
+            source.replace("/usr/local/bin/ltx-runtime", str(stub)), encoding="utf-8"
+        )
+
+        known = {
+            "ensure",
+            "warm",
+            "fetch-weights",
+            "assert-refusal",
+            "status",
+            "terms",
+            "provenance",
+            "health",
+            "version",
+        }
+        for argv in self._documented_argv():
+            result = subprocess.run(
+                ["bash", str(script), *argv],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            assert result.returncode == 0, f"{argv}: {result.stderr}"
+            mode = result.stdout.strip().removeprefix("MODE:")
+            assert mode in known, (
+                f"the runbook's `docker run ... {' '.join(argv)}` dispatches to "
+                f"{mode!r}, which is not a mode. The operator would get an "
+                "argument-parser error and, for a refusal check, could not tell "
+                "it apart from the refusal the document promises."
+            )
 
 
 class TestTheImageLayoutIsReachableByTheRuntimeUser:

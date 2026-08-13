@@ -369,7 +369,8 @@ four hard-gate capabilities are licence capabilities:
 
 The primary artifact is `ltx2_5_text_to_video.json`. The workflow does not stop
 at generation: `npa workbench ltx2 gate` sits between curation and LeRobot
-policy training and fails the run when the declared use class is commercial,
+any trainer the operator names, and fails the run when the declared use class is
+commercial,
 because Attachment A(18) forbids training another model on LTX Outputs for
 commercial use. Not claimed: image-to-video, audio-to-video, and LoRA
 fine-tuning. See `npa/docker/workbench/ltx2/REDISTRIBUTION.md` and

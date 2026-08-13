@@ -90,8 +90,7 @@ pipeline.
 `byof-ltx2.yaml` runs:
 
 ```text
-generate (GPU, npa-ltx2) -> stamp (CPU) -> curate (CPU, FiftyOne)
-  -> gate (CPU) -> train (GPU, LeRobot)
+generate (GPU, npa-ltx2) -> stamp (CPU) -> curate (CPU, FiftyOne) -> gate (CPU)
 ```
 
 - **stamp** writes `ltx2_provenance.json` (`npa.ltx2.provenance.v1`) next to the
@@ -100,14 +99,23 @@ generate (GPU, npa-ltx2) -> stamp (CPU) -> curate (CPU, FiftyOne)
 - **curate** runs real FiftyOne Brain uniqueness and duplicate detection. It
   inspects Outputs without training on them, so it is licence-neutral and runs
   before the gate.
-- **gate** re-reads the manifest and refuses the trainer under a commercial
-  declaration. It also denies on a missing manifest, an unrecognised schema, and
-  an unknown disposition — the breach is a licence-termination event under
+- **gate** re-reads the manifest and refuses the named consumer under a
+  commercial declaration. It also denies on a missing manifest, an unrecognised
+  schema, an unknown disposition, and a manifest that does not cover the
+  artifact the consumer named — the breach is a licence-termination event under
   Section 13, so "we couldn't tell" must never mean "proceed".
 
-A policy trained through this path is itself a Derivative of LTX-2.x under
-Section 1.5 and stays bound by the Agreement, including the Section 3.5 transfer
-conditions.
+**The gate is the terminal state, and that is deliberate.** An earlier draft
+ended in a LeRobot training state, which made the pipeline look like a complete
+demonstration. It was not: that state trained on the `lerobot/pusht` hub dataset,
+so no LTX Output ever reached it and the gate in front of it was decorative in
+the one place meant to show it is not. LTX-2.5 text-to-video output is not a
+LeRobot dataset — no actions, no `meta/info.json` — and no honest conversion
+exists here, so training is the operator's own next step, taken after calling the
+gate. `npa.workbench.ltx2.check_training_consumer` is the integration point.
+
+Any model trained on cleared Outputs is a Derivative of LTX-2.x under Section 1.5
+and stays bound by the Agreement, including the Section 3.5 transfer conditions.
 
 Validate and plan the checked-in spec:
 
