@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+import typer
 
 from npa.workflows import data_factory_stages as dfs
 
@@ -617,10 +618,14 @@ def test_all_augmentations_reads_every_combo(tmp_path: Path) -> None:
     assert _first_augmentation(configs_uri) == combos[0]
 
 
-def test_all_augmentations_missing_manifest_returns_empty(tmp_path: Path) -> None:
+def test_all_augmentations_missing_manifest_fails_closed(tmp_path: Path) -> None:
     from npa.cli.workbench.cosmos2 import _all_augmentations
 
-    assert _all_augmentations(str(tmp_path / "nope") + "/") == []
+    with pytest.raises(
+        typer.BadParameter,
+        match="configured augmentation manifest could not be read",
+    ):
+        _all_augmentations(str(tmp_path / "nope") + "/")
 
 
 def test_finalize_aggregates_stage_artifacts(tmp_path: Path, monkeypatch) -> None:

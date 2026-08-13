@@ -67,8 +67,9 @@ def test_spec_for_input_video_builds_edge_control(tmp_path: Path) -> None:
     assert spec["prompt"] == "rainy night, wet asphalt"
     assert spec["edge"] == {"control_weight": 0.8}
     assert spec["guidance"] == 4
-    # depth and seg are on-the-fly too (VideoDepthAnything / GroundingDINO+SAM2),
-    # so an input-only spec can ask for them without any precomputed asset.
+    # Depth is precomputed-only: this path must never fetch Video Depth Anything.
+    depth = tmp_path / "depth.mp4"
+    depth.write_bytes(b"depth")
     _rel2, modality2 = tx._spec_for_input_video(
         repo,
         input_video=str(clip),
@@ -77,6 +78,7 @@ def test_spec_for_input_video_builds_edge_control(tmp_path: Path) -> None:
         control_weight=1.0,
         guidance=3,
         name="run-2",
+        control_asset=str(depth),
     )
     assert modality2 == "depth"
 

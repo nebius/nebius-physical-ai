@@ -36,7 +36,7 @@ import hashlib
 import os
 import tempfile
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -897,7 +897,10 @@ class SkyPilotWaveExecutor:
             self.spec,
             steps,
             run_id=self.run_id,
-            options=self.render_options,
+            options=replace(
+                self.render_options,
+                execution_attempt_id=attempt.logical_launch_id,
+            ),
             execution="parallel" if kind == "parallel" else "serial",
             name=job_name,
         )

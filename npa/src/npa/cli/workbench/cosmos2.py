@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 import os
 from pathlib import Path
 from typing import Any, Optional
@@ -71,24 +73,36 @@ def _all_augmentations(configs_uri: str) -> list[dict]:
     """Read the Config-Gen manifest and return every sampled appearance combo.
 
     Each combo drives one Cosmos Transfer 2.5 inference ("multiply"), so a config
-    manifest with N augmentations yields N scenario variants. Best-effort: returns
-    [] on any read failure so the caller can fall back to a single default render.
+    manifest with N augmentations yields N scenario variants.  A configured
+    manifest is authoritative: an unreadable or empty manifest must not silently
+    collapse a requested multi-variant/gang run into one default render.
     """
+    uri = (
+        configs_uri
+        if configs_uri.endswith(".json")
+        else configs_uri.rstrip("/") + "/manifest.json"
+    )
     try:
         from npa.workflows.data_factory_stages import _download_json
 
-        uri = configs_uri if configs_uri.endswith(".json") else configs_uri.rstrip("/") + "/manifest.json"
         manifest = _download_json(uri)
         combos = manifest.get("augmentations") or []
-        return [c for c in combos if isinstance(c, dict)]
-    except Exception:  # noqa: BLE001 - variables are advisory metadata, never fatal
-        return []
+    except Exception as exc:  # noqa: BLE001 - normalize storage/provider errors
+        raise typer.BadParameter(
+            f"configured augmentation manifest could not be read at {uri!r}"
+        ) from exc
+    valid = [c for c in combos if isinstance(c, dict)]
+    if not valid:
+        raise typer.BadParameter(
+            f"configured augmentation manifest at {uri!r} has no augmentation objects"
+        )
+    return valid
 
 
 def _first_augmentation(configs_uri: str) -> dict:
-    """Read the Config-Gen manifest and return the first sampled combo (or {})."""
+    """Read the Config-Gen manifest and return its first sampled combo."""
     combos = _all_augmentations(configs_uri)
-    return combos[0] if combos else {}
+    return combos[0]
 
 
 _VIDEO_EXTS = (".mp4", ".mov", ".webm", ".mkv", ".avi")
@@ -217,28 +231,121 @@ def _gang_shard() -> tuple[int, int]:
     happened.
     """
 
-    def _read(*names: str) -> str:
-        for name in names:
-            value = str(os.environ.get(name, "")).strip()
-            if value:
-                return value
-        return ""
+    rank, nodes, _attempt_id = _gang_identity()
+    return rank, nodes
 
-    raw_nodes = _read("NPA_COSMOS_NODE_COUNT", "SKYPILOT_NUM_NODES")
-    raw_rank = _read("NPA_COSMOS_NODE_RANK", "SKYPILOT_NODE_RANK") or "0"
+
+def _gang_identity() -> tuple[int, int, str]:
+    """Return rank, authoritative gang size, and one shared attempt identity.
+
+    ``NPA_COSMOS_NODE_COUNT`` comes from the workflow renderer and is the source
+    of truth.  SkyPilot 0.12.2 independently supplies count, rank, ordered node
+    IPs, and an internal job id.  All are checked before a worker can publish a
+    shard.  ``SKYPILOT_TASK_ID`` is deliberately excluded: SkyPilot preserves it
+    across managed-job recoveries.
+    """
+
+    def _read(name: str) -> str:
+        return str(os.environ.get(name, "")).strip()
+
+    raw_nodes = _read("NPA_COSMOS_NODE_COUNT")
+    raw_local_rank = _read("NPA_COSMOS_NODE_RANK")
+    sky_nodes = _read("SKYPILOT_NUM_NODES")
+    sky_rank = _read("SKYPILOT_NODE_RANK")
+    sky_ips = _read("SKYPILOT_NODE_IPS")
+    sky_internal_job = _read("SKYPILOT_INTERNAL_JOB_ID")
+    sky_managed_job = _read("SKYPILOT_MANAGED_JOB_ID")
+    base_attempt = _read("NPA_WORKFLOW_ATTEMPT_ID")
+    local_attempt = _read("NPA_COSMOS_ATTEMPT_ID")
+    sky_evidence = any((sky_nodes, sky_rank, sky_ips, sky_internal_job))
+    if not raw_nodes:
+        if sky_evidence:
+            raise typer.BadParameter(
+                "multi-node augment identity is missing authoritative "
+                "NPA_COSMOS_NODE_COUNT"
+            )
+        return 0, 1, ""
     try:
-        nodes = int(raw_nodes) if raw_nodes else 1
-        rank = int(raw_rank)
+        nodes = int(raw_nodes)
     except ValueError as exc:
         raise typer.BadParameter(
             "multi-node augment identity is not numeric "
-            f"(node count {raw_nodes!r}, rank {raw_rank!r})"
+            f"(authoritative node count {raw_nodes!r})"
         ) from exc
+    if sky_evidence:
+        missing = [
+            name
+            for name, value in (
+                ("SKYPILOT_NUM_NODES", sky_nodes),
+                ("SKYPILOT_NODE_RANK", sky_rank),
+                ("SKYPILOT_NODE_IPS", sky_ips),
+                ("SKYPILOT_INTERNAL_JOB_ID", sky_internal_job),
+                ("NPA_WORKFLOW_ATTEMPT_ID", base_attempt),
+            )
+            if not value
+        ]
+        if missing:
+            raise typer.BadParameter(
+                "multi-node augment identity is incomplete: missing "
+                + ", ".join(missing)
+            )
+        try:
+            observed_nodes = int(sky_nodes)
+            rank = int(sky_rank)
+        except ValueError as exc:
+            raise typer.BadParameter(
+                "multi-node augment identity is not numeric "
+                f"(SkyPilot node count {sky_nodes!r}, rank {sky_rank!r})"
+            ) from exc
+        if observed_nodes != nodes:
+            raise typer.BadParameter(
+                "multi-node augment identity is contradictory: renderer requested "
+                f"{nodes} node(s), SkyPilot reported {observed_nodes}"
+            )
+        if raw_local_rank and raw_local_rank != sky_rank:
+            raise typer.BadParameter(
+                "multi-node augment identity is contradictory: "
+                f"NPA rank {raw_local_rank!r}, SkyPilot rank {sky_rank!r}"
+            )
+        node_ips = [line.strip() for line in sky_ips.splitlines() if line.strip()]
+        if len(node_ips) != nodes or len(set(node_ips)) != nodes:
+            raise typer.BadParameter(
+                "multi-node augment identity is contradictory: "
+                f"SKYPILOT_NODE_IPS has {len(node_ips)} unique member(s), "
+                f"expected {nodes}"
+            )
+        attempt_material = json.dumps(
+            {
+                "base": base_attempt,
+                "internal_job": sky_internal_job,
+                "managed_job": sky_managed_job,
+                "node_count": nodes,
+                "node_ips": node_ips,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        attempt_id = hashlib.sha256(attempt_material).hexdigest()
+    else:
+        raw_rank = raw_local_rank or "0"
+        try:
+            rank = int(raw_rank)
+        except ValueError as exc:
+            raise typer.BadParameter(
+                "multi-node augment identity is not numeric "
+                f"(node count {raw_nodes!r}, rank {raw_rank!r})"
+            ) from exc
+        if nodes > 1 and not local_attempt:
+            raise typer.BadParameter(
+                "multi-node augment identity is incomplete: a local gang requires "
+                "NPA_COSMOS_ATTEMPT_ID"
+            )
+        attempt_id = local_attempt
     if nodes < 1 or not 0 <= rank < nodes:
         raise typer.BadParameter(
             f"multi-node augment identity is inconsistent: rank {rank} of {nodes} node(s)"
         )
-    return rank, nodes
+    return rank, nodes, attempt_id
 
 
 def _shard_indices(count: int, *, rank: int, nodes: int) -> list[int]:
@@ -463,10 +570,9 @@ def transfer_cmd(
     control: str = typer.Option(
         "edge",
         "--control",
-        help="Control modality for input-conditioning: edge, vis, depth, or seg. All "
-        "four are computed on-the-fly from the input clip (Canny / bilateral blur / "
-        "VideoDepthAnything / GroundingDINO+SAM2) unless --control-asset supplies a "
-        "precomputed control video.",
+        help="Control modality for input-conditioning: edge, vis, depth, or seg. "
+        "Edge/vis/seg can be derived from the input; depth requires an "
+        "operator-owned precomputed control and never invokes Video Depth Anything.",
     ),
     control_weight: float = typer.Option(1.0, "--control-weight", help="Control weight for input-conditioning."),
     control_asset: str = typer.Option(
@@ -513,6 +619,51 @@ def transfer_cmd(
     reference augmentation writes real augmented image frames. Inspect
     ``output_kind`` in the manifest ("video" vs "frames") to disambiguate.
     """
+
+    # Resolve every deterministic control knob before probing the runtime or
+    # touching input/control storage.  The same import-light validator is used
+    # by workflow validate/plan/submit.
+    control = os.environ.get("NPA_COSMOS_CONTROL", "").strip() or control
+    control_asset = (
+        os.environ.get("NPA_COSMOS_CONTROL_ASSET", "").strip() or control_asset
+    )
+    control_prompt = (
+        os.environ.get("NPA_COSMOS_CONTROL_PROMPT", "").strip() or control_prompt
+    )
+    mask_asset = os.environ.get("NPA_COSMOS_MASK_ASSET", "").strip() or mask_asset
+    mask_prompt = os.environ.get("NPA_COSMOS_MASK_PROMPT", "").strip() or mask_prompt
+    raw_control_weight = os.environ.get("NPA_COSMOS_CONTROL_WEIGHT", "").strip()
+    raw_guidance = os.environ.get("NPA_COSMOS_GUIDANCE", "").strip()
+    requested_control_weight: object = control_weight
+    if raw_control_weight:
+        requested_control_weight = raw_control_weight
+    if raw_guidance:
+        try:
+            guidance = float(raw_guidance)
+        except ValueError as exc:
+            raise typer.BadParameter(
+                "NPA_COSMOS_GUIDANCE must be a finite number"
+            ) from exc
+        if not math.isfinite(guidance):
+            raise typer.BadParameter("NPA_COSMOS_GUIDANCE must be a finite number")
+    from npa.workbench.cosmos.control_contract import (
+        ControlContractError,
+        validate_control_request,
+    )
+
+    try:
+        checkpoint, normalized_weight = validate_control_request(
+            modality=control,
+            weight=requested_control_weight,
+            control_asset=control_asset,
+            control_prompt=control_prompt,
+            mask_asset=mask_asset,
+            mask_prompt=mask_prompt,
+        )
+    except ControlContractError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    control = checkpoint.modality
+    control_weight = normalized_weight
 
     payload = build_cosmos2_transfer_manifest(
         Cosmos2TransferConfig(
@@ -574,39 +725,6 @@ def transfer_cmd(
                     f"input conditioning was requested, but no {expected} "
                     f"({', '.join(_VIDEO_EXTS)}) was found at the configured input"
                 )
-        # Env fallbacks let a submit tune conditioning without changing the toolRef argv.
-        control = (os.environ.get("NPA_COSMOS_CONTROL", "").strip() or control)
-        control_asset = (os.environ.get("NPA_COSMOS_CONTROL_ASSET", "").strip() or control_asset)
-        control_prompt = (os.environ.get("NPA_COSMOS_CONTROL_PROMPT", "").strip() or control_prompt)
-        mask_asset = (os.environ.get("NPA_COSMOS_MASK_ASSET", "").strip() or mask_asset)
-        mask_prompt = (os.environ.get("NPA_COSMOS_MASK_PROMPT", "").strip() or mask_prompt)
-        _cw = os.environ.get("NPA_COSMOS_CONTROL_WEIGHT", "").strip()
-        _g = os.environ.get("NPA_COSMOS_GUIDANCE", "").strip()
-        if _cw:
-            control_weight = float(_cw)
-        if _g:
-            guidance = float(_g)
-
-        # Reject an unusable conditioning request before the GPU is held. The spec
-        # builder enforces the same rules, but it only runs after the model and its
-        # weights are loaded, which is minutes of a held accelerator later.
-        from npa.workbench.cosmos.transfer import (
-            ControlModalityError,
-            resolve_control_modality,
-            resolve_control_weight,
-        )
-
-        try:
-            control = resolve_control_modality(control)
-            control_weight = resolve_control_weight(control_weight)
-        except ControlModalityError as exc:
-            raise typer.BadParameter(str(exc)) from exc
-        if mask_asset and mask_prompt:
-            raise typer.BadParameter(
-                "--mask-asset and --mask-prompt are mutually exclusive; Cosmos "
-                "Transfer takes either a precomputed region mask or a prompt to "
-                "generate one"
-            )
         control_asset = _materialize_control_asset(control_asset, label="--control-asset")
         mask_asset = _materialize_control_asset(mask_asset, label="--mask-asset")
 
@@ -625,14 +743,12 @@ def transfer_cmd(
                 write_shard_manifest,
             )
 
-            combos = _all_augmentations(configs_uri) if configs_uri else []
-            if not combos:
-                combos = [{}]
+            combos = _all_augmentations(configs_uri)
 
             # Multi-node fan-out: this node renders only its stride of the sampled
             # combos. Variant indices stay GLOBAL, so clip names remain disjoint
             # across the gang and the merged manifest keeps the sampled order.
-            rank, node_count = _gang_shard()
+            rank, node_count, attempt_id = _gang_identity()
             shard = [(i, combos[i]) for i in _shard_indices(len(combos), rank=rank, nodes=node_count)]
 
             conditioning_clip_uri = _persist_generated_conditioning_clip(
@@ -715,10 +831,14 @@ def transfer_cmd(
                     node_count=node_count,
                     variant_parallelism=parallelism,
                     variant_total=len(combos),
+                    attempt_id=attempt_id,
                 )
                 manifest = (
                     merge_shard_manifests(
-                        output_uri, run_id=run_id, node_count=node_count
+                        output_uri,
+                        run_id=run_id,
+                        node_count=node_count,
+                        attempt_id=attempt_id,
                     )
                     if rank == 0
                     else build_run_manifest(
@@ -726,6 +846,7 @@ def transfer_cmd(
                         run_id=run_id,
                         variant_parallelism=parallelism,
                         node_count=node_count,
+                        attempt_id=attempt_id,
                     )
                 )
             else:
@@ -745,8 +866,14 @@ def transfer_cmd(
             payload["node_rank"] = rank
             payload["shard_variant_count"] = len(clips)
             payload["clips"] = manifest["clips"]
-            payload["augmentation_variables"] = combos[0]
-            payload["prompt"] = str((combos[0] or {}).get("prompt") or "")
+            local_variables = [combo for _index, combo in shard]
+            payload["augmentation_variables"] = local_variables
+            local_prompts = [str(combo.get("prompt") or "") for combo in local_variables]
+            payload["prompts"] = local_prompts
+            # Retain the legacy singular field as the first prompt this worker
+            # actually executed; an empty stride reports no prompt.
+            payload["prompt"] = local_prompts[0] if local_prompts else ""
+            payload["attempt_id"] = attempt_id
             payload["input_conditioned"] = bool(local_input)
             payload["conditioning_clip_uri"] = manifest.get("conditioning_clip_uri", "")
             payload["control_spec"] = manifest["control_spec"]

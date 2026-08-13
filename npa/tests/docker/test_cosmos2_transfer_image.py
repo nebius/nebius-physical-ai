@@ -291,6 +291,10 @@ def test_exact_pin_golden_eval_and_workflow_use_the_legal_path() -> None:
         golden["golden_eval"]["command"]
         == "bash /opt/cosmos2-transfer/smoke_functional.sh"
     )
+    smoke = (IMAGE_DIR / "smoke_functional.sh").read_text(encoding="utf-8")
+    assert "from npa.workbench.cosmos.transfer import _classify_output_videos" in smoke
+    assert "_classify_output_videos(out)" in smoke
+    assert 'if "control" not in Path(p).name.lower()' not in smoke
     assert "procedural input" in golden["safety"]["notes"]
     assert "built outside this repo" not in golden["safety"]["notes"]
     argv = TOOL_CATALOG["workbench.cosmos2.transfer_execute"].argv_template

@@ -25,6 +25,7 @@ from npa.cli.workbench import cosmos2
 from npa.workbench.cosmos import transfer as tx
 
 runner = CliRunner()
+ATTEMPT = "wave-attempt-1"
 
 
 class FakeStorage:
@@ -61,6 +62,14 @@ def _clip(index: int, *, run_id: str = "run1") -> dict:
     }
 
 
+def _write_shard(*args, attempt_id: str = ATTEMPT, **kwargs):
+    return tx.write_shard_manifest(*args, attempt_id=attempt_id, **kwargs)
+
+
+def _merge_shards(*args, attempt_id: str = ATTEMPT, **kwargs):
+    return tx.merge_shard_manifests(*args, attempt_id=attempt_id, **kwargs)
+
+
 def test_shard_indices_stride_so_every_node_gets_a_balanced_share() -> None:
     # 5 combos over 2 nodes: striding keeps the nodes within one variant of each
     # other; contiguous blocks would give one node 3 and the other 2 in sequence.
@@ -83,14 +92,71 @@ def test_gang_shard_reads_skypilot_identity(monkeypatch: pytest.MonkeyPatch) -> 
     # No gang: a single-node augment, which is the shipped default.
     assert cosmos2._gang_shard() == (0, 1)
 
+    monkeypatch.setenv("NPA_COSMOS_NODE_COUNT", "4")
     monkeypatch.setenv("SKYPILOT_NUM_NODES", "4")
     monkeypatch.setenv("SKYPILOT_NODE_RANK", "2")
+    monkeypatch.setenv("SKYPILOT_NODE_IPS", "10.0.0.1\n10.0.0.2\n10.0.0.3\n10.0.0.4")
+    monkeypatch.setenv("SKYPILOT_INTERNAL_JOB_ID", "42")
+    monkeypatch.setenv("SKYPILOT_MANAGED_JOB_ID", "7")
+    monkeypatch.setenv("NPA_WORKFLOW_ATTEMPT_ID", "loop-2-wave-1")
     assert cosmos2._gang_shard() == (2, 4)
 
-    # An NPA override wins, so the shard is reproducible off-cluster.
+    # A local gang is reproducible only with an explicit shared attempt id.
+    for name in (
+        "SKYPILOT_NUM_NODES",
+        "SKYPILOT_NODE_RANK",
+        "SKYPILOT_NODE_IPS",
+        "SKYPILOT_INTERNAL_JOB_ID",
+        "SKYPILOT_MANAGED_JOB_ID",
+        "NPA_WORKFLOW_ATTEMPT_ID",
+    ):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("NPA_COSMOS_NODE_COUNT", "2")
     monkeypatch.setenv("NPA_COSMOS_NODE_RANK", "1")
+    monkeypatch.setenv("NPA_COSMOS_ATTEMPT_ID", ATTEMPT)
     assert cosmos2._gang_shard() == (1, 2)
+
+
+def test_gang_identity_cross_checks_renderer_and_skypilot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_COSMOS_NODE_COUNT", "2")
+    monkeypatch.setenv("SKYPILOT_NUM_NODES", "3")
+    monkeypatch.setenv("SKYPILOT_NODE_RANK", "0")
+    monkeypatch.setenv("SKYPILOT_NODE_IPS", "10.0.0.1\n10.0.0.2\n10.0.0.3")
+    monkeypatch.setenv("SKYPILOT_INTERNAL_JOB_ID", "42")
+    monkeypatch.setenv("NPA_WORKFLOW_ATTEMPT_ID", "wave")
+    with pytest.raises(cosmos2.typer.BadParameter, match="contradictory"):
+        cosmos2._gang_identity()
+
+
+def test_attempt_identity_is_shared_by_gang_and_changes_on_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_COSMOS_NODE_COUNT", "2")
+    monkeypatch.setenv("SKYPILOT_NUM_NODES", "2")
+    monkeypatch.setenv("SKYPILOT_NODE_IPS", "10.0.0.1\n10.0.0.2")
+    monkeypatch.setenv("SKYPILOT_INTERNAL_JOB_ID", "101")
+    monkeypatch.setenv("SKYPILOT_MANAGED_JOB_ID", "9")
+    monkeypatch.setenv("NPA_WORKFLOW_ATTEMPT_ID", "loop-iteration-2")
+    monkeypatch.setenv("SKYPILOT_NODE_RANK", "0")
+    rank0 = cosmos2._gang_identity()
+    monkeypatch.setenv("SKYPILOT_NODE_RANK", "1")
+    rank1 = cosmos2._gang_identity()
+    assert rank0[2] == rank1[2]
+
+    # SkyPilot_TASK_ID is deliberately irrelevant.  SkyPilot documents that it
+    # stays constant across managed-job recovery, and changing it here cannot
+    # manufacture a new shard identity.
+    monkeypatch.setenv("SKYPILOT_TASK_ID", "not-part-of-the-identity")
+    task_id_changed = cosmos2._gang_identity()
+    assert task_id_changed[2] == rank1[2]
+
+    # The cluster-local launch identity changes when the gang is relaunched.
+    monkeypatch.setenv("SKYPILOT_TASK_ID", "constant-across-recovery")
+    monkeypatch.setenv("SKYPILOT_INTERNAL_JOB_ID", "102")
+    recovered = cosmos2._gang_identity()
+    assert recovered[2] != rank1[2]
 
 
 @pytest.mark.parametrize(
@@ -112,7 +178,7 @@ def test_shard_manifests_merge_into_the_single_node_run_manifest() -> None:
     storage = FakeStorage()
     output_uri = "s3://bkt/run1/cosmos_augmented/"
     # Rank 1 finishes first; the merge must still restore sampled combo order.
-    tx.write_shard_manifest(
+    _write_shard(
         [_clip(1), _clip(3)],
         output_uri,
         run_id="run1",
@@ -122,7 +188,7 @@ def test_shard_manifests_merge_into_the_single_node_run_manifest() -> None:
         variant_total=4,
         storage_client=storage,
     )
-    tx.write_shard_manifest(
+    _write_shard(
         [_clip(0), _clip(2)],
         output_uri,
         run_id="run1",
@@ -133,7 +199,7 @@ def test_shard_manifests_merge_into_the_single_node_run_manifest() -> None:
         storage_client=storage,
     )
 
-    manifest = tx.merge_shard_manifests(
+    manifest = _merge_shards(
         output_uri, run_id="run1", node_count=2, storage_client=storage
     )
 
@@ -186,7 +252,7 @@ def test_shard_manifests_are_files_not_a_subdirectory_of_the_augment_prefix() ->
 def test_merge_waits_for_a_slow_rank_then_joins() -> None:
     storage = FakeStorage()
     output_uri = "s3://bkt/run1/cosmos_augmented/"
-    tx.write_shard_manifest(
+    _write_shard(
         [_clip(0)], output_uri, run_id="run1", rank=0, node_count=2,
         variant_parallelism=1, variant_total=2, storage_client=storage,
     )
@@ -194,12 +260,12 @@ def test_merge_waits_for_a_slow_rank_then_joins() -> None:
 
     def late_arrival(seconds: float) -> None:
         waits.append(seconds)
-        tx.write_shard_manifest(
+        _write_shard(
             [_clip(1)], output_uri, run_id="run1", rank=1, node_count=2,
             variant_parallelism=1, variant_total=2, storage_client=storage,
         )
 
-    manifest = tx.merge_shard_manifests(
+    manifest = _merge_shards(
         output_uri,
         run_id="run1",
         node_count=2,
@@ -215,22 +281,23 @@ def test_merge_waits_for_a_slow_rank_then_joins() -> None:
 def test_merge_ignores_a_stale_shard_until_the_current_rank_overwrites_it() -> None:
     storage = FakeStorage()
     output_uri = "s3://bkt/run1/cosmos_augmented/"
-    tx.write_shard_manifest(
+    _write_shard(
         [_clip(0)], output_uri, run_id="run1", rank=0, node_count=2,
         variant_parallelism=1, variant_total=2, storage_client=storage,
     )
-    tx.write_shard_manifest(
-        [_clip(1, run_id="old")], output_uri, run_id="old", rank=1, node_count=2,
+    _write_shard(
+        [_clip(1)], output_uri, run_id="run1", rank=1, node_count=2,
         variant_parallelism=1, variant_total=2, storage_client=storage,
+        attempt_id="prior-loop-same-run",
     )
 
     def current_arrival(_seconds: float) -> None:
-        tx.write_shard_manifest(
+        _write_shard(
             [_clip(1)], output_uri, run_id="run1", rank=1, node_count=2,
             variant_parallelism=1, variant_total=2, storage_client=storage,
         )
 
-    manifest = tx.merge_shard_manifests(
+    manifest = _merge_shards(
         output_uri,
         run_id="run1",
         node_count=2,
@@ -239,22 +306,56 @@ def test_merge_ignores_a_stale_shard_until_the_current_rank_overwrites_it() -> N
     )
 
     assert manifest["clips"] == ["aug-run1-0", "aug-run1-1"]
+    assert manifest["attempt_id"] == ATTEMPT
+    assert {item["attempt_id"] for item in manifest["shards"]} == {ATTEMPT}
+
+
+def test_merge_rejects_prior_recovery_attempt_with_identical_stable_fields() -> None:
+    storage = FakeStorage()
+    output_uri = "s3://bkt/run1/cosmos_augmented/"
+    _write_shard(
+        [_clip(0)], output_uri, run_id="run1", rank=0, node_count=2,
+        variant_parallelism=1, variant_total=2, storage_client=storage,
+        attempt_id="recovered-launch",
+    )
+    _write_shard(
+        [_clip(1)], output_uri, run_id="run1", rank=1, node_count=2,
+        variant_parallelism=1, variant_total=2, storage_client=storage,
+        attempt_id="failed-launch",
+    )
+    waits = 0
+
+    def recovered_rank(_seconds: float) -> None:
+        nonlocal waits
+        waits += 1
+        _write_shard(
+            [_clip(1)], output_uri, run_id="run1", rank=1, node_count=2,
+            variant_parallelism=1, variant_total=2, storage_client=storage,
+            attempt_id="recovered-launch",
+        )
+
+    manifest = _merge_shards(
+        output_uri, run_id="run1", node_count=2, storage_client=storage,
+        attempt_id="recovered-launch", sleep=recovered_rank,
+    )
+    assert waits == 1
+    assert manifest["attempt_id"] == "recovered-launch"
 
 
 def test_merge_refuses_duplicate_or_missing_global_variant_indices() -> None:
     storage = FakeStorage()
     output_uri = "s3://bkt/run1/cosmos_augmented/"
-    tx.write_shard_manifest(
+    _write_shard(
         [_clip(0)], output_uri, run_id="run1", rank=0, node_count=2,
         variant_parallelism=1, variant_total=2, storage_client=storage,
     )
-    tx.write_shard_manifest(
+    _write_shard(
         [_clip(0)], output_uri, run_id="run1", rank=1, node_count=2,
         variant_parallelism=1, variant_total=2, storage_client=storage,
     )
 
     with pytest.raises(RuntimeError, match="cover every variant exactly once"):
-        tx.merge_shard_manifests(
+        _merge_shards(
             output_uri, run_id="run1", node_count=2, storage_client=storage
         )
 
@@ -264,13 +365,13 @@ def test_merge_refuses_duplicate_or_missing_global_variant_indices() -> None:
 def test_merge_fails_naming_the_ranks_that_never_reported() -> None:
     storage = FakeStorage()
     output_uri = "s3://bkt/run1/cosmos_augmented/"
-    tx.write_shard_manifest(
+    _write_shard(
         [_clip(0)], output_uri, run_id="run1", rank=0, node_count=3,
         variant_parallelism=1, variant_total=3, storage_client=storage,
     )
 
     with pytest.raises(RuntimeError, match=r"rank\(s\) \[1, 2\]"):
-        tx.merge_shard_manifests(
+        _merge_shards(
             output_uri,
             run_id="run1",
             node_count=3,
@@ -288,13 +389,13 @@ def test_the_join_keeps_waiting_rather_than_timing_out_a_slow_sibling() -> None:
     """A sibling's remaining work is however long its diffusions take.
 
     Any default deadline short enough to be useful would fail runs that were
-    about to succeed, and an unbounded wait cannot outlive a dead sibling:
-    SkyPilot fails the whole task when a node's process exits nonzero.
+    about to succeed. Operators can choose an explicit observable deadline for
+    a live-but-hung sibling.
     """
 
     storage = FakeStorage()
     output_uri = "s3://bkt/run1/cosmos_augmented/"
-    tx.write_shard_manifest(
+    _write_shard(
         [_clip(0)], output_uri, run_id="run1", rank=0, node_count=2,
         variant_parallelism=1, variant_total=2, storage_client=storage,
     )
@@ -304,12 +405,12 @@ def test_the_join_keeps_waiting_rather_than_timing_out_a_slow_sibling() -> None:
         waits.append(seconds)
         if len(waits) < 40:
             return
-        tx.write_shard_manifest(
+        _write_shard(
             [_clip(1)], output_uri, run_id="run1", rank=1, node_count=2,
             variant_parallelism=1, variant_total=2, storage_client=storage,
         )
 
-    manifest = tx.merge_shard_manifests(
+    manifest = _merge_shards(
         output_uri,
         run_id="run1",
         node_count=2,
@@ -327,19 +428,37 @@ def test_an_operator_can_ask_for_a_join_deadline(
 ) -> None:
     storage = FakeStorage()
     output_uri = "s3://bkt/run1/cosmos_augmented/"
-    tx.write_shard_manifest(
+    _write_shard(
         [_clip(0)], output_uri, run_id="run1", rank=0, node_count=2,
         variant_parallelism=1, variant_total=2, storage_client=storage,
     )
     monkeypatch.setenv("NPA_COSMOS_SHARD_JOIN_TIMEOUT_S", "0")
 
-    with pytest.raises(RuntimeError, match=r"rank\(s\) \[1\]"):
-        tx.merge_shard_manifests(
+    diagnostics: list[str] = []
+    with pytest.raises(RuntimeError, match=r"rank\(s\) \[1\].*attempt"):
+        _merge_shards(
             output_uri,
             run_id="run1",
             node_count=2,
             storage_client=storage,
             sleep=lambda _s: None,
+            progress=diagnostics.append,
+        )
+    assert any("missing_ranks=[1]" in item for item in diagnostics)
+    assert any("timeout=0s" in item for item in diagnostics)
+
+
+@pytest.mark.parametrize("value", ["nope", "-1", "nan", "inf"])
+def test_invalid_join_timeout_fails_cleanly(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("NPA_COSMOS_SHARD_JOIN_TIMEOUT_S", value)
+    with pytest.raises(ValueError, match="finite|non-negative|number"):
+        _merge_shards(
+            "s3://bkt/run1/cosmos_augmented/",
+            run_id="run1",
+            node_count=2,
+            storage_client=FakeStorage(),
         )
 
 
@@ -417,6 +536,7 @@ def test_a_worker_renders_only_its_stride_and_publishes_a_shard(
     rendered = _multiply_cli(monkeypatch, tmp_path, storage)
     monkeypatch.setenv("NPA_COSMOS_NODE_COUNT", "2")
     monkeypatch.setenv("NPA_COSMOS_NODE_RANK", "1")
+    monkeypatch.setenv("NPA_COSMOS_ATTEMPT_ID", ATTEMPT)
 
     result = _invoke_multiply(tmp_path / "configs")
 
@@ -437,6 +557,12 @@ def test_a_worker_renders_only_its_stride_and_publishes_a_shard(
     assert payload["node_rank"] == 1
     assert payload["node_count"] == 2
     assert payload["shard_variant_count"] == 2
+    assert payload["augmentation_variables"] == [
+        {"lighting": "l1", "prompt": "scene 1"},
+        {"lighting": "l3", "prompt": "scene 3"},
+    ]
+    assert payload["prompts"] == ["scene 1", "scene 3"]
+    assert payload["prompt"] == "scene 1"
 
 
 def test_rank_zero_merges_the_gang_into_one_run_manifest(
@@ -445,7 +571,7 @@ def test_rank_zero_merges_the_gang_into_one_run_manifest(
     storage = FakeStorage()
     rendered = _multiply_cli(monkeypatch, tmp_path, storage)
     # The other node already finished and left its shard behind.
-    tx.write_shard_manifest(
+    _write_shard(
         [_clip(1), _clip(3)],
         "s3://bkt/run1/cosmos_augmented/",
         run_id="run1",
@@ -457,6 +583,7 @@ def test_rank_zero_merges_the_gang_into_one_run_manifest(
     )
     monkeypatch.setenv("NPA_COSMOS_NODE_COUNT", "2")
     monkeypatch.setenv("NPA_COSMOS_NODE_RANK", "0")
+    monkeypatch.setenv("NPA_COSMOS_ATTEMPT_ID", ATTEMPT)
 
     result = _invoke_multiply(tmp_path / "configs")
 
@@ -478,6 +605,26 @@ def test_rank_zero_merges_the_gang_into_one_run_manifest(
     assert payload["shard_variant_count"] == 2
 
 
+def test_an_explicit_local_surplus_rank_reports_an_empty_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage = FakeStorage()
+    rendered = _multiply_cli(monkeypatch, tmp_path, storage)
+    monkeypatch.setenv("NPA_COSMOS_NODE_COUNT", "5")
+    monkeypatch.setenv("NPA_COSMOS_NODE_RANK", "4")
+    monkeypatch.setenv("NPA_COSMOS_ATTEMPT_ID", ATTEMPT)
+
+    result = _invoke_multiply(tmp_path / "configs")
+
+    assert result.exit_code == 0, result.output
+    assert rendered == []
+    payload = json.loads(result.output)
+    assert payload["shard_variant_count"] == 0
+    assert payload["augmentation_variables"] == []
+    assert payload["prompts"] == []
+    assert payload["prompt"] == ""
+
+
 def test_single_node_augment_writes_no_shard_and_keeps_todays_manifest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -485,7 +632,13 @@ def test_single_node_augment_writes_no_shard_and_keeps_todays_manifest(
 
     storage = FakeStorage()
     rendered = _multiply_cli(monkeypatch, tmp_path, storage)
-    for name in ("NPA_COSMOS_NODE_COUNT", "NPA_COSMOS_NODE_RANK", "SKYPILOT_NUM_NODES", "SKYPILOT_NODE_RANK"):
+    for name in (
+        "NPA_COSMOS_NODE_COUNT",
+        "NPA_COSMOS_NODE_RANK",
+        "NPA_COSMOS_ATTEMPT_ID",
+        "SKYPILOT_NUM_NODES",
+        "SKYPILOT_NODE_RANK",
+    ):
         monkeypatch.delenv(name, raising=False)
 
     result = _invoke_multiply(tmp_path / "configs")

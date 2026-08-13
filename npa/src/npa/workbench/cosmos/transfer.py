@@ -16,11 +16,18 @@ on :func:`cosmos_transfer_available` and fall back to their descriptor path.
 from __future__ import annotations
 
 import glob
+import logging
 import os
 import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
+
+from npa.workbench.cosmos.control_contract import (
+    COSMOS_TRANSFER_CHECKPOINTS as CONTROL_MODALITY_MODELS,
+    ControlContractError,
+    validate_control_request,
+)
 
 DEFAULT_REPO = "/opt/cosmos/cosmos-transfer2.5"
 # No upstream media is bundled in the redistributable image. Callers must supply
@@ -28,11 +35,10 @@ DEFAULT_REPO = "/opt/cosmos/cosmos-transfer2.5"
 DEFAULT_SPEC = ""
 
 # Control modalities the pinned Cosmos Transfer 2.5 accepts (upstream CONTROL_KEYS).
-# Every one of them is computed ON-THE-FLY from the input ``video_path`` when no
-# ``control_path`` is given -- Canny edge, bilateral blur, VideoDepthAnything
-# depth, and GroundingDINO+SAM2 segmentation -- so conditioning on an arbitrary
-# input clip needs no precomputed control asset for any modality.
-INPUT_AUTO_CONTROLS = ("edge", "vis", "depth", "seg")
+# Depth is intentionally precomputed-only: NPA neither downloads nor executes
+# Video Depth Anything weights.
+INPUT_CONTROLS = tuple(CONTROL_MODALITY_MODELS)
+INPUT_AUTO_CONTROLS = ("edge", "vis", "seg")
 DEFAULT_INPUT_CONTROL = "edge"
 # ``seg`` is the only modality whose on-the-fly generator is text-driven: upstream
 # feeds ``control_prompt`` to GroundingDINO to pick the objects SAM2 then tracks,
@@ -40,12 +46,6 @@ DEFAULT_INPUT_CONTROL = "edge"
 CONTROL_PROMPT_MODALITIES = ("seg",)
 # Each modality is a separate ControlNet checkpoint, so a seg/depth run downloads
 # weights an edge run never touches. Named here for the operator-facing error.
-CONTROL_MODALITY_MODELS = {
-    "edge": "Canny edge",
-    "vis": "bilateral blur",
-    "depth": "VideoDepthAnything",
-    "seg": "GroundingDINO-base + SAM2",
-}
 DISABLE_CONTENT_GUARDRAILS_ENV = "NPA_COSMOS_DISABLE_CONTENT_GUARDRAILS"
 # Live job 339 reported SUCCEEDED while the spec promised ``manifest.json`` and
 # the then-reference-only tool wrote ``index.json`` with a different schema.
@@ -92,15 +92,15 @@ def resolve_control_modality(control: str) -> str:
     got an edge-conditioned render and no signal that the request was dropped.
     """
 
-    modality = str(control or DEFAULT_INPUT_CONTROL).strip().lower()
-    if not modality:
-        return DEFAULT_INPUT_CONTROL
-    if modality not in INPUT_AUTO_CONTROLS:
-        raise ControlModalityError(
-            f"unsupported Cosmos Transfer control modality {modality!r}; "
-            f"expected one of {', '.join(INPUT_AUTO_CONTROLS)}"
+    try:
+        checkpoint, _weight = validate_control_request(
+            modality=control or DEFAULT_INPUT_CONTROL,
+            weight=1.0,
+            control_asset="precomputed" if str(control or "").strip().lower() == "depth" else "",
         )
-    return modality
+    except ControlContractError as exc:
+        raise ControlModalityError(str(exc)) from exc
+    return checkpoint.modality
 
 
 def resolve_control_weight(control_weight: float | str) -> float:
@@ -112,16 +112,11 @@ def resolve_control_weight(control_weight: float | str) -> float:
     """
 
     try:
-        weight = float(control_weight)
-    except (TypeError, ValueError) as exc:
-        raise ControlModalityError(
-            f"control weight {control_weight!r} is not a number"
-        ) from exc
-    if not 0.0 <= weight <= 1.0:
-        raise ControlModalityError(
-            f"control weight {weight} is outside Cosmos Transfer's accepted range "
-            "0.0-1.0 (0 ignores the control, 1 adheres to it most strongly)"
+        _checkpoint, weight = validate_control_request(
+            modality="edge", weight=control_weight
         )
+    except ControlContractError as exc:
+        raise ControlModalityError(str(exc)) from exc
     return weight
 
 
@@ -141,9 +136,9 @@ def _spec_for_input_video(
 ) -> tuple[str, str]:
     """Write a Cosmos Transfer 2.5 controlnet spec that CONDITIONS ON ``input_video``.
 
-    ``video_path`` is the caller's real input clip; the control signal is computed
-    on-the-fly from it unless ``control_asset`` supplies a precomputed control
-    video, so the output preserves the input's structure/motion while ``prompt``
+    ``video_path`` is the caller's real input clip; edge/vis/seg may be computed
+    from it, while depth requires ``control_asset`` from an operator-owned
+    weight-free method. The output preserves structure/motion while ``prompt``
     drives a new appearance -- i.e. a genuine augmentation of the caller's footage.
 
     ``control_prompt`` names the objects on-the-fly ``seg`` should segment.
@@ -154,19 +149,20 @@ def _spec_for_input_video(
     """
     import json as _json
 
-    modality = resolve_control_modality(control)
-    if mask_asset and mask_prompt:
-        raise ControlModalityError(
-            "give either a precomputed region mask or a mask prompt for "
-            f"{modality!r} control, not both"
+    try:
+        checkpoint, normalized_weight = validate_control_request(
+            modality=control,
+            weight=control_weight,
+            control_asset=control_asset,
+            control_prompt=control_prompt,
+            mask_asset=mask_asset,
+            mask_prompt=mask_prompt,
         )
-    if control_prompt and modality not in CONTROL_PROMPT_MODALITIES:
-        raise ControlModalityError(
-            f"{modality!r} control is not text-driven, so a control prompt has no "
-            f"effect; only {', '.join(CONTROL_PROMPT_MODALITIES)} accepts one"
-        )
+    except ControlContractError as exc:
+        raise ControlModalityError(str(exc)) from exc
+    modality = checkpoint.modality
     control_config: dict[str, Any] = {
-        "control_weight": resolve_control_weight(control_weight)
+        "control_weight": normalized_weight
     }
     if control_asset:
         control_config["control_path"] = str(Path(control_asset).resolve())
@@ -345,7 +341,7 @@ def run_cosmos_transfer(
 
     When ``input_video`` is provided the transfer is CONDITIONED ON THAT CLIP: a
     controlnet spec is built with ``video_path`` = the input and the ``control``
-    modality computed on-the-fly, so the output is a real augmentation of the
+    selected modality (or precomputed depth control), so the output is a real augmentation of the
     caller's footage (new appearance from ``prompt``, same structure/motion).
     ``control_asset`` substitutes a precomputed control video, ``control_prompt``
     names what on-the-fly ``seg`` segments, and ``mask_asset``/``mask_prompt``
@@ -584,17 +580,11 @@ def publish_transfer_clip(
 
     control_uris: dict[str, str] = {}
     control_frames: dict[str, list[str]] = {}
+    control_evidence: dict[str, str] = {
+        "status": "pending" if control_output_uri else "not_requested"
+    }
     frame_index: list[dict[str, str]] = []
     with _tempfile.TemporaryDirectory(prefix="npa-cosmos-pub-") as tmp:
-        if control_output_uri:
-            control_uris, control_frames = _publish_control_signal(
-                transfer,
-                control_output_uri,
-                clip=clip,
-                workdir=Path(tmp) / "control",
-                max_frames=max_frames,
-                client=client,
-            )
         frames = extract_frames(transfer["video_path"], Path(tmp) / "frames", max_frames=max_frames)
         if require_frames and not frames:
             raise RuntimeError(
@@ -610,7 +600,7 @@ def publish_transfer_clip(
             client.upload_file(str(frame_path), f"{frames_base}{key}")
             frame_index.append({"frame_id": f"frame-{i:05d}", "uri": f"{frames_base}{key}"})
 
-        clip_meta = {
+        clip_meta: dict[str, Any] = {
             "schema": TRANSFER_MANIFEST_SCHEMA,
             "mode": TRANSFER_MANIFEST_MODE,
             "clip": clip,
@@ -629,11 +619,55 @@ def publish_transfer_clip(
             "control_prompt": str(transfer.get("control_prompt") or ""),
             "mask_prompt": str(transfer.get("mask_prompt") or ""),
             "control_uris": control_uris,
+            "control_evidence": control_evidence,
             "content_guardrails_enabled": content_guardrails_enabled,
         }
         cm = Path(tmp) / "metadata.json"
-        cm.write_text(_json.dumps(clip_meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        client.upload_file(str(cm), f"{clip_base}metadata.json")
+
+        def _upload_metadata() -> None:
+            cm.write_text(
+                _json.dumps(clip_meta, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            client.upload_file(str(cm), f"{clip_base}metadata.json")
+
+        # Commit the completed render before optional evidence.  If a control
+        # sidecar upload fails, consumers still get a coherent generated video,
+        # frames, and metadata that does not claim the evidence exists.
+        _upload_metadata()
+        if control_output_uri:
+            try:
+                control_uris, control_frames = _publish_control_signal(
+                    transfer,
+                    control_output_uri,
+                    clip=clip,
+                    workdir=Path(tmp) / "control",
+                    max_frames=max_frames,
+                    client=client,
+                )
+            except Exception as exc:  # noqa: BLE001 - evidence is non-fatal
+                control_uris = {}
+                control_frames = {}
+                control_evidence = {
+                    "status": "failed",
+                    # Never persist provider errors: they can contain signed URLs
+                    # or credential-adjacent request details.
+                    "error_type": type(exc).__name__,
+                }
+            else:
+                control_evidence = {"status": "published"}
+            clip_meta["control_uris"] = control_uris
+            clip_meta["control_evidence"] = control_evidence
+            try:
+                _upload_metadata()
+            except Exception as exc:  # noqa: BLE001 - core metadata is durable
+                # The first metadata object says `pending`, never that evidence
+                # exists.  A separately retryable evidence/finalization failure
+                # must not discard a completed generated variant.
+                logging.getLogger(__name__).debug(
+                    "control evidence metadata finalization failed: %s",
+                    type(exc).__name__,
+                )
 
     return {
         "clip": clip,
@@ -654,6 +688,7 @@ def publish_transfer_clip(
         "mask_prompt": str(transfer.get("mask_prompt") or ""),
         "control_uris": control_uris,
         "control_frames": control_frames,
+        "control_evidence": control_evidence,
         "content_guardrails_enabled": content_guardrails_enabled,
         "variables": variables or {},
     }
@@ -734,6 +769,7 @@ def build_run_manifest(
     variant_parallelism: int = 1,
     node_count: int = 1,
     shards: list[dict[str, Any]] | None = None,
+    attempt_id: str = "",
 ) -> dict[str, Any]:
     """Return the run-level transfer manifest for ``clips`` (no I/O).
 
@@ -796,6 +832,8 @@ def build_run_manifest(
     }
     if shards is not None:
         manifest["shards"] = shards
+    if attempt_id:
+        manifest["attempt_id"] = str(attempt_id)
     return manifest
 
 
@@ -808,6 +846,7 @@ def write_run_manifest(
     variant_parallelism: int = 1,
     node_count: int = 1,
     shards: list[dict[str, Any]] | None = None,
+    attempt_id: str = "",
 ) -> dict[str, Any]:
     """Write the run-level ``cosmos_augmented/manifest.json`` listing every clip
     produced by the (possibly multi-variant) augment stage; return the manifest.
@@ -828,6 +867,7 @@ def write_run_manifest(
         variant_parallelism=variant_parallelism,
         node_count=node_count,
         shards=shards,
+        attempt_id=attempt_id,
     )
     _upload_json(client, manifest, transfer_manifest_uri_for(output_uri))
     return manifest
@@ -848,6 +888,7 @@ def write_shard_manifest(
     node_count: int,
     variant_parallelism: int = 1,
     variant_total: int = 0,
+    attempt_id: str,
     storage_client: Any = None,
 ) -> dict[str, Any]:
     """Publish ONE node's share of a multi-node augment as a shard manifest.
@@ -862,11 +903,15 @@ def write_shard_manifest(
     from npa.clients.storage import StorageClient
 
     client = storage_client or StorageClient.from_environment()
+    normalized_attempt_id = str(attempt_id or "").strip()
+    if not normalized_attempt_id:
+        raise ValueError("multi-node shard manifest requires a non-empty attempt_id")
     shard = {
         "schema": SHARD_MANIFEST_SCHEMA,
         "mode": TRANSFER_MANIFEST_MODE,
         "status": TRANSFER_MANIFEST_STATUS,
         "run_id": run_id,
+        "attempt_id": normalized_attempt_id,
         "rank": int(rank),
         "node_count": max(1, int(node_count or 1)),
         "variant_parallelism": max(1, int(variant_parallelism or 1)),
@@ -884,10 +929,14 @@ def merge_shard_manifests(
     *,
     run_id: str = "",
     node_count: int,
+    attempt_id: str,
     storage_client: Any = None,
     timeout_s: float | None = None,
     poll_interval_s: float = 15.0,
+    progress_interval_s: float = 60.0,
     sleep: Any = None,
+    monotonic: Any = None,
+    progress: Any = None,
 ) -> dict[str, Any]:
     """Wait for every node's shard manifest, then write the run manifest.
 
@@ -901,15 +950,16 @@ def merge_shard_manifests(
     The wait is unbounded by default, because there is no defensible duration to
     cap it at: a sibling's remaining work is however long its diffusions take, and
     a deadline short enough to be useful would fail runs that were about to
-    succeed. An unbounded wait cannot outlive a dead sibling either — SkyPilot
-    fails the whole task when any node's process exits nonzero. Set
+    succeed. Missing ranks and elapsed time are emitted periodically. Set
     ``NPA_COSMOS_SHARD_JOIN_TIMEOUT_S`` (or pass ``timeout_s``) when an operator
     does want a deadline, and the failure then names the missing ranks.
     """
 
     import json as _json
+    import math as _math
     import tempfile as _tempfile
     import time as _time
+    import sys as _sys
 
     if not output_uri.startswith("s3://"):
         raise ValueError(f"output_uri must be an s3:// prefix, got: {output_uri!r}")
@@ -917,12 +967,30 @@ def merge_shard_manifests(
 
     client = storage_client or StorageClient.from_environment()
     waiter = sleep or _time.sleep
+    clock = monotonic or _time.monotonic
+    reporter = progress or (
+        lambda message: print(message, file=_sys.stderr, flush=True)
+    )
     expected = max(1, int(node_count or 1))
+    normalized_attempt_id = str(attempt_id or "").strip()
+    if not normalized_attempt_id:
+        raise ValueError("multi-node shard merge requires a non-empty attempt_id")
     limit = timeout_s
     if limit is None:
         env_limit = str(os.environ.get("NPA_COSMOS_SHARD_JOIN_TIMEOUT_S", "")).strip()
-        limit = float(env_limit) if env_limit else None
-    deadline = None if limit is None else _time.monotonic() + max(0.0, float(limit))
+        try:
+            limit = float(env_limit) if env_limit else None
+        except ValueError as exc:
+            raise ValueError(
+                "NPA_COSMOS_SHARD_JOIN_TIMEOUT_S must be a non-negative number"
+            ) from exc
+    if limit is not None and (
+        not _math.isfinite(float(limit)) or float(limit) < 0
+    ):
+        raise ValueError("shard join timeout must be finite and non-negative")
+    started = clock()
+    deadline = None if limit is None else started + float(limit)
+    last_progress: float | None = None
     shards: dict[int, dict[str, Any]] = {}
 
     def _is_current_shard(document: Any, rank: int) -> bool:
@@ -936,6 +1004,7 @@ def merge_shard_manifests(
             and document.get("mode") == TRANSFER_MANIFEST_MODE
             and document.get("status") == TRANSFER_MANIFEST_STATUS
             and str(document.get("run_id") or "") == str(run_id or "")
+            and str(document.get("attempt_id") or "") == normalized_attempt_id
             and int(document.get("rank", -1)) == rank
             and int(document.get("node_count", 0)) == expected
             and isinstance(descriptors, list)
@@ -969,11 +1038,25 @@ def merge_shard_manifests(
                     local.unlink(missing_ok=True)
             if len(shards) == expected:
                 break
-            if deadline is not None and _time.monotonic() >= deadline:
-                missing = [r for r in range(expected) if r not in shards]
+            now = clock()
+            missing = [r for r in range(expected) if r not in shards]
+            if (
+                last_progress is None
+                or now - last_progress >= max(0.0, float(progress_interval_s))
+            ):
+                reporter(
+                    "multi-node augment shard join waiting: "
+                    f"attempt={normalized_attempt_id} missing_ranks={missing} "
+                    f"received_ranks={sorted(shards)} "
+                    f"elapsed={max(0.0, now - started):.1f}s "
+                    f"timeout={'disabled' if limit is None else f'{float(limit):g}s'}"
+                )
+                last_progress = now
+            if deadline is not None and now >= deadline:
                 raise RuntimeError(
                     "multi-node augment: no shard manifest from rank(s) "
-                    f"{missing} after {float(limit or 0):.0f}s at {output_uri}. Those "
+                    f"{missing} for attempt {normalized_attempt_id} after "
+                    f"{float(limit or 0):.0f}s at {output_uri}. Those "
                     "nodes did not finish publishing their variants, so the run "
                     "manifest would understate the fan-out."
                 )
@@ -1014,9 +1097,11 @@ def merge_shard_manifests(
                 "variant_count": int(shard.get("variant_count", 0) or 0),
                 "variant_parallelism": max(1, int(shard.get("variant_parallelism", 1) or 1)),
                 "clips": list(shard.get("clips", [])),
+                "attempt_id": str(shard.get("attempt_id") or ""),
             }
             for rank, shard in sorted(shards.items())
         ],
+        attempt_id=normalized_attempt_id,
     )
 
 
@@ -1232,6 +1317,7 @@ __all__ = [
     "ControlModalityError",
     "FrameExtractionError",
     "INPUT_AUTO_CONTROLS",
+    "INPUT_CONTROLS",
     "REFERENCE_AUGMENT_MODE",
     "REFERENCE_AUGMENT_STATUS",
     "SHARD_MANIFEST_PREFIX",
