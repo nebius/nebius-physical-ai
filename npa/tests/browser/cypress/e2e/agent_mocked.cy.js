@@ -1016,11 +1016,13 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#simStage").should("contain.text", "stage_14_rerun_viz");
     cy.get("#simCamera").should("contain.text", "customer-overhead");
 
-    cy.get(`#runIdSelect option[value="${NON_STOCK_RUN_ID}"][data-source-type="workflow_history"]`).then(($opt) => {
-      const select = $opt[0].parentElement;
-      select.selectedIndex = [...select.options].indexOf($opt[0]);
-      cy.wrap(select).trigger("change");
-    });
+    cy.get(`#runIdSelect option[value="${NON_STOCK_RUN_ID}"][data-source-type="workflow_history"]`)
+      .should("have.length", 1);
+    // Cypress's native select command changes the source-qualified option and
+    // dispatches its event atomically, matching an operator selection. Manually
+    // setting selectedIndex and queueing a later trigger lets a prior async
+    // artifact refresh repaint the picker between those two artificial steps.
+    cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
     cy.wait("@loadRun");
     cy.get("#tabMain").click();
     cy.get("#stagesPanel h3").should("have.text", "Stages");
