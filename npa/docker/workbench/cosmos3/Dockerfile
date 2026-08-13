@@ -115,6 +115,7 @@ RUN cd "${COSMOS3_REPO}" \
 # entrypoint for the CLI, the SDK, and the SkyPilot workflow.
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
+COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 RUN UV_CACHE_DIR=/tmp/uv-cache uv venv --python 3.12 /opt/npa/.venv \
     && UV_CACHE_DIR=/tmp/uv-cache uv pip install \
        --python /opt/npa/.venv/bin/python -e /opt/npa \

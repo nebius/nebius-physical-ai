@@ -83,6 +83,7 @@ ENV PATH=/opt/lerobot/venv/bin:/opt/npa/venv/bin:$PATH \
 
 COPY --chown=1000:1000 pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=1000:1000 src/npa /opt/npa/src/npa
+COPY --chown=1000:1000 workflows /opt/npa/workflows
 
 RUN /opt/lerobot/venv/bin/python - <<'PY'
 import importlib

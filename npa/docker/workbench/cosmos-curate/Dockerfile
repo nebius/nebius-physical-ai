@@ -180,6 +180,7 @@ RUN python -m venv "${COSMOS_CURATE_VENV}" \
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
+COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 COPY --chown=ubuntu:ubuntu docker/workbench/cosmos-curate/smoke_functional.py /opt/npa/docker/workbench/cosmos-curate/smoke_functional.py
 COPY --chown=ubuntu:ubuntu docker/workbench/cosmos-curate/entrypoint.sh /opt/npa/docker/workbench/cosmos-curate/entrypoint.sh
 

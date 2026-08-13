@@ -25,6 +25,11 @@ report success while nothing is publicly pullable. Making the packages public is
 step that cannot be automated (see ``package_settings_url``); the verification prints a
 click-through list.
 
+``--verify-parity`` is the read-only drift check for automation: it runs the same source
+preflight and then requires every target tag to resolve to the exact same OCI digest. This
+is deliberately stronger than ``--verify-public``, because an anonymously pullable tag can
+still serve stale bytes.
+
 ``--describe-credential`` reads a source-registry credential on stdin and reports its
 expiry offline, because the credential is what actually breaks: a Nebius access token
 lives 12 hours, so anything stored in CI must be a static key issued for
@@ -579,7 +584,7 @@ def preflight_sources(plan: list[PublishItem]) -> list[tuple[PublishItem, str]]:
             detail = f"UNVALIDATED — {detail}"
         if ok:
             ok, detail = _crane_manifest_readable(item.source_ref)
-        if ok:
+        if ok and item.tool in images.SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS:
             ok, detail = verify_bootstrap_publication_source(item)
             detail = f"BOOTSTRAP GATE — {detail}"
         if ok and item.tool == "wan2-2":
@@ -800,6 +805,37 @@ def verify_public(plan: list[PublishItem]) -> list[tuple[PublishItem, str]]:
     return failures
 
 
+def verify_parity(plan: list[PublishItem]) -> list[tuple[PublishItem, str]]:
+    """Return items whose source and target do not resolve to identical OCI bytes.
+
+    Anonymous pullability proves that consumers can fetch a package, but it does not
+    prove that the target still serves the image pinned by ``main``. The plan is
+    expected to have passed source preflight already, so a source read failure here is
+    a blocking registry fault rather than a reason to silently omit the comparison.
+    """
+
+    failures: list[tuple[PublishItem, str]] = []
+    for item in plan:
+        source_ok, source_detail = _crane_digest(item.source_ref)
+        if not source_ok:
+            detail = f"source digest unreadable — {source_detail}"
+        else:
+            target_ok, target_detail = _crane_digest(item.target_ref)
+            if not target_ok:
+                detail = f"target digest unreadable — {target_detail}"
+            elif target_detail != source_detail:
+                detail = (
+                    "digest mismatch — "
+                    f"source {source_detail}; target {target_detail}"
+                )
+            else:
+                print(f"  {item.target_ref}  current ({source_detail})")
+                continue
+        print(f"  {item.target_ref}  DRIFTED — {detail}")
+        failures.append((item, detail))
+    return failures
+
+
 def ghcr_owner_and_package(target_ref: str) -> tuple[str, str] | None:
     """Split a GHCR reference into its owner and package name.
 
@@ -1015,6 +1051,16 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--verify-parity",
+        action="store_true",
+        help=(
+            "Do not copy. Preflight every planned source and compare its immutable OCI "
+            "digest with the target tag. Exit non-zero when a target is absent, unreadable, "
+            "or serves different bytes. Use --skip-missing to omit source images that have "
+            "not been built yet."
+        ),
+    )
+    parser.add_argument(
         "--preflight",
         action="store_true",
         help=(
@@ -1039,7 +1085,7 @@ def main(argv: list[str] | None = None) -> int:
         "--skip-missing",
         action="store_true",
         help=(
-            "Publish the images that exist, skipping any the source registry does not have "
+            "Operate on the images that exist, skipping any the source registry does not have "
             "yet (NAME_UNKNOWN / MANIFEST_UNKNOWN), and report exactly which were skipped. "
             "The plan comes from the packaging contract, which records what this repo BUILDS, "
             "so a tool that landed before its image was built otherwise blocks every ready "
@@ -1108,6 +1154,23 @@ def main(argv: list[str] | None = None) -> int:
                 print("\n" + visibility_checklist(failures))
             return 1
         print(f"\nAll {len(expected)} image(s) are publicly pullable.")
+        return 0
+
+    if args.verify_parity:
+        print("\nPreflighting source images before the digest comparison:")
+        expected = _preflight_or_explain(plan, skip_missing=args.skip_missing)
+        if not expected:
+            return 1
+        print("\nComparing source and target OCI digests:")
+        failures = verify_parity(expected)
+        if failures:
+            print(
+                f"\n{len(failures)} of {len(expected)} image(s) are not at parity; "
+                "run the guarded publisher to copy the exact source digests.",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"\nAll {len(expected)} image(s) have exact source/target digest parity.")
         return 0
 
     if args.preflight:

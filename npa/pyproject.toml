@@ -155,9 +155,9 @@ cosmos2-transfer = "2.5.1-skypilot-ready-20260801T053000Z"
 cosmos3 = "1.2.2-cu130-r2"
 cosmos3-reason = "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 # Cosmos Curator: NVIDIA upstream checkout + GPU-free curation stage deps.
-cosmos-curate = "0.1.2"
+cosmos-curate = "0.1.2-skypilot-v1-20260813T164700Z"
 # Cosmos Evaluator: NVIDIA upstream checkout; no model weights (CV + hosted VLM).
-cosmos-evaluator = "0.1.2"
+cosmos-evaluator = "0.1.2-skypilot-v1-20260813T164700Z"
 groot = "0.1.0"
 fiftyone = "1.15.0.post1"
 sonic = "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"

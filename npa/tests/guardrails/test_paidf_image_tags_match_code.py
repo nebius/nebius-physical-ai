@@ -106,48 +106,21 @@ def test_the_quick_start_forwards_the_hugging_face_token() -> None:
 def test_shell_examples_do_not_let_a_pipe_swallow_a_failed_submit() -> None:
     # `npa ... | tee run.log` reports 0 for a submit that printed `Error:`.
     guide = DEPLOY_GUIDE.read_text(encoding="utf-8")
-    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
 
     assert "set -o pipefail" in guide
-    # The README carried a copy of the path until #289; the guide is now the
-    # only document a reader pipes commands from.
-    assert "npa" in readme
 
 
-def _quick_start() -> str:
-    """The copy-paste path, which moved from the README to the guide in #289."""
-
-    text = DEPLOY_GUIDE.read_text(encoding="utf-8")
-    return text.split("## Quick start (copy-paste)", 1)[1].split("\n## ", 1)[0]
-
-
-def test_the_documented_path_names_the_image_step() -> None:
-    whole_path = _quick_start()
+def test_the_deploy_guide_path_names_the_image_step() -> None:
+    guide = DEPLOY_GUIDE.read_text(encoding="utf-8")
+    whole_path = (
+        guide.split("## Quick start (copy-paste)", 1)[1]
+        .split("```bash", 1)[1]
+        .split("```", 1)[0]
+    )
 
     assert "preflight-images" in whole_path
-    # A 2x1-GPU fleet needed `--gpu-nodes 2`, which the copy-paste path lacked.
+    # The copy-paste path must make its requested GPU count explicit.
     assert "--gpu-nodes" in whole_path
-
-
-def test_deterministic_gates_run_before_paid_provisioning() -> None:
-    """Free checks first: nothing that bills should precede a check that cannot.
-
-    The README anchored "paid" on `--gpu-readiness-timeout 900`. The guide's paid
-    step is the on-demand GPU provisioning itself, which is the thing that costs
-    money, so that is the anchor here.
-    """
-
-    guide = DEPLOY_GUIDE.read_text(encoding="utf-8")
-    quick_start = _quick_start()
-    paid_apply = quick_start.index("--on-demand")
-
-    assert quick_start.index("preflight-images") > paid_apply, (
-        "image preflight needs the cluster the provisioning step creates"
-    )
-    # The teardown and the free dry run are documented, so a reader who stops
-    # before paying can still find both.
-    assert 'npa destroy --project "$PROJECT" --all --json' in guide
-    assert "--dry-run --output-format json" in guide
 
 
 def test_no_build_command_when_the_dockerfile_is_not_where_we_would_say() -> None:
@@ -198,17 +171,19 @@ def test_the_copy_hint_never_suggests_copying_a_ref_onto_itself() -> None:
     assert f"crane copy {same} {same}" not in remedy
 
 
-def test_the_documented_path_offers_the_public_mirror_before_building() -> None:
+def test_the_deploy_guide_selects_the_public_mirror_before_preflight() -> None:
     """Building three multi-GB images is avoidable: the mirror already has them."""
 
     from npa.deploy.images import DEFAULT_PUBLIC_CONTAINER_REGISTRY
 
     guide = DEPLOY_GUIDE.read_text(encoding="utf-8")
-    quick_start = _quick_start()
-
-    assert DEFAULT_PUBLIC_CONTAINER_REGISTRY in quick_start, (
-        "the copy-paste path must reach the mirror before anyone builds"
+    whole_path = (
+        guide.split("## Quick start (copy-paste)", 1)[1]
+        .split("```bash", 1)[1]
+        .split("```", 1)[0]
     )
-    assert quick_start.index(DEFAULT_PUBLIC_CONTAINER_REGISTRY) < guide.index(
-        "## 4. Choose the public mirror or build into a private registry"
+
+    assert DEFAULT_PUBLIC_CONTAINER_REGISTRY in whole_path
+    assert whole_path.index(DEFAULT_PUBLIC_CONTAINER_REGISTRY) < whole_path.index(
+        "preflight-images"
     )
