@@ -60,15 +60,26 @@ DEFAULT_IMAGE_PULL_SECRETS = ("agent-sa",)
 #: dropped, so a run that declares nothing forwards nothing and the container's
 #: own gate refuses — which is the behaviour under test in the ltx2 and wan2-2
 #: image smokes.
-OPERATOR_RUNTIME_ENVS = (
-    "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS",
-    "NPA_LTX_ACCEPT_COMMUNITY_LICENSE",
-    "NPA_LTX_ENTITY_CLASS",
-    "NPA_LTX_USE_CLASS",
-    "NPA_LTX_COMMERCIAL_AGREEMENT_REF",
-    "NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS",
-    "HF_TOKEN",
-)
+#:
+#: Keyed by solution, because these are per-vendor answers and a single shared
+#: tuple quietly widens every other image's environment: adding LTX's variables
+#: for ltx2 also forwarded them — and HF_TOKEN — into wan2-2 and open-dreamer
+#: runs whenever they happened to be set in the operator's shell. A solution
+#: that is not listed forwards none of them.
+OPERATOR_RUNTIME_ENVS_BY_SOLUTION: dict[str, tuple[str, ...]] = {
+    "wan2.2": (
+        "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS",
+        "HF_TOKEN",
+    ),
+    "ltx2.5": (
+        "NPA_LTX_ACCEPT_COMMUNITY_LICENSE",
+        "NPA_LTX_ENTITY_CLASS",
+        "NPA_LTX_USE_CLASS",
+        "NPA_LTX_COMMERCIAL_AGREEMENT_REF",
+        "NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS",
+        "HF_TOKEN",
+    ),
+}
 DEFAULT_SECRET_ENVS = (
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
@@ -76,20 +87,23 @@ DEFAULT_SECRET_ENVS = (
 )
 
 
-def resolve_secret_envs(explicit: list[str] | None) -> list[str]:
+def resolve_secret_envs(
+    explicit: list[str] | None, *, solution_name: str = ""
+) -> list[str]:
     """Return the secret env names to forward to SkyPilot.
 
-    An explicit ``--secret-env`` list replaces the default storage names. An explicitly
-    set operator-runtime gate is appended in either case so acceptance cannot fall back
-    to rendered YAML. Names with no value are dropped, since SkyPilot rejects a secret
-    it cannot resolve.
+    An explicit ``--secret-env`` list replaces the default storage names. The
+    operator-runtime gates *this solution* reads are appended in either case, so
+    acceptance cannot fall back to rendered YAML — and a solution never receives
+    another vendor's answers. Names with no value are dropped, since SkyPilot
+    rejects a secret it cannot resolve.
     """
 
     names = list(explicit if explicit is not None else DEFAULT_SECRET_ENVS)
     # Operator acceptance is runtime state, not workflow configuration. Always
     # carry an explicitly set gate through SkyPilot's redacted secret channel,
     # even when a caller supplies an otherwise explicit secret allowlist.
-    names.extend(OPERATOR_RUNTIME_ENVS)
+    names.extend(OPERATOR_RUNTIME_ENVS_BY_SOLUTION.get(solution_name.strip(), ()))
     return [name for name in dict.fromkeys(names) if os.environ.get(name)]
 
 
@@ -468,7 +482,9 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     infra=infra,
                     config_path=config_path,
                     cleanup=args.cleanup,
-                    secret_envs=resolve_secret_envs(args.secret_env),
+                    secret_envs=resolve_secret_envs(
+                        args.secret_env, solution_name=args.solution_name
+                    ),
                 )
             teardown_guard = SignalTeardown(
                 run_id=run_id,
@@ -491,7 +507,9 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     config_path=submit_config_path,
                     sky_bin=sky_bin,
                     infra=infra,
-                    secret_envs=resolve_secret_envs(args.secret_env),
+                    secret_envs=resolve_secret_envs(
+                        args.secret_env, solution_name=args.solution_name
+                    ),
                     timeout=args.submit_timeout,
                 )
                 submitted_config_path = (

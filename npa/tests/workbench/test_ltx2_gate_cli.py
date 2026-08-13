@@ -232,3 +232,151 @@ class TestGateCli:
         assert payload["license"]["date"] == "2026-08-11"
         assert payload["license"]["osi_approved"] is False
         assert payload["runtime_fetch"]["baked_into_image"] is False
+
+
+class TestTheStampReconcilesWithTheRun:
+    """`stamp` runs in a different container than the generation it describes.
+
+    Deriving the declaration from `os.environ` alone left a seam exactly where
+    the chain of custody must not have one: if the operator's environment drifted
+    between states, or secret forwarding differed, the manifest the gate trusts
+    would record the CPU state's opinion rather than what the GPU run did.
+    """
+
+    def _declaration(self, path: Path, *, use_class: str) -> Path:
+        """What `ltx-runtime provenance` writes inside the generation container."""
+
+        from npa.workbench.ltx2.licensing import LicenseDeclaration, ProvenanceRecord
+
+        record = ProvenanceRecord(
+            declaration=LicenseDeclaration(
+                entity_class="community", use_class=use_class
+            ),
+            run_id="generation",
+        )
+        path.write_text(json.dumps(record.as_dict()), encoding="utf-8")
+        return path
+
+    def test_a_matching_declaration_stamps(self, tmp_path: Path) -> None:
+        declaration = self._declaration(
+            tmp_path / "ltx2_5_declaration.json", use_class="non-commercial"
+        )
+
+        result = gate_module.stamp_run(
+            run_id="r1",
+            outputs=[str(tmp_path / "v.mp4")],
+            manifest_uri=str(tmp_path / "manifest.json"),
+            env={
+                ACCEPT_ENV: "YES",
+                ENTITY_CLASS_ENV: "community",
+                USE_CLASS_ENV: "non-commercial",
+            },
+            declaration_uri=str(declaration),
+        )
+
+        assert result.manifest["operator_declaration"]["use_class"] == "non-commercial"
+
+    def test_a_declaration_that_drifted_between_states_refuses(
+        self, tmp_path: Path
+    ) -> None:
+        """The whole point: the run said commercial, this state says otherwise."""
+
+        declaration = self._declaration(
+            tmp_path / "ltx2_5_declaration.json", use_class="commercial"
+        )
+
+        with pytest.raises(LtxLicenseError) as excinfo:
+            gate_module.stamp_run(
+                run_id="r1",
+                outputs=[str(tmp_path / "v.mp4")],
+                manifest_uri=str(tmp_path / "manifest.json"),
+                env={
+                    ACCEPT_ENV: "YES",
+                    ENTITY_CLASS_ENV: "community",
+                    USE_CLASS_ENV: "non-commercial",
+                },
+                declaration_uri=str(declaration),
+            )
+
+        message = str(excinfo.value)
+        assert "disagrees with the one the generation ran under" in message
+        assert "use_class" in message
+        assert not (tmp_path / "manifest.json").exists(), (
+            "a refused stamp must not leave a manifest behind"
+        )
+
+    def test_an_unreadable_declaration_refuses_rather_than_falling_back(
+        self, tmp_path: Path
+    ) -> None:
+        with pytest.raises(LtxLicenseError) as excinfo:
+            gate_module.stamp_run(
+                run_id="r1",
+                outputs=[],
+                manifest_uri=str(tmp_path / "manifest.json"),
+                env={
+                    ACCEPT_ENV: "YES",
+                    ENTITY_CLASS_ENV: "community",
+                    USE_CLASS_ENV: "non-commercial",
+                },
+                declaration_uri=str(tmp_path / "absent.json"),
+            )
+
+        assert "Cannot read the generation's own declaration" in str(excinfo.value)
+
+
+class TestTheGateIsBoundToItsArtifacts:
+    """A decision about a document is not a decision about the bytes."""
+
+    def _manifest(self, path: Path, *, outputs: list[str]) -> Path:
+        from npa.workbench.ltx2.licensing import LicenseDeclaration, ProvenanceRecord
+
+        record = ProvenanceRecord(
+            declaration=LicenseDeclaration(
+                entity_class="community", use_class="non-commercial"
+            ),
+            run_id="run-a",
+            outputs=tuple(outputs),
+        )
+        path.write_text(json.dumps(record.as_dict()), encoding="utf-8")
+        return path
+
+    def test_a_manifest_that_covers_the_artifact_clears_it(self, tmp_path: Path) -> None:
+        video = "s3://bucket/run-a/ltx2_5_text_to_video.mp4"
+        manifest = self._manifest(tmp_path / "manifest.json", outputs=[video])
+
+        result = gate_module.gate_run(
+            manifest_uri=str(manifest), consumer="trainer", artifacts=[video]
+        )
+
+        assert result.decision.allowed is True
+        assert result.as_dict()["artifacts"] == [video]
+
+    def test_another_runs_manifest_cannot_clear_these_bytes(
+        self, tmp_path: Path
+    ) -> None:
+        """Without this, a permissive manifest from run A clears run B's video."""
+
+        manifest = self._manifest(
+            tmp_path / "manifest.json",
+            outputs=["s3://bucket/run-a/ltx2_5_text_to_video.mp4"],
+        )
+
+        result = gate_module.gate_run(
+            manifest_uri=str(manifest),
+            consumer="trainer",
+            artifacts=["s3://bucket/run-b/ltx2_5_text_to_video.mp4"],
+        )
+
+        assert result.decision.allowed is False
+        assert "does not describe" in result.decision.reason
+
+    def test_naming_no_artifacts_still_answers_the_licence_question(
+        self, tmp_path: Path
+    ) -> None:
+        """Callers that only have a manifest keep working; they just prove less."""
+
+        manifest = self._manifest(tmp_path / "manifest.json", outputs=[])
+
+        assert gate_module.gate_run(
+            manifest_uri=str(manifest), consumer="trainer"
+        ).decision.allowed

@@ -75,14 +75,50 @@ def test_wan_runtime_acceptance_uses_secret_channel(monkeypatch) -> None:
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "probe-id")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "probe-secret")
 
-    assert module.resolve_secret_envs(None) == [
+    assert module.resolve_secret_envs(None, solution_name="wan2.2") == [
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
         "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS",
     ]
-    assert module.resolve_secret_envs(["HF_TOKEN"]) == [
+    # HF_TOKEN is unset here, so it drops out: SkyPilot rejects a secret it
+    # cannot resolve, and forwarding an empty one would look like an entitlement.
+    assert module.resolve_secret_envs(["HF_TOKEN"], solution_name="wan2.2") == [
         "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS"
     ]
+
+
+def test_one_solutions_operator_answers_do_not_widen_anothers(monkeypatch) -> None:
+    """Vendor answers are per-image, and a shared tuple made them global.
+
+    With one tuple for every BYOF image, adding LTX's declaration variables also
+    forwarded them — and HF_TOKEN — into wan2-2 and open-dreamer runs whenever
+    they were set in the operator's shell. Nothing broke visibly, which is why it
+    needs a test rather than a review.
+    """
+
+    module = _load_module()
+    for name in (
+        "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS",
+        "NPA_LTX_ACCEPT_COMMUNITY_LICENSE",
+        "NPA_LTX_ENTITY_CLASS",
+        "NPA_LTX_USE_CLASS",
+        "HF_TOKEN",
+    ):
+        monkeypatch.setenv(name, "set")
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+    monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
+
+    wan = module.resolve_secret_envs(None, solution_name="wan2.2")
+    ltx = module.resolve_secret_envs(None, solution_name="ltx2.5")
+    other = module.resolve_secret_envs(None, solution_name="open-dreamer")
+
+    assert not [name for name in wan if name.startswith("NPA_LTX_")]
+    assert "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS" not in ltx
+    assert "NPA_LTX_ACCEPT_COMMUNITY_LICENSE" in ltx
+    # A solution with no declared operator answers forwards none, including the
+    # token: it has no gate that reads one.
+    assert other == []
 
 
 def test_output_storage_preflight_writes_reads_and_deletes(monkeypatch) -> None:
