@@ -94,7 +94,11 @@ RUN install -d -m 0755 -o "${NPA_RUNTIME_USER}" -g "${NPA_RUNTIME_USER}" \
     && su "${NPA_RUNTIME_USER}" -s /bin/bash -c 'ltx-runtime health' \
     && su "${NPA_RUNTIME_USER}" -s /bin/bash -c 'ltx-runtime assert-refusal' \
       | grep -Fq NPA_LTX_BOOTSTRAP_REFUSES_WITHOUT_DECLARATION_OK \
-    && test -z "$(find /workspace -mindepth 2 -print -quit)" \
+    # No files anywhere in the operator's workspace: the refusal must not have
+    # written one. Directories are exempt because `install -d` above creates the
+    # empty cache mount points, which are deeper than the tree this once
+    # searched — so the old depth-based form failed on the image's own layout.
+    && test -z "$(find /workspace -type f -print -quit)" \
     # The output validator decides whether a GPU run passed, so prove here that
     # it can tell a real clip from a plausible-looking one. ffmpeg's own synthetic
     # sources supply both cases; no LTX bytes are involved and both files are

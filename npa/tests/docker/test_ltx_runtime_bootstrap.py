@@ -393,7 +393,9 @@ class TestTheEntrypointDispatch:
         """
 
         stub = tmp_path / "ltx-runtime-stub"
-        stub.write_text('#!/usr/bin/env bash\nprintf "MODE:%s\\n" "$*"\n', encoding="utf-8")
+        stub.write_text(
+            '#!/usr/bin/env bash\nprintf "MODE:%s\\n" "$*"\n', encoding="utf-8"
+        )
         stub.chmod(0o755)
 
         source = (DOCKER_DIR / "entrypoint.sh").read_text(encoding="utf-8")
@@ -452,7 +454,15 @@ class TestTheImageLayoutIsReachableByTheRuntimeUser:
     #: Directories the base image already provides, whose modes a COPY does not
     #: get to invent. Anything else a COPY lands in is created by that COPY.
     PREEXISTING = frozenset(
-        {"/bin", "/etc", "/opt", "/sbin", "/usr/bin", "/usr/local/bin", "/usr/share/doc"}
+        {
+            "/bin",
+            "/etc",
+            "/opt",
+            "/sbin",
+            "/usr/bin",
+            "/usr/local/bin",
+            "/usr/share/doc",
+        }
     )
 
     def test_every_directory_a_readonly_copy_creates_is_normalized(self) -> None:
@@ -479,6 +489,64 @@ class TestTheImageLayoutIsReachableByTheRuntimeUser:
             f"directories created by a read-only COPY are never made traversable: "
             f"{sorted(created - normalized)}"
         )
+
+
+class TestTheBuildsOwnEmptinessCheck:
+    """The Dockerfile's "the refusal wrote nothing" test, run against the layout.
+
+    This predicate is inside a `RUN`, so it only ever executes during a real
+    build — and it was wrong: it searched `/workspace` by depth and so tripped
+    over the empty cache mount points `install -d` creates two lines earlier.
+    The bug stayed invisible because an earlier link in the same `&&` chain was
+    failing first. Extracting the real expression and running it against a
+    replica of the real layout gets that back under test without Docker.
+    """
+
+    def _predicate(self) -> str:
+        dockerfile = (DOCKER_DIR / "Dockerfile").read_text(encoding="utf-8")
+        match = re.search(r'test -z "\$\(find /workspace[^"]*\)"', dockerfile)
+        assert match, "the build no longer checks that the refusal wrote nothing"
+        return match.group(0)
+
+    def _workspace(self, tmp_path: Path) -> Path:
+        """The directories the Dockerfile's `install -d` creates, and nothing else."""
+
+        workspace = tmp_path / "workspace"
+        (workspace / ".cache" / "npa" / "ltx2" / "runtime").mkdir(parents=True)
+        (workspace / "model-cache" / "ltx-2.5").mkdir(parents=True)
+        return workspace
+
+    def _run(self, predicate: str, workspace: Path) -> int:
+        return subprocess.run(
+            ["bash", "-c", predicate.replace("/workspace", str(workspace))],
+            capture_output=True,
+            timeout=60,
+        ).returncode
+
+    def test_it_passes_on_the_layout_the_build_actually_creates(
+        self, tmp_path: Path
+    ) -> None:
+        assert self._run(self._predicate(), self._workspace(tmp_path)) == 0
+
+    @pytest.mark.parametrize(
+        "written",
+        [
+            ".cache/npa/ltx2/runtime/src/ltx_core.py",
+            "model-cache/ltx-2.5/vae/ltx-2.5-video-vae-bf16.safetensors",
+            "generated.mp4",
+        ],
+    )
+    def test_it_still_fails_when_the_refusal_writes_anything(
+        self, tmp_path: Path, written: str
+    ) -> None:
+        """Otherwise the fix would have turned the check into a no-op."""
+
+        workspace = self._workspace(tmp_path)
+        leaked = workspace / written
+        leaked.parent.mkdir(parents=True, exist_ok=True)
+        leaked.write_bytes(b"payload")
+
+        assert self._run(self._predicate(), workspace) != 0
 
 
 class TestModesThatNeverNeedADeclaration:
