@@ -4251,6 +4251,20 @@
         return copy;
       }
       let rerunCaptureBridge = null;
+      function captureStreamWithFrameFallback(canvas) {
+        // A zero-rate canvas stream is useful only when the browser exposes a
+        // requestFrame-capable track. Partial implementations otherwise leave a
+        // static Rerun scene permanently idle, so replace them with a 30 fps stream.
+        const manual = canvas.captureStream(0);
+        const track = manual && manual.getVideoTracks && manual.getVideoTracks()[0];
+        if (track && typeof track.requestFrame === "function") return manual;
+        if (manual && manual.getTracks) {
+          manual.getTracks().forEach((item) => {
+            try { item.stop(); } catch (_err) { /* ignore */ }
+          });
+        }
+        return canvas.captureStream(30);
+      }
       function stopRerunCaptureBridge() {
         if (!rerunCaptureBridge) return;
         try {
@@ -4285,7 +4299,7 @@
             return rerunCaptureBridge;
           }
           stopRerunCaptureBridge();
-          const stream = canvas.captureStream(30);
+          const stream = captureStreamWithFrameFallback(canvas);
           const video = document.createElement("video");
           video.setAttribute("playsinline", "");
           video.setAttribute("muted", "");
@@ -4909,6 +4923,8 @@
       }
       function setActiveRunId(nextRunId) {
         activeRunId = String(nextRunId || "").trim();
+        const runLabel = document.getElementById("simRunId");
+        if (runLabel) runLabel.textContent = activeRunId || "-";
         syncFoxgloveWebAction();
         return activeRunId;
       }
@@ -7034,11 +7050,21 @@
         const runId = String(option.dataset.runId || option.value || "").trim();
         if (!runId) return null;
         const key = String(option.dataset.entryKey || "");
-        return mergedRunsCache.find((item) => String(item.entry_key || "") === key) || {
+        const runRef = String(option.dataset.runRef || "");
+        const sourceType = String(option.dataset.sourceType || "workflow_history");
+        // Duplicate run basenames can exist in workflow history and one or more
+        // artifact buckets. Match every identity field represented by the chosen
+        // option; an entry-key-only lookup can silently return the S3 sibling when
+        // the operator explicitly selected workflow history.
+        return mergedRunsCache.find((item) =>
+          String(item.entry_key || "") === key &&
+          String(item.run_ref || "") === runRef &&
+          String(item.source_type || "workflow_history") === sourceType
+        ) || {
           run_id: runId,
           entry_key: key,
-          run_ref: String(option.dataset.runRef || ""),
-          source_type: String(option.dataset.sourceType || "workflow_history"),
+          run_ref: runRef,
+          source_type: sourceType,
           source_label: String(option.dataset.sourceLabel || "workflow history"),
           bucket: String(option.dataset.bucket || ""),
           project_id: String(option.dataset.projectId || ""),
@@ -7721,6 +7747,7 @@
           String((entry && entry.entry_key) || runId),
           String((preferred && preferred.key) || ""),
         ].join("|");
+        const preferredViewerIntent = artifactLoadRequestId;
         const shouldLoadPreferred = !context.deferPreferredViewer && preferred && ["rerun", "mcap", "video", "image", "json", "text", "download"].includes(preferredRender) &&
           !(preferredRender === "rerun" && isMobileLayout()) &&
           preferredLoadKey !== autoLoadedPreferredKey;
@@ -7728,7 +7755,11 @@
         // preferred viewer. A slow or temporarily unavailable Rerun mount must
         // not erase the exact run's stages and physical job identities.
         await loadRunDetails(runId, detailOptions);
-        if (shouldLoadPreferred) {
+        if (
+          shouldLoadPreferred &&
+          preferredViewerIntent === artifactLoadRequestId &&
+          !operatorMediaPreviewActive
+        ) {
           autoLoadedPreferredKey = preferredLoadKey;
           try {
             await loadArtifact({
@@ -9662,6 +9693,7 @@
           frameLooksBlank,
           sampleFrameStats,
           captureCanvasDataUrl,
+          captureStreamWithFrameFallback,
           ensureRerunCaptureBridge,
           grabFromRerunCaptureBridge,
           pickBestIframeCanvas,
