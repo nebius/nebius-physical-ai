@@ -127,14 +127,59 @@ assembles those frames into a temporary 1280x720, 93-frame clip inside the GPU
 runner. An empty, inaccessible, or image/video-free input fails closed before
 inference. Bundled upstream media was removed for redistribution reasons and is
 not a fallback. The runner builds a controlnet spec with `video_path` = that clip
-and an **`edge`** (or `vis`) control computed on-the-fly, and the sampled appearance
-prompt drives the new look — so the output preserves the input's structure/motion
-with a new appearance. Generic direct CLI callers remain strict: they opt in with
-`--condition-on-input` or `--input-video <path|s3://>` and must supply a video. `edge`/
-`vis` need no precomputed control asset; `depth`/`seg` would need one, so input-only
-conditioning falls back to `edge`. Conditioned runs record `mode:
-cosmos_transfer2.5_gpu` + `input_conditioned: true` + `conditioned_input` in the
-augment `metadata.json` / `manifest.json`, which the agent's provenance panel surfaces.
+and the `config.augment_control` modality computed on-the-fly, and the sampled
+appearance prompt drives the new look — so the output preserves the input's
+structure/motion with a new appearance. Generic direct CLI callers remain strict:
+they opt in with `--condition-on-input` or `--input-video <path|s3://>` and must
+supply a video. Conditioned runs record `mode: cosmos_transfer2.5_gpu` +
+`input_conditioned: true` + `conditioned_input` in the augment `metadata.json` /
+`manifest.json`, which the agent's provenance panel surfaces.
+
+**Segmentation conditioning and region masks (`--var augment_control=seg`).** All
+four of upstream's control modalities are computed on-the-fly from the staged input,
+so none of them needs a precomputed asset: `edge` (Canny), `vis` (bilateral blur),
+`depth` (VideoDepthAnything), and `seg` (GroundingDINO-base + SAM2). Each is a
+separate ControlNet checkpoint, so switching modality downloads different gated
+weights. NPA used to rewrite any request outside `edge`/`vis` to `edge` silently;
+an unsupported modality now fails closed instead.
+
+- **What seg buys you.** `edge` preserves every texture edge, so a prompt that
+  restyles a surface fights the old material's edge detail. `seg` preserves class
+  boundaries only, which lets the prompt change what a region is *made of* while
+  keeping the region's shape and motion.
+- **`config.augment_control_prompt`** names what to segment (`"robot arm, conveyor,
+  bin"`). Upstream defaults it to the first 128 words of the appearance prompt.
+- **Region masks** restrict any modality to part of the frame: white pixels are
+  where the control applies, black pixels follow the prompt freely.
+  `config.augment_mask_prompt` has SAM2 segment the region from text;
+  `config.augment_mask_asset_uri` supplies a precomputed binary spatiotemporal mask
+  video. They are mutually exclusive — upstream accepts one or the other.
+- **`config.augment_control_asset_uri`** substitutes a precomputed control video
+  (e.g. a segmentation map from an earlier pipeline) for the on-the-fly one. A named
+  asset that does not exist fails rather than quietly reverting to on-the-fly.
+- **Published conditioning.** The control map and mask land under
+  `config.augment_control_uri` as `cosmos_control/<clip>/control_<modality>.mp4`,
+  `mask_<modality>.mp4`, and extracted frames beneath each. That prefix is a
+  **sibling** of `cosmos_augmented/`, never a child: `cosmos_evaluator` treats every
+  child directory of the augment prefix as a variant and falls back to the
+  alphabetically first PNG inside one, so a nested `control/` would hand the
+  attribute-verify VLM a segmentation map instead of the frame it must grade. Rerun
+  logs them as `control/<clip>/control_<modality>` next to `augmented/<clip>`, and
+  the augment `manifest.json` records `control`, `control_weight`,
+  `control_prompt`, `mask_prompt`, and `control_uris`.
+
+Example:
+
+```bash
+npa workbench workflow submit physical-ai-data-factory.yaml --run-id <id> \
+  --var augment_control=seg \
+  --var augment_control_prompt="robot arm, conveyor, bin" \
+  --var augment_mask_prompt="robot arm"
+```
+
+`NPA_COSMOS_CONTROL`, `NPA_COSMOS_CONTROL_PROMPT`, `NPA_COSMOS_CONTROL_ASSET`,
+`NPA_COSMOS_MASK_PROMPT`, and `NPA_COSMOS_MASK_ASSET` override the same knobs for a
+submit that cannot change the toolRef argv.
 
 **Cosmos Evaluator grading (`evaluate` stage).** `npa workbench cosmos-evaluator
 evaluate` runs two of upstream's checks per augmented variant and writes

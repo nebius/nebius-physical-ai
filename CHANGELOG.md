@@ -12,6 +12,43 @@ a versioned heading when a release is cut.
   `npa.agent.api_error/v1` (`run_id_required_for_s3_uri`) instead of reading an
   arbitrary object.
 
+### PAIDF can condition augmentation on segmentation, not just edges
+
+Cosmos Transfer 2.5 accepts four control modalities and NPA only ever used two.
+`_spec_for_input_video` rewrote any request outside `edge`/`vis` to `edge` silently,
+on the stated grounds that `depth`/`seg` need a precomputed control file — untrue of
+the pinned revision, where `SegConfig.control_path` and `DepthConfig.control_path`
+are optional and upstream computes the control from the input clip
+(GroundingDINO-base + SAM2 for `seg`, VideoDepthAnything for `depth`). So an
+operator asking for segmentation conditioning got an edge render and no signal.
+
+- **`--var augment_control=seg|depth|vis|edge`** now selects the real modality, and
+  an unsupported one fails before the GPU is held instead of becoming `edge`.
+  `edge` preserves every texture edge, which fights a prompt that restyles a
+  surface; `seg` preserves class boundaries only, so a region keeps its shape and
+  motion while the prompt changes what it is made of.
+- **Region masks**: `augment_mask_prompt` has SAM2 segment a region from text, or
+  `augment_mask_asset_uri` supplies a precomputed binary spatiotemporal mask video,
+  and the control then applies only inside it (mutually exclusive, as upstream).
+  `augment_control_prompt` names what `seg` should segment;
+  `augment_control_asset_uri` substitutes a precomputed control video, failing when
+  the named asset is absent rather than reverting to on-the-fly.
+- **The conditioning is now reviewable**, not discarded with the container: the
+  control map and mask publish to `config.augment_control_uri`
+  (`cosmos_control/<clip>/control_<modality>.mp4`, `mask_<modality>.mp4`, plus
+  extracted frames), Rerun logs them as `control/<clip>/*` beside
+  `augmented/<clip>`, and the augment manifest records `control`,
+  `control_weight`, `control_prompt`, `mask_prompt`, and `control_uris`. That prefix
+  is a **sibling** of `cosmos_augmented/`, never a child: `cosmos_evaluator` counts
+  every child directory of the augment prefix as a variant and falls back to the
+  alphabetically first PNG inside one, so a nested `control/` would hand the
+  attribute-verify VLM a segmentation map instead of the frame it must grade.
+- **Fixes an output-selection bug the mask support exposed**: the generated video
+  was picked as the largest mp4 whose name lacked `control`, so upstream's
+  `<name>_mask_<key>.mp4` was a candidate — and a full-frame binary mask can
+  outweigh a short render.
+- An `edge` run publishes exactly the artifact set it did before.
+
 ### PAIDF augment scales across nodes, not just GPUs
 
 The Physical AI Data Factory multiplied scenario variants across the GPUs of **one**

@@ -77,6 +77,12 @@ _AMBIENT_CREDENTIAL_ENV_VARS = (
     "NPA_WORKFLOW_GPU_ACCELERATOR",
     "NPA_COSMOS_CONDITION_ON_INPUT",
     "NPA_COSMOS_VARIANT_PARALLELISM",
+    "NPA_COSMOS_CONTROL",
+    "NPA_COSMOS_CONTROL_WEIGHT",
+    "NPA_COSMOS_CONTROL_ASSET",
+    "NPA_COSMOS_CONTROL_PROMPT",
+    "NPA_COSMOS_MASK_ASSET",
+    "NPA_COSMOS_MASK_PROMPT",
     # Upstream Cosmos OSS checkouts: a dev VM with these exported would let unit
     # tests import a real checkout and take the upstream code path.
     "NPA_COSMOS_CURATE_SRC",

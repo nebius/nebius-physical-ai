@@ -30,14 +30,7 @@ def _src_uri(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/prefix/npa")
 
 
-def _augment_flags(spec) -> dict[str, str]:
-    """Parse the rendered augment command back into ``{flag: value}``.
-
-    Parsing rather than substring matching is what makes an empty value
-    meaningful: an unquoted ``--control-prompt`` followed by ``--mask-asset``
-    would read as the prompt *being* ``--mask-asset``.
-    """
-
+def _augment_task(spec) -> dict:
     plan = build_plan(spec, run_id="paidf", assume_decision="promote_checkpoint")
     text = render_skypilot_yaml(
         spec,
@@ -46,7 +39,18 @@ def _augment_flags(spec) -> dict[str, str]:
         options=SkypilotRenderOptions(image_overrides={"*": ""}),
     )
     docs = [doc for doc in yaml.safe_load_all(text) if doc]
-    task = next(doc for doc in docs[1:] if doc["name"].startswith("augment"))
+    return next(doc for doc in docs[1:] if doc["name"].startswith("augment"))
+
+
+def _augment_flags(spec) -> dict[str, str]:
+    """Parse the rendered augment command back into ``{flag: value}``.
+
+    Parsing rather than substring matching is what makes an empty value
+    meaningful: an unquoted ``--control-prompt`` followed by ``--mask-asset``
+    would read as the prompt *being* ``--mask-asset``.
+    """
+
+    task = _augment_task(spec)
     line = next(
         statement
         for statement in str(task["run"]).splitlines()
@@ -128,3 +132,35 @@ def test_the_control_prefix_is_a_sibling_of_the_augmented_clips() -> None:
     assert not published.startswith(
         "s3://example-bucket/physical-ai-data-factory/paidf/cosmos_augmented/"
     )
+
+
+def test_exported_control_env_rides_along_to_the_augment_pod(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The env fallbacks are only real if the renderer forwards them.
+
+    The CLI reads NPA_COSMOS_* as a fallback for these flags, but that fallback
+    is read inside the pod, so a variable exported next to the submit does
+    nothing unless the rendered task carries it.
+    """
+
+    monkeypatch.setenv("NPA_COSMOS_CONTROL", "seg")
+    monkeypatch.setenv("NPA_COSMOS_CONTROL_PROMPT", "robot arm, conveyor")
+    monkeypatch.setenv("NPA_COSMOS_MASK_PROMPT", "robot arm")
+    monkeypatch.setenv("NPA_COSMOS_MASK_ASSET", "s3://example-bucket/masks/arm.mp4")
+    monkeypatch.setenv("NPA_COSMOS_CONTROL_ASSET", "s3://example-bucket/seg/arm.mp4")
+
+    envs = _augment_task(load_spec(BLUEPRINT))["envs"]
+
+    assert envs["NPA_COSMOS_CONTROL"] == "seg"
+    assert envs["NPA_COSMOS_CONTROL_PROMPT"] == "robot arm, conveyor"
+    assert envs["NPA_COSMOS_MASK_PROMPT"] == "robot arm"
+    assert envs["NPA_COSMOS_MASK_ASSET"] == "s3://example-bucket/masks/arm.mp4"
+    assert envs["NPA_COSMOS_CONTROL_ASSET"] == "s3://example-bucket/seg/arm.mp4"
+
+
+def test_an_unexported_knob_leaves_the_pod_env_alone() -> None:
+    envs = _augment_task(load_spec(BLUEPRINT))["envs"]
+
+    assert "NPA_COSMOS_MASK_PROMPT" not in envs
+    assert "NPA_COSMOS_CONTROL_ASSET" not in envs

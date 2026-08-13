@@ -756,6 +756,74 @@ How the nodes divide the work and rejoin:
 Only `augment` is multi-node. Captioning, grading, curation, and visualization are
 CPU/Token-Factory stages that stay a single pod.
 
+### 6c. Choose what the augmentation preserves (`--var augment_control=seg`)
+
+Fan-out decides how many variants render at once; the **control modality** decides
+what each variant keeps from the input. Cosmos Transfer 2.5 computes all four of
+them on-the-fly from the staged clip, so switching is a `--var`, not a new asset:
+
+| `--var augment_control=` | Preserves | Computed by |
+| --- | --- | --- |
+| `edge` (default) | every intensity edge, including texture detail | Canny |
+| `vis` | coarse layout and colour blocks | bilateral blur |
+| `depth` | scene geometry | VideoDepthAnything |
+| `seg` | class/instance boundaries only | GroundingDINO-base + SAM2 |
+
+`edge` fights a prompt that restyles a surface, because the old material's texture
+edges are part of the control. `seg` keeps a region's shape and motion while
+letting the prompt change what it is *made of*:
+
+```bash
+npa workbench workflow submit "$SPEC" \
+  --run-id "$(date -u +paidf-seg-%Y%m%dt%H%M%sz)" \
+  --var bucket=<your-artifact-bucket> \
+  --var augment_control=seg \
+  --var augment_control_prompt="robot arm, conveyor, bin" \
+  --var augment_mask_prompt="robot arm" \
+  --assume-decision promote_checkpoint \
+  --secret-env NEBIUS_TOKEN_FACTORY_KEY \
+  --secret-env AWS_ACCESS_KEY_ID \
+  --secret-env AWS_SECRET_ACCESS_KEY
+```
+
+- `augment_control_prompt` names what to segment; upstream otherwise defaults it to
+  the first 128 words of the appearance prompt.
+- `augment_mask_prompt` adds a **region mask**: SAM2 segments that region and the
+  control applies only inside it, so the rest of the frame follows the prompt
+  freely. `augment_mask_asset_uri` supplies a precomputed binary spatiotemporal
+  mask video instead. The two are mutually exclusive.
+- `augment_control_asset_uri` substitutes a precomputed control video (e.g. a
+  segmentation map from an earlier pipeline) for the on-the-fly one. A named asset
+  that is missing fails the stage instead of reverting to on-the-fly.
+- `augment_control_weight` (default `1.0`) trades control fidelity against prompt
+  freedom.
+- Each modality is a separate ControlNet checkpoint, so the first `seg` or `depth`
+  run downloads different gated weights than an `edge` run.
+- An unsupported modality fails before the GPU is held. NPA previously rewrote
+  anything outside `edge`/`vis` to `edge` silently.
+
+What lands in S3, alongside `cosmos_augmented/<clip>/`:
+
+```
+cosmos_control/<clip>/control_<modality>.mp4   # the map that conditioned the variant
+cosmos_control/<clip>/control_<modality>/*.png
+cosmos_control/<clip>/mask_<modality>.mp4      # only when a region mask was used
+cosmos_control/<clip>/mask_<modality>/*.png
+```
+
+`cosmos_control/` is a **sibling** of `cosmos_augmented/`, never nested inside it:
+`cosmos-evaluator` treats every child directory of the augment prefix as a variant
+and falls back to the alphabetically first PNG in one, so a nested control dir
+would hand the attribute-verify VLM a segmentation map to grade. Rerun logs these
+as `control/<clip>/control_<modality>` beside `augmented/<clip>` on the same
+timeline, and the augment `manifest.json` records `control`, `control_weight`,
+`control_prompt`, `mask_prompt`, and `control_uris`.
+
+`NPA_COSMOS_CONTROL`, `NPA_COSMOS_CONTROL_WEIGHT`, `NPA_COSMOS_CONTROL_PROMPT`,
+`NPA_COSMOS_CONTROL_ASSET`, `NPA_COSMOS_MASK_PROMPT`, and `NPA_COSMOS_MASK_ASSET`
+set the same knobs from the submit environment when the argv cannot change; the
+renderer forwards them into the augment pod.
+
 ---
 
 ## 7. Real FiftyOne curation (run in the `npa-fiftyone` image)

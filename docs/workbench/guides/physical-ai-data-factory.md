@@ -83,7 +83,8 @@ where NPA substitutes its own endpoint.
 > `multiply_mode` in the augment manifest, curation, and finalize reports.
 > The managed transfer conditions every variant on a supported video under the
 > run's `config.trigger_uri` (`input/`), preserving geometry/motion while changing
-> appearance (edge control is computed on-the-fly).
+> appearance. `config.augment_control` chooses which structure is preserved and is
+> computed on-the-fly from that clip: `edge` (default), `vis`, `depth`, or `seg`.
 
 ### Input conditioning and its evaluation source
 
@@ -95,6 +96,20 @@ frames at 16 fps, and extracts eight caption frames. The catalog always invokes
 `input/conditioning.mp4` over `source.mp4`. Cosmos Evaluator uses that same clip
 for hallucination scoring. Missing or invalid input therefore cannot turn into a
 decorative staged object or a fixed control example.
+
+All four of upstream's control modalities are derived from that same staged clip,
+so choosing one is a `--var` decision and needs no extra asset:
+`--var augment_control=seg` conditions on a GroundingDINO+SAM2 segmentation
+(`config.augment_control_prompt` names the classes) instead of Canny edges, which
+lets a prompt change what a region is made of while keeping its shape and motion.
+`config.augment_mask_prompt` (or a precomputed
+`config.augment_mask_asset_uri`) restricts the control to one region so the rest of
+the frame follows the prompt freely. An unsupported modality fails the stage rather
+than silently rendering an edge-conditioned variant. The control map and mask that
+conditioned each variant are published under `config.augment_control_uri`
+(`cosmos_control/`, a sibling of `cosmos_augmented/`) and logged into the Rerun
+recording, so the conditioning signal is reviewable. See
+[section 6c of the deploy guide](physical-ai-data-factory-deploy.md#6c-choose-what-the-augmentation-preserves---var-augment_controlseg).
 
 ### Starter input: authenticity, licensing, and replacement
 
