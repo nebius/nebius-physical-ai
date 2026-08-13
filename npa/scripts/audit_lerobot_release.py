@@ -25,6 +25,10 @@ removed symbol, dropped parameter, renamed CLI flag, changed dataset
 pin this repo forces. It cannot prove runtime behaviour. A real GPU train+eval
 smoke (``npa.smoke.test_lerobot_functional``) remains the merge gate.
 
+Dependency markers are evaluated for the B300 image target (Linux x86_64), not
+the workstation running the audit. Python-version markers retain the audit
+interpreter's values because the inspected wheel and audit context supply them.
+
 The surface below is a reviewed list with call-site provenance, not a scrape.
 When a new call site starts using LeRobot, add it here too.
 """
@@ -45,6 +49,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import packaging.markers as packaging_markers
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
@@ -56,30 +61,116 @@ PYPI_JSON = "https://pypi.org/pypi/lerobot/{version}/json"
 
 # ── The surface this repo binds to ──────────────────────────────────────────
 # (module, symbol, call-site provenance). symbol=None checks the module only.
-IMPORT_SURFACE: tuple[tuple[str, str | None, str], ...] = (
+IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
     (
         "lerobot.datasets.lerobot_dataset",
         "LeRobotDataset",
-        "npa/workflows/lerobot_dataset.py, npa/demo/generate_observation.py",
+        (
+            "npa/demo/generate_observation.py",
+            "npa/src/npa/workflows/lerobot_dataset.py",
+        ),
     ),
-    ("lerobot.datasets", "LeRobotDataset", "npa/setup/install_lerobot.sh"),
-    ("lerobot.datasets.factory", "make_dataset", "research/lerobot-deploy/training/profile_train.py"),
-    ("lerobot.datasets.sampler", "EpisodeAwareSampler", "research/lerobot-deploy/training/profile_train.py"),
-    ("lerobot.configs.policies", "PreTrainedConfig", "npa/server/app.py, npa/genesis/eval_student.py"),
-    ("lerobot.configs.train", "TrainPipelineConfig", "research/lerobot-deploy/training/profile_train.py"),
-    ("lerobot.configs.default", "DatasetConfig", "research/lerobot-deploy/training/profile_train.py"),
-    ("lerobot.configs.default", "EvalConfig", "research/lerobot-deploy/training/profile_train.py"),
-    ("lerobot.configs.default", "WandBConfig", "research/lerobot-deploy/training/profile_train.py"),
-    ("lerobot.policies.factory", "make_policy", "npa/server/app.py"),
-    ("lerobot.policies.factory", "make_pre_post_processors", "npa/server/app.py, npa/genesis/eval_student.py"),
-    ("lerobot.policies.utils", "prepare_observation_for_inference", "npa/server/app.py"),
-    ("lerobot.policies.act.modeling_act", "ACTPolicy", "npa/genesis/eval_student.py"),
-    ("lerobot.policies.act.configuration_act", "ACTConfig", "npa/smoke/test_lerobot_env.py"),
-    ("lerobot.policies.diffusion.modeling_diffusion", "DiffusionPolicy", "npa/genesis/eval_student.py"),
-    ("lerobot.policies.smolvla.modeling_smolvla", "SmolVLAPolicy", "npa/genesis/eval_student.py"),
-    ("lerobot.optim.factory", "make_optimizer_and_scheduler", "research/lerobot-deploy/training/profile_train.py"),
-    ("lerobot.utils.device_utils", "get_safe_torch_device", "npa/server/app.py"),
-    ("lerobot.envs.configs", "EnvConfig", "npa/server/app.py"),
+    (
+        "lerobot.datasets",
+        "LeRobotDataset",
+        ("npa/src/npa/setup/install_lerobot.sh",),
+    ),
+    (
+        "lerobot.datasets.factory",
+        "make_dataset",
+        ("research/lerobot-deploy/training/profile_train.py",),
+    ),
+    (
+        "lerobot.datasets.sampler",
+        "EpisodeAwareSampler",
+        ("research/lerobot-deploy/training/profile_train.py",),
+    ),
+    (
+        "lerobot.configs.policies",
+        "PreTrainedConfig",
+        (
+            "npa/src/npa/genesis/eval_student.py",
+            "npa/src/npa/server/app.py",
+            "research/lerobot-deploy/training/profile_train.py",
+        ),
+    ),
+    (
+        "lerobot.configs.train",
+        "TrainPipelineConfig",
+        ("research/lerobot-deploy/training/profile_train.py",),
+    ),
+    (
+        "lerobot.configs.default",
+        "DatasetConfig",
+        ("research/lerobot-deploy/training/profile_train.py",),
+    ),
+    (
+        "lerobot.configs.default",
+        "EvalConfig",
+        ("research/lerobot-deploy/training/profile_train.py",),
+    ),
+    (
+        "lerobot.configs.default",
+        "WandBConfig",
+        ("research/lerobot-deploy/training/profile_train.py",),
+    ),
+    (
+        "lerobot.policies.factory",
+        "make_policy",
+        (
+            "npa/src/npa/server/app.py",
+            "research/lerobot-deploy/training/profile_train.py",
+        ),
+    ),
+    (
+        "lerobot.policies.factory",
+        "make_pre_post_processors",
+        (
+            "npa/src/npa/genesis/eval_student.py",
+            "npa/src/npa/server/app.py",
+            "research/lerobot-deploy/training/profile_train.py",
+        ),
+    ),
+    (
+        "lerobot.policies.utils",
+        "prepare_observation_for_inference",
+        ("npa/src/npa/server/app.py",),
+    ),
+    (
+        "lerobot.policies.act.modeling_act",
+        "ACTPolicy",
+        ("npa/src/npa/genesis/eval_student.py",),
+    ),
+    (
+        "lerobot.policies.act.configuration_act",
+        "ACTConfig",
+        ("npa/src/npa/smoke/test_lerobot_env.py",),
+    ),
+    (
+        "lerobot.policies.diffusion.modeling_diffusion",
+        "DiffusionPolicy",
+        ("npa/src/npa/genesis/eval_student.py",),
+    ),
+    (
+        "lerobot.policies.smolvla.modeling_smolvla",
+        "SmolVLAPolicy",
+        ("npa/src/npa/genesis/eval_student.py",),
+    ),
+    (
+        "lerobot.optim.factory",
+        "make_optimizer_and_scheduler",
+        ("research/lerobot-deploy/training/profile_train.py",),
+    ),
+    (
+        "lerobot.utils.device_utils",
+        "get_safe_torch_device",
+        ("npa/src/npa/server/app.py",),
+    ),
+    (
+        "lerobot.envs.configs",
+        "EnvConfig",
+        ("npa/src/npa/server/app.py",),
+    ),
 )
 
 # Parameters this repo passes by keyword. Upstream may append parameters freely;
@@ -159,6 +250,10 @@ class Report:
     def failed(self) -> list[dict[str, Any]]:
         return [c for c in self.checks if c["status"] == "FAIL"]
 
+    @property
+    def warnings(self) -> list[dict[str, Any]]:
+        return [c for c in self.checks if c["status"] == "WARN"]
+
 
 # ── Wheel acquisition ───────────────────────────────────────────────────────
 
@@ -209,7 +304,7 @@ def _parse(path: Path) -> ast.Module:
 
 
 def _top_level_names(path: Path) -> set[str]:
-    """Names a module defines or re-exports (import-from counts as re-export)."""
+    """Names bound in module scope, including conditional control-flow suites."""
 
     names: set[str] = set()
     try:
@@ -217,43 +312,79 @@ def _top_level_names(path: Path) -> set[str]:
     except SyntaxError:
         return names
 
-    def is_type_checking(test: ast.expr) -> bool:
-        return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
-            isinstance(test, ast.Attribute)
-            and isinstance(test.value, ast.Name)
-            and test.value.id == "typing"
-            and test.attr == "TYPE_CHECKING"
-        )
+    try_nodes = (ast.Try,)
+    if hasattr(ast, "TryStar"):
+        try_nodes += (ast.TryStar,)
 
-    def catches_import_error(handler: ast.ExceptHandler) -> bool:
-        error = handler.type
-        return (isinstance(error, ast.Name) and error.id == "ImportError") or (
-            isinstance(error, ast.Tuple)
-            and any(isinstance(item, ast.Name) and item.id == "ImportError" for item in error.elts)
-        )
+    def collect_target(target: ast.AST | None) -> None:
+        if isinstance(target, ast.Name):
+            names.add(target.id)
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for element in target.elts:
+                collect_target(element)
+        elif isinstance(target, ast.Starred):
+            collect_target(target.value)
+        elif isinstance(target, ast.MatchAs):
+            collect_target(target.pattern)
+            if target.name:
+                names.add(target.name)
+        elif isinstance(target, ast.MatchStar):
+            if target.name:
+                names.add(target.name)
+        elif isinstance(target, ast.MatchMapping):
+            for pattern in target.patterns:
+                collect_target(pattern)
+            if target.rest:
+                names.add(target.rest)
+        elif isinstance(target, ast.MatchSequence):
+            for pattern in target.patterns:
+                collect_target(pattern)
+        elif isinstance(target, ast.MatchClass):
+            for pattern in (*target.patterns, *target.kwd_patterns):
+                collect_target(pattern)
+        elif isinstance(target, ast.MatchOr):
+            for pattern in target.patterns:
+                collect_target(pattern)
 
     def collect(statements: list[ast.stmt]) -> None:
         for node in statements:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                # The definition itself is module-scoped; its body is a new
+                # lexical scope and must never contribute exports.
                 names.add(node.name)
             elif isinstance(node, ast.Assign):
-                names.update(t.id for t in node.targets if isinstance(t, ast.Name))
-            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-                names.add(node.target.id)
+                for target in node.targets:
+                    collect_target(target)
+            elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+                collect_target(node.target)
             elif isinstance(node, ast.ImportFrom):
                 names.update(a.asname or a.name for a in node.names)
             elif isinstance(node, ast.Import):
                 names.update(a.asname or a.name.split(".")[0] for a in node.names)
-            elif isinstance(node, ast.If) and is_type_checking(node.test):
+            elif isinstance(node, ast.If):
                 collect(node.body)
                 collect(node.orelse)
-            elif isinstance(node, ast.Try):
-                import_handlers = [handler for handler in node.handlers if catches_import_error(handler)]
-                if import_handlers:
-                    collect(node.body)
-                    collect(node.orelse)
-                    for handler in import_handlers:
-                        collect(handler.body)
+            elif isinstance(node, try_nodes):
+                collect(node.body)
+                collect(node.orelse)
+                collect(node.finalbody)
+                for handler in node.handlers:
+                    collect(handler.body)
+            elif isinstance(node, (ast.With, ast.AsyncWith)):
+                for item in node.items:
+                    collect_target(item.optional_vars)
+                collect(node.body)
+            elif isinstance(node, (ast.For, ast.AsyncFor)):
+                collect_target(node.target)
+                collect(node.body)
+                collect(node.orelse)
+            elif isinstance(node, ast.While):
+                collect(node.body)
+                collect(node.orelse)
+            elif isinstance(node, ast.Match):
+                for case in node.cases:
+                    collect_target(case.pattern)
+                    collect(case.body)
 
     collect(tree.body)
     return names
@@ -311,18 +442,41 @@ def _dist_info(root: Path) -> Path | None:
     return next(root.glob("lerobot-*.dist-info"), None)
 
 
-def _declared_bounds(root: Path) -> dict[str, str]:
-    """Intersection of applicable specifiers for dependencies we care about."""
+def _target_marker_environment(*, extra: str = "") -> dict[str, str]:
+    """PEP 508 environment for the Linux x86_64 B300 image target."""
+
+    environment = packaging_markers.default_environment()
+    environment.update(
+        {
+            "extra": extra,
+            "os_name": "posix",
+            "platform_machine": "x86_64",
+            "platform_system": "Linux",
+            "sys_platform": "linux",
+        }
+    )
+    return environment
+
+
+def _marker_applies(requirement: Requirement, *, extra: str = "") -> bool:
+    return requirement.marker is None or requirement.marker.evaluate(
+        _target_marker_environment(extra=extra)
+    )
+
+
+def _declared_bounds(root: Path, extras: Iterable[str]) -> dict[str, str]:
+    """Intersection of target-applicable bounds from extras the image installs."""
 
     collected: dict[str, list[str]] = {}
     per_extra, base = _extra_requirements(root)
+    active_extras, _ = _extra_closure(per_extra, base, extras)
     applicable = [
-        *(req for req in base if req.marker is None or req.marker.evaluate()),
+        *(req for req in base if _marker_applies(req)),
         *(
             req
-            for extra, requirements in per_extra.items()
-            for req in requirements
-            if req.marker is None or req.marker.evaluate({"extra": extra})
+            for extra in active_extras
+            for req in per_extra.get(extra, [])
+            if _marker_applies(req, extra=extra)
         ),
     ]
     for req in applicable:
@@ -354,22 +508,25 @@ def _extra_requirements(root: Path) -> tuple[dict[str, list[Requirement]], list[
         extras = re.findall(r'extra\s*==\s*[\'"]([^\'"]+)[\'"]', str(req.marker or ""))
         if extras:
             for extra in extras:
-                per_extra.setdefault(extra, []).append(req)
+                per_extra.setdefault(canonicalize_name(extra), []).append(req)
         else:
             base.append(req)
     return per_extra, base
 
 
-def _extra_closure(root: Path, extras: Iterable[str]) -> set[str]:
-    """Distributions installed by ``pip install lerobot[<extras>]``.
+def _extra_closure(
+    per_extra: dict[str, list[Requirement]],
+    base: list[Requirement],
+    extras: Iterable[str],
+) -> tuple[set[str], set[str]]:
+    """Active extras and distributions from ``pip install lerobot[<extras>]``.
 
     Extras reference each other (``training`` -> ``dataset``, ``diffusion`` ->
     ``diffusers-dep``), so this walks the self-referential graph to a fixpoint.
     """
 
-    per_extra, base = _extra_requirements(root)
-    provided = {canonicalize_name(req.name) for req in base}
-    queue = list(extras)
+    provided = {canonicalize_name(req.name) for req in base if _marker_applies(req)}
+    queue = [canonicalize_name(extra) for extra in extras]
     seen: set[str] = set()
     while queue:
         extra = queue.pop()
@@ -377,11 +534,13 @@ def _extra_closure(root: Path, extras: Iterable[str]) -> set[str]:
             continue
         seen.add(extra)
         for req in per_extra.get(extra, []):
+            if not _marker_applies(req, extra=extra):
+                continue
             if canonicalize_name(req.name) == "lerobot":
-                queue.extend(req.extras)
+                queue.extend(canonicalize_name(nested) for nested in req.extras)
             else:
                 provided.add(canonicalize_name(req.name))
-    return provided
+    return seen, provided
 
 
 def _require_package_gates(root: Path, relpath: str) -> list[tuple[str, str]]:
@@ -447,19 +606,20 @@ def check_imports(root: Path, report: Report) -> None:
     missing = []
     lazy = []
     for module, symbol, provenance in IMPORT_SURFACE:
+        provenance_text = ", ".join(provenance)
         path = _module_file(root, module)
         if path is None:
-            missing.append(f"{module} (module gone) <- {provenance}")
+            missing.append(f"{module} (module gone) <- {provenance_text}")
         elif symbol:
             names = _top_level_names(path)
             if symbol not in names:
                 if "__getattr__" in names:
                     lazy.append(
                         f"{module}:{symbol} (lazily re-exported, could not verify statically)"
-                        f" <- {provenance}"
+                        f" <- {provenance_text}"
                     )
                 else:
-                    missing.append(f"{module}:{symbol} (symbol gone) <- {provenance}")
+                    missing.append(f"{module}:{symbol} (symbol gone) <- {provenance_text}")
     total = len(IMPORT_SURFACE)
     resolved = total - len(missing) - len(lazy)
     detail = f"{resolved}/{total} bindings resolve statically"
@@ -507,6 +667,16 @@ def check_entry_points(root: Path, report: Report) -> None:
     report.add("available-entry-points", True, ", ".join(extra) or "none")
 
 
+def _manifest_extras(manifest_entry: dict[str, Any] | None) -> list[str]:
+    if manifest_entry is None:
+        return []
+    return [
+        extra.strip()
+        for extra in str(manifest_entry.get("pip_extras", "")).split(",")
+        if extra.strip()
+    ]
+
+
 def check_policy_extras(root: Path, report: Report, manifest_entry: dict[str, Any] | None) -> None:
     """Do the manifest's extras actually let every policy we use be constructed?"""
 
@@ -518,8 +688,9 @@ def check_policy_extras(root: Path, report: Report, manifest_entry: dict[str, An
         )
         return
 
-    declared = [e.strip() for e in str(manifest_entry.get("pip_extras", "")).split(",") if e.strip()]
-    provided = _extra_closure(root, declared)
+    declared = _manifest_extras(manifest_entry)
+    per_extra, base = _extra_requirements(root)
+    _, provided = _extra_closure(per_extra, base, declared)
 
     problems: list[str] = []
     satisfied: list[str] = []
@@ -625,7 +796,7 @@ def _conflicts(pins: dict[str, str], bounds: dict[str, str]) -> list[str]:
 def check_dependency_bounds(
     root: Path, report: Report, manifest_entry: dict[str, Any] | None
 ) -> None:
-    bounds = _declared_bounds(root)
+    bounds = _declared_bounds(root, _manifest_extras(manifest_entry))
     report.add("requires-python", True, _requires_python(root) or "unspecified")
     report.add("declared-bounds", True, ", ".join(f"{k}{v}" for k, v in sorted(bounds.items())))
 
@@ -744,10 +915,17 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
     summary_stream = sys.stderr if args.json else sys.stdout
-    print(
-        f"\nPASS: lerobot {candidate.version} satisfies this repo's static LeRobot surface.",
-        file=summary_stream,
-    )
+    if candidate.warnings:
+        print(
+            f"\nWARN: {len(candidate.warnings)} non-blocking unverifiable finding(s)"
+            f" for lerobot {candidate.version}; no blocking findings.",
+            file=summary_stream,
+        )
+    else:
+        print(
+            f"\nPASS: lerobot {candidate.version} satisfies this repo's static LeRobot surface.",
+            file=summary_stream,
+        )
     print(
         "Static pre-flight only -- a real GPU train+eval smoke is still the merge gate.",
         file=summary_stream,
