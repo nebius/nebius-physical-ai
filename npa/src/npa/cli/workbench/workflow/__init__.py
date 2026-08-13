@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 import typer
 from rich.console import Console
+from rich.text import Text
 
 from npa.cli.workbench.trigger import app as trigger_app
 from npa.orchestration.npa_workflow.spec import load_spec
@@ -53,7 +54,13 @@ class ControllerBackendOption(str, Enum):
 def _fail(msg: str, code: int = 1) -> None:
     # Operational recovery commands and status phrases must remain copyable and
     # machine-observable even when Rich detects a narrow non-interactive console.
-    console.print(f"[red]Error:[/red] {msg}", soft_wrap=True)
+    error = Text("Error:", style="red")
+    error.append(" ")
+    # Exception messages can legitimately contain bracketed values (for example,
+    # a malformed URI such as ``[/foo]``).  Keep them literal so Rich does not
+    # replace the original failure with a MarkupError while reporting it.
+    error.append(str(msg))
+    console.print(error, soft_wrap=True)
     raise typer.Exit(code)
 
 

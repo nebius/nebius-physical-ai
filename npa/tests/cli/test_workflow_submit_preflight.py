@@ -7,14 +7,18 @@ separate run, and there was no command to produce the npa source copy at all.
 
 from __future__ import annotations
 
+from io import StringIO
 import json
 import os
 from pathlib import Path
 
 import pytest
+from rich.console import Console
+import typer
 from typer.testing import CliRunner
 
 from npa.cli.main import app
+from npa.cli.workbench import workflow as workflow_cli
 
 runner = CliRunner()
 
@@ -62,6 +66,23 @@ def _submit(*args: str):
             "--no-deploy-if-absent",
             *args,
         ],
+    )
+
+
+def test_fail_reports_bracketed_exception_messages_literally(monkeypatch) -> None:
+    output = StringIO()
+    monkeypatch.setattr(
+        workflow_cli,
+        "console",
+        Console(file=output, force_terminal=False, color_system=None),
+    )
+
+    with pytest.raises(typer.Exit) as exc_info:
+        workflow_cli._fail("invalid target [H100:1] after closing tag [/:]")
+
+    assert exc_info.value.exit_code == 1
+    assert output.getvalue() == (
+        "Error: invalid target [H100:1] after closing tag [/:]\n"
     )
 
 
