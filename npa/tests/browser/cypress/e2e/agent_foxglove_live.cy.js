@@ -220,6 +220,19 @@ describe("NPA agent official Foxglove Web against live infra", () => {
           "contain.text",
           "Runs (latest first)",
         );
+        // Exercise the deployed @foxglove/embed path itself. The hosted viewer
+        // is cross-origin (and may require the customer's Foxglove sign-in), so
+        // this verifies the supported SDK iframe + connection-state contract,
+        // not pixels inside the hosted application.
+        cy.get("#renderModeFoxglove").click();
+        cy.get("#viewerPaneFoxglove").should("have.class", "is-active-viewer");
+        cy.get("#viewerPaneFoxglove iframe", { timeout: 30000 })
+          .should("have.attr", "src")
+          .and("match", /^https:\/\/embed\.foxglove\.dev\//);
+        cy.get("#foxgloveStatus", { timeout: 30000 }).should(($status) => {
+          expect($status, "no deployed SDK error state").not.to.have.class("is-error");
+          expect($status.text()).to.match(/Connecting to|Foxglove viewer ready/);
+        });
         cy.intercept("POST", "/api/foxglove/export").as("liveFoxgloveUiExport");
         cy.window().then((win) => {
           const replace = cy.stub().as("foxgloveNavigate");

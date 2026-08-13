@@ -2298,7 +2298,12 @@ def list_runs_cached(
 
 
 def find_run_artifact_matches(
-    bucket: str, *, base_prefix: str, run_id: str, s3=None
+    bucket: str,
+    *,
+    base_prefix: str,
+    run_id: str,
+    exact_source_prefix: "str | None" = None,
+    s3=None,
 ) -> list[RunResolution]:
     """Return every exact source match for a run basename in one bucket."""
     if s3 is None:
@@ -2311,7 +2316,23 @@ def find_run_artifact_matches(
         contains=normalized_run,
         s3=s3,
     )
-    if index.truncated or not index.discovery_complete:
+    candidates = [
+        item
+        for item in index.runs
+        if item.run_id == normalized_run
+        and (
+            exact_source_prefix is None
+            or item.resolved_prefix == exact_source_prefix
+        )
+    ]
+    # An incomplete bounded scan cannot prove that an absent source does not
+    # exist or that a plain run basename is unique. A positive exact-prefix
+    # match is different: the server itself observed that tuple in its bounded
+    # index, so it is safe to resolve without letting an unrelated high-volume
+    # source disable the source-qualified selector.
+    if (index.truncated or not index.discovery_complete) and (
+        exact_source_prefix is None or not candidates
+    ):
         raise ArtifactDiscoveryError(
             "run source discovery was incomplete; select an exact source"
         )
@@ -2331,8 +2352,7 @@ def find_run_artifact_matches(
                 )
             ],
         )
-        for item in index.runs
-        if item.run_id == normalized_run
+        for item in candidates
     ]
 
 
@@ -2357,7 +2377,11 @@ def resolve_run_artifacts(
         # bounded run index before listing objects beneath a caller-supplied path.
         exact_source_matches = _merge_staging_resolutions(
             find_run_artifact_matches(
-                bucket, base_prefix=base_prefix, run_id=run_id, s3=s3
+                bucket,
+                base_prefix=base_prefix,
+                run_id=run_id,
+                exact_source_prefix=source_prefix,
+                s3=s3,
             )
         )
         exact = [

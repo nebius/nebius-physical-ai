@@ -733,6 +733,92 @@ def test_run_ref_must_match_a_server_discovered_exact_source(monkeypatch) -> Non
     )
 
 
+def test_server_discovered_exact_source_survives_unrelated_truncated_scan(
+    monkeypatch,
+) -> None:
+    import npa.workflows.artifacts as A
+
+    artifact = A.Artifact(
+        "safe-run",
+        "authorized/safe-run/report.json",
+        "s3://bucket/authorized/safe-run/report.json",
+        1,
+        "2026-08-10T00:00:00Z",
+        "json",
+        True,
+    )
+    monkeypatch.setattr(
+        A,
+        "_list_artifact_run_index",
+        lambda *_args, **_kwargs: A.RunListPage(
+            runs=[
+                A.RunSummary(
+                    run_id="safe-run",
+                    last_modified="2026-08-10T00:00:00Z",
+                    artifact_count=1,
+                    has_viewable=True,
+                    bucket="bucket",
+                    resolved_prefix="authorized",
+                    namespaces=("authorized",),
+                )
+            ],
+            truncated=True,
+            total_runs=1,
+            limit=100,
+            discovery_complete=False,
+        ),
+    )
+    monkeypatch.setattr(A, "list_artifacts", lambda *_args, **_kwargs: [artifact])
+
+    matches = A.find_run_artifact_matches(
+        "bucket",
+        base_prefix="",
+        run_id="safe-run",
+        exact_source_prefix="authorized",
+        s3=object(),
+    )
+
+    assert matches == [
+        A.RunResolution("safe-run", "bucket", "authorized", [artifact])
+    ]
+
+
+def test_undiscovered_exact_source_still_fails_closed_on_truncated_scan(
+    monkeypatch,
+) -> None:
+    import npa.workflows.artifacts as A
+
+    monkeypatch.setattr(
+        A,
+        "_list_artifact_run_index",
+        lambda *_args, **_kwargs: A.RunListPage(
+            runs=[
+                A.RunSummary(
+                    run_id="safe-run",
+                    last_modified="2026-08-10T00:00:00Z",
+                    artifact_count=1,
+                    has_viewable=True,
+                    bucket="bucket",
+                    resolved_prefix="authorized",
+                )
+            ],
+            truncated=True,
+            total_runs=1,
+            limit=100,
+            discovery_complete=False,
+        ),
+    )
+
+    with pytest.raises(A.ArtifactDiscoveryError, match="incomplete"):
+        A.find_run_artifact_matches(
+            "bucket",
+            base_prefix="",
+            run_id="safe-run",
+            exact_source_prefix="guessed",
+            s3=object(),
+        )
+
+
 def test_plain_run_resolution_fails_when_any_bucket_search_is_incomplete(monkeypatch) -> None:
     import npa.workflows.artifacts as A
 
