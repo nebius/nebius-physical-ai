@@ -79,7 +79,12 @@ COPY --chmod=0444 docker/workbench/ltx2/THIRD_PARTY_NOTICES.md /usr/share/doc/np
 
 RUN install -d -m 0755 -o "${NPA_RUNTIME_USER}" -g "${NPA_RUNTIME_USER}" \
       /workspace /workspace/.cache/npa/ltx2/runtime /workspace/model-cache/ltx-2.5 \
-    && chmod 0755 /opt/npa \
+    # BuildKit applies `COPY --chmod` to the parent directories it creates on the
+    # way, so the 0444 file modes above also landed on /opt/npa/ltx2 and
+    # /usr/share/doc/npa-ltx2 — directories with no execute bit, which the
+    # runtime user cannot traverse. Every file inside then reads as Permission
+    # denied, including the licensing gate. Normalize the directories back.
+    && chmod 0755 /opt/npa /opt/npa/ltx2 /usr/share/doc/npa-ltx2 \
     # Prove at build time that the refusal is real and that proving it fetched
     # nothing. `assert-refusal` exists rather than a bare `ltx-runtime ensure`
     # here: it scrubs the acceptance variables from its child environment, so the

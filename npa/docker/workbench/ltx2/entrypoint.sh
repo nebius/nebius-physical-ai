@@ -5,7 +5,15 @@
 set -euo pipefail
 
 case "${1:-}" in
-  ltx-runtime|health|version|status|terms|provenance|ensure|warm|fetch-weights|assert-refusal)
+  ltx-runtime)
+    # `docker run <image> ltx-runtime <mode>` is how the runbook and the golden
+    # eval invoke this, so the literal has to be dropped before forwarding:
+    # passing it through makes the mode itself "ltx-runtime" and every such
+    # command dies as an unknown mode.
+    shift
+    exec /usr/local/bin/ltx-runtime "$@"
+    ;;
+  health|version|status|terms|provenance|ensure|warm|fetch-weights|assert-refusal)
     exec /usr/local/bin/ltx-runtime "$@"
     ;;
   "")

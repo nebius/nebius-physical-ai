@@ -20,9 +20,10 @@ broken ordering fails immediately instead of quietly cloning from GitHub.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -369,6 +370,115 @@ class TestTheRefusalIsNotVacuous:
         assert record["restrictions"]["derived_model_training"] == "prohibited"
         assert record["license"]["osi_approved"] is False
         assert record["run_id"] == "bootstrap-check"
+
+
+class TestTheEntrypointDispatch:
+    """`docker run <image> ltx-runtime <mode>` must reach <mode>.
+
+    The entrypoint funnels every invocation through ``ltx-runtime`` so the gate
+    cannot be sidestepped, which means its argv handling is load-bearing: the
+    runbook, the golden eval, and the live re-proof of the refusal all invoke it
+    in exactly that form. A first build of the image showed the ``ltx-runtime``
+    arm forwarding the literal word as the mode, so every one of those commands
+    died as "unknown mode" instead of running.
+    """
+
+    @pytest.fixture
+    def entrypoint(self, tmp_path: Path) -> Path:
+        """The shipped entrypoint, with its one absolute path pointed at a stub.
+
+        ``ltx_runtime.sh`` is invoked by absolute path (deliberately — a PATH
+        lookup would be a way around the gate), so exercising the dispatch means
+        redirecting that one reference rather than shimming PATH.
+        """
+
+        stub = tmp_path / "ltx-runtime-stub"
+        stub.write_text('#!/usr/bin/env bash\nprintf "MODE:%s\\n" "$*"\n', encoding="utf-8")
+        stub.chmod(0o755)
+
+        source = (DOCKER_DIR / "entrypoint.sh").read_text(encoding="utf-8")
+        assert "/usr/local/bin/ltx-runtime" in source
+        script = tmp_path / "entrypoint.sh"
+        script.write_text(
+            source.replace("/usr/local/bin/ltx-runtime", str(stub)), encoding="utf-8"
+        )
+        script.chmod(0o755)
+        return script
+
+    def _dispatch(self, entrypoint: Path, *args: str) -> str:
+        result = subprocess.run(
+            ["bash", str(entrypoint), *args],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout.strip()
+
+    @pytest.mark.parametrize(
+        "mode",
+        ["health", "version", "status", "terms", "provenance", "assert-refusal"],
+    )
+    def test_the_redundant_ltx_runtime_prefix_is_dropped(
+        self, entrypoint: Path, mode: str
+    ) -> None:
+        assert self._dispatch(entrypoint, "ltx-runtime", mode) == f"MODE:{mode}"
+
+    @pytest.mark.parametrize("mode", ["health", "status", "ensure", "fetch-weights"])
+    def test_a_bare_mode_still_dispatches(self, entrypoint: Path, mode: str) -> None:
+        assert self._dispatch(entrypoint, mode) == f"MODE:{mode}"
+
+    def test_an_arbitrary_command_is_funnelled_through_the_gate(
+        self, entrypoint: Path
+    ) -> None:
+        """Anything else runs under `exec`, which fetches only after declaring."""
+
+        assert self._dispatch(entrypoint, "python", "-c", "pass") == (
+            "MODE:exec python -c pass"
+        )
+
+
+class TestTheImageLayoutIsReachableByTheRuntimeUser:
+    """Directories the Dockerfile creates must stay traversable.
+
+    BuildKit applies ``COPY --chmod`` to the parent directories it creates along
+    the way, so a read-only file mode silently becomes a read-only *directory* —
+    no execute bit, and the non-root runtime user cannot traverse into it. The
+    first real build failed exactly this way: ``/opt/npa/ltx2`` came out
+    ``dr--r--r--`` and every file inside it, the licensing gate included, read as
+    Permission denied. Nothing in a Dockerfile review shows that.
+    """
+
+    #: Directories the base image already provides, whose modes a COPY does not
+    #: get to invent. Anything else a COPY lands in is created by that COPY.
+    PREEXISTING = frozenset(
+        {"/bin", "/etc", "/opt", "/sbin", "/usr/bin", "/usr/local/bin", "/usr/share/doc"}
+    )
+
+    def test_every_directory_a_readonly_copy_creates_is_normalized(self) -> None:
+        dockerfile = (DOCKER_DIR / "Dockerfile").read_text(encoding="utf-8")
+
+        created: set[str] = set()
+        for match in re.finditer(
+            r"^COPY\s+--chmod=(\d+)\s+\S+\s+(\S+)", dockerfile, re.MULTILINE
+        ):
+            mode, destination = match.group(1), match.group(2)
+            if int(mode, 8) & 0o111:
+                continue
+            parent = str(PurePosixPath(destination).parent)
+            if parent not in self.PREEXISTING:
+                created.add(parent)
+
+        assert created, "no read-only COPY destinations found; has the layout changed?"
+        normalized = {
+            directory
+            for match in re.finditer(r"chmod\s+0?755\s+([^\n\\]+)", dockerfile)
+            for directory in match.group(1).split()
+        }
+        assert created <= normalized, (
+            f"directories created by a read-only COPY are never made traversable: "
+            f"{sorted(created - normalized)}"
+        )
 
 
 class TestModesThatNeverNeedADeclaration:
