@@ -87,7 +87,7 @@ spec:
           # root filesystem is immutable and /tmp is a separate scratch volume (pip needs
           # a writable TMPDIR). Flagged by Trivy KSV-0014 on the first draft of this file
           # — worth honouring rather than ignoring, because this job downloads and unpacks
-          # ~4.5 GB of third-party code as root.
+          # ~4.5 GB of third-party code and should not be able to modify the image root.
           securityContext:
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
