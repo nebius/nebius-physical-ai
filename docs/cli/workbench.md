@@ -26,6 +26,7 @@ nurec  NVIDIA Omniverse NuRec / Neural Reconstruction Engine: sensor recordings 
 sonic  NVIDIA GEAR-SONIC whole-body-control workbench.
 mjlab  MJLab locomotion policy evaluation for SONIC workflows.
 lichtblick  Lichtblick (MPL-2.0) - an open-source, Foxglove-compatible MCAP / ROS-bag log viewer.
+ltx2  LTX-2.5 licensing surface: declare the LTX-2.x Community License terms, stamp them onto generated video, and gate downstream training on them.
 lancedb  Deploy and query LanceDB vector-search workbenches.
 detection-training  Train Faster R-CNN detectors from LanceDB materialized views.
 scenario-gen  Adversarial scenario generation: mine hard scenarios that fail a policy-under-test (pluggable Isaac Lab RL backend; deterministic default).
@@ -64,6 +65,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `sonic` | NVIDIA GEAR-SONIC whole-body-control workbench. |
 | `mjlab` | MJLab locomotion policy evaluation for SONIC workflows. |
 | `lichtblick` | Lichtblick (MPL-2.0) - an open-source, Foxglove-compatible MCAP / ROS-bag log viewer. |
+| `ltx2` | LTX-2.5 licensing surface: declare the LTX-2.x Community License terms, stamp them onto generated video, and gate downstream training on them. |
 | `lancedb` | Deploy and query LanceDB vector-search workbenches. |
 | `detection-training` | Train Faster R-CNN detectors from LanceDB materialized views. |
 | `scenario-gen` | Adversarial scenario generation: mine hard scenarios that fail a policy-under-test (pluggable Isaac Lab RL backend; deterministic default). |
