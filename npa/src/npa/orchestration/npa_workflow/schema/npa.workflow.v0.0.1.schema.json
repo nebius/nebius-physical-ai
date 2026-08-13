@@ -82,6 +82,7 @@
         "inputs": { "$ref": "#/$defs/artifacts" },
         "outputs": { "$ref": "#/$defs/artifacts" },
         "resources": { "type": "string" },
+        "multiNodeMode": { "enum": ["sharded"] },
         "terminal": { "type": "boolean" }
       }
     },

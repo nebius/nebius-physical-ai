@@ -56,6 +56,7 @@ states:
     next: gang-stage
   gang-stage:
     resources: gang
+    multiNodeMode: sharded
     run:
       shell: "echo rank $SKYPILOT_NODE_RANK"
     terminal: true
@@ -211,6 +212,7 @@ initial: augment
 states:
   augment:
     resources: gpu
+    multiNodeMode: sharded
     run:
       shell: "echo rank $SKYPILOT_NODE_RANK"
     terminal: true
@@ -276,13 +278,16 @@ def test_paidf_augment_scales_from_one_pod_to_a_gang(monkeypatch: pytest.MonkeyP
     )
     spec = load_spec(blueprint)
 
-    def _augment_task(loaded):
+    def _augment_task(loaded, *, execution_attempt_id: str = ""):
         plan = build_plan(loaded, run_id="paidf", assume_decision="promote_checkpoint")
         text = render_skypilot_yaml(
             loaded,
             plan,
             run_id="paidf",
-            options=SkypilotRenderOptions(image_overrides={"*": ""}),
+            options=SkypilotRenderOptions(
+                image_overrides={"*": ""},
+                execution_attempt_id=execution_attempt_id,
+            ),
         )
         docs = [doc for doc in yaml.safe_load_all(text) if doc]
         return next(doc for doc in docs[1:] if doc["name"].startswith("augment"))
@@ -290,9 +295,56 @@ def test_paidf_augment_scales_from_one_pod_to_a_gang(monkeypatch: pytest.MonkeyP
     # Shipped default: one augment pod, rendered exactly as before.
     assert "num_nodes" not in _augment_task(spec)
 
-    gang = _augment_task(merge_config_overrides(spec, {"augment_nodes": "4"}))
+    gang = _augment_task(
+        merge_config_overrides(
+            spec, {"augment_nodes": "4", "n_augmentations": "4"}
+        )
+    )
     assert gang["num_nodes"] == 4
+    assert gang["envs"]["NPA_COSMOS_NODE_COUNT"] == "4"
+    assert gang["envs"]["NPA_WORKFLOW_ATTEMPT_ID"]
     assert "num_nodes" not in gang["resources"]
+
+    # A second grade-loop launch of the same state/run gets a different
+    # scheduler-owned wave identity even though all stable manifest fields match.
+    first = _augment_task(
+        merge_config_overrides(spec, {"augment_nodes": "2"}),
+        execution_attempt_id="paidf-loop-1-wave-augment-attempt-1",
+    )
+    second = _augment_task(
+        merge_config_overrides(spec, {"augment_nodes": "2"}),
+        execution_attempt_id="paidf-loop-2-wave-augment-attempt-1",
+    )
+    assert first["envs"]["NPA_WORKFLOW_ATTEMPT_ID"] != second["envs"][
+        "NPA_WORKFLOW_ATTEMPT_ID"
+    ]
+
+
+def test_more_augment_nodes_than_variants_fails_before_render(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
+
+    blueprint = (
+        Path(__file__).resolve().parents[3]
+        / "workflows"
+        / "workbench"
+        / "npa-workflows"
+        / "physical-ai-data-factory.yaml"
+    )
+    spec = load_spec(blueprint)
+    with pytest.raises(NpaWorkflowError, match="num_nodes=3 exceeds n_augmentations=2"):
+        merge_config_overrides(spec, {"augment_nodes": "3"})
+
+
+def test_multi_node_profile_reuse_by_unsharded_writer_fails(tmp_path: Path) -> None:
+    text = SPEC_TEMPLATE.format(nodes=2).replace(
+        "    multiNodeMode: sharded\n", "", 1
+    )
+    path = tmp_path / "duplicate.yaml"
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(NpaWorkflowError, match="not declared sharded"):
+        load_spec(path)
 
 
 def test_every_shipped_spec_still_validates() -> None:

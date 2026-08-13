@@ -72,6 +72,34 @@ class KubernetesGpuCatalog:
 
 
 @dataclass(frozen=True)
+class KubernetesGpuNode:
+    """Per-node schedulable/free GPU evidence used by gang preflight."""
+
+    name: str
+    ready: bool
+    schedulable: bool
+    products: tuple[str, ...]
+    capacity: int
+    allocatable: int
+    committed: int
+    free: int
+    exclusion: str = ""
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "ready": self.ready,
+            "schedulable": self.schedulable,
+            "products": list(self.products),
+            "capacity": self.capacity,
+            "allocatable": self.allocatable,
+            "committed": self.committed,
+            "free": self.free,
+            "exclusion": self.exclusion,
+        }
+
+
+@dataclass(frozen=True)
 class KubernetesGpuInventory:
     """Provider-independent Kubernetes GPU readiness evidence."""
 
@@ -83,6 +111,7 @@ class KubernetesGpuInventory:
     products: tuple[str, ...]
     node_labels: dict[str, dict[str, str]]
     error: str = ""
+    nodes: tuple[KubernetesGpuNode, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         product = (
@@ -106,7 +135,49 @@ class KubernetesGpuInventory:
             else "blocked_missing_product_label",
             "node_labels": self.node_labels,
             "error": self.error,
+            "nodes": [node.to_dict() for node in self.nodes],
         }
+
+
+def _gpu_quantity(container: object) -> int:
+    if not isinstance(container, dict):
+        return 0
+    resources = container.get("resources") or {}
+    if not isinstance(resources, dict):
+        return 0
+    requests = resources.get("requests") or {}
+    limits = resources.get("limits") or {}
+    raw = (
+        requests.get("nvidia.com/gpu", limits.get("nvidia.com/gpu", 0))
+        if isinstance(requests, dict) and isinstance(limits, dict)
+        else 0
+    )
+    try:
+        return max(0, int(raw or 0))
+    except (TypeError, ValueError):
+        raise KubernetesGpuCatalogError(
+            f"invalid pod nvidia.com/gpu request {raw!r}"
+        )
+
+
+def _pod_gpu_commitment(pod: object) -> tuple[str, int]:
+    if not isinstance(pod, dict):
+        return "", 0
+    spec = pod.get("spec") or {}
+    status = pod.get("status") or {}
+    if not isinstance(spec, dict) or not isinstance(status, dict):
+        return "", 0
+    if str(status.get("phase") or "") in {"Succeeded", "Failed"}:
+        return "", 0
+    node_name = str(spec.get("nodeName") or "").strip()
+    if not node_name:
+        return "", 0
+    regular = sum(_gpu_quantity(item) for item in spec.get("containers") or [])
+    init = max(
+        (_gpu_quantity(item) for item in spec.get("initContainers") or []),
+        default=0,
+    )
+    return node_name, max(regular, init)
 
 
 def discover_kubernetes_gpu_inventory(
@@ -139,12 +210,45 @@ def discover_kubernetes_gpu_inventory(
         return KubernetesGpuInventory(
             context, 0, 0, 0, 0, (), {}, "kubectl node inventory unavailable"
         )
+    pod_cmd = ["kubectl"]
+    if context:
+        pod_cmd.extend(["--context", context])
+    pod_cmd.extend(["get", "pods", "--all-namespaces", "-o", "json"])
+    try:
+        pod_result = execute(
+            pod_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if pod_result.returncode != 0:
+            return KubernetesGpuInventory(
+                context, 0, 0, 0, 0, (), {},
+                "kubectl pod inventory failed; free shared GPU capacity is unknown",
+            )
+        pod_payload = json.loads(pod_result.stdout or "{}")
+        committed_by_node: dict[str, int] = {}
+        for pod in pod_payload.get("items", []):
+            node_name, quantity = _pod_gpu_commitment(pod)
+            if node_name and quantity:
+                committed_by_node[node_name] = (
+                    committed_by_node.get(node_name, 0) + quantity
+                )
+    except (OSError, ValueError, subprocess.SubprocessError, KubernetesGpuCatalogError):
+        return KubernetesGpuInventory(
+            context, 0, 0, 0, 0, (), {},
+            "kubectl pod inventory unavailable; free shared GPU capacity is unknown",
+        )
+
     ready_nodes = 0
     eligible_nodes = 0
     capacity = 0
     allocatable = 0
     products: set[str] = set()
     labels_by_node: dict[str, dict[str, str]] = {}
+    node_records: list[KubernetesGpuNode] = []
     for item in payload.get("items", []):
         metadata = item.get("metadata") or {}
         spec = item.get("spec") or {}
@@ -156,7 +260,7 @@ def discover_kubernetes_gpu_inventory(
         )
         if ready:
             ready_nodes += 1
-        blocked = bool(spec.get("unschedulable")) or any(
+        disallowed_taint = any(
             str(taint.get("effect") or "") in {"NoSchedule", "NoExecute"}
             and str(taint.get("key") or "") not in {"nvidia.com/gpu"}
             for taint in spec.get("taints") or []
@@ -174,18 +278,46 @@ def discover_kubernetes_gpu_inventory(
         name = str(metadata.get("name") or "")
         if name:
             labels_by_node[name] = raw_labels
+        blocked = bool(spec.get("unschedulable")) or disallowed_taint
+        node_products: set[str] = set()
+        for key, value in raw_labels.items():
+            if key in {
+                "nvidia.com/gpu.product",
+                "nebius.com/gpu",
+                "node.kubernetes.io/instance-type",
+            } or "product" in key.casefold():
+                if value:
+                    node_products.add(value)
+        committed = committed_by_node.get(name, 0)
+        free = max(0, node_allocatable - committed)
+        exclusion = (
+            "not-ready"
+            if not ready
+            else "cordoned-or-unsupported-taint"
+            if blocked
+            else "no-allocatable-gpu"
+            if node_allocatable <= 0
+            else ""
+        )
+        if name:
+            node_records.append(
+                KubernetesGpuNode(
+                    name=name,
+                    ready=ready,
+                    schedulable=not blocked,
+                    products=tuple(sorted(node_products)),
+                    capacity=node_capacity,
+                    allocatable=node_allocatable,
+                    committed=committed,
+                    free=free,
+                    exclusion=exclusion,
+                )
+            )
         if ready and not blocked and node_allocatable > 0:
             eligible_nodes += 1
             allocatable += node_allocatable
             capacity += node_capacity
-            for key, value in raw_labels.items():
-                if key in {
-                    "nvidia.com/gpu.product",
-                    "nebius.com/gpu",
-                    "node.kubernetes.io/instance-type",
-                } or "product" in key.casefold():
-                    if value:
-                        products.add(value)
+            products.update(node_products)
     return KubernetesGpuInventory(
         context=context,
         ready_nodes=ready_nodes,
@@ -194,7 +326,56 @@ def discover_kubernetes_gpu_inventory(
         allocatable=allocatable,
         products=tuple(sorted(products)),
         node_labels=labels_by_node,
+        nodes=tuple(sorted(node_records, key=lambda item: item.name)),
     )
+
+
+def preflight_kubernetes_gpu_gang(
+    inventory: KubernetesGpuInventory,
+    *,
+    accelerator: str,
+    node_count: int,
+) -> dict[str, object]:
+    """Require N distinct compatible nodes with enough currently free GPUs."""
+
+    if inventory.error:
+        raise KubernetesGpuCatalogError(inventory.error)
+    request = parse_accelerator_request(accelerator)
+    expected = int(node_count)
+    if expected < 1:
+        raise ValueError("node_count must be positive")
+    wanted = _normalize(request.name)
+    alias_group = next(
+        (group for group in _EXPLICIT_ACCELERATOR_ALIASES if wanted in group),
+        frozenset({wanted}),
+    )
+
+    def compatible(node: KubernetesGpuNode) -> bool:
+        return any(_normalize(product) in alias_group for product in node.products)
+
+    candidates = [
+        node
+        for node in inventory.nodes
+        if node.ready
+        and node.schedulable
+        and compatible(node)
+        and node.free >= request.quantity
+    ]
+    if len(candidates) < expected:
+        raise UnsatisfiableAcceleratorError(
+            f"Kubernetes context {inventory.context or '<current>'} has "
+            f"{len(candidates)} distinct compatible schedulable node(s) with at "
+            f"least {request.quantity} free {request.name} GPU(s), but the gang "
+            f"requires {expected}. Active pod GPU commitments are subtracted; "
+            "aggregate GPUs on one node cannot satisfy multiple gang ranks."
+        )
+    return {
+        "context": inventory.context,
+        "accelerator": request.spec,
+        "node_count": expected,
+        "compatible_free_nodes": len(candidates),
+        "selected_nodes": [node.name for node in candidates[:expected]],
+    }
 
 
 @dataclass(frozen=True)

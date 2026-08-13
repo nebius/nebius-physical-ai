@@ -85,6 +85,9 @@ class StateSpec:
     resources: str = "default"
     terminal: bool = False
     writes_decision: bool = False
+    # Explicit acknowledgement for rank-aware raw commands. Catalog toolRefs
+    # normally carry this contract themselves.
+    multi_node_mode: str = "forbidden"
 
 
 @dataclass
@@ -286,6 +289,9 @@ def _parse_state(
         writes_decision=bool(
             entry.get("writesDecision") or entry.get("writes_decision")
         ),
+        multi_node_mode=str(
+            entry.get("multiNodeMode") or entry.get("multi_node_mode") or "forbidden"
+        ),
     )
 
 
@@ -393,6 +399,7 @@ def validate_spec(spec: NpaWorkflowSpec) -> None:
             _validate_loop_max(state, spec.config)
 
     _validate_resource_profiles(spec)
+    _validate_executable_resource_contracts(spec)
     _assert_acyclic_needs(spec)
     _assert_terminal_exists(spec)
     _assert_bounded_control_flow_cycles(spec)
@@ -471,6 +478,95 @@ def _validate_resource_profiles(spec: NpaWorkflowSpec) -> None:
             run=context.run,
         )
         profile_num_nodes(resolved, name=name)
+
+
+def _validate_executable_resource_contracts(spec: NpaWorkflowSpec) -> None:
+    """Reject unsafe gang reuse and run import-light tool semantic checks."""
+
+    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+    from npa.orchestration.npa_workflow.interpreter import _make_context
+
+    context = _make_context(spec, run_id="validate-run")
+    for state in spec.states.values():
+        if not state.run and not state.tool_ref:
+            continue
+        profile = spec.resources.get(state.resources)
+        if profile is None and state.resources == "default":
+            profile = {}
+        if not isinstance(profile, Mapping):
+            raise NpaWorkflowError(
+                f"state {state.name}: unknown resource profile {state.resources!r}"
+            )
+        resolved = resolve_resource_profile(
+            state.resources,
+            profile,
+            config=context.config,
+            run=context.run,
+        )
+        nodes = profile_num_nodes(resolved, name=state.resources)
+        entry = TOOL_CATALOG.get(state.tool_ref) if state.tool_ref else None
+        mode = entry.multi_node_mode if entry is not None else state.multi_node_mode
+        if mode not in {"forbidden", "sharded"}:
+            raise NpaWorkflowError(
+                f"state {state.name}: multiNodeMode must be 'sharded', got {mode!r}"
+            )
+        if nodes > 1 and mode != "sharded":
+            raise NpaWorkflowError(
+                f"state {state.name}: resource profile {state.resources!r} requests "
+                f"num_nodes={nodes}, but this executable is not declared sharded; "
+                "identical workers could duplicate or race output writers"
+            )
+        if entry is None or not entry.semantic_contract:
+            continue
+        effective_config = dict(spec.config)
+        effective_config.update(state.params)
+        if entry.semantic_contract == "cosmos_transfer_control":
+            from npa.workbench.cosmos.control_contract import (
+                ControlContractError,
+                validate_control_request,
+            )
+
+            try:
+                validate_control_request(
+                    modality=effective_config.get("augment_control", "edge"),
+                    weight=effective_config.get("augment_control_weight", "1.0"),
+                    control_asset=effective_config.get("augment_control_asset_uri", ""),
+                    control_prompt=effective_config.get("augment_control_prompt", ""),
+                    mask_asset=effective_config.get("augment_mask_asset_uri", ""),
+                    mask_prompt=effective_config.get("augment_mask_prompt", ""),
+                )
+            except ControlContractError as exc:
+                raise NpaWorkflowError(f"state {state.name}: {exc}") from exc
+        else:
+            raise NpaWorkflowError(
+                f"state {state.name}: unknown semantic contract "
+                f"{entry.semantic_contract!r}"
+            )
+        if entry.variant_count_config:
+            raw_variants = effective_config.get(entry.variant_count_config, "1")
+            if isinstance(raw_variants, bool):
+                raise NpaWorkflowError(
+                    f"state {state.name}: {entry.variant_count_config} must be a "
+                    "positive integer, not a bool"
+                )
+            try:
+                variants = int(raw_variants)
+            except (TypeError, ValueError) as exc:
+                raise NpaWorkflowError(
+                    f"state {state.name}: {entry.variant_count_config} must be a "
+                    f"positive integer, got {raw_variants!r}"
+                ) from exc
+            if variants < 1:
+                raise NpaWorkflowError(
+                    f"state {state.name}: {entry.variant_count_config} must be >= 1, "
+                    f"got {variants}"
+                )
+            if nodes > variants:
+                raise NpaWorkflowError(
+                    f"state {state.name}: num_nodes={nodes} exceeds "
+                    f"{entry.variant_count_config}={variants}; surplus GPU workers "
+                    "would have empty strides"
+                )
 
 
 def resolve_resource_profile(

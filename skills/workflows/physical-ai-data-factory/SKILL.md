@@ -80,9 +80,11 @@ Verified live: a 4-variant run on `RTXPRO6000:4` drove all 4 GPUs to 100%
 nodes are the second, and only the `augment` stage uses it. `resources.gpu` declares
 `num_nodes: "{{config.augment_nodes}}"` (default `1`), so submit chooses the block
 size without editing the blueprint — concurrent renders = `augment_nodes` × GPUs per
-node. `num_nodes` accepts a `{{config.*}}` token on any profile, resolved against the
-`--var`-merged config; `deployIfAbsent` then provisions at least that many GPU nodes,
-because a gang bigger than the cluster sits `PENDING` rather than failing.
+node. Validation requires `augment_nodes <= n_augmentations`, so surplus GPU workers
+fail before provisioning. `num_nodes` accepts a `{{config.*}}` token on any profile,
+resolved against the `--var`-merged config. Existing clusters also receive a read-only
+submit-time snapshot check for enough distinct, Ready, schedulable, product-compatible
+nodes after active pod GPU requests are subtracted.
 
 SkyPilot runs the *same* augment command in every pod of the gang, so the stage
 shards: node `k` of `N` renders variants `k, k+N, …` (striding keeps the nodes within
@@ -93,9 +95,10 @@ shards and merges them into the usual `cosmos_augmented/manifest.json` in sample
 combo order, adding `node_count` and a per-rank `shards` block; a rank that never
 reports fails the stage by name instead of publishing an understated fan-out. That
 wait has no default deadline — a sibling's remaining work is however long its
-diffusions take, and SkyPilot already fails the task when a node's process dies, so
-a timeout could only turn a slow success into a failure. `NPA_COSMOS_SHARD_JOIN_TIMEOUT_S`
-opts into one. Shard
+diffusions take. It periodically reports elapsed time and missing/received ranks;
+`NPA_COSMOS_SHARD_JOIN_TIMEOUT_S` opts into a visible deterministic deadline for a
+live-but-hung sibling. Each shard also carries a scheduler/runtime attempt identity,
+so loop iterations and managed-job recovery cannot accept a prior attempt. Shard
 manifests are objects at the augment prefix root, never a subdirectory — every
 consumer (`curate`, `finalize`, the evaluator, provenance) treats a subdirectory
 there as a scenario variant. With `augment_nodes=1` no shard file is written and the
@@ -131,7 +134,7 @@ assembles those frames into a temporary 1280x720, 93-frame clip inside the GPU
 runner. An empty, inaccessible, or image/video-free input fails closed before
 inference. Bundled upstream media was removed for redistribution reasons and is
 not a fallback. The runner builds a controlnet spec with `video_path` = that clip
-and the `config.augment_control` modality computed on-the-fly, and the sampled
+and the selected `config.augment_control` signal, and the sampled
 appearance prompt drives the new look — so the output preserves the input's
 structure/motion with a new appearance. Generic direct CLI callers remain strict:
 they opt in with `--condition-on-input` or `--input-video <path|s3://>` and must
@@ -139,12 +142,15 @@ supply a video. Conditioned runs record `mode: cosmos_transfer2.5_gpu` +
 `input_conditioned: true` + `conditioned_input` in the augment `metadata.json` /
 `manifest.json`, which the agent's provenance panel surfaces.
 
-**Segmentation conditioning and region masks (`--var augment_control=seg`).** All
-four of upstream's control modalities are computed on-the-fly from the staged input,
-so none of them needs a precomputed asset: `edge` (Canny), `vis` (bilateral blur),
-`depth` (VideoDepthAnything), and `seg` (GroundingDINO-base + SAM2). Each is a
-separate ControlNet checkpoint, so switching modality downloads different gated
-weights. NPA used to rewrite any request outside `edge`/`vis` to `edge` silently;
+**Segmentation conditioning and region masks (`--var augment_control=seg`).**
+`edge` (Canny), `vis` (bilateral blur), and `seg` (GroundingDINO-base + SAM2) may
+be derived from the staged input. `depth` is deliberately precomputed-only and
+requires `augment_control_asset_uri` produced by an operator-owned permissive,
+weight-free method. NPA does not download, execute, or validate Video Depth Anything
+Large or Small weights. Each modality selects an exact pinned ControlNet checkpoint
+from `nvidia/Cosmos-Transfer2.5-2B`; submit verifies the caller-owned HF token can
+access that exact revision/file before provisioning or GPU work. Token presence is
+not treated as license consent. NPA used to rewrite requests outside `edge`/`vis` silently;
 an unsupported modality now fails closed instead.
 
 - **What seg buys you.** `edge` preserves every texture edge, so a prompt that
@@ -158,9 +164,10 @@ an unsupported modality now fails closed instead.
   `config.augment_mask_prompt` has SAM2 segment the region from text;
   `config.augment_mask_asset_uri` supplies a precomputed binary spatiotemporal mask
   video. They are mutually exclusive — upstream accepts one or the other.
-- **`config.augment_control_weight`** is bounded `0.0`–`1.0` upstream
-  (`ControlWeight = Field(ge=0.0, le=1.0)`), which pydantic would only enforce
-  after the accelerator is held, so NPA rejects an out-of-range weight at submit.
+- **`config.augment_control_weight`** is finite and bounded `0.0`–`1.0`. The
+  shared semantic contract rejects bad weights, mask mutual exclusion, non-seg
+  control prompts, missing depth assets, and nodes exceeding variants during
+  validate/plan/submit, before image, cluster, or GPU work.
 - **`config.augment_control_asset_uri`** substitutes a precomputed control video
   (e.g. a segmentation map from an earlier pipeline) for the on-the-fly one. A named
   asset that does not exist fails rather than quietly reverting to on-the-fly.

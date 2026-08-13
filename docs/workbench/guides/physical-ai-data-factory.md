@@ -83,8 +83,10 @@ where NPA substitutes its own endpoint.
 > `multiply_mode` in the augment manifest, curation, and finalize reports.
 > The managed transfer conditions every variant on a supported video under the
 > run's `config.trigger_uri` (`input/`), preserving geometry/motion while changing
-> appearance. `config.augment_control` chooses which structure is preserved and is
-> computed on-the-fly from that clip: `edge` (default), `vis`, `depth`, or `seg`.
+> appearance. `config.augment_control` chooses which structure is preserved:
+> `edge` (default), `vis`, or `seg` may be derived from the clip; `depth` requires
+> an operator-owned precomputed weight-free control. Video Depth Anything weights
+> are not downloaded or executed by this workflow.
 
 ### Input conditioning and its evaluation source
 
@@ -97,8 +99,8 @@ frames at 16 fps, and extracts eight caption frames. The catalog always invokes
 for hallucination scoring. Missing or invalid input therefore cannot turn into a
 decorative staged object or a fixed control example.
 
-All four of upstream's control modalities are derived from that same staged clip,
-so choosing one is a `--var` decision and needs no extra asset:
+Edge, visibility-blur, and segmentation controls are derived from the staged clip.
+Depth is precomputed-only and must be supplied as `augment_control_asset_uri`:
 `--var augment_control=seg` conditions on a GroundingDINO+SAM2 segmentation
 (`config.augment_control_prompt` names the classes) instead of Canny edges, which
 lets a prompt change what a region is made of while keeping its shape and motion.

@@ -719,7 +719,10 @@ One pod is bounded by the GPUs on a single node. `config.augment_nodes` is the
 second axis: the `gpu` profile declares `num_nodes: "{{config.augment_nodes}}"`, so
 raising it at submit time gang-schedules that many augment pods without editing the
 blueprint. `deployIfAbsent` provisions a cluster with at least that many GPU nodes,
-because a gang larger than the cluster does not fail — it sits `PENDING`.
+and validation requires `augment_nodes <= n_augmentations`. For an existing
+cluster, submit reads the explicitly selected Kubernetes context and requires that
+many distinct Ready, schedulable, product-compatible nodes after subtracting active
+pod GPU requests. This is an instantaneous preflight snapshot, not a reservation.
 
 ```bash
 # 16 variants: 4 nodes x 4 GPUs, all rendering at once.
@@ -750,10 +753,11 @@ How the nodes divide the work and rejoin:
   names it — the run manifest never quietly understates the fan-out.
 - That join waits as long as the slowest sibling needs. It carries no default
   deadline, because a sibling's remaining work is however long its diffusions take,
-  and it cannot hang past a dead sibling either: SkyPilot fails the whole task when
-  any node's process exits nonzero. Export
-  `NPA_COSMOS_SHARD_JOIN_TIMEOUT_S=<seconds>` if you do want rank 0 to give up, and
-  the failure then names the ranks that never reported.
+  and periodically reports elapsed time plus missing and received ranks. Export
+  `NPA_COSMOS_SHARD_JOIN_TIMEOUT_S=<seconds>` to give a live-but-hung sibling an
+  explicit deterministic deadline; the failure names the missing ranks. Shards
+  carry the current scheduler wave and SkyPilot launch-incarnation identity, so
+  loop iteration and managed-job recovery reject prior-attempt objects.
 - Downstream stages are unchanged: they enumerate clip dirs, and the shard files
   are objects at the prefix root rather than a subdirectory, so nothing counts them
   as a variant.
@@ -766,14 +770,15 @@ CPU/Token-Factory stages that stay a single pod.
 ### 6c. Choose what the augmentation preserves (`--var augment_control=seg`)
 
 Fan-out decides how many variants render at once; the **control modality** decides
-what each variant keeps from the input. Cosmos Transfer 2.5 computes all four of
-them on-the-fly from the staged clip, so switching is a `--var`, not a new asset:
+what each variant keeps from the input. Edge, visibility blur, and segmentation
+may be derived from the staged clip. Depth requires an operator-owned precomputed
+weight-free control via `augment_control_asset_uri`:
 
 | `--var augment_control=` | Preserves | Computed by |
 | --- | --- | --- |
 | `edge` (default) | every intensity edge, including texture detail | Canny |
 | `vis` | coarse layout and colour blocks | bilateral blur |
-| `depth` | scene geometry | VideoDepthAnything |
+| `depth` | scene geometry | precomputed permissive weight-free control |
 | `seg` | class/instance boundaries only | GroundingDINO-base + SAM2 |
 
 `edge` fights a prompt that restyles a surface, because the old material's texture
@@ -801,12 +806,15 @@ npa workbench workflow submit "$SPEC" \
   mask video instead. The two are mutually exclusive.
 - `augment_control_asset_uri` substitutes a precomputed control video (e.g. a
   segmentation map from an earlier pipeline) for the on-the-fly one. A named asset
-  that is missing fails the stage instead of reverting to on-the-fly.
+  that is missing fails the stage instead of reverting to on-the-fly. It is
+  mandatory for depth. Video Depth Anything Large/Small weights are outside this
+  validated path and are neither downloaded nor executed.
 - `augment_control_weight` (default `1.0`) trades control fidelity against prompt
   freedom. Upstream accepts `0.0`–`1.0`; anything outside that fails the submit
   rather than the loaded model.
-- Each modality is a separate ControlNet checkpoint, so the first `seg` or `depth`
-  run downloads different gated weights than an `edge` run.
+- Each modality is a separate pinned ControlNet checkpoint. Before provisioning,
+  submit verifies the caller-owned HF token can access the selected exact
+  `nvidia/Cosmos-Transfer2.5-2B` revision/file; token presence is not consent.
 - An unsupported modality fails before the GPU is held. NPA previously rewrote
   anything outside `edge`/`vis` to `edge` silently.
 

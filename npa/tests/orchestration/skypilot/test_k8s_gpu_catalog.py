@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 
 import pytest
@@ -7,10 +8,14 @@ import pytest
 from npa.orchestration.skypilot.k8s_gpu_catalog import (
     KubernetesGpuCatalog,
     KubernetesGpuCatalogError,
+    KubernetesGpuInventory,
+    KubernetesGpuNode,
     UnsatisfiableAcceleratorError,
     context_from_infra,
     discover_kubernetes_gpu_catalog,
+    discover_kubernetes_gpu_inventory,
     parse_kubernetes_gpu_catalog,
+    preflight_kubernetes_gpu_gang,
     resolve_kubernetes_accelerator,
     spec_accelerators,
     wait_for_kubernetes_accelerators,
@@ -303,3 +308,155 @@ def test_readiness_timeout_is_clear_and_preserves_capacity() -> None:
 )
 def test_context_from_infra(infra: str, expected: str) -> None:
     assert context_from_infra(infra) == expected
+
+
+def _node(
+    name: str,
+    *,
+    product: str = "RTXPRO-6000-BLACKWELL-SERVER-EDITION",
+    free: int = 1,
+    ready: bool = True,
+    schedulable: bool = True,
+) -> KubernetesGpuNode:
+    return KubernetesGpuNode(
+        name=name,
+        ready=ready,
+        schedulable=schedulable,
+        products=(product,),
+        capacity=1,
+        allocatable=1,
+        committed=1 - free,
+        free=free,
+        exclusion="" if ready and schedulable else "excluded",
+    )
+
+
+def test_gang_capacity_requires_distinct_compatible_free_nodes() -> None:
+    inventory = KubernetesGpuInventory(
+        context="exact-context",
+        ready_nodes=3,
+        eligible_gpu_nodes=3,
+        capacity=3,
+        allocatable=3,
+        products=("RTXPRO-6000-BLACKWELL-SERVER-EDITION",),
+        node_labels={},
+        nodes=(_node("a"), _node("b"), _node("c", free=0)),
+    )
+    evidence = preflight_kubernetes_gpu_gang(
+        inventory, accelerator="RTXPRO6000:1", node_count=2
+    )
+    assert evidence["compatible_free_nodes"] == 2
+    assert evidence["selected_nodes"] == ["a", "b"]
+
+
+def test_gang_capacity_subtracts_shared_and_incompatible_capacity() -> None:
+    inventory = KubernetesGpuInventory(
+        context="exact-context",
+        ready_nodes=4,
+        eligible_gpu_nodes=4,
+        capacity=4,
+        allocatable=4,
+        products=("RTXPRO-6000-BLACKWELL-SERVER-EDITION", "H100"),
+        node_labels={},
+        nodes=(
+            _node("occupied", free=0),
+            _node("wrong-product", product="H100"),
+            _node("cordoned", schedulable=False),
+            _node("only-free"),
+        ),
+    )
+    with pytest.raises(UnsatisfiableAcceleratorError, match="1 distinct compatible"):
+        preflight_kubernetes_gpu_gang(
+            inventory, accelerator="RTXPRO6000:1", node_count=2
+        )
+
+
+def test_gang_capacity_fails_closed_when_pod_inventory_is_unreadable() -> None:
+    inventory = KubernetesGpuInventory(
+        context="exact-context",
+        ready_nodes=0,
+        eligible_gpu_nodes=0,
+        capacity=0,
+        allocatable=0,
+        products=(),
+        node_labels={},
+        error="kubectl pod inventory failed; free shared GPU capacity is unknown",
+    )
+    with pytest.raises(KubernetesGpuCatalogError, match="shared GPU capacity"):
+        preflight_kubernetes_gpu_gang(
+            inventory, accelerator="RTXPRO6000:1", node_count=2
+        )
+
+
+def test_live_inventory_uses_exact_context_and_subtracts_active_pods() -> None:
+    nodes = {
+        "items": [
+            {
+                "metadata": {
+                    "name": "gpu-a",
+                    "labels": {
+                        "nvidia.com/gpu.product": (
+                            "RTXPRO-6000-BLACKWELL-SERVER-EDITION"
+                        )
+                    },
+                },
+                "spec": {},
+                "status": {
+                    "conditions": [{"type": "Ready", "status": "True"}],
+                    "capacity": {"nvidia.com/gpu": "2"},
+                    "allocatable": {"nvidia.com/gpu": "2"},
+                },
+            }
+        ]
+    }
+    pods = {
+        "items": [
+            {
+                "spec": {
+                    "nodeName": "gpu-a",
+                    "containers": [
+                        {"resources": {"requests": {"nvidia.com/gpu": "1"}}}
+                    ],
+                    "initContainers": [
+                        {"resources": {"limits": {"nvidia.com/gpu": "2"}}}
+                    ],
+                },
+                "status": {"phase": "Running"},
+            },
+            {
+                "spec": {
+                    "nodeName": "gpu-a",
+                    "containers": [
+                        {"resources": {"requests": {"nvidia.com/gpu": "2"}}}
+                    ],
+                },
+                "status": {"phase": "Succeeded"},
+            },
+        ]
+    }
+    seen: list[list[str]] = []
+
+    def runner(cmd, **_kwargs):
+        seen.append(cmd)
+        payload = pods if "pods" in cmd else nodes
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(payload), stderr="")
+
+    inventory = discover_kubernetes_gpu_inventory(
+        context="exact-context", runner=runner
+    )
+
+    assert seen == [
+        ["kubectl", "--context", "exact-context", "get", "nodes", "-o", "json"],
+        [
+            "kubectl",
+            "--context",
+            "exact-context",
+            "get",
+            "pods",
+            "--all-namespaces",
+            "-o",
+            "json",
+        ],
+    ]
+    assert inventory.nodes[0].committed == 2
+    assert inventory.nodes[0].free == 0

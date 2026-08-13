@@ -51,6 +51,7 @@ states:
   report-nodes:
     description: Every node in the gang writes its rank report.
     resources: gang
+    multiNodeMode: sharded
     run:
       shell: >
         python3 -c "from npa.workflows.multi_node_probe import report_node;

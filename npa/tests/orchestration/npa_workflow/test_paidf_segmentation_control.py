@@ -12,8 +12,11 @@ from pathlib import Path
 
 import pytest
 import yaml
+from typer.testing import CliRunner
 
+from npa.cli.main import app
 from npa.orchestration.npa_workflow import build_plan, load_spec, validate_spec
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.skypilot_render import (
     SkypilotRenderOptions,
     render_skypilot_yaml,
@@ -21,8 +24,13 @@ from npa.orchestration.npa_workflow.skypilot_render import (
 from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
 BLUEPRINT = (
-    Path(__file__).resolve().parents[3] / "workflows" / "physical-ai-data-factory.yaml"
+    Path(__file__).resolve().parents[3]
+    / "workflows"
+    / "workbench"
+    / "npa-workflows"
+    / "physical-ai-data-factory.yaml"
 )
+RUNNER = CliRunner()
 
 
 @pytest.fixture(autouse=True)
@@ -92,7 +100,6 @@ def test_submit_can_switch_the_run_to_segmentation_conditioning() -> None:
             "augment_mask_prompt": "robot arm",
         },
     )
-
     flags = _augment_flags(spec)
 
     assert flags["--control"] == "seg"
@@ -111,10 +118,159 @@ def test_submit_can_supply_a_precomputed_segmentation_map() -> None:
             "augment_control_asset_uri": "s3://example-bucket/seg/robot_seg.mp4",
         },
     )
-
     assert _augment_flags(spec)["--control-asset"] == (
         "s3://example-bucket/seg/robot_seg.mp4"
     )
+
+
+def test_depth_requires_precomputed_control_at_validation() -> None:
+    with pytest.raises(NpaWorkflowError, match="depth control requires"):
+        merge_config_overrides(
+            load_spec(BLUEPRINT), {"augment_control": "depth"}
+        )
+    spec = merge_config_overrides(
+        load_spec(BLUEPRINT),
+        {
+            "augment_control": "depth",
+            "augment_control_asset_uri": "s3://operator-owned/depth/control.mp4",
+        },
+    )
+    assert _augment_flags(spec)["--control"] == "depth"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "match"),
+    [
+        ({"augment_control_weight": "1.1"}, "range 0.0-1.0"),
+        ({"augment_control": "edge", "augment_control_prompt": "arm"}, "not text-driven"),
+        (
+            {
+                "augment_mask_asset_uri": "s3://bucket/mask.mp4",
+                "augment_mask_prompt": "arm",
+            },
+            "mutually exclusive",
+        ),
+        ({"n_augmentations": "0"}, "must be >= 1"),
+        (
+            {"n_augmentations": "2", "augment_nodes": "3"},
+            "num_nodes=3 exceeds n_augmentations=2",
+        ),
+    ],
+)
+def test_semantic_contract_rejects_invalid_overrides_before_plan(
+    overrides: dict[str, str], match: str
+) -> None:
+    with pytest.raises(NpaWorkflowError, match=match):
+        merge_config_overrides(load_spec(BLUEPRINT), overrides)
+
+
+def test_plan_and_submit_share_the_early_semantic_preflight() -> None:
+    bad = [
+        "--var",
+        "augment_control=edge",
+        "--var",
+        "augment_control_prompt=robot arm",
+    ]
+    planned = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "plan-spec",
+            str(BLUEPRINT),
+            "--run-id",
+            "bad-plan",
+            "--assume-decision",
+            "promote_checkpoint",
+            *bad,
+        ],
+    )
+    submitted = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(BLUEPRINT),
+            "--run-id",
+            "bad-submit",
+            *bad,
+        ],
+    )
+    assert planned.exit_code != 0
+    assert submitted.exit_code != 0
+    assert "not text-driven" in planned.output
+    assert "not text-driven" in submitted.output
+
+
+def test_submit_capacity_preflight_uses_resolved_paidf_gang_and_free_nodes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli.workbench.workflow import _preflight_submit_gang_capacity
+    from npa.orchestration.skypilot import k8s_gpu_catalog as gpu_catalog
+
+    def node(name: str, *, free: int = 1) -> gpu_catalog.KubernetesGpuNode:
+        return gpu_catalog.KubernetesGpuNode(
+            name=name,
+            ready=True,
+            schedulable=True,
+            products=("RTXPRO-6000-BLACKWELL-SERVER-EDITION",),
+            capacity=1,
+            allocatable=1,
+            committed=1 - free,
+            free=free,
+        )
+
+    inventory = gpu_catalog.KubernetesGpuInventory(
+        context="task-scoped-context",
+        ready_nodes=2,
+        eligible_gpu_nodes=2,
+        capacity=2,
+        allocatable=2,
+        products=("RTXPRO-6000-BLACKWELL-SERVER-EDITION",),
+        node_labels={},
+        nodes=(node("gpu-a"), node("gpu-b")),
+    )
+    monkeypatch.setattr(
+        gpu_catalog,
+        "discover_kubernetes_gpu_inventory",
+        lambda *, context: inventory,
+    )
+    spec = merge_config_overrides(
+        load_spec(BLUEPRINT),
+        {"augment_nodes": "2", "n_augmentations": "2"},
+    )
+    checks = _preflight_submit_gang_capacity(
+        spec,
+        context="task-scoped-context",
+        accelerator_overrides={
+            "RTXPRO6000:1": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+        },
+    )
+    assert checks == [
+        {
+            "context": "task-scoped-context",
+            "accelerator": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1",
+            "node_count": 2,
+            "compatible_free_nodes": 2,
+            "selected_nodes": ["gpu-a", "gpu-b"],
+            "state": "augment",
+            "profile": "gpu",
+        }
+    ]
+
+    monkeypatch.setattr(
+        gpu_catalog,
+        "discover_kubernetes_gpu_inventory",
+        lambda *, context: gpu_catalog.KubernetesGpuInventory(
+            **{
+                **inventory.__dict__,
+                "nodes": (node("gpu-a"), node("gpu-b", free=0)),
+            }
+        ),
+    )
+    with pytest.raises(gpu_catalog.UnsatisfiableAcceleratorError, match="requires 2"):
+        _preflight_submit_gang_capacity(spec, context="task-scoped-context")
 
 
 def test_the_control_prefix_is_a_sibling_of_the_augmented_clips() -> None:

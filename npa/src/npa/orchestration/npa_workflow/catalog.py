@@ -13,6 +13,13 @@ class ToolEntry:
     argv_template: list[str]
     description: str = ""
     stub: bool = False
+    # Multi-node profiles run the same command on every node.  The default is
+    # fail-closed because an ordinary writer would publish duplicate/racing
+    # outputs.  A sharded tool must own an explicit rank-aware contract.
+    multi_node_mode: str = "forbidden"
+    # Named import-light semantic contract evaluated by validate/plan/submit.
+    semantic_contract: str = ""
+    variant_count_config: str = ""
 
 
 # Public composable entries intentionally available to customer-authored specs,
@@ -391,6 +398,9 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "+ frames to S3, conditioned on the chosen control modality (edge, vis, "
             "depth, or seg) and optionally restricted to a segmented region."
         ),
+        multi_node_mode="sharded",
+        semantic_contract="cosmos_transfer_control",
+        variant_count_config="n_augmentations",
         argv_template=[
             "npa",
             "workbench",
@@ -404,8 +414,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{run.id}}",
             "--configs-uri",
             "{{config.configs_uri}}",
-            # Conditioning shape. All four modalities are computed on-the-fly from
-            # the staged input, so `--control seg` needs no asset; the asset and
+            # Conditioning shape. Edge/vis/seg may be computed from the staged
+            # input; depth requires an operator-owned precomputed control. The asset and
             # prompt flags stay empty unless the spec sets them, and empty means
             # "unset" in the CLI rather than a control the model must honour.
             "--control",

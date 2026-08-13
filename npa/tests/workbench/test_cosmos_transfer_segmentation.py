@@ -1,7 +1,8 @@
 """Segmentation-conditioned augmentation and region masks in Cosmos Transfer 2.5.
 
-The pinned upstream revision computes every control modality on the fly from the
-input clip -- ``seg`` via GroundingDINO-base + SAM2 -- and accepts a binary
+The pinned upstream revision computes edge/vis/seg controls on the fly from the
+input clip -- ``seg`` via GroundingDINO-base + SAM2 -- while NPA requires depth
+to be precomputed without restricted Video Depth Anything weights. It accepts a binary
 spatiotemporal region mask per modality, either precomputed or generated from a
 text prompt by SAM2. These tests cover the NPA surface for both: the controlnet
 spec NPA writes, the artifacts it publishes, and the CLI/PAIDF wiring.
@@ -34,6 +35,28 @@ class FakeStorage:
     def upload_file(self, local: str, uri: str) -> str:
         self.uploads[uri] = Path(local).read_bytes()
         return uri
+
+
+def test_output_classifier_never_selects_control_evidence_as_generated(
+    tmp_path: Path,
+) -> None:
+    generated = tmp_path / "clip.mp4"
+    control = tmp_path / "clip_control_seg.mp4"
+    mask = tmp_path / "clip_mask_seg.mp4"
+    unknown = tmp_path / "clip_control_evidence_extra.mp4"
+    for path, size in (
+        (generated, 1),
+        (control, 100),
+        (mask, 200),
+        (unknown, 300),
+    ):
+        path.write_bytes(b"x" * size)
+
+    videos, controls, masks = tx._classify_output_videos(tmp_path)
+
+    assert videos == [str(generated)]
+    assert controls == {"seg": str(control)}
+    assert masks == {"seg": str(mask)}
 
 
 def _fake_inference(monkeypatch, repo: Path, *, sidecars: dict[str, bytes] | None = None):
@@ -368,6 +391,78 @@ def test_control_artifacts_publish_beside_the_clips_not_inside_them(
     assert meta["control"] == "seg"
     assert meta["control_prompt"] == "robot arm"
     assert meta["mask_prompt"] == "robot arm"
+    assert meta["control_evidence"] == {"status": "published"}
+
+
+def test_control_upload_failure_preserves_completed_generated_variant(
+    tmp_path: Path, monkeypatch
+) -> None:
+    video = tmp_path / "out.mp4"
+    video.write_bytes(b"generated")
+    control = tmp_path / "out_control_seg.mp4"
+    control.write_bytes(b"control")
+
+    def fake_extract(_source: str, dest: Path, *, max_frames: int = 8) -> list[Path]:
+        dest.mkdir(parents=True, exist_ok=True)
+        frame = dest / "frame-00000.png"
+        frame.write_bytes(b"frame")
+        return [frame]
+
+    monkeypatch.setattr(tx, "extract_frames", fake_extract)
+
+    class FailingControlStorage(FakeStorage):
+        def __init__(self) -> None:
+            super().__init__()
+            self.order: list[str] = []
+
+        def upload_file(self, local: str, uri: str) -> str:
+            self.order.append(uri)
+            if "/cosmos_control/" in uri:
+                raise RuntimeError("signed-provider-detail-must-not-persist")
+            return super().upload_file(local, uri)
+
+    storage = FailingControlStorage()
+    clip = tx.publish_transfer_clip(
+        {
+            "video_path": str(video),
+            "video_bytes": video.stat().st_size,
+            "spec": "seg.json",
+            "control": "seg",
+            "control_videos": {"seg": str(control)},
+        },
+        "s3://bkt/run1/cosmos_augmented/",
+        clip_name="aug-run1-0",
+        control_output_uri="s3://bkt/run1/cosmos_control/",
+        require_frames=True,
+        storage_client=storage,
+    )
+
+    core = "s3://bkt/run1/cosmos_augmented/aug-run1-0/"
+    assert storage.order[:3] == [
+        core + "augmented_video.mp4",
+        core + "frame-00000.png",
+        core + "metadata.json",
+    ]
+    assert storage.uploads[core + "augmented_video.mp4"] == b"generated"
+    assert storage.uploads[core + "frame-00000.png"] == b"frame"
+    metadata = json.loads(storage.uploads[core + "metadata.json"])
+    assert metadata["control_uris"] == {}
+    assert metadata["control_evidence"] == {
+        "error_type": "RuntimeError",
+        "status": "failed",
+    }
+    assert "signed-provider-detail" not in json.dumps(metadata)
+    assert clip["control_uris"] == {}
+    assert clip["control_evidence"]["status"] == "failed"
+
+    # Core publication is complete enough for the run manifest to continue.
+    manifest = tx.write_run_manifest(
+        [clip],
+        "s3://bkt/run1/cosmos_augmented/",
+        run_id="run1",
+        storage_client=storage,
+    )
+    assert manifest["variant_count"] == 1
 
 
 def test_the_run_manifest_records_what_conditioned_the_batch(
@@ -468,7 +563,46 @@ def test_cli_refuses_an_unknown_modality_before_holding_the_gpu(monkeypatch) -> 
     )
 
     assert result.exit_code != 0
-    assert "unsupported Cosmos Transfer control modality" in result.output
+
+
+@pytest.mark.parametrize(
+    "args, expected",
+    [
+        (["--control", "edge", "--control-prompt", "robot arm"], "not text-driven"),
+        (["--control", "depth"], "requires an operator-owned precomputed"),
+    ],
+)
+def test_cli_normalizes_deterministic_control_errors_before_runtime_or_storage(
+    monkeypatch, args: list[str], expected: str
+) -> None:
+    monkeypatch.setattr(
+        tx,
+        "cosmos_transfer_available",
+        lambda: pytest.fail("runtime probe must not run"),
+    )
+    monkeypatch.setattr(
+        cosmos2,
+        "_materialize_input_clip",
+        lambda *_a, **_k: pytest.fail("input must not be materialized"),
+    )
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos2",
+            "transfer",
+            "--input-uri",
+            "s3://bkt/input/",
+            "--output-uri",
+            "s3://bkt/augment/",
+            "--execute",
+            "--condition-on-input",
+            *args,
+        ],
+    )
+    assert result.exit_code == 2
+    assert expected in result.output
+    assert "Traceback" not in result.output
 
 
 def test_cli_refuses_an_out_of_range_control_weight_before_holding_the_gpu(

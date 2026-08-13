@@ -572,6 +572,7 @@ def submit_cmd(
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
     from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
     from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
+    from npa.orchestration.npa_workflow.run_state import PAIDF_WORKFLOW_NAME
     from npa.orchestration.skypilot.workflow import (
         SkyPilotSubmitError,
         WorkflowResult,
@@ -595,13 +596,30 @@ def submit_cmd(
         _fail(str(exc))
         return
     is_npa_spec = is_npa_workflow_spec(yaml_path)
+    merged_npa_spec = None
+    if is_npa_spec:
+        from npa.orchestration.npa_workflow.submit import load_spec_for_submit
+
+        try:
+            # This is the authoritative spec for every later preflight.  It is
+            # intentionally loaded before credentials, images, ledgers, input
+            # staging, provisioning, or accelerator discovery.
+            merged_npa_spec = load_spec_for_submit(
+                yaml_path, config_overrides=substitutions
+            )
+        except Exception as exc:
+            _fail(str(exc))
+            return
     if image_override and not is_npa_spec:
         _fail(
             "--image-override/--tool-image is supported only for "
             "npa.workflow/v0.0.1 specs"
         )
         return
-    is_paidf_spec = is_npa_spec and _is_paidf_workflow_spec(yaml_path)
+    is_paidf_spec = bool(
+        merged_npa_spec is not None
+        and merged_npa_spec.name == PAIDF_WORKFLOW_NAME
+    )
     legacy_fixture = _is_truthy_submit_value(
         substitutions.get("seed_fixture")
     ) or _is_truthy_submit_value(substitutions.get("seed_default_input"))
@@ -634,11 +652,8 @@ def submit_cmd(
         return
     workflow_identity = ""
     if is_npa_spec:
-        try:
-            workflow_identity = load_spec(yaml_path).name
-        except Exception as exc:
-            _fail(str(exc))
-            return
+        assert merged_npa_spec is not None
+        workflow_identity = merged_npa_spec.name
         from npa.orchestration.npa_workflow.first_run_state import prepare_run
 
         try:
@@ -678,24 +693,86 @@ def submit_cmd(
         resolve_submit_credentials,
     )
 
+    checkpoint_access_error = ""
     try:
+        required_secret_env = list(secret_env)
+        checkpoint_tool_refs = {
+            "workbench.cosmos2.transfer_execute",
+            "workbench.cosmos2.transfer_conditioned_execute",
+        }
+        checkpoint_access_required = bool(
+            not plan_only
+            and merged_npa_spec is not None
+            and any(
+                state.tool_ref in checkpoint_tool_refs
+                for state in merged_npa_spec.states.values()
+            )
+        )
+        if checkpoint_access_required:
+            required_secret_env.append("HF_TOKEN")
         submit_credentials = resolve_submit_credentials(
             project=project,
             explicit_endpoint=s3_endpoint,
-            requested=secret_env,
+            requested=required_secret_env,
         )
+        secret_env[:] = list(dict.fromkeys(required_secret_env))
     except Exception as exc:
         _fail(f"Workflow credential resolution failed: {exc}")
         return
     s3_endpoint = submit_credentials.endpoint_url
     extra_env: dict[str, str] = dict(submit_credentials.secret_values)
-    if submit_credentials.missing and not plan_only:
+    missing_secrets = list(submit_credentials.missing)
+    if checkpoint_access_required and "HF_TOKEN" in missing_secrets:
+        missing_secrets.remove("HF_TOKEN")
+        checkpoint_access_error = (
+            "HF_TOKEN is required to verify the exact gated Cosmos Transfer "
+            "checkpoint before provisioning or GPU work"
+        )
+    if missing_secrets and not plan_only:
         _fail(
-            "--secret-env requested values that are not present in the process "
-            "environment or supported NPA credentials for project "
-            f"{project or '<default>'}: {', '.join(submit_credentials.missing)}. "
+            "Required secret values are not present in the process environment "
+            "or supported NPA credentials for project "
+            f"{project or '<default>'}: {', '.join(missing_secrets)}. "
             "Set them explicitly or store them with `npa configure`."
         )
+        return
+    if merged_npa_spec is not None and checkpoint_access_required:
+        transfer_tool_refs = {
+            "workbench.cosmos2.transfer_execute",
+            "workbench.cosmos2.transfer_conditioned_execute",
+        }
+        transfer_states = [
+            state
+            for state in merged_npa_spec.states.values()
+            if state.tool_ref in transfer_tool_refs
+        ]
+        if transfer_states and not checkpoint_access_error:
+            from npa.workbench.cosmos.checkpoint_access import (
+                CosmosCheckpointAccessError,
+                preflight_control_checkpoint_access,
+            )
+
+            modalities = {
+                str(merged_npa_spec.config.get("augment_control") or "edge")
+                if state.tool_ref == "workbench.cosmos2.transfer_execute"
+                else "edge"
+                for state in transfer_states
+            }
+            try:
+                for modality in sorted(modalities):
+                    preflight_control_checkpoint_access(
+                        modality=modality,
+                        token=str(
+                            submit_credentials.secret_values.get("HF_TOKEN") or ""
+                        ),
+                    )
+            except CosmosCheckpointAccessError as exc:
+                checkpoint_access_error = str(exc)
+
+    if checkpoint_access_error and skip_preflight:
+        # This switch may skip ordinary convenience diagnostics, but never a
+        # gated-model authorization boundary.
+        _fail(checkpoint_access_error)
         return
 
     prepared_npa = None
@@ -714,7 +791,8 @@ def submit_cmd(
         # failures spread over the render, the SkyPilot resolver and the
         # controller. Everything the operator still has to do is listed once,
         # each with the command that fixes it.
-        spec_config = _npa_spec_config(yaml_path, substitutions)
+        assert merged_npa_spec is not None
+        spec_config = dict(merged_npa_spec.config)
         # Resolve the pinned context before the preflight reports on it: npa keeps
         # its cluster kubeconfigs outside ~/.kube/config, so a context it
         # provisioned looks missing until KUBECONFIG points at it.
@@ -842,13 +920,9 @@ def submit_cmd(
                 parse_deploy_targets,
                 plan_infra_present,
             )
-            from npa.orchestration.npa_workflow.spec import (
-                load_spec as _load_deploy_spec,
-            )
-
             try:
                 deploy_targets = bind_deploy_targets_to_submit(
-                    parse_deploy_targets(_load_deploy_spec(yaml_path)),
+                    parse_deploy_targets(merged_npa_spec),
                     project=project,
                     infra=infra,
                 )
@@ -874,6 +948,7 @@ def submit_cmd(
                 ),
                 requires_npa_source=requires_npa_source,
                 source_staging_planned=stage_source_planned,
+                checkpoint_access_error=checkpoint_access_error,
             )
             if missing:
                 _fail_missing_prerequisites(yaml_path, missing)
@@ -1136,6 +1211,7 @@ def submit_cmd(
             materialize_registry_secrets=not plan_only,
             gpu_accelerator_overrides=_resolve_submit_accelerators(
                 yaml_path,
+                spec=merged_npa_spec,
                 infra=infra,
                 sky_bin=sky_bin,
                 enabled=resolve_accelerators and not plan_only,
@@ -1143,6 +1219,16 @@ def submit_cmd(
                 readiness_poll_interval=gpu_readiness_poll_interval,
             ),
         )
+        if not plan_only and merged_npa_spec is not None:
+            try:
+                _preflight_submit_gang_capacity(
+                    merged_npa_spec,
+                    context=infra_context,
+                    accelerator_overrides=npa_render_options.gpu_accelerator_overrides,
+                )
+            except Exception as exc:
+                _fail(f"multi-node GPU capacity preflight failed: {exc}")
+                return
 
         if runtime and not plan_only:
             # Runtime renders one wave at a time and historically returned before
@@ -2279,6 +2365,7 @@ def _preflight_image_bootstrap_contracts(
 def _resolve_submit_accelerators(
     yaml_path: Path,
     *,
+    spec=None,
     infra: str,
     sky_bin: str,
     enabled: bool,
@@ -2311,7 +2398,7 @@ def _resolve_submit_accelerators(
     )
 
     try:
-        requested = spec_accelerators(load_spec(yaml_path).resources)
+        requested = spec_accelerators((spec or load_spec(yaml_path)).resources)
     except NpaWorkflowError:
         return {}
     if not requested:
@@ -2342,6 +2429,59 @@ def _resolve_submit_accelerators(
             overrides[accelerator] = resolution.resolved
         typer.echo(f"accelerator-resolve: {resolution.describe()}", err=True)
     return overrides
+
+
+def _preflight_submit_gang_capacity(
+    spec,
+    *,
+    context: str,
+    accelerator_overrides: Mapping[str, str] | None = None,
+) -> list[dict[str, object]]:
+    """Check existing/new cluster free compatible nodes before job submission."""
+
+    from npa.orchestration.npa_workflow.spec import (
+        profile_num_nodes,
+        resolve_resource_profile,
+    )
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        discover_kubernetes_gpu_inventory,
+        preflight_kubernetes_gpu_gang,
+    )
+
+    checks: list[dict[str, object]] = []
+    for state in spec.states.values():
+        profile = spec.resources.get(state.resources)
+        if not isinstance(profile, Mapping):
+            continue
+        resolved = resolve_resource_profile(
+            state.resources,
+            profile,
+            config=spec.config,
+            run={"id": "capacity-preflight"},
+        )
+        nodes = profile_num_nodes(resolved, name=state.resources)
+        accelerator = str(resolved.get("accelerators") or "").strip()
+        if nodes <= 1 or not accelerator:
+            continue
+        if not context:
+            raise RuntimeError(
+                f"state {state.name!r} requests a {nodes}-node GPU gang, but no "
+                "explicit Kubernetes context was selected; ambient context fallback "
+                "is forbidden for gang capacity preflight"
+            )
+        selected = str(
+            (accelerator_overrides or {}).get(accelerator) or accelerator
+        )
+        inventory = discover_kubernetes_gpu_inventory(context=context)
+        result = preflight_kubernetes_gpu_gang(
+            inventory,
+            accelerator=selected,
+            node_count=nodes,
+        )
+        result["state"] = state.name
+        result["profile"] = state.resources
+        checks.append(result)
+    return checks
 
 
 def _parse_submit_vars(var: list[str]) -> dict[str, str]:
@@ -2664,6 +2804,7 @@ def _submit_prerequisites(
     s3_secret_access_key: str = "",
     requires_npa_source: bool = True,
     source_staging_planned: bool = False,
+    checkpoint_access_error: str = "",
 ) -> list[tuple[str, str]]:
     """Return ``[(missing, remedy)]`` for an npa.workflow submit.
 
@@ -2677,6 +2818,16 @@ def _submit_prerequisites(
     from npa.orchestration.npa_workflow.skypilot_render import resolve_src_s3_uri
 
     missing: list[tuple[str, str]] = []
+
+    if checkpoint_access_error:
+        missing.append(
+            (
+                checkpoint_access_error,
+                "provide a caller-owned HF_TOKEN that has gated access to the "
+                "selected nvidia/Cosmos-Transfer2.5-2B checkpoint; token presence "
+                "does not itself record license consent",
+            )
+        )
 
     if not plan_only:
         from npa.orchestration.skypilot._bin import (
@@ -5584,7 +5735,11 @@ def plan_spec_cmd(
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
     spec = _load_npa_workflow(yaml_path)
-    spec = merge_config_overrides(spec, _parse_submit_vars(var))
+    try:
+        spec = merge_config_overrides(spec, _parse_submit_vars(var))
+    except NpaWorkflowError as exc:
+        _fail(str(exc))
+        return
     _warn_placeholder_bucket(spec.config, quiet=json_output)
     resolved_run_id = run_id or f"{spec.name}-plan"
     try:

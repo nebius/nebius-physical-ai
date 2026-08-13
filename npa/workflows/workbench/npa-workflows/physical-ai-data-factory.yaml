@@ -93,13 +93,15 @@ config:
   # shard across a gang-scheduled block: each node renders its stride of the
   # sampled combos on its own GPUs, publishes those clips plus a shard manifest,
   # and rank 0 merges the shards into cosmos_augmented/manifest.json. Total
-  # concurrent renders = augment_nodes x GPUs per node. Raise it at submit time
+  # concurrent renders = augment_nodes x GPUs per node. Validation requires
+  # augment_nodes <= n_augmentations. Raise it at submit time
   # (`--var augment_nodes=4`) rather than editing this file; deployIfAbsent then
   # provisions a cluster with that many GPU nodes.
   augment_nodes: "1"
   # Control modality the augmentation is conditioned on: edge, vis, depth, or seg.
-  # Cosmos Transfer 2.5 derives every one of them from the staged input clip
-  # on-the-fly, so `--var augment_control=seg` needs no precomputed asset: it runs
+  # Cosmos Transfer 2.5 derives edge/vis/seg from the staged input clip. Depth
+  # requires an operator-owned precomputed weight-free control; NPA never downloads
+  # or runs Video Depth Anything weights. `--var augment_control=seg` runs
   # GroundingDINO-base + SAM2 over the input and conditions on the resulting
   # segmentation map instead of Canny edges. seg holds class boundaries where edge
   # holds every texture edge, so it lets a prompt restyle a surface without the
