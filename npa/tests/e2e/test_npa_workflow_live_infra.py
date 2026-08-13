@@ -254,8 +254,8 @@ def test_guide_loop_back_assume_expands_outer_loop(e2e_project: str | None) -> N
     spec = load_spec(SPECS / "sim2real.yaml")
     plan = build_plan(spec, run_id="guide-loop-back", assume_decision="loop_back")
     states = [step.state for step in plan.steps]
-    inner = spec.config["inner_iterations"]
-    outer = spec.config["outer_iterations"]
+    inner = int(spec.config["inner_iterations"])
+    outer = int(spec.config["outer_iterations"])
     assert states.count("stage-07-rollouts") == inner * outer
 
 
