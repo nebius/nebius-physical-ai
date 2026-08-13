@@ -51,6 +51,7 @@ CONTAINER_IMAGE_NAMES = {
     "lancedb": "npa-lancedb",
     "detection-training": "npa-detection-training",
     "wan2-2": "npa-wan2-2",
+    "ltx2": "npa-ltx2",
 }
 
 # Tools whose built image may NOT be published to a public/anonymous registry,
@@ -93,6 +94,20 @@ OMNIVERSE_RESTRICTED_TOOLS: frozenset[str] = frozenset({"cosmos3-serving"})
 # Empty for the same reason as above: ``sonic-mujoco`` inherits sonic's runtime-fetch
 # architecture and adds no Isaac and no Omniverse assets of its own.
 OMNIVERSE_RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
+
+# Tools that are licence-eligible for public redistribution but have no built,
+# validated artifact yet, so there is nothing whose bytes we could have checked.
+#
+# This is a different question from `OMNIVERSE_RESTRICTED_TOOLS`, and conflating
+# them would be wrong in both directions: these are not restricted (the licensing
+# work is done and the answer was "public"), they are simply unproven. Publishing
+# an image whose payload scan and GPU smoke have never run would hand out a claim
+# we have not earned, so publish_public refuses them by name rather than relying
+# on the push failing because the tag happens not to exist.
+#
+# Remove a tool from this set in the same change that records its accepted image
+# digest and its payload-scan/GPU evidence — not before.
+UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"ltx2"})
 
 # Public mirror registry for the OSS-redistributable image subset. Nebius CR does
 # NOT support anonymous/public pulls and has no cross-tenant / all-authenticated
@@ -154,6 +169,11 @@ SUPPORTED_TOOL_VERSIONS = {
     "detection-training": "bdd100k-golden-eval-smoke-20260614T210000Z",
     # Public-eligible Wan source/CPU base; CUDA torch is operator-gated runtime fetch.
     "wan2-2": "2.2-ti2v5b-rtfetch-cu128-20260809T011658Z-r7",
+    # LTX-2.5. The tag names the design, not a built artifact: this image has not
+    # been built or GPU-validated yet, and publish_public refuses it until an
+    # accepted-image manifest exists. Everything LTX (source AND weights) is a
+    # runtime fetch under the operator's own licence declaration.
+    "ltx2": "2.5-rtfetch-unbuilt",
     "nebius-cli": "0.12.254",
     "terraform": "~> 0.5.201",
     "terraform-cli": "1.13.3",

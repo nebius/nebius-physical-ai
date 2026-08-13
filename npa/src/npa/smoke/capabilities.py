@@ -119,6 +119,14 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "machine-readable runtime health/version contract",
         "CUDA runtime fetch refuses before operator terms acceptance",
     ],
+    "ltx2": [
+        "machine-readable runtime health/version contract",
+        "source and weight fetch refuse before the operator declares under the "
+        "LTX-2.x Community License",
+        "a Commercial Entity declaring commercial use is refused without a "
+        "Commercial Use Agreement reference",
+        "no LTX source, weights, or CUDA distribution present in the image",
+    ],
     "envgen": [
         "raw env generation (JSONL contract)",
         "Genesis CUDA env step (mocked in unit gate)",

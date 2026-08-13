@@ -46,6 +46,7 @@
   "validation_states": {
     "validated": "get_device_capability() confirmed on a real B200/B300 node with the image's real capability smoke passing.",
     "pending-hardware": "Wheel arch set confirmed on the built image, but not yet run on a real datacenter Blackwell node.",
+    "pending-build": "The Dockerfile is in tree but the image has not been built, so no wheel arch set and no GPU result exist yet. Never upgrade this from a reading of the Dockerfile.",
     "not-required": "CPU-only image; no arch assertion applies."
   },
   "images": [
@@ -213,6 +214,18 @@
         "sm_120",
         "compute_120"
       ]
+    },
+    {
+      "name": "npa-ltx2",
+      "dockerfile": "ltx2/Dockerfile",
+      "build_script": "ltx2/build.sh",
+      "verdict": "ready",
+      "validation": "pending-build",
+      "redistribution": "public",
+      "torch": "not baked; the operator-owned runtime volume resolves upstream LTX-2's own cu128/cu130 torch pin after both the LTX and NVIDIA terms are accepted",
+      "source_compiled_extensions": [],
+      "smoke": "npa workbench ltx2 generate produces a decodable H.264 MP4 plus a provenance manifest, and npa workbench ltx2 gate refuses to hand that manifest to a trainer when the declared use class is commercial",
+      "notes": "The image itself is CPU-only and carries zero Lightricks bytes, so nothing about datacenter Blackwell has been measured for it. The runtime closure LTX-2 resolves is expected to carry sm_100 because its torch pin comes from the cu128/cu130 index, but that is an expectation from the wheel index, not a measurement: this image has not been built or run on any GPU. natten, if the operator enables that extra, is a source-compiled CUDA extension and must be checked against TORCH_CUDA_ARCH_LIST on first B200 build."
     },
     {
       "name": "npa-cosmos3-reason",
