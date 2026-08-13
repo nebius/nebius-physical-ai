@@ -61,23 +61,6 @@ npa --version
 npa workbench health preflight
 ```
 
-### Get a first result without a GPU
-
-[Nebius Token Factory](https://tokenfactory.nebius.com/) only needs a
-`NEBIUS_TOKEN_FACTORY_KEY`, which you can add during `npa configure`.
-
-```bash
-npa workbench token-factory verify
-printf 'Explain sim-to-real transfer in one sentence.\n' > /tmp/prompts.txt
-npa workbench token-factory generate \
-  --input-path /tmp/prompts.txt \
-  --output-path /tmp/tf-generations.jsonl \
-  --output json
-```
-
-Next: [run the full quickstart](docs/quickstart.md) or
-[pick a robot tutorial](docs/workbench/guides/README.md).
-
 ## Pick a robot
 
 | Tutorial | Stack |
