@@ -180,6 +180,26 @@ images:
     dockerfile: sim2real-eval/Dockerfile
     tier: job
     redistribution: public
+  sim2real-control:
+    dockerfile: sim2real-control/Dockerfile
+    tier: job
+    redistribution: public
+    passwordless_root_exemption: >-
+      The stock SkyPilot 0.12.2 Kubernetes bootstrap invokes arbitrary sudo
+      package/service and shell commands before the declared task starts, so a
+      command allowlist would be equivalent to allowing its root shell and would
+      provide a false boundary. This exception is limited to the CPU-only
+      Sim2Real standard-workflow adapter image: its final user is uid 1000, sshd
+      is not started by the image, password/root SSH login is disabled by the
+      Debian defaults used here, no credentials or GPU/vendor runtime are baked,
+      and the task pod/container—not the uid—is the documented trust boundary.
+      Remove this grant when the pinned SkyPilot bootstrap supports rootless
+      Kubernetes task setup; it is not an authorization pattern for services.
+    privilege_exception:
+      id: sim2real-control-skypilot-0.12.2-root-bootstrap
+      expires_with: skypilot-rootless-kubernetes-bootstrap
+      scope: ephemeral-standard-workflow-task-pod
+      prohibited_uses: [service, public-ingress, baked-credentials]
   cosmos2-transfer:
     dockerfile: cosmos2-transfer/Dockerfile
     tier: job

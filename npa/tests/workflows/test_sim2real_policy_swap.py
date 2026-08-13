@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from npa.workflows.sim2real.engine import _component_job_script
@@ -12,6 +15,21 @@ from npa.workflows.sim2real_envgen import (
     build_policy_image_contract,
     write_action_conditioned_envs,
 )
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+EXPLORE_POLICY_DOCKERFILE = (
+    REPO_ROOT / "npa/docker/workbench/sim2real-explore-policy/Dockerfile"
+)
+
+
+def test_explore_policy_image_replaces_inherited_source_provenance() -> None:
+    dockerfile = EXPLORE_POLICY_DOCKERFILE.read_text(encoding="utf-8")
+
+    assert "ARG NPA_SOURCE_SHA" in dockerfile
+    assert 'org.opencontainers.image.revision="${NPA_SOURCE_SHA}"' in dockerfile
+    assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in dockerfile
+    assert 'test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40' in dockerfile
 
 
 def test_policy_image_contract_documents_swap_points() -> None:
@@ -73,7 +91,9 @@ def test_reference_and_explore_policy_variants_emit_distinct_actions(
         limit=1,
         train_envs_uri="s3://bucket/run/envs/train/envs.jsonl",
     )
-    ref_amp = _max_abs(_read_actions(tmp_path / "ref" / "action-conditioned-train-envs.jsonl"))
+    ref_amp = _max_abs(
+        _read_actions(tmp_path / "ref" / "action-conditioned-train-envs.jsonl")
+    )
 
     monkeypatch.setenv("NPA_SIM2REAL_POLICY_VARIANT", "explore")
     write_action_conditioned_envs(
@@ -83,19 +103,22 @@ def test_reference_and_explore_policy_variants_emit_distinct_actions(
         limit=1,
         train_envs_uri="s3://bucket/run/envs/train/envs.jsonl",
     )
-    alt_amp = _max_abs(_read_actions(tmp_path / "alt" / "action-conditioned-train-envs.jsonl"))
+    alt_amp = _max_abs(
+        _read_actions(tmp_path / "alt" / "action-conditioned-train-envs.jsonl")
+    )
 
     assert ref["policy_image"].endswith("reference-policy:0.1.1")
     assert alt_amp > ref_amp
 
 
-def test_isaac_heldout_script_requires_source_tarball() -> None:
+def test_isaac_heldout_script_uses_preinstalled_exact_runtime() -> None:
     script = _component_job_script("heldout_eval", sim_backend="isaac")
-    assert "NPA_SIM2REAL_SOURCE_TARBALL_URI" in script
-    assert "missing NPA_SIM2REAL_SOURCE_TARBALL_URI" in script
+    assert "NPA_SIM2REAL_SOURCE_TARBALL_URI" not in script
+    assert "pip install" not in script
+    assert "git clone" not in script
+    assert "npa.workflows.sim2real.runtime_attestation" in script
     assert "heldout_entry" in script
     assert "sim2real.cli" not in script
-    assert "git clone" not in script
 
 
 def test_envgen_raw_shard_script_invokes_envgen_module_directly() -> None:
@@ -106,9 +129,31 @@ def test_envgen_raw_shard_script_invokes_envgen_module_directly() -> None:
     assert "invalid choice" not in script
 
 
-def test_component_script_avoids_optional_sdk_imports() -> None:
+def test_cosmos_transfer_script_uses_lightweight_source_import() -> None:
     script = _component_job_script("cosmos2_transfer")
     assert "export NPA_SKIP_EAGER_IMPORTS=1" in script
+    assert "python -m npa.workflows.sim2real component-cosmos2-transfer" in script
+
+
+def test_lightweight_cosmos_reason_import_does_not_load_http_sdk() -> None:
+    env = os.environ.copy()
+    env["NPA_SKIP_EAGER_IMPORTS"] = "1"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; import npa.workbench.cosmos.reason; "
+                "assert 'npa.workbench.cosmos.cosmos3' not in sys.modules; "
+                "assert 'httpx' not in sys.modules"
+            ),
+        ],
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_engine_resolve_isaac_scene_consumed_stock_envelope(tmp_path: Path) -> None:

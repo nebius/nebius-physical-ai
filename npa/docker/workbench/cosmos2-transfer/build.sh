@@ -12,6 +12,11 @@ TAG=""
 CUDA_BASE_IMAGE=""
 SOURCE_REVISION=""
 PYTHON_VERSION=""
+NPA_SOURCE_SHA="${NPA_SOURCE_SHA:-$(git -C "${NPA_ROOT}/.." rev-parse HEAD)}"
+if [[ ! "${NPA_SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "ERROR: NPA_SOURCE_SHA must be the exact 40-character checkout SHA" >&2
+  exit 2
+fi
 
 usage() {
   echo "Usage: $0 [--registry HOST/PATH] [--tag TAG] [--push]" >&2
@@ -83,6 +88,7 @@ BUILD_ARGS=(
   --platform linux/amd64
   --file "${SCRIPT_DIR}/Dockerfile"
   --tag "${IMAGE_REF}"
+  --build-arg "NPA_SOURCE_SHA=${NPA_SOURCE_SHA}"
 )
 [[ -z "${CUDA_BASE_IMAGE}" ]] || BUILD_ARGS+=(--build-arg "CUDA_BASE_IMAGE=${CUDA_BASE_IMAGE}")
 [[ -z "${SOURCE_REVISION}" ]] || BUILD_ARGS+=(--build-arg "COSMOS_TRANSFER_REVISION=${SOURCE_REVISION}")

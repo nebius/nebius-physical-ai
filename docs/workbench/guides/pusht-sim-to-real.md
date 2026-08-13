@@ -63,9 +63,10 @@ When you're ready to do it for real on an H100:
 
 ```bash
 npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/sim2real-vlm-rl.yaml \
-  --run-id <run-id> --var bucket=<your-bucket> \
-  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+  npa/workflows/workbench/npa-workflows/sim2real.yaml \
+  --run-id <run-id> \
+  --var NPA_SIM2REAL_BUCKET=<your-bucket> \
+  --var NPA_SIM2REAL_TRIGGER_DATASET_URI=s3://<your-bucket>/<trigger-prefix>/
 ```
 
 That wrapper renders `sim-to-real-pipeline.yaml`, submits it on `H100:1`, runs
@@ -114,6 +115,7 @@ you recorded in Genesis, or a [Reachy 2](reachy2-lerobot-policy.md) dataset.
 ## Dig deeper
 
 - **14-stage production loop:** [Sim-to-real workflow](sim2real-workflow.md) · [Data contracts](sim2real-data-contracts.md)
-- Spec: `npa/workflows/workbench/npa-workflows/sim2real-vlm-rl.yaml`
-- Runbook (reads without npa in the loop): `npa/workflows/workbench/sim2real/runbook.yaml`
+- Canonical 14-stage YAML: `npa/workflows/workbench/npa-workflows/sim2real.yaml`
+- Generic loop semantics remain covered by a test-only fixture under
+  `npa/tests/fixtures/npa-workflows/`; it is not an operator workflow.
 - Skill: `skills/workflows/sim-to-real/SKILL.md`

@@ -27,9 +27,11 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_ROLLOUT_COUNT,
     DEFAULT_S3_ENDPOINT,
     DEFAULT_SIM_BACKEND,
+    DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE,
     DEFAULT_STEPS_PER_ROLLOUT,
     DEFAULT_THRESHOLD,
     DEFAULT_TRAIN_FRACTION,
+    DEFAULT_VALIDATION_ENVS,
     SIM_BACKENDS,
 )
 from npa.workflows.sim2real.engine import (
@@ -50,6 +52,7 @@ from npa.workflows.sim2real.engine import (
 from npa.workflows.sim2real.models import Sim2RealLoopError, new_run_id
 from npa.workflows.sim2real.runner import Sim2RealWorkflow, run_full_loop
 from npa.workflows.sim2real.utils import _bool_value, _utc_now
+
 
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
@@ -83,7 +86,14 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         "--train-envs-uri", default=os.environ.get("TRAIN_ENVS_URI", "")
     )
     parser.add_argument(
+        "--validation-envs-uri", default=os.environ.get("VALIDATION_ENVS_URI", "")
+    )
+    parser.add_argument(
         "--heldout-envs-uri", default=os.environ.get("HELDOUT_ENVS_URI", "")
+    )
+    parser.add_argument(
+        "--gold-heldout-envs-uri",
+        default=os.environ.get("GOLD_HELDOUT_ENVS_URI", ""),
     )
     parser.add_argument("--assets-uri", default=os.environ.get("ASSETS_URI", ""))
     parser.add_argument(
@@ -113,7 +123,9 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--envgen-shard-count",
         type=int,
-        default=int(os.environ.get("NPA_ENVGEN_SHARD_COUNT", DEFAULT_ENVGEN_SHARD_COUNT)),
+        default=int(
+            os.environ.get("NPA_ENVGEN_SHARD_COUNT", DEFAULT_ENVGEN_SHARD_COUNT)
+        ),
     )
     parser.add_argument(
         "--action-env-limit",
@@ -162,6 +174,15 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         default=float(os.environ.get("SUCCESS_THRESHOLD", DEFAULT_THRESHOLD)),
     )
     parser.add_argument(
+        "--early-exit",
+        action=argparse.BooleanOptionalAction,
+        default=_bool_value(os.environ.get("NPA_SIM2REAL_EARLY_EXIT", "0")),
+        help=(
+            "Stop after a checkpoint clears the promotion threshold (default off). "
+            "Use --early-exit for score-gated development runs."
+        ),
+    )
+    parser.add_argument(
         "--inner-iterations", type=int, default=DEFAULT_INNER_ITERATIONS
     )
     parser.add_argument(
@@ -175,11 +196,22 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         "--steps-per-rollout", type=int, default=DEFAULT_STEPS_PER_ROLLOUT
     )
     parser.add_argument("--heldout-env-count", type=int, default=DEFAULT_HELDOUT_ENVS)
+    parser.add_argument(
+        "--validation-env-count", type=int, default=DEFAULT_VALIDATION_ENVS
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--upload-artifacts", action="store_true")
     parser.add_argument("--no-guardrails", action="store_true")
     parser.add_argument("--signal-loss-weight", type=float, default=1.0)
-    parser.add_argument("--learning-rate", type=float, default=0.05)
+    parser.add_argument(
+        "--learning-rate",
+        type=float,
+        default=DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE,
+        help=(
+            "VLM signal-adapter/no-signal-control step size; this does not override "
+            "the Isaac RSL-RL PPO optimizer learning rate."
+        ),
+    )
     parser.add_argument("--byo-signal-converter", default="")
     parser.add_argument("--byo-trainer-command", default="")
     parser.add_argument("--byo-vlm-command", default="")
@@ -222,6 +254,16 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--k8s-isaac-cache-pvc",
+        default=os.environ.get(
+            "NPA_SIM2REAL_ISAAC_CACHE_PVC", "npa-sim2real-isaac-cache"
+        ),
+        help=(
+            "Pre-warmed content-addressed Isaac dependency PVC, mounted offline "
+            "and read-only by every Isaac GPU Job."
+        ),
+    )
+    parser.add_argument(
         "--k8s-gpu-resource",
         default=os.environ.get("NPA_SIM2REAL_K8S_GPU_RESOURCE", "nvidia.com/gpu"),
     )
@@ -233,8 +275,19 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--k8s-gpu-candidates",
+        default=os.environ.get("NPA_SIM2REAL_K8S_GPU_CANDIDATES", ""),
+        help=(
+            "Ordered comma-separated GPU product labels or families. The runtime "
+            "normalizes these against actual cluster node labels and retries only "
+            "on concrete Kubernetes GPU scheduling/capacity evidence."
+        ),
+    )
+    parser.add_argument(
         "--k8s-kubeconfig",
-        default=os.environ.get("NPA_SIM2REAL_KUBECONFIG", os.environ.get("KUBECONFIG", "")),
+        default=os.environ.get(
+            "NPA_SIM2REAL_KUBECONFIG", os.environ.get("KUBECONFIG", "")
+        ),
     )
     parser.add_argument(
         "--k8s-context",
@@ -243,7 +296,11 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--k8s-job-timeout-s",
         type=int,
-        default=int(os.environ.get("NPA_SIM2REAL_K8S_JOB_TIMEOUT_S", "7200")),
+        default=int(os.environ.get("NPA_SIM2REAL_K8S_JOB_TIMEOUT_S", "0")),
+        help=(
+            "Orchestrator/sibling Job deadline in seconds; 0 is uncapped. Failed Job counters, "
+            "deleted Jobs, kubectl errors, and component failures still terminate."
+        ),
     )
     parser.add_argument(
         "--k8s-max-parallel-gpus",
@@ -262,6 +319,7 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=int(os.environ.get("NPA_SIM2REAL_HELDOUT_EVAL_LIMIT", "0")),
     )
+
 
 def main(argv: list[str] | None = None) -> int:
     """Module CLI for raw SkyPilot YAML and local smoke runs."""
@@ -289,7 +347,7 @@ def main(argv: list[str] | None = None) -> int:
 
     run_cmd = subparsers.add_parser(
         "run",
-        help="Run the full workflow via Sim2RealWorkflow (canonical orchestrator).",
+        help="Replay the legacy Sim2RealWorkflow path (deprecated compatibility).",
     )
     _add_common_args(run_cmd)
     run_cmd.add_argument(
@@ -305,9 +363,10 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         metavar="SPEC",
         help=(
-            "Execute via the declarative DAG scheduler instead of run_staged(). "
-            "Pass a spec path, or bare --dag for the shipped sim2real.dag.yaml. "
-            "Drives the same stage methods in the same order (parity-checked)."
+            "Replay through the deprecated compatibility DAG instead of "
+            "run_staged(). Pass a spec path, or bare --dag for the shipped "
+            "sim2real.dag.yaml. New runs must use `npa workbench workflow submit` "
+            "with npa-workflows/sim2real.yaml."
         ),
     )
     inner = subparsers.add_parser(
@@ -373,7 +432,9 @@ def main(argv: list[str] | None = None) -> int:
     component_policy.add_argument("--limit", type=int, default=DEFAULT_ACTION_ENV_LIMIT)
     component_policy.add_argument("--seed", type=int, default=42)
     component_policy.add_argument("--run-id", default="")
-    component_policy.add_argument("--rollout-count", type=int, default=DEFAULT_ROLLOUT_COUNT)
+    component_policy.add_argument(
+        "--rollout-count", type=int, default=DEFAULT_ROLLOUT_COUNT
+    )
     component_policy.add_argument(
         "--steps-per-rollout", type=int, default=DEFAULT_STEPS_PER_ROLLOUT
     )
@@ -500,7 +561,9 @@ def main(argv: list[str] | None = None) -> int:
         trigger_dataset_id=args.trigger_dataset_id,
         action_rollouts_uri=args.action_rollouts_uri,
         train_envs_uri=args.train_envs_uri,
+        validation_envs_uri=args.validation_envs_uri,
         heldout_envs_uri=args.heldout_envs_uri,
+        gold_heldout_envs_uri=args.gold_heldout_envs_uri,
         assets_uri=args.assets_uri,
         scene_spec_uri=args.scene_spec_uri,
         cameras_uri=args.cameras_uri,
@@ -527,12 +590,14 @@ def main(argv: list[str] | None = None) -> int:
         vlm_reason3_model=args.vlm_reason3_model,
         vlm_dual_reason=args.vlm_dual_reason,
         threshold=args.threshold,
+        early_exit=args.early_exit,
         inner_iterations=args.inner_iterations,
         outer_iterations=args.outer_iterations,
         loop_of_loops_iterations=args.loop_of_loops_iterations,
         rollout_count=args.rollout_count,
         steps_per_rollout=args.steps_per_rollout,
         heldout_env_count=args.heldout_env_count,
+        validation_env_count=args.validation_env_count,
         seed=args.seed,
         upload_artifacts=args.upload_artifacts,
         no_guardrails=args.no_guardrails,
@@ -549,8 +614,14 @@ def main(argv: list[str] | None = None) -> int:
         k8s_service_account=args.k8s_service_account,
         k8s_image_pull_secrets=args.k8s_image_pull_secrets,
         k8s_env_secret_names=args.k8s_env_secret_names,
+        k8s_isaac_cache_pvc=args.k8s_isaac_cache_pvc,
         k8s_gpu_resource=args.k8s_gpu_resource,
         k8s_gpu_product=args.k8s_gpu_product,
+        k8s_gpu_candidates=tuple(
+            item.strip()
+            for item in args.k8s_gpu_candidates.replace(";", ",").split(",")
+            if item.strip()
+        ),
         k8s_kubeconfig=args.k8s_kubeconfig,
         k8s_context=args.k8s_context,
         k8s_job_timeout_s=args.k8s_job_timeout_s,
@@ -559,6 +630,10 @@ def main(argv: list[str] | None = None) -> int:
         source_ref=args.source_ref,
         heldout_eval_limit=args.heldout_eval_limit,
     )
+
+    # Isaac Job builders are also callable as isolated component modules. Keep
+    # the validated CLI/SDK field available to that shared scheduling layer.
+    os.environ["NPA_SIM2REAL_ISAAC_CACHE_PVC"] = config.k8s_isaac_cache_pvc
 
     if args.command == "run":
         workflow = Sim2RealWorkflow(config)
@@ -620,12 +695,14 @@ def main(argv: list[str] | None = None) -> int:
             local_dir=local_dir,
             outer_iteration=int(args.outer_iteration),
             initial_quality=initial_quality,
+            resume_checkpoint_uri=str(state.get("last_checkpoint_uri") or ""),
         )
         state["final_inner"] = iteration["inner"]
         state["final_eval"] = iteration["heldout_report"]
         state["final_decision"] = iteration["decision"]
         state.setdefault("outer_history", []).append(iteration["history_entry"])
         state["current_quality"] = iteration["next_quality"]
+        state["last_checkpoint_uri"] = iteration["checkpoint_uri"]
         state["next_outer_iteration"] = int(args.outer_iteration) + 1
         state["status"] = "outer_iteration_completed"
         state["updated_at"] = _utc_now()
@@ -637,6 +714,7 @@ def main(argv: list[str] | None = None) -> int:
         if local_dir is None:
             raise Sim2RealLoopError("--output-dir is required for finalize")
         state = _read_workflow_state(local_dir)
+        config = _config_from_workflow_state(config, state)
         final_inner = state.get("final_inner")
         final_eval = state.get("final_eval")
         final_decision = state.get("final_decision")
@@ -673,6 +751,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(evidence, indent=2, sort_keys=True))
         return 0
     return 2
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

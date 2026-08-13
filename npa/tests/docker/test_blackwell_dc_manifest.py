@@ -241,6 +241,7 @@ def test_names_match_the_real_container_image_names(entries: list[dict]) -> None
         "npa-sonic-mujoco",
         "npa-sonic-export",
         "npa-cosmos3-serving",
+        "npa-sim2real-control",
     }
     unknown = [
         entry["name"]

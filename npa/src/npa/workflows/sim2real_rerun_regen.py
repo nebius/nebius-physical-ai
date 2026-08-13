@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import json
 import os
+import hashlib
+import shlex
+import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from npa.clients.storage import StorageClient, StorageError
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
+from npa.workflows.sim2real.reporting import build_progress_metrics
 from npa.workflows.sim2real.utils import _artifact_root_uri
 from npa.workflows.sim2real_viz import (
     Sim2RealVizResult,
@@ -82,6 +87,38 @@ def run_prefix_uri(config: Sim2RealLoopConfig) -> str:
     return f"{_artifact_root_uri(config).rstrip('/')}/"
 
 
+def _gold_eval_relative_dir(config: Sim2RealLoopConfig) -> Path:
+    return Path("eval") / "gold-heldout" / f"outer-{config.outer_iterations:02d}"
+
+
+def _gold_report_path(config: Sim2RealLoopConfig, local_dir: Path) -> Path:
+    canonical = Path(local_dir) / _gold_eval_relative_dir(config) / "report.json"
+    legacy = Path(local_dir) / "eval" / "heldout" / "report.json"
+    return canonical if canonical.is_file() or not legacy.is_file() else legacy
+
+
+def _renders_dir_for_report(
+    config: Sim2RealLoopConfig,
+    local_dir: Path,
+    heldout_report: dict[str, Any] | None,
+) -> Path:
+    report = heldout_report or {}
+    recorded = Path(str(report.get("local_renders_dir") or ""))
+    try:
+        if recorded.is_absolute() and recorded.resolve().is_relative_to(
+            Path(local_dir).resolve()
+        ):
+            return recorded
+    except OSError:
+        pass
+    if report.get("evaluation_split") == "gold_heldout":
+        outer = int(report.get("outer_iteration") or config.outer_iterations)
+        return (
+            Path(local_dir) / "eval" / "gold-heldout" / f"outer-{outer:02d}" / "renders"
+        )
+    return Path(local_dir) / "eval" / "heldout" / "renders"
+
+
 def _sibling_uri(uri: str, filename: str) -> str:
     base = uri.rsplit("/", 1)[0] if "/" in uri else uri
     return f"{base.rstrip('/')}/{filename}"
@@ -133,41 +170,72 @@ def sync_regen_inputs(
     local_dir.mkdir(parents=True, exist_ok=True)
 
     inner_evidence_rel = _latest_inner_evidence_rel(storage, prefix)
+    gold_eval_rel = _gold_eval_relative_dir(config).as_posix()
     singles = {
         inner_evidence_rel: local_dir / inner_evidence_rel,
+        f"{gold_eval_rel}/report.json": local_dir / gold_eval_rel / "report.json",
         "eval/heldout/report.json": local_dir / "eval/heldout/report.json",
         "reports/sim2real-report.json": local_dir / "reports/sim2real-report.json",
+        "checkpoints/candidate/candidate.json": local_dir
+        / "checkpoints/candidate/candidate.json",
         "outer_loop/decision.json": local_dir / "outer_loop/decision.json",
         "outer_loop/loopback.json": local_dir / "outer_loop/loopback.json",
         "tokens/manifest.json": local_dir / "tokens/manifest.json",
         "envs/train/envs.jsonl": local_dir / "envs/train/envs.jsonl",
         "envs/heldout/envs.jsonl": local_dir / "envs/heldout/envs.jsonl",
-        "envs/manifest/split-manifest.json": local_dir / "envs/manifest/split-manifest.json",
+        "envs/manifest/split-manifest.json": local_dir
+        / "envs/manifest/split-manifest.json",
         "envs/split-manifest.json": local_dir / "envs/split-manifest.json",
         "stage_01_trigger/trigger.json": local_dir / "stage_01_trigger/trigger.json",
-        "stage_02_assets/assets_manifest.json": local_dir / "stage_02_assets/assets_manifest.json",
-        "stage_02_assets/consumed_robot_spec.json": local_dir / "stage_02_assets/consumed_robot_spec.json",
-        "stage_02_assets/consumed_scene_spec.json": local_dir / "stage_02_assets/consumed_scene_spec.json",
-        "stage_12_external_validation/external_stub.json": local_dir / "stage_12_external_validation/external_stub.json",
-        "stage_13_retrigger/retrigger.json": local_dir / "stage_13_retrigger/retrigger.json",
+        "stage_02_assets/assets_manifest.json": local_dir
+        / "stage_02_assets/assets_manifest.json",
+        "stage_02_assets/consumed_robot_spec.json": local_dir
+        / "stage_02_assets/consumed_robot_spec.json",
+        "stage_02_assets/consumed_scene_spec.json": local_dir
+        / "stage_02_assets/consumed_scene_spec.json",
+        "stage_12_external_validation/external_stub.json": local_dir
+        / "stage_12_external_validation/external_stub.json",
+        "stage_13_retrigger/retrigger.json": local_dir
+        / "stage_13_retrigger/retrigger.json",
     }
     for rel, dest in singles.items():
         dest.parent.mkdir(parents=True, exist_ok=True)
         _download_if_exists(storage, f"{prefix}{rel}", dest)
+
+    # The viewer plots improvement across every outer/inner pass, not only the
+    # latest evidence object selected for backward compatibility above.
+    for outer_prefix in _list_common_prefixes(
+        storage, f"{prefix.rstrip('/')}/inner_loop/"
+    ):
+        outer_name = Path(outer_prefix.rstrip("/")).name
+        if not outer_name.startswith("outer-"):
+            continue
+        destination = local_dir / "inner_loop" / outer_name / "evidence.json"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        bucket, _run_key = _parse_s3(prefix)
+        _download_if_exists(
+            storage,
+            f"s3://{bucket}/{outer_prefix.rstrip('/')}/evidence.json",
+            destination,
+        )
 
     for rel in ("actions", "vlm_eval", "training_signal", "augment", "envs/raw"):
         try:
             storage.download_directory(f"{prefix}{rel}/", str(local_dir / rel))
         except (StorageError, OSError):
             pass
-    for evidence_path in sorted((local_dir / "inner_loop").glob("outer-*/evidence.json")):
+    for evidence_path in sorted(
+        (local_dir / "inner_loop").glob("outer-*/evidence.json")
+    ):
         _rewrite_inner_evidence_paths(local_dir, evidence_path)
 
     heldout_report: dict[str, Any] = {}
-    heldout_path = local_dir / "eval" / "heldout/report.json"
+    heldout_path = _gold_report_path(config, local_dir)
     if heldout_path.is_file():
         heldout_report = json.loads(heldout_path.read_text(encoding="utf-8"))
-    sync_heldout_renders(config, local_dir, heldout_report=heldout_report, client=storage)
+    sync_heldout_renders(
+        config, local_dir, heldout_report=heldout_report, client=storage
+    )
 
 
 def sync_heldout_renders(
@@ -177,20 +245,38 @@ def sync_heldout_renders(
     heldout_report: dict[str, Any] | None = None,
     client: StorageClient | None = None,
 ) -> bool:
-    """Sync held-out PNG tree into local_dir/eval/heldout/renders; return True if any PNGs."""
+    """Sync the report's exact render tree; never guess for sealed gold."""
 
     storage = client or _storage_client_for_config(config)
     prefix = run_prefix_uri(config)
-    renders_dir = Path(local_dir) / "eval" / "heldout" / "renders"
+    renders_dir = _renders_dir_for_report(config, local_dir, heldout_report)
     renders_dir.mkdir(parents=True, exist_ok=True)
 
-    canonical = f"{prefix}eval/heldout/renders/"
+    if (heldout_report or {}).get("evaluation_split") == "gold_heldout":
+        lineage = dict((heldout_report or {}).get("render_lineage") or {})
+        canonical = str(lineage.get("renders_s3_uri") or "").strip()
+        if not canonical:
+            raise Sim2RealRerunRegenError(
+                "sealed gold report has no exact render_lineage.renders_s3_uri"
+            )
+        if lineage.get("evaluation_split") != "gold_heldout":
+            raise Sim2RealRerunRegenError(
+                "sealed gold render lineage has the wrong evaluation split"
+            )
+    else:
+        canonical = f"{prefix}eval/heldout/renders/"
     try:
         storage.download_directory(canonical, str(renders_dir))
     except (StorageError, OSError):
         pass
     if _has_camera_pngs(renders_dir):
         return True
+
+    # Gold metrics may only be paired with the exact render prefix recorded by
+    # that evaluation. Lexicographic component/BYO discovery is retained solely
+    # for legacy validation reports where no sealed split is involved.
+    if (heldout_report or {}).get("evaluation_split") == "gold_heldout":
+        return False
 
     component_root = f"{prefix}component-io/heldout-eval/"
     bucket, _ = _parse_s3(component_root)
@@ -202,13 +288,15 @@ def sync_heldout_renders(
         except (StorageError, OSError):
             continue
         if _has_camera_pngs(renders_dir):
-            manifest_uri = f"s3://{bucket}/{component_prefix}output/render-manifest.json"
-            manifest_path = Path(local_dir) / "eval" / "heldout" / "render-manifest.sibling.json"
+            manifest_uri = (
+                f"s3://{bucket}/{component_prefix}output/render-manifest.json"
+            )
+            manifest_path = renders_dir.parent / "render-manifest.sibling.json"
             if _download_if_exists(storage, manifest_uri, manifest_path):
                 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             else:
                 manifest = _render_manifest_from_png_tree(renders_dir)
-            _write_report_render_manifest(local_dir, heldout_report, manifest)
+            _write_report_render_manifest(config, local_dir, heldout_report, manifest)
             return True
     byo_root = f"{prefix}byo-eval/"
     bucket, _ = _parse_s3(byo_root)
@@ -221,12 +309,12 @@ def sync_heldout_renders(
             continue
         if _has_camera_pngs(renders_dir):
             manifest_uri = f"s3://{bucket}/{component_prefix}render-manifest.json"
-            manifest_path = Path(local_dir) / "eval" / "heldout" / "render-manifest.byo.json"
+            manifest_path = renders_dir.parent / "render-manifest.byo.json"
             if _download_if_exists(storage, manifest_uri, manifest_path):
                 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             else:
                 manifest = _render_manifest_from_png_tree(renders_dir)
-            _write_report_render_manifest(local_dir, heldout_report, manifest)
+            _write_report_render_manifest(config, local_dir, heldout_report, manifest)
             return True
     return _has_camera_pngs(renders_dir)
 
@@ -243,7 +331,9 @@ def _latest_inner_evidence_rel(client: StorageClient, prefix_uri: str) -> str:
     if run_prefix and not run_prefix.endswith("/"):
         run_prefix += "/"
     candidates: list[tuple[int, str]] = []
-    for outer_prefix in _list_common_prefixes(client, f"{prefix_uri.rstrip('/')}/inner_loop/"):
+    for outer_prefix in _list_common_prefixes(
+        client, f"{prefix_uri.rstrip('/')}/inner_loop/"
+    ):
         outer_name = Path(outer_prefix.rstrip("/")).name
         if not outer_name.startswith("outer-"):
             continue
@@ -252,7 +342,9 @@ def _latest_inner_evidence_rel(client: StorageClient, prefix_uri: str) -> str:
         except ValueError:
             continue
         key = f"{outer_prefix.rstrip('/')}/evidence.json"
-        candidates.append((outer_index, key[len(run_prefix) :] if key.startswith(run_prefix) else key))
+        candidates.append(
+            (outer_index, key[len(run_prefix) :] if key.startswith(run_prefix) else key)
+        )
     if not candidates:
         return default
     return sorted(candidates)[-1][1]
@@ -260,7 +352,9 @@ def _latest_inner_evidence_rel(client: StorageClient, prefix_uri: str) -> str:
 
 def _latest_local_inner_evidence(local_dir: Path) -> Path:
     candidates: list[tuple[int, Path]] = []
-    for evidence_path in sorted((Path(local_dir) / "inner_loop").glob("outer-*/evidence.json")):
+    for evidence_path in sorted(
+        (Path(local_dir) / "inner_loop").glob("outer-*/evidence.json")
+    ):
         try:
             outer_index = int(evidence_path.parent.name.removeprefix("outer-"))
         except ValueError:
@@ -291,7 +385,9 @@ def _rewrite_inner_evidence_paths(local_dir: Path, evidence_path: Path) -> None:
                 record[key] = str(rewritten)
                 changed = True
     if changed:
-        Path(evidence_path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        Path(evidence_path).write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
 
 
 def _path_under_marker(local_dir: Path, value: Any, marker: str) -> Path | None:
@@ -307,7 +403,9 @@ def _path_under_marker(local_dir: Path, value: Any, marker: str) -> Path | None:
 
 def _render_manifest_from_png_tree(renders_dir: Path) -> dict[str, Any]:
     episodes: list[dict[str, Any]] = []
-    for env_dir in sorted(path for path in Path(renders_dir).iterdir() if path.is_dir()):
+    for env_dir in sorted(
+        path for path in Path(renders_dir).iterdir() if path.is_dir()
+    ):
         frames = [path.name for path in sorted(env_dir.glob("camera-*.png"))]
         if frames:
             episodes.append({"env_id": env_dir.name, "frames": frames})
@@ -315,18 +413,21 @@ def _render_manifest_from_png_tree(renders_dir: Path) -> dict[str, Any]:
 
 
 def _write_report_render_manifest(
+    config: Sim2RealLoopConfig,
     local_dir: Path,
     heldout_report: dict[str, Any] | None,
     manifest: dict[str, Any],
 ) -> None:
-    report_path = Path(local_dir) / "eval" / "heldout/report.json"
+    report_path = _gold_report_path(config, Path(local_dir))
     if report_path.is_file():
         report = json.loads(report_path.read_text(encoding="utf-8"))
     else:
         report = dict(heldout_report or {})
     report["render_manifest"] = manifest
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    report_path.write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
 def download_rrd_from_s3(
@@ -358,20 +459,40 @@ def publish_regen_outputs(
     prefix = run_prefix_uri(config)
     local_dir = Path(local_dir)
 
-    report_path = local_dir / "eval" / "heldout/report.json"
+    report_path = _gold_report_path(config, local_dir)
     if report_path.is_file():
-        storage.upload_file(str(report_path), f"{prefix}eval/heldout/report.json")
+        rel = report_path.relative_to(local_dir).as_posix()
+        storage.upload_file(str(report_path), f"{prefix}{rel}")
 
-    renders_dir = local_dir / "eval" / "heldout/renders"
+    renders_dir = _renders_dir_for_report(
+        config,
+        local_dir,
+        json.loads(report_path.read_text(encoding="utf-8"))
+        if report_path.is_file()
+        else {},
+    )
     if renders_dir.is_dir() and _has_camera_pngs(renders_dir):
-        storage.upload_directory(str(renders_dir), f"{prefix}eval/heldout/renders")
+        rel = renders_dir.relative_to(local_dir).as_posix()
+        storage.upload_directory(str(renders_dir), f"{prefix}{rel}")
 
     rrd_path = local_dir / "reports" / "sim2real.rrd"
     if not rrd_path.is_file():
         raise Sim2RealRerunRegenError(f"missing regenerated recording: {rrd_path}")
     visual_index_path = local_dir / "reports" / "sim2real-visual-index.json"
     if visual_index_path.is_file():
-        storage.upload_file(str(visual_index_path), f"{prefix}reports/sim2real-visual-index.json")
+        storage.upload_file(
+            str(visual_index_path), f"{prefix}reports/sim2real-visual-index.json"
+        )
+    final_report_path = local_dir / "reports" / "sim2real-report.json"
+    if final_report_path.is_file():
+        storage.upload_file(
+            str(final_report_path), f"{prefix}reports/sim2real-report.json"
+        )
+    candidate_path = local_dir / "checkpoints" / "candidate" / "candidate.json"
+    if candidate_path.is_file():
+        storage.upload_file(
+            str(candidate_path), f"{prefix}checkpoints/candidate/candidate.json"
+        )
     upload_uri = storage.upload_file(str(rrd_path), f"{prefix}reports/sim2real.rrd")
     return upload_uri
 
@@ -403,7 +524,11 @@ def regen_sim2real_rrd(
 ) -> RegenResult:
     """Sync artifacts (optional), emit .rrd locally, optionally upload to S3."""
 
-    work_dir = Path(local_dir) if local_dir is not None else default_regen_local_dir(config.run_id)
+    work_dir = (
+        Path(local_dir)
+        if local_dir is not None
+        else default_regen_local_dir(config.run_id)
+    )
     output_rrd = (
         Path(local_rrd_path)
         if local_rrd_path is not None
@@ -416,7 +541,7 @@ def regen_sim2real_rrd(
 
     inner_path = _latest_local_inner_evidence(work_dir)
     _rewrite_inner_evidence_paths(work_dir, inner_path)
-    heldout_path = work_dir / "eval/heldout/report.json"
+    heldout_path = _gold_report_path(config, work_dir)
     if not inner_path.is_file():
         raise Sim2RealRerunRegenError(f"missing inner evidence: {inner_path}")
     if not heldout_path.is_file():
@@ -424,12 +549,85 @@ def regen_sim2real_rrd(
 
     inner_evidence = json.loads(inner_path.read_text(encoding="utf-8"))
     heldout_report = json.loads(heldout_path.read_text(encoding="utf-8"))
+    report_path = work_dir / "reports" / "sim2real-report.json"
+    report = (
+        json.loads(report_path.read_text(encoding="utf-8"))
+        if report_path.is_file()
+        else {}
+    )
+    policy_access = _ensure_policy_access_metadata(
+        config, work_dir, storage=storage, report=report
+    )
+    outer_history = list((report.get("outer_loop") or {}).get("history") or [])
+    viewer_command = (
+        "npa workbench sim2real rerun serve "
+        f"--run-id {config.run_id} --s3-bucket {config.s3_bucket} "
+        f"--s3-prefix {config.s3_prefix}"
+    )
+    rerun_started = time.monotonic()
     result = emit_sim2real_rerun(
         local_dir=work_dir,
         inner_evidence=inner_evidence,
         heldout_report=heldout_report,
+        stage_components=list(report.get("components") or []),
+        outer_history=outer_history,
+        run_metadata={
+            "run_id": config.run_id,
+            "artifact_root": run_prefix_uri(config),
+            "rrd_s3_uri": f"{run_prefix_uri(config)}reports/sim2real.rrd",
+            "candidate_s3_uri": (
+                f"{run_prefix_uri(config)}checkpoints/candidate/candidate.json"
+            ),
+            "policy_checkpoint": policy_access.get("checkpoint_uri", ""),
+            "policy_checkpoint_identity": policy_access.get("identity", ""),
+            "policy_checkpoint_sha256": policy_access.get("sha256", ""),
+            "policy_checkpoint_size_bytes": policy_access.get("size_bytes", 0),
+            "policy_download_command": policy_access.get(
+                "authenticated_download_command", ""
+            ),
+            "policy_ui_action": policy_access.get("ui_action", ""),
+            "policy_deployable": policy_access.get("deployable_policy", False),
+            "orchestrator_job_name": config.run_id,
+            "orchestrator_node_product": config.k8s_gpu_product,
+            "viewer_command": viewer_command,
+        },
         output_rrd=output_rrd,
     )
+    rerun_duration_s = round(time.monotonic() - rerun_started, 3)
+    if report:
+        from npa.workflows.sim2real.engine import gpu_fallback_report_contract
+
+        report["policy_access"] = policy_access
+        report["progress_metrics"] = build_progress_metrics(work_dir, outer_history)
+        report["gpu_fallback_contract"] = gpu_fallback_report_contract(
+            config, list(report.get("components") or [])
+        )
+        report["visualization"] = {
+            **result.to_dict(),
+            "rrd_s3_uri": f"{run_prefix_uri(config)}reports/sim2real.rrd",
+            "rrd_size_bytes": output_rrd.stat().st_size,
+            "viewer_command": viewer_command,
+        }
+        for component in report.get("components") or []:
+            if component.get("name") == "stage_14_rerun_viz":
+                component["tier"] = "WORKS"
+                component["evidence"] = (
+                    f"Wrote the complete Rerun recording from every persisted pass: "
+                    f"{result.rollout_count} real policy rollout(s), "
+                    f"{result.frame_count} synchronized policy camera frame(s), and "
+                    f"{result.heldout_frame_count} held-out frame(s)."
+                )
+                component.setdefault("artifacts", {}).update(
+                    {
+                        "rrd": f"{run_prefix_uri(config)}reports/sim2real.rrd",
+                        "rrd_local": str(output_rrd),
+                        "rrd_size_bytes": output_rrd.stat().st_size,
+                        "duration_s": rerun_duration_s,
+                    }
+                )
+        report_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
     # The finalize stage emits both viewer recordings from the same inputs, so regen
     # must too: refreshing only the .rrd leaves the run's MCAP frozen at whatever
     # the emitter produced when the run first completed. Best-effort, exactly as in
@@ -455,6 +653,89 @@ def regen_sim2real_rrd(
     )
 
 
+def _ensure_policy_access_metadata(
+    config: Sim2RealLoopConfig,
+    local_dir: Path,
+    *,
+    storage: StorageClient,
+    report: dict[str, Any],
+) -> dict[str, Any]:
+    """Resolve candidate bytes and write secret-free access and promotion state."""
+
+    candidate_path = Path(local_dir) / "checkpoints" / "candidate" / "candidate.json"
+    candidate = (
+        json.loads(candidate_path.read_text(encoding="utf-8"))
+        if candidate_path.is_file()
+        else {}
+    )
+    checkpoint_uri = str(
+        candidate.get("policy_checkpoint_uri")
+        or ((report.get("outer_loop") or {}).get("latest_decision") or {}).get(
+            "checkpoint_uri"
+        )
+        or ""
+    ).strip()
+    deployable = bool(
+        candidate.get("deployable_policy")
+        and checkpoint_uri.startswith("s3://")
+        and checkpoint_uri.endswith(".pt")
+    )
+    bytes_available = bool(
+        (candidate.get("policy_bytes_available") or deployable)
+        and checkpoint_uri.startswith("s3://")
+        and checkpoint_uri.endswith(".pt")
+    )
+    if bytes_available and (
+        not candidate.get("policy_checkpoint_sha256")
+        or not candidate.get("policy_checkpoint_size_bytes")
+    ):
+        with tempfile.TemporaryDirectory(prefix="npa-policy-regen-") as temporary:
+            local_checkpoint = Path(temporary) / Path(checkpoint_uri).name
+            storage.download_file(checkpoint_uri, str(local_checkpoint))
+            candidate.update(
+                {
+                    "policy_checkpoint_identity": Path(checkpoint_uri).name,
+                    "policy_checkpoint_sha256": hashlib.sha256(
+                        local_checkpoint.read_bytes()
+                    ).hexdigest(),
+                    "policy_checkpoint_size_bytes": local_checkpoint.stat().st_size,
+                }
+            )
+    if bytes_available:
+        candidate.update(
+            {
+                "policy_download_command": (
+                    "aws s3 cp "
+                    f"{shlex.quote(checkpoint_uri)} ./model.pt "
+                    '--endpoint-url "$AWS_ENDPOINT_URL"'
+                ),
+                "policy_ui_action": (
+                    "Open Artifacts for this run, select the candidate .pt checkpoint, "
+                    "and choose Download. Check deployable_policy before deployment; "
+                    "the Rerun viewer links the weights but does not execute them."
+                ),
+            }
+        )
+        candidate_path.parent.mkdir(parents=True, exist_ok=True)
+        candidate_path.write_text(
+            json.dumps(candidate, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    return {
+        "deployable_policy": deployable,
+        "policy_bytes_available": bytes_available,
+        "identity": candidate.get("policy_checkpoint_identity", ""),
+        "sha256": candidate.get("policy_checkpoint_sha256", ""),
+        "size_bytes": candidate.get("policy_checkpoint_size_bytes", 0),
+        "checkpoint_uri": checkpoint_uri if bytes_available else "",
+        "candidate_manifest_uri": (
+            f"{run_prefix_uri(config)}checkpoints/candidate/candidate.json"
+        ),
+        "authenticated_download_command": candidate.get("policy_download_command", ""),
+        "ui_action": candidate.get("policy_ui_action", ""),
+        "viewer_executes_policy": False,
+    }
+
+
 def rerun_heldout_eval_only(
     config: Sim2RealLoopConfig,
     *,
@@ -467,13 +748,19 @@ def rerun_heldout_eval_only(
 
     from npa.workflows.sim2real.engine import run_heldout_eval
 
-    work_dir = Path(local_dir) if local_dir is not None else default_regen_local_dir(config.run_id)
+    work_dir = (
+        Path(local_dir)
+        if local_dir is not None
+        else default_regen_local_dir(config.run_id)
+    )
     storage = client or _storage_client_for_config(config)
     prefix = run_prefix_uri(config)
 
     work_dir.mkdir(parents=True, exist_ok=True)
     try:
-        storage.download_directory(f"{prefix}envs/heldout/", str(work_dir / "envs" / "heldout"))
+        storage.download_directory(
+            f"{prefix}envs/heldout/", str(work_dir / "envs" / "heldout")
+        )
     except (StorageError, OSError) as exc:
         raise Sim2RealRerunRegenError(
             f"failed to sync envs/heldout for {config.run_id}: {exc}"
@@ -481,8 +768,12 @@ def rerun_heldout_eval_only(
 
     inner_path = work_dir / "inner_loop/outer-01/evidence.json"
     inner_path.parent.mkdir(parents=True, exist_ok=True)
-    if not _download_if_exists(storage, f"{prefix}inner_loop/outer-01/evidence.json", inner_path):
-        raise Sim2RealRerunRegenError(f"missing inner evidence at {prefix}inner_loop/outer-01/evidence.json")
+    if not _download_if_exists(
+        storage, f"{prefix}inner_loop/outer-01/evidence.json", inner_path
+    ):
+        raise Sim2RealRerunRegenError(
+            f"missing inner evidence at {prefix}inner_loop/outer-01/evidence.json"
+        )
 
     inner_evidence = json.loads(inner_path.read_text(encoding="utf-8"))
     report = run_heldout_eval(
@@ -494,13 +785,17 @@ def rerun_heldout_eval_only(
 
     invocation = report.get("component_invocation") or {}
     output_uri = str(invocation.get("output_uri") or "").strip()
-    renders_dir = work_dir / "eval" / "heldout" / "renders"
+    renders_dir = _renders_dir_for_report(config, work_dir, report)
     renders_dir.mkdir(parents=True, exist_ok=True)
     if output_uri:
         try:
-            storage.download_directory(_sibling_uri(output_uri, "renders/"), str(renders_dir))
+            storage.download_directory(
+                _sibling_uri(output_uri, "renders/"), str(renders_dir)
+            )
         except (StorageError, OSError):
-            sync_heldout_renders(config, work_dir, heldout_report=report, client=storage)
+            sync_heldout_renders(
+                config, work_dir, heldout_report=report, client=storage
+            )
     else:
         sync_heldout_renders(config, work_dir, heldout_report=report, client=storage)
 

@@ -32,7 +32,7 @@ is pure composition of existing toolRefs; only add real tools with tests.
 
 ## What It Is
 
-`npa/workflows/physical-ai-data-factory.yaml` — one
+`npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml` — one
 `npa.workflow/v0.0.1` spec. Blueprint → NPA stage mapping:
 
 | NVIDIA stage | NPA state | Tool (all REAL — no stubs) | Runtime |
@@ -230,7 +230,7 @@ Token Factory model.
 ## Commands
 
 ```bash
-SPEC=npa/workflows/physical-ai-data-factory.yaml
+SPEC=npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
 npa workbench workflow validate-spec "$SPEC" --json
 # --var bucket= is required for a meaningful plan; without it the spec's
 # `example-bucket` placeholder is planned (plan-spec warns).

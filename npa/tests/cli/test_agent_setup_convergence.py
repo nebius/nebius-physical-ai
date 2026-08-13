@@ -145,7 +145,9 @@ def test_health_transport_failure_remains_indeterminate(monkeypatch) -> None:
     assert result["error_category"] == "ReadTimeout"
 
 
-def test_blocking_calls_emit_structured_secret_free_heartbeats(monkeypatch, tmp_path) -> None:
+def test_blocking_calls_emit_structured_secret_free_heartbeats(
+    monkeypatch, tmp_path
+) -> None:
     monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
     operation = ProvisioningOperation.prepare(
         command="npa agent bootstrap",

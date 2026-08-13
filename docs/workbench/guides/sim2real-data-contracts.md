@@ -12,21 +12,23 @@ loop. Other guides link here instead of duplicating tables.
 | **[sim2real-workflow.md](./sim2real-workflow.md)** | Run the loop: quickstart, CLI, local smoke |
 | **This file** | What each artifact *is* (LeRobot vs NPA JSON vs media) |
 | **[sim2real-customer-assets.md](./sim2real-customer-assets.md)** | What the customer uploads (robot, scene, trigger) |
-| **[sim2real-architecture.md](./sim2real-architecture.md)** | Control flow, K8s sibling jobs, fallbacks |
+| **[sim2real-architecture.md](./sim2real-architecture.md)** | Standard-runtime control flow, parallel waves, loops, and resume |
 | **[sim2real-demo-script-10min.md](./sim2real-demo-script-10min.md)** | Presentation walkthrough |
 
-**Code:** `npa/src/npa/workflows/sim2real_loop.py` (`SCHEMA_*` constants),
-`sim2real_envgen.py`, `sim2real_assets.py`.
+**Code:** `npa/src/npa/workflows/sim2real/workflow_stage.py`,
+`workflow_io.py`, `sim2real_envgen.py`, and `sim2real_assets.py`.
 
 ---
 
 ## Not everything is LeRobot
 
-The loop uses **four format families**. Only Stage 1 input is LeRobot-native.
+The loop uses **four format families**. Stage 1 accepts a task-aligned seed
+dataset; it is LeRobot-native only when that dataset's explicit task contract
+matches the selected task.
 
 | Family | Used for | Examples |
 | --- | --- | --- |
-| **LeRobot dataset** | Real-robot demonstrations that **trigger** the run | Parquet + video under `NPA_SIM2REAL_TRIGGER_DATASET_URI` |
+| **Task seed dataset** | Task-aligned demonstrations or simulator captures that **trigger** the run | Manifest + action/camera trajectory data under `NPA_SIM2REAL_TRIGGER_DATASET_URI` |
 | **NPA JSON schemas** | Workflow records, env catalogs, eval reports | `npa.sim2real.*.v1` (see table below) |
 | **Simulation media** | Rollout frames, augment output | `.ppm`, `.png`, `.mp4` under `actions/`, `augment/frames/` |
 | **CAD / scene files** | BYO objects and robots (not LeRobot) | OBJ/STL/GLB/PLY/USD meshes; URDF/MJCF/USD for arms |
@@ -41,14 +43,15 @@ policy rollouts.
 
 | URI / artifact | Provider | Format | Stage |
 | --- | --- | --- | --- |
-| `NPA_SIM2REAL_TRIGGER_DATASET_URI` | Customer | **LeRobot dataset** on S3 | 1 |
+| `NPA_SIM2REAL_TRIGGER_DATASET_URI` | Customer/operator | Task-aligned Isaac seed dataset plus `task-dataset-manifest.json`; PushT is incompatible with the default Franka lift task | 1 |
 | `ASSETS_URI`, `SCENE_SPEC_URI` | Customer (optional) | Meshes + optional `npa.sim2real.scene_spec.v1` | 2 |
 | `ROBOT_SPEC_URI`, `ROBOT_PRESET` | Customer (optional) | `npa.sim2real.robot_spec.v1` or preset name | 2 |
-| `train_envs_uri` / `heldout_envs_uri` | **Workflow** | NPA env manifests + JSONL | 4–6 |
+| `train_envs_uri` / `validation_envs_uri` / `gold_heldout_envs_uri` | **Workflow** | Curated, disjoint, stratified NPA scenario JSONL with task/config digests | 4–6 |
 | `actions/train/…` | Workflow / policy job | Rollout dirs + `npa.sim2real.action_rollout.v1` | 7 |
 | `vlm_eval/…` | Workflow / VLM job | `npa.sim2real.vlm_eval.v1` | 8 |
 | `training_signal/…` | Workflow | `npa.sim2real.rl_signal.v1` | 9 |
-| `eval/heldout/report.json` | Workflow / eval job | `npa.sim2real.heldout_eval.v1` | 10 |
+| `eval/validation/outer-XX/iter-YY/report.json` | Workflow / eval job | Validation-only checkpoint comparison | 9 |
+| `eval/gold-heldout/outer-XX/report.json` | Workflow / eval job | Final untouched gold evaluation, `npa.sim2real.heldout_eval.v1` | 10 |
 | `reports/sim2real-report.json` | Workflow | `npa.sim2real.e2e_report.v1` | finalize |
 
 ---
@@ -73,7 +76,8 @@ Every JSON artifact should include a top-level `"schema"` string. Constants live
 
 | Schema | Typical path | Stage | Notes |
 | --- | --- | --- | --- |
-| `npa.sim2real.trigger.v1` | `stage_01_trigger/trigger.json` | 1 | Points at LeRobot trigger URI |
+| `npa.sim2real.trigger.v1` | `stage_01_trigger/trigger.json` | 1 | Points at the task-aligned trigger URI and its verified seed provenance |
+| `npa.sim2real.task_contract.v1` | `stage_02_assets/task-contract.json` | 2 | Normalized task/data/embodiment/physics/camera/success contract and digest |
 | `npa.sim2real.consumed_scene_spec.v1` | `stage_02_assets/consumed_scene_spec.json` | 2 | Stock or BYO scene after materialization |
 | `npa.sim2real.consumed_robot_spec.v1` | `stage_02_assets/consumed_robot_spec.json` | 2 | Stock Franka or BYO / preset metadata |
 | `npa.sim2real.stock_scene_spec.v1` | (embedded in consumed scene) | 2 | Stock-only wrapper |
@@ -87,8 +91,9 @@ Every JSON artifact should include a top-level `"schema"` string. Constants live
 | `npa.sim2real.raw_env_shard_summary.v1` | shard summary JSON | 4 | Envgen shard metadata |
 | `npa.sim2real.env_manifest.v1` | `envs/raw|train|heldout/manifest.json` | 4–6 | Env lists for split dirs |
 | `npa.sim2real.env_split.v1` | split sidecars | 6 | Train vs held-out partition |
-| `npa.sim2real.split_manifest.v1` | split manifest on S3 | 6 | Uploaded split metadata |
-| `npa.sim2real.tokens.v1` | `tokens/manifest.json` | 6 | Token / shard bookkeeping |
+| `npa.sim2real.curation_manifest.v1` | `envs/manifest/curation-manifest.json` | 4–5 | Rejections, deduplication, coverage, and Stage 3 lineage consumption |
+| `npa.sim2real.split_manifest.v2` | `envs/manifest/split-manifest.json` | 5 | Uploaded disjoint split metadata and leakage evidence |
+| `npa.sim2real.tokens.v2` | `tokens/manifest.json` | 6 | Honest lineage/reporting-only consumer declaration for state PPO |
 | `npa.sim2real.workflow_state.v1` | `state/workflow_state.json` | all | `train_envs_uri`, `heldout_envs_uri`, quality, decisions |
 
 **10K env note:** `NPA_ENV_COUNT=10000` creates **10K JSON env records** (~8K train /
@@ -112,9 +117,9 @@ Rollout **frames** (not JSON): `camera-NNN.ppm` (or paths listed in manifest).
 
 | Schema | Typical path | Stage | Notes |
 | --- | --- | --- | --- |
-| `npa.sim2real.heldout_eval.v1` | `eval/heldout/report.json` | 10 | `per_env[]`, `sim_backend`, `rollout_backend` |
+| `npa.sim2real.heldout_eval.v1` | `eval/gold-heldout/outer-XX/report.json` | 10 | Strict 5 cm stable placement, distance diagnostics, decomposed/per-stratum metrics, checkpoint SHA, and exact applied config digests |
 | `npa.sim2real.threshold_decision.v1` | `outer_loop/decision.json` | 11 | `promote_checkpoint` vs `loop_back_to_inner_loop` |
-| `npa.sim2real.candidate_checkpoint.v1` | `checkpoints/candidate/` | 11 | On promote |
+| `npa.sim2real.candidate_checkpoint.v1` | `checkpoints/candidate/` | 11 | Exact best real checkpoint is packaged even below threshold; only passing gates set `deployable_policy=true` |
 | `npa.sim2real.loopback.v1` | `outer_loop/loopback.json` | 11 | On loop-back |
 | `npa.sim2real.external_stub.v1` | `stage_12_external_validation/external_stub.json` | 12 | BYO seam |
 | `npa.sim2real.retrigger.v1` | `stage_13_retrigger/retrigger.json` | 13 | Next trigger metadata |
@@ -143,7 +148,7 @@ schemas above on stdout files:
 
 ```text
 # INPUT (customer)
-s3://<bucket>/sim2real-triggers/<run-id>/lerobot-<task>/   # LeRobot dataset
+s3://<bucket>/sim2real-triggers/<run-id>/<task>/           # task-aligned seed dataset + manifest
 
 # OPTIONAL BYO (customer)
 s3://<bucket>/sim2real-assets/<task>/                       # meshes, scene-spec.json, robot-spec.json
@@ -158,13 +163,17 @@ s3://<bucket>/<prefix>/<run-id>/
   augment/frames/
   envs/raw/                    # JSONL shards when NPA_ENV_COUNT>0
   envs/train/                  # ~80% train shard
-  envs/heldout/                # ~20% held-out shard
+  envs/validation/             # checkpoint selection only
+  envs/gold-heldout/           # untouched until final Stage 10
+  envs/heldout/                # compatibility alias for downstream consumers
+  envs/manifest/{curation-manifest.json,split-manifest.json}
   tokens/manifest.json
   actions/train/outer-XX/iter-YY/rollout-*/
   vlm_eval/train/outer-XX/iter-YY/
   training_signal/train/outer-XX/iter-YY/
   inner_loop/outer-XX/evidence.json
-  eval/heldout/report.json
+  eval/validation/outer-XX/iter-YY/report.json
+  eval/gold-heldout/outer-XX/report.json
   outer_loop/decision.json
   stage_12_external_validation/external_stub.json
   stage_13_retrigger/retrigger.json
@@ -201,6 +210,6 @@ npa/.venv/bin/python -m pytest npa/tests/workflows/test_sim2real_loop.py -q
 Inspect a live artifact:
 
 ```bash
-jq '.schema, .sim_backend, .rollout_backend' eval/heldout/report.json
-jq '.train_envs_uri, .heldout_envs_uri' state/workflow_state.json
+jq '.schema, .evaluation_split, .strict_success, .decomposed_metrics, .applied_scenario_proof' eval/gold-heldout/outer-03/report.json
+jq '.train_envs_uri, .validation_envs_uri, .gold_heldout_envs_uri' state/workflow_state.json
 ```

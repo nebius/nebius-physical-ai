@@ -14,11 +14,12 @@ from npa.workflows.sim2real.monitor import (
     get_sim2real_workflow_status,
     normalize_staged_run_id,
     orchestrator_job_name,
-    parse_submit_run_id,
 )
 
 
-def _mock_s3_client(existing_keys: set[str], *, prefixes: set[str] | None = None) -> MagicMock:
+def _mock_s3_client(
+    existing_keys: set[str], *, prefixes: set[str] | None = None
+) -> MagicMock:
     prefixes = prefixes or set()
 
     client = MagicMock()
@@ -202,16 +203,15 @@ def test_stage_states_infers_trigger_from_later_stage_artifacts(
 
 def test_orchestrator_job_name() -> None:
     assert orchestrator_job_name("demo-run") == "sim2real-demo-run"
+    assert (
+        orchestrator_job_name("sim2real-pr258-final-gpu-20260805t180511z-2900ceae")
+        == "sim2real-pr258-final-gpu-20260805t180511z-2900ceae"
+    )
 
 
 def test_normalize_staged_run_id_strips_polluted_submit_line() -> None:
     polluted = "sim2real-staged-20260615t120000z job=sim2real-staged-20260615t120000z"
     assert normalize_staged_run_id(polluted) == "sim2real-staged-20260615t120000z"
-
-
-def test_parse_submit_run_id_from_combined_line() -> None:
-    output = "run_id=sim2real-staged-20260615t120000z job=sim2real-staged-20260615t120000z"
-    assert parse_submit_run_id(output) == "sim2real-staged-20260615t120000z"
 
 
 def test_sim2real_workflow_status_includes_eval_metrics_from_workflow_state(
@@ -232,8 +232,17 @@ def test_sim2real_workflow_status_includes_eval_metrics_from_workflow_state(
         lambda context: tmp_path / "kubeconfig",
     )
     monkeypatch.setattr(
-        "npa.workflows.sim2real.monitor._kubectl_json",
-        lambda *args, **kwargs: {},
+        "npa.workflows.sim2real.monitor._k8s_orchestrator_status",
+        lambda **kwargs: {
+            "job_name": orchestrator_job_name("run-1"),
+            "found": False,
+            "phase": "MISSING",
+            "active": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "pod_phase": "",
+            "pod_reason": "",
+        },
     )
     monkeypatch.setattr(
         "npa.workflows.sim2real.monitor._k8s_sibling_summary",
@@ -289,8 +298,17 @@ def test_sim2real_workflow_status_eval_metrics_fallback_to_heldout_report(
         lambda context: tmp_path / "kubeconfig",
     )
     monkeypatch.setattr(
-        "npa.workflows.sim2real.monitor._kubectl_json",
-        lambda *args, **kwargs: {},
+        "npa.workflows.sim2real.monitor._k8s_orchestrator_status",
+        lambda **kwargs: {
+            "job_name": orchestrator_job_name("run-1"),
+            "found": False,
+            "phase": "MISSING",
+            "active": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "pod_phase": "",
+            "pod_reason": "",
+        },
     )
     monkeypatch.setattr(
         "npa.workflows.sim2real.monitor._k8s_sibling_summary",
@@ -340,29 +358,56 @@ def test_sim2real_workflow_status_marks_failed_image_pull(
         lambda context: tmp_path / "kubeconfig",
     )
 
-    job_payload = {"status": {"active": 1, "succeeded": 0, "failed": 0}}
-    pod_payload = {
-        "items": [
-            {
-                "status": {
-                    "phase": "Pending",
-                    "containerStatuses": [
-                        {"state": {"waiting": {"reason": "ImagePullBackOff"}}}
-                    ],
-                }
-            }
-        ]
-    }
+    from npa.workflows.sim2real.k8s_client import (
+        ContainerSnapshot,
+        JobSnapshot,
+        PodSnapshot,
+    )
 
-    def fake_kubectl_json(args, *, kubeconfig):
-        del kubeconfig
-        if args[-1] == orchestrator_job_name("run-1"):
-            return job_payload
-        return pod_payload
+    snapshot = JobSnapshot(
+        name=orchestrator_job_name("run-1"),
+        namespace="default",
+        uid="job-uid",
+        resource_version="1",
+        state="running",
+        active=1,
+        succeeded=0,
+        failed=0,
+        deleting=False,
+        condition_type="",
+        condition_reason="",
+        condition_message="",
+        pods=(
+            PodSnapshot(
+                name="pod",
+                uid="pod-uid",
+                owner_uid="job-uid",
+                phase="Pending",
+                node_name="",
+                deletion_timestamp="",
+                scheduled_status="False",
+                scheduled_reason="Unschedulable",
+                resource_requests={},
+                containers=(
+                    ContainerSnapshot(
+                        name="controller",
+                        image="registry/controller@sha256:" + "a" * 64,
+                        image_id="",
+                        restart_count=0,
+                        waiting_reason="ImagePullBackOff",
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    class FakeK8sClient:
+        def snapshot_if_exists(self, *args, **kwargs):
+            return snapshot
 
     monkeypatch.setattr(
-        "npa.workflows.sim2real.monitor._kubectl_json",
-        fake_kubectl_json,
+        "npa.workflows.sim2real.monitor._structured_k8s_client",
+        lambda **kwargs: FakeK8sClient(),
     )
     monkeypatch.setattr(
         "npa.workflows.sim2real.monitor._k8s_sibling_summary",
@@ -431,10 +476,10 @@ def test_workflow_cli_status_sim2real_run(monkeypatch: pytest.MonkeyPatch) -> No
     assert body["status"] == "RUNNING"
 
 
-def test_is_sim2real_runbook() -> None:
-    from npa.workflows.sim2real.k8s_submit import is_sim2real_runbook
+def test_retired_sim2real_runbook_is_not_shipped() -> None:
 
     root = Path(__file__).resolve().parents[2]
-    runbook = root / "workflows" / "workbench" / "sim2real" / "runbook.yaml"
-    assert is_sim2real_runbook(runbook)
-    assert not is_sim2real_runbook(root / "src" / "npa" / "workflows" / "skypilot" / "vlm-eval.yaml")
+    assert not (root / "workflows" / "sim2real.yaml").exists()
+    assert (
+        root / "workflows" / "workbench" / "npa-workflows" / "sim2real.yaml"
+    ).is_file()

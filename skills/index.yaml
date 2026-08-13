@@ -130,7 +130,9 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml
-          - npa/workflows/workbench/npa-workflows/sim2real-vlm-rl.yaml
+      - type: workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/sim2real.yaml
   - name: review-checklist
     category: atomic
     when_to_use: "Code reviews and risk classification."
@@ -477,19 +479,19 @@ skills:
     when_to_use: "Design, review, or operate sim-to-real data, training, evaluation, and loop-control workflows."
     path: skills/workflows/sim-to-real/SKILL.md
     smoke:
-      - type: npa_workflow_yaml
+      - type: workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/sim2real-vlm-rl.yaml
+          - npa/workflows/workbench/npa-workflows/sim2real.yaml
       - type: cli_help
         args: ["workbench", "workflow", "trigger", "--help"]
         contains: "trigger"
   - name: sim2real-operate
     category: workflows
-    when_to_use: "Run, monitor, or debug the staged Sim2Real pipeline on a K8s GPU cluster — runbook, direct-K8s submit, preflight health checks, storage secret sync, and job monitoring."
+    when_to_use: "Run, resume, monitor, or debug the compositional Sim2Real npa.workflow on a Kubernetes GPU cluster."
     path: skills/workflows/sim2real-operate/SKILL.md
     smoke:
       - type: file_exists
-        path: npa/workflows/workbench/sim2real/runbook.yaml
+        path: npa/workflows/workbench/npa-workflows/sim2real.yaml
       - type: cli_help
         args: ["workbench", "health", "sim2real", "--help"]
         contains: "checks"
@@ -505,7 +507,7 @@ skills:
         contains: "npa.workflow"
   - name: sim2real-engine
     category: tools
-    when_to_use: "Navigate or change the Sim2Real staged pipeline engine — 14-stage map, preamble/inner/outer/finalize entrypoints, and K8s sibling jobs."
+    when_to_use: "Navigate or change the canonical 14-stage Sim2Real npa.workflow, stateless adapters, parallel lane joins, ComponentRecords, and durable standard-runtime resume."
     path: skills/workbench/sim2real-engine/SKILL.md
     smoke:
       - type: file_exists
@@ -589,11 +591,11 @@ skills:
         paths:
           - npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml
           - npa/workflows/workbench/npa-workflows/tokenfactory-rollout-judge.yaml
-          - npa/workflows/workbench/npa-workflows/sim2real-vlm-rl.yaml
+          - npa/workflows/workbench/npa-workflows/sim2real.yaml
           - npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml
           - npa/workflows/workbench/npa-workflows/av-night-scene-hardening.yaml
           - npa/workflows/workbench/npa-workflows/cosmos-synth-fanout-curation.yaml
-          - npa/workflows/physical-ai-data-factory.yaml
+          - npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
           - npa/workflows/workbench/npa-workflows/tokenfactory-cosmos-gate.yaml
           - npa/workflows/workbench/npa-workflows/token-factory-parallel-fanout.yaml
           - npa/workflows/workbench/npa-workflows/token-factory-gate-loop.yaml
@@ -638,7 +640,6 @@ skills:
         contains: "npa.workflow"
       - type: npa_workflow_yaml
         paths:
-          - skills/workflows/diagram-to-npa-workflow/examples/sim2real-vlm-rl-from-diagram.yaml
           - skills/workflows/diagram-to-npa-workflow/examples/av-failure-mode-from-diagram.yaml
           - skills/workflows/diagram-to-npa-workflow/examples/av-night-scene-hardening-from-diagram.yaml
   - name: workbench-reference-workflows
@@ -656,7 +657,7 @@ skills:
         paths:
           - npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml
           - npa/workflows/workbench/npa-workflows/cosmos3-text-to-image.yaml
-          - npa/workflows/workbench/npa-workflows/sim2real-vlm-rl.yaml
+          - npa/workflows/workbench/npa-workflows/sim2real.yaml
           - npa/workflows/workbench/npa-workflows/isaac-lab-rl-sweep.yaml
           - npa/workflows/workbench/npa-workflows/cosmos3-reason.yaml
           - npa/workflows/workbench/npa-workflows/mjlab-eval.yaml
@@ -676,7 +677,7 @@ skills:
     smoke:
       - type: npa_workflow_yaml
         paths:
-          - npa/workflows/physical-ai-data-factory.yaml
+          - npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
       - type: cli_help
         args: ["workbench", "cosmos-evaluator", "evaluate", "--help"]
         contains: "--configs-uri"

@@ -128,8 +128,9 @@ Rules:
 - PAIDF and sim-to-real drafting resolves the staged agent bucket and configured
   Kubernetes accelerator/profile before rendering. A conflicting requested GPU
   fails closed; absent infrastructure remains an explicit placeholder/warning.
-- Chat-generated sim-to-real uses `workbench.sim2real.run` (the real staged
-  engine), not the legacy `workbench.sim2real.*` demo/echo toolRefs.
+- Chat-generated sim-to-real loads the single canonical compositional
+  `npa.workflow/v0.0.1` graph. It must not emit the retired
+  `workbench.sim2real.run` monolith or legacy demo/echo toolRefs.
 
 ## Workflow Draft / Validate / Plan / Submit Loop
 

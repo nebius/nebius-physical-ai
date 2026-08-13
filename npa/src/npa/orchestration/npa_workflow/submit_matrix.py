@@ -659,12 +659,23 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     ),
     # --- Plan-only: stubs or separately covered BYOF onboarding flows ---
     SubmitLiveCase(
-        "sim2real-vlm-rl.yaml",
+        "sim2real.yaml",
         "multi",
-        secret_envs=("HF_TOKEN",),
-        plan_only=True,
-        plan_only_justification="contains known stub toolRefs without a real execution contract",
-        notes="Stub toolRefs; plan-only until engine wiring lands.",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        runtime=True,
+        expected_parallel_tasks=2,
+        rotation_skip=True,
+        skip_reason=(
+            "The canonical live case requires six project-local immutable image "
+            "digests, a prewarmed Isaac cache PVC, and task-aligned trigger data."
+        ),
+        notes=(
+            "Canonical compositional 14-stage Sim2Real runtime. Repository CI "
+            "validates the dynamic plan; an operator live run supplies six "
+            "registry-qualified immutable component images, an Isaac cache PVC, "
+            "and task-aligned trigger data. The reduced real-GPU proof is archived "
+            "separately because the component images are project-local."
+        ),
     ),
     SubmitLiveCase(
         "byof.yaml",
@@ -767,16 +778,6 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "workbench.fiftyone.launch_app is a stub, and both synthetic shard states "
             "currently target the same transfer manifest object; keep plan-only until "
             "both gaps close."
-        ),
-    ),
-    SubmitLiveCase(
-        "sim2real-gpu-cross-region-agent.yaml",
-        "multi",
-        plan_only=True,
-        plan_only_justification="three of five advertised toolRefs remain stubs",
-        notes=(
-            "Three of five toolRefs are stubs: policy_rollouts, heldout_eval, and "
-            "finalize."
         ),
     ),
     SubmitLiveCase(

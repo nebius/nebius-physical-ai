@@ -26,7 +26,6 @@ PUBLIC_REUSABLE_TOOLREFS: dict[str, str] = {
     "workbench.insights.record": "public lineage/metrics ingestion primitive",
     "workbench.isaac_lab.byof_repo": "public Isaac Lab BYOF primitive",
     "workbench.lerobot.eval": "public LeRobot evaluation primitive",
-    "workbench.sim2real.run": "public legacy-compatible Sim2Real execution primitive",
 }
 
 
@@ -667,7 +666,9 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.sim2real_envgen.split": ToolEntry(
         name="workbench.sim2real_envgen.split",
-        description="Split the generated env catalog into disjoint train and held-out sets.",
+        description=(
+            "Consume raw shards and create disjoint train, validation, and gold-heldout sets."
+        ),
         argv_template=[
             "python3",
             "-m",
@@ -681,118 +682,20 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.env_count}}",
             "--train-fraction",
             "{{config.train_fraction}}",
+            "--shard-count",
+            "{{config.shard_count}}",
             "--seed",
             "{{config.envgen_seed}}",
             "--augmented-frames-uri",
             "{{config.augmented_frames_uri}}",
         ],
     ),
-    "workbench.sim2real.run": ToolEntry(
-        name="workbench.sim2real.run",
-        description=(
-            "Run the real staged Sim2Real engine (augmentation, environment generation, "
-            "policy/VLM loop, held-out evaluation, threshold decision, and final artifacts)."
-        ),
-        argv_template=[
-            "npa",
-            "workbench",
-            "sim2real",
-            "run",
-            "--run-id",
-            "{{run.id}}",
-            "--s3-bucket",
-            "{{config.bucket}}",
-            "--s3-prefix",
-            "{{config.s3_prefix}}",
-            "--trigger-dataset-uri",
-            "{{config.trigger_dataset_uri}}",
-            "--trigger-dataset-id",
-            "{{config.trigger_dataset_id}}",
-            "--assets-uri",
-            "{{config.assets_uri}}",
-            "--scene-spec-uri",
-            "{{config.scene_spec_uri}}",
-            "--cameras-uri",
-            "{{config.cameras_uri}}",
-            "--robot-spec-uri",
-            "{{config.robot_spec_uri}}",
-            "--robot-source",
-            "{{config.robot_source}}",
-            "--robot-preset",
-            "{{config.robot_preset}}",
-            "--sim-backend",
-            "{{config.sim_backend}}",
-            "--isaac-task",
-            "{{config.isaac_task}}",
-            "--vlm-model",
-            "{{config.vlm_model}}",
-            "--threshold",
-            "{{config.success_threshold}}",
-            "--inner-iterations",
-            "{{config.inner_iterations}}",
-            "--outer-iterations",
-            "{{config.outer_iterations}}",
-            "--loop-of-loops-iterations",
-            "{{config.loop_of_loops_iterations}}",
-            "--rollout-count",
-            "{{config.rollout_count}}",
-            "--steps-per-rollout",
-            "{{config.steps_per_rollout}}",
-            "--heldout-env-count",
-            "{{config.heldout_env_count}}",
-            "--env-count",
-            "{{config.env_count}}",
-            "--train-fraction",
-            "{{config.train_fraction}}",
-            "--envgen-shard-count",
-            "{{config.envgen_shard_count}}",
-            "--action-env-limit",
-            "{{config.action_env_limit}}",
-            "--seed",
-            "{{config.seed}}",
-            "--k8s-namespace",
-            "{{config.k8s_namespace}}",
-            "--k8s-service-account",
-            "{{config.k8s_service_account}}",
-            "--k8s-image-pull-secrets",
-            "{{config.k8s_image_pull_secrets}}",
-            "--k8s-env-secret-names",
-            "{{config.k8s_env_secret_names}}",
-            "--k8s-gpu-product",
-            "{{config.k8s_gpu_product}}",
-            "--augment-image",
-            "{{config.augment_image}}",
-            "--envgen-image",
-            "{{config.envgen_image}}",
-            "--policy-image",
-            "{{config.policy_image}}",
-            "--trainer-image",
-            "{{config.trainer_image}}",
-            "--vlm-image",
-            "{{config.vlm_image}}",
-            "--eval-image",
-            "{{config.eval_image}}",
-            "--isaac-image",
-            "{{config.isaac_image}}",
-            "--upload-artifacts",
-            "--output-json",
-        ],
-    ),
-    "workbench.sim2real.policy_rollouts": ToolEntry(
-        name="workbench.sim2real.policy_rollouts",
-        description="Policy rollouts on train envs (workflow stub until sim2real step wiring).",
-        argv_template=["echo", "policy rollouts -> {{config.rollouts_uri}}"],
-        stub=True,
-    ),
-    "workbench.sim2real.heldout_eval": ToolEntry(
-        name="workbench.sim2real.heldout_eval",
-        description="Held-out simulation eval (workflow stub).",
-        argv_template=["echo", "heldout eval -> {{config.heldout_report_uri}}"],
-        stub=True,
-    ),
+    # Generic decision writer retained for non-Sim2Real workflow examples. The
+    # canonical Sim2Real graph calls its stage adapter and does not use this
+    # historical namespace.
     "workbench.sim2real.write_decision": ToolEntry(
         name="workbench.sim2real.write_decision",
-        description="Write threshold decision artifact for dynamic transitions (demo stub).",
+        description="Write a real S3 workflow decision artifact.",
         argv_template=[
             "python3",
             "-c",
@@ -801,15 +704,6 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
                 "write_decision('{{config.decision_uri}}', '{{config.default_decision}}')"
             ),
         ],
-    ),
-    "workbench.sim2real.finalize": ToolEntry(
-        name="workbench.sim2real.finalize",
-        description="Finalize run artifacts (workflow stub).",
-        argv_template=[
-            "echo",
-            "finalize run {{run.id}} -> {{config.finalize_report_uri}}",
-        ],
-        stub=True,
     ),
     "workbench.byof.repo": ToolEntry(
         name="workbench.byof.repo",
@@ -823,52 +717,6 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         name="workbench.isaac_lab.byof_repo",
         description="Compatibility alias for workbench.byof.repo.",
         argv_template=_BYOF_REPO_ARGV,
-    ),
-    "workbench.data_transform.rollout_contract": ToolEntry(
-        name="workbench.data_transform.rollout_contract",
-        description="Validate + adapt rollout contract payloads to canonical v1.",
-        argv_template=[
-            "python3",
-            "-c",
-            (
-                "import json;from pathlib import Path;"
-                "source='npa.sim2real.action_rollout.v1';"
-                "target='npa.sim2real.rollout_manifest.v1';"
-                "payload={'tenant_id':'{{config.tenant_id}}','source_project':'{{config.project_primary}}',"
-                "'target_project':'{{config.project_secondary}}','source_region':'{{config.region_primary}}',"
-                "'target_region':'{{config.region_secondary}}','source_uri':'{{config.rollouts_uri}}manifest.json',"
-                "'target_uri':'{{config.normalized_rollouts_uri}}manifest.json','source_schema':source,"
-                "'target_schema':target,'contract_version':'v1','adapter_version':'v1',"
-                "'status':'ok'};"
-                "required=('tenant_id','source_project','target_project','source_region','target_region',"
-                "'source_uri','target_uri','source_schema','target_schema','contract_version','adapter_version','status');"
-                "missing=[k for k in required if not payload.get(k)];"
-                "assert not missing, f'missing required fields: {missing}';"
-                "Path('{{config.improvement_local_path}}').write_text(json.dumps(payload, indent=2));"
-                "print('normalized manifest ready')"
-            ),
-        ],
-    ),
-    "workbench.data_transform.improvement_summary": ToolEntry(
-        name="workbench.data_transform.improvement_summary",
-        description="Generate contract-validated cross-region improvement summary payload.",
-        argv_template=[
-            "python3",
-            "-c",
-            (
-                "import json;from pathlib import Path;"
-                "summary={'tenant_id':'{{config.tenant_id}}','projects':['{{config.project_primary}}',"
-                "'{{config.project_secondary}}'],'regions':['{{config.region_primary}}','{{config.region_secondary}}'],"
-                "'metrics':{'improvement_delta':0.12},'result':'improved',"
-                "'contract_version':'v1'};"
-                "assert isinstance(summary['projects'], list) and len(summary['projects']) == 2;"
-                "assert isinstance(summary['regions'], list) and len(summary['regions']) == 2;"
-                "assert isinstance(summary['metrics'].get('improvement_delta'), (int, float));"
-                "assert summary['contract_version'] == 'v1', 'unsupported improvement contract version';"
-                "Path('{{config.improvement_local_path}}').write_text(json.dumps(summary, indent=2));"
-                "print(json.dumps(summary))"
-            ),
-        ],
     ),
     "workbench.rl.policy_train": ToolEntry(
         name="workbench.rl.policy_train",
@@ -1901,21 +1749,38 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         name="workflow.groot.preflight_rigor",
         description="Fail before GPU scheduling when the declared learning contract is incoherent.",
         argv_template=[
-            "python3", "-m", "npa.workflows.groot_learning", "preflight-rigor",
-            "--output-uri", "{{config.rigor_preflight_uri}}",
-            "--run-id", "{{run.id}}",
-            "--gpu-type", "{{config.gpu_type}}",
-            "--gpu-count", "{{config.gpu_count}}",
-            "--global-batch-size", "{{config.global_batch_size}}",
-            "--per-device-batch-size", "{{config.per_device_batch_size}}",
-            "--gradient-accumulation-steps", "{{config.gradient_accumulation_steps}}",
-            "--train-episodes", "{{config.train_episodes}}",
-            "--validation-episodes", "{{config.heldout_episodes}}",
-            "--final-episodes", "{{config.final_episodes}}",
-            "--max-steps", "{{config.max_steps}}",
-            "--save-steps", "{{config.save_steps}}",
-            "--save-total-limit", "{{config.save_total_limit}}",
-            "--minimum-epochs", "{{config.minimum_epochs}}",
+            "python3",
+            "-m",
+            "npa.workflows.groot_learning",
+            "preflight-rigor",
+            "--output-uri",
+            "{{config.rigor_preflight_uri}}",
+            "--run-id",
+            "{{run.id}}",
+            "--gpu-type",
+            "{{config.gpu_type}}",
+            "--gpu-count",
+            "{{config.gpu_count}}",
+            "--global-batch-size",
+            "{{config.global_batch_size}}",
+            "--per-device-batch-size",
+            "{{config.per_device_batch_size}}",
+            "--gradient-accumulation-steps",
+            "{{config.gradient_accumulation_steps}}",
+            "--train-episodes",
+            "{{config.train_episodes}}",
+            "--validation-episodes",
+            "{{config.heldout_episodes}}",
+            "--final-episodes",
+            "{{config.final_episodes}}",
+            "--max-steps",
+            "{{config.max_steps}}",
+            "--save-steps",
+            "{{config.save_steps}}",
+            "--save-total-limit",
+            "{{config.save_total_limit}}",
+            "--minimum-epochs",
+            "{{config.minimum_epochs}}",
         ],
     ),
     "workflow.groot.prepare_split": ToolEntry(

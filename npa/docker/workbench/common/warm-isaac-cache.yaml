@@ -22,16 +22,17 @@
 #
 # USAGE
 #   1. Pick a volume (see the two options below) and set NPA_ISAAC_CACHE_DIR to its mount.
-#   2. Replace <your-registry> and the image tag.
+#   2. Replace <your-registry-id> and the image digest with the exact image built
+#      from the controller SHA. Tags are not accepted as runtime provenance.
 #   3. kubectl apply -f warm-isaac-cache.yaml
-#      kubectl wait --for=condition=complete job/npa-warm-isaac-cache --timeout=30m
+#      kubectl wait --for=condition=complete job/npa-warm-isaac-cache --timeout=-1s
 #      kubectl logs job/npa-warm-isaac-cache
 #   4. Run your workload pods against the same volume with
 #      NPA_ISAAC_CACHE_READONLY=1 (and optionally NPA_ISAAC_BOOTSTRAP_OFFLINE=1).
 #
-#   Re-run it after changing ISAAC_SIM_VERSION, ISAAC_LAB_VERSION or the wheel manifest:
-#   the cache is version-stamped, so a pin change needs a new tree (the old one is left
-#   alone, so pods still using it are unaffected).
+#   Re-run it after changing the bootstrap, OSS lock, Isaac pins, or wheel manifest.
+#   The full-SHA cache stamp selects a new tree; the old one stays immutable for Pods
+#   already using it.
 #
 # VOLUME OPTIONS
 #   a) Shared filesystem PVC (recommended): one download serves every pod on every node.
@@ -69,24 +70,32 @@ spec:
         app: npa-warm-isaac-cache
     spec:
       restartPolicy: Never
-      # Root only so the warmed tree can be owned by root and left read-only for the
-      # workload pods. It is a short-lived init task with no GPU and no network exposure.
+      # The CSI driver applies this fsGroup to the mounted cache, so the image's
+      # unprivileged ubuntu user can atomically publish a versioned tree. Workload pods
+      # subsequently mount the same tree read-only; root is neither needed nor allowed.
       securityContext:
-        runAsUser: 0
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: warm
           # The job's only legitimate writes are into the mounted cache volume, so the
           # root filesystem is immutable and /tmp is a separate scratch volume (pip needs
           # a writable TMPDIR). Flagged by Trivy KSV-0014 on the first draft of this file
           # — worth honouring rather than ignoring, because this job downloads and unpacks
-          # ~4.5 GB of third-party code as root.
+          # ~4.5 GB of third-party code and should not be able to modify the image root.
           securityContext:
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
+            runAsNonRoot: true
             capabilities:
               drop: ["ALL"]
           # Any of the Isaac images works; they share the bootstrap.
-          image: cr.eu-north1.nebius.cloud/<your-registry-id>/npa-isaac-lab:2.3.2.post1
+          image: cr.us-central1.nebius.cloud/<your-registry-id>/npa-isaac-lab@sha256:<64-hex-digest>
           command: ["/opt/npa/bin/isaac-bootstrap", "warm"]
           env:
             # YOUR acceptance of NVIDIA's terms. Nothing downloads without both.

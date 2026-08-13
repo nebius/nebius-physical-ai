@@ -15,7 +15,10 @@ import yaml
 
 from npa.orchestration.npa_workflow.blueprints import resolve_npa_workflow_spec
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
-from npa.cli.agent_workflow import generate_data_factory_yaml, generate_sim2real_staged_yaml
+from npa.cli.agent_workflow import (
+    generate_data_factory_yaml,
+    generate_sim2real_staged_yaml,
+)
 
 BLUEPRINT = resolve_npa_workflow_spec("physical-ai-data-factory.yaml")
 assert BLUEPRINT is not None, "physical-ai-data-factory.yaml not found in any spec root"
@@ -36,10 +39,7 @@ NUREC_SKYPILOT = (
 # toolRefs that only echo or write a contract/manifest — never advertise as real.
 KNOWN_STUB_TOOLREFS = {
     "workbench.fiftyone.launch_app",  # echo hook
-    "workbench.sim2real.finalize",  # echo
     "workbench.sim2real.write_decision",  # demo stub
-    "workbench.sim2real.policy_rollouts",
-    "workbench.sim2real.heldout_eval",
 }
 REAL_RUN_MARKERS = ("npa workbench", "data_factory_stages", "data_factory_viz")
 
@@ -72,7 +72,9 @@ def test_blueprint_uses_no_stub_toolrefs() -> None:
     "yaml_text",
     [
         generate_data_factory_yaml(user_text="fan out 4 variants on 4 GPUs"),
-        generate_sim2real_staged_yaml(user_text="Isaac sim2real with 2 outer iterations"),
+        generate_sim2real_staged_yaml(
+            user_text="Isaac sim2real with 2 outer iterations"
+        ),
     ],
 )
 def test_agent_generated_blueprints_use_only_real_toolrefs(yaml_text: str) -> None:
@@ -86,15 +88,18 @@ def test_agent_generated_blueprints_use_only_real_toolrefs(yaml_text: str) -> No
 
 
 def test_agent_generated_paidf_runs_named_real_components() -> None:
-    spec = yaml.safe_load(generate_data_factory_yaml(user_text="fan out 2 variants on 2 GPUs"))
+    spec = yaml.safe_load(
+        generate_data_factory_yaml(user_text="fan out 2 variants on 2 GPUs")
+    )
     states = spec["states"]
     assert states["grade"]["sequence"] == ["augment", "evaluate", "quality-gate"]
     assert states["evaluate"]["toolRef"] == "workbench.cosmos_evaluator.evaluate"
     assert states["cosmos-curate"]["toolRef"] == "workbench.cosmos_curate.curate"
     assert states["curate"]["toolRef"] == "workbench.fiftyone.curate_augmented"
-    assert "--curator-report-uri" in TOOL_CATALOG[
-        "workbench.fiftyone.curate_augmented"
-    ].argv_template
+    assert (
+        "--curator-report-uri"
+        in TOOL_CATALOG["workbench.fiftyone.curate_augmented"].argv_template
+    )
     assert states["visualize"]["toolRef"] == "workbench.nurec.visualize"
     assert "pip install" not in str(states["visualize"])
 

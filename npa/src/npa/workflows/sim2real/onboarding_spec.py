@@ -86,7 +86,9 @@ def _opt_pos_float(value: Any, label: str) -> float:
     return out
 
 
-def _str_list_or_auto(value: Any, label: str, auto_fields: set[str], field_name: str) -> tuple[str, ...]:
+def _str_list_or_auto(
+    value: Any, label: str, auto_fields: set[str], field_name: str
+) -> tuple[str, ...]:
     """Parse a list-of-strings field that may be the ``auto`` sentinel."""
 
     if _is_auto(value):
@@ -95,16 +97,22 @@ def _str_list_or_auto(value: Any, label: str, auto_fields: set[str], field_name:
     if isinstance(value, str):
         return (value,)
     if not isinstance(value, (list, tuple)):
-        raise OnboardingSpecError(f"{label} must be a list of names or '{AUTO}', got {value!r}")
+        raise OnboardingSpecError(
+            f"{label} must be a list of names or '{AUTO}', got {value!r}"
+        )
     return tuple(str(v) for v in value)
 
 
-def _float_list_or_auto(value: Any, label: str, auto_fields: set[str], field_name: str) -> tuple[float, ...]:
+def _float_list_or_auto(
+    value: Any, label: str, auto_fields: set[str], field_name: str
+) -> tuple[float, ...]:
     if _is_auto(value):
         auto_fields.add(field_name)
         return ()
     if not isinstance(value, (list, tuple)):
-        raise OnboardingSpecError(f"{label} must be a list of numbers or '{AUTO}', got {value!r}")
+        raise OnboardingSpecError(
+            f"{label} must be a list of numbers or '{AUTO}', got {value!r}"
+        )
     try:
         return tuple(float(v) for v in value)
     except (TypeError, ValueError) as exc:
@@ -193,7 +201,9 @@ class OnboardingSpec:
 # --------------------------------------------------------------------------- #
 def _parse_robot(doc: dict[str, Any]) -> RobotInput:
     if not isinstance(doc, dict):
-        raise OnboardingSpecError(f"'robot' must be a mapping, got {type(doc).__name__}")
+        raise OnboardingSpecError(
+            f"'robot' must be a mapping, got {type(doc).__name__}"
+        )
 
     auto_fields: set[str] = set()
     ri = RobotInput(auto_fields=auto_fields)
@@ -202,10 +212,7 @@ def _parse_robot(doc: dict[str, Any]) -> RobotInput:
 
     # The asset: usd_path / urdf_path / robot_uri (aliases), or a stock/preset robot.
     uri = str(
-        doc.get("usd_path")
-        or doc.get("urdf_path")
-        or doc.get("robot_uri")
-        or ""
+        doc.get("usd_path") or doc.get("urdf_path") or doc.get("robot_uri") or ""
     ).strip()
     ri.robot_uri = uri
 
@@ -238,13 +245,20 @@ def _parse_robot(doc: dict[str, Any]) -> RobotInput:
             f"robot_source={ri.robot_source} requires a 'usd_path'/'urdf_path' asset"
         )
 
-    ri.ee_link = _str_or_auto(doc.get("ee_link", ""), "robot.ee_link", auto_fields, "ee_link")
-    ri.base_link = _str_or_auto(doc.get("base_link", ""), "robot.base_link", auto_fields, "base_link")
+    ri.ee_link = _str_or_auto(
+        doc.get("ee_link", ""), "robot.ee_link", auto_fields, "ee_link"
+    )
+    ri.base_link = _str_or_auto(
+        doc.get("base_link", ""), "robot.base_link", auto_fields, "base_link"
+    )
     ri.joint_names = _str_list_or_auto(
         doc.get("joint_names", ()), "robot.joint_names", auto_fields, "joint_names"
     )
     ri.gripper_joint_names = _str_list_or_auto(
-        doc.get("gripper_joint_names", ()), "robot.gripper_joint_names", auto_fields, "gripper_joint_names"
+        doc.get("gripper_joint_names", ()),
+        "robot.gripper_joint_names",
+        auto_fields,
+        "gripper_joint_names",
     )
     ri.finger_links = _str_list_or_auto(
         doc.get("finger_links", ()), "robot.finger_links", auto_fields, "finger_links"
@@ -252,7 +266,9 @@ def _parse_robot(doc: dict[str, Any]) -> RobotInput:
 
     for fld in ("home_qpos", "kp", "kv", "force_lower", "force_upper"):
         if fld in doc:
-            setattr(ri, fld, _float_list_or_auto(doc[fld], f"robot.{fld}", auto_fields, fld))
+            setattr(
+                ri, fld, _float_list_or_auto(doc[fld], f"robot.{fld}", auto_fields, fld)
+            )
 
     if "n_arm_joints" in doc and not _is_auto(doc["n_arm_joints"]):
         ri.n_arm_joints = int(doc["n_arm_joints"])
@@ -329,14 +345,20 @@ def _parse_task(doc: dict[str, Any]) -> TaskSpec:
         try:
             ts.goal_pos = tuple(float(v) for v in goal)
         except (TypeError, ValueError) as exc:
-            raise OnboardingSpecError(f"task.goal_pos must be numeric: {goal!r}") from exc
+            raise OnboardingSpecError(
+                f"task.goal_pos must be numeric: {goal!r}"
+            ) from exc
 
     if "lift_height_m" in doc:
         ts.lift_height_m = _opt_pos_float(doc["lift_height_m"], "task.lift_height_m")
     if "success_distance_m" in doc:
-        ts.success_distance_m = _opt_pos_float(doc["success_distance_m"], "task.success_distance_m")
+        ts.success_distance_m = _opt_pos_float(
+            doc["success_distance_m"], "task.success_distance_m"
+        )
     if "success_threshold" in doc:
-        ts.success_threshold = _opt_float(doc["success_threshold"], "task.success_threshold")
+        ts.success_threshold = _opt_float(
+            doc["success_threshold"], "task.success_threshold"
+        )
         if not 0.0 <= ts.success_threshold <= 1.0:
             raise OnboardingSpecError(
                 f"task.success_threshold must be in [0, 1], got {ts.success_threshold}"
@@ -357,7 +379,9 @@ def parse_onboarding_spec(doc: dict[str, Any]) -> OnboardingSpec:
     """Parse + validate an onboarding spec document into an ``OnboardingSpec``."""
 
     if not isinstance(doc, dict):
-        raise OnboardingSpecError(f"onboarding spec must be a mapping, got {type(doc).__name__}")
+        raise OnboardingSpecError(
+            f"onboarding spec must be a mapping, got {type(doc).__name__}"
+        )
 
     schema = str(doc.get("schema") or ONBOARDING_SCHEMA).strip()
     if schema != ONBOARDING_SCHEMA:
@@ -410,5 +434,7 @@ def load_onboarding_spec(path: str | Path) -> OnboardingSpec:
     try:
         doc = yaml.safe_load(text)
     except yaml.YAMLError as exc:
-        raise OnboardingSpecError(f"could not parse onboarding YAML {path}: {exc}") from exc
+        raise OnboardingSpecError(
+            f"could not parse onboarding YAML {path}: {exc}"
+        ) from exc
     return parse_onboarding_spec(doc)

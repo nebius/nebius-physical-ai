@@ -18,7 +18,7 @@ import yaml
 
 from npa.clients.credentials import load_credentials
 from npa.clients.serverless import ServerlessClient, ServerlessClientError
-from npa.deploy.images import container_image_for_tool
+from npa.deploy.images import container_image_for_tool, primary_container_registry
 from npa.serverless_common.env import ISAAC_EULA_VARS, isaac_eula_env  # noqa: F401 (re-exported)
 from npa.serverless_common import (
     build_serverless_job_env,
@@ -34,6 +34,30 @@ from npa.smoke.manifest import container
 # small default is used when a golden eval does not pin its own serverless GPU.
 DEFAULT_SERVERLESS_GPU = "l40s"
 _TERMINAL_OK = {"completed", "succeeded", "success"}
+
+
+def resolve_golden_image(
+    tool: str, *, registry: str | None = None, tag: str | None = None
+) -> str:
+    """Resolve tool, variant, and internal runtime images without misclassifying them."""
+
+    spec = container(tool)
+    if spec.internal:
+        resolved_registry = (registry or primary_container_registry()).rstrip("/")
+        resolved_tag = tag or spec.default_tag
+        if not resolved_tag:
+            raise RuntimeError(
+                f"internal golden-eval image {tool!r} has no default tag"
+            )
+        return f"{resolved_registry}/{spec.image}:{resolved_tag}"
+    if spec.variant_of:
+        return container_image_for_tool(
+            spec.variant_of,
+            registry=registry,
+            tag=tag,
+            image_variant=spec.image_variant,
+        )
+    return container_image_for_tool(tool, registry=registry, tag=tag)
 
 
 def _project_id(explicit: str | None) -> str:
@@ -90,14 +114,7 @@ def submit_golden_eval(
     gpu = gpu_type or spec.golden_eval.serverless_gpu or DEFAULT_SERVERLESS_GPU
 
     resolved_project = _project_id(project_id)
-    # A variant (e.g. sonic-mujoco) is deliberately not a CONTAINER_IMAGE_NAMES key, so a
-    # plain lookup raises KeyError; it resolves through its parent tool's image manifest.
-    if spec.variant_of:
-        image = container_image_for_tool(
-            spec.variant_of, registry=registry, tag=tag, image_variant=spec.image_variant
-        )
-    else:
-        image = container_image_for_tool(tool, registry=registry, tag=tag)
+    image = resolve_golden_image(tool, registry=registry, tag=tag)
     cfg = load_credentials(export_to_environment=True)
     bucket = (cfg.s3_bucket or "").rstrip("/")
     if not bucket:

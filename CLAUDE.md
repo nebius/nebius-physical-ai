@@ -44,8 +44,8 @@ making architecture, review, or domain judgments.
 - `skills/workflows/sim-to-real/SKILL.md`: generic sim-to-real workflow
   planning.
 - `skills/workflows/sim2real-operate/SKILL.md`: run, monitor, and debug the
-  staged Sim2Real pipeline on a K8s GPU cluster (runbook, direct-K8s submit,
-  health checks, job monitoring).
+  compositional Sim2Real `npa.workflow` through the standard SkyPilot runtime
+  (validate/plan/submit, durable S3 resume, health checks, job monitoring).
 - `skills/workflows/agent-fresh-operate/SKILL.md`: npa-driven agent teardown,
   fresh-setup, tiered verify gates, and deploy failure recovery on the
   operator/dev VM.
@@ -84,8 +84,10 @@ making architecture, review, or domain judgments.
  BUILT image with `npa/scripts/scan_image_omniverse_payload.py`, not by reading
  the Dockerfile: the Isaac images were cleared that way, and two of the three
  problems it found were invisible in the Dockerfile.
-- `skills/workbench/sim2real-engine/SKILL.md`: Sim2Real staged engine map
-  (14 stages, preamble/inner/outer/finalize) and K8s sibling-job glue.
+- `skills/workbench/sim2real-engine/SKILL.md`: canonical 14-stage Sim2Real graph,
+  stateless stage adapters, parallel lane joins, ComponentRecords, and durable
+  standard-runtime resume. The preamble/inner/outer/finalize controller is
+  finite legacy compatibility, never the canonical execution path.
 
 Compatibility symlinks exist at `.claude/skills` and `.agents/skills`; do not
 create a new split skill tree.

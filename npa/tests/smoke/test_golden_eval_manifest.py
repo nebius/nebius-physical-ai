@@ -42,7 +42,7 @@ def test_entries_map_to_known_images_or_foundation() -> None:
     specs = load_manifest()
     known_images = set(CONTAINER_IMAGE_NAMES.values())
     for name, spec in specs.items():
-        if spec.foundation:
+        if spec.foundation or spec.internal:
             continue
         if spec.variant_of is not None:
             # A build variant of another tool (e.g. sonic-mujoco is built FROM npa-sonic
@@ -71,7 +71,9 @@ def test_every_separately_built_image_has_a_golden_eval() -> None:
     """
     import yaml
 
-    contract_path = REPO_ROOT / "npa" / "docker" / "workbench" / "packaging-contract.yaml"
+    contract_path = (
+        REPO_ROOT / "npa" / "docker" / "workbench" / "packaging-contract.yaml"
+    )
     contract = yaml.safe_load(contract_path.read_text(encoding="utf-8"))
     # Compare by Dockerfile path, not by key: the two files legitimately use different
     # names for the same image (contract `sim2real-envgen` is tool `envgen`, contract
@@ -86,7 +88,9 @@ def test_every_separately_built_image_has_a_golden_eval() -> None:
         for name, entry in contract["images"].items()
         if entry["dockerfile"] not in covered
     )
-    assert not missing, f"packaging-contract images with no golden-eval entry: {missing}"
+    assert not missing, (
+        f"packaging-contract images with no golden-eval entry: {missing}"
+    )
 
 
 @pytest.mark.parametrize("name", sorted(load_manifest()))
@@ -202,11 +206,14 @@ def test_dockerfile_provides_golden_eval_entrypoint(name: str) -> None:
         )
     elif command.startswith("bash "):
         script_path = command.split("bash ", 1)[1].split()[0]
-        assert any(
-            src.endswith(Path(script_path).name) or script_path in dest
-            for src in sources
-            for dest in dests
-        ) or script_path in dests, (
+        assert (
+            any(
+                src.endswith(Path(script_path).name) or script_path in dest
+                for src in sources
+                for dest in dests
+            )
+            or script_path in dests
+        ), (
             f"{name}: {spec.dockerfile} runs `{command}` but no COPY writes "
             f"{script_path} into the image"
         )
@@ -253,9 +260,7 @@ def test_versions_helper_works_without_toml_library(tmp_path: Path) -> None:
 
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text(
-        "[tool.npa.supported-tools]\n"
-        'genesis = "0.4.6"\n'
-        'lerobot = "0.5.1"\n',
+        '[tool.npa.supported-tools]\ngenesis = "0.4.6"\nlerobot = "0.5.1"\n',
         encoding="utf-8",
     )
     start = tmp_path / "pkg" / "smoke.py"
@@ -332,11 +337,14 @@ def test_every_manifest_entry_resolves_to_a_real_image() -> None:
     manifest instead. Nothing checked that the entry pointed at something resolvable.
     """
     from npa.deploy.images import container_image_for_tool
+    from npa.smoke.serverless_runner import resolve_golden_image
 
     for name, spec in load_manifest().items():
         if spec.foundation:
             continue  # foundation images are not resolved through CONTAINER_IMAGE_NAMES
-        if spec.variant_of:
+        if spec.internal:
+            ref = resolve_golden_image(name, registry="registry.example/test")
+        elif spec.variant_of:
             ref = container_image_for_tool(
                 spec.variant_of,
                 registry="registry.example/test",

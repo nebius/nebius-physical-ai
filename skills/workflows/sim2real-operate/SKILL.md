@@ -1,83 +1,65 @@
 ---
 name: sim2real-operate
-description: Use when running, monitoring, or debugging the staged Sim2Real pipeline on a Kubernetes GPU cluster — the runbook, the direct-K8s submit path, preflight health checks, cluster storage secrets, and job monitoring.
+description: Operate the compositional 14-stage Sim2Real npa.workflow on Kubernetes through the standard SkyPilot runtime, durable S3 resume ledger, real component images, and artifact audit.
 ---
 
-# Sim2Real Operate
+# Operate compositional Sim2Real
 
-## When To Use
+Use the one canonical spec:
 
-Use this skill to actually *operate* the staged Sim2Real VLM-to-RL pipeline on a
-Kubernetes RTX PRO 6000 / L40S cluster: submitting a run, preflighting it,
-watching the orchestrator and its sibling Jobs, and recovering from the recurring
-cold-start blockers. For navigating or changing the engine *code* (the 14-stage
-map), use `sim2real-engine` instead; for generic sim-to-real workflow design use
-`sim-to-real`.
+`npa/workflows/workbench/npa-workflows/sim2real.yaml`
 
-## Entry Points
+It is `npa.workflow/v0.0.1`. Always use `npa workbench workflow ... --runtime`;
+there is no direct-Kubernetes Sim2Real submit path. The old materializer and
+`k8s_submit` implementation have been removed; the retained CLI command exits
+with an actionable migration to this canonical spec.
 
-- `npa/workflows/workbench/sim2real/runbook.yaml` — the standalone, materialized
-  raw-SkyPilot runbook. Read its header first: it documents every env var, the
-  trigger-bucket vs artifact-bucket split, and the S3-compatible endpoint map.
-- `<private-operator-pack>/sim2real-rtxpro/submit-k8s-staged-job.sh` — the direct-Kubernetes
-  submit path (bypasses the SkyPilot 0.12.2 getcwd/kubeconfig blocker). This is
-  the route that actually reaches GPUs today. It applies a one-GPU orchestrator
-  Job that clones `NPA_SOURCE_REF` and runs `python -m npa.workflows.sim2real run`,
-  which fans out sibling Jobs (Isaac sim, VLM, eval, trainer, envgen).
-- `npa workbench workflow submit npa/workflows/workbench/sim2real/runbook.yaml`
-  and `sim2real.run` (SDK) wrap the same workflow; they do not gate it.
+## Preflight
 
-## Procedure
+1. Validate tenant/project/region, bucket, registry, Kubernetes context, Kueue
+   admission, Ready RT-core nodes, and the read-only Isaac cache PVC.
+2. Require registry-qualified immutable digests for controller, Transfer,
+   EnvGen, Reason, Isaac, and viewer images. Confirm each image attests the exact
+   source SHA; never use source overlays or best-effort bootstrap.
+3. Validate the task-aligned seed manifest, HF/NGC access, S3 read/write, image
+   pulls, and primary/side/overhead capture before a full run.
+4. Run `validate-spec`, `plan-spec --waves`, scheduler-plan, and submit plan-only
+   on the same canonical file.
 
-1. **Preflight third-party terms before provisioning.** Load
-   `skills/atomic/third-party-eula-preflight/SKILL.md`. For an Isaac backend,
-   require explicit operator acceptance of the named NVIDIA Omniverse Kit and
-   Isaac Sim terms before creating or submitting work; detached runs without it
-   must fail early with the exact resume command.
-2. **Configure once.** `~/.npa/config.yaml` (bucket, endpoint, registry,
-   `k8s_context`) + `~/.npa/credentials.yaml` (S3 HMAC, HF/NGC tokens). Generate
-   operator files with `<private-operator-pack>/sim2real-rtxpro/setup-local-operator.sh`.
-3. **Seed the trigger** on a new bucket: `seed-stock-trigger.sh`, then set
-   `storage.sim2real_stock_trigger_uri`.
-4. **Sync the cluster storage secret** so pods get the endpoint + keys:
-   `<private-operator-pack>/sim2real-rtxpro/sync-cluster-storage-secret.sh`.
-5. **Preflight:** `npa workbench health sim2real --checks all` (accepts `all` or
-   a comma list: `config,coherence,s3,registry,tokens,cluster`). Expect PASS on
-   s3, tokens, cluster; WARN on registry only when `NPA_REGISTRY` is unset.
-6. **Submit:** `INNER_ITERATIONS=… OUTER_ITERATIONS=… submit-k8s-staged-job.sh`
-   (or `run.sh trigger`). It registry-qualifies every image, refreshes the
-   `npa-nebius-registry` pull secret, and preflights the trigger + S3 write.
-7. **Monitor:** `<private-operator-pack>/sim2real-rtxpro/monitor-k8s-job.sh sim2real-<run-id>`
-   or `npa workbench sim2real status <run-id> --watch`.
-8. **View results:** `run.sh sync <run-id>` (Rerun), or read
-   `reports/sim2real-report.json` (`.outer_loop.latest_decision`,
-   `.inner_loop.reward_trend`, `.upload.status`).
+## Submit and resume
 
-## Gotchas
+Before provisioning or submitting an Isaac state, load
+`skills/atomic/third-party-eula-preflight/SKILL.md` and require explicit
+operator acceptance of the named NVIDIA Omniverse Kit and Isaac Sim terms.
+Detached runs without that acceptance fail before work is created and report
+the exact resume command; the workflow never infers or bakes acceptance.
 
-- **Exit codes are load-bearing.** `python -m npa.workflows.sim2real run` exits
-  non-zero when an artifact upload was requested but `upload.status` is
-  `blocked`/`failed`. Shell wrappers must check `$?` (do not print success
-  unconditionally). `rerun_serve` blocked is a warning, not a failure.
-- **Trigger bucket vs artifact bucket can differ** on S3-compatible object
-  stores. `NPA_SIM2REAL_TRIGGER_DATASET_URI` is required at submit.
-- **Stale IAM token → ImagePullBackOff 401.** The submit script refreshes
-  `npa-nebius-registry` before apply; if a sibling Job still fails to pull,
-  re-run the refresh. The refresh is per-registry-server, so it also covers the
-  envgen image even though that image is set from `NPA_REGISTRY` at runtime.
-- **GPU product is pinned** via `nodeSelector` /
-  `NPA_SIM2REAL_K8S_GPU_PRODUCT` (default
-  `NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition`). Wrong product → Pods stay
-  Pending.
-- **Isaac Lab needs RT-core GPUs** (L40S / RTX PRO). Genesis is the fallback
-  backend (`NPA_SIM2REAL_SIM_BACKEND`).
-- Keep `runbook.yaml`'s `envs:` literals and the `run:` block `${VAR:-default}`
-  fallbacks in agreement — a cleared env var must not silently change behavior.
+Submit with `--runtime --resume`. Pass tenant-specific data only through
+`--var`, isolated config, and secret envs. For a no-deadline run pass
+`--max-wait-seconds 0`; the runtime still records wave/job status in
+`<run-root>/npa-workflow/runtime.json`.
 
-## Verify
+The graph owns every stage Job. Isaac rollout/PPO/eval execute their proven
+payload inside their already admitted SkyPilot GPU task and must report
+`npa_workflow_skypilot_task`; a hidden sibling Job is a contract failure.
 
-```bash
-npa/.venv/bin/python -m pytest npa/tests/guardrails/test_skills_index.py -q
-npa workbench health sim2real --checks all
-bash -n <private-operator-pack>/sim2real-rtxpro/submit-k8s-staged-job.sh
-```
+Use a deliberate controller restart after Stage 8 and `--resume` to prove the
+Stage 8→9 barrier. Also restart during Stage 14 in the integration ladder. The
+runtime must adopt/replay complete waves from declared S3 outputs and resubmit
+only incomplete work.
+
+## Audit
+
+Require exactly 14 canonical ComponentRecords. Stages 1–11, 13, and 14 are
+`WORKS`; Stage 12 alone is `SEAM`. For GPU stages verify workflow Job identity,
+immutable digest, source SHA, GPU product, and explicit S3 inputs/outputs.
+Verify train/validation/gold digest disjointness, validation-only checkpoint
+selection, exact checkpoint SHA/size loaded by gold, strict 5 cm stable
+placement, bounded non-degenerate temporal signals, and explicit gold render
+lineage.
+
+Download and independently decode non-empty `reports/sim2real.rrd` and
+`reports/sim2real.mcap`. Confirm 10 FPS (or configured FPS) timestamps,
+primary/side/overhead footage, progress/policy/evaluation evidence, and
+checkpoint accessibility. Pipeline completion does not imply policy efficacy;
+report measured strict success without weakening the threshold.

@@ -54,7 +54,11 @@ def robot_payload_from_spec(
 
     uri = ri.robot_uri.strip()
     if uri.startswith("s3://"):
-        usd_path = robotmod.ROBOT_USD_CONTAINER_PATH if hasattr(robotmod, "ROBOT_USD_CONTAINER_PATH") else "/tmp/npa_robot/robot.usd"
+        usd_path = (
+            robotmod.ROBOT_USD_CONTAINER_PATH
+            if hasattr(robotmod, "ROBOT_USD_CONTAINER_PATH")
+            else "/tmp/npa_robot/robot.usd"
+        )
         robot_usd_uri = uri
     else:
         usd_path = uri  # https CDN or container-local path: loads in place
@@ -131,6 +135,7 @@ def submit_smoke_job(
     endpoint: str,
     namespace: str = "default",
     service_account: str = "agent-sa",
+    isaac_cache_pvc: str = "",
     gpu_product: str = trainer.DEFAULT_GPU_PRODUCT,
     iterations: int = DEFAULT_SMOKE_ITERATIONS,
     num_envs: int = DEFAULT_SMOKE_NUM_ENVS,
@@ -147,7 +152,9 @@ def submit_smoke_job(
     if not image:
         raise ValueError("smoke job requires an Isaac image (ISAAC_IMAGE)")
     if not bucket:
-        raise ValueError("smoke job requires an S3 bucket (NPA_SIM2REAL_BUCKET/S3_BUCKET)")
+        raise ValueError(
+            "smoke job requires an S3 bucket (NPA_SIM2REAL_BUCKET/S3_BUCKET)"
+        )
 
     job_name = f"s2r-onboard-smoke-{run_id}"[:63]
     out_uri = f"s3://{bucket}/sim2real-b/{run_id}/onboard-smoke/{job_name}/"
@@ -168,7 +175,22 @@ def submit_smoke_job(
         robot_usd_uri=plan.robot_usd_uri,
         task_config=plan.derived.to_dict(),
     )
+    from npa.workflows.sim2real.job_scheduling import configure_gpu_job
+
+    manifest = configure_gpu_job(
+        manifest,
+        image=image,
+        product=gpu_product,
+        gpu_resource="nvidia.com/gpu",
+        gpu_count=1,
+        isaac_cache_pvc=isaac_cache_pvc,
+    )
     rc = 0
     if kubectl_apply is not None:
         rc = int(kubectl_apply(manifest))
-    return {"job_name": job_name, "out_uri": out_uri, "apply_rc": rc, "manifest": manifest}
+    return {
+        "job_name": job_name,
+        "out_uri": out_uri,
+        "apply_rc": rc,
+        "manifest": manifest,
+    }

@@ -29,7 +29,7 @@ def test_run_assets_stage_stock_writes_scene_and_robot_specs(tmp_path: Path) -> 
     robot = json.loads(Path(result.consumed_robot_path).read_text())
     assert scene["status"] == "stock_tabletop"
     assert scene["sim_backend"] == "isaac"
-    assert "workspace" in scene["cameras"]
+    assert set(scene["cameras"]) == {"primary", "side", "overhead"}
     assert robot["robot_spec"]["preset"] == "franka"
     assert robot["robot_spec"]["robot_source"] == "stock_franka"
     assert result.component["tier"] == "WORKS"
@@ -50,7 +50,22 @@ def test_run_assets_stage_ur_preset_marks_pending_urdf(tmp_path: Path) -> None:
 def test_scene_spec_doc_from_consumed_unwraps_stage_two_envelope() -> None:
     stock = {
         "schema": "npa.sim2real.consumed_scene_spec.v1",
-        "scene_spec": {"objects": [{"name": "cube", "role": "manipuland", "asset_source": "isaac_stock", "builtin_path": "lift_cube", "pos": [0, 0, 0.04], "euler": [0, 0, 0], "color": [1, 0, 0], "fixed": False, "friction": 0.5, "mass": 0.1}]},
+        "scene_spec": {
+            "objects": [
+                {
+                    "name": "cube",
+                    "role": "manipuland",
+                    "asset_source": "isaac_stock",
+                    "builtin_path": "lift_cube",
+                    "pos": [0, 0, 0.04],
+                    "euler": [0, 0, 0],
+                    "color": [1, 0, 0],
+                    "fixed": False,
+                    "friction": 0.5,
+                    "mass": 0.1,
+                }
+            ]
+        },
     }
     doc = scene_spec_doc_from_consumed(stock)
     assert isinstance(doc.get("objects"), list)
@@ -125,8 +140,14 @@ def test_resolve_robot_spec_from_consumed_byo_usd_path_not_leaked_preset() -> No
             "n_arm_joints": 6,
             "n_gripper_joints": 2,
             "joint_names": [
-                "joint1", "joint2", "joint3", "joint4", "joint5", "joint6",
-                "finger_joint1", "finger_joint2",
+                "joint1",
+                "joint2",
+                "joint3",
+                "joint4",
+                "joint5",
+                "joint6",
+                "finger_joint1",
+                "finger_joint2",
             ],
             "gripper_joint_names": ["finger_joint1", "finger_joint2"],
             "finger_links": ["uflite_finger1", "uflite_finger2"],
@@ -144,7 +165,11 @@ def test_resolve_stage_cameras_from_scene_spec_file(tmp_path: Path) -> None:
     stage_dir = tmp_path / "stage_02_assets"
     stage_dir.mkdir()
     custom = {
-        "workspace": {"placement": "custom", "resolution": [1280, 720], "dtype": "uint8"},
+        "workspace": {
+            "placement": "custom",
+            "resolution": [1280, 720],
+            "dtype": "uint8",
+        },
     }
     (stage_dir / "scene-spec.json").write_text(
         json.dumps({"objects": [], "cameras": custom}),
@@ -157,9 +182,13 @@ def test_resolve_stage_cameras_from_scene_spec_file(tmp_path: Path) -> None:
 
 def test_cameras_from_consumed_uri_reads_envelope(tmp_path: Path) -> None:
     consumed_path = tmp_path / "consumed_scene_spec.json"
-    custom = {"wrist": {"placement": "custom", "resolution": [640, 480], "dtype": "uint8"}}
+    custom = {
+        "wrist": {"placement": "custom", "resolution": [640, 480], "dtype": "uint8"}
+    }
     consumed_path.write_text(
-        json.dumps({"schema": "npa.sim2real.consumed_scene_spec.v1", "cameras": custom}),
+        json.dumps(
+            {"schema": "npa.sim2real.consumed_scene_spec.v1", "cameras": custom}
+        ),
         encoding="utf-8",
     )
     assert cameras_from_consumed_uri(str(consumed_path)) == custom

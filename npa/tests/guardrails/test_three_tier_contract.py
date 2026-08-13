@@ -31,9 +31,12 @@ from npa.guardrails.three_tier import (
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SPECS = Path("npa/workflows/workbench/npa-workflows")
+SIM2REAL_DEMO = Path("npa/tests/fixtures/npa-workflows/sim2real-vlm-rl-demo.yaml")
 
 
-def _p(cli_param: str, sdk_param: str, cli_flag: str, yaml_env: str = "") -> ParameterContract:
+def _p(
+    cli_param: str, sdk_param: str, cli_flag: str, yaml_env: str = ""
+) -> ParameterContract:
     return ParameterContract(
         cli_param=cli_param, sdk_param=sdk_param, cli_flag=cli_flag, yaml_env=yaml_env
     )
@@ -325,8 +328,9 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         ),
     ),
     # --- the watcher: a DRIVER, so its third tier is the spec it submits --------
-    # `sim-to-real-trigger.yaml` is retired. Its stage ran the watch loop, and the loop's
-    # third tier was that YAML's `envs:`. The loop now submits `sim2real-vlm-rl.yaml`, so the
+    # `sim-to-real-trigger.yaml` is retired. This CLI parity check intentionally uses
+    # a test-only DSL fixture; the canonical workflow is composed from run.shell
+    # adapters and is tested through its actual standard-runtime path elsewhere.
     # spec is the third tier — but only for the parameters that describe the RUN. The watch
     # parameters (where to look, how often, what it has already seen) are driver state with no
     # stage analogue, which is exactly what `spec_gap` is for.
@@ -336,7 +340,7 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         cli_callback="run_cmd",
         sdk_module="npa.sdk.workbench.trigger",
         sdk_attr="run_once",
-        spec_path=SPECS / "sim2real-vlm-rl.yaml",
+        spec_path=SIM2REAL_DEMO,
         tool_ref="workbench.cosmos2.transfer_conditioned_execute",
         spec_gap=(
             "s3_endpoint",
@@ -355,11 +359,23 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
             "submit_timeout",
         ),
         params=(
-            _p("s3_endpoint", "s3_endpoint", "--s3-endpoint", "NPA_TRIGGER_S3_ENDPOINT"),
+            _p(
+                "s3_endpoint", "s3_endpoint", "--s3-endpoint", "NPA_TRIGGER_S3_ENDPOINT"
+            ),
             _p("s3_bucket", "s3_bucket", "--s3-bucket", "NPA_TRIGGER_S3_BUCKET"),
             _p("s3_prefix", "s3_prefix", "--s3-prefix", "NPA_TRIGGER_S3_PREFIX"),
-            _p("watermark_uri", "watermark_uri", "--watermark-uri", "NPA_TRIGGER_WATERMARK_URI"),
-            _p("pipeline_yaml", "pipeline_yaml", "--pipeline-yaml", "NPA_TRIGGER_PIPELINE_YAML"),
+            _p(
+                "watermark_uri",
+                "watermark_uri",
+                "--watermark-uri",
+                "NPA_TRIGGER_WATERMARK_URI",
+            ),
+            _p(
+                "pipeline_yaml",
+                "pipeline_yaml",
+                "--pipeline-yaml",
+                "NPA_TRIGGER_PIPELINE_YAML",
+            ),
             _p(
                 "pipeline_bucket",
                 "pipeline_bucket",
@@ -393,7 +409,12 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
             ),
             _p("gpu", "gpu", "--gpu", "NPA_GPU_TYPE"),
             _p("gpu_failover", "gpu_failover", "--gpu-failover", "NPA_GPU_FAILOVER"),
-            _p("submit_timeout", "submit_timeout", "--submit-timeout", "NPA_TRIGGER_SUBMIT_TIMEOUT"),
+            _p(
+                "submit_timeout",
+                "submit_timeout",
+                "--submit-timeout",
+                "NPA_TRIGGER_SUBMIT_TIMEOUT",
+            ),
         ),
     ),
     CapabilityContract(
@@ -402,7 +423,7 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         cli_callback="watch_cmd",
         sdk_module="npa.sdk.workbench.trigger",
         sdk_attr="watch",
-        spec_path=SPECS / "sim2real-vlm-rl.yaml",
+        spec_path=SIM2REAL_DEMO,
         tool_ref="workbench.cosmos2.transfer_conditioned_execute",
         spec_gap=(
             "s3_endpoint",
@@ -413,12 +434,24 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
             "max_launches",
         ),
         params=(
-            _p("s3_endpoint", "s3_endpoint", "--s3-endpoint", "NPA_TRIGGER_S3_ENDPOINT"),
+            _p(
+                "s3_endpoint", "s3_endpoint", "--s3-endpoint", "NPA_TRIGGER_S3_ENDPOINT"
+            ),
             _p("s3_bucket", "s3_bucket", "--s3-bucket", "NPA_TRIGGER_S3_BUCKET"),
             _p("s3_prefix", "s3_prefix", "--s3-prefix", "NPA_TRIGGER_S3_PREFIX"),
-            _p("poll_interval", "poll_interval", "--poll-interval", "NPA_TRIGGER_POLL_INTERVAL"),
+            _p(
+                "poll_interval",
+                "poll_interval",
+                "--poll-interval",
+                "NPA_TRIGGER_POLL_INTERVAL",
+            ),
             _p("max_polls", "max_polls", "--max-polls", "NPA_TRIGGER_MAX_POLLS"),
-            _p("max_launches", "max_launches", "--max-launches", "NPA_TRIGGER_MAX_LAUNCHES"),
+            _p(
+                "max_launches",
+                "max_launches",
+                "--max-launches",
+                "NPA_TRIGGER_MAX_LAUNCHES",
+            ),
         ),
     ),
 )
@@ -476,9 +509,8 @@ def test_spec_gaps_are_categorised() -> None:
 
 
 def test_sim2real_headline_workflow_is_three_tier_coherent() -> None:
-    # The sim2real headline workflow uses a **overrides SDK surface, so it cannot
-    # use the inspect-based CapabilityContract. Its coherence is enforced through
-    # the doctor seam table instead (CLI flag <-> config/SDK field <-> YAML env).
+    # The headline path is a composed run.shell graph, so its coherence check
+    # verifies the standard workflow type, 14 adapters, and runtime image inputs.
     from npa.workflows.sim2real_health import coherence_failures
 
     failures = coherence_failures(REPO_ROOT)
@@ -606,11 +638,15 @@ def test_the_legacy_yaml_tier_still_fails_loudly_if_anything_returns_to_it(
     )
 
     failures = validate_contract(
-        replace(contract, spec_path=None, tool_ref="", spec_gap=(), yaml_path=legacy_yaml),
+        replace(
+            contract, spec_path=None, tool_ref="", spec_gap=(), yaml_path=legacy_yaml
+        ),
         repo_root=Path("/"),
     )
 
-    assert any("YAML env missing: NPA_TRIGGER_S3_BUCKET" in f for f in failures), failures
+    assert any("YAML env missing: NPA_TRIGGER_S3_BUCKET" in f for f in failures), (
+        failures
+    )
 
 
 @pytest.mark.parametrize("contract", CONTRACTS, ids=lambda c: c.name)

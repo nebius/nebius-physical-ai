@@ -115,7 +115,7 @@ def test_guide_sim2real_promote_plans_finalize_once(
             "workbench",
             "workflow",
             "plan-spec",
-            str(SPECS / "sim2real-vlm-rl.yaml"),
+            str(SPECS / "sim2real.yaml"),
             "--run-id",
             "guide-promote-live",
             "--assume-decision",
@@ -125,7 +125,7 @@ def test_guide_sim2real_promote_plans_finalize_once(
     )
     payload = parse_json_payload(result, forbidden_markers)
     states = [step["state"] for step in payload["steps"]]
-    assert states.count("finalize") == 1, states
+    assert states.count("stage-14-visualize") == 1, states
 
 
 def test_guide_run_spec_scheduler_and_persist_state(
@@ -158,7 +158,9 @@ def test_guide_run_spec_scheduler_and_persist_state(
     )
     scheduler_payload = parse_json_payload(scheduler, forbidden_markers)
     assert scheduler_payload["scheduler"]["tasks"], scheduler_payload
-    assert_no_credential_leakage(json.dumps(scheduler_payload), extra_forbidden=forbidden_markers)
+    assert_no_credential_leakage(
+        json.dumps(scheduler_payload), extra_forbidden=forbidden_markers
+    )
 
     spec = load_spec(spec_path)
     store = _live_store(e2e_project, bucket=bucket, prefix=f"npa-workflow-e2e/{run_id}")
@@ -249,15 +251,17 @@ def test_guide_require_inputs_fails_on_missing_artifact(
 
 def test_guide_loop_back_assume_expands_outer_loop(e2e_project: str | None) -> None:
     live_bucket(e2e_project)
-    spec = load_spec(SPECS / "sim2real-vlm-rl.yaml")
+    spec = load_spec(SPECS / "sim2real.yaml")
     plan = build_plan(spec, run_id="guide-loop-back", assume_decision="loop_back")
     states = [step.state for step in plan.steps]
-    inner = spec.config["inner_iterations"]
-    outer = spec.config["outer_iterations"]
-    assert states.count("rollouts") == inner * outer
+    inner = int(spec.config["inner_iterations"])
+    outer = int(spec.config["outer_iterations"])
+    assert states.count("stage-07-rollouts") == inner * outer
 
 
-def test_guide_cosmos_gate_loop_back_expands_refinement(e2e_project: str | None) -> None:
+def test_guide_cosmos_gate_loop_back_expands_refinement(
+    e2e_project: str | None,
+) -> None:
     live_bucket(e2e_project)
     spec = load_spec(SPECS / "tokenfactory-cosmos-gate.yaml")
     plan = build_plan(spec, run_id="guide-cosmos-loop", assume_decision="loop_back")
@@ -278,7 +282,9 @@ def test_live_golden_full_cli_on_real_bucket(
     run_id = f"live-golden-{name.replace('.yaml', '')}"
     path = materialize_live_spec(tmp_path, name, bucket=bucket, run_id=run_id)
 
-    validate = RUNNER.invoke(app, ["workbench", "workflow", "validate-spec", str(path), "--json"])
+    validate = RUNNER.invoke(
+        app, ["workbench", "workflow", "validate-spec", str(path), "--json"]
+    )
     assert parse_json_payload(validate, forbidden_markers)["status"] == "valid"
 
     plan_args = [

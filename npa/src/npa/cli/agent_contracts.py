@@ -127,7 +127,24 @@ def _embedded_source(path: Path) -> str:
 
 
 def _embedded_agent_workflow_source() -> str:
-    return _embedded_source(Path(__file__).with_name("agent_workflow.py"))
+    source = _embedded_source(Path(__file__).with_name("agent_workflow.py"))
+    canonical = (
+        Path(__file__).resolve().parents[3]
+        / "workflows"
+        / "workbench"
+        / "npa-workflows"
+        / "sim2real.yaml"
+    ).read_text(encoding="utf-8")
+    marker = '_EMBEDDED_CANONICAL_SIM2REAL_YAML = ""'
+    if marker not in source:
+        raise RuntimeError(
+            "agent workflow source lost its canonical Sim2Real embed marker"
+        )
+    return source.replace(
+        marker,
+        f"_EMBEDDED_CANONICAL_SIM2REAL_YAML = {canonical!r}",
+        1,
+    )
 
 
 def _embedded_agent_routing_source() -> str:

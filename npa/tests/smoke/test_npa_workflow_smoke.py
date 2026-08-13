@@ -21,7 +21,7 @@ def _spec(name: str) -> Path:
     [
         "vlm-eval-single.yaml",
         "tokenfactory-rollout-judge.yaml",
-        "sim2real-vlm-rl.yaml",
+        "sim2real.yaml",
         "bdd100k-pipeline.yaml",
         "tokenfactory-cosmos-gate.yaml",
         "av-night-scene-hardening.yaml",

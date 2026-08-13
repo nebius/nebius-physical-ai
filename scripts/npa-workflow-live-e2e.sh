@@ -13,7 +13,7 @@ PY="${REPO}/npa/.venv/bin/python"
 NPA="${REPO}/npa/.venv/bin/npa"
 export NPA_INTEGRATION_E2E=1
 SPECS_DIR="${REPO}/npa/workflows/workbench/npa-workflows"
-DYNAMIC="sim2real-vlm-rl.yaml tokenfactory-cosmos-gate.yaml"
+DYNAMIC="sim2real.yaml tokenfactory-cosmos-gate.yaml"
 RUN_ID="npa-workflow-live-$(date -u +%Y%m%dT%H%M%SZ)"
 LOG="/tmp/${RUN_ID}.log"
 exec > >(tee -a "$LOG") 2>&1
@@ -66,8 +66,8 @@ import json, sys
 report = json.load(sys.stdin)
 steps = [s['state'] for s in report['plan']['steps']]
 assert steps, report
-if report['workflow'] == 'sim2real-vlm-rl':
-    assert steps.count('finalize') == 1, steps
+if report['workflow'] == 'sim2real':
+    assert steps.count('stage-14-visualize') == 1, steps
 "; then
       FAILED=1
     fi

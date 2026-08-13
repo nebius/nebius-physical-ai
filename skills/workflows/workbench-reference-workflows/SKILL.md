@@ -70,8 +70,9 @@ These raw templates were retired once their `npa.workflow` spec had a live run
   `register` stage reads back what `ingest` wrote to the in-cluster LanceDB service
   (`npa workbench lancedb deploy --runtime kubernetes --namespace workbench`).
 - `sim-to-real-pipeline.yaml` / `sim-to-real-trigger.yaml` — retired. The pipeline ran the
-  deprecated `npa.workflows.sim_to_real real-loop`; the maintained path is the staged engine's
-  spec, `npa-workflows/sim2real-vlm-rl.yaml`, which is also what the watcher now submits.
+  deprecated `npa.workflows.sim_to_real real-loop`; the maintained path and the
+  watcher's submit target are the single staged-engine YAML,
+  `npa/workflows/workbench/npa-workflows/sim2real.yaml`.
 - `cosmos2-transfer.yaml` — retired to `npa-workflows/cosmos2-transfer.yaml`, which runs the
   REAL Cosmos-Transfer2.5 model (`--execute`) instead of printing a `contract_ready` payload.
 - `isaac-franka-capture-reason.yaml` — retired to

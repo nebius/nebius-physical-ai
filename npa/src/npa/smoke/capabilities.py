@@ -119,6 +119,11 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "machine-readable runtime health/version contract",
         "CUDA runtime fetch refuses before operator terms acceptance",
     ],
+    "sim2real-control": [
+        "canonical compositional stage-adapter module imports",
+        "stage CLI exposes the complete 1-through-14 contract",
+        "exact baked source and immutable-image checks run before stage work",
+    ],
     "envgen": [
         "raw env generation (JSONL contract)",
         "Genesis CUDA env step (mocked in unit gate)",

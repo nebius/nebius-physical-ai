@@ -1,10 +1,9 @@
-"""Declarative DAG scheduler for the Sim2Real staged workflow.
+"""Legacy DAG scheduler for pre-standard-runtime Sim2Real artifact replay.
 
-This is the "true YAML" execution path. The workflow's *shape* — stage
-dependencies, the outer loop with its conditional ``promote_checkpoint``
-early-exit, and the fixed-count inner loop — lives as declarative data in
-``sim2real.dag.yaml`` instead of as hard-coded Python control flow in
-``runner.run_staged()``.
+This module and ``sim2real.dag.yaml`` are compatibility-only and target removal
+in 0.5.0, no earlier than 2027-02-01. The canonical workflow is the ordinary
+``npa.workflow/v0.0.1`` spec under ``npa-workflows/sim2real.yaml``; it never
+imports this scheduler or ``runner.run_staged``.
 
 Stage *implementations are unchanged*: each executable node maps to an existing
 ``Sim2RealWorkflow`` entrypoint (``run_preamble`` → preamble stages 1-6,
@@ -13,8 +12,8 @@ Stage *implementations are unchanged*: each executable node maps to an existing
 methods in the same order as ``run_staged()``, the two paths produce identical
 stage records — see ``tests/workflows/test_sim2real_scheduler.py``.
 
-The scheduler is opt-in behind ``sim2real run --dag <spec>``; the default path
-remains ``run_staged()``.
+Archived callers may still opt in through ``sim2real run --dag <spec>`` during
+the finite compatibility window.
 
 Design rules honoured here:
 
@@ -40,7 +39,7 @@ DAG_SPEC_SCHEMA = "npa.workflow/v1"
 
 # Default spec shipped with the repo, resolved relative to the workbench tree.
 # __file__ = <repo>/npa/src/npa/workflows/sim2real/scheduler.py; parents[4] = <repo>/npa,
-# which is where the workbench workflow YAMLs (runbook.yaml, sim2real.dag.yaml) live.
+# which is where the workbench workflow YAMLs and canonical sim2real.yaml live.
 DEFAULT_DAG_SPEC = (
     Path(__file__).resolve().parents[4]
     / "workflows"
@@ -262,7 +261,7 @@ def _exec_outer_iteration(ctx: SchedulerContext, node: NodeSpec) -> None:
     start = ctx.state.next_outer_iteration
     for outer_iteration in range(start, max_iterations + 1):
         ctx.state = workflow.run_outer_iteration(outer_iteration=outer_iteration)
-        if until(ctx.state):
+        if getattr(workflow.config, "early_exit", True) and until(ctx.state):
             break
 
 

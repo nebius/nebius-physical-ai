@@ -11,7 +11,7 @@ from typing import Optional
 import typer
 
 from npa.clients.credentials import load_credentials
-from npa.workflows.sim2real_loop import (
+from npa.workflows.sim2real.constants import (
     DEFAULT_ACTION_ENV_LIMIT,
     DEFAULT_ENVGEN_SHARD_COUNT,
     DEFAULT_ENV_COUNT,
@@ -25,11 +25,13 @@ from npa.workflows.sim2real_loop import (
     DEFAULT_STEPS_PER_ROLLOUT,
     DEFAULT_THRESHOLD,
     DEFAULT_TRAIN_FRACTION,
-    build_config_from_env,
+)
+from npa.workflows.sim2real.config import build_config_from_env
+from npa.workflows.sim2real.engine import (
     convert_vlm_eval_to_rl_signal,
-    run_full_loop,
     run_inner_loop,
 )
+from npa.workflows.sim2real.runner import run_full_loop
 from npa.workflows.sim2real_rerun_regen import (
     Sim2RealRerunRegenError,
     default_regen_local_dir,
@@ -138,7 +140,9 @@ def run_command(
     vlm_image: str = typer.Option("", "--vlm-image", help="BYO VLM image."),
     eval_image: str = typer.Option("", "--eval-image", help="BYO held-out eval image."),
     isaac_image: str = typer.Option(
-        "", "--isaac-image", help="Isaac Lab held-out rollout image (Isaac Sim headless)."
+        "",
+        "--isaac-image",
+        help="Isaac Lab held-out rollout image (Isaac Sim headless).",
     ),
     sim_backend: str = typer.Option(
         "isaac",
@@ -179,7 +183,9 @@ def run_command(
         DEFAULT_HELDOUT_ENVS, "--heldout-env-count", help="Held-out env count."
     ),
     env_count: int = typer.Option(
-        DEFAULT_ENV_COUNT, "--env-count", help="Number of generated simulation environments."
+        DEFAULT_ENV_COUNT,
+        "--env-count",
+        help="Number of generated simulation environments.",
     ),
     train_fraction: float = typer.Option(
         DEFAULT_TRAIN_FRACTION,
@@ -237,6 +243,11 @@ def run_command(
         "--k8s-env-secret-names",
         help="Comma-separated env secrets for sibling Jobs.",
     ),
+    k8s_isaac_cache_pvc: str = typer.Option(
+        "npa-sim2real-isaac-cache",
+        "--k8s-isaac-cache-pvc",
+        help="Pre-warmed Isaac dependency PVC mounted offline/read-only by GPU Jobs.",
+    ),
     k8s_gpu_resource: str = typer.Option(
         "nvidia.com/gpu", "--k8s-gpu-resource", help="Kubernetes GPU resource key."
     ),
@@ -246,7 +257,9 @@ def run_command(
         help="GPU product node selector for sibling Jobs.",
     ),
     k8s_job_timeout_s: int = typer.Option(
-        7200, "--k8s-job-timeout-s", help="Sibling Job timeout in seconds."
+        0,
+        "--k8s-job-timeout-s",
+        help="Optional sibling Job timeout in seconds (0 means no deadline).",
     ),
     source_repo: str = typer.Option(
         "", "--source-repo", help="Optional source repository cloned by sibling Jobs."
@@ -312,6 +325,7 @@ def run_command(
         k8s_service_account=k8s_service_account,
         k8s_image_pull_secrets=k8s_image_pull_secrets,
         k8s_env_secret_names=k8s_env_secret_names,
+        k8s_isaac_cache_pvc=k8s_isaac_cache_pvc,
         k8s_gpu_resource=k8s_gpu_resource,
         k8s_gpu_product=k8s_gpu_product,
         k8s_job_timeout_s=k8s_job_timeout_s,
@@ -327,76 +341,30 @@ def run_command(
         typer.echo(text)
 
 
-@app.command("materialize")
-def materialize_command(
-    runbook: Optional[Path] = typer.Argument(
-        None,
-        help="SkyPilot runbook to render (default: the committed sim2real runbook).",
-    ),
-    run_id: str = typer.Option("", "--run-id", help="Run id; also sets NPA_SIM2REAL_RUN_ID."),
-    image: str = typer.Option(
-        "", "--image", help="Registry-qualified trainer image (required while the runbook ships a placeholder)."
-    ),
-    env: list[str] = typer.Option(
-        [], "--env", help="KEY=VALUE override for a runbook env (repeatable)."
-    ),
-    namespace: str = typer.Option("", "--namespace", help="Kubernetes namespace override."),
-    skip_setup: bool = typer.Option(
-        False, "--skip-setup", help="Omit the runbook setup block (image already carries npa)."
-    ),
-    output: Optional[Path] = typer.Option(
-        None, "--output", "-o", help="Write the Job manifest YAML here instead of stdout."
-    ),
-) -> None:
-    """Render the sim2real runbook to a Kubernetes Job (no SkyPilot, no operator pack).
+@app.command(
+    "materialize",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def materialize_command(_ctx: typer.Context) -> None:
+    """Explain the migration from the retired direct-controller materializer."""
 
-    This is the in-repo GPU-reaching path while raw `sky jobs launch` is blocked
-    by the SkyPilot 0.12.2 pre-setup getcwd() bug: materialize, then
-    `kubectl apply -f <manifest>` and follow with `npa workbench sim2real status`.
-    """
-
-    from npa.workflows.sim2real.materialize import (
-        Sim2RealMaterializeError,
-        materialize_k8s_job,
+    typer.echo(
+        "error: `npa workbench sim2real materialize` was retired with the bespoke "
+        "direct-Kubernetes controller. Submit the canonical compositional workflow "
+        "instead:\n"
+        "  npa workbench workflow submit "
+        "npa/workflows/workbench/npa-workflows/sim2real.yaml --runtime skypilot",
+        err=True,
     )
-
-    overrides: dict[str, str] = {}
-    for item in env:
-        key, separator, value = item.partition("=")
-        if not separator or not key:
-            raise typer.BadParameter(f"--env expects KEY=VALUE, got {item!r}")
-        overrides[key] = value
-
-    try:
-        job = materialize_k8s_job(
-            runbook,
-            run_id=run_id,
-            image=image,
-            env_overrides=overrides,
-            namespace=namespace,
-            include_setup=not skip_setup,
-        )
-    except (Sim2RealMaterializeError, FileNotFoundError) as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(code=1)
-
-    if output is not None:
-        output.write_text(job.to_yaml(), encoding="utf-8")
-        typer.echo(f"wrote {output}")
-        typer.echo(
-            f"apply with: kubectl apply -f {output} "
-            f"(job {job.job_name} in namespace {job.namespace}, image {job.image})"
-        )
-    else:
-        typer.echo(job.to_yaml())
-    for warning in job.warnings:
-        typer.echo(f"note: {warning}", err=True)
+    raise typer.Exit(code=2)
 
 
 @app.command("status")
 def status_command(
     run_id: str = typer.Option(..., "--run-id", help="Sim2Real staged run id."),
-    s3_bucket: str = typer.Option("", "--s3-bucket", help="S3 bucket for run artifacts."),
+    s3_bucket: str = typer.Option(
+        "", "--s3-bucket", help="S3 bucket for run artifacts."
+    ),
     s3_prefix: str = typer.Option(
         DEFAULT_S3_PREFIX, "--s3-prefix", help="S3 parent prefix (default: sim2real-b)."
     ),
@@ -404,12 +372,18 @@ def status_command(
         DEFAULT_S3_ENDPOINT, "--s3-endpoint", help="S3-compatible endpoint."
     ),
     k8s_context: str = typer.Option("", "--k8s-context", help="Kubernetes context."),
-    k8s_namespace: str = typer.Option("default", "--k8s-namespace", help="Job namespace."),
+    k8s_namespace: str = typer.Option(
+        "default", "--k8s-namespace", help="Job namespace."
+    ),
     watch: bool = typer.Option(
-        False, "--watch/--no-watch", help="Refresh until the run reaches a terminal state."
+        False,
+        "--watch/--no-watch",
+        help="Refresh until the run reaches a terminal state.",
     ),
     interval: float = typer.Option(10.0, "--interval", help="Watch refresh interval."),
-    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON."
+    ),
 ) -> None:
     """Check kubectl-submitted Sim2Real runs via S3 workflow_state.json and K8s jobs."""
 
@@ -483,7 +457,9 @@ def _onboard_env(name: str, default: str = "") -> str:
 @app.command("onboard-robot")
 def onboard_robot_command(
     spec: Path = typer.Option(
-        ..., "--spec", help="Onboarding robot+task spec YAML (see robot-onboarding.template.yaml)."
+        ...,
+        "--spec",
+        help="Onboarding robot+task spec YAML (see robot-onboarding.template.yaml).",
     ),
     smoke: bool = typer.Option(
         False,
@@ -492,7 +468,9 @@ def onboard_robot_command(
         "retargets, and trains (requires cluster creds + ISAAC_IMAGE in env).",
     ),
     run_id: str = typer.Option(
-        "", "--run-id", help="Run id for the smoke job (default: derived from robot name)."
+        "",
+        "--run-id",
+        help="Run id for the smoke job (default: derived from robot name).",
     ),
     smoke_iterations: int = typer.Option(
         onboarding_svc.DEFAULT_SMOKE_ITERATIONS,
@@ -504,8 +482,17 @@ def onboard_robot_command(
         "--smoke-num-envs",
         help="Smoke-job parallel envs.",
     ),
-    k8s_namespace: str = typer.Option("default", "--k8s-namespace", help="Smoke job namespace."),
-    json_output: bool = typer.Option(False, "--json", help="Emit the derived plan as JSON."),
+    k8s_namespace: str = typer.Option(
+        "default", "--k8s-namespace", help="Smoke job namespace."
+    ),
+    k8s_isaac_cache_pvc: str = typer.Option(
+        os.environ.get("NPA_SIM2REAL_ISAAC_CACHE_PVC", "npa-sim2real-isaac-cache"),
+        "--k8s-isaac-cache-pvc",
+        help="Pre-warmed Isaac dependency PVC mounted offline/read-only.",
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit the derived plan as JSON."
+    ),
 ) -> None:
     """Validate an onboarding spec, print the auto-derived robot-aware task config,
     and (with --smoke) submit a short Isaac trainer job to confirm the robot trains.
@@ -583,8 +570,6 @@ def onboard_robot_command(
         return
 
     # --- smoke submit (real cluster) ---
-    from npa.workflows.sim2real import byo_isaac_trainer as trainer
-
     image = _onboard_env("ISAAC_IMAGE") or _onboard_env("NPA_SIM2REAL_ISAAC_IMAGE")
     bucket = _onboard_env("NPA_SIM2REAL_BUCKET") or _onboard_env("S3_BUCKET")
     endpoint = _onboard_env("AWS_ENDPOINT_URL")
@@ -596,18 +581,25 @@ def onboard_robot_command(
 
     rid = run_id.strip() or f"onboard-{_slug(parsed.robot.name)}"
 
-    def _kubectl_apply(manifest: dict) -> int:
-        trainer._kubectl(
-            ["delete", "job", f"s2r-onboard-smoke-{rid}"[:63], "-n", k8s_namespace,
-             "--ignore-not-found"],
-            timeout=60,
-        )
-        res = trainer._kubectl(
-            ["apply", "-f", "-"], stdin=json.dumps(manifest), timeout=120
-        )
-        if res.returncode != 0:
-            typer.secho(f"kubectl apply failed: {res.stderr}", fg=typer.colors.RED, err=True)
-        return res.returncode
+    def _kubernetes_apply(manifest: dict) -> int:
+        from npa.workflows.sim2real.k8s_client import KubernetesJobClient
+
+        try:
+            client = KubernetesJobClient.from_environment(namespace=k8s_namespace)
+            client.create_or_adopt(
+                manifest,
+                run_id=rid,
+                source_sha=_onboard_env("NPA_SIM2REAL_SOURCE_SHA", "onboarding-smoke"),
+                runtime_image=image.removeprefix("docker:"),
+            )
+        except Exception as exc:
+            typer.secho(
+                f"Kubernetes Job reconcile failed: {exc}",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            return 1
+        return 0
 
     result = onboarding_svc.submit_smoke_job(
         plan,
@@ -617,9 +609,10 @@ def onboard_robot_command(
         endpoint=endpoint,
         namespace=k8s_namespace,
         service_account=service_account,
+        isaac_cache_pvc=k8s_isaac_cache_pvc,
         iterations=smoke_iterations,
         num_envs=smoke_num_envs,
-        kubectl_apply=_kubectl_apply,
+        kubectl_apply=_kubernetes_apply,
     )
     if result["apply_rc"] != 0:
         typer.secho(
@@ -638,7 +631,9 @@ def onboard_robot_command(
 
 
 def _slug(text: str) -> str:
-    cleaned = "".join(c if (c.isalnum() or c in "-_") else "-" for c in text.strip().lower())
+    cleaned = "".join(
+        c if (c.isalnum() or c in "-_") else "-" for c in text.strip().lower()
+    )
     return cleaned.strip("-") or "robot"
 
 
@@ -699,18 +694,32 @@ def _rerun_serve_credentials() -> tuple[str, str]:
 @rerun_app.command("serve")
 def rerun_serve_command(
     run_id: str = typer.Option(..., "--run-id", help="Completed Sim2Real run id."),
-    project: str = typer.Option("", "--project", "-p", help="Project alias for storage resolution."),
-    cluster_name: str = typer.Option(
-        "", "--cluster-name", help="NPA cluster profile for cached kubeconfig (default: from ~/.npa/config.yaml)."
+    project: str = typer.Option(
+        "", "--project", "-p", help="Project alias for storage resolution."
     ),
-    kubeconfig: str = typer.Option("", "--kubeconfig", help="Kubeconfig path override."),
-    namespace: str = typer.Option(DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace."),
+    cluster_name: str = typer.Option(
+        "",
+        "--cluster-name",
+        help="NPA cluster profile for cached kubeconfig (default: from ~/.npa/config.yaml).",
+    ),
+    kubeconfig: str = typer.Option(
+        "", "--kubeconfig", help="Kubeconfig path override."
+    ),
+    namespace: str = typer.Option(
+        DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace."
+    ),
     port: int = typer.Option(DEFAULT_PORT, "--port", help="Rerun web viewer port."),
     s3_bucket: str = typer.Option("", "--s3-bucket", help="S3 bucket override."),
-    s3_prefix: str = typer.Option(DEFAULT_S3_PREFIX, "--s3-prefix", help="S3 prefix parent for runs."),
-    s3_endpoint: str = typer.Option("", "--s3-endpoint", help="S3-compatible endpoint override."),
+    s3_prefix: str = typer.Option(
+        DEFAULT_S3_PREFIX, "--s3-prefix", help="S3 prefix parent for runs."
+    ),
+    s3_endpoint: str = typer.Option(
+        "", "--s3-endpoint", help="S3-compatible endpoint override."
+    ),
     rrd_uri: str = typer.Option(
-        "", "--rrd-uri", help="Explicit s3:// URI for reports/sim2real.rrd (no local download)."
+        "",
+        "--rrd-uri",
+        help="Explicit s3:// URI for reports/sim2real.rrd (no local download).",
     ),
     report_uri: str = typer.Option(
         "",
@@ -746,7 +755,9 @@ def rerun_serve_command(
         "--wait",
         help="When used with --destroy, wait for Kubernetes to confirm resource deletion.",
     ),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Print the Kubernetes manifest only."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print the Kubernetes manifest only."
+    ),
     local_record: bool = typer.Option(
         False,
         "--local-record",
@@ -758,13 +769,18 @@ def rerun_serve_command(
         help="Override local .rrd destination when using --local-record.",
     ),
     auth_user: str = typer.Option(
-        "", "--auth-user", help="Enable HTTP basic-auth on the hosted viewer with this username."
+        "",
+        "--auth-user",
+        help="Enable HTTP basic-auth on the hosted viewer with this username.",
     ),
     auth_password: str = typer.Option(
-        "", "--auth-password",
+        "",
+        "--auth-password",
         help="Password for --auth-user (generated if --auth-user is set without one).",
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Deploy a hosted Rerun viewer; pod init container pulls reports/sim2real.rrd from S3."""
     try:
@@ -773,6 +789,7 @@ def rerun_serve_command(
         # Basic-auth: gate the cloud LoadBalancer URL behind credentials.
         if auth_user.strip() and not auth_password:
             import secrets
+
             auth_password = secrets.token_urlsafe(12)
         config = build_rerun_serve_config(
             auth_user=auth_user,
@@ -796,9 +813,17 @@ def rerun_serve_command(
         if dry_run:
             manifest = build_rerun_serve_manifest(config)
             if output == OutputFormat.json:
-                typer.echo(json.dumps(redact_rerun_serve_manifest(manifest), indent=2, sort_keys=True))
+                typer.echo(
+                    json.dumps(
+                        redact_rerun_serve_manifest(manifest), indent=2, sort_keys=True
+                    )
+                )
             else:
-                typer.echo(json.dumps(redact_rerun_serve_manifest(manifest), indent=2, sort_keys=True))
+                typer.echo(
+                    json.dumps(
+                        redact_rerun_serve_manifest(manifest), indent=2, sort_keys=True
+                    )
+                )
             return
         resolved_kubeconfig = require_kubeconfig(
             cluster_name=cluster_context,
@@ -859,10 +884,16 @@ def rerun_serve_command(
 @rerun_app.command("regen")
 def rerun_regen_command(
     run_id: str = typer.Option(..., "--run-id", help="Completed Sim2Real run id."),
-    project: str = typer.Option("", "--project", "-p", help="Project alias for storage resolution."),
+    project: str = typer.Option(
+        "", "--project", "-p", help="Project alias for storage resolution."
+    ),
     s3_bucket: str = typer.Option("", "--s3-bucket", help="S3 bucket override."),
-    s3_prefix: str = typer.Option(DEFAULT_S3_PREFIX, "--s3-prefix", help="S3 prefix parent for runs."),
-    s3_endpoint: str = typer.Option("", "--s3-endpoint", help="S3-compatible endpoint override."),
+    s3_prefix: str = typer.Option(
+        DEFAULT_S3_PREFIX, "--s3-prefix", help="S3 prefix parent for runs."
+    ),
+    s3_endpoint: str = typer.Option(
+        "", "--s3-endpoint", help="S3-compatible endpoint override."
+    ),
     local_dir: Optional[Path] = typer.Option(
         None,
         "--local-dir",
@@ -883,7 +914,9 @@ def rerun_regen_command(
         "--no-sync",
         help="Skip S3 download; use artifacts already under --local-dir.",
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Regenerate reports/sim2real.rrd + sim2real.mcap from S3 artifacts (held-out PNG sync included)."""
     try:
@@ -924,22 +957,32 @@ def rerun_regen_command(
 @rerun_app.command("heldout-only")
 def rerun_heldout_only_command(
     run_id: str = typer.Option(..., "--run-id", help="Existing Sim2Real run id."),
-    project: str = typer.Option("", "--project", "-p", help="Project alias for storage resolution."),
+    project: str = typer.Option(
+        "", "--project", "-p", help="Project alias for storage resolution."
+    ),
     s3_bucket: str = typer.Option("", "--s3-bucket", help="S3 bucket override."),
-    s3_prefix: str = typer.Option(DEFAULT_S3_PREFIX, "--s3-prefix", help="S3 prefix parent for runs."),
-    s3_endpoint: str = typer.Option("", "--s3-endpoint", help="S3-compatible endpoint override."),
+    s3_prefix: str = typer.Option(
+        DEFAULT_S3_PREFIX, "--s3-prefix", help="S3 prefix parent for runs."
+    ),
+    s3_endpoint: str = typer.Option(
+        "", "--s3-endpoint", help="S3-compatible endpoint override."
+    ),
     local_dir: Optional[Path] = typer.Option(
         None,
         "--local-dir",
         help="Local working directory (default: /tmp/sim2real-regen/<run-id>).",
     ),
-    outer_iteration: int = typer.Option(1, "--outer-iteration", help="Outer loop index for stage 10."),
+    outer_iteration: int = typer.Option(
+        1, "--outer-iteration", help="Outer loop index for stage 10."
+    ),
     no_publish: bool = typer.Option(
         False,
         "--no-publish",
         help="Skip uploading held-out report/renders to the run prefix on S3.",
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Re-run Isaac held-out eval (stage 10) on cluster for an existing run (~5–15 min)."""
     try:
@@ -963,7 +1006,9 @@ def rerun_heldout_only_command(
     payload = {
         "run_id": run_id,
         "success_rate": report.get("success_rate"),
-        "render_manifest_episodes": len((report.get("render_manifest") or {}).get("episodes") or []),
+        "render_manifest_episodes": len(
+            (report.get("render_manifest") or {}).get("episodes") or []
+        ),
         "sim_backend": report.get("sim_backend"),
         "rollout_backend": report.get("rollout_backend"),
     }

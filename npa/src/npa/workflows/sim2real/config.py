@@ -9,6 +9,7 @@ from typing import Any
 from npa.deploy.images import registry_from_env
 from npa.workflows.sim2real.constants import (
     DEFAULT_ACTION_ENV_LIMIT,
+    DEFAULT_ENV_COUNT,
     DEFAULT_ENVGEN_SHARD_COUNT,
     DEFAULT_K8S_MAX_PARALLEL_GPUS,
     DEFAULT_INNER_ITERATIONS,
@@ -23,10 +24,12 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_ROLLOUT_COUNT,
     DEFAULT_S3_ENDPOINT,
     DEFAULT_SIM_BACKEND,
+    DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE,
     DEFAULT_STEPS_PER_ROLLOUT,
     DEFAULT_THRESHOLD,
     DEFAULT_TRAIN_FRACTION,
     DEFAULT_HELDOUT_ENVS,
+    DEFAULT_VALIDATION_ENVS,
 )
 from npa.workflows.sim2real.models import (
     Sim2RealLoopConfig,
@@ -46,21 +49,20 @@ from npa.workflows.sim2real.utils import (
     _split_csv,
 )
 
+
 def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
     """Build a Sim2Real loop config from explicit values and env fallbacks."""
 
     run_id = str(
         overrides.get("run_id") or os.environ.get("NPA_SIM2REAL_RUN_ID") or new_run_id()
     )
-    if "s3_bucket" in overrides:
-        bucket = str(overrides.get("s3_bucket") or "")
-    else:
-        bucket = str(
-            os.environ.get("NPA_SIM2REAL_BUCKET")
-            or os.environ.get("NPA_S3_BUCKET")
-            or os.environ.get("S3_BUCKET")
-            or ""
-        )
+    bucket = str(
+        overrides.get("s3_bucket")
+        or os.environ.get("NPA_SIM2REAL_BUCKET")
+        or os.environ.get("NPA_S3_BUCKET")
+        or os.environ.get("S3_BUCKET")
+        or ""
+    )
     registry = registry_from_env()
     if "s3_prefix" in overrides and overrides.get("s3_prefix") is not None:
         s3_prefix = str(overrides["s3_prefix"])
@@ -102,9 +104,29 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
         train_envs_uri=str(
             overrides.get("train_envs_uri") or os.environ.get("TRAIN_ENVS_URI") or ""
         ),
+        validation_envs_uri=str(
+            overrides.get("validation_envs_uri")
+            or os.environ.get("VALIDATION_ENVS_URI")
+            or ""
+        ),
         heldout_envs_uri=str(
             overrides.get("heldout_envs_uri")
             or os.environ.get("HELDOUT_ENVS_URI")
+            or ""
+        ),
+        gold_heldout_envs_uri=str(
+            overrides.get("gold_heldout_envs_uri")
+            or os.environ.get("GOLD_HELDOUT_ENVS_URI")
+            or ""
+        ),
+        task_contract_uri=str(
+            overrides.get("task_contract_uri")
+            or os.environ.get("NPA_SIM2REAL_TASK_CONTRACT_URI")
+            or ""
+        ),
+        task_contract_digest=str(
+            overrides.get("task_contract_digest")
+            or os.environ.get("NPA_SIM2REAL_TASK_CONTRACT_DIGEST")
             or ""
         ),
         assets_uri=str(
@@ -130,13 +152,17 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             or os.environ.get("ROBOT_SOURCE")
             or os.environ.get("NPA_SIM2REAL_ROBOT_SOURCE")
             or ""
-        ).strip().lower(),
+        )
+        .strip()
+        .lower(),
         robot_preset=str(
             overrides.get("robot_preset")
             or os.environ.get("ROBOT_PRESET")
             or os.environ.get("NPA_SIM2REAL_ROBOT_PRESET")
             or ""
-        ).strip().lower(),
+        )
+        .strip()
+        .lower(),
         augment_image=str(
             overrides.get("augment_image")
             or os.environ.get("AUGMENT_IMAGE")
@@ -148,7 +174,9 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             or default_envgen_image(registry=registry or None)
         ),
         env_count=int(
-            overrides.get("env_count", os.environ.get("NPA_ENV_COUNT", "0"))
+            overrides.get(
+                "env_count", os.environ.get("NPA_ENV_COUNT", DEFAULT_ENV_COUNT)
+            )
         ),
         train_fraction=float(
             overrides.get(
@@ -209,7 +237,9 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             overrides.get("sim_backend")
             or os.environ.get("NPA_SIM2REAL_SIM_BACKEND")
             or DEFAULT_SIM_BACKEND
-        ).strip().lower(),
+        )
+        .strip()
+        .lower(),
         isaac_task=str(
             overrides.get("isaac_task")
             or os.environ.get("NPA_SIM2REAL_ISAAC_TASK")
@@ -242,6 +272,11 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             overrides.get(
                 "threshold", os.environ.get("SUCCESS_THRESHOLD", DEFAULT_THRESHOLD)
             )
+        ),
+        early_exit=_bool_value(
+            overrides["early_exit"]
+            if "early_exit" in overrides
+            else os.environ.get("NPA_SIM2REAL_EARLY_EXIT", "0")
         ),
         inner_iterations=int(
             overrides.get(
@@ -280,6 +315,15 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
                 os.environ.get("HELDOUT_ENV_COUNT", DEFAULT_HELDOUT_ENVS),
             )
         ),
+        validation_env_count=int(
+            overrides.get(
+                "validation_env_count",
+                os.environ.get(
+                    "NPA_SIM2REAL_VALIDATION_ENV_COUNT",
+                    os.environ.get("VALIDATION_ENV_COUNT", DEFAULT_VALIDATION_ENVS),
+                ),
+            )
+        ),
         seed=int(overrides.get("seed", os.environ.get("SEED", "42"))),
         upload_artifacts=_bool_value(
             overrides.get("upload_artifacts", os.environ.get("UPLOAD_ARTIFACTS", "0"))
@@ -293,7 +337,12 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             )
         ),
         learning_rate=float(
-            overrides.get("learning_rate", os.environ.get("LEARNING_RATE", "0.05"))
+            overrides.get(
+                "learning_rate",
+                os.environ.get(
+                    "LEARNING_RATE", str(DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE)
+                ),
+            )
         ),
         byo_signal_converter=str(
             overrides.get("byo_signal_converter")
@@ -347,6 +396,11 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             or os.environ.get("NPA_SIM2REAL_K8S_ENV_SECRET_NAMES")
             or "hf-ngc-tokens,npa-storage-credentials"
         ),
+        k8s_isaac_cache_pvc=str(
+            overrides.get("k8s_isaac_cache_pvc")
+            or os.environ.get("NPA_SIM2REAL_ISAAC_CACHE_PVC")
+            or "npa-sim2real-isaac-cache"
+        ),
         k8s_gpu_resource=str(
             overrides.get("k8s_gpu_resource")
             or os.environ.get("NPA_SIM2REAL_K8S_GPU_RESOURCE")
@@ -356,6 +410,13 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             overrides.get("k8s_gpu_product")
             or os.environ.get("NPA_SIM2REAL_K8S_GPU_PRODUCT")
             or "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
+        ),
+        k8s_gpu_candidates=tuple(
+            _split_csv(
+                overrides.get("k8s_gpu_candidates")
+                or os.environ.get("NPA_SIM2REAL_K8S_GPU_CANDIDATES")
+                or ""
+            )
         ),
         k8s_kubeconfig=str(
             overrides.get("k8s_kubeconfig")
@@ -371,7 +432,7 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
         k8s_job_timeout_s=int(
             overrides.get(
                 "k8s_job_timeout_s",
-                os.environ.get("NPA_SIM2REAL_K8S_JOB_TIMEOUT_S", "7200"),
+                os.environ.get("NPA_SIM2REAL_K8S_JOB_TIMEOUT_S", "0"),
             )
         ),
         k8s_max_parallel_gpus=int(
@@ -384,14 +445,10 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             )
         ),
         source_repo=str(
-            overrides.get("source_repo")
-            or os.environ.get("NPA_SOURCE_REPO")
-            or ""
+            overrides.get("source_repo") or os.environ.get("NPA_SOURCE_REPO") or ""
         ),
         source_ref=str(
-            overrides.get("source_ref")
-            or os.environ.get("NPA_SOURCE_REF")
-            or ""
+            overrides.get("source_ref") or os.environ.get("NPA_SOURCE_REF") or ""
         ),
         heldout_eval_limit=int(
             overrides.get(
@@ -412,22 +469,34 @@ def artifact_uris(config: Sim2RealLoopConfig) -> dict[str, str]:
         "root": f"{root}/",
         "trigger_dataset": config.trigger_dataset_uri,
         "stage_01_trigger": f"{root}/stage_01_trigger/trigger.json",
+        "task_contract": f"{root}/stage_02_assets/task-contract.json",
         "stage_02_assets": f"{root}/stage_02_assets/consumed_scene_spec.json",
         "stage_02_assets_stub": f"{root}/stage_02_assets/consumed_scene_spec.json",
         "stage_03_augment": f"{root}/augment/cosmos2-transfer-result.json",
         "stage_04_envs_raw": f"{root}/envs/raw/",
+        "curation_manifest": f"{root}/envs/manifest/curation-manifest.json",
+        "scenario_split_manifest": f"{root}/envs/manifest/split-manifest.json",
         "stage_05_envs_train": f"{root}/envs/train/",
+        "validation_envs": f"{root}/envs/validation/envs.jsonl",
+        "gold_heldout_envs": f"{root}/envs/gold-heldout/envs.jsonl",
         "stage_06_tokens": f"{root}/tokens/manifest.json",
         "stage_07_actions_train": f"{root}/actions/train/",
         "stage_08_vlm_eval_train": f"{root}/vlm_eval/train/",
         "stage_09_training_signal": f"{root}/training_signal/train/",
+        "ppo_telemetry": f"{root}/byo-trainer/",
+        "validation_selection": f"{root}/checkpoints/validation-selection/",
         "inner_loop": f"{root}/inner_loop/",
-        "stage_10_eval_heldout": f"{root}/eval/heldout/report.json",
+        "stage_10_eval_heldout": (
+            f"{root}/eval/gold-heldout/outer-{config.outer_iterations:02d}/report.json"
+        ),
         "stage_11_outer_loop": f"{root}/outer_loop/decision.json",
         "candidate_checkpoint": f"{root}/checkpoints/candidate/",
         "stage_12_external_validation_stub": f"{root}/stage_12_external_validation/external_stub.json",
         "stage_13_retrigger": f"{root}/stage_13_retrigger/retrigger.json",
         "report": f"{root}/reports/sim2real-report.json",
+        "stage_14_rerun_viz_rrd": f"{root}/reports/sim2real.rrd",
+        "stage_14_mcap": f"{root}/reports/sim2real.mcap",
+        "source_archive": f"{root}/source/",
     }
 
 
@@ -446,6 +515,8 @@ def byo_seams(config: Sim2RealLoopConfig) -> dict[str, Any]:
         "action_rollouts_uri": config.action_rollouts_uri,
         "train_envs_uri": config.train_envs_uri,
         "heldout_envs_uri": config.heldout_envs_uri,
+        "validation_envs_uri": getattr(config, "validation_envs_uri", ""),
+        "gold_heldout_envs_uri": getattr(config, "gold_heldout_envs_uri", ""),
         "policy_image": config.policy_image,
         "trainer_image": config.trainer_image,
         "vlm_image": config.vlm_image,
@@ -467,9 +538,11 @@ def byo_seams(config: Sim2RealLoopConfig) -> dict[str, Any]:
         "k8s_service_account": config.k8s_service_account,
         "k8s_image_pull_secrets": _split_csv(config.k8s_image_pull_secrets),
         "k8s_env_secret_names": _split_csv(config.k8s_env_secret_names),
+        "k8s_isaac_cache_pvc": config.k8s_isaac_cache_pvc,
         "k8s_gpu_request": {
             "resource": config.k8s_gpu_resource,
             "product": config.k8s_gpu_product,
+            "candidates": list(config.k8s_gpu_candidates),
             "count": 1,
         },
         "source_ref": config.source_ref,

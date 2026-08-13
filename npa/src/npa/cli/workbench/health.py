@@ -36,7 +36,7 @@ from npa.workflows.sim2real_health import (
     has_failure,
     run_preflight,
 )
-from npa.workflows.sim2real_loop import build_config_from_env
+from npa.workflows.sim2real.config import build_config_from_env
 from npa.workbench.model_access import (
     all_capabilities,
     check_workbench_access,

@@ -1,10 +1,12 @@
+# DEMO ONLY — two-state DSL example, not the canonical 14-stage Sim2Real engine.
 apiVersion: npa.workflow/v0.0.1
 kind: Workflow
 
 metadata:
   name: sim2real-two-step
   description: >
-    Two-step Sim2Real pipeline: Cosmos Transfer augment, then raw env generation.
+    DEMO ONLY: two-state Cosmos Transfer and raw-env graph used for DSL examples;
+    it does not run the canonical 14-stage Sim2Real engine.
 
 config:
   bucket: example-bucket

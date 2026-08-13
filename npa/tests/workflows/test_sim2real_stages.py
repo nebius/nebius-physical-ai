@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from npa.workflows.sim2real_loop import Sim2RealLoopConfig, run_preamble
 from npa.workflows.sim2real_stages import (
     DEFAULT_ENV_COUNT,
@@ -15,6 +17,7 @@ from npa.workflows.sim2real_stages import (
     resolve_augment_frame_count,
     run_augment_stage,
     run_envgen_split_stage,
+    Sim2RealStageError,
 )
 
 
@@ -82,7 +85,9 @@ def test_k8s_image_ready_rejects_bare_tags_and_placeholders() -> None:
     )
 
 
-def test_augment_stage_uses_seam_reference_for_placeholder_image(tmp_path: Path) -> None:
+def test_augment_stage_uses_seam_reference_for_placeholder_image(
+    tmp_path: Path,
+) -> None:
     config = Sim2RealLoopConfig(
         run_id="seam-augment",
         output_dir=tmp_path,
@@ -97,12 +102,14 @@ def test_augment_stage_uses_seam_reference_for_placeholder_image(tmp_path: Path)
     assert (tmp_path / "augment" / "frames" / "index.json").exists()
 
 
-def test_augment_stage_mirrors_k8s_frame_descriptors(monkeypatch, tmp_path: Path) -> None:
+def test_augment_stage_mirrors_k8s_frame_descriptors(
+    monkeypatch, tmp_path: Path
+) -> None:
     def fake_component(config, *, input_uri, output_uri, local_dir):
         return {
             "manifest": {
                 "status": "executed",
-                "mode": "descriptor_stub",
+                "mode": "cosmos_transfer2.5_gpu",
                 "frame_count": 2,
                 "augmented_frames_uri": f"{output_uri.rstrip('/')}/frames/",
             },
@@ -118,7 +125,9 @@ def test_augment_stage_mirrors_k8s_frame_descriptors(monkeypatch, tmp_path: Path
                     {
                         "schema": "npa.sim2real.augmented_frames.v1",
                         "frame_count": 1,
-                        "frames": [{"frame_id": "frame-00000", "uri": f"{uri}frame-00000.json"}],
+                        "frames": [
+                            {"frame_id": "frame-00000", "uri": f"{uri}frame-00000.json"}
+                        ],
                     }
                 ),
                 encoding="utf-8",
@@ -159,12 +168,14 @@ def test_augment_stage_mirrors_k8s_frame_descriptors(monkeypatch, tmp_path: Path
     assert (tmp_path / "augment" / "frames" / "frame-00000.json").is_file()
 
 
-def test_augment_stage_keeps_working_when_frame_mirror_lags(monkeypatch, tmp_path: Path) -> None:
+def test_augment_stage_keeps_working_when_frame_mirror_lags(
+    monkeypatch, tmp_path: Path
+) -> None:
     def fake_component(config, *, input_uri, output_uri, local_dir):
         return {
             "manifest": {
                 "status": "executed",
-                "mode": "descriptor_stub",
+                "mode": "cosmos_transfer2.5_gpu",
                 "frame_count": 2,
                 "augmented_frames_uri": f"{output_uri.rstrip('/')}/frames/",
             },
@@ -183,7 +194,9 @@ def test_augment_stage_keeps_working_when_frame_mirror_lags(monkeypatch, tmp_pat
         "npa.clients.storage.StorageClient.from_environment",
         lambda: FakeClient(),
     )
-    monkeypatch.setattr("npa.workflows.sim2real_stages.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_stages.time.sleep", lambda _seconds: None
+    )
     config = Sim2RealLoopConfig(
         run_id="k8s-augment-lag",
         output_dir=tmp_path,
@@ -197,8 +210,41 @@ def test_augment_stage_keeps_working_when_frame_mirror_lags(monkeypatch, tmp_pat
 
     assert result["component"]["tier"] == "WORKS"
     assert "falls back to manifest descriptors" in result["component"]["evidence"]
-    warning = json.loads((tmp_path / "augment" / "frames" / "mirror-warning.json").read_text())
+    warning = json.loads(
+        (tmp_path / "augment" / "frames" / "mirror-warning.json").read_text()
+    )
     assert warning["status"] == "mirror_unavailable"
+
+
+def test_augment_stage_rejects_descriptor_stub_from_qualified_image(
+    monkeypatch, tmp_path: Path
+) -> None:
+    def fake_component(config, *, input_uri, output_uri, local_dir):
+        return {
+            "manifest": {
+                "status": "executed",
+                "mode": "descriptor_stub",
+                "augmented_frames_uri": f"{output_uri.rstrip('/')}/frames/",
+            },
+            "augmented_frames_uri": f"{output_uri.rstrip('/')}/frames/",
+        }
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.engine.run_cosmos2_transfer_component",
+        fake_component,
+    )
+    config = Sim2RealLoopConfig(
+        run_id="reject-stub",
+        output_dir=tmp_path,
+        s3_bucket="bucket",
+        trigger_dataset_uri="s3://bucket/triggers/pusht/",
+        augment_image=(
+            "cr.eu-north1.nebius.cloud/example-registry-id/npa-cosmos2-transfer:2.5.0"
+        ),
+    )
+
+    with pytest.raises(Sim2RealStageError, match="did not emit real GPU provenance"):
+        run_augment_stage(config, tmp_path)
 
 
 def test_envgen_split_stage_launches_indexed_shards_when_image_ready(
@@ -215,16 +261,39 @@ def test_envgen_split_stage_launches_indexed_shards_when_image_ready(
         fake_sharded,
     )
     monkeypatch.setattr(
+        "npa.workflows.sim2real_envgen.frame_uris_from_augmented_index",
+        lambda _uri: ("s3://bucket/run/augment/frames/frame-00000.png",),
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_stages.load_raw_shards",
+        lambda envgen, output_dir: (
+            [],
+            {
+                "mode": "downloaded_stage_04_raw_shards",
+                "row_count": envgen.env_count,
+            },
+        ),
+    )
+    monkeypatch.setattr(
         "npa.workflows.sim2real_stages.write_split_manifest",
-        lambda envgen, output_dir: {
+        lambda envgen, output_dir, **kwargs: {
             "uploaded_train": "s3://bucket/run/envs/train/envs.jsonl",
             "uploaded_heldout": "s3://bucket/run/envs/heldout/envs.jsonl",
+            "uploaded_validation": "s3://bucket/run/envs/validation/envs.jsonl",
+            "uploaded_gold_heldout": "s3://bucket/run/envs/gold-heldout/envs.jsonl",
+            "uploaded_curation": "s3://bucket/run/envs/manifest/curation-manifest.json",
             "uploaded_manifest": "s3://bucket/run/envs/manifest/split-manifest.json",
             "train_count": 8,
             "heldout_count": 2,
+            "validation_count": 1,
+            "gold_heldout_count": 1,
             "raw_count": 10,
             "train_uri": "s3://bucket/run/envs/train/",
             "heldout_uri": "s3://bucket/run/envs/heldout/",
+            "validation_uri": "s3://bucket/run/envs/validation/",
+            "gold_heldout_uri": "s3://bucket/run/envs/gold-heldout/",
+            "config_digest_leakage": {},
+            "coverage": {},
         },
     )
     monkeypatch.setattr(

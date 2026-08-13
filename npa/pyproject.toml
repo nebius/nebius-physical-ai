@@ -30,6 +30,9 @@ dependencies = [
     "rich>=13.0",
     "boto3>=1.34",
     "jinja2>=3.1",
+    # Official API client matched to the production Kubernetes 1.33 cluster.
+    # Sim2Real uses typed Job/Pod conditions instead of parsing kubectl prose.
+    "kubernetes==33.1.0",
     "numpy>=1.24",
     "pyarrow>=14.0",
     "pillow>=10.0",
@@ -202,6 +205,8 @@ packages = ["src/npa"]
 "src/npa/deploy/terraform/.terraform.lock.hcl" = "npa/deploy/terraform/.terraform.lock.hcl"
 "src/npa/deploy/terraform/.terraform.lock.npa.json" = "npa/deploy/terraform/.terraform.lock.npa.json"
 "src/npa/smoke/golden_evals.yaml" = "npa/smoke/golden_evals.yaml"
+"workflows/workbench/npa-workflows/sim2real.yaml" = "npa/workflows/workbench/npa-workflows/sim2real.yaml"
+"workflows/workbench/npa-workflows/physical-ai-data-factory.yaml" = "npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml"
 "src/npa/cli/agent_ui.html" = "npa/cli/agent_ui.html"
 "src/npa/assets/paidf_starter_video.json" = "npa/assets/paidf_starter_video.json"
 
