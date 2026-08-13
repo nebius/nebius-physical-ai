@@ -251,6 +251,47 @@ def test_one_project_receipt_keeps_multiple_resource_identities(
     } == {("agent-a", "instance-a"), ("agent-b", "instance-b")}
 
 
+def test_recreated_agent_generations_coexist_and_resolve_exactly(
+    monkeypatch, tmp_path: Path
+) -> None:  # noqa: ANN001
+    from npa.cleanup_identity import CleanupIdentityError, resolve_cleanup_identity
+
+    _root(monkeypatch, tmp_path)
+    path = None
+    for instance_id in ("instance-first", "instance-retry"):
+        path = receipts.record_teardown_event(
+            phase="agent",
+            resource="agent",
+            terminal_state="verified_absent",
+            project_id="project-1",
+            identity={
+                "project_id": "project-1",
+                "agent_name": "agent",
+                "instance_id": instance_id,
+            },
+        )
+    assert path is not None
+    payload = receipts.load_teardown_receipt(path.stem)
+    assert {item["instance_id"] for item in payload["identity"]["agents"]} == {
+        "instance-first",
+        "instance-retry",
+    }
+
+    selected = resolve_cleanup_identity(
+        explicit={"project_id": "project-1", "instance_id": "instance-retry"},
+        receipt_id=path.stem,
+        phase="agent",
+        resource="agent",
+    )
+    assert selected.get("instance_id") == "instance-retry"
+    with pytest.raises(CleanupIdentityError, match="ambiguous agent_name"):
+        resolve_cleanup_identity(
+            receipt_id=path.stem,
+            phase="agent",
+            resource="agent",
+        )
+
+
 def test_retry_cluster_ids_coexist_for_one_context_and_resolve_exactly(
     monkeypatch, tmp_path: Path
 ) -> None:  # noqa: ANN001

@@ -302,17 +302,22 @@ def _merge_identity(
             marker = json.dumps(item, sort_keys=True, default=str)
             if marker not in seen:
                 if isinstance(item, Mapping):
+                    identity_keys = (
+                        ("instance_id", "agent_name")
+                        if path == "identity.agents"
+                        else (
+                            "agent_name",
+                            "cluster_id",
+                            "context",
+                            "run_id",
+                            "operation_id",
+                            "service_account_id",
+                        )
+                    )
                     identity_key = next(
                         (
                             key
-                            for key in (
-                                "agent_name",
-                                "cluster_id",
-                                "context",
-                                "run_id",
-                                "operation_id",
-                                "service_account_id",
-                            )
+                            for key in identity_keys
                             if item.get(key) not in (None, "")
                         ),
                         "",
