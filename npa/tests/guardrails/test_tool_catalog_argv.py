@@ -34,8 +34,6 @@ from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 #: against a Typer signature. Pinned so the set can shrink but not silently grow.
 NON_CLI_ARGV = frozenset(
     {
-        "workbench.data_transform.improvement_summary",
-        "workbench.data_transform.rollout_contract",
         "workbench.dataset.report_rejection",
         "workbench.dataset.write_quality_decision",
         "workbench.lancedb.backfill_cpu_bundle",
