@@ -70,6 +70,9 @@ printf '%s\n' \
   'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
   > /etc/apt/sources.list.d/ubuntu.sources
 apt-get update
+# CUDA's Jammy base retains an old linux-libc-dev build. These are development
+# headers rather than the host kernel, but the fixed immutable-snapshot build is
+# available, so upgrade it explicitly instead of carrying avoidable critical CVEs.
 apt-get install -y --no-install-recommends \
   ca-certificates \
   curl \
@@ -82,6 +85,7 @@ apt-get install -y --no-install-recommends \
   libx11-6 \
   libxext6 \
   libxrender1 \
+  linux-libc-dev=5.15.0-186.196 \
   libxt6 `# MaterialX render libs dlopen libXt.so.6; without it Kit logs three
           # "Could not load the dynamic library ... libMaterialXRender*.so" errors` \
   vulkan-tools

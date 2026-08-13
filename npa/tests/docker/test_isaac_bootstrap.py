@@ -622,6 +622,20 @@ def test_isaac_image_normalizes_bootstrap_scripts_for_the_non_root_user() -> Non
     assert "chmod 0755 /opt/npa/docker/workbench/common/*.sh" in dockerfile
 
 
+def test_base_installer_upgrades_linux_headers_from_the_fixed_snapshot() -> None:
+    """Do not retain the stale kernel-header package inherited from CUDA.
+
+    ``linux-libc-dev`` contains userspace development headers, not the cluster's
+    running kernel.  Even so, the immutable Ubuntu snapshot carries a fixed build,
+    so keeping the older inherited package would leave avoidable critical Trivy
+    findings in every thin Isaac runtime.
+    """
+
+    installer = BASE_INSTALLER.read_text(encoding="utf-8")
+    assert 'UBUNTU_SNAPSHOT="${NPA_UBUNTU_SNAPSHOT:-20260801T053000Z}"' in installer
+    assert "linux-libc-dev=5.15.0-186.196" in installer
+
+
 # --------------------------------------------------------------------------------------
 # The shim
 # --------------------------------------------------------------------------------------
