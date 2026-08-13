@@ -224,6 +224,7 @@ describe("NPA agent official Foxglove Web against live infra", () => {
         // is cross-origin (and may require the customer's Foxglove sign-in), so
         // this verifies the supported SDK iframe + connection-state contract,
         // not pixels inside the hosted application.
+        cy.get("#tabRerun").click();
         cy.get("#renderModeFoxglove").click();
         cy.get("#viewerPaneFoxglove").should("have.class", "is-active-viewer");
         cy.get("#viewerPaneFoxglove iframe", { timeout: 30000 })
@@ -242,7 +243,6 @@ describe("NPA agent official Foxglove Web against live infra", () => {
             close: cy.stub(),
           }));
         });
-        cy.get("#tabRerun").click();
         cy.get("#renderedDataSummary").should("contain.text", runId);
         cy.get('[data-testid="open-foxglove-web"]')
           .should("have.length", 1)

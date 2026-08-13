@@ -6546,9 +6546,15 @@
         return true;
       }
       async function fetchWithTimeout(path, init, timeoutMs) {
-        const ms = Number(timeoutMs || 12000);
+        const ms = timeoutMs === undefined ? 12000 : Number(timeoutMs);
         const ctrl = new AbortController();
-        const timer = window.setTimeout(() => ctrl.abort(), ms);
+        // A non-positive budget deliberately means "no timer". Long-running
+        // server operations still honor an external abort signal, but should
+        // not be abandoned merely because indexing or provisioning takes more
+        // than the generic UI request budget.
+        const timer = Number.isFinite(ms) && ms > 0
+          ? window.setTimeout(() => ctrl.abort(), ms)
+          : null;
         const req = init || {};
         const externalSignal = req.signal;
         const relayAbort = () => ctrl.abort();
@@ -6568,7 +6574,7 @@
             signal: ctrl.signal,
           });
         } finally {
-          window.clearTimeout(timer);
+          if (timer !== null) window.clearTimeout(timer);
           if (externalSignal) externalSignal.removeEventListener("abort", relayAbort);
         }
       }
@@ -6585,11 +6591,17 @@
           headers,
         };
         const pathText = String(path || "");
-        const timeoutMs = pathText.startsWith("/api/artifacts/") ? 60000 : (
-          pathText === "/api/chat" ||
-          pathText === "/api/workflows/submit" ||
-          pathText === "/api/infra/provision"
-        ) ? 900000 : 12000;
+        const timeoutMs = pathText === "/api/foxglove/export"
+          ? 0
+          : pathText.startsWith("/api/artifacts/")
+            ? 60000
+            : (
+              pathText === "/api/chat" ||
+              pathText === "/api/workflows/submit" ||
+              pathText === "/api/infra/provision"
+            )
+              ? 900000
+              : 12000;
         const isChat = pathText === "/api/chat";
         let resp;
         let lastFetchErr = null;

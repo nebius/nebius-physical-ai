@@ -496,6 +496,38 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     cy.then(() => expect(requests, "one export request").to.eq(1));
   });
 
+  it("does not abandon a valid slow Foxglove Cloud export", () => {
+    stubFoxgloveApis();
+    const exported = foxgloveExportResponse("mock-run", { reused: true });
+    cy.intercept("POST", "/api/foxglove/export", (request) => {
+      request.reply({
+        delay: 13000,
+        statusCode: 200,
+        body: exported,
+      });
+    }).as("slowCloudExport");
+    cy.window().then((win) => {
+      const replace = cy.stub().as("slowCloudNavigate");
+      cy.stub(win, "open").returns({
+        opener: null,
+        location: { replace },
+        close: cy.stub(),
+      });
+    });
+
+    cy.get("#tabRerun").click();
+    cy.get("#foxgloveOpenWeb").click();
+    cy.wait("@slowCloudExport", { timeout: 20000 });
+    cy.get("@slowCloudNavigate").should(
+      "have.been.calledOnceWith",
+      exported.export.web_url,
+    );
+    cy.get("#foxgloveExportNote").should(
+      "contain.text",
+      "Reused the unchanged indexed",
+    );
+  });
+
   it("keeps the action stable and actionable after backend and popup failures", () => {
     stubFoxgloveApis();
     let exportRequests = 0;
