@@ -53,6 +53,20 @@ CONTAINER_IMAGE_NAMES = {
     "wan2-2": "npa-wan2-2",
 }
 
+# Public-image publication must enforce the digest-bound SkyPilot bootstrap
+# attestation only for images that declare that build contract in
+# docker/workbench/packaging-contract.yaml.  Keep this packaged copy explicit:
+# an installed npa wheel does not carry the repository's Docker packaging tree.
+# npa/tests/docker/test_packaging_contract.py locks the two inventories together.
+SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
+    {
+        "cosmos2-transfer",
+        "cosmos-curate",
+        "cosmos-evaluator",
+        "fiftyone",
+    }
+)
+
 # Tools whose built image may NOT be published to a public/anonymous registry,
 # because it bakes a runtime we are not licensed to redistribute.
 #
@@ -135,8 +149,8 @@ SUPPORTED_TOOL_VERSIONS = {
     # No weights baked; gated Cosmos3 checkpoints download at runtime.
     "cosmos3": "1.2.2-cu130-r2",
     "cosmos3-reason": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
-    "cosmos-curate": "0.1.2",
-    "cosmos-evaluator": "0.1.2",
+    "cosmos-curate": "0.1.2-skypilot-v1-20260813T164700Z",
+    "cosmos-evaluator": "0.1.2-skypilot-v1-20260813T164700Z",
     "groot": "0.1.0",
     "fiftyone": "1.15.0.post1",
     "sonic": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
