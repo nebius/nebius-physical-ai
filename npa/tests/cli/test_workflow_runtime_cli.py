@@ -346,6 +346,51 @@ def test_submit_runtime_refreshes_pull_secret_before_driver(
     assert events[1] == ("driver", "rt-pull-secret-order")
 
 
+def test_submit_runtime_pinned_no_source_preserves_registry_render_error(
+    mocker, monkeypatch: pytest.MonkeyPatch, satisfied_preflight
+) -> None:
+    """A fail-fast render error must not be masked by cleanup bookkeeping."""
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        NpaWorkflowRenderError,
+    )
+
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._plan_requires_npa_source",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._preflight_submit_images",
+        lambda *_args, **_kwargs: {},
+    )
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submit.prepare_npa_workflow_for_submit",
+        side_effect=NpaWorkflowRenderError("expected registry mismatch"),
+    )
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--run-id",
+            "rt-pinned-registry-error",
+            "--runtime",
+            "--no-stage-src",
+            "--var",
+            "bucket=rt-bucket",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "expected registry mismatch" in result.output
+    assert "referenced before assignment" not in result.output
+    assert "UnexpectedError" not in result.output
+
+
 def test_submit_runtime_passes_per_tool_image_override(fake_runtime) -> None:
     image = "cr.example.invalid/reg/npa-fiftyone:fixed"
     result = RUNNER.invoke(

@@ -692,6 +692,12 @@ def submit_cmd(
         return
 
     prepared_npa = None
+    # The runtime registry-auth render has its own temporary directory.  Keep
+    # the cleanup sentinel in the enclosing submit scope: fully image-pinned
+    # workflows with --no-stage-src never enter the source-staging branch
+    # below, but their fail-fast render errors must still cleanly reach the
+    # operator instead of being masked by an unbound local in ``finally``.
+    registry_auth_plan = None
     deploy_targets = []
     resolved_deploy_plans: dict[str, Any] = {}
     source_action = "not-required"
@@ -773,7 +779,6 @@ def submit_cmd(
             os.environ["NPA_SRC_S3_URI"] = existing_source_uri
         local_source_fingerprint = ""
         if requires_npa_source or stage_src is True:
-            registry_auth_plan = None
             try:
                 local_source_fingerprint = _local_source_fingerprint()
             except Exception as exc:
