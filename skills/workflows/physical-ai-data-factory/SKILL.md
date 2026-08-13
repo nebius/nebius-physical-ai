@@ -76,6 +76,32 @@ Verified live: a 4-variant run on `RTXPRO6000:4` drove all 4 GPUs to 100%
 (4 distinct compute PIDs) and finished in ~14 min end-to-end; the manifest recorded
 `variant_parallelism: 4`.
 
+**Multi-node fan-out (`--var augment_nodes=N`).** GPUs-per-pod is the first axis;
+nodes are the second, and only the `augment` stage uses it. `resources.gpu` declares
+`num_nodes: "{{config.augment_nodes}}"` (default `1`), so submit chooses the block
+size without editing the blueprint — concurrent renders = `augment_nodes` × GPUs per
+node. `num_nodes` accepts a `{{config.*}}` token on any profile, resolved against the
+`--var`-merged config; `deployIfAbsent` then provisions at least that many GPU nodes,
+because a gang bigger than the cluster sits `PENDING` rather than failing.
+
+SkyPilot runs the *same* augment command in every pod of the gang, so the stage
+shards: node `k` of `N` renders variants `k, k+N, …` (striding keeps the nodes within
+one variant of each other) with node-local GPU pins, publishes those clip dirs under
+global variant indices (so clip names stay disjoint), and writes
+`cosmos_augmented/manifest-rank-<k>.json`. **Rank 0 is the join**: it waits for all N
+shards and merges them into the usual `cosmos_augmented/manifest.json` in sampled
+combo order, adding `node_count` and a per-rank `shards` block; a rank that never
+reports fails the stage by name instead of publishing an understated fan-out. Shard
+manifests are objects at the augment prefix root, never a subdirectory — every
+consumer (`curate`, `finalize`, the evaluator, provenance) treats a subdirectory
+there as a scenario variant. With `augment_nodes=1` no shard file is written and the
+artifact set is exactly what it was before.
+
+Cosmos Transfer 2.5 itself also supports `torchrun --nproc_per_node=N` context
+parallelism for *one* clip; NPA does not use it, because one-variant-per-GPU gives a
+better throughput for a multiply fan-out. A single-variant run therefore does not go
+faster on more GPUs.
+
 **Authoring from chat (agent).** The NPA chat agent can WRITE this blueprint. Ask
 it e.g. *"write me a paidf workflow: augment my robot clips and fan out 4 scenarios
 on at least 4 RTX 6000 PRO GPUs"* — the deterministic router classifies
@@ -383,7 +409,8 @@ npa workbench cosmos-curate curate-videos --input-dir ./clips --output-dir ./cur
   `publish_transfer_to_s3` uploads the real Cosmos Transfer 2.5 result in the
   **per-clip** layout the consumers require:
   `cosmos_augmented/<clip>/{augmented_video.mp4, frame-*.png, metadata.json}`
-  plus a run-level `cosmos_augmented/manifest.json`.   `curate` counts clip
+  plus a run-level `cosmos_augmented/manifest.json` (and, for a multi-node augment,
+  one `manifest-rank-<k>.json` per node beside it).   `curate` counts clip
   subdirs (not top-level files) and `build_run_rrd` reads each clip's
   `metadata.json` for its Rerun label. Producer and consumers share this shape;
 - **Real FiftyOne curation:** the `curate` stage invokes

@@ -44,6 +44,14 @@ TRANSFER_MANIFEST_FILENAME = "manifest.json"
 TRANSFER_MANIFEST_SCHEMA = "npa.cosmos2.transfer.v1"
 TRANSFER_MANIFEST_MODE = "cosmos_transfer2.5_gpu"
 TRANSFER_MANIFEST_STATUS = "executed"
+# Multi-node augment: each node of a gang-scheduled block publishes its own clips
+# and one shard manifest, then rank 0 merges the shards into the run manifest.
+# Shard manifests are FILES at the augment prefix root (never a subdirectory):
+# every consumer -- data_factory_stages.curate/finalize, the Cosmos Evaluator, the
+# provenance reader -- treats a subdirectory of that prefix as a clip, so a
+# `shards/` dir would be counted as a bogus variant.
+SHARD_MANIFEST_PREFIX = "manifest-rank-"
+SHARD_MANIFEST_SCHEMA = "npa.cosmos2.transfer_shard.v1"
 AUGMENTED_FRAMES_INDEX = "index.json"
 AUGMENTED_FRAMES_SCHEMA = "npa.sim2real.augmented_frames.v1"
 REFERENCE_AUGMENT_MODE = "reference_augment"
@@ -377,6 +385,7 @@ def publish_transfer_clip(
     run_id: str = "",
     clip_name: str = "",
     variables: dict[str, Any] | None = None,
+    variant_index: int = 0,
     max_frames: int = 8,
     frames_output_uri: str = "",
     require_frames: bool = False,
@@ -447,6 +456,10 @@ def publish_transfer_clip(
             "schema": TRANSFER_MANIFEST_SCHEMA,
             "mode": TRANSFER_MANIFEST_MODE,
             "clip": clip,
+            # Position of this variant in the sampled combo order. It is the same
+            # number whichever node rendered the clip, so a merged multi-node
+            # manifest can restore the single-node ordering.
+            "variant_index": int(variant_index),
             "variables": variables or {},
             "prompt": str((variables or {}).get("prompt") or ""),
             "control_spec": transfer.get("spec", ""),
@@ -462,6 +475,7 @@ def publish_transfer_clip(
 
     return {
         "clip": clip,
+        "variant_index": int(variant_index),
         "clip_base": clip_base,
         "augmented_video_uri": video_uri,
         "frame_count": len(frame_index),
@@ -478,30 +492,35 @@ def publish_transfer_clip(
     }
 
 
-def write_run_manifest(
-    clips: list[dict[str, Any]],
-    output_uri: str,
-    *,
-    run_id: str = "",
-    storage_client: Any = None,
-    variant_parallelism: int = 1,
-) -> dict[str, Any]:
-    """Write the run-level ``cosmos_augmented/manifest.json`` listing every clip
-    produced by the (possibly multi-variant) augment stage; return the manifest.
-
-    ``clips`` are the descriptors returned by :func:`publish_transfer_clip`.
-    ``variant_parallelism`` records how many GPUs the fan-out ran across (1 ==
-    sequential) so provenance can surface the multi-GPU amplification.
-    """
-
-    if not output_uri.startswith("s3://"):
-        raise ValueError(f"output_uri must be an s3:// prefix, got: {output_uri!r}")
-    from npa.clients.storage import StorageClient
+def _upload_json(client: Any, document: dict[str, Any], uri: str) -> str:
+    """Upload ``document`` as pretty-printed JSON to ``uri``."""
 
     import json as _json
     import tempfile as _tempfile
 
-    client = storage_client or StorageClient.from_environment()
+    with _tempfile.TemporaryDirectory(prefix="npa-cosmos-man-") as tmp:
+        local = Path(tmp) / Path(uri).name
+        local.write_text(
+            _json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        return client.upload_file(str(local), uri)
+
+
+def build_run_manifest(
+    clips: list[dict[str, Any]],
+    *,
+    run_id: str = "",
+    variant_parallelism: int = 1,
+    node_count: int = 1,
+    shards: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Return the run-level transfer manifest for ``clips`` (no I/O).
+
+    Shared by the single-node publisher (:func:`write_run_manifest`) and the
+    multi-node shard merge (:func:`merge_shard_manifests`) so both emit the same
+    document for the same set of variants.
+    """
+
     first = clips[0] if clips else {}
     frames = [f for c in clips for f in c.get("frames", [])]
     manifest = {
@@ -514,7 +533,11 @@ def write_run_manifest(
         # "multiply": one Cosmos Transfer 2.5 inference per sampled appearance
         # combo. >1 clips means the run genuinely amplified across scenarios.
         "multiply_mode": "multi-variant" if len(clips) > 1 else "single-variant",
+        # Concurrent variant renders across the whole augment block: the sum of
+        # each node's GPU fan-out, so it is the pod's GPU count on one node and
+        # the gang's total on many.
         "variant_parallelism": max(1, int(variant_parallelism or 1)),
+        "node_count": max(1, int(node_count or 1)),
         "augmented_video_uri": first.get("augmented_video_uri", ""),
         "augmented_videos": [c.get("augmented_video_uri", "") for c in clips],
         "frame_count": sum(int(c.get("frame_count", 0) or 0) for c in clips),
@@ -532,19 +555,193 @@ def write_run_manifest(
         "variants": [
             {
                 "clip": c.get("clip", ""),
+                "variant_index": int(c.get("variant_index", index) or 0),
                 "variables": c.get("variables", {}),
                 "prompt": str((c.get("variables") or {}).get("prompt") or ""),
                 "frame_count": int(c.get("frame_count", 0) or 0),
                 "augmented_video_uri": c.get("augmented_video_uri", ""),
             }
-            for c in clips
+            for index, c in enumerate(clips)
         ],
     }
-    with _tempfile.TemporaryDirectory(prefix="npa-cosmos-man-") as tmp:
-        mp = Path(tmp) / TRANSFER_MANIFEST_FILENAME
-        mp.write_text(_json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        client.upload_file(str(mp), transfer_manifest_uri_for(output_uri))
+    if shards is not None:
+        manifest["shards"] = shards
     return manifest
+
+
+def write_run_manifest(
+    clips: list[dict[str, Any]],
+    output_uri: str,
+    *,
+    run_id: str = "",
+    storage_client: Any = None,
+    variant_parallelism: int = 1,
+    node_count: int = 1,
+    shards: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Write the run-level ``cosmos_augmented/manifest.json`` listing every clip
+    produced by the (possibly multi-variant) augment stage; return the manifest.
+
+    ``clips`` are the descriptors returned by :func:`publish_transfer_clip`.
+    ``variant_parallelism`` records how many GPUs the fan-out ran across (1 ==
+    sequential) so provenance can surface the multi-GPU amplification.
+    """
+
+    if not output_uri.startswith("s3://"):
+        raise ValueError(f"output_uri must be an s3:// prefix, got: {output_uri!r}")
+    from npa.clients.storage import StorageClient
+
+    client = storage_client or StorageClient.from_environment()
+    manifest = build_run_manifest(
+        clips,
+        run_id=run_id,
+        variant_parallelism=variant_parallelism,
+        node_count=node_count,
+        shards=shards,
+    )
+    _upload_json(client, manifest, transfer_manifest_uri_for(output_uri))
+    return manifest
+
+
+def shard_manifest_uri_for(output_uri: str, rank: int) -> str:
+    """Return the shard-manifest URI one node of a gang-scheduled augment writes."""
+
+    return f"{output_uri.rstrip('/')}/{SHARD_MANIFEST_PREFIX}{int(rank)}.json"
+
+
+def write_shard_manifest(
+    clips: list[dict[str, Any]],
+    output_uri: str,
+    *,
+    run_id: str = "",
+    rank: int,
+    node_count: int,
+    variant_parallelism: int = 1,
+    variant_total: int = 0,
+    storage_client: Any = None,
+) -> dict[str, Any]:
+    """Publish ONE node's share of a multi-node augment as a shard manifest.
+
+    Every node of the gang writes its own file, so the nodes never contend for a
+    single key. ``clips`` carry their global ``variant_index``, which is what lets
+    :func:`merge_shard_manifests` restore the sampled combo order.
+    """
+
+    if not output_uri.startswith("s3://"):
+        raise ValueError(f"output_uri must be an s3:// prefix, got: {output_uri!r}")
+    from npa.clients.storage import StorageClient
+
+    client = storage_client or StorageClient.from_environment()
+    shard = {
+        "schema": SHARD_MANIFEST_SCHEMA,
+        "mode": TRANSFER_MANIFEST_MODE,
+        "status": TRANSFER_MANIFEST_STATUS,
+        "run_id": run_id,
+        "rank": int(rank),
+        "node_count": max(1, int(node_count or 1)),
+        "variant_parallelism": max(1, int(variant_parallelism or 1)),
+        "variant_total": max(0, int(variant_total or 0)),
+        "variant_count": len(clips),
+        "clips": [c.get("clip", "") for c in clips],
+        "clip_descriptors": clips,
+    }
+    _upload_json(client, shard, shard_manifest_uri_for(output_uri, rank))
+    return shard
+
+
+def merge_shard_manifests(
+    output_uri: str,
+    *,
+    run_id: str = "",
+    node_count: int,
+    storage_client: Any = None,
+    timeout_s: float = 3600.0,
+    poll_interval_s: float = 15.0,
+    sleep: Any = None,
+) -> dict[str, Any]:
+    """Wait for every node's shard manifest, then write the run manifest.
+
+    Called by rank 0 only. The gang's nodes run the same augment command
+    concurrently, so this is the join: it fetches ``manifest-rank-<k>.json`` for
+    every expected rank, orders the clips by their global variant index, and
+    writes the same ``manifest.json`` a single-node run would have produced.
+    Waiting is bounded -- a rank that never reports is a hard failure naming the
+    missing ranks, not a manifest that silently omits its variants.
+    """
+
+    import json as _json
+    import tempfile as _tempfile
+    import time as _time
+
+    if not output_uri.startswith("s3://"):
+        raise ValueError(f"output_uri must be an s3:// prefix, got: {output_uri!r}")
+    from npa.clients.storage import StorageClient
+
+    client = storage_client or StorageClient.from_environment()
+    waiter = sleep or _time.sleep
+    expected = max(1, int(node_count or 1))
+    deadline = _time.monotonic() + max(0.0, float(timeout_s))
+    shards: dict[int, dict[str, Any]] = {}
+
+    with _tempfile.TemporaryDirectory(prefix="npa-cosmos-shard-") as tmp:
+        while True:
+            for rank in range(expected):
+                if rank in shards:
+                    continue
+                # Fetch the exact key rather than listing the prefix: a bucket
+                # listing can lag behind a sibling node's upload.
+                local = Path(tmp) / f"{SHARD_MANIFEST_PREFIX}{rank}.json"
+                try:
+                    client.download_path(
+                        shard_manifest_uri_for(output_uri, rank), str(local)
+                    )
+                except Exception:  # noqa: BLE001 - a rank that is not there yet
+                    continue
+                if not local.is_file():
+                    continue
+                try:
+                    shards[rank] = _json.loads(local.read_text(encoding="utf-8"))
+                except ValueError:
+                    # A partially visible object: drop it and re-read next pass.
+                    local.unlink(missing_ok=True)
+            if len(shards) == expected:
+                break
+            if _time.monotonic() >= deadline:
+                missing = [r for r in range(expected) if r not in shards]
+                raise RuntimeError(
+                    "multi-node augment: no shard manifest from rank(s) "
+                    f"{missing} after {timeout_s:.0f}s at {output_uri}. Those nodes "
+                    "did not finish publishing their variants, so the run manifest "
+                    "would understate the fan-out."
+                )
+            waiter(max(0.1, float(poll_interval_s)))
+
+    ordered = sorted(
+        (clip for shard in shards.values() for clip in shard.get("clip_descriptors", [])),
+        key=lambda c: int(c.get("variant_index", 0) or 0),
+    )
+    return write_run_manifest(
+        ordered,
+        output_uri,
+        run_id=run_id,
+        storage_client=client,
+        variant_parallelism=sum(
+            max(1, int(shard.get("variant_parallelism", 1) or 1))
+            for shard in shards.values()
+            if int(shard.get("variant_count", 0) or 0) > 0
+        )
+        or 1,
+        node_count=expected,
+        shards=[
+            {
+                "rank": int(shard.get("rank", rank) or 0),
+                "variant_count": int(shard.get("variant_count", 0) or 0),
+                "variant_parallelism": max(1, int(shard.get("variant_parallelism", 1) or 1)),
+                "clips": list(shard.get("clips", [])),
+            }
+            for rank, shard in sorted(shards.items())
+        ],
+    )
 
 
 def publish_transfer_to_s3(
@@ -755,19 +952,25 @@ __all__ = [
     "FrameExtractionError",
     "REFERENCE_AUGMENT_MODE",
     "REFERENCE_AUGMENT_STATUS",
+    "SHARD_MANIFEST_PREFIX",
+    "SHARD_MANIFEST_SCHEMA",
     "TRANSFER_MANIFEST_FILENAME",
     "TRANSFER_MANIFEST_MODE",
     "TRANSFER_MANIFEST_SCHEMA",
     "TRANSFER_MANIFEST_STATUS",
     "augmented_frames_index_uri_for",
+    "build_run_manifest",
     "cosmos_transfer_available",
     "cosmos_transfer_repo",
     "ensure_env",
     "extract_frames",
+    "merge_shard_manifests",
     "publish_transfer_clip",
     "publish_transfer_to_s3",
     "reference_augment_frames",
     "run_cosmos_transfer",
+    "shard_manifest_uri_for",
     "transfer_manifest_uri_for",
     "write_run_manifest",
+    "write_shard_manifest",
 ]

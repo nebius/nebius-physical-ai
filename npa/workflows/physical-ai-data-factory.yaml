@@ -89,6 +89,14 @@ config:
   seed_default_input: "false"
   n_augmentations: "2"            # augmented variants sampled per source video
   augment_subject: "the input robot clips"  # included in sampled Cosmos prompts
+  # Nodes in the augment block. The variants are independent diffusions, so they
+  # shard across a gang-scheduled block: each node renders its stride of the
+  # sampled combos on its own GPUs, publishes those clips plus a shard manifest,
+  # and rank 0 merges the shards into cosmos_augmented/manifest.json. Total
+  # concurrent renders = augment_nodes x GPUs per node. Raise it at submit time
+  # (`--var augment_nodes=4`) rather than editing this file; deployIfAbsent then
+  # provisions a cluster with that many GPU nodes.
+  augment_nodes: "1"
   refinement_iterations: "2"      # max evaluate/validate passes before reject
   grade_threshold: "0.75"         # min aggregate score to promote (else loop_back)
   # NPA temporal residual is advisory until a deployment calibrates its fixed
@@ -193,6 +201,12 @@ resources:
     # (auto-detected, or set NPA_COSMOS_VARIANT_PARALLELISM). N variants then run
     # in ~one variant's wall-clock instead of N x. Keep :1 for a single-GPU run.
     accelerators: RTXPRO6000:1
+    # MULTI-NODE FAN-OUT: the second axis. SkyPilot gang-schedules this many
+    # identical pods for the augment task and exports SKYPILOT_NODE_RANK /
+    # SKYPILOT_NUM_NODES into each; the augment stage shards the sampled combos by
+    # rank, so a 4-node x 4-GPU block renders 16 variants concurrently. Only the
+    # augment stage is multi-node -- the CPU/Token-Factory stages stay single pod.
+    num_nodes: "{{config.augment_nodes}}"
     # Host-side model loading/checkpoint materialization scales with the
     # multi-GPU variant fan-out. Keep enough CPU/RAM headroom for a 4-GPU
     # override instead of OOM-killing four concurrent Cosmos workers.
@@ -265,6 +279,10 @@ states:
       Stage 2b - Augment & Multiply. Cosmos Transfer 2.5 runs ONE inference per
       sampled appearance combo (config.n_augmentations), so N combos -> N scenario
       variants, each published as its own cosmos_augmented/<clip>/ dir (GPU tier).
+      The variants fan out over GPUs within a node and over nodes when
+      config.augment_nodes > 1: each node renders its stride of the combos and
+      publishes a manifest-rank-<k>.json shard, and rank 0 merges the shards into
+      the run manifest, so the fan-out is one artifact set either way.
       Appearance-only: lighting, background, color grade, surface finish -- never scene
       geometry.
       Every managed variant conditions on the prepared 93-frame

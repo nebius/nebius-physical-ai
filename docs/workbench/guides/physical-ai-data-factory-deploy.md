@@ -663,12 +663,19 @@ ambient (often expired) token over the fresh CLI one.
 
 ---
 
-## 6. Multi-GPU fan-out (`RTXPRO6000:N`)
+## 6. Multi-GPU and multi-node fan-out (`RTXPRO6000:N`, `--var augment_nodes=N`)
 
 The `augment` stage runs **one Cosmos Transfer 2.5 diffusion per sampled scenario
 variant**. Request `N` GPUs and the stage fans the `N` variants across them (one
 variant per GPU), so `N` variants complete in roughly one variant's wall-clock
 instead of `N x`.
+
+The variants are independent diffusions, so they also scale across **nodes**:
+`--var augment_nodes=N` makes SkyPilot gang-schedule `N` identical augment pods
+and the stage shards the sampled combos by `SKYPILOT_NODE_RANK`. Concurrent
+renders = `augment_nodes` × GPUs per node. See
+[section 6b](#6b-multi-node-augment---var-augment_nodesn) for the artifact
+contract.
 
 - Set the number of variants with `config.n_augmentations` (via `--var`, default
   `2`).
@@ -704,6 +711,50 @@ variant is conditioned on the run's `input/` prefix: a supported video is used
 directly, or the required PNG/JPEG frames are assembled into a temporary clip
 (preserve input geometry/motion, change only appearance). Missing or inaccessible
 input fails closed before inference.
+
+### 6b. Multi-node augment (`--var augment_nodes=N`)
+
+One pod is bounded by the GPUs on a single node. `config.augment_nodes` is the
+second axis: the `gpu` profile declares `num_nodes: "{{config.augment_nodes}}"`, so
+raising it at submit time gang-schedules that many augment pods without editing the
+blueprint. `deployIfAbsent` provisions a cluster with at least that many GPU nodes,
+because a gang larger than the cluster does not fail — it sits `PENDING`.
+
+```bash
+# 16 variants: 4 nodes x 4 GPUs, all rendering at once.
+NPA_WORKFLOW_GPU_ACCELERATOR=RTXPRO6000:4 \
+npa workbench workflow submit "$SPEC" \
+  --run-id "$(date -u +paidf-4x4-%Y%m%dt%H%M%sz)" \
+  --var bucket=<your-artifact-bucket> \
+  --var n_augmentations=16 \
+  --var augment_nodes=4 \
+  --assume-decision promote_checkpoint \
+  --secret-env NEBIUS_TOKEN_FACTORY_KEY \
+  --secret-env AWS_ACCESS_KEY_ID \
+  --secret-env AWS_SECRET_ACCESS_KEY
+```
+
+How the nodes divide the work and rejoin:
+
+- Every pod runs the same augment command and reads the same
+  `configs/manifest.json`. Node `k` of `N` renders variants `k, k+N, k+2N, …`
+  (striding, so the nodes stay within one variant of each other) and pins each of
+  its own concurrent renders to a local GPU starting at 0.
+- Variant indices are global, so clip names (`aug-<run-id>-<i>`) stay disjoint and
+  every clip dir is written by exactly one node.
+- Each node publishes `cosmos_augmented/manifest-rank-<k>.json`; **rank 0** waits
+  for all `N` shards and merges them into the usual
+  `cosmos_augmented/manifest.json`, ordered by variant index, with `node_count` and
+  a per-rank `shards` block added. A rank that never reports is a hard failure that
+  names it — the run manifest never quietly understates the fan-out.
+- Downstream stages are unchanged: they enumerate clip dirs, and the shard files
+  are objects at the prefix root rather than a subdirectory, so nothing counts them
+  as a variant.
+- `augment_nodes=1` (the default) writes no shard files and renders exactly as
+  before.
+
+Only `augment` is multi-node. Captioning, grading, curation, and visualization are
+CPU/Token-Factory stages that stay a single pod.
 
 ---
 

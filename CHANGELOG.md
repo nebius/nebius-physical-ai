@@ -12,6 +12,31 @@ a versioned heading when a release is cut.
   `npa.agent.api_error/v1` (`run_id_required_for_s3_uri`) instead of reading an
   arbitrary object.
 
+### PAIDF augment scales across nodes, not just GPUs
+
+The Physical AI Data Factory multiplied scenario variants across the GPUs of **one**
+augment pod, so the fan-out was capped by a single node. The variants are independent
+diffusions, so they now shard across a gang-scheduled block as well.
+
+- **`--var augment_nodes=N`** gang-schedules N augment pods
+  (`resources.gpu.num_nodes: "{{config.augment_nodes}}"`, default `1`). Concurrent
+  renders = `augment_nodes` × GPUs per node.
+- **`num_nodes` accepts a `{{config.*}}` token** on any resource profile, resolved
+  against the `--var`-merged config, so a shipped blueprint's block size is a submit
+  decision instead of a file edit. Bounds and error text are unchanged.
+- **`deployIfAbsent` sizes the cluster to the gang**: a profile asking for more nodes
+  than the cluster has does not fail, it sits `PENDING`, so the provisioner now takes
+  `num_nodes` as the GPU-node floor.
+- **The augment stage shards and rejoins.** SkyPilot runs the same command in every
+  pod, so node `k` of `N` renders variants `k, k+N, …` on node-local GPUs, publishes
+  its clip dirs under global variant indices, and writes
+  `cosmos_augmented/manifest-rank-<k>.json`; rank 0 waits for every shard and merges
+  them into the usual `manifest.json` (ordered by variant index, plus `node_count`
+  and per-rank `shards`). A rank that never reports fails the stage by name rather
+  than publishing an understated fan-out. Shard manifests are objects at the augment
+  prefix root, because every consumer counts a *subdirectory* there as a variant.
+  With one node nothing is written that was not written before.
+
 ### Retiring the raw SkyPilot task catalog (36 → 0 templates (of the 36; two arrived mid-sweep from #234/#235))
 
 `npa.workflow/v0.0.1` specs are becoming the only workflow authoring surface.

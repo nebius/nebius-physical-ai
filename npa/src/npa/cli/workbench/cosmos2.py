@@ -203,6 +203,56 @@ def _detect_gpu_count() -> int:
         return 1
 
 
+def _gang_shard() -> tuple[int, int]:
+    """Return this worker's ``(rank, node_count)`` in the augment block.
+
+    A spec asks for a multi-node augment with ``resources.gpu.num_nodes``; SkyPilot
+    then gang-schedules that many identical pods for the one task and exports
+    ``SKYPILOT_NODE_RANK`` / ``SKYPILOT_NUM_NODES`` into each. Every pod runs this
+    same command, so without a shard the gang would render every variant N times.
+    ``NPA_COSMOS_NODE_RANK`` / ``NPA_COSMOS_NODE_COUNT`` override for local runs.
+
+    An inconsistent identity fails closed: silently collapsing to one node would
+    duplicate GPU work and leave the run manifest reporting a fan-out that never
+    happened.
+    """
+
+    def _read(*names: str) -> str:
+        for name in names:
+            value = str(os.environ.get(name, "")).strip()
+            if value:
+                return value
+        return ""
+
+    raw_nodes = _read("NPA_COSMOS_NODE_COUNT", "SKYPILOT_NUM_NODES")
+    raw_rank = _read("NPA_COSMOS_NODE_RANK", "SKYPILOT_NODE_RANK") or "0"
+    try:
+        nodes = int(raw_nodes) if raw_nodes else 1
+        rank = int(raw_rank)
+    except ValueError as exc:
+        raise typer.BadParameter(
+            "multi-node augment identity is not numeric "
+            f"(node count {raw_nodes!r}, rank {raw_rank!r})"
+        ) from exc
+    if nodes < 1 or not 0 <= rank < nodes:
+        raise typer.BadParameter(
+            f"multi-node augment identity is inconsistent: rank {rank} of {nodes} node(s)"
+        )
+    return rank, nodes
+
+
+def _shard_indices(count: int, *, rank: int, nodes: int) -> list[int]:
+    """Variant indices this node renders, striding so the load stays balanced.
+
+    Striding (rank, rank+nodes, ...) rather than contiguous blocks keeps every
+    node within one variant of the others when the count does not divide evenly.
+    """
+
+    if nodes <= 1:
+        return list(range(max(0, count)))
+    return list(range(rank, max(0, count), nodes))
+
+
 def _variant_parallelism(num_variants: int) -> int:
     """Resolve how many variant inferences to run concurrently (>=1).
 
@@ -293,13 +343,18 @@ def _materialize_conditioning_input(
         ) from exc
 
 
-def _persist_generated_conditioning_clip(local_input: str, input_uri: str) -> str:
+def _persist_generated_conditioning_clip(
+    local_input: str, input_uri: str, *, publish: bool = True
+) -> str:
     """Persist PAIDF's frame-derived clip so evaluation uses the exact source.
 
     Operator-side preparation already persists ``conditioning.mp4``. The legacy
     fixture path still creates ``npa-paidf-conditioning.mp4`` in the worker and
     needs it published. In both cases return the canonical URI so evaluation
     records the exact clip Cosmos consumed.
+
+    ``publish=False`` resolves the URI without writing: in a multi-node augment
+    every node derives the same clip, so only one of them uploads it.
     """
 
     path = Path(str(local_input or ""))
@@ -310,6 +365,8 @@ def _persist_generated_conditioning_clip(local_input: str, input_uri: str) -> st
         return uri
     if path.name != "npa-paidf-conditioning.mp4":
         return ""
+    if not publish:
+        return uri
     from npa.clients.storage import StorageClient
 
     return StorageClient.from_environment().upload_file(str(path), uri)
@@ -451,25 +508,38 @@ def transfer_cmd(
             # image). The per-clip layout is what data_factory curate /
             # build_run_rrd / provenance consume.
             from npa.workbench.cosmos.transfer import (
+                merge_shard_manifests,
                 publish_transfer_clip,
                 write_run_manifest,
+                write_shard_manifest,
             )
 
             combos = _all_augmentations(configs_uri) if configs_uri else []
             if not combos:
                 combos = [{}]
 
+            # Multi-node fan-out: this node renders only its stride of the sampled
+            # combos. Variant indices stay GLOBAL, so clip names remain disjoint
+            # across the gang and the merged manifest keeps the sampled order.
+            rank, node_count = _gang_shard()
+            shard = [(i, combos[i]) for i in _shard_indices(len(combos), rank=rank, nodes=node_count)]
+
             conditioning_clip_uri = _persist_generated_conditioning_clip(
-                local_input, input_uri
+                local_input,
+                input_uri,
+                # One writer for a key the whole gang would otherwise race on.
+                publish=rank == 0,
             )
 
-            parallelism = _variant_parallelism(len(combos))
+            parallelism = _variant_parallelism(len(shard))
 
-            def _render_variant(i: int, combo: dict) -> dict:
+            def _render_variant(slot: int, i: int, combo: dict) -> dict:
                 variant_run = f"{run_id}-v{i}" if run_id else f"v{i}"
                 # Pin each concurrent variant to a distinct GPU so an N-GPU pod
                 # runs N diffusions at once (sequential when parallelism == 1).
-                device = str(i % parallelism) if parallelism > 1 else None
+                # The device comes from the node-local slot, never the global
+                # variant index: rank 1 of a gang must still start at GPU 0.
+                device = str(slot % parallelism) if parallelism > 1 else None
                 result = run_cosmos_transfer(
                     run_id=variant_run,
                     spec=spec or None,
@@ -484,25 +554,25 @@ def transfer_cmd(
                 result["conditioning_clip_uri"] = conditioning_clip_uri
                 return result
 
-            # Fan the GPU-bound diffusions out across the pod's GPUs, then publish
+            # Fan the GPU-bound diffusions out across this pod's GPUs, then publish
             # sequentially in combo order (publish/S3 upload stays single-threaded).
-            transfers: list[dict] = [dict() for _ in combos]
-            if parallelism > 1 and len(combos) > 1:
+            transfers: dict[int, dict] = {}
+            if parallelism > 1 and len(shard) > 1:
                 from concurrent.futures import ThreadPoolExecutor
 
                 with ThreadPoolExecutor(max_workers=parallelism) as pool:
                     futures = {
-                        pool.submit(_render_variant, i, combo): i
-                        for i, combo in enumerate(combos)
+                        pool.submit(_render_variant, slot, i, combo): i
+                        for slot, (i, combo) in enumerate(shard)
                     }
                     for future in futures:
                         transfers[futures[future]] = future.result()
             else:
-                for i, combo in enumerate(combos):
-                    transfers[i] = _render_variant(i, combo)
+                for slot, (i, combo) in enumerate(shard):
+                    transfers[i] = _render_variant(slot, i, combo)
 
             clips: list[dict] = []
-            for i, combo in enumerate(combos):
+            for i, combo in shard:
                 clip_name = f"aug-{run_id}-{i}" if run_id else f"aug{i}"
                 clips.append(
                     publish_transfer_clip(
@@ -511,12 +581,41 @@ def transfer_cmd(
                         run_id=run_id,
                         clip_name=clip_name,
                         variables=combo,
+                        variant_index=i,
                         require_frames=True,
                     )
                 )
-            manifest = write_run_manifest(
-                clips, output_uri, run_id=run_id, variant_parallelism=parallelism
-            )
+            if node_count > 1:
+                # Each node publishes its own shard manifest; rank 0 joins them into
+                # the single run manifest the downstream stages read. A worker's
+                # payload describes its own shard -- it never claims the run's total.
+                from npa.workbench.cosmos.transfer import build_run_manifest
+
+                write_shard_manifest(
+                    clips,
+                    output_uri,
+                    run_id=run_id,
+                    rank=rank,
+                    node_count=node_count,
+                    variant_parallelism=parallelism,
+                    variant_total=len(combos),
+                )
+                manifest = (
+                    merge_shard_manifests(
+                        output_uri, run_id=run_id, node_count=node_count
+                    )
+                    if rank == 0
+                    else build_run_manifest(
+                        clips,
+                        run_id=run_id,
+                        variant_parallelism=parallelism,
+                        node_count=node_count,
+                    )
+                )
+            else:
+                manifest = write_run_manifest(
+                    clips, output_uri, run_id=run_id, variant_parallelism=parallelism
+                )
             payload["status"] = TRANSFER_MANIFEST_STATUS
             payload["output_kind"] = "video"
             payload["mode"] = TRANSFER_MANIFEST_MODE
@@ -526,6 +625,9 @@ def transfer_cmd(
             payload["variant_count"] = manifest["variant_count"]
             payload["multiply_mode"] = manifest["multiply_mode"]
             payload["variant_parallelism"] = manifest["variant_parallelism"]
+            payload["node_count"] = node_count
+            payload["node_rank"] = rank
+            payload["shard_variant_count"] = len(clips)
             payload["clips"] = manifest["clips"]
             payload["augmentation_variables"] = combos[0]
             payload["prompt"] = str((combos[0] or {}).get("prompt") or "")

@@ -192,6 +192,102 @@ def test_a_non_mapping_resource_profile_is_rejected(tmp_path: Path) -> None:
         load_spec(path)
 
 
+TOKEN_SPEC = """\
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: token-nodes
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/probe"
+  augment_nodes: "1"
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    num_nodes: "{{config.augment_nodes}}"
+    deployIfAbsent: true
+initial: augment
+states:
+  augment:
+    resources: gpu
+    run:
+      shell: "echo rank $SKYPILOT_NODE_RANK"
+    terminal: true
+"""
+
+
+def _token_spec(tmp_path: Path):
+    path = tmp_path / "token-nodes.yaml"
+    path.write_text(TOKEN_SPEC, encoding="utf-8")
+    return load_spec(path)
+
+
+def test_a_config_token_lets_submit_choose_the_block_size(tmp_path: Path) -> None:
+    """`--var augment_nodes=4` must scale a shipped blueprint without editing it."""
+
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
+
+    spec = _token_spec(tmp_path)
+    plan = build_plan(spec, run_id="probe")
+    step = next(s for s in plan.steps if s.state == "augment")
+    assert num_nodes_for_step(spec, step) == 1
+
+    scaled = merge_config_overrides(spec, {"augment_nodes": "4"})
+    assert num_nodes_for_step(scaled, step) == 4
+
+
+def test_a_config_token_resolving_to_nonsense_still_fails(tmp_path: Path) -> None:
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
+
+    spec = merge_config_overrides(_token_spec(tmp_path), {"augment_nodes": "lots"})
+    step = next(s for s in build_plan(spec, run_id="probe").steps if s.state == "augment")
+
+    with pytest.raises(NpaWorkflowError, match="must be an integer"):
+        num_nodes_for_step(spec, step)
+
+
+def test_a_gang_stage_provisions_a_cluster_that_can_hold_it(tmp_path: Path) -> None:
+    """`num_nodes: 4` against a one-GPU-node cluster does not fail; it sits PENDING."""
+
+    from npa.orchestration.npa_workflow.deploy import parse_deploy_targets
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
+
+    spec = _token_spec(tmp_path)
+    assert [t.gpu_nodes for t in parse_deploy_targets(spec)] == [1]
+
+    scaled = merge_config_overrides(spec, {"augment_nodes": "4"})
+    assert [t.gpu_nodes for t in parse_deploy_targets(scaled)] == [4]
+
+
+def test_paidf_augment_scales_from_one_pod_to_a_gang(monkeypatch: pytest.MonkeyPatch) -> None:
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
+
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/prefix/npa")
+    blueprint = (
+        Path(__file__).resolve().parents[3] / "workflows" / "physical-ai-data-factory.yaml"
+    )
+    spec = load_spec(blueprint)
+
+    def _augment_task(loaded):
+        plan = build_plan(loaded, run_id="paidf", assume_decision="promote_checkpoint")
+        text = render_skypilot_yaml(
+            loaded,
+            plan,
+            run_id="paidf",
+            options=SkypilotRenderOptions(image_overrides={"*": ""}),
+        )
+        docs = [doc for doc in yaml.safe_load_all(text) if doc]
+        return next(doc for doc in docs[1:] if doc["name"].startswith("augment"))
+
+    # Shipped default: one augment pod, rendered exactly as before.
+    assert "num_nodes" not in _augment_task(spec)
+
+    gang = _augment_task(merge_config_overrides(spec, {"augment_nodes": "4"}))
+    assert gang["num_nodes"] == 4
+    assert "num_nodes" not in gang["resources"]
+
+
 def test_every_shipped_spec_still_validates() -> None:
     """The new profile validation must not reject anything already in the catalog."""
 

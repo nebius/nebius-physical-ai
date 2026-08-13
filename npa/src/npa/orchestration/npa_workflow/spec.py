@@ -382,13 +382,64 @@ def validate_spec(spec: NpaWorkflowSpec) -> None:
     _validate_resolvable(spec)
 
 
-def _validate_resource_profiles(spec: NpaWorkflowSpec) -> None:
-    """Validate resource-profile fields the renderer will act on.
+def profile_num_nodes(
+    profile: Any,
+    *,
+    name: str,
+    config: Mapping[str, Any] | None = None,
+    run: Mapping[str, Any] | None = None,
+) -> int:
+    """Return a resource profile's ``num_nodes`` (default 1), validating bounds.
 
-    ``num_nodes`` is the only one that changes the *shape* of the rendered task (a
-    multi-node gang instead of one pod), so a bad value has to fail at validate time
-    rather than at provision time.
+    The value may be a literal or a ``{{config.*}}`` token, so one blueprint can be
+    submitted with a different block size (``--var augment_nodes=4``) instead of
+    being edited. Callers that pass an unresolved profile must also pass the merged
+    config; planned steps already carry a fully resolved resource profile.
     """
+
+    if not isinstance(profile, dict):
+        raise NpaWorkflowError(f"resource profile {name!r} must be a mapping")
+    raw = profile.get("num_nodes")
+    if raw in (None, ""):
+        return 1
+    if isinstance(raw, bool):
+        raise NpaWorkflowError(
+            f"resource profile {name!r}: num_nodes must be an integer, not a bool"
+        )
+    if isinstance(raw, str) and "{{" in raw:
+        if config is None:
+            raise NpaWorkflowError(
+                f"resource profile {name!r}: num_nodes token requires merged config"
+            )
+        from npa.orchestration.npa_workflow.tokens import TokenError, resolve_tokens
+
+        try:
+            raw = resolve_tokens(raw, config=config, run=run or {})
+        except TokenError as exc:
+            raise NpaWorkflowError(
+                f"resource profile {name!r}: num_nodes token is unresolvable: {exc}"
+            ) from exc
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError) as exc:
+        raise NpaWorkflowError(
+            f"resource profile {name!r}: num_nodes must be an integer, got {raw!r}"
+        ) from exc
+    if value < 1:
+        raise NpaWorkflowError(
+            f"resource profile {name!r}: num_nodes must be >= 1, got {value}"
+        )
+    if value > MAX_PROFILE_NODES:
+        raise NpaWorkflowError(
+            f"resource profile {name!r}: num_nodes must be <= {MAX_PROFILE_NODES}, "
+            f"got {value} (a gang-scheduled block this large is almost always a typo; "
+            "it would sit PENDING rather than fail)"
+        )
+    return value
+
+
+def _validate_resource_profiles(spec: NpaWorkflowSpec) -> None:
+    """Validate resource-profile fields the renderer will act on."""
 
     from npa.orchestration.npa_workflow.interpreter import _make_context
 
@@ -396,35 +447,13 @@ def _validate_resource_profiles(spec: NpaWorkflowSpec) -> None:
     for name, profile in spec.resources.items():
         if not isinstance(profile, dict):
             raise NpaWorkflowError(f"resource profile {name!r} must be a mapping")
-        resolve_resource_profile(
+        resolved = resolve_resource_profile(
             str(name),
             profile,
             config=context.config,
             run=context.run,
         )
-        raw = profile.get("num_nodes")
-        if raw in (None, ""):
-            continue
-        if isinstance(raw, bool):
-            raise NpaWorkflowError(
-                f"resource profile {name!r}: num_nodes must be an integer, not a bool"
-            )
-        try:
-            value = int(raw)
-        except (TypeError, ValueError) as exc:
-            raise NpaWorkflowError(
-                f"resource profile {name!r}: num_nodes must be an integer, got {raw!r}"
-            ) from exc
-        if value < 1:
-            raise NpaWorkflowError(
-                f"resource profile {name!r}: num_nodes must be >= 1, got {value}"
-            )
-        if value > MAX_PROFILE_NODES:
-            raise NpaWorkflowError(
-                f"resource profile {name!r}: num_nodes must be <= {MAX_PROFILE_NODES}, "
-                f"got {value} (a gang-scheduled block this large is almost always a typo; "
-                "it would sit PENDING rather than fail)"
-            )
+        profile_num_nodes(resolved, name=name)
 
 
 def resolve_resource_profile(
