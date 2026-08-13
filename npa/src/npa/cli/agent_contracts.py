@@ -7,7 +7,11 @@ from pathlib import Path
 from npa.cli.agent_source_embed import embedded_module_source
 
 
+LEISAAC_CONTROL_READINESS_CONTRACT = "LEISAAC_CONTROL_READINESS_CONTRACT"
+
+
 AGENT_LEISAAC_CONTRACT = (
+    LEISAAC_CONTROL_READINESS_CONTRACT,
     "ensureLeIsaacTab",
     "ensureLeIsaacTab(leisaacCapability)",
     "unavailableLeIsaacStatus",

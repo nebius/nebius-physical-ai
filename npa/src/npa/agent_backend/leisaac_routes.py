@@ -169,7 +169,7 @@ def _log_exception(level: int, event: str, exc: BaseException) -> None:
 def _resolve(deps: LeIsaacDeps, requested_run_id: str) -> tuple[dict | None, str]:
     run_id = selected_run_id(deps.load_state(), requested_run_id)
     if not run_id:
-        return None, "Select a run that exposes a LeIsaac teleoperation session."
+        return None, "No LeIsaac runtime is registered with this agent."
     try:
         raw = deps.resolve_manifest(run_id)
     except Exception as exc:  # storage failures are capability absence, not a UI 500
@@ -398,7 +398,6 @@ def register_leisaac_routes(app: Any, deps: LeIsaacDeps) -> None:
     consumed_ws_nonces: dict[str, int | tuple[int, int]] = {}
     bundle_selection_lock = asyncio.Lock()
     bundle_mutations_inflight: set[str] = set()
-    bundle_restore_pending: dict[str, dict[str, str]] = {}
     bundle_mutation_deadlines: dict[str, float] = {}
     bundle_restore_lock = threading.Lock()
 
@@ -475,7 +474,7 @@ def register_leisaac_routes(app: Any, deps: LeIsaacDeps) -> None:
         now = time.monotonic()
         selected = selected_run_id(deps.load_state(), run_id)
         if not selected:
-            return None, "Select a run that exposes a LeIsaac teleoperation session."
+            return None, "No LeIsaac runtime is registered with this agent."
         with manifest_cache_lock:
             cached = manifest_cache.get(selected)
             if cached is not None:
@@ -717,72 +716,31 @@ def register_leisaac_routes(app: Any, deps: LeIsaacDeps) -> None:
                 actual_digests = _selection_digests(
                     health.get("selected_bundles", {}) if health else {}
                 )
-                restore_pending = bool(
+                selection_pending = bool(
                     health and desired_digests and actual_digests != desired_digests
                 )
                 mutation_active = False
-                if health and desired_digests and actual_digests != desired_digests:
-                    should_restore = False
+                if selection_pending:
                     with bundle_restore_lock:
                         now = time.monotonic()
                         for key, deadline in list(bundle_mutation_deadlines.items()):
                             if deadline <= now:
                                 bundle_mutation_deadlines.pop(key, None)
                         mutation_active = str(manifest["run_id"]) in bundle_mutation_deadlines
-                        pending = bundle_restore_pending.get(str(manifest["run_id"]))
-                        http_post = deps.http_post
-                        if (
-                            not mutation_active
-                            and pending != desired_digests
-                            and http_post is not None
-                        ):
-                            # Reserve this exact restore under the narrow lock,
-                            # then release it before the potentially 30-second
-                            # runtime request. Concurrent status polls remain
-                            # independent and cannot duplicate the mutation.
-                            bundle_restore_pending[str(manifest["run_id"])] = dict(
-                                desired_digests
-                            )
-                            should_restore = True
-                    if should_restore:
-                        assert http_post is not None
-                        try:
-                            upstream = http_post(
-                                f"{manifest['service_url']}/bundles/apply",
-                                json={"selection": desired_digests},
-                                headers={
-                                    "X-NPA-LeIsaac-Nonce": manifest["session_nonce"]
-                                },
-                                timeout=30.0,
-                                follow_redirects=False,
-                            )
-                        except Exception as exc:
-                            _log_exception(
-                                logging.WARNING, "LeIsaac bundle restore failed", exc
-                            )
-                            upstream = None
-                        if upstream is None or int(upstream.status_code) != 202:
-                            with bundle_restore_lock:
-                                if bundle_restore_pending.get(
-                                    str(manifest["run_id"])
-                                ) == desired_digests:
-                                    bundle_restore_pending.pop(
-                                        str(manifest["run_id"]), None
-                                    )
-                elif health and actual_digests == desired_digests:
-                    with bundle_restore_lock:
-                        bundle_restore_pending.pop(str(manifest["run_id"]), None)
-                if restore_pending:
+                if selection_pending and mutation_active:
                     payload = status_payload(
                         manifest,
-                        reason=(
-                            "Applying a checksum-verified custom bundle selection."
-                            if mutation_active
-                            else "Restoring persisted checksum-verified custom bundles."
-                        ),
+                        reason="Applying a checksum-verified custom bundle selection.",
                     )
                 else:
                     payload = status_payload(manifest, health, reason=reason)
+                    payload["bundle_selection_pending"] = selection_pending
+                    payload["bundle_selection_reason"] = (
+                        "Persisted checksum-verified bundles differ from this runtime. "
+                        "Connect teleoperation and obtain the controller lease to apply them."
+                        if selection_pending
+                        else ""
+                    )
         if payload.get("available"):
             payload["agent_transport_metrics"] = transport_metrics.snapshot()
         state = deps.load_state()
@@ -886,6 +844,9 @@ def register_leisaac_routes(app: Any, deps: LeIsaacDeps) -> None:
                 "bundle_sha256",
             }:
                 raise BundleError("bundle selection fields are invalid")
+            controller_headers = fallback_controller_headers(request, payload)
+            if controller_headers is None:
+                return controller_busy_response()
             store = await asyncio.to_thread(
                 bundle_store, str(request.query_params.get("run_id") or "")
             )
@@ -964,7 +925,10 @@ def register_leisaac_routes(app: Any, deps: LeIsaacDeps) -> None:
                     deps.http_post,
                     f"{capability['service_url']}/bundles/apply",
                     json=apply_payload,
-                    headers={"X-NPA-LeIsaac-Nonce": capability["session_nonce"]},
+                    headers={
+                        "X-NPA-LeIsaac-Nonce": capability["session_nonce"],
+                        **controller_headers,
+                    },
                     timeout=30.0,
                     follow_redirects=False,
                 )
@@ -1047,6 +1011,9 @@ def register_leisaac_routes(app: Any, deps: LeIsaacDeps) -> None:
                     "same-origin authenticated reset is required", status_code=403
                 )
             )
+        controller_headers = fallback_controller_headers(request, {})
+        if controller_headers is None:
+            return controller_busy_response()
         capability, reason = await asyncio.to_thread(
             cached_resolve, str(request.query_params.get("run_id") or "")
         )
@@ -1070,7 +1037,8 @@ def register_leisaac_routes(app: Any, deps: LeIsaacDeps) -> None:
                     f"{capability['service_url']}/bundles/apply",
                     json={"selection": {}},
                     headers={
-                        "X-NPA-LeIsaac-Nonce": capability["session_nonce"]
+                        "X-NPA-LeIsaac-Nonce": capability["session_nonce"],
+                        **controller_headers,
                     },
                     timeout=30.0,
                     follow_redirects=False,
@@ -1107,8 +1075,6 @@ def register_leisaac_routes(app: Any, deps: LeIsaacDeps) -> None:
                 current["bundle_selection_scope"] = current_scope
 
             await asyncio.to_thread(mutate_state, persist_reset)
-            with bundle_restore_lock:
-                bundle_restore_pending.pop(str(capability["run_id"]), None)
         finally:
             with bundle_restore_lock:
                 bundle_mutation_deadlines.pop(mutation_run_id, None)
@@ -1984,6 +1950,9 @@ def register_leisaac_routes(app: Any, deps: LeIsaacDeps) -> None:
                 status_code=400,
                 media_type="application/json",
             )
+        controller_headers = fallback_controller_headers(request, payload)
+        if controller_headers is None:
+            return controller_busy_response()
         manifest, reason = await asyncio.to_thread(cached_resolve, run_id)
         if not manifest:
             return deps.response(
@@ -1999,7 +1968,10 @@ def register_leisaac_routes(app: Any, deps: LeIsaacDeps) -> None:
                     deps.http_post,
                     f"{manifest['service_url']}/recorder/control",
                     json={"command": command, "request_id": request_id},
-                    headers={"X-NPA-LeIsaac-Nonce": manifest["session_nonce"]},
+                    headers={
+                        "X-NPA-LeIsaac-Nonce": manifest["session_nonce"],
+                        **controller_headers,
+                    },
                     timeout=10.0,
                     follow_redirects=False,
                 )

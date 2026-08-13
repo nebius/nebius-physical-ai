@@ -44,6 +44,10 @@ const leisaacModeStatus = (viewMode = "single_fast", recordingMode = "primary_on
   applied_recording_revision: 0,
 });
 
+const grantMockControllerLease = () => cy.window().then((win) =>
+  win.__NPA_AGENT_TEST__.setLeIsaacControllerLeaseForTest(true),
+);
+
 describe("NPA agent LeIsaac capability tab", () => {
   beforeEach(() => {
     cy.intercept("POST", "/api/leisaac/ws-session*", {
@@ -54,11 +58,44 @@ describe("NPA agent LeIsaac capability tab", () => {
   });
 
   it("stays mounted with retry state when live capability is unavailable", () => {
+    cy.intercept("GET", "/api/leisaac/status", {
+      statusCode: 200,
+      body: {
+        available: false,
+        episodes_available: false,
+        run_id: "",
+        reason: "No LeIsaac runtime is registered with this agent.",
+      },
+    }).as("readinessRetry");
     cy.get("#tabLeIsaac", { timeout: 10000 }).should("exist").click();
     cy.get("#panelLeIsaac").should("have.class", "is-active");
-    cy.get("#leisaacConnect").should("be.disabled");
-    cy.get("#leisaacRetry").should("be.visible");
-    cy.get("#leisaacEpisodesTitle").should("be.visible");
+    cy.get("#leisaacReadiness")
+      .should("be.visible")
+      .and("have.attr", "data-contract", "LEISAAC_CONTROL_READINESS_CONTRACT");
+    cy.get("#leisaacRetry").should("be.visible").and("not.be.disabled").focus();
+    cy.focused().should("have.id", "leisaacRetry");
+    cy.get("#leisaacConnect, #leisaacLiveGrid, #leisaacRecordStart, #leisaacResetDefaults")
+      .should("not.exist");
+    cy.get("#leisaacReadinessSummary").should("contain.text", "not displayed");
+    cy.get("#leisaacPrerequisitesTitle").should("contain.text", "Operator readiness checklist");
+    cy.get(".leisaac-launch-template")
+      .should("contain.text", "npa workbench leisaac launch")
+      .and("contain.text", "<project-alias>");
+    cy.get("#panelLeIsaac").should("contain.text", "This page never sets them");
+    cy.get("#leisaacRetry").click();
+    cy.wait("@readinessRetry");
+    cy.get("#leisaacAvailability").should("contain.text", "No LeIsaac runtime is registered");
+  });
+
+  it("keeps no-session readiness usable at a mobile viewport", () => {
+    cy.viewport(390, 844);
+    cy.get("#tabLeIsaac").click();
+    cy.get("#leisaacReadiness").should("be.visible");
+    cy.get("#leisaacRetry").should("be.visible").and("not.be.disabled");
+    cy.get("#leisaacConnect, #leisaacLiveGrid, #leisaacRecordStart").should("not.exist");
+    cy.window().then((win) => {
+      expect(win.document.documentElement.scrollWidth).to.be.at.most(win.innerWidth);
+    });
   });
 
   it("mounts before a slow capability request can block first paint", () => {
@@ -75,9 +112,9 @@ describe("NPA agent LeIsaac capability tab", () => {
     cy.reload();
     cy.get("#tabLeIsaac", { timeout: 1000 }).should("be.visible").click();
     cy.get("#panelLeIsaac").should("have.class", "is-active");
-    cy.get("#leisaacConnect").should("be.disabled");
-    cy.get("#leisaacRetry").should("be.visible");
-    cy.get("#leisaacAvailability").should("contain.text", "No active LeIsaac session");
+    cy.get("#leisaacConnect").should("not.exist");
+    cy.get("#leisaacRetry").should("be.visible").and("not.be.disabled");
+    cy.get("#leisaacAvailability").should("contain.text", "No LeIsaac runtime is registered");
   });
 
   it("shows and preserves four real defaults for a completely fresh client", () => {
@@ -116,16 +153,20 @@ describe("NPA agent LeIsaac capability tab", () => {
     cy.reload();
     cy.wait("@defaultStatus");
     cy.get("#tabLeIsaac", { timeout: 10000 }).click();
-    cy.get("#leisaacRobotSelection").should("have.value", "so101_follower");
-    cy.get("#leisaacSceneSelection").should("have.value", "table_with_cube");
-    cy.get("#leisaacDeviceSelection").should("have.value", "browser_keyboard_so101");
-    cy.get("#leisaacTaskSelection").should("have.value", "LeIsaac-SO101-LiftCube-v0");
+    cy.get("#leisaacRobotSelection").should("have.attr", "data-value", "so101_follower");
+    cy.get("#leisaacSceneSelection").should("have.attr", "data-value", "table_with_cube");
+    cy.get("#leisaacDeviceSelection").should("have.attr", "data-value", "browser_keyboard_so101");
+    cy.get("#leisaacTaskSelection").should("have.attr", "data-value", "LeIsaac-SO101-LiftCube-v0");
     cy.get("#leisaacInputDevice")
       .should("have.value", "keyboard")
       .find("option:selected")
       .should("contain.text", "default test device");
     cy.get("#leisaacConnect").should("not.be.disabled");
-    cy.get("#leisaacSendNeutralAction").should("not.be.disabled");
+    cy.get("#leisaacSendNeutralAction")
+      .should("be.disabled")
+      .and("have.attr", "aria-disabled", "true")
+      .and("have.attr", "aria-describedby", "leisaacControllerPrerequisite");
+    cy.get("#leisaacControllerPrerequisite").should("contain.text", "Connect teleoperation");
     cy.get("#leisaacCanvas").should("exist");
     cy.get("#leisaacViewMode").should("have.value", "single_fast");
     cy.get("#leisaacLiveGrid").should("have.class", "is-single");
@@ -170,6 +211,9 @@ describe("NPA agent LeIsaac capability tab", () => {
     });
     cy.window().then((win) => win.__NPA_AGENT_TEST__.refreshLeIsaacCapability(status.run_id));
     cy.wait("@modeRefresh");
+    cy.get("#leisaacViewMode").should("be.disabled");
+    cy.get("#leisaacRecordingCameras").should("be.disabled");
+    grantMockControllerLease();
     cy.get("#leisaacViewMode")
       .should("not.be.disabled")
       .and("have.value", "single_fast")
@@ -180,6 +224,55 @@ describe("NPA agent LeIsaac capability tab", () => {
       .and("have.value", "primary_only")
       .find("option")
       .should("have.length", 2);
+  });
+
+  it("keeps a second browser locked and exposes controls only after its lease is active", () => {
+    const status = {
+      available: true,
+      episodes_available: false,
+      run_id: "mock-controller-lease",
+      task: "LeIsaac-SO101-LiftCube-v0",
+      configuration: defaultLeIsaacConfiguration(),
+      ...leisaacModeStatus(),
+      cameras: ["workspace"],
+      stream_transport: "websocket-v1",
+      recorder: { state: "idle", completed_episode_count: 0 },
+    };
+    cy.intercept("GET", "/api/leisaac/status*", { statusCode: 200, body: status }).as("leaseStatus");
+    cy.window().then((win) => win.__NPA_AGENT_TEST__.refreshLeIsaacCapability(status.run_id));
+    cy.wait("@leaseStatus");
+    cy.get("#tabLeIsaac").click();
+    cy.get("#leisaacConnect").should("be.visible").and("not.be.disabled");
+    cy.window().then((win) => win.__NPA_AGENT_TEST__.setLeIsaacControllerLeaseForTest(
+      false,
+      "Another authenticated browser currently holds the controller lease. Controller actions remain locked here.",
+    ));
+    cy.get("#leisaacControllerPrerequisite").should("contain.text", "Another authenticated browser");
+    cy.get("#leisaacViewMode, #leisaacRecordingCameras, #leisaacRecordStart, #leisaacSendNeutralAction, #leisaacResetDefaults")
+      .each(($control) => {
+        expect($control).to.be.disabled;
+        expect($control).to.have.attr("aria-disabled", "true");
+        expect($control.attr("aria-describedby")).to.contain("leisaacControllerPrerequisite");
+      });
+    cy.get("#leisaacStreamHost")
+      .should("have.attr", "tabindex", "-1")
+      .and("have.attr", "aria-disabled", "true");
+    cy.get("#leisaacConnect")
+      .should("not.be.disabled")
+      .and("contain.text", "Retry controller lease");
+
+    grantMockControllerLease();
+    cy.get("#leisaacControllerPrerequisite").should("contain.text", "Controller lease active");
+    cy.get("#leisaacViewMode, #leisaacRecordingCameras, #leisaacRecordStart, #leisaacSendNeutralAction, #leisaacResetDefaults")
+      .each(($control) => {
+        expect($control).not.to.be.disabled;
+        expect($control).to.have.attr("aria-disabled", "false");
+      });
+    cy.get("#leisaacRecordSuccess, #leisaacRecordFailure, #leisaacRecordFinalize")
+      .should("be.disabled");
+    cy.get("#leisaacStreamHost")
+      .should("have.attr", "tabindex", "0")
+      .and("have.attr", "aria-disabled", "false");
   });
 
   it("shows task/environment metadata and enforces recorder transitions", () => {
@@ -234,6 +327,8 @@ describe("NPA agent LeIsaac capability tab", () => {
       "/api/leisaac/recorder?run_id=mock-recorder",
       (req) => {
         expect(req.headers["x-npa-leisaac-control"]).to.equal("1");
+        expect(req.headers["x-npa-leisaac-client-id"]).to.match(/^[A-Za-z0-9._:-]+$/);
+        expect(req.headers["x-npa-leisaac-lease-id"]).to.equal("a".repeat(64));
         expect(req.body.request_id).to.be.a("string").and.not.be.empty;
         if (req.body.command === "start" && recorderState === "idle")
           recorderState = "recording";
@@ -275,6 +370,7 @@ describe("NPA agent LeIsaac capability tab", () => {
     );
     cy.wait("@recorderStatus");
     cy.get("#tabLeIsaac").click();
+    grantMockControllerLease();
     cy.get("#panelLeIsaac").should("contain.text", "LeIsaac-SO101-LiftCube-v0");
     cy.get("#panelLeIsaac").should("contain.text", "table-b [1]");
     cy.get("#panelLeIsaac").should(
@@ -398,6 +494,7 @@ describe("NPA agent LeIsaac capability tab", () => {
     );
     cy.wait("@retryStatus");
     cy.get("#tabLeIsaac").click();
+    grantMockControllerLease();
     cy.get("#leisaacRecordFinalize").should("not.be.disabled").click();
     cy.wait("@retryControl");
     cy.get("#leisaacRecorderError").should(
@@ -473,6 +570,7 @@ describe("NPA agent LeIsaac capability tab", () => {
     });
     cy.wait("@networkRetryStatus");
     cy.get("#tabLeIsaac").click();
+    grantMockControllerLease();
     cy.window().then((win) => {
       const originalFetch = win.fetch.bind(win);
       let rejectRecorderRequest = true;
@@ -499,7 +597,7 @@ describe("NPA agent LeIsaac capability tab", () => {
     cy.get("#leisaacRecordSuccess").should("not.be.disabled");
   });
 
-  it("appears only for a live run and drives the upstream keyboard client", () => {
+  it("switches readiness into a live run and drives the upstream keyboard client", () => {
     cy.intercept("GET", "/api/leisaac/status?run_id=mock-run", {
       statusCode: 200,
       body: {
@@ -833,7 +931,9 @@ describe("NPA agent LeIsaac capability tab", () => {
     cy.get("#tabLeIsaac").should("exist");
     cy.get("#panelLeIsaac").should("exist");
     cy.get("#leisaacAvailability").should("contain.text", "session expired");
-    cy.get("#leisaacConnect").should("be.disabled");
+    cy.get("#leisaacConnect, #leisaacLiveGrid, #leisaacRecordStart").should("not.exist");
+    cy.get("#leisaacReadiness").should("be.visible");
+    cy.get("#leisaacRetry").should("not.be.disabled");
     cy.window().then((win) =>
       {
         expect(win.RTCPeerConnection).to.equal(win.__LEISAAC_NATIVE_PEER__);
@@ -1027,6 +1127,8 @@ describe("NPA agent LeIsaac capability tab", () => {
               type: "resumed",
               run_id: message.run_id,
               client_id: message.client_id,
+              lease_id: "a".repeat(64),
+              lease_generation: 1,
               next_seq: 1,
               last_applied_seq: 0,
               keys_down: [],
@@ -1052,6 +1154,8 @@ describe("NPA agent LeIsaac capability tab", () => {
               type: "resumed",
               run_id: message.run_id,
               client_id: message.client_id,
+              lease_id: "a".repeat(64),
+              lease_generation: 1,
               next_seq: 1,
               last_applied_seq: 0,
               keys_down: [],
@@ -1261,6 +1365,8 @@ describe("NPA agent LeIsaac capability tab", () => {
                 type: "resumed",
                 run_id: message.run_id,
                 client_id: message.client_id,
+                lease_id: "a".repeat(64),
+                lease_generation: 1,
                 next_seq: nextExpected,
                 last_applied_seq: nextExpected - 1,
                 keys_down: [],
@@ -1569,8 +1675,12 @@ describe("NPA agent LeIsaac capability tab", () => {
       );
       video.fail();
     });
+    cy.get("#leisaacViewMode").should("be.disabled");
+    cy.get("#leisaacControllerPrerequisite").should("contain.text", "Another authenticated browser");
     cy.window().then((win) => { win.__LEISAAC_DROP_NEXT_MODE_REQUEST__ = true; });
-    cy.get("#leisaacViewMode").select("dual_slow");
+    cy.get("#leisaacViewMode", { timeout: 10000 })
+      .should("not.be.disabled")
+      .select("dual_slow");
     cy.get("#leisaacModeStatus", { timeout: 10000 })
       .should("contain.text", "Applied view")
       .and("contain.text", "Dual view");
@@ -1822,17 +1932,19 @@ describe("NPA agent LeIsaac capability tab", () => {
     cy.get("#tabLeIsaac").click();
     cy.get("#leisaacAvailability").should("contain.text", "reconnecting");
     cy.get("#leisaacEpisodesTitle").should("be.visible");
-    cy.get("#leisaacViewUploadedEpisode").should("be.visible").click();
+    cy.wait("@episodeList");
+    cy.wait("@episodeVersions");
+    cy.get("#leisaacEpisodeVersion").select(versionId);
+    cy.get("#leisaacEpisodesNextPage").should("not.be.disabled").click();
+    cy.wait("@episodeListNext");
+    cy.contains("#leisaacEpisodeList button", "Open").click();
     cy.window().then((win) =>
       win.__NPA_AGENT_TEST__.refreshLeIsaacCapability("mock-episodes"),
     );
     cy.wait("@episodeDetail");
     cy.wait("@episodeTimeline");
     cy.get("#leisaacEpisodePlayer").should("be.visible");
-    cy.get("#leisaacEpisodeStatus").should(
-      "contain.text",
-      "Showing 1 immutable episode",
-    );
+    cy.get("#leisaacEpisodePlayerTitle").should("contain.text", "Episode 1 · failure");
     cy.get("#leisaacEpisodeSecondaryPane").should("be.visible");
     cy.get("#leisaacEpisodeSingleCamera").should("not.be.visible");
     cy.get("#leisaacEpisodeMetadata")
@@ -1923,174 +2035,115 @@ describe("NPA agent LeIsaac capability tab", () => {
     cy.get("#leisaacEpisodesNextPage").should("not.be.disabled");
   });
 
-  it("validates, uploads, discovers, and applies robot, scene, and device bundles", () => {
-    const digests = { robot: "d".repeat(64), scene: "e".repeat(64), device: "f".repeat(64) };
+  it("keeps offline bundle storage useful but applies only with a live controller lease", () => {
+    const digest = "d".repeat(64);
     const uploaded = [];
-    cy.intercept("GET", "/api/leisaac/status?run_id=mock-bundles", {
+    let liveReady = false;
+    let selectionPending = false;
+    const status = () => ({
+      available: liveReady,
+      episodes_available: true,
+      reason: liveReady ? "" : "registered runtime health is not ready",
+      run_id: "mock-bundles",
+      task: "LeIsaac-SO101-LiftCube-v0",
+      dataset_uri: "s3://bucket/datasets/leisaac",
+      bundles_url: "/api/leisaac/bundles?run_id=mock-bundles",
+      bundle_select_url: "/api/leisaac/bundles/select?run_id=mock-bundles",
+      bundle_reset_url: "/api/leisaac/bundles/reset?run_id=mock-bundles",
+      bundle_selection_pending: selectionPending,
+      bundle_selection_reason: selectionPending
+        ? "Persisted checksum-verified bundles differ from this runtime. Connect teleoperation and obtain the controller lease to apply them."
+        : "",
+      configuration: defaultLeIsaacConfiguration(),
+      ...leisaacModeStatus(),
+      cameras: ["workspace"],
+      recorder: { state: "idle", completed_episode_count: 0 },
+    });
+    cy.intercept("GET", "/api/leisaac/status?run_id=mock-bundles", (req) =>
+      req.reply({ statusCode: 200, body: status() }),
+    ).as("bundleStatus");
+    cy.intercept("GET", "/api/leisaac/episodes/versions?*", {
       statusCode: 200,
-      body: {
-        available: false,
-        episodes_available: false,
-        run_id: "mock-bundles",
-        task: "LeIsaac-SO101-LiftCube-v0",
-        dataset_uri: "s3://bucket/datasets/leisaac",
-        bundles_url: "/api/leisaac/bundles?run_id=mock-bundles",
-        bundle_select_url: "/api/leisaac/bundles/select?run_id=mock-bundles",
-        bundle_reset_url: "/api/leisaac/bundles/reset?run_id=mock-bundles",
-        configuration: defaultLeIsaacConfiguration(),
-      },
-    }).as("bundleStatus");
-    cy.intercept("GET", "/api/leisaac/bundles?run_id=mock-bundles", (req) => {
-      req.reply({
-        statusCode: 200,
-        body: {
-          bundles: uploaded,
-          bounded: true,
-          truncated: false,
-        },
-      });
-    }).as("bundleList");
+      body: { versions: [], next_cursor: "", bounded: true },
+    });
+    cy.intercept("GET", "/api/leisaac/episodes?*", {
+      statusCode: 200,
+      body: { episodes: [], next_cursor: "", source_count: 0, loaded_count: 0, filtered_count: 0, skipped_count: 0 },
+    });
+    cy.intercept("GET", "/api/leisaac/bundles?run_id=mock-bundles", (req) =>
+      req.reply({ statusCode: 200, body: { bundles: uploaded, bounded: true, truncated: false } }),
+    ).as("bundleList");
     cy.intercept("POST", "/api/leisaac/bundles?run_id=mock-bundles", (req) => {
       expect(req.headers["x-npa-leisaac-control"]).to.equal("1");
-      expect(req.body.schema).to.equal("npa.leisaac.bundle.v1");
-      expect(["robot", "scene", "device"]).to.include(req.body.kind);
       expect(req.body.files.every((file) => /^[a-f0-9]{64}$/.test(file.sha256))).to.equal(true);
-      const digest = digests[req.body.kind];
       const index = {
         schema: "npa.leisaac.bundle.v1",
-        kind: req.body.kind,
+        kind: "robot",
         name: req.body.name,
         bundle_sha256: digest,
         entrypoint: req.body.entrypoint,
         bytes: 64,
       };
       uploaded.push(index);
-      req.reply({
-        statusCode: 201,
-        body: index,
-      });
+      req.reply({ statusCode: 201, body: index });
     }).as("bundleUpload");
     cy.intercept("POST", "/api/leisaac/bundles/select?run_id=mock-bundles", (req) => {
-      expect(req.body).to.deep.equal({ kind: req.body.kind, bundle_sha256: digests[req.body.kind] });
+      expect(req.headers["x-npa-leisaac-lease-id"]).to.equal("a".repeat(64));
+      expect(req.body).to.deep.equal({ kind: "robot", bundle_sha256: digest });
       req.reply({ statusCode: 202, body: { selected: req.body, restarting: true } });
     }).as("bundleSelect");
     cy.intercept("POST", "/api/leisaac/bundles/reset?run_id=mock-bundles", (req) => {
-      expect(req.headers["x-npa-leisaac-control"]).to.equal("1");
-      req.reply({
-        statusCode: 202,
-        body: {
-          reset: true,
-          selected_bundles: {},
-          configuration: defaultLeIsaacConfiguration(),
-          restarting: true,
-        },
-      });
+      expect(req.headers["x-npa-leisaac-lease-id"]).to.equal("a".repeat(64));
+      req.reply({ statusCode: 202, body: { reset: true, restarting: true } });
     }).as("bundleReset");
 
-    cy.window().then((win) =>
-      win.__NPA_AGENT_TEST__.refreshLeIsaacCapability("mock-bundles"),
-    );
+    cy.window().then((win) => win.__NPA_AGENT_TEST__.refreshLeIsaacCapability("mock-bundles"));
     cy.wait("@bundleStatus");
     cy.get("#tabLeIsaac").click();
     cy.wait("@bundleList");
+    cy.get("#leisaacReadiness").should("be.visible");
+    cy.get("#leisaacBundleUpload, #leisaacBundleRefresh").should("not.be.disabled");
+    cy.get("#leisaacBundleSelect, #leisaacResetDefaults").should("not.exist");
     cy.get("#leisaacBundleName").type("custom-so101");
     cy.get("#leisaacBundleKind").select("robot");
-    cy.get("#leisaacBundleFiles").selectFile([
-      {
-        contents: Cypress.Buffer.from('#usda 1.0\ndef Xform "SO101" {}\n'),
-        fileName: "robot.usda",
-        mimeType: "application/octet-stream",
-      },
-      {
-        contents: Cypress.Buffer.from('ROBOT_USD = "robot.usda"\n'),
-        fileName: "asset.py",
-        mimeType: "text/x-python",
-      },
-    ]);
-    cy.get("#leisaacBundleUpload").click();
-    cy.wait("@bundleUpload");
-    cy.wait("@bundleList");
-    cy.get("#leisaacBundleSelection").should("have.value", digests.robot);
-    cy.get("#leisaacBundleSelect").click();
-    cy.wait("@bundleSelect");
-    cy.get("#leisaacBundleStatus")
-      .should("contain.text", "Selected robot bundle")
-      .and("contain.text", digests.robot.slice(0, 16));
-
-    cy.get("#leisaacBundleName").clear().type("custom-workcell");
-    cy.get("#leisaacBundleKind").select("scene");
     cy.get("#leisaacBundleFiles").selectFile({
-      contents: Cypress.Buffer.from('#usda 1.0\ndef Xform "Scene" {}\n'),
-      fileName: "scene.usda",
+      contents: Cypress.Buffer.from('#usda 1.0\ndef Xform "SO101" {}\n'),
+      fileName: "robot.usda",
       mimeType: "application/octet-stream",
     });
     cy.get("#leisaacBundleUpload").click();
     cy.wait("@bundleUpload");
     cy.wait("@bundleList");
-    cy.get("#leisaacBundleSelection").should("have.value", digests.scene);
-    cy.get("#leisaacBundleSelect").click();
-    cy.wait("@bundleSelect");
-    cy.get("#leisaacBundleStatus").should("contain.text", "Selected scene bundle");
+    cy.get("#leisaacBundleStatus").should("contain.text", "has not been applied");
+    cy.get("#leisaacBundleLibrary").should("contain.text", "custom-so101");
 
-    cy.get("#leisaacBundleName").clear().type("safe-so101-device");
-    cy.get("#leisaacBundleKind").select("device");
-    cy.get("#leisaacBundleFiles").selectFile({
-      contents: Cypress.Buffer.from(JSON.stringify({
-        schema: "npa.leisaac.so101-device.v1",
-        driver: "custom-so101",
-        action_order: ["x", "y", "z", "roll", "pitch", "yaw", "shoulder_pan", "gripper"],
-        rate_hz: 50,
-      })),
-      fileName: "device.json",
-      mimeType: "application/json",
+    cy.then(() => {
+      liveReady = true;
+      selectionPending = true;
     });
-    cy.get("#leisaacBundleUpload").click();
-    cy.wait("@bundleUpload");
-    cy.wait("@bundleList");
-    cy.get("#leisaacBundleSelection").should("have.value", digests.device);
-    cy.get("#leisaacBundleSelect").click();
+    cy.window().then((win) => win.__NPA_AGENT_TEST__.refreshLeIsaacCapability("mock-bundles"));
+    cy.wait("@bundleStatus");
+    cy.get("#leisaacConfigurationStatus")
+      .should("contain.text", "differ from this runtime")
+      .and("contain.text", "controller lease");
+    cy.get("#leisaacConnect").should("not.be.disabled");
+    cy.get("#leisaacBundleSelection").select(digest);
+    cy.get("#leisaacBundleSelect").should("be.disabled");
+    grantMockControllerLease();
+    cy.get("#leisaacBundleSelect")
+      .should("not.be.disabled")
+      .and("have.attr", "aria-disabled", "false")
+      .click();
     cy.wait("@bundleSelect");
     cy.get("#leisaacBundleStatus")
-      .should("contain.text", "Selected device bundle")
+      .should("contain.text", "Selected robot bundle")
       .and("contain.text", "restart accepted");
-
-    cy.intercept("GET", "/api/leisaac/status?run_id=mock-bundles", {
-      statusCode: 200,
-      body: {
-        available: false,
-        episodes_available: false,
-        run_id: "mock-bundles",
-        task: "LeIsaac-SO101-LiftCube-v0",
-        reason: "selected runtime is restarting",
-        configuration: defaultLeIsaacConfiguration(),
-        bundle_reset_url: "/api/leisaac/bundles/reset?run_id=mock-bundles",
-      },
-    }).as("bundleRestartStatus");
-    cy.get("#panelLeIsaac").then(($mountedPanel) => {
-      cy.window().then((win) =>
-        win.__NPA_AGENT_TEST__.refreshLeIsaacCapability("mock-bundles"),
-      );
-      cy.wait("@bundleRestartStatus");
-      cy.get("#panelLeIsaac").then(($refreshedPanel) => {
-        expect($refreshedPanel[0], "mounted panel survives runtime restart").to.equal(
-          $mountedPanel[0],
-        );
-      });
-      cy.get("#leisaacBundleStatus")
-        .should("contain.text", "Selected device bundle")
-        .and("contain.text", "restart accepted");
-    });
-    cy.get("#leisaacResetDefaults").click();
+    cy.get("#leisaacResetDefaults").should("be.disabled");
+    cy.get("#leisaacControllerPrerequisite").should("contain.text", "controller lease");
+    grantMockControllerLease();
+    cy.get("#leisaacResetDefaults").should("not.be.disabled").click();
     cy.wait("@bundleReset");
     cy.get("#leisaacBundleStatus").should("contain.text", "Built-in defaults selected");
-    cy.window().then((win) =>
-      win.__NPA_AGENT_TEST__.refreshLeIsaacCapability("mock-bundles"),
-    );
-    cy.wait("@bundleRestartStatus");
-    cy.get("#leisaacRobotSelection").should("have.value", "so101_follower");
-    cy.get("#leisaacSceneSelection").should("have.value", "table_with_cube");
-    cy.get("#leisaacDeviceSelection").should("have.value", "browser_keyboard_so101");
-    cy.get("#leisaacTaskSelection").should("have.value", "LeIsaac-SO101-LiftCube-v0");
   });
 
   it("falls back explicitly and self-heals after bounded preferred-transport retries", () => {
@@ -2156,9 +2209,10 @@ describe("NPA agent LeIsaac capability tab", () => {
         ...modeFields,
       },
     });
-    cy.intercept("GET", "/api/leisaac/status", {
-      statusCode: 200,
-      body: {
+    cy.intercept("GET", "/api/leisaac/status", (request) => {
+      request.reply({
+        statusCode: 200,
+        body: {
         available: true,
         run_id: "mock-ws-fallback",
         task: "LeIsaac-SO101-PickOrange-v0",
@@ -2168,7 +2222,16 @@ describe("NPA agent LeIsaac capability tab", () => {
         frame_url: "/api/leisaac/frame.jpg?run_id=mock-ws-fallback",
         input_url: "/api/leisaac/input?run_id=mock-ws-fallback",
         ...modeFields,
-      },
+        requested_view_mode: authoritativeViewRevision ? "dual_slow" : "single_fast",
+        applied_view_mode: authoritativeViewRevision ? "dual_slow" : "single_fast",
+        view_revision: authoritativeViewRevision,
+        applied_view_revision: authoritativeViewRevision,
+        requested_recording_camera_mode: authoritativeRecordingRevision ? "primary_and_secondary" : "primary_only",
+        applied_recording_camera_mode: authoritativeRecordingRevision ? "primary_and_secondary" : "primary_only",
+        recording_revision: authoritativeRecordingRevision,
+        applied_recording_revision: authoritativeRecordingRevision,
+        },
+      });
     });
     cy.intercept("POST", "/api/leisaac/select", {
       statusCode: 200,
@@ -2277,6 +2340,8 @@ describe("NPA agent LeIsaac capability tab", () => {
               type: "resumed",
               run_id: message.run_id,
               client_id: message.client_id,
+              lease_id: "a".repeat(64),
+              lease_generation: 1,
               next_seq: 1,
               last_applied_seq: 0,
               keys_down: [],
@@ -2298,12 +2363,7 @@ describe("NPA agent LeIsaac capability tab", () => {
     );
     cy.wait("@wsFallbackStatus");
     cy.get("#tabLeIsaac").click();
-    cy.get("#leisaacRecordingCameras").select("primary_and_secondary");
-    cy.wait("@fallbackModeControl");
-    cy.get("#leisaacModeStatus", { timeout: 5000 }).should(
-      "contain.text",
-      "recording: Primary + secondary",
-    );
+    cy.get("#leisaacRecordingCameras").should("be.disabled");
     cy.get("#leisaacConnect").click();
     cy.wait("@wsFallbackFrame");
     cy.get("#leisaacTransportStatus", { timeout: 10000 })
@@ -2315,6 +2375,13 @@ describe("NPA agent LeIsaac capability tab", () => {
       .and("contain.text", "latest-frame-wins");
     cy.get("#leisaacFrame").should("not.be.visible");
     cy.get("#leisaacCanvas").should("be.visible");
+    cy.get("#leisaacRecordingCameras")
+      .should("not.be.disabled")
+      .select("primary_and_secondary");
+    cy.get("#leisaacModeStatus", { timeout: 5000 }).should(
+      "contain.text",
+      "recording: Primary + secondary",
+    );
     cy.window().then((win) => {
       const control = win.__mockLeIsaacRecoveredControl;
       expect(control, "recovered preferred control socket").to.exist;
@@ -2322,7 +2389,6 @@ describe("NPA agent LeIsaac capability tab", () => {
       if (control.onclose) control.onclose({ target: control });
     });
     cy.get("#leisaacViewMode").select("dual_slow");
-    cy.wait("@preferredGapModeControl");
     cy.window().should((win) => {
       const evidence = win.__NPA_AGENT_TEST__.leisaacTransportEvidence();
       expect(evidence.active).to.equal("websocket-v1");

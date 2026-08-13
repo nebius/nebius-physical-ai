@@ -883,12 +883,25 @@ def test_authenticated_backend_routes_gate_status_and_proxy_client(monkeypatch) 
     )
     assert conflicting_browser.status_code == 409
     assert conflicting_browser.json()["code"] == "controller_busy"
+    recorder_without_lease = client.post(
+        "/leisaac/recorder",
+        params={"run_id": raw_manifest["run_id"]},
+        headers={
+            "x-forwarded-proto": "https",
+            "x-npa-leisaac-control": "1",
+        },
+        json={"command": "mark-success", "request_id": "missing-lease"},
+    )
+    assert recorder_without_lease.status_code == 409
+    assert recorder_without_lease.json()["code"] == "controller_busy"
     recorder_control = client.post(
         "/leisaac/recorder",
         params={"run_id": raw_manifest["run_id"]},
         headers={
             "x-forwarded-proto": "https",
             "x-npa-leisaac-control": "1",
+            "x-npa-leisaac-client-id": "route-test-browser",
+            "x-npa-leisaac-lease-id": "a" * 64,
         },
         json={"command": "mark-success", "request_id": "route-test-command"},
     )
@@ -897,6 +910,11 @@ def test_authenticated_backend_routes_gate_status_and_proxy_client(monkeypatch) 
     assert recorder_post[1]["json"] == {
         "command": "mark-success",
         "request_id": "route-test-command",
+    }
+    assert recorder_post[1]["headers"] == {
+        "X-NPA-LeIsaac-Nonce": raw_manifest["session_nonce"],
+        "X-NPA-LeIsaac-Client-ID": "route-test-browser",
+        "X-NPA-LeIsaac-Lease-ID": "a" * 64,
     }
     rejected_control = client.post(
         "/leisaac/input",

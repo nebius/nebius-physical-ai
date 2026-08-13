@@ -188,6 +188,93 @@ def test_runtime_public_surfaces_require_nonce_while_health_endpoints_are_minima
     assert client.get("/client/index.js", headers=headers).status_code == 200
 
 
+def test_runtime_configuration_and_recorder_require_active_controller_lease(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _session_server_module()
+    nonce = "f" * 64
+    lease_id = "a" * 64
+    monkeypatch.setenv("NPA_LEISAAC_SESSION_NONCE", nonce)
+    module.CONTROL_OWNER.update(
+        token="owner-token",
+        client_id="owner-browser",
+        lease_id=lease_id,
+        lease_generation=1,
+    )
+    applied: list[dict] = []
+    recorded: list[tuple[str, str]] = []
+
+    def apply(selection):
+        applied.append(selection)
+        return selection
+
+    def record(command, request_id):
+        recorded.append((command, request_id))
+        return 202, {"accepted": True, "request_id": request_id}
+
+    monkeypatch.setattr(module, "apply_bundle_selection", apply)
+    monkeypatch.setattr(module, "enqueue_recorder_command", record)
+    client = TestClient(module.build_app())
+    nonce_headers = {"X-NPA-LeIsaac-Nonce": nonce}
+
+    for path, payload in (
+        ("/bundles/apply", {"selection": {}}),
+        ("/recorder/control", {"command": "start", "request_id": "lease-test"}),
+    ):
+        missing = client.post(path, headers=nonce_headers, json=payload)
+        assert missing.status_code == 409
+        assert missing.json()["code"] == "controller_busy"
+        second_client = client.post(
+            path,
+            headers={
+                **nonce_headers,
+                "X-NPA-LeIsaac-Client-ID": "other-browser",
+                "X-NPA-LeIsaac-Lease-ID": "b" * 64,
+            },
+            json=payload,
+        )
+        assert second_client.status_code == 409
+        assert second_client.json()["code"] == "controller_busy"
+
+    owner_headers = {
+        **nonce_headers,
+        "X-NPA-LeIsaac-Client-ID": "owner-browser",
+        "X-NPA-LeIsaac-Lease-ID": lease_id,
+    }
+    assert (
+        client.post(
+            "/bundles/apply", headers=owner_headers, json={"selection": {}}
+        ).status_code
+        == 202
+    )
+    assert (
+        client.post(
+            "/recorder/control",
+            headers=owner_headers,
+            json={"command": "start", "request_id": "lease-test"},
+        ).status_code
+        == 202
+    )
+    assert applied == [{}]
+    assert recorded == [("start", "lease-test")]
+
+    # A nonce-authenticated agent request still cannot mutate runtime state
+    # without the active browser controller lease.
+    restore_headers = {
+        **nonce_headers,
+        "X-NPA-LeIsaac-System-Restore": "1",
+    }
+    assert client.post(
+        "/bundles/apply", headers=restore_headers, json={"selection": {}}
+    ).status_code == 409
+    restore_recorder = client.post(
+        "/recorder/control",
+        headers=restore_headers,
+        json={"command": "start", "request_id": "restore-cannot-record"},
+    )
+    assert restore_recorder.status_code == 409
+
+
 def test_runtime_datachannel_source_coalesces_stale_causal_frames() -> None:
     module = _session_server_module()
     module.FRAME_LATEST = AsyncLatestByKey(("workspace", "overview"))

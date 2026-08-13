@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
     <meta name="npa-ui-version" content="{AGENT_UI_VERSION}">
+    <meta name="leisaac-control-readiness-contract" content="LEISAAC_CONTROL_READINESS_CONTRACT">
     <meta name="npa-artifact-discovery-contract" content="s3-source-qualified-v1">
     <title>NPA Agent</title>
     <link rel="preload" href="/rerun/re_viewer.js" as="script" crossorigin>
@@ -167,6 +168,87 @@
       .leisaac-head h3 { color: #f8fafc; margin-bottom: 4px; }
       .leisaac-head .hint { color: #94a3b8; }
       .leisaac-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+      .leisaac-readiness {
+        display: grid;
+        gap: 14px;
+        padding: 20px;
+        color: #e2e8f0;
+        background:
+          radial-gradient(circle at 0 0, rgba(229, 255, 79, 0.09), transparent 34%),
+          #080d18;
+      }
+      .leisaac-readiness-card {
+        display: grid;
+        gap: 10px;
+        padding: 16px;
+        border: 1px solid #334155;
+        border-radius: 12px;
+        background: #0b1220;
+      }
+      .leisaac-readiness-card h4 { margin: 0; color: #f8fafc; font-size: 16px; }
+      .leisaac-readiness-card p,
+      .leisaac-readiness-card li { color: #cbd5e1; line-height: 1.5; }
+      .leisaac-readiness-card ul { margin: 0; padding-left: 20px; }
+      .leisaac-readiness-card code {
+        color: #f8fafc;
+        background: #111c2e;
+        border-radius: 4px;
+        padding: 1px 4px;
+      }
+      .leisaac-launch-template {
+        margin: 0;
+        max-width: 100%;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        color: #dbeafe;
+        background: #020617;
+        border: 1px solid #293244;
+        border-radius: 9px;
+        padding: 12px;
+        font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      .leisaac-readonly-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(120px, 1fr));
+        gap: 8px;
+        margin: 0;
+      }
+      .leisaac-readonly-grid div {
+        min-width: 0;
+        padding: 9px 10px;
+        border: 1px solid #334155;
+        border-radius: 8px;
+        background: #111827;
+      }
+      .leisaac-readonly-grid dt { color: #94a3b8; font-size: 12px; }
+      .leisaac-readonly-grid dd {
+        margin: 3px 0 0;
+        color: #f8fafc;
+        overflow-wrap: anywhere;
+      }
+      .leisaac-prerequisite {
+        margin: 0;
+        padding: 10px 12px;
+        border-left: 3px solid #facc15;
+        border-radius: 6px;
+        color: #fef3c7;
+        background: #29220d;
+      }
+      .leisaac-prerequisite.is-ready {
+        border-color: #22c55e;
+        color: #dcfce7;
+        background: #0d291c;
+      }
+      .leisaac-bundle-library { display: grid; gap: 6px; }
+      .leisaac-bundle-row {
+        padding: 8px 10px;
+        border: 1px solid #334155;
+        border-radius: 8px;
+        color: #cbd5e1;
+        background: #111827;
+        overflow-wrap: anywhere;
+      }
       .leisaac-stage {
         position: relative;
         min-height: calc(100dvh - 245px);
@@ -337,6 +419,19 @@
         .leisaac-live-grid,
         .leisaac-playback-grid { grid-template-columns: 1fr; }
         .leisaac-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .leisaac-readonly-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
+      @media (max-width: 640px) {
+        .leisaac-head { flex-direction: column; gap: 10px; padding: 14px; }
+        .leisaac-head > div,
+        .leisaac-actions { width: 100%; min-width: 0; }
+        .leisaac-actions .btn { width: auto; max-width: 100%; white-space: normal; }
+        .leisaac-readiness { padding: 12px; }
+        .leisaac-readiness-card { padding: 13px; }
+        .leisaac-filters,
+        .leisaac-readonly-grid { grid-template-columns: 1fr; }
+        .leisaac-episodes { padding-top: 12px; }
+        .leisaac-viewport-label { align-items: flex-start; flex-direction: column; }
       }
       .layout { display: grid; gap: 14px; }
       .layout-rerun {
@@ -2647,6 +2742,7 @@
       let thinkingNode = null;
       let activeMainTab = "main";
       let chatDrawerOpen = false;
+      const LEISAAC_CONTROL_READINESS_CONTRACT = "LEISAAC_CONTROL_READINESS_CONTRACT";
       function updateChatQueueBadge() {
         const badge = document.getElementById("chatQueueBadge");
         if (!badge) return;
@@ -2781,6 +2877,7 @@
       let leisaacClientResumeGeneration = 0;
       let leisaacControlLeaseId = "";
       let leisaacControlLeaseReady = false;
+      let leisaacLeaseBlockReason = "";
       let leisaacReconnectPromise = null;
       let leisaacManualDisconnect = false;
       let leisaacBundleRestartPending = false;
@@ -2792,6 +2889,7 @@
       let leisaacNativePendingView = null;
       let leisaacNativePaintedViewRevision = 0;
       let leisaacNativeFrameCallbackGeneration = 0;
+      let leisaacLifecycleGeneration = 0;
       let leisaacNativeLastPresentedMs = 0;
       const leisaacLastPaintByCamera = { workspace: 0, overview: 0 };
       const leisaacPresentationIntervals = [];
@@ -2894,8 +2992,204 @@
         const value = status && typeof status.configuration === "object" ? status.configuration : {};
         return value || {};
       }
+      function leisaacControllerLeaseActive(status = leisaacCapability) {
+        return Boolean(
+          status && status.available && leisaacControlLeaseReady &&
+          /^[A-Za-z0-9._:-]{1,96}$/.test(String(leisaacClientId || "")) &&
+          /^[a-f0-9]{64}$/.test(String(leisaacControlLeaseId || ""))
+        );
+      }
+      function setLeIsaacPrerequisiteState(element, enabled) {
+        if (!element) return;
+        element.disabled = !enabled;
+        element.setAttribute("aria-disabled", enabled ? "false" : "true");
+        const ids = new Set(String(element.getAttribute("aria-describedby") || "").split(/\s+/).filter(Boolean));
+        if (enabled) ids.delete("leisaacControllerPrerequisite");
+        else ids.add("leisaacControllerPrerequisite");
+        if (ids.size) element.setAttribute("aria-describedby", Array.from(ids).join(" "));
+        else element.removeAttribute("aria-describedby");
+      }
+      function updateLeIsaacControlReadiness(status = leisaacCapability) {
+        const sessionReady = Boolean(status && status.available);
+        const controllerReady = leisaacControllerLeaseActive(status);
+        const prerequisite = document.getElementById("leisaacControllerPrerequisite");
+        if (prerequisite) {
+          prerequisite.classList.toggle("is-ready", controllerReady);
+          prerequisite.textContent = controllerReady
+            ? "Controller lease active for this browser. Motion, orbit, recorder, view, and runtime configuration are available subject to their current state."
+            : String(
+              leisaacLeaseBlockReason ||
+              (sessionReady
+                ? "Session ready. Connect teleoperation to obtain the controller lease; motion, orbit, recorder, view, and runtime configuration remain locked until then."
+                : "An authenticated ready LeIsaac session is required before controller actions are available.")
+            );
+        }
+        for (const id of [
+          "leisaacResetDefaults",
+          "leisaacViewMode",
+          "leisaacInputDevice",
+          "leisaacSendNeutralAction",
+        ]) setLeIsaacPrerequisiteState(document.getElementById(id), controllerReady);
+        const bundleSelection = document.getElementById("leisaacBundleSelection");
+        const bundleApply = document.getElementById("leisaacBundleSelect");
+        setLeIsaacPrerequisiteState(
+          bundleApply,
+          controllerReady && Boolean(String((bundleSelection && bundleSelection.value) || "")),
+        );
+        if (bundleApply && controllerReady && !String((bundleSelection && bundleSelection.value) || "")) {
+          const ids = new Set(String(bundleApply.getAttribute("aria-describedby") || "").split(/\s+/).filter(Boolean));
+          ids.delete("leisaacControllerPrerequisite");
+          ids.add("leisaacBundleStatus");
+          bundleApply.setAttribute("aria-describedby", Array.from(ids).join(" "));
+          bundleApply.title = "Choose an uploaded immutable bundle before applying it";
+        }
+        const recording = document.getElementById("leisaacRecordingCameras");
+        const recorderState = String((((status || {}).recorder || {}).state) || "unavailable");
+        setLeIsaacPrerequisiteState(recording, controllerReady && recorderState === "idle");
+        const host = document.getElementById("leisaacStreamHost");
+        if (host) {
+          host.tabIndex = controllerReady ? 0 : -1;
+          host.setAttribute("aria-disabled", controllerReady ? "false" : "true");
+        }
+        const connect = document.getElementById("leisaacConnect");
+        if (connect) {
+          const connecting = /^Connecting|^Reconnecting/.test(String(leisaacLeaseBlockReason || ""));
+          connect.disabled = !sessionReady || controllerReady || connecting;
+          connect.setAttribute("aria-disabled", connect.disabled ? "true" : "false");
+          connect.textContent = controllerReady ? "Controller connected" : (leisaacLeaseBlockReason ? "Retry controller lease" : "Connect teleoperation");
+        }
+        const disconnect = document.getElementById("leisaacDisconnect");
+        if (disconnect) {
+          disconnect.hidden = !controllerReady;
+          disconnect.disabled = !controllerReady;
+          disconnect.setAttribute("aria-disabled", controllerReady ? "false" : "true");
+        }
+        return { sessionReady, controllerReady };
+      }
+      function leisaacOfflineBundleMarkup(status) {
+        if (!(status && status.bundles_url && status.episodes_available)) return "";
+        return `
+          <section class="leisaac-episodes" aria-labelledby="leisaacOfflineBundlesTitle">
+            <div class="leisaac-head">
+              <div>
+                <strong id="leisaacOfflineBundlesTitle">Offline bundle library</strong>
+                <p id="leisaacBundleStatus" class="hint">Bundle validation and upload use the manifest-bound S3 dataset. Uploading stores an immutable bundle only; it does not apply or restart the runtime.</p>
+              </div>
+              <button id="leisaacBundleRefresh" class="btn" type="button">Refresh uploaded bundles</button>
+            </div>
+            <div class="leisaac-actions">
+              <input id="leisaacBundleName" type="text" maxlength="64" placeholder="Bundle name" aria-label="Bundle name" aria-describedby="leisaacBundleStatus">
+              <select id="leisaacBundleKind" aria-label="Bundle kind" aria-describedby="leisaacBundleStatus"><option value="robot">Robot</option><option value="scene">Scene</option><option value="device">Device</option></select>
+              <input id="leisaacBundleFiles" type="file" multiple accept=".usd,.usda,.usdc,.py,.json" aria-label="USD, Python, or device mapping files" aria-describedby="leisaacBundleStatus">
+              <button id="leisaacBundleUpload" class="btn" type="button" aria-describedby="leisaacBundleStatus">Validate &amp; upload only</button>
+            </div>
+            <div id="leisaacBundleLibrary" class="leisaac-bundle-library" aria-live="polite"></div>
+          </section>`;
+      }
+      function leisaacOfflineEpisodesMarkup(status) {
+        if (!(status && status.episodes_available && status.run_id)) return "";
+        return `
+          <section class="leisaac-episodes" aria-labelledby="leisaacEpisodesTitle">
+            <div class="leisaac-head">
+              <div>
+                <strong id="leisaacEpisodesTitle">Immutable episodes</strong>
+                <p id="leisaacEpisodeStatus" class="hint" role="status">Loading immutable S3 episodes…</p>
+                <p id="leisaacEpisodeError" class="hint" role="alert"></p>
+              </div>
+              <div class="leisaac-actions">
+                <button id="leisaacEpisodesRetry" class="btn" type="button">Retry episode list</button>
+                <button id="leisaacEpisodesPreviousPage" class="btn" type="button" hidden>Previous page</button>
+                <button id="leisaacEpisodesNextPage" class="btn" type="button" hidden>Next page</button>
+              </div>
+            </div>
+            <div class="leisaac-filters">
+              <label>Dataset version<select id="leisaacEpisodeVersion"><option value="">All immutable commits</option></select></label>
+              <label>Task<input id="leisaacEpisodeTask" autocomplete="off" maxlength="128"></label>
+              <label>Environment<input id="leisaacEpisodeEnvironment" autocomplete="off" maxlength="128"></label>
+              <label>Outcome<select id="leisaacEpisodeOutcome"><option value="">Any</option><option value="success">Success</option><option value="failure">Failure</option></select></label>
+              <label>Date from<input id="leisaacEpisodeDateFrom" type="date"></label>
+              <label>Date to<input id="leisaacEpisodeDateTo" type="date"></label>
+              <label>Robot<input id="leisaacEpisodeRobot" autocomplete="off" maxlength="128"></label>
+              <label>Scene<input id="leisaacEpisodeScene" autocomplete="off" maxlength="128"></label>
+              <label>Device<input id="leisaacEpisodeDevice" autocomplete="off" maxlength="128"></label>
+              <button id="leisaacEpisodesApply" class="btn btn-primary" type="button">Apply episode filters</button>
+            </div>
+            <div id="leisaacEpisodeList" class="leisaac-episode-list" aria-live="polite"></div>
+            <div id="leisaacEpisodePlayer" class="leisaac-player" hidden tabindex="0" aria-label="LeIsaac episode player">
+              <div class="leisaac-head">
+                <div><strong id="leisaacEpisodePlayerTitle">Episode</strong><p id="leisaacEpisodeMetadata" class="hint"></p></div>
+                <div class="leisaac-actions"><button id="leisaacEpisodePrevious" class="btn" type="button">Previous episode</button><button id="leisaacEpisodeNext" class="btn" type="button">Next episode</button><button id="leisaacEpisodeDescribe" class="btn" type="button">Describe this frame</button></div>
+              </div>
+              <div class="leisaac-playback-grid">
+                <div><p class="leisaac-viewport-label"><strong id="leisaacEpisodePrimaryLabel">Primary camera</strong></p><video id="leisaacEpisodePrimaryVideo" controls playsinline preload="metadata"></video></div>
+                <div id="leisaacEpisodeSecondaryPane"><p class="leisaac-viewport-label"><strong id="leisaacEpisodeSecondaryLabel">Secondary camera</strong></p><video id="leisaacEpisodeSecondaryVideo" controls playsinline preload="metadata"></video></div>
+                <div id="leisaacEpisodeSingleCamera" class="leisaac-secondary-empty" hidden>Legacy single-camera episode: no second camera track exists.</div>
+              </div>
+              <div class="leisaac-player-toolbar">
+                <label>Playback rate<select id="leisaacEpisodeRate"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="1.5">1.5×</option><option value="2">2×</option></select></label>
+                <a id="leisaacEpisodeRecordsExport" class="btn" href="#" download>Download saved data</a>
+                <a id="leisaacEpisodeMetadataExport" class="btn" href="#" download>Download metadata</a>
+                <span id="leisaacEpisodeChecksum" class="hint"></span>
+              </div>
+              <div id="leisaacEpisodeArtifacts" class="leisaac-episode-list" aria-label="Episode artifacts"></div>
+              <input id="leisaacEpisodeTimeline" class="leisaac-timeline" type="range" min="0" max="0" value="0" step="1" aria-label="Episode timeline">
+              <pre id="leisaacEpisodeTimelineValues" class="leisaac-timeline-values">Timeline is loading…</pre>
+            </div>
+          </section>`;
+      }
+      function leisaacUnavailablePanelMarkup(status) {
+        const runId = escapeHtml(String((status && status.run_id) || ""));
+        const reason = escapeHtml(String((status && status.reason) || "No LeIsaac runtime is registered with this agent."));
+        const dataset = escapeHtml(String((status && status.dataset_uri) || ""));
+        const registered = Boolean(runId);
+        const title = registered ? "Registered runtime is not ready" : "Launch a LeIsaac runtime to begin";
+        const state = registered ? "runtime-unavailable" : "setup-required";
+        return `
+          <section class="panel leisaac-panel" data-readiness-state="${state}">
+            <div class="leisaac-head">
+              <div>
+                <h3>LeIsaac teleoperation</h3>
+                <p id="leisaacAvailability" class="hint" role="status">${reason}</p>
+                ${registered ? `<p class="hint">Registered run <strong>${runId}</strong>${dataset ? ` · dataset <code>${dataset}</code>` : ""}</p>` : ""}
+              </div>
+              <div class="leisaac-actions">
+                <button id="leisaacRetry" class="btn btn-primary" type="button" aria-describedby="leisaacReadinessSummary">Retry readiness</button>
+              </div>
+            </div>
+            <div id="leisaacReadiness" class="leisaac-readiness" data-contract="LEISAAC_CONTROL_READINESS_CONTRACT">
+              <section class="leisaac-readiness-card" aria-labelledby="leisaacReadinessTitle">
+                <h4 id="leisaacReadinessTitle">${title}</h4>
+                <p id="leisaacReadinessSummary">Live teleoperation, camera/orbit, recorder, and runtime configuration are not displayed because there is no authenticated ready session and controller lease. Retry is safe and does not launch infrastructure.</p>
+                <p>${registered ? "The capability manifest is available, but the runtime health/attestation gate is not ready." : "Launch is an operator action from the Workbench CLI; this browser does not accept licenses, allocate a GPU, or invent a session."}</p>
+              </section>
+              <section class="leisaac-readiness-card" aria-labelledby="leisaacPrerequisitesTitle">
+                <h4 id="leisaacPrerequisitesTitle">Operator readiness checklist</h4>
+                <ul>
+                  <li>Explicit operator acceptance of the NVIDIA Omniverse Kit and Isaac Sim/Isaac Lab agreements for this launch.</li>
+                  <li>RT-core capacity on the supported RTX PRO 6000 Kubernetes pool.</li>
+                  <li>A digest-pinned <code>npa-leisaac</code> image in an accessible registry.</li>
+                  <li>A valid Kubernetes context/namespace and configured S3 storage destination.</li>
+                  <li>Secure <code>agent-relay</code> configuration bound to this authenticated agent and restricted operator CIDRs.</li>
+                </ul>
+                <pre class="leisaac-launch-template" aria-label="Generic LeIsaac launch command">npa workbench leisaac launch \\
+  --run-id &lt;run-id&gt; \\
+  --image &lt;registry&gt;/npa-leisaac@sha256:&lt;digest&gt; \\
+  --context &lt;kubernetes-context&gt; \\
+  --source-range &lt;operator-public-ip&gt;/32 \\
+  --transport agent-relay \\
+  --agent-project &lt;project-alias&gt; --agent-name &lt;agent-name&gt; \\
+  --output-path s3://&lt;bucket&gt;/&lt;dataset-prefix&gt; \\
+  --manifest-prefix s3://&lt;bucket&gt;/&lt;capability-prefix&gt;</pre>
+                <p>After the operator accepts the agreements, the launch environment must explicitly contain both <code>OMNI_KIT_ACCEPT_EULA=YES</code> and <code>ISAACSIM_ACCEPT_EULA=YES</code>. This page never sets them.</p>
+              </section>
+              ${leisaacOfflineBundleMarkup(status)}
+              ${leisaacOfflineEpisodesMarkup(status)}
+            </div>
+          </section>`;
+      }
       function leisaacPanelMarkup(status) {
         const liveAvailable = Boolean(status && status.available);
+        if (!liveAvailable) return leisaacUnavailablePanelMarkup(status || {});
         const episodesAvailable = Boolean(status && status.episodes_available);
         const runId = escapeHtml(String(status.run_id || ""));
         const task = escapeHtml(String(status.task || ""));
@@ -2923,30 +3217,31 @@
               </div>
               <div class="leisaac-actions">
                 <button id="leisaacRetry" class="btn" type="button">Retry status</button>
-                <button id="leisaacConnect" class="btn btn-primary" type="button"${liveDisabled}>Connect teleoperation</button>
-                <button id="leisaacDisconnect" class="btn" type="button" disabled>Disconnect</button>
+                <button id="leisaacConnect" class="btn btn-primary" type="button" aria-describedby="leisaacControllerPrerequisite"${liveDisabled}>Connect teleoperation</button>
+                <button id="leisaacDisconnect" class="btn" type="button" hidden>Disconnect</button>
               </div>
             </div>
+            <p id="leisaacControllerPrerequisite" class="leisaac-prerequisite" role="status" aria-live="polite">Session ready. Connect teleoperation to obtain the controller lease; motion, orbit, recorder, view, and runtime configuration remain locked until then.</p>
             <section class="leisaac-episodes" aria-label="Active LeIsaac configuration">
               <div class="leisaac-head">
                 <div>
                   <strong>Ready-to-test configuration</strong>
                   <p id="leisaacConfigurationStatus" class="hint">Built-in runtime choices are real operator-fetched LeIsaac assets, not uploaded S3 bundles.</p>
                 </div>
-                <button id="leisaacResetDefaults" class="btn" type="button">Reset to built-in defaults</button>
+                <button id="leisaacResetDefaults" class="btn" type="button" disabled aria-disabled="true" aria-describedby="leisaacControllerPrerequisite">Reset to built-in defaults</button>
               </div>
-              <div class="leisaac-filters">
-                <label>Robot<select id="leisaacRobotSelection" aria-label="Selected LeIsaac robot" disabled></select></label>
-                <label>Scene<select id="leisaacSceneSelection" aria-label="Selected LeIsaac scene" disabled></select></label>
-                <label>Input device<select id="leisaacDeviceSelection" aria-label="Selected LeIsaac input device" disabled></select></label>
-                <label>Task<select id="leisaacTaskSelection" aria-label="Selected LeIsaac task" disabled></select></label>
-              </div>
+              <dl class="leisaac-readonly-grid" aria-label="Current LeIsaac configuration">
+                <div><dt>Robot</dt><dd id="leisaacRobotSelection">Loading…</dd></div>
+                <div><dt>Scene</dt><dd id="leisaacSceneSelection">Loading…</dd></div>
+                <div><dt>Input device</dt><dd id="leisaacDeviceSelection">Loading…</dd></div>
+                <div><dt>Task</dt><dd id="leisaacTaskSelection">Loading…</dd></div>
+              </dl>
             </section>
             <section class="leisaac-episodes" aria-label="Custom LeIsaac assets and devices">
               <div class="leisaac-head">
                 <div>
                   <strong>Custom assets and devices</strong>
-                  <p id="leisaacBundleStatus" class="hint">USD assets and declarative device mappings are checksummed into immutable S3 bundles. Selecting a bundle applies it with a safe simulator restart; uploaded Python is non-executable provenance only.</p>
+                  <p id="leisaacBundleStatus" class="hint">Upload validates and stores an immutable S3 bundle only; it is not applied until the connected controller explicitly applies it. Uploaded Python is non-executable provenance only.</p>
                 </div>
                 <div class="leisaac-actions">
                   <input id="leisaacBundleName" type="text" maxlength="64" placeholder="Bundle name" aria-label="Bundle name">
@@ -2957,17 +3252,18 @@
               </div>
               <div class="leisaac-actions">
                 <select id="leisaacBundleSelection" aria-label="Immutable custom bundle"><option value="">No custom bundle selected</option></select>
-                <button id="leisaacBundleSelect" class="btn" type="button">Select bundle</button>
+                <button id="leisaacBundleSelect" class="btn" type="button" disabled aria-disabled="true" aria-describedby="leisaacControllerPrerequisite">Apply selected bundle</button>
                 <button id="leisaacBundleRefresh" class="btn" type="button">Refresh bundles</button>
               </div>
+              <div id="leisaacBundleLibrary" class="leisaac-bundle-library" aria-live="polite"></div>
             </section>
             <section class="leisaac-episodes" aria-label="LeIsaac display and recording camera modes">
               <div class="leisaac-filters">
                 <label>View mode:
-                  <select id="leisaacViewMode" aria-label="View mode"${liveDisabled}>${leisaacModeOptions(viewContract)}</select>
+                  <select id="leisaacViewMode" aria-label="View mode" disabled aria-disabled="true" aria-describedby="leisaacControllerPrerequisite">${leisaacModeOptions(viewContract)}</select>
                 </label>
                 <label>Episode cameras:
-                  <select id="leisaacRecordingCameras" aria-label="Episode recording cameras"${liveDisabled}>${leisaacModeOptions(recordingContract)}</select>
+                  <select id="leisaacRecordingCameras" aria-label="Episode recording cameras" disabled aria-disabled="true" aria-describedby="leisaacControllerPrerequisite">${leisaacModeOptions(recordingContract)}</select>
                 </label>
               </div>
               <p id="leisaacModeStatus" class="hint" aria-live="polite"></p>
@@ -2976,7 +3272,7 @@
             <div id="leisaacLiveGrid" class="leisaac-live-grid${dualMode ? "" : " is-single"}" aria-label="LeIsaac live viewports">
               <div class="leisaac-viewport-shell">
                 <p class="leisaac-viewport-label"><strong>Interactive primary</strong><span>Drag/touch orbit; robot controls require focus</span></p>
-                <div id="leisaacStreamHost" class="leisaac-stage leisaac-primary-stage" tabindex="0" aria-label="Interactive LeIsaac workspace simulation stream">
+                <div id="leisaacStreamHost" class="leisaac-stage leisaac-primary-stage" tabindex="-1" aria-disabled="true" aria-describedby="leisaacControllerPrerequisite" aria-label="Interactive LeIsaac workspace simulation stream">
                   <video id="leisaacVideo" autoplay playsinline></video>
                   <img id="leisaacFrame" alt="Live RTX-rendered LeIsaac workspace simulation" hidden>
                   <canvas id="leisaacCanvas" width="1280" height="720" aria-label="Low-latency LeIsaac workspace simulation" hidden></canvas>
@@ -3016,10 +3312,10 @@
                 <button id="leisaacViewUploadedEpisode" class="btn" type="button" hidden>View uploaded episode</button>
               </div>
               <div class="leisaac-actions">
-                <button id="leisaacRecordStart" class="btn btn-primary" type="button" title="Start recording a new episode">Start episode</button>
-                <button id="leisaacRecordSuccess" class="btn" type="button" aria-pressed="false" title="Start an episode before marking its outcome" disabled>Mark success</button>
-                <button id="leisaacRecordFailure" class="btn" type="button" aria-pressed="false" title="Start an episode before marking its outcome" disabled>Mark failure</button>
-                <button id="leisaacRecordFinalize" class="btn" type="button" title="Mark success or failure before finalizing" disabled>Finalize &amp; upload</button>
+                <button id="leisaacRecordStart" class="btn btn-primary" type="button" title="Connect and obtain the controller lease before recording" disabled aria-disabled="true" aria-describedby="leisaacControllerPrerequisite leisaacRecorderGuidance">Start episode</button>
+                <button id="leisaacRecordSuccess" class="btn" type="button" aria-pressed="false" title="Start an episode before marking its outcome" disabled aria-disabled="true" aria-describedby="leisaacControllerPrerequisite leisaacRecorderGuidance">Mark success</button>
+                <button id="leisaacRecordFailure" class="btn" type="button" aria-pressed="false" title="Start an episode before marking its outcome" disabled aria-disabled="true" aria-describedby="leisaacControllerPrerequisite leisaacRecorderGuidance">Mark failure</button>
+                <button id="leisaacRecordFinalize" class="btn" type="button" title="Mark success or failure before finalizing" disabled aria-disabled="true" aria-describedby="leisaacControllerPrerequisite leisaacRecorderGuidance">Finalize &amp; upload</button>
               </div>
             </div>
             <div class="leisaac-head">
@@ -3029,13 +3325,13 @@
               </div>
               <div class="leisaac-actions">
                 <label class="hint">Input device
-                  <select id="leisaacInputDevice">
+                  <select id="leisaacInputDevice" disabled aria-disabled="true" aria-describedby="leisaacControllerPrerequisite">
                     <option value="keyboard">Browser keyboard SO-101 (default test device)</option>
                     <option value="browser-gamepad">Browser gamepad</option>
                     <option value="custom-so101">Custom SO-101 action source</option>
                   </select>
                 </label>
-                <button id="leisaacSendNeutralAction" class="btn" type="button">Send neutral action</button>
+                <button id="leisaacSendNeutralAction" class="btn" type="button" disabled aria-disabled="true" aria-describedby="leisaacControllerPrerequisite">Send neutral action</button>
               </div>
             </div>
             <section class="leisaac-episodes" aria-labelledby="leisaacEpisodesTitle">
@@ -3047,8 +3343,8 @@
                 </div>
                 <div class="leisaac-actions">
                   <button id="leisaacEpisodesRetry" class="btn" type="button">Retry</button>
-                  <button id="leisaacEpisodesPreviousPage" class="btn" type="button" disabled>Previous page</button>
-                  <button id="leisaacEpisodesNextPage" class="btn" type="button" disabled>Next page</button>
+                  <button id="leisaacEpisodesPreviousPage" class="btn" type="button" hidden>Previous page</button>
+                  <button id="leisaacEpisodesNextPage" class="btn" type="button" hidden>Next page</button>
                 </div>
               </div>
               <div class="leisaac-filters">
@@ -3090,9 +3386,12 @@
       function setLeIsaacRecorderButton(button, enabled, reason) {
         if (!button) return;
         const busy = Boolean(leisaacRecorderPending);
-        button.disabled = busy || !enabled;
+        const controllerReady = leisaacControllerLeaseActive();
+        button.disabled = busy || !enabled || !controllerReady;
         button.setAttribute("aria-disabled", button.disabled ? "true" : "false");
-        button.title = busy
+        button.title = !controllerReady
+          ? "Connect teleoperation and obtain the controller lease before using the recorder"
+          : busy
           ? "Waiting for " + String(leisaacRecorderPending.command || "recorder transition")
           : String(reason || "Ready");
         button.setAttribute("data-disabled-reason", button.disabled ? button.title : "");
@@ -3200,6 +3499,9 @@
       async function sendLeIsaacRecorder(command) {
         const status = leisaacCapability;
         if (!status || !status.recorder_url) throw new Error("LeIsaac recorder is unavailable");
+        if (!leisaacControllerLeaseActive(status)) {
+          throw new Error("Connect teleoperation and obtain the controller lease before using the recorder");
+        }
         if (leisaacRecorderPending) throw new Error("A recorder transition is already in progress");
         const requestId = leisaacRecorderRequestId();
         leisaacRecorderPending = { command: command, requestId: requestId };
@@ -3210,7 +3512,12 @@
             method: "POST",
             credentials: "include",
             cache: "no-store",
-            headers: { "Content-Type": "application/json", "X-NPA-LeIsaac-Control": "1" },
+            headers: {
+              "Content-Type": "application/json",
+              "X-NPA-LeIsaac-Control": "1",
+              "X-NPA-LeIsaac-Client-ID": leisaacClientId,
+              "X-NPA-LeIsaac-Lease-ID": leisaacControlLeaseId,
+            },
             body: JSON.stringify({ command: command, request_id: requestId }),
           });
           const payload = await response.json().catch(() => ({}));
@@ -3410,8 +3717,8 @@
           leisaacEpisodeCursorHistory.splice(0);
           const previous = document.getElementById("leisaacEpisodesPreviousPage");
           const next = document.getElementById("leisaacEpisodesNextPage");
-          if (previous) previous.disabled = true;
-          if (next) next.disabled = true;
+          if (previous) { previous.disabled = true; previous.hidden = true; }
+          if (next) { next.disabled = true; next.hidden = true; }
         }
         if (leisaacEpisodeListAbort) leisaacEpisodeListAbort.abort();
         const controller = new AbortController();
@@ -3441,8 +3748,14 @@
               + " · skipped " + String(Number(payload.skipped_count || 0)) + ".";
           const previous = document.getElementById("leisaacEpisodesPreviousPage");
           const next = document.getElementById("leisaacEpisodesNextPage");
-          if (previous) previous.disabled = leisaacEpisodeCursorHistory.length === 0;
-          if (next) next.disabled = !leisaacEpisodeNextCursor;
+          if (previous) {
+            previous.disabled = leisaacEpisodeCursorHistory.length === 0;
+            previous.hidden = previous.disabled;
+          }
+          if (next) {
+            next.disabled = !leisaacEpisodeNextCursor;
+            next.hidden = next.disabled;
+          }
           return payload;
         } catch (err) {
           if (err && err.name === "AbortError") return null;
@@ -3637,39 +3950,53 @@
       }
       function renderLeIsaacBundles() {
         const select = document.getElementById("leisaacBundleSelection");
-        if (!select) return;
-        const prior = select.value;
-        select.replaceChildren();
-        const none = document.createElement("option");
-        none.value = "";
-        none.textContent = "No custom bundle selected";
-        select.appendChild(none);
-        for (const bundle of leisaacBundles) {
-          const option = document.createElement("option");
-          option.value = String(bundle.bundle_sha256 || "");
-          option.setAttribute("data-kind", String(bundle.kind || ""));
-          option.textContent = String(bundle.kind || "bundle") + " · " + String(bundle.name || "unnamed") + " · " + String(bundle.bundle_sha256 || "").slice(0, 12);
-          select.appendChild(option);
+        if (select) {
+          const prior = select.value;
+          select.replaceChildren();
+          const none = document.createElement("option");
+          none.value = "";
+          none.textContent = "No custom bundle selected";
+          select.appendChild(none);
+          for (const bundle of leisaacBundles) {
+            const option = document.createElement("option");
+            option.value = String(bundle.bundle_sha256 || "");
+            option.setAttribute("data-kind", String(bundle.kind || ""));
+            option.textContent = String(bundle.kind || "bundle") + " · " + String(bundle.name || "unnamed") + " · " + String(bundle.bundle_sha256 || "").slice(0, 12);
+            select.appendChild(option);
+          }
+          if (Array.from(select.options).some((option) => option.value === prior)) select.value = prior;
         }
-        if (Array.from(select.options).some((option) => option.value === prior)) select.value = prior;
+        const library = document.getElementById("leisaacBundleLibrary");
+        if (!library) return;
+        library.replaceChildren();
+        if (!leisaacBundles.length) {
+          const empty = document.createElement("p");
+          empty.className = "hint";
+          empty.textContent = "No immutable custom bundles are stored for this manifest-bound dataset.";
+          library.appendChild(empty);
+          updateLeIsaacControlReadiness();
+          return;
+        }
+        for (const bundle of leisaacBundles) {
+          const row = document.createElement("div");
+          row.className = "leisaac-bundle-row";
+          row.textContent = String(bundle.kind || "bundle") + " · " + String(bundle.name || "unnamed") + " · SHA-256 " + String(bundle.bundle_sha256 || "").slice(0, 16) + "…";
+          library.appendChild(row);
+        }
+        updateLeIsaacControlReadiness();
       }
       function renderLeIsaacConfiguration(status) {
         const configuration = leisaacConfiguration(status);
         const setSelection = (id, item) => {
-          const select = document.getElementById(id);
-          if (!select) return;
+          const output = document.getElementById(id);
+          if (!output) return;
           const value = item && typeof item === "object" ? item : {};
           const identifier = String(value.id || "unavailable");
           const source = String(value.source || "unknown");
           const label = String(value.display_name || identifier) + " · " + source;
-          select.replaceChildren();
-          const option = document.createElement("option");
-          option.value = identifier;
-          option.textContent = label;
-          option.selected = true;
-          select.appendChild(option);
-          select.value = identifier;
-          select.setAttribute("data-source", source);
+          output.textContent = label;
+          output.setAttribute("data-value", identifier);
+          output.setAttribute("data-source", source);
         };
         setSelection("leisaacRobotSelection", configuration.robot);
         setSelection("leisaacSceneSelection", configuration.scene);
@@ -3680,15 +4007,10 @@
           const tasks = Array.isArray(((status.task_registry || {}).tasks))
             ? status.task_registry.tasks
             : [];
-          taskSelect.replaceChildren();
-          for (const task of tasks.length ? tasks : [{ task: selectedTask, display_name: selectedTask }]) {
-            const option = document.createElement("option");
-            option.value = String(task.task || "");
-            option.textContent = String(task.display_name || task.task || "");
-            option.selected = option.value === selectedTask;
-            taskSelect.appendChild(option);
-          }
-          taskSelect.value = selectedTask;
+          const selected = tasks.find((task) => String(task.task || "") === selectedTask) || {};
+          taskSelect.textContent = String(selected.display_name || selectedTask || "unavailable") + " · built-in-registry";
+          taskSelect.setAttribute("data-value", selectedTask);
+          taskSelect.setAttribute("data-source", "built-in-registry");
         }
         const inputDevice = document.getElementById("leisaacInputDevice");
         const deviceId = String(((configuration.device || {}).id) || "");
@@ -3701,7 +4023,9 @@
         const statusLabel = document.getElementById("leisaacConfigurationStatus");
         if (statusLabel) {
           const count = Number(configuration.custom_bundle_count || 0);
-          statusLabel.textContent = count
+          statusLabel.textContent = status.bundle_selection_pending
+            ? String(status.bundle_selection_reason || "Persisted bundles are pending a controller-authorized apply.")
+            : count
             ? count + " uploaded checksum-verified override" + (count === 1 ? " is" : "s are") + " active; all other choices remain built-in."
             : "All four real built-in defaults are active; no uploaded S3 bundle is being represented as a built-in.";
         }
@@ -3715,7 +4039,7 @@
         leisaacBundles = Array.isArray(payload.bundles) ? payload.bundles : [];
         renderLeIsaacBundles();
         const label = document.getElementById("leisaacBundleStatus");
-        if (label) label.textContent = "Loaded " + leisaacBundles.length + " bounded immutable bundle" + (leisaacBundles.length === 1 ? "." : "s.");
+        if (label) label.textContent = "Loaded " + leisaacBundles.length + " bounded immutable bundle" + (leisaacBundles.length === 1 ? ". Upload/list is storage-only; applying still requires a live controller lease." : "s. Upload/list is storage-only; applying still requires a live controller lease.");
         return leisaacBundles;
       }
       async function uploadLeIsaacBundle() {
@@ -3759,11 +4083,14 @@
         const select = document.getElementById("leisaacBundleSelection");
         if (select) select.value = String(result.bundle_sha256 || "");
         const label = document.getElementById("leisaacBundleStatus");
-        if (label) label.textContent = "Validated immutable " + selectedKind + " bundle " + String(result.bundle_sha256 || "").slice(0, 16) + " with checksummed provenance.";
+        if (label) label.textContent = "Uploaded validated immutable " + selectedKind + " bundle " + String(result.bundle_sha256 || "").slice(0, 16) + " with checksummed provenance. It has not been applied to a runtime.";
         return result;
       }
       async function selectLeIsaacBundle() {
         const status = leisaacCapability;
+        if (!leisaacControllerLeaseActive(status)) {
+          throw new Error("Connect teleoperation and obtain the controller lease before applying a runtime bundle");
+        }
         const select = document.getElementById("leisaacBundleSelection");
         const option = select && select.selectedOptions && select.selectedOptions[0];
         if (!status || !status.bundle_select_url || !option || !option.value) throw new Error("Choose an immutable bundle.");
@@ -3774,7 +4101,12 @@
         try {
           result = await apiJson(String(status.bundle_select_url), {
             method: "POST",
-            headers: { "Content-Type": "application/json", "X-NPA-LeIsaac-Control": "1" },
+            headers: {
+              "Content-Type": "application/json",
+              "X-NPA-LeIsaac-Control": "1",
+              "X-NPA-LeIsaac-Client-ID": leisaacClientId,
+              "X-NPA-LeIsaac-Lease-ID": leisaacControlLeaseId,
+            },
             body: JSON.stringify({ kind: kind, bundle_sha256: option.value }),
           });
         } catch (err) {
@@ -3792,6 +4124,9 @@
       }
       async function resetLeIsaacDefaults() {
         const status = leisaacCapability;
+        if (!leisaacControllerLeaseActive(status)) {
+          throw new Error("Connect teleoperation and obtain the controller lease before resetting runtime configuration");
+        }
         const resetUrl = status && status.bundle_reset_url
           ? String(status.bundle_reset_url)
           : status && status.run_id
@@ -3802,7 +4137,12 @@
         if (label) label.textContent = "Restoring the built-in SO-101 robot, task scene, and browser keyboard device.";
         const result = await apiJson(resetUrl, {
           method: "POST",
-          headers: { "Content-Type": "application/json", "X-NPA-LeIsaac-Control": "1" },
+          headers: {
+            "Content-Type": "application/json",
+            "X-NPA-LeIsaac-Control": "1",
+            "X-NPA-LeIsaac-Client-ID": leisaacClientId,
+            "X-NPA-LeIsaac-Lease-ID": leisaacControlLeaseId,
+          },
           body: JSON.stringify({}),
         });
         if (label) label.textContent = "Built-in defaults selected; simulator restart accepted.";
@@ -3827,7 +4167,7 @@
         const key = String((event && event.key) || "").toUpperCase();
         const host = document.getElementById("leisaacStreamHost");
         const focused = host && (document.activeElement === host || host.contains(event && event.target));
-        if (!leisaacStreamReady || !focused || !LEISAAC_KEYS.has(key) || (event && event.repeat)) return false;
+        if (!leisaacStreamReady || !leisaacControllerLeaseActive() || !focused || !LEISAAC_KEYS.has(key) || (event && event.repeat)) return false;
         leisaacInputCount += 1;
         const label = document.getElementById("leisaacInputStatus");
         if (label) label.textContent = "Keyboard events sent: " + String(leisaacInputCount) + " · last " + key;
@@ -3984,7 +4324,7 @@
       }
       let leisaacFallbackFlush = null;
       function flushLeIsaacFallbackControls() {
-        if (leisaacFallbackFlush || leisaacActiveTransport !== "jpeg-poll") return leisaacFallbackFlush;
+        if (leisaacFallbackFlush || leisaacActiveTransport !== "jpeg-poll" || !leisaacControllerLeaseActive()) return leisaacFallbackFlush;
         const status = leisaacCapability;
         leisaacFallbackFlush = (async () => {
           while (leisaacUnackedControls.size) {
@@ -4021,7 +4361,7 @@
         return leisaacFallbackFlush;
       }
       function queueLeIsaacControl(key, event) {
-        if (!leisaacClientId) return;
+        if (!leisaacClientId || !leisaacControllerLeaseActive()) return;
         const payload = leisaacControlPayload(key, event);
         leisaacUnackedControls.set(payload.seq, {
           payload: payload,
@@ -4040,7 +4380,7 @@
         return leisaacFallbackFlush;
       }
       function queueLeIsaacAction(action, device) {
-        if (!leisaacClientId || !Array.isArray(action) || action.length !== 8) return;
+        if (!leisaacClientId || !leisaacControllerLeaseActive() || !Array.isArray(action) || action.length !== 8) return;
         const payload = leisaacActionPayload(action, device);
         leisaacUnackedControls.set(payload.seq, {
           payload: payload,
@@ -4068,7 +4408,7 @@
           const gamepads = typeof navigator.getGamepads === "function" ? navigator.getGamepads() : [];
           const gamepad = Array.from(gamepads || []).find(Boolean);
           const label = document.getElementById("leisaacDeviceStatus");
-          if (gamepad && leisaacStreamReady) {
+          if (gamepad && leisaacStreamReady && leisaacControllerLeaseActive()) {
             const axes = Array.from(gamepad.axes || []).slice(0, 6);
             while (axes.length < 6) axes.push(0);
             const pressed = (index) => Number((((gamepad.buttons || [])[index] || {}).value) || 0);
@@ -4091,7 +4431,7 @@
         const key = String((event && event.key) || "").toUpperCase();
         const host = document.getElementById("leisaacStreamHost");
         const focused = host && (document.activeElement === host || host.contains(event && event.target));
-        if (!leisaacStreamReady || !focused || !LEISAAC_KEYS.has(key) || (event && event.repeat)) return;
+        if (!leisaacStreamReady || !leisaacControllerLeaseActive() || !focused || !LEISAAC_KEYS.has(key) || (event && event.repeat)) return;
         event.preventDefault();
         event.stopImmediatePropagation();
         queueLeIsaacControl(key, kind);
@@ -4471,7 +4811,8 @@
           ) {
             select.innerHTML = leisaacModeOptions(contract);
           }
-          select.disabled = !Boolean(status.available);
+          const controllerReady = leisaacControllerLeaseActive(status);
+          setLeIsaacPrerequisiteState(select, controllerReady);
         };
         // The tab may first mount from a cheap run summary while the registered
         // live capability request is still in flight. Reconcile the option set
@@ -4479,7 +4820,10 @@
         reconcileOptions(viewSelect, viewContract);
         reconcileOptions(recordingSelect, recordingContract);
         const recorderState = String((status.recorder && status.recorder.state) || "idle");
-        if (recordingSelect) recordingSelect.disabled = !Boolean(status.available) || recorderState !== "idle";
+        if (recordingSelect) setLeIsaacPrerequisiteState(
+          recordingSelect,
+          leisaacControllerLeaseActive(status) && recorderState === "idle",
+        );
         if (viewSelect && viewContract.values.includes(leisaacRequestedViewMode)) viewSelect.value = leisaacRequestedViewMode;
         if (recordingSelect && recordingContract.values.includes(leisaacRequestedRecordingMode)) recordingSelect.value = leisaacRequestedRecordingMode;
         const dual = viewContract.values.length === 2 && appliedView === viewContract.values[1];
@@ -4513,6 +4857,9 @@
             : "Fast single performs no secondary capture, relay, decode, or paint work.");
       }
       function sendLeIsaacModeRequest(requestType, mode, reuseLatestRevision = false) {
+        if (!leisaacControllerLeaseActive()) {
+          throw new Error("Connect teleoperation and obtain the controller lease before changing view or recording modes");
+        }
         const socket = leisaacControlSocket;
         const isView = requestType === "view-mode";
         const previousRequestedMode = isView
@@ -4718,6 +5065,7 @@
               leisaacControlLeaseId = String(payload.lease_id);
             }
           leisaacControlLeaseReady = true;
+          leisaacLeaseBlockReason = "";
           const expected = Number(payload.next_seq || 1);
           const lastApplied = Number(payload.last_applied_seq || 0);
           leisaacModeRevision = Math.max(
@@ -4757,10 +5105,21 @@
           // the runtime then supplies their simulator-applied acknowledgement.
           for (const item of leisaacUnackedControls.values()) item.sentGeneration = 0;
           sendQueuedWebSocketControls();
+          updateLeIsaacModeUi(leisaacCapability);
+          updateLeIsaacRecorder(leisaacCapability || {});
+          updateLeIsaacControlReadiness(leisaacCapability);
           window.setTimeout(() => {
             try {
-              if (leisaacRequestedViewMode) sendLeIsaacModeRequest("view-mode", leisaacRequestedViewMode, true);
-              if (leisaacRequestedRecordingMode) sendLeIsaacModeRequest("recording-cameras", leisaacRequestedRecordingMode, true);
+              const appliedView = String((leisaacCapability && leisaacCapability.applied_view_mode) || "");
+              const appliedRecording = String((leisaacCapability && leisaacCapability.applied_recording_camera_mode) || "");
+              if (
+                leisaacRequestedViewMode &&
+                (leisaacModeRevision > 0 || leisaacRequestedViewMode !== appliedView)
+              ) sendLeIsaacModeRequest("view-mode", leisaacRequestedViewMode, true);
+              if (
+                leisaacRequestedRecordingMode &&
+                (leisaacRecordingRevision > 0 || leisaacRequestedRecordingMode !== appliedRecording)
+              ) sendLeIsaacModeRequest("recording-cameras", leisaacRequestedRecordingMode, true);
             } catch (_err) {}
           }, 0);
           return true;
@@ -4787,7 +5146,11 @@
             // reconnect. Keep ordered controls queued until a strictly newer
             // resume handshake owns the lease, then replay them idempotently.
             leisaacControlLeaseReady = false;
-            setLeIsaacStreamState("Reacquiring authenticated control lease…", "pending");
+            leisaacLeaseBlockReason = "Another authenticated browser currently holds the controller lease. Motion, orbit, recorder, view, and runtime configuration remain locked here; retry after that controller disconnects.";
+            setLeIsaacStreamState("Controller lease is held by another browser", "pending");
+            updateLeIsaacModeUi(leisaacCapability);
+            updateLeIsaacRecorder(leisaacCapability || {});
+            updateLeIsaacControlReadiness(leisaacCapability);
             if (!leisaacManualDisconnect) scheduleLeIsaacReconnect(250);
             return "controller_busy";
           }
@@ -5194,7 +5557,10 @@
       async function flushLeIsaacViewDelta() {
         if (leisaacViewInFlight || !leisaacPendingViewDelta) return;
         const status = leisaacCapability;
-        if (!status || !status.available || !status.view_orbit || !status.view_url) return;
+        if (!status || !status.available || !leisaacControllerLeaseActive(status) || !status.view_orbit || !status.view_url) {
+          leisaacPendingViewDelta = null;
+          return;
+        }
         leisaacViewInFlight = true;
         const delta = leisaacPendingViewDelta;
         leisaacPendingViewDelta = null;
@@ -5231,6 +5597,7 @@
         }
       }
       function queueLeIsaacViewDelta(yaw, pitch, distance) {
+        if (!leisaacControllerLeaseActive()) return;
         const current = leisaacPendingViewDelta || { yaw: 0, pitch: 0, distance: 0 };
         leisaacPendingViewDelta = {
           yaw: current.yaw + Number(yaw || 0),
@@ -5245,7 +5612,7 @@
         let pointer = null;
         host.addEventListener("pointerdown", (event) => {
           event.stopImmediatePropagation();
-          if (!(leisaacCapability && leisaacCapability.view_orbit)) return;
+          if (!(leisaacCapability && leisaacCapability.view_orbit) || !leisaacControllerLeaseActive()) return;
           pointer = { id: event.pointerId, x: event.clientX, y: event.clientY };
           host.classList.add("is-orbiting");
           // Pointer capture isn't available for synthetic accessibility/test
@@ -5287,7 +5654,7 @@
         host.addEventListener("pointercancel", finish);
         host.addEventListener("wheel", (event) => {
           event.stopImmediatePropagation();
-          if (!(leisaacCapability && leisaacCapability.view_orbit)) return;
+          if (!(leisaacCapability && leisaacCapability.view_orbit) || !leisaacControllerLeaseActive()) return;
           queueLeIsaacViewDelta(0, 0, event.deltaY * 0.002);
           event.preventDefault();
         }, { passive: false });
@@ -5374,6 +5741,9 @@
           peer.onconnectionstatechange = null;
           try { peer.close(); } catch (_err) { /* already closed */ }
         }
+        updateLeIsaacModeUi(leisaacCapability);
+        updateLeIsaacRecorder(leisaacCapability || {});
+        updateLeIsaacControlReadiness(leisaacCapability);
       }
       function leisaacHasRelayCandidate(peer) {
         const sdp = String((peer.localDescription && peer.localDescription.sdp) || "");
@@ -5781,6 +6151,8 @@
         if (leisaacReconnectPromise) return leisaacReconnectPromise;
         leisaacTransportEvidence.reconnects += 1;
         leisaacStreamReady = false;
+        leisaacLeaseBlockReason = "Reconnecting to the authenticated controller lease; controller actions remain locked during recovery.";
+        updateLeIsaacControlReadiness(status);
         setLeIsaacStreamState("Reconnecting preferred transport…", "pending");
         leisaacReconnectPromise = connectLeIsaacPreferred(status, controlOnly).finally(() => { leisaacReconnectPromise = null; });
         return leisaacReconnectPromise;
@@ -5834,11 +6206,14 @@
         }, delay);
       }
       async function connectLeIsaac() {
+        leisaacLifecycleGeneration += 1;
         const status = leisaacCapability;
         if (!status || !status.available) throw new Error("No usable LeIsaac session is selected");
         const connectBtn = document.getElementById("leisaacConnect");
         const disconnectBtn = document.getElementById("leisaacDisconnect");
         if (connectBtn) connectBtn.disabled = true;
+        leisaacLeaseBlockReason = "Connecting to the authenticated runtime and obtaining this browser's controller lease…";
+        updateLeIsaacControlReadiness(status);
         leisaacManualDisconnect = false;
         leisaacStreamReady = false;
         leisaacNativePendingView = null;
@@ -5942,7 +6317,12 @@
           restoreLeIsaacVideoPlayGate();
           restoreLeIsaacPeerConnection();
           restoreLeIsaacWebSocketAdapter();
-          if (connectBtn) connectBtn.disabled = false;
+          if (!leisaacLeaseBlockReason || /^Connecting/.test(leisaacLeaseBlockReason)) {
+            leisaacLeaseBlockReason = "The controller lease was not obtained: " + String((err && err.message) || err) + ". Retry is safe.";
+          }
+          updateLeIsaacModeUi(status);
+          updateLeIsaacRecorder(status);
+          updateLeIsaacControlReadiness(status);
           setLeIsaacStreamState(String((err && err.message) || err), "error");
           throw err;
         }
@@ -5967,6 +6347,7 @@
         }
       }
       async function disconnectLeIsaac() {
+        const lifecycleGeneration = ++leisaacLifecycleGeneration;
         leisaacManualDisconnect = true;
         leisaacNativeFrameCallbackGeneration += 1;
         leisaacNativePendingCausal.clear();
@@ -5975,7 +6356,11 @@
         const controlSocket = leisaacControlSocket;
         if (leisaacControlIsOpen(controlSocket) && leisaacClientId) {
           try {
-            const released = new Promise((resolve) => { leisaacReleaseResolver = resolve; });
+            let resolver = null;
+            const released = new Promise((resolve) => {
+              resolver = resolve;
+              leisaacReleaseResolver = resolve;
+            });
             controlSocket.send(JSON.stringify({
               v: 1,
               type: "release-all",
@@ -5988,7 +6373,9 @@
               released,
               new Promise((resolve) => window.setTimeout(resolve, 1500)),
             ]);
+            if (leisaacReleaseResolver === resolver) leisaacReleaseResolver = null;
           } catch (_err) { /* server disconnect cleanup also releases keys */ }
+          if (lifecycleGeneration !== leisaacLifecycleGeneration) return;
           leisaacReleaseResolver = null;
         } else if (leisaacActiveTransport === "jpeg-poll" && leisaacClientId) {
           const held = Array.from(leisaacKeysDown).sort();
@@ -5996,7 +6383,9 @@
           if (leisaacFallbackFlush) {
             try {
               await leisaacFallbackFlush;
+              if (lifecycleGeneration !== leisaacLifecycleGeneration) return;
             } catch (err) {
+              if (lifecycleGeneration !== leisaacLifecycleGeneration) return;
               leisaacManualDisconnect = false;
               setLeIsaacStreamState("Safety release failed; connection retained for retry", "error");
               throw err;
@@ -6017,6 +6406,7 @@
         if (video) video.hidden = false;
         if (streamer && streamer.terminate) {
           try { await streamer.terminate(false, true); } catch (_err) { /* already disconnected */ }
+          if (lifecycleGeneration !== leisaacLifecycleGeneration) return;
         }
         restoreLeIsaacVideoPlayGate();
         restoreLeIsaacPeerConnection();
@@ -6025,6 +6415,10 @@
         const disconnectBtn = document.getElementById("leisaacDisconnect");
         if (connectBtn) connectBtn.disabled = !(leisaacCapability && leisaacCapability.available);
         if (disconnectBtn) disconnectBtn.disabled = true;
+        leisaacLeaseBlockReason = "";
+        updateLeIsaacModeUi(leisaacCapability);
+        updateLeIsaacRecorder(leisaacCapability || {});
+        updateLeIsaacControlReadiness(leisaacCapability);
         setLeIsaacStreamState("Disconnected", "pending");
       }
       function ensureLeIsaacTab(status) {
@@ -6034,7 +6428,8 @@
         let tab = document.getElementById("tabLeIsaac");
         let panel = document.getElementById("panelLeIsaac");
         const changedRun = panel && panel.getAttribute("data-run-id") !== String(status.run_id || "");
-        if (changedRun) {
+        const changedAvailability = panel && panel.getAttribute("data-live-available") !== String(Boolean(status.available));
+        if (changedRun || changedAvailability) {
           stopLeIsaacRecorderPolling();
           leisaacRecorderPending = null;
           leisaacRecorderUiError = "";
@@ -6062,11 +6457,13 @@
         if (!panel) {
           panel = document.createElement("div");
           panel.id = "panelLeIsaac";
-          panel.className = "tab-panel is-inactive";
+          const tabActive = activeMainTab === "leisaac";
+          panel.className = "tab-panel " + (tabActive ? "is-active" : "is-inactive");
           panel.setAttribute("role", "tabpanel");
           panel.setAttribute("aria-labelledby", "tabLeIsaac");
-          panel.setAttribute("aria-hidden", "true");
+          panel.setAttribute("aria-hidden", tabActive ? "false" : "true");
           panel.setAttribute("data-run-id", String(status.run_id || ""));
+          panel.setAttribute("data-live-available", String(Boolean(status.available)));
           panel.innerHTML = leisaacPanelMarkup(status);
           page.appendChild(panel);
           const connectBtn = panel.querySelector("#leisaacConnect");
@@ -6104,10 +6501,12 @@
           });
           const bundleUpload = panel.querySelector("#leisaacBundleUpload");
           const bundleSelect = panel.querySelector("#leisaacBundleSelect");
+          const bundleSelection = panel.querySelector("#leisaacBundleSelection");
           const bundleRefresh = panel.querySelector("#leisaacBundleRefresh");
           const resetDefaults = panel.querySelector("#leisaacResetDefaults");
           if (bundleUpload) bundleUpload.addEventListener("click", () => uploadLeIsaacBundle().catch((err) => showToast(String(err), "error")));
           if (bundleSelect) bundleSelect.addEventListener("click", () => selectLeIsaacBundle().catch((err) => showToast(String(err), "error")));
+          if (bundleSelection) bundleSelection.addEventListener("change", () => updateLeIsaacControlReadiness());
           if (bundleRefresh) bundleRefresh.addEventListener("click", () => loadLeIsaacBundles().catch((err) => showToast(String(err), "error")));
           if (resetDefaults) resetDefaults.addEventListener("click", () => resetLeIsaacDefaults().catch((err) => showToast(String(err), "error")));
           const recorderButtons = {
@@ -6214,12 +6613,17 @@
           : String(status.reason || "Live simulation is unavailable; Episodes remains usable when an S3 dataset is selected.");
         if (connectBtn && !leisaacStreamReady) connectBtn.disabled = !status.available;
         updateLeIsaacRecorder(status);
+        updateLeIsaacControlReadiness(status);
         if (status.available) startLeIsaacRecorderPolling();
         else stopLeIsaacRecorderPolling();
-        if (status.episodes_available && !leisaacEpisodes.length) {
-          loadLeIsaacEpisodes(true).catch(() => null);
+        if (status.episodes_available) {
+          if (leisaacEpisodes.length) renderLeIsaacEpisodeList();
+          else loadLeIsaacEpisodes(true).catch(() => null);
         }
-        if (status.bundles_url && !leisaacBundles.length) loadLeIsaacBundles().catch(() => null);
+        if (status.bundles_url) {
+          if (leisaacBundles.length) renderLeIsaacBundles();
+          else loadLeIsaacBundles().catch(() => null);
+        }
       }
       function removeLeIsaacTab() {
         const tab = document.getElementById("tabLeIsaac");
@@ -6240,7 +6644,7 @@
           run_id: String(runId || "").trim(),
           reason: String(
             reason ||
-            "No active LeIsaac session. Launch one with the Workbench CLI, or retry capability discovery."
+            "No LeIsaac runtime is registered with this agent. Launch one with the Workbench CLI after operator prerequisites are ready."
           ),
         };
       }
@@ -14277,7 +14681,11 @@
         syncRerunRecordingCapability(data && data.sim_viz);
         setActiveRunId(targetRunId);
         activeArtifactRunRef = String(data.run_ref || targetRunRef || "").trim();
-        await refreshLeIsaacCapability(targetRunId);
+        // Workflow/artifact context is independent of the registered live
+        // LeIsaac capability. Never probe an arbitrary loaded run as a robot
+        // session; that can turn a normal artifact selection into a slow,
+        // misleading teleoperation failure.
+        await refreshLeIsaacCapability();
         appendChat("assistant", "Loaded run context (workflow history) — **run_id**: `" + targetRunId + "`.");
         await loadRunDetails(targetRunId, {
           entry: preferredRunEntry(activeArtifactRunRef || targetRunId) || {},
@@ -14640,7 +15048,10 @@
           // Capability discovery may involve remote artifact/service probes. Let it
           // reveal the optional tab asynchronously instead of delaying the existing
           // viewer boot path.
-          refreshLeIsaacCapability(activeRunId).catch(() => null);
+          // Boot resolves only the independently registered LeIsaac runtime.
+          // The restored Rerun/artifact selection may be unrelated and must not
+          // become a fake LeIsaac run or trigger a slow manifest miss.
+          refreshLeIsaacCapability().catch(() => null);
           const accessPromise = refreshAccess(false).catch((accessErr) => {
             console.warn("access discovery failed", accessErr);
           });
@@ -14711,7 +15122,7 @@
           (panel && panel.getAttribute("data-run-id")) || "",
         ).trim();
         return mountedRunId || String(
-          (leisaacCapability && leisaacCapability.run_id) || activeRunId || "",
+          (leisaacCapability && leisaacCapability.run_id) || "",
         ).trim();
       }
       function startPeriodicRefresh() {
@@ -14776,6 +15187,28 @@
           connectLeIsaac,
           disconnectLeIsaac,
           queueLeIsaacControl,
+          leisaacControlReadiness: () => ({
+            contract: LEISAAC_CONTROL_READINESS_CONTRACT,
+            sessionReady: Boolean(leisaacCapability && leisaacCapability.available),
+            controllerReady: leisaacControllerLeaseActive(),
+            reason: leisaacLeaseBlockReason,
+          }),
+          setLeIsaacControllerLeaseForTest: (ready, reason = "") => {
+            leisaacLifecycleGeneration += 1;
+            if (ready) {
+              if (!leisaacClientId && leisaacCapability) ensureLeIsaacClientIdentity(leisaacCapability);
+              leisaacControlLeaseId = "a".repeat(64);
+              leisaacControlLeaseReady = true;
+              leisaacLeaseBlockReason = "";
+            } else {
+              leisaacControlLeaseReady = false;
+              leisaacControlLeaseId = "";
+              leisaacLeaseBlockReason = String(reason || "Controller lease unavailable in this mocked browser.");
+            }
+            updateLeIsaacModeUi(leisaacCapability);
+            updateLeIsaacRecorder(leisaacCapability || {});
+            return updateLeIsaacControlReadiness(leisaacCapability);
+          },
           leisaacTransportEvidence: snapshotLeIsaacTransportEvidence,
           // Performance probes poll every few milliseconds on the browser
           // event loop. They are read-only and must not allocate/copy the

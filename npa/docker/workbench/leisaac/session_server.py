@@ -2219,6 +2219,9 @@ def build_app() -> FastAPI:
     async def bundles_apply(request: Request) -> Response:
         if not _authorized(request.headers):
             return JSONResponse(status_code=403, content={"detail": "forbidden"})
+        client_id = str(request.headers.get("x-npa-leisaac-client-id") or "")
+        if not _controller_lease_authorized(request.headers, client_id):
+            return _controller_busy()
         payload = await read_bounded_json(request)
         if payload is None or set(payload) != {"selection"}:
             return JSONResponse(
@@ -2461,6 +2464,9 @@ def build_app() -> FastAPI:
     async def recorder_control(request: Request) -> Response:
         if not _authorized(request.headers):
             return JSONResponse(status_code=403, content={"detail": "forbidden"})
+        client_id = str(request.headers.get("x-npa-leisaac-client-id") or "")
+        if not _controller_lease_authorized(request.headers, client_id):
+            return _controller_busy()
         payload = await read_bounded_json(request)
         command = str(payload.get("command") if payload else "")
         request_id = str(

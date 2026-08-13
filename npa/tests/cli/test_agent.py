@@ -2884,7 +2884,7 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                     "available": False,
                     "episodes_available": False,
                     "run_id": "",
-                    "reason": "Select a run that exposes a LeIsaac teleoperation session.",
+                    "reason": "No LeIsaac runtime is registered with this agent.",
                 }
             )
         if url_s.endswith("/api/infra/k8s"):
@@ -2928,7 +2928,9 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 return _Resp({"detail": "authentication required"}, status_code=401)
             html = (
                 f'<html><head><meta name="viewport" content="width=device-width, initial-scale=1">'
-                f'<meta name="npa-ui-version" content="{AGENT_UI_VERSION}"></head>'
+                f'<meta name="npa-ui-version" content="{AGENT_UI_VERSION}">'
+                '<meta name="leisaac-control-readiness-contract" '
+                'content="LEISAAC_CONTROL_READINESS_CONTRACT"></head>'
                 "<body>"
                 '<div id="tabMain"></div><div id="tabRerun"></div>'
                 '<div id="agentAccessPanel"></div><button id="agentAccessRefresh"></button>'

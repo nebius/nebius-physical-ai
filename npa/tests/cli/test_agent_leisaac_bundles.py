@@ -338,6 +338,8 @@ def test_bundle_routes_require_same_origin_upload_and_persist_exact_selection() 
     headers = {
         "x-forwarded-proto": "https",
         "x-npa-leisaac-control": "1",
+        "x-npa-leisaac-client-id": "bundle-test-browser",
+        "x-npa-leisaac-lease-id": "d" * 64,
         "sec-fetch-site": "same-origin",
     }
     uploaded = client.post(url, headers=headers, json=_payload())
@@ -346,6 +348,18 @@ def test_bundle_routes_require_same_origin_upload_and_persist_exact_selection() 
     listed = client.get(url, headers={"x-forwarded-proto": "https"})
     assert listed.status_code == 200
     assert listed.json()["bundles"][0]["bundle_sha256"] == digest
+    no_lease_headers = {
+        name: value
+        for name, value in headers.items()
+        if name not in {"x-npa-leisaac-client-id", "x-npa-leisaac-lease-id"}
+    }
+    missing_lease = client.post(
+        "/leisaac/bundles/select?run_id=bundle-route-run",
+        headers=no_lease_headers,
+        json={"kind": "robot", "bundle_sha256": digest},
+    )
+    assert missing_lease.status_code == 409
+    assert missing_lease.json()["code"] == "controller_busy"
     selected = client.post(
         "/leisaac/bundles/select?run_id=bundle-route-run",
         headers=headers,
@@ -365,7 +379,18 @@ def test_bundle_routes_require_same_origin_upload_and_persist_exact_selection() 
     }
     assert posts[-1][0] == "http://8.8.8.8:8080/bundles/apply"
     assert posts[-1][1]["json"] == {"selection": {"robot": digest}}
-    assert posts[-1][1]["headers"] == {"X-NPA-LeIsaac-Nonce": nonce}
+    assert posts[-1][1]["headers"] == {
+        "X-NPA-LeIsaac-Nonce": nonce,
+        "X-NPA-LeIsaac-Client-ID": "bundle-test-browser",
+        "X-NPA-LeIsaac-Lease-ID": "d" * 64,
+    }
+    missing_reset_lease = client.post(
+        "/leisaac/bundles/reset?run_id=bundle-route-run",
+        headers=no_lease_headers,
+        json={},
+    )
+    assert missing_reset_lease.status_code == 409
+    assert missing_reset_lease.json()["code"] == "controller_busy"
     reset = client.post(
         "/leisaac/bundles/reset?run_id=bundle-route-run",
         headers=headers,
@@ -375,6 +400,11 @@ def test_bundle_routes_require_same_origin_upload_and_persist_exact_selection() 
     assert reset.json()["selected_bundles"] == {}
     assert reset.json()["configuration"]["scene"]["id"] == "kitchen_with_orange"
     assert posts[-1][1]["json"] == {"selection": {}}
+    assert posts[-1][1]["headers"] == {
+        "X-NPA-LeIsaac-Nonce": nonce,
+        "X-NPA-LeIsaac-Client-ID": "bundle-test-browser",
+        "X-NPA-LeIsaac-Lease-ID": "d" * 64,
+    }
     assert saved[-1]["leisaac"]["bundle_selection"] == {}
     assert saved[-1]["leisaac"]["bundle_selection_scope"]["dataset_uri"] == (
         "s3://bucket/datasets/leisaac"
@@ -459,6 +489,8 @@ def test_bundle_selection_prunes_state_from_a_previous_dataset_prefix() -> None:
     headers = {
         "x-forwarded-proto": "https",
         "x-npa-leisaac-control": "1",
+        "x-npa-leisaac-client-id": "bundle-test-browser",
+        "x-npa-leisaac-lease-id": "d" * 64,
         "sec-fetch-site": "same-origin",
     }
     uploaded = client.post(
@@ -516,6 +548,7 @@ def test_cumulative_bundle_selection_uses_atomic_backend_state_mutation() -> Non
     state: dict = {"leisaac": {}}
     s3 = FakeS3()
     applied: list[dict] = []
+    applied_headers: list[dict] = []
     runtime_selected: dict[str, dict[str, str]] = {}
     block_next_apply = False
     apply_entered = threading.Event()
@@ -545,6 +578,7 @@ def test_cumulative_bundle_selection_uses_atomic_backend_state_mutation() -> Non
     def http_post(_url, **kwargs):
         nonlocal block_next_apply
         applied.append(kwargs["json"])
+        applied_headers.append(kwargs["headers"])
         runtime_selected.clear()
         for kind, digest in kwargs["json"]["selection"].items():
             manifest = s3.objects[
@@ -584,6 +618,8 @@ def test_cumulative_bundle_selection_uses_atomic_backend_state_mutation() -> Non
     headers = {
         "x-forwarded-proto": "https",
         "x-npa-leisaac-control": "1",
+        "x-npa-leisaac-client-id": "bundle-test-browser",
+        "x-npa-leisaac-lease-id": "d" * 64,
         "sec-fetch-site": "same-origin",
     }
     for kind in ("scene", "device", "robot"):
@@ -624,33 +660,43 @@ def test_cumulative_bundle_selection_uses_atomic_backend_state_mutation() -> Non
         {"scene", "device"},
         {"scene", "device", "robot"},
     ]
+    assert all(
+        item
+        == {
+            "X-NPA-LeIsaac-Nonce": nonce,
+            "X-NPA-LeIsaac-Client-ID": "bundle-test-browser",
+            "X-NPA-LeIsaac-Lease-ID": "d" * 64,
+        }
+        for item in applied_headers
+    )
 
-    # A fresh runtime after a Kubernetes rollout starts on built-ins. The
-    # agent's scoped, atomically saved selection is reconciled exactly once.
+    # A fresh runtime after a Kubernetes rollout starts on built-ins. Status
+    # exposes the scoped selection as pending but never mutates the runtime
+    # without a browser controller lease.
     runtime_selected.clear()
     before_restore = len(applied)
-    restoring = client.get(
+    pending = client.get(
         "/leisaac/status?run_id=bundle-atomic-run",
         headers={"x-forwarded-proto": "https"},
     )
-    assert restoring.status_code == 200
-    assert restoring.json()["available"] is False
-    assert "Restoring persisted" in restoring.json()["reason"]
-    assert len(applied) == before_restore + 1
-    assert set(applied[-1]["selection"]) == {"robot", "scene", "device"}
-    restored = client.get(
+    assert pending.status_code == 200
+    assert pending.json()["available"] is True
+    assert pending.json()["bundle_selection_pending"] is True
+    assert "controller lease" in pending.json()["bundle_selection_reason"]
+    assert pending.json()["bundle_selection"] == selection
+    assert pending.json()["configuration"]["custom_bundle_count"] == 0
+    assert len(applied) == before_restore
+    still_pending = client.get(
         "/leisaac/status?run_id=bundle-atomic-run",
         headers={"x-forwarded-proto": "https"},
     )
-    assert restored.json()["available"] is True
-    assert restored.json()["bundle_selection"] == selection
-    assert restored.json()["configuration"]["custom_bundle_count"] == 3
-    assert len(applied) == before_restore + 1
+    assert still_pending.json()["bundle_selection_pending"] is True
+    assert len(applied) == before_restore
 
     # Slow runtime apply must not serialize independent status health/storage
-    # discovery. The status snapshot may describe the last committed selection,
-    # while the narrow mutation transaction prevents it from restoring over the
-    # in-flight replacement.
+    # discovery. The status snapshot may describe the last committed selection
+    # while the narrow mutation transaction keeps the live controls unavailable
+    # until the controller-authorized apply finishes.
     replacement = _payload(kind="scene")
     replacement["name"] = "replacement-scene"
     replacement["files"][0] = _file(

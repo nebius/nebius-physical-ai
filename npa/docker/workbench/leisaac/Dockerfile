@@ -46,9 +46,10 @@ COPY docker/workbench/isaac-lab/smoke_functional.py /opt/npa/docker/workbench/is
 
 # MoviePy is not used by LeIsaac's exercised runtime; recording uses Debian's
 # dynamically packaged ffmpeg. Install the shared Isaac OSS closure through an
-# explicit LeIsaac variant that omits MoviePy, so imageio-ffmpeg and its bundled
-# executable are never downloaded into a build layer.
-RUN sed '/^moviepy$/d' /opt/npa/docker/workbench/common/isaac-oss-deps.txt \
+# explicit LeIsaac variant that omits both MoviePy and the separately pinned
+# imageio-ffmpeg package, so its bundled executable never enters a committed
+# image layer. Match the versioned lockfile entries, not only bare names.
+RUN sed -E '/^(moviepy|imageio-ffmpeg)==/d' /opt/npa/docker/workbench/common/isaac-oss-deps.txt \
       > /opt/npa/docker/workbench/common/leisaac-oss-deps.txt \
     && chmod +x /opt/npa/docker/workbench/common/*.sh \
     && NPA_RUNTIME_USER="${NPA_RUNTIME_USER}" \

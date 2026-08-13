@@ -103,7 +103,7 @@ def test_leisaac_dockerfile_removes_parent_imageio_ffmpeg_payload() -> None:
     assert "! /opt/npa/sim/venv/bin/python -m pip show moviepy imageio-ffmpeg" in dockerfile
     assert "FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04@sha256:" in dockerfile
     assert "NPA_ISAAC_OSS_DEPS_FILE=" in dockerfile
-    assert "sed '/^moviepy$/d'" in dockerfile
+    assert "sed -E '/^(moviepy|imageio-ffmpeg)==/d'" in dockerfile
     assert "FROM ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab" not in dockerfile
 
 

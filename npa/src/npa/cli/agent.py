@@ -126,6 +126,7 @@ from npa.cli.agent_contracts import (  # noqa: F401 - public compatibility expor
     AGENT_STAGES_RUN_PICKER_CONTRACT,
     AGENT_VIEWER_CHAT_DRAWER_CONTRACT,
     AGENT_VISUAL_FEEDBACK_CONTRACT,
+    LEISAAC_CONTROL_READINESS_CONTRACT,
     _embedded_agent_artifact_content_source,
     _embedded_agent_artifacts_source,
     _embedded_agent_chat_source,
@@ -11268,6 +11269,7 @@ def verify_live_cmd(
         "Accessible / discovered",
         "Configured references",
         # Capability-gated LeIsaac tab and authenticated WebRTC bridge.
+        LEISAAC_CONTROL_READINESS_CONTRACT,
         "ensureLeIsaacTab",
         "ensureLeIsaacTab(leisaacCapability)",
         "unavailableLeIsaacStatus",

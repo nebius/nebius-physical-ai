@@ -52,20 +52,30 @@ parallel control routing.
 
 ## What makes the tab appear
 
-The browser mounts the `LeIsaac` tab and its explicit unavailable/retry panel as
-soon as the UI is wired, before remote capability or artifact discovery. A live
-simulator is optional; an agent-relay launch registers its run through the
-agent's authenticated, certificate-pinned HTTPS API. The browser first checks
-that independently registered LeIsaac run and can then ask about an explicitly
-selected artifact run. An unrelated Rerun or Voxel51 selection is never treated
-as the default LeIsaac capability and cannot delay the tab's first paint. The
+The browser mounts the `LeIsaac` tab and its readiness panel as soon as the UI
+is wired, before remote capability or artifact discovery. With no registered
+runtime, session-only configuration, livestream, motion/orbit, and recorder
+widgets are not rendered. The available **Retry readiness** action is safe and
+does not launch infrastructure; the panel instead shows the non-secret
+operator prerequisites and a placeholder Workbench CLI launch template. It
+never accepts an EULA or creates a session from browser state.
+
+A live simulator is optional; an agent-relay launch registers its run through
+the agent's authenticated, certificate-pinned HTTPS API. The browser checks
+that independently registered LeIsaac run. An unrelated Rerun, artifact, or Voxel51
+selection is never treated as the default LeIsaac capability and cannot delay
+the tab's first paint. The
 backend discovers exactly one `reports/leisaac-session.json` artifact, validates its schema,
 run/task/device, fixed transport endpoints, expiry, source commit, and
 digest-pinned image, registry fingerprint, task/environment identity, and S3
 dataset destination, then verifies the live service's matching one-way nonce
 attestation. The raw nonce never appears in `/status` or the browser. Any
 absent, stale, malformed, unreachable, mismatched, or non-ready live session
-disables live controls without removing an already selected dataset surface.
+keeps live controls out of the DOM without removing safe dataset surfaces.
+When a registered manifest has a configured dataset, immutable episode browsing
+and checksum-validated bundle list/upload remain available; upload is explicitly
+storage-only and never claims that the bundle is applied. Runtime configuration
+and recording are not available in this state.
 Selecting another live LeIsaac run
 updates the registered capability; switching unrelated artifact runs does not
 discard it.
@@ -78,6 +88,15 @@ session nonce, rejects malformed JPEG bytes and unknown controls, and relays
 the response through HTTPS. The service reports accepted inputs separately
 from inputs consumed by upstream `SO101Keyboard`, so live validation proves
 that controls reached the simulator rather than only the public API.
+
+Even after health and attestation are ready, the page keeps motion, orbit,
+recorder, view-mode, recording-camera, and bundle apply/reset actions locked
+until **Connect teleoperation** obtains a run/client-bound controller lease.
+Each locked widget is associated with the visible lease prerequisite. A second
+authenticated browser can still inspect status and immutable data, but receives
+`controller_busy` and cannot mutate the runtime until the current controller
+disconnects. Disconnect, transport recovery, and lease loss immediately return
+those controls to the locked state.
 
 The measured public profile uses an authenticated same-origin WebSocket for
 reliable ordered control and an independent bounded binary WebSocket for
@@ -346,7 +365,8 @@ declarations are accepted. Calls, functions, classes, attribute writes, unsafe
 imports, and executable statements are rejected.
 
 Selecting a bundle is an authenticated runtime operation, not a cosmetic UI
-preference. The runtime downloads the manifest and each file directly from the
+preference. It requires the active controller lease; upload/list alone never
+selects or applies a bundle. The runtime downloads the manifest and each file directly from the
 selected dataset prefix, revalidates canonical and per-file SHA-256 values,
 materializes only below a digest-named private cache, and rejects a kind
 mismatch. It refuses to restart while a recording is active. Otherwise it
@@ -356,8 +376,10 @@ channel, terminates only the supervised simulator child, and starts it again.
 **Reset to built-in defaults** clears all three uploaded overrides as one
 authenticated operation and restarts the same registered task on its task-aware
 built-ins. The scoped selection is persisted with run, dataset, task, and
-registry identity so a rollout restores valid overrides but never carries a
-stale selection into another dataset.
+registry identity. After a rollout, a mismatch is reported as pending rather
+than restored automatically: a browser must reconnect, obtain the controller
+lease, and explicitly apply the selection. A stale selection is never carried
+into another dataset.
 The tab remains present with an explicit reconnect state until both distinct
 RTX viewports are nonblank. Runtime health and episode provenance expose the
 selected names and digests without exposing storage credentials. Custom robot
@@ -510,8 +532,9 @@ relay and any compatibility TURN unit, and deletes only the matching
 NPA-managed UDP `3478` rule (plus a legacy `47999` rule when an older
 session recorded one). It preserves the S3
 manifest/log/evidence record.
-Once the service is gone, live health fails and the agent UI disables live
-controls while keeping immutable S3 episodes and downloads available.
+Once the service is gone, live health fails and the agent UI replaces live
+controls with the readiness panel while keeping immutable S3 episodes and
+downloads available.
 
 Durable validation evidence and screenshots live under
 `docs/evidence/leisaac/`.
