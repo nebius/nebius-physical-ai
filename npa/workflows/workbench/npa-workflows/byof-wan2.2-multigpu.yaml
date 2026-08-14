@@ -35,8 +35,8 @@ config:
     export WAN22_EXPECTED_WORLD_SIZE="4"
     export WAN22_OUTPUT_NAME="wan2_2_ti2v_5b_multigpu.mp4"
     # The security-fixed runtime pins NCCL 2.29.7. Retain the conservative
-    # device allocator and shared-memory host fallback from the previously
-    # accepted 2.27.7 topology while this runtime awaits live qualification.
+    # device allocator and shared-memory host fallback from the historical
+    # topology while this runtime awaits live qualification.
     export NCCL_CUMEM_ENABLE="0"
     export NCCL_CUMEM_HOST_ENABLE="0"
     # The eight-B200 host exposes NVSwitch, but an unprivileged four-GPU
@@ -132,6 +132,12 @@ config:
     import torch
     import torch.distributed as dist
     from torch.distributed.fsdp import FullyShardedDataParallel, ShardingStrategy
+
+    if torch.__version__.split("+", 1)[0] != "2.13.0" or torch.version.cuda != "13.0":
+        raise RuntimeError(
+            f"Wan runtime must be Torch 2.13.0 / CUDA 13.0, observed "
+            f"{torch.__version__} / {torch.version.cuda}"
+        )
 
     # torch.distributed.run executes this generated wrapper by path, which puts
     # the run directory (not the immutable checkout) at sys.path[0].
@@ -367,6 +373,9 @@ config:
                         or item["torch_nccl_use_comm_nonblocking"] != "1"
                         or item["loaded_nccl"]["version"] != "2.29.7"
                         or item["loaded_nccl"]["version_code"] != 22907
+                        or item["torch"].split("+", 1)[0] != "2.13.0"
+                        or item["torch_cuda"] != "13.0"
+                        or item["nccl_build_api_version"] != [2, 29, 7]
                         or len(wrappers) != 2
                         or "WanModel" not in wrapper_sources
                         or not any(wrapper["sequence_parallel_active_before_wrap"] for wrapper in wrappers)
@@ -434,6 +443,12 @@ config:
     import cv2
     import numpy as np
     import torch
+
+    if torch.__version__.split("+", 1)[0] != "2.13.0" or torch.version.cuda != "13.0":
+        raise SystemExit(
+            f"Wan runtime must be Torch 2.13.0 / CUDA 13.0, observed "
+            f"{torch.__version__} / {torch.version.cuda}"
+        )
 
     out = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
     video = out / os.environ["WAN22_OUTPUT_NAME"]

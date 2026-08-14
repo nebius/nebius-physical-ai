@@ -110,7 +110,7 @@ def test_clean_oss_rootfs_and_runtime_fetch_plumbing_pass(tmp_path: Path) -> Non
         tmp_path / "clean.tar",
         {
             "opt/byof/LICENSE.txt": b"Apache License 2.0",
-            "opt/npa/wan2-2/runtime-requirements.txt": b"torch==2.7.1\n",
+            "opt/npa/wan2-2/runtime-requirements.txt": b"torch==2.13.0\n",
             "usr/local/bin/wan-runtime": b"NVIDIA terms; runtime fetch only\n",
         },
     )
@@ -590,6 +590,22 @@ def test_secret_literal_exception_requires_exact_audited_bytes(
     assert (
         scanner.scan(_tar(tmp_path / "audited.tar", {path: audited_payload}), {}) == []
     )
+
+
+def test_precompiled_secret_literal_allowlist_is_exact() -> None:
+    expected = {
+        "opt/wan-base/lib/python3.10/site-packages/PIL/__pycache__/ImageFont.cpython-310.pyc": (
+            "59632aaf913b02078acc5d366bcef3e28a14194acaf7904c4c13ac4714c319a2"
+        ),
+        "opt/wan-base/lib/python3.10/site-packages/cryptography/hazmat/primitives/serialization/__pycache__/ssh.cpython-310.pyc": (
+            "b269114f93539cfc4c55511c3ecb8e55e7a8f1f9dd8755deef8762f9938eec3e"
+        ),
+    }
+
+    assert {
+        path: scanner.AUDITED_SECRET_LITERAL_FILE_SHA256.get(path)
+        for path in expected
+    } == expected
 
 
 @pytest.mark.parametrize(

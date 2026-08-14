@@ -312,6 +312,7 @@ def test_wan22_multigpu_uses_the_pinned_official_distributed_path() -> None:
     assert "nvidia-nccl-cu13==2.29.7" in runtime_requirements
     assert '"nvidia-nccl-cu13": "2.29.7"' in runtime_script
     assert 'item["loaded_nccl"]["version_code"] != 22907' in smoke
+    assert 'item["nccl_build_api_version"] != [2, 29, 7]' in smoke
     assert "--ignore-installed --no-deps" in runtime_script
     assert "nvidia-nccl-cu12" not in runtime_requirements
     assert "--nproc_per_node=4" in smoke

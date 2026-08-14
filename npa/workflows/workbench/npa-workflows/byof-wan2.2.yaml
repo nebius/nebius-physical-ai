@@ -101,6 +101,12 @@ config:
     INVENTORY_NAME = "wan2_2_runtime_inventory.json"
     VALIDATION_CAPABILITY = "wan2.2_decoded_mp4_validation"
 
+    if torch.__version__.split("+", 1)[0] != "2.13.0" or torch.version.cuda != "13.0":
+        raise SystemExit(
+            f"Wan runtime must be Torch 2.13.0 / CUDA 13.0, observed "
+            f"{torch.__version__} / {torch.version.cuda}"
+        )
+
     out_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
     out_dir.mkdir(parents=True, exist_ok=True)
     cache_dir = Path(os.environ.get("WAN22_CACHE_DIR", "/workspace/model-cache/wan2.2"))

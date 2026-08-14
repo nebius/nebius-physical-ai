@@ -10,6 +10,14 @@ from pathlib import Path
 
 import pytest
 
+from npa.solutions.wan2_2.dependency_closure import (
+    DependencyClosureError,
+    DistributionMetadata,
+    RUNTIME_ONLY_DISTRIBUTIONS,
+    parse_runtime_requirements,
+    validate_dependency_union,
+)
+
 
 ROOT = Path(__file__).resolve().parents[3]
 RUNTIME_SCRIPT = ROOT / "npa" / "docker" / "workbench" / "wan2-2" / "wan_runtime.sh"
@@ -64,14 +72,90 @@ def test_security_fixed_runtime_and_baked_image_are_fully_pinned() -> None:
     assert "pip install --no-cache-dir --no-deps" in dockerfile
     assert "https://download.pytorch.org/whl/cpu" not in dockerfile
     assert "^(torch|torchvision|torchaudio|nvidia-)" in dockerfile
-    assert "-type d -name __pycache__ -prune" in dockerfile
+    assert "dependency_closure.py validate" in dockerfile
+    assert '"opencv-python-headless>=4.9.0.80"' in dockerfile
+    assert "-e '/\"easydict\",/d'" in dockerfile
+    assert "-e '/\"flash_attn\",/d'" in dockerfile
+    assert "pip install --no-cache-dir --no-deps -e /opt/byof" in dockerfile
+    assert "-m compileall -q --invalidation-mode checked-hash" in dockerfile
+    assert "-type d -name __pycache__ -prune" not in dockerfile
     assert '"$tree/venv/bin/python" -m pip check' in RUNTIME_SCRIPT.read_text(
         encoding="utf-8"
     )
     smoke = WAN_SMOKE.read_text(encoding="utf-8")
     assert 'find_spec("torch") is None' in smoke
-    assert "import wan" not in smoke
+    assert "dependency_closure.py verify-report" in smoke
+    assert "resolve_wan_input_contract" in smoke
+    assert "test -r /opt/byof/wan/textimage2video.py" not in smoke
     assert "wan-runtime ensure" in smoke
+
+
+def _metadata(
+    name: str, version: str, *requires_dist: str
+) -> DistributionMetadata:
+    return DistributionMetadata(
+        name=name,
+        version=version,
+        requires_dist=tuple(requires_dist),
+    )
+
+
+def test_dependency_closure_allows_only_declared_runtime_only_family() -> None:
+    report = validate_dependency_union(
+        {
+            "wan": _metadata("wan", "2.2", "torch>=2.13", "shared==1.0"),
+            "shared": _metadata("shared", "1.0"),
+        },
+        {"torch": _metadata("torch", "2.13.0", "shared>=1")},
+        runtime_only_allowlist=frozenset({"torch"}),
+    )
+
+    assert report["status"] == "validated"
+    assert report["runtime_only_distributions"] == ["torch"]
+    assert report["applicable_dependency_edges_checked"] == 3
+
+
+def test_dependency_closure_rejects_unapproved_runtime_only_package() -> None:
+    with pytest.raises(DependencyClosureError, match="runtime-only distribution set"):
+        validate_dependency_union(
+            {"wan": _metadata("wan", "2.2")},
+            {"unreviewed": _metadata("unreviewed", "1.0")},
+            runtime_only_allowlist=frozenset(),
+        )
+
+
+def test_dependency_closure_rejects_missing_transitive_requirement() -> None:
+    with pytest.raises(DependencyClosureError, match="requires missing omitted"):
+        validate_dependency_union(
+            {"wan": _metadata("wan", "2.2", "omitted>=1")},
+            {},
+            runtime_only_allowlist=frozenset(),
+        )
+
+
+def test_dependency_closure_rejects_incompatible_transitive_requirement() -> None:
+    with pytest.raises(
+        DependencyClosureError, match=r"requires shared<2; effective shared==2\.0"
+    ):
+        validate_dependency_union(
+            {
+                "wan": _metadata("wan", "2.2", "shared<2"),
+                "shared": _metadata("shared", "2.0"),
+            },
+            {},
+            runtime_only_allowlist=frozenset(),
+        )
+
+
+def test_checked_in_runtime_only_set_is_exact() -> None:
+    runtime = set(parse_runtime_requirements(RUNTIME_REQUIREMENTS))
+    baked = {
+        line.split("==", 1)[0].lower().replace("_", "-")
+        for line in BAKED_CONSTRAINTS.read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
+    }
+
+    assert runtime.difference(baked) == RUNTIME_ONLY_DISTRIBUTIONS
 
 
 def _offline_runtime_env(

@@ -59,6 +59,8 @@ COPY --chmod=0444 docker/workbench/wan2-2/baked-constraints.txt /opt/npa/wan2-2/
 COPY --chmod=0444 docker/workbench/wan2-2/easydict_compat.py /opt/byof/wan/utils/easydict.py
 COPY --chmod=0444 docker/workbench/wan2-2/wan_init_ti2v.py /opt/byof/wan/__init__.py
 COPY --chmod=0444 docker/workbench/wan2-2/input_contract.py /opt/byof/npa_wan_input_contract.py
+COPY --chmod=0444 docker/workbench/wan2-2/runtime-requirements.txt /opt/npa/wan2-2/runtime-requirements.txt
+COPY --chmod=0444 src/npa/solutions/wan2_2/dependency_closure.py /opt/npa/wan2-2/dependency_closure.py
 
 # Install the complete reviewed OSS closure without dependency resolution so
 # packages such as Accelerate and PEFT cannot pull Torch/CUDA into an image
@@ -73,18 +75,24 @@ RUN python -m venv /opt/wan-base \
       "imageio-ffmpeg==0.6.0" \
     && /opt/wan-base/bin/python -m pip install --no-cache-dir --no-deps \
       -r /opt/npa/wan2-2/baked-constraints.txt \
-    && /opt/wan-base/bin/python -m pip install --no-cache-dir --no-deps -e /opt/byof \
     && sed -i \
       's/^from \.attention import flash_attention$/from .attention import attention as flash_attention/' \
       /opt/byof/wan/modules/model.py \
     && sed -i \
       's/^from easydict import EasyDict$/from wan.utils.easydict import EasyDict/' \
       /opt/byof/wan/configs/*.py \
+    && sed -i \
+      -e 's/"opencv-python>=4.9.0.80"/"opencv-python-headless>=4.9.0.80"/' \
+      -e '/"easydict",/d' \
+      -e '/"flash_attn",/d' \
+      /opt/byof/pyproject.toml \
     && grep -Fxq 'from .attention import attention as flash_attention' /opt/byof/wan/modules/model.py \
     && ! grep -Rqs '^from easydict import EasyDict$' /opt/byof/wan/configs \
+    && grep -Fq '"opencv-python-headless>=4.9.0.80"' /opt/byof/pyproject.toml \
+    && ! grep -Eq '"(opencv-python|easydict|flash_attn)([">=,])' /opt/byof/pyproject.toml \
+    && /opt/wan-base/bin/python -m pip install --no-cache-dir --no-deps -e /opt/byof \
     && test "$(/opt/wan-base/bin/python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')" = /usr/bin/ffmpeg \
     && test -z "$(find /opt/wan-base -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
-    && /opt/wan-base/bin/python -m compileall -q /opt/byof \
     && /opt/wan-base/bin/python -c 'import runpy; cls=runpy.run_path("/opt/byof/wan/utils/easydict.py")["EasyDict"]; cfg=cls({"nested":{"value":7}}); assert cfg.nested.value == 7' \
     && /opt/wan-base/bin/python -m pip freeze --all --exclude-editable > /opt/byof/npa_baked_python_inventory.txt \
     && diff -u \
@@ -96,12 +104,17 @@ RUN python -m venv /opt/wan-base \
          -o -iname 'model*.pt' -o -iname 'model*.pth' -o -iname 'weights*.pt' \
          -o -iname 'weights*.pth' \) \
       -print -quit)" \
-    && find /opt/byof /opt/wan-base -type d -name __pycache__ -prune \
-      -exec rm -rf -- {} + \
+    && /opt/wan-base/bin/python /opt/npa/wan2-2/dependency_closure.py validate \
+      --baked-site /opt/wan-base/lib/python3.10/site-packages \
+      --baked-inventory /opt/byof/npa_baked_python_inventory.txt \
+      --runtime-requirements /opt/npa/wan2-2/runtime-requirements.txt \
+      --report /opt/byof/npa_dependency_closure_report.json \
+    && /opt/wan-base/bin/python -m compileall -q --invalidation-mode checked-hash \
+      /opt/byof /opt/npa/wan2-2/dependency_closure.py \
+    && test -n "$(find /opt/byof/wan -type f -path '*/__pycache__/*.pyc' -print -quit)" \
     && rm -rf /root/.cache /tmp/pip-* \
     && ln -s /workspace/.cache/npa/wan2-2/runtime/current/venv /opt/byof/.venv
 
-COPY --chmod=0444 docker/workbench/wan2-2/runtime-requirements.txt /opt/npa/wan2-2/runtime-requirements.txt
 COPY --chmod=0755 docker/workbench/wan2-2/wan_runtime.sh /usr/local/bin/wan-runtime
 COPY --chmod=0755 docker/workbench/wan2-2/entrypoint.sh /usr/local/bin/wan-entrypoint
 COPY --chmod=0755 docker/workbench/wan2-2/smoke.sh /opt/npa/wan2-2/smoke.sh
