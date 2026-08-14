@@ -112,6 +112,10 @@ RUN python -m venv /opt/wan-base \
     && /opt/wan-base/bin/python -m compileall -q --invalidation-mode checked-hash \
       /opt/byof /opt/npa/wan2-2/dependency_closure.py \
     && test -n "$(find /opt/byof/wan -type f -path '*/__pycache__/*.pyc' -print -quit)" \
+    # Bytecode is not needed at runtime. Removing it after the build-time checks
+    # keeps credential-shaped literals in source-auditable files for byte scans.
+    && find /opt/wan-base /opt/byof -type d -name __pycache__ -prune \
+      -exec rm -rf '{}' + \
     && rm -rf /root/.cache /tmp/pip-* \
     && ln -s /workspace/.cache/npa/wan2-2/runtime/current/venv /opt/byof/.venv
 
