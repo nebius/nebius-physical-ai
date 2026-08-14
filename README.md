@@ -196,6 +196,16 @@ PROJECT="$NPA_PROJECT_ALIAS"
 export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
 REGISTRY="$NPA_REGISTRY"
 npa workbench health preflight
+
+# Reserve the exact run identity, then complete deterministic validation,
+# planning, and image gates before provisioning or source upload.
+BUCKET="$NPA_BUCKET"
+RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project "$PROJECT")"
+npa workbench workflow validate-spec "$SPEC" --json
+npa workbench workflow plan-spec "$SPEC" --run-id "$RUN_ID" \
+  --assume-decision promote_checkpoint --var bucket="$BUCKET" \
+  --var n_augmentations=1 --json
+npa workbench workflow preflight-images "$SPEC" --registry "$REGISTRY"
 npa provision-if-absent --project "$PROJECT" --cluster-name "$CONTEXT" \
   --cpu-nodes 1 --cpu-platform cpu-d3 --cpu-preset 8vcpu-32gb \
   --gpu-nodes 1 --gpu-platform gpu-rtx6000 \
@@ -207,16 +217,7 @@ npa provision-if-absent --project "$PROJECT" --skip-k8s
 eval "$(npa configure --show --env)"
 export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
 REGISTRY="$NPA_REGISTRY"
-BUCKET="$NPA_BUCKET"
 npa skypilot bootstrap
-RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project "$PROJECT")"
-npa workbench workflow validate-spec "$SPEC" --json
-npa workbench workflow plan-spec "$SPEC" --run-id "$RUN_ID" \
-  --assume-decision promote_checkpoint --var bucket="$BUCKET" \
-  --var n_augmentations=1 --json
-# Complete every deterministic, read-only workflow gate before provisioning
-# resources or allowing submit to stage the repository source.
-npa workbench workflow preflight-images "$SPEC" --registry "$REGISTRY"
 npa provision-if-absent --project "$PROJECT" --cluster-name "$CONTEXT" \
   --cpu-nodes 1 --cpu-platform cpu-d3 --cpu-preset 8vcpu-32gb \
   --gpu-nodes 1 --gpu-platform gpu-rtx6000 \
