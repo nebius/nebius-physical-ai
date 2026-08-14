@@ -594,10 +594,14 @@ def verify_cmd(
             "--kubeconfig is not given."
         ),
     ),
-    controller_backend: str = typer.Option(
-        "kubernetes",
+    controller_backend: str | None = typer.Option(
+        None,
         "--controller-backend",
-        help="Controller backend: kubernetes (Nebius profile optional) or nebius (required).",
+        help=(
+            "Controller backend: kubernetes (Nebius profile optional) or nebius "
+            "(required). Defaults to kubernetes without making a bare legacy "
+            "runtime check require cluster setup."
+        ),
     ),
     output_format: str = typer.Option(
         "text",
@@ -617,7 +621,8 @@ def verify_cmd(
         _fail(kubernetes_client_remedy(state.kubernetes_version))
         return
 
-    backend = controller_backend.strip().lower()
+    backend_was_explicit = controller_backend is not None
+    backend = str(controller_backend or "kubernetes").strip().lower()
     if backend not in {"kubernetes", "nebius"}:
         _fail("--controller-backend must be kubernetes or nebius")
         return
@@ -626,6 +631,9 @@ def verify_cmd(
         return
     check_env, exact_context = _verify_kube_env(
         kubeconfig=kubeconfig, cluster=cluster
+    )
+    kubernetes_required = backend == "kubernetes" and bool(
+        backend_was_explicit or kubeconfig is not None or cluster
     )
     check_cmd = [str(state.sky_bin), "check"]
     if backend == "kubernetes" and exact_context:
@@ -659,7 +667,7 @@ def verify_cmd(
     ok = (
         result.returncode == 0
         and not (profile_failure and required)
-        and (backend != "kubernetes" or kubernetes_enabled)
+        and (not kubernetes_required or kubernetes_enabled)
     )
     if profile_failure and not required:
         profile_status = "skipped_not_required"
@@ -679,6 +687,7 @@ def verify_cmd(
     payload = {
         "status": "ok" if ok else "failed",
         "controller_backend": backend,
+        "kubernetes_required": kubernetes_required,
         "kubernetes_enabled": kubernetes_enabled,
         "nebius_profile": profile_status,
         "nebius_profile_detail": detail,

@@ -397,6 +397,26 @@ def _get_project(
     return payload
 
 
+_PROVIDER_FIELD_MISSING = object()
+
+
+def _provider_field(
+    payload: object, *spellings: str
+) -> object:
+    """Read one provider field defensively across wire-format spellings.
+
+    Multiple spellings are accepted only when their values agree. Missing or
+    contradictory evidence stays unknown so identity/shape checks fail closed.
+    """
+
+    if not isinstance(payload, dict):
+        return _PROVIDER_FIELD_MISSING
+    values = [payload[key] for key in spellings if key in payload]
+    if not values or any(value != values[0] for value in values[1:]):
+        return _PROVIDER_FIELD_MISSING
+    return values[0]
+
+
 def _verify_existing_project(
     payload: dict[str, Any],
     *,
@@ -418,7 +438,8 @@ def _verify_existing_project(
         mismatches.append("provider id does not match the listed project")
     if str(metadata.get("name") or "") != name:
         mismatches.append("display name changed after project listing")
-    if str(metadata.get("parent_id") or "") != tenant_id:
+    parent_id = _provider_field(metadata, "parent_id", "parentId")
+    if str(parent_id if parent_id is not _PROVIDER_FIELD_MISSING else "") != tenant_id:
         mismatches.append("project belongs to another tenant")
     if region and actual_region != region:
         mismatches.append(
@@ -1818,9 +1839,15 @@ def _is_verified_unchanged_target(
         or ""
     )
     expected_name = project.display_name(prefix) if project.name else ""
+    provider_parent_id = _provider_field(metadata, "parent_id", "parentId")
     if (
         str(metadata.get("id") or "") != project_id
-        or str(metadata.get("parent_id") or "") != tenant_id
+        or str(
+            provider_parent_id
+            if provider_parent_id is not _PROVIDER_FIELD_MISSING
+            else ""
+        )
+        != tenant_id
         or provider_region != region
         or (expected_name and str(metadata.get("name") or "") != expected_name)
     ):
@@ -1865,9 +1892,17 @@ def _is_verified_unchanged_target(
         return False
     cluster_metadata = provider_cluster.get("metadata", {}) or {}
     cluster_status = provider_cluster.get("status", {}) or {}
+    cluster_parent_id = _provider_field(
+        cluster_metadata, "parent_id", "parentId"
+    )
     if (
         str(cluster_metadata.get("id") or "") != cluster_id
-        or str(cluster_metadata.get("parent_id") or "") != project_id
+        or str(
+            cluster_parent_id
+            if cluster_parent_id is not _PROVIDER_FIELD_MISSING
+            else ""
+        )
+        != project_id
         or str(cluster_metadata.get("name") or "") != cluster.name
         or str(cluster_status.get("state") or "") != "RUNNING"
     ):
@@ -1910,12 +1945,29 @@ def _provider_node_group_matches_pool(
     status = payload.get("status", {}) or {}
     template = spec.get("template", {}) or {}
     resources = template.get("resources", {}) or {}
-    reservation = template.get("reservation_policy", {}) or {}
-    reservation_ids = (
-        reservation.get("reservation_ids", []) if isinstance(reservation, dict) else []
+    reservation_value = _provider_field(
+        template, "reservation_policy", "reservationPolicy"
     )
+    if reservation_value is _PROVIDER_FIELD_MISSING:
+        reservation: dict[str, Any] = {}
+    elif isinstance(reservation_value, dict):
+        reservation = reservation_value
+    else:
+        return False
+    reservation_ids_value = _provider_field(
+        reservation, "reservation_ids", "reservationIds"
+    )
+    reservation_ids = (
+        []
+        if reservation_ids_value is _PROVIDER_FIELD_MISSING
+        else reservation_ids_value
+    )
+    fixed_node_count_value = _provider_field(
+        spec, "fixed_node_count", "fixedNodeCount"
+    )
+    preemptible = _provider_field(template, "preemptible")
     try:
-        fixed_node_count = int(spec.get("fixed_node_count") or 0)
+        fixed_node_count = int(fixed_node_count_value)
     except (TypeError, ValueError):
         return False
     if (
@@ -1923,7 +1975,9 @@ def _provider_node_group_matches_pool(
         or fixed_node_count != pool.count
         or str(resources.get("platform") or "") != pool.platform
         or str(resources.get("preset") or "") != pool.preset
-        or bool(template.get("preemptible"))
+        # Absence, relocation, or non-boolean data cannot prove an on-demand
+        # pool. Only an explicit provider boolean false is sufficient.
+        or preemptible is not False
     ):
         return False
     if pool.capacity_block_group:

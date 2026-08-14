@@ -533,7 +533,7 @@ def test_resolve_project_id_reuses_existing_by_name(monkeypatch) -> None:
             "metadata": {
                 "name": "fleet1-test-a",
                 "id": "project-found",
-                "parent_id": "tenant-x",
+                "parentId": "tenant-x",
             },
             "spec": {"region": "us-central1"},
         },
@@ -1115,7 +1115,7 @@ def test_unchanged_provider_verified_target_has_zero_incremental_demand(
             "metadata": {
                 "id": "project-x",
                 "name": "a",
-                "parent_id": "tenant-x",
+                "parentId": "tenant-x",
             },
             "spec": {"region": "us-central1"},
         },
@@ -1129,27 +1129,29 @@ def test_unchanged_provider_verified_target_has_zero_incremental_demand(
                         "items": [
                             {
                                 "spec": {
-                                    "fixed_node_count": 1,
+                                    "fixedNodeCount": 1,
                                     "template": {
                                         "resources": {
                                             "platform": "cpu-d3",
                                             "preset": "8vcpu-32gb",
-                                        }
+                                        },
+                                        "preemptible": False,
                                     },
                                 },
                                 "status": {"state": "RUNNING"},
                             },
                             {
                                 "spec": {
-                                    "fixed_node_count": 1,
+                                    "fixedNodeCount": 1,
                                     "template": {
                                         "resources": {
                                             "platform": "gpu-rtx6000",
                                             "preset": "1gpu-24vcpu-218gb",
                                         },
-                                        "reservation_policy": {
+                                        "preemptible": False,
+                                        "reservationPolicy": {
                                             "policy": "STRICT",
-                                            "reservation_ids": [
+                                            "reservationIds": [
                                                 "capacityblockgroup-exact"
                                             ],
                                         },
@@ -1168,7 +1170,7 @@ def test_unchanged_provider_verified_target_has_zero_incremental_demand(
                     "metadata": {
                         "id": "cluster-x",
                         "name": "gpu",
-                        "parent_id": "project-x",
+                        "parentId": "project-x",
                     },
                     "status": {"state": "RUNNING"},
                 }
@@ -1203,6 +1205,52 @@ def test_unchanged_provider_verified_target_has_zero_incremental_demand(
         ),
     )
     assert L._is_verified_unchanged_target(**{**kwargs, "cluster": changed}) is False
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        {"resources": {"platform": "cpu-d3", "preset": "8vcpu-32gb"}},
+        {
+            "resources": {"platform": "cpu-d3", "preset": "8vcpu-32gb"},
+            "preemptible": "false",
+        },
+        {
+            "resources": {"platform": "cpu-d3", "preset": "8vcpu-32gb"},
+            "preemptible": None,
+        },
+    ],
+)
+def test_node_group_match_fails_closed_without_explicit_false_preemptibility(
+    template: dict,
+) -> None:
+    from npa.fleet import lifecycle as L
+
+    payload = {
+        "spec": {"fixedNodeCount": 1, "template": template},
+        "status": {"state": "RUNNING"},
+    }
+    pool = NodePoolSpec(count=1, platform="cpu-d3", preset="8vcpu-32gb")
+
+    assert L._provider_node_group_matches_pool(payload, pool) is False
+
+
+def test_node_group_match_accepts_camel_case_with_explicit_on_demand_evidence() -> None:
+    from npa.fleet import lifecycle as L
+
+    payload = {
+        "spec": {
+            "fixedNodeCount": 1,
+            "template": {
+                "resources": {"platform": "cpu-d3", "preset": "8vcpu-32gb"},
+                "preemptible": False,
+            },
+        },
+        "status": {"state": "RUNNING"},
+    }
+    pool = NodePoolSpec(count=1, platform="cpu-d3", preset="8vcpu-32gb")
+
+    assert L._provider_node_group_matches_pool(payload, pool) is True
 
 
 def test_deploy_one_cluster_failure_leaves_sidecar_provisioning(

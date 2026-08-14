@@ -201,18 +201,34 @@ def sky_bin(tmp_path):  # noqa: ANN001, ANN201 - pytest fixture
     return str(path)
 
 
-def test_discover_passes_the_context_as_an_infra_target(sky_bin: str) -> None:
+def test_discover_passes_exact_context_config_and_kubeconfig(
+    sky_bin: str, tmp_path
+) -> None:  # noqa: ANN001
     seen: dict[str, object] = {}
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
 
     def fake_run(cmd, **kwargs):  # noqa: ANN001 - test stub
         seen["cmd"] = cmd
+        seen["env"] = kwargs["env"]
         return subprocess.CompletedProcess(cmd, 0, stdout=LIVE_OUTPUT, stderr="")
 
     catalog = discover_kubernetes_gpu_catalog(
-        context="npa-rtxpro-mk8s", sky_bin=sky_bin, runner=fake_run
+        context="npa-rtxpro-mk8s",
+        kubeconfig=kubeconfig,
+        sky_bin=sky_bin,
+        runner=fake_run,
     )
 
-    assert seen["cmd"][-2:] == ["--infra", "k8s/npa-rtxpro-mk8s"]
+    assert seen["cmd"] == [
+        sky_bin,
+        "show-gpus",
+        "--config",
+        'kubernetes.allowed_contexts=["npa-rtxpro-mk8s"]',
+        "--infra",
+        "k8s/npa-rtxpro-mk8s",
+    ]
+    assert seen["env"]["KUBECONFIG"] == str(kubeconfig)
     assert set(catalog.quantities_by_accelerator) == {
         "RTXPRO-6000-BLACKWELL-SERVER-EDITION"
     }
@@ -228,29 +244,25 @@ def test_discover_surfaces_a_failing_sky_invocation(sky_bin: str) -> None:
     assert "no kube context" in str(excinfo.value)
 
 
-def test_discover_labels_known_rtxpro_when_skypilot_catalog_is_empty(
+def test_empty_discovery_is_read_only_and_never_labels_nodes(
     sky_bin: str, monkeypatch
 ) -> None:  # noqa: ANN001
-    outputs = iter(["", SINGLE_GPU_OUTPUT])
-    calls: list[list[str]] = []
-
     def fake_run(cmd, **kwargs):  # noqa: ANN001 - test stub
-        return subprocess.CompletedProcess(cmd, 0, stdout=next(outputs), stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(
         "npa.orchestration.skypilot.k8s_gpu_catalog."
         "label_known_kubernetes_gpus_for_skypilot",
-        lambda **kwargs: (calls.append([kwargs["context"]]), 1)[1],
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("catalog discovery must not mutate Kubernetes nodes")
+        ),
     )
 
     catalog = discover_kubernetes_gpu_catalog(
         context="npa-cluster", sky_bin=sky_bin, runner=fake_run
     )
 
-    assert calls == [["npa-cluster"]]
-    assert catalog.quantities_by_accelerator == {
-        "RTXPRO-6000-BLACKWELL-SERVER-EDITION": frozenset({1})
-    }
+    assert catalog.is_empty
 
 
 def test_known_rtxpro_label_is_exact_context_scoped() -> None:
@@ -292,6 +304,27 @@ def test_known_rtxpro_label_is_exact_context_scoped() -> None:
             "skypilot.co/accelerator=rtxpro6000",
         ]
     ]
+
+
+def test_known_gpu_label_rbac_failure_is_immediate_and_actionable() -> None:
+    inventory = KubernetesGpuInventory(
+        context="ctx",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=("RTX6000",),
+        node_labels={"node-a": {"nebius.com/gpu-name": "RTX6000"}},
+    )
+
+    with pytest.raises(KubernetesGpuCatalogError, match="RBAC.*patch/update"):
+        label_known_kubernetes_gpus_for_skypilot(
+            context="ctx",
+            inventory=inventory,
+            runner=lambda cmd, **_kwargs: subprocess.CompletedProcess(
+                cmd, 1, stdout="", stderr="Error from server (Forbidden)"
+            ),
+        )
 
 
 def test_inventory_prefers_gfd_product_over_same_node_provider_alias() -> None:
@@ -396,6 +429,47 @@ def test_readiness_waits_after_kubernetes_allocatable_until_skypilot_labels() ->
     assert messages[-1].startswith(
         "GPU readiness: Kubernetes allocatable=1; SkyPilot discovery=ready"
     )
+
+
+def test_explicit_known_label_repair_precedes_catalog_readiness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    inventory = KubernetesGpuInventory(
+        context="ctx",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=("RTX6000",),
+        node_labels={"node-a": {"nebius.com/gpu-name": "RTX6000"}},
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog."
+        "discover_kubernetes_gpu_inventory",
+        lambda **_kwargs: inventory,
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog."
+        "label_known_kubernetes_gpus_for_skypilot",
+        lambda **_kwargs: (events.append("label"), 1)[1],
+    )
+
+    result = wait_for_kubernetes_accelerators(
+        [],
+        context="ctx",
+        label_known_gpus=True,
+        discover=lambda: (
+            events.append("discover"),
+            KubernetesGpuCatalog(
+                quantities_by_accelerator={"rtxpro6000": frozenset({1})}
+            ),
+        )[1],
+        monotonic=lambda: 0.0,
+    )
+
+    assert events == ["label", "discover"]
+    assert result["rtxpro6000:1"].resolved == "rtxpro6000:1"
 
 
 def test_readiness_timeout_is_clear_and_preserves_capacity() -> None:
