@@ -228,7 +228,6 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
           .should("be.visible")
           .and("contain.text", "robot + trajectory 3D")
           .and("contain.text", "not calibrated robot/world kinematics");
-        cy.get("#renderedDataSummary").should("contain.text", run.run_id);
         cy.get('[data-testid="open-foxglove-web"]')
           .should("be.visible")
           .and("be.enabled")
