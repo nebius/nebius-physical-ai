@@ -1122,6 +1122,46 @@ def test_same_run_without_preferred_rrd_preserves_canonical_mcap(
         sys.modules.pop(module_name, None)
 
 
+def test_same_run_artifact_state_ignores_stale_session_history_alias(
+    monkeypatch, tmp_path
+) -> None:
+    """An unqualified reload must resolve the active source-qualified run."""
+    import sys
+
+    module_name = "npa_rendered_same_run_history_alias_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    run_id = "run-with-source-history"
+    current = {
+        "run_id": run_id,
+        "source_type": "artifact_storage",
+        "artifact_run_ref": "npa1_exact_source",
+        "bucket": "artifact-bucket",
+        "resolved_prefix": "nested/root",
+        "canonical_mcap_s3_uri": (
+            f"s3://artifact-bucket/nested/root/{run_id}/reports/sim2real.mcap"
+        ),
+    }
+    state = {
+        "sim_viz": current,
+        "sim_viz_runs": {
+            run_id: {
+                "run_id": run_id,
+                "source_type": "workflow_history",
+                "rrd_uri": "file:///opt/npa-agent/runs/local.rrd",
+            },
+            "npa1_exact_source": dict(current),
+        },
+        "sim2real_runs": {run_id: {"run_id": run_id}},
+    }
+    try:
+        monkeypatch.setattr(module, "_load_state", lambda: state)
+        result = module._load_session_run_if_known(body={}, run_id=run_id)
+        assert result is None
+        assert state["sim_viz"] == current
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
     monkeypatch, tmp_path
 ) -> None:

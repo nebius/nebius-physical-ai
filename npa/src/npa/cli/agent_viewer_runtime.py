@@ -171,6 +171,28 @@ def _load_session_run_if_known(
     runs = state.get("sim_viz_runs")
     runs = runs if isinstance(runs, dict) else {}
     selected = runs.get(run_id)
+    current = state.get("sim_viz")
+    if (
+        isinstance(current, dict)
+        and str(current.get("run_id") or "").strip() == run_id
+        and (
+            str(current.get("source_type") or "").strip() == "artifact_storage"
+            or any(
+                str(current.get(key) or "").strip()
+                for key in (
+                    "artifact_run_ref",
+                    "bucket",
+                    "resolved_prefix",
+                    "canonical_mcap_s3_uri",
+                )
+            )
+        )
+    ):
+        # Rerun self-heal also keeps a basename history alias so its local RRD
+        # can be recovered. That alias is not a session-owned replacement for
+        # an active source-qualified run. Let normal artifact resolution handle
+        # the unqualified request so it preserves the run's canonical MCAP.
+        return None
     sim2real_runs = state.get("sim2real_runs")
     sim2real_runs = sim2real_runs if isinstance(sim2real_runs, dict) else {}
     if isinstance(selected, dict):
