@@ -132,6 +132,14 @@ def validate_hf_file_access(
             and (
                 re.fullmatch(r"cdn-lfs(?:-[a-z0-9-]+)?\.hf\.co", host)
                 or host == "cas-bridge.xethub.hf.co"
+                # Hugging Face's current Xet redirect is region/provider scoped,
+                # for example ``us.aws.cdn.hf.co/xet-bridge-us/...``.  Trust only
+                # the exact ``cdn.hf.co`` DNS boundary (plus subdomains); a mere
+                # substring/suffix such as ``cdn.hf.co.attacker.invalid`` must
+                # remain rejected.  The HTTPS, non-empty signed query, path, and
+                # no-userinfo checks above still apply.
+                or host == "cdn.hf.co"
+                or host.endswith(".cdn.hf.co")
             )
         )
         if location and (artifact_cache or signed_object):

@@ -111,6 +111,8 @@ def test_transient_or_unknown_access_failure_fails_closed() -> None:
         "/api/resolve-cache/models/nvidia/checkpoint",
         "https://cdn-lfs-us-1.hf.co/signed-object?X-Amz-Signature=abc",
         "https://cas-bridge.xethub.hf.co/signed-object?X-Xet-Signed=abc",
+        "https://us.aws.cdn.hf.co/xet-bridge-us/object?X-Xet-Signed=abc",
+        "https://cdn.hf.co/xet-bridge/object?X-Xet-Signed=abc",
     ],
 )
 def test_exact_file_probe_accepts_only_known_hf_redirects(
@@ -137,6 +139,10 @@ def test_exact_file_probe_accepts_only_known_hf_redirects(
         (302, "/nvidia/model"),
         (302, "https://huggingface.co/join"),
         (302, "https://cdn-lfs-us-1.hf.co/unsigned-object"),
+        (302, "https://cdn.hf.co.attacker.invalid/signed?X-Xet-Signed=abc"),
+        (302, "https://evilcdn.hf.co/signed?X-Xet-Signed=abc"),
+        (302, "http://us.aws.cdn.hf.co/signed?X-Xet-Signed=abc"),
+        (302, "https://user@us.aws.cdn.hf.co/signed?X-Xet-Signed=abc"),
         (304, ""),
     ],
 )
