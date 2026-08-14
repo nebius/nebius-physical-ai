@@ -207,6 +207,7 @@ def _rollback_fresh_cluster_apply(
             tenant_id=str(operation.read().get("tenant_id") or ""),
             region=str(operation.read().get("region") or ""),
             cluster_id="",
+            operation_id="",
             context_name=context,
             keep_local_state=False,
             force=True,

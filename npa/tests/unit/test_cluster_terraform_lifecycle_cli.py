@@ -645,6 +645,7 @@ def test_failed_fresh_apply_rolls_back_only_its_new_terraform_state(
     assert "provider race after network create" in result.output
     down.assert_called_once()
     assert down.call_args.kwargs["context_name"] == "cluster-a"
+    assert down.call_args.kwargs["operation_id"] == ""
 
 
 def test_validate_cluster_accepts_compute_csi_when_filestore_is_disabled(
