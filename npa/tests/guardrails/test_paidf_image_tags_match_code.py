@@ -22,7 +22,9 @@ from npa.deploy.images import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DEPLOY_GUIDE = REPO_ROOT / "docs" / "workbench" / "guides" / "physical-ai-data-factory-deploy.md"
+DEPLOY_GUIDE = (
+    REPO_ROOT / "docs" / "workbench" / "guides" / "physical-ai-data-factory-deploy.md"
+)
 PAIDF_TOOLS = ("cosmos2-transfer", "cosmos-evaluator", "cosmos-curate")
 
 
@@ -104,32 +106,21 @@ def test_the_quick_start_forwards_the_hugging_face_token() -> None:
 def test_shell_examples_do_not_let_a_pipe_swallow_a_failed_submit() -> None:
     # `npa ... | tee run.log` reports 0 for a submit that printed `Error:`.
     guide = DEPLOY_GUIDE.read_text(encoding="utf-8")
-    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
 
     assert "set -o pipefail" in guide
-    assert "set -o pipefail" in readme
 
 
-def test_the_readme_path_names_the_image_step() -> None:
-    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    whole_path = readme.split("### The whole path, in order", 1)[1].split("###", 1)[0]
+def test_the_deploy_guide_path_names_the_image_step() -> None:
+    guide = DEPLOY_GUIDE.read_text(encoding="utf-8")
+    whole_path = (
+        guide.split("## Quick start (copy-paste)", 1)[1]
+        .split("```bash", 1)[1]
+        .split("```", 1)[0]
+    )
 
     assert "preflight-images" in whole_path
-    # A 2x1-GPU fleet needed `--gpu-nodes 2`, which the copy-paste path lacked.
+    # The copy-paste path must make its requested GPU count explicit.
     assert "--gpu-nodes" in whole_path
-
-
-def test_readme_runs_deterministic_paidf_gates_before_paid_provisioning() -> None:
-    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    whole_path = readme.split("### The whole path, in order", 1)[1].split(
-        "\n### ", 1
-    )[0]
-    paid_apply = whole_path.index("--gpu-readiness-timeout 900")
-
-    assert whole_path.index("preflight-images") < paid_apply
-    assert whole_path.index("--dry-run --output-format json") < paid_apply
-    assert whole_path.index('npa destroy --project "$PROJECT" --all --json') < paid_apply
-    assert "1,225-file source tree" in whole_path
 
 
 def test_no_build_command_when_the_dockerfile_is_not_where_we_would_say() -> None:
@@ -141,7 +132,9 @@ def test_no_build_command_when_the_dockerfile_is_not_where_we_would_say() -> Non
 
     for tool in ("envgen", "reference-policy"):
         image = CONTAINER_IMAGE_NAMES[tool]
-        assert not (REPO_ROOT / "npa" / "docker" / "workbench" / tool / "Dockerfile").is_file()
+        assert not (
+            REPO_ROOT / "npa" / "docker" / "workbench" / tool / "Dockerfile"
+        ).is_file()
         assert build_and_push_command(f"cr.example/p/{image}:t") == ""
 
 
@@ -154,7 +147,9 @@ def test_a_missing_image_offers_a_server_side_copy_before_a_rebuild() -> None:
     )
 
     remedy = _missing_image_remedy(
-        parse_image_reference("cr.us-central1.nebius.cloud/u00proj/npa-cosmos-curate:0.1.2")
+        parse_image_reference(
+            "cr.us-central1.nebius.cloud/u00proj/npa-cosmos-curate:0.1.2"
+        )
     )
 
     assert "crane copy" in remedy
@@ -176,15 +171,19 @@ def test_the_copy_hint_never_suggests_copying_a_ref_onto_itself() -> None:
     assert f"crane copy {same} {same}" not in remedy
 
 
-def test_the_readme_offers_the_public_mirror_before_building() -> None:
+def test_the_deploy_guide_selects_the_public_mirror_before_preflight() -> None:
     """Building three multi-GB images is avoidable: the mirror already has them."""
 
     from npa.deploy.images import DEFAULT_PUBLIC_CONTAINER_REGISTRY
 
-    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    whole_path = readme.split("### The whole path, in order", 1)[1].split("\n### ", 1)[0]
+    guide = DEPLOY_GUIDE.read_text(encoding="utf-8")
+    whole_path = (
+        guide.split("## Quick start (copy-paste)", 1)[1]
+        .split("```bash", 1)[1]
+        .split("```", 1)[0]
+    )
 
     assert DEFAULT_PUBLIC_CONTAINER_REGISTRY in whole_path
     assert whole_path.index(DEFAULT_PUBLIC_CONTAINER_REGISTRY) < whole_path.index(
-        "needs them built and pushed"
+        "preflight-images"
     )

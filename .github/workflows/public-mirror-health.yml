@@ -11,11 +11,14 @@
 #      PUSHED, and a new tool sits in that gap until its image is built.
 #
 # Discovering either on publish day costs a round trip through whoever owns the Nebius tenant.
-# This runs the same read-only preflight on a schedule so both show up early.
+# This runs the same read-only preflight on a schedule and also compares source and GHCR
+# digests, so a stale or retargeted public tag is detected before a consumer hits it.
 #
 # WHAT FAILS THIS JOB, and what deliberately does not:
 #   - a dead or missing credential, or a denial on any image: FAILS. Actionable and urgent,
 #     and it is the early warning the static key's invisible expiry otherwise denies us.
+#   - a missing GHCR tag or source/GHCR digest mismatch: FAILS. A public-but-stale package is
+#     not parity and must be republished from the exact source digest.
 #   - images absent from the registry (NAME_UNKNOWN / MANIFEST_UNKNOWN): reported, does NOT
 #     fail. Those are expected for a tool that landed before its image was built, and a job
 #     that is permanently red for a known reason teaches everyone to ignore it.
@@ -27,7 +30,7 @@ name: Public mirror health
 on:
   schedule:
     # Weekly. Frequent enough to catch a credential that expired since the last check well
-    # before someone needs it; rare enough that ~23 manifest reads are free.
+    # before someone needs it; rare enough that the canonical manifest reads are cheap.
     - cron: "0 5 * * 1"
   workflow_dispatch:
 
@@ -36,7 +39,7 @@ permissions:
 
 jobs:
   preflight:
-    name: Source registry credential and pinned tags
+    name: Source registry and public mirror parity
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -59,14 +62,14 @@ jobs:
           NEBIUS_CR_TOKEN: ${{ secrets.NEBIUS_CR_TOKEN }}
         run: ./npa/scripts/ci_source_registry_login.sh
 
-      # Writes nothing. --skip-missing is what makes absence non-fatal while keeping a
-      # credential or role fault fatal; the skipped images are listed in the log.
-      - name: Preflight every pinned source tag
+      # Writes nothing. --skip-missing makes source absence non-fatal while keeping
+      # credential, role, target-absence, and digest-drift faults fatal.
+      - name: Preflight source tags and verify GHCR digest parity
         id: preflight
         run: |
           python -m npa.deploy.publish_public \
             --target "ghcr.io/${GITHUB_REPOSITORY,,}" \
-            --skip-missing --preflight 2>&1 | tee "$RUNNER_TEMP/preflight.txt"
+            --skip-missing --verify-parity 2>&1 | tee "$RUNNER_TEMP/preflight.txt"
 
       - name: Summarise
         if: always()
@@ -75,20 +78,36 @@ jobs:
             echo "## Public mirror preflight"
             echo
             if [ "${{ steps.preflight.outcome }}" = "success" ]; then
-              echo "The source credential works and every readable pin resolves."
+              echo "The source credential works and every built pin exactly matches GHCR."
             else
-              echo "**The source registry could not be read.** This is a credential or role"
-              echo "fault, not a missing image — see the log."
+              echo "**The source registry or public-mirror parity check failed.** See the log"
+              echo "for a credential/role fault, missing target, or exact digest mismatch."
               echo
-              echo "A static key issued for CONTAINER_REGISTRY expires (6 months by default)"
-              echo "and its expiry is not readable from the token, so this job is the only"
-              echo "warning. Re-issue and update the \`NEBIUS_CR_TOKEN\` secret:"
-              echo
-              echo '```'
-              echo "nebius iam static-key issue \\"
-              echo "  --account-service-account-id=<service-account-id> \\"
-              echo "  --service=CONTAINER_REGISTRY"
-              echo '```'
+              if grep -q 'BOOTSTRAP GATE — ' "$RUNNER_TEMP/preflight.txt" 2>/dev/null; then
+                echo "### Source images that fail the publication contract"
+                echo
+                echo '```'
+                grep 'BOOTSTRAP GATE — ' "$RUNNER_TEMP/preflight.txt" || true
+                echo '```'
+                echo "Rebuild and validate these source tags before attempting publication."
+              elif grep -q '  DRIFTED — ' "$RUNNER_TEMP/preflight.txt" 2>/dev/null; then
+                echo "### GHCR tags without exact parity"
+                echo
+                echo '```'
+                grep '  DRIFTED — ' "$RUNNER_TEMP/preflight.txt" || true
+                echo '```'
+                echo "Run the guarded public-image publisher to copy those exact source digests."
+              else
+                echo "A static key issued for CONTAINER_REGISTRY expires (6 months by default)"
+                echo "and its expiry is not readable from the token, so this job is the only"
+                echo "warning. Re-issue and update the \`NEBIUS_CR_TOKEN\` secret:"
+                echo
+                echo '```'
+                echo "nebius iam static-key issue \\"
+                echo "  --account-service-account-id=<service-account-id> \\"
+                echo "  --service=CONTAINER_REGISTRY"
+                echo '```'
+              fi
             fi
             echo
             if grep -q '^Skipping ' "$RUNNER_TEMP/preflight.txt" 2>/dev/null; then

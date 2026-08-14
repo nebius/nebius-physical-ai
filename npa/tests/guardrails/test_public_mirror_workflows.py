@@ -62,6 +62,7 @@ def test_scoped_branch_publication_has_dispatch_schema_fallbacks() -> None:
     assert "inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY" in text
     assert "inputs.tool || vars.NPA_PUBLISH_TOOL" in text
     assert "(inputs.tool || vars.NPA_PUBLISH_TOOL) == ''" in text
+    assert "comma/space-separated workbench tools" in text
 
 
 @pytest.mark.parametrize("path", [PUBLISH, HEALTH], ids=lambda p: p.name)
@@ -81,7 +82,12 @@ def test_no_workflow_reinlines_the_credential_handling(path: Path) -> None:
 def test_the_health_check_never_copies_anything() -> None:
     """It runs on a schedule with no human watching, against a registry where publication is
     irreversible. Every publish_public invocation in it must be an explicitly read-only mode."""
-    read_only = ("--preflight", "--verify-public", "--describe-credential")
+    read_only = (
+        "--preflight",
+        "--verify-public",
+        "--verify-parity",
+        "--describe-credential",
+    )
     invocations = [run for run in _run_scripts(HEALTH) if "npa.deploy.publish_public" in run]
     assert invocations, "the health check must actually run the publisher's preflight"
     for run in invocations:
@@ -93,11 +99,27 @@ def test_the_health_check_tolerates_images_that_are_not_built_yet() -> None:
     """Without --skip-missing it would be red for as long as any pin lacks a pushed image,
     and a permanently red scheduled job is one nobody reads."""
     preflight = [
-        run for run in _run_scripts(HEALTH) if "--preflight" in run and "publish_public" in run
+        run
+        for run in _run_scripts(HEALTH)
+        if ("--preflight" in run or "--verify-parity" in run)
+        and "publish_public" in run
     ]
     assert preflight, "expected a preflight invocation"
     for run in preflight:
         assert "--skip-missing" in run
+
+
+def test_the_health_check_compares_source_and_public_digests() -> None:
+    invocations = [
+        run for run in _run_scripts(HEALTH) if "npa.deploy.publish_public" in run
+    ]
+    assert any("--verify-parity" in run for run in invocations)
+
+
+def test_the_health_check_distinguishes_a_bootstrap_contract_failure() -> None:
+    text = HEALTH.read_text(encoding="utf-8")
+    assert "BOOTSTRAP GATE" in text
+    assert "Rebuild and validate these source tags" in text
 
 
 def test_the_health_check_is_scheduled_and_read_only_by_permission() -> None:
@@ -129,10 +151,9 @@ def test_publishers_are_serialized_without_cancelling_an_active_release() -> Non
     }
 
 
-def test_selected_publisher_copies_the_digest_pinned_preflight_result() -> None:
+def test_selected_publisher_copies_all_digest_pinned_preflight_results() -> None:
     text = SELECTED_PUBLISHER.read_text(encoding="utf-8")
-    assert "item = publishable[0]" in text
-    assert "copied = _crane_copy(item)" in text
+    assert "sum(_crane_copy(item) for item in publishable)" in text
 
 
 def test_visibility_guidance_requires_a_completed_copy_phase() -> None:
@@ -153,6 +174,8 @@ def test_visibility_guidance_requires_a_completed_copy_phase() -> None:
     assert publish["id"] == "publish"
     assert "steps.publish.outputs.copy_phase_completed == 'true'" in visibility["if"]
     assert "Images copied, but not yet public" in visibility["run"]
-    assert "--tool \"$SELECTED_TOOL\" --mode checklist" in visibility["run"]
+    assert "--tool \"$SELECTED_TOOLS\" --mode checklist" in visibility["run"]
     assert "steps.publish.outputs.copy_phase_completed != 'true'" in pre_copy["if"]
     assert "do not change GHCR visibility" in pre_copy["run"]
+    assert "multi-image batch" in pre_copy["run"]
+    assert "current digests are skipped" in pre_copy["run"]
