@@ -1353,6 +1353,7 @@ from npa.cli.agent_resources import (
 {_AGENT_RRD_PROXY_EMBED}
 
 # Foxglove viewer helpers + routes are SHIPPED modules (see agent_backend/).
+from agent_backend.canonical_mcap import CANONICAL_MCAP_DEFAULT_STATE
 from agent_backend.canonical_mcap import clear_cross_run_mcap_state
 from agent_backend.canonical_mcap import has_rich_visualization_contract
 from agent_backend.canonical_mcap import prepare_canonical_mcap
@@ -2882,6 +2883,28 @@ def _wire_active_sim2real_recording(state: dict, *, camera: str = "workspace") -
         "submit_mode": str(current.get("submit_mode") or latest.get("submit_mode") or "completed-k8s"),
         "workflow_name": "sim2real",
     }}
+    if str(current.get("run_id") or "").strip() == run_id:
+        # This helper repairs the Rerun recording after bootstrap or a shared
+        # slot overwrite. It must not silently unpublish the same run's already
+        # validated canonical MCAP while doing so; otherwise the next clean
+        # Foxglove tab performs the entire S3 conversion again and briefly has
+        # no source/layout. Cross-run selection is still cleared by
+        # clear_cross_run_mcap_state in the artifact loader.
+        for key in (
+            *CANONICAL_MCAP_DEFAULT_STATE,
+            "artifact_run_ref",
+            "bucket",
+            "project_id",
+            "resolved_prefix",
+            "mcap_uri",
+            "mcap_updated_at",
+            "lichtblick_ready",
+            "lichtblick_iframe_url",
+            "foxglove_ready",
+            "foxglove_url",
+        ):
+            if key in current:
+                viz[key] = current[key]
     for key in ("decision", "success_rate", "threshold"):
         if key in current:
             viz[key] = current[key]

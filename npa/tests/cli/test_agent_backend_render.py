@@ -968,6 +968,75 @@ def test_source_qualified_rrd_loads_keep_independent_history(
         sys.modules.pop(module_name, None)
 
 
+def test_rerun_self_heal_preserves_same_run_canonical_mcap(
+    monkeypatch, tmp_path
+) -> None:
+    """Repairing Rerun must not discard the selected run's Foxglove source."""
+    import shutil
+    import sys
+
+    module_name = "npa_rendered_same_run_self_heal_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    recordings = tmp_path / "recordings"
+    recordings.mkdir()
+    run_id = "run-with-canonical-mcap"
+    module.RECORDINGS_DIR = recordings
+    module.RECORDING_PATH = recordings / "active.rrd"
+    module.RRD_PATH = tmp_path / "sim2real.rrd"
+    run_recording = recordings / module.run_recording_basename(run_id)
+    run_recording.write_bytes(b"run-specific RRD")
+
+    def _publish(source):
+        shutil.copy2(source, module.RECORDING_PATH)
+        return "/rerun/recordings/cap-" + "a" * 43 + ".rrd"
+
+    monkeypatch.setattr(module, "recording_has_run_entities", lambda _data: True)
+    monkeypatch.setattr(module, "_publish_rrd_recording", _publish)
+    monkeypatch.setattr(module, "_restart_rerun_serve", lambda **_kwargs: True)
+    monkeypatch.setattr(module, "_save_state", lambda _state: None)
+    current = {
+        "run_id": run_id,
+        "artifact_run_ref": "npa1_same_run",
+        "bucket": "artifact-bucket",
+        "resolved_prefix": "nested/root",
+        "canonical_mcap_s3_uri": "s3://artifact-bucket/nested/root/reports/sim2real.mcap",
+        "canonical_mcap_key": "nested/root/reports/sim2real.mcap",
+        "canonical_mcap_sha256": "a" * 64,
+        "canonical_mcap_size_bytes": 4096,
+        "canonical_mcap_source": "native-reused",
+        "canonical_mcap_provenance": {
+            "visualization_contract": "npa.foxglove.robot-motion.v2"
+        },
+        "transport_state": "published-local-cache",
+        "foxglove_cloud_layout": {"layout_id": "lay_a9618be1fa915fb8"},
+        "mcap_uri": "file:///opt/npa-agent/recordings/sim2real.mcap",
+        "foxglove_ready": True,
+        "foxglove_url": "/foxglove/data/npa-rich.mcap",
+    }
+    state = {
+        "sim_viz": current,
+        "latest_submit": {"run_id": run_id},
+        "sim_viz_runs": {},
+    }
+    try:
+        repaired = module._wire_active_sim2real_recording(state)
+        assert repaired is not None
+        assert repaired["run_id"] == run_id
+        assert repaired["canonical_mcap_s3_uri"] == current["canonical_mcap_s3_uri"]
+        assert repaired["canonical_mcap_sha256"] == "a" * 64
+        assert repaired["canonical_mcap_provenance"] == current[
+            "canonical_mcap_provenance"
+        ]
+        assert repaired["foxglove_cloud_layout"] == current[
+            "foxglove_cloud_layout"
+        ]
+        assert repaired["foxglove_url"] == current["foxglove_url"]
+        assert state["sim_viz"] == repaired
+        assert state["sim_viz_runs"][run_id]["canonical_mcap_sha256"] == "a" * 64
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
     monkeypatch, tmp_path
 ) -> None:
