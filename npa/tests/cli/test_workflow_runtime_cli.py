@@ -237,8 +237,13 @@ def fake_runtime(mocker, satisfied_preflight):
 
 
 def test_submit_runtime_passes_options_and_emits_json(
-    fake_runtime, tmp_path: Path
+    fake_runtime, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The runtime automatically forwards project storage credentials even when
+    # the caller did not repeat their names with --secret-env.  Its just-in-time
+    # resolver must refresh that same expanded set before every wave.
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "rotating-access")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "rotating-secret")
     sky_config = tmp_path / "sky.yaml"
     sky_config.write_text("kubernetes: {}\n", encoding="utf-8")
     sky_bin = tmp_path / "sky"
@@ -289,6 +294,11 @@ def test_submit_runtime_passes_options_and_emits_json(
     assert options.resume is False
     assert options.config_path == sky_config
     assert options.sky_bin == str(sky_bin)
+    assert options.secret_envs == ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")
+    assert options.credential_resolver() == {
+        "AWS_ACCESS_KEY_ID": "rotating-access",
+        "AWS_SECRET_ACCESS_KEY": "rotating-secret",
+    }
     # --var reaches the spec's config, not just the renderer.
     assert fake_runtime["spec"].config["max_images"] == "1"
     assert fake_runtime["render_options"].registry == "cr.example.invalid/reg"

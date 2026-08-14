@@ -1894,13 +1894,16 @@ def _run_npa_workflow_runtime(
         {"workflow": _workflow_submission_receipt(spec, receipt_steps, run_id)},
     )
 
+    resolved_secret_envs = secret_env_names(
+        secret_envs, values=secret_env_values
+    )
     options = RuntimeOptions(
         poll_seconds=poll_seconds,
         max_wait_seconds=max_wait_seconds,
         retries=max(0, retries),
         cancel_on_timeout=cancel_on_timeout,
         max_concurrency=max(0, max_concurrency),
-        secret_envs=secret_env_names(secret_envs, values=secret_env_values),
+        secret_envs=resolved_secret_envs,
         secret_env_values=secret_env_values,
         submit_timeout=submit_timeout,
         infra=infra,
@@ -1912,7 +1915,7 @@ def _run_npa_workflow_runtime(
         sky_bin=sky_bin,
         credential_resolver=lambda: _resolve_runtime_secret_values(
             project=project,
-            requested=secret_envs,
+            requested=list(resolved_secret_envs),
         ),
     )
     runtime_env = dict(secret_env_values)
