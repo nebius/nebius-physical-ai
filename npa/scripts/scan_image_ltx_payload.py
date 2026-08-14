@@ -123,6 +123,10 @@ FORBIDDEN_HISTORY: tuple[tuple[str, re.Pattern[str]], ...] = (
         ),
     ),
     (
+        # Ratchet, not a live guard: nothing reads these variables any more, so
+        # this can only fire if a future change reintroduces the self-certified
+        # declaration that was deliberately removed. Cheap to keep, and the one
+        # place a reintroduction would be visible in an artifact.
         "baked_ltx_declaration",
         re.compile(
             r"\b(?:ENV|ARG)\s+[^\n]*\b(?:NPA_LTX_ENTITY_CLASS|NPA_LTX_USE_CLASS|"

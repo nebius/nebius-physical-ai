@@ -56,8 +56,12 @@ CLEAN_ROOTFS = {
         b"uv sync --extra natten\n"
         b"hf download Lightricks/LTX-2.5\n"
     ),
-    "opt/npa/ltx2/licensing.py": b"LICENSE_NAME = 'LTX-2.x Community License'\n",
-    "opt/npa/ltx2/ltx_gate.py": b"import licensing\n",
+    # What the image actually ships. It carried a copied licensing module and an
+    # in-image gate script until the declaration was removed; modelling files the
+    # image no longer contains would mean the "a clean image passes" case below
+    # was asserting against a fiction.
+    "opt/npa/ltx2/video_check.py": b"FLAT_FRAME_TOLERANCE = 1.0\n",
+    "opt/npa/ltx2/validate_video.py": b"import video_check\n",
     "usr/share/doc/npa-ltx2/REDISTRIBUTION.md": b"# npa-ltx2\nltx-core, ltx_pipelines\n",
     "usr/local/lib/python3.12/site-packages/uv/__init__.py": b"",
     "usr/local/lib/python3.12/site-packages/huggingface_hub/__init__.py": b"",
@@ -69,11 +73,12 @@ CLEAN_CONFIG = {
         {"created_by": "COPY docker/workbench/ltx2/ltx_runtime.sh /usr/local/bin/"},
         {"created_by": "RUN ltx-runtime health"},
         {"created_by": "RUN su ubuntu -s /bin/bash -c 'ltx-runtime assert-refusal'"},
+        {"created_by": "COPY src/npa/workbench/ltx2/video_check.py /opt/npa/ltx2/"},
     ],
     "config": {
         "Env": [
             "NPA_LTX_SOURCE_REF=fd4ded7f2d88d3da713abcdd4ad41ecc4a9314ca",
-            "NPA_LTX_GATE=/opt/npa/ltx2/ltx_gate.py",
+            "NPA_LTX_MODEL_CACHE=/workspace/model-cache/ltx-2.5",
         ]
     },
 }
