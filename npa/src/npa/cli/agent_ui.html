@@ -2485,6 +2485,12 @@
         } else if (!chatDrawerOpen) {
           setChatDrawerOpen(false);
         }
+        if (tab === "rerun") {
+          // Warm only the small, non-secret config JSON before run discovery can
+          // occupy the backend worker pool. The SDK and its iframe remain lazy
+          // until the operator selects the Foxglove render tab.
+          void warmFoxgloveConfig();
+        }
         if (tab === "rerun" && !opts.skipEnsure && !rerunIframeLoaded) {
           try {
             await ensureFrankaRerunLoaded();
@@ -5692,6 +5698,7 @@
       // same-origin /foxglove/ assets installed at bootstrap.
       let foxgloveHandle = null;
       let foxgloveConfig = null;
+      let foxgloveConfigWarmPromise = null;
       let foxgloveMountPromise = null;
       let foxglovePreparePromise = null;
       let foxgloveLastSourceKey = "";
@@ -5774,6 +5781,33 @@
         updateFoxgloveVisualizationSummary(foxgloveConfig);
         return foxgloveConfig;
       }
+      function warmFoxgloveConfig() {
+        if (foxgloveConfig) return Promise.resolve(foxgloveConfig);
+        if (foxgloveConfigWarmPromise) return foxgloveConfigWarmPromise;
+        foxgloveConfigWarmPromise = loadFoxgloveConfig().finally(() => {
+          foxgloveConfigWarmPromise = null;
+        });
+        return foxgloveConfigWarmPromise;
+      }
+      function foxgloveConfigForActiveRun(config) {
+        const cfg = config && typeof config === "object" ? config : {};
+        const configuredRun = String(cfg.run_id || "").trim();
+        const selectedRun = String(activeRunId || "").trim();
+        if (!selectedRun || !configuredRun || configuredRun === selectedRun) return cfg;
+        // The warmed config may describe the previously active run. Keep the
+        // viewer application/config but never flash that run's source or layout
+        // while the selected run is prepared in the background.
+        return {
+          ...cfg,
+          run_id: selectedRun,
+          recording_url: "",
+          data_source: null,
+          layout: {},
+          layout_storage_key:
+            String(cfg.layout_storage_key || "npa-agent-foxglove") + "-source-default",
+          visualization: { checked: false },
+        };
+      }
       async function prepareFoxgloveVisualization(config) {
         const visualization = (config && config.visualization) || {};
         const runId = String(activeRunId || "").trim();
@@ -5849,9 +5883,10 @@
         const opts = options || {};
         if (foxgloveMountPromise) return foxgloveMountPromise;
         foxgloveMountPromise = (async () => {
-          let config = opts.config && typeof opts.config === "object"
+          const loadedConfig = opts.config && typeof opts.config === "object"
             ? opts.config
-            : await loadFoxgloveConfig();
+            : (foxgloveConfig || await warmFoxgloveConfig());
+          let config = foxgloveConfigForActiveRun(loadedConfig);
           foxgloveConfig = config;
           updateFoxgloveVisualizationSummary(config);
           if (!config || !config.available) {

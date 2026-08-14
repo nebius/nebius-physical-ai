@@ -1445,6 +1445,9 @@ def test_bootstrap_embeds_cameras_panel() -> None:
     assert 'id="foxgloveVisualizationSummary"' in source
     assert "prepareFoxgloveVisualization" in source
     assert "let foxglovePreparePromise = null" in source
+    assert "let foxgloveConfigWarmPromise = null" in source
+    assert "void warmFoxgloveConfig()" in source
+    assert "foxgloveConfigForActiveRun" in source
     assert 'visualization.checked' in source
     ensure_foxglove = source.split("async function ensureFoxgloveViewer", 1)[1].split(
         "function teardownFoxgloveViewer", 1
