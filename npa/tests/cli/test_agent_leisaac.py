@@ -498,6 +498,8 @@ def test_v2_manifest_and_health_bind_task_environment_dataset_and_recorder() -> 
     assert payload["scene"] == "table_with_cube"
     assert payload["device"] == "browser_keyboard_so101"
     assert payload["task"] == "LeIsaac-SO101-LiftCube-v0"
+    assert payload["stream_transport"] == "websocket-v1"
+    assert payload["runtime_stream_transport"] == health["stream_transport"]
     assert payload["configuration"]["robot"]["source"] == "uploaded-bundle"
     assert payload["configuration"]["scene"]["source"] == "built-in-runtime"
     assert "session_nonce" not in repr(payload)

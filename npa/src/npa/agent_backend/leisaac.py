@@ -779,7 +779,13 @@ def status_payload(
         "signaling_port": 443,
         "signaling_path": LEISAAC_SIGNAL_PATH,
         "client_module_url": f"{LEISAAC_CLIENT_MODULE_PATH}?run_id={run_id}",
-        "stream_transport": health.get("stream_transport", "webrtc"),
+        # The runtime may expose native WebRTC, but the public agent relay's
+        # measured/default path is the authenticated same-origin WebSocket.
+        # Advertise the transport the browser should actually select and retain
+        # the runtime capability separately for diagnostics and explicit
+        # fallback coverage.
+        "stream_transport": "websocket-v1",
+        "runtime_stream_transport": health.get("stream_transport", "webrtc"),
         "requested_video_transport": health.get("requested_video_transport", ""),
         "active_video_transport": health.get("active_video_transport", ""),
         "video_codec": health.get("video_codec", ""),

@@ -786,6 +786,14 @@ def Xform "Scene" (
       cy.window().then((win) =>
         win.__NPA_AGENT_TEST__.refreshLeIsaacCapability(selectedRun),
       );
+      cy.get("#leisaacConnect").click();
+      cy.get("#leisaacStreamStatus", { timeout: 120000 }).should(
+        "contain.text",
+        "keyboard teleoperation active",
+      );
+      cy.get("#leisaacTransportStatus", { timeout: 120000 })
+        .should("contain.text", "WebSocket")
+        .and("contain.text", "preferred");
       uploadAndApplyBundle("robot", "queue-custom-so101", "robot.usda", robot)
         .then(() =>
           uploadAndApplyBundle("scene", "queue-custom-table", "scene.usda", scene),

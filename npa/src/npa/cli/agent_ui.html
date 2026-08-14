@@ -4083,7 +4083,7 @@
         const select = document.getElementById("leisaacBundleSelection");
         if (select) select.value = String(result.bundle_sha256 || "");
         const label = document.getElementById("leisaacBundleStatus");
-        if (label) label.textContent = "Uploaded validated immutable " + selectedKind + " bundle " + String(result.bundle_sha256 || "").slice(0, 16) + " with checksummed provenance. It has not been applied to a runtime.";
+        if (label) label.textContent = "Validated immutable " + selectedKind + " bundle " + String(result.bundle_sha256 || "").slice(0, 16) + " and uploaded it with checksummed provenance. It has not been applied to a runtime.";
         return result;
       }
       async function selectLeIsaacBundle() {
