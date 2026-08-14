@@ -6,6 +6,14 @@ locals {
   create_subnet        = trimspace(var.subnet_id) == ""
   subnet_id            = local.create_subnet ? nebius_vpc_v1_subnet.cluster[0].id : var.subnet_id
   capacity_block_group = trimspace(var.capacity_block_group)
+  b200_driverfull_platforms = toset([
+    "gpu-b200-sxm",
+    "gpu-b200-sxm-a",
+  ])
+  gpu_nodes_driverfull_image = contains(
+    local.b200_driverfull_platforms,
+    lower(trimspace(var.gpu_nodes_platform)),
+  )
   gpu_reservation_policy = local.capacity_block_group == "" ? null : {
     policy          = "STRICT"
     reservation_ids = [local.capacity_block_group]
@@ -54,7 +62,7 @@ module "k8s_training" {
   gpu_nodes_preset                = var.gpu_nodes_preset
   gpu_nodes_reservation_policy    = local.gpu_reservation_policy
   gpu_disk_size                   = var.gpu_disk_size
-  gpu_nodes_driverfull_image      = false
+  gpu_nodes_driverfull_image      = local.gpu_nodes_driverfull_image
   enable_gpu_cluster              = var.enable_gpu_cluster
   infiniband_fabric               = var.infiniband_fabric
   custom_driver                   = false
