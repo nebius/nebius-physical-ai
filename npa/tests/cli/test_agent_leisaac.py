@@ -232,6 +232,54 @@ def test_manifest_artifact_loader_requires_one_bounded_canonical_object() -> Non
     assert duplicated is None
 
 
+def test_manifest_artifact_loader_uses_run_owned_exact_uri_without_discovery() -> None:
+    payload = b'{"schema":"npa.leisaac.session.v2","run_id":"live"}'
+    calls: list[dict[str, str]] = []
+
+    class S3:
+        def get_object(self, **kwargs):
+            calls.append(kwargs)
+            return {"Body": io.BytesIO(payload)}
+
+    loaded = load_manifest_artifact(
+        "live",
+        validate_run_id=lambda value: value,
+        s3_client=lambda: (S3(), {"bucket": "bucket", "prefix": ""}),
+        s3_buckets=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        find_artifacts=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError()
+        ),
+        exact_uri="s3://bucket/leisaac-sessions/live/reports/leisaac-session.json",
+    )
+
+    assert loaded == {"schema": "npa.leisaac.session.v2", "run_id": "live"}
+    assert calls == [
+        {
+            "Bucket": "bucket",
+            "Key": "leisaac-sessions/live/reports/leisaac-session.json",
+        }
+    ]
+
+
+def test_manifest_artifact_loader_rejects_exact_uri_outside_agent_bucket() -> None:
+    class S3:
+        def get_object(self, **_kwargs):
+            raise AssertionError("out-of-scope object must not be read")
+
+    loaded = load_manifest_artifact(
+        "live",
+        validate_run_id=lambda value: value,
+        s3_client=lambda: (S3(), {"bucket": "agent-bucket", "prefix": ""}),
+        s3_buckets=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        find_artifacts=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError()
+        ),
+        exact_uri="s3://other-bucket/leisaac-sessions/live/reports/leisaac-session.json",
+    )
+
+    assert loaded is None
+
+
 def test_manifest_artifact_loader_reads_configured_canonical_key_without_discovery() -> None:
     payload = b'{"schema":"npa.leisaac.session.v1"}'
     calls: list[dict[str, str]] = []

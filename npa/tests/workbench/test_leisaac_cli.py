@@ -268,6 +268,7 @@ def test_install_relay_creates_required_agent_directories() -> None:
         run_id="live-relay",
         session_nonce="a" * 64,
         expires_at="2099-01-01T00:00:00Z",
+        manifest_uri="s3://bucket/leisaac/live-relay/reports/leisaac-session.json",
     )
 
     assert "sudo install -d -m 0755 /etc/npa /opt/npa-agent" in ssh.command
@@ -285,6 +286,10 @@ def test_install_relay_creates_required_agent_directories() -> None:
     )
     unit = base64.b64decode(encoded_payloads[-1]).decode("utf-8")
     assert "${CREDENTIALS_DIRECTORY}/leisaac.json" in unit
+    config = json.loads(base64.b64decode(encoded_payloads[-2]).decode("utf-8"))
+    assert config["manifest_uri"] == (
+        "s3://bucket/leisaac/live-relay/reports/leisaac-session.json"
+    )
 
 
 def test_remove_relay_restores_only_its_recorded_baseline_coturn() -> None:

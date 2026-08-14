@@ -7821,6 +7821,11 @@ def _leisaac_manifest_for_run(run_id: str) -> dict | None:
         run_id, validate_run_id=validate_run_id,
         s3_client=_agent_s3_client, s3_buckets=_agent_s3_buckets,
         find_artifacts=find_run_artifacts_across_buckets,
+        exact_uri=(
+            str(credential.get("manifest_uri") or "")
+            if isinstance(credential, dict) and credential.get("run_id") == run_id
+            else ""
+        ),
     )
     if not isinstance(manifest, dict):
         return None
@@ -7830,14 +7835,14 @@ def _leisaac_manifest_for_run(run_id: str) -> dict | None:
         return manifest
     if credential.get("run_id") != run_id:
         return manifest
-    try:
-        expiry = datetime.fromisoformat(
-            str(credential.get("expires_at") or "").replace("Z", "+00:00")
-        )
-    except ValueError:
-        return manifest
-    if expiry <= datetime.now(timezone.utc):
-        return manifest
+    raw_expiry = str(credential.get("expires_at") or "").strip()
+    if raw_expiry:
+        try:
+            expiry = datetime.fromisoformat(raw_expiry.replace("Z", "+00:00"))
+        except ValueError:
+            return manifest
+        if expiry <= datetime.now(timezone.utc):
+            return manifest
     resolved = dict(manifest)
     resolved["session_nonce"] = str(credential.get("session_nonce") or "")
     return resolved

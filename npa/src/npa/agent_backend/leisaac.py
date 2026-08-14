@@ -113,6 +113,7 @@ def load_manifest_artifact(
     s3_client: Callable[[], tuple[Any, dict]],
     s3_buckets: Callable[[Any, dict], list[str]],
     find_artifacts: Callable[..., tuple[str, list[Any]]],
+    exact_uri: str = "",
 ) -> dict | None:
     """Load one bounded canonical manifest for a validated run from S3."""
 
@@ -120,6 +121,31 @@ def load_manifest_artifact(
     s3, settings = s3_client()
     base_prefix = str(settings.get("prefix") or "").strip().strip("/")
     primary_bucket = str(settings.get("bucket") or "").strip()
+    if exact_uri:
+        parsed = urlparse(str(exact_uri).strip())
+        exact_key = parsed.path.lstrip("/")
+        if (
+            parsed.scheme != "s3"
+            or not primary_bucket
+            or parsed.netloc != primary_bucket
+            or parsed.params
+            or parsed.query
+            or parsed.fragment
+            or not is_leisaac_manifest_key(exact_key)
+        ):
+            return None
+        try:
+            response = s3.get_object(Bucket=primary_bucket, Key=exact_key)
+        except Exception:  # noqa: BLE001 - exact run credential fails closed
+            return None
+        body = response["Body"].read(131073)
+        if len(body) > 131072:
+            return None
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            return None
+        return payload if isinstance(payload, dict) else None
     canonical_key = "/".join(
         part
         for part in (

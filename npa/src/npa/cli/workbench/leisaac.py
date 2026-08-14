@@ -440,6 +440,7 @@ def _install_agent_relay(
     run_id: str,
     session_nonce: str,
     expires_at: str,
+    manifest_uri: str,
     media_target_host: str = "",
     media_target_port: int = 0,
 ) -> None:
@@ -447,6 +448,7 @@ def _install_agent_relay(
         "run_id": run_id,
         "session_nonce": session_nonce,
         "expires_at": expires_at,
+        "manifest_uri": manifest_uri,
     }
     if media_target_host or media_target_port:
         config["media_target_host"] = media_target_host
@@ -628,16 +630,8 @@ def _put_manifest(
             "region_name": storage.get("region") or None,
         }
         client_kwargs["aws" + "_secret_access_key"] = storage["secret_key"]
-    leaf = "reports/leisaac-session.json"
-    # A deprecated launch accepted a leaf URI but treated it as a prefix,
-    # producing .../leisaac-session.json/<run>/reports/leisaac-session.json.
-    # Honor leaf semantics for new writes while discovery continues to find
-    # historical objects by their canonical basename.
-    key = (
-        prefix.rstrip("/")
-        if prefix.rstrip("/").endswith(leaf)
-        else f"{prefix.rstrip('/')}/{manifest['run_id']}/{leaf}"
-    )
+    manifest_uri = _manifest_object_uri(uri, str(manifest["run_id"]))
+    _manifest_bucket, key = split_s3_uri(manifest_uri)
     if storage is None:
         client_kwargs["endpoint_url"] = (
             os.environ.get("NEBIUS_S3_ENDPOINT")
@@ -654,6 +648,24 @@ def _put_manifest(
             "utf-8"
         ),
         ContentType="application/json",
+    )
+    return manifest_uri
+
+
+def _manifest_object_uri(prefix_uri: str, run_id: str) -> str:
+    """Return the exact immutable manifest object for one validated run."""
+
+    bucket, prefix = split_s3_uri(prefix_uri)
+    run_id = validate_run_id(run_id)
+    leaf = "reports/leisaac-session.json"
+    # A deprecated launch accepted a leaf URI but treated it as a prefix,
+    # producing .../leisaac-session.json/<run>/reports/leisaac-session.json.
+    # Honor leaf semantics for new writes while discovery continues to find
+    # historical objects by their canonical basename.
+    key = (
+        prefix.rstrip("/")
+        if prefix.rstrip("/").endswith(leaf)
+        else f"{prefix.rstrip('/')}/{run_id}/{leaf}"
     )
     return f"s3://{bucket}/{key}"
 
@@ -873,6 +885,7 @@ def launch_cmd(
         if not resolved_manifest_prefix:
             raise LeIsaacConfigError("--manifest-prefix is required")
         split_s3_uri(resolved_manifest_prefix)
+        exact_manifest_uri = _manifest_object_uri(resolved_manifest_prefix, run_id)
         name = resource_name(run_id)
         nonce = secrets.token_hex(32)
         if image_pull_secret:
@@ -936,6 +949,7 @@ def launch_cmd(
                 run_id=run_id,
                 session_nonce=nonce,
                 expires_at=expires_at,
+                manifest_uri=exact_manifest_uri,
             )
             certificate_sha256 = _agent_certificate_sha256(media_host)
             relay_secret = relay_client_secret_manifest(
