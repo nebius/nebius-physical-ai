@@ -72,29 +72,27 @@ claim that LTX-2.5 is redistributable, and this image gives no one any right to
 LTX-2.5: Lightricks delivers source and weights to each operator directly, under
 that operator's own acceptance.
 
-## The obligations a container cannot discharge
+## The obligations that stay with the operator
 
-Two survive into the operator's own conduct, so the image refuses to run until
-the operator has answered for them (`ltx_gate.py`, backed by
-`npa/src/npa/workbench/ltx2/licensing.py`):
+Two survive into the operator's own conduct, and neither is something this
+image can discharge, verify, or record on their behalf:
 
 - **Section 2.1** — an Entity at or above **$10,000,000** annual revenue,
   aggregated across all affiliates under common Control (Section 1.6), needs a
-  paid Commercial Use Agreement for any use outside the Section 2.2 carve-out.
-  Nebius cannot know an operator's revenue, and must not assume the permissive
-  answer. Section 2.2 does allow a Commercial Entity to use LTX-2.5 for
-  "testing, evaluation, or non-commercial research and development in a
-  non-production or development environment" without a paid licence — which is
-  what a dev-VM evaluation is, and it is the declaration such a run must make.
+  paid Commercial Use Agreement for any use outside the Section 2.2 carve-out
+  ("testing, evaluation, or non-commercial research and development in a
+  non-production or development environment"). Nebius cannot know an operator's
+  revenue, ships no LTX bytes, and is not a distributor here, so it does not ask
+  customers to self-certify it. `ltx-runtime terms` states the threshold and the
+  vendor contact; the decision is the operator's.
 - **Attachment A(18)** — "For commercial use only: To train, improve, or
   fine-tune any other machine learning model, artificial intelligence system, or
   competing model", reinforced by Section 2.2(c). **In a physical-AI workbench
   this is the load-bearing restriction**, because the obvious reason to generate
   synthetic video here is to train a robot policy, and a robot policy is another
-  machine learning model. Under a commercial declaration that is prohibited. The
-  disposition is computed per run, stamped into
-  `ltx_provenance.json` next to the artifacts, and re-checked fail-closed by
-  `npa workbench ltx2 gate` before any trainer may consume them.
+  machine learning model. Complying with it is the operator's responsibility:
+  the restriction governs Outputs sitting in their own bucket, which no
+  packaging choice of ours reaches.
 
 Note the asymmetry that makes Attachment A(18) easy to get wrong: it is scoped by
 *use*, not by entity size. A company under the revenue threshold owes no licence
@@ -102,8 +100,23 @@ fee and is still barred from training other models on Outputs commercially.
 
 Section 6 and Attachment A(5)/(19) add output-side duties — disclose
 machine-generated content, and do not strip provenance, watermarking, or latent
-disclosure. The provenance manifest records these as `output_obligations` so they
-travel with the artifacts instead of living only here.
+disclosure. They attach to artifacts we never touch, so they are stated here and
+in `docs/workbench/ltx2.md` rather than enforced.
+
+## What the image does check
+
+Acceptance of the agreement is not a variable we can meaningfully hold. The
+agreement forms by conduct — "By downloading, using, accessing or distributing
+any portion or element of LTX-2.x, you agree that you have read and accepted to
+be bound by this Agreement" — so a local `ACCEPT=YES` never formed it. What *is*
+checkable is the entitlement Lightricks grants: `Lightricks/LTX-2.5` is gated,
+and access follows a human accepting the terms on that page. An anonymous `HEAD`
+on a weight file returns 401; with an entitled token it returns 302.
+
+So the container requires `HF_TOKEN` for **both** fetches — the weights and, per
+Section 1.9, the source — and refuses with exit 78 without it. NVIDIA's CUDA
+terms remain a separate vendor decision under
+`NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS`. Neither value is ever baked.
 
 ## Verification
 
@@ -114,10 +127,11 @@ this file or the Dockerfile:
 npa/.venv/bin/python npa/scripts/scan_image_ltx_payload.py <registry>/npa-ltx2:<tag>
 ```
 
-The build itself asserts the refusal (exit 78) in two directions and that no
-cache was written; `smoke.sh` repeats that against the pushed image and adds the
-weight-fetch refusals. Passing automation proves byte absence and refusal
-behaviour — not human legal approval.
+The build itself asserts the refusal (exit 78) on the source fetch, the weight
+fetch, and NVIDIA's runtime terms, asserts *which* gate refused in each case,
+and asserts that no cache was written; `smoke.sh` repeats that against the
+pushed image. Passing automation proves byte absence and refusal behaviour — not
+human legal approval.
 
 ## Status
 

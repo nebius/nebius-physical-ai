@@ -1,38 +1,51 @@
 #!/usr/bin/env bash
 # Runtime delivery for LTX-2.5. The image ships none of it.
 #
-# Two separate vendors have to deliver to the operator directly, so there are two
-# independent acceptance gates and neither is ever baked:
+# Two separate vendors have to deliver to the operator directly, and neither
+# entitlement is ever baked:
 #
 #   Lightricks  ltx-core / ltx-pipelines source AND the gated LTX-2.5 weights,
-#               under the LTX-2.x Community License Agreement.
+#               under the LTX-2.x Community License Agreement. Both are licensed
+#               material (Section 1.9 covers the accompanying source code), and
+#               both arrive under the operator's own HF_TOKEN.
 #   NVIDIA      the CUDA PyTorch stack that upstream's own pins pull from
 #               download.pytorch.org/whl/cu132.
 #
-# The Lightricks gate is enforced by the copied, unit-tested licensing module
-# (ltx_gate.py) rather than by shell string comparisons here, so the container
-# and the repo cannot disagree about what a valid declaration is.
+# There is nothing here for an operator to declare. The LTX-2.x agreement forms
+# by conduct — "By downloading, using, accessing or distributing any portion or
+# element of LTX-2.x, you agree ... to be bound by this Agreement" — so a local
+# variable saying YES never formed it. huggingface.co/Lightricks/LTX-2.5 is a
+# gated repository, and Lightricks grants access only after a human accepts the
+# terms there, which makes a working token evidence of acceptance rather than a
+# self-certification. Compliance with the agreement is the operator's own
+# responsibility; this script only refuses to fetch what they are not entitled
+# to receive.
 set -euo pipefail
 
 readonly EX_CONFIG=78
 readonly EX_UNAVAILABLE=69
 readonly EX_SOFTWARE=70
 readonly NVIDIA_ACCEPT_ENV=NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS
-readonly LTX_ACCEPT_ENV=NPA_LTX_ACCEPT_COMMUNITY_LICENSE
-# Every variable that could pre-answer a licensing question, in one place so the
-# refusal proof cannot drift out of sync with the set it has to scrub.
-DECLARATION_ENVS=(
-  "$LTX_ACCEPT_ENV"
-  NPA_LTX_ENTITY_CLASS
-  NPA_LTX_USE_CLASS
-  NPA_LTX_COMMERCIAL_AGREEMENT_REF
+# Every variable that could pre-answer an entitlement question, in one place so
+# the refusal proof cannot drift out of sync with the set it has to scrub.
+ENTITLEMENT_ENVS=(
   "$NVIDIA_ACCEPT_ENV"
   HF_TOKEN
 )
 
+# Licence facts, kept in sync with npa/src/npa/workbench/ltx2/licensing.py by
+# npa/tests/workbench/test_ltx2_licensing.py. They are duplicated here rather
+# than imported because the image bakes none of our Python beyond the video
+# check — but a wrong URL is a factual error about someone's legal position, so
+# the duplication is tested rather than trusted.
+readonly LICENSE_NAME="LTX-2.x Community License Agreement"
+readonly LICENSE_DATE="2026-08-11"
+readonly LICENSE_URL="https://github.com/Lightricks/LTX-2/blob/main/LICENSE.md"
+readonly ACCEPTABLE_USE_POLICY_URL="https://static.lightricks.com/legal/ltx-acceptable-use-policy.pdf"
+readonly COMMERCIAL_LICENSE_CONTACT="ltxv-licensing@lightricks.com"
+
 CACHE_ROOT="${NPA_LTX_RUNTIME_CACHE:-/workspace/.cache/npa/ltx2/runtime}"
 MODEL_CACHE="${NPA_LTX_MODEL_CACHE:-/workspace/model-cache/ltx-2.5}"
-GATE="${NPA_LTX_GATE:-/opt/npa/ltx2/ltx_gate.py}"
 SOURCE_REPO="${NPA_LTX_SOURCE_REPO:-https://github.com/Lightricks/LTX-2.git}"
 SOURCE_REF="${NPA_LTX_SOURCE_REF:-fd4ded7f2d88d3da713abcdd4ad41ecc4a9314ca}"
 WEIGHTS_REPO="${NPA_LTX_WEIGHTS_REPO:-Lightricks/LTX-2.5}"
@@ -48,12 +61,6 @@ UV_EXTRA="${NPA_LTX_UV_EXTRA:-natten}"
 
 log() { printf 'ltx-runtime: %s\n' "$*" >&2; }
 die() { local code="$1"; shift; log "$*"; exit "$code"; }
-
-require_ltx_acceptance() {
-  # Delegates to the tested module. It refuses with 78 and prints the terms,
-  # the two Lightricks URLs, and what each declaration value means.
-  python3 "$GATE" check || exit "$EX_CONFIG"
-}
 
 require_nvidia_acceptance() {
   case "$(printf '%s' "${!NVIDIA_ACCEPT_ENV:-}" | tr '[:lower:]' '[:upper:]')" in
@@ -77,6 +84,28 @@ EOF
   exit "$EX_CONFIG"
 }
 
+require_hf_token() {
+  [[ -n "${HF_TOKEN:-}" ]] && return 0
+  cat >&2 <<EOF
+ltx-runtime: refusing to fetch LTX-2.5 without HF_TOKEN.
+
+https://huggingface.co/${WEIGHTS_REPO} is a GATED repository. Access is granted
+to your own Hugging Face account after you accept Lightricks' terms on that page
+(a fine-grained token needs the "read gated repos" scope). We never redistribute
+LTX-2.5 and never hold an entitlement on your behalf.
+
+The token gates the SOURCE as well as the weights. Section 1.9 of the
+${LICENSE_NAME} folds the accompanying source code into
+the licensed material, so ${SOURCE_REPO} is not a free
+download either — and your entitlement on the gated repository is the only
+evidence of acceptance anyone here can check.
+
+Accept the terms with Lightricks, then export HF_TOKEN.
+Nothing has been downloaded.
+EOF
+  exit "$EX_CONFIG"
+}
+
 source_tree() { printf '%s/src/%s' "$CACHE_ROOT" "$SOURCE_REF"; }
 venv_python() { printf '%s/.venv/bin/python' "$(source_tree)"; }
 
@@ -87,8 +116,11 @@ ready_source() {
 
 fetch_source() {
   # Both gates first: this function is the only place that reaches the network
-  # for software, and it must never do so before the operator has declared.
-  require_ltx_acceptance
+  # for software, and it must never do so before the operator is entitled to it.
+  # The source is licensed material too — Section 1.9 names the GitHub repo — so
+  # it is fetched under the same Hugging Face entitlement as the weights, which
+  # is the only acceptance evidence anyone here can check.
+  require_hf_token
   require_nvidia_acceptance
 
   local tree tmp; tree="$(source_tree)"
@@ -134,21 +166,6 @@ fetch_source() {
   log "source ${SOURCE_REF} installed at ${tree}"
 }
 
-require_hf_token() {
-  [[ -n "${HF_TOKEN:-}" ]] && return 0
-  cat >&2 <<EOF
-ltx-runtime: refusing to fetch LTX-2.5 weights without HF_TOKEN.
-
-https://huggingface.co/${WEIGHTS_REPO} is a GATED repository. Access is granted
-to your own Hugging Face account after you accept Lightricks' terms on that page
-(a fine-grained token needs the "read gated repos" scope). We never redistribute
-the weights and never hold an entitlement on your behalf.
-
-Accept the terms, then export HF_TOKEN. Nothing has been downloaded.
-EOF
-  exit "$EX_CONFIG"
-}
-
 resolve_weights_revision() {
   # Resolve the ref to the commit it points at right now, under the operator's
   # own token. Downloading a branch name and then recording the branch name
@@ -160,7 +177,6 @@ print(HfApi().repo_info(sys.argv[1], revision=sys.argv[2]).sha)' \
 }
 
 fetch_weights() {
-  require_ltx_acceptance
   require_hf_token
 
   mkdir -p "$MODEL_CACHE"
@@ -188,21 +204,21 @@ fetch_weights() {
   printf '%s\n' "$revision" > "$MODEL_CACHE/$WEIGHTS_REVISION_FILE"
 }
 
-undeclared() {
-  # Run a command with every acceptance variable scrubbed, so a refusal holds
+unentitled() {
+  # Run a command with every entitlement variable scrubbed, so a refusal holds
   # regardless of what leaked into the builder or the operator's shell.
   local args=() name
-  for name in "${DECLARATION_ENVS[@]}"; do args+=(-u "$name"); done
+  for name in "${ENTITLEMENT_ENVS[@]}"; do args+=(-u "$name"); done
   env "${args[@]}" "$@"
 }
 
 assert_gate() {
   # Assert that a gate refused *and* that it was the gate we meant. Checking only
-  # the exit code would make this proof vacuous: three independent gates all
-  # refuse with 78, so a licence gate that had been broken open to accept
-  # everything would still "pass" on the strength of NVIDIA's or Hugging Face's
-  # refusal downstream of it. The refusal each gate prints names its own
-  # variable, so that is what identifies which one fired.
+  # the exit code would make this proof vacuous: both gates refuse with 78, so a
+  # token check that had been broken open to accept everything would still
+  # "pass" on the strength of NVIDIA's refusal downstream of it. The refusal each
+  # gate prints names its own variable, so that is what identifies which one
+  # fired.
   local what="$1" expect_env="$2" rc=0 out
   shift 2
   out="$("$@" 2>&1)" || rc=$?
@@ -212,35 +228,69 @@ assert_gate() {
     || die "$EX_SOFTWARE" "${what} refused, but not on ${expect_env}: ${out:0:200}"
 }
 
-nvidia_gate_undeclared() { unset "$NVIDIA_ACCEPT_ENV"; require_nvidia_acceptance; }
-hf_gate_undeclared() { unset HF_TOKEN; require_hf_token; }
+nvidia_gate_without_acceptance() {
+  unset "$NVIDIA_ACCEPT_ENV"
+  require_nvidia_acceptance
+}
 
 assert_refusal() {
   # Proves, inside the build and again against the pushed image, that the
-  # download path refuses without a declaration — without the build ever running
-  # the download path in a way that could succeed. Scrubbing the acceptance
+  # download path refuses without an entitlement — without the build ever running
+  # the download path in a way that could succeed. Scrubbing the entitlement
   # variables also keeps the build history free of `ltx-runtime ensure`, which
   # the payload scanner treats as a baked fetch precisely because it normally is
   # one.
 
   # The wired-up paths, through the real entry point. Both must stop on the
-  # Lightricks gate specifically, because it is the one that must run first.
-  assert_gate "'ensure'" "$LTX_ACCEPT_ENV" undeclared "$0" ensure
-  assert_gate "'fetch-weights'" "$LTX_ACCEPT_ENV" undeclared "$0" fetch-weights
+  # Hugging Face entitlement specifically: the source is licensed material too,
+  # so it is the gate that must run first on either path.
+  assert_gate "'ensure'" HF_TOKEN unentitled "$0" ensure
+  assert_gate "'fetch-weights'" HF_TOKEN unentitled "$0" fetch-weights
 
-  # The two downstream gates, exercised directly. Reaching them through `ensure`
-  # would require a valid declaration, and writing an acceptance value into this
-  # script — even only to test with — is exactly what the image promises never to
-  # contain. assert_gate runs them inside a command substitution, so each unset
-  # below is confined to its own subshell.
-  assert_gate "the NVIDIA runtime gate" "$NVIDIA_ACCEPT_ENV" nvidia_gate_undeclared
-  assert_gate "the gated-weights token check" HF_TOKEN hf_gate_undeclared
+  # NVIDIA's terms are a different vendor's decision, and reaching that gate
+  # through `ensure` would need a token — which this image promises never to
+  # contain, even a fake one. assert_gate runs the function inside a command
+  # substitution, so the unset is confined to its own subshell.
+  assert_gate "the NVIDIA runtime gate" "$NVIDIA_ACCEPT_ENV" \
+    nvidia_gate_without_acceptance
 
   [[ -z "$(find "$CACHE_ROOT" -mindepth 1 -print -quit 2>/dev/null)" ]] \
     || die "$EX_SOFTWARE" "refusal wrote to ${CACHE_ROOT}"
   [[ -z "$(find "$MODEL_CACHE" -mindepth 1 -print -quit 2>/dev/null)" ]] \
     || die "$EX_SOFTWARE" "refusal wrote to ${MODEL_CACHE}"
-  printf 'NPA_LTX_BOOTSTRAP_REFUSES_WITHOUT_DECLARATION_OK\n'
+  printf 'NPA_LTX_BOOTSTRAP_REFUSES_WITHOUT_ENTITLEMENT_OK\n'
+}
+
+terms() {
+  # Facts only, and safe to run with nothing set: there is no declaration to
+  # make here, and acceptance happens with Lightricks on the gated repository.
+  cat <<EOF
+npa-ltx2 ships no LTX-2.5 code and no LTX-2.5 weights. Running it asks
+Lightricks' own channels to deliver them to you:
+  source:  ${SOURCE_REPO} @ ${SOURCE_REF}
+  weights: https://huggingface.co/${WEIGHTS_REPO} (gated)
+
+LTX-2.5 is not OSI open source. It is licensed under the
+${LICENSE_NAME} (${LICENSE_DATE}):
+  ${LICENSE_URL}
+  ${ACCEPTABLE_USE_POLICY_URL}
+
+The Agreement binds by use: "By downloading, using, accessing or distributing
+any portion or element of LTX-2.x, you agree that you have read and accepted to
+be bound by this Agreement." Accept it with Lightricks, on the gated repository
+page, with your own Hugging Face account, then export HF_TOKEN. That token is
+all this container requires of you, and it gates the source as well as the
+weights.
+
+Two obligations are yours alone, and nothing here checks them for you:
+  Section 2.1      an Entity whose annual revenue is at or above \$10,000,000,
+                   counting all affiliates under common Control, needs a paid
+                   Commercial Use Agreement for any use outside the Section 2.2
+                   non-commercial carve-out. Contact ${COMMERCIAL_LICENSE_CONTACT}.
+  Attachment A(18) for commercial use, the Outputs may not be used to train,
+                   improve, or fine-tune any other machine learning model. A
+                   robot policy is another machine learning model.
+EOF
 }
 
 status() {
@@ -276,15 +326,13 @@ case "$mode" in
     status
     ;;
   terms)
-    exec python3 "$GATE" terms
-    ;;
-  provenance)
-    exec python3 "$GATE" provenance
+    terms
     ;;
   health)
-    # Must not touch the network, accept anything, or require a declaration:
+    # Must not touch the network, accept anything, or require an entitlement:
     # this runs as the container HEALTHCHECK.
-    [[ -r "$GATE" && -r /opt/npa/ltx2/licensing.py ]] || exit "$EX_SOFTWARE"
+    [[ -r /opt/npa/ltx2/video_check.py && -x /opt/npa/ltx2/validate_video.py ]] \
+      || exit "$EX_SOFTWARE"
     [[ -r /usr/share/doc/npa-ltx2/REDISTRIBUTION.md ]] || exit "$EX_SOFTWARE"
     command -v uv >/dev/null 2>&1 || exit "$EX_SOFTWARE"
     printf '{"status":"ok","source_ref":"%s","payload":"runtime-fetch"}\n' "$SOURCE_REF"
@@ -304,6 +352,6 @@ case "$mode" in
     ;;
   *)
     die "$EX_CONFIG" \
-      "unknown mode '$mode' (use ensure, fetch-weights, assert-refusal, status, terms, provenance, health, version, or exec)"
+      "unknown mode '$mode' (use ensure, fetch-weights, assert-refusal, status, terms, health, version, or exec)"
     ;;
 esac

@@ -42,14 +42,10 @@ if [[ "$PUSH" == 1 ]]; then
 else
   ARGS+=(--load --provenance=false)
 fi
-# Acceptance variables are stripped from the build environment on purpose: if a
-# build could inherit them, the build could perform the fetch the runtime gate
-# exists to prevent, and the image would ship what it claims not to.
+# Entitlement variables are stripped from the build environment on purpose: if a
+# build could inherit them, the build could perform the fetch the runtime checks
+# exist to prevent, and the image would ship what it claims not to.
 env -u HF_TOKEN -u NGC_API_KEY -u NEBIUS_IAM_TOKEN \
-    -u NPA_LTX_ACCEPT_COMMUNITY_LICENSE \
-    -u NPA_LTX_ENTITY_CLASS \
-    -u NPA_LTX_USE_CLASS \
-    -u NPA_LTX_COMMERCIAL_AGREEMENT_REF \
     -u NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS \
   docker buildx build "${ARGS[@]}" "$NPA_ROOT"
 echo "Built: $IMAGE"

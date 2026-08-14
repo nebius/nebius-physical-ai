@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Every path into the container funnels through ltx-runtime, so the licensing
-# gate cannot be sidestepped by passing a command. A bare shell is still
+# Every path into the container funnels through ltx-runtime, so the entitlement
+# checks cannot be sidestepped by passing a command. A bare shell is still
 # available for debugging, but it has no LTX code or weights to reach.
 set -euo pipefail
 
@@ -13,7 +13,7 @@ case "${1:-}" in
     shift
     exec /usr/local/bin/ltx-runtime "$@"
     ;;
-  health|version|status|terms|provenance|ensure|warm|fetch-weights|assert-refusal)
+  health|version|status|terms|ensure|warm|fetch-weights|assert-refusal)
     exec /usr/local/bin/ltx-runtime "$@"
     ;;
   "")

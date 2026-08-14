@@ -9,10 +9,12 @@
 #
 # So this image bakes no LTX bytes. On first use it fetches upstream's pinned
 # source and lets upstream's own uv resolution install the dependencies, and it
-# fetches the gated weights with the operator's own Hugging Face token — after
-# refusing unless the operator has declared their position under Sections 2.1 and
-# 2.2. Lightricks delivers to each operator directly; we redistribute nothing of
-# theirs. See REDISTRIBUTION.md for the full classification.
+# fetches the gated weights — both under the operator's own Hugging Face token,
+# and neither without it. That token is the checkable part: Lightricks grants
+# access to the gated repository only after a human accepts the terms there, and
+# the agreement itself binds by conduct. Lightricks delivers to each operator
+# directly; we redistribute nothing of theirs, and compliance with the agreement
+# is the operator's own. See REDISTRIBUTION.md for the full classification.
 FROM python:3.12-slim-bookworm@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2
 
 ARG LTX_SOURCE_URL=https://github.com/Lightricks/LTX-2.git
@@ -34,7 +36,6 @@ LABEL npa.tool="ltx2" \
       org.opencontainers.image.revision="${NPA_SOURCE_COMMIT}"
 
 ENV DEBIAN_FRONTEND=noninteractive \
-    NPA_LTX_GATE=/opt/npa/ltx2/ltx_gate.py \
     NPA_LTX_RUNTIME_CACHE=/workspace/.cache/npa/ltx2/runtime \
     NPA_LTX_MODEL_CACHE=/workspace/model-cache/ltx-2.5 \
     NPA_LTX_SOURCE_REPO=${LTX_SOURCE_URL} \
@@ -64,12 +65,10 @@ RUN python -m pip install --no-cache-dir \
       "uv==${UV_VERSION}" "huggingface-hub[cli]==0.36.0" \
     && rm -rf /root/.cache
 
-# The licensing gate is the repo's own unit-tested module, copied verbatim. It is
-# stdlib-only precisely so the tested code and the enforcing code are the same
-# code; a shell re-implementation would be a second version of a legal control.
-COPY --chmod=0444 src/npa/workbench/ltx2/licensing.py /opt/npa/ltx2/licensing.py
+# The decoded-video check is the repo's own unit-tested module, copied verbatim.
+# It is stdlib-plus-ffmpeg only precisely so the tested code and the code that
+# decides whether a run produced a real clip are the same code.
 COPY --chmod=0444 src/npa/workbench/ltx2/video_check.py /opt/npa/ltx2/video_check.py
-COPY --chmod=0555 docker/workbench/ltx2/ltx_gate.py /opt/npa/ltx2/ltx_gate.py
 COPY --chmod=0555 docker/workbench/ltx2/validate_video.py /opt/npa/ltx2/validate_video.py
 COPY --chmod=0755 docker/workbench/ltx2/ltx_runtime.sh /usr/local/bin/ltx-runtime
 COPY --chmod=0755 docker/workbench/ltx2/entrypoint.sh /usr/local/bin/ltx-entrypoint
@@ -83,17 +82,17 @@ RUN install -d -m 0755 -o "${NPA_RUNTIME_USER}" -g "${NPA_RUNTIME_USER}" \
     # way, so the 0444 file modes above also landed on /opt/npa/ltx2 and
     # /usr/share/doc/npa-ltx2 — directories with no execute bit, which the
     # runtime user cannot traverse. Every file inside then reads as Permission
-    # denied, including the licensing gate. Normalize the directories back.
+    # denied, including the video check. Normalize the directories back.
     && chmod 0755 /opt/npa /opt/npa/ltx2 /usr/share/doc/npa-ltx2 \
     # Prove at build time that the refusal is real and that proving it fetched
     # nothing. `assert-refusal` exists rather than a bare `ltx-runtime ensure`
-    # here: it scrubs the acceptance variables from its child environment, so the
-    # build cannot succeed at downloading even if a builder leaked them, and the
-    # build history stays free of the fetch verbs the payload scanner rejects.
-    # The golden eval repeats this against the pushed image.
+    # here: it scrubs the entitlement variables from its child environment, so
+    # the build cannot succeed at downloading even if a builder leaked them, and
+    # the build history stays free of the fetch verbs the payload scanner
+    # rejects. The golden eval repeats this against the pushed image.
     && su "${NPA_RUNTIME_USER}" -s /bin/bash -c 'ltx-runtime health' \
     && su "${NPA_RUNTIME_USER}" -s /bin/bash -c 'ltx-runtime assert-refusal' \
-      | grep -Fq NPA_LTX_BOOTSTRAP_REFUSES_WITHOUT_DECLARATION_OK \
+      | grep -Fq NPA_LTX_BOOTSTRAP_REFUSES_WITHOUT_ENTITLEMENT_OK \
     # No files anywhere in the operator's workspace: the refusal must not have
     # written one. Directories are exempt because `install -d` above creates the
     # empty cache mount points, which are deeper than the tree this once
