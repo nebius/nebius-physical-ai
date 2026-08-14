@@ -1049,7 +1049,7 @@ def _patch_slurmcluster_crd(kubectl_bin: str, context: str) -> bool:
     )
     if got.returncode != 0 or not got.stdout.strip():
         return False
-    _run_capture(
+    patched = _run_capture(
         [kubectl_bin, "--context", context, "patch", "crd",
          "slurmclusters.slurm.nebius.ai", "--type=json", "-p",
          '[{"op":"add","path":"/spec/versions/0/schema/openAPIV3Schema/'
@@ -1058,7 +1058,7 @@ def _patch_slurmcluster_crd(kubectl_bin: str, context: str) -> bool:
         env=kube_env,
         check=False,
     )
-    return True
+    return patched.returncode == 0
 
 
 def _ensure_scripts_configmap(kubectl_bin: str, context: str, namespace: str) -> bool:
@@ -1091,14 +1091,14 @@ def _ensure_scripts_configmap(kubectl_bin: str, context: str, namespace: str) ->
     except json.JSONDecodeError:
         return False
     cm["metadata"] = {"name": target, "namespace": namespace}
-    subprocess.run(
+    applied = subprocess.run(
         [kubectl_bin, "--context", context, "apply", "-f", "-"],
         input=json.dumps(cm),
         text=True,
         env=kube_env,
         check=False,
     )
-    return True
+    return applied.returncode == 0
 
 
 def _mid_apply_fix_loop(

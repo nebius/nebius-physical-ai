@@ -1250,6 +1250,45 @@ def test_post_deploy_monitoring_repair_clean_install_returns_no_warnings(
     assert lifecycle.apply_post_deploy_fixes("ctx", "kubectl") == []
 
 
+def test_slurmcluster_crd_patch_reports_kubernetes_write_failure(monkeypatch) -> None:
+    from npa.soperator import lifecycle
+
+    def fake_capture(cmd, *, cwd=None, env=None, timeout=None, check=True):
+        if "get" in cmd:
+            return _Done(stdout="slurmclusters.slurm.nebius.ai")
+        assert "patch" in cmd
+        return _Done(stderr="Forbidden", returncode=1)
+
+    monkeypatch.setattr(lifecycle, "_run_capture", fake_capture)
+
+    assert lifecycle._patch_slurmcluster_crd("kubectl", "ctx") is False
+
+
+def test_scripts_configmap_reports_kubernetes_write_failure(monkeypatch) -> None:
+    from npa.soperator import lifecycle
+
+    source = {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {"name": "slurm-scripts"},
+        "data": {"entrypoint.sh": "#!/bin/sh"},
+    }
+
+    def fake_capture(cmd, *, cwd=None, env=None, timeout=None, check=True):
+        if "soperator-slurm-scripts" in cmd:
+            return _Done(stderr="NotFound", returncode=1)
+        return _Done(stdout=json.dumps(source))
+
+    monkeypatch.setattr(lifecycle, "_run_capture", fake_capture)
+    monkeypatch.setattr(
+        lifecycle.subprocess,
+        "run",
+        lambda *args, **kwargs: _Done(stderr="Forbidden", returncode=1),
+    )
+
+    assert lifecycle._ensure_scripts_configmap("kubectl", "ctx", "soperator") is False
+
+
 def _write_recipe_locals(tmp_path, essential_body: str):
     """Write a minimal locals_active_checks.tf with an ``essential`` scope."""
 
