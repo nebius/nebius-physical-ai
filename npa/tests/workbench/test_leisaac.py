@@ -695,6 +695,9 @@ def test_observability_patch_is_exact_and_records_real_upstream_input() -> None:
     assert "NPA_LEISAAC_INPUT_COUNTER" in source
     assert "NPA_LEISAAC_IPC_EVENT_PATH" in source
     assert "def notify_runtime_frame(metadata, frame_bytes):" in source
+    assert "+    single_primary_capture_fps = 10.0 if native_video else 16.0" in source
+    assert "+        if primary_due or secondary_due:" in source
+    assert "(not native_video or recording_active)" not in source
     assert "self._advance_counter(self._applied_counter, len(acknowledgements))" in source
     assert "target.writelines(" in source
     assert "os.fsync(target.fileno())" in source

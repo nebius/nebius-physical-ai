@@ -593,15 +593,12 @@ index a467482..8d0821b 100644
 +            destroy_overview_sensor()
 +        primary_due = now >= capture_state["next_at"]["workspace"]
 +        secondary_due = secondary_enabled and now >= capture_state["next_at"]["overview"]
-+        recording_active = recorder.status()["state"] in {
-+            "recording", "outcome-pending"
-+        }
 +        if not primary_due and not secondary_due:
 +            return
 +        capture_state["group"] += 1
 +        capture_group = f"capture-{capture_state['group']}"
 +        cameras = []
-+        if (primary_due or secondary_due) and (not native_video or recording_active):
++        if primary_due or secondary_due:
 +            cameras.append(
 +                ("workspace", workspace_camera_path, frame_path, frame_meta_path)
 +            )
