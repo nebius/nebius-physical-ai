@@ -178,8 +178,13 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
           expect(response.body.export.sha256).to.eq(exported.sha256);
           openedWebUrl = response.body.export.web_url;
         });
-        cy.get("@foxgloveNavigate").then((navigate) => {
-          expect(navigate).to.have.been.calledOnceWith(openedWebUrl);
+        // cy.wait() resolves as soon as the response completes; allow the
+        // application's promise continuation to perform the safe navigation.
+        cy.get("@foxgloveNavigate", { timeout: 30000 }).should((navigate) => {
+          expect(navigate.callCount, "one popup navigation").to.eq(1);
+          expect(navigate.firstCall.args, "exact response deep link").to.deep.eq([
+            openedWebUrl,
+          ]);
         });
         cy.get("#foxgloveExportNote")
           .should("have.attr", "data-state", "success")

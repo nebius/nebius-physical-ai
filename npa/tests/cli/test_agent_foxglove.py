@@ -8,6 +8,7 @@ safety rules for the unauthenticated CORS data directory, and the text-only
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -64,6 +65,11 @@ def test_cypress_live_runner_fails_closed_and_keeps_credentials_out_of_arguments
     config = (
         repo_root / "npa" / "tests" / "browser" / "cypress.config.cjs"
     ).read_text(encoding="utf-8")
+    package = json.loads(
+        (repo_root / "npa" / "tests" / "browser" / "package.json").read_text(
+            encoding="utf-8"
+        )
+    )
 
     assert '"${NPA_AGENT_CYPRESS_LIVE:-0}" != "1"' in runner
     for name in ("NPA_AGENT_BASE_URL", "NPA_AGENT_USER", "NPA_AGENT_PASSWORD"):
@@ -71,6 +77,10 @@ def test_cypress_live_runner_fails_closed_and_keeps_credentials_out_of_arguments
     assert 'npm run "${LIVE_CYPRESS_SCRIPT}" -- --env' not in runner
     assert "screenshotOnRunFailure: process.env.NPA_AGENT_CYPRESS_LIVE" in config
     assert "video: false" in config
+    assert package["scripts"]["cy:live"].endswith("agent_foxglove_live.cy.js")
+    assert "agent_live.cy.js" not in package["scripts"]["cy:live"]
+    assert "lichtblick_mcap_live.cy.js" not in package["scripts"]["cy:live"]
+    assert "cy:live-all" in package["scripts"]
 
 
 @pytest.mark.skipif(
