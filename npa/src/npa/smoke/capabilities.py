@@ -117,7 +117,7 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
     "wan2-2": [
         "pinned Wan source import with OSS CPU dependency base",
         "machine-readable runtime health/version contract",
-        "CUDA runtime fetch refuses before operator terms acceptance",
+        "pinned CUDA runtime fetch into an atomic writable cache",
     ],
     "sim2real-control": [
         "canonical compositional stage-adapter module imports",

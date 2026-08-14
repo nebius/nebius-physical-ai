@@ -753,11 +753,10 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=(
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
-            "HF_TOKEN",
         ),
         plan_only=True,
         plan_only_justification=(
-            "the dedicated RTX PRO live E2E owns the large gated model run"
+            "the dedicated RTX PRO live E2E owns the large public model run"
         ),
         notes=(
             "BYOF Wan 2.2 TI2V-5B candidate. Plan-only in the shared matrix: "
@@ -771,11 +770,10 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=(
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
-            "HF_TOKEN",
         ),
         plan_only=True,
         plan_only_justification=(
-            "the dedicated four-B200 live E2E owns the multi-GPU gated model run"
+            "the dedicated four-B200 live E2E owns the multi-GPU public model run"
         ),
         notes=(
             "Plan-only in the shared submit matrix: the dedicated Wan live E2E "
