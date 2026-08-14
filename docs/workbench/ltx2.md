@@ -224,26 +224,20 @@ out a claim we have not earned.
 
 ## Validated on the dev VM
 
-Steps 1–3 of the runbook have been executed. The image was built with
-`build.sh --push` and scanned by immutable digest
-`sha256:a31e22a4dfe2cb419df10e4ad63495f1905b73a05b106618005c72413df1e3b3`.
-That build predates the removal of the licensing declaration, so where the
-results below say "undeclared" the equivalent check today is "unentitled", and
-the marker it printed has since been renamed to
-`NPA_LTX_BOOTSTRAP_REFUSES_WITHOUT_ENTITLEMENT_OK`. Everything else it proved —
-zero LTX bytes in any layer, refusals that write nothing, the layout and
-entrypoint fixes — is unchanged and still the reason those defects are
-regression-tested:
+Steps 1-3 of the runbook have been executed, and re-executed after the licensing
+declaration was removed. The image was built with `build.sh --push` and scanned
+by immutable digest
+`sha256:a9d6c63eeea890c577ed38f5e3b47ae84a0db663920ce9de7c097dfaf541b3fa`:
 
 | Check | Result |
 | --- | --- |
-| `build.sh --push` | succeeded, including every in-build proof: `health`, `assert-refusal`, no files written under `/workspace`, the ffmpeg moving-clip/flat-clip validator pair, and the no-`ltx_core`/no-`*.safetensors`/no-`nvidia` layer checks |
-| `scan_image_ltx_payload.py <digest>` | `pass` — 18 archives scanned, zero findings |
-| `docker run <digest> ltx-runtime assert-refusal` | printed the marker, exit 0, on bytes pulled fresh from the registry |
-| `docker run <digest> ensure` (undeclared) | exit 78, names the licence gate, "Nothing has been downloaded." |
-| `docker run <digest> fetch-weights` (undeclared) | exit 78 |
-| `docker run <digest> status` | `source: absent`, `weights: absent` |
-| `docker run <digest> status` after review changes | reports `weights_revision: unknown` — nothing fetched, so no revision is claimed |
+| `build.sh --push` | succeeded, including every in-build proof: `health`, `assert-refusal`, no files written under `/workspace`, the moving/flat/still validator triple, and the no-`ltx_core`/no-`*.safetensors`/no-`nvidia` layer checks |
+| `scan_image_ltx_payload.py <digest>` | `pass` — 16 archives scanned, zero findings |
+| `docker run <digest> ltx-runtime assert-refusal` | printed `NPA_LTX_BOOTSTRAP_REFUSES_WITHOUT_ENTITLEMENT_OK`, exit 0 |
+| `docker run <digest> ensure` without a token | exit 78, and the refusal names `HF_TOKEN` — the source fetch is entitlement-gated now, not just the weights |
+| `docker run <digest> fetch-weights` without a token | exit 78 |
+| `docker run <digest> status` | `source: absent`, `weights: absent`, `weights_revision: unknown` |
+
 | `/opt/npa/ltx2/smoke.sh` in-image | `OK (refusals enforced, no LTX payload present)` |
 
 The first build failed three times, and each failure was a real defect that no
