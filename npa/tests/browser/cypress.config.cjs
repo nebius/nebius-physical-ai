@@ -305,10 +305,13 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
     }
     const viewerTabs = page.locator(".render-mode-tabs");
     const paneGeometry = {};
+    // Leave the lazy official viewer selected while it starts. Switching away
+    // immediately after the first Foxglove click can make a clean profile wait
+    // on the same in-flight SDK/config request while the pane is inactive.
     for (const [label, pane] of [
       ["View", "#viewerPaneRerun"],
-      ["Foxglove", "#viewerPaneFoxglove"],
       ["Lichtblick", "#viewerPaneLichtblick"],
+      ["Foxglove", "#viewerPaneFoxglove"],
     ]) {
       await viewerTabs.getByRole("tab", { name: label, exact: true }).click();
       const box = await page.locator(pane).boundingBox();
@@ -317,8 +320,21 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
       }
       paneGeometry[label] = { width: Math.round(box.width), height: Math.round(box.height) };
     }
-    await viewerTabs.getByRole("tab", { name: "Foxglove", exact: true }).click();
-    await page.locator("#viewerPaneFoxglove iframe").waitFor({ state: "visible" });
+    await page.locator("#viewerPaneFoxglove iframe").waitFor({
+      state: "visible",
+      timeout: 180000,
+    });
+    await page.waitForFunction(
+      () => {
+        const summary = String(
+          document.querySelector("#foxgloveVisualizationSummary")?.textContent || "",
+        );
+        return summary.includes("robot + trajectory 3D") &&
+          summary.includes("not calibrated robot/world kinematics");
+      },
+      null,
+      { timeout: 180000 },
+    );
     const desktopEvidence = path.join(evidenceDir, "live-agent-desktop-after.png");
     await page.screenshot({ path: desktopEvidence });
     fs.chmodSync(desktopEvidence, 0o600);
@@ -341,7 +357,7 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
     }
     await viewerTabs.getByRole("tab", { name: "Foxglove", exact: true }).click();
     const mobileEvidence = path.join(evidenceDir, "live-agent-mobile-after.png");
-    await page.screenshot({ path: mobileEvidence });
+    await page.locator("section.rerun-stage").screenshot({ path: mobileEvidence });
     fs.chmodSync(mobileEvidence, 0o600);
 
     await page.setViewportSize({ width: 1440, height: 1000 });
@@ -349,6 +365,7 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
     const exportResponsePromise = page.waitForResponse(
       (response) => response.url().includes("/api/foxglove/export") &&
         response.request().method() === "POST",
+      { timeout: 180000 },
     );
     await page.getByRole("button", { name: "View in Foxglove", exact: true }).click();
     const popup = await popupPromise;
@@ -361,7 +378,10 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
       throw new Error("real-click Foxglove export selected the wrong run");
     }
     const expectedWebUrl = String(exportPayload.export?.web_url || "");
-    await popup.waitForURL((url) => url.origin === "https://app.foxglove.dev");
+    await popup.waitForURL(
+      (url) => url.origin === "https://app.foxglove.dev",
+      { timeout: 180000 },
+    );
     const requestedUrl = officialRequests.find((value) => value === expectedWebUrl) || "";
     if (!requestedUrl) {
       throw new Error("real popup did not request the exact official response URL");
