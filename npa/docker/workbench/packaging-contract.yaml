@@ -180,11 +180,13 @@ images:
       would therefore have forced `restricted`; baking nothing makes the question
       moot. Upstream source is fetched at run time at an immutable commit and
       installed by upstream's own uv resolution, and gated weights come from
-      Hugging Face under the operator's own token — both only after the operator
-      declares entity class and use class (Sections 2.1/2.2). Attachment A(18)
-      bars training other models on Outputs for commercial use, so each run
-      stamps a provenance manifest that `npa workbench ltx2 gate` re-checks
-      fail-closed before a trainer may consume the artifacts. Byte/layer scanning
+      Hugging Face — both only under the operator's own token, since Section 1.9
+      makes the source licensed material too and the gated repository is where
+      Lightricks actually grants access. Sections 2.1 (paid Commercial Use
+      Agreement above $10M revenue) and Attachment A(18) (no training other
+      models on Outputs for commercial use) govern the operator's own conduct and
+      artifacts, and are their responsibility rather than something this image
+      certifies. Byte/layer scanning
       with scripts/scan_image_ltx_payload.py is mandatory before publication.
       NOT YET BUILT OR GPU-VALIDATED; see ltx2/REDISTRIBUTION.md.
   sonic:

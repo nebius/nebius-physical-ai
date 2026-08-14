@@ -103,11 +103,6 @@ SOLUTION_CAPABILITY_CONTRACTS = {
         "must_exercise": [
             "ltx2_5_text_to_video",
             "ltx2_5_decoded_mp4_validation",
-            # Unique to this solution: the licence gate is a capability, because
-            # the image's whole redistribution argument is that it refuses until
-            # the operator has declared under the LTX-2.x Community License.
-            "ltx2_5_license_gate_refusal",
-            "ltx2_5_license_provenance_stamp",
         ],
     },
     "wan2.2": {
@@ -212,8 +207,8 @@ def test_oss_catalog_lists_solution_specific_capabilities() -> None:
         assert expected["smoke_artifact_name"] in text, solution
 
 
-def test_ltx2_spec_fetches_nothing_before_the_operator_has_declared() -> None:
-    """The LTX spec's ordering is the licence control, so it is pinned here.
+def test_ltx2_spec_fetches_nothing_before_the_refusal_is_proved() -> None:
+    """The LTX spec's ordering is what keeps the zero-payload claim honest.
 
     `assert-refusal` has to run *before* the fetches: it also asserts both caches
     are empty, so running it afterwards would let a "refusal" that merely reused
@@ -250,19 +245,20 @@ def test_ltx2_spec_fetches_nothing_before_the_operator_has_declared() -> None:
     assert "video_check.validate_video(" in smoke
 
 
-def test_ltx2_gate_is_terminal_and_no_state_trains_without_consuming_ltx() -> None:
-    """Attachment A(18) is enforced by graph order, so the order is a test.
+def test_ltx2_stops_at_curation_and_trains_nothing() -> None:
+    """No state here may train on LTX Outputs, and none may pretend to.
 
-    An earlier version of this spec ended in a LeRobot training state, and this
-    test asserted the gate sat in front of it. It did — but that trainer read the
-    `lerobot/pusht` hub dataset and no LTX Output ever reached it, so the gate was
-    decorative in the one place meant to prove it is not. Asserting *position*
-    was the weakness: what matters is that nothing downstream of generation
-    trains on artifacts it never receives.
+    Attachment A(18) restricts training other models on the Outputs for
+    commercial use, and whether that applies is the operator's own call — it
+    turns on facts about them. What this spec must not do is make that call look
+    handled. An earlier version ended in a LeRobot training state, which read the
+    `lerobot/pusht` hub dataset: no LTX Output ever reached it, so a trainer
+    appeared in the pipeline while nothing about the restriction was actually
+    demonstrated.
 
     LTX-2.5 text-to-video output is not a LeRobot dataset — no actions, no
-    meta/info.json — so the honest shape is for the gate to be terminal and the
-    trainer to be the operator's own next step, taken only after calling it.
+    meta/info.json — so the honest shape is to stop at curation, which inspects
+    Outputs without training on them, and leave training to the operator.
     """
 
     from npa.orchestration.npa_workflow import load_spec
@@ -270,36 +266,25 @@ def test_ltx2_gate_is_terminal_and_no_state_trains_without_consuming_ltx() -> No
     spec = load_spec(WORKFLOW_DIR / "byof-ltx2.yaml")
     states = spec.states
 
-    assert states["generate"].next == "stamp"
-    assert states["stamp"].tool_ref == "workbench.ltx2.stamp"
-    assert states["gate"].tool_ref == "workbench.ltx2.gate"
-    assert states["gate"].terminal, "the licence decision is where this spec stops"
+    assert set(states) == {"generate", "curate"}
+    assert states["generate"].next == "curate"
+    assert states["curate"].tool_ref == "workbench.fiftyone.curate_augmented"
+    assert states["curate"].terminal, "curation is where this spec stops"
 
     training_tools = {"workbench.lerobot.policy_train", "workbench.groot.finetune"}
     trainers = {
         name for name, state in states.items() if state.tool_ref in training_tools
     }
     assert trainers == set(), (
-        f"{sorted(trainers)} would train inside this spec. Either wire it to consume "
-        "the generated artifacts, or leave training to the operator behind the gate — "
-        "a trainer fed from elsewhere makes the gate in front of it decorative."
+        f"{sorted(trainers)} would train inside this spec. A trainer fed from "
+        "elsewhere demonstrates nothing about LTX Outputs, and one fed from here "
+        "makes a licensing judgement that is the operator's to make."
     )
 
-    # Both sides must name the same config key, not two URIs that happen to look
-    # alike today.
-    manifest = "{{config.ltx2_manifest_uri}}"
-    assert [output.uri for output in states["stamp"].outputs] == [manifest]
-    assert manifest in [item.uri for item in states["gate"].inputs]
-
-    # The gate must be told which artifacts it is clearing, not just which
-    # document to read, or one run's manifest would clear another run's video.
-    assert "{{config.video_uri}}" in [item.uri for item in states["gate"].inputs]
-
-    # And `stamp` must read the declaration the GPU run itself wrote, rather than
-    # re-deriving one from its own container's environment.
-    declaration = "{{config.ltx2_declaration_uri}}"
-    assert declaration in [item.uri for item in states["generate"].outputs]
-    assert declaration in [item.uri for item in states["stamp"].inputs]
+    # Curation consumes what generation actually produced, by config key rather
+    # than by two URIs that happen to look alike today.
+    assert "{{config.video_uri}}" in [item.uri for item in states["generate"].outputs]
+    assert [item.uri for item in states["curate"].inputs] == ["{{config.augment_uri}}"]
 
 
 def test_wan22_package_keeps_weights_runtime_only_and_claims_t2v_only() -> None:

@@ -121,10 +121,9 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
     ],
     "ltx2": [
         "machine-readable runtime health/version contract",
-        "source and weight fetch refuse before the operator declares under the "
-        "LTX-2.x Community License",
-        "a Commercial Entity declaring commercial use is refused without a "
-        "Commercial Use Agreement reference",
+        "source and weight fetch both refuse without the operator's own "
+        "entitlement on the gated Lightricks/LTX-2.5 repository",
+        "CUDA runtime fetch refuses before NVIDIA terms acceptance",
         "no LTX source, weights, or CUDA distribution present in the image",
     ],
     "sim2real-control": [

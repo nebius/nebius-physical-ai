@@ -736,9 +736,6 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
             "HF_TOKEN",
-            "NPA_LTX_ACCEPT_COMMUNITY_LICENSE",
-            "NPA_LTX_ENTITY_CLASS",
-            "NPA_LTX_USE_CLASS",
             "NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS",
         ),
         plan_only=True,
@@ -748,9 +745,10 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes=(
             "BYOF LTX-2.5 candidate. Plan-only for a reason the other entries do "
             "not share: the image does not exist yet. It also cannot be submitted "
-            "on an operator's behalf at all — the run refuses until that operator "
-            "declares their position under the LTX-2.x Community License. "
-            "test_ltx2_live_e2e.py owns the gated live path once an image exists."
+            "on an operator's behalf at all — both fetches refuse without that "
+            "operator's own entitlement on the gated Lightricks/LTX-2.5 "
+            "repository. test_ltx2_live_e2e.py owns the gated live path once an "
+            "image exists."
         ),
     ),
     SubmitLiveCase(

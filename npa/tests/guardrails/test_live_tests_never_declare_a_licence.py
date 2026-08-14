@@ -1,11 +1,17 @@
-"""No live test may answer a licensing question on the operator's behalf.
+"""No live test may accept a vendor's terms on the operator's behalf.
 
-Some vendor terms cannot be accepted by us. LTX-2.x asks whether the operator's
-entity crosses a revenue threshold and whether this particular use is
-commercial; NVIDIA and Isaac ask for EULA acceptance. A container that refuses
-until those are declared is the mechanism, and a live test that exports them for
-convenience makes every subsequent run technically valid and legally
-meaningless.
+Some vendor terms cannot be accepted by us: NVIDIA's CUDA runtime terms and
+Isaac's EULA are decisions a person makes. A container that refuses until those
+are accepted is the mechanism, and a live test that exports them for convenience
+makes every subsequent run technically valid and legally meaningless.
+
+LTX's four `NPA_LTX_*` declaration variables used to be listed here. They are
+gone from the repo entirely: the LTX-2.x agreement binds by conduct, so a local
+`ACCEPT=YES` never formed it, and the entity/use answers were unverifiable
+self-certification. The gated-repository entitlement replaced them, and a token
+is a credential rather than an answer — `HF_TOKEN` is deliberately not scanned
+for here. `NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS` stays, because that one really
+is an acceptance, of a different vendor's terms.
 
 This scans the live tier by AST rather than by grep, because the shapes matter
 more than the spelling. The version this replaces lived inside the one file it
@@ -27,13 +33,9 @@ import pytest
 
 E2E = Path(__file__).resolve().parents[1] / "e2e"
 
-#: Variables that record a human's answer to a licensing question.
+#: Variables that record a human's acceptance of a vendor's terms.
 DECLARATION_ENVS = frozenset(
     {
-        "NPA_LTX_ACCEPT_COMMUNITY_LICENSE",
-        "NPA_LTX_ENTITY_CLASS",
-        "NPA_LTX_USE_CLASS",
-        "NPA_LTX_COMMERCIAL_AGREEMENT_REF",
         "NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS",
         "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS",
         "OMNI_KIT_ACCEPT_EULA",
@@ -41,10 +43,10 @@ DECLARATION_ENVS = frozenset(
     }
 )
 
-#: The names those variables are usually imported under, so aliasing them does
-#: not hide the write.
+#: The names such a variable would plausibly be imported under, so aliasing it
+#: does not hide the write.
 DECLARATION_ALIASES = frozenset(
-    {"ACCEPT_ENV", "ENTITY_CLASS_ENV", "USE_CLASS_ENV", "COMMERCIAL_AGREEMENT_ENV"}
+    {"ACCEPT_ENV", "ACCEPT_EULA_ENV", "EULA_ENV", "NVIDIA_ACCEPT_ENV"}
 )
 
 ENV_WRITE_METHODS = frozenset({"setenv", "setdefault", "putenv", "update"})
@@ -117,7 +119,7 @@ def test_the_scan_would_notice_each_shape_it_claims_to_cover() -> None:
     import tempfile
 
     shapes = (
-        'import os\nos.environ["NPA_LTX_ACCEPT_COMMUNITY_LICENSE"] = "YES"\n',
+        'import os\nos.environ["NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS"] = "YES"\n',
         'monkeypatch.setenv("OMNI_KIT_ACCEPT_EULA", "YES")\n',
         'env = {}\nenv.setdefault("ISAACSIM_ACCEPT_EULA", "YES")\n',
         'run(env={"NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS": "YES"})\n',
@@ -132,8 +134,8 @@ def test_the_scan_would_notice_each_shape_it_claims_to_cover() -> None:
         clean = Path(tmp) / "clean.py"
         clean.write_text(
             "import os\n"
-            'value = os.environ.get("NPA_LTX_ACCEPT_COMMUNITY_LICENSE", "")\n'
+            'value = os.environ.get("NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS", "")\n'
             'assert value == "YES"\n',
             encoding="utf-8",
         )
-        assert _writes(clean) == [], "reading a declaration must stay allowed"
+        assert _writes(clean) == [], "reading an acceptance must stay allowed"

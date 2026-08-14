@@ -1,10 +1,9 @@
 """Contract and gated live GPU E2E for the LTX-2.5 BYOF solution spec.
 
-The always-on tests plan the checked-in spec and pin the properties that make
-the licence control real. The live test consumes a separately built, byte-scanned
-image by immutable digest, runs it on a GPU, and verifies the published evidence
-— including that the artifacts carry a provenance manifest and that
-``npa workbench ltx2 gate`` reaches the disposition the operator declared.
+The always-on tests plan the checked-in spec and pin the properties that keep
+the zero-payload claim honest. The live test consumes a separately built,
+byte-scanned image by immutable digest, runs it on a GPU, and verifies the
+published evidence — the decoded MP4, re-checked from the operator side.
 
 Live gates (all required):
 
@@ -12,13 +11,12 @@ Live gates (all required):
 * ``NPA_LTX2_LIVE_GPU=1``
 * ``NPA_LTX2_REUSE_IMAGE`` pinned to ``…@sha256:…``
 * ``HF_TOKEN`` with access to the gated ``Lightricks/LTX-2.5`` repository
-* the operator's own LTX-2.x declaration in the environment
 * normal NPA project, registry, Kubernetes, and S3 operator configuration
 
-The declaration is deliberately *not* set by this test. A test that exported
-``NPA_LTX_ACCEPT_COMMUNITY_LICENSE=YES`` would be Nebius accepting Lightricks'
-terms on the operator's behalf, which is the one thing the whole gate exists to
-prevent — so the live test refuses to run instead, exactly as the container does.
+The token is read and never written. It is the operator's own entitlement,
+granted by Lightricks after that operator accepted the terms on the gated
+repository page, and it is what both fetches require — so a run without one
+refuses in the pod exactly as it does here.
 
 Status: no live run has happened. The image has not been built. See
 ``docs/workbench/ltx2.md`` for the runbook that produces the evidence.
@@ -41,15 +39,6 @@ import yaml
 
 from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import storage_env_for_project
-from npa.workbench.ltx2.licensing import (
-    ACCEPT_ENV,
-    ENTITY_CLASS_ENV,
-    PROVENANCE_SCHEMA,
-    TRAINING_NON_COMMERCIAL_ONLY,
-    TRAINING_PROHIBITED,
-    USE_CLASS_ENV,
-    USE_COMMERCIAL,
-)
 from npa.workbench.ltx2.video_check import validate_video
 from npa.workflows.byof.live import (
     resolve_byof_kubernetes_target,
@@ -68,8 +57,6 @@ PROFILE_DIR = REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "byof" / "profil
 EXPECTED_CAPABILITIES = {
     "ltx2_5_text_to_video",
     "ltx2_5_decoded_mp4_validation",
-    "ltx2_5_license_gate_refusal",
-    "ltx2_5_license_provenance_stamp",
 }
 
 
@@ -193,8 +180,8 @@ def test_ltx2_spec_plans_the_real_pinned_gpu_workload() -> None:
     assert "disk_size: 500" in profile_text
 
 
-# The negative control that used to live here — "this file must never write a
-# declaration" — is now
+# The negative control that used to live here — "this file must never accept a
+# vendor's terms" — is now
 # `tests/guardrails/test_live_tests_never_declare_a_licence.py`, which applies it
 # to every live test rather than to this one, and catches the dict-literal and
 # `env=` shapes the local version missed.
@@ -205,27 +192,22 @@ def test_ltx2_spec_plans_the_real_pinned_gpu_workload() -> None:
     or os.environ.get("NPA_LTX2_LIVE_GPU") != "1",
     reason=(
         "Set NPA_INTEGRATION_E2E=1 and NPA_LTX2_LIVE_GPU=1, plus your own "
-        "LTX-2.x declaration and HF_TOKEN, to run the LTX-2.5 GPU smoke."
+        "HF_TOKEN with access to Lightricks/LTX-2.5, to run the LTX-2.5 GPU "
+        "smoke."
     ),
 )
 @pytest.mark.e2e
-def test_ltx2_live_gpu_generate_gate_and_decode(
+def test_ltx2_live_gpu_generate_and_decode(
     e2e_project: str | None,
     tmp_path: Path,
 ) -> None:
     registry = resolve_container_registry(e2e_project)
     assert registry, "NPA container registry could not be resolved"
 
-    # The operator's own answers, read and never written. Missing ones fail the
-    # test here for the same reason the container refuses: nobody else may
-    # answer them.
-    declared_use = (os.environ.get(USE_CLASS_ENV) or "").strip().lower()
-    assert (os.environ.get(ACCEPT_ENV) or "").strip().upper() == "YES", (
-        f"{ACCEPT_ENV} must be YES: you, not this test, accept the LTX-2.x "
-        "Community License Agreement. Run `npa workbench ltx2 terms` first."
-    )
-    assert (os.environ.get(ENTITY_CLASS_ENV) or "").strip(), ENTITY_CLASS_ENV
-    assert declared_use, USE_CLASS_ENV
+    # The operator's own entitlement, read and never written. Its absence fails
+    # the test here for the same reason the container refuses: Lightricks grants
+    # it to them, on the gated repository page, and it covers the source as well
+    # as the weights. Run `npa workbench ltx2 terms` first.
     assert os.environ.get("HF_TOKEN", "").strip(), (
         "Lightricks/LTX-2.5 is a gated repository; export your own HF_TOKEN."
     )
@@ -333,17 +315,6 @@ def test_ltx2_live_gpu_generate_gate_and_decode(
     assert artifact["weights_baked"] is False
     assert artifact["source_baked"] is False
 
-    licence = artifact["license"]
-    assert licence["schema"] == PROVENANCE_SCHEMA
-    assert licence["source"]["ref"] == planned["--repo-ref"]
-    assert licence["license"]["osi_approved"] is False
-    expected_disposition = (
-        TRAINING_PROHIBITED
-        if declared_use == USE_COMMERCIAL
-        else TRAINING_NON_COMMERCIAL_ONLY
-    )
-    assert licence["restrictions"]["derived_model_training"] == expected_disposition
-
     # Decode the published pixels with the same module the pod used, from the
     # operator side, so a passing in-pod check cannot be the only evidence.
     evidence = artifact["evidence"]["video"]
@@ -357,48 +328,9 @@ def test_ltx2_live_gpu_generate_gate_and_decode(
     assert local.frame_count == evidence["frame_count"]
     assert local.codec == evidence["codec"]
 
-    # Finally the part that is not about video at all: the gate must reach the
-    # declared disposition, and must fail the workflow when it is prohibited.
-    manifest_uri = f"s3://{out_bucket}/{key_prefix}ltx2_provenance.json"
-    stamp = subprocess.run(
-        [
-            "npa",
-            "workbench",
-            "ltx2",
-            "stamp",
-            "--run-id",
-            run_id,
-            "--manifest-uri",
-            manifest_uri,
-            "--output-uri",
-            f"s3://{out_bucket}/{video_key}",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    assert stamp.returncode == 0, stamp.stderr
-    gate = subprocess.run(
-        [
-            "npa",
-            "workbench",
-            "ltx2",
-            "gate",
-            "--manifest-uri",
-            manifest_uri,
-            "--consumer",
-            "LeRobot policy training",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    if declared_use == USE_COMMERCIAL:
-        assert gate.returncode != 0, (
-            "a commercial declaration must stop the trainer; Attachment A(18)"
-        )
-    else:
-        assert gate.returncode == 0, gate.stderr
-        assert json.loads(gate.stdout)["allowed"] is True
+    # The in-run proof that the image refuses without an entitlement, published
+    # alongside the video. It ran before either fetch, on these exact bytes.
+    refusal = s3.get_object(
+        Bucket=out_bucket, Key=key_prefix + "ltx2_5_entitlement_refusal.txt"
+    )["Body"].read()
+    assert b"NPA_LTX_BOOTSTRAP_REFUSES_WITHOUT_ENTITLEMENT_OK" in refusal

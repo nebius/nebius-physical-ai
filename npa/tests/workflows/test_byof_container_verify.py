@@ -90,18 +90,16 @@ def test_wan_runtime_acceptance_uses_secret_channel(monkeypatch) -> None:
 def test_one_solutions_operator_answers_do_not_widen_anothers(monkeypatch) -> None:
     """Vendor answers are per-image, and a shared tuple made them global.
 
-    With one tuple for every BYOF image, adding LTX's declaration variables also
-    forwarded them — and HF_TOKEN — into wan2-2 and open-dreamer runs whenever
-    they were set in the operator's shell. Nothing broke visibly, which is why it
-    needs a test rather than a review.
+    With one tuple for every BYOF image, adding LTX's variables also forwarded
+    them — and HF_TOKEN — into wan2-2 and open-dreamer runs whenever they were
+    set in the operator's shell. Nothing broke visibly, which is why it needs a
+    test rather than a review.
     """
 
     module = _load_module()
     for name in (
         "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS",
-        "NPA_LTX_ACCEPT_COMMUNITY_LICENSE",
-        "NPA_LTX_ENTITY_CLASS",
-        "NPA_LTX_USE_CLASS",
+        "NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS",
         "HF_TOKEN",
     ):
         monkeypatch.setenv(name, "set")
@@ -115,8 +113,10 @@ def test_one_solutions_operator_answers_do_not_widen_anothers(monkeypatch) -> No
 
     assert not [name for name in wan if name.startswith("NPA_LTX_")]
     assert "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS" not in ltx
-    assert "NPA_LTX_ACCEPT_COMMUNITY_LICENSE" in ltx
-    # A solution with no declared operator answers forwards none, including the
+    assert "NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS" in ltx
+    # The entitlement the LTX container needs for both of its fetches.
+    assert "HF_TOKEN" in ltx
+    # A solution with no vendor answers of its own forwards none, including the
     # token: it has no gate that reads one.
     assert other == []
 

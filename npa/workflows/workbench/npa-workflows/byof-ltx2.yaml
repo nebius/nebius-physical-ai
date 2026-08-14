@@ -1,31 +1,28 @@
 apiVersion: npa.workflow/v0.0.1
 kind: Workflow
 
-# LTX-2.5 generation chained into the workbench tools that already exist, with
-# the licence carried between them as an artifact rather than as an assumption.
+# LTX-2.5 generation chained into the workbench tools that already exist.
 #
-#   generate (GPU, npa-ltx2) -> stamp (CPU) -> curate (CPU, FiftyOne)
-#     -> gate (CPU) -> train (GPU, LeRobot)
+#   generate (GPU, npa-ltx2) -> curate (CPU, FiftyOne)
 #
-# The two CPU states in the middle are the point of the spec. LTX-2.5 is
-# governed by the LTX-2.x Community License Agreement, whose Attachment A(18)
-# forbids using Outputs to "train, improve, or fine-tune any other machine
-# learning model" for commercial use. A robot policy is another machine learning
-# model, so the last state of this pipeline is exactly the thing that becomes
-# illegal under a commercial declaration. `gate` reads back what the operator
-# declared at generation time and fails the run rather than letting `train`
-# start. See npa/docker/workbench/ltx2/REDISTRIBUTION.md.
+# LTX-2.5 is governed by the LTX-2.x Community License Agreement, which binds by
+# use and whose Attachment A(18) forbids using Outputs to "train, improve, or
+# fine-tune any other machine learning model" for commercial use. A robot policy
+# is another machine learning model, so an operator who intends to train on this
+# video owes that judgement themselves — it turns on facts about them that this
+# spec cannot see and Nebius has no standing to certify. What the spec owes them
+# is an honest pipeline: generation under their own Hugging Face entitlement,
+# and curation that inspects Outputs without training on them.
+# See npa/docker/workbench/ltx2/REDISTRIBUTION.md.
 
 metadata:
   name: byof-ltx2
   description: >
-    Generate video with LTX-2.5 in the zero-payload npa-ltx2 image, stamp the
-    operator's LTX-2.x Community License declaration onto the artifacts, curate
-    the result with FiftyOne, and gate LeRobot policy training on Attachment
-    A(18) before any trainer may consume the video. The image contains no
-    Lightricks code and no weights: the run fetches upstream source at an
-    immutable ref and gated weights under the operator's own HF token, only
-    after the declaration validates.
+    Generate video with LTX-2.5 in the zero-payload npa-ltx2 image and curate the
+    result with FiftyOne. The image contains no Lightricks code and no weights:
+    the run fetches upstream source at an immutable ref and the gated weights
+    under the operator's own HF token, which is what the gated repository grants
+    after they accept Lightricks' terms there. Both fetches refuse without it.
 
 config:
   bucket: example-bucket
@@ -51,21 +48,17 @@ config:
     mkdir -p "${LTX2_OUT}"
 
     # First, and before anything is fetched: prove in this run, on this image,
-    # that the licence gate refuses when the declaration is scrubbed. It has to
-    # run first because it also asserts both caches are still empty, which stops
-    # a "refusal" that merely reused an already-populated cache from passing.
-    ltx-runtime assert-refusal | tee "${LTX2_OUT}/ltx2_5_license_refusal.txt"
+    # that both fetches refuse when the entitlement is scrubbed. It has to run
+    # first because it also asserts both caches are still empty, which stops a
+    # "refusal" that merely reused an already-populated cache from passing.
+    ltx-runtime assert-refusal | tee "${LTX2_OUT}/ltx2_5_entitlement_refusal.txt"
 
-    # Now the two gated fetches. Each refuses with exit 78 unless the operator
-    # declared entity class and use class (Lightricks) and accepted the CUDA
-    # runtime terms (NVIDIA).
+    # Now the two gated fetches. Each refuses with exit 78 without the
+    # operator's own HF_TOKEN — the source is licensed material too (Section
+    # 1.9) — and the source install additionally needs the CUDA runtime terms
+    # accepted (NVIDIA).
     ltx-runtime ensure
     ltx-runtime fetch-weights
-
-    # The accepted declaration, as the tested licensing module computes it. This
-    # is what gets embedded in the capability artifact and what the downstream
-    # `npa workbench ltx2 gate` state re-checks before the trainer runs.
-    ltx-runtime provenance > "${LTX2_OUT}/ltx2_5_declaration.json"
 
     ltx-runtime exec python - <<'PY'
     import base64
@@ -131,14 +124,6 @@ config:
     capabilities_exercised = []
     deferred = []
 
-    refusal = (out / "ltx2_5_license_refusal.txt").read_text(encoding="utf-8")
-    if "NPA_LTX_BOOTSTRAP_REFUSES_WITHOUT_DECLARATION_OK" in refusal:
-        capabilities_exercised.append("ltx2_5_license_gate_refusal")
-
-    declaration = json.loads((out / "ltx2_5_declaration.json").read_text(encoding="utf-8"))
-    if declaration.get("schema") == "npa.ltx2.provenance.v1":
-        capabilities_exercised.append("ltx2_5_license_provenance_stamp")
-
     check = video_check.validate_video(
         out / "ltx2_5_text_to_video.mp4", min_frames=24, capability=capability
     )
@@ -152,7 +137,6 @@ config:
         "weights_baked": False,
         "source_baked": False,
         "evidence": check.as_dict(),
-        "license": declaration,
         "deferred": deferred,
         "not_claimed": [
             "ltx2_5_image_to_video",
@@ -168,8 +152,6 @@ config:
     required = {
         capability,
         "ltx2_5_decoded_mp4_validation",
-        "ltx2_5_license_gate_refusal",
-        "ltx2_5_license_provenance_stamp",
     }
     missing = required.difference(capabilities_exercised)
     if missing or deferred:
@@ -193,17 +175,6 @@ config:
   summary_uri: "s3://{{config.bucket}}/{{config.prefix}}/npa_byof_summary.json"
   artifact_uri: "s3://{{config.bucket}}/{{config.prefix}}/{{config.smoke_artifact_name}}"
   video_uri: "s3://{{config.bucket}}/{{config.prefix}}/ltx2_5_text_to_video.mp4"
-
-  ltx2_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/ltx2_provenance.json"
-  # Written by the GPU container itself (`ltx-runtime provenance`). `stamp` reads
-  # it back and refuses if its own environment disagrees, so the licence record
-  # cannot change identity on the hop between containers.
-  ltx2_declaration_uri: "s3://{{config.bucket}}/{{config.prefix}}/ltx2_5_declaration.json"
-  ltx2_gate_uri: "s3://{{config.bucket}}/{{config.prefix}}/ltx2_gate.json"
-  # Named for the record the gate writes. Nothing in this spec trains: this is
-  # the consumer the operator intends to hand the cleared artifacts to, and the
-  # decision is recorded against that name.
-  ltx2_consumer: "LeRobot policy training"
 
   # FiftyOne curation over the generated set. No Cosmos Curator ran here, so the
   # optional curator report is empty rather than pointed at a file that does not
@@ -234,8 +205,8 @@ states:
       Fetch upstream LTX-2.5 source at the pinned ref and the gated weights under
       the operator's own token, run the distilled pipeline on one RTX PRO 6000
       Blackwell, validate the decoded MP4, and upload the evidence through the
-      BYOF S3 runner. Both fetches refuse with exit 78 unless the operator has
-      declared entity class and use class.
+      BYOF S3 runner. Both fetches refuse with exit 78 without that token: the
+      source is licensed material too, under Section 1.9.
     toolRef: workbench.byof.repo
     resources: gpu
     outputs:
@@ -245,38 +216,21 @@ states:
         schema: npa.workbench.byof.ltx2_5_text_to_video.v1
       - uri: "{{config.video_uri}}"
         schema: video/mp4
-      # What the GPU container itself declared, written by `ltx-runtime
-      # provenance`. `stamp` reconciles against this rather than trusting its
-      # own environment, so the licence record cannot change identity on the
-      # hop between containers.
-      - uri: "{{config.ltx2_declaration_uri}}"
-        schema: npa.ltx2.provenance.v1
-    next: stamp
-
-  stamp:
-    description: >
-      Record which licence text was accepted, by what class of entity, for what
-      class of use, and what Attachment A(18) therefore permits — next to the
-      video rather than in a wiki.
-    needs: [generate]
-    toolRef: workbench.ltx2.stamp
-    resources: cpu
-    inputs:
-      - uri: "{{config.ltx2_declaration_uri}}"
-        schema: npa.ltx2.provenance.v1
-      - uri: "{{config.video_uri}}"
-        schema: video/mp4
-    outputs:
-      - uri: "{{config.ltx2_manifest_uri}}"
-        schema: npa.ltx2.provenance.v1
     next: curate
 
   curate:
     description: >
       Curate the generated set with real FiftyOne Brain uniqueness and duplicate
-      detection. Curation is licence-neutral: it inspects Outputs without
-      training anything on them, so it runs before the gate.
-    needs: [stamp]
+      detection, and the terminal state.
+
+      Curation inspects Outputs without training anything on them, which is why
+      it is the last thing this spec does. An earlier draft ended in a LeRobot
+      training state, but that state trained on the `lerobot/pusht` hub dataset:
+      no LTX Output ever reached it. LTX-2.5 text-to-video output is not a
+      LeRobot dataset — it has no actions and no meta/info.json — and no honest
+      conversion exists here, so training is the operator's own next step, taken
+      under their own reading of Attachment A(18).
+    needs: [generate]
     toolRef: workbench.fiftyone.curate_augmented
     resources: cpu
     inputs:
@@ -288,33 +242,4 @@ states:
     outputs:
       - uri: "{{config.curation_report_uri}}"
         schema: npa.fiftyone.curation.v1
-    next: gate
-
-  gate:
-    description: >
-      Fail-closed Attachment A(18) check, and the terminal state. Denies on a
-      commercial declaration, on a missing manifest, on a manifest whose terms
-      it does not recognise, and on a manifest that does not cover the artifact
-      the consumer named; only an explicit non-commercial declaration over
-      matching artifacts clears them.
-
-      This is where the shipped pipeline stops, deliberately. An earlier draft
-      ended in a LeRobot training state, but that state trained on the
-      `lerobot/pusht` hub dataset: no LTX Output ever reached it, so the gate in
-      front of it was decorative in the one place meant to demonstrate that it
-      is not. LTX-2.5 text-to-video output is not a LeRobot dataset — it has no
-      actions and no meta/info.json — and no honest conversion exists here, so
-      the trainer is the operator's own next step. What this spec owes them is
-      the decision, and a machine-readable record of it.
-    needs: [curate]
-    toolRef: workbench.ltx2.gate
-    resources: cpu
-    inputs:
-      - uri: "{{config.ltx2_manifest_uri}}"
-        schema: npa.ltx2.provenance.v1
-      - uri: "{{config.video_uri}}"
-        schema: video/mp4
-    outputs:
-      - uri: "{{config.ltx2_gate_uri}}"
-        schema: npa.ltx2.gate.v1
     terminal: true
