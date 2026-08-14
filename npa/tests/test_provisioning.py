@@ -206,6 +206,45 @@ def test_provision_if_absent_reuses_kubeconfig_and_ensures_bucket(
     assert "k8s:validated stable GPU health and CUDA vectorAdd" in result.actions
 
 
+def test_reused_cluster_runs_requested_skypilot_smoke(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_runtime(tmp_path, monkeypatch)
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    seen: list[tuple[object, ...]] = []
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle._run_skypilot_smoke",
+        lambda *args, **kwargs: seen.append((*args, kwargs)),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog."
+        "wait_for_kubernetes_accelerators",
+        lambda *_args, **_kwargs: {},
+    )
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        cluster_name="npa-cluster",
+        kubeconfig=kubeconfig,
+        sky_smoke=True,
+        accelerator="RTXPRO6000:1",
+        sky_bin="/opt/npa/sky",
+    )
+
+    assert result.status == "ok"
+    assert "sky-smoke:passed" in result.actions
+    assert seen == [
+        (
+            kubeconfig,
+            "npa-cluster",
+            "npa-cluster",
+            "RTXPRO6000:1",
+            {"sky_bin": "/opt/npa/sky"},
+        )
+    ]
+
+
 def test_reused_cluster_still_waits_for_skypilot_gpu_readiness(
     tmp_path: Path, monkeypatch
 ) -> None:

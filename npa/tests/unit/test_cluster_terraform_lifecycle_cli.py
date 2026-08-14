@@ -73,6 +73,54 @@ def _find_call(stream_calls: list[list[str]], *prefix: str) -> list[str] | None:
     return None
 
 
+def test_skypilot_smoke_scopes_check_and_uses_explicit_binary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    captures: list[tuple[list[str], dict[str, str]]] = []
+    streams: list[list[str]] = []
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda value: value)
+
+    def capture(cmd, **kwargs):  # noqa: ANN001
+        captures.append((cmd, kwargs["env"]))
+        return _completed("Kubernetes: enabled [compute]\n")
+
+    monkeypatch.setattr(tf_mod, "_run_capture", capture)
+    monkeypatch.setattr(
+        tf_mod, "_run_stream", lambda cmd, **_kwargs: streams.append(cmd)
+    )
+    monkeypatch.setattr(
+        tf_mod, "_wait_for_sky_down", lambda *_args, **_kwargs: None
+    )
+
+    tf_mod._run_skypilot_smoke(
+        kubeconfig,
+        "fleet-exact",
+        "provider-cluster",
+        "RTXPRO6000:1",
+        sky_bin="/opt/npa/sky",
+    )
+
+    assert captures[0][0] == [
+        "/opt/npa/sky",
+        "check",
+        "--config",
+        'kubernetes.allowed_contexts=["fleet-exact"]',
+        "kubernetes",
+    ]
+    assert captures[0][1]["KUBECONFIG"] == str(kubeconfig)
+    assert streams[0][0:2] == ["/opt/npa/sky", "launch"]
+    assert streams[0][streams[0].index("--config") + 1] == (
+        'kubernetes.allowed_contexts=["fleet-exact"]'
+    )
+    assert streams[0][streams[0].index("--gpus") + 1] == "RTXPRO6000:1"
+    assert streams[1][0:2] == ["/opt/npa/sky", "down"]
+    assert streams[1][streams[1].index("--config") + 1] == (
+        'kubernetes.allowed_contexts=["fleet-exact"]'
+    )
+
+
 def test_explicit_context_is_the_terraform_resource_name() -> None:
     tfvars = {"cluster_name": "npa-cluster"}
     context = "k8s-live-unique"

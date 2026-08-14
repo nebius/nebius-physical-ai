@@ -42,8 +42,33 @@ export PATH="$(dirname "$(npa skypilot status --bin-path)"):$PATH"
 
 ```bash
 test -x "$NPA_SKYPILOT_BIN"
-npa skypilot verify
+npa skypilot verify --cluster <npa-cluster-context>
 ```
+
+Passing the NPA cluster context is important on workstations that already use
+SkyPilot with another Kubernetes cluster. NPA pins the check to that exact
+context and requires SkyPilot to report `Kubernetes: enabled`; a zero exit code
+with Kubernetes disabled is a failed verification.
+
+To prove GPU execution without creating a managed-jobs controller, use NPA's
+built-in smoke task:
+
+```bash
+npa provision-if-absent \
+  --project <project-alias> \
+  --cluster-name <npa-cluster-context> \
+  --context <npa-cluster-context> \
+  --kubeconfig <kubeconfig> \
+  --skip-s3 \
+  --sky-smoke \
+  --accelerator RTXPRO6000:1 \
+  --sky-bin "$NPA_SKYPILOT_BIN"
+```
+
+The smoke also runs when the cluster kubeconfig is already cached. Every
+SkyPilot check, launch, status poll, and cleanup remains scoped to the selected
+context, and the command succeeds only after the GPU task completes and its
+ephemeral SkyPilot cluster is removed.
 
 ## Managed-Jobs Controller
 

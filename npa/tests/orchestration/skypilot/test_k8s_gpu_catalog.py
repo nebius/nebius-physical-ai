@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import json
 import subprocess
 
 import pytest
 
 from npa.orchestration.skypilot.k8s_gpu_catalog import (
+    KubernetesGpuInventory,
     KubernetesGpuCatalog,
     KubernetesGpuCatalogError,
     UnsatisfiableAcceleratorError,
     context_from_infra,
     discover_kubernetes_gpu_catalog,
+    discover_kubernetes_gpu_inventory,
+    label_known_kubernetes_gpus_for_skypilot,
     parse_kubernetes_gpu_catalog,
     resolve_kubernetes_accelerator,
     spec_accelerators,
@@ -222,6 +226,128 @@ def test_discover_surfaces_a_failing_sky_invocation(sky_bin: str) -> None:
         discover_kubernetes_gpu_catalog(sky_bin=sky_bin, runner=fake_run)
 
     assert "no kube context" in str(excinfo.value)
+
+
+def test_discover_labels_known_rtxpro_when_skypilot_catalog_is_empty(
+    sky_bin: str, monkeypatch
+) -> None:  # noqa: ANN001
+    outputs = iter(["", SINGLE_GPU_OUTPUT])
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):  # noqa: ANN001 - test stub
+        return subprocess.CompletedProcess(cmd, 0, stdout=next(outputs), stderr="")
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog."
+        "label_known_kubernetes_gpus_for_skypilot",
+        lambda **kwargs: (calls.append([kwargs["context"]]), 1)[1],
+    )
+
+    catalog = discover_kubernetes_gpu_catalog(
+        context="npa-cluster", sky_bin=sky_bin, runner=fake_run
+    )
+
+    assert calls == [["npa-cluster"]]
+    assert catalog.quantities_by_accelerator == {
+        "RTXPRO-6000-BLACKWELL-SERVER-EDITION": frozenset({1})
+    }
+
+
+def test_known_rtxpro_label_is_exact_context_scoped() -> None:
+    inventory = KubernetesGpuInventory(
+        context="ctx",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=("NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",),
+        node_labels={
+            "node-a": {
+                "nvidia.com/gpu.product": (
+                    "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
+                )
+            }
+        },
+    )
+    seen: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):  # noqa: ANN001 - test stub
+        seen.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="node/node-a labelled", stderr="")
+
+    assert (
+        label_known_kubernetes_gpus_for_skypilot(
+            context="ctx", inventory=inventory, runner=fake_run
+        )
+        == 1
+    )
+    assert seen == [
+        [
+            "kubectl",
+            "--context",
+            "ctx",
+            "label",
+            "node",
+            "node-a",
+            "skypilot.co/accelerator=rtxpro6000",
+        ]
+    ]
+
+
+def test_inventory_prefers_gfd_product_over_same_node_provider_alias() -> None:
+    payload = {
+        "items": [
+            {
+                "metadata": {
+                    "name": "gpu-node",
+                    "labels": {
+                        "nvidia.com/gpu.product": "NVIDIA-RTX-PRO-6000",
+                        "nebius.com/gpu-name": "RTX6000",
+                    },
+                },
+                "spec": {},
+                "status": {
+                    "conditions": [{"type": "Ready", "status": "True"}],
+                    "capacity": {"nvidia.com/gpu": "1"},
+                    "allocatable": {"nvidia.com/gpu": "1"},
+                },
+            }
+        ]
+    }
+
+    inventory = discover_kubernetes_gpu_inventory(
+        context="ctx",
+        runner=lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            [], 0, stdout=json.dumps(payload), stderr=""
+        ),
+    )
+
+    assert inventory.products == ("NVIDIA-RTX-PRO-6000",)
+    assert inventory.to_dict()["accelerator_product"] == "NVIDIA-RTX-PRO-6000"
+
+
+def test_unknown_gpu_is_never_fuzzy_labelled() -> None:
+    inventory = KubernetesGpuInventory(
+        context="ctx",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=("NVIDIA-RTX-PRO-5000-Blackwell",),
+        node_labels={
+            "node-a": {"nvidia.com/gpu.product": "NVIDIA-RTX-PRO-5000-Blackwell"}
+        },
+    )
+
+    def unexpected(*args, **kwargs):  # noqa: ANN001, ANN202
+        raise AssertionError("unknown products must not be labelled")
+
+    assert (
+        label_known_kubernetes_gpus_for_skypilot(
+            context="ctx", inventory=inventory, runner=unexpected
+        )
+        == 0
+    )
 
 
 def test_spec_accelerators_reads_only_kubernetes_profiles() -> None:

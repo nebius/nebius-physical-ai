@@ -526,14 +526,80 @@ def test_resolve_project_id_reuses_existing_by_name(monkeypatch) -> None:
             {"metadata": {"name": "fleet1-test-a", "id": "project-found"}}
         ],
     )
+    monkeypatch.setattr(
+        lifecycle,
+        "_get_project",
+        lambda *a, **k: {
+            "metadata": {
+                "name": "fleet1-test-a",
+                "id": "project-found",
+                "parent_id": "tenant-x",
+            },
+            "spec": {"region": "us-central1"},
+        },
+    )
     project = ProjectSpec(
         name="a", clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))]
     )
     pid, created = lifecycle.resolve_project_id(
-        "nebius", "tenant-x", project, prefix="fleet1-test-", create=False, env={}
+        "nebius",
+        "tenant-x",
+        project,
+        prefix="fleet1-test-",
+        create=False,
+        env={},
+        region="us-central1",
     )
     assert pid == "project-found"
     assert created is False
+
+
+def test_resolve_project_id_rejects_same_name_in_wrong_region(monkeypatch) -> None:
+    from npa.fleet import lifecycle
+
+    monkeypatch.setattr(
+        lifecycle,
+        "_list_projects",
+        lambda *a, **k: [
+            {"metadata": {"name": "fleet1-test-a", "id": "project-found"}}
+        ],
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "_get_project",
+        lambda *a, **k: {
+            "metadata": {
+                "name": "fleet1-test-a",
+                "id": "project-found",
+                "parent_id": "tenant-x",
+            },
+            "status": {"region": "eu-north1"},
+        },
+    )
+    project = ProjectSpec(
+        name="a", clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))]
+    )
+    with pytest.raises(ValueError, match="region.*does not match"):
+        lifecycle.resolve_project_id(
+            "nebius",
+            "tenant-x",
+            project,
+            prefix="fleet1-test-",
+            create=False,
+            env={},
+            region="us-central1",
+        )
+
+
+def test_find_project_id_rejects_ambiguous_same_name() -> None:
+    from npa.fleet import lifecycle
+
+    projects = [
+        {"metadata": {"name": "same", "id": "project-a"}},
+        {"metadata": {"name": "same", "id": "project-b"}},
+    ]
+    with pytest.raises(ValueError, match="ambiguous"):
+        lifecycle._find_project_id(projects, "same")
 
 
 def test_resolve_project_id_errors_when_absent_and_no_create(monkeypatch) -> None:
@@ -905,6 +971,7 @@ def _mock_deploy_boundary(monkeypatch, *, apply_fails: bool = False):
         lambda *a, **k: {"kube_cluster": {"value": {"id": "mk8s-1"}}},
     )
     monkeypatch.setattr(L, "_write_kubeconfig", lambda *a, **k: None)
+    monkeypatch.setattr(L, "_persist_npa_cluster_identity", lambda **k: None)
     return L
 
 
@@ -934,6 +1001,10 @@ def _run_one_cluster(L, tmp_path, *, profile: str = "", cluster=None):
 
 def test_deploy_one_cluster_success_promotes_sidecar(tmp_path, monkeypatch) -> None:
     L = _mock_deploy_boundary(monkeypatch)
+    recorded = []
+    monkeypatch.setattr(
+        L, "_persist_npa_cluster_identity", lambda **kwargs: recorded.append(kwargs)
+    )
     res = _run_one_cluster(L, tmp_path)
     assert res["status"] == "deployed"
     assert res["cluster_id"] == "mk8s-1"
@@ -941,6 +1012,197 @@ def test_deploy_one_cluster_success_promotes_sidecar(tmp_path, monkeypatch) -> N
     assert sidecar["status"] == "deployed"
     assert sidecar["subnet_id"] == "subnet-1"
     assert sidecar["cluster_id"] == "mk8s-1"
+    assert len(recorded) == 1
+    assert recorded[0]["context"] == "fleet-f-a-c"
+    assert recorded[0]["cluster_id"] == "mk8s-1"
+    assert recorded[0]["project_id"] == "p1"
+
+
+def test_fleet_cluster_identity_roundtrip_and_collision_guard(tmp_path) -> None:
+    from npa.cluster.state import kubeconfig_file, load_cluster_state
+    from npa.fleet import lifecycle as L
+
+    kubeconfig = tmp_path / "source-kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n")
+    cluster = ClusterSpec(
+        name="gpu",
+        cpu_nodes=NodePoolSpec(count=1, platform="cpu-d3", preset="8vcpu-32gb"),
+        gpu_nodes=NodePoolSpec(
+            count=1, platform="gpu-rtx6000", preset="1gpu-24vcpu-218gb"
+        ),
+    )
+    kwargs = {
+        "context": "fleet-f-a-gpu",
+        "cluster_id": "cluster-1",
+        "project_id": "project-1",
+        "region": "us-central1",
+        "cluster": cluster,
+        "subnet_id": "subnet-1",
+        "kubeconfig_path": kubeconfig,
+        "fleet_name": "f",
+        "project_key": "a",
+        "base_dir": tmp_path / "clusters",
+    }
+    L._persist_npa_cluster_identity(**kwargs)
+    state = load_cluster_state("fleet-f-a-gpu", base_dir=tmp_path / "clusters")
+    assert state is not None
+    assert state.cluster_id == "cluster-1"
+    assert state.project_id == "project-1"
+    assert state.node_count == 2
+    assert state.node_platform == "gpu-rtx6000"
+    installed_kubeconfig = kubeconfig_file(
+        "fleet-f-a-gpu", base_dir=tmp_path / "clusters"
+    )
+    assert installed_kubeconfig.read_text() == "apiVersion: v1\n"
+    assert installed_kubeconfig.stat().st_mode & 0o777 == 0o600
+    assert state.kubeconfig_path == str(installed_kubeconfig)
+    assert state.provider_name == "gpu"
+
+    with pytest.raises(RuntimeError, match="different immutable"):
+        L._persist_npa_cluster_identity(**{**kwargs, "cluster_id": "cluster-2"})
+
+    L._remove_npa_cluster_identity(
+        context="fleet-f-a-gpu",
+        cluster_id="cluster-1",
+        project_id="project-1",
+        base_dir=tmp_path / "clusters",
+    )
+    assert load_cluster_state("fleet-f-a-gpu", base_dir=tmp_path / "clusters") is None
+
+
+def test_unchanged_provider_verified_target_has_zero_incremental_demand(
+    tmp_path, monkeypatch
+) -> None:
+    from npa.fleet import lifecycle as L
+
+    fleet_root = tmp_path / "f"
+    install = fleet_root / "a" / "gpu"
+    workdir = install / L._K8S_TRAINING_SUBDIR
+    workdir.mkdir(parents=True)
+    project = ProjectSpec(
+        name="a",
+        clusters=[],
+    )
+    cluster = ClusterSpec(
+        name="gpu",
+        cpu_nodes=NodePoolSpec(count=1, platform="cpu-d3", preset="8vcpu-32gb"),
+        gpu_nodes=NodePoolSpec(
+            count=1,
+            platform="gpu-rtx6000",
+            preset="1gpu-24vcpu-218gb",
+            capacity_block_group="capacityblockgroup-exact",
+        ),
+    )
+    L._write_env_sidecar(
+        install,
+        {
+            "tenant_id": "tenant-x",
+            "project_id": "project-x",
+            "region": "us-central1",
+            "cluster_name": "gpu",
+            "cluster_id": "cluster-x",
+            "status": "deployed",
+        },
+    )
+    ssh_key = "ssh-ed25519 test"
+    (workdir / "terraform.tfvars").write_text(
+        render_tfvars(cluster, ssh_public_key=ssh_key)
+    )
+    monkeypatch.setattr(
+        L,
+        "_get_project",
+        lambda *a, **k: {
+            "metadata": {
+                "id": "project-x",
+                "name": "a",
+                "parent_id": "tenant-x",
+            },
+            "spec": {"region": "us-central1"},
+        },
+    )
+
+    def provider(cmd, **kwargs):
+        if "node-group" in cmd:
+            return _Cap(
+                json.dumps(
+                    {
+                        "items": [
+                            {
+                                "spec": {
+                                    "fixed_node_count": 1,
+                                    "template": {
+                                        "resources": {
+                                            "platform": "cpu-d3",
+                                            "preset": "8vcpu-32gb",
+                                        }
+                                    },
+                                },
+                                "status": {"state": "RUNNING"},
+                            },
+                            {
+                                "spec": {
+                                    "fixed_node_count": 1,
+                                    "template": {
+                                        "resources": {
+                                            "platform": "gpu-rtx6000",
+                                            "preset": "1gpu-24vcpu-218gb",
+                                        },
+                                        "reservation_policy": {
+                                            "policy": "STRICT",
+                                            "reservation_ids": [
+                                                "capacityblockgroup-exact"
+                                            ],
+                                        },
+                                    },
+                                },
+                                "status": {"state": "RUNNING"},
+                            },
+                        ]
+                    }
+                ),
+                0,
+            )
+        return _Cap(
+            json.dumps(
+                {
+                    "metadata": {
+                        "id": "cluster-x",
+                        "name": "gpu",
+                        "parent_id": "project-x",
+                    },
+                    "status": {"state": "RUNNING"},
+                }
+            ),
+            0,
+        )
+
+    monkeypatch.setattr(L, "_run_capture", provider)
+    kwargs = {
+        "project": project,
+        "cluster": cluster,
+        "prefix": "",
+        "tenant_id": "tenant-x",
+        "region": "us-central1",
+        "ssh_public_key": ssh_key,
+        "fleet_root": fleet_root,
+        "nebius_bin": "nebius",
+        "profile": "profile-x",
+        "env": {},
+    }
+    assert L._is_verified_unchanged_target(**kwargs) is True
+
+    changed = ClusterSpec(
+        name="gpu",
+        cpu_nodes=cluster.cpu_nodes,
+        gpu_nodes=NodePoolSpec(
+            count=1,
+            platform="gpu-rtx6000",
+            preset="1gpu-24vcpu-218gb",
+            disk_size_gib=2048,
+            capacity_block_group="capacityblockgroup-exact",
+        ),
+    )
+    assert L._is_verified_unchanged_target(**{**kwargs, "cluster": changed}) is False
 
 
 def test_deploy_one_cluster_failure_leaves_sidecar_provisioning(

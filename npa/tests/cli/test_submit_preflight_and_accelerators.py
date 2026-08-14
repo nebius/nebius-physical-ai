@@ -20,6 +20,7 @@ from npa.orchestration.skypilot.image_bootstrap_contract import (
 )
 from npa.orchestration.skypilot.k8s_gpu_catalog import KubernetesGpuCatalog
 from npa.orchestration.skypilot.registry_preflight import ImagePullCheck
+from npa.orchestration.skypilot.workflow import SkyPilotSubmitError
 
 
 runner = CliRunner()
@@ -47,6 +48,49 @@ SPEC = {
         "done": {"terminal": True},
     },
 }
+
+
+class _RecordingOperation:
+    def __init__(self) -> None:
+        self.rollback: dict[str, object] | None = None
+        self.transitions: list[tuple[str, dict[str, object]]] = []
+
+    def record_rollback(self, **kwargs) -> None:  # noqa: ANN003
+        self.rollback = kwargs
+
+    def transition(self, phase: str, **kwargs) -> None:  # noqa: ANN003
+        self.transitions.append((phase, kwargs))
+
+
+def test_prelaunch_reconciliation_failure_does_not_leave_recovery_blocker() -> None:
+    operation = _RecordingOperation()
+    transaction = type("Transaction", (), {"launch_sequence": 0})()
+    error = SkyPilotSubmitError("controller identity mismatch", transaction=transaction)
+
+    workflow_cli._record_workflow_submit_failure(operation, error)
+
+    assert operation.rollback == {
+        "attempted": False,
+        "completed": True,
+        "removed": [],
+        "preserved": [],
+        "outcomes": [],
+    }
+    assert operation.transitions[0][0] == "rolled-back"
+    assert operation.transitions[0][1]["details"]["launch_attempted"] is False
+
+
+def test_postlaunch_failure_preserves_recovery_blocker() -> None:
+    operation = _RecordingOperation()
+    transaction = type("Transaction", (), {"launch_sequence": 1})()
+    error = SkyPilotSubmitError("launch indeterminate", transaction=transaction)
+
+    workflow_cli._record_workflow_submit_failure(operation, error)
+
+    assert operation.rollback is None
+    assert operation.transitions == [
+        ("recovery-required", {"error": "launch indeterminate"})
+    ]
 
 
 @pytest.fixture()

@@ -465,6 +465,17 @@ def provision_if_absent(
             )
             actions.append("k8s:validated stable GPU health and CUDA vectorAdd")
         k8s_ready = True
+        if sky_smoke and not dry_run:
+            from npa.cli.cluster.terraform_lifecycle import _run_skypilot_smoke
+
+            _run_skypilot_smoke(
+                Path(kubeconfig_path),
+                context,
+                cluster_name,
+                str(accelerator or ""),
+                sky_bin=sky_bin,
+            )
+            actions.append("sky-smoke:passed")
     elif not environment.project_id or not environment.tenant_id:
         warnings.append("project_id and tenant_id are required to ensure Kubernetes")
     elif dry_run:

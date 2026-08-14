@@ -178,14 +178,29 @@ def discover_kubernetes_gpu_inventory(
             eligible_nodes += 1
             allocatable += node_allocatable
             capacity += node_capacity
-            for key, value in raw_labels.items():
-                if key in {
-                    "nvidia.com/gpu.product",
-                    "nebius.com/gpu",
-                    "node.kubernetes.io/instance-type",
-                } or "product" in key.casefold():
-                    if value:
-                        products.add(value)
+            # Report one canonical product per node. Nebius and GPU Feature
+            # Discovery can advertise two aliases for the same physical card;
+            # treating both as separate products makes a homogeneous pool look
+            # heterogeneous in CLI readiness output.
+            product = next(
+                (
+                    raw_labels.get(key, "")
+                    for key in ("nvidia.com/gpu.product", "nebius.com/gpu-name")
+                    if raw_labels.get(key)
+                ),
+                "",
+            )
+            if not product:
+                product = next(
+                    (
+                        value
+                        for key, value in sorted(raw_labels.items())
+                        if "product" in key.casefold() and value
+                    ),
+                    "",
+                )
+            if product:
+                products.add(product)
     return KubernetesGpuInventory(
         context=context,
         ready_nodes=ready_nodes,
@@ -312,7 +327,115 @@ def discover_kubernetes_gpu_catalog(
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or f"exit {result.returncode}").strip()
         raise KubernetesGpuCatalogError(f"`{' '.join(cmd)}` failed: {detail}")
-    return parse_kubernetes_gpu_catalog(output, context=context)
+    catalog = parse_kubernetes_gpu_catalog(output, context=context)
+    if catalog.is_empty and context:
+        labelled = label_known_kubernetes_gpus_for_skypilot(context=context)
+        if labelled:
+            try:
+                result = execute(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=timeout,
+                    check=False,
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise KubernetesGpuCatalogError(
+                    f"Unable to rerun `{' '.join(cmd)}` after GPU labelling: {exc}"
+                ) from exc
+            output = "\n".join(
+                part for part in (result.stdout, result.stderr) if part
+            )
+            if result.returncode != 0:
+                detail = (
+                    result.stderr or result.stdout or f"exit {result.returncode}"
+                ).strip()
+                raise KubernetesGpuCatalogError(
+                    f"`{' '.join(cmd)}` failed after GPU labelling: {detail}"
+                )
+            catalog = parse_kubernetes_gpu_catalog(output, context=context)
+    return catalog
+
+
+_KNOWN_SKYPILOT_LABELS = {
+    "rtx6000": "rtxpro6000",
+    "rtxpro6000": "rtxpro6000",
+    "rtxpro6000blackwellserveredition": "rtxpro6000",
+    "nvidiartxpro6000blackwellserveredition": "rtxpro6000",
+}
+
+
+def _known_skypilot_label(labels: dict[str, str]) -> str:
+    for key in ("nvidia.com/gpu.product", "nebius.com/gpu-name"):
+        normalized = _normalize(labels.get(key, ""))
+        if normalized in _KNOWN_SKYPILOT_LABELS:
+            return _KNOWN_SKYPILOT_LABELS[normalized]
+    return ""
+
+
+def label_known_kubernetes_gpus_for_skypilot(
+    *,
+    context: str,
+    inventory: KubernetesGpuInventory | None = None,
+    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> int:
+    """Add SkyPilot labels only for exact, reviewed GFD product aliases.
+
+    SkyPilot 0.12.2 treats any GFD label as "already labelled", but its GPU name
+    catalog does not yet recognize the RTX PRO 6000 Blackwell product string.
+    Its own ``sky gpus label`` therefore performs no mutation while
+    ``sky gpus list`` remains empty.  NPA bridges only explicit equivalences;
+    unknown or adjacent products remain untouched and fail closed.
+    """
+
+    exact_context = str(context or "").strip()
+    if not exact_context:
+        raise KubernetesGpuCatalogError(
+            "Refusing to label GPUs without an exact Kubernetes context"
+        )
+    observed = inventory or discover_kubernetes_gpu_inventory(context=exact_context)
+    if observed.error:
+        raise KubernetesGpuCatalogError(
+            f"Cannot label GPUs because Kubernetes inventory failed: {observed.error}"
+        )
+    execute = runner or subprocess.run
+    labelled = 0
+    for node, labels in observed.node_labels.items():
+        if labels.get("skypilot.co/accelerator"):
+            continue
+        accelerator = _known_skypilot_label(labels)
+        if not accelerator:
+            continue
+        cmd = [
+            "kubectl",
+            "--context",
+            exact_context,
+            "label",
+            "node",
+            node,
+            f"skypilot.co/accelerator={accelerator}",
+        ]
+        try:
+            result = execute(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise KubernetesGpuCatalogError(
+                "Could not add the reviewed SkyPilot accelerator label to a GPU node"
+            ) from exc
+        if result.returncode != 0:
+            raise KubernetesGpuCatalogError(
+                "Could not add the reviewed SkyPilot accelerator label to a GPU node; "
+                "the existing node labels were preserved"
+            )
+        labelled += 1
+    return labelled
 
 
 def kubernetes_allocatable_gpu_count(

@@ -3104,21 +3104,56 @@ def _gpus_per_node(preset: str) -> int:
 
 
 def _run_skypilot_smoke(
-    kubeconfig_path: Path, context: str, cluster_name: str, sky_gpus: str
+    kubeconfig_path: Path,
+    context: str,
+    cluster_name: str,
+    sky_gpus: str,
+    *,
+    sky_bin: str = "",
 ) -> None:
-    sky_bin = os.environ.get("NPA_SKYPILOT_BIN") or str(_DEFAULT_SKYPILOT_BIN)
-    sky = _require_bin(sky_bin)
+    executable = (
+        sky_bin or os.environ.get("NPA_SKYPILOT_BIN") or str(_DEFAULT_SKYPILOT_BIN)
+    )
+    sky = _require_bin(executable)
     env = os.environ.copy()
     env["KUBECONFIG"] = str(kubeconfig_path)
     infra = f"k8s/{context}"
-    _run_stream([sky, "check", "kubernetes"], env=env, timeout=300)
-    accelerator = sky_gpus.strip() or _detect_skypilot_gpu(sky, infra, env)
+    allowed_contexts = json.dumps([context], separators=(",", ":"))
+    check_result = _run_capture(
+        [
+            sky,
+            "check",
+            "--config",
+            f"kubernetes.allowed_contexts={allowed_contexts}",
+            "kubernetes",
+        ],
+        env=env,
+        timeout=300,
+    )
+    plain_check = re.sub(
+        r"\x1b\[[0-?]*[ -/]*[@-~]",
+        "",
+        "\n".join((check_result.stdout or "", check_result.stderr or "")),
+    )
+    if not re.search(
+        r"\bKubernetes:\s+enabled\b", plain_check, flags=re.IGNORECASE
+    ):
+        raise RuntimeError(
+            "SkyPilot returned success without enabling the exact Kubernetes context"
+        )
+    typer.echo(f"SkyPilot Kubernetes credentials verified for context {context!r}.")
+    config_override = f"kubernetes.allowed_contexts={allowed_contexts}"
+    accelerator = sky_gpus.strip() or _detect_skypilot_gpu(
+        sky, infra, env, config_override=config_override
+    )
     smoke_name = _sky_cluster_name(cluster_name)
     try:
         _run_stream(
             [
                 sky,
                 "launch",
+                "--config",
+                config_override,
                 "-c",
                 smoke_name,
                 "--infra",
@@ -3132,14 +3167,29 @@ def _run_skypilot_smoke(
             timeout=1800,
         )
     finally:
-        _run_stream([sky, "down", "--yes", smoke_name], env=env, timeout=600)
-        _wait_for_sky_down(sky, smoke_name, env)
+        _run_stream(
+            [sky, "down", "--config", config_override, "--yes", smoke_name],
+            env=env,
+            timeout=600,
+        )
+        _wait_for_sky_down(
+            sky, smoke_name, env, config_override=config_override
+        )
     typer.echo(f"SkyPilot smoke passed and {smoke_name} was removed.")
 
 
-def _detect_skypilot_gpu(sky: str, infra: str, env: dict[str, str]) -> str:
+def _detect_skypilot_gpu(
+    sky: str,
+    infra: str,
+    env: dict[str, str],
+    *,
+    config_override: str = "",
+) -> str:
+    cmd = [sky, "show-gpus", "--infra", infra, "--all"]
+    if config_override:
+        cmd[2:2] = ["--config", config_override]
     result = _run_capture(
-        [sky, "show-gpus", "--infra", infra, "--all"], env=env, timeout=300
+        cmd, env=env, timeout=300
     )
     for line in result.stdout.splitlines():
         if "RTX" not in line.upper() or "6000" not in line:
@@ -3157,10 +3207,19 @@ def _sky_cluster_name(cluster_name: str) -> str:
     return f"{normalized[:40]}-sky-smoke"
 
 
-def _wait_for_sky_down(sky: str, cluster_name: str, env: dict[str, str]) -> None:
+def _wait_for_sky_down(
+    sky: str,
+    cluster_name: str,
+    env: dict[str, str],
+    *,
+    config_override: str = "",
+) -> None:
     for _ in range(30):
+        cmd = [sky, "status", "--refresh"]
+        if config_override:
+            cmd[2:2] = ["--config", config_override]
         result = _run_capture(
-            [sky, "status", "--refresh"], env=env, timeout=120, check=False
+            cmd, env=env, timeout=120, check=False
         )
         if cluster_name not in result.stdout:
             return

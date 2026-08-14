@@ -45,7 +45,7 @@ from npa.cli.cluster.terraform_lifecycle import (
 from npa.cluster.gpu_driver import resolve_gpu_driver_strategy
 from npa.cluster.gpu_health import GpuHealthConfig, validate_gpu_health
 from npa.fleet.quotas import preflight_region, shortfall_message
-from npa.fleet.spec import ClusterSpec, FleetSpec, ProjectSpec
+from npa.fleet.spec import ClusterSpec, FleetSpec, NodePoolSpec, ProjectSpec
 from npa.fleet.tfvars import patch_provider_domain, provider_domain, render_tfvars
 
 logger = logging.getLogger(__name__)
@@ -351,11 +351,85 @@ def _list_projects(
 
 
 def _find_project_id(projects: list[dict[str, Any]], name: str) -> str:
-    for item in projects:
-        meta = item.get("metadata", {})
-        if meta.get("name") == name and meta.get("id"):
-            return str(meta["id"])
-    return ""
+    matches = [
+        str((item.get("metadata", {}) or {}).get("id") or "")
+        for item in projects
+        if (item.get("metadata", {}) or {}).get("name") == name
+        and (item.get("metadata", {}) or {}).get("id")
+    ]
+    if len(matches) > 1:
+        raise ValueError(
+            f"project name {name!r} is ambiguous under the selected tenant; "
+            "use an explicit project_id"
+        )
+    return matches[0] if matches else ""
+
+
+def _get_project(
+    nebius_bin: str, project_id: str, env: dict[str, str], profile: str = ""
+) -> dict[str, Any]:
+    """Return one exact provider project without exposing provider output."""
+
+    result = _run_capture(
+        [
+            *_nebius_argv(nebius_bin, profile),
+            "iam",
+            "project",
+            "get",
+            "--id",
+            project_id,
+            "--format",
+            "json",
+        ],
+        env=env,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"could not verify existing project (nebius exited {result.returncode})"
+        )
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise ValueError("could not parse existing project JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("existing project JSON is not an object")
+    return payload
+
+
+def _verify_existing_project(
+    payload: dict[str, Any],
+    *,
+    project_id: str,
+    tenant_id: str,
+    name: str,
+    region: str,
+) -> None:
+    """Fail closed unless a same-name resume has the exact requested identity."""
+
+    metadata = payload.get("metadata", {}) or {}
+    spec = payload.get("spec", {}) or {}
+    status = payload.get("status", {}) or {}
+    actual_region = str(
+        spec.get("region") or status.get("region") or metadata.get("region") or ""
+    )
+    mismatches: list[str] = []
+    if str(metadata.get("id") or "") != project_id:
+        mismatches.append("provider id does not match the listed project")
+    if str(metadata.get("name") or "") != name:
+        mismatches.append("display name changed after project listing")
+    if str(metadata.get("parent_id") or "") != tenant_id:
+        mismatches.append("project belongs to another tenant")
+    if region and actual_region != region:
+        mismatches.append(
+            f"project region {actual_region or '<unavailable>'!r} does not match "
+            f"requested region {region!r}"
+        )
+    if mismatches:
+        raise ValueError(
+            f"existing project {name!r} failed immutable identity verification: "
+            + "; ".join(mismatches)
+        )
 
 
 def _create_project(
@@ -577,6 +651,14 @@ def resolve_project_id(
     existing = _list_projects(nebius_bin, tenant_id, env, profile)
     found = _find_project_id(existing, name)
     if found:
+        verified = _get_project(nebius_bin, found, env, profile)
+        _verify_existing_project(
+            verified,
+            project_id=found,
+            tenant_id=tenant_id,
+            name=name,
+            region=region,
+        )
         _log(on_status, f"project {name!r} exists ({found})")
         return found, False
     if not create:
@@ -668,6 +750,128 @@ def _load_json_file(path: Path | None) -> dict[str, Any]:
 
 def _write_env_sidecar(install_dir: Path, data: dict[str, Any]) -> None:
     _write_json_file(install_dir / _ENV_SIDECAR, data)
+
+
+def _persist_npa_cluster_identity(
+    *,
+    context: str,
+    cluster_id: str,
+    project_id: str,
+    region: str,
+    cluster: ClusterSpec,
+    subnet_id: str,
+    kubeconfig_path: Path,
+    fleet_name: str,
+    project_key: str,
+    base_dir: Path | None = None,
+) -> None:
+    """Register a fleet cluster for project-scoped workflow/controller use."""
+
+    from npa.cluster.state import (
+        ClusterState,
+        kubeconfig_file,
+        load_cluster_state,
+        save_cluster_state,
+        utc_now_iso,
+    )
+
+    existing = load_cluster_state(context, base_dir=base_dir)
+    if existing is not None and (
+        existing.cluster_id != cluster_id or existing.project_id != project_id
+    ):
+        raise RuntimeError(
+            f"NPA cluster context {context!r} already records a different immutable "
+            "project/cluster identity; refusing to overwrite it"
+        )
+    if not kubeconfig_path.is_file():
+        raise RuntimeError(
+            "Fleet kubeconfig is unavailable; refusing to register incomplete "
+            "NPA cluster identity"
+        )
+    installed_kubeconfig = kubeconfig_file(context, base_dir=base_dir)
+    installed_kubeconfig.parent.mkdir(parents=True, exist_ok=True)
+    if kubeconfig_path.resolve() != installed_kubeconfig.resolve():
+        temporary: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                dir=installed_kubeconfig.parent,
+                prefix=f".{installed_kubeconfig.name}.",
+                delete=False,
+            ) as handle:
+                with kubeconfig_path.open("rb") as source:
+                    shutil.copyfileobj(source, handle)
+                temporary = Path(handle.name)
+            temporary.chmod(stat.S_IRUSR | stat.S_IWUSR)
+            os.replace(temporary, installed_kubeconfig)
+            temporary = None
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+    else:
+        installed_kubeconfig.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    primary_pool = (
+        cluster.gpu_nodes
+        if cluster.gpu_nodes and cluster.gpu_nodes.count > 0
+        else cluster.cpu_nodes
+    )
+    state = ClusterState(
+        name=context,
+        cluster_id=cluster_id,
+        project_id=project_id,
+        region=region,
+        node_count=cluster.cpu_count() + cluster.gpu_count(),
+        node_platform=str(primary_pool.platform if primary_pool else ""),
+        node_preset=str(primary_pool.preset if primary_pool else ""),
+        k8s_version=cluster.k8s_version,
+        subnet_id=subnet_id,
+        created_at=existing.created_at if existing else utc_now_iso(),
+        last_seen_state="RUNNING",
+        last_seen_at=utc_now_iso(),
+        node_group_id=existing.node_group_id if existing else "",
+        endpoint=existing.endpoint if existing else "",
+        kubeconfig_path=str(installed_kubeconfig),
+        provider_name=cluster.name,
+    )
+    save_cluster_state(
+        state,
+        base_dir=base_dir,
+        metadata={
+            "managed_by": "npa fleet",
+            "fleet": fleet_name,
+            "project_key": project_key,
+            "event": "kubeconfig_written",
+            "updated_at": utc_now_iso(),
+            "teardown": (
+                "Run `npa fleet destroy --spec <fleet-spec.yaml> "
+                f"--only-projects {project_key} --only-clusters {cluster.name} --yes`."
+            ),
+        },
+    )
+
+
+def _remove_npa_cluster_identity(
+    *,
+    context: str,
+    cluster_id: str,
+    project_id: str,
+    base_dir: Path | None = None,
+) -> None:
+    """Remove only the exact fleet identity after authoritative cloud teardown."""
+
+    if not context:
+        return
+    from npa.cluster.state import delete_cluster_state, load_cluster_state
+
+    existing = load_cluster_state(context, base_dir=base_dir)
+    if existing is None:
+        return
+    if existing.cluster_id != cluster_id or existing.project_id != project_id:
+        raise RuntimeError(
+            f"NPA cluster context {context!r} no longer matches the fleet's immutable "
+            "project/cluster identity; local identity was preserved"
+        )
+    delete_cluster_state(context, base_dir=base_dir)
 
 
 def _load_env_sidecar(install_dir: Path) -> dict[str, str] | None:
@@ -1355,9 +1559,11 @@ def deploy_fleet(
         "k8s_training_source": str(recipe_root),
     }
 
-    # Phase 0: quota preflight, before any project is created. Regions come from
-    # the spec, so this needs no project ids -- and running it first means a
-    # quota-blocked deploy does not leave a freshly created, empty project behind.
+    # Phase 0: quota preflight, before any project is created. An exact
+    # provider-present target whose saved rendered shape still matches the spec
+    # has zero incremental demand. Everything else is conservatively treated as
+    # new capacity, so missing/stale local state can never bypass preflight or
+    # leave a newly created project behind when quota is unavailable.
     preflight_project_ids: dict[str, str] = {}
     if preflight:
         scoped: dict[str, list[ClusterSpec]] = {}
@@ -1370,6 +1576,24 @@ def deploy_fleet(
             project_has_scoped_cluster = False
             for cluster in project.clusters:
                 if only_clusters and cluster.name not in only_clusters:
+                    continue
+                if _is_verified_unchanged_target(
+                    project=project,
+                    cluster=cluster,
+                    prefix=prefix,
+                    tenant_id=tenant_id,
+                    region=region,
+                    ssh_public_key=ssh_public_key,
+                    fleet_root=fleet_root,
+                    nebius_bin=nebius_bin,
+                    profile=nebius_profile,
+                    env=cli_env,
+                ):
+                    _log(
+                        on_status,
+                        f"capacity/quota preflight: {project.key()}/{cluster.name} "
+                        "is provider-verified and unchanged; incremental demand is zero",
+                    )
                     continue
                 scoped.setdefault(region, []).append(cluster)
                 project_has_scoped_cluster = True
@@ -1545,6 +1769,174 @@ def deploy_fleet(
     return result
 
 
+def _is_verified_unchanged_target(
+    *,
+    project: ProjectSpec,
+    cluster: ClusterSpec,
+    prefix: str,
+    tenant_id: str,
+    region: str,
+    ssh_public_key: str,
+    fleet_root: Path,
+    nebius_bin: str,
+    profile: str,
+    env: dict[str, str],
+) -> bool:
+    """Prove that a target consumes no *additional* quota on this deploy."""
+
+    install_dir = fleet_root / project.key() / cluster.name
+    saved = _load_env_sidecar(install_dir) or {}
+    project_id = str(saved.get("project_id") or "")
+    cluster_id = str(saved.get("cluster_id") or "")
+    if (
+        str(saved.get("status") or "") != "deployed"
+        or not project_id
+        or not cluster_id
+        or str(saved.get("tenant_id") or "") != tenant_id
+        or str(saved.get("region") or "") != region
+        or str(saved.get("cluster_name") or "") != cluster.name
+    ):
+        return False
+    if project.project_id and project.project_id != project_id:
+        return False
+    tfvars_path = install_dir / _K8S_TRAINING_SUBDIR / "terraform.tfvars"
+    try:
+        if tfvars_path.read_text(encoding="utf-8") != render_tfvars(
+            cluster, ssh_public_key=ssh_public_key
+        ):
+            return False
+        provider_project = _get_project(nebius_bin, project_id, env, profile)
+    except (OSError, RuntimeError, ValueError):
+        return False
+    metadata = provider_project.get("metadata", {}) or {}
+    project_spec = provider_project.get("spec", {}) or {}
+    project_status = provider_project.get("status", {}) or {}
+    provider_region = str(
+        project_spec.get("region")
+        or project_status.get("region")
+        or metadata.get("region")
+        or ""
+    )
+    expected_name = project.display_name(prefix) if project.name else ""
+    if (
+        str(metadata.get("id") or "") != project_id
+        or str(metadata.get("parent_id") or "") != tenant_id
+        or provider_region != region
+        or (expected_name and str(metadata.get("name") or "") != expected_name)
+    ):
+        return False
+
+    cluster_result = _run_capture(
+        [
+            *_nebius_argv(nebius_bin, profile),
+            "mk8s",
+            "cluster",
+            "get",
+            "--id",
+            cluster_id,
+            "--format",
+            "json",
+        ],
+        env=env,
+        check=False,
+    )
+    groups_result = _run_capture(
+        [
+            *_nebius_argv(nebius_bin, profile),
+            "mk8s",
+            "node-group",
+            "list",
+            "--parent-id",
+            cluster_id,
+            "--format",
+            "json",
+        ],
+        env=env,
+        check=False,
+    )
+    if cluster_result.returncode != 0 or groups_result.returncode != 0:
+        return False
+    try:
+        provider_cluster = json.loads(cluster_result.stdout or "{}")
+        groups_payload = json.loads(groups_result.stdout or "{}")
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(provider_cluster, dict) or not isinstance(groups_payload, dict):
+        return False
+    cluster_metadata = provider_cluster.get("metadata", {}) or {}
+    cluster_status = provider_cluster.get("status", {}) or {}
+    if (
+        str(cluster_metadata.get("id") or "") != cluster_id
+        or str(cluster_metadata.get("parent_id") or "") != project_id
+        or str(cluster_metadata.get("name") or "") != cluster.name
+        or str(cluster_status.get("state") or "") != "RUNNING"
+    ):
+        return False
+    groups = groups_payload.get("items", [])
+    if not isinstance(groups, list):
+        return False
+    expected_pools = [
+        pool
+        for pool in (cluster.cpu_nodes, cluster.gpu_nodes)
+        if pool is not None and pool.count > 0
+    ]
+    if len(groups) != len(expected_pools):
+        return False
+
+    unmatched = [item for item in groups if isinstance(item, dict)]
+    if len(unmatched) != len(groups):
+        return False
+    for pool in expected_pools:
+        match_index = next(
+            (
+                index
+                for index, item in enumerate(unmatched)
+                if _provider_node_group_matches_pool(item, pool)
+            ),
+            None,
+        )
+        if match_index is None:
+            return False
+        unmatched.pop(match_index)
+    return not unmatched
+
+
+def _provider_node_group_matches_pool(
+    payload: dict[str, Any], pool: NodePoolSpec
+) -> bool:
+    """Compare one provider node-group payload with one desired pool."""
+
+    spec = payload.get("spec", {}) or {}
+    status = payload.get("status", {}) or {}
+    template = spec.get("template", {}) or {}
+    resources = template.get("resources", {}) or {}
+    reservation = template.get("reservation_policy", {}) or {}
+    reservation_ids = (
+        reservation.get("reservation_ids", []) if isinstance(reservation, dict) else []
+    )
+    try:
+        fixed_node_count = int(spec.get("fixed_node_count") or 0)
+    except (TypeError, ValueError):
+        return False
+    if (
+        str(status.get("state") or "") != "RUNNING"
+        or fixed_node_count != pool.count
+        or str(resources.get("platform") or "") != pool.platform
+        or str(resources.get("preset") or "") != pool.preset
+        or bool(template.get("preemptible"))
+    ):
+        return False
+    if pool.capacity_block_group:
+        return (
+            isinstance(reservation, dict)
+            and str(reservation.get("policy") or "") == "STRICT"
+            and reservation_ids == [pool.capacity_block_group]
+        )
+    return not reservation_ids and not (
+        isinstance(reservation, dict) and reservation.get("policy")
+    )
+
+
 def _preflight_quotas(
     nebius_bin: str,
     *,
@@ -1710,6 +2102,17 @@ def _deploy_one_cluster(
         try:
             _write_kubeconfig(
                 nebius_bin, cluster_id, kubeconfig_path, context, env, profile
+            )
+            _persist_npa_cluster_identity(
+                context=context,
+                cluster_id=cluster_id,
+                project_id=project_id,
+                region=region,
+                cluster=cluster,
+                subnet_id=subnet_id,
+                kubeconfig_path=kubeconfig_path,
+                fleet_name=spec.name,
+                project_key=project_key,
             )
         except Exception as exc:  # noqa: BLE001 - retain applied state for credential retry
             message = str(exc)
@@ -2301,7 +2704,28 @@ def _destroy_one_cluster(
         }
 
     # Terraform is the authoritative owner of all recipe resources. Only after
-    # its successful destroy may the local state be removed.
+    # its successful destroy may the exact global cluster identity and local
+    # fleet state be removed.
+    try:
+        _remove_npa_cluster_identity(
+            context=str(saved.get("context") or ""),
+            cluster_id=str(saved.get("cluster_id") or ""),
+            project_id=project_id,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        errors.append(
+            f"cloud teardown succeeded but NPA cluster identity cleanup failed: "
+            f"{type(exc).__name__}"
+        )
+        return {
+            "project_key": project.key(),
+            "cluster_name": cluster.name,
+            "status": "destroy-incomplete",
+            "errors": errors,
+            "retry_command": retry_command,
+            "install_dir": str(install_dir),
+            **log_metadata,
+        }
     try:
         shutil.rmtree(install_dir)
     except OSError as exc:

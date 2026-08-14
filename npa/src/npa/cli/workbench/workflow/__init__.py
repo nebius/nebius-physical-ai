@@ -1512,7 +1512,7 @@ def submit_cmd(
                 try:
                     submitted = submit()
                 except BaseException as exc:
-                    operation.transition("recovery-required", error=str(exc))
+                    _record_workflow_submit_failure(operation, exc)
                     raise
                 operation.transition("state-durable")
                 operation.commit()
@@ -2352,6 +2352,34 @@ def _resolve_submit_accelerators(
             overrides[accelerator] = resolution.resolved
         typer.echo(f"accelerator-resolve: {resolution.describe()}", err=True)
     return overrides
+
+
+def _record_workflow_submit_failure(operation, exc: BaseException) -> None:  # noqa: ANN001
+    """Keep recovery only when this transaction may have issued a launch.
+
+    A failed initial reconciliation has ``launch_sequence == 0``: NPA never
+    called ``sky jobs launch`` and therefore owns no workflow resource to
+    recover.  Marking that journal recovery-required blocks unrelated safe
+    project operations forever, even though no mutation occurred.
+    """
+
+    transaction = getattr(exc, "transaction", None)
+    launch_sequence = getattr(transaction, "launch_sequence", None)
+    if launch_sequence == 0:
+        operation.record_rollback(
+            attempted=False,
+            completed=True,
+            removed=[],
+            preserved=[],
+            outcomes=[],
+        )
+        operation.transition(
+            "rolled-back",
+            error=str(exc),
+            details={"error_type": type(exc).__name__, "launch_attempted": False},
+        )
+        return
+    operation.transition("recovery-required", error=str(exc))
 
 
 def _parse_submit_vars(var: list[str]) -> dict[str, str]:

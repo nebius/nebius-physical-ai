@@ -38,7 +38,7 @@ SkyPilot submission behavior.
 ## Live submit prerequisites (real cluster)
 
 A real `npa workbench workflow submit` (not `--plan-only`) needs, on top of a
-healthy `sky check kubernetes`:
+successful `npa skypilot verify --cluster <exact-context>`:
 
 - **Secrets via `--secret-env`** (never in the YAML): `NEBIUS_TOKEN_FACTORY_KEY`
   for Token Factory stages, `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` for S3,
@@ -69,6 +69,10 @@ healthy `sky check kubernetes`:
   deadline. This is product behavior, not an operator job/time budget. A
   recovered launch proceeds in the same command; use `--resume-run <same-id>`
   only for crash/restart or a printed indeterminate/deadline recovery action.
+- A failed reconciliation with launch sequence zero created no SkyPilot job.
+  NPA records a completed no-op rollback instead of leaving a
+  `recovery-required` journal that would block unrelated project operations.
+  Any failure after a launch may have been issued remains recovery-required.
 
 - SkyPilot `envs` does not support self-referencing interpolation. The
   npa.workflow renderer resolves images and config before submit so rendered
