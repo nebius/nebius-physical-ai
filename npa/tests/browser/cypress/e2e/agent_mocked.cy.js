@@ -1529,9 +1529,11 @@ describe("NPA agent UI with mocked APIs", () => {
       const el = $log[0];
       expect(el.scrollHeight - el.clientHeight).to.be.greaterThan(40);
     });
+    cy.get("#chatLog").scrollTo("bottom").trigger("scroll");
+    cy.get("#chatScrollBottom").should("have.attr", "hidden");
 
     // Scrolling up reveals the jump-to-latest arrow.
-    cy.get("#chatLog").scrollTo("top");
+    cy.get("#chatLog").scrollTo("top").trigger("scroll");
     cy.get("#chatScrollBottom").should("not.have.attr", "hidden");
     cy.get("#chatScrollBottom").should("be.visible");
 
