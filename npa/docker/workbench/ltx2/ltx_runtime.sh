@@ -140,8 +140,8 @@ fetch_source() {
   git -C "$tmp" remote add origin "$SOURCE_REPO"
   git -C "$tmp" fetch -q --depth 1 origin "$SOURCE_REF"
   git -C "$tmp" checkout -q --detach FETCH_HEAD
-  # The ref is the provenance record stamped onto every artifact, so verify it
-  # rather than trusting the fetch.
+  # The ref is what the spec and the capability artifact claim ran, so verify
+  # what arrived rather than trusting the fetch.
   [[ "$(git -C "$tmp" rev-parse HEAD)" == "$SOURCE_REF" ]] \
     || die "$EX_SOFTWARE" "fetched source ref does not match ${SOURCE_REF}"
   [[ -s "$tmp/LICENSE.md" ]] \
@@ -199,8 +199,8 @@ fetch_weights() {
   log "fetching ${#files[@]} weight files from ${WEIGHTS_REPO}@${revision}"
   hf download "$WEIGHTS_REPO" "${files[@]}" \
     --revision "$revision" --local-dir "$MODEL_CACHE"
-  # Record what was actually delivered, next to the bytes, so the provenance
-  # manifest names the weights rather than just the repository.
+  # Record what was actually delivered, next to the bytes, so a later reader
+  # can name the weights rather than just the repository they came from.
   printf '%s\n' "$revision" > "$MODEL_CACHE/$WEIGHTS_REVISION_FILE"
 }
 
