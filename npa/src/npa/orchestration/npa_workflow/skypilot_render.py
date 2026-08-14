@@ -26,6 +26,7 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     # Generation runs in the Cosmos 3 framework image; the reason stage runs in the
     # (differently built) Cosmos-Reason VLM image. Exact match wins over the prefix.
     "workbench.cosmos3.generate": "cosmos3",
+    "workbench.cosmos3.checkpoint_eval": "cosmos3",
     "workbench.cosmos3": "cosmos3-reason",
     "workbench.cosmos_curate": "cosmos-curate",
     "workbench.cosmos_evaluator": "cosmos-evaluator",
@@ -1488,10 +1489,34 @@ def build_skypilot_task_doc(
         "yes",
         "on",
     }
-    if require_baked and (not image or "@sha256:" not in image):
+    expected_source_sha = str(spec.config.get("source_sha") or "").strip().lower()
+    if require_baked:
+        from npa.orchestration.skypilot.image_bootstrap_contract import (
+            ImageBootstrapContractError,
+            parse_oci_reference,
+        )
+
+        try:
+            parsed_image = parse_oci_reference(image)
+        except ImageBootstrapContractError as exc:
+            raise NpaWorkflowRenderError(
+                f"planned step {scheduler_task['name']!r} requires a "
+                "registry-qualified immutable image because "
+                "config.require_baked_npa is enabled"
+            ) from exc
+        if not parsed_image.digest:
+            raise NpaWorkflowRenderError(
+                f"planned step {scheduler_task['name']!r} requires a "
+                "registry-qualified immutable image because "
+                "config.require_baked_npa is enabled"
+            )
+    if require_baked and (
+        len(expected_source_sha) != 40
+        or any(char not in "0123456789abcdef" for char in expected_source_sha)
+    ):
         raise NpaWorkflowRenderError(
-            f"planned step {scheduler_task['name']!r} requires a registry-qualified "
-            "immutable image because config.require_baked_npa is enabled"
+            f"planned step {scheduler_task['name']!r} requires an exact source SHA "
+            "because config.require_baked_npa is enabled"
         )
 
     command = list(scheduler_task.get("command") or [])
@@ -1509,7 +1534,6 @@ def build_skypilot_task_doc(
         envs["AWS_ENDPOINT_URL"] = options.aws_endpoint_url
     if image:
         envs["NPA_TASK_IMAGE"] = image.removeprefix("docker:")
-    expected_source_sha = str(spec.config.get("source_sha") or "").strip().lower()
     if expected_source_sha:
         if len(expected_source_sha) != 40 or any(
             char not in "0123456789abcdef" for char in expected_source_sha

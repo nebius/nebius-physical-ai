@@ -144,6 +144,15 @@ skills:
       - type: workflow_yaml
         paths:
           - npa/workflows/workbench/npa-workflows/sim2real.yaml
+  - name: protect-nebius-infra-details
+    category: atomic
+    when_to_use: "Prepare commits, docs, reports, examples, tests, PR bodies, issues, or live-validation handoffs involving Nebius without publishing concrete live infrastructure details or credentials."
+    path: skills/atomic/protect-nebius-infra-details/SKILL.md
+    smoke:
+      - type: file_exists
+        path: skills/atomic/protect-nebius-infra-details/SKILL.md
+      - type: file_exists
+        path: npa/src/npa/guardrails/confidentiality.py
   - name: review-checklist
     category: atomic
     when_to_use: "Code reviews and risk classification."

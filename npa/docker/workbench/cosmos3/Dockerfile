@@ -16,6 +16,7 @@ FROM ${BASE_IMAGE}
 
 # cosmos-framework release that COSMOS3_REF points at.
 ARG COSMOS3_VERSION=1.2.2
+ARG NPA_SOURCE_SHA
 ARG COSMOS3_SOURCE_REPO=https://github.com/NVIDIA/cosmos-framework.git
 # Pinned so a build is reproducible and the golden eval means something; bumping
 # this is a deliberate, tested change (upstream main moves and re-locks deps).
@@ -34,7 +35,9 @@ ARG COSMOS3_INFERENCE_DEPS="qwen-vl-utils==0.0.14 boto3==1.40.61"
 
 LABEL npa.tool="cosmos3" \
       npa.version="${COSMOS3_VERSION}" \
-      npa.cosmos3.ref="${COSMOS3_REF}"
+      npa.cosmos3.ref="${COSMOS3_REF}" \
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 # UV_PYTHON_INSTALL_DIR keeps uv's interpreters out of /root (mode 700) so the
 # non-root runtime user can execute the venvs that link against them.
@@ -48,6 +51,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     COSMOS3_REPO=/opt/cosmos3/cosmos-framework \
     NPA_COSMOS3_CHECKPOINT=Cosmos3-Nano \
     NPA_COSMOS3_OUTPUT_DIR=/tmp/npa-cosmos3-generate \
+    NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
+    NPA_BAKED_PYTHON=/opt/npa/.venv/bin/python \
     COSMOS_TRAINING=0 \
     HF_HOME=/tmp/hf_home \
     COSMOS_DOWNLOAD_CACHE_DIR=/tmp/hf_home/cosmos-downloads \
@@ -68,6 +73,7 @@ RUN apt-get update \
         git \
         git-lfs \
         openssh-server \
+        rsync \
         sudo \
         wget \
     && rm -rf /var/lib/apt/lists/*
@@ -120,9 +126,11 @@ RUN UV_CACHE_DIR=/tmp/uv-cache uv venv --python 3.12 /opt/npa/.venv \
     && UV_CACHE_DIR=/tmp/uv-cache uv pip install \
        --python /opt/npa/.venv/bin/python -e /opt/npa \
     && /opt/npa/.venv/bin/npa workbench cosmos3 generate --help >/dev/null \
+    && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && rm -rf /tmp/uv-cache
 
 COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/cosmos3/smoke_functional.sh /opt/cosmos3/smoke_functional.sh
+COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/cosmos3/entrypoint.sh /usr/local/bin/npa-cosmos3-entrypoint
 
 # Distribution guard: fail the build if any model weight was baked into a layer.
 RUN baked="$(find /opt/cosmos3 /opt/npa /tmp/hf_home -type f \
@@ -136,5 +144,5 @@ RUN baked="$(find /opt/cosmos3 /opt/npa /tmp/hf_home -type f \
 
 WORKDIR /workspace
 
-ENTRYPOINT ["npa", "workbench", "cosmos3"]
+ENTRYPOINT ["/usr/local/bin/npa-cosmos3-entrypoint"]
 CMD ["generate", "--help"]

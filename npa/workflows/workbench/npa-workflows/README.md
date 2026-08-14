@@ -93,6 +93,7 @@ below (see `npa/src/npa/orchestration/npa_workflow/blueprints.py`). Deploy guide
 | `sonic-locomotion-finetuning.yaml` | Retarget → train → mjlab |
 | `groot-1-7-finetune.yaml` | Real GR00T data → parameterized 1-to-many-GPU optimizer smoke → immutable checkpoint → aligned offline evaluation → outcome classification → RRD/MCAP → inspected S3 publication → NPA agent viewer handoff; no rollout or statistical-learning claim |
 | `cosmos3-reason.yaml` | Cosmos3 reason |
+| `cosmos3-checkpoint-eval.yaml` | B200-only guarded Cosmos3 still-image checkpoint evaluation |
 | `byof.yaml` | BYOF via `run_byof_repo.py` |
 | `byof-maniskill.yaml` | OSS registry: ManiSkill pinned image + PickCube smoke |
 | `byof-mujoco-playground.yaml` | OSS registry: MuJoCo Playground pinned image + Cartpole smoke |

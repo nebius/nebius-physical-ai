@@ -7,9 +7,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NPA_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-REGISTRY="${REGISTRY:-cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw}"
+REGISTRY="${REGISTRY:-}"
 BASE_IMAGE="${COSMOS3_BASE_IMAGE:-nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04}"
 COSMOS3_REF="${COSMOS3_REF:-}"
+NPA_SOURCE_SHA="${NPA_SOURCE_SHA:-$(git -C "${NPA_ROOT}" rev-parse HEAD)}"
 PUSH=0
 TAG=""
 
@@ -29,6 +30,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ -z "${REGISTRY}" ]]; then
+  echo "ERROR: pass --registry or set REGISTRY to an authorized registry" >&2
+  exit 2
+fi
+if [[ ! "${NPA_SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "ERROR: NPA_SOURCE_SHA must be the exact 40-character checkout SHA" >&2
+  exit 2
+fi
+
 if [[ -z "${TAG}" ]]; then
   TAG="$("${NPA_ROOT}/.venv/bin/python" - <<'PY'
 from npa.deploy.images import supported_tool_version
@@ -40,7 +50,10 @@ fi
 LOCAL_REF="npa-cosmos3:${TAG}"
 REMOTE_REF="${REGISTRY}/npa-cosmos3:${TAG}"
 
-BUILD_ARGS=(--build-arg "BASE_IMAGE=${BASE_IMAGE}")
+BUILD_ARGS=(
+  --build-arg "BASE_IMAGE=${BASE_IMAGE}"
+  --build-arg "NPA_SOURCE_SHA=${NPA_SOURCE_SHA}"
+)
 if [[ -n "${COSMOS3_REF}" ]]; then
   BUILD_ARGS+=(--build-arg "COSMOS3_REF=${COSMOS3_REF}")
 fi

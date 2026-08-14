@@ -2242,6 +2242,44 @@ def test_reservation_capacity_parser_and_validation_match_region_platform_fabric
     assert "fabric" in shortfalls[0].reason
 
 
+def test_single_gpu_strict_reservation_accepts_provider_scoped_fabric() -> None:
+    """The block ID supplies placement when the node group is not GPU-clustered."""
+
+    from npa.fleet.quotas import (
+        find_reservation_shortfalls,
+        parse_capacity_blocks,
+        required_reservations,
+    )
+
+    cluster = ClusterSpec(
+        name="b200-single",
+        gpu_nodes=NodePoolSpec(
+            count=1,
+            platform="gpu-b200-sxm",
+            preset="1gpu-20vcpu-224gb",
+            capacity_block_group="capacityblockgroup-test",
+        ),
+        enable_gpu_cluster=False,
+    )
+    requirements = required_reservations([cluster], "us-central1")
+    blocks = parse_capacity_blocks(
+        json.dumps(
+            {
+                "items": [
+                    _capacity_block(
+                        platform="gpu-b200-sxm",
+                        fabric="us-central1-b",
+                        limit="40",
+                    )
+                ]
+            }
+        )
+    )
+
+    assert requirements["capacityblockgroup-test"].fabric == ""
+    assert find_reservation_shortfalls(requirements, blocks, "t") == []
+
+
 def test_reservation_capacity_parser_treats_live_usage_percentage_as_fraction() -> None:
     from npa.fleet.quotas import parse_capacity_blocks
 

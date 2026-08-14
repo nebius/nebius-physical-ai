@@ -16,6 +16,29 @@ import subprocess
 import sys
 
 
+BUILTIN_NEBIUS_INFRA_PATTERN = r"""(?ix)
+(?:
+    # Opaque account/resource IDs. Ignore 40/64-character hexadecimal hashes.
+    (?<![a-z0-9])(?:e|u)00
+    (?!(?:[0-9a-f]{37}|[0-9a-f]{61})(?![0-9a-f]))
+    [a-z0-9]{12,}(?![a-z0-9])
+  |
+    # Task-specific private object-store or registry locations.
+    \bs3://[a-z0-9][a-z0-9.-]*
+    (?:-[0-9a-f]{8,}|-(?:19|20)[0-9]{6})(?=[/\s`'\"]|$)
+  |
+    \bcr\.[a-z0-9-]+\.nebius\.cloud/[a-z0-9][a-z0-9._-]*
+    (?:-[0-9a-f]{8,}|-(?:19|20)[0-9]{6})(?=[/:\s`'\"]|$)
+  |
+    # Dated operational names when attached to a resource/campaign/job field.
+    \b(?:tenant|project|capacity[ _-]?block|cluster|node[ _-]?group|
+       compute[ _-]?instance|bucket|registry|network|campaign|job)
+    (?:[ _-]?(?:id|name))?\b[^\n]{0,48}[:=|/]\s*[`'\"]?
+    [a-z0-9][a-z0-9-]{4,}-(?:19|20)[0-9]{6}\b
+)
+"""
+
+
 @dataclass(frozen=True)
 class ScanHit:
     """A redacted denylist match location."""
@@ -89,12 +112,35 @@ def compile_denylist(
     return re.compile(pattern, flags=flags)
 
 
+def compile_builtin_nebius_infra() -> re.Pattern[str]:
+    """Compile the public, deterministic Nebius infrastructure leak guard."""
+
+    return compile_denylist(
+        BUILTIN_NEBIUS_INFRA_PATTERN,
+        source="built-in-nebius-infra",
+    )
+
+
 def scan_text(text: str, denylist: re.Pattern[str], *, source: str) -> list[ScanHit]:
     """Return redacted hit locations for text."""
 
     hits: list[ScanHit] = []
     for line_number, line in enumerate(text.splitlines(), start=1):
         if denylist.search(line):
+            hits.append(ScanHit(source=source, line_number=line_number))
+    return hits
+
+
+def scan_diff_text(
+    text: str, denylist: re.Pattern[str], *, source: str
+) -> list[ScanHit]:
+    """Return redacted hits from added diff lines, ignoring removals and headers."""
+
+    hits: list[ScanHit] = []
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        if not line.startswith("+") or line.startswith("+++"):
+            continue
+        if denylist.search(line[1:]):
             hits.append(ScanHit(source=source, line_number=line_number))
     return hits
 
@@ -137,9 +183,7 @@ def scan_git_diff(repo_root: Path, diff_range: str, denylist: re.Pattern[str]) -
         stdout=subprocess.PIPE,
         text=True,
     )
-    return scan_text(result.stdout, denylist, source=f"diff:{diff_range}")
-
-
+    return scan_diff_text(result.stdout, denylist, source=f"diff:{diff_range}")
 
 
 def should_skip_unconfigured_fork_pull_request(
@@ -180,6 +224,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--diff-range", default="")
     parser.add_argument("--tree", action="store_true")
     parser.add_argument(
+        "--built-in-nebius-infra",
+        action="store_true",
+        help="Use the deterministic public Nebius infrastructure leak patterns.",
+    )
+    parser.add_argument(
+        "--stdin-source",
+        default="",
+        help="Scan stdin and report redacted hits under this source label.",
+    )
+    parser.add_argument(
+        "--stdin-is-diff",
+        action="store_true",
+        help="Treat stdin as a Git diff and scan only added lines.",
+    )
+    parser.add_argument(
         "--pattern-env",
         default="CUSTOMER_DENYLIST",
         help="Environment variable containing the denylist regex.",
@@ -200,8 +259,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if (args.tree or args.diff_range) and should_skip_unconfigured_fork_pull_request(
-        args.pattern_env
+    if (
+        not args.built_in_nebius_infra
+        and (args.tree or args.diff_range or args.stdin_source)
+        and should_skip_unconfigured_fork_pull_request(
+            args.pattern_env
+        )
     ):
         print(
             "confidentiality scan skipped on fork pull request "
@@ -210,15 +273,18 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        source_pattern = load_denylist_pattern(
-            args.pattern_env,
-            pattern_file=args.pattern_file,
-        )
-        denylist = compile_denylist(
-            source_pattern.pattern,
-            source=source_pattern.source,
-            ignore_case=args.ignore_case,
-        )
+        if args.built_in_nebius_infra:
+            denylist = compile_builtin_nebius_infra()
+        else:
+            source_pattern = load_denylist_pattern(
+                args.pattern_env,
+                pattern_file=args.pattern_file,
+            )
+            denylist = compile_denylist(
+                source_pattern.pattern,
+                source=source_pattern.source,
+                ignore_case=args.ignore_case,
+            )
     except ValueError as exc:
         print(f"confidentiality scan not configured: {exc}", file=sys.stderr)
         return 2
@@ -235,6 +301,12 @@ def main(argv: list[str] | None = None) -> int:
         hits.extend(scan_paths(tracked_text_files(repo_root), denylist, repo_root=repo_root))
     if args.diff_range:
         hits.extend(scan_git_diff(repo_root, args.diff_range, denylist))
+    if args.stdin_source:
+        stdin_text = sys.stdin.read()
+        if args.stdin_is_diff:
+            hits.extend(scan_diff_text(stdin_text, denylist, source=args.stdin_source))
+        else:
+            hits.extend(scan_text(stdin_text, denylist, source=args.stdin_source))
 
     if hits:
         print("confidentiality scan failed; redacted hit locations:", file=sys.stderr)

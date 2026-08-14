@@ -257,7 +257,12 @@ def find_reservation_shortfalls(
                     f"platform {block['platform']!r} does not match {requirement.platform!r}",
                 )
             )
-        elif block["fabric"] != requirement.fabric:
+        # A fabric is a workload requirement only for an explicitly clustered
+        # 8-GPU pool. Single-GPU STRICT reservations are still fabric-scoped by
+        # the provider, but the capacity-block ID itself supplies that placement;
+        # requiring the non-clustered node pool's deliberately empty fabric to
+        # equal the block's concrete fabric rejects every such reservation.
+        elif requirement.fabric and block["fabric"] != requirement.fabric:
             shortfalls.append(
                 ReservationShortfall(
                     reservation_id,
