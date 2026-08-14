@@ -14,6 +14,7 @@ from npa.cli.workbench.leisaac import (
     _install_agent_relay,
     _put_manifest,
     _relay_media_server,
+    _remove_agent_relay,
     _select_agent_leisaac_run,
     _wait_ready,
     app,
@@ -273,6 +274,9 @@ def test_install_relay_creates_required_agent_directories() -> None:
     assert "net.core.rmem_max=8388608" in ssh.command
     assert "net.core.wmem_max=8388608" in ssh.command
     assert "net.core.netdev_max_backlog=5000" in ssh.command
+    assert "systemctl is-active --quiet coturn.service" in ssh.command
+    assert "leisaac-relay.restore-coturn" in ssh.command
+    assert "systemctl stop coturn.service" in ssh.command
     assert "DynamicUser=yes" not in ssh.command  # unit is base64-encoded in transit
     assert "openssl req -x509" not in ssh.command
 
@@ -281,6 +285,22 @@ def test_install_relay_creates_required_agent_directories() -> None:
     )
     unit = base64.b64decode(encoded_payloads[-1]).decode("utf-8")
     assert "${CREDENTIALS_DIRECTORY}/leisaac.json" in unit
+
+
+def test_remove_relay_restores_only_its_recorded_baseline_coturn() -> None:
+    class CaptureSSH:
+        command = ""
+
+        def run_or_raise(self, command, **_kwargs):
+            self.command = command
+            return 0, "", ""
+
+    ssh = CaptureSSH()
+    _remove_agent_relay(ssh, run_id="live-relay")
+
+    assert "leisaac-relay.restore-coturn" in ssh.command
+    assert 'if [ "$existing" != live-relay ]; then exit 0; fi' in ssh.command
+    assert "systemctl start coturn.service" in ssh.command
 
 
 def test_relay_media_server_is_the_stable_private_service_host(monkeypatch) -> None:

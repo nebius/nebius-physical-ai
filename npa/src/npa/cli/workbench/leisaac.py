@@ -94,6 +94,7 @@ _RELAY_TOOL = "leisaac-relay"
 _RELAY_CONFIG = "/etc/npa/leisaac-relay.json"
 _RELAY_SCRIPT = "/opt/npa-agent/leisaac-agent-relay.py"
 _RELAY_UNIT = "npa-leisaac-relay.service"
+_RELAY_COTURN_RESTORE_MARKER = "/etc/npa/leisaac-relay.restore-coturn"
 _TURN_CONTROL_TOOL = "leisaac-turn-control"
 _TURN_TCP_TOOL = "leisaac-turn-control-tcp"
 _TURN_MEDIA_TOOL = "leisaac-turn-media"
@@ -488,6 +489,14 @@ if sudo systemctl is-active --quiet {_RELAY_UNIT} && [ "$existing" != {run_q} ];
   echo 'another LeIsaac relay session is active' >&2
   exit 42
 fi
+marker_owner=''
+if sudo test -f {_RELAY_COTURN_RESTORE_MARKER}; then
+  marker_owner=$(sudo cat {_RELAY_COTURN_RESTORE_MARKER})
+fi
+if [ -n "$marker_owner" ] && [ "$marker_owner" != {run_q} ]; then
+  echo 'another LeIsaac relay owns the baseline coturn handoff' >&2
+  exit 43
+fi
 sudo install -d -m 0755 /etc/npa /opt/npa-agent
 sudo tee /etc/sysctl.d/90-npa-leisaac-relay.conf >/dev/null <<'EOF'
 net.core.rmem_max=8388608
@@ -500,6 +509,11 @@ echo {shlex.quote(config_b64)} | base64 -d | sudo tee {_RELAY_CONFIG} >/dev/null
 echo {shlex.quote(unit_b64)} | base64 -d | sudo tee /etc/systemd/system/{_RELAY_UNIT} >/dev/null
 sudo chmod 0644 {_RELAY_SCRIPT} /etc/systemd/system/{_RELAY_UNIT}
 sudo chmod 0600 {_RELAY_CONFIG}
+if sudo systemctl is-active --quiet coturn.service; then
+  echo {run_q} | sudo tee {_RELAY_COTURN_RESTORE_MARKER} >/dev/null
+  sudo chmod 0600 {_RELAY_COTURN_RESTORE_MARKER}
+  sudo systemctl stop coturn.service
+fi
 sudo systemctl daemon-reload
 sudo systemctl enable --now {_RELAY_UNIT} >/dev/null
 sudo systemctl restart {_RELAY_UNIT}
@@ -510,12 +524,20 @@ sudo systemctl restart {_RELAY_UNIT}
 def _remove_agent_relay(ssh: SSHClient, *, run_id: str) -> None:
     run_q = shlex.quote(run_id)
     command = f"""set -eu
-if ! sudo test -f {_RELAY_CONFIG}; then exit 0; fi
-existing=$(sudo /usr/bin/python3 -c 'import json; print(json.load(open("{_RELAY_CONFIG}"))["run_id"])')
+existing=''
+if sudo test -f {_RELAY_CONFIG}; then
+  existing=$(sudo /usr/bin/python3 -c 'import json; print(json.load(open("{_RELAY_CONFIG}"))["run_id"])')
+elif sudo test -f {_RELAY_COTURN_RESTORE_MARKER}; then
+  existing=$(sudo cat {_RELAY_COTURN_RESTORE_MARKER})
+fi
 if [ "$existing" != {run_q} ]; then exit 0; fi
 sudo systemctl disable --now {_RELAY_UNIT} >/dev/null 2>&1 || true
 sudo rm -f /etc/systemd/system/{_RELAY_UNIT} {_RELAY_CONFIG} {_RELAY_SCRIPT}
 sudo systemctl daemon-reload
+if sudo test -f {_RELAY_COTURN_RESTORE_MARKER} && [ "$(sudo cat {_RELAY_COTURN_RESTORE_MARKER})" = {run_q} ]; then
+  sudo systemctl start coturn.service
+  sudo rm -f {_RELAY_COTURN_RESTORE_MARKER}
+fi
 """
     ssh.run_or_raise(command, label="remove LeIsaac agent relay")
 
