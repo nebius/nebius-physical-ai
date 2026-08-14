@@ -1522,13 +1522,24 @@ describe("NPA agent UI with mocked APIs", () => {
     // Each new message auto-scrolls to the bottom, so the arrow is hidden.
     cy.get("#chatScrollBottom").should("have.attr", "hidden");
 
+    // Keep this deterministic across browser font metrics and host load: prove
+    // that the test viewport overflows before exercising the scroll behavior.
+    cy.get("#chatLog").invoke("css", "height", "160px");
+    cy.get("#chatLog").should(($log) => {
+      const el = $log[0];
+      expect(el.scrollHeight - el.clientHeight).to.be.greaterThan(40);
+    });
+
     // Scrolling up reveals the jump-to-latest arrow.
     cy.get("#chatLog").scrollTo("top");
     cy.get("#chatScrollBottom").should("not.have.attr", "hidden");
     cy.get("#chatScrollBottom").should("be.visible");
 
     // Clicking the arrow returns to the end of the chat and hides the arrow.
-    cy.get("#chatScrollBottom").click();
+    // The preceding assertion proves visibility. Avoid Cypress's pre-click
+    // actionability scroll, which otherwise scrolls the chat log to the bottom
+    // and hides the overlaid button before dispatching the click.
+    cy.get("#chatScrollBottom").click({ force: true });
     cy.get("#chatLog").should(($log) => {
       const el = $log[0];
       expect(el.scrollHeight - el.scrollTop - el.clientHeight).to.be.lessThan(41);
@@ -2642,7 +2653,7 @@ describe("NPA agent UI with mocked APIs", () => {
       api.setRenderMode("image");
     });
 
-    cy.get("#describeVisual").click({ force: true });
+    cy.get("#describeVisual").should("be.enabled").click();
     cy.wait("@visualKindChat").then((interception) => {
       const body = interception.request.body;
       expect(body.visual_context.kind).to.eq("image");
@@ -2678,7 +2689,7 @@ describe("NPA agent UI with mocked APIs", () => {
       api.setRenderMode("video");
     });
 
-    cy.get("#describeVisual").click({ force: true });
+    cy.get("#describeVisual").should("be.enabled").click();
     cy.wait("@visualKindChat").then((interception) => {
       const body = interception.request.body;
       expect(body.visual_context.kind).to.eq("video");
@@ -2717,7 +2728,7 @@ describe("NPA agent UI with mocked APIs", () => {
       api.setRenderMode("data");
     });
 
-    cy.get("#describeVisual").click({ force: true });
+    cy.get("#describeVisual").should("be.enabled").click();
     cy.wait("@dataKindChat").then((interception) => {
       const body = interception.request.body;
       expect(body.visual_context.kind).to.eq("data");

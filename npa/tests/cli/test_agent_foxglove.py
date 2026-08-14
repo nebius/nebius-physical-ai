@@ -77,6 +77,11 @@ def test_cypress_live_runner_fails_closed_and_keeps_credentials_out_of_arguments
     assert 'npm run "${LIVE_CYPRESS_SCRIPT}" -- --env' not in runner
     assert "screenshotOnRunFailure: process.env.NPA_AGENT_CYPRESS_LIVE" in config
     assert "video: false" in config
+    assert "experimentalMemoryManagement: true" in config
+    assert "numTestsKeptInMemory: 0" in config
+    mock_script = package["scripts"]["cy:mock"]
+    assert "cypress/e2e/agent_mocked.cy.js" in mock_script
+    assert "&& cypress run --spec cypress/e2e/agent_foxglove.cy.js" in mock_script
     assert package["scripts"]["cy:live"].endswith("agent_foxglove_live.cy.js")
     assert "agent_live.cy.js" not in package["scripts"]["cy:live"]
     assert "lichtblick_mcap_live.cy.js" not in package["scripts"]["cy:live"]
