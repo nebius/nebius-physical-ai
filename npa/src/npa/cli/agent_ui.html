@@ -5693,6 +5693,7 @@
       let foxgloveHandle = null;
       let foxgloveConfig = null;
       let foxgloveMountPromise = null;
+      let foxglovePreparePromise = null;
       let foxgloveLastSourceKey = "";
       let foxgloveSignInTimer = null;
       function setFoxgloveStatus(text, kind) {
@@ -5778,35 +5779,81 @@
         const runId = String(activeRunId || "").trim();
         const runRef = String(activeArtifactRunRef || "").trim();
         if (!runId || visualization.checked) return config;
-        setFoxgloveStatus(
-          "Preparing the selected run's canonical robot-motion MCAP…"
-        );
-        try {
-          const data = await apiJson("/api/foxglove/export", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              run_id: runId,
-              ...(runRef ? { run_ref: runRef } : {}),
-            }),
-          });
-          updateRenderedDataSummary((data && data.sim_viz) || {});
-          return await loadFoxgloveConfig();
-        } catch (err) {
+        if (foxglovePreparePromise) return await foxglovePreparePromise;
+        foxglovePreparePromise = (async () => {
           setFoxgloveStatus(
-            "Could not prepare the rich canonical MCAP; opening the selected source as-is: " +
+            "Preparing the selected run's canonical robot-motion MCAP…"
+          );
+          try {
+            const data = await apiJson("/api/foxglove/export", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                run_id: runId,
+                ...(runRef ? { run_ref: runRef } : {}),
+              }),
+            });
+            updateRenderedDataSummary((data && data.sim_viz) || {});
+            return await loadFoxgloveConfig();
+          } catch (err) {
+            setFoxgloveStatus(
+              "Could not prepare the rich canonical MCAP; opening the selected source as-is: " +
+                String((err && err.message) || err),
+              "warning"
+            );
+            return config;
+          }
+        })();
+        try {
+          return await foxglovePreparePromise;
+        } finally {
+          foxglovePreparePromise = null;
+        }
+      }
+      function prepareFoxgloveVisualizationAfterMount(config) {
+        const visualization = (config && config.visualization) || {};
+        if (visualization.checked || !String(activeRunId || "").trim()) return;
+        // Do not make a slow S3 lookup/conversion a prerequisite for a visible
+        // official viewer pane. The SDK iframe mounts first; this single-flight
+        // task applies the canonical source as soon as it is ready.
+        prepareFoxgloveVisualization(config).then(async (prepared) => {
+          if (!foxgloveHandle || !prepared || !prepared.available) return;
+          foxgloveConfig = prepared;
+          const preparedVisualization = prepared.visualization || {};
+          const preparedLayout = prepared.layout || {};
+          const needsCanonicalRemount =
+            String(prepared.viewer_backend || "") === "foxglove-sdk" &&
+            preparedVisualization.checked === true &&
+            preparedLayout.version === 1 &&
+            preparedLayout.content &&
+            String(prepared.layout_storage_key || "") !==
+              String((config && config.layout_storage_key) || "");
+          if (needsCanonicalRemount) {
+            // `selectLayout` accepts Foxglove's opaque saved-layout payload, not
+            // this SDK's structured seed. Remount once with initialLayoutParams
+            // so the stable storage key restores user edits and seeds the NPA
+            // arrangement only when that key has no saved layout.
+            await ensureFoxgloveViewer({ remount: true, config: prepared });
+            return;
+          }
+          await setFoxgloveDataSource(prepared);
+        }).catch((err) => {
+          setFoxgloveStatus(
+            "Could not apply the prepared Foxglove source: " +
               String((err && err.message) || err),
             "warning"
           );
-          return config;
-        }
+        });
       }
       async function ensureFoxgloveViewer(options) {
         const opts = options || {};
         if (foxgloveMountPromise) return foxgloveMountPromise;
         foxgloveMountPromise = (async () => {
-          let config = await loadFoxgloveConfig();
-          config = await prepareFoxgloveVisualization(config);
+          let config = opts.config && typeof opts.config === "object"
+            ? opts.config
+            : await loadFoxgloveConfig();
+          foxgloveConfig = config;
+          updateFoxgloveVisualizationSummary(config);
           if (!config || !config.available) {
             teardownFoxgloveViewer();
             showFoxgloveMessage(foxgloveUnavailableHtml(config));
@@ -5816,6 +5863,7 @@
           if (foxgloveHandle && !opts.remount) {
             hideFoxgloveMessage();
             await setFoxgloveDataSource(config);
+            prepareFoxgloveVisualizationAfterMount(config);
             return true;
           }
           const host = document.getElementById("foxgloveHost");
@@ -5883,6 +5931,7 @@
                 );
               }, 4000);
             }
+            prepareFoxgloveVisualizationAfterMount(config);
             return true;
           } catch (err) {
             const message = String((err && err.message) || err);

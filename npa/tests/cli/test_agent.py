@@ -1444,7 +1444,15 @@ def test_bootstrap_embeds_cameras_panel() -> None:
     assert "View in Foxglove</button>" in source
     assert 'id="foxgloveVisualizationSummary"' in source
     assert "prepareFoxgloveVisualization" in source
+    assert "let foxglovePreparePromise = null" in source
     assert 'visualization.checked' in source
+    ensure_foxglove = source.split("async function ensureFoxgloveViewer", 1)[1].split(
+        "function teardownFoxgloveViewer", 1
+    )[0]
+    assert "config = await prepareFoxgloveVisualization(config)" not in ensure_foxglove
+    assert ensure_foxglove.index("mod.mountFoxgloveViewer") < ensure_foxglove.rindex(
+        "prepareFoxgloveVisualizationAfterMount(config)"
+    )
     assert '"-source-default"' in _agent_source()
     assert "pane.setAttribute(\"aria-hidden\"" in source
     assert "btn.setAttribute(\"aria-selected\"" in source

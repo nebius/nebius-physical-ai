@@ -227,11 +227,15 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
     String(process.env.NPA_AGENT_CYPRESS_EVIDENCE_DIR || ""),
   );
   const runId = String((taskInput && taskInput.runId) || "").trim();
+  const runRef = String((taskInput && taskInput.runRef) || "").trim();
   if (!executablePath || !fs.existsSync(executablePath)) {
     throw new Error("real-browser Foxglove verification requires a Chromium executable");
   }
   if (!runId.match(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)) {
     throw new Error("real-browser Foxglove verification requires a safe run id");
+  }
+  if (!runRef.match(/^npa1_[A-Za-z0-9_-]+$/)) {
+    throw new Error("real-browser Foxglove verification requires a source-qualified run ref");
   }
   if (!process.env.NPA_AGENT_CYPRESS_EVIDENCE_DIR || evidenceDir.startsWith(repoRoot)) {
     throw new Error("real-browser evidence directory must be explicit and outside the clone");
@@ -274,9 +278,25 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
     const page = await context.newPage();
     await page.goto(credentials.baseUrl, { waitUntil: "domcontentloaded" });
     await page.locator("#tabRerun").click();
+    // This is a new, storage-empty browser context. Select the verification
+    // run through the deployed UI rather than assuming backend export state is
+    // browser state or seeding localStorage out of band.
+    await page.locator("#artifactPrefix").fill(runId);
+    await page.locator("#artifactPrefix").press("Enter");
+    await page.waitForFunction(
+      (expected) => [...(document.querySelector("#runIdSelect")?.options || [])]
+        .some((option) => option.value === expected),
+      runRef,
+      { timeout: 180000 },
+    );
+    await page.locator("#runIdInput").fill(runId);
+    await page.locator("#loadRunData").click();
+    await page.locator('#loadRunData[aria-busy="false"]')
+      .waitFor({ state: "visible", timeout: 180000 });
     await page.waitForFunction(
       (expected) => document.querySelector("#simRunId")?.textContent?.includes(expected),
       runId,
+      { timeout: 180000 },
     );
     const expectedLabels = ["View", "Foxglove", "Lichtblick", "Video", "Image", "Data"];
     const desktopLabels = await page.locator(".render-mode-tabs .render-mode-tab").allTextContents();

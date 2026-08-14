@@ -356,7 +356,7 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
       .and("contain.text", "not calibrated robot/world kinematics");
   });
 
-  it("prepares an unchecked selected run once before mounting the rich viewer", () => {
+  it("mounts promptly, then prepares and remounts an unchecked run with the rich layout", () => {
     const rich = foxgloveConfig();
     const unchecked = foxgloveConfig({
       layout_storage_key: "npa-agent-foxglove-robot-motion-v2-source-default",
@@ -380,14 +380,16 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
 
     cy.get("#tabRerun").click();
     cy.contains(".render-mode-tab", /^Foxglove$/).click();
+    cy.get("#viewerPaneFoxglove iframe").should("be.visible");
     cy.wait("@automaticPreparation");
     expectMockAppState("ready");
     cy.get("#foxgloveVisualizationSummary")
       .should("contain.text", "robot + trajectory 3D")
       .and("have.attr", "data-state", "ready");
-    mockAppFrame().its("0.contentWindow").then((win) => {
-      const messages = win.__mockFoxgloveReceived || [];
+    cy.get("#foxgloveHost iframe").should(($iframe) => {
+      const messages = $iframe[0].contentWindow.__mockFoxgloveReceived || [];
       const ack = messages.find((message) => message && message.type === "handshake-ack");
+      expect(ack, "prepared rich-viewer handshake").to.exist;
       expect(ack.payload.initialLayoutParams.storageKey).to.eq(
         "npa-agent-foxglove-robot-motion-v2",
       );

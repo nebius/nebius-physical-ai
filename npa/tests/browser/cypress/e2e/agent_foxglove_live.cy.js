@@ -177,6 +177,23 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
 
         cy.visitLiveAgent();
         cy.get("#tabRerun").should("have.text", "View").click();
+        // A clean browser has no persisted active run. Exercise the visible
+        // run selector exactly as an operator must before asserting viewer
+        // state; the API export above intentionally does not mutate browser
+        // selection state.
+        cy.get("#artifactPrefix").clear().type(String(run.run_id)).type("{enter}");
+        cy.get("#runIdSelect", { timeout: 180000 }).find("option").should(($options) => {
+          expect(
+            [...$options].map((option) => option.value),
+            "source-qualified discovered run option",
+          ).to.include(String(run.run_ref));
+        });
+        cy.get("#runIdInput").clear().type(String(run.run_id));
+        cy.get("#loadRunData").should("be.visible").and("be.enabled").click();
+        cy.get("#loadRunData", { timeout: 180000 })
+          .should("have.attr", "aria-busy", "false")
+          .and("be.enabled");
+        cy.get("#simRunId", { timeout: 180000 }).should("contain.text", run.run_id);
         cy.get(".render-mode-tabs .render-mode-tab").then(($tabs) => {
           expect([...$tabs].map((tab) => tab.textContent.trim())).to.deep.eq([
             "View", "Foxglove", "Lichtblick", "Video", "Image", "Data",
@@ -200,7 +217,7 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
         });
         cy.get("#renderModeFoxglove").click();
         cy.get("#viewerPaneFoxglove").should("have.class", "is-active-viewer");
-        cy.get("#viewerPaneFoxglove iframe", { timeout: 30000 })
+        cy.get("#viewerPaneFoxglove iframe", { timeout: 180000 })
           .should("have.attr", "src")
           .and("match", /^https:\/\/embed\.foxglove\.dev\//);
         cy.get("#foxgloveStatus", { timeout: 30000 }).should(($status) => {
@@ -222,7 +239,7 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
         // stubs window.open and returns only non-secret contract/evidence facts.
         cy.task(
           "verifyFoxgloveHostedNavigation",
-          { runId: String(run.run_id) },
+          { runId: String(run.run_id), runRef: String(run.run_ref) },
           { log: false, timeout: 180000 },
         ).then((result) => {
           expect(result.runId).to.eq(run.run_id);
