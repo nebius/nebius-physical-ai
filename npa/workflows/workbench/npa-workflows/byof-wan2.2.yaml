@@ -206,8 +206,13 @@ config:
                 "license_classifiers": license_classifiers,
             }
         )
+    # Build dpkg's field syntax at runtime so the workflow renderer does not
+    # confuse those literal fields with unresolved workflow placeholders.
+    dpkg_format = (
+        "$" + "{Package}\t" + "$" + "{Version}\t" + "$" + "{Architecture}\n"
+    )
     dpkg = subprocess.run(
-        ["dpkg-query", "-W", "-f=${Package}\t${Version}\t${Architecture}\n"],
+        ["dpkg-query", "-W", "-f=" + dpkg_format],
         check=False,
         capture_output=True,
         text=True,
