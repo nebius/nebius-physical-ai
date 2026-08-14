@@ -339,6 +339,7 @@ def test_deployment_is_real_rt_core_leisaac_and_operator_eula_runtime_config() -
         recorder_secret=RECORDER_SECRET,
     )
     pod = deployment["spec"]["template"]["spec"]
+    assert pod["runtimeClassName"] == "nvidia"
     assert pod["nodeSelector"] == {"nvidia.com/gpu.product": GPU_PRODUCT}
     container = pod["containers"][0]
     assert container["resources"]["requests"]["cpu"] == "16"

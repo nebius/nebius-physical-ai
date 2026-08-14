@@ -526,6 +526,10 @@ def deployment_manifest(
         "protocol": "UDP",
     }
     pod_spec: dict[str, Any] = {
+        # The device plugin allocates /dev/nvidia*, while the NVIDIA runtime
+        # injects the matching graphics/Vulkan driver libraries that
+        # Omniverse rendering requires.  CUDA compute alone is insufficient.
+        "runtimeClassName": "nvidia",
         "nodeSelector": {"nvidia.com/gpu.product": GPU_PRODUCT},
         "containers": [
             {
