@@ -384,6 +384,7 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     cy.get("#foxgloveExportNote").should("contain.text", "remote-file source");
     cy.get("#runIdInput").clear().type("non-stock-customer-run");
     cy.get("#loadRunData").click();
+    cy.get("#simRunId").should("contain.text", "non-stock-customer-run");
     cy.get("#foxgloveOpenWeb").click();
     cy.wait("@pathExport").its("request.body.run_id").should("eq", "non-stock-customer-run");
     cy.get("#foxgloveExportNote").should("contain.text", "remote-file source");
