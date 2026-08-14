@@ -291,6 +291,11 @@ class SkypilotRenderOptions:
     # deterministic task-local value below.  Cosmos gang workers combine this
     # with SkyPilot's launch incarnation before accepting shard manifests.
     execution_attempt_id: str = ""
+    # Durable scheduler-issued ordering fence. Runtime waves monotonically
+    # increase sequence; an explicit retry increases attempt within that wave.
+    # Workload processes may not manufacture or advance these values.
+    execution_fence_sequence: int = 1
+    execution_fence_attempt: int = 1
 
 
 def normalize_resources(
@@ -1515,6 +1520,12 @@ def build_skypilot_task_doc(
         ).encode("utf-8")
         attempt_id = hashlib.sha256(material).hexdigest()
     envs["NPA_WORKFLOW_ATTEMPT_ID"] = attempt_id
+    if options.execution_fence_sequence < 1 or options.execution_fence_attempt < 1:
+        raise NpaWorkflowRenderError(
+            "workflow execution fence sequence and attempt must be positive"
+        )
+    envs["NPA_WORKFLOW_FENCE_SEQUENCE"] = str(options.execution_fence_sequence)
+    envs["NPA_WORKFLOW_FENCE_ATTEMPT"] = str(options.execution_fence_attempt)
     if options.include_aws_endpoint and options.aws_endpoint_url:
         envs["AWS_ENDPOINT_URL"] = options.aws_endpoint_url
     if image:
@@ -1543,7 +1554,16 @@ def build_skypilot_task_doc(
         "NPA_COSMOS_MASK_PROMPT",
         "NPA_COSMOS_GUIDANCE",
         "NPA_COSMOS_VARIANT_PARALLELISM",
+        "NPA_COSMOS_IDENTITY_TIMEOUT_S",
         "NPA_COSMOS_SHARD_JOIN_TIMEOUT_S",
+        "NPA_COSMOS_VALIDATION_SCOPE",
+        "NPA_COSMOS_VALIDATION_DELAY_S",
+        "NPA_COSMOS_VALIDATION_DELAY_PHASE",
+        "NPA_COSMOS_VALIDATION_DELAY_RANK",
+        "NPA_COSMOS_VALIDATION_DELAY_GENERATION",
+        "NPA_COSMOS_VALIDATION_FAIL_PHASE",
+        "NPA_COSMOS_VALIDATION_FAIL_RANK",
+        "NPA_COSMOS_VALIDATION_FAIL_GENERATION",
         "NPA_COSMOS_DISABLE_CONTENT_GUARDRAILS",
     ):
         _cond_val = str(_os_cond.environ.get(_cond_var) or "").strip()

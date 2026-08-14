@@ -752,14 +752,17 @@ def submit_cmd(
                 preflight_control_checkpoint_access,
             )
 
-            modalities = {
-                str(merged_npa_spec.config.get("augment_control") or "edge")
-                if state.tool_ref == "workbench.cosmos2.transfer_execute"
-                else "edge"
-                for state in transfer_states
-            }
             try:
-                for modality in sorted(modalities):
+                modalities = _transfer_control_modalities(
+                    merged_npa_spec, run_id=resolved_run_id
+                )
+            except Exception as exc:  # token failures must not reach GPU work
+                checkpoint_access_error = (
+                    "could not resolve the state-local Cosmos control modality "
+                    f"for checkpoint preflight: {exc}"
+                )
+            try:
+                for modality in sorted(modalities) if not checkpoint_access_error else []:
                     preflight_control_checkpoint_access(
                         modality=modality,
                         token=str(
@@ -1219,12 +1222,16 @@ def submit_cmd(
                 readiness_poll_interval=gpu_readiness_poll_interval,
             ),
         )
-        if not plan_only and merged_npa_spec is not None:
+        if not plan_only and not skip_preflight and merged_npa_spec is not None:
             try:
                 _preflight_submit_gang_capacity(
                     merged_npa_spec,
                     context=infra_context,
                     accelerator_overrides=npa_render_options.gpu_accelerator_overrides,
+                    allowed_nodes=None,
+                    sky_bin=sky_bin,
+                    config_path=config_path,
+                    isolated_config_dir=isolated_config_dir,
                 )
             except Exception as exc:
                 _fail(f"multi-node GPU capacity preflight failed: {exc}")
@@ -2436,6 +2443,10 @@ def _preflight_submit_gang_capacity(
     *,
     context: str,
     accelerator_overrides: Mapping[str, str] | None = None,
+    allowed_nodes: tuple[str, ...] | None = (),
+    sky_bin: str = "",
+    config_path: Path | None = None,
+    isolated_config_dir: Path | None = None,
 ) -> list[dict[str, object]]:
     """Check existing/new cluster free compatible nodes before job submission."""
 
@@ -2449,6 +2460,7 @@ def _preflight_submit_gang_capacity(
     )
 
     checks: list[dict[str, object]] = []
+    resolved_allowed_nodes = allowed_nodes
     for state in spec.states.values():
         profile = spec.resources.get(state.resources)
         if not isinstance(profile, Mapping):
@@ -2469,19 +2481,102 @@ def _preflight_submit_gang_capacity(
                 "explicit Kubernetes context was selected; ambient context fallback "
                 "is forbidden for gang capacity preflight"
             )
+        if resolved_allowed_nodes is None:
+            resolved_allowed_nodes = _skypilot_allowed_nodes(
+                sky_bin=sky_bin,
+                config_path=config_path,
+                isolated_config_dir=isolated_config_dir,
+            )
         selected = str(
             (accelerator_overrides or {}).get(accelerator) or accelerator
         )
+        kubernetes = resolved.get("kubernetes")
+        kubernetes = kubernetes if isinstance(kubernetes, Mapping) else {}
+        pod_config = kubernetes.get("pod_config")
+        pod_config = pod_config if isinstance(pod_config, Mapping) else {}
+        pod_spec = pod_config.get("spec")
+        pod_spec = pod_spec if isinstance(pod_spec, Mapping) else {}
         inventory = discover_kubernetes_gpu_inventory(context=context)
         result = preflight_kubernetes_gpu_gang(
             inventory,
             accelerator=selected,
             node_count=nodes,
+            cpus=resolved.get("cpus", 0),
+            memory=resolved.get("memory", 0),
+            allowed_nodes=resolved_allowed_nodes,
+            pod_spec=pod_spec,
         )
         result["state"] = state.name
         result["profile"] = state.resources
         checks.append(result)
     return checks
+
+
+def _skypilot_allowed_nodes(
+    *,
+    sky_bin: str,
+    config_path: Path | None,
+    isolated_config_dir: Path | None,
+) -> tuple[str, ...]:
+    """Read the exact SkyPilot node-affinity allowlist used for submission."""
+
+    import yaml
+
+    from npa.orchestration.skypilot._bin import resolve_config
+
+    resolved = resolve_config(
+        sky_bin=sky_bin or None,
+        global_config_path=config_path,
+        isolated_config_dir=isolated_config_dir,
+    )
+    if resolved.global_config_path is None:
+        return ()
+    try:
+        document = yaml.safe_load(resolved.global_config_path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        raise RuntimeError(
+            "could not read the selected SkyPilot config for allowed_nodes preflight"
+        ) from exc
+    kubernetes = document.get("kubernetes") if isinstance(document, Mapping) else None
+    raw = kubernetes.get("allowed_nodes") if isinstance(kubernetes, Mapping) else None
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or not raw or not all(
+        isinstance(name, str) and name.strip() for name in raw
+    ):
+        raise RuntimeError(
+            "SkyPilot kubernetes.allowed_nodes must be a non-empty list of node names"
+        )
+    names = tuple(dict.fromkeys(name.strip() for name in raw))
+    return names
+
+
+def _transfer_control_modalities(spec, *, run_id: str) -> set[str]:
+    """Resolve each transfer state's exact state-local checkpoint modality."""
+
+    from npa.orchestration.npa_workflow.tokens import resolve_tokens
+
+    tool_refs = {
+        "workbench.cosmos2.transfer_execute",
+        "workbench.cosmos2.transfer_conditioned_execute",
+    }
+    modalities: set[str] = set()
+    for state in spec.states.values():
+        if state.tool_ref not in tool_refs:
+            continue
+        effective = dict(spec.config)
+        for key, value in state.params.items():
+            effective[key] = (
+                resolve_tokens(
+                    value,
+                    config=spec.config,
+                    run={"id": run_id},
+                )
+                if isinstance(value, str)
+                else value
+            )
+        modalities.add(str(effective.get("augment_control") or "edge").strip())
+    return modalities
 
 
 def _parse_submit_vars(var: list[str]) -> dict[str, str]:
@@ -2929,7 +3024,10 @@ def _fail_missing_prerequisites(
     for item, remedy in missing:
         lines.append(f"  - {item}")
         lines.append(f"      fix: {remedy}")
-    lines.append("  (bypass these checks with --skip-preflight)")
+    lines.append(
+        "  (--skip-preflight skips only optional environment diagnostics; "
+        "model authorization and deterministic safety contracts remain mandatory)"
+    )
     _fail("\n".join(lines))
 
 

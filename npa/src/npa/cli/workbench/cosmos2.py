@@ -7,6 +7,9 @@ import json
 import math
 import os
 from pathlib import Path
+import socket
+import threading
+import time
 from typing import Any, Optional
 
 import typer
@@ -231,18 +234,18 @@ def _gang_shard() -> tuple[int, int]:
     happened.
     """
 
-    rank, nodes, _attempt_id = _gang_identity()
+    rank, nodes, _metadata = _gang_environment()
     return rank, nodes
 
 
-def _gang_identity() -> tuple[int, int, str]:
-    """Return rank, authoritative gang size, and one shared attempt identity.
+def _gang_environment() -> tuple[int, int, dict[str, Any]]:
+    """Validate scheduler identity and return its immutable gang evidence.
 
     ``NPA_COSMOS_NODE_COUNT`` comes from the workflow renderer and is the source
     of truth.  SkyPilot 0.12.2 independently supplies count, rank, ordered node
-    IPs, and an internal job id.  All are checked before a worker can publish a
-    shard.  ``SKYPILOT_TASK_ID`` is deliberately excluded: SkyPilot preserves it
-    across managed-job recoveries.
+    IPs, internal job id, and managed-job id. All are checked before a worker can
+    claim or publish. ``SKYPILOT_TASK_ID`` is deliberately excluded: SkyPilot
+    preserves it across managed-job recoveries.
     """
 
     def _read(name: str) -> str:
@@ -256,6 +259,8 @@ def _gang_identity() -> tuple[int, int, str]:
     sky_internal_job = _read("SKYPILOT_INTERNAL_JOB_ID")
     sky_managed_job = _read("SKYPILOT_MANAGED_JOB_ID")
     base_attempt = _read("NPA_WORKFLOW_ATTEMPT_ID")
+    fence_sequence = _read("NPA_WORKFLOW_FENCE_SEQUENCE")
+    fence_attempt = _read("NPA_WORKFLOW_FENCE_ATTEMPT")
     local_attempt = _read("NPA_COSMOS_ATTEMPT_ID")
     sky_evidence = any((sky_nodes, sky_rank, sky_ips, sky_internal_job))
     if not raw_nodes:
@@ -264,7 +269,7 @@ def _gang_identity() -> tuple[int, int, str]:
                 "multi-node augment identity is missing authoritative "
                 "NPA_COSMOS_NODE_COUNT"
             )
-        return 0, 1, ""
+        return 0, 1, {"scheduler": "single", "attempt_id": ""}
     try:
         nodes = int(raw_nodes)
     except ValueError as exc:
@@ -280,7 +285,10 @@ def _gang_identity() -> tuple[int, int, str]:
                 ("SKYPILOT_NODE_RANK", sky_rank),
                 ("SKYPILOT_NODE_IPS", sky_ips),
                 ("SKYPILOT_INTERNAL_JOB_ID", sky_internal_job),
+                ("SKYPILOT_MANAGED_JOB_ID", sky_managed_job),
                 ("NPA_WORKFLOW_ATTEMPT_ID", base_attempt),
+                ("NPA_WORKFLOW_FENCE_SEQUENCE", fence_sequence),
+                ("NPA_WORKFLOW_FENCE_ATTEMPT", fence_attempt),
             )
             if not value
         ]
@@ -292,6 +300,8 @@ def _gang_identity() -> tuple[int, int, str]:
         try:
             observed_nodes = int(sky_nodes)
             rank = int(sky_rank)
+            scheduler_sequence = int(fence_sequence)
+            scheduler_attempt = int(fence_attempt)
         except ValueError as exc:
             raise typer.BadParameter(
                 "multi-node augment identity is not numeric "
@@ -301,6 +311,10 @@ def _gang_identity() -> tuple[int, int, str]:
             raise typer.BadParameter(
                 "multi-node augment identity is contradictory: renderer requested "
                 f"{nodes} node(s), SkyPilot reported {observed_nodes}"
+            )
+        if scheduler_sequence < 1 or scheduler_attempt < 1:
+            raise typer.BadParameter(
+                "multi-node augment scheduler publication fence must be positive"
             )
         if raw_local_rank and raw_local_rank != sky_rank:
             raise typer.BadParameter(
@@ -314,18 +328,30 @@ def _gang_identity() -> tuple[int, int, str]:
                 f"SKYPILOT_NODE_IPS has {len(node_ips)} unique member(s), "
                 f"expected {nodes}"
             )
-        attempt_material = json.dumps(
-            {
-                "base": base_attempt,
-                "internal_job": sky_internal_job,
-                "managed_job": sky_managed_job,
-                "node_count": nodes,
-                "node_ips": node_ips,
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-        attempt_id = hashlib.sha256(attempt_material).hexdigest()
+        membership_digest = hashlib.sha256(
+            json.dumps(
+                {
+                    "internal_job": sky_internal_job,
+                    "managed_job": sky_managed_job,
+                    "scheduler_fence_attempt": scheduler_attempt,
+                    "scheduler_fence_sequence": scheduler_sequence,
+                    "node_count": nodes,
+                    "node_ips": node_ips,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        metadata = {
+            "scheduler": "skypilot-0.12.2-managed",
+            "logical_wave_id": base_attempt,
+            "internal_job_id": sky_internal_job,
+            "managed_job_id": sky_managed_job,
+            "node_ips": node_ips,
+            "membership_digest": membership_digest,
+            "scheduler_fence_sequence": scheduler_sequence,
+            "scheduler_fence_attempt": scheduler_attempt,
+        }
     else:
         raw_rank = raw_local_rank or "0"
         try:
@@ -340,12 +366,358 @@ def _gang_identity() -> tuple[int, int, str]:
                 "multi-node augment identity is incomplete: a local gang requires "
                 "NPA_COSMOS_ATTEMPT_ID"
             )
-        attempt_id = local_attempt
+        metadata = {"scheduler": "local", "attempt_id": local_attempt}
     if nodes < 1 or not 0 <= rank < nodes:
         raise typer.BadParameter(
             f"multi-node augment identity is inconsistent: rank {rank} of {nodes} node(s)"
         )
-    return rank, nodes, attempt_id
+    return rank, nodes, metadata
+
+
+def _rendezvous_port(logical_wave_id: str, membership_digest: str) -> int:
+    material = f"{logical_wave_id}\0{membership_digest}".encode("utf-8")
+    return 30000 + (int(hashlib.sha256(material).hexdigest()[:8], 16) % 20000)
+
+
+def _recv_json_line(connection: socket.socket) -> dict[str, Any]:
+    chunks = bytearray()
+    while len(chunks) <= 16384:
+        part = connection.recv(4096)
+        if not part:
+            break
+        chunks.extend(part)
+        if b"\n" in part:
+            break
+    if len(chunks) > 16384:
+        raise ValueError("gang identity rendezvous message exceeds 16 KiB")
+    payload = json.loads(bytes(chunks).split(b"\n", 1)[0].decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("gang identity rendezvous message is not an object")
+    return payload
+
+
+def _identity_timeout() -> float | None:
+    raw = str(os.environ.get("NPA_COSMOS_IDENTITY_TIMEOUT_S", "")).strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise typer.BadParameter(
+            "NPA_COSMOS_IDENTITY_TIMEOUT_S must be a non-negative number"
+        ) from exc
+    if not math.isfinite(value) or value < 0:
+        raise typer.BadParameter(
+            "NPA_COSMOS_IDENTITY_TIMEOUT_S must be finite and non-negative"
+        )
+    return value
+
+
+def _sky_gang_rendezvous(
+    *,
+    rank: int,
+    node_count: int,
+    node_ips: list[str],
+    logical_wave_id: str,
+    membership_digest: str,
+    internal_job_id: str,
+    offered: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Share rank 0's scheduler-fenced attempt with the exact gang members.
+
+    SkyPilot 0.12.2 exposes no ordered recovery epoch to the workload. Rank 0
+    therefore claims only the NPA runtime's pre-issued ``(sequence, attempt)``
+    fence and serves that claim to the exact ordered members. An inner SkyPilot
+    recovery retains the fence and cannot supersede an existing same-token claim;
+    if no worker claimed it before failing, the replacement may safely be its first
+    claimant. Only an explicit later NPA retry may carry a higher scheduler token.
+    """
+
+    port = _rendezvous_port(logical_wave_id, membership_digest)
+    protocol = "npa.cosmos.gang-attempt/v1"
+    if rank == 0:
+        if not isinstance(offered, dict):
+            raise typer.BadParameter("rank 0 has no publication generation to share")
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            server.bind((node_ips[0], port))
+            server.listen(max(1, node_count - 1))
+        except OSError as exc:
+            server.close()
+            raise typer.BadParameter(
+                "rank 0 could not open the gang-attempt rendezvous on its "
+                "authoritative SkyPilot node IP"
+            ) from exc
+
+        def serve() -> None:
+            received: set[int] = set()
+            try:
+                while len(received) < node_count - 1:
+                    connection, _peer = server.accept()
+                    with connection:
+                        member_rank = -1
+                        try:
+                            request = _recv_json_line(connection)
+                            member_rank = int(request.get("rank", -1))
+                            valid = bool(
+                                request.get("protocol") == protocol
+                                and request.get("logical_wave_id") == logical_wave_id
+                                and request.get("membership_digest") == membership_digest
+                                and request.get("internal_job_id") == internal_job_id
+                                and int(request.get("node_count", 0)) == node_count
+                                and 0 < member_rank < node_count
+                                and member_rank not in received
+                                and _peer[0] == node_ips[member_rank]
+                            )
+                            if not valid:
+                                response: dict[str, Any] = {
+                                    "protocol": protocol,
+                                    "error": "contradictory gang identity",
+                                }
+                            else:
+                                received.add(member_rank)
+                                response = {"protocol": protocol, **offered}
+                        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                            response = {
+                                "protocol": protocol,
+                                "error": "invalid gang identity request",
+                            }
+                        try:
+                            connection.sendall(
+                                json.dumps(response, sort_keys=True).encode("utf-8")
+                                + b"\n"
+                            )
+                        except OSError:
+                            # The member retries if the response was interrupted.
+                            received.discard(member_rank)
+            finally:
+                server.close()
+
+        threading.Thread(
+            target=serve,
+            name="npa-cosmos-gang-attempt",
+            daemon=True,
+        ).start()
+        return offered
+
+    request = {
+        "protocol": protocol,
+        "rank": rank,
+        "node_count": node_count,
+        "logical_wave_id": logical_wave_id,
+        "membership_digest": membership_digest,
+        "internal_job_id": internal_job_id,
+    }
+    started = time.monotonic()
+    limit = _identity_timeout()
+    last_report = -60.0
+    while True:
+        elapsed = time.monotonic() - started
+        if elapsed - last_report >= 60.0:
+            typer.echo(
+                "multi-node augment identity rendezvous waiting: "
+                f"rank={rank} leader={node_ips[0]} elapsed={elapsed:.1f}s "
+                f"timeout={'disabled' if limit is None else f'{limit:g}s'}",
+                err=True,
+            )
+            last_report = elapsed
+        if limit is not None and elapsed >= limit:
+            raise typer.BadParameter(
+                "multi-node augment identity rendezvous timed out for rank "
+                f"{rank} after {limit:g}s"
+            )
+        try:
+            remaining = None if limit is None else max(0.1, limit - elapsed)
+            connect_timeout = 5.0 if remaining is None else min(5.0, remaining)
+            with socket.create_connection(
+                (node_ips[0], port),
+                timeout=connect_timeout,
+                source_address=(node_ips[rank], 0),
+            ) as connection:
+                connection.sendall(
+                    json.dumps(request, sort_keys=True).encode("utf-8") + b"\n"
+                )
+                response = _recv_json_line(connection)
+            if response.get("protocol") != protocol:
+                raise typer.BadParameter(
+                    "multi-node augment identity rendezvous returned an invalid protocol"
+                )
+            if response.get("error"):
+                raise typer.BadParameter(
+                    f"multi-node augment identity is contradictory: {response['error']}"
+                )
+            return {key: value for key, value in response.items() if key != "protocol"}
+        except typer.BadParameter:
+            raise
+        except (OSError, ValueError, json.JSONDecodeError):
+            remaining = None if limit is None else max(0.0, limit - elapsed)
+            time.sleep(1.0 if remaining is None else min(1.0, remaining))
+
+
+def _gang_identity(
+    *,
+    output_uri: str,
+    run_id: str,
+    storage_client: Any = None,
+    rendezvous: Any = None,
+) -> tuple[int, int, str, str, int, dict[str, Any]]:
+    """Establish the gang's shared publication identity and durable fence."""
+
+    rank, nodes, metadata = _gang_environment()
+    if metadata.get("scheduler") == "single":
+        return rank, nodes, "", "", 0, {}
+    if metadata.get("scheduler") == "local":
+        raise typer.BadParameter(
+            "NPA workflow Cosmos publication requires SkyPilot managed-job "
+            "identity and its rank-0 publication fence; local rank/count "
+            "overrides are shard-planning aids only"
+        )
+
+    logical_wave_id = str(metadata["logical_wave_id"])
+    membership_digest = str(metadata["membership_digest"])
+    internal_job_id = str(metadata["internal_job_id"])
+    scheduler_sequence = int(metadata["scheduler_fence_sequence"])
+    scheduler_attempt = int(metadata["scheduler_fence_attempt"])
+    offered: dict[str, Any] | None = None
+    claim_etag = ""
+    if rank == 0:
+        from npa.workbench.cosmos.transfer import claim_run_publication
+
+        attempt_id, claim_etag, generation = claim_run_publication(
+            output_uri,
+            run_id=run_id,
+            logical_wave_id=logical_wave_id,
+            node_count=nodes,
+            membership_digest=membership_digest,
+            scheduler_fence_sequence=scheduler_sequence,
+            scheduler_fence_attempt=scheduler_attempt,
+            scheduler_launch_id=internal_job_id,
+            storage_client=storage_client,
+        )
+        offered = {
+            "attempt_id": attempt_id,
+            "publication_generation": generation,
+            "logical_wave_id": logical_wave_id,
+            "membership_digest": membership_digest,
+            "internal_job_id": internal_job_id,
+            "scheduler_fence_sequence": scheduler_sequence,
+            "scheduler_fence_attempt": scheduler_attempt,
+            "node_count": nodes,
+        }
+    if nodes == 1:
+        shared = offered
+    else:
+        exchange = rendezvous or _sky_gang_rendezvous
+        shared = exchange(
+            rank=rank,
+            node_count=nodes,
+            node_ips=list(metadata["node_ips"]),
+            logical_wave_id=logical_wave_id,
+            membership_digest=membership_digest,
+            internal_job_id=internal_job_id,
+            offered=offered,
+        )
+    try:
+        attempt_id = str(shared.get("attempt_id") or "").strip()
+        generation = int(shared.get("publication_generation", 0))
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise typer.BadParameter(
+            "multi-node augment identity rendezvous returned an invalid generation"
+        ) from exc
+    if not (
+        len(attempt_id) == 64
+        and all(char in "0123456789abcdef" for char in attempt_id)
+        and generation > 0
+        and shared.get("logical_wave_id") == logical_wave_id
+        and shared.get("membership_digest") == membership_digest
+        and shared.get("internal_job_id") == internal_job_id
+        and int(shared.get("scheduler_fence_sequence", 0)) == scheduler_sequence
+        and int(shared.get("scheduler_fence_attempt", 0)) == scheduler_attempt
+        and int(shared.get("node_count", 0)) == nodes
+    ):
+        raise typer.BadParameter(
+            "multi-node augment identity rendezvous returned contradictory identity"
+        )
+    publication_identity = {
+        "logical_wave_id": logical_wave_id,
+        "scheduler_fence_sequence": scheduler_sequence,
+        "scheduler_fence_attempt": scheduler_attempt,
+        "scheduler_launch_id": internal_job_id,
+    }
+    return rank, nodes, attempt_id, claim_etag, generation, publication_identity
+
+
+def _apply_validation_fault(
+    *, run_id: str, rank: int, generation: int, phase: str
+) -> None:
+    """Apply an explicitly scoped live-validation delay or failure.
+
+    These hooks are inert unless the caller repeats the exact run id in
+    ``NPA_COSMOS_VALIDATION_SCOPE``. They let an operator exercise delayed-rank
+    and managed-recovery behavior in a task-owned job without deleting pods or
+    touching shared workloads.
+    """
+
+    names = {
+        "NPA_COSMOS_VALIDATION_DELAY_S",
+        "NPA_COSMOS_VALIDATION_FAIL_PHASE",
+    }
+    if not any(str(os.environ.get(name, "")).strip() for name in names):
+        return
+    scope = str(os.environ.get("NPA_COSMOS_VALIDATION_SCOPE", "")).strip()
+    if not run_id or scope != run_id:
+        raise typer.BadParameter(
+            "Cosmos validation fault hooks require NPA_COSMOS_VALIDATION_SCOPE "
+            "to equal the exact non-empty --run-id"
+        )
+
+    def selected(prefix: str) -> bool:
+        raw_rank = str(os.environ.get(f"{prefix}_RANK", "")).strip()
+        raw_generation = str(
+            os.environ.get(f"{prefix}_GENERATION", "")
+        ).strip()
+        try:
+            return bool(
+                (not raw_rank or int(raw_rank) == rank)
+                and (not raw_generation or int(raw_generation) == generation)
+            )
+        except ValueError as exc:
+            raise typer.BadParameter(
+                f"{prefix}_RANK and {prefix}_GENERATION must be integers"
+            ) from exc
+
+    delay_raw = str(os.environ.get("NPA_COSMOS_VALIDATION_DELAY_S", "")).strip()
+    delay_phase = str(
+        os.environ.get("NPA_COSMOS_VALIDATION_DELAY_PHASE", "before-render")
+    ).strip()
+    if delay_raw and delay_phase == phase and selected("NPA_COSMOS_VALIDATION_DELAY"):
+        try:
+            delay = float(delay_raw)
+        except ValueError as exc:
+            raise typer.BadParameter(
+                "NPA_COSMOS_VALIDATION_DELAY_S must be a finite non-negative number"
+            ) from exc
+        if not math.isfinite(delay) or delay < 0:
+            raise typer.BadParameter(
+                "NPA_COSMOS_VALIDATION_DELAY_S must be a finite non-negative number"
+            )
+        typer.echo(
+            "task-scoped Cosmos validation delay: "
+            f"run={run_id} rank={rank} generation={generation} "
+            f"phase={phase} delay={delay:g}s",
+            err=True,
+        )
+        time.sleep(delay)
+
+    fail_phase = str(
+        os.environ.get("NPA_COSMOS_VALIDATION_FAIL_PHASE", "")
+    ).strip()
+    if fail_phase == phase and selected("NPA_COSMOS_VALIDATION_FAIL"):
+        raise RuntimeError(
+            "task-scoped Cosmos validation fault: "
+            f"run={run_id} rank={rank} generation={generation} phase={phase}"
+        )
 
 
 def _shard_indices(count: int, *, rank: int, nodes: int) -> list[int]:
@@ -737,6 +1109,7 @@ def transfer_cmd(
             # image). The per-clip layout is what data_factory curate /
             # build_run_rrd / provenance consume.
             from npa.workbench.cosmos.transfer import (
+                attempt_output_uri_for,
                 merge_shard_manifests,
                 publish_transfer_clip,
                 write_run_manifest,
@@ -748,8 +1121,32 @@ def transfer_cmd(
             # Multi-node fan-out: this node renders only its stride of the sampled
             # combos. Variant indices stay GLOBAL, so clip names remain disjoint
             # across the gang and the merged manifest keeps the sampled order.
-            rank, node_count, attempt_id = _gang_identity()
+            (
+                rank,
+                node_count,
+                attempt_id,
+                publication_claim_etag,
+                publication_generation,
+                publication_identity,
+            ) = _gang_identity(output_uri=output_uri, run_id=run_id)
+            _apply_validation_fault(
+                run_id=run_id,
+                rank=rank,
+                generation=publication_generation,
+                phase="before-render",
+            )
             shard = [(i, combos[i]) for i in _shard_indices(len(combos), rank=rank, nodes=node_count)]
+            fenced_publication = bool(attempt_id)
+            publish_output_uri = (
+                attempt_output_uri_for(output_uri, attempt_id)
+                if fenced_publication
+                else output_uri
+            )
+            publish_control_output_uri = (
+                attempt_output_uri_for(control_output_uri, attempt_id)
+                if fenced_publication and control_output_uri
+                else control_output_uri
+            )
 
             conditioning_clip_uri = _persist_generated_conditioning_clip(
                 local_input,
@@ -808,12 +1205,12 @@ def transfer_cmd(
                 clips.append(
                     publish_transfer_clip(
                         transfers[i],
-                        output_uri,
+                        publish_output_uri,
                         run_id=run_id,
                         clip_name=clip_name,
                         variables=combo,
                         variant_index=i,
-                        control_output_uri=control_output_uri,
+                        control_output_uri=publish_control_output_uri,
                         require_frames=True,
                     )
                 )
@@ -832,6 +1229,23 @@ def transfer_cmd(
                     variant_parallelism=parallelism,
                     variant_total=len(combos),
                     attempt_id=attempt_id,
+                    scheduler_fence_sequence=int(
+                        publication_identity["scheduler_fence_sequence"]
+                    ),
+                    scheduler_fence_attempt=int(
+                        publication_identity["scheduler_fence_attempt"]
+                    ),
+                    scheduler_launch_id=str(
+                        publication_identity["scheduler_launch_id"]
+                    ),
+                    logical_wave_id=str(publication_identity["logical_wave_id"]),
+                    publication_generation=publication_generation,
+                )
+                _apply_validation_fault(
+                    run_id=run_id,
+                    rank=rank,
+                    generation=publication_generation,
+                    phase="after-shard",
                 )
                 manifest = (
                     merge_shard_manifests(
@@ -839,6 +1253,8 @@ def transfer_cmd(
                         run_id=run_id,
                         node_count=node_count,
                         attempt_id=attempt_id,
+                        publication_claim_etag=publication_claim_etag,
+                        publication_generation=publication_generation,
                     )
                     if rank == 0
                     else build_run_manifest(
@@ -850,8 +1266,21 @@ def transfer_cmd(
                     )
                 )
             else:
+                publication_kwargs = (
+                    {
+                        "attempt_id": attempt_id,
+                        "publication_claim_etag": publication_claim_etag,
+                        "publication_generation": publication_generation,
+                    }
+                    if fenced_publication
+                    else {}
+                )
                 manifest = write_run_manifest(
-                    clips, output_uri, run_id=run_id, variant_parallelism=parallelism
+                    clips,
+                    output_uri,
+                    run_id=run_id,
+                    variant_parallelism=parallelism,
+                    **publication_kwargs,
                 )
             payload["status"] = TRANSFER_MANIFEST_STATUS
             payload["output_kind"] = "video"

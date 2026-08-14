@@ -219,6 +219,12 @@ def test_submit_capacity_preflight_uses_resolved_paidf_gang_and_free_nodes(
             allocatable=1,
             committed=1 - free,
             free=free,
+            allocatable_cpu_millis=64_000,
+            free_cpu_millis=64_000,
+            allocatable_memory_bytes=256 * 1024**3,
+            free_memory_bytes=256 * 1024**3,
+            allocatable_pods=110,
+            free_pod_slots=110,
         )
 
     inventory = gpu_catalog.KubernetesGpuInventory(
@@ -254,6 +260,9 @@ def test_submit_capacity_preflight_uses_resolved_paidf_gang_and_free_nodes(
             "node_count": 2,
             "compatible_free_nodes": 2,
             "selected_nodes": ["gpu-a", "gpu-b"],
+            "cpus_per_node": 16.0,
+            "memory_bytes_per_node": 128 * 1024**3,
+            "allowed_nodes": [],
             "state": "augment",
             "profile": "gpu",
         }
@@ -272,6 +281,88 @@ def test_submit_capacity_preflight_uses_resolved_paidf_gang_and_free_nodes(
     with pytest.raises(gpu_catalog.UnsatisfiableAcceleratorError, match="requires 2"):
         _preflight_submit_gang_capacity(spec, context="task-scoped-context")
 
+
+def test_submit_capacity_preflight_reads_exact_skypilot_allowed_nodes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    import yaml
+
+    from npa.cli.workbench.workflow import _skypilot_allowed_nodes
+    from npa.orchestration.skypilot import _bin
+
+    config = tmp_path / "sky.yaml"
+    config.write_text(
+        yaml.safe_dump({"kubernetes": {"allowed_nodes": ["gpu-b", "gpu-a"]}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        _bin,
+        "resolve_config",
+        lambda **_kwargs: SimpleNamespace(global_config_path=config),
+    )
+    assert _skypilot_allowed_nodes(
+        sky_bin="pinned-sky",
+        config_path=config,
+        isolated_config_dir=tmp_path / "isolated",
+    ) == ("gpu-b", "gpu-a")
+
+
+def test_submit_capacity_preflight_does_not_resolve_sky_for_cpu_only_spec(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import npa.cli.workbench.workflow as workflow_cli
+
+    cpu_only = (
+        Path(__file__).resolve().parents[3]
+        / "workflows"
+        / "workbench"
+        / "npa-workflows"
+        / "token-factory-parallel-fanout.yaml"
+    )
+    spec = load_spec(cpu_only)
+    monkeypatch.setattr(
+        workflow_cli,
+        "_skypilot_allowed_nodes",
+        lambda **_kwargs: pytest.fail("CPU-only specs must not resolve SkyPilot affinity"),
+    )
+
+    assert workflow_cli._preflight_submit_gang_capacity(
+        spec,
+        context="",
+        allowed_nodes=None,
+    ) == []
+
+
+def test_checkpoint_preflight_uses_state_local_modality_overlay() -> None:
+    from npa.cli.workbench.workflow import _transfer_control_modalities
+
+    spec = load_spec(BLUEPRINT)
+    spec.config["state_control"] = "depth"
+    spec.states["augment"].params["augment_control"] = "{{config.state_control}}"
+
+    assert spec.config["augment_control"] == "edge"
+    assert _transfer_control_modalities(spec, run_id="submit-run") == {"depth"}
+
+
+def test_validate_and_plan_resolve_state_local_control_tokens() -> None:
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import validate_spec
+
+    spec = load_spec(BLUEPRINT)
+    spec.config["state_control"] = "depth"
+    spec.states["augment"].params.update(
+        {
+            "augment_control": "{{config.state_control}}",
+            "augment_control_asset_uri": "s3://owner-controls/depth.mp4",
+        }
+    )
+
+    validate_spec(spec)
+    plan = build_plan(spec, run_id="state-local-depth")
+    augment = next(step for step in plan.steps if step.state == "augment")
+    assert "depth" in augment.argv
 
 def test_the_control_prefix_is_a_sibling_of_the_augmented_clips() -> None:
     """Nesting it would make the evaluator read a control map as a variant."""

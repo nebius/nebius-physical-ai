@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from npa.clients import huggingface
 from npa.clients.huggingface import HFAccessResult
 from npa.workbench.cosmos.checkpoint_access import (
     CosmosCheckpointAccessError,
@@ -102,3 +103,53 @@ def test_transient_or_unknown_access_failure_fails_closed() -> None:
         preflight_control_checkpoint_access(
             modality="depth", token="caller-owned", validator=transient
         )
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        "/api/resolve-cache/models/nvidia/checkpoint",
+        "https://cdn-lfs-us-1.hf.co/signed-object?X-Amz-Signature=abc",
+        "https://cas-bridge.xethub.hf.co/signed-object?X-Xet-Signed=abc",
+    ],
+)
+def test_exact_file_probe_accepts_only_known_hf_redirects(
+    monkeypatch: pytest.MonkeyPatch, location: str
+) -> None:
+    class Response:
+        status_code = 302
+        headers = {"location": location}
+
+    monkeypatch.setattr(huggingface.httpx, "head", lambda *_a, **_k: Response())
+    result = huggingface.validate_hf_file_access(
+        "caller-owned", "nvidia/model", "revision", "checkpoint.pt"
+    )
+    assert result.ok is True
+
+
+@pytest.mark.parametrize(
+    ("status", "location"),
+    [
+        (302, ""),
+        (302, "https://attacker.invalid/object"),
+        (302, "//attacker.invalid/object"),
+        (302, "/login?next=/nvidia/model/resolve/revision/checkpoint.pt"),
+        (302, "/nvidia/model"),
+        (302, "https://huggingface.co/join"),
+        (302, "https://cdn-lfs-us-1.hf.co/unsigned-object"),
+        (304, ""),
+    ],
+)
+def test_exact_file_probe_rejects_arbitrary_three_xx(
+    monkeypatch: pytest.MonkeyPatch, status: int, location: str
+) -> None:
+    class Response:
+        status_code = status
+        headers = {"location": location}
+
+    monkeypatch.setattr(huggingface.httpx, "head", lambda *_a, **_k: Response())
+    result = huggingface.validate_hf_file_access(
+        "caller-owned", "nvidia/model", "revision", "checkpoint.pt"
+    )
+    assert result.ok is False
+    assert "caller-owned" not in result.error

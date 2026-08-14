@@ -207,6 +207,12 @@ class WaveAttempt:
     #: wave survived a flaky control plane rather than silently leaking a job).
     status_errors: list[str] = field(default_factory=list)
     logical_launch_id: str = ""
+    #: Monotonic runtime-wave ordinal rendered into the workload publication
+    #: fence. Unlike ``launch_sequence``, this is assigned before submission and
+    #: must survive launch-transaction bookkeeping unchanged.
+    scheduler_fence_sequence: int = 0
+    #: Launch transaction phase observed by the submitter. This is not workload
+    #: authority and may legitimately be zero at a crash/reconciliation seam.
     launch_sequence: int = 0
     error_category: str = ""
     readiness: list[dict[str, Any]] = field(default_factory=list)
@@ -243,6 +249,7 @@ class WaveAttempt:
             "observations": list(self.observations),
             "status_errors": list(self.status_errors),
             "logical_launch_id": self.logical_launch_id,
+            "scheduler_fence_sequence": self.scheduler_fence_sequence,
             "launch_sequence": self.launch_sequence,
             "error_category": self.error_category,
             "readiness": list(self.readiness),
@@ -475,6 +482,10 @@ class SkyPilotWaveExecutor:
                 ended_at=str(replayed.get("ended_at") or ""),
                 tasks=list(replayed.get("tasks") or []),
                 outputs=list(replayed.get("outputs") or []),
+                scheduler_fence_sequence=int(
+                    replayed.get("scheduler_fence_sequence") or self._sequence
+                ),
+                launch_sequence=int(replayed.get("launch_sequence") or 0),
                 replayed=True,
             )
             self._log(f"wave {key}: replayed from ledger (job {attempt.job_id})")
@@ -574,6 +585,7 @@ class SkyPilotWaveExecutor:
                 attempt=attempt_number,
                 started_at=utc_now(),
                 outputs=[dict(item) for step in steps for item in step.outputs],
+                scheduler_fence_sequence=self._sequence,
             )
             self.attempts.append(attempt)
             try:
@@ -637,6 +649,9 @@ class SkyPilotWaveExecutor:
             outputs=list(record.get("outputs") or []),
             error=str(record.get("error") or ""),
             logical_launch_id=str(record.get("logical_launch_id") or ""),
+            scheduler_fence_sequence=int(
+                record.get("scheduler_fence_sequence") or 0
+            ),
             launch_sequence=int(record.get("launch_sequence") or 0),
             error_category=str(record.get("error_category") or ""),
             readiness=list(record.get("readiness") or []),
@@ -900,6 +915,8 @@ class SkyPilotWaveExecutor:
             options=replace(
                 self.render_options,
                 execution_attempt_id=attempt.logical_launch_id,
+                execution_fence_sequence=attempt.scheduler_fence_sequence,
+                execution_fence_attempt=attempt.attempt,
             ),
             execution="parallel" if kind == "parallel" else "serial",
             name=job_name,

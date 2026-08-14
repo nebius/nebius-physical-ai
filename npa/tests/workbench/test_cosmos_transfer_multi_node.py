@@ -22,10 +22,17 @@ from typer.testing import CliRunner
 
 from npa.cli.main import app
 from npa.cli.workbench import cosmos2
+from npa.clients.storage import StorageError, StoragePreconditionFailed
 from npa.workbench.cosmos import transfer as tx
 
 runner = CliRunner()
 ATTEMPT = "wave-attempt-1"
+
+
+@pytest.fixture(autouse=True)
+def _scheduler_fence_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NPA_WORKFLOW_FENCE_SEQUENCE", "1")
+    monkeypatch.setenv("NPA_WORKFLOW_FENCE_ATTEMPT", "1")
 
 
 class FakeStorage:
@@ -33,10 +40,41 @@ class FakeStorage:
 
     def __init__(self) -> None:
         self.objects: dict[str, bytes] = {}
+        self.etags: dict[str, str] = {}
+        self.version = 0
+
+    def _next_etag(self) -> str:
+        self.version += 1
+        return f'"etag-{self.version}"'
 
     def upload_file(self, local: str, uri: str) -> str:
         self.objects[uri] = Path(local).read_bytes()
+        self.etags[uri] = self._next_etag()
         return uri
+
+    def read_bytes_with_etag(self, uri: str):
+        if uri not in self.objects:
+            return None
+        return self.objects[uri], self.etags[uri]
+
+    def put_bytes_conditional(
+        self,
+        payload: bytes,
+        uri: str,
+        *,
+        if_match: str = "",
+        if_none_match: bool = False,
+        content_type: str = "application/octet-stream",
+    ) -> str:
+        del content_type
+        if if_none_match:
+            if uri in self.objects:
+                raise StoragePreconditionFailed(uri)
+        elif not if_match or self.etags.get(uri) != if_match:
+            raise StoragePreconditionFailed(uri)
+        self.objects[uri] = payload
+        self.etags[uri] = self._next_etag()
+        return self.etags[uri]
 
     def download_path(self, uri: str, local_path: str) -> str:
         if uri not in self.objects:
@@ -47,12 +85,13 @@ class FakeStorage:
         return str(dest)
 
 
-def _clip(index: int, *, run_id: str = "run1") -> dict:
+def _clip(index: int, *, run_id: str = "run1", attempt_id: str = ATTEMPT) -> dict:
+    base = f"s3://bkt/{run_id}/cosmos_augmented/_attempts/{attempt_id}"
     return {
         "clip": f"aug-{run_id}-{index}",
         "variant_index": index,
-        "augmented_video_uri": f"s3://bkt/{run_id}/cosmos_augmented/aug-{run_id}-{index}/augmented_video.mp4",
-        "frames_uri": f"s3://bkt/{run_id}/cosmos_augmented/aug-{run_id}-{index}/",
+        "augmented_video_uri": f"{base}/aug-{run_id}-{index}/augmented_video.mp4",
+        "frames_uri": f"{base}/aug-{run_id}-{index}/",
         "frames": [{"frame_id": "frame-00000", "uri": "s3://bkt/f.png"}],
         "frame_count": 1,
         "variables": {"prompt": f"scene {index}"},
@@ -62,11 +101,81 @@ def _clip(index: int, *, run_id: str = "run1") -> dict:
     }
 
 
+def _attempt_clip(index: int, output_uri: str, attempt_id: str) -> dict:
+    clip = _clip(index)
+    attempt_uri = tx.attempt_output_uri_for(output_uri, attempt_id)
+    clip["augmented_video_uri"] = (
+        f"{attempt_uri}/aug-run1-{index}/augmented_video.mp4"
+    )
+    clip["frames_uri"] = f"{attempt_uri}/aug-run1-{index}/"
+    return clip
+
+
 def _write_shard(*args, attempt_id: str = ATTEMPT, **kwargs):
-    return tx.write_shard_manifest(*args, attempt_id=attempt_id, **kwargs)
+    clips = []
+    for source in args[0]:
+        clip = dict(source)
+        for field in ("augmented_video_uri", "frames_uri"):
+            value = str(clip.get(field) or "")
+            if "/_attempts/" in value:
+                prefix, rest = value.split("/_attempts/", 1)
+                _old, _separator, suffix = rest.partition("/")
+                clip[field] = f"{prefix}/_attempts/{attempt_id}/{suffix}"
+        clips.append(clip)
+    kwargs.setdefault("scheduler_fence_sequence", 1)
+    kwargs.setdefault("scheduler_fence_attempt", 1)
+    kwargs.setdefault("scheduler_launch_id", "test-launch")
+    kwargs.setdefault("logical_wave_id", "test-wave")
+    kwargs.setdefault("publication_generation", 1)
+    return tx.write_shard_manifest(clips, *args[1:], attempt_id=attempt_id, **kwargs)
+
+
+def _seed_claim(
+    storage: FakeStorage,
+    output_uri: str,
+    *,
+    attempt_id: str = ATTEMPT,
+    generation: int = 1,
+    run_id: str = "run1",
+    node_count: int = 2,
+) -> str:
+    claim = {
+        "schema": tx.TRANSFER_MANIFEST_SCHEMA,
+        "mode": tx.TRANSFER_MANIFEST_MODE,
+        "status": tx.PUBLICATION_CLAIM_STATUS,
+        "run_id": run_id,
+        "attempt_id": attempt_id,
+        tx.PUBLICATION_GENERATION_FIELD: generation,
+        "node_count": node_count,
+        "logical_wave_id": "test-wave",
+        "membership_digest": "test-members",
+        "scheduler_fence_sequence": generation,
+        "scheduler_fence_attempt": 1,
+        "scheduler_launch_id": "test-launch",
+    }
+    canonical = tx.transfer_manifest_uri_for(output_uri)
+    existing = storage.read_bytes_with_etag(canonical)
+    return storage.put_bytes_conditional(
+        (json.dumps(claim, sort_keys=True) + "\n").encode(),
+        canonical,
+        if_match=existing[1] if existing else "",
+        if_none_match=existing is None,
+        content_type="application/json",
+    )
 
 
 def _merge_shards(*args, attempt_id: str = ATTEMPT, **kwargs):
+    storage = kwargs["storage_client"]
+    output_uri = args[0]
+    if "publication_claim_etag" not in kwargs:
+        kwargs["publication_claim_etag"] = _seed_claim(
+            storage,
+            output_uri,
+            attempt_id=attempt_id,
+            run_id=kwargs.get("run_id", ""),
+            node_count=kwargs.get("node_count", 1),
+        )
+        kwargs["publication_generation"] = 1
     return tx.merge_shard_manifests(*args, attempt_id=attempt_id, **kwargs)
 
 
@@ -109,6 +218,8 @@ def test_gang_shard_reads_skypilot_identity(monkeypatch: pytest.MonkeyPatch) -> 
         "SKYPILOT_INTERNAL_JOB_ID",
         "SKYPILOT_MANAGED_JOB_ID",
         "NPA_WORKFLOW_ATTEMPT_ID",
+        "NPA_WORKFLOW_FENCE_SEQUENCE",
+        "NPA_WORKFLOW_FENCE_ATTEMPT",
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("NPA_COSMOS_NODE_COUNT", "2")
@@ -125,14 +236,64 @@ def test_gang_identity_cross_checks_renderer_and_skypilot(
     monkeypatch.setenv("SKYPILOT_NODE_RANK", "0")
     monkeypatch.setenv("SKYPILOT_NODE_IPS", "10.0.0.1\n10.0.0.2\n10.0.0.3")
     monkeypatch.setenv("SKYPILOT_INTERNAL_JOB_ID", "42")
+    monkeypatch.setenv("SKYPILOT_MANAGED_JOB_ID", "7")
     monkeypatch.setenv("NPA_WORKFLOW_ATTEMPT_ID", "wave")
     with pytest.raises(cosmos2.typer.BadParameter, match="contradictory"):
-        cosmos2._gang_identity()
+        cosmos2._gang_environment()
 
 
-def test_attempt_identity_is_shared_by_gang_and_changes_on_recovery(
+def test_local_multi_node_execution_fails_before_an_unfenced_publish(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("NPA_COSMOS_NODE_COUNT", "2")
+    monkeypatch.setenv("NPA_COSMOS_NODE_RANK", "0")
+    monkeypatch.setenv("NPA_COSMOS_ATTEMPT_ID", ATTEMPT)
+    with pytest.raises(cosmos2.typer.BadParameter, match="publication fence"):
+        cosmos2._gang_identity(output_uri="s3://bkt/out/", run_id="run1")
+
+
+def test_managed_single_node_claims_the_same_scheduler_publication_fence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = FakeStorage()
+    monkeypatch.setenv("NPA_COSMOS_NODE_COUNT", "1")
+    monkeypatch.setenv("SKYPILOT_NUM_NODES", "1")
+    monkeypatch.setenv("SKYPILOT_NODE_RANK", "0")
+    monkeypatch.setenv("SKYPILOT_NODE_IPS", "10.0.0.1")
+    monkeypatch.setenv("SKYPILOT_INTERNAL_JOB_ID", "101")
+    monkeypatch.setenv("SKYPILOT_MANAGED_JOB_ID", "9")
+    monkeypatch.setenv("NPA_WORKFLOW_ATTEMPT_ID", "loop-1")
+
+    identity = cosmos2._gang_identity(
+        output_uri="s3://bkt/run1/cosmos_augmented/",
+        run_id="run1",
+        storage_client=storage,
+    )
+
+    assert identity[:2] == (0, 1)
+    assert len(identity[2]) == 64
+    assert identity[3]
+    assert identity[4] == 1
+    with pytest.raises(RuntimeError, match="stale|duplicates"):
+        cosmos2._gang_identity(
+            output_uri="s3://bkt/run1/cosmos_augmented/",
+            run_id="run1",
+            storage_client=storage,
+        )
+
+
+def test_attempt_identity_is_shared_and_only_outer_retry_may_advance_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = FakeStorage()
+    shared: dict[str, object] = {}
+
+    def exchange(**kwargs):
+        if kwargs["offered"] is not None:
+            shared.clear()
+            shared.update(kwargs["offered"])
+        return dict(shared)
+
     monkeypatch.setenv("NPA_COSMOS_NODE_COUNT", "2")
     monkeypatch.setenv("SKYPILOT_NUM_NODES", "2")
     monkeypatch.setenv("SKYPILOT_NODE_IPS", "10.0.0.1\n10.0.0.2")
@@ -140,23 +301,204 @@ def test_attempt_identity_is_shared_by_gang_and_changes_on_recovery(
     monkeypatch.setenv("SKYPILOT_MANAGED_JOB_ID", "9")
     monkeypatch.setenv("NPA_WORKFLOW_ATTEMPT_ID", "loop-iteration-2")
     monkeypatch.setenv("SKYPILOT_NODE_RANK", "0")
-    rank0 = cosmos2._gang_identity()
+    rank0 = cosmos2._gang_identity(
+        output_uri="s3://bkt/run1/cosmos_augmented/",
+        run_id="run1",
+        storage_client=storage,
+        rendezvous=exchange,
+    )
     monkeypatch.setenv("SKYPILOT_NODE_RANK", "1")
-    rank1 = cosmos2._gang_identity()
+    rank1 = cosmos2._gang_identity(
+        output_uri="s3://bkt/run1/cosmos_augmented/",
+        run_id="run1",
+        storage_client=storage,
+        rendezvous=exchange,
+    )
     assert rank0[2] == rank1[2]
 
     # SkyPilot_TASK_ID is deliberately irrelevant.  SkyPilot documents that it
     # stays constant across managed-job recovery, and changing it here cannot
     # manufacture a new shard identity.
     monkeypatch.setenv("SKYPILOT_TASK_ID", "not-part-of-the-identity")
-    task_id_changed = cosmos2._gang_identity()
+    task_id_changed = cosmos2._gang_identity(
+        output_uri="s3://bkt/run1/cosmos_augmented/",
+        run_id="run1",
+        storage_client=storage,
+        rendezvous=exchange,
+    )
     assert task_id_changed[2] == rank1[2]
 
-    # The cluster-local launch identity changes when the gang is relaunched.
+    # Stock SkyPilot recovery retains the scheduler token. A replacement rank 0
+    # must fail before GPU work instead of using arrival order to steal a newer
+    # canonical generation.
     monkeypatch.setenv("SKYPILOT_TASK_ID", "constant-across-recovery")
+    monkeypatch.setenv("SKYPILOT_NODE_RANK", "0")
     monkeypatch.setenv("SKYPILOT_INTERNAL_JOB_ID", "102")
-    recovered = cosmos2._gang_identity()
+    with pytest.raises(RuntimeError, match="stale|duplicates"):
+        cosmos2._gang_identity(
+            output_uri="s3://bkt/run1/cosmos_augmented/",
+            run_id="run1",
+            storage_client=storage,
+            rendezvous=exchange,
+        )
+
+    # Once that managed job is terminal, the durable NPA runtime explicitly
+    # retries the wave with a higher ordered token shared by the whole new gang.
+    monkeypatch.setenv("NPA_WORKFLOW_ATTEMPT_ID", "loop-iteration-2-npa-retry-2")
+    monkeypatch.setenv("NPA_WORKFLOW_FENCE_ATTEMPT", "2")
+    recovered = cosmos2._gang_identity(
+        output_uri="s3://bkt/run1/cosmos_augmented/",
+        run_id="run1",
+        storage_client=storage,
+        rendezvous=exchange,
+    )
     assert recovered[2] != rank1[2]
+    assert recovered[4] == rank0[4] + 1
+
+
+def test_rank_zero_rendezvous_shares_one_generation_over_scheduler_membership() -> None:
+    offered = {
+        "attempt_id": "a" * 64,
+        "publication_generation": 7,
+        "logical_wave_id": "loop-2",
+        "membership_digest": "members",
+        "internal_job_id": "42",
+        "node_count": 2,
+    }
+    leader = cosmos2._sky_gang_rendezvous(
+        rank=0,
+        node_count=2,
+        node_ips=["127.0.0.1", "127.0.0.2"],
+        logical_wave_id="loop-2",
+        membership_digest="members",
+        internal_job_id="42",
+        offered=offered,
+    )
+    follower = cosmos2._sky_gang_rendezvous(
+        rank=1,
+        node_count=2,
+        node_ips=["127.0.0.1", "127.0.0.2"],
+        logical_wave_id="loop-2",
+        membership_digest="members",
+        internal_job_id="42",
+        offered=None,
+    )
+    assert leader == follower == offered
+
+
+def test_recovery_rendezvous_rejects_stale_launch_and_duplicate_rank() -> None:
+    offered = {
+        "attempt_id": "b" * 64,
+        "publication_generation": 8,
+        "logical_wave_id": "loop-2",
+        "membership_digest": "replacement-members",
+        "internal_job_id": "new-job-43",
+        "node_count": 3,
+    }
+    node_ips = ["127.0.0.1", "127.0.0.2", "127.0.0.3"]
+    cosmos2._sky_gang_rendezvous(
+        rank=0,
+        node_count=3,
+        node_ips=node_ips,
+        logical_wave_id="loop-2",
+        membership_digest="replacement-members",
+        internal_job_id="new-job-43",
+        offered=offered,
+    )
+
+    # An escaped process from the prior managed-job launch still owns rank 1's
+    # IP, but its scheduler-issued internal job id cannot join the replacement.
+    with pytest.raises(cosmos2.typer.BadParameter, match="contradictory"):
+        cosmos2._sky_gang_rendezvous(
+            rank=1,
+            node_count=3,
+            node_ips=node_ips,
+            logical_wave_id="loop-2",
+            membership_digest="replacement-members",
+            internal_job_id="old-job-42",
+            offered=None,
+        )
+    assert cosmos2._sky_gang_rendezvous(
+        rank=1,
+        node_count=3,
+        node_ips=node_ips,
+        logical_wave_id="loop-2",
+        membership_digest="replacement-members",
+        internal_job_id="new-job-43",
+        offered=None,
+    ) == offered
+    with pytest.raises(cosmos2.typer.BadParameter, match="contradictory"):
+        cosmos2._sky_gang_rendezvous(
+            rank=1,
+            node_count=3,
+            node_ips=node_ips,
+            logical_wave_id="loop-2",
+            membership_digest="replacement-members",
+            internal_job_id="new-job-43",
+            offered=None,
+        )
+    assert cosmos2._sky_gang_rendezvous(
+        rank=2,
+        node_count=3,
+        node_ips=node_ips,
+        logical_wave_id="loop-2",
+        membership_digest="replacement-members",
+        internal_job_id="new-job-43",
+        offered=None,
+    ) == offered
+
+
+def test_identity_rendezvous_has_only_an_explicit_opt_in_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_COSMOS_IDENTITY_TIMEOUT_S", "0")
+    with pytest.raises(cosmos2.typer.BadParameter, match="timed out.*rank 1"):
+        cosmos2._sky_gang_rendezvous(
+            rank=1,
+            node_count=2,
+            node_ips=["127.0.0.1", "127.0.0.2"],
+            logical_wave_id="absent-leader",
+            membership_digest="members",
+            internal_job_id="42",
+            offered=None,
+        )
+
+
+def test_live_validation_faults_are_exactly_run_rank_generation_scoped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    slept: list[float] = []
+    monkeypatch.setenv("NPA_COSMOS_VALIDATION_SCOPE", "task-run")
+    monkeypatch.setenv("NPA_COSMOS_VALIDATION_DELAY_S", "2.5")
+    monkeypatch.setenv("NPA_COSMOS_VALIDATION_DELAY_RANK", "1")
+    monkeypatch.setenv("NPA_COSMOS_VALIDATION_DELAY_GENERATION", "2")
+    monkeypatch.setattr(cosmos2.time, "sleep", slept.append)
+    cosmos2._apply_validation_fault(
+        run_id="task-run", rank=1, generation=2, phase="before-render"
+    )
+    cosmos2._apply_validation_fault(
+        run_id="task-run", rank=0, generation=2, phase="before-render"
+    )
+    assert slept == [2.5]
+
+    monkeypatch.setenv("NPA_COSMOS_VALIDATION_FAIL_PHASE", "after-shard")
+    monkeypatch.setenv("NPA_COSMOS_VALIDATION_FAIL_RANK", "0")
+    monkeypatch.setenv("NPA_COSMOS_VALIDATION_FAIL_GENERATION", "1")
+    with pytest.raises(RuntimeError, match="task-scoped.*generation=1"):
+        cosmos2._apply_validation_fault(
+            run_id="task-run", rank=0, generation=1, phase="after-shard"
+        )
+
+
+def test_live_validation_fault_refuses_an_unscoped_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_COSMOS_VALIDATION_DELAY_S", "1")
+    monkeypatch.setenv("NPA_COSMOS_VALIDATION_SCOPE", "some-other-run")
+    with pytest.raises(cosmos2.typer.BadParameter, match="exact non-empty --run-id"):
+        cosmos2._apply_validation_fault(
+            run_id="task-run", rank=1, generation=2, phase="before-render"
+        )
 
 
 @pytest.mark.parametrize(
@@ -220,33 +562,22 @@ def test_shard_manifests_merge_into_the_single_node_run_manifest() -> None:
     written = json.loads(storage.objects[tx.transfer_manifest_uri_for(output_uri)])
     assert written["clips"] == manifest["clips"]
     assert (
-        tx.shard_manifest_uri_for(output_uri, 1)
-        == "s3://bkt/run1/cosmos_augmented/manifest-rank-1.json"
+        tx.shard_manifest_uri_for(output_uri, 1, attempt_id=ATTEMPT)
+        == "s3://bkt/run1/cosmos_augmented/_attempts/wave-attempt-1/manifest-rank-1.json"
     )
 
 
-def test_shard_manifests_are_files_not_a_subdirectory_of_the_augment_prefix() -> None:
-    """Every consumer counts a subdir of the augment prefix as a scenario variant."""
+def test_shard_manifests_and_clips_are_scoped_to_the_attempt_prefix() -> None:
+    """Late recovery writes cannot touch the current attempt's object keys."""
 
-    uri = tx.shard_manifest_uri_for("s3://bkt/run1/cosmos_augmented/", 3)
+    uri = tx.shard_manifest_uri_for(
+        "s3://bkt/run1/cosmos_augmented/", 3, attempt_id=ATTEMPT
+    )
     relative = uri.split("cosmos_augmented/", 1)[1]
-    assert "/" not in relative
-
-    from npa.workflows import data_factory_stages as dfs
-
-    keys = [
-        "physical-ai-data-factory/run1/cosmos_augmented/manifest.json",
-        "physical-ai-data-factory/run1/cosmos_augmented/manifest-rank-0.json",
-        "physical-ai-data-factory/run1/cosmos_augmented/manifest-rank-1.json",
-        "physical-ai-data-factory/run1/cosmos_augmented/aug-run1-0/augmented_video.mp4",
-        "physical-ai-data-factory/run1/cosmos_augmented/aug-run1-1/augmented_video.mp4",
-    ]
-    _, prefix = dfs._split(
-        "s3://bkt/physical-ai-data-factory/run1/cosmos_augmented/"
-    )
-    rels = [k[len(prefix):] for k in keys if k.startswith(prefix)]
-    clips = sorted({r.split("/", 1)[0] for r in rels if "/" in r})
-    assert clips == ["aug-run1-0", "aug-run1-1"]
+    assert relative == "_attempts/wave-attempt-1/manifest-rank-3.json"
+    assert tx.attempt_output_uri_for(
+        "s3://bkt/run1/cosmos_augmented/", ATTEMPT
+    ).endswith("/_attempts/wave-attempt-1")
 
 
 def test_merge_waits_for_a_slow_rank_then_joins() -> None:
@@ -342,6 +673,370 @@ def test_merge_rejects_prior_recovery_attempt_with_identical_stable_fields() -> 
     assert manifest["attempt_id"] == "recovered-launch"
 
 
+def test_second_loop_waits_for_delayed_current_rank_not_late_prior_rank() -> None:
+    storage = FakeStorage()
+    output_uri = "s3://bkt/run1/cosmos_augmented/"
+    first_id, first_etag, first_generation = tx.claim_run_publication(
+        output_uri,
+        run_id="run1",
+        logical_wave_id="grade-loop-iteration-1",
+        node_count=2,
+        membership_digest="same-stable-membership",
+        scheduler_fence_sequence=1,
+        scheduler_fence_attempt=1,
+        scheduler_launch_id="loop-1-job",
+        storage_client=storage,
+        nonce_factory=lambda: "a" * 32,
+    )
+    for rank in (0, 1):
+        _write_shard(
+            [_attempt_clip(rank, output_uri, first_id)],
+            output_uri,
+            run_id="run1",
+            rank=rank,
+            node_count=2,
+            variant_total=2,
+            storage_client=storage,
+            attempt_id=first_id,
+            scheduler_fence_sequence=1,
+            scheduler_fence_attempt=1,
+            scheduler_launch_id="loop-1-job",
+            logical_wave_id="grade-loop-iteration-1",
+            publication_generation=first_generation,
+        )
+    tx.merge_shard_manifests(
+        output_uri,
+        run_id="run1",
+        node_count=2,
+        attempt_id=first_id,
+        publication_claim_etag=first_etag,
+        publication_generation=first_generation,
+        storage_client=storage,
+    )
+
+    second_id, second_etag, second_generation = tx.claim_run_publication(
+        output_uri,
+        run_id="run1",
+        logical_wave_id="grade-loop-iteration-2",
+        node_count=2,
+        membership_digest="same-stable-membership",
+        scheduler_fence_sequence=2,
+        scheduler_fence_attempt=1,
+        scheduler_launch_id="loop-2-job",
+        storage_client=storage,
+        nonce_factory=lambda: "b" * 32,
+    )
+    _write_shard(
+        [_attempt_clip(0, output_uri, second_id)],
+        output_uri,
+        run_id="run1",
+        rank=0,
+        node_count=2,
+        variant_total=2,
+        storage_client=storage,
+        attempt_id=second_id,
+        scheduler_fence_sequence=2,
+        scheduler_fence_attempt=1,
+        scheduler_launch_id="loop-2-job",
+        logical_wave_id="grade-loop-iteration-2",
+        publication_generation=second_generation,
+    )
+    waits = 0
+
+    def delayed_rank_one(_seconds: float) -> None:
+        nonlocal waits
+        waits += 1
+        if waits == 1:
+            # A delayed write from iteration 1 lands successfully, but only at
+            # iteration 1's private key. The current join must keep waiting.
+            _write_shard(
+                [_attempt_clip(1, output_uri, first_id)],
+                output_uri,
+                run_id="run1",
+                rank=1,
+                node_count=2,
+                variant_total=2,
+                storage_client=storage,
+                attempt_id=first_id,
+                scheduler_fence_sequence=1,
+                scheduler_fence_attempt=1,
+                scheduler_launch_id="loop-1-job",
+                logical_wave_id="grade-loop-iteration-1",
+                publication_generation=first_generation,
+            )
+            current = json.loads(
+                storage.objects[tx.transfer_manifest_uri_for(output_uri)]
+            )
+            assert current["status"] == tx.PUBLICATION_CLAIM_STATUS
+            assert current["attempt_id"] == second_id
+            return
+        _write_shard(
+            [_attempt_clip(1, output_uri, second_id)],
+            output_uri,
+            run_id="run1",
+            rank=1,
+            node_count=2,
+            variant_total=2,
+            storage_client=storage,
+            attempt_id=second_id,
+            scheduler_fence_sequence=2,
+            scheduler_fence_attempt=1,
+            scheduler_launch_id="loop-2-job",
+            logical_wave_id="grade-loop-iteration-2",
+            publication_generation=second_generation,
+        )
+
+    manifest = tx.merge_shard_manifests(
+        output_uri,
+        run_id="run1",
+        node_count=2,
+        attempt_id=second_id,
+        publication_claim_etag=second_etag,
+        publication_generation=second_generation,
+        storage_client=storage,
+        sleep=delayed_rank_one,
+    )
+    assert waits == 2
+    assert manifest["attempt_id"] == second_id
+    assert all(f"/_attempts/{second_id}/" in uri for uri in manifest["augmented_videos"])
+
+
+def test_recovery_generation_fences_late_prior_finalization_and_writes() -> None:
+    storage = FakeStorage()
+    output_uri = "s3://bkt/run1/cosmos_augmented/"
+    old_id, old_etag, old_generation = tx.claim_run_publication(
+        output_uri,
+        run_id="run1",
+        logical_wave_id="same-managed-task-and-wave",
+        node_count=2,
+        membership_digest="same-stable-membership",
+        scheduler_fence_sequence=3,
+        scheduler_fence_attempt=1,
+        scheduler_launch_id="failed-managed-job",
+        storage_client=storage,
+        nonce_factory=lambda: "c" * 32,
+    )
+    new_id, new_etag, new_generation = tx.claim_run_publication(
+        output_uri,
+        run_id="run1",
+        logical_wave_id="same-managed-task-and-wave",
+        node_count=2,
+        membership_digest="same-stable-membership",
+        scheduler_fence_sequence=3,
+        scheduler_fence_attempt=2,
+        scheduler_launch_id="npa-runtime-retry",
+        storage_client=storage,
+        nonce_factory=lambda: "d" * 32,
+    )
+    assert new_generation == old_generation + 1
+    assert new_id != old_id
+
+    # An escaped old leader arriving after the scheduler-authorized retry cannot
+    # manufacture "generation + 1" and take over the canonical fence.
+    with pytest.raises(RuntimeError, match="stale|duplicates"):
+        tx.claim_run_publication(
+            output_uri,
+            run_id="run1",
+            logical_wave_id="same-managed-task-and-wave",
+            node_count=2,
+            membership_digest="late-old-membership",
+            scheduler_fence_sequence=3,
+            scheduler_fence_attempt=1,
+            scheduler_launch_id="late-old-managed-job",
+            storage_client=storage,
+            nonce_factory=lambda: "e" * 32,
+        )
+    current = json.loads(storage.objects[tx.transfer_manifest_uri_for(output_uri)])
+    assert current["attempt_id"] == new_id
+
+    late_old = [_attempt_clip(0, output_uri, old_id), _attempt_clip(1, output_uri, old_id)]
+    _write_shard(
+        [late_old[1]],
+        output_uri,
+        run_id="run1",
+        rank=1,
+        node_count=2,
+        variant_total=2,
+        storage_client=storage,
+        attempt_id=old_id,
+        scheduler_fence_sequence=3,
+        scheduler_fence_attempt=1,
+        scheduler_launch_id="failed-managed-job",
+        logical_wave_id="same-managed-task-and-wave",
+        publication_generation=old_generation,
+    )
+    with pytest.raises(RuntimeError, match="fence|superseded"):
+        tx.write_run_manifest(
+            late_old,
+            output_uri,
+            run_id="run1",
+            node_count=2,
+            attempt_id=old_id,
+            publication_claim_etag=old_etag,
+            publication_generation=old_generation,
+            storage_client=storage,
+        )
+
+    for rank in (0, 1):
+        _write_shard(
+            [_attempt_clip(rank, output_uri, new_id)],
+            output_uri,
+            run_id="run1",
+            rank=rank,
+            node_count=2,
+            variant_total=2,
+            storage_client=storage,
+            attempt_id=new_id,
+            scheduler_fence_sequence=3,
+            scheduler_fence_attempt=2,
+            scheduler_launch_id="npa-runtime-retry",
+            logical_wave_id="same-managed-task-and-wave",
+            publication_generation=new_generation,
+        )
+    manifest = tx.merge_shard_manifests(
+        output_uri,
+        run_id="run1",
+        node_count=2,
+        attempt_id=new_id,
+        publication_claim_etag=new_etag,
+        publication_generation=new_generation,
+        storage_client=storage,
+    )
+    assert manifest["status"] == tx.TRANSFER_MANIFEST_STATUS
+    assert manifest["attempt_id"] == new_id
+
+
+def test_publication_claim_refuses_an_unexamined_foreign_manifest() -> None:
+    storage = FakeStorage()
+    uri = "s3://bkt/run1/cosmos_augmented/"
+    canonical = tx.transfer_manifest_uri_for(uri)
+    foreign = {
+        "schema": tx.TRANSFER_MANIFEST_SCHEMA,
+        "mode": tx.TRANSFER_MANIFEST_MODE,
+        "status": tx.TRANSFER_MANIFEST_STATUS,
+        "run_id": "some-other-run",
+    }
+    storage.objects[canonical] = json.dumps(foreign).encode()
+    storage.etags[canonical] = storage._next_etag()
+    with pytest.raises(StorageError, match="unreadable"):
+        tx.claim_run_publication(
+            uri,
+            run_id="run1",
+            logical_wave_id="wave",
+            node_count=2,
+            membership_digest="members",
+            scheduler_fence_sequence=1,
+            scheduler_fence_attempt=1,
+            scheduler_launch_id="job",
+            storage_client=storage,
+        )
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "attempt_id",
+        "publication_generation",
+        "logical_publication",
+        "logical_wave_id",
+        "membership_digest",
+        "scheduler_fence_sequence",
+        "scheduler_fence_attempt",
+        "scheduler_launch_id",
+    ],
+)
+def test_committed_attempt_manifest_requires_the_complete_publication_identity(
+    missing: str,
+) -> None:
+    output_uri = "s3://bkt/run1/cosmos_augmented/"
+    document = {
+        "schema": tx.TRANSFER_MANIFEST_SCHEMA,
+        "mode": tx.TRANSFER_MANIFEST_MODE,
+        "status": tx.TRANSFER_MANIFEST_STATUS,
+        "run_id": "run1",
+        "node_count": 1,
+        "attempt_id": ATTEMPT,
+        "publication_generation": 2,
+        "logical_publication": "conditional",
+        "logical_wave_id": "grade-loop-2",
+        "membership_digest": "single-member",
+        "scheduler_fence_sequence": 3,
+        "scheduler_fence_attempt": 1,
+        "scheduler_launch_id": "job-3",
+        "variant_count": 1,
+        "variants": [
+            {
+                "clip": "aug-run1-0",
+                "variant_index": 0,
+                "augmented_video_uri": (
+                    f"{output_uri}_attempts/{ATTEMPT}/"
+                    "aug-run1-0/augmented_video.mp4"
+                ),
+            }
+        ],
+    }
+    document.pop(missing)
+
+    with pytest.raises(ValueError, match="publication identity"):
+        tx.validate_committed_run_manifest(document, output_uri)
+
+
+def test_claim_refuses_a_malformed_scheduler_owned_single_node_manifest() -> None:
+    storage = FakeStorage()
+    output_uri = "s3://bkt/run1/cosmos_augmented/"
+    canonical = tx.transfer_manifest_uri_for(output_uri)
+    malformed = {
+        "schema": tx.TRANSFER_MANIFEST_SCHEMA,
+        "mode": tx.TRANSFER_MANIFEST_MODE,
+        "status": tx.TRANSFER_MANIFEST_STATUS,
+        "run_id": "run1",
+        "node_count": 1,
+        "logical_publication": "conditional",
+        "publication_generation": 1,
+        "variant_count": 0,
+        "variants": [],
+    }
+    storage.objects[canonical] = json.dumps(malformed).encode()
+    storage.etags[canonical] = storage._next_etag()
+
+    with pytest.raises(StorageError, match="unexamined publication fence"):
+        tx.claim_run_publication(
+            output_uri,
+            run_id="run1",
+            logical_wave_id="loop-2",
+            node_count=1,
+            membership_digest="single-member",
+            scheduler_fence_sequence=2,
+            scheduler_fence_attempt=1,
+            scheduler_launch_id="job-2",
+            storage_client=storage,
+        )
+
+
+def test_shard_rejects_a_descriptor_outside_its_attempt_prefix() -> None:
+    storage = FakeStorage()
+    clip = _clip(0)
+    clip["augmented_video_uri"] = (
+        "s3://bkt/run1/cosmos_augmented/aug-run1-0/augmented_video.mp4"
+    )
+    with pytest.raises(ValueError, match="attempt-scoped"):
+        tx.write_shard_manifest(
+            [clip],
+            "s3://bkt/run1/cosmos_augmented/",
+            run_id="run1",
+            rank=0,
+            node_count=2,
+            variant_total=1,
+            attempt_id=ATTEMPT,
+            scheduler_fence_sequence=1,
+            scheduler_fence_attempt=1,
+            scheduler_launch_id="test-launch",
+            logical_wave_id="test-wave",
+            publication_generation=1,
+            storage_client=storage,
+        )
+
+
 def test_merge_refuses_duplicate_or_missing_global_variant_indices() -> None:
     storage = FakeStorage()
     output_uri = "s3://bkt/run1/cosmos_augmented/"
@@ -359,7 +1054,8 @@ def test_merge_refuses_duplicate_or_missing_global_variant_indices() -> None:
             output_uri, run_id="run1", node_count=2, storage_client=storage
         )
 
-    assert tx.transfer_manifest_uri_for(output_uri) not in storage.objects
+    partial = json.loads(storage.objects[tx.transfer_manifest_uri_for(output_uri)])
+    assert partial["status"] == tx.PUBLICATION_CLAIM_STATUS
 
 
 def test_merge_fails_naming_the_ranks_that_never_reported() -> None:
@@ -382,7 +1078,8 @@ def test_merge_fails_naming_the_ranks_that_never_reported() -> None:
 
     # A partial manifest is never published: an understated fan-out would look
     # like a successful smaller run to every downstream stage.
-    assert tx.transfer_manifest_uri_for(output_uri) not in storage.objects
+    partial = json.loads(storage.objects[tx.transfer_manifest_uri_for(output_uri)])
+    assert partial["status"] == tx.PUBLICATION_CLAIM_STATUS
 
 
 def test_the_join_keeps_waiting_rather_than_timing_out_a_slow_sibling() -> None:
@@ -448,6 +1145,33 @@ def test_an_operator_can_ask_for_a_join_deadline(
     assert any("timeout=0s" in item for item in diagnostics)
 
 
+def test_shard_join_propagates_storage_permission_failures() -> None:
+    class DeniedStorage(FakeStorage):
+        def read_bytes_with_etag(self, uri: str):
+            if "manifest-rank-1.json" in uri:
+                raise PermissionError("provider denied GetObject")
+            return super().read_bytes_with_etag(uri)
+
+    storage = DeniedStorage()
+    output_uri = "s3://bkt/run1/cosmos_augmented/"
+    _write_shard(
+        [_clip(0)],
+        output_uri,
+        run_id="run1",
+        rank=0,
+        node_count=2,
+        variant_total=2,
+        storage_client=storage,
+    )
+    with pytest.raises(PermissionError, match="provider denied"):
+        _merge_shards(
+            output_uri,
+            run_id="run1",
+            node_count=2,
+            storage_client=storage,
+        )
+
+
 @pytest.mark.parametrize("value", ["nope", "-1", "nan", "inf"])
 def test_invalid_join_timeout_fails_cleanly(
     monkeypatch: pytest.MonkeyPatch, value: str
@@ -498,7 +1222,12 @@ def _multiply_cli(
 
     def fake_publish(transfer, output_uri, **kwargs):
         index = int(kwargs["variant_index"])
-        return _clip(index)
+        clip = _clip(index)
+        clip_name = str(clip["clip"])
+        base = output_uri.rstrip("/")
+        clip["augmented_video_uri"] = f"{base}/{clip_name}/augmented_video.mp4"
+        clip["frames_uri"] = f"{base}/{clip_name}/"
+        return clip
 
     monkeypatch.setattr(tx, "run_cosmos_transfer", fake_run)
     monkeypatch.setattr(tx, "publish_transfer_clip", fake_publish)
@@ -537,6 +1266,23 @@ def test_a_worker_renders_only_its_stride_and_publishes_a_shard(
     monkeypatch.setenv("NPA_COSMOS_NODE_COUNT", "2")
     monkeypatch.setenv("NPA_COSMOS_NODE_RANK", "1")
     monkeypatch.setenv("NPA_COSMOS_ATTEMPT_ID", ATTEMPT)
+    monkeypatch.setattr(
+        cosmos2,
+        "_gang_identity",
+        lambda **_kwargs: (
+            1,
+            2,
+            ATTEMPT,
+            "",
+            1,
+            {
+                "logical_wave_id": "test-wave",
+                "scheduler_fence_sequence": 1,
+                "scheduler_fence_attempt": 1,
+                "scheduler_launch_id": "test-launch",
+            },
+        ),
+    )
 
     result = _invoke_multiply(tmp_path / "configs")
 
@@ -546,7 +1292,10 @@ def test_a_worker_renders_only_its_stride_and_publishes_a_shard(
     # Its GPU pins start at 0: the device index is node-local, not the global one.
     assert sorted(call["cuda_visible_devices"] for call in rendered) == ["0", "1"]
     shard = json.loads(
-        storage.objects["s3://bkt/run1/cosmos_augmented/manifest-rank-1.json"]
+        storage.objects[
+            "s3://bkt/run1/cosmos_augmented/_attempts/"
+            "wave-attempt-1/manifest-rank-1.json"
+        ]
     )
     assert shard["schema"] == tx.SHARD_MANIFEST_SCHEMA
     assert shard["clips"] == ["aug-run1-1", "aug-run1-3"]
@@ -581,6 +1330,26 @@ def test_rank_zero_merges_the_gang_into_one_run_manifest(
         variant_total=4,
         storage_client=storage,
     )
+    claim_etag = _seed_claim(
+        storage, "s3://bkt/run1/cosmos_augmented/", node_count=2
+    )
+    monkeypatch.setattr(
+        cosmos2,
+        "_gang_identity",
+        lambda **_kwargs: (
+            0,
+            2,
+            ATTEMPT,
+            claim_etag,
+            1,
+            {
+                "logical_wave_id": "test-wave",
+                "scheduler_fence_sequence": 1,
+                "scheduler_fence_attempt": 1,
+                "scheduler_launch_id": "test-launch",
+            },
+        ),
+    )
     monkeypatch.setenv("NPA_COSMOS_NODE_COUNT", "2")
     monkeypatch.setenv("NPA_COSMOS_NODE_RANK", "0")
     monkeypatch.setenv("NPA_COSMOS_ATTEMPT_ID", ATTEMPT)
@@ -613,6 +1382,23 @@ def test_an_explicit_local_surplus_rank_reports_an_empty_payload(
     monkeypatch.setenv("NPA_COSMOS_NODE_COUNT", "5")
     monkeypatch.setenv("NPA_COSMOS_NODE_RANK", "4")
     monkeypatch.setenv("NPA_COSMOS_ATTEMPT_ID", ATTEMPT)
+    monkeypatch.setattr(
+        cosmos2,
+        "_gang_identity",
+        lambda **_kwargs: (
+            4,
+            5,
+            ATTEMPT,
+            "",
+            1,
+            {
+                "logical_wave_id": "test-wave",
+                "scheduler_fence_sequence": 1,
+                "scheduler_fence_attempt": 1,
+                "scheduler_launch_id": "test-launch",
+            },
+        ),
+    )
 
     result = _invoke_multiply(tmp_path / "configs")
 
@@ -652,3 +1438,91 @@ def test_single_node_augment_writes_no_shard_and_keeps_todays_manifest(
     assert manifest["variant_count"] == 4
     assert manifest["node_count"] == 1
     assert "shards" not in manifest
+
+
+def test_scheduler_single_node_uses_attempt_prefix_and_conditional_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage = FakeStorage()
+    _multiply_cli(monkeypatch, tmp_path, storage)
+    claim_etag = _seed_claim(
+        storage,
+        "s3://bkt/run1/cosmos_augmented/",
+        node_count=1,
+    )
+    monkeypatch.setattr(
+        cosmos2,
+        "_gang_identity",
+        lambda **_kwargs: (
+            0,
+            1,
+            ATTEMPT,
+            claim_etag,
+            1,
+            {
+                "logical_wave_id": "test-wave",
+                "scheduler_fence_sequence": 1,
+                "scheduler_fence_attempt": 1,
+                "scheduler_launch_id": "test-launch",
+            },
+        ),
+    )
+
+    result = _invoke_multiply(tmp_path / "configs")
+
+    assert result.exit_code == 0, result.output
+    manifest = json.loads(
+        storage.objects["s3://bkt/run1/cosmos_augmented/manifest.json"]
+    )
+    assert manifest["attempt_id"] == ATTEMPT
+    assert manifest["scheduler_fence_sequence"] == 1
+    assert all(
+        uri.startswith(
+            "s3://bkt/run1/cosmos_augmented/_attempts/wave-attempt-1/"
+        )
+        for uri in manifest["augmented_videos"]
+    )
+
+
+def test_late_single_node_finalization_is_fenced_by_the_next_loop() -> None:
+    storage = FakeStorage()
+    output_uri = "s3://bkt/run1/cosmos_augmented/"
+    old_id, old_etag, old_generation = tx.claim_run_publication(
+        output_uri,
+        run_id="run1",
+        logical_wave_id="loop-1",
+        node_count=1,
+        membership_digest="single-old",
+        scheduler_fence_sequence=1,
+        scheduler_fence_attempt=1,
+        scheduler_launch_id="old-launch",
+        storage_client=storage,
+        nonce_factory=lambda: "old-single-node-nonce",
+    )
+    new_id, _new_etag, _new_generation = tx.claim_run_publication(
+        output_uri,
+        run_id="run1",
+        logical_wave_id="loop-2",
+        node_count=1,
+        membership_digest="single-new",
+        scheduler_fence_sequence=2,
+        scheduler_fence_attempt=1,
+        scheduler_launch_id="new-launch",
+        storage_client=storage,
+        nonce_factory=lambda: "new-single-node-nonce",
+    )
+
+    with pytest.raises(RuntimeError, match="superseded|fence"):
+        tx.write_run_manifest(
+            [_attempt_clip(0, output_uri, old_id)],
+            output_uri,
+            run_id="run1",
+            storage_client=storage,
+            node_count=1,
+            attempt_id=old_id,
+            publication_claim_etag=old_etag,
+            publication_generation=old_generation,
+        )
+    canonical = json.loads(storage.objects[tx.transfer_manifest_uri_for(output_uri)])
+    assert canonical["attempt_id"] == new_id
+    assert canonical["status"] == tx.PUBLICATION_CLAIM_STATUS

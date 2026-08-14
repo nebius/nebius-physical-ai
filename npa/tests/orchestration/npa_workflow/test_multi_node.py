@@ -303,6 +303,8 @@ def test_paidf_augment_scales_from_one_pod_to_a_gang(monkeypatch: pytest.MonkeyP
     assert gang["num_nodes"] == 4
     assert gang["envs"]["NPA_COSMOS_NODE_COUNT"] == "4"
     assert gang["envs"]["NPA_WORKFLOW_ATTEMPT_ID"]
+    assert gang["envs"]["NPA_WORKFLOW_FENCE_SEQUENCE"] == "1"
+    assert gang["envs"]["NPA_WORKFLOW_FENCE_ATTEMPT"] == "1"
     assert "num_nodes" not in gang["resources"]
 
     # A second grade-loop launch of the same state/run gets a different

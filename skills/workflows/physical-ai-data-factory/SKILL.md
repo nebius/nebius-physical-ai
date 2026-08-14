@@ -84,25 +84,37 @@ node. Validation requires `augment_nodes <= n_augmentations`, so surplus GPU wor
 fail before provisioning. `num_nodes` accepts a `{{config.*}}` token on any profile,
 resolved against the `--var`-merged config. Existing clusters also receive a read-only
 submit-time snapshot check for enough distinct, Ready, schedulable, product-compatible
-nodes after active pod GPU requests are subtracted.
+nodes after active pod GPU, CPU, memory, init-container, and pod-overhead requests
+are subtracted. An active unbound GPU pod makes shared placement indeterminate and
+fails this check; task-profile node selectors and required node affinity are applied.
 
 SkyPilot runs the *same* augment command in every pod of the gang, so the stage
 shards: node `k` of `N` renders variants `k, k+N, …` (striding keeps the nodes within
-one variant of each other) with node-local GPU pins, publishes those clip dirs under
-global variant indices (so clip names stay disjoint), and writes
-`cosmos_augmented/manifest-rank-<k>.json`. **Rank 0 is the join**: it waits for all N
-shards and merges them into the usual `cosmos_augmented/manifest.json` in sampled
+one variant of each other) with node-local GPU pins and publishes clips plus
+`manifest-rank-<k>.json` under
+`cosmos_augmented/_attempts/<attempt-id>/`. **Rank 0 is the join**: it waits for all N
+current-attempt shards and conditionally commits the usual
+`cosmos_augmented/manifest.json` in sampled
 combo order, adding `node_count` and a per-rank `shards` block; a rank that never
 reports fails the stage by name instead of publishing an understated fan-out. That
 wait has no default deadline — a sibling's remaining work is however long its
 diffusions take. It periodically reports elapsed time and missing/received ranks;
 `NPA_COSMOS_SHARD_JOIN_TIMEOUT_S` opts into a visible deterministic deadline for a
-live-but-hung sibling. Each shard also carries a scheduler/runtime attempt identity,
-so loop iterations and managed-job recovery cannot accept a prior attempt. Shard
-manifests are objects at the augment prefix root, never a subdirectory — every
-consumer (`curate`, `finalize`, the evaluator, provenance) treats a subdirectory
-there as a scenario variant. With `augment_nodes=1` no shard file is written and the
-artifact set is exactly what it was before.
+live-but-hung sibling. The rank-0 identity rendezvous is also unbounded by default;
+`NPA_COSMOS_IDENTITY_TIMEOUT_S` is its separate explicit opt-in bound. SkyPilot
+0.12.2 intentionally preserves its task id across managed recovery and exposes no
+globally ordered recovery epoch to the workload. The durable NPA runtime therefore
+pre-issues an ordered wave-sequence/explicit-attempt fence. Rank 0 may claim only
+that token and shares its fresh attempt id with the exact ordered gang. An inner
+SkyPilot recovery retains the token and cannot supersede an existing same-token
+claim; it may safely become the first claimant if the prior worker died before
+claiming. A configured NPA retry gets a higher token after the prior job is terminal. Final publication is
+compare-and-swap fenced by that claim, so a late old worker stays beneath its old
+attempt prefix and an escaped old leader cannot replace the newer canonical claim.
+Downstream consumers follow only the executed canonical manifest, never enumerate
+`_attempts/`. With `augment_nodes=1` no shard file is written, but the scheduler
+claim, attempt-private clip prefix, and conditional canonical commit still fence a
+late process from a prior loop or recovery.
 
 Cosmos Transfer 2.5 itself also supports `torchrun --nproc_per_node=N` context
 parallelism for *one* clip; NPA does not use it, because one-variant-per-GPU gives a
@@ -468,9 +480,10 @@ npa workbench cosmos-curate curate-videos --input-dir ./clips --output-dir ./cur
   `publish_transfer_to_s3` uploads the real Cosmos Transfer 2.5 result in the
   **per-clip** layout the consumers require:
   `cosmos_augmented/<clip>/{augmented_video.mp4, frame-*.png, metadata.json}`
-  plus a run-level `cosmos_augmented/manifest.json` (and, for a multi-node augment,
-  one `manifest-rank-<k>.json` per node beside it).   `curate` counts clip
-  subdirs (not top-level files) and `build_run_rrd` reads each clip's
+  plus a run-level `cosmos_augmented/manifest.json`. Every scheduler-managed
+  augment puts its clip dirs below `_attempts/<attempt-id>/`; a multi-node augment
+  also puts `manifest-rank-<k>.json` there. Consumers resolve only variants named
+  by the executed canonical manifest. `build_run_rrd` reads each selected clip's
   `metadata.json` for its Rerun label. Producer and consumers share this shape;
 - **Real FiftyOne curation:** the `curate` stage invokes
   `workbench.fiftyone.curate_augmented` in the `npa-fiftyone` image with

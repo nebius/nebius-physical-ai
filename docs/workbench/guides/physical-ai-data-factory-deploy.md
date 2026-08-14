@@ -723,7 +723,10 @@ blueprint. `deployIfAbsent` provisions a cluster with at least that many GPU nod
 and validation requires `augment_nodes <= n_augmentations`. For an existing
 cluster, submit reads the explicitly selected Kubernetes context and requires that
 many distinct Ready, schedulable, product-compatible nodes after subtracting active
-pod GPU requests. This is an instantaneous preflight snapshot, not a reservation.
+pod GPU, CPU, memory, init-container, and pod-overhead requests and applying the
+profile's node selector/required node affinity plus SkyPilot's node allowlist. An
+active unbound GPU pod makes shared placement indeterminate and fails closed. This
+is an instantaneous preflight snapshot, not a reservation.
 
 ```bash
 # 16 variants: 4 nodes x 4 GPUs, all rendering at once.
@@ -745,25 +748,41 @@ How the nodes divide the work and rejoin:
   `configs/manifest.json`. Node `k` of `N` renders variants `k, k+N, k+2N, …`
   (striding, so the nodes stay within one variant of each other) and pins each of
   its own concurrent renders to a local GPU starting at 0.
-- Variant indices are global, so clip names (`aug-<run-id>-<i>`) stay disjoint and
-  every clip dir is written by exactly one node.
-- Each node publishes `cosmos_augmented/manifest-rank-<k>.json`; **rank 0** waits
-  for all `N` shards and merges them into the usual
+- Variant indices are global, so clip names (`aug-<run-id>-<i>`) stay disjoint.
+  Every scheduler-managed wave attempt, including the one-node default, writes only below
+  `cosmos_augmented/_attempts/<attempt-id>/`, and every clip dir there is written
+  by exactly one node.
+- Each node publishes its attempt-private `manifest-rank-<k>.json`; **rank 0**
+  waits for all `N` current-attempt shards and conditionally commits the usual
   `cosmos_augmented/manifest.json`, ordered by variant index, with `node_count` and
   a per-rank `shards` block added. A rank that never reports is a hard failure that
-  names it — the run manifest never quietly understates the fan-out.
+  names it — the canonical run manifest remains `publishing` rather than quietly
+  understating the fan-out.
 - That join waits as long as the slowest sibling needs. It carries no default
   deadline, because a sibling's remaining work is however long its diffusions take,
   and periodically reports elapsed time plus missing and received ranks. Export
   `NPA_COSMOS_SHARD_JOIN_TIMEOUT_S=<seconds>` to give a live-but-hung sibling an
-  explicit deterministic deadline; the failure names the missing ranks. Shards
-  carry the current scheduler wave and SkyPilot launch-incarnation identity, so
-  loop iteration and managed-job recovery reject prior-attempt objects.
-- Downstream stages are unchanged: they enumerate clip dirs, and the shard files
-  are objects at the prefix root rather than a subdirectory, so nothing counts them
-  as a variant.
-- `augment_nodes=1` (the default) writes no shard files and renders exactly as
-  before.
+  explicit deterministic deadline; the failure names the missing ranks.
+- The rank-0 attempt-id rendezvous likewise has no arbitrary default deadline and
+  reports elapsed wait state. `NPA_COSMOS_IDENTITY_TIMEOUT_S=<seconds>` is the
+  separate explicit opt-in bound for a missing leader.
+- SkyPilot 0.12.2 deliberately preserves its task id across managed recovery and
+  exports no globally ordered recovery counter to the workload. The durable NPA
+  runtime therefore issues an ordered `(wave sequence, explicit attempt)` fence
+  before each launch. Rank 0 may claim only that token and shares its attempt id
+  with the exact ordered members. An inner SkyPilot replacement retains the old
+  token and cannot supersede an existing same-token claim; if the prior worker
+  failed before claiming, the replacement may safely be the first claimant. After
+  that job is terminal, an explicitly configured NPA retry receives a higher token. This prevents an
+  escaped old rank 0 from taking over by arriving after the replacement. Final
+  publication remains compare-and-swap fenced, and late workers can write only to
+  their old private prefix.
+- The evaluator, Cosmos Curator, FiftyOne curation/finalize, and Rerun viewer follow
+  only variants named by an `executed` canonical manifest. They never enumerate
+  `_attempts/`, so retained recovery evidence is not counted as a scenario.
+- `augment_nodes=1` (the default) writes no shard files, but it uses the same
+  scheduler claim, attempt-private clip prefix, and conditional canonical commit.
+  A delayed one-node process therefore cannot overwrite a later grade iteration.
 
 Only `augment` is multi-node. Captioning, grading, curation, and visualization are
 CPU/Token-Factory stages that stay a single pod.

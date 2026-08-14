@@ -760,3 +760,59 @@ def test_local_run_needs_no_object_storage_credentials(
         curated_uri=str(tmp_path / "curated"),
     )
     assert report.engine == "unavailable"
+
+
+def test_curator_stages_only_the_manifest_committed_recovery_attempt(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "cosmos_augmented"
+    current = root / "_attempts" / "current" / "aug-current"
+    old = root / "_attempts" / "old" / "aug-old"
+    current.mkdir(parents=True)
+    old.mkdir(parents=True)
+    current_video = current / "augmented_video.mp4"
+    current_video.write_bytes(b"current")
+    (old / "augmented_video.mp4").write_bytes(b"old")
+    (root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema": "npa.cosmos2.transfer.v1",
+                "mode": "cosmos_transfer2.5_gpu",
+                "status": "executed",
+                "node_count": 2,
+                "attempt_id": "current",
+                "scheduler_fence_sequence": 2,
+                "scheduler_fence_attempt": 1,
+                "scheduler_launch_id": "job",
+                "publication_generation": 2,
+                "logical_publication": "conditional",
+                "logical_wave_id": "grade-loop-2",
+                "membership_digest": "current-members",
+                "variant_count": 1,
+                "variants": [
+                    {
+                        "clip": "aug-current",
+                        "variant_index": 0,
+                        "augmented_video_uri": str(current_video),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    staged = tmp_path / "staged"
+
+    variants = report_mod._stage_variants(
+        str(root), staged, store=object(), max_variants=0, warnings=[]
+    )
+    assert variants == {"aug-current": "aug-current"}
+    assert (staged / "aug-current.mp4").read_bytes() == b"current"
+
+
+def test_curator_refuses_attempt_layout_without_canonical_manifest(tmp_path: Path) -> None:
+    root = tmp_path / "cosmos_augmented"
+    (root / "_attempts" / "orphan" / "clip").mkdir(parents=True)
+    with pytest.raises(CosmosCurateError, match="without a valid canonical"):
+        report_mod._stage_variants(
+            str(root), tmp_path / "staged", store=object(), max_variants=0, warnings=[]
+        )

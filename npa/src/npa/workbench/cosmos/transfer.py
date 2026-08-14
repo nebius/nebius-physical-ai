@@ -16,8 +16,11 @@ on :func:`cosmos_transfer_available` and fall back to their descriptor path.
 from __future__ import annotations
 
 import glob
+import hashlib
 import logging
 import os
+import re
+import secrets
 import shutil
 import subprocess
 from pathlib import Path
@@ -57,14 +60,26 @@ TRANSFER_MANIFEST_FILENAME = "manifest.json"
 TRANSFER_MANIFEST_SCHEMA = "npa.cosmos2.transfer.v1"
 TRANSFER_MANIFEST_MODE = "cosmos_transfer2.5_gpu"
 TRANSFER_MANIFEST_STATUS = "executed"
-# Multi-node augment: each node of a gang-scheduled block publishes its own clips
-# and one shard manifest, then rank 0 merges the shards into the run manifest.
-# Shard manifests are FILES at the augment prefix root (never a subdirectory):
-# every consumer -- data_factory_stages.curate/finalize, the Cosmos Evaluator, the
-# provenance reader -- treats a subdirectory of that prefix as a clip, so a
-# `shards/` dir would be counted as a bogus variant.
+# Scheduler-managed augment: each wave attempt publishes only below its opaque
+# ``_attempts/<attempt-id>/`` prefix. The leader conditionally replaces the
+# canonical manifest (after joining shards for a gang); consumers follow only it.
 SHARD_MANIFEST_PREFIX = "manifest-rank-"
 SHARD_MANIFEST_SCHEMA = "npa.cosmos2.transfer_shard.v1"
+PUBLICATION_CLAIM_STATUS = "publishing"
+PUBLICATION_GENERATION_FIELD = "publication_generation"
+ATTEMPT_PREFIX = "_attempts"
+SCHEDULER_PUBLICATION_IDENTITY_FIELDS = frozenset(
+    {
+        "attempt_id",
+        PUBLICATION_GENERATION_FIELD,
+        "logical_publication",
+        "logical_wave_id",
+        "membership_digest",
+        "scheduler_fence_sequence",
+        "scheduler_fence_attempt",
+        "scheduler_launch_id",
+    }
+)
 AUGMENTED_FRAMES_INDEX = "index.json"
 AUGMENTED_FRAMES_SCHEMA = "npa.sim2real.augmented_frames.v1"
 REFERENCE_AUGMENT_MODE = "reference_augment"
@@ -552,6 +567,7 @@ def publish_transfer_clip(
     if not output_uri.startswith("s3://"):
         raise ValueError(f"output_uri must be an s3:// prefix, got: {output_uri!r}")
     from npa.clients.storage import StorageClient
+    import tempfile as _tempfile
 
     client = storage_client or StorageClient.from_environment()
     base = output_uri if output_uri.endswith("/") else output_uri + "/"
@@ -563,7 +579,6 @@ def publish_transfer_clip(
     video_uri = f"{clip_base}augmented_video.mp4"
 
     import json as _json
-    import tempfile as _tempfile
 
     # This publish path only runs after the REAL Cosmos Transfer 2.5 model
     # executed on GPU, so record the GPU mode (kept in sync with the provenance
@@ -655,7 +670,9 @@ def publish_transfer_clip(
                     "error_type": type(exc).__name__,
                 }
             else:
-                control_evidence = {"status": "published"}
+                control_evidence = {
+                    "status": "published" if control_uris else "missing"
+                }
             clip_meta["control_uris"] = control_uris
             clip_meta["control_evidence"] = control_evidence
             try:
@@ -762,6 +779,313 @@ def _upload_json(client: Any, document: dict[str, Any], uri: str) -> str:
         return client.upload_file(str(local), uri)
 
 
+def _json_bytes(document: dict[str, Any]) -> bytes:
+    import json as _json
+
+    return (_json.dumps(document, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def _validated_attempt_id(attempt_id: str) -> str:
+    normalized = str(attempt_id or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", normalized):
+        raise ValueError(
+            "multi-node attempt_id must contain 1-128 letters, digits, '.', '_', or '-'"
+        )
+    return normalized
+
+
+def attempt_output_uri_for(output_uri: str, attempt_id: str) -> str:
+    """Return the private object prefix for one gang recovery generation."""
+
+    return (
+        f"{output_uri.rstrip('/')}/{ATTEMPT_PREFIX}/"
+        f"{_validated_attempt_id(attempt_id)}"
+    )
+
+
+def validate_committed_run_manifest(
+    document: Any, output_uri: str = ""
+) -> list[dict[str, Any]]:
+    """Validate the canonical consumer contract and return its variants.
+
+    The canonical document is a security/correctness boundary: recovery leaves
+    older generations below ``_attempts/``, so consumers must never infer a
+    generation by listing. Every referenced generated video is constrained to
+    this augment root and, for an attempt publication, its exact opaque prefix.
+    """
+
+    if not isinstance(document, dict):
+        raise ValueError("canonical Cosmos augment manifest is not an object")
+    if not (
+        document.get("schema") == TRANSFER_MANIFEST_SCHEMA
+        and document.get("mode") == TRANSFER_MANIFEST_MODE
+        and document.get("status") == TRANSFER_MANIFEST_STATUS
+    ):
+        raise ValueError(
+            "canonical Cosmos augment manifest has an invalid schema, mode, or status"
+        )
+    variants = document.get("variants")
+    if not isinstance(variants, list) or int(document.get("variant_count", -1)) != len(
+        variants
+    ):
+        raise ValueError("canonical Cosmos augment manifest has inconsistent variants")
+    attempt_id = str(document.get("attempt_id") or "").strip()
+    try:
+        node_count = int(document.get("node_count", 1) or 1)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("canonical Cosmos augment manifest has invalid node_count") from exc
+    if node_count < 1:
+        raise ValueError("canonical Cosmos augment manifest has invalid node_count")
+    scheduler_owned = node_count > 1 or any(
+        field in document for field in SCHEDULER_PUBLICATION_IDENTITY_FIELDS
+    )
+    if scheduler_owned and not attempt_id:
+        raise ValueError(
+            "scheduler-fenced Cosmos augment manifest has incomplete publication identity"
+        )
+    if attempt_id:
+        _validated_attempt_id(attempt_id)
+        try:
+            fence = (
+                int(document.get("scheduler_fence_sequence", 0)),
+                int(document.get("scheduler_fence_attempt", 0)),
+            )
+            publication_generation = int(
+                document.get(PUBLICATION_GENERATION_FIELD, 0)
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "scheduler-fenced Cosmos augment manifest has invalid publication identity"
+            ) from exc
+        required_text = {
+            "logical_wave_id": str(document.get("logical_wave_id") or "").strip(),
+            "membership_digest": str(document.get("membership_digest") or "").strip(),
+            "scheduler_launch_id": str(
+                document.get("scheduler_launch_id") or ""
+            ).strip(),
+        }
+        if (
+            min(fence) < 1
+            or publication_generation < 1
+            or document.get("logical_publication") != "conditional"
+            or not all(required_text.values())
+        ):
+            raise ValueError(
+                "scheduler-fenced Cosmos augment manifest has incomplete publication identity"
+            )
+    root = output_uri.rstrip("/") + "/" if output_uri else ""
+    if not root and variants:
+        first_video = str(variants[0].get("augmented_video_uri") or "")
+        if attempt_id:
+            marker = f"/{ATTEMPT_PREFIX}/{attempt_id}/"
+            if marker in first_video:
+                root = first_video.split(marker, 1)[0] + "/"
+        else:
+            marker = "/cosmos_augmented/"
+            if marker in first_video:
+                root = first_video.split(marker, 1)[0] + marker
+    if not root:
+        raise ValueError("canonical Cosmos augment manifest output root is indeterminate")
+    expected_prefix = (
+        f"{root.rstrip('/')}/{ATTEMPT_PREFIX}/{attempt_id}/"
+        if attempt_id
+        else root
+    )
+    seen_clips: set[str] = set()
+    seen_indices: set[int] = set()
+    for index, variant in enumerate(variants):
+        if not isinstance(variant, dict):
+            raise ValueError("canonical Cosmos augment manifest has an invalid variant")
+        clip = str(variant.get("clip") or "").strip()
+        video_uri = str(variant.get("augmented_video_uri") or "").strip()
+        try:
+            variant_index = int(variant.get("variant_index", index))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "canonical Cosmos augment manifest has an invalid variant index"
+            ) from exc
+        if not clip or clip in seen_clips or not video_uri.startswith(expected_prefix):
+            raise ValueError(
+                "canonical Cosmos augment manifest variant is duplicated or outside "
+                "its declared publication prefix"
+            )
+        if variant_index in seen_indices:
+            raise ValueError("canonical Cosmos augment manifest duplicates a variant index")
+        seen_clips.add(clip)
+        seen_indices.add(variant_index)
+        control_uris = variant.get("control_uris") or {}
+        if not isinstance(control_uris, dict):
+            raise ValueError("canonical Cosmos augment manifest control_uris is invalid")
+        if attempt_id and any(
+            f"/{ATTEMPT_PREFIX}/{attempt_id}/" not in str(uri or "")
+            for uri in control_uris.values()
+        ):
+            raise ValueError(
+                "canonical Cosmos augment manifest references control evidence from "
+                "another attempt"
+            )
+    if seen_indices != set(range(len(variants))):
+        raise ValueError("canonical Cosmos augment manifest has incomplete variant indices")
+    return variants
+
+
+def claim_run_publication(
+    output_uri: str,
+    *,
+    run_id: str,
+    logical_wave_id: str,
+    node_count: int,
+    membership_digest: str,
+    scheduler_fence_sequence: int,
+    scheduler_fence_attempt: int,
+    scheduler_launch_id: str,
+    storage_client: Any = None,
+    nonce_factory: Any = None,
+) -> tuple[str, str, int]:
+    """Atomically claim the canonical manifest for a scheduler wave attempt.
+
+    The durable NPA workflow scheduler supplies the ordered ``(sequence,
+    attempt)`` fence before launch. Workload arrival order is never treated as
+    authority: a lower/equal token cannot supersede the canonical document. A
+    cryptographic nonce keeps the attempt prefix unguessably distinct. The
+    returned ETag is the final-publication fence: only a merge whose claim is
+    still current may replace the ``publishing`` document with ``executed``.
+
+    Stock SkyPilot 0.12.2 does not expose a globally ordered recovery identity to
+    workloads. An inner managed recovery therefore retains the same scheduler
+    token and fails closed here. The NPA runtime may submit an explicit retry
+    with a higher attempt token after the prior managed job is terminal.
+    """
+
+    if not output_uri.startswith("s3://"):
+        raise ValueError(f"output_uri must be an s3:// prefix, got: {output_uri!r}")
+    logical_wave = str(logical_wave_id or "").strip()
+    if not logical_wave:
+        raise ValueError("scheduler publication claim requires a logical wave id")
+    members = str(membership_digest or "").strip()
+    if not members:
+        raise ValueError("scheduler publication claim requires a membership digest")
+    expected_nodes = int(node_count)
+    if expected_nodes < 1:
+        raise ValueError("scheduler publication claim requires at least one node")
+    fence = (int(scheduler_fence_sequence), int(scheduler_fence_attempt))
+    if min(fence) < 1:
+        raise ValueError("publication claim requires a positive scheduler fence")
+    launch_id = str(scheduler_launch_id or "").strip()
+    if not launch_id:
+        raise ValueError("publication claim requires a scheduler launch id")
+
+    from npa.clients.storage import (
+        StorageClient,
+        StorageError,
+        StoragePreconditionFailed,
+    )
+
+    client = storage_client or StorageClient.from_environment()
+    canonical_uri = transfer_manifest_uri_for(output_uri)
+    current = client.read_bytes_with_etag(canonical_uri)
+    prior_generation = 0
+    prior_fence = (0, 0)
+    expected_etag = ""
+    if current is not None:
+        raw, expected_etag = current
+        try:
+            import json as _json
+
+            document = _json.loads(raw.decode("utf-8"))
+            if not isinstance(document, dict):
+                raise TypeError("manifest is not an object")
+            if not (
+                document.get("schema") == TRANSFER_MANIFEST_SCHEMA
+                and document.get("mode") == TRANSFER_MANIFEST_MODE
+                and document.get("status")
+                in {TRANSFER_MANIFEST_STATUS, PUBLICATION_CLAIM_STATUS}
+                and str(document.get("run_id") or "") == str(run_id or "")
+            ):
+                raise ValueError("manifest identity is contradictory")
+            prior_generation = int(document.get(PUBLICATION_GENERATION_FIELD, 0) or 0)
+            prior_node_count = int(document.get("node_count", 1) or 1)
+            scheduler_owned = prior_node_count > 1 or any(
+                field in document
+                for field in SCHEDULER_PUBLICATION_IDENTITY_FIELDS
+            )
+            if scheduler_owned:
+                _validated_attempt_id(str(document.get("attempt_id") or ""))
+                prior_fence = (
+                    int(document.get("scheduler_fence_sequence", 0)),
+                    int(document.get("scheduler_fence_attempt", 0)),
+                )
+                required = (
+                    prior_generation >= 1,
+                    min(prior_fence) >= 1,
+                    bool(str(document.get("logical_wave_id") or "").strip()),
+                    bool(str(document.get("membership_digest") or "").strip()),
+                    bool(str(document.get("scheduler_launch_id") or "").strip()),
+                    document.get("status") != TRANSFER_MANIFEST_STATUS
+                    or document.get("logical_publication") == "conditional",
+                )
+                if not all(required):
+                    raise ValueError(
+                        "prior scheduler publication has incomplete identity"
+                    )
+        except (UnicodeDecodeError, TypeError, ValueError) as exc:
+            raise StorageError(
+                f"canonical transfer manifest is unreadable at {canonical_uri}; "
+                "refusing to replace an unexamined publication fence"
+            ) from exc
+        if prior_generation < 0:
+            raise StorageError(
+                f"canonical transfer manifest has an invalid publication generation "
+                f"at {canonical_uri}"
+            )
+        if fence <= prior_fence:
+            raise RuntimeError(
+                "scheduler publication claim is stale or duplicates an existing "
+                f"scheduler fence (requested={fence}, current={prior_fence}); "
+                "transparent SkyPilot recovery is fenced until the NPA runtime "
+                "issues a higher retry token"
+            )
+    generation = prior_generation + 1
+    make_nonce = nonce_factory or (lambda: secrets.token_hex(32))
+    nonce = str(make_nonce() or "").strip()
+    if len(nonce) < 16:
+        raise ValueError("publication nonce must contain at least 16 characters")
+    attempt_material = (
+        f"{logical_wave}\0{fence[0]}\0{fence[1]}\0{members}\0{launch_id}\0{nonce}"
+    ).encode("utf-8")
+    attempt_id = hashlib.sha256(attempt_material).hexdigest()
+    claim = {
+        "schema": TRANSFER_MANIFEST_SCHEMA,
+        "mode": TRANSFER_MANIFEST_MODE,
+        "status": PUBLICATION_CLAIM_STATUS,
+        "run_id": run_id,
+        "attempt_id": attempt_id,
+        "logical_wave_id": logical_wave,
+        PUBLICATION_GENERATION_FIELD: generation,
+        "node_count": expected_nodes,
+        "membership_digest": members,
+        "scheduler_fence_sequence": fence[0],
+        "scheduler_fence_attempt": fence[1],
+        "scheduler_launch_id": launch_id,
+        "variant_count": 0,
+        "variants": [],
+    }
+    try:
+        claim_etag = client.put_bytes_conditional(
+            _json_bytes(claim),
+            canonical_uri,
+            if_match=expected_etag,
+            if_none_match=not expected_etag,
+            content_type="application/json",
+        )
+    except StoragePreconditionFailed as exc:
+        raise RuntimeError(
+            "scheduler publication claim was superseded before GPU work; "
+            "refusing to race another recovery generation"
+        ) from exc
+    return attempt_id, claim_etag, generation
+
+
 def build_run_manifest(
     clips: list[dict[str, Any]],
     *,
@@ -847,6 +1171,8 @@ def write_run_manifest(
     node_count: int = 1,
     shards: list[dict[str, Any]] | None = None,
     attempt_id: str = "",
+    publication_claim_etag: str = "",
+    publication_generation: int = 0,
 ) -> dict[str, Any]:
     """Write the run-level ``cosmos_augmented/manifest.json`` listing every clip
     produced by the (possibly multi-variant) augment stage; return the manifest.
@@ -860,6 +1186,21 @@ def write_run_manifest(
         raise ValueError(f"output_uri must be an s3:// prefix, got: {output_uri!r}")
     from npa.clients.storage import StorageClient
 
+    expected = max(1, int(node_count or 1))
+    conditional_parts = (
+        bool(publication_claim_etag),
+        int(publication_generation) > 0,
+        bool(str(attempt_id or "").strip()),
+    )
+    if expected > 1 and not all(conditional_parts):
+        raise ValueError(
+            "multi-node shard merge requires the rank-0 publication claim fence"
+        )
+    if any(conditional_parts) and not all(conditional_parts):
+        raise ValueError(
+            "conditional run publication requires attempt_id, claim ETag, and "
+            "positive generation together"
+        )
     client = storage_client or StorageClient.from_environment()
     manifest = build_run_manifest(
         clips,
@@ -869,14 +1210,78 @@ def write_run_manifest(
         shards=shards,
         attempt_id=attempt_id,
     )
-    _upload_json(client, manifest, transfer_manifest_uri_for(output_uri))
+    if publication_claim_etag:
+        if not attempt_id or int(publication_generation) < 1:
+            raise ValueError(
+                "conditional run publication requires attempt_id and positive generation"
+            )
+        manifest[PUBLICATION_GENERATION_FIELD] = int(publication_generation)
+        manifest["logical_publication"] = "conditional"
+        from npa.clients.storage import StoragePreconditionFailed
+
+        current = client.read_bytes_with_etag(transfer_manifest_uri_for(output_uri))
+        try:
+            import json as _json
+
+            current_document = (
+                _json.loads(current[0].decode("utf-8")) if current is not None else {}
+            )
+        except (UnicodeDecodeError, TypeError, ValueError) as exc:
+            raise RuntimeError(
+                "multi-node publication fence is unreadable before finalization"
+            ) from exc
+        if not (
+            current is not None
+            and current[1] == publication_claim_etag
+            and isinstance(current_document, dict)
+            and current_document.get("status") == PUBLICATION_CLAIM_STATUS
+            and str(current_document.get("attempt_id") or "") == str(attempt_id)
+            and str(current_document.get("run_id") or "") == str(run_id or "")
+            and int(current_document.get("node_count", 0) or 0)
+            == int(node_count)
+            and int(current_document.get(PUBLICATION_GENERATION_FIELD, 0) or 0)
+            == int(publication_generation)
+        ):
+            raise RuntimeError(
+                "multi-node augment publication fence is absent, contradictory, "
+                "or already superseded"
+            )
+        for field in (
+            "logical_wave_id",
+            "membership_digest",
+            "scheduler_fence_sequence",
+            "scheduler_fence_attempt",
+            "scheduler_launch_id",
+        ):
+            value = current_document.get(field)
+            if value in (None, ""):
+                raise RuntimeError(
+                    f"multi-node publication claim is missing required {field}"
+                )
+            manifest[field] = value
+
+        try:
+            client.put_bytes_conditional(
+                _json_bytes(manifest),
+                transfer_manifest_uri_for(output_uri),
+                if_match=str(publication_claim_etag),
+                content_type="application/json",
+            )
+        except StoragePreconditionFailed as exc:
+            raise RuntimeError(
+                "multi-node augment publication was fenced by a newer recovery "
+                f"attempt; refusing to publish stale attempt {attempt_id}"
+            ) from exc
+    else:
+        _upload_json(client, manifest, transfer_manifest_uri_for(output_uri))
     return manifest
 
 
-def shard_manifest_uri_for(output_uri: str, rank: int) -> str:
+def shard_manifest_uri_for(output_uri: str, rank: int, *, attempt_id: str) -> str:
     """Return the shard-manifest URI one node of a gang-scheduled augment writes."""
 
-    return f"{output_uri.rstrip('/')}/{SHARD_MANIFEST_PREFIX}{int(rank)}.json"
+    attempt_uri = attempt_output_uri_for(output_uri, attempt_id)
+    return f"{attempt_uri}/{SHARD_MANIFEST_PREFIX}{int(rank)}.json"
 
 
 def write_shard_manifest(
@@ -889,6 +1294,11 @@ def write_shard_manifest(
     variant_parallelism: int = 1,
     variant_total: int = 0,
     attempt_id: str,
+    scheduler_fence_sequence: int,
+    scheduler_fence_attempt: int,
+    scheduler_launch_id: str,
+    logical_wave_id: str,
+    publication_generation: int,
     storage_client: Any = None,
 ) -> dict[str, Any]:
     """Publish ONE node's share of a multi-node augment as a shard manifest.
@@ -903,15 +1313,35 @@ def write_shard_manifest(
     from npa.clients.storage import StorageClient
 
     client = storage_client or StorageClient.from_environment()
-    normalized_attempt_id = str(attempt_id or "").strip()
-    if not normalized_attempt_id:
-        raise ValueError("multi-node shard manifest requires a non-empty attempt_id")
+    normalized_attempt_id = _validated_attempt_id(attempt_id)
+    fence = (int(scheduler_fence_sequence), int(scheduler_fence_attempt))
+    launch_id = str(scheduler_launch_id or "").strip()
+    logical_wave = str(logical_wave_id or "").strip()
+    generation = int(publication_generation)
+    if min(fence) < 1 or not launch_id or not logical_wave or generation < 1:
+        raise ValueError("multi-node shard requires the complete scheduler fence")
+    attempt_prefix = attempt_output_uri_for(output_uri, normalized_attempt_id) + "/"
+    invalid_uris = [
+        str(clip.get("augmented_video_uri") or "")
+        for clip in clips
+        if not str(clip.get("augmented_video_uri") or "").startswith(attempt_prefix)
+    ]
+    if invalid_uris:
+        raise ValueError(
+            "multi-node shard descriptors must point inside their attempt-scoped "
+            "output prefix"
+        )
     shard = {
         "schema": SHARD_MANIFEST_SCHEMA,
         "mode": TRANSFER_MANIFEST_MODE,
         "status": TRANSFER_MANIFEST_STATUS,
         "run_id": run_id,
         "attempt_id": normalized_attempt_id,
+        "logical_wave_id": logical_wave,
+        PUBLICATION_GENERATION_FIELD: generation,
+        "scheduler_fence_sequence": fence[0],
+        "scheduler_fence_attempt": fence[1],
+        "scheduler_launch_id": launch_id,
         "rank": int(rank),
         "node_count": max(1, int(node_count or 1)),
         "variant_parallelism": max(1, int(variant_parallelism or 1)),
@@ -920,7 +1350,11 @@ def write_shard_manifest(
         "clips": [c.get("clip", "") for c in clips],
         "clip_descriptors": clips,
     }
-    _upload_json(client, shard, shard_manifest_uri_for(output_uri, rank))
+    _upload_json(
+        client,
+        shard,
+        shard_manifest_uri_for(output_uri, rank, attempt_id=normalized_attempt_id),
+    )
     return shard
 
 
@@ -937,12 +1371,14 @@ def merge_shard_manifests(
     sleep: Any = None,
     monotonic: Any = None,
     progress: Any = None,
+    publication_claim_etag: str = "",
+    publication_generation: int = 0,
 ) -> dict[str, Any]:
     """Wait for every node's shard manifest, then write the run manifest.
 
     Called by rank 0 only. The gang's nodes run the same augment command
     concurrently, so this is the join: it fetches ``manifest-rank-<k>.json`` for
-    every expected rank, orders the clips by their global variant index, and
+    every expected rank from the attempt-private prefix, orders the clips by their global variant index, and
     writes the same ``manifest.json`` a single-node run would have produced. A
     rank that never reports must not become a manifest that silently omits its
     variants.
@@ -957,7 +1393,6 @@ def merge_shard_manifests(
 
     import json as _json
     import math as _math
-    import tempfile as _tempfile
     import time as _time
     import sys as _sys
 
@@ -965,16 +1400,61 @@ def merge_shard_manifests(
         raise ValueError(f"output_uri must be an s3:// prefix, got: {output_uri!r}")
     from npa.clients.storage import StorageClient
 
+    expected = max(1, int(node_count or 1))
+    normalized_attempt_id = _validated_attempt_id(attempt_id)
+    if not publication_claim_etag or int(publication_generation) < 1:
+        raise ValueError(
+            "multi-node shard merge requires the rank-0 publication claim fence"
+        )
     client = storage_client or StorageClient.from_environment()
+    claim_current = client.read_bytes_with_etag(transfer_manifest_uri_for(output_uri))
+    try:
+        claim_document = (
+            _json.loads(claim_current[0].decode("utf-8"))
+            if claim_current is not None
+            else {}
+        )
+    except (UnicodeDecodeError, TypeError, ValueError) as exc:
+        raise RuntimeError("multi-node shard-join fence is unreadable") from exc
+    if not (
+        claim_current is not None
+        and claim_current[1] == publication_claim_etag
+        and isinstance(claim_document, dict)
+        and claim_document.get("schema") == TRANSFER_MANIFEST_SCHEMA
+        and claim_document.get("mode") == TRANSFER_MANIFEST_MODE
+        and claim_document.get("status") == PUBLICATION_CLAIM_STATUS
+        and str(claim_document.get("run_id") or "") == str(run_id or "")
+        and str(claim_document.get("attempt_id") or "") == normalized_attempt_id
+        and int(claim_document.get("node_count", 0) or 0) == expected
+        and int(claim_document.get(PUBLICATION_GENERATION_FIELD, 0) or 0)
+        == int(publication_generation)
+    ):
+        raise RuntimeError(
+            "multi-node shard join has no current authoritative publication fence"
+        )
+    expected_shard_identity = {
+        "logical_wave_id": str(claim_document.get("logical_wave_id") or ""),
+        PUBLICATION_GENERATION_FIELD: int(publication_generation),
+        "scheduler_fence_sequence": int(
+            claim_document.get("scheduler_fence_sequence", 0) or 0
+        ),
+        "scheduler_fence_attempt": int(
+            claim_document.get("scheduler_fence_attempt", 0) or 0
+        ),
+        "scheduler_launch_id": str(claim_document.get("scheduler_launch_id") or ""),
+    }
+    if (
+        not expected_shard_identity["logical_wave_id"]
+        or not expected_shard_identity["scheduler_launch_id"]
+        or int(expected_shard_identity["scheduler_fence_sequence"]) < 1
+        or int(expected_shard_identity["scheduler_fence_attempt"]) < 1
+    ):
+        raise RuntimeError("multi-node publication claim has an incomplete scheduler fence")
     waiter = sleep or _time.sleep
     clock = monotonic or _time.monotonic
     reporter = progress or (
         lambda message: print(message, file=_sys.stderr, flush=True)
     )
-    expected = max(1, int(node_count or 1))
-    normalized_attempt_id = str(attempt_id or "").strip()
-    if not normalized_attempt_id:
-        raise ValueError("multi-node shard merge requires a non-empty attempt_id")
     limit = timeout_s
     if limit is None:
         env_limit = str(os.environ.get("NPA_COSMOS_SHARD_JOIN_TIMEOUT_S", "")).strip()
@@ -999,6 +1479,9 @@ def merge_shard_manifests(
         if not isinstance(document, dict):
             return False
         descriptors = document.get("clip_descriptors")
+        attempt_prefix = (
+            attempt_output_uri_for(output_uri, normalized_attempt_id) + "/"
+        )
         return bool(
             document.get("schema") == SHARD_MANIFEST_SCHEMA
             and document.get("mode") == TRANSFER_MANIFEST_MODE
@@ -1007,60 +1490,69 @@ def merge_shard_manifests(
             and str(document.get("attempt_id") or "") == normalized_attempt_id
             and int(document.get("rank", -1)) == rank
             and int(document.get("node_count", 0)) == expected
+            and all(
+                document.get(field) == value
+                for field, value in expected_shard_identity.items()
+            )
             and isinstance(descriptors, list)
             and int(document.get("variant_count", -1)) == len(descriptors)
+            and all(
+                isinstance(item, dict)
+                and str(item.get("augmented_video_uri") or "").startswith(
+                    attempt_prefix
+                )
+                for item in descriptors
+            )
         )
 
-    with _tempfile.TemporaryDirectory(prefix="npa-cosmos-shard-") as tmp:
-        while True:
-            for rank in range(expected):
-                if rank in shards:
-                    continue
-                # Fetch the exact key rather than listing the prefix: a bucket
-                # listing can lag behind a sibling node's upload.
-                local = Path(tmp) / f"{SHARD_MANIFEST_PREFIX}{rank}.json"
-                try:
-                    client.download_path(
-                        shard_manifest_uri_for(output_uri, rank), str(local)
-                    )
-                except Exception:  # noqa: BLE001 - a rank that is not there yet
-                    continue
-                if not local.is_file():
-                    continue
-                try:
-                    candidate = _json.loads(local.read_text(encoding="utf-8"))
-                    if _is_current_shard(candidate, rank):
-                        shards[rank] = candidate
-                    else:
-                        local.unlink(missing_ok=True)
-                except (TypeError, ValueError):
-                    # A partially visible object: drop it and re-read next pass.
-                    local.unlink(missing_ok=True)
-            if len(shards) == expected:
-                break
-            now = clock()
-            missing = [r for r in range(expected) if r not in shards]
-            if (
-                last_progress is None
-                or now - last_progress >= max(0.0, float(progress_interval_s))
-            ):
-                reporter(
-                    "multi-node augment shard join waiting: "
-                    f"attempt={normalized_attempt_id} missing_ranks={missing} "
-                    f"received_ranks={sorted(shards)} "
-                    f"elapsed={max(0.0, now - started):.1f}s "
-                    f"timeout={'disabled' if limit is None else f'{float(limit):g}s'}"
+    while True:
+        for rank in range(expected):
+            if rank in shards:
+                continue
+            # Fetch the exact key rather than listing the prefix: a bucket listing
+            # can lag behind a sibling upload. ``None`` is the only missing-rank
+            # signal; credentials, endpoint, and permission errors propagate with
+            # their provider evidence instead of becoming an unbounded wait.
+            current = client.read_bytes_with_etag(
+                shard_manifest_uri_for(
+                    output_uri, rank, attempt_id=normalized_attempt_id
                 )
-                last_progress = now
-            if deadline is not None and now >= deadline:
-                raise RuntimeError(
-                    "multi-node augment: no shard manifest from rank(s) "
-                    f"{missing} for attempt {normalized_attempt_id} after "
-                    f"{float(limit or 0):.0f}s at {output_uri}. Those "
-                    "nodes did not finish publishing their variants, so the run "
-                    "manifest would understate the fan-out."
-                )
-            waiter(max(0.1, float(poll_interval_s)))
+            )
+            if current is None:
+                continue
+            try:
+                candidate = _json.loads(current[0].decode("utf-8"))
+                if _is_current_shard(candidate, rank):
+                    shards[rank] = candidate
+            except (UnicodeDecodeError, TypeError, ValueError):
+                # A partial or malformed object is never accepted; retry the same
+                # exact key in case a compatible store exposed an in-flight write.
+                pass
+        if len(shards) == expected:
+            break
+        now = clock()
+        missing = [r for r in range(expected) if r not in shards]
+        if (
+            last_progress is None
+            or now - last_progress >= max(0.0, float(progress_interval_s))
+        ):
+            reporter(
+                "multi-node augment shard join waiting: "
+                f"attempt={normalized_attempt_id} missing_ranks={missing} "
+                f"received_ranks={sorted(shards)} "
+                f"elapsed={max(0.0, now - started):.1f}s "
+                f"timeout={'disabled' if limit is None else f'{float(limit):g}s'}"
+            )
+            last_progress = now
+        if deadline is not None and now >= deadline:
+            raise RuntimeError(
+                "multi-node augment: no shard manifest from rank(s) "
+                f"{missing} for attempt {normalized_attempt_id} after "
+                f"{float(limit or 0):.0f}s at {output_uri}. Those "
+                "nodes did not finish publishing their variants, so the run "
+                "manifest would understate the fan-out."
+            )
+        waiter(max(0.1, float(poll_interval_s)))
 
     totals = {int(shard.get("variant_total", -1)) for shard in shards.values()}
     if len(totals) != 1 or next(iter(totals), -1) < 1:
@@ -1102,6 +1594,8 @@ def merge_shard_manifests(
             for rank, shard in sorted(shards.items())
         ],
         attempt_id=normalized_attempt_id,
+        publication_claim_etag=publication_claim_etag,
+        publication_generation=publication_generation,
     )
 
 
@@ -1310,6 +1804,7 @@ def reference_augment_frames(
 
 
 __all__ = [
+    "ATTEMPT_PREFIX",
     "AUGMENTED_FRAMES_INDEX",
     "AUGMENTED_FRAMES_SCHEMA",
     "CONTROL_MODALITY_MODELS",
@@ -1320,6 +1815,8 @@ __all__ = [
     "INPUT_CONTROLS",
     "REFERENCE_AUGMENT_MODE",
     "REFERENCE_AUGMENT_STATUS",
+    "PUBLICATION_CLAIM_STATUS",
+    "PUBLICATION_GENERATION_FIELD",
     "SHARD_MANIFEST_PREFIX",
     "SHARD_MANIFEST_SCHEMA",
     "TRANSFER_MANIFEST_FILENAME",
@@ -1327,7 +1824,9 @@ __all__ = [
     "TRANSFER_MANIFEST_SCHEMA",
     "TRANSFER_MANIFEST_STATUS",
     "augmented_frames_index_uri_for",
+    "attempt_output_uri_for",
     "build_run_manifest",
+    "claim_run_publication",
     "cosmos_transfer_available",
     "cosmos_transfer_repo",
     "ensure_env",

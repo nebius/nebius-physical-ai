@@ -77,10 +77,13 @@ where NPA substitutes its own endpoint.
 > **Config → augment MULTIPLY.** The `augment` stage receives the Config-Gen
 > manifest via `--configs-uri` and runs **one Cosmos Transfer 2.5 inference per
 > sampled combo**: each combo's prompt drives a distinct appearance, published as
-> its own per-clip dir (`cosmos_augmented/<clip>/`) with its own `metadata.json`
+> its own per-clip dir under the current scheduler-owned
+> `cosmos_augmented/_attempts/<attempt-id>/<clip>/` prefix with its own `metadata.json`
 > `variables` (which drives that clip's Rerun label). So a config with N
 > augmentations produces **N scenario variants**, recorded via `variant_count` /
 > `multiply_mode` in the augment manifest, curation, and finalize reports.
+> Consumers follow only the executed canonical manifest, so artifacts
+> retained from a delayed or recovered prior attempt are never counted.
 > The managed transfer conditions every variant on a supported video under the
 > run's `config.trigger_uri` (`input/`), preserving geometry/motion while changing
 > appearance. `config.augment_control` chooses which structure is preserved:
@@ -341,9 +344,13 @@ readiness. Immediately before each Kubernetes controller launch it requires a
 stable series of API `/readyz` observations using the exact selected context and
 SkyPilot environment. A transient refusal is reconciled first: NPA adopts an
 exact job if the request landed, retries only after authoritative absence, and
-blocks as indeterminate when structured queue evidence is unavailable. A
-recovered launch continues inside the same command; `--resume-run` remains the
-crash/restart recovery contract.
+blocks as indeterminate when structured queue evidence is unavailable.
+Scheduler-managed Cosmos publication is stricter for both one-node and gang
+stages: an inner replacement cannot supersede an existing same-token claim (but
+may safely be the first claimant if the prior worker died before claiming). A
+configured NPA runtime retry receives a higher ordered attempt only after the prior
+managed job is terminal. `--resume-run` remains the driver crash/restart recovery
+contract.
 
 Status, logs, artifacts, and cancel share the same precedence: explicit URI,
 owner-only per-project/run submission receipt, exact canonical PAIDF prefix,

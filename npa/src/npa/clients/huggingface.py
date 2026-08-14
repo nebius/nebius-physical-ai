@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from urllib.parse import quote
+import re
+from urllib.parse import quote, urlparse
 
 import httpx
 
@@ -63,9 +64,10 @@ def validate_hf_file_access(
 ) -> HFAccessResult:
     """Verify one pinned checkpoint path without downloading its bytes.
 
-    Redirects are intentionally not followed: an authenticated 3xx to object
-    storage proves Hugging Face authorized the exact revision/path while keeping
-    the bearer token on the huggingface.co origin.
+    Redirects are intentionally not followed so the bearer token never leaves
+    ``huggingface.co``. Only Hugging Face's artifact-cache and signed-object
+    redirect forms count as access; login, consent, and model-page redirects do
+    not prove authorization for the exact pinned file.
     """
 
     normalized_repo = str(repo or "").strip("/")
@@ -104,13 +106,53 @@ def validate_hf_file_access(
             error=f"checkpoint access probe failed: {type(exc).__name__}",
         )
     status = response.status_code
-    if 200 <= status < 400:
+    if 200 <= status < 300:
         return HFAccessResult(
             repo=normalized_repo,
             revision=normalized_revision,
             filename=normalized_filename,
             ok=True,
             status_code=status,
+        )
+    if status in {301, 302, 303, 307, 308}:
+        location = str(response.headers.get("location") or "").strip()
+        target = urlparse(location)
+        host = str(target.hostname or "").casefold()
+        artifact_cache = bool(
+            not target.scheme
+            and not target.netloc
+            and target.path.startswith("/api/resolve-cache/")
+        )
+        signed_object = bool(
+            target.scheme == "https"
+            and not target.username
+            and not target.password
+            and target.path not in {"", "/"}
+            and bool(target.query)
+            and (
+                re.fullmatch(r"cdn-lfs(?:-[a-z0-9-]+)?\.hf\.co", host)
+                or host == "cas-bridge.xethub.hf.co"
+            )
+        )
+        if location and (artifact_cache or signed_object):
+            return HFAccessResult(
+                repo=normalized_repo,
+                revision=normalized_revision,
+                filename=normalized_filename,
+                ok=True,
+                status_code=status,
+            )
+        error = (
+            "checkpoint access probe returned an untrusted or missing redirect "
+            "target; exact artifact authorization remains unverified"
+        )
+        return HFAccessResult(
+            repo=normalized_repo,
+            revision=normalized_revision,
+            filename=normalized_filename,
+            ok=False,
+            status_code=status,
+            error=error,
         )
     if status in {401, 403}:
         error = (

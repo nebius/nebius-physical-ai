@@ -243,6 +243,7 @@ def test_submit_runtime_passes_options_and_emits_json(
     sky_config.write_text("kubernetes: {}\n", encoding="utf-8")
     sky_bin = tmp_path / "sky"
     sky_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+    sky_bin.chmod(0o755)
     result = RUNNER.invoke(
         app,
         [

@@ -518,8 +518,20 @@ def _validate_executable_resource_contracts(spec: NpaWorkflowSpec) -> None:
             )
         if entry is None or not entry.semantic_contract:
             continue
-        effective_config = dict(spec.config)
-        effective_config.update(state.params)
+        from npa.orchestration.npa_workflow.tokens import TokenError, resolve_value
+
+        effective_config = dict(context.config)
+        try:
+            resolved_params = resolve_value(
+                state.params,
+                config=context.config,
+                run=context.run,
+            )
+        except TokenError as exc:
+            raise NpaWorkflowError(f"state {state.name}: {exc}") from exc
+        if not isinstance(resolved_params, Mapping):  # defensive: params is typed mapping
+            raise NpaWorkflowError(f"state {state.name}: params must resolve to a mapping")
+        effective_config.update(resolved_params)
         if entry.semantic_contract == "cosmos_transfer_control":
             from npa.workbench.cosmos.control_contract import (
                 ControlContractError,

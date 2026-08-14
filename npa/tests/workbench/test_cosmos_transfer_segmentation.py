@@ -465,6 +465,44 @@ def test_control_upload_failure_preserves_completed_generated_variant(
     assert manifest["variant_count"] == 1
 
 
+def test_absent_control_signal_never_claims_evidence_was_published(
+    tmp_path: Path, monkeypatch
+) -> None:
+    video = tmp_path / "out.mp4"
+    video.write_bytes(b"generated")
+
+    def fake_extract(_source: str, dest: Path, *, max_frames: int = 8) -> list[Path]:
+        dest.mkdir(parents=True, exist_ok=True)
+        frame = dest / "frame-00000.png"
+        frame.write_bytes(b"frame")
+        return [frame]
+
+    monkeypatch.setattr(tx, "extract_frames", fake_extract)
+    storage = FakeStorage()
+    clip = tx.publish_transfer_clip(
+        {
+            "video_path": str(video),
+            "video_bytes": video.stat().st_size,
+            "spec": "seg.json",
+            "control": "seg",
+            "control_videos": {"seg": str(tmp_path / "absent.mp4")},
+        },
+        "s3://bkt/run1/cosmos_augmented/",
+        clip_name="aug-run1-0",
+        control_output_uri="s3://bkt/run1/cosmos_control/",
+        require_frames=True,
+        storage_client=storage,
+    )
+    assert clip["control_uris"] == {}
+    assert clip["control_evidence"] == {"status": "missing"}
+    metadata = json.loads(
+        storage.uploads[
+            "s3://bkt/run1/cosmos_augmented/aug-run1-0/metadata.json"
+        ]
+    )
+    assert metadata["control_evidence"] == {"status": "missing"}
+
+
 def test_the_run_manifest_records_what_conditioned_the_batch(
     tmp_path: Path, monkeypatch
 ) -> None:

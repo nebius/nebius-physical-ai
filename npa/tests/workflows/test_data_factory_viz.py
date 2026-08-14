@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
-from npa.workflows.data_factory_viz import DataFactoryVizError, _frame_index, build_run_rrd
+from npa.workflows.data_factory_viz import (
+    DataFactoryVizError,
+    _committed_variant_dirs,
+    _frame_index,
+    build_run_rrd,
+)
 
 
 def _write_png(path: Path, color: tuple[int, int, int]) -> None:
@@ -256,3 +262,49 @@ def test_build_run_rrd_errors_when_no_frames(tmp_path: Path) -> None:
     empty.mkdir()
     with pytest.raises(DataFactoryVizError):
         build_run_rrd(str(empty), str(tmp_path / "reports" / "sim2real.rrd"))
+
+
+def test_visualization_follows_only_committed_attempt_directories(tmp_path: Path) -> None:
+    current = tmp_path / "cosmos_augmented" / "_attempts" / "current" / "aug-1"
+    old = tmp_path / "cosmos_augmented" / "_attempts" / "old" / "aug-1"
+    current.mkdir(parents=True)
+    old.mkdir(parents=True)
+    video = current / "augmented_video.mp4"
+    video.write_bytes(b"current")
+    (tmp_path / "cosmos_augmented" / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema": "npa.cosmos2.transfer.v1",
+                "mode": "cosmos_transfer2.5_gpu",
+                "status": "executed",
+                "node_count": 2,
+                "attempt_id": "current",
+                "scheduler_fence_sequence": 2,
+                "scheduler_fence_attempt": 1,
+                "scheduler_launch_id": "job",
+                "publication_generation": 2,
+                "logical_publication": "conditional",
+                "logical_wave_id": "grade-loop-2",
+                "membership_digest": "current-members",
+                "variant_count": 1,
+                "variants": [
+                    {
+                        "clip": "aug-1",
+                        "variant_index": 0,
+                        "augmented_video_uri": (
+                            "s3://bucket/run/cosmos_augmented/_attempts/"
+                            "current/aug-1/augmented_video.mp4"
+                        ),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert _committed_variant_dirs(tmp_path) == [current]
+
+
+def test_visualization_refuses_attempt_layout_without_manifest(tmp_path: Path) -> None:
+    (tmp_path / "cosmos_augmented" / "_attempts" / "orphan").mkdir(parents=True)
+    with pytest.raises(DataFactoryVizError, match="without a valid canonical"):
+        _committed_variant_dirs(tmp_path)

@@ -328,6 +328,8 @@ def _node(
         committed=1 - free,
         free=free,
         exclusion="" if ready and schedulable else "excluded",
+        allocatable_pods=110,
+        free_pod_slots=110,
     )
 
 
@@ -371,6 +373,43 @@ def test_gang_capacity_subtracts_shared_and_incompatible_capacity() -> None:
         )
 
 
+def test_gang_capacity_subtracts_cpu_and_memory_commitments() -> None:
+    def resourced(name: str, *, cpu: int, memory: int) -> KubernetesGpuNode:
+        return KubernetesGpuNode(
+            **{
+                **_node(name).to_dict(),
+                "products": ("RTXPRO-6000-BLACKWELL-SERVER-EDITION",),
+                "allocatable_cpu_millis": 32_000,
+                "free_cpu_millis": cpu,
+                "allocatable_memory_bytes": 256 * 1024**3,
+                "free_memory_bytes": memory,
+            }
+        )
+
+    inventory = KubernetesGpuInventory(
+        context="exact-context",
+        ready_nodes=3,
+        eligible_gpu_nodes=3,
+        capacity=3,
+        allocatable=3,
+        products=("RTXPRO-6000-BLACKWELL-SERVER-EDITION",),
+        node_labels={},
+        nodes=(
+            resourced("cpu-busy", cpu=8_000, memory=256 * 1024**3),
+            resourced("memory-busy", cpu=32_000, memory=64 * 1024**3),
+            resourced("compatible", cpu=32_000, memory=256 * 1024**3),
+        ),
+    )
+    with pytest.raises(UnsatisfiableAcceleratorError, match="1 distinct compatible"):
+        preflight_kubernetes_gpu_gang(
+            inventory,
+            accelerator="RTXPRO6000:1",
+            node_count=2,
+            cpus=16,
+            memory="128Gi",
+        )
+
+
 def test_gang_capacity_fails_closed_when_pod_inventory_is_unreadable() -> None:
     inventory = KubernetesGpuInventory(
         context="exact-context",
@@ -404,7 +443,12 @@ def test_live_inventory_uses_exact_context_and_subtracts_active_pods() -> None:
                 "status": {
                     "conditions": [{"type": "Ready", "status": "True"}],
                     "capacity": {"nvidia.com/gpu": "2"},
-                    "allocatable": {"nvidia.com/gpu": "2"},
+                    "allocatable": {
+                        "nvidia.com/gpu": "2",
+                        "cpu": "32",
+                        "memory": "64Gi",
+                        "pods": "110",
+                    },
                 },
             }
         ]
@@ -415,11 +459,25 @@ def test_live_inventory_uses_exact_context_and_subtracts_active_pods() -> None:
                 "spec": {
                     "nodeName": "gpu-a",
                     "containers": [
-                        {"resources": {"requests": {"nvidia.com/gpu": "1"}}}
+                        {
+                            "resources": {
+                                "requests": {
+                                    "nvidia.com/gpu": "1",
+                                    "cpu": "8",
+                                    "memory": "16Gi",
+                                }
+                            }
+                        }
                     ],
                     "initContainers": [
-                        {"resources": {"limits": {"nvidia.com/gpu": "2"}}}
+                        {
+                            "resources": {
+                                "requests": {"cpu": "12", "memory": "32Gi"},
+                                "limits": {"nvidia.com/gpu": "2"},
+                            }
+                        }
                     ],
+                    "overhead": {"cpu": "1", "memory": "1Gi"},
                 },
                 "status": {"phase": "Running"},
             },
@@ -431,6 +489,15 @@ def test_live_inventory_uses_exact_context_and_subtracts_active_pods() -> None:
                     ],
                 },
                 "status": {"phase": "Succeeded"},
+            },
+            {
+                "metadata": {"name": "competing-gang-rank"},
+                "spec": {
+                    "containers": [
+                        {"resources": {"requests": {"nvidia.com/gpu": "1"}}}
+                    ]
+                },
+                "status": {"phase": "Pending"},
             },
         ]
     }
@@ -460,3 +527,145 @@ def test_live_inventory_uses_exact_context_and_subtracts_active_pods() -> None:
     ]
     assert inventory.nodes[0].committed == 2
     assert inventory.nodes[0].free == 0
+    assert inventory.nodes[0].committed_cpu_millis == 13_000
+    assert inventory.nodes[0].free_cpu_millis == 19_000
+    assert inventory.nodes[0].committed_memory_bytes == 33 * 1024**3
+    assert inventory.nodes[0].free_memory_bytes == 31 * 1024**3
+    assert inventory.nodes[0].committed_pods == 1
+    assert inventory.nodes[0].free_pod_slots == 109
+    assert inventory.unbound_pending_gpu_pods == 1
+    assert inventory.unbound_pending_gpu_requests == 1
+
+
+def test_gang_capacity_fails_unknown_for_unbound_pending_gpu_demand() -> None:
+    inventory = KubernetesGpuInventory(
+        context="exact-context",
+        ready_nodes=2,
+        eligible_gpu_nodes=2,
+        capacity=2,
+        allocatable=2,
+        products=("RTXPRO-6000-BLACKWELL-SERVER-EDITION",),
+        node_labels={},
+        nodes=(_node("a"), _node("b")),
+        unbound_pending_gpu_pods=1,
+        unbound_pending_gpu_requests=1,
+    )
+
+    with pytest.raises(KubernetesGpuCatalogError, match="active unbound GPU pod"):
+        preflight_kubernetes_gpu_gang(
+            inventory, accelerator="RTXPRO6000:1", node_count=2
+        )
+
+
+def test_gang_capacity_applies_profile_node_selector_and_required_affinity() -> None:
+    def labelled(name: str, zone: str, pool: str) -> KubernetesGpuNode:
+        return KubernetesGpuNode(
+            **{
+                **_node(name).to_dict(),
+                "products": ("RTXPRO-6000-BLACKWELL-SERVER-EDITION",),
+                "labels": (("topology.kubernetes.io/zone", zone), ("pool", pool)),
+            }
+        )
+
+    inventory = KubernetesGpuInventory(
+        context="exact-context",
+        ready_nodes=3,
+        eligible_gpu_nodes=3,
+        capacity=3,
+        allocatable=3,
+        products=("RTXPRO-6000-BLACKWELL-SERVER-EDITION",),
+        node_labels={},
+        nodes=(
+            labelled("a", "central-a", "shared"),
+            labelled("b", "central-b", "owned"),
+            labelled("c", "central-b", "owned"),
+        ),
+    )
+
+    evidence = preflight_kubernetes_gpu_gang(
+        inventory,
+        accelerator="RTXPRO6000:1",
+        node_count=2,
+        pod_spec={
+            "nodeSelector": {"pool": "owned"},
+            "affinity": {
+                "nodeAffinity": {
+                    "requiredDuringSchedulingIgnoredDuringExecution": {
+                        "nodeSelectorTerms": [
+                            {
+                                "matchExpressions": [
+                                    {
+                                        "key": "topology.kubernetes.io/zone",
+                                        "operator": "In",
+                                        "values": ["central-b"],
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                }
+            },
+        },
+    )
+
+    assert evidence["selected_nodes"] == ["b", "c"]
+
+
+def test_gang_capacity_applies_allowed_nodes_pod_slots_and_sky_tolerations() -> None:
+    inventory = KubernetesGpuInventory(
+        context="exact-context",
+        ready_nodes=3,
+        eligible_gpu_nodes=3,
+        capacity=3,
+        allocatable=3,
+        products=("RTXPRO-6000-BLACKWELL-SERVER-EDITION",),
+        node_labels={},
+        nodes=(
+            _node("not-allowed"),
+            KubernetesGpuNode(**{**_node("pod-full").to_dict(), "free_pod_slots": 0}),
+            _node("allowed"),
+        ),
+    )
+    with pytest.raises(UnsatisfiableAcceleratorError, match="1 distinct compatible"):
+        preflight_kubernetes_gpu_gang(
+            inventory,
+            accelerator="RTXPRO6000:1",
+            node_count=2,
+            allowed_nodes=["pod-full", "allowed"],
+        )
+
+
+def test_nvidia_noexecute_taint_is_not_covered_by_skypilot_toleration() -> None:
+    nodes = {
+        "items": [
+            {
+                "metadata": {
+                    "name": "evicting-gpu",
+                    "labels": {"nvidia.com/gpu.product": "RTXPRO6000"},
+                },
+                "spec": {
+                    "taints": [
+                        {"key": "nvidia.com/gpu", "effect": "NoExecute"}
+                    ]
+                },
+                "status": {
+                    "conditions": [{"type": "Ready", "status": "True"}],
+                    "capacity": {"nvidia.com/gpu": "1"},
+                    "allocatable": {
+                        "nvidia.com/gpu": "1",
+                        "cpu": "32",
+                        "memory": "128Gi",
+                        "pods": "110",
+                    },
+                },
+            }
+        ]
+    }
+
+    def runner(cmd, **_kwargs):
+        payload = {"items": []} if "pods" in cmd else nodes
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(payload), stderr="")
+
+    inventory = discover_kubernetes_gpu_inventory(context="exact", runner=runner)
+    assert inventory.nodes[0].schedulable is False
+    assert inventory.nodes[0].exclusion == "cordoned-or-unsupported-taint"

@@ -303,6 +303,7 @@ def _embedding_novelty(order: list[str], emb: Any) -> dict[str, float]:
 def _augmented_representatives(keys: list[str], augment_prefix: str) -> dict[str, dict[str, Any]]:
     """Map clip-id -> {frame_key, meta_key} for the augmented variants."""
     by_clip: dict[str, dict[str, Any]] = {}
+    selected_attempt = ""
     for key in keys:
         if not key.startswith(augment_prefix):
             continue
@@ -310,7 +311,17 @@ def _augmented_representatives(keys: list[str], augment_prefix: str) -> dict[str
         parts = rel.split("/")
         if len(parts) < 2 or not parts[0]:
             continue
-        clip = parts[0]
+        if parts[0] == "_attempts":
+            if len(parts) < 4 or not parts[1] or not parts[2]:
+                continue
+            if selected_attempt and selected_attempt != parts[1]:
+                raise ValueError(
+                    "FiftyOne curation received more than one augment attempt"
+                )
+            selected_attempt = parts[1]
+            clip = parts[2]
+        else:
+            clip = parts[0]
         entry = by_clip.setdefault(clip, {"frames": [], "meta": ""})
         low = key.lower()
         if low.endswith(".png"):
