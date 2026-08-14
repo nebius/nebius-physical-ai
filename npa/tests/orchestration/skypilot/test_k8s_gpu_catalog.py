@@ -351,6 +351,35 @@ def test_gang_capacity_requires_distinct_compatible_free_nodes() -> None:
     assert evidence["selected_nodes"] == ["a", "b"]
 
 
+def test_gang_capacity_matches_nvidia_product_label_to_skypilot_name() -> None:
+    inventory = KubernetesGpuInventory(
+        context="exact-context",
+        ready_nodes=2,
+        eligible_gpu_nodes=2,
+        capacity=2,
+        allocatable=2,
+        products=("NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",),
+        node_labels={},
+        nodes=(
+            _node(
+                "a", product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
+            ),
+            _node(
+                "b", product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
+            ),
+        ),
+    )
+
+    evidence = preflight_kubernetes_gpu_gang(
+        inventory,
+        accelerator="RTXPRO-6000-BLACKWELL-SERVER-EDITION:1",
+        node_count=2,
+    )
+
+    assert evidence["compatible_free_nodes"] == 2
+    assert evidence["selected_nodes"] == ["a", "b"]
+
+
 def test_gang_capacity_subtracts_shared_and_incompatible_capacity() -> None:
     inventory = KubernetesGpuInventory(
         context="exact-context",

@@ -682,6 +682,7 @@ _EXPLICIT_ACCELERATOR_ALIASES = (
             "rtx6000",
             "rtxpro6000",
             "rtxpro6000blackwellserveredition",
+            "nvidiartxpro6000blackwellserveredition",
         }
     ),
 )
