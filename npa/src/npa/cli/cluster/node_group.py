@@ -17,6 +17,7 @@ from npa.cluster.config import (
     DEFAULT_NODE_PLATFORM,
     CpuNodeGroupConfig,
     NodeGroupConfig,
+    normalize_provider_k8s_version,
     resolve_project_id,
 )
 from npa.cluster.exceptions import ClusterConfigError, ClusterError, ClusterNotFoundError, NodeGroupNotFoundError
@@ -115,7 +116,11 @@ def add_cmd(
             autoscaling_max=autoscaling_max,
             wait=wait,
             timeout_minutes=timeout,
-            k8s_version=(local_state.k8s_version if local_state else DEFAULT_K8S_VERSION),
+            k8s_version=normalize_provider_k8s_version(
+                local_state.k8s_version
+                if local_state and local_state.k8s_version
+                else DEFAULT_K8S_VERSION
+            ),
             subnet_id=(
                 subnet_id.strip()
                 or (local_state.subnet_id if local_state else "")
@@ -243,7 +248,11 @@ def add_cpu_cmd(
             wait=wait,
             timeout_minutes=timeout,
             boot_disk_size_gib=boot_disk_size_gib,
-            k8s_version=(local_state.k8s_version if local_state else DEFAULT_K8S_VERSION),
+            k8s_version=normalize_provider_k8s_version(
+                local_state.k8s_version
+                if local_state and local_state.k8s_version
+                else DEFAULT_K8S_VERSION
+            ),
             subnet_id=(subnet_id.strip() or (local_state.subnet_id if local_state else "")),
         )
 
