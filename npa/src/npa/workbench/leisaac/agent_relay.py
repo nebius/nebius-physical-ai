@@ -15,6 +15,7 @@ import hmac
 import http.server
 import ipaddress
 import json
+import math
 import re
 import signal
 import socket
@@ -63,19 +64,23 @@ def load_config(path: str | Path) -> dict[str, Any]:
     if RUN_ID_PATTERN.fullmatch(run_id) is None:
         raise ValueError("relay run id is invalid")
     expires_at = str(data.get("expires_at") or "")
-    try:
-        expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise ValueError("relay credential expiry must be an ISO-8601 timestamp") from exc
-    if expiry.tzinfo is None:
-        raise ValueError("relay credential expiry must include a timezone")
-    expires_epoch = expiry.astimezone(timezone.utc).timestamp()
-    if expires_epoch <= time.time():
-        raise ValueError("relay credential has expired")
+    expires_epoch = float("inf")
+    normalized_expiry = ""
+    if expires_at:
+        try:
+            expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("relay credential expiry must be an ISO-8601 timestamp") from exc
+        if expiry.tzinfo is None:
+            raise ValueError("relay credential expiry must include a timezone")
+        normalized_expiry = expiry.astimezone(timezone.utc).isoformat()
+        expires_epoch = expiry.astimezone(timezone.utc).timestamp()
+        if expires_epoch <= time.time():
+            raise ValueError("relay credential has expired")
     result: dict[str, Any] = {
         "run_id": run_id,
         "session_nonce": nonce,
-        "expires_at": expiry.astimezone(timezone.utc).isoformat(),
+        "expires_at": normalized_expiry,
         "expires_epoch": expires_epoch,
     }
     media_host = str(data.get("media_target_host") or "").strip()
@@ -534,6 +539,9 @@ def serve(config: dict[str, Any]) -> None:
     stop = threading.Event()
 
     def expire_credential() -> None:
+        if not math.isfinite(backhaul.expires_epoch):
+            stop.wait()
+            return
         if stop.wait(max(0.0, backhaul.expires_epoch - time.time())):
             return
         backhaul.revoke()

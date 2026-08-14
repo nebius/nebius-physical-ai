@@ -89,6 +89,16 @@ def test_relay_configs_pin_nonce_public_agent_and_certificate(tmp_path: Path) ->
 
     server_path.write_text(
         json.dumps(
+            {"run_id": "run-123", "session_nonce": NONCE, "expires_at": ""}
+        ),
+        encoding="utf-8",
+    )
+    loaded = load_server_config(server_path)
+    assert loaded["expires_at"] == ""
+    assert loaded["expires_epoch"] == float("inf")
+
+    server_path.write_text(
+        json.dumps(
             {
                 "session_nonce": NONCE,
                 "run_id": "run-123",
@@ -131,7 +141,6 @@ def test_relay_configs_pin_nonce_public_agent_and_certificate(tmp_path: Path) ->
 
     for invalid in (
         {"run_id": "", "session_nonce": NONCE, "expires_at": expires_at},
-        {"run_id": "run-123", "session_nonce": NONCE, "expires_at": ""},
         {
             "run_id": "run-123",
             "session_nonce": NONCE,
