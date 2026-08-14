@@ -1037,6 +1037,91 @@ def test_rerun_self_heal_preserves_same_run_canonical_mcap(
         sys.modules.pop(module_name, None)
 
 
+def test_same_run_without_preferred_rrd_preserves_canonical_mcap(
+    monkeypatch, tmp_path
+) -> None:
+    """A same-run View load must not erase the prepared Foxglove contract."""
+    import sys
+
+    module_name = "npa_rendered_same_run_no_rrd_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    run_id = "run-with-canonical-only"
+    canonical = {
+        "run_id": run_id,
+        "canonical_mcap_s3_uri": (
+            "s3://artifact-bucket/nested/root/run-with-canonical-only/"
+            "reports/sim2real.mcap"
+        ),
+        "canonical_mcap_key": (
+            "nested/root/run-with-canonical-only/reports/sim2real.mcap"
+        ),
+        "canonical_mcap_sha256": "a" * 64,
+        "canonical_mcap_size_bytes": 4096,
+        "canonical_mcap_source": "generated-rich-diagnostic",
+        "canonical_mcap_provenance": {
+            "visualization_contract": "npa.foxglove.robot-motion.v2"
+        },
+        "transport_state": "published-local-cache",
+        "foxglove_cloud_layout": {"layout_id": "lay_a9618be1fa915fb8"},
+        "mcap_uri": "file:///opt/npa-agent/recordings/sim2real.mcap",
+        "mcap_updated_at": "2026-08-14T00:00:00+00:00",
+        "lichtblick_ready": True,
+        "lichtblick_iframe_url": "/lichtblick/?ds=mcap",
+        "foxglove_ready": True,
+        "foxglove_url": "/foxglove/data/npa-rich.mcap",
+    }
+    state = {"sim_viz": dict(canonical), "sim_viz_runs": {}}
+    artifact = module.Artifact(
+        run_id=run_id,
+        key=f"nested/root/{run_id}/metrics/final.json",
+        s3_uri=f"s3://artifact-bucket/nested/root/{run_id}/metrics/final.json",
+        size=128,
+        last_modified="2026-08-14T00:00:00Z",
+        render="json",
+        inline=True,
+    )
+    resolution = module.RunResolution(
+        run_id,
+        "artifact-bucket",
+        "nested/root",
+        [artifact],
+    )
+    try:
+        monkeypatch.setattr(module, "_load_state", lambda: state)
+        monkeypatch.setattr(module, "_save_state", lambda _state: None)
+        monkeypatch.setattr(module, "_record_sim_viz_run", lambda *_args: None)
+        monkeypatch.setattr(
+            module,
+            "_agent_s3_client",
+            lambda: (object(), {"bucket": "artifact-bucket", "prefix": ""}),
+        )
+        monkeypatch.setattr(
+            module, "_agent_s3_buckets", lambda *_args, **_kwargs: ["artifact-bucket"]
+        )
+        monkeypatch.setattr(
+            module, "resolve_run_artifacts", lambda *_args, **_kwargs: resolution
+        )
+        monkeypatch.setattr(module, "_agent_access_report", lambda: {})
+
+        loaded = module.sim_viz_load_run({"run_id": run_id})
+
+        assert loaded["artifacts_available"] is True
+        assert loaded["sim_viz"]["preview_status"] == "no_previewable_recording"
+        for key in (
+            "canonical_mcap_s3_uri",
+            "canonical_mcap_key",
+            "canonical_mcap_sha256",
+            "canonical_mcap_provenance",
+            "foxglove_cloud_layout",
+            "foxglove_url",
+            "lichtblick_iframe_url",
+        ):
+            assert loaded["sim_viz"][key] == canonical[key]
+            assert state["sim_viz"][key] == canonical[key]
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
     monkeypatch, tmp_path
 ) -> None:

@@ -6411,6 +6411,28 @@ def sim_viz_load_run(payload: dict | None = None):
             role_counts = artifact_inventory_counts(artifacts)
             state = _load_state()
             sim_viz = dict(DEFAULT_SIM_VIZ)
+            current = state.get("sim_viz")
+            if (
+                isinstance(current, dict)
+                and str(current.get("run_id") or "").strip() == resolved_run_id
+            ):
+                # An unqualified same-run load may legitimately find artifacts
+                # but no preferred RRD. Keep a canonical MCAP that was already
+                # validated/published for that exact run; selecting the View tab
+                # must not make the next clean Foxglove profile reconvert S3.
+                # Cross-run loads still start from DEFAULT_SIM_VIZ and therefore
+                # cannot inherit another run's source, layout, or provenance.
+                for key in (
+                    *CANONICAL_MCAP_DEFAULT_STATE,
+                    "mcap_uri",
+                    "mcap_updated_at",
+                    "lichtblick_ready",
+                    "lichtblick_iframe_url",
+                    "foxglove_ready",
+                    "foxglove_url",
+                ):
+                    if key in current:
+                        sim_viz[key] = current[key]
             sim_viz.update({{
                 "run_id": resolved_run_id,
                 "artifact_run_ref": resolved_ref,
