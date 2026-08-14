@@ -19,14 +19,21 @@ def hf_model_url(repo: str) -> str:
     return f"https://huggingface.co/{repo}"
 
 
-def validate_hf_access(token: str, repo: str, *, timeout: float = 10.0) -> HFAccessResult:
-    """Check whether *token* can access a Hugging Face model repo."""
+def validate_hf_access(
+    token: str, repo: str, repo_type: str = "model", *, timeout: float = 10.0
+) -> HFAccessResult:
+    """Check authenticated or anonymous access to a Hugging Face repository."""
     headers = {"Authorization": f"Bearer {token}"} if token else {}
-    url = f"https://huggingface.co/api/models/{repo}"
+    kind = "datasets" if repo_type == "dataset" else "models"
+    url = f"https://huggingface.co/api/{kind}/{repo}"
     try:
-        response = httpx.head(url, headers=headers, timeout=timeout, follow_redirects=True)
+        response = httpx.head(
+            url, headers=headers, timeout=timeout, follow_redirects=True
+        )
         if response.status_code == 405:
-            response = httpx.get(url, headers=headers, timeout=timeout, follow_redirects=True)
+            response = httpx.get(
+                url, headers=headers, timeout=timeout, follow_redirects=True
+            )
     except httpx.HTTPError as exc:
         return HFAccessResult(repo=repo, ok=False, error=str(exc))
 
@@ -48,4 +55,3 @@ def validate_hf_access(token: str, repo: str, *, timeout: float = 10.0) -> HFAcc
         status_code=response.status_code,
         error=f"Unable to validate Hugging Face access to {repo}: HTTP {response.status_code}",
     )
-

@@ -51,17 +51,18 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     "workbench.vlm_eval": (),
     # Attribute verification generates and answers its questions on Token Factory.
     "workbench.cosmos_evaluator": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    # This entry explicitly disables the parent Cosmos3 hint: the public Nano
+    # checkpoint is downloaded anonymously and this toolRef passes --no-guardrails.
+    "workbench.cosmos3.text_to_image": (),
     "workbench.cosmos3": ("HF_TOKEN",),
     # Cosmos-Transfer2.5 downloads its guardrail checkpoints from a gated Hugging Face repo
     # before it will generate anything. Live job 286 got all the way into examples/inference.py
     # and died on `hf download nvidia/Cosmos-Guardrail1` with no token.
     "workbench.cosmos2": ("HF_TOKEN",),
-    # No NGC_API_KEY: `--runtime local` trains in the stage and pulls nothing from NGC, and
-    # hinting a secret the cases do not carry skips the twins instead of running them (#238).
-    "workbench.sonic": ("HF_TOKEN",),
-    # The pinned N1.7 base model is fetched from Hugging Face. The redistributable
-    # GR00T image contains no NGC payload and finetuning does not use NGC.
-    "workbench.groot": ("HF_TOKEN",),
+    # The default GEAR-SONIC and GR00T-N1.7 assets are public. Callers may still
+    # pass HF_TOKEN for rate limits or private overrides, but it is not a preflight.
+    "workbench.sonic": (),
+    "workbench.groot": (),
 }
 
 OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
@@ -289,6 +290,8 @@ class SkypilotRenderOptions:
     # When False (``--plan-only``), embed placeholders instead of minting live
     # Nebius registry tokens into rendered YAML that may be printed to stdout.
     materialize_registry_secrets: bool = True
+    # Explicit run-scoped operator consent. Never read from repository config.
+    accept_eula: bool = False
 
 
 def normalize_resources(
@@ -906,20 +909,38 @@ def self_hosted_vlm_model(config: Mapping[str, Any]) -> str:
     return str(raw).split(",")[0].strip()
 
 
-#: NVIDIA's gate on the Isaac workbench images. They ship no Isaac Sim / Isaac Lab and fetch it
-#: on first run, refusing with exit 78 unless BOTH are YES.
-ISAAC_EULA_VARS = ("OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA")
+#: NVIDIA's documented, run-scoped gate on Isaac acquisition/use.
+ISAAC_EULA_ENV = "ACCEPT_EULA"
 #: Image keys in TOOL_REF_IMAGE_TOOL that resolve to an Isaac-based image.
 ISAAC_IMAGE_TOOLS = frozenset({"isaac-lab", "sonic"})
 
 
-def routes_at_an_isaac_image(tool_ref: str) -> bool:
-    """Whether the renderer sends this toolRef's stage to an Isaac-based image."""
+def routes_at_an_isaac_image(
+    tool_ref: str,
+    resources: Mapping[str, Any] | None = None,
+) -> bool:
+    """Whether the renderer sends this stage to an Isaac-based runtime."""
 
-    return tool_image_key(tool_ref) in ISAAC_IMAGE_TOOLS
+    if tool_image_key(tool_ref) in ISAAC_IMAGE_TOOLS:
+        return True
+    raw = resources or {}
+    image = str(raw.get("image") or "").lower()
+    if "isaac-lab" in image or "npa-sonic" in image:
+        return True
+    pod = ((raw.get("kubernetes") or {}).get("pod_config") or {}).get("spec") or {}
+    for container in pod.get("containers") or []:
+        names = {str(item.get("name") or "") for item in container.get("env") or []}
+        if "NPA_ISAAC_CACHE_DIR" in names or "NPA_SIM2REAL_ISAAC_CACHE_PVC" in names:
+            return True
+    return False
 
 
-def isaac_eula_envs(tool_ref: str) -> dict[str, str]:
+def isaac_eula_envs(
+    tool_ref: str,
+    *,
+    resources: Mapping[str, Any] | None = None,
+    accepted: bool = False,
+) -> dict[str, str]:
     """Declare NVIDIA's acceptance gate for an Isaac stage, EMPTY unless the operator set it.
 
     Declared rather than omitted so the task documents what it needs and **fails closed** with
@@ -931,11 +952,9 @@ def isaac_eula_envs(tool_ref: str) -> dict[str, str]:
     expected to know the routing, and a new Isaac toolRef is covered the moment it is added.
     """
 
-    if not routes_at_an_isaac_image(tool_ref):
+    if not routes_at_an_isaac_image(tool_ref, resources):
         return {}
-    import os as _os
-
-    return {var: str(_os.environ.get(var) or "").strip() for var in ISAAC_EULA_VARS}
+    return {ISAAC_EULA_ENV: "Y" if accepted else ""}
 
 
 def default_npa_setup() -> str:
@@ -1366,12 +1385,16 @@ def secret_env_hints_for_plan(steps: Sequence[PlanStep]) -> tuple[str, ...]:
             if OPENPI_TERMS_ENV not in seen:
                 seen.add(OPENPI_TERMS_ENV)
                 hints.append(OPENPI_TERMS_ENV)
-        for prefix, names in SECRET_ENV_HINTS.items():
-            if tool_ref == prefix or tool_ref.startswith(prefix + "."):
-                for name in names:
-                    if name not in seen:
-                        seen.add(name)
-                        hints.append(name)
+        matches = [
+            (prefix, names)
+            for prefix, names in SECRET_ENV_HINTS.items()
+            if tool_ref == prefix or tool_ref.startswith(prefix + ".")
+        ]
+        names = max(matches, key=lambda item: len(item[0]))[1] if matches else ()
+        for name in names:
+            if name not in seen:
+                seen.add(name)
+                hints.append(name)
     return tuple(hints)
 
 
@@ -1551,7 +1574,13 @@ def build_skypilot_task_doc(
                 "config.source_sha must be an exact 40-character hexadecimal SHA"
             )
         envs["NPA_SIM2REAL_SOURCE_SHA"] = expected_source_sha
-    envs.update(isaac_eula_envs(str(scheduler_task.get("tool_ref") or "")))
+    envs.update(
+        isaac_eula_envs(
+            str(scheduler_task.get("tool_ref") or ""),
+            resources=scheduler_task.get("resources") or {},
+            accepted=options.accept_eula,
+        )
+    )
     # Optional tuning passthrough. The first-class transfer_execute toolRef always
     # conditions on the workflow input; these variables can tune that real path.
     import os as _os_cond

@@ -44,9 +44,11 @@ dependencies on the node. Modes: `text2image`, `text2video`, `image2video`,
 `video2video` (the last three need `--input-path` for `image2video` and
 `video2video`).
 
-No weights are baked. The gated checkpoint downloads at run time with the
-operator's own `HF_TOKEN`, and `NPA_COSMOS3_REQUIRE_NGC=1` additionally demands
-their `NGC_API_KEY`; `require_model_access` refuses to start without them. Use
+No weights are baked. Public `nvidia/Cosmos3-Nano` downloads anonymously; when
+guardrails are enabled, their gated weights download at run time with the
+operator's own `HF_TOKEN`. `NPA_COSMOS3_REQUIRE_NGC=1` additionally demands
+their `NGC_API_KEY`; `require_model_access` refuses only for the selected gated
+or NGC-hosted path. Use
 `--dry-run` to inspect the resolved input sample and inference argv from a CPU
 host.
 

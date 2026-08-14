@@ -305,7 +305,9 @@ def test_access_fails_on_gated_denial(monkeypatch) -> None:
     monkeypatch.setattr(
         health_module,
         "validate_hf_access",
-        lambda token, repo: _HFOK(ok=False, status_code=403, error="no access"),
+        lambda token, repo, repo_type: _HFOK(
+            ok=False, status_code=403, error="no access"
+        ),
     )
     result = runner.invoke(
         app,
@@ -325,7 +327,9 @@ def test_access_warn_only_suppresses_exit(monkeypatch) -> None:
     monkeypatch.setattr(
         health_module,
         "validate_hf_access",
-        lambda token, repo: _HFOK(ok=False, status_code=403, error="no access"),
+        lambda token, repo, repo_type: _HFOK(
+            ok=False, status_code=403, error="no access"
+        ),
     )
     result = runner.invoke(
         app,
@@ -348,7 +352,13 @@ def test_access_pass_when_validator_ok(monkeypatch) -> None:
         health_module, "load_credentials", lambda *a, **k: _AccessCreds()
     )
     monkeypatch.setattr(
-        health_module, "validate_hf_access", lambda token, repo: _HFOK(ok=True)
+        health_module,
+        "validate_hf_access",
+        lambda token, repo, repo_type: _HFOK(ok=True),
+    )
+    monkeypatch.setattr(
+        "npa.workbench.nurec.nurec.check_ngc_image_access",
+        lambda key: "reachable",
     )
     result = runner.invoke(
         app,

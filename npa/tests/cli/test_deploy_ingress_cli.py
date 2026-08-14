@@ -59,6 +59,8 @@ def _ingress_result(case: DeployIngressCase) -> EnsureIngressResult:
 
 
 def _patch_successful_deploy(mocker, case: DeployIngressCase, *, instance_id: str | None) -> None:
+    if case.tool == "groot":
+        mocker.patch.dict("os.environ", {"ACCEPT_EULA": "Y"})
     module = case.module
     tf_outputs = {
         "vm_ip": "203.0.113.10",

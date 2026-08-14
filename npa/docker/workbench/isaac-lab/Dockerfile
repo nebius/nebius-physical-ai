@@ -15,8 +15,8 @@
 # Consequences an operator should know about, measured on RTX PRO 6000:
 #   * first run downloads ~4.5 GB and materialises ~10.0 GiB of cache (111 s in-cluster)
 #   * subsequent runs add 32 ms
-#   * the container REFUSES TO START Isaac unless OMNI_KIT_ACCEPT_EULA=YES and
-#     ISAACSIM_ACCEPT_EULA=YES are both set. That refusal is deliberate and load-bearing;
+#   * the container REFUSES TO START Isaac unless NVIDIA's documented
+#     ACCEPT_EULA=Y is set. That refusal is deliberate and load-bearing;
 #     see npa/docker/workbench/common/isaac_bootstrap.sh.
 #   * pre-warm the cache once per node/PVC to avoid paying the cold start per pod:
 #     npa/docker/workbench/common/warm-isaac-cache.yaml

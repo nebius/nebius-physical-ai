@@ -204,7 +204,7 @@ bash -n /opt/npa/bin/isaac-python
 # This is the load-bearing legal mechanism, so the build proves the refusal instead of
 # proving a baked install. Exit 78 is EX_CONFIG: the operator must act.
 set +e
-env -u OMNI_KIT_ACCEPT_EULA -u ISAACSIM_ACCEPT_EULA \
+env -u ACCEPT_EULA -u OMNI_KIT_ACCEPT_EULA -u ISAACSIM_ACCEPT_EULA \
   /opt/npa/bin/isaac-bootstrap ensure >/dev/null 2>/tmp/eula-refusal.txt
 refusal_rc=$?
 set -e
@@ -213,8 +213,7 @@ if [ "$refusal_rc" -ne 78 ]; then
   cat /tmp/eula-refusal.txt >&2
   exit 1
 fi
-grep -q OMNI_KIT_ACCEPT_EULA /tmp/eula-refusal.txt
-grep -q ISAACSIM_ACCEPT_EULA /tmp/eula-refusal.txt
+grep -q 'ACCEPT_EULA=Y' /tmp/eula-refusal.txt
 rm -f /tmp/eula-refusal.txt
 echo "NPA_ISAAC_BOOTSTRAP_REFUSES_WITHOUT_EULA_OK"
 

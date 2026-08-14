@@ -272,8 +272,7 @@ def _kubernetes_component_env(
                 "HF_XET_CACHE",
                 "UV_CACHE_DIR",
                 "XDG_CACHE_HOME",
-                "OMNI_KIT_ACCEPT_EULA",
-                "ISAACSIM_ACCEPT_EULA",
+                "ACCEPT_EULA",
             }
         ):
             safe[key] = value
@@ -285,7 +284,7 @@ def _kubernetes_component_env(
     safe["AWS_ENDPOINT_URL"] = endpoint
     safe["S3_ENDPOINT_URL"] = endpoint
     apply_cosmos_reason_kubernetes_env(safe)
-    for key in ("OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA"):
+    for key in ("ACCEPT_EULA",):
         value = str(env.get(key) or os.environ.get(key) or "").strip()
         if value:
             safe[key] = value

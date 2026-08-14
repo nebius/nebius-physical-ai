@@ -896,15 +896,6 @@ def materialize_live_spec(
             lambda m: f"{m.group(1)}{bdd_synth}{m.group(2)}",
             text,
         )
-    # Accepting NVIDIA's terms for a live SONIC run is the OPERATOR's act, so the harness reads
-    # it from the environment rather than shipping an accepted spec (EVIDENCE.md §R47).
-    sonic_eula = os.environ.get("NPA_E2E_SONIC_ACCEPT_NVIDIA_EULA", "").strip()
-    if sonic_eula:
-        text = re.sub(
-            r'(sonic_accept_nvidia_eula:\s*")[^"]*(")',
-            lambda m: f"{m.group(1)}{sonic_eula}{m.group(2)}",
-            text,
-        )
     bdd_epochs = os.environ.get("NPA_E2E_BDD100K_EPOCHS", "").strip()
     if bdd_epochs:
         text = re.sub(

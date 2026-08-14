@@ -38,17 +38,15 @@ export NPA_REGISTRY=cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}
 npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push
 ```
 
-SONIC publishes two first-party image variants. The compatibility source of
+SONIC publishes one active first-party runtime-fetch image. The compatibility source of
 truth is `npa/src/npa/deploy/sonic_image_manifest.json`, with the human catalog
-in `docs/workbench/sonic-image-catalog.md`. The default L40S VM image is
-`${NPA_REGISTRY}/npa-sonic:0.1.2`; the Kubernetes GPU-operator image for
-RTX PRO 6000 Blackwell is `${NPA_REGISTRY}/npa-sonic:0.1.2-k8s-runtime`.
+in `docs/workbench/sonic-image-catalog.md`. Use the exact active tag there for
+RTX PRO 6000 Blackwell Kubernetes. Legacy L40S and MuJoCo variants are quarantined.
 
 Verify the pushed image before launch with:
 
 ```bash
-docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2"
-docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2-k8s-runtime"
+docker manifest inspect "${NPA_REGISTRY}/npa-sonic:<active-runtime-fetch-tag>"
 ```
 
 The default embodiment is Unitree G1:

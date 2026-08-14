@@ -54,7 +54,6 @@ DEFAULT_IMAGE_PULL_SECRETS = ("agent-sa",)
 #: and then dies at the upload with
 #: ``botocore.exceptions.NoCredentialsError: Unable to locate credentials``.
 OPERATOR_RUNTIME_ENVS = (
-    "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS",
     "NPA_OPENPI_ACCEPT_GEMMA_TERMS",
 )
 DEFAULT_SECRET_ENVS = (

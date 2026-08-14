@@ -62,7 +62,6 @@ from npa.clients.credentials import (
     apply_shared_credential_env,
     load_credentials,
     shared_credential_env,
-    warn_if_hf_token_missing,
 )
 from npa.clients.env import (
     merge_env_file_content,
@@ -117,10 +116,12 @@ from npa.deploy.safety import (
     format_replacement_required_error,
 )
 from npa.serverless_common import (
+    MissingIsaacEulaAcceptanceError,
     MissingS3CredentialsError,
     SubnetResolutionError,
     build_serverless_job_env,
     build_serverless_output_upload_cmd,
+    require_isaac_eula_acceptance,
     require_s3_credentials,
     resolve_gpu_platform,
     resolve_subnet,
@@ -230,11 +231,20 @@ SUPPORTED_EMBODIMENT_TAGS = (
 )
 
 
-def _groot_gated_models(model: str = DEFAULT_MODEL) -> list[str]:
-    repos = [model or DEFAULT_MODEL]
-    if COSMOS_REASON_MODEL not in repos:
-        repos.append(COSMOS_REASON_MODEL)
-    return repos
+def _groot_deploy_models(model: str = DEFAULT_MODEL) -> list[str]:
+    """Assets the base deploy actually fetches; optional Reason2 is checked at use."""
+
+    return [model or DEFAULT_MODEL]
+
+
+def _require_groot_isaac_consent(context: str) -> None:
+    try:
+        require_isaac_eula_acceptance(
+            context=context,
+            resume_command="npa workbench groot deploy ...",
+        )
+    except MissingIsaacEulaAcceptanceError as exc:
+        _fail(str(exc))
 
 
 def _model_check_or_fail(
@@ -246,25 +256,19 @@ def _model_check_or_fail(
     no_shared_creds: bool,
 ) -> None:
     if skip_model_check:
-        for repo in _groot_gated_models(model):
+        for repo in _groot_deploy_models(model):
             console.print(f"  HF access check skipped for {repo}")
         if dry_run:
-            console.print("  [dry-run] HF gated-model validation skipped")
+            console.print("  [dry-run] HF model validation skipped")
         return
     token = "" if no_shared_creds else credentials.hf_token
-    if not token:
-        warn_if_hf_token_missing(credentials, warn=console.print)
-        for repo in _groot_gated_models(model):
-            console.print(f"  HF access check skipped for {repo}")
-        if dry_run:
-            raise typer.Exit(1)
-        return
-    for repo in _groot_gated_models(model):
+    for repo in _groot_deploy_models(model):
         result = validate_hf_access(token, repo)
         if not result.ok:
             _fail(result.error or f"Unable to validate Hugging Face access to {repo}")
         prefix = "[dry-run] " if dry_run else ""
-        console.print(f"  {prefix}HF access ok: {repo}")
+        auth = "authenticated" if token else "anonymous"
+        console.print(f"  {prefix}HF access ok ({auth}): {repo}")
 
 
 def _groot_service_env(
@@ -278,6 +282,7 @@ def _groot_service_env(
     service_env: dict[str, str],
     include_shared_creds: bool,
 ) -> dict[str, str]:
+    _require_groot_isaac_consent("GR00T service with Isaac Lab")
     env = {
         "GROOT_MODEL_PATH": DEFAULT_MODEL,
         "GROOT_EMBODIMENT_TAG": DEFAULT_EMBODIMENT_TAG,
@@ -292,9 +297,7 @@ def _groot_service_env(
         "NEBIUS_S3_ENDPOINT": storage_ep,
         "NEBIUS_S3_BUCKET": bucket,
         "NEBIUS_REGION": env_region,
-        "OMNI_KIT_ACCEPT_EULA": "YES",
         "ACCEPT_EULA": "Y",
-        "ISAACSIM_ACCEPT_EULA": "YES",
         "PYTHONUNBUFFERED": "1",
         **service_env,
     }
@@ -1175,12 +1178,13 @@ def _build_runtime_pin_patch_command() -> str:
 
 
 def _build_install_command(port: int = DEFAULT_SERVER_PORT) -> str:
+    _require_groot_isaac_consent("GR00T installation with Isaac Lab")
     server_py = _build_server_py(DEFAULT_MODEL, DEFAULT_EMBODIMENT_TAG)
     runtime_pin_patch = _build_runtime_pin_patch_command()
     script = f"""\
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
-export OMNI_KIT_ACCEPT_EULA="${{OMNI_KIT_ACCEPT_EULA:-YES}}"
+export ACCEPT_EULA=Y
 sudo apt-get update
 sudo apt-get install -y software-properties-common build-essential git git-lfs curl unzip ffmpeg libsm6 libxext6 libglu1-mesa
 git lfs install --system || true
@@ -2410,6 +2414,8 @@ def deploy_cmd(
         _fail(f"--data-disk-size must be positive, got {data_disk_size}")
     if gpu_count < 0:
         _fail(f"--gpu-count must be 0 (all detected) or positive, got {gpu_count}")
+    if not destroy and not skip_app and not dry_run:
+        _require_groot_isaac_consent("GR00T deployment with Isaac Lab")
 
     byovm = is_byovm_runtime(runtime)
     if _is_serverless_runtime(runtime):
@@ -2908,9 +2914,7 @@ def deploy_cmd(
             "NEBIUS_S3_ENDPOINT": storage_ep,
             "NEBIUS_S3_BUCKET": bucket,
             "NEBIUS_REGION": env_region,
-            "OMNI_KIT_ACCEPT_EULA": "YES",
             "ACCEPT_EULA": "Y",
-            "ISAACSIM_ACCEPT_EULA": "YES",
             "PYTHONUNBUFFERED": "1",
             **gpu_env_fields(
                 byovm_gpu_info,
@@ -3512,7 +3516,9 @@ def finetune_cmd(
         None, "--dataloader-num-workers", help="Override dataloader workers."
     ),
     logging_steps: int | None = typer.Option(
-        None, "--logging-steps", help="Emit a real trainer loss every N optimizer steps."
+        None,
+        "--logging-steps",
+        help="Emit a real trainer loss every N optimizer steps.",
     ),
     save_steps: int | None = typer.Option(
         None, "--save-steps", help="Override checkpoint save interval."

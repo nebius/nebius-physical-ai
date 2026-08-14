@@ -185,7 +185,6 @@ def _offline_runtime_env(
             "NPA_WAN_BASE_PYTHON": str(fake_base),
             "NPA_WAN_RUNTIME_REQUIREMENTS": str(requirements),
             "NPA_WAN_RUNTIME_OFFLINE": "1",
-            "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS": "YES",
         },
         requirements,
     )
@@ -382,7 +381,6 @@ exit 0
         "NPA_WAN_RUNTIME_CACHE": str(cache),
         "NPA_WAN_BASE_PYTHON": str(fake_base),
         "NPA_WAN_RUNTIME_REQUIREMENTS": str(requirements),
-        "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS": "YES",
         "FAKE_BASE_SITE": str(tmp_path / "base-site"),
         "FAKE_CACHE_SITE": str(tmp_path / "cache-site"),
         "FAKE_VENV_PYTHON": str(fake_venv),

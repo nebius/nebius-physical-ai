@@ -47,14 +47,14 @@ Isaac runtime-fetch workloads require all of these official terms:
 - NVIDIA Software Licence Agreement:
   `https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/`
 
-The repository mechanism requires both caller-supplied values:
+The repository mechanism requires this caller-supplied, run-scoped value:
 
 ```bash
-OMNI_KIT_ACCEPT_EULA=YES ISAACSIM_ACCEPT_EULA=YES <resume-command>
+ACCEPT_EULA=Y <resume-command>
 ```
 
-Absent either value, `isaac-bootstrap` must exit `78` before downloading. The
-values accept only the named NVIDIA terms; they do not accept unrelated terms.
+Absent that exact value, `isaac-bootstrap` must exit `78` before downloading. It
+accepts only the named NVIDIA terms; it does not accept unrelated terms.
 
 ## Guardrails
 

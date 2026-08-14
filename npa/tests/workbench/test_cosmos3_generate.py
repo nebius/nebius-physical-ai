@@ -38,7 +38,9 @@ def _fake_runtime(tmp_path: Path) -> tuple[Path, dict[str, str]]:
 
     repo = tmp_path / "cosmos-framework"
     (repo / "cosmos_framework" / "scripts").mkdir(parents=True)
-    (repo / "cosmos_framework" / "scripts" / "inference.py").write_text("", encoding="utf-8")
+    (repo / "cosmos_framework" / "scripts" / "inference.py").write_text(
+        "", encoding="utf-8"
+    )
     venv_python = repo / ".venv" / "bin" / "python"
     venv_python.parent.mkdir(parents=True)
     venv_python.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -118,20 +120,19 @@ def test_plan_disables_guardrails_only_on_explicit_opt_out(tmp_path: Path) -> No
     assert "--no-guardrails" in plan["argv"]
 
 
-def test_require_model_access_demands_operator_hf_token() -> None:
-    with pytest.raises(Cosmos3GenerateError, match="not baked into this image"):
-        require_model_access(checkpoint="Cosmos3-Nano", environ={})
-
+def test_public_cosmos3_nano_works_anonymously_without_guardrails() -> None:
     assert require_model_access(
-        checkpoint="Cosmos3-Nano", environ={"HF_TOKEN": "hf-secret"}
-    ) == {"hf_auth": "configured", "ngc_auth": "skipped"}
+        checkpoint="Cosmos3-Nano", guardrails=False, environ={}
+    ) == {"hf_auth": "skipped", "ngc_auth": "skipped"}
 
 
-def test_require_model_access_missing_token_error_names_the_401_403_diagnostic() -> None:
+def test_require_model_access_missing_token_error_names_the_401_403_diagnostic() -> (
+    None
+):
     """Authenticated 401 vs 403 guidance names every authorization cause."""
 
     with pytest.raises(Cosmos3GenerateError) as excinfo:
-        require_model_access(checkpoint="Cosmos3-Nano", environ={})
+        require_model_access(checkpoint="Cosmos3-Nano", guardrails=True, environ={})
 
     message = str(excinfo.value)
     assert "anonymous" in message
@@ -144,8 +145,10 @@ def test_require_model_access_missing_token_error_names_the_401_403_diagnostic()
     assert "docs/workbench/cosmos3-access-preflight.md" in message
 
 
-def test_require_model_access_skips_token_only_when_nothing_is_fetched() -> None:
-    """A staged checkpoint alone does not exempt the run.
+def test_require_model_access_skips_token_when_only_public_weights_are_fetched() -> (
+    None
+):
+    """A staged checkpoint alone does not exempt a gated guardrail fetch.
 
     Guardrails are on by default and pull the gated guardrail models from Hugging
     Face, so exempting on the checkpoint alone would let the preflight pass and
@@ -159,6 +162,11 @@ def test_require_model_access_skips_token_only_when_nothing_is_fetched() -> None
         checkpoint="/mnt/checkpoints/cosmos3", guardrails=False, environ={}
     )
     assert result["hf_auth"] == "skipped"
+
+    public = require_model_access(
+        checkpoint="Cosmos3-Nano", guardrails=False, environ={}
+    )
+    assert public["hf_auth"] == "skipped"
 
 
 def test_require_model_access_demands_token_for_guardrails_alone() -> None:
@@ -213,9 +221,12 @@ def test_require_model_access_enforces_ngc_when_demanded() -> None:
     with pytest.raises(Cosmos3GenerateError, match="NGC API key"):
         require_model_access(checkpoint="Cosmos3-Nano", environ=env)
 
-    assert require_model_access(
-        checkpoint="Cosmos3-Nano", environ={**env, "NGC_API_KEY": "ngc-secret"}
-    )["ngc_auth"] == "configured"
+    assert (
+        require_model_access(
+            checkpoint="Cosmos3-Nano", environ={**env, "NGC_API_KEY": "ngc-secret"}
+        )["ngc_auth"]
+        == "configured"
+    )
 
 
 def test_resolve_hf_token_honours_the_env_name_override() -> None:
@@ -256,9 +267,7 @@ def test_check_xet_pin_is_silent_on_a_newer_unaffected_pair(tmp_path: Path) -> N
     warning = check_xet_pin(
         repo,
         environ={},
-        runner=_version_probe_runner(
-            {"huggingface_hub": "1.26.0", "hf-xet": "1.6.0"}
-        ),
+        runner=_version_probe_runner({"huggingface_hub": "1.26.0", "hf-xet": "1.6.0"}),
     )
 
     assert warning == ""
@@ -328,9 +337,12 @@ def test_check_xet_pin_fails_open_on_every_probe_failure_mode(
         return subprocess.CompletedProcess(argv, 0, "[]", "")
 
     assert check_xet_pin(repo, environ={}, runner=runner) == ""
-    assert _installed_package_versions(
-        repo / ".venv" / "bin" / "python", ("huggingface_hub",), runner=runner
-    ) == {}
+    assert (
+        _installed_package_versions(
+            repo / ".venv" / "bin" / "python", ("huggingface_hub",), runner=runner
+        )
+        == {}
+    )
 
 
 def test_check_xet_pin_skips_probe_when_xet_is_already_disabled(
@@ -351,7 +363,9 @@ def test_check_xet_pin_skips_probe_when_xet_is_already_disabled(
     )
 
 
-def test_check_xet_pin_false_value_still_warns_for_affected_pair(tmp_path: Path) -> None:
+def test_check_xet_pin_false_value_still_warns_for_affected_pair(
+    tmp_path: Path,
+) -> None:
     repo, _ = _fake_runtime(tmp_path)
 
     warning = check_xet_pin(
@@ -407,21 +421,14 @@ def test_run_generate_warns_on_stderr_for_the_affected_xet_pin(
     assert "HF_HUB_DISABLE_XET=1" in capsys.readouterr().err
 
 
-def test_run_generate_still_warns_with_guardrails_off(
+def test_anonymous_public_generate_does_not_emit_gated_transfer_warning(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """xet-core#895 is a Hugging Face transfer bug, not a guardrail one.
+    """The xet warning is scoped to authenticated/gated transfers."""
 
-    A --no-guardrails run still downloads its checkpoint from Hugging Face, so
-    gating the warning on guardrails would hide it from exactly the runs the
-    doc tells operators to try first.
-    """
+    _generate_with_probe(tmp_path, tmp_path / "out", AFFECTED_PAIR, no_guardrails=True)
 
-    _generate_with_probe(
-        tmp_path, tmp_path / "out", AFFECTED_PAIR, no_guardrails=True
-    )
-
-    assert "HF_HUB_DISABLE_XET=1" in capsys.readouterr().err
+    assert "HF_HUB_DISABLE_XET=1" not in capsys.readouterr().err
 
 
 def test_run_generate_is_silent_on_an_unaffected_xet_pin(
@@ -450,7 +457,9 @@ def test_run_generate_is_silent_when_xet_workaround_is_already_active(
 
 
 def test_availability_is_false_without_the_baked_runtime(tmp_path: Path) -> None:
-    assert cosmos3_generate_available({"COSMOS3_REPO": str(tmp_path / "missing")}) is False
+    assert (
+        cosmos3_generate_available({"COSMOS3_REPO": str(tmp_path / "missing")}) is False
+    )
 
 
 def test_run_generate_reports_the_produced_image(tmp_path: Path) -> None:
@@ -466,7 +475,9 @@ def test_run_generate_reports_the_produced_image(tmp_path: Path) -> None:
         # be reported as the generated result.
         (sample / "inputs" / "source.png").write_bytes(b"x" * 4096)
         (sample / "vision.jpg").write_bytes(b"y" * 2048)
-        (sample / "sample_outputs.json").write_text('{"status": "ok"}', encoding="utf-8")
+        (sample / "sample_outputs.json").write_text(
+            '{"status": "ok"}', encoding="utf-8"
+        )
         return subprocess.CompletedProcess(argv, 0)
 
     result = run_cosmos3_generate(
@@ -647,8 +658,7 @@ def test_verify_env_covers_every_advertised_mode() -> None:
     """The build-time graph walk must not verify fewer modes than the CLI offers."""
 
     verify_env = (
-        Path(__file__).resolve().parents[2]
-        / "docker/workbench/cosmos3/verify_env.py"
+        Path(__file__).resolve().parents[2] / "docker/workbench/cosmos3/verify_env.py"
     )
     text = verify_env.read_text(encoding="utf-8")
     match = re.search(r"^MODES = \((?P<body>.*?)\)$", text, flags=re.M | re.S)

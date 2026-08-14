@@ -121,14 +121,10 @@ redistribution:
         the registry (internal R&D, build-your-own), but hosting it PREBUILT on a
         public/anonymous registry would make us the third-party redistributor,
         which requires an NVIDIA AI Enterprise license.
-        NOTE: no image is currently classified restricted. The four Isaac images
-        used to be, and were re-architected to fetch Isaac Sim / Isaac Lab at
-        first run under the operator's own EULA acceptance instead of baking it
-        (npa/docker/workbench/common/isaac_bootstrap.sh), which is what made them
-        publicly redistributable. The class and every guard around it are kept
-        deliberately, with an empty membership, for the next runtime we cannot
-        ship — and the guards are tested against synthetic restricted images so
-        they cannot rot while unused.
+        Restricted membership is deliberate: cosmos3-serving remains
+        build-your-own under the NVIDIA Deep Learning Container License, and the
+        stale sonic-mujoco variant is quarantined because it inherits restricted
+        baked bytes. Credentials or runtime consent do not alter either result.
       reason: bakes-a-non-redistributable-runtime
 
 # Relative to npa/docker/workbench/
@@ -162,7 +158,7 @@ images:
     notes: >-
       Immutable Apache-2.0 Wan source plus an OSS CPU dependency base. CUDA
       PyTorch and all nvidia-* distributions are fetched only into a non-root
-      writable runtime volume after explicit operator acceptance; model and
+      writable runtime volume under their upstream package terms; model and
       tokenizer payloads are also runtime-only. Built-image byte/layer scanning
       is mandatory before publication.
   sonic:
@@ -173,9 +169,12 @@ images:
     redistribution: public
   sonic-mujoco:
     dockerfile: sonic/Dockerfile.mujoco
-    isaac_runtime_fetch: true
     tier: job
-    redistribution: public
+    redistribution: restricted
+    notes: >-
+      Quarantined legacy variant: its default parent is the old npa-sonic:0.1.2
+      image containing restricted NVIDIA bytes. Credentials or runtime consent
+      cannot make an already-baked payload redistributable.
   sim2real-eval:
     dockerfile: sim2real-eval/Dockerfile
     tier: job
@@ -249,7 +248,7 @@ images:
       requires material added primary functionality and downstream terms at
       least as protective; this thin serving wrapper and anonymous GHCR do not
       establish those conditions. Operators build into their own registry and
-      fetch gated weights at runtime with their own Hugging Face acceptance.
+      fetch gated weights at runtime using a token whose account has upstream access.
     redistribution: restricted
   cosmos3-reason:
     dockerfile: cosmos3-reason/Dockerfile

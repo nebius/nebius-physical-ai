@@ -46,8 +46,7 @@ def test_inline_payload_requires_and_attests_exact_workflow_image(
 ) -> None:
     image = "registry.example/npa/isaac@sha256:" + "b" * 64
     monkeypatch.setenv("NPA_TASK_IMAGE", image)
-    monkeypatch.setenv("OMNI_KIT_ACCEPT_EULA", "YES")
-    monkeypatch.setenv("ISAACSIM_ACCEPT_EULA", "YES")
+    monkeypatch.setenv("ACCEPT_EULA", "Y")
     command, args = compressed_bash_launch('test "$INLINE_MARKER" = yes')
     manifest = {
         "spec": {
@@ -72,18 +71,12 @@ def test_inline_payload_requires_and_attests_exact_workflow_image(
     assert proof["image"] == image
 
 
-@pytest.mark.parametrize(
-    "missing",
-    ["OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA"],
-)
 def test_inline_payload_fails_before_kit_without_explicit_operator_eula(
     monkeypatch: pytest.MonkeyPatch,
-    missing: str,
 ) -> None:
     image = "registry.example/npa/isaac@sha256:" + "c" * 64
     monkeypatch.setenv("NPA_TASK_IMAGE", image)
-    for name in ("OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA"):
-        monkeypatch.setenv(name, "" if name == missing else "YES")
+    monkeypatch.delenv("ACCEPT_EULA", raising=False)
     command, args = compressed_bash_launch("exit 99")
     manifest = {
         "spec": {
@@ -95,5 +88,5 @@ def test_inline_payload_fails_before_kit_without_explicit_operator_eula(
         }
     }
 
-    with pytest.raises(RuntimeError, match=missing):
+    with pytest.raises(RuntimeError, match="ACCEPT_EULA=Y"):
         execute_manifest_container_inline(manifest)

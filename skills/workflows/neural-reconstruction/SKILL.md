@@ -283,7 +283,7 @@ table; the rest were hit for real while landing this capability.
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | `402 Payment Required` pulling `nvcr.io/nvidia/nre/nre` | That repo needs an extra entitlement (upstream: `denied: requested access ...`) | Use the `-ga` channel, `nvcr.io/nvidia/nre/nre-ga:26.04`. `nurec check` reports `entitlement-required` |
-| `401`/`403` on `nvidia/PhysicalAI-*` (upstream) | Gated license not accepted, or `HF_TOKEN` lacks `read` | Accept the license on Hugging Face as the token owner, then re-run `nurec check` |
+| `401`/`403` on a gated `nvidia/PhysicalAI-Autonomous-Vehicles*` override (upstream) | Gated dataset access is absent, or `HF_TOKEN` lacks `read` | Accept/request access on Hugging Face as the token owner, then re-run `nurec check`; the default `PhysicalAI-NuRec-PPISP` remains anonymous |
 | NRE will not load a clip: "not valid NCore V4" (upstream) | The recording was never converted | Convert with upstream `ncore` first; the workbench consumes NCore V4 only |
 | `KeyError: ('rig', 'world')` / no scene extent | The clip has camera poses but no rig edge -- NVIDIA's own COLMAP converter omits it | Automatic: `reconstruct` derives it. See the pose-edge section |
 | `Requested lidars not present in the data: dummy_lidar` | The recipe ships placeholder sensor ids | Automatic: the sequence's real ids are adopted |
@@ -348,7 +348,7 @@ npa workbench workflow submit npa/src/npa/workbench/nurec/examples/nurec-reconst
   --var NPA_SRC_S3_URI="s3://<bucket>/npa-src/<tag>" \
   --var AWS_ENDPOINT_URL="<s3-endpoint>" \
   --var AWS_ACCESS_KEY_ID="<key>" --var AWS_SECRET_ACCESS_KEY="<secret>" \
-  --var HF_TOKEN="<hf>" --var NGC_API_KEY="<ngc>"
+  --var NGC_API_KEY="<ngc>"
 
 # 3. Watch it.
 npa workbench workflow status "$RUN_ID" --watch
@@ -402,8 +402,9 @@ NPA_NUREC_E2E_PREFIX=checkpoints \
     npa/tests/e2e/test_nurec_reconstruct_live_e2e.py -v -s
 ```
 
-Also needs `AWS_ENDPOINT_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
-`HF_TOKEN` and `NGC_API_KEY` exported. Budget ~30 min end to end (image pull,
+Also needs `AWS_ENDPOINT_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and
+`NGC_API_KEY` exported. `HF_TOKEN` is optional for the public PPISP default and
+required only for a gated/private dataset override. Budget ~30 min end to end (image pull,
 30k 3DGUT steps, render, upload); raise `NPA_NUREC_E2E_MAX_WAIT_SECONDS` (default
 7200) for a slower cluster. Measured: **1 passed in 28m47s**, with the underlying
 SkyPilot job taking 26m10s and reporting `test/psnr 31.19`, `test/ssim 0.833`,

@@ -33,7 +33,7 @@ Rows are ordered by **Built** date, then by friendly name.
 | BDD100K Detection Training | `npa-detection-training` | `bdd100k-golden-eval-smoke-20260614T210000Z` | 2026-07-22 | Object-detector train/eval service on port 8790 with torchvision detectors and COCO metrics. It provides the re-label and measurement stage in the data-factory loop. |
 | Lichtblick 1.26.0 | `npa-lichtblick` | `1.26.0` | 2026-07-23 | Fully open-source (MPL-2.0), Foxglove-compatible MCAP/ROS log viewer served by Caddy on port 8080. No account or proprietary component is required. |
 | GR00T N1.7-3B | `npa-groot` | `0.1.0` | 2026-08-01 | NVIDIA Isaac-GR00T humanoid foundation-model inference using `nvidia/GR00T-N1.7-3B`; weights are pulled at runtime with the operator's Hugging Face token. GR00T inference itself does not require Isaac or EULA acceptance. |
-| Isaac Lab 2.3.2 (Isaac Sim 5.1) | `npa-isaac-lab` | `2.3.2.post1` | 2026-08-01 | Isaac Lab RL simulation. Contains no NVIDIA Isaac bytes: Isaac Sim and Isaac Lab are fetched from `pypi.nvidia.com` on first use under the operator's EULA. Isaac startup requires `OMNI_KIT_ACCEPT_EULA=YES` and `ISAACSIM_ACCEPT_EULA=YES`; expect an approximately 4.5 GB first-run download. |
+| Isaac Lab 2.3.2 (Isaac Sim 5.1) | `npa-isaac-lab` | `2.3.2.post1` | 2026-08-01 | Isaac Lab RL simulation. Contains no NVIDIA Isaac bytes: Isaac Sim and Isaac Lab are fetched from `pypi.nvidia.com` on first use under the operator's EULA. Isaac startup requires NVIDIA's documented, run-scoped `ACCEPT_EULA=Y`; expect an approximately 4.5 GB first-run download. |
 | Cosmos 1.0 Diffusion 7B (Predict) | `npa-cosmos` | `1.0.9`, `cu128-torch27-sm100-1.0.9-20260803T002017Z` | 2026-08-03 | Cosmos world-model generation with `Cosmos-1.0-Diffusion-7B-Text2World`, plus the default self-hosted VLM image for workflows. Uses Torch 2.7 and CUDA 12.8 with flash-attn, NATTEN, and Transformer Engine. |
 | Cosmos Reason 2 / Predict 2.5 (3.0.1) | `npa-cosmos3-reason` | `3.0.1-genuine-sm120`, `cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | 2026-08-03 | VLM reasoning over video/images with `Cosmos-Reason2-8B` or `Cosmos-Reason2-2B`, serving as a judge/critic stage. Also wires Predict 2.5, Transfer 2.5, and Cosmos-Guardrail1 model IDs on a Blackwell-capable CUDA 13 base. |
 | Cosmos Transfer 2.5 | `npa-cosmos2-transfer` | `2.5.1-skypilot-ready-20260801T053000Z` | 2026-08-03 | Cosmos Transfer 2.5 Sim2Real video augmentation, built from source at an immutable commit with hash-locked dependencies. Gated weights are fetched at runtime with `HF_TOKEN`; baked-byte scans are a release gate. |
@@ -73,7 +73,7 @@ Rows are ordered by **Built** date, then by friendly name.
 The registry verification confirms repository visibility, exact tag spelling,
 manifest resolution, platform metadata, selected OCI labels, exposed ports,
 entrypoints, and build timestamps. It is descriptive, not a packaging-policy
-pass: for example, `npa-sonic:0.1.2` declares the `ubuntu` OCI user, while the
+pass: for example, the active runtime-fetch `npa-sonic` image declares the `ubuntu` OCI user, while the
 timestamped Kubernetes pin declares `root` because its build sets
 `NPA_RUNTIME_USER=root`. Capability descriptions are cross-checked against the
 corresponding Dockerfiles, packaging contracts, golden evaluations, and workflow

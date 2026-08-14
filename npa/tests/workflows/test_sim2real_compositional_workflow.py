@@ -624,8 +624,6 @@ def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> N
             "isaac_image": image,
             "viewer_image": image,
             "isaac_cache_pvc": "isaac-cache",
-            "omni_kit_accept_eula": "YES",
-            "isaacsim_accept_eula": "YES",
         }
     )
     plan = build_plan(spec, run_id="render-1x1", assume_decision="loop_back")
@@ -633,7 +631,10 @@ def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> N
         spec,
         plan,
         run_id="render-1x1",
-        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        options=SkypilotRenderOptions(
+            materialize_registry_secrets=False,
+            accept_eula=True,
+        ),
     )
     documents = [item for item in yaml.safe_load_all(rendered) if item]
     tasks = [item for item in documents if item.get("envs")]
@@ -664,34 +665,18 @@ def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> N
     isaac_env = isaac_pod["containers"][0]["env"]
     isaac_env_by_name = {item["name"]: item["value"] for item in isaac_env}
     assert isaac_env_by_name["NPA_BAKED_PYTHON"] == "/opt/npa/sim/venv/bin/python"
-    rendered_isaac_tasks = []
-    for task in tasks:
-        containers = (
-            task.get("config", {})
-            .get("kubernetes", {})
-            .get("pod_config", {})
-            .get("spec", {})
-            .get("containers", [])
-        )
-        if not containers:
-            continue
-        task_env = {
-            item["name"]: item["value"] for item in containers[0].get("env", [])
-        }
-        if "NPA_BAKED_PYTHON" in task_env:
-            rendered_isaac_tasks.append(task)
-            assert task_env["OMNI_KIT_ACCEPT_EULA"] == "YES"
-            assert task_env["ISAACSIM_ACCEPT_EULA"] == "YES"
+    rendered_isaac_tasks = [task for task in tasks if "ACCEPT_EULA" in task["envs"]]
+    for task in rendered_isaac_tasks:
+        assert task["envs"]["ACCEPT_EULA"] == "Y"
     assert len(rendered_isaac_tasks) == 3
 
 
 def test_canonical_isaac_eula_acceptance_is_operator_supplied_and_fail_closed() -> None:
     payload = yaml.safe_load(SPEC.read_text())
-    assert payload["config"]["omni_kit_accept_eula"] == ""
-    assert payload["config"]["isaacsim_accept_eula"] == ""
+    assert "omni_kit_accept_eula" not in payload["config"]
+    assert "isaacsim_accept_eula" not in payload["config"]
     env = payload["resources"]["isaac-gpu"]["kubernetes"]["pod_config"]["spec"][
         "containers"
     ][0]["env"]
     by_name = {item["name"]: item["value"] for item in env}
-    assert by_name["OMNI_KIT_ACCEPT_EULA"] == "{{config.omni_kit_accept_eula}}"
-    assert by_name["ISAACSIM_ACCEPT_EULA"] == "{{config.isaacsim_accept_eula}}"
+    assert "ACCEPT_EULA" not in by_name

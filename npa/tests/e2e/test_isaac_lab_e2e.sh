@@ -29,6 +29,11 @@ if [ "${#ARGS[@]}" -ne 4 ]; then
   exit 2
 fi
 
+if [ "${ACCEPT_EULA:-}" != "Y" ]; then
+  echo "Refusing before provisioning: set NVIDIA's documented ACCEPT_EULA=Y for this Isaac operation." >&2
+  exit 78
+fi
+
 PROJECT="${ARGS[0]}"
 NAME="${ARGS[1]}"
 GPU_TYPE="${ARGS[2]}"
@@ -216,7 +221,7 @@ run_step "scp smoke tests to VM" stage_smoke_files || exit 1
 
 run_remote_script_step "run Isaac Lab environment smoke test" "set -euo pipefail
 source /opt/isaac-lab/venv/bin/activate
-export OMNI_KIT_ACCEPT_EULA=\"\${OMNI_KIT_ACCEPT_EULA:-YES}\"
+export ACCEPT_EULA=\"$ACCEPT_EULA\"
 python - <<'PY'
 try:
     import tomllib
@@ -231,7 +236,7 @@ python -m npa.smoke.test_isaac_lab_env" || exit 1
 
 run_remote_script_step "run Isaac Lab functional smoke test" "set -euo pipefail
 source /opt/isaac-lab/venv/bin/activate
-export OMNI_KIT_ACCEPT_EULA=\"\${OMNI_KIT_ACCEPT_EULA:-YES}\"
+export ACCEPT_EULA=\"$ACCEPT_EULA\"
 python - <<'PY'
 try:
     import tomllib

@@ -954,7 +954,7 @@ def _isaac_eula_env_entries() -> list[dict[str, str]]:
     """Kubernetes ``env`` entries carrying the operator's NVIDIA licence acceptance.
 
     The Isaac image ships no Isaac Sim and refuses to fetch it (exit 78) unless
-    OMNI_KIT_ACCEPT_EULA and ISAACSIM_ACCEPT_EULA are set. These jobs invoke
+    NVIDIA's documented ``ACCEPT_EULA=Y`` is set. These jobs invoke
     /isaac-sim/python.sh, so without forwarding they cannot run at all.
 
     Read from the submitting process's environment and never defaulted to "YES": the
@@ -965,7 +965,7 @@ def _isaac_eula_env_entries() -> list[dict[str, str]]:
 
     return [
         {"name": name, "value": os.environ[name]}
-        for name in ("OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA")
+        for name in ("ACCEPT_EULA",)
         if os.environ.get(name)
     ]
 

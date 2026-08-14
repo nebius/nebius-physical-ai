@@ -15,12 +15,14 @@ LINKED_SKILLS = (
     REPO_ROOT / "skills/tools/isaac-lab/SKILL.md",
     REPO_ROOT / "skills/atomic/solution-licensing/SKILL.md",
 )
-EULA_VARS = ("OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA")
+EULA_VALUE = "ACCEPT_EULA=Y"
 
 
 def test_eula_preflight_is_canonical_and_discoverable() -> None:
     index = yaml.safe_load(INDEX.read_text(encoding="utf-8"))
-    entry = next(item for item in index["skills"] if item["name"] == "third-party-eula-preflight")
+    entry = next(
+        item for item in index["skills"] if item["name"] == "third-party-eula-preflight"
+    )
 
     assert REPO_ROOT / entry["path"] == SKILL
     assert entry["category"] == "atomic"
@@ -41,8 +43,7 @@ def test_eula_preflight_requires_scoped_explicit_consent_and_early_refusal() -> 
     )
     for phrase in required:
         assert phrase.lower() in text.lower(), phrase
-    for variable in EULA_VARS:
-        assert f"{variable}=YES" in text
+    assert EULA_VALUE in text
 
 
 def test_operational_skills_link_the_preflight() -> None:

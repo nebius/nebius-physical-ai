@@ -64,28 +64,19 @@ def require_s3_credentials(
 #: It must never default to "YES": that would be us accepting on the operator's behalf and
 #: would gut the mechanism the whole runtime-fetch architecture rests on. Unset stays unset,
 #: and the job then fails with the actionable refusal rather than silently consenting.
-ISAAC_EULA_VARS = ("OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA")
-ISAAC_EULA_ACCEPTED_VALUES = frozenset({"YES", "Y", "1", "TRUE"})
+ISAAC_EULA_ENV = "ACCEPT_EULA"
+ISAAC_EULA_VARS = (ISAAC_EULA_ENV,)
 
 
 def require_isaac_eula_acceptance(*, context: str, resume_command: str) -> None:
-    """Refuse before provisioning unless the caller explicitly accepted both terms."""
+    """Refuse before provisioning unless the caller explicitly accepted the terms."""
 
-    missing = [
-        name
-        for name in ISAAC_EULA_VARS
-        if str(os.environ.get(name) or "").strip().upper()
-        not in ISAAC_EULA_ACCEPTED_VALUES
-    ]
-    if not missing:
+    if str(os.environ.get(ISAAC_EULA_ENV) or "").strip() == "Y":
         return
-    resume = (
-        "OMNI_KIT_ACCEPT_EULA=YES ISAACSIM_ACCEPT_EULA=YES "
-        f"{resume_command.strip()}"
-    )
+    resume = f"ACCEPT_EULA=Y {resume_command.strip()}"
     raise MissingIsaacEulaAcceptanceError(
         f"Refusing to provision {context}: explicit operator acceptance is missing "
-        f"for {', '.join(missing)}. The required agreements are the NVIDIA "
+        "for ACCEPT_EULA=Y. The required agreements are the NVIDIA "
         "Omniverse Licence Agreement, NVIDIA Isaac Sim Additional Software and "
         "Materials Licence, and NVIDIA Software Licence Agreement; official links "
         "are listed at https://docs.isaacsim.omniverse.nvidia.com/latest/common/licenses.html. "
@@ -95,9 +86,10 @@ def require_isaac_eula_acceptance(*, context: str, resume_command: str) -> None:
 
 
 def isaac_eula_env() -> dict[str, str]:
-    """Return whichever Isaac EULA acceptance variables the caller has set."""
+    """Return the official run-scoped Isaac EULA value when explicitly set."""
 
-    return {name: os.environ[name] for name in ISAAC_EULA_VARS if os.environ.get(name)}
+    value = str(os.environ.get(ISAAC_EULA_ENV) or "").strip()
+    return {ISAAC_EULA_ENV: value} if value else {}
 
 
 def build_serverless_job_env(
@@ -135,13 +127,19 @@ def build_serverless_job_env(
     return env
 
 
-def split_serverless_env(env: Mapping[str, str]) -> tuple[dict[str, str], dict[str, str]]:
+def split_serverless_env(
+    env: Mapping[str, str],
+) -> tuple[dict[str, str], dict[str, str]]:
     """Split env vars into safe command-line vars and secret vars."""
 
     secret_marker_words = ("TOKEN", "KEY", "SECRET", "PASSWORD")
     safe: dict[str, str] = {}
     secret: dict[str, str] = {}
     for key, value in env.items():
-        target = secret if any(marker in key.upper() for marker in secret_marker_words) else safe
+        target = (
+            secret
+            if any(marker in key.upper() for marker in secret_marker_words)
+            else safe
+        )
         target[key] = value
     return safe, secret

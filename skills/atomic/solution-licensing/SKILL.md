@@ -162,7 +162,8 @@ rather than the argument.
   it to them as a service, requires NVIDIA AI Enterprise. Internal R&D is free with no
   seat limit.
 - **Weights and data:** already handled by runtime fetch (Cosmos, GR00T N1,
-  Cosmos-Reason) with the operator's own HF/NGC token.
+  Cosmos-Reason) at runtime. Public Hugging Face assets work anonymously; gated
+  assets use the operator's token, and NGC credentials apply only to NGC-hosted pulls.
 
 **Wrong answer #1: "the source is Apache-2.0, so the image is fine."** The decisive layer
 is the baked runtime, and publishing an image distributes every byte in it.
@@ -193,7 +194,7 @@ form "we keep baking it but add an access control" is answering the wrong questi
 SDK, not just the weights.** The images were re-architected to contain **no NVIDIA Isaac
 bytes at all**. On first run they download Isaac Sim and Isaac Lab from
 `https://pypi.nvidia.com` into a cache volume, and **refuse to run** unless the operator
-has set both `OMNI_KIT_ACCEPT_EULA=YES` and `ISAACSIM_ACCEPT_EULA=YES`. Nothing is baked
+has set NVIDIA's documented `ACCEPT_EULA=Y`. Nothing is baked
 with acceptance pre-granted. NVIDIA delivers to each operator under that operator's own
 acceptance; we redistribute nothing; the licensing question is moot rather than argued.
 So `isaac-lab`, `sonic`, `sonic-mujoco` and `groot` are now `redistribution: public`.

@@ -477,6 +477,27 @@ def test_workbench_workflow_submit_warns_on_unresolved_placeholders(
     )
 
 
+def test_workbench_workflow_submit_refuses_sonic_without_run_scoped_consent(mocker) -> None:
+    submit = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(SKYPILOT_FIXTURES / "sonic-train-standalone.yaml"),
+            "--run-id",
+            "sonic-no-consent",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "--accept-eula" in result.output
+    assert "No expensive action has begun" in result.output
+    submit.assert_not_called()
+
+
 def test_workbench_workflow_submit_materializes_sonic_yaml(mocker) -> None:
     yaml_path = SKYPILOT_FIXTURES / "sonic-train-standalone.yaml"
     captured: dict[str, object] = {}
@@ -506,6 +527,7 @@ def test_workbench_workflow_submit_materializes_sonic_yaml(mocker) -> None:
             "registry.example/workbench",
             "--gpu-target",
             "gpu-rtx6000",
+            "--accept-eula",
             "--s3-endpoint",
             "https://storage.example",
             "--s3-bucket",
@@ -524,7 +546,7 @@ def test_workbench_workflow_submit_materializes_sonic_yaml(mocker) -> None:
     docs = [doc for doc in yaml.safe_load_all(str(captured["content"])) if doc]
     task = docs[1]
     envs = task["envs"]
-    assert "image_id" not in task["resources"]
+    assert task["resources"]["image_id"] == f"docker:{envs['POLICY_IMAGE']}"
     assert task["resources"]["cloud"] == "kubernetes"
     assert task["resources"]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
     assert envs["POLICY_IMAGE"] == (
@@ -533,15 +555,15 @@ def test_workbench_workflow_submit_materializes_sonic_yaml(mocker) -> None:
     )
     assert envs["SONIC_GPU_TYPE"] == "gpu-rtx6000"
     assert envs["SONIC_IMAGE_VARIANT"] == "sonic-k8s-host-mounted"
+    assert envs["ACCEPT_EULA"] == "Y"
     assert envs["S3_ENDPOINT_URL"] == "https://storage.example"
     assert envs["S3_BUCKET"] == "proof-bucket"
     assert envs["SONIC_OUTPUT_PREFIX"] == "sonic-proof/sonic-run/"
     assert envs["SONIC_MAX_ITERATIONS"] == "2"
-    assert "image_id" not in task["resources"]
     assert "${" not in "\n".join(str(value) for value in envs.values())
 
 
-def test_workbench_workflow_submit_materializes_registry_auth(mocker) -> None:
+def test_workbench_workflow_submit_uses_active_runtime_fetch_image(mocker) -> None:
     yaml_path = SKYPILOT_FIXTURES / "sonic-train-standalone.yaml"
     captured: dict[str, object] = {}
 
@@ -574,7 +596,8 @@ def test_workbench_workflow_submit_materializes_registry_auth(mocker) -> None:
             "--registry-password",
             "redacted-test-token",
             "--gpu-target",
-            "h100",
+            "gpu-rtx6000",
+            "--accept-eula",
             "--use-spot",
             "--s3-endpoint",
             "https://storage.example",
@@ -587,15 +610,17 @@ def test_workbench_workflow_submit_materializes_registry_auth(mocker) -> None:
     assert "redacted-test-token" not in result.output
     docs = [doc for doc in yaml.safe_load_all(str(captured["content"])) if doc]
     task = docs[1]
-    assert task["resources"]["accelerators"] == "H100:1"
-    assert task["resources"]["memory"] == 200
-    assert task["resources"]["use_spot"] is True
-    assert task["envs"]["SKYPILOT_DOCKER_USERNAME"] == "operator"
-    assert task["envs"]["SKYPILOT_DOCKER_PASSWORD"] == "redacted-test-token"
-    assert task["envs"]["SKYPILOT_DOCKER_SERVER"] == "registry.example"
+    assert task["resources"]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+    assert task["resources"]["memory"] == 64
+    assert "use_spot" not in task["resources"]
+    assert task["resources"]["image_id"].endswith(
+        "npa-sonic:cuda13-b300-0.1.2-k8s-runtime-"
+        "sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+    )
+    assert "SKYPILOT_DOCKER_PASSWORD" not in task["envs"]
 
 
-def test_workbench_workflow_submit_materializes_sonic_mvp_workflow(mocker) -> None:
+def test_workbench_workflow_rejects_quarantined_sonic_mvp_workflow(mocker) -> None:
     yaml_path = SKYPILOT_FIXTURES / "sonic-locomotion-finetuning.yaml"
     captured: dict[str, object] = {}
 
@@ -629,6 +654,7 @@ def test_workbench_workflow_submit_materializes_sonic_mvp_workflow(mocker) -> No
             "redacted-test-token",
             "--gpu-target",
             "h100",
+            "--accept-eula",
             "--use-spot",
             "--region",
             "eu-north1",
@@ -643,30 +669,10 @@ def test_workbench_workflow_submit_materializes_sonic_mvp_workflow(mocker) -> No
         ],
     )
 
-    assert result.exit_code == 0
-    assert "redacted-test-token" not in result.output
-    docs = [doc for doc in yaml.safe_load_all(str(captured["content"])) if doc]
-    assert [doc["name"] for doc in docs[1:]] == [
-        "sonic-retarget-motion",
-        "sonic-g1-finetune",
-        "sonic-mujoco-eval",
-    ]
-    assert docs[1]["resources"]["cloud"] == "kubernetes"
-    assert docs[1]["envs"]["AWS_PROFILE"] == "nebius"
-    assert docs[1]["envs"]["AWS_ENDPOINT_URL"] == "https://storage.example"
-    for task in docs[2:]:
-        assert task["resources"]["accelerators"] == "H100:1"
-        assert task["resources"]["region"] == "eu-north1"
-        assert task["resources"]["use_spot"] is True
-        assert "image_id" not in task["resources"]
-        assert (
-            task["envs"]["POLICY_IMAGE"]
-            == "registry.example/workbench/npa-sonic-mujoco:0.1.3-mvp"
-        )
-        assert task["envs"]["SONIC_PAYLOAD_MODE"] == "docker"
-        assert task["envs"]["AWS_PROFILE"] == "nebius"
-        assert task["envs"]["SKYPILOT_DOCKER_PASSWORD"] == "redacted-test-token"
-    assert captured["kwargs"]["require_controller_up"] is False
+    assert result.exit_code == 1
+    assert "quarantined" in result.output
+    assert "restricted" in result.output
+    assert "content" not in captured
 
 
 def test_workflow_run_unknown_workflow_errors() -> None:

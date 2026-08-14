@@ -98,11 +98,9 @@ spec:
           image: cr.us-central1.nebius.cloud/<your-registry-id>/npa-isaac-lab@sha256:<64-hex-digest>
           command: ["/opt/npa/bin/isaac-bootstrap", "warm"]
           env:
-            # YOUR acceptance of NVIDIA's terms. Nothing downloads without both.
-            - name: OMNI_KIT_ACCEPT_EULA
-              value: "YES"
-            - name: ISAACSIM_ACCEPT_EULA
-              value: "YES"
+            # YOUR run-scoped acceptance of NVIDIA's terms.
+            - name: ACCEPT_EULA
+              value: "Y"
             - name: NPA_ISAAC_CACHE_DIR
               value: /opt/isaac-cache
             # Point this at an internal mirror if egress to pypi.nvidia.com is restricted;

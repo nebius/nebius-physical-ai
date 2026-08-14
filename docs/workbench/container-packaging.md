@@ -103,7 +103,8 @@ image (`public` | `restricted`), enforced by
 - **`public`** — OSS-redistributable. Code is under OSI-approved licenses
   (Apache-2.0 / BSD-3 / MIT / MPL-2.0), the CUDA/PyTorch base images
   (`nvidia/cuda`, `pytorch/pytorch` on Docker Hub) are freely redistributable,
-  and any gated model weights (Cosmos, GR00T N1, Cosmos-Reason) are pulled at
+  and model weights are pulled at runtime. Public GR00T N1.7, GEAR-SONIC,
+  Cosmos Reason1, and Cosmos3 Nano assets work anonymously; gated Cosmos assets require a token at
   **runtime** by the operator, never baked into the image. These may be published
   to a public/anonymous registry.
 - **`restricted`** — bakes a runtime we are not licensed to redistribute. Such an
@@ -134,8 +135,8 @@ Kit was already in the layers. So the images were changed to make the statement 
 **How it works.** The images contain **no NVIDIA Isaac bytes**. On first use of
 `/isaac-sim/python.sh`, `npa/docker/workbench/common/isaac_bootstrap.sh`:
 
-1. **Refuses** unless the operator has set **both** `OMNI_KIT_ACCEPT_EULA=YES` and
-   `ISAACSIM_ACCEPT_EULA=YES`. Without them it exits 78 and downloads nothing. Nothing
+1. **Refuses** unless the operator has set NVIDIA's documented `ACCEPT_EULA=Y`.
+   Without it the bootstrap exits 78 and downloads nothing. Nothing
    is baked with acceptance pre-granted — **this refusal is the legal mechanism**, and
    `npa/tests/docker/test_packaging_contract.py` fails the build if any image
    reintroduces a baked `*_ACCEPT_EULA`.

@@ -13,7 +13,6 @@ from typer.testing import CliRunner
 
 from npa.cli.groot import (
     COSMOS_REASON_REVISION,
-    COSMOS_REASON_MODEL,
     DEFAULT_MODEL,
     GROOT_CONTAINER_ENV_FILE,
     GROOT_CONTAINER_NAME,
@@ -49,7 +48,12 @@ TERRAFORM_PLAN_FIXTURES = PACKAGE_ROOT / "tests" / "fixtures" / "terraform_plans
 
 
 @pytest.fixture(autouse=True)
-def _terraform_plan_allows_apply(mocker):
+def _terraform_plan_allows_apply(mocker, monkeypatch):
+    monkeypatch.setenv("ACCEPT_EULA", "Y")
+    mocker.patch(
+        "npa.cli.groot.validate_hf_access",
+        return_value=SimpleNamespace(ok=True, error=""),
+    )
     mocker.patch(
         "npa.cli.groot.provisioner.plan",
         return_value=(TERRAFORM_PLAN_FIXTURES / "fresh_create.txt").read_text(),
@@ -187,7 +191,6 @@ def test_groot_deploy_dry_run_defaults_to_l40s(mocker) -> None:
     assert "http://<pending>:8080" in result.output
     assert [call.args for call in validate_hf_access.call_args_list] == [
         ("hf-test", DEFAULT_MODEL),
-        ("hf-test", COSMOS_REASON_MODEL),
     ]
     init.assert_not_called()
     apply.assert_not_called()
@@ -917,7 +920,7 @@ def test_groot_install_command_installs_gr00t_and_isaac_lab() -> None:
     assert "config.model.model_revision" in cmd
     assert "uv sync --python 3.10" in cmd
     assert "ngccli_linux.zip" in cmd
-    assert 'export OMNI_KIT_ACCEPT_EULA="${OMNI_KIT_ACCEPT_EULA:-YES}"' in cmd
+    assert "export ACCEPT_EULA=Y" in cmd
     assert "GR00T_ENV_SMOKE_OK" in cmd
     assert "isaaclab[isaacsim,all]==2.3.2.post1" in cmd
     assert "ISAAC_LAB_ENV_SMOKE_OK" in cmd
@@ -1494,8 +1497,7 @@ def test_two_same_node_finetunes_use_unique_temp_dirs_and_standalone_rendezvous(
         "save_total_limit": 1,
     }
     commands = [
-        _build_finetune_command(run_id=f"run-{index}", **kwargs)
-        for index in (1, 2)
+        _build_finetune_command(run_id=f"run-{index}", **kwargs) for index in (1, 2)
     ]
     assert "finetune-101" in commands[0]
     assert "finetune-202" in commands[1]
@@ -1694,8 +1696,8 @@ def test_groot_finetune_local_runtime_uses_real_two_gpu_launcher(mocker) -> None
     assert f"uv pip install --quiet --python {GROOT_VENV}/bin/python boto3" in command
     assert "import boto3, wandb" in command
     assert "NPA_GROOT_TRAIN_ENV_SYNC_OK" in command
-    assert 'mktemp -d /tmp/npa-groot-finetune.XXXXXX' in command
-    assert 'trap \'rm -rf -- "$runtime_dir"\' EXIT' in script
+    assert "mktemp -d /tmp/npa-groot-finetune.XXXXXX" in command
+    assert "trap 'rm -rf -- \"$runtime_dir\"' EXIT" in script
     assert '"$runtime_dir/npa_groot_distributed_probe.py"' in command
     assert "--master_port=29501" not in command
     assert "export NCCL_P2P_DISABLE=1" in command
@@ -1733,8 +1735,8 @@ def test_two_concurrent_finetunes_use_unique_temp_paths_and_safe_rendezvous() ->
     }
     assert len(output_dirs) == 2
     for command in commands:
-        assert 'mktemp -d /tmp/npa-groot-finetune.XXXXXX' in command
-        assert 'trap \'rm -rf -- "$runtime_dir"\' EXIT' in shlex.split(command)[2]
+        assert "mktemp -d /tmp/npa-groot-finetune.XXXXXX" in command
+        assert "trap 'rm -rf -- \"$runtime_dir\"' EXIT" in shlex.split(command)[2]
         assert command.count("torchrun --standalone") == 2
         assert "--master_port=" not in command
 

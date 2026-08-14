@@ -490,7 +490,6 @@ def test_wan_submit_cases_forward_runtime_acceptance_as_secret(spec: str) -> Non
 
     assert case is not None
     assert {
-        "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS",
         "HF_TOKEN",
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",

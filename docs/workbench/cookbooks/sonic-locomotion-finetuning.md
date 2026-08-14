@@ -115,8 +115,9 @@ For RTX PRO 6000 Kubernetes targets, use:
 --accelerators RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
 ```
 
-This resolves the SONIC stage to `npa-sonic:0.1.2-k8s-runtime`. L40S resolves to
-`npa-sonic:0.1.2`.
+This resolves the SONIC stage to the active CUDA 13 runtime-fetch tag recorded
+in `sonic_image_manifest.json`. The old baked L40S and inherited MuJoCo images
+are quarantined and rejected; an EULA flag cannot make their baked bytes redistributable.
 
 For Kubernetes targets that pull private images, pass a SkyPilot config with the
 namespace's registry pull secret:

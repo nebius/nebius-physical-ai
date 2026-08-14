@@ -10,8 +10,7 @@ from typing import Any
 
 _ARG_CHUNK_CHARS = 60_000
 _SCRIPT_PATH = "/tmp/npa-isaac-job-script.sh"
-_ISAAC_EULA_VARS = ("OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA")
-_ACCEPTED_EULA_VALUES = frozenset({"1", "TRUE", "Y", "YES"})
+_ISAAC_EULA_ENV = "ACCEPT_EULA"
 _DECODE_STUB = (
     "set -euo pipefail; "
     f"printf '%s' \"$@\" | base64 --decode | gzip --decompress > {_SCRIPT_PATH}; "
@@ -51,17 +50,12 @@ def decode_compressed_bash_args(args: list[str]) -> str:
 
 
 def _require_operator_eula_acceptance(env: dict[str, str]) -> None:
-    """Fail before Kit starts unless the operator explicitly accepted both terms."""
+    """Fail before Kit starts unless the operator explicitly accepted the terms."""
 
-    missing = [
-        name
-        for name in _ISAAC_EULA_VARS
-        if str(env.get(name) or "").strip().upper() not in _ACCEPTED_EULA_VALUES
-    ]
-    if missing:
+    if str(env.get(_ISAAC_EULA_ENV) or "").strip() != "Y":
         raise RuntimeError(
             "inline Isaac execution requires explicit operator EULA acceptance: "
-            + " ".join(missing)
+            "ACCEPT_EULA=Y"
         )
 
 

@@ -44,15 +44,15 @@ workflow composition with retargeting or MJLab.
 
 ## Routing And Validation
 
-- Use the baked `npa-sonic:0.1.2` image for L40S VM targets.
-- Use the host-mounted image selected by
+- The legacy baked L40S and inherited MuJoCo variants are quarantined because
+  their built bytes contain restricted NVIDIA payloads; resolvers must reject them.
+- Use the active host-mounted runtime-fetch image selected by
   `npa/src/npa/deploy/sonic_image_manifest.json` for RTX PRO 6000 Blackwell
   Kubernetes targets with NVIDIA GPU Operator mounted drivers. The CUDA 13
   image inherits the truthful `sm80-sm90-sm100-sm103-sm120` base alias; do not
   reconstruct that tag in callers.
-- SONIC render validation requires RT-capable GPUs. H100 can be useful for
-  non-render training throughput, but it is not the default render-validation
-  target.
+- SONIC render validation requires RT-capable GPUs. Use RTX PRO 6000 Blackwell;
+  do not silently fall back to the quarantined H100/L40S images.
 
 ## Runtime Isaac bootstrap (the container ships no Isaac Sim)
 
@@ -64,9 +64,9 @@ Omniverse Kit, which made it non-redistributable; Isaac is now downloaded on fir
 
 What this changes in practice:
 
-- **Set both variables, or Isaac will not start.** Missing either
-  `OMNI_KIT_ACCEPT_EULA=YES` or `ISAACSIM_ACCEPT_EULA=YES` makes the container exit **78**
-  with a message naming them. That refusal is deliberate and load-bearing — do not "fix"
+- **Set `ACCEPT_EULA=Y`, or Isaac will not start.** Missing or changing
+  NVIDIA's documented value makes the container exit **78**
+  with an actionable message. That refusal is deliberate and load-bearing — do not "fix"
   it by baking acceptance into the image; a guard fails the build if anyone does.
 - **Reach Isaac through `/isaac-sim/python.sh`** (the value of `ISAAC_LAB_PYTHON`). That is
   the bootstrap shim, and it is what every SkyPilot template, the sim2real engine and the

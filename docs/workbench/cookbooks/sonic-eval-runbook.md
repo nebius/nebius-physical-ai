@@ -24,16 +24,12 @@ template is retired).
   checkpoint URI for normal runs, or a pre-mounted local path for development.
 - Object storage credentials are available to the task, and the endpoint is
   `https://storage.eu-north1.nebius.cloud`.
-- The first-party SONIC image is built and pushed with the variant that matches
-  your GPU target. Use `0.1.2` for L40S VM targets and `0.1.2-k8s-runtime` for
-  RTX PRO 6000 Blackwell Kubernetes targets:
+- The active first-party SONIC image is the exact host-mounted runtime-fetch tag
+  in `sonic_image_manifest.json`, for RTX PRO 6000 Blackwell Kubernetes targets:
 
   ```bash
   export NPA_REGISTRY=cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}
-  npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push --variant baked
-  npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push --variant k8s --tag 0.1.2-k8s-runtime
-  docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2"
-  docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2-k8s-runtime"
+  npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push --variant k8s --tag <new-additive-runtime-fetch-tag>
   ```
 
   See `docs/workbench/sonic-image-catalog.md` for the compatibility matrix.
