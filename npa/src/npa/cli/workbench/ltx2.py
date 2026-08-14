@@ -2,19 +2,21 @@
 
 LTX-2.5 generation itself runs inside the ``npa-ltx2`` container on a GPU node,
 launched through ``npa workbench byof run`` like every other BYOF solution. What
-lives here is the part that has to be callable from the host and from a
-workflow state without a GPU: the licensing surface.
+lives here is the part that has to be callable from the host without a GPU:
+``terms`` prints which licence governs LTX-2.5, where to read it, and what the
+workbench needs from the operator before it can fetch anything (a Hugging Face
+token with access to the gated weights repository).
 
-``terms`` prints what the operator is being asked to accept. ``declare``
-validates the answers they gave. ``stamp`` records those answers onto a run's
-artifacts. ``gate`` reads that record back and refuses to let a trainer consume
-LTX Outputs when Attachment A(18) forbids it.
+There is nothing here to declare or to accept. The LTX-2.x agreement forms by
+conduct — "By downloading, using, accessing or distributing any portion or
+element of LTX-2.x, you agree ... to be bound by this Agreement" — and access to
+the gated repository is granted by Lightricks on Hugging Face, not by us.
+Compliance with the agreement is the operator's own responsibility.
 """
 
 from __future__ import annotations
 
 import json
-import os
 from enum import Enum
 from typing import Any
 
@@ -23,19 +25,12 @@ import typer
 app = typer.Typer(
     name="ltx2",
     help=(
-        "LTX-2.5 licensing surface: declare the LTX-2.x Community License terms, "
-        "stamp them onto generated video, and gate downstream training on them."
+        "LTX-2.5 licence surface: print the LTX-2.x Community License terms, the "
+        "pinned upstream source, and the gated weights repository the operator's "
+        "own Hugging Face entitlement unlocks."
     ),
     no_args_is_help=True,
 )
-
-# Exit codes. 78 is EX_CONFIG, the same code the container's runtime gate uses
-# for a missing or invalid declaration, so an operator sees one number for "you
-# have not told us your licensing position" wherever it surfaces. A denial under
-# Attachment A(18) is a different thing — the declaration was fine, the answer
-# was no — and gets its own code.
-EXIT_UNDECLARED = 78
-EXIT_DENIED = 3
 
 
 class OutputFormat(str, Enum):
@@ -56,7 +51,7 @@ def terms_cmd(
         OutputFormat.text, "--output", help="Output format."
     ),
 ) -> None:
-    """Print the LTX-2.x licence terms and the declaration this workbench requires."""
+    """Print the LTX-2.x licence terms and what running LTX-2.5 here requires."""
 
     from npa.workbench.ltx2 import licensing
 
@@ -74,158 +69,46 @@ def terms_cmd(
         },
         "runtime_fetch": {
             "source": {"repo": licensing.SOURCE_REPO, "ref": licensing.SOURCE_REF},
-            "weights": {"repo": licensing.WEIGHTS_REPO, "gated": True},
+            "weights": {
+                "repo": licensing.WEIGHTS_REPO,
+                "url": licensing.WEIGHTS_REPO_URL,
+                "gated": True,
+            },
             "baked_into_image": False,
+            "requires": "HF_TOKEN",
         },
-        "declaration_env": {
-            "accept": licensing.ACCEPT_ENV,
-            "entity_class": licensing.ENTITY_CLASS_ENV,
-            "use_class": licensing.USE_CLASS_ENV,
-            "commercial_agreement_ref": licensing.COMMERCIAL_AGREEMENT_ENV,
-        },
-        "entity_classes": list(licensing.ENTITY_CLASSES),
-        "use_classes": list(licensing.USE_CLASSES),
-        "output_obligations": list(licensing.OUTPUT_OBLIGATIONS),
     }
-    _emit(
-        payload,
-        output=output,
-        text=licensing.refusal_text("Nothing has been requested yet."),
-    )
+    _emit(payload, output=output, text=terms_text())
 
 
-@app.command("declare")
-def declare_cmd(
-    output: OutputFormat = typer.Option(
-        OutputFormat.json, "--output", help="Output format."
-    ),
-) -> None:
-    """Validate the operator's licensing declaration from the environment."""
+def terms_text() -> str:
+    """Return the operator-facing summary of the terms and what they must hold."""
 
-    from npa.workbench.ltx2.licensing import LtxLicenseError, declaration_from_env
+    from npa.workbench.ltx2 import licensing
 
-    try:
-        declaration = declaration_from_env(os.environ)
-    except LtxLicenseError as exc:
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(EXIT_UNDECLARED)
+    return f"""\
+npa-ltx2 ships no LTX-2.5 code and no LTX-2.5 weights. Running it asks
+Lightricks' own channels to deliver them to you:
+  source:  {licensing.SOURCE_REPO} @ {licensing.SOURCE_REF}
+  weights: {licensing.WEIGHTS_REPO_URL} (gated)
 
-    payload = declaration.as_dict()
-    payload["derived_model_training"] = declaration.derived_model_training
-    _emit(
-        payload,
-        output=output,
-        text=(
-            f"entity={declaration.entity_class} use={declaration.use_class} "
-            f"derived_model_training={declaration.derived_model_training}"
-        ),
-    )
+LTX-2.5 is not OSI open source. It is licensed under the
+{licensing.LICENSE_NAME} ({licensing.LICENSE_DATE}):
+  {licensing.LICENSE_URL}
+  {licensing.ACCEPTABLE_USE_POLICY_URL}
 
+The Agreement binds by use: "By downloading, using, accessing or distributing
+any portion or element of LTX-2.x, you agree that you have read and accepted to
+be bound by this Agreement." Accept it with Lightricks, on the gated repository
+page, with your own Hugging Face account. Both fetches then run under your own
+HF_TOKEN, which is the only thing this workbench requires of you.
 
-@app.command("stamp")
-def stamp_cmd(
-    run_id: str = typer.Option(
-        ..., "--run-id", help="Run id recorded in the manifest."
-    ),
-    manifest_uri: str = typer.Option(
-        ...,
-        "--manifest-uri",
-        help="S3 prefix or path to write the provenance manifest to.",
-    ),
-    output_uri: list[str] = typer.Option(
-        [],
-        "--output-uri",
-        help="A generated artifact covered by this manifest; repeatable.",
-    ),
-    model_file: list[str] = typer.Option(
-        [], "--model-file", help="Weights file the run fetched; repeatable."
-    ),
-    declaration_uri: str = typer.Option(
-        "",
-        "--declaration-uri",
-        help=(
-            "The generation's own declaration (`ltx-runtime provenance`). When "
-            "given, this state's declaration must match it or the stamp refuses."
-        ),
-    ),
-    output: OutputFormat = typer.Option(
-        OutputFormat.json, "--output", help="Output format."
-    ),
-) -> None:
-    """Stamp the accepted licence terms onto the artifacts a run generated."""
-
-    from npa.workbench.ltx2.gate import stamp_run
-    from npa.workbench.ltx2.licensing import LtxLicenseError
-
-    try:
-        result = stamp_run(
-            run_id=run_id,
-            outputs=list(output_uri),
-            model_files=list(model_file),
-            manifest_uri=manifest_uri,
-            env=os.environ,
-            declaration_uri=declaration_uri,
-        )
-    except LtxLicenseError as exc:
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(EXIT_UNDECLARED)
-
-    payload = result.as_dict()
-    disposition = payload["manifest"]["restrictions"]["derived_model_training"]
-    _emit(
-        payload,
-        output=output,
-        text=(f"stamped {result.manifest_uri} derived_model_training={disposition}"),
-    )
-
-
-@app.command("gate")
-def gate_cmd(
-    manifest_uri: str = typer.Option(
-        ..., "--manifest-uri", help="Provenance manifest written by `ltx2 stamp`."
-    ),
-    consumer: str = typer.Option(
-        ...,
-        "--consumer",
-        help="What wants the artifacts, e.g. 'lerobot policy training'.",
-    ),
-    artifact_uri: list[str] = typer.Option(
-        [],
-        "--artifact-uri",
-        help=(
-            "An artifact the consumer intends to use; repeatable. The manifest "
-            "must claim it, so another run's manifest cannot clear these bytes."
-        ),
-    ),
-    report_uri: str = typer.Option(
-        "", "--report-uri", help="Optional S3 prefix or path for the gate report."
-    ),
-    output: OutputFormat = typer.Option(
-        OutputFormat.json, "--output", help="Output format."
-    ),
-) -> None:
-    """Refuse or allow a downstream trainer to consume LTX-2.5 output.
-
-    Exits non-zero when the answer is no, so a workflow state fails rather than
-    proceeding past a licence restriction it just printed.
-    """
-
-    from npa.workbench.ltx2.gate import gate_run
-
-    result = gate_run(
-        manifest_uri=manifest_uri,
-        consumer=consumer,
-        report_uri=report_uri,
-        artifacts=list(artifact_uri),
-    )
-    payload = result.as_dict()
-    text = f"allowed={result.decision.allowed} {result.decision.reason}"
-    if result.decision.allowed:
-        _emit(payload, output=output, text=text)
-        return
-
-    if output == OutputFormat.json:
-        typer.echo(json.dumps(payload, indent=2, sort_keys=True), err=True)
-    else:
-        typer.echo(text, err=True)
-    raise typer.Exit(EXIT_DENIED)
+Two obligations are yours alone, and nothing here checks them for you:
+  Section 2.1      an Entity whose annual revenue is at or above
+                   ${licensing.COMMERCIAL_REVENUE_THRESHOLD_USD:,}, counting all affiliates under
+                   common Control, needs a paid Commercial Use Agreement for any
+                   use outside the Section 2.2 non-commercial carve-out.
+                   Contact {licensing.COMMERCIAL_LICENSE_CONTACT}.
+  Attachment A(18) for commercial use, the Outputs may not be used to train,
+                   improve, or fine-tune any other machine learning model. A
+                   robot policy is another machine learning model."""

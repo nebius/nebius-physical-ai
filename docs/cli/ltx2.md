@@ -5,15 +5,12 @@
 ```text
 Usage: npa workbench ltx2 [OPTIONS] COMMAND [ARGS]...
 
-LTX-2.5 licensing surface: declare the LTX-2.x Community License terms, stamp them onto generated video, and gate downstream training on them.
+LTX-2.5 licence surface: print the LTX-2.x Community License terms, the pinned upstream source, and the gated weights repository the operator's own Hugging Face entitlement unlocks.
 
 Options
 --help  Show this message and exit.
 Commands
-terms  Print the LTX-2.x licence terms and the declaration this workbench requires.
-declare  Validate the operator's licensing declaration from the environment.
-stamp  Stamp the accepted licence terms onto the artifacts a run generated.
-gate  Refuse or allow a downstream trainer to consume LTX-2.5 output.
+terms  Print the LTX-2.x licence terms and what running LTX-2.5 here requires.
 ```
 
 ## Options
@@ -26,10 +23,7 @@ gate  Refuse or allow a downstream trainer to consume LTX-2.5 output.
 
 | Command | Description |
 | --- | --- |
-| `terms` | Print the LTX-2.x licence terms and the declaration this workbench requires. |
-| `declare` | Validate the operator's licensing declaration from the environment. |
-| `stamp` | Stamp the accepted licence terms onto the artifacts a run generated. |
-| `gate` | Refuse or allow a downstream trainer to consume LTX-2.5 output. |
+| `terms` | Print the LTX-2.x licence terms and what running LTX-2.5 here requires. |
 
 ## Examples
 

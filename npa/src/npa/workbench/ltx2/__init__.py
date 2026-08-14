@@ -1,34 +1,16 @@
-"""LTX-2.5 workbench tool: operator licensing gate and output provenance.
+"""LTX-2.5 workbench tool: licence facts and generated-video validation.
 
 The container definition lives in ``npa/docker/workbench/ltx2/``; it bakes no
-LTX-2.5 code and no LTX-2.5 weights. This package holds the parts that must be
-unit-testable without a GPU: validating the operator's declaration under the
-LTX-2.x Community License Agreement, stamping that declaration onto generated
-artifacts, and the fail-closed gate that keeps commercially-declared output out
-of downstream trainers.
+LTX-2.5 code and no LTX-2.5 weights, and fetches both at run time against the
+operator's own Hugging Face entitlement for the gated weights repository.
+
+This package holds the parts that must be usable without a GPU: the record of
+which licence text governs LTX-2.5 and where to read it, and the decoded-video
+check that decides whether a generation run actually produced a clip.
 """
 
 from __future__ import annotations
 
-from npa.workbench.ltx2.gate import GateResult, StampResult, gate_run, stamp_run
-from npa.workbench.ltx2.licensing import (
-    GateDecision,
-    LicenseDeclaration,
-    LtxLicenseError,
-    ProvenanceRecord,
-    check_training_consumer,
-    declaration_from_env,
-)
+from npa.workbench.ltx2 import licensing
 
-__all__ = [
-    "GateDecision",
-    "GateResult",
-    "LicenseDeclaration",
-    "LtxLicenseError",
-    "ProvenanceRecord",
-    "StampResult",
-    "check_training_consumer",
-    "declaration_from_env",
-    "gate_run",
-    "stamp_run",
-]
+__all__ = ["licensing"]

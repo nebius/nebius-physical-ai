@@ -71,8 +71,6 @@ CHECKED_TOOLREFS = [
     ("workbench.token_factory.reason", "npa.cli.workbench.token_factory", "reason"),
     ("workbench.vlm_eval.run", "npa.cli.workbench.vlm_eval", "run"),
     ("workbench.nurec.visualize", "npa.cli.nurec", "visualize"),
-    ("workbench.ltx2.stamp", "npa.cli.workbench.ltx2", "stamp"),
-    ("workbench.ltx2.gate", "npa.cli.workbench.ltx2", "gate"),
 ]
 
 

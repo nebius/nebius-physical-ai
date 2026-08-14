@@ -2060,54 +2060,6 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{run.id}}",
         ],
     ),
-    "workbench.ltx2.stamp": ToolEntry(
-        name="workbench.ltx2.stamp",
-        description=(
-            "Validate the operator's LTX-2.x Community License declaration and "
-            "stamp it onto the video a generation state produced, so the licence "
-            "terms travel with the artifacts instead of living in a wiki."
-        ),
-        argv_template=[
-            "npa",
-            "workbench",
-            "ltx2",
-            "stamp",
-            "--run-id",
-            "{{run.id}}",
-            "--manifest-uri",
-            "{{config.ltx2_manifest_uri}}",
-            # The generation's own declaration, so the stamp cannot record this
-            # CPU state's environment instead of what the GPU run did.
-            "--declaration-uri",
-            "{{config.ltx2_declaration_uri}}",
-            "--output-uri",
-            "{{config.video_uri}}",
-        ],
-    ),
-    "workbench.ltx2.gate": ToolEntry(
-        name="workbench.ltx2.gate",
-        description=(
-            "Fail-closed check of an LTX-2.5 provenance manifest before a trainer "
-            "consumes the video: Attachment A(18) forbids training other models "
-            "on LTX Outputs for commercial use, and a robot policy is another "
-            "model. Exits non-zero when the answer is no."
-        ),
-        argv_template=[
-            "npa",
-            "workbench",
-            "ltx2",
-            "gate",
-            "--manifest-uri",
-            "{{config.ltx2_manifest_uri}}",
-            "--consumer",
-            "{{config.ltx2_consumer}}",
-            # Binds the decision to specific bytes, not just to a document.
-            "--artifact-uri",
-            "{{config.video_uri}}",
-            "--report-uri",
-            "{{config.ltx2_gate_uri}}",
-        ],
-    ),
     "workbench.cosmos3.reason": ToolEntry(
         name="workbench.cosmos3.reason",
         description="Build a Cosmos3 reason-stage manifest over input frames.",
