@@ -434,10 +434,7 @@ def test_export_uses_one_canonical_s3_contract_for_viewers_download_and_cloud(
     second = client.post("/foxglove/export", json=request)
 
     assert first.status_code == second.status_code == 200
-    assert [call["run_ref"] for call in prepare_calls] == [
-        "npa1_exact",
-        "npa1_exact",
-    ]
+    assert [call["run_ref"] for call in prepare_calls] == ["npa1_exact"]
     assert first.json()["converted"] is True
     assert second.json()["converted"] is False
     for response in (first.json(), second.json()):
@@ -448,6 +445,15 @@ def test_export_uses_one_canonical_s3_contract_for_viewers_download_and_cloud(
         assert response["sim_viz"]["canonical_mcap_sha256"] == digest
         assert response["export"]["cloud"]["recording_key"] == f"npa-{digest}"
     assert state["sim_viz"]["foxglove_cloud"]["import_status"] == "complete"
+
+    # A byte mismatch invalidates the fast path and repairs the public transport
+    # from the authoritative canonical S3 contract on the next click.
+    (data_dir / "transport.mcap").write_bytes(b"corrupt-public-cache")
+    repaired = client.post("/foxglove/export", json=request)
+    assert repaired.status_code == 200
+    assert len(prepare_calls) == 2
+    assert (data_dir / "transport.mcap").read_bytes() == canonical.read_bytes()
+    assert repaired.json()["export"]["sha256"] == digest
 
 
 def test_canonical_s3_failure_is_not_concealed(tmp_path: Path) -> None:

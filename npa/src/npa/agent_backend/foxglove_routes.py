@@ -13,6 +13,8 @@ VM's filesystem, session state, or object storage.
 
 from __future__ import annotations
 
+import hashlib
+import re
 import secrets
 import threading
 from functools import wraps
@@ -87,6 +89,27 @@ class FoxgloveDeps:
 def _sim_viz(state: dict) -> dict:
     value = state.get("sim_viz")
     return value if isinstance(value, dict) else {}
+
+
+def _reusable_canonical_transport(sim_viz: dict, path: Path | None) -> bool:
+    """Return true only when the active public bytes match canonical state."""
+    if path is None or not path.is_file():
+        return False
+    expected = str(sim_viz.get("canonical_mcap_sha256") or "").strip().lower()
+    provenance = sim_viz.get("canonical_mcap_provenance")
+    if not re.fullmatch(r"[0-9a-f]{64}", expected) or not isinstance(
+        provenance, dict
+    ):
+        return False
+    if str(provenance.get("sha256") or "").strip().lower() != expected:
+        return False
+    if not str(sim_viz.get("canonical_mcap_s3_uri") or "").startswith("s3://"):
+        return False
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest() == expected
 
 
 def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> None:
@@ -260,15 +283,29 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
         active_url = str(sim_viz.get("foxglove_url") or "").strip()
         active_run = str(sim_viz.get("run_id") or "").strip()
         active_path = deps.data_dir / Path(active_url).name if active_url else None
-        # The S3 resolver is idempotent and validates native MCAPs, so ask it on
-        # every explicit export. This repairs missing local transport caches and
-        # guarantees export never falls back to a stale previous-run publication.
-        if deps.prepare_canonical_mcap is not None or (
+        # A selected canonical transport is reusable only when its local bytes,
+        # persisted SHA, provenance SHA, S3 identity, and run identity all agree.
+        # This keeps the popup-safe action responsive without trusting a stale
+        # previous-run publication. Missing/corrupt evidence still goes through
+        # the authoritative S3 resolver, as does an explicit force request.
+        has_active_transport = bool(
+            active_url
+            and requested_run == active_run
+            and active_path is not None
+            and active_path.is_file()
+        )
+        canonical_reusable = (
+            _reusable_canonical_transport(sim_viz, active_path)
+            if deps.prepare_canonical_mcap is not None
+            else has_active_transport
+        )
+        if (
             bool(body.get("force_convert"))
             or not active_url
             or requested_run != active_run
             or active_path is None
             or not active_path.is_file()
+            or not canonical_reusable
         ):
             converted = foxglove_convert_run_route(body)
             sim_viz = dict(converted.get("sim_viz") or {})
