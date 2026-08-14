@@ -159,7 +159,8 @@ def plan_cmd(
                 f"      cluster {c['name']}: cpu={c['cpu_nodes']} ({c['cpu_preset']}) "
                 f"gpu={c['gpu_nodes']} ({c['gpu_platform']} {c['gpu_preset']}) "
                 f"reservation={c['gpu_reservation']} "
-                f"gpu_cluster={c['enable_gpu_cluster']}"
+                f"gpu_cluster={c['enable_gpu_cluster']} "
+                f"driver={c['gpu_driver_mode']}"
             )
 
 

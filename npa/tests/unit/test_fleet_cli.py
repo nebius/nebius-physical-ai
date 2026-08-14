@@ -323,7 +323,7 @@ def test_render_tfvars_capacity_block_is_strict() -> None:
     )
 
 
-def test_render_tfvars_b200_uses_managed_driver_image() -> None:
+def test_render_tfvars_gpu_defaults_managed_and_operator_is_explicit() -> None:
     b200 = render_tfvars(
         ClusterSpec(
             name="b200",
@@ -335,6 +335,7 @@ def test_render_tfvars_b200_uses_managed_driver_image() -> None:
         )
     )
     assert "gpu_nodes_driverfull_image   = true" in b200
+    assert 'gpu_nodes_driver_preset     = "cuda13.0"' in b200
 
     b200_alias = render_tfvars(
         ClusterSpec(
@@ -358,7 +359,24 @@ def test_render_tfvars_b200_uses_managed_driver_image() -> None:
             infiniband_fabric="us-central1-a",
         )
     )
-    assert "gpu_nodes_driverfull_image   = false" in h200
+    assert "gpu_nodes_driverfull_image   = true" in h200
+
+    operator = render_tfvars(
+        ClusterSpec(
+            name="operator",
+            gpu_nodes=NodePoolSpec(
+                count=1, platform="gpu-rtx6000", preset="1gpu-24vcpu-218gb"
+            ),
+            gpu_driver_mode="operator",
+        )
+    )
+    assert "gpu_nodes_driverfull_image   = false" in operator
+    assert "gpu_nodes_driver_preset" not in operator
+
+    cpu_only = render_tfvars(
+        ClusterSpec(name="cpu", cpu_nodes=NodePoolSpec(count=1))
+    )
+    assert "gpu_nodes_driverfull_image" not in cpu_only
 
 
 def test_patch_provider_domain_region_aware() -> None:
@@ -890,10 +908,10 @@ def _mock_deploy_boundary(monkeypatch, *, apply_fails: bool = False):
     return L
 
 
-def _run_one_cluster(L, tmp_path, *, profile: str = ""):
+def _run_one_cluster(L, tmp_path, *, profile: str = "", cluster=None):
     spec = FleetSpec(name="f")
     project = ProjectSpec(name="a")
-    cluster = ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))
+    cluster = cluster or ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))
     return L._deploy_one_cluster(
         spec=spec,
         project=project,
@@ -934,6 +952,68 @@ def test_deploy_one_cluster_failure_leaves_sidecar_provisioning(
     # Sidecar was written before apply; a failed apply must NOT read as deployed.
     sidecar = json.loads((tmp_path / "a" / "c" / L._ENV_SIDECAR).read_text())
     assert sidecar["status"] == "provisioning"
+
+
+def test_deploy_gpu_health_failure_never_promotes_deployed(
+    tmp_path, monkeypatch
+) -> None:
+    L = _mock_deploy_boundary(monkeypatch)
+    monkeypatch.setattr(L, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(
+        L,
+        "validate_gpu_health",
+        lambda *a, **k: (_ for _ in ()).throw(
+            RuntimeError("NebiusGPUError=True; Fabric State='In Progress'")
+        ),
+    )
+    cluster = ClusterSpec(
+        name="c",
+        gpu_nodes=NodePoolSpec(
+            count=2, platform="gpu-b200-sxm", preset="8gpu-160vcpu-1792gb"
+        ),
+        infiniband_fabric="us-central1-b",
+    )
+
+    result = _run_one_cluster(L, tmp_path, cluster=cluster)
+
+    assert result["status"] == "deployed-validation-failed"
+    assert result["cluster_id"] == "mk8s-1"
+    assert result["kubeconfig"]
+    sidecar = json.loads((tmp_path / "a" / "c" / L._ENV_SIDECAR).read_text())
+    assert sidecar["status"] == "deployed-validation-failed"
+    assert sidecar["gpu_driver_mode"] == "managed-image"
+    assert "NebiusGPUError" in sidecar["error"]
+
+
+def test_deploy_gpu_promotes_only_after_health_success(tmp_path, monkeypatch) -> None:
+    L = _mock_deploy_boundary(monkeypatch)
+    monkeypatch.setattr(L, "_require_bin", lambda binary: binary)
+    observed_status: list[str] = []
+
+    def healthy(*_args, **kwargs):
+        sidecar = json.loads(
+            (tmp_path / "a" / "c" / L._ENV_SIDECAR).read_text()
+        )
+        observed_status.append(sidecar["status"])
+        assert kwargs["config"].expected_gpus == 3
+        return {"status": "healthy", "final_snapshot": {}, "cuda_smokes": []}
+
+    monkeypatch.setattr(L, "validate_gpu_health", healthy)
+    cluster = ClusterSpec(
+        name="c",
+        gpu_nodes=NodePoolSpec(
+            count=3, platform="gpu-rtx6000", preset="1gpu-24vcpu-218gb"
+        ),
+        gpu_health_stabilization_seconds=0,
+        gpu_cuda_smoke=False,
+    )
+
+    result = _run_one_cluster(L, tmp_path, cluster=cluster)
+
+    assert observed_status == ["validating-gpu-health"]
+    assert result["status"] == "deployed"
+    sidecar = json.loads((tmp_path / "a" / "c" / L._ENV_SIDECAR).read_text())
+    assert sidecar["status"] == "deployed"
 
 
 # --------------------------------------------------------------------------- #

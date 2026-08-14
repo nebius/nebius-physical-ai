@@ -67,6 +67,16 @@ def _successful_storage_probe(monkeypatch):
             },
         )(),
     )
+    # Cached-cluster tests exercise provisioning orchestration, not a live API.
+    # The shared health validator itself has hermetic topology/fabric/smoke tests.
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle._validate_cluster",
+        lambda *_args, **_kwargs: {
+            "ready_nodes": 2,
+            "total_gpus": 1,
+            "default_storage_class": "compute-csi-default-sc",
+        },
+    )
 
 
 def _write_runtime(tmp_path: Path, monkeypatch) -> None:
@@ -193,6 +203,7 @@ def test_provision_if_absent_reuses_kubeconfig_and_ensures_bucket(
     assert result.status == "ok"
     assert "s3:verified writable bucket bucket" in result.actions
     assert f"k8s:reused kubeconfig {kubeconfig}" in result.actions
+    assert "k8s:validated stable GPU health and CUDA vectorAdd" in result.actions
 
 
 def test_reused_cluster_still_waits_for_skypilot_gpu_readiness(

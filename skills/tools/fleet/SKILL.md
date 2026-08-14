@@ -40,6 +40,12 @@ region: us-central1
 profile: ""                  # ~/.nebius profile to authenticate as; "" = active
 project_prefix: "fleet1-test-"
 defaults:
+  gpu_driver_mode: auto
+  managed_driver_preset: cuda13.0
+  allow_unsafe_nvswitch_operator: false
+  gpu_health_stabilization_seconds: 120
+  gpu_health_timeout_minutes: 60
+  gpu_cuda_smoke: true
   cpu_nodes: { count: 1, platform: cpu-d3, preset: 48vcpu-192gb }
   gpu_nodes:
     count: 1
@@ -109,11 +115,14 @@ depends on it.
    valid on fabric-capable 8-GPU SXM presets. Single-GPU presets (e.g. RTX PRO
    6000 `1gpu-24vcpu-218gb`) auto-set `enable_gpu_cluster=false`; set it `true`
    only with an 8-GPU preset **and** `infiniband_fabric`.
-   B200 pools (`gpu-b200-sxm` and the recipe/API alias `gpu-b200-sxm-a`)
-   automatically use Nebius's `cuda13.0` driver-full node image and the provider
-   device plugin. This is the supported Managed Kubernetes path and prevents
-   the pod-managed GPU driver from racing the Network Operator while the NVLink
-   fabric is initialized. The same rule applies to `npa cluster up` and fleet.
+   Every GPU pool defaults to `gpu_driver_mode: auto`, which selects Nebius's
+   managed driver image plus the provider device plugin; CPU-only clusters emit
+   no GPU-driver input. `managed_driver_preset` defaults to the vendored
+   recipe's supported `cuda13.0` and is configurable. `operator` remains an
+   explicit escape hatch, but NVSwitch topologies reject it unless
+   `allow_unsafe_nvswitch_operator: true` acknowledges the Network
+   Operator/MOFED versus Fabric Manager host-device race. The same strategy
+   resolver applies to `npa cluster up` and Fleet.
 4. **Bind reserved GPU capacity explicitly when required.** Set
    `gpu_nodes.capacity_block_group` to a runtime-supplied Capacity Block Group
    ID. Fleet renders `gpu_nodes_reservation_policy = { policy = "STRICT", ... }`,
@@ -202,6 +211,10 @@ depends on it.
    including the package-only pinned-ref fallback; currently this removes
    `kubectl debug --quiet` from the filesystem verifier because kubectl 1.36
    otherwise hides both required success evidence and the debugger-pod name.
+   For GPU clusters it also inspects the materialized recipe's variables and
+   `gpu_settings` wiring. If the selected managed-driver mode/preset cannot be
+   represented, deployment fails with an actionable compatibility error rather
+   than silently reverting to the operator driver.
 8. **Status / teardown**: `npa fleet status --spec fleet.yaml`; `npa fleet
    destroy --spec fleet.yaml` (prompts; `--yes`/`-y` or `--force` to skip).
 
@@ -231,9 +244,14 @@ Both `deploy` and `destroy` confirm before acting (bypass with `--yes`/`-y`;
 - **Per-cluster isolation**: each `(project, cluster)` gets its own Terraform
   install dir + local state under `~/.npa/fleet/<name>/<project>/<cluster>` and
   an env sidecar so `destroy` can rebuild the required `TF_VAR_*`. The sidecar's
-  `status` starts as `provisioning` and is promoted to `deployed` only after a
-  successful apply and kubeconfig write. Credential failures report
-  `deployed-credentials-failed` and retain Terraform/cloud state for recovery.
+  `status` starts as `provisioning`. GPU clusters move through
+  `validating-gpu-health` and are promoted to `deployed` only after the requested
+  Ready-node/GPU topology, absence of `NebiusGPUError`, exposed Fabric state,
+  driver components, stable boot IDs, and per-node CUDA vectorAdd all pass for
+  the configured stabilization interval. Health failures report
+  `deployed-validation-failed`; credential failures report
+  `deployed-credentials-failed`. Both retain Terraform/cloud state, kubeconfig,
+  and local evidence for diagnosis and an idempotent retry.
 - **Region domain**: the recipe's `provider.tf` domain is patched to
   `api.nebius.cloud` for non-EU regions automatically (EU uses
   `api.eu.nebius.cloud`). If the upstream recipe drifts (renames `provider.tf`,
@@ -246,6 +264,11 @@ Both `deploy` and `destroy` confirm before acting (bypass with `--yes`/`-y`;
   and the o11y/kuberay/gatekeeper `enable_*` flags. Pulling a newer recipe whose
   variables changed can require updating `fleet/tfvars.py`; validate with
   `npa fleet plan` + a `terraform plan` before a fleet-wide apply.
+- **Existing GPU pools do not change their boot image in place**: after moving
+  an affected spec to `auto`/`managed-image`, perform a controlled rolling
+  node-group update or recreation. A newer NPA binary alone cannot repair
+  already-booted operator-driver nodes; preserve reservation capacity and obey
+  workload disruption policy while replacing them.
 - **Filesystem quota**: `enable_filestore: true` creates one shared filesystem
   per cluster and consumes tenant `compute.filesystem.count` +
   `compute.filesystem.size.network-ssd` quota. Set `enable_filestore: false`

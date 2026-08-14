@@ -23,8 +23,15 @@ Options
 --cpu-preset  <str>  CPU node preset, matching `npa cluster up`.
 --gpu-platform  <str>  GPU node platform, matching `npa cluster up`.
 --gpu-preset  <str>  GPU node preset, matching `npa cluster up`.
---preemptible  --on-demand  Run the GPU node group as preemptible, matching `npa cluster up`. This changes the capacity pool but not hard instance/disk/IP
-    quotas; a reclaim stops the node mid-run.
+--gpu-driver-mode  <str>  GPU driver strategy (auto, managed-image, or operator), matching `npa cluster up`.
+--managed-driver-preset  <str>  Nebius managed driver preset, matching `npa cluster up`.
+--allow-unsafe-nvswitch-operator  --deny-unsafe-nvswitch-operator  Explicit diagnostic acknowledgement for operator mode on NVSwitch systems.
+--gpu-health-stabilization-seconds  <int>  Required stable GPU-health interval, matching `npa cluster up`. [default: 120]
+--gpu-cuda-smoke  --skip-gpu-cuda-smoke  Run CUDA vectorAdd on every requested GPU node. [default: gpu-cuda-smoke]
+--gpu-cuda-smoke-image  <str>  Container image for CUDA vectorAdd validation.
+    [default: nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0-ubuntu22.04]
+--preemptible  --on-demand  Run the GPU node group as preemptible, matching `npa cluster up`. This changes the capacity pool but not hard
+    instance/disk/IP quotas; a reclaim stops the node mid-run.
 --dry-run  Resolve settings and print intended actions only.
 --timeout  <int>  Terraform apply timeout in minutes. [default: 120]
 --accelerator  <str>  Requested SkyPilot accelerator (for example RTXPRO6000:1) to gate readiness.
@@ -54,6 +61,12 @@ Options
 | `--cpu-preset` | <str>  CPU node preset, matching `npa cluster up`. |
 | `--gpu-platform` | <str>  GPU node platform, matching `npa cluster up`. |
 | `--gpu-preset` | <str>  GPU node preset, matching `npa cluster up`. |
+| `--gpu-driver-mode` | <str>  GPU driver strategy (auto, managed-image, or operator), matching `npa cluster up`. |
+| `--managed-driver-preset` | <str>  Nebius managed driver preset, matching `npa cluster up`. |
+| `--allow-unsafe-nvswitch-operator` | --deny-unsafe-nvswitch-operator  Explicit diagnostic acknowledgement for operator mode on NVSwitch systems. |
+| `--gpu-health-stabilization-seconds` | <int>  Required stable GPU-health interval, matching `npa cluster up`. [default: 120] |
+| `--gpu-cuda-smoke` | --skip-gpu-cuda-smoke  Run CUDA vectorAdd on every requested GPU node. [default: gpu-cuda-smoke] |
+| `--gpu-cuda-smoke-image` | <str>  Container image for CUDA vectorAdd validation. [default: nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0-ubuntu22.04] |
 | `--preemptible` | --on-demand  Run the GPU node group as preemptible, matching `npa cluster up`. This changes the capacity pool but not hard instance/disk/IP quotas; a reclaim stops the node mid-run. |
 | `--dry-run` | Resolve settings and print intended actions only. |
 | `--timeout` | <int>  Terraform apply timeout in minutes. [default: 120] |

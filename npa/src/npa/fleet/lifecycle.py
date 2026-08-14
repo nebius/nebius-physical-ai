@@ -42,6 +42,8 @@ from npa.cli.cluster.terraform_lifecycle import (
     _run_stream,
     _terraform_env,
 )
+from npa.cluster.gpu_driver import resolve_gpu_driver_strategy
+from npa.cluster.gpu_health import GpuHealthConfig, validate_gpu_health
 from npa.fleet.quotas import preflight_region, shortfall_message
 from npa.fleet.spec import ClusterSpec, FleetSpec, ProjectSpec
 from npa.fleet.tfvars import patch_provider_domain, provider_domain, render_tfvars
@@ -747,7 +749,9 @@ def _prepare_install_dir(
         )
 
     (workdir / "terraform.tfvars").write_text(
-        render_tfvars(cluster, ssh_public_key=ssh_public_key)
+        render_tfvars(
+            cluster, ssh_public_key=ssh_public_key, recipe_dir=workdir
+        )
     )
     return workdir
 
@@ -1202,6 +1206,18 @@ def plan_fleet(
     for project in spec.projects:
         clusters = []
         for cluster in project.clusters:
+            gpu = cluster.gpu_nodes
+            driver = resolve_gpu_driver_strategy(
+                gpu_nodes=cluster.gpu_count(),
+                platform=gpu.platform if gpu else "",
+                preset=gpu.preset if gpu else "",
+                mode=cluster.gpu_driver_mode,
+                managed_driver_preset=cluster.managed_driver_preset,
+                enable_gpu_cluster=cluster.resolved_enable_gpu_cluster(),
+                allow_unsafe_nvswitch_operator=(
+                    cluster.allow_unsafe_nvswitch_operator
+                ),
+            )
             clusters.append(
                 {
                     "name": cluster.name,
@@ -1218,6 +1234,19 @@ def plan_fleet(
                         else "on-demand"
                     ),
                     "enable_gpu_cluster": cluster.resolved_enable_gpu_cluster(),
+                    "gpu_driver_mode": driver.effective_mode,
+                    "managed_driver_preset": (
+                        driver.managed_driver_preset
+                        if driver.uses_managed_image
+                        else None
+                    ),
+                    "unsafe_nvswitch_operator": (
+                        driver.unsafe_operator_acknowledged
+                    ),
+                    "gpu_health_stabilization_seconds": (
+                        cluster.gpu_health_stabilization_seconds
+                    ),
+                    "gpu_cuda_smoke": cluster.gpu_cuda_smoke,
                     "enable_filestore": cluster.enable_filestore,
                     "filestore_disk_size_gibibytes": cluster.filestore_disk_size_gibibytes,
                     "filestore_mount_path": cluster.filestore_mount_path,
@@ -1576,6 +1605,22 @@ def _deploy_one_cluster(
     label = f"{project_key}/{cluster.name}"
     log_metadata = {"terraform_log": str(log_path)} if log_path is not None else {}
     try:
+        gpu = cluster.gpu_nodes
+        driver = resolve_gpu_driver_strategy(
+            gpu_nodes=cluster.gpu_count(),
+            platform=gpu.platform if gpu else "",
+            preset=gpu.preset if gpu else "",
+            mode=cluster.gpu_driver_mode,
+            managed_driver_preset=cluster.managed_driver_preset,
+            enable_gpu_cluster=cluster.resolved_enable_gpu_cluster(),
+            allow_unsafe_nvswitch_operator=cluster.allow_unsafe_nvswitch_operator,
+        )
+        if driver.unsafe_operator_acknowledged:
+            _log(
+                on_status,
+                f"[{label}] WARNING: explicitly acknowledged unsafe operator-mode "
+                "driver/Fabric Manager ordering on an NVSwitch topology",
+            )
         _ensure_private_directory(fleet_root)
         _ensure_private_directory(install_dir.parent)
         _ensure_private_directory(install_dir)
@@ -1607,6 +1652,10 @@ def _deploy_one_cluster(
             "cluster_name": cluster.name,
             "context": context,
             "profile": profile,
+            "gpu_driver_mode": driver.effective_mode,
+            "managed_driver_preset": (
+                driver.managed_driver_preset if driver.uses_managed_image else ""
+            ),
             "status": "provisioning",
         }
         _write_env_sidecar(install_dir, sidecar)
@@ -1687,8 +1736,89 @@ def _deploy_one_cluster(
                 "error": message,
                 **log_metadata,
             }
+        gpu_health: dict[str, Any] | None = None
+        gpu_health_path = install_dir / "gpu-health.json"
+        if cluster.gpu_count() > 0:
+            _write_env_sidecar(
+                install_dir,
+                {
+                    **sidecar,
+                    "cluster_id": cluster_id,
+                    "status": "validating-gpu-health",
+                    "gpu_health_evidence": str(gpu_health_path),
+                },
+            )
+            _log(
+                on_status,
+                f"[{label}] validating {cluster.gpu_count()} GPU node(s) in "
+                f"{driver.effective_mode} mode",
+            )
+            try:
+                kubectl_bin = _require_bin(
+                    os.environ.get("NPA_KUBECTL_BIN") or "kubectl"
+                )
+                gpu_health = validate_gpu_health(
+                    _run_capture,
+                    kubectl_bin=kubectl_bin,
+                    kubeconfig_path=kubeconfig_path,
+                    config=GpuHealthConfig(
+                        expected_nodes=cluster.cpu_count() + cluster.gpu_count(),
+                        expected_gpu_nodes=cluster.gpu_count(),
+                        gpu_preset=gpu.preset if gpu else "",
+                        gpu_platform=gpu.platform if gpu else "",
+                        driver_mode=driver.effective_mode,
+                        nvswitch=driver.nvswitch,
+                        stabilization_seconds=(
+                            cluster.gpu_health_stabilization_seconds
+                        ),
+                        timeout_seconds=cluster.gpu_health_timeout_minutes * 60,
+                        cuda_smoke=cluster.gpu_cuda_smoke,
+                        cuda_smoke_image=cluster.gpu_cuda_smoke_image,
+                    ),
+                    evidence_path=gpu_health_path,
+                    on_status=lambda message: _log(
+                        on_status, f"[{label}] {message}"
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001 - retain applied state/evidence
+                message = str(exc)
+                _write_env_sidecar(
+                    install_dir,
+                    {
+                        **sidecar,
+                        "cluster_id": cluster_id,
+                        "status": "deployed-validation-failed",
+                        "gpu_health_evidence": str(gpu_health_path),
+                        "error": message,
+                    },
+                )
+                _log(on_status, f"[{label}] GPU validation FAILED: {message}")
+                return {
+                    "project_key": project_key,
+                    "project_id": project_id,
+                    "cluster_name": cluster.name,
+                    "region": region,
+                    "cluster_id": cluster_id,
+                    "kube_context": context,
+                    "kubeconfig": str(kubeconfig_path),
+                    "install_dir": str(install_dir),
+                    "status": "deployed-validation-failed",
+                    "gpu_health_evidence": str(gpu_health_path),
+                    "error": message,
+                    **log_metadata,
+                }
         _write_env_sidecar(
-            install_dir, {**sidecar, "cluster_id": cluster_id, "status": "deployed"}
+            install_dir,
+            {
+                **sidecar,
+                "cluster_id": cluster_id,
+                "status": "deployed",
+                **(
+                    {"gpu_health_evidence": str(gpu_health_path)}
+                    if gpu_health is not None
+                    else {}
+                ),
+            },
         )
         return {
             "project_key": project_key,
@@ -1701,6 +1831,14 @@ def _deploy_one_cluster(
             "kubeconfig": str(kubeconfig_path) if cluster_id else "",
             "install_dir": str(install_dir),
             "status": "deployed",
+            **(
+                {
+                    "gpu_health": gpu_health,
+                    "gpu_health_evidence": str(gpu_health_path),
+                }
+                if gpu_health is not None
+                else {}
+            ),
             **log_metadata,
         }
     except Exception as exc:  # noqa: BLE001 - capture per-cluster failure

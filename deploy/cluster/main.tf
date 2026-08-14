@@ -6,17 +6,28 @@ locals {
   create_subnet        = trimspace(var.subnet_id) == ""
   subnet_id            = local.create_subnet ? nebius_vpc_v1_subnet.cluster[0].id : var.subnet_id
   capacity_block_group = trimspace(var.capacity_block_group)
-  b200_driverfull_platforms = toset([
-    "gpu-b200-sxm",
-    "gpu-b200-sxm-a",
-  ])
-  gpu_nodes_driverfull_image = contains(
-    local.b200_driverfull_platforms,
-    lower(trimspace(var.gpu_nodes_platform)),
+  gpu_nodes_driverfull_image = var.gpu_nodes_count > 0 && contains(
+    ["auto", "managed-image"],
+    var.gpu_driver_mode,
+  )
+  gpus_per_node = try(
+    tonumber(regex("^([0-9]+)gpu-", lower(trimspace(var.gpu_nodes_preset)))[0]),
+    0,
   )
   gpu_reservation_policy = local.capacity_block_group == "" ? null : {
     policy          = "STRICT"
     reservation_ids = [local.capacity_block_group]
+  }
+}
+
+check "nvswitch_operator_acknowledgement" {
+  assert {
+    condition = !(
+      var.gpu_nodes_count > 0 &&
+      var.gpu_driver_mode == "operator" &&
+      (var.enable_gpu_cluster || (local.gpus_per_node > 1 && can(regex("-(sxm|nvl)", lower(var.gpu_nodes_platform)))))
+    ) || var.allow_unsafe_nvswitch_operator
+    error_message = "gpu_driver_mode=operator is unsafe on NVSwitch systems because in-cluster driver/Fabric Manager startup can race host InfiniBand devices. Use auto/managed-image, or set allow_unsafe_nvswitch_operator=true only for a controlled diagnostic followed by GPU node-group recreation."
   }
 }
 
@@ -63,6 +74,7 @@ module "k8s_training" {
   gpu_nodes_reservation_policy    = local.gpu_reservation_policy
   gpu_disk_size                   = var.gpu_disk_size
   gpu_nodes_driverfull_image      = local.gpu_nodes_driverfull_image
+  gpu_nodes_driver_preset         = var.managed_driver_preset
   enable_gpu_cluster              = var.enable_gpu_cluster
   infiniband_fabric               = var.infiniband_fabric
   custom_driver                   = false

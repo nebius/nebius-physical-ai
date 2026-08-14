@@ -11,14 +11,17 @@ from npa.cli.cluster import app
 from npa.cli.cluster import terraform_lifecycle as tf_mod
 
 
-def test_cluster_terraform_uses_managed_driver_image_for_b200_platforms_only() -> None:
+def test_cluster_terraform_defaults_all_gpu_pools_to_managed_driver_image() -> None:
     main_tf = (
         Path(__file__).resolve().parents[3] / "deploy" / "cluster" / "main.tf"
     ).read_text()
 
-    assert '"gpu-b200-sxm"' in main_tf
-    assert '"gpu-b200-sxm-a"' in main_tf
+    assert '["auto", "managed-image"]' in main_tf
+    assert "var.gpu_nodes_count > 0" in main_tf
+    assert 'tonumber(regex("^([0-9]+)gpu-"' in main_tf
+    assert "local.gpus_per_node > 1" in main_tf
     assert "gpu_nodes_driverfull_image      = local.gpu_nodes_driverfull_image" in main_tf
+    assert "gpu_nodes_driver_preset         = var.managed_driver_preset" in main_tf
     assert "gpu_nodes_driverfull_image      = false" not in main_tf
 
 
@@ -131,6 +134,7 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
                 'tenant_id = "tenant-a"',
                 'region = "region-a"',
                 'cluster_name = "cluster-a"',
+                "cpu_nodes_count = 0",
                 "gpu_nodes_count = 2",
                 'gpu_nodes_preset = "8gpu-192vcpu-1744gb"',
                 "enable_filestore = true",
@@ -187,15 +191,29 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
                     {
                         "items": [
                             {
+                                "metadata": {
+                                    "name": "gpu-0",
+                                    "labels": {
+                                        "node.kubernetes.io/instance-type": "gpu-b200-sxm"
+                                    },
+                                },
                                 "status": {
                                     "conditions": [{"type": "Ready", "status": "True"}],
                                     "allocatable": {"nvidia.com/gpu": "8"},
+                                    "nodeInfo": {"bootID": "boot-0"},
                                 }
                             },
                             {
+                                "metadata": {
+                                    "name": "gpu-1",
+                                    "labels": {
+                                        "node.kubernetes.io/instance-type": "gpu-b200-sxm"
+                                    },
+                                },
                                 "status": {
                                     "conditions": [{"type": "Ready", "status": "True"}],
                                     "allocatable": {"nvidia.com/gpu": "8"},
+                                    "nodeInfo": {"bootID": "boot-1"},
                                 }
                             },
                         ]
@@ -203,7 +221,21 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
                 )
             )
         if args[:4] == ["kubectl", "get", "pods", "-n"]:
-            return _completed(json.dumps({"items": [{"status": {"phase": "Running"}}]}))
+            return _completed(
+                json.dumps(
+                    {
+                        "items": [
+                            {
+                                "metadata": {"name": "device-plugin"},
+                                "status": {
+                                    "phase": "Running",
+                                    "containerStatuses": [{"ready": True}],
+                                },
+                            }
+                        ]
+                    }
+                )
+            )
         if args[:3] == ["kubectl", "get", "storageclass"]:
             return _completed(
                 json.dumps(
@@ -239,6 +271,9 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
             str(tf_dir),
             "--capacity-block-group",
             "capacityblockgroup-test",
+            "--gpu-health-stabilization-seconds",
+            "0",
+            "--skip-gpu-cuda-smoke",
             "--skip-sky-smoke",
         ],
     )
@@ -261,6 +296,7 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
         call[:4] == ["nebius", "mk8s", "cluster", "get-credentials"]
         for call in stream_calls
     )
+    assert [state.last_seen_state for state in saved] == ["VALIDATING", "RUNNING"]
     assert saved[-1].cluster_id == "mk8scluster-a"
     assert "16 allocatable GPUs" in result.output
 
@@ -494,14 +530,25 @@ def test_validate_cluster_accepts_compute_csi_when_filestore_is_disabled(
     responses = {
         ("kubectl", "get", "nodes", "-o", "json"): {
             "items": [{
+                "metadata": {
+                    "name": "gpu-0",
+                    "labels": {"node.kubernetes.io/instance-type": "gpu-rtx6000"},
+                },
                 "status": {
                     "conditions": [{"type": "Ready", "status": "True"}],
                     "allocatable": {"nvidia.com/gpu": "1"},
+                    "nodeInfo": {"bootID": "boot-a"},
                 }
             }]
         },
-        ("kubectl", "get", "pods", "-n", "gpu-operator", "-o", "json"): {
-            "items": [{"metadata": {"name": "gpu-operator"}, "status": {"phase": "Running"}}]
+        ("kubectl", "get", "pods", "-n", "nvidia-device-plugin", "-o", "json"): {
+            "items": [{
+                "metadata": {"name": "device-plugin"},
+                "status": {
+                    "phase": "Running",
+                    "containerStatuses": [{"ready": True}],
+                },
+            }]
         },
         ("kubectl", "get", "storageclass", "-o", "json"): {
             "items": [{
@@ -523,8 +570,11 @@ def test_validate_cluster_accepts_compute_csi_when_filestore_is_disabled(
         "kubectl",
         tmp_path / "kubeconfig",
         {
+            "cpu_nodes_count": 0,
             "gpu_nodes_count": 1,
+            "gpu_nodes_platform": "gpu-rtx6000",
             "gpu_nodes_preset": "1gpu-24vcpu-218gb",
+            "gpu_driver_mode": "auto",
             "enable_filestore": False,
         },
     )
@@ -795,6 +845,7 @@ def test_up_validation_accepts_block_default_sc_when_filestore_disabled(
                 'tenant_id = "tenant-a"',
                 'region = "region-a"',
                 'cluster_name = "cluster-a"',
+                "cpu_nodes_count = 0",
                 "gpu_nodes_count = 1",
                 'gpu_nodes_preset = "1gpu-24vcpu-218gb"',
             ]
@@ -838,9 +889,16 @@ def test_up_validation_accepts_block_default_sc_when_filestore_disabled(
                     {
                         "items": [
                             {
+                                "metadata": {
+                                    "name": "gpu-0",
+                                    "labels": {
+                                        "node.kubernetes.io/instance-type": "gpu-rtx6000"
+                                    },
+                                },
                                 "status": {
                                     "conditions": [{"type": "Ready", "status": "True"}],
                                     "allocatable": {"nvidia.com/gpu": "1"},
+                                    "nodeInfo": {"bootID": "boot-0"},
                                 }
                             }
                         ]
@@ -848,7 +906,21 @@ def test_up_validation_accepts_block_default_sc_when_filestore_disabled(
                 )
             )
         if args[:4] == ["kubectl", "get", "pods", "-n"]:
-            return _completed(json.dumps({"items": [{"status": {"phase": "Running"}}]}))
+            return _completed(
+                json.dumps(
+                    {
+                        "items": [
+                            {
+                                "metadata": {"name": "device-plugin"},
+                                "status": {
+                                    "phase": "Running",
+                                    "containerStatuses": [{"ready": True}],
+                                },
+                            }
+                        ]
+                    }
+                )
+            )
         if args[:3] == ["kubectl", "get", "storageclass"]:
             return _completed(
                 json.dumps(
@@ -875,7 +947,15 @@ def test_up_validation_accepts_block_default_sc_when_filestore_disabled(
 
     result = runner.invoke(
         app,
-        ["up", "--terraform-dir", str(tf_dir), "--skip-sky-smoke"],
+        [
+            "up",
+            "--terraform-dir",
+            str(tf_dir),
+            "--gpu-health-stabilization-seconds",
+            "0",
+            "--skip-gpu-cuda-smoke",
+            "--skip-sky-smoke",
+        ],
     )
 
     assert result.exit_code == 0, result.output

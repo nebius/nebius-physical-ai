@@ -9,10 +9,18 @@ its provider domain for the target region, and drive it with a rendered
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from npa.cluster.gpu_driver import (
+    CANONICAL_RECIPE_CAPABILITIES,
+    RecipeGpuDriverCapabilities,
+    inspect_recipe_gpu_driver_capabilities,
+    recipe_driver_tfvars,
+    resolve_gpu_driver_strategy,
+)
 from npa.fleet.spec import ClusterSpec
 
 _EU_DOMAIN = "api.eu.nebius.cloud:443"
-_B200_DRIVERFULL_PLATFORMS = frozenset({"gpu-b200-sxm", "gpu-b200-sxm-a"})
 
 
 def provider_domain(region: str) -> str:
@@ -27,18 +35,18 @@ def patch_provider_domain(provider_tf: str, region: str) -> str:
     return provider_tf.replace(_EU_DOMAIN, provider_domain(region))
 
 
-def managed_gpu_driverfull_image(platform: str) -> bool:
-    """Whether *platform* requires Nebius's managed CUDA driver-full image."""
-
-    return platform.strip().lower() in _B200_DRIVERFULL_PLATFORMS
-
-
 def _tfstr(value: str) -> str:
     escaped = value.replace("\\", "\\\\").replace('"', '\\"')
     return f'"{escaped}"'
 
 
-def render_tfvars(cluster: ClusterSpec, *, ssh_public_key: str = "") -> str:
+def render_tfvars(
+    cluster: ClusterSpec,
+    *,
+    ssh_public_key: str = "",
+    recipe_dir: Path | None = None,
+    recipe_capabilities: RecipeGpuDriverCapabilities | None = None,
+) -> str:
     """Return ``terraform.tfvars`` for a single cluster (k8s-training root vars).
 
     tenant/project/region/subnet/iam_token are supplied via ``TF_VAR_*`` env at
@@ -65,16 +73,26 @@ def render_tfvars(cluster: ClusterSpec, *, ssh_public_key: str = "") -> str:
     lines.append("gpu_nodes_preemptible        = false")
     lines.append('mig_strategy                 = "none"')
     lines.append("custom_driver                = false")
-    # Nebius exposes an authoritative CUDA 13 driver-full image for B200. It
-    # starts the NVLink fabric stack before kubelet advertises GPUs, avoiding a
-    # live race observed with the marketplace GPU Operator where its driver pod
-    # and Network Operator install/reload host components concurrently and CUDA
-    # remains SYSTEM_NOT_READY. The recipe installs only the provider device
-    # plugin when this is true.
-    managed_gpu_drivers = bool(gpu and managed_gpu_driverfull_image(gpu.platform))
-    lines.append(
-        "gpu_nodes_driverfull_image   = "
-        f"{'true' if managed_gpu_drivers else 'false'}"
+
+    driver_selection = resolve_gpu_driver_strategy(
+        gpu_nodes=gpu.count if gpu else 0,
+        platform=gpu.platform if gpu else "",
+        preset=gpu.preset if gpu else "",
+        mode=cluster.gpu_driver_mode,
+        managed_driver_preset=cluster.managed_driver_preset,
+        enable_gpu_cluster=cluster.resolved_enable_gpu_cluster(),
+        allow_unsafe_nvswitch_operator=cluster.allow_unsafe_nvswitch_operator,
+    )
+    capabilities = recipe_capabilities
+    if capabilities is None and recipe_dir is not None:
+        capabilities = inspect_recipe_gpu_driver_capabilities(recipe_dir)
+    capabilities = capabilities or CANONICAL_RECIPE_CAPABILITIES
+    lines.extend(
+        recipe_driver_tfvars(
+            driver_selection,
+            capabilities,
+            recipe_label=str(recipe_dir or "canonical k8s-training recipe"),
+        )
     )
 
     cpu_count = cpu.count if cpu else 0
