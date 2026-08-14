@@ -239,7 +239,10 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
         cy.task(
           "verifyFoxgloveHostedNavigation",
           { runId: String(run.run_id), runRef: String(run.run_ref) },
-          { log: false, timeout: 180000 },
+          // The task performs several independently strict live waits in a
+          // second clean profile. Its outer budget must cover their sum rather
+          // than terminating before the individual assertions can report.
+          { log: false, timeout: 600000 },
         ).then((result) => {
           expect(result.runId).to.eq(run.run_id);
           expect(result.labels).to.deep.eq([
