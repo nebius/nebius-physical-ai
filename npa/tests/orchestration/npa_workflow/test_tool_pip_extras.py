@@ -11,7 +11,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-import yaml
 
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.interpreter import build_plan
@@ -102,9 +101,8 @@ def test_setup_installs_declarative_allowlisted_viz_extra() -> None:
     )
 
     assert "npa[viz]" in setup
-    assert_no_unresolved_placeholders(
-        yaml.safe_dump({"name": "byof-viz", "setup": setup}, sort_keys=False)
-    )
+    assert "npa_pip_install -e" in setup
+    assert "viz @" not in setup
 
 
 def test_setup_for_other_byof_does_not_install_viz_extra() -> None:

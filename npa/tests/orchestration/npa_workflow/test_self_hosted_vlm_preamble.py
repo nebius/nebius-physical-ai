@@ -144,14 +144,19 @@ def test_preamble_uses_python_not_curl_for_the_health_wait() -> None:
     assert "urllib.request" in preamble
 
 
-def test_preamble_is_valid_author_controlled_shell_after_render() -> None:
-    """The placeholder guard accepts the preamble in a real ``setup`` field."""
+def test_preamble_round_trips_as_a_top_level_setup_program() -> None:
+    """YAML serialization must preserve the generated author-controlled shell."""
 
+    preamble = render_self_hosted_vlm_preamble({})
     rendered = yaml.safe_dump(
-        {"name": "self-hosted-vlm", "setup": render_self_hosted_vlm_preamble({})},
+        {"name": "self-hosted-vlm", "setup": preamble},
         sort_keys=False,
     )
-    assert_no_unresolved_placeholders(rendered)
+    document = yaml.safe_load(rendered)
+
+    assert document["setup"] == preamble
+    assert '${npa_vlm_model}' not in document["setup"]
+    assert '"$npa_vlm_model"' in document["setup"]
 
 
 def test_config_overrides_model_port_and_trust() -> None:

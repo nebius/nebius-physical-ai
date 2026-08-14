@@ -399,7 +399,10 @@ def test_render_vlm_eval_single_produces_serial_pipeline() -> None:
     assert "set -euo pipefail" in task["run"]
 
 
-def test_placeholder_guard_distinguishes_shell_from_declarative_fields() -> None:
+@pytest.mark.parametrize("nested_shell_key", ["run", "setup"])
+def test_placeholder_guard_distinguishes_shell_from_declarative_fields(
+    nested_shell_key: str,
+) -> None:
     rendered = """\
 name: placeholder-contract
 execution: serial
@@ -422,9 +425,10 @@ resources:
         assert_no_unresolved_placeholders(unresolved_env)
 
     nested_shell_name = rendered.replace(
-        "MATERIALIZED: ready", 'run: "${NESTED_RUN_VALUE}"'
+        "MATERIALIZED: ready",
+        f'{nested_shell_key}: "${{NESTED_SHELL_VALUE}}"',
     )
-    with pytest.raises(NpaWorkflowRenderError, match=r"\$\{NESTED_RUN_VALUE\}"):
+    with pytest.raises(NpaWorkflowRenderError, match=r"\$\{NESTED_SHELL_VALUE\}"):
         assert_no_unresolved_placeholders(nested_shell_name)
 
     unresolved_image = rendered.replace(

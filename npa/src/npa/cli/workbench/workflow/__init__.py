@@ -2215,6 +2215,7 @@ def _preflight_image_bootstrap_contracts(
         parse_image_reference,
         resolve_registry_credentials,
     )
+    from npa.deploy.images import requires_skypilot_bootstrap_runtime_probe
 
     check_by_image = {str(getattr(item, "image", "")): item for item in pull_checks}
     cache_path = Path.home() / ".npa" / "cache" / "sky-image-bootstrap.json"
@@ -2233,12 +2234,28 @@ def _preflight_image_bootstrap_contracts(
                 raise ImageBootstrapContractError(
                     "mutable tag resolved to a different digest between pull and contract checks"
                 )
+            runtime_probe_required = requires_skypilot_bootstrap_runtime_probe(image)
             cached = load_cached_evidence(cache_path, digest)
-            if cached is not None:
+            if cached is not None and (
+                not runtime_probe_required
+                or cached.source == "ephemeral_capability_probe"
+            ):
                 evidence = cached
             else:
                 attested = verify_attestation(image=image, digest=digest, labels=labels)
-                if attested.ok:
+                if runtime_probe_required:
+                    # Canonical and derived GR00T artifacts share one repository.
+                    # The derived source carries a label, but the canonical source
+                    # does not implement the full contract, so the label cannot
+                    # establish provenance. Probe the selected immutable bytes and
+                    # ignore stale label-backed cache entries for the same digest.
+                    evidence = probe_image_capabilities(
+                        image=image,
+                        digest=digest,
+                        context=context,
+                        kubeconfig=str(os.environ.get("KUBECONFIG") or ""),
+                    )
+                elif attested.ok:
                     evidence = attested
                 elif (
                     is_trusted_npa_image(image) or "version mismatch" in attested.detail

@@ -446,9 +446,10 @@ def render_pip_extra_setup(extra: str) -> str:
         "fi\n"
         'if [ -n "$npa_src_root" ]; then\n'
         f'  echo "installing npa[{extra}] from $npa_src_root" >&2\n'
-        # Compose with printf, never "${var}[extra]": braced expansions are what the
-        # rendered-YAML placeholder guard (assert_no_unresolved_placeholders) rejects,
-        # because SkyPilot would leave a literal ${NAME} in the document.
+        # Compose with printf so the optional-extra suffix is visibly separate from the
+        # source path. Braced expansions are valid here because top-level SkyPilot setup
+        # and run values are author-controlled shell programs; only declarative and
+        # nested fields are subject to the unresolved-placeholder guard.
         f'  npa_extra_target="$(printf \'%s[{extra}]\' "$npa_src_root")"\n'
         '  npa_pip_install -e "$npa_extra_target"\n'
         "else\n"
@@ -587,8 +588,9 @@ def render_self_hosted_vlm_preamble(config: Mapping[str, Any]) -> str:
     ``DEFAULT_ENDPOINT_URL`` points at), so a spec needs no extra config to work;
     ``config.vlm_model`` / ``config.vlm_serve_port`` override them.
 
-    Unbraced ``$var`` throughout: a ``${var}`` would trip
-    :func:`assert_no_unresolved_placeholders`.
+    The generated program uses ordinary shell expansion. Top-level SkyPilot
+    ``setup`` and ``run`` programs are intentionally exempt from
+    :func:`assert_no_unresolved_placeholders`; declarative and nested fields are not.
     """
 
     from npa.workbench.vlm_eval import DEFAULT_MODEL

@@ -124,7 +124,13 @@ Pixel-level nonblank rendering and “Describe this” remain browser E2E gates.
 ## Kubernetes image prerequisites
 
 `npa/docker/workbench/groot/Dockerfile.k8s-prereqs` adds the system packages the
-SkyPilot Kubernetes bootstrap requires. Both the canonical and derived images
-run as `ubuntu`, provide passwordless sudo for SkyPilot's in-pod package/SSH
-bootstrap, and retain a forwarding entrypoint; the workflow does not override
-the pod to uid 0.
+SkyPilot Kubernetes bootstrap requires. The canonical image runs as `ubuntu`
+and its shared installer supplies system Python, `rsync`, an SSH client, and
+passwordless sudo for SkyPilot's in-pod bootstrap. It does not contain
+`openssh-server`, its entrypoint is `/bin/bash`, and it does not implement
+runtime SSH host-key generation. The derived repair layer adds the SSH server,
+generates per-container host keys when SSH starts, removes build-time host keys,
+and installs the argument-forwarding entrypoint required by the complete
+SkyPilot bootstrap contract. The workflow does not override the pod to uid 0,
+so use the repaired image for Kubernetes submission; the canonical image alone
+has not passed that complete contract.

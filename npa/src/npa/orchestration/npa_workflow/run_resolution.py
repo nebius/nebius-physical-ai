@@ -101,13 +101,15 @@ def run_id_from_locator(run_id: str, workflow_s3_uri: str = "") -> str:
         raise WorkflowStateError("workflow S3 URI does not identify a run")
     if workflow_s3_uri and not str(run_id).startswith("s3://"):
         supplied = validate_run_id(run_id)
-        # An explicit locator may place the workflow name below the run prefix,
-        # e.g. ``.../<run>/<workflow>/npa-workflow``. The manifest remains the
-        # authoritative exact-ID check; require only that the safe supplied ID
-        # is one path component instead of assuming it is the final component.
-        if supplied not in parts:
+        # Supported locators end in either ``.../<run>/npa-workflow`` or
+        # ``.../<run>/<workflow>/npa-workflow``. Only those trailing positions can
+        # identify the supplied run. Accepting an earlier component lets the exact-
+        # prefix fallback misreport an unrelated populated prefix as this run while
+        # its manifest is still absent.
+        if supplied not in parts[-2:]:
             raise WorkflowStateError(
-                f"run ID {supplied!r} is not present in --workflow-s3-uri"
+                f"run ID {supplied!r} is not in the trailing run/workflow layout "
+                "of --workflow-s3-uri"
             )
         return supplied
     resolved = validate_run_id(parts[-1])

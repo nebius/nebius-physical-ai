@@ -67,6 +67,26 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
     }
 )
 
+# Images for these tool repositories may carry the bootstrap-contract label only
+# through a separately checked derived Dockerfile, while the canonical image does
+# not satisfy the same contract. A label cannot distinguish those two sources and
+# is therefore never sufficient evidence. Submit ignores both the label and any
+# cached label-backed result and runs the exact-digest capability probe instead.
+# The packaging-contract guard locks this inventory to
+# `derived_skypilot_bootstrap_contract.verification: runtime_probe_required`.
+SKYPILOT_BOOTSTRAP_RUNTIME_PROBED_TOOLS: frozenset[str] = frozenset({"groot"})
+
+
+def requires_skypilot_bootstrap_runtime_probe(image: str) -> bool:
+    """Whether ``image`` belongs to a repository whose label is only a hint."""
+
+    raw = str(image or "").strip().removeprefix("docker:").partition("@")[0]
+    leaf = raw.rsplit("/", 1)[-1].split(":", 1)[0]
+    return leaf in {
+        CONTAINER_IMAGE_NAMES[tool]
+        for tool in SKYPILOT_BOOTSTRAP_RUNTIME_PROBED_TOOLS
+    }
+
 # Tools whose built image may NOT be published to a public/anonymous registry,
 # because it bakes a runtime we are not licensed to redistribute.
 #
