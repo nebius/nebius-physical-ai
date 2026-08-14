@@ -1430,7 +1430,7 @@ def test_video_relay_credits_runtime_before_browser_ack() -> None:
                 "schema": "npa.leisaac.health.v1",
                 "state": "ready",
                 "stream_ready": True,
-                "stream_transport": "websocket-v1",
+                "stream_transport": "webrtc",
                 "run_id": raw_manifest["run_id"],
                 "task": raw_manifest["task"],
                 "source_commit": raw_manifest["source_commit"],

@@ -453,9 +453,6 @@ function recordEpisode(outcome, episodeNumber, completedBefore) {
         );
         expect(status.input_url).to.match(/^\/api\/leisaac\/input\?run_id=/);
         expect(status.gpu).to.contain("RTX PRO 6000");
-        expect(status.frame_bytes, "substantive JPEG payload").to.be.greaterThan(
-          1024,
-        );
         win.__LEISAAC_INITIAL_STATUS__ = status;
       });
 
@@ -581,6 +578,16 @@ function recordEpisode(outcome, episodeNumber, completedBefore) {
 
       cy.window().then(async (win) => {
         const status = win.__LEISAAC_INITIAL_STATUS__;
+        const statusResponse = await win.fetch(
+          "/api/leisaac/status?run_id=" + encodeURIComponent(selectedRun),
+          { credentials: "include", cache: "no-store" },
+        );
+        expect(statusResponse.ok, "post-connect capability status").to.equal(true);
+        const connectedStatus = await statusResponse.json();
+        expect(
+          connectedStatus.frame_bytes,
+          "substantive post-connect JPEG payload",
+        ).to.be.greaterThan(1024);
         const response = await win.fetch(status.frame_url + "&proof=1", {
           credentials: "include",
           cache: "no-store",

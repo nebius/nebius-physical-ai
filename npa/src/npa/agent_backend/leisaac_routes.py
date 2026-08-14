@@ -2026,11 +2026,11 @@ def register_leisaac_routes(app: Any, deps: LeIsaacDeps) -> None:
         health, reason = await asyncio.to_thread(_health, deps, manifest)
         if not health:
             return None, reason
-        allowed_transport = (
-            {"websocket-v1", "webrtc"}
-            if subprotocol == CONTROL_SUBPROTOCOL
-            else {"websocket-v1"}
-        )
+        # The runtime keeps its bounded JPEG WebSocket endpoint available as
+        # the authenticated fallback even while NVENC/native WebRTC is healthy.
+        # Both control and video relays are therefore valid for either live
+        # transport mode; jpeg-poll remains intentionally outside this path.
+        allowed_transport = {"websocket-v1", "webrtc"}
         if str(health.get("stream_transport") or "") not in allowed_transport:
             return None, "preferred transport is unavailable for this session"
         return manifest, ""
