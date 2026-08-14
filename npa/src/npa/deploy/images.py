@@ -186,7 +186,7 @@ SUPPORTED_TOOL_VERSIONS = {
     # LTX-2.5. The tag names the design, not a built artifact: this image has not
     # been built or GPU-validated yet, and publish_public refuses it until an
     # accepted-image manifest exists. Everything LTX (source AND weights) is a
-    # runtime fetch under the operator's own licence declaration.
+    # runtime fetch under the operator's own Hugging Face entitlement.
     "ltx2": "2.5-rtfetch-unbuilt",
     "nebius-cli": "0.12.254",
     "terraform": "~> 0.5.201",

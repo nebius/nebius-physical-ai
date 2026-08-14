@@ -4,8 +4,8 @@ NPA packages Lightricks' LTX-2.5 video/audio model as a BYOF solution whose
 image contains **no LTX-2.5 bytes at all** — no `ltx-core`, no `ltx-pipelines`,
 no weights, no CUDA wheels. On first use the container fetches upstream's pinned
 source and the gated weights under the operator's own credentials, and refuses
-to fetch anything until the operator has made a licensing declaration that only
-they can make.
+to fetch either without a Hugging Face token that has access to the gated
+repository.
 
 LTX-2.5 is a generative video model. This integration does not represent it as
 an action-conditioned robotics simulator or an action-prediction model.
@@ -14,10 +14,11 @@ an action-conditioned robotics simulator or an action-prediction model.
 > been built and pushed on the dev VM, the payload scan passes against the
 > pushed digest, and the refusal has been re-proved against those exact bytes
 > pulled back from the registry (see "Validated on the dev VM" below). What has
-> *not* happened is a generation run: that needs the operator's own LTX-2.x
-> declaration, which nobody else may make. `ltx2` therefore stays in
-> `UNVALIDATED_PUBLICATION_TOOLS` — publication needs the GPU capability
-> evidence as well as the byte evidence, and only one of the two exists.
+> *not* happened is a generation run: that needs an operator's own entitlement
+> on the gated `Lightricks/LTX-2.5` repository, which nobody can hold on their
+> behalf. `ltx2` therefore stays in `UNVALIDATED_PUBLICATION_TOOLS` —
+> publication needs the GPU capability evidence as well as the byte evidence,
+> and only one of the two exists.
 
 ## Why this image ships nothing
 
@@ -41,81 +42,102 @@ classification.
 
 | Input | Revision | Packaging |
 | --- | --- | --- |
-| Official source | [`Lightricks/LTX-2` `fd4ded7…`](https://github.com/Lightricks/LTX-2/tree/fd4ded7f2d88d3da713abcdd4ad41ecc4a9314ca) | fetched at run time; never baked |
+| Official source | [`Lightricks/LTX-2` `fd4ded7…`](https://github.com/Lightricks/LTX-2/tree/fd4ded7f2d88d3da713abcdd4ad41ecc4a9314ca) | fetched at run time with the operator's own `HF_TOKEN`; never baked |
 | LTX-2.5 weights | [`Lightricks/LTX-2.5`](https://huggingface.co/Lightricks/LTX-2.5) (gated) | fetched at run time with the operator's own `HF_TOKEN` |
 | CUDA PyTorch stack | resolved by upstream's own `uv` pins from `download.pytorch.org/whl/cu132` | fetched at run time under separate NVIDIA acceptance |
 
 `ltx_runtime.sh` verifies the fetched `HEAD` against the pinned ref and requires
 upstream's `LICENSE.md` to be present before installing, because that ref is
-what the provenance manifest claims.
+what this documentation and the capability artifact claim.
 
-## The declaration
+## What the workbench requires: a token, not a declaration
 
-Isaac needs one answer: has the operator accepted the EULA? LTX needs three,
-because its obligations depend on facts about the operator that nobody upstream
-of them can know.
+**A valid `HF_TOKEN` with access to `Lightricks/LTX-2.5` is the only
+workbench-side requirement.** Both fetches refuse with exit 78 without one —
+the weights *and* the source, because Section 1.9 of the agreement folds
+"inference-enabling code, training-enabling code … accompanying source code"
+into the licensed material, so the GitHub repository is licensed material too.
 
-| Variable | Values | Question it answers |
-| --- | --- | --- |
-| `NPA_LTX_ACCEPT_COMMUNITY_LICENSE` | `YES` | Have you read and accepted the Agreement and its Attachment A? |
-| `NPA_LTX_ENTITY_CLASS` | `community` \| `commercial` | Is your annual revenue, counting all affiliates under common Control (Section 1.6), at or above $10,000,000? |
-| `NPA_LTX_USE_CLASS` | `non-commercial` \| `commercial` | Is *this* use the Section 2.2 non-commercial carve-out, or production/revenue-generating? |
-| `NPA_LTX_COMMERCIAL_AGREEMENT_REF` | free text | Required when both answers above are `commercial`: Section 2.1 prohibits that combination without a paid Commercial Use Agreement. |
+Acceptance happens on Hugging Face, not here. `Lightricks/LTX-2.5` is a gated
+repository (`gated: auto`): you sign in, share contact information, and accept
+Lightricks' terms on that page, and Lightricks grants your account access. That
+is checkable, and we checked it — an anonymous `HEAD` on a weight file returns
+`401`, the same request with an entitled token returns `302`. A fine-grained
+token needs the "read gated repos" scope.
 
-A separate `NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS=YES` covers the CUDA runtime,
-and `HF_TOKEN` covers the gated weight repository. Every one of these is absent
-by default and none is ever baked. Missing or unrecognised values refuse with
-exit 78 before anything is downloaded.
+**The licence binds by use.** Its opening line is "By downloading, using,
+accessing or distributing any portion or element of LTX-2.x, you agree that you
+have read and accepted to be bound by this Agreement." An earlier version of
+this integration asked the operator to set
+`NPA_LTX_ACCEPT_COMMUNITY_LICENSE=YES` plus an entity class and a use class.
+Those are gone. The local variable never formed the contract — conduct did — and
+the class answers were unverifiable self-certification that Nebius, which ships
+zero LTX bytes and is not a distributor here, has no standing to collect. The
+entitlement is the stronger evidence, and it is the vendor's own.
 
-Print the terms without declaring anything:
+A separate `NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS=YES` covers NVIDIA's CUDA
+runtime, which is a different vendor's decision. Neither it nor the token is
+ever baked into the image.
+
+Print what governs LTX-2.5 without holding anything:
 
 ```bash
 npa/.venv/bin/npa workbench ltx2 terms
-npa/.venv/bin/npa workbench ltx2 declare      # validates what you have set
 ```
 
-## The restriction that shapes the workflow
+## Two obligations that remain yours
 
-**Attachment A(18)** prohibits using the Outputs "to train, improve, or
-fine-tune any other machine learning model, artificial intelligence system, or
-competing model" — for commercial use. Section 2.2(c) says the same from the
-other side.
+Compliance with the agreement is the operator's own responsibility. Two clauses
+in particular cannot be discharged, verified, or recorded by a container, and
+this workbench does not pretend otherwise:
 
-In a physical-AI workbench that is not an edge case. Generating synthetic video
-to train a robot policy is the obvious reason to want this model, and a robot
-policy is another machine learning model. Packaging cannot help: the restriction
-governs artifacts in the customer's own bucket. So the control lives in the
-pipeline.
+- **Section 2.1** — an Entity whose annual revenue is at or above $10,000,000,
+  counting all affiliates under common Control (Section 1.6), needs a **paid
+  Commercial Use Agreement** for any use outside the Section 2.2 carve-out
+  ("testing, evaluation, or non-commercial research and development in a
+  non-production or development environment"). Contact
+  `ltxv-licensing@lightricks.com`.
+- **Attachment A(18)** — for commercial use, the Outputs may not be used "to
+  train, improve, or fine-tune any other machine learning model, artificial
+  intelligence system, or competing model". Section 2.2(c) says the same from
+  the other side.
+
+In a physical-AI workbench the second one is not an edge case. Generating
+synthetic video to train a robot policy is the obvious reason to want this
+model, and a robot policy is another machine learning model. No packaging choice
+reaches it, because it governs artifacts in your own bucket — which is exactly
+why it is your call rather than a value this pipeline computes for you. Note the
+asymmetry: Attachment A(18) is scoped by *use*, not entity size, so a company
+below the revenue threshold owes no licence fee and is still bound by it. Any
+model trained on Outputs is a Derivative of LTX-2.x under Section 1.5 and stays
+bound by the Agreement, including the Section 3.5 transfer conditions.
+
+Section 6 and Attachment A(5)/(19) add output-side duties: disclose
+machine-generated content, and do not strip provenance, watermarking, or latent
+disclosure markers.
+
+## The pipeline
 
 `byof-ltx2.yaml` runs:
 
 ```text
-generate (GPU, npa-ltx2) -> stamp (CPU) -> curate (CPU, FiftyOne) -> gate (CPU)
+generate (GPU, npa-ltx2) -> curate (CPU, FiftyOne)
 ```
 
-- **stamp** writes `ltx2_provenance.json` (`npa.ltx2.provenance.v1`) next to the
-  video: which licence text was accepted, by what class of entity, for what
-  class of use, and the resulting Attachment A(18) disposition.
-- **curate** runs real FiftyOne Brain uniqueness and duplicate detection. It
-  inspects Outputs without training on them, so it is licence-neutral and runs
-  before the gate.
-- **gate** re-reads the manifest and refuses the named consumer under a
-  commercial declaration. It also denies on a missing manifest, an unrecognised
-  schema, an unknown disposition, and a manifest that does not cover the
-  artifact the consumer named — the breach is a licence-termination event under
-  Section 13, so "we couldn't tell" must never mean "proceed".
+- **generate** proves the refusal on this image first (`ltx-runtime
+  assert-refusal`, which also asserts both caches are still empty), then fetches
+  source and weights under your token, runs `python -m ltx_pipelines.distilled`
+  at the pinned ref, and validates the decoded MP4.
+- **curate** runs real FiftyOne Brain uniqueness and duplicate detection, and is
+  the terminal state. Curation inspects Outputs without training on them.
 
-**The gate is the terminal state, and that is deliberate.** An earlier draft
-ended in a LeRobot training state, which made the pipeline look like a complete
+**Curation is where the shipped pipeline stops, deliberately.** An earlier draft
+ended in a LeRobot training state, which made it look like a complete
 demonstration. It was not: that state trained on the `lerobot/pusht` hub dataset,
-so no LTX Output ever reached it and the gate in front of it was decorative in
-the one place meant to show it is not. LTX-2.5 text-to-video output is not a
-LeRobot dataset — no actions, no `meta/info.json` — and no honest conversion
-exists here, so training is the operator's own next step, taken after calling the
-gate. `npa.workbench.ltx2.check_training_consumer` is the integration point.
-
-Any model trained on cleared Outputs is a Derivative of LTX-2.x under Section 1.5
-and stays bound by the Agreement, including the Section 3.5 transfer conditions.
+so no LTX Output ever reached it. LTX-2.5 text-to-video output is not a LeRobot
+dataset — no actions, no `meta/info.json` — and no honest conversion exists here,
+so training is your own next step, taken under your own reading of Attachment
+A(18).
 
 Validate and plan the checked-in spec:
 
@@ -129,9 +151,10 @@ npa/.venv/bin/npa workbench workflow plan-spec \
 ## Dev VM runbook
 
 Steps 1-3 have been executed; see "Validated on the dev VM" below for what they
-produced. Steps 4-6 have not: they need the operator's own declaration, which
-nobody else may make. Each step produces the evidence the next one depends on,
-and the tree records no accepted digest until they have all run.
+produced. Steps 4-6 have not: they need an operator's own entitlement on the
+gated repository, which nobody can hold on their behalf. Each step produces the
+evidence the next one depends on, and the tree records no accepted digest until
+they have all run.
 
 **1. Build.** Requires Docker and a registry you control. The build itself
 proves the refusal works and that proving it downloaded nothing; it fails if any
@@ -161,21 +184,21 @@ build ran, now against the artifact anyone would pull.
 docker run --rm <your-registry>/npa-ltx2@sha256:<digest> ltx-runtime assert-refusal
 ```
 
-It must print `NPA_LTX_BOOTSTRAP_REFUSES_WITHOUT_DECLARATION_OK`. Confirm the
-undeclared refusal separately, and that it names the licence gate rather than
-one of the gates behind it:
+It must print `NPA_LTX_BOOTSTRAP_REFUSES_WITHOUT_ENTITLEMENT_OK`. Confirm the
+unentitled refusal separately, and that it names the token rather than one of
+the gates behind it:
 
 ```bash
 docker run --rm <your-registry>/npa-ltx2@sha256:<digest> ltx-runtime ensure
-# exits 78, prints the LTX-2.x terms, downloads nothing
+# exits 78, names HF_TOKEN and the gated repository, downloads nothing
 ```
 
 **4. Accept the terms yourself.** Read the
 [Agreement](https://github.com/Lightricks/LTX-2/blob/main/LICENSE.md) and the
 [Acceptable Use Policy](https://static.lightricks.com/legal/ltx-acceptable-use-policy.pdf),
-request access on the gated weights repository with your own Hugging Face
-account, and export your own answers. Nobody else may set these for you — which
-is why neither the workflow, the test suite, nor the image contains them.
+request access on the gated repository with your own Hugging Face account, and
+export the resulting `HF_TOKEN`. Nobody else can hold that entitlement for you —
+which is why neither the workflow, the test suite, nor the image contains one.
 
 **5. Run the live GPU smoke.** One RTX PRO 6000 Blackwell, 500 GB disk (the
 weight set alone is ~66 GiB, so a default 100 GB disk fails the pull rather than
@@ -187,11 +210,11 @@ export NPA_LTX2_REUSE_IMAGE=<your-registry>/npa-ltx2@sha256:<digest>
 npa/.venv/bin/python -m pytest npa/tests/e2e/test_ltx2_live_e2e.py -q
 ```
 
-The live test refuses to run unless the declaration and `HF_TOKEN` are already
-in the environment; it never sets them, and a test in the same file asserts by
-AST walk that no future edit starts setting them. Forwarding to a submitted
-workflow goes through the secret channel — `--secret-env HF_TOKEN`,
-`--secret-env NPA_LTX_ACCEPT_COMMUNITY_LICENSE`, and the two class variables —
+The live test refuses to run unless `HF_TOKEN` is already in the environment; it
+never sets it, and `npa/tests/guardrails/test_live_tests_never_declare_a_licence.py`
+asserts by AST walk that no live test starts accepting a vendor's terms on your
+behalf. Forwarding to a submitted workflow goes through the secret channel —
+`--secret-env HF_TOKEN` and `--secret-env NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS` —
 never through a spec or rendered YAML.
 
 **6. Record what the run proved.** Add the accepted digest and the scan and GPU
@@ -203,7 +226,14 @@ out a claim we have not earned.
 
 Steps 1–3 of the runbook have been executed. The image was built with
 `build.sh --push` and scanned by immutable digest
-`sha256:a31e22a4dfe2cb419df10e4ad63495f1905b73a05b106618005c72413df1e3b3`:
+`sha256:a31e22a4dfe2cb419df10e4ad63495f1905b73a05b106618005c72413df1e3b3`.
+That build predates the removal of the licensing declaration, so where the
+results below say "undeclared" the equivalent check today is "unentitled", and
+the marker it printed has since been renamed to
+`NPA_LTX_BOOTSTRAP_REFUSES_WITHOUT_ENTITLEMENT_OK`. Everything else it proved —
+zero LTX bytes in any layer, refusals that write nothing, the layout and
+entrypoint fixes — is unchanged and still the reason those defects are
+regression-tested:
 
 | Check | Result |
 | --- | --- |
@@ -221,7 +251,7 @@ amount of local shell testing had reached:
 
 1. `COPY --chmod=0444` also set `0444` on the directories BuildKit created for
    those files, so `/opt/npa/ltx2` had no execute bit and the runtime user got
-   Permission denied on the licensing gate itself.
+   Permission denied on every file inside it.
 2. The entrypoint's `ltx-runtime` arm forwarded the literal word as the mode, so
    the runbook's own `docker run <image> ltx-runtime assert-refusal` died as an
    unknown mode.
@@ -249,24 +279,26 @@ passed could not ship. The live test downloads the published MP4 and re-runs the
 same check from the operator side, so an in-pod result is never the only
 evidence.
 
-The smoke's hard gate requires four capabilities and fails the run if any is
-missing: `ltx2_5_text_to_video`, `ltx2_5_decoded_mp4_validation`,
-`ltx2_5_license_gate_refusal`, `ltx2_5_license_provenance_stamp`. Image-to-video,
-audio-to-video, and LoRA fine-tuning are not claimed.
+The smoke's hard gate requires two capabilities and fails the run if either is
+missing: `ltx2_5_text_to_video` and `ltx2_5_decoded_mp4_validation`.
+Image-to-video, audio-to-video, and LoRA fine-tuning are not claimed.
 
 ## How the refusal is kept honest
 
-The image has three independent refusals — Lightricks' terms, NVIDIA's CUDA
-terms, and the Hugging Face entitlement — and all three fail closed with exit
-78. That is a trap: the first version of the build-time proof checked only the
-exit code, so a licence gate rewritten to accept everything still passed,
-because NVIDIA's gate refused downstream of it and produced the same 78.
+The image has two independent refusals — the Hugging Face entitlement and
+NVIDIA's CUDA terms — and both fail closed with exit 78. That is a trap: the
+first version of the build-time proof checked only the exit code, so a gate
+rewritten to accept everything still passed, because the next gate refused
+downstream of it and produced the same 78.
 
-`assert-refusal` now asserts *which* gate refused, by the variable each refusal
-names. `npa/tests/docker/test_ltx_runtime_bootstrap.py` executes the shipped
-script with `bash` and breaks each gate in turn to prove the proof still
-notices; it also runs a control on the unmutated script, so the mutation cases
-cannot pass on an unrelated error. None of it needs Docker or a GPU.
+`assert-refusal` asserts *which* gate refused, by the variable each refusal
+names, across the source fetch, the weight fetch, and NVIDIA's terms.
+`npa/tests/docker/test_ltx_runtime_bootstrap.py` executes the shipped script
+with `bash` and breaks each gate in turn to prove the proof still notices —
+including dropping the token check from `fetch_source` alone, which leaves the
+weight path fully guarded and would otherwise slip through. It also runs a
+control on the unmutated script, so the mutation cases cannot pass on an
+unrelated error. None of it needs Docker or a GPU.
 
 ## Validation
 
@@ -275,7 +307,6 @@ npa/.venv/bin/python -m pytest \
   npa/tests/docker/test_ltx_runtime_bootstrap.py \
   npa/tests/docker/test_ltx_image_payload_scan.py \
   npa/tests/workbench/test_ltx2_licensing.py \
-  npa/tests/workbench/test_ltx2_gate_cli.py \
   npa/tests/workbench/test_ltx2_video_check.py \
   npa/tests/workflows/test_byof_solution_smokes.py \
   npa/tests/e2e/test_ltx2_live_e2e.py -q
@@ -283,6 +314,6 @@ npa/.venv/bin/python -m pytest npa/tests/docker/ npa/tests/deploy/ -q
 npa/.venv/bin/python -m pytest npa/tests/guardrails/test_skills_index.py -q
 ```
 
-This is engineering enforcement of a recorded classification, not legal advice.
-Passing these gates does not substitute for the organization's own publication
-and legal approval.
+The workbench states these terms and refuses to fetch what an operator is not
+entitled to receive. It does not, and cannot, certify their compliance with the
+agreement — that is theirs, and this page is not legal advice.

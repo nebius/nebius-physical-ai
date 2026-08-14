@@ -26,10 +26,11 @@ MANUAL_GATES = {
     "NPA_BYOF_WAN22_MULTIGPU_LIVE_GPU": "Wan multi-GPU BYOF mutation requires an explicitly selected acceptance run",
     "NPA_BYOF_LIVE_UBUNTU": "BYOF Ubuntu mutation is a dedicated onboarding acceptance",
     # Not merely operator-selected: an automated runner *must not* reach this
-    # suite. It needs the operator's own LTX-2.x declaration and gated-weights
-    # token, and a runner exporting those would be us accepting Lightricks'
-    # licence on their behalf, which is what the whole gate exists to prevent.
-    "NPA_LTX2_LIVE_GPU": "LTX-2.5 requires the operator's own licence declaration and gated-weights token",
+    # suite. It needs a token entitled to the gated Lightricks/LTX-2.5
+    # repository, which Lightricks grants only after a human accepts its terms
+    # there — so a runner that supplied one would be running under an acceptance
+    # nobody in this repository made.
+    "NPA_LTX2_LIVE_GPU": "LTX-2.5 requires the operator's own gated-repository token",
     "NPA_E2E_BYOVM_SELF_HEAL": "targets an explicitly selected existing BYOVM service",
     "NPA_CONFIGURE_E2E": "creates storage configuration and needs exact project selectors",
     "NPA_E2E_S3_ACCESS_KEY_ID": "runtime prerequisite, not an authorization gate",

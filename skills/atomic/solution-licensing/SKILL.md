@@ -283,47 +283,71 @@ independent reason not to bake even the source. So `npa-ltx2` contains no LTX
 bytes at all and fetches both source and weights at run time — the Isaac answer,
 reached by a different route.
 
-**Acceptance is not a boolean.** This is the transferable lesson. Isaac needed
-one answer: has the operator accepted the EULA? LTX's obligations depend on
-facts only the operator knows — whether the entity's revenue crosses Section
-2.1's $10M threshold across all affiliates under common Control, and whether
-*this* use is commercial. A single `ACCEPT=YES` would quietly answer two
-questions we have no standing to answer, so the gate asks three separate ones
-and refuses on any missing or unrecognised value. Whenever a licence's
-obligations turn on who the operator is, the declaration must have as many
-fields as the licence has questions.
+**Prefer verifiable vendor-side consent to customer self-certification.** This is
+the transferable lesson, and it is the opposite of what this integration first
+shipped. An earlier version asked the operator for three declarations —
+`NPA_LTX_ACCEPT_COMMUNITY_LICENSE=YES`, an entity class, and a use class —
+because LTX's obligations turn on facts only the operator knows: whether the
+entity's revenue crosses Section 2.1's $10M threshold across all affiliates
+under common Control, and whether *this* use is commercial. All three were
+removed, for two reasons worth carrying forward:
 
-**The restriction that actually bit.** Attachment A(18) prohibits using the
-Outputs "to train, improve, or fine-tune any other machine learning model" for
-commercial use. In a physical-AI workbench that is not an edge case — generating
-synthetic video to train a robot policy is the *reason* to want the model, and a
-robot policy is another machine learning model. No amount of careful packaging
-touches this, because it governs artifacts sitting in the customer's own bucket.
-The control is therefore in the pipeline, not the image: the declared
-disposition is computed once, stamped into a provenance manifest beside the
-generated video, and re-checked by `npa workbench ltx2 gate` before the
-LeRobot training stage in `byof-ltx2.yaml` may consume anything. A commercial
-declaration fails that gate and stops the run. The gate denies on a missing
-manifest, an unknown schema, and an unrecognised disposition, because the
-breach is a licence-termination event and "we couldn't tell" must never mean
-"proceed".
+- **The agreement binds by conduct, so a local variable never formed it.** Its
+  opening line is "By downloading, using, accessing or distributing any portion
+  or element of LTX-2.x, you agree that you have read and accepted to be bound
+  by this Agreement." Whoever runs it is bound whether or not they typed `YES`
+  to us. Read the acceptance clause before building an acceptance gate: if the
+  licence forms on use, an `ACCEPT=YES` collects nothing and only looks like a
+  control.
+- **The vendor's own gate is checkable; a typed answer is not.**
+  `Lightricks/LTX-2.5` is a gated Hugging Face repository, and Lightricks grants
+  access only after a human accepts its terms there. Verified empirically: an
+  anonymous `HEAD` on a weight file returns `401`, and the same request with an
+  entitled token returns `302`. A token that can read the repository is
+  therefore *evidence* of acceptance, obtained from the party whose terms they
+  are — strictly stronger than a self-typed variable, which is unfalsifiable.
+  `npa-ltx2` now requires `HF_TOKEN` for the source fetch as well as the weight
+  fetch, because Section 1.9 makes the source licensed material too.
 
-**The trap in proving it: gates that mask each other.** `npa-ltx2` has three
-independent refusals — Lightricks' terms, NVIDIA's CUDA terms, and the
-operator's own Hugging Face entitlement for the gated weights — and all three
-fail closed with exit 78. The build-time proof originally checked only that
-`ensure` exited 78, which meant a licence gate rewritten to accept everything
-still passed, on the strength of NVIDIA's refusal downstream of it. A refusal
-proof must assert **which** gate refused, and must be mutation-tested by
-breaking each gate in turn (`npa/tests/docker/test_ltx_runtime_bootstrap.py`
-runs the shipped script for real and does exactly that). Any time several
-controls share an exit code, assume they are hiding each other until a mutant
-proves otherwise.
+An infrastructure provider that ships zero vendor bytes is not a distributor of
+them, and should not ask a customer to self-certify their revenue to it. Look
+for an entitlement the vendor already issues — gated repo, licence key, signed
+URL, registry credential — and require that. Ask the customer to declare only
+what no vendor-side entitlement can stand in for, and prefer stating an
+obligation plainly over pretending to have checked it.
+
+**The restriction that packaging cannot reach.** Attachment A(18) prohibits
+using the Outputs "to train, improve, or fine-tune any other machine learning
+model" for commercial use. In a physical-AI workbench that is not an edge case —
+generating synthetic video to train a robot policy is the *reason* to want the
+model, and a robot policy is another machine learning model. No amount of
+careful packaging touches this, because it governs artifacts sitting in the
+customer's own bucket. Which is also why no gate of ours can decide it: whether
+A(18) applies turns on the operator's own commercial position. `byof-ltx2.yaml`
+therefore stops at curation, which inspects Outputs without training on them,
+and leaves training to the operator under their own reading of the clause; the
+docs name the obligation instead of computing a disposition for it. Do not build
+a control that must guess a fact you cannot observe — a gate keyed to a guess
+reads as compliance while enforcing nothing.
+
+**The trap in proving it: gates that mask each other.** `npa-ltx2` has
+independent refusals — the operator's own Hugging Face entitlement and NVIDIA's
+CUDA terms — that all fail closed with exit 78. The build-time proof originally
+checked only that `ensure` exited 78, which meant a gate rewritten to accept
+everything still passed, on the strength of another gate refusing downstream of
+it. A refusal proof must assert **which** gate refused, and must be
+mutation-tested by breaking each gate in turn
+(`npa/tests/docker/test_ltx_runtime_bootstrap.py` runs the shipped script for
+real and does exactly that, including dropping the token check from the source
+fetch alone while the weight path stays guarded). Any time several controls
+share an exit code, assume they are hiding each other until a mutant proves
+otherwise.
 
 **Do not publish on the strength of the classification alone.** The licence work
-concluded `redistribution: public`, but no image has been built and no bytes
-scanned, so `ltx2` sits in `UNVALIDATED_PUBLICATION_TOOLS` and `publish_public`
-refuses it by name. Eligible and proven are different claims.
+concluded `redistribution: public`, and the pushed image has since been scanned
+by digest, but no GPU has run it — so `ltx2` sits in
+`UNVALIDATED_PUBLICATION_TOOLS` and `publish_public` refuses it by name.
+Eligible and proven are different claims.
 
 ## Red Flags
 
@@ -342,7 +366,8 @@ Any of these means stop and classify carefully rather than assuming OSS:
 - The license names an entity type we might be (cloud provider, service
   provider, competitor) in a carve-out
 - The license names an entity type the **operator** might be, or turns on a
-  revenue/headcount threshold — we cannot answer that, so the image must ask
+  revenue/headcount threshold — we cannot answer that and neither can a variable
+  they type, so state the obligation and require the vendor's own entitlement
 - The license says anything about the model's *outputs*: how they may be used,
   that they must be disclosed as machine-generated, that provenance markers may
   not be stripped, or that they may not train another model

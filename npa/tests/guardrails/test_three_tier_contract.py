@@ -544,12 +544,9 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         "lerobot",
         # Static web viewer (caddy static server; no skypilot three-tier YAML).
         "lichtblick",
-        # LTX-2.5 licensing surface only. Generation runs through the BYOF tier
-        # (`base_image: tool://ltx2`), so these verbs have no service or YAML
-        # env tier to stay coherent with; they read the operator's declaration
-        # from the environment and write/read one S3 artifact. The toolRef flags
-        # are checked against the real Typer options in
-        # tests/orchestration/npa_workflow/test_toolref_cli_contract.py.
+        # LTX-2.5 licensing surface only: `terms` prints what governs the model.
+        # Generation runs through the BYOF tier (`base_image: tool://ltx2`), so
+        # this verb has no service or YAML env tier to stay coherent with.
         "ltx2",
         "mjlab",
         # NuRec verbs take repeatable options (--camera-id, --override) and Hydra

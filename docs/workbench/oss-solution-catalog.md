@@ -195,25 +195,25 @@ LTX-2.5 differs from every other candidate in this catalog in what it licenses.
 The LTX-2.x Community License Agreement (2026-08-11, not OSI) covers the
 `ltx-core` / `ltx-pipelines` source as well as the weights, so the habitual
 "bake the code, fetch the weights" split is not available: the image bakes
-neither. It also carries a restriction that lands squarely on this workbench —
-Attachment A(18) forbids using Outputs to train another machine learning model
-for commercial use, and a robot policy is another machine learning model. That
-is why the workflow's licence gate is itself a graded capability rather than a
-paragraph in a README.
+neither, and both fetches run under the operator's own `HF_TOKEN`. Acceptance
+happens on Lightricks' gated Hugging Face repository, not here, and compliance
+with the Agreement — including Attachment A(18), which forbids using Outputs to
+train another machine learning model for commercial use, and a robot policy is
+another machine learning model — is the operator's own responsibility.
 
 | Capability | Status | Upstream basis / NPA evidence |
 | --- | --- | --- |
 | `ltx2_5_text_to_video` | declared; no image built | `python -m ltx_pipelines.distilled` at the pinned ref, per upstream's own quick start |
 | `ltx2_5_decoded_mp4_validation` | declared; no image built | `npa/src/npa/workbench/ltx2/video_check.py`, unit-tested against real ffmpeg clips and copied into the image |
-| `ltx2_5_license_gate_refusal` | declared; no image built | `ltx-runtime assert-refusal` proves exit 78 and empty caches before any fetch, in the run itself |
-| `ltx2_5_license_provenance_stamp` | declared; no image built | `npa.ltx2.provenance.v1` manifest embedded in the capability artifact and re-checked by `npa workbench ltx2 gate` |
 | `ltx2_5_image_to_video` | not claimed | upstream pipeline exists; no code path or evidence here |
 | `ltx2_5_audio_to_video` | not claimed | separate `A2VidPipelineTwoStage` inputs |
 | `ltx2_5_lora_fine_tuning` | not claimed | `ltx-trainer` is licensed material and training on Outputs is what Attachment A(18) restricts |
 
-The primary JSON is `ltx2_5_text_to_video.json`. See
-[`ltx2.md`](ltx2.md) for the dev-VM runbook, the licence declaration the run
-requires, and what has to happen before any of the above may be marked live.
+The primary JSON is `ltx2_5_text_to_video.json`. The run itself still proves the
+refusal first (`ltx-runtime assert-refusal`: exit 78 and empty caches before any
+fetch), but that is a property of the image rather than a graded capability. See
+[`ltx2.md`](ltx2.md) for the dev-VM runbook, the entitlement the run requires,
+and what has to happen before any of the above may be marked live.
 
 ## First-class Workbench tools (not BYOF)
 
