@@ -660,7 +660,7 @@ def deployment_manifest(
                         "protocol": "UDP",
                     },
                     {
-                        "name": "turn-control-tcp",
+                        "name": "turn-ctrl-tcp",
                         "containerPort": TURN_PORT,
                         "protocol": "TCP",
                     },

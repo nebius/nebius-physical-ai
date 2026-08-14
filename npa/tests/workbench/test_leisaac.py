@@ -451,6 +451,12 @@ def test_agent_relay_client_is_secret_mounted_as_non_gpu_sidecar() -> None:
         TURN_PORT,
         TURN_RELAY_PORT,
     }
+    assert {item["name"] for item in turn["ports"]} == {
+        "turn-control",
+        "turn-ctrl-tcp",
+        "turn-media",
+    }
+    assert all(len(item["name"]) <= 15 for item in turn["ports"])
 
 
 def test_agent_relay_manifest_keeps_tcp_private_and_media_on_agent_public_ip() -> None:
