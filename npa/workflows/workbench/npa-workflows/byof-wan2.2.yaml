@@ -45,7 +45,9 @@ config:
     # Python consumers decode it without evaluating it as shell syntax.
     export WAN22_PROMPT_B64="{{config.prompt|base64}}"
     export WAN22_CONTEXT_IMAGE_URI_B64="{{config.context_image_uri|base64}}"
-    export WAN22_CACHE_DIR="${WAN22_CACHE_DIR:-/workspace/model-cache/wan2.2}"
+    if ! printenv WAN22_CACHE_DIR >/dev/null; then
+      export WAN22_CACHE_DIR=/workspace/model-cache/wan2.2
+    fi
     # Validate the config-facing input/capability/artifact contract before the
     # pinned CUDA runtime fetch can create a cache or contact a package index.
     /opt/wan-base/bin/python - <<'PY'

@@ -251,6 +251,7 @@ def test_wan22_spec_plans_the_real_pinned_rtxpro_workload() -> None:
     assert "${Package}" not in rendered
     assert "${Version}" not in rendered
     assert "${Architecture}" not in rendered
+    assert "${WAN22_CACHE_DIR" not in rendered
     for capability in EXPECTED_CAPABILITIES:
         assert capability in rendered
 
