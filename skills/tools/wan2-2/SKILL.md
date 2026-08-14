@@ -48,10 +48,10 @@ no checkpoint weights, credentials, private code, or user data. The runtime
 must remain non-root, with `/opt/byof` and its venv readable and executable.
 
 The single-GPU baseline requests one RTX PRO 6000 Blackwell (`sm_120`), uses the
-official PyTorch 2.7.1 CUDA 12.8 wheel line, and binds pinned Wan attention to
-native PyTorch SDPA instead of FlashAttention. Record the device, compute
-capability, driver, CUDA, torch version, compiled arch list, and finite SDPA
-probe.
+security-fixed PyTorch 2.13.0 CUDA 13.0 wheel line, and binds pinned Wan
+attention to native PyTorch SDPA instead of FlashAttention. Record the device,
+compute capability, driver, CUDA, torch version, compiled arch list, and finite
+SDPA probe.
 
 The distributed spec uses `byof-solution-smoke-wan22-b200-4gpu.yaml` and exactly
 four ranks. Invoke the official path with:

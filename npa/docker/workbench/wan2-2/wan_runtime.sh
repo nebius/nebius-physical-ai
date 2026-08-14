@@ -39,8 +39,8 @@ require_acceptance() {
 wan-runtime: refusing to download or execute the NVIDIA CUDA Python runtime.
 
 The image contains no NVIDIA CUDA wheels or libraries. The requested operation
-would ask PyTorch's CUDA wheel index to deliver pinned torch 2.7.1+cu128 and the
-NVIDIA packages it depends on into this operator-owned writable cache. Nebius
+would ask PyPI to deliver pinned torch 2.13.0 with its CUDA 13.0 NVIDIA
+dependencies into this operator-owned writable cache. Nebius
 cannot accept NVIDIA terms for the operator, so acceptance is never baked in.
 
 Review the current terms before proceeding:
@@ -67,35 +67,39 @@ ready_tree() {
 
 verify_tree() {
   local tree="$1"
+  "$tree/venv/bin/python" -m pip check
   "$tree/venv/bin/python" - <<'PY'
 import importlib.metadata
 import torch
 
 def public_version(value):
-    # CUDA wheel local versions such as 2.7.1+cu128 are intended. Prefix
-    # extensions (2.7.10, 2.27.70) and post/dev releases are not.
+    # A wheel-local suffix is harmless, but prefix extensions and post/dev
+    # releases are not accepted as the exact reviewed public version.
     return value.split("+", 1)[0]
 
-assert public_version(torch.__version__) == "2.7.1", torch.__version__
-assert torch.version.cuda == "12.8", torch.version.cuda
+assert public_version(torch.__version__) == "2.13.0", torch.__version__
+assert torch.version.cuda == "13.0", torch.version.cuda
 for name, expected in {
-    "torchvision": "0.22.1",
-    "torchaudio": "2.7.1",
-    "triton": "3.3.1",
-    "nvidia-cublas-cu12": "12.8.3.14",
-    "nvidia-cuda-cupti-cu12": "12.8.57",
-    "nvidia-cuda-nvrtc-cu12": "12.8.61",
-    "nvidia-cuda-runtime-cu12": "12.8.57",
-    "nvidia-cudnn-cu12": "9.7.1.26",
-    "nvidia-cufft-cu12": "11.3.3.41",
-    "nvidia-cufile-cu12": "1.13.0.11",
-    "nvidia-curand-cu12": "10.3.9.55",
-    "nvidia-cusolver-cu12": "11.7.2.55",
-    "nvidia-cusparse-cu12": "12.5.7.53",
-    "nvidia-cusparselt-cu12": "0.6.3",
-    "nvidia-nccl-cu12": "2.27.7",
-    "nvidia-nvjitlink-cu12": "12.8.61",
-    "nvidia-nvtx-cu12": "12.8.55",
+    "torchvision": "0.28.0",
+    "cuda-toolkit": "13.0.3.0",
+    "cuda-bindings": "13.3.1",
+    "cuda-pathfinder": "1.6.0",
+    "nvidia-cublas": "13.1.1.3",
+    "nvidia-cuda-cupti": "13.0.85",
+    "nvidia-cuda-nvrtc": "13.0.88",
+    "nvidia-cuda-runtime": "13.0.96",
+    "nvidia-cudnn-cu13": "9.20.0.48",
+    "nvidia-cufft": "12.0.0.61",
+    "nvidia-cufile": "1.15.1.6",
+    "nvidia-curand": "10.4.0.35",
+    "nvidia-cusolver": "12.0.4.66",
+    "nvidia-cusparse": "12.6.3.3",
+    "nvidia-cusparselt-cu13": "0.8.1",
+    "nvidia-nccl-cu13": "2.29.7",
+    "nvidia-nvjitlink": "13.3.33",
+    "nvidia-nvshmem-cu13": "3.4.5",
+    "nvidia-nvtx": "13.0.85",
+    "triton": "3.7.1",
 }.items():
     observed = importlib.metadata.version(name)
     assert public_version(observed) == expected, (name, observed, expected)
@@ -184,7 +188,7 @@ case "$mode" in
     printf '{"status":"ok","source_ref":"42bf4cfaa384bc21833865abc2f9e6c0e67233dc","cuda_runtime":"runtime-fetch"}\n'
     ;;
   version)
-    printf 'wan2.2 source=42bf4cfaa384bc21833865abc2f9e6c0e67233dc torch=2.7.1 cu=12.8 provisioning=runtime-fetch\n'
+    printf 'wan2.2 source=42bf4cfaa384bc21833865abc2f9e6c0e67233dc torch=2.13.0 cu=13.0 provisioning=runtime-fetch\n'
     ;;
   exec)
     shift

@@ -300,9 +300,9 @@ Pinned official source:
 TI2V-5B checkpoint:
 `Wan-AI/Wan2.2-TI2V-5B@921dbaf3f1674a56f47e83fb80a34bac8a8f203e`.
 The candidate uses one RTX PRO 6000 Blackwell (`sm_120`), native
-`wan.WanTI2V.generate`, the official PyTorch 2.7.1 CUDA 12.8 wheel line with
-an explicit `sm_120` architecture check, and run-time model acquisition. No
-weights are baked, and the upstream native PyTorch SDPA fallback is used.
+`wan.WanTI2V.generate`, the security-fixed PyTorch 2.13.0 CUDA 13.0 wheel line
+with an explicit `sm_120` architecture check, and run-time model acquisition.
+No weights are baked, and the upstream native PyTorch SDPA fallback is used.
 
 Accepted live hard-gate capabilities, validated by
 A private validation record on one RTX PRO 6000 Blackwell (`sm_120`):

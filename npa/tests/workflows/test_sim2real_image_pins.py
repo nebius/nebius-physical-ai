@@ -355,7 +355,6 @@ def test_sim2real_control_plane_requirement_closure_is_exact() -> None:
     assert genesis_lines == [
         "huggingface-hub==0.35.3",
         "tomli==2.4.1",
-        "transformers==4.57.6",
     ]
     for relative_path in (
         "sim2real-envgen/Dockerfile",
@@ -365,4 +364,6 @@ def test_sim2real_control_plane_requirement_closure_is_exact() -> None:
         dockerfile = (root / relative_path).read_text(encoding="utf-8")
         assert "sim2real-control-requirements.txt" in dockerfile
         assert "sim2real-genesis-requirements.txt" in dockerfile
+        assert "python -m pip uninstall -y transformers" in dockerfile
+        assert 'd.metadata["Name"].lower() == "transformers"' in dockerfile
         assert "pip check" in dockerfile

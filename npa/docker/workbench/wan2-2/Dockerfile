@@ -60,29 +60,19 @@ COPY --chmod=0444 docker/workbench/wan2-2/easydict_compat.py /opt/byof/wan/utils
 COPY --chmod=0444 docker/workbench/wan2-2/wan_init_ti2v.py /opt/byof/wan/__init__.py
 COPY --chmod=0444 docker/workbench/wan2-2/input_contract.py /opt/byof/npa_wan_input_contract.py
 
-# CPU-only PyTorch is BSD-3-Clause and prevents OSS dependency resolution from
-# selecting CUDA wheels. The CUDA build later shadows it in the runtime cache.
+# Install the complete reviewed OSS closure without dependency resolution so
+# packages such as Accelerate and PEFT cannot pull Torch/CUDA into an image
+# layer. ImageIO-FFmpeg is installed from source first to avoid its bundled
+# executable; the later exact requirements pass recognizes it as satisfied.
 RUN python -m venv /opt/wan-base \
     && /opt/wan-base/bin/python -m pip install --no-cache-dir --upgrade \
-      "pip==25.1.1" "setuptools==80.9.0" "wheel==0.45.1" \
-    && /opt/wan-base/bin/python -m pip install --no-cache-dir \
-      --index-url https://download.pytorch.org/whl/cpu \
-      --constraint /opt/npa/wan2-2/baked-constraints.txt \
-      "torch==2.7.1+cpu" "torchvision==0.22.1+cpu" "torchaudio==2.7.1+cpu" \
-    && /opt/wan-base/bin/python -m pip install --no-cache-dir \
-      --constraint /opt/npa/wan2-2/baked-constraints.txt \
-      "numpy==1.26.4" "opencv-python-headless==4.11.0.86" \
-      "diffusers==0.35.1" "transformers==4.51.3" "tokenizers==0.21.4" \
-      "accelerate==1.9.0" "huggingface-hub==0.34.4" \
-      "imageio==2.37.0" \
-      "safetensors==0.5.3" "sentencepiece==0.2.0" "einops==0.8.1" \
-      "ftfy==6.3.1" "tqdm==4.67.1" \
-      "decord==0.6.0" "peft==0.17.0" \
-      "dashscope==1.26.5" "boto3==1.39.11" \
+      "pip==26.1.2" "setuptools==83.0.0" "wheel==0.46.2" \
     && /opt/wan-base/bin/python -m pip install --no-cache-dir \
       --no-binary imageio-ffmpeg \
       --constraint /opt/npa/wan2-2/baked-constraints.txt \
       "imageio-ffmpeg==0.6.0" \
+    && /opt/wan-base/bin/python -m pip install --no-cache-dir --no-deps \
+      -r /opt/npa/wan2-2/baked-constraints.txt \
     && /opt/wan-base/bin/python -m pip install --no-cache-dir --no-deps -e /opt/byof \
     && sed -i \
       's/^from \.attention import flash_attention$/from .attention import attention as flash_attention/' \
@@ -100,12 +90,14 @@ RUN python -m venv /opt/wan-base \
     && diff -u \
       <(sed '/^#/d;/^$/d' /opt/npa/wan2-2/baked-constraints.txt) \
       /opt/byof/npa_baked_python_inventory.txt \
-    && ! grep -Eiq '^nvidia-|cu(da|dnn|blas)|nccl' /opt/byof/npa_baked_python_inventory.txt \
+    && ! grep -Eiq '^(torch|torchvision|torchaudio|nvidia-)|cu(da|dnn|blas)|nccl' /opt/byof/npa_baked_python_inventory.txt \
     && test -z "$(find /opt/byof /opt/wan-base -type f \
       \( -iname '*.safetensors' -o -iname '*.ckpt' -o -iname '*.bin.index.json' \
          -o -iname 'model*.pt' -o -iname 'model*.pth' -o -iname 'weights*.pt' \
          -o -iname 'weights*.pth' \) \
       -print -quit)" \
+    && find /opt/byof /opt/wan-base -type d -name __pycache__ -prune \
+      -exec rm -rf -- {} + \
     && rm -rf /root/.cache /tmp/pip-* \
     && ln -s /workspace/.cache/npa/wan2-2/runtime/current/venv /opt/byof/.venv
 

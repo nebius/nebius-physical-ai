@@ -67,7 +67,7 @@ live input/output evidence is accepted.
 ## GPU and runtime gates
 
 The single-GPU path requires exactly one compute-capability 12.0 device. Its
-PyTorch 2.7.1 CUDA 12.8 wheel must report `sm_120`, FlashAttention must remain
+PyTorch 2.13.0 CUDA 13.0 wheel must report `sm_120`, FlashAttention must remain
 absent, the patched official model binding must point at native PyTorch SDPA,
 and a BF16 SDPA probe must be finite.
 
@@ -163,7 +163,7 @@ local plus remote verification results. Only a verified manifest names the
 | `wan2.2_ti2v_5b_text_to_video` | accepted | private validation record: fresh real 1280×704 output on RTX PRO 6000 Blackwell from the accepted runtime-fetch candidate |
 | `wan2.2_decoded_mp4_validation` | accepted | same run decoded all 17 frames at 24 fps and passed non-uniform-content gates |
 | `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted | private validation record: official four-rank path on 4×B200 with the accepted runtime-fetch candidate |
-| `wan2.2_distributed_rank_topology_validation` | accepted | same run proved unique ranks/devices, NCCL 2.27.7 runtime transport and sum 10/10, T5/DiT FULL_SHARD, Ulysses calls, and process-group teardown |
+| `wan2.2_distributed_rank_topology_validation` | accepted historical evidence | prior runtime proved unique ranks/devices, NCCL 2.27.7 transport and sum 10/10, T5/DiT FULL_SHARD, Ulysses calls, and process-group teardown; the security-fixed 2.29.7 runtime requires a new operator-accepted live qualification before publication |
 | `wan2.2_verified_rerun_recording` | accepted | fresh single- and four-GPU RRDs were built from their exact MP4/JSON evidence, uploaded, and remotely re-verified; the single-GPU RRD was loaded byte-identically and visibly rendered in the live agent |
 | `wan2.2_ti2v_5b_image_to_video` | deferred | optional real input path exists but lacks separately accepted live evidence |
 | A14B, S2V-14B, Animate-14B | deferred | separate models and input/GPU contracts |
@@ -197,8 +197,8 @@ visibly rendered the 3,045,269-byte single-GPU RRD
 ## Licensing and publication
 
 The pinned source, model, and tokenizer declare Apache-2.0. The shipped runtime
-contains only the digest-pinned official Python/Debian base, CPU-only PyTorch,
-and audited OSS dependencies; Debian copyright records and wheel metadata carry
+contains only the digest-pinned official Python/Debian base and audited OSS
+dependencies; Debian copyright records and wheel metadata carry
 their GPL/LGPL/BSD/MIT/Apache notices. CUDA Python distributions, model/tokenizer,
 credentials, data, and caches are runtime-only. Public eligibility requires four
 separate checks: scan the pushed digest and every individual layer/history entry

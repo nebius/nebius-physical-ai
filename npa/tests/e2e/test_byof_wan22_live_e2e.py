@@ -429,7 +429,7 @@ def test_wan22_live_rtxpro_candidate_generate_and_decode(
     assert runtime_stack["devices"][0]["compute_capability"] == [12, 0]
     assert "sm_120" in runtime_stack["torch_cuda_arch_list"]
     assert runtime_stack["driver_versions"]
-    assert runtime_stack["torch_cuda"] == "12.8"
+    assert runtime_stack["torch_cuda"] == "13.0"
     assert runtime_stack["flash_attention_installed"] is False
     assert runtime_stack["sdpa_source_binding"] is True
     assert runtime_stack["sdpa_probe"]["finite"] is True
@@ -440,8 +440,8 @@ def test_wan22_live_rtxpro_candidate_generate_and_decode(
         for package in inventory["baked_runtime"]["python_packages"]
     }
     assert installed["wan"] == "2.2.0"
-    assert installed["torch"] == "2.7.1+cu128"
-    assert installed["nvidia-nccl-cu12"] == "2.27.7"
+    assert installed["torch"] == "2.13.0"
+    assert installed["nvidia-nccl-cu13"] == "2.29.7"
     assert inventory["baked_runtime"]["os_packages"]
 
     video_key = key_prefix + str(artifact["output_filename"])

@@ -3,7 +3,8 @@ set -euo pipefail
 
 wan-runtime health
 wan-runtime version
-/opt/wan-base/bin/python -c 'import wan; print(wan.__file__)'
+test -r /opt/byof/wan/textimage2video.py
+/opt/wan-base/bin/python -c 'import importlib.util; assert importlib.util.find_spec("torch") is None'
 set +e
 wan-runtime ensure >/tmp/wan-out 2>/tmp/wan-err
 rc=$?
