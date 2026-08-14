@@ -33,9 +33,17 @@ def test_renderer_fails_closed_and_forwards_only_scoped_consent(tool_ref: str) -
 
 
 def test_renderer_does_not_add_consent_to_non_isaac_tasks() -> None:
-    from npa.orchestration.npa_workflow.skypilot_render import isaac_eula_envs
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        isaac_eula_envs,
+        tool_image_key,
+    )
 
     assert isaac_eula_envs("workbench.lancedb.serve", accepted=True) == {}
+    # Generic BYOF chooses its workload image from config.base_image in the
+    # inner runner.  Treating the whole family as Isaac both selected the wrong
+    # outer image and invented an Isaac consent requirement for public Wan.
+    assert tool_image_key("workbench.byof.repo") is None
+    assert isaac_eula_envs("workbench.byof.repo", accepted=True) == {}
 
 
 def test_serverless_forwarder_never_invents_acceptance(monkeypatch) -> None:

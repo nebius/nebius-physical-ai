@@ -41,7 +41,10 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.retargeting": "retargeting",
     "workbench.sim2real": "lerobot-vlm-rl",
     "workbench.sim2real_envgen": "envgen",
-    "workbench.byof": "isaac-lab",
+    # BYOF selects its actual workload image from config.base_image inside the
+    # BYOF runner.  It is not globally an Isaac workload: public Ubuntu/CUDA
+    # profiles such as Wan 2.2 must use the staged NPA runner anonymously and
+    # must not inherit Isaac image routing or consent requirements.
     "workbench.genesis": "genesis",
     "workbench.groot": "groot",
 }
