@@ -1430,6 +1430,25 @@ def test_bootstrap_embeds_cameras_panel() -> None:
     assert "frustumSvg" in source
     assert 'id="tabMain"' in source
     assert 'id="tabRerun"' in source
+    assert 'data-tab="rerun">View</button>' in source
+    viewer_tab_markup = source.split('<div class="render-mode-tabs"', 1)[1].split(
+        "</div>", 1
+    )[0]
+    view_tab = viewer_tab_markup.index('id="renderModeRerun"')
+    foxglove_tab = viewer_tab_markup.index('id="renderModeFoxglove"')
+    lichtblick_tab = viewer_tab_markup.index('id="renderModeLichtblick"')
+    assert view_tab < foxglove_tab < lichtblick_tab
+    assert 'id="renderModeRerun" data-render-mode="rerun">View</button>' in source
+    assert 'role="tab" aria-selected="true" aria-controls="viewerPaneRerun"' in source
+    assert 'data-testid="open-foxglove-web"' in source
+    assert "View in Foxglove</button>" in source
+    assert 'id="foxgloveVisualizationSummary"' in source
+    assert "prepareFoxgloveVisualization" in source
+    assert 'visualization.checked' in source
+    assert '"-source-default"' in _agent_source()
+    assert "pane.setAttribute(\"aria-hidden\"" in source
+    assert "btn.setAttribute(\"aria-selected\"" in source
+    assert "event.key === \"ArrowRight\"" in source
     assert "layout-rerun" in source
     assert "activateMainTab" in source
     assert "tab-panel.is-inactive" in source

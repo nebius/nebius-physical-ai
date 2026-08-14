@@ -54,6 +54,7 @@ def harness(tmp_path: Path):
     env: dict[str, str] = {"NPA_FOXGLOVE_EMBED_SRC": "https://embed.foxglove.dev/"}
     convert_calls: list[dict] = []
     cloud_calls: list[tuple[Path, str]] = []
+    layout_calls: list[dict] = []
 
     def _config(current: dict | None = None) -> dict:
         return resolve_foxglove_config(
@@ -107,6 +108,17 @@ def harness(tmp_path: Path):
             },
         }
 
+    def _layout(*, provenance: dict) -> dict:
+        layout_calls.append(dict(provenance))
+        return {
+            "layout_id": "layout-rich",
+            "available": True,
+            "created": not bool(layout_calls[:-1]),
+            "updated": False,
+            "reused": bool(layout_calls[:-1]),
+            "reason": "",
+        }
+
     app = FastAPI()
     register_foxglove_routes(
         app,
@@ -123,6 +135,7 @@ def harness(tmp_path: Path):
             runs_dir=runs_dir,
             keep_published=2,
             ensure_cloud_recording=_cloud,
+            ensure_cloud_layout=_layout,
         ),
         HTTPException,
     )
@@ -137,6 +150,7 @@ def harness(tmp_path: Path):
         "convert_calls": convert_calls,
         "loaded": loaded,
         "cloud_calls": cloud_calls,
+        "layout_calls": layout_calls,
     }
 
 
@@ -279,10 +293,23 @@ def test_export_open_web_returns_selected_remote_file_link_without_cloud_upload(
     assert exported["data_source"] == "remote-file"
     assert exported["web_open_mode"] == "remote-file"
     assert "ds=remote-file" in exported["web_url"]
-    assert "ds.url=https%3A%2F%2Fagent.example%2Ffoxglove%2Fdata%2F" in exported["web_url"]
+    assert (
+        "ds.url=https%3A%2F%2Fagent.example%2Ffoxglove%2Fdata%2F" in exported["web_url"]
+    )
+    assert "layoutId=layout-rich" in exported["web_url"]
+    assert exported["layout"] == {
+        "layout_id": "layout-rich",
+        "available": True,
+        "created": True,
+        "updated": False,
+        "reused": False,
+        "reason": "",
+    }
+    assert "canonical shared NPA layout" in exported["layout_note"]
     assert "cloud" not in exported
     assert "openIn" not in exported["web_url"]
     assert harness["cloud_calls"] == []
+    assert harness["layout_calls"] == [{}]
 
 
 def test_export_different_safe_run_converts_that_run(harness) -> None:

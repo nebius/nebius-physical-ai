@@ -2,6 +2,8 @@ const { defineConfig } = require("cypress");
 const fs = require("fs");
 const http = require("http");
 const path = require("path");
+const { chromium } = require("playwright-core");
+const { PNG } = require("pngjs");
 
 const repoRoot = path.resolve(__dirname, "../..");
 const agentSourcePath = path.join(repoRoot, "src/npa/cli/agent.py");
@@ -175,6 +177,231 @@ function startMockServer(port) {
   return server;
 }
 
+function liveCredentials(config) {
+  const read = (name) => String(config.env[name] || "").trim();
+  const result = {
+    baseUrl: read("agentBaseUrl") || read("NPA_AGENT_BASE_URL"),
+    username: read("agentUser") || read("NPA_AGENT_USER"),
+    password: read("agentPassword") || read("NPA_AGENT_PASSWORD"),
+  };
+  if (!result.baseUrl || !result.username || !result.password) {
+    throw new Error("real-browser Foxglove verification requires complete owner credentials");
+  }
+  return result;
+}
+
+function screenshotStats(filePath) {
+  const png = PNG.sync.read(fs.readFileSync(filePath));
+  const colors = new Set();
+  let minLuma = 255;
+  let maxLuma = 0;
+  let opaqueSamples = 0;
+  for (let pixel = 0; pixel < png.width * png.height; pixel += 16) {
+    const offset = pixel * 4;
+    if (png.data[offset + 3] < 220) continue;
+    const r = png.data[offset];
+    const g = png.data[offset + 1];
+    const b = png.data[offset + 2];
+    const luma = Math.round(0.2126 * r + 0.7152 * g + 0.0722 * b);
+    minLuma = Math.min(minLuma, luma);
+    maxLuma = Math.max(maxLuma, luma);
+    colors.add(`${r >> 3}:${g >> 3}:${b >> 3}`);
+    opaqueSamples += 1;
+  }
+  return {
+    width: png.width,
+    height: png.height,
+    sampledColors: colors.size,
+    opaqueSamples,
+    lumaRange: maxLuma - minLuma,
+    nonblank: opaqueSamples > 100 && colors.size > 20 && maxLuma - minLuma > 18,
+  };
+}
+
+async function verifyFoxgloveHostedNavigation(config, taskInput) {
+  const credentials = liveCredentials(config);
+  const executablePath = String(
+    process.env.NPA_PLAYWRIGHT_CHROMIUM_EXECUTABLE || "",
+  ).trim();
+  const evidenceDir = path.resolve(
+    String(process.env.NPA_AGENT_CYPRESS_EVIDENCE_DIR || ""),
+  );
+  const runId = String((taskInput && taskInput.runId) || "").trim();
+  if (!executablePath || !fs.existsSync(executablePath)) {
+    throw new Error("real-browser Foxglove verification requires a Chromium executable");
+  }
+  if (!runId.match(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)) {
+    throw new Error("real-browser Foxglove verification requires a safe run id");
+  }
+  if (!process.env.NPA_AGENT_CYPRESS_EVIDENCE_DIR || evidenceDir.startsWith(repoRoot)) {
+    throw new Error("real-browser evidence directory must be explicit and outside the clone");
+  }
+  fs.mkdirSync(evidenceDir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(evidenceDir, 0o700);
+
+  const browser = await chromium.launch({
+    executablePath,
+    headless: true,
+    args: ["--ignore-certificate-errors", "--disable-gpu-blocklist"],
+  });
+  const context = await browser.newContext({
+    httpCredentials: {
+      username: credentials.username,
+      password: credentials.password,
+    },
+    ignoreHTTPSErrors: true,
+    serviceWorkers: "block",
+    viewport: { width: 1440, height: 1000 },
+  });
+  const officialRequests = [];
+  const officialResponses = [];
+  context.on("request", (request) => {
+    try {
+      const url = new URL(request.url());
+      if (url.origin === "https://app.foxglove.dev") officialRequests.push(request.url());
+    } catch (_error) { /* ignore non-URL requests */ }
+  });
+  context.on("response", (response) => {
+    try {
+      const url = new URL(response.url());
+      if (url.origin === "https://app.foxglove.dev") {
+        officialResponses.push({ url: response.url(), status: response.status() });
+      }
+    } catch (_error) { /* ignore non-URL responses */ }
+  });
+
+  try {
+    const page = await context.newPage();
+    await page.goto(credentials.baseUrl, { waitUntil: "domcontentloaded" });
+    await page.locator("#tabRerun").click();
+    await page.waitForFunction(
+      (expected) => document.querySelector("#simRunId")?.textContent?.includes(expected),
+      runId,
+    );
+    const expectedLabels = ["View", "Foxglove", "Lichtblick", "Video", "Image", "Data"];
+    const desktopLabels = await page.locator(".render-mode-tabs .render-mode-tab").allTextContents();
+    if (desktopLabels.map((value) => value.trim()).join("|") !== expectedLabels.join("|")) {
+      throw new Error("deployed viewer tab order does not match the required labels");
+    }
+    const viewerTabs = page.locator(".render-mode-tabs");
+    const paneGeometry = {};
+    for (const [label, pane] of [
+      ["View", "#viewerPaneRerun"],
+      ["Foxglove", "#viewerPaneFoxglove"],
+      ["Lichtblick", "#viewerPaneLichtblick"],
+    ]) {
+      await viewerTabs.getByRole("tab", { name: label, exact: true }).click();
+      const box = await page.locator(pane).boundingBox();
+      if (!box || box.width <= 0 || box.height <= 0) {
+        throw new Error(`deployed ${label} pane has zero geometry`);
+      }
+      paneGeometry[label] = { width: Math.round(box.width), height: Math.round(box.height) };
+    }
+    await viewerTabs.getByRole("tab", { name: "Foxglove", exact: true }).click();
+    await page.locator("#viewerPaneFoxglove iframe").waitFor({ state: "visible" });
+    const desktopEvidence = path.join(evidenceDir, "live-agent-desktop-after.png");
+    await page.screenshot({ path: desktopEvidence });
+    fs.chmodSync(desktopEvidence, 0o600);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    const mobileLabels = await page.locator(".render-mode-tabs .render-mode-tab").allTextContents();
+    if (mobileLabels.map((value) => value.trim()).join("|") !== expectedLabels.join("|")) {
+      throw new Error("mobile deployed viewer tab order does not match the required labels");
+    }
+    for (const [label, pane] of [
+      ["View", "#viewerPaneRerun"],
+      ["Foxglove", "#viewerPaneFoxglove"],
+      ["Lichtblick", "#viewerPaneLichtblick"],
+    ]) {
+      await viewerTabs.getByRole("tab", { name: label, exact: true }).click();
+      const box = await page.locator(pane).boundingBox();
+      if (!box || box.width <= 0 || box.height <= 0) {
+        throw new Error(`mobile deployed ${label} pane has zero geometry`);
+      }
+    }
+    await viewerTabs.getByRole("tab", { name: "Foxglove", exact: true }).click();
+    const mobileEvidence = path.join(evidenceDir, "live-agent-mobile-after.png");
+    await page.screenshot({ path: mobileEvidence });
+    fs.chmodSync(mobileEvidence, 0o600);
+
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    const popupPromise = context.waitForEvent("page");
+    const exportResponsePromise = page.waitForResponse(
+      (response) => response.url().includes("/api/foxglove/export") &&
+        response.request().method() === "POST",
+    );
+    await page.getByRole("button", { name: "View in Foxglove", exact: true }).click();
+    const popup = await popupPromise;
+    const exportResponse = await exportResponsePromise;
+    if (exportResponse.status() !== 200) {
+      throw new Error("real-click Foxglove export did not return HTTP 200");
+    }
+    const exportPayload = await exportResponse.json();
+    if (String(exportPayload.run_id || "") !== runId) {
+      throw new Error("real-click Foxglove export selected the wrong run");
+    }
+    const expectedWebUrl = String(exportPayload.export?.web_url || "");
+    await popup.waitForURL((url) => url.origin === "https://app.foxglove.dev");
+    const requestedUrl = officialRequests.find((value) => value === expectedWebUrl) || "";
+    if (!requestedUrl) {
+      throw new Error("real popup did not request the exact official response URL");
+    }
+    const parsed = new URL(requestedUrl);
+    const dataUrls = parsed.searchParams.getAll("ds.url");
+    if (
+      parsed.pathname !== "/~/view" ||
+      parsed.searchParams.get("ds") !== "remote-file" ||
+      dataUrls.length !== 1
+    ) {
+      throw new Error("real popup did not use the official remote-file contract");
+    }
+    const recordingUrl = new URL(dataUrls[0]);
+    if (recordingUrl.protocol !== "https:" || !recordingUrl.pathname.endsWith(".mcap")) {
+      throw new Error("real popup did not carry one absolute HTTPS MCAP URL");
+    }
+    if (/%25(?:2f|3a)/i.test(parsed.search)) {
+      throw new Error("real popup double-encoded the recording URL");
+    }
+    await popup.waitForLoadState("domcontentloaded").catch(() => {});
+    await popup.waitForTimeout(2500);
+    const hostedEvidence = path.join(evidenceDir, "live-hosted-foxglove-after.png");
+    await popup.screenshot({ path: hostedEvidence });
+    fs.chmodSync(hostedEvidence, 0o600);
+    const pixels = screenshotStats(hostedEvidence);
+    if (!pixels.nonblank) {
+      throw new Error("hosted Foxglove/sign-in/error surface is visually blank");
+    }
+    const response = officialResponses.find((item) => item.url === expectedWebUrl) ||
+      officialResponses[0] || { status: 0 };
+    return {
+      runId,
+      labels: expectedLabels,
+      paneGeometry,
+      officialContract: {
+        requestMatchedResponse: true,
+        responseStatus: response.status,
+        sourceType: parsed.searchParams.get("ds"),
+        oneAbsoluteHttpsMcap: true,
+        encodedExactlyOnce: true,
+        layoutIdPresent: Boolean(parsed.searchParams.get("layoutId")),
+      },
+      hostedSurface: {
+        finalOrigin: new URL(popup.url()).origin,
+        finalPath: new URL(popup.url()).pathname,
+        pixels,
+      },
+      evidence: {
+        desktop: desktopEvidence,
+        mobile: mobileEvidence,
+        hosted: hostedEvidence,
+      },
+    };
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+}
+
 module.exports = defineConfig({
   // The production UI exercises WebGL, media streams, and two viewer SDKs.
   // Release spec state eagerly so long mocked runs stay stable on shared CI
@@ -211,6 +438,11 @@ module.exports = defineConfig({
       if (!process.env.NPA_AGENT_BASE_URL) {
         server = startMockServer(Number(process.env.NPA_AGENT_CYPRESS_PORT || 47867));
       }
+      on("task", {
+        verifyFoxgloveHostedNavigation(input) {
+          return verifyFoxgloveHostedNavigation(config, input);
+        },
+      });
       on("after:run", () => {
         if (server) {
           server.close();

@@ -1884,7 +1884,7 @@
       </header>
       <nav class="main-tabs" role="tablist" aria-label="Workbench views">
         <button id="tabMain" class="main-tab" type="button" role="tab" aria-selected="true" aria-controls="panelChat" data-tab="main">Main</button>
-        <button id="tabRerun" class="main-tab" type="button" role="tab" aria-selected="false" aria-controls="panelRerun" data-tab="rerun">Rerun</button>
+        <button id="tabRerun" class="main-tab" type="button" role="tab" aria-selected="false" aria-controls="panelRerun" data-tab="rerun">View</button>
         <button id="tabVoxel" class="main-tab" type="button" role="tab" aria-selected="false" aria-controls="panelVoxel" data-tab="voxel51">Dataset &amp; provenance</button>
       </nav>
       <button id="chatDrawerToggle" class="btn btn-primary chat-fab" type="button" aria-expanded="false" aria-controls="panelChat" title="Open chat">
@@ -2116,12 +2116,12 @@
             <div class="rerun-stage-chrome">
               <h3>Viewer</h3>
               <div class="render-mode-tabs" role="tablist" aria-label="Artifact render mode">
-                <button type="button" class="render-mode-tab is-active" id="renderModeRerun" data-render-mode="rerun">Rerun</button>
-                <button type="button" class="render-mode-tab" id="renderModeLichtblick" data-render-mode="lichtblick">Lichtblick</button>
-                <button type="button" class="render-mode-tab" id="renderModeFoxglove" data-render-mode="foxglove">Foxglove</button>
-                <button type="button" class="render-mode-tab" id="renderModeVideo" data-render-mode="video">Video</button>
-                <button type="button" class="render-mode-tab" id="renderModeImage" data-render-mode="image">Image</button>
-                <button type="button" class="render-mode-tab" id="renderModeData" data-render-mode="data">Data</button>
+                <button type="button" role="tab" aria-selected="true" aria-controls="viewerPaneRerun" tabindex="0" class="render-mode-tab is-active" id="renderModeRerun" data-render-mode="rerun">View</button>
+                <button type="button" role="tab" aria-selected="false" aria-controls="viewerPaneFoxglove" tabindex="-1" class="render-mode-tab" id="renderModeFoxglove" data-render-mode="foxglove">Foxglove</button>
+                <button type="button" role="tab" aria-selected="false" aria-controls="viewerPaneLichtblick" tabindex="-1" class="render-mode-tab" id="renderModeLichtblick" data-render-mode="lichtblick">Lichtblick</button>
+                <button type="button" role="tab" aria-selected="false" aria-controls="viewerPaneMedia" tabindex="-1" class="render-mode-tab" id="renderModeVideo" data-render-mode="video">Video</button>
+                <button type="button" role="tab" aria-selected="false" aria-controls="viewerPaneMedia" tabindex="-1" class="render-mode-tab" id="renderModeImage" data-render-mode="image">Image</button>
+                <button type="button" role="tab" aria-selected="false" aria-controls="viewerPaneMedia" tabindex="-1" class="render-mode-tab" id="renderModeData" data-render-mode="data">Data</button>
               </div>
               <div id="simviz">
                 <div class="status-row">
@@ -2140,7 +2140,7 @@
                   <button id="foxgloveOpenWeb" class="btn" type="button"
                     data-testid="open-foxglove-web" aria-describedby="foxgloveExportNote"
                     aria-busy="false" disabled
-                    title="Open this public MCAP as a remote-file data source in Foxglove Web">Open in Foxglove Web</button>
+                    title="Open this public MCAP as a remote-file data source in Foxglove Web">View in Foxglove</button>
                   <a id="openFullRerun" class="btn" href="/rerun/?hide_welcome_screen=1&theme=dark&camera=workspace" target="_blank" rel="noopener">Open full Rerun</a>
                 </div>
                 <p id="foxgloveExportNote" class="hint" role="status" aria-live="polite">Load a run to open its canonical MCAP in Foxglove Web.</p>
@@ -2152,7 +2152,7 @@
               </div>
             </div>
             <div class="viewer-stack">
-              <div id="viewerPaneRerun" class="viewer-pane is-active-viewer">
+              <div id="viewerPaneRerun" class="viewer-pane is-active-viewer" role="tabpanel" aria-labelledby="renderModeRerun" aria-hidden="false">
                 <div class="rerun-frame-shell">
                   <iframe id="rerunFrame" title="rerun" src="about:blank" allow="fullscreen; clipboard-read; clipboard-write" allowfullscreen></iframe>
                   <div id="rerunBundleCover" class="rerun-bundle-cover" hidden aria-live="polite">
@@ -2161,7 +2161,7 @@
                   </div>
                 </div>
               </div>
-              <div id="viewerPaneLichtblick" class="viewer-pane is-inactive-viewer">
+              <div id="viewerPaneLichtblick" class="viewer-pane is-inactive-viewer" role="tabpanel" aria-labelledby="renderModeLichtblick" aria-hidden="true">
                 <div class="rerun-frame-shell">
                   <iframe id="lichtblickFrame" title="lichtblick" src="about:blank" allow="fullscreen; clipboard-read; clipboard-write" allowfullscreen></iframe>
                   <div id="lichtblickPlaceholder" class="rerun-placeholder lichtblick-placeholder" hidden>
@@ -2170,12 +2170,13 @@
                   </div>
                 </div>
               </div>
-              <div id="viewerPaneFoxglove" class="viewer-pane is-inactive-viewer">
+              <div id="viewerPaneFoxglove" class="viewer-pane is-inactive-viewer" role="tabpanel" aria-labelledby="renderModeFoxglove" aria-hidden="true">
                 <div id="foxgloveHost" class="foxglove-host"></div>
                 <div id="foxgloveMessage" class="foxglove-message" hidden></div>
                 <div id="foxgloveStatus" class="foxglove-status" role="status" aria-live="polite">Foxglove viewer idle.</div>
+                <p id="foxgloveVisualizationSummary" class="hint" role="status" aria-live="polite">Select a real MCAP to inspect its robot-motion visualization contract.</p>
               </div>
-              <div id="viewerPaneMedia" class="viewer-pane is-inactive-viewer">
+              <div id="viewerPaneMedia" class="viewer-pane is-inactive-viewer" role="tabpanel" aria-hidden="true">
                 <div id="artifactPreviewHost" class="media-preview-host" hidden></div>
               </div>
             </div>
@@ -3163,6 +3164,20 @@
             // reveal an empty viewer (the .mcap is 1-of-many artifacts, easy to miss).
             if (mode === "lichtblick") {
               ensureLichtblickForActiveRun().catch((err) => console.warn("lichtblick autoload failed", err));
+            }
+          });
+          btn.addEventListener("keydown", (event) => {
+            const tabs = Array.from(document.querySelectorAll(".render-mode-tab[data-render-mode]"));
+            const current = tabs.indexOf(btn);
+            let target = -1;
+            if (event.key === "ArrowRight") target = (current + 1) % tabs.length;
+            else if (event.key === "ArrowLeft") target = (current - 1 + tabs.length) % tabs.length;
+            else if (event.key === "Home") target = 0;
+            else if (event.key === "End") target = tabs.length - 1;
+            if (target >= 0) {
+              event.preventDefault();
+              tabs[target].focus();
+              tabs[target].click();
             }
           });
         });
@@ -4971,7 +4986,7 @@
         const busy = Boolean(current && current.runId === runId && current.runRef === runRef);
         button.disabled = !runId || busy;
         button.setAttribute("aria-busy", busy ? "true" : "false");
-        button.textContent = busy ? "Opening Foxglove Web…" : "Open in Foxglove Web";
+        button.textContent = busy ? "Opening Foxglove…" : "View in Foxglove";
         if (!runId && !busy && !staleOperationCancelled) {
           setFoxgloveWebNote(
             "Load a run to open its canonical MCAP in Foxglove Web.",
@@ -5406,7 +5421,10 @@
           ? next
           : "rerun";
         document.querySelectorAll(".render-mode-tab").forEach((btn) => {
-          btn.classList.toggle("is-active", btn.getAttribute("data-render-mode") === activeRenderMode);
+          const selected = btn.getAttribute("data-render-mode") === activeRenderMode;
+          btn.classList.toggle("is-active", selected);
+          btn.setAttribute("aria-selected", selected ? "true" : "false");
+          btn.setAttribute("tabindex", selected ? "0" : "-1");
         });
         const rerunPane = document.getElementById("viewerPaneRerun");
         const lichtblickPane = document.getElementById("viewerPaneLichtblick");
@@ -5420,11 +5438,20 @@
           if (!pane) return;
           pane.classList.toggle("is-active-viewer", active);
           pane.classList.toggle("is-inactive-viewer", !active);
+          pane.setAttribute("aria-hidden", active ? "false" : "true");
         };
         togglePane(rerunPane, isRerun);
         togglePane(lichtblickPane, isLichtblick);
         togglePane(foxglovePane, isFoxglove);
         togglePane(mediaPane, isMedia);
+        if (mediaPane && isMedia) {
+          const activeMediaTab = document.querySelector(
+            '.render-mode-tab[data-render-mode="' + activeRenderMode + '"]'
+          );
+          if (activeMediaTab && activeMediaTab.id) {
+            mediaPane.setAttribute("aria-labelledby", activeMediaTab.id);
+          }
+        }
         // The Rerun-specific placeholder must not sit above another viewer's pane.
         // Only ever hide it here: showing it again is owned by the Rerun mount /
         // refresh logic, which knows whether a recording is actually pending.
@@ -5667,12 +5694,30 @@
       let foxgloveConfig = null;
       let foxgloveMountPromise = null;
       let foxgloveLastSourceKey = "";
+      let foxgloveSignInTimer = null;
       function setFoxgloveStatus(text, kind) {
         const el = document.getElementById("foxgloveStatus");
         if (!el) return;
         el.textContent = String(text || "");
         el.classList.toggle("is-ready", kind === "ready");
         el.classList.toggle("is-error", kind === "error");
+      }
+      function updateFoxgloveVisualizationSummary(config) {
+        const el = document.getElementById("foxgloveVisualizationSummary");
+        if (!el) return;
+        const visualization = (config && config.visualization) || {};
+        const topics = Object.keys(visualization.topics || {});
+        if (!visualization.contract) {
+          el.textContent = "This recording does not advertise the NPA robot-motion visualization contract.";
+          el.setAttribute("data-state", "warning");
+          return;
+        }
+        el.textContent =
+          "Visualization: robot + trajectory 3D, preserved camera, actuator/joint state, " +
+          "phase/progress, metrics and logs · fixed frame " +
+          String(visualization.fixed_frame || "unknown") + " · " +
+          String(topics.length) + " topics. " + String(visualization.fidelity || "");
+        el.setAttribute("data-state", "ready");
       }
       function showFoxgloveMessage(html) {
         const box = document.getElementById("foxgloveMessage");
@@ -5725,13 +5770,43 @@
             reason: "Could not read /api/foxglove/config: " + String((err && err.message) || err),
           };
         }
+        updateFoxgloveVisualizationSummary(foxgloveConfig);
         return foxgloveConfig;
+      }
+      async function prepareFoxgloveVisualization(config) {
+        const visualization = (config && config.visualization) || {};
+        const runId = String(activeRunId || "").trim();
+        const runRef = String(activeArtifactRunRef || "").trim();
+        if (!runId || visualization.checked) return config;
+        setFoxgloveStatus(
+          "Preparing the selected run's canonical robot-motion MCAP…"
+        );
+        try {
+          const data = await apiJson("/api/foxglove/export", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              run_id: runId,
+              ...(runRef ? { run_ref: runRef } : {}),
+            }),
+          });
+          updateRenderedDataSummary((data && data.sim_viz) || {});
+          return await loadFoxgloveConfig();
+        } catch (err) {
+          setFoxgloveStatus(
+            "Could not prepare the rich canonical MCAP; opening the selected source as-is: " +
+              String((err && err.message) || err),
+            "warning"
+          );
+          return config;
+        }
       }
       async function ensureFoxgloveViewer(options) {
         const opts = options || {};
         if (foxgloveMountPromise) return foxgloveMountPromise;
         foxgloveMountPromise = (async () => {
-          const config = await loadFoxgloveConfig();
+          let config = await loadFoxgloveConfig();
+          config = await prepareFoxgloveVisualization(config);
           if (!config || !config.available) {
             teardownFoxgloveViewer();
             showFoxgloveMessage(foxgloveUnavailableHtml(config));
@@ -5775,6 +5850,8 @@
                 config,
                 origin: location.origin,
                 onReady: () => {
+                  if (foxgloveSignInTimer) clearTimeout(foxgloveSignInTimer);
+                  foxgloveSignInTimer = null;
                   const source = (foxgloveConfig && foxgloveConfig.data_source) || null;
                   setFoxgloveStatus(
                     source
@@ -5793,6 +5870,19 @@
                 ? "Opening the self-hosted viewer…"
                 : "Connecting to " + String(config.embed_src || "the Foxglove viewer") + "…"
             );
+            if (!selfHosted) {
+              if (foxgloveSignInTimer) clearTimeout(foxgloveSignInTimer);
+              foxgloveSignInTimer = setTimeout(() => {
+                foxgloveSignInTimer = null;
+                if (!foxgloveHandle || activeRenderMode !== "foxglove") return;
+                setFoxgloveStatus(
+                  "Foxglove may be awaiting browser sign-in or an embedding-enabled plan. " +
+                  "The server-side API token does not create a hosted browser session; sign in " +
+                  "inside Foxglove to render the selected source and saved NPA layout.",
+                  "warning"
+                );
+              }, 4000);
+            }
             return true;
           } catch (err) {
             const message = String((err && err.message) || err);
@@ -5813,6 +5903,8 @@
         }
       }
       function teardownFoxgloveViewer() {
+        if (foxgloveSignInTimer) clearTimeout(foxgloveSignInTimer);
+        foxgloveSignInTimer = null;
         if (foxgloveHandle) {
           try { foxgloveHandle.destroy(); } catch (_err) { /* already gone */ }
         }
@@ -5971,8 +6063,11 @@
           if (!info || !info.available || !info.web_url) {
             throw new Error(String((info && info.reason) || "Foxglove Web is unavailable"));
           }
+          const layoutNote = String(info.layout_note || "");
           setFoxgloveWebNote(
-            "Opened the selected canonical MCAP for " + runId + " as a Foxglove remote-file source.",
+            "Opened the selected canonical MCAP for " + runId +
+              " as a Foxglove remote-file source. " + layoutNote +
+              " A Foxglove browser sign-in and eligible plan may still be required to render it.",
             "success"
           );
           // Navigation is the requested action and must not wait behind a broad

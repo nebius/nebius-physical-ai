@@ -177,7 +177,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026081302"
+AGENT_UI_VERSION = "2026081401"
 ARTIFACT_DISCOVERY_CONTRACT = "s3-source-qualified-v1"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
@@ -1353,8 +1353,9 @@ from npa.cli.agent_resources import (
 {_AGENT_RRD_PROXY_EMBED}
 
 # Foxglove viewer helpers + routes are SHIPPED modules (see agent_backend/).
-from agent_backend.canonical_mcap import prepare_canonical_mcap
 from agent_backend.canonical_mcap import clear_cross_run_mcap_state
+from agent_backend.canonical_mcap import has_rich_visualization_contract
+from agent_backend.canonical_mcap import prepare_canonical_mcap
 from agent_backend.foxglove import (
     convert_run_request,
     describe_foxglove_context,
@@ -1364,7 +1365,11 @@ from agent_backend.foxglove import (
     resolve_foxglove_config,
     self_hosted_viewer_url,
 )
-from agent_backend.foxglove_cloud import ensure_recording_and_layout_from_credentials
+from agent_backend.foxglove_cloud import (
+    data_aware_layout_data,
+    ensure_layout_from_credentials,
+    ensure_recording_and_layout_from_credentials,
+)
 from agent_backend.foxglove_routes import FoxgloveDeps, register_foxglove_routes
 
 RERUN_CAPABILITY_NAME_RE = re.compile(r"cap-[A-Za-z0-9_-]{{43}}\\.rrd")
@@ -2700,13 +2705,39 @@ def _foxglove_config(state: dict | None = None) -> dict:
     session = state if isinstance(state, dict) else _load_state()
     sim_viz = session.get("sim_viz") if isinstance(session.get("sim_viz"), dict) else {{}}
     env, origin = dict(os.environ), _agent_public_origin()
-    return resolve_foxglove_config(
+    payload = resolve_foxglove_config(
         env,
         assets_dir=FOXGLOVE_SDK_DIR,
         origin=origin,
         sim_viz=sim_viz,
         self_hosted_ready=_self_hosted_viewer_healthy(),
     )
+    provenance = dict(sim_viz.get("canonical_mcap_provenance") or {{}})
+    rich_visualization = has_rich_visualization_contract(provenance)
+    if provenance:
+        payload["layout"] = (
+            data_aware_layout_data(provenance) if rich_visualization else {{}}
+        )
+        if not rich_visualization:
+            payload["layout_storage_key"] = (
+                str(payload.get("layout_storage_key") or "npa-agent-foxglove")
+                + "-source-default"
+            )
+        payload["visualization"] = {{
+            "contract": str(provenance.get("visualization_contract") or ""),
+            "fixed_frame": str(provenance.get("visualization_fixed_frame") or ""),
+            "fidelity": str(provenance.get("visualization_fidelity") or ""),
+            "topics": dict(provenance.get("schemas") or {{}}),
+            "checked": rich_visualization,
+        }}
+    else:
+        payload["layout"] = {{}}
+        payload["layout_storage_key"] = (
+            str(payload.get("layout_storage_key") or "npa-agent-foxglove")
+            + "-source-default"
+        )
+        payload["visualization"] = {{"checked": False}}
+    return payload
 
 
 _RERUN_RESTART_MIN_INTERVAL_S = 8.0
@@ -7326,6 +7357,13 @@ def _foxglove_ensure_cloud_recording(
     )
 
 
+def _foxglove_ensure_cloud_layout(*, provenance: dict):
+    return ensure_layout_from_credentials(
+        provenance,
+        credentials_path="/root/.npa/credentials.yaml",
+    )
+
+
 register_foxglove_routes(
     app,
     FoxgloveDeps(
@@ -7341,6 +7379,7 @@ register_foxglove_routes(
         runs_dir=Path("/opt/npa-agent/runs"),
         keep_published=FOXGLOVE_KEEP_PUBLISHED,
         ensure_cloud_recording=_foxglove_ensure_cloud_recording,
+        ensure_cloud_layout=_foxglove_ensure_cloud_layout,
         prepare_canonical_mcap=_foxglove_prepare_canonical_mcap,
     ),
     HTTPException,

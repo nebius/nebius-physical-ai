@@ -8,10 +8,10 @@ in URLs, subprocess arguments, return payloads, or exception messages.
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import re
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -19,10 +19,15 @@ from urllib.parse import quote
 
 import httpx
 
+from npa.agent_backend.canonical_mcap import has_rich_visualization_contract
+
 
 FOXGLOVE_API_ROOT = "https://api.foxglove.dev/v1"
 _SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
-FOXGLOVE_LAYOUT_NAME = "NPA Physical AI rich visualization v1"
+FOXGLOVE_LAYOUT_NAME = "NPA Physical AI robot motion v2"
+FOXGLOVE_LAYOUT_ID = (
+    "lay_" + uuid.uuid5(uuid.NAMESPACE_URL, "npa/foxglove/robot-motion-v2").hex[:16]
+)
 
 
 class FoxgloveCloudError(RuntimeError):
@@ -74,7 +79,7 @@ class FoxgloveCloudLayout:
 
 
 def data_aware_layout_data(provenance: dict[str, Any]) -> dict[str, Any]:
-    """Build Foxglove's documented v1 programmatic layout from real channels."""
+    """Build an intentional, data-aware Foxglove v1 programmatic layout."""
     schemas = dict(provenance.get("schemas") or {})
     numeric_paths = dict(provenance.get("numeric_paths") or {})
     image_topics = sorted(
@@ -82,97 +87,202 @@ def data_aware_layout_data(provenance: dict[str, Any]) -> dict[str, Any]:
         for topic, schema in schemas.items()
         if schema == "foxglove.CompressedImage"
     )
-    # A transform alone defines frames but paints no geometry. Never configure
-    # an empty 3D panel unless a renderable schema is actually present.
-    has_3d = any(
-        schema
-        in {
-            "foxglove.PointCloud",
-            "foxglove.SceneUpdate",
-            "foxglove.PosesInFrame",
-            "foxglove.PoseInFrame",
-            "foxglove.LaserScan",
-        }
-        for schema in schemas.values()
+    fixed_frame = str(provenance.get("visualization_fixed_frame") or "world")
+    rich_topics = {
+        "/robot/diagnostic_scene",
+        "/robot/diagnostic_pose",
+        "/robot/diagnostic_trajectory",
+    }
+    has_rich_3d = rich_topics.issubset(schemas)
+    primary_image = (
+        "/camera"
+        if "/camera" in image_topics
+        else (image_topics[0] if image_topics else "")
     )
-    panels: list[dict[str, Any]] = []
-    for topic in image_topics[:2]:
-        panels.append(
+
+    def panel(panel_type: str, title: str, config: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "type": "panel",
+            "panelType": panel_type,
+            "config": config,
+            "title": title,
+            "version": 1,
+        }
+
+    def split(
+        direction: str, items: list[tuple[float, dict[str, Any]]]
+    ) -> dict[str, Any]:
+        return {
+            "type": "split",
+            "direction": direction,
+            "items": [
+                {"proportion": proportion, "content": content}
+                for proportion, content in items
+            ],
+        }
+
+    if has_rich_3d and primary_image:
+        three_dee = panel(
+            "ThreeDee",
+            "Robot motion and end-effector trajectory",
             {
-                "type": "panel",
-                "panelType": "Image",
-                "config": {"imageMode": {"imageTopic": topic}},
-                "title": topic.rsplit("/", 1)[-1].replace("_", " ").title(),
-                "version": 1,
-            }
+                "fixedFrame": fixed_frame,
+                "followMode": "follow-none",
+                "cameraState": {
+                    "distance": 2.15,
+                    "perspective": True,
+                    "phi": 58,
+                    "thetaOffset": 42,
+                    "target": [0.38, 0.0, 0.32],
+                    "targetOffset": [0.0, 0.0, 0.0],
+                    "targetOrientation": [0.0, 0.0, 0.0, 1.0],
+                    "fovy": 45,
+                },
+                "layers": {
+                    "npa-ground-grid": {
+                        "instanceId": "npa-ground-grid",
+                        "layerId": "foxglove.Grid",
+                        "label": "Action-space reference grid",
+                        "visible": True,
+                        "drawBehind": True,
+                        "frameId": fixed_frame,
+                        "size": 2.5,
+                        "divisions": 20,
+                        "lineWidth": 1,
+                        "color": "#52607088",
+                        "position": [0.25, 0.0, 0.0],
+                        "rotation": [0.0, 0.0, 0.0],
+                    }
+                },
+                "topics": {
+                    "/robot/diagnostic_scene": {"visible": True},
+                    "/robot/diagnostic_pose": {
+                        "visible": True,
+                        "type": "axis",
+                        "axisScale": 0.18,
+                    },
+                    "/robot/diagnostic_trajectory": {
+                        "visible": True,
+                        "type": "line",
+                        "lineWidth": 4,
+                        "gradient": ["#22D3EE", "#FBBF24"],
+                    },
+                },
+                "synchronize": True,
+                "syncedTopics": {topic: True for topic in sorted(rich_topics)},
+            },
         )
-    if has_3d:
-        panels.append(
+        image = panel(
+            "Image",
+            "Primary camera — preserved Isaac renderer frames",
             {
-                "type": "panel",
-                "panelType": "ThreeDee",
-                "config": {"fixedFrame": "world"},
-                "title": "State trajectory",
-                "version": 1,
-            }
+                "imageMode": {
+                    "imageTopic": primary_image,
+                    "imageSchemaName": "foxglove.CompressedImage",
+                },
+                "synchronize": True,
+                "syncedTopics": {primary_image: True},
+            },
         )
-    paths = [
-        {"value": f"{topic}.{field}", "label": field.replace("_", " ")}
-        for topic, fields in sorted(numeric_paths.items())
-        for field in list(fields)[:4]
-    ][:8]
-    if paths:
-        panels.append(
+        preferred_fields = [
+            ("/metrics/execution", "reward", "reward"),
+            ("/metrics/execution", "object_lift_m", "object lift (m)"),
+            (
+                "/metrics/execution",
+                "object_goal_distance_m",
+                "object-goal distance (m)",
+            ),
+            ("/run/state", "progress", "run progress"),
+        ]
+        plot_paths = [
             {
-                "type": "panel",
-                "panelType": "Plot",
-                "config": {"paths": paths, "timeRange": "all", "showLegend": True},
-                "title": "Execution metrics",
-                "version": 1,
+                "value": f"{topic}.{field}",
+                "label": label,
+                "enabled": True,
+                "showLine": True,
+                "lineSize": 2,
             }
+            for topic, field, label in preferred_fields
+            if field in list(numeric_paths.get(topic) or [])
+        ]
+        plot = panel(
+            "Plot",
+            "Execution performance",
+            {
+                "paths": plot_paths,
+                "showLegend": True,
+                "legendDisplay": "top",
+                "showPlotValuesInLegend": True,
+                "timeWindowMode": "automatic",
+                "isSynced": True,
+                "showXAxisLabels": True,
+                "showYAxisLabels": True,
+            },
         )
-    if any(schema == "foxglove.Log" for schema in schemas.values()):
+        transitions = panel(
+            "StateTransitions",
+            "Run phase and grasp state",
+            {
+                "paths": [
+                    {"value": "/run/state.phase", "label": "phase", "enabled": True},
+                    {
+                        "value": "/run/state.contact",
+                        "label": "contact",
+                        "enabled": True,
+                    },
+                    {
+                        "value": "/run/state.stable_grasp",
+                        "label": "stable grasp",
+                        "enabled": True,
+                    },
+                    {
+                        "value": "/run/state.success",
+                        "label": "success",
+                        "enabled": True,
+                    },
+                ],
+                "timeWindowMode": "automatic",
+                "isSynced": True,
+                "showPoints": True,
+            },
+        )
         log_topic = next(
-            topic for topic, schema in schemas.items() if schema == "foxglove.Log"
+            (topic for topic, schema in schemas.items() if schema == "foxglove.Log"),
+            "/log",
         )
-        panels.append(
-            {
-                "type": "panel",
-                "panelType": "Log",
-                "config": {"topicToRender": log_topic, "preload": True},
-                "title": "Run events",
-                "version": 1,
-            }
+        log = panel(
+            "Log",
+            "Run events",
+            {"topicToRender": log_topic, "preload": True, "minLogLevel": 1},
         )
-    if not panels:
-        panels.append(
-            {
-                "type": "panel",
-                "panelType": "RawMessages",
-                "config": {},
-                "title": "Messages",
-                "version": 1,
-            }
-        )
-    rows = [panels[index : index + 2] for index in range(0, len(panels), 2)]
-    row_content = [
-        {
-            "type": "split",
-            "direction": "row",
-            "items": [{"proportion": 1, "content": panel} for panel in row],
+        return {
+            "version": 1,
+            "content": split(
+                "column",
+                [
+                    (0.72, split("row", [(0.68, three_dee), (0.32, image)])),
+                    (
+                        0.28,
+                        split("row", [(0.45, plot), (0.30, transitions), (0.25, log)]),
+                    ),
+                ],
+            ),
         }
-        for row in rows
+
+    fallback_panels = [
+        panel(
+            "Image",
+            topic.rsplit("/", 1)[-1].replace("_", " ").title(),
+            {"imageMode": {"imageTopic": topic}},
+        )
+        for topic in image_topics[:2]
     ]
-    content = (
-        row_content[0]
-        if len(row_content) == 1
-        else {
-            "type": "split",
-            "direction": "column",
-            "items": [{"proportion": 1, "content": row} for row in row_content],
-        }
-    )
-    return {"version": 1, "content": content}
+    if not fallback_panels:
+        fallback_panels = [panel("RawMessages", "Messages", {})]
+    return {
+        "version": 1,
+        "content": split("row", [(1.0, value) for value in fallback_panels]),
+    }
 
 
 class FoxgloveCloudClient:
@@ -452,7 +562,13 @@ class FoxgloveCloudClient:
             return FoxgloveCloudLayout("", False, False, False, False, str(exc))
 
     def _ensure_layout(self, provenance: dict[str, Any]) -> FoxgloveCloudLayout:
-        """Create/update one schema-versioned org layout, or reuse it unchanged."""
+        """Create one schema-versioned org layout, or reuse it unchanged."""
+        if not has_rich_visualization_contract(provenance):
+            raise FoxgloveCloudError(
+                "The selected MCAP does not expose the NPA robot-motion v2 topic contract; "
+                "the canonical shared layout was not created.",
+                status_code=409,
+            )
         desired = data_aware_layout_data(provenance)
         response = self._api_request("GET", "/layouts", params={"includeData": "true"})
         payload = self._json(response)
@@ -467,11 +583,17 @@ class FoxgloveCloudClient:
             None,
         )
         existing_id = str(existing.get("id") or "") if existing is not None else ""
-        if existing is not None and json.dumps(
-            existing.get("data") or {}, sort_keys=True
-        ) == json.dumps(desired, sort_keys=True):
+        if existing is not None:
+            if not existing_id:
+                raise FoxgloveCloudError(
+                    "Foxglove returned the shared layout without an ID."
+                )
+            # This versioned canonical layout is a seed, not an enforcement
+            # mechanism. Once created, preserve any organization/user edits.
+            # A future incompatible seed gets a new versioned name and ID.
             return FoxgloveCloudLayout(existing_id, False, False, True)
         body = {
+            "id": FOXGLOVE_LAYOUT_ID,
             "name": FOXGLOVE_LAYOUT_NAME,
             "folderName": "NPA",
             # Foxglove's public API requires API-key-created layouts to use
@@ -479,22 +601,46 @@ class FoxgloveCloudClient:
             "permission": "ORG_WRITE",
             "data": desired,
         }
-        if existing is None:
-            created = self._json(self._api_request("POST", "/layouts", json_body=body))
-            layout_id = (
-                str(created.get("id") or "") if isinstance(created, dict) else ""
+        create_response = self._api_request(
+            "POST", "/layouts", json_body=body, allow_conflict=True
+        )
+        if create_response.status_code == 409:
+            # Concurrent hosted-action clicks can both observe an empty list.
+            # The deterministic ID makes the winning create safe to discover.
+            retry = self._json(
+                self._api_request("GET", "/layouts", params={"includeData": "false"})
             )
-            if not layout_id:
-                raise FoxgloveCloudError(
-                    "Foxglove created the shared layout without returning an ID."
+            winner = (
+                next(
+                    (
+                        item
+                        for item in retry
+                        if isinstance(item, dict)
+                        and (
+                            item.get("name") == FOXGLOVE_LAYOUT_NAME
+                            or item.get("id") == FOXGLOVE_LAYOUT_ID
+                        )
+                    ),
+                    None,
                 )
-            return FoxgloveCloudLayout(layout_id, True, False, False)
-        if not existing_id:
-            raise FoxgloveCloudError(
-                "Foxglove returned the shared layout without an ID."
+                if isinstance(retry, list)
+                else None
             )
-        self._api_request("PATCH", f"/layouts/{existing_id}", json_body=body)
-        return FoxgloveCloudLayout(existing_id, False, True, False)
+            winner_id = str(winner.get("id") or "") if winner else ""
+            if winner_id:
+                return FoxgloveCloudLayout(winner_id, False, False, True)
+            raise FoxgloveCloudError(
+                "Foxglove reported a shared-layout conflict but the versioned layout "
+                "could not be found; retry the action.",
+                status_code=409,
+            )
+        created = self._json(create_response)
+        layout_id = str(created.get("id") or "") if isinstance(created, dict) else ""
+        if not layout_id:
+            raise FoxgloveCloudError(
+                "Foxglove created the shared layout without returning an ID."
+            )
+        return FoxgloveCloudLayout(layout_id, True, False, False)
 
 
 def ensure_recording_from_credentials(
@@ -548,3 +694,27 @@ def ensure_recording_and_layout_from_credentials(
         recording = client.ensure_recording(local_path, run_id=run_id).to_dict()
         recording["layout"] = client.ensure_layout(provenance).to_dict()
         return recording
+
+
+def ensure_layout_from_credentials(
+    provenance: dict[str, Any],
+    *,
+    credentials_path: str | Path = "/root/.npa/credentials.yaml",
+) -> dict[str, Any]:
+    """Idempotently ensure only the shared layout, returning no secret material."""
+    from npa.clients.credentials import load_credentials
+
+    try:
+        credentials = load_credentials(
+            path=Path(credentials_path), environ={}, export_to_environment=False
+        )
+    except Exception as exc:  # noqa: BLE001 - token-safe operator error
+        raise FoxgloveCloudError(
+            f"Could not load the agent's Foxglove credentials ({type(exc).__name__}).",
+            status_code=503,
+        ) from exc
+    with FoxgloveCloudClient(
+        credentials.foxglove_api_token,
+        project_id=str(os.environ.get("NPA_FOXGLOVE_PROJECT_ID", "")).strip(),
+    ) as client:
+        return client.ensure_layout(provenance).to_dict()

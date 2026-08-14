@@ -23,7 +23,7 @@ export const FOXGLOVE_LIVE_PROTOCOLS = Object.freeze([
 ]);
 
 /** Default layout storage key used when the backend does not configure one. */
-export const DEFAULT_LAYOUT_STORAGE_KEY = "npa-agent-foxglove";
+export const DEFAULT_LAYOUT_STORAGE_KEY = "npa-agent-foxglove-robot-motion-v2";
 
 /**
  * Resolve a possibly relative URL against an origin.
@@ -207,6 +207,12 @@ export function mountFoxgloveViewer(params) {
       storageKey: String(cfg.layout_storage_key || "").trim() || DEFAULT_LAYOUT_STORAGE_KEY,
     },
   };
+  // The SDK restores user changes under storageKey after the first mount.  A
+  // supplied layout seeds the useful NPA arrangement only when no saved layout
+  // exists; omitting `force` is intentional so we never overwrite user edits.
+  if (cfg.layout && cfg.layout.version === 1 && cfg.layout.content) {
+    options.initialLayoutParams.layout = cfg.layout;
+  }
   const src = String(cfg.embed_src || "").trim();
   if (src) options.src = src;
   if (keybindings.length) options.keybindings = keybindings;

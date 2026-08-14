@@ -60,6 +60,11 @@ function assertRemoteFileLink(exported) {
   expect(parsed.searchParams.get("openIn")).to.eq(null);
   expect(exported.data_source).to.eq("remote-file");
   expect(exported.web_open_mode).to.eq("remote-file");
+  expect(exported.layout, "server-side shared layout result").to.deep.include({
+    available: true,
+  });
+  expect(exported.layout.layout_id).to.match(/^[A-Za-z0-9_-]+$/);
+  expect(parsed.searchParams.get("layoutId")).to.eq(exported.layout.layout_id);
   expect(exported.recording_url).to.match(/^https:\/\//);
   expect(exported.web_url).not.to.match(/authorization|basic|password|api.?token/i);
 }
@@ -95,6 +100,25 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
         );
         expect(exported.sha256).to.match(/^[a-f0-9]{64}$/);
         expect(Number(exported.size_bytes || prepared.body.size_bytes)).to.be.greaterThan(8);
+        expect(exported.provenance.visualization_contract).to.eq(
+          "npa.foxglove.robot-motion.v2",
+        );
+        expect(exported.provenance.visualization_fixed_frame).to.eq("npa_action_space");
+        expect(exported.provenance.visualization_fidelity).to.match(/not calibrated/i);
+        expect(exported.provenance.schemas).to.deep.include({
+          "/camera": "foxglove.CompressedImage",
+          "/robot/diagnostic_scene": "foxglove.SceneUpdate",
+          "/robot/diagnostic_pose": "foxglove.PoseInFrame",
+          "/robot/diagnostic_trajectory": "foxglove.PosesInFrame",
+          "/robot/diagnostic_joint_states": "foxglove.JointStates",
+          "/actuators/commands": "npa.ActuatorCommands",
+          "/run/state": "npa.RunState",
+          "/log": "foxglove.Log",
+        });
+        expect(
+          Object.values(exported.provenance.schemas),
+          "numeric metrics schema",
+        ).to.include("npa.RunMetrics.execution");
 
         cy.request({ url: exported.recording_url, method: "HEAD", log: false }).then((head) => {
           expect(head.status).to.eq(200);
@@ -135,6 +159,14 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
           expect(response.body.requires_account_note).to.match(/sign in/i);
           expect(response.body.data_source).to.deep.include({ type: "remote-file" });
           expect(response.body.data_source.urls).to.deep.eq([exported.recording_url]);
+          expect(response.body.layout.version).to.eq(1);
+          expect(response.body.visualization).to.deep.include({
+            contract: "npa.foxglove.robot-motion.v2",
+            fixed_frame: "npa_action_space",
+          });
+          expect(response.body.layout_storage_key).to.eq(
+            "npa-agent-foxglove-robot-motion-v2",
+          );
         });
         liveAgentRequest("/api/foxglove/status").then((response) => {
           expect(response.status).to.eq(200);
@@ -144,7 +176,28 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
         });
 
         cy.visitLiveAgent();
-        cy.get("#tabRerun").click();
+        cy.get("#tabRerun").should("have.text", "View").click();
+        cy.get(".render-mode-tabs .render-mode-tab").then(($tabs) => {
+          expect([...$tabs].map((tab) => tab.textContent.trim())).to.deep.eq([
+            "View", "Foxglove", "Lichtblick", "Video", "Image", "Data",
+          ]);
+        });
+        [
+          ["View", "#viewerPaneRerun"],
+          ["Foxglove", "#viewerPaneFoxglove"],
+          ["Lichtblick", "#viewerPaneLichtblick"],
+        ].forEach(([label, pane]) => {
+          cy.contains(".render-mode-tabs .render-mode-tab", new RegExp(`^${label}$`))
+            .scrollIntoView()
+            .click();
+          cy.get(pane)
+            .should("have.attr", "aria-hidden", "false")
+            .should(($pane) => {
+              const rect = $pane[0].getBoundingClientRect();
+              expect(rect.width, `${label} live pane width`).to.be.greaterThan(0);
+              expect(rect.height, `${label} live pane height`).to.be.greaterThan(0);
+            });
+        });
         cy.get("#renderModeFoxglove").click();
         cy.get("#viewerPaneFoxglove").should("have.class", "is-active-viewer");
         cy.get("#viewerPaneFoxglove iframe", { timeout: 30000 })
@@ -152,46 +205,48 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
           .and("match", /^https:\/\/embed\.foxglove\.dev\//);
         cy.get("#foxgloveStatus", { timeout: 30000 }).should(($status) => {
           expect($status, "no SDK or hosted-viewer error").not.to.have.class("is-error");
-          expect($status.text()).to.match(/Connecting to|Foxglove viewer ready/);
+          expect($status.text()).to.match(/Connecting to|Foxglove viewer ready|awaiting browser sign-in/);
         });
-
-        cy.intercept("POST", "/api/foxglove/export").as("liveFoxgloveOpen");
-        cy.window().then((win) => {
-          const replace = cy.stub().as("foxgloveNavigate");
-          cy.stub(win, "open").as("foxglovePopup").callsFake(() => ({
-            opener: null,
-            location: { replace },
-            close: cy.stub(),
-          }));
-        });
+        cy.get("#foxgloveVisualizationSummary")
+          .should("be.visible")
+          .and("contain.text", "robot + trajectory 3D")
+          .and("contain.text", "not calibrated robot/world kinematics");
         cy.get("#renderedDataSummary").should("contain.text", run.run_id);
         cy.get('[data-testid="open-foxglove-web"]')
           .should("be.visible")
           .and("be.enabled")
-          .click();
-        cy.get("@foxglovePopup").should("have.been.calledOnceWith", "about:blank", "_blank");
-        let openedWebUrl = "";
-        cy.wait("@liveFoxgloveOpen", { timeout: 180000 }).then(({ request, response }) => {
-          expect(request.body).to.deep.include(requestBody);
-          expect(response.statusCode).to.eq(200);
-          assertRemoteFileLink(response.body.export);
-          expect(response.body.export.sha256).to.eq(exported.sha256);
-          openedWebUrl = response.body.export.web_url;
-        });
-        // cy.wait() resolves as soon as the response completes; allow the
-        // application's promise continuation to perform the safe navigation.
-        cy.get("@foxgloveNavigate", { timeout: 30000 }).should((navigate) => {
-          expect(navigate.callCount, "one popup navigation").to.eq(1);
-          expect(navigate.firstCall.args, "exact response deep link").to.deep.eq([
-            openedWebUrl,
+          .and("have.text", "View in Foxglove");
+
+        // This Cypress task launches a separate clean Chromium profile and uses
+        // the real button click plus Playwright's browser page event. It never
+        // stubs window.open and returns only non-secret contract/evidence facts.
+        cy.task(
+          "verifyFoxgloveHostedNavigation",
+          { runId: String(run.run_id) },
+          { log: false, timeout: 180000 },
+        ).then((result) => {
+          expect(result.runId).to.eq(run.run_id);
+          expect(result.labels).to.deep.eq([
+            "View", "Foxglove", "Lichtblick", "Video", "Image", "Data",
           ]);
+          for (const label of ["View", "Foxglove", "Lichtblick"]) {
+            expect(result.paneGeometry[label].width).to.be.greaterThan(0);
+            expect(result.paneGeometry[label].height).to.be.greaterThan(0);
+          }
+          expect(result.officialContract).to.deep.include({
+            requestMatchedResponse: true,
+            sourceType: "remote-file",
+            oneAbsoluteHttpsMcap: true,
+            encodedExactlyOnce: true,
+            layoutIdPresent: true,
+          });
+          expect(result.officialContract.responseStatus).to.be.within(200, 399);
+          expect(result.hostedSurface.finalOrigin).to.eq("https://app.foxglove.dev");
+          expect(result.hostedSurface.pixels.nonblank).to.eq(true);
+          expect(result.evidence.desktop).to.match(/live-agent-desktop-after\.png$/);
+          expect(result.evidence.mobile).to.match(/live-agent-mobile-after\.png$/);
+          expect(result.evidence.hosted).to.match(/live-hosted-foxglove-after\.png$/);
         });
-        cy.get("#foxgloveExportNote")
-          .should("have.attr", "data-state", "success")
-          .and("contain.text", "remote-file source");
-        cy.get('[data-testid="open-foxglove-web"]')
-          .should("have.attr", "aria-busy", "false")
-          .and("be.enabled");
       });
     });
   });

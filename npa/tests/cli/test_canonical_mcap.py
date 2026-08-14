@@ -10,6 +10,7 @@ import pytest
 from npa.agent_backend.canonical_mcap import (
     canonical_key_for_run,
     clear_cross_run_mcap_state,
+    has_rich_visualization_contract,
     prepare_canonical_mcap,
     rich_run_provenance_from_manifest,
 )
@@ -137,6 +138,47 @@ def test_canonical_key_and_cross_run_state_are_strict() -> None:
     assert state["mcap_uri"] == ""
     assert state["canonical_mcap_sha256"] == ""
     assert state["foxglove_cloud"] == {}
+
+
+def test_rich_visualization_contract_requires_every_meaningful_topic() -> None:
+    schemas = {
+        "/camera": "foxglove.CompressedImage",
+        "/robot/diagnostic_scene": "foxglove.SceneUpdate",
+        "/robot/diagnostic_pose": "foxglove.PoseInFrame",
+        "/robot/diagnostic_trajectory": "foxglove.PosesInFrame",
+        "/robot/diagnostic_joint_states": "foxglove.JointStates",
+        "/actuators/commands": "npa.ActuatorCommands",
+        "/run/state": "npa.RunState",
+        "/metrics/execution": "npa.RunMetrics.execution",
+        "/log": "foxglove.Log",
+    }
+    info = {
+        "schemas": schemas,
+        "metadata": {"npa": {"visualization_contract": "npa.foxglove.robot-motion.v2"}},
+    }
+
+    assert has_rich_visualization_contract(info) is True
+    assert (
+        has_rich_visualization_contract(
+            {
+                "schemas": schemas,
+                "visualization_contract": "npa.foxglove.robot-motion.v2",
+            }
+        )
+        is True
+    )
+    for missing in schemas:
+        incomplete = {
+            **info,
+            "schemas": {k: v for k, v in schemas.items() if k != missing},
+        }
+        assert has_rich_visualization_contract(incomplete) is False
+    assert (
+        has_rich_visualization_contract(
+            {**info, "metadata": {"npa": {"visualization_contract": "v1"}}}
+        )
+        is False
+    )
 
 
 def test_rich_run_manifest_compacts_honest_engine_and_limitations() -> None:

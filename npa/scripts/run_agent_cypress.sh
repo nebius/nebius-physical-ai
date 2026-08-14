@@ -92,6 +92,22 @@ if [[ -n "${LIVE_ARTIFACT_KEY}" ]]; then
   fi
   LIVE_CYPRESS_SCRIPT="cy:live-rrd"
 fi
+if [[ "${LIVE_CYPRESS_SCRIPT}" == "cy:live" ]]; then
+  if [[ -z "${NPA_PLAYWRIGHT_CHROMIUM_EXECUTABLE:-}" || ! -x "${NPA_PLAYWRIGHT_CHROMIUM_EXECUTABLE}" ]]; then
+    echo "Live Foxglove Cypress requires NPA_PLAYWRIGHT_CHROMIUM_EXECUTABLE." >&2
+    exit 1
+  fi
+  if [[ -z "${NPA_AGENT_CYPRESS_EVIDENCE_DIR:-}" || "${NPA_AGENT_CYPRESS_EVIDENCE_DIR}" != /* ]]; then
+    echo "Live Foxglove Cypress requires an absolute NPA_AGENT_CYPRESS_EVIDENCE_DIR." >&2
+    exit 1
+  fi
+  case "${NPA_AGENT_CYPRESS_EVIDENCE_DIR}" in
+    "${ROOT}"|"${ROOT}"/*)
+      echo "Live Foxglove evidence must be stored outside the clone." >&2
+      exit 1
+      ;;
+  esac
+fi
 
 (
   cd "${BROWSER_DIR}"

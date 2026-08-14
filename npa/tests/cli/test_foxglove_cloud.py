@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from npa.agent_backend.foxglove_cloud import (
+    FOXGLOVE_LAYOUT_ID,
     FOXGLOVE_LAYOUT_NAME,
     FoxgloveCloudClient,
     FoxgloveCloudError,
@@ -16,15 +17,29 @@ from npa.agent_backend.foxglove_cloud import (
 
 def _rich_provenance() -> dict:
     return {
+        "visualization_contract": "npa.foxglove.robot-motion.v2",
         "schemas": {
-            "/camera/overview": "foxglove.CompressedImage",
+            "/camera": "foxglove.CompressedImage",
             "/camera/workspace": "foxglove.CompressedImage",
-            "/trajectory": "foxglove.PointCloud",
+            "/robot/diagnostic_scene": "foxglove.SceneUpdate",
+            "/robot/diagnostic_pose": "foxglove.PoseInFrame",
+            "/robot/diagnostic_trajectory": "foxglove.PosesInFrame",
+            "/robot/diagnostic_joint_states": "foxglove.JointStates",
+            "/actuators/commands": "npa.ActuatorCommands",
+            "/run/state": "npa.RunState",
             "/tf": "foxglove.FrameTransform",
-            "/metrics/execution": "npa.metrics.execution",
+            "/metrics/execution": "npa.RunMetrics.execution",
             "/log": "foxglove.Log",
         },
-        "numeric_paths": {"/metrics/execution": ["reward", "progress", "state_norm"]},
+        "numeric_paths": {
+            "/metrics/execution": [
+                "object_goal_distance_m",
+                "object_lift_m",
+                "reward",
+            ],
+            "/run/state": ["progress", "sim_step", "step"],
+        },
+        "visualization_fixed_frame": "npa_action_space",
     }
 
 
@@ -43,23 +58,39 @@ def test_data_aware_layout_binds_only_real_rich_topics() -> None:
     panels = _panel_nodes(layout["content"])
 
     assert [panel["panelType"] for panel in panels] == [
-        "Image",
-        "Image",
         "ThreeDee",
+        "Image",
         "Plot",
+        "StateTransitions",
         "Log",
     ]
     assert [
         panel["config"]["imageMode"]["imageTopic"]
         for panel in panels
         if panel["panelType"] == "Image"
-    ] == ["/camera/overview", "/camera/workspace"]
+    ] == ["/camera"]
+    three_dee = panels[0]
+    assert three_dee["config"]["fixedFrame"] == "npa_action_space"
+    assert set(three_dee["config"]["topics"]) == {
+        "/robot/diagnostic_scene",
+        "/robot/diagnostic_pose",
+        "/robot/diagnostic_trajectory",
+    }
     plot = next(panel for panel in panels if panel["panelType"] == "Plot")
     assert [path["value"] for path in plot["config"]["paths"]] == [
         "/metrics/execution.reward",
-        "/metrics/execution.progress",
-        "/metrics/execution.state_norm",
+        "/metrics/execution.object_lift_m",
+        "/metrics/execution.object_goal_distance_m",
+        "/run/state.progress",
     ]
+    transitions = next(
+        panel for panel in panels if panel["panelType"] == "StateTransitions"
+    )
+    assert transitions["config"]["paths"][0]["value"] == "/run/state.phase"
+    assert layout["content"]["direction"] == "column"
+    assert [item["proportion"] for item in layout["content"]["items"]] == [0.72, 0.28]
+    assert "Settings" not in {panel["panelType"] for panel in panels}
+    assert "UserScript" not in {panel["panelType"] for panel in panels}
 
 
 def test_data_aware_layout_omits_unsupported_empty_3d_panel() -> None:
@@ -86,6 +117,9 @@ def test_cloud_layout_is_created_then_reused_without_quota_churn() -> None:
         if request.url.path == "/v1/layouts" and request.method == "POST":
             body = __import__("json").loads(request.content)
             writes.append(request.method)
+            assert body["id"] == FOXGLOVE_LAYOUT_ID
+            assert len(body["id"]) == 20
+            assert body["id"].startswith("lay_")
             assert body["name"] == FOXGLOVE_LAYOUT_NAME
             assert body["permission"] == "ORG_WRITE"
             layouts.append(
@@ -105,6 +139,82 @@ def test_cloud_layout_is_created_then_reused_without_quota_churn() -> None:
     assert first.created is True
     assert second.reused is True
     assert writes == ["POST"]
+
+
+def test_cloud_layout_preserves_user_modified_versioned_layout() -> None:
+    layouts = [
+        {
+            "id": "lay_user_arranged",
+            "name": FOXGLOVE_LAYOUT_NAME,
+            "data": {"version": 1, "content": {"type": "panel", "panelType": "Image"}},
+        }
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == "/v1/layouts"
+        return httpx.Response(200, json=layouts)
+
+    cloud = FoxgloveCloudClient(
+        "secret-token",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    result = cloud.ensure_layout(_rich_provenance())
+
+    assert result.layout_id == "lay_user_arranged"
+    assert result.reused is True
+    assert result.updated is False
+
+
+def test_cloud_layout_reuses_concurrent_deterministic_create() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            assert request.method == "GET"
+            return httpx.Response(200, json=[])
+        if calls == 2:
+            assert request.method == "POST"
+            return httpx.Response(409, json={"error": "already exists"})
+        assert request.method == "GET"
+        return httpx.Response(
+            200,
+            json=[{"id": "layout-winner", "name": FOXGLOVE_LAYOUT_NAME}],
+        )
+
+    cloud = FoxgloveCloudClient(
+        "secret-token",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    result = cloud.ensure_layout(_rich_provenance())
+
+    assert result.layout_id == "layout-winner"
+    assert result.reused is True
+    assert result.created is False
+    assert calls == 3
+
+
+def test_cloud_layout_refuses_non_rich_recording() -> None:
+    cloud = FoxgloveCloudClient(
+        "secret-token",
+        client=httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _request: (_ for _ in ()).throw(
+                    AssertionError("non-rich recording must not call the layout API")
+                )
+            )
+        ),
+    )
+
+    result = cloud.ensure_layout({"schemas": {"/camera": "foxglove.CompressedImage"}})
+
+    assert result.available is False
+    assert result.layout_id == ""
+    assert "robot-motion v2" in result.reason
 
 
 def test_cloud_layout_plan_failure_has_explicit_token_safe_fallback() -> None:

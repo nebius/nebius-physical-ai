@@ -57,14 +57,16 @@ def _install_assets(tmp_path: Path, *, manifest: bool = True) -> Path:
     return assets
 
 
-def test_cypress_live_runner_fails_closed_and_keeps_credentials_out_of_arguments() -> None:
+def test_cypress_live_runner_fails_closed_and_keeps_credentials_out_of_arguments() -> (
+    None
+):
     repo_root = Path(__file__).resolve().parents[3]
     runner = (repo_root / "npa" / "scripts" / "run_agent_cypress.sh").read_text(
         encoding="utf-8"
     )
-    config = (
-        repo_root / "npa" / "tests" / "browser" / "cypress.config.cjs"
-    ).read_text(encoding="utf-8")
+    config = (repo_root / "npa" / "tests" / "browser" / "cypress.config.cjs").read_text(
+        encoding="utf-8"
+    )
     package = json.loads(
         (repo_root / "npa" / "tests" / "browser" / "package.json").read_text(
             encoding="utf-8"
@@ -275,9 +277,7 @@ def test_foxglove_data_source_link_supports_documented_live_sources(
 ) -> None:
     from urllib.parse import parse_qs, urlparse
 
-    link = foxglove_data_source_link(
-        {"type": "live", "protocol": protocol, "url": url}
-    )
+    link = foxglove_data_source_link({"type": "live", "protocol": protocol, "url": url})
 
     assert parse_qs(urlparse(link["web_url"]).query) == {
         "ds": [protocol],
@@ -292,7 +292,11 @@ def test_foxglove_data_source_link_supports_documented_live_sources(
         {"type": "remote-file", "urls": ["/relative.mcap"]},
         {"type": "remote-file", "urls": ["https://user:pass@agent.example/a.mcap"]},
         {"type": "remote-file", "urls": ["https://127.0.0.1/a.mcap"]},
-        {"type": "live", "protocol": "foxglove-websocket", "url": "ws://localhost:8765"},
+        {
+            "type": "live",
+            "protocol": "foxglove-websocket",
+            "url": "ws://localhost:8765",
+        },
         {"type": "live", "protocol": "unsupported", "url": "wss://robot.example/ws"},
     ],
 )
@@ -504,7 +508,7 @@ def test_resolve_config_available_with_assets(tmp_path: Path) -> None:
     assert config["host_module_url"] == FOXGLOVE_HOST_MODULE_URL
     assert config["sdk_version"] == "9.9.9"
     assert config["color_scheme"] == "dark"
-    assert config["layout_storage_key"] == "npa-agent-foxglove"
+    assert config["layout_storage_key"] == "npa-agent-foxglove-robot-motion-v2"
     assert config["data_source"]["urls"] == [
         "https://agent.example/foxglove/data/tok-run.mcap"
     ]

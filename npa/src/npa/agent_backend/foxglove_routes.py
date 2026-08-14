@@ -80,6 +80,7 @@ class FoxgloveDeps:
     keep_published: int = 3
     set_live_url: Callable[[str], None] | None = None
     ensure_cloud_recording: Callable[..., dict] | None = None
+    ensure_cloud_layout: Callable[..., dict] | None = None
     prepare_canonical_mcap: Callable[..., dict] | None = None
 
 
@@ -294,14 +295,40 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
         export["provenance"] = dict(sim_viz.get("canonical_mcap_provenance") or {})
         if bool(body.get("open_web")):
             provenance = dict(sim_viz.get("canonical_mcap_provenance") or {})
+            layout: dict[str, Any] = {}
+            if deps.ensure_cloud_layout is not None:
+                try:
+                    layout = dict(deps.ensure_cloud_layout(provenance=provenance) or {})
+                except FoxgloveCloudError as exc:
+                    layout = {
+                        "available": False,
+                        "layout_id": "",
+                        "reason": str(exc),
+                    }
             web = foxglove_data_source_link(
                 config.get("data_source"),
+                layout_id=str(layout.get("layout_id") or "")
+                if layout.get("available")
+                else "",
                 start_time_ns=int(provenance.get("start_time_ns") or 0),
                 end_time_ns=int(provenance.get("end_time_ns") or 0),
             )
             if not web["available"]:
                 raise http_error(status_code=409, detail=web["reason"])
             export.update(web)
+            export["layout"] = layout
+            export["layout_note"] = (
+                "Foxglove Web was opened with the canonical shared NPA layout."
+                if web.get("layout_id")
+                else (
+                    str(layout.get("reason") or "")
+                    or "Foxglove Web remote-file links cannot carry an inline layout; "
+                    "use the rich topics or select a saved layout after signing in."
+                )
+            )
+            sim_viz["foxglove_cloud_layout"] = layout
+            state["sim_viz"] = sim_viz
+            deps.save_state(state)
         if bool(body.get("cloud_import")):
             if deps.ensure_cloud_recording is None:
                 raise http_error(

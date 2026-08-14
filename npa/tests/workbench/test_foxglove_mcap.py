@@ -223,7 +223,9 @@ def test_mcap_accepts_long_relative_timelines_and_large_optimizer_steps(
 
     write_run_mcap(
         output=output,
-        metrics=[MetricsInput(path=metrics, name="train_loss", topic="/metrics/train_loss")],
+        metrics=[
+            MetricsInput(path=metrics, name="train_loss", topic="/metrics/train_loss")
+        ],
         start_time_ns=1,
         run_id="long-run",
         metadata={
@@ -291,6 +293,8 @@ def test_write_run_mcap_preserves_explicit_producer(tmp_path: Path) -> None:
     assert summarize_mcap(output).metadata["npa"]["producer"] == (
         "npa.groot.task-performance"
     )
+
+
 def test_camera_topics_share_synthetic_epoch_and_primary_camera_topic(
     tmp_path: Path,
 ) -> None:
@@ -561,3 +565,119 @@ def test_metric_document_that_is_neither_object_nor_records_is_reported(
 
     assert summary.metrics == 1
     assert any("weird.json" in item for item in summary.skipped)
+
+
+def test_action_rollout_emits_meaningful_robot_motion_contract(tmp_path: Path) -> None:
+    pytest.importorskip("mcap")
+    from mcap.reader import make_reader
+
+    root = _run_fixture(tmp_path, frames=3)
+    actions = [
+        {
+            "step": index,
+            "sim_step": index * 9,
+            "action": [index + joint * 0.5 for joint in range(8)],
+            "simulator_ground_truth": {
+                "contact": index >= 1,
+                "stable_grasp": index >= 2,
+                "gripper_closed": index >= 1,
+                "placement_stable": False,
+                "termination_reason": "running",
+            },
+        }
+        for index in range(3)
+    ]
+    (root / "reports" / "source-actions-manifest.json").write_text(
+        json.dumps(
+            {
+                "schema": "npa.sim2real.action_rollout.v1",
+                "actions": actions,
+                "camera_metadata": [
+                    {
+                        "name": "primary",
+                        "pose_frame": "isaac_world",
+                        "position": [-2.0, 0.0, 1.0],
+                        "rotation": [1.0, 0.0, 0.0, 0.0],
+                        "quaternion_order": "wxyz",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "rich.mcap"
+
+    summary = convert_run_directory(
+        input_path=root,
+        output=output,
+        fps=4.0,
+        run_id="real-source-diagnostic-visualization",
+    )
+    info = summarize_mcap(output)
+
+    expected = {
+        "/robot/diagnostic_scene": "foxglove.SceneUpdate",
+        "/robot/diagnostic_pose": "foxglove.PoseInFrame",
+        "/robot/diagnostic_trajectory": "foxglove.PosesInFrame",
+        "/robot/diagnostic_joint_states": "foxglove.JointStates",
+        "/actuators/commands": "npa.ActuatorCommands",
+        "/run/state": "npa.RunState",
+    }
+    assert {topic: info.schemas[topic] for topic in expected} == expected
+    assert summary.scenes == 3
+    assert summary.poses == 6
+    assert summary.joint_states == summary.actuator_states == summary.run_states == 3
+    assert (
+        info.metadata["npa"]["visualization_contract"] == "npa.foxglove.robot-motion.v2"
+    )
+    assert info.metadata["npa"]["visualization_fixed_frame"] == "npa_action_space"
+    assert "not calibrated" in info.metadata["npa"]["visualization_fidelity"]
+    assert info.channels_monotonic is True
+    assert all(
+        value["start_time_ns"] <= value["end_time_ns"]
+        for value in info.channel_time_ranges.values()
+    )
+
+    messages: dict[str, list[dict]] = {}
+    message_times: dict[str, list[int]] = {}
+    wire_schemas: dict[str, dict] = {}
+    with output.open("rb") as handle:
+        for schema, channel, message in make_reader(handle).iter_messages():
+            messages.setdefault(channel.topic, []).append(json.loads(message.data))
+            message_times.setdefault(channel.topic, []).append(message.log_time)
+            wire_schemas.setdefault(channel.topic, json.loads(schema.data))
+    scene = messages["/robot/diagnostic_scene"][0]
+    label = scene["entities"][0]["texts"][0]["text"]
+    assert "DIAGNOSTIC action-space schematic" in label
+    assert "not calibrated robot/world kinematics" in label
+    assert len(scene["entities"][0]["lines"][0]["points"]) == 8
+    assert [
+        len(item["poses"]) for item in messages["/robot/diagnostic_trajectory"]
+    ] == [1, 2, 3]
+    assert messages["/run/state"][-1]["phase"] == "lift"
+    assert messages["/run/state"][-1]["progress"] == 1.0
+    assert messages["/actuators/commands"][1]["command_7"] == actions[1]["action"][7]
+    joint_message = messages["/robot/diagnostic_joint_states"][1]
+    assert "states" not in joint_message
+    assert "frame_id" not in joint_message
+    assert [joint["name"] for joint in joint_message["joints"]] == [
+        f"diagnostic_joint_{index}" for index in range(1, 8)
+    ]
+    joint_schema = wire_schemas["/robot/diagnostic_joint_states"]
+    assert joint_schema["required"] == ["timestamp", "joints"]
+    assert set(joint_schema["properties"]) == {"timestamp", "joints"}
+    assert joint_schema["properties"]["joints"]["items"]["required"] == ["name"]
+    assert wire_schemas["/robot/diagnostic_scene"]["required"] == [
+        "deletions",
+        "entities",
+    ]
+    for topic in (
+        "/robot/diagnostic_scene",
+        "/robot/diagnostic_pose",
+        "/robot/diagnostic_trajectory",
+        "/robot/diagnostic_joint_states",
+        "/actuators/commands",
+        "/run/state",
+    ):
+        assert message_times[topic] == message_times["/camera"]
+    assert messages["/tf"][0]["parent_frame_id"] == "isaac_world"

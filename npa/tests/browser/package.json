@@ -11,6 +11,8 @@
   },
   "devDependencies": {
     "cypress": "^15.18.0",
-    "@foxglove/embed": "0.58.0"
+    "@foxglove/embed": "0.58.0",
+    "playwright-core": "1.55.0",
+    "pngjs": "7.0.0"
   }
 }

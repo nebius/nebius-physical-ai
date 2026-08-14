@@ -11,6 +11,17 @@ from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
+RICH_VISUALIZATION_CONTRACT = "npa.foxglove.robot-motion.v2"
+_RICH_VISUALIZATION_TOPICS = {
+    "/camera": "foxglove.CompressedImage",
+    "/robot/diagnostic_scene": "foxglove.SceneUpdate",
+    "/robot/diagnostic_pose": "foxglove.PoseInFrame",
+    "/robot/diagnostic_trajectory": "foxglove.PosesInFrame",
+    "/robot/diagnostic_joint_states": "foxglove.JointStates",
+    "/actuators/commands": "npa.ActuatorCommands",
+    "/run/state": "npa.RunState",
+}
+
 CANONICAL_MCAP_DEFAULT_STATE: dict[str, Any] = {
     "canonical_mcap_s3_uri": "",
     "canonical_mcap_key": "",
@@ -20,6 +31,7 @@ CANONICAL_MCAP_DEFAULT_STATE: dict[str, Any] = {
     "canonical_mcap_provenance": {},
     "transport_state": "",
     "foxglove_cloud": {},
+    "foxglove_cloud_layout": {},
 }
 
 
@@ -69,6 +81,31 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def has_rich_visualization_contract(info: dict[str, Any]) -> bool:
+    """Prove that a rich canonical MCAP has the v2 robot-motion contract."""
+    schemas = dict(info.get("schemas") or {})
+    metadata = dict(info.get("metadata") or {})
+    npa_metadata = dict(metadata.get("npa") or {})
+    contract = str(
+        npa_metadata.get("visualization_contract")
+        or info.get("visualization_contract")
+        or ""
+    )
+    return (
+        contract == RICH_VISUALIZATION_CONTRACT
+        and all(
+            schemas.get(topic) == schema
+            for topic, schema in _RICH_VISUALIZATION_TOPICS.items()
+        )
+        and any(schema == "foxglove.Log" for schema in schemas.values())
+        and any(
+            schema.startswith("npa.RunMetrics")
+            for schema in schemas.values()
+            if isinstance(schema, str)
+        )
+    )
 
 
 def rich_run_provenance_from_manifest(
@@ -186,29 +223,18 @@ def prepare_canonical_mcap(
 
     converted: dict = {}
     saved_provenance: dict = {}
-    if native is not None:
-        download(str(native.s3_uri), local_path, s3=s3)
-        prior = next(
-            (item for item in artifacts if str(item.key) == provenance_key), None
-        )
-        if prior is not None:
-            try:
-                response = s3.get_object(Bucket=bucket, Key=provenance_key)
-                saved = json.loads(response["Body"].read())
-                if isinstance(saved, dict):
-                    saved_provenance = saved
-            except Exception as exc:
-                # A stale/unreadable sidecar is repaired from the validated MCAP.
-                logger.debug("repairing unreadable canonical MCAP provenance: %s", exc)
-    else:
+
+    def generate_rich_canonical() -> dict:
         with tempfile.TemporaryDirectory(prefix=f"npa-mcap-{normalized}-") as tmp:
             source_dir = Path(tmp) / normalized
             for item in artifacts:
+                if str(item.key) in {canonical_key, provenance_key}:
+                    continue
                 relative = run_relative_artifact_key(
                     str(item.key), normalized, safe_key=safe_key
                 )
                 download(str(item.s3_uri), source_dir / relative, s3=s3)
-            converted = convert(
+            result = convert(
                 input_path=source_dir,
                 output_path=local_path,
                 fps=fps,
@@ -226,6 +252,29 @@ def prepare_canonical_mcap(
                     "npa-canonical": "true",
                 },
             )
+        return result
+
+    if native is not None:
+        download(str(native.s3_uri), local_path, s3=s3)
+        native_info = summarize(local_path).to_dict()
+        if rich_run and not has_rich_visualization_contract(native_info):
+            converted = generate_rich_canonical()
+            source = "regenerated-rich-visualization-v2"
+            saved_provenance = {}
+        prior = next(
+            (item for item in artifacts if str(item.key) == provenance_key), None
+        )
+        if prior is not None and not converted:
+            try:
+                response = s3.get_object(Bucket=bucket, Key=provenance_key)
+                saved = json.loads(response["Body"].read())
+                if isinstance(saved, dict):
+                    saved_provenance = saved
+            except Exception as exc:
+                # A stale/unreadable sidecar is repaired from the validated MCAP.
+                logger.debug("repairing unreadable canonical MCAP provenance: %s", exc)
+    else:
+        converted = generate_rich_canonical()
 
     info = summarize(local_path).to_dict()
     digest = sha256_file(local_path)
@@ -262,6 +311,15 @@ def prepare_canonical_mcap(
         "duration_s": float(info.get("duration_s") or 0),
         "timestamps": timestamps,
         "fps": str((metadata.get("npa") or {}).get("fps") or ""),
+        "visualization_contract": str(
+            (metadata.get("npa") or {}).get("visualization_contract") or ""
+        ),
+        "visualization_fixed_frame": str(
+            (metadata.get("npa") or {}).get("visualization_fixed_frame") or ""
+        ),
+        "visualization_fidelity": str(
+            (metadata.get("npa") or {}).get("visualization_fidelity") or ""
+        ),
         "updated_at": now_iso(),
     }
     if rich_run:
