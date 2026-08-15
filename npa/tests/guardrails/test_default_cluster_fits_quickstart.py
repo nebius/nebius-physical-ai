@@ -168,3 +168,16 @@ def test_npa_and_terraform_agree_on_the_default_cpu_preset() -> None:
     from npa.cluster.config import DEFAULT_CPU_NODE_GROUP_PRESET
 
     assert _terraform_default("cpu_nodes_preset") == DEFAULT_CPU_NODE_GROUP_PRESET
+
+
+def test_paidf_self_provisioning_keeps_the_controller_cpu_node_explicit() -> None:
+    spec = yaml.safe_load(QUICKSTART_SPEC.read_text(encoding="utf-8"))
+    directive = spec["resources"]["gpu"]["deployIfAbsent"]
+    assert directive == {
+        "cpuNodes": 1,
+        "cpuPlatform": "cpu-d3",
+        "cpuPreset": "8vcpu-32gb",
+        "gpuNodes": 1,
+        "gpuPlatform": "gpu-rtx6000",
+        "gpuPreset": "1gpu-24vcpu-218gb",
+    }

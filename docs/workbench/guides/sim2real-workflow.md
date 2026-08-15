@@ -69,7 +69,7 @@ selected project's private NPA credential store; never put values in YAML.
 
 ## 3. Add a schedulable CPU pool before GPU work
 
-SkyPilot's Kubernetes jobs controller needs 4 vCPU/16 GiB. Sim2Real CPU states
+SkyPilot's Kubernetes jobs controller requests 2 vCPU/8 GiB. Sim2Real CPU states
 request 8 vCPU/32 GiB and deliberately use the small
 `npa-sim2real-control` image. Give them a Ready, untainted, non-GPU node so they
 do not contend with RT-core workers:

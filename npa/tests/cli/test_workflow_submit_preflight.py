@@ -141,6 +141,38 @@ def test_sim2real_submit_collects_pipeline_prerequisites_before_image_or_launch(
     launch.assert_not_called()
 
 
+def test_paidf_submit_collects_runtime_prerequisites_before_image_or_launch(
+    mocker,
+) -> None:
+    image_preflight = mocker.patch(
+        "npa.cli.workbench.workflow._preflight_submit_images"
+    )
+    launch = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(SPEC),
+            "--run-id",
+            "paidf-cold-start",
+            "--no-deploy-if-absent",
+            "--var",
+            "bucket=real-bucket",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "missing prerequisites" in result.output
+    assert "PAIDF runtime credentials" in result.output
+    assert "NEBIUS_TOKEN_FACTORY_KEY" in result.output
+    assert "HF_TOKEN" in result.output
+    image_preflight.assert_not_called()
+    launch.assert_not_called()
+
+
 def test_submit_preflight_clears_as_prerequisites_are_met(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

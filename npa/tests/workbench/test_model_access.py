@@ -52,7 +52,7 @@ def test_hf_model_url() -> None:
 
 def test_all_capabilities_includes_core_tools() -> None:
     caps = all_capabilities()
-    for expected in ("groot", "cosmos", "sim2real", "vlm_eval"):
+    for expected in ("groot", "cosmos", "paidf", "sim2real", "vlm_eval"):
         assert expected in caps
 
 
@@ -63,6 +63,12 @@ def test_assets_for_filters_by_capability() -> None:
     # 'all' / None returns the full catalog.
     assert assets_for(None) == WORKBENCH_ASSETS
     assert assets_for([]) == WORKBENCH_ASSETS
+
+
+def test_paidf_access_is_scoped_to_the_gated_transfer_model() -> None:
+    assets = assets_for(["paidf"])
+    assert [asset.repo for asset in assets] == ["nvidia/Cosmos-Transfer2.5-2B"]
+    assert all(asset.gated for asset in assets)
 
 
 def test_hf_gated_warns_without_token() -> None:

@@ -7,6 +7,14 @@ import json
 import re
 from typing import Any
 
+from npa.orchestration.npa_workflow.kubernetes_prerequisites import (
+    ready_schedulable_cpu_nodes,
+)
+from npa.orchestration.skypilot.controller import (
+    DEFAULT_K8S_CONTROLLER_CPUS,
+    DEFAULT_K8S_CONTROLLER_MEMORY_GB,
+)
+
 
 Issue = tuple[str, str]
 _ACCEPTED_EULA_VALUES = frozenset({"1", "TRUE", "Y", "YES"})
@@ -121,58 +129,13 @@ def static_prerequisites(
     return issues
 
 
-def _cpu_millicores(value: object) -> int:
-    raw = str(value or "").strip()
-    try:
-        return int(raw[:-1]) if raw.endswith("m") else int(float(raw) * 1000)
-    except ValueError:
-        return 0
-
-
-def _memory_bytes(value: object) -> int:
-    raw = str(value or "").strip()
-    match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)([KMGTPE]i?|)", raw)
-    if not match:
-        return 0
-    number = float(match.group(1))
-    suffix = match.group(2)
-    if not suffix:
-        return int(number)
-    powers = {letter: index for index, letter in enumerate("KMGTPE", 1)}
-    return int(number * ((1024 if suffix.endswith("i") else 1000) ** powers[suffix[0]]))
-
-
 def _ready_schedulable_cpu_nodes(nodes_json: str) -> list[str]:
-    """Return non-GPU nodes able to host the 8 CPU / 32 GiB Sim2Real profile."""
-
-    try:
-        items = (json.loads(nodes_json) or {}).get("items") or []
-    except (TypeError, json.JSONDecodeError):
-        return []
-    ready: list[str] = []
-    for node in items:
-        spec = node.get("spec") or {}
-        status = node.get("status") or {}
-        allocatable = status.get("allocatable") or {}
-        conditions = status.get("conditions") or []
-        is_ready = any(
-            item.get("type") == "Ready" and str(item.get("status")).lower() == "true"
-            for item in conditions
-        )
-        blocking_taint = any(
-            str(item.get("effect") or "") in {"NoSchedule", "NoExecute"}
-            for item in (spec.get("taints") or [])
-        )
-        if (
-            is_ready
-            and not spec.get("unschedulable", False)
-            and not blocking_taint
-            and _cpu_millicores(allocatable.get("cpu")) >= 8000
-            and _memory_bytes(allocatable.get("memory")) >= 32 * 1024**3
-            and _cpu_millicores(allocatable.get("nvidia.com/gpu")) == 0
-        ):
-            ready.append(str((node.get("metadata") or {}).get("name") or "<unnamed>"))
-    return ready
+    """Return nodes able to host one CPU stage and the SkyPilot controller."""
+    return ready_schedulable_cpu_nodes(
+        nodes_json,
+        minimum_cpu_millicores=(8 + DEFAULT_K8S_CONTROLLER_CPUS) * 1000,
+        minimum_memory_bytes=(32 + DEFAULT_K8S_CONTROLLER_MEMORY_GB) * 1024**3,
+    )
 
 
 def kubernetes_prerequisites(
@@ -196,8 +159,8 @@ def kubernetes_prerequisites(
     elif not _ready_schedulable_cpu_nodes(str(getattr(nodes, "stdout", ""))):
         issues.append(
             (
-                "no Ready, untainted, non-GPU node can fit the Sim2Real 8 vCPU / "
-                "32 GiB CPU profile (and the 4 vCPU / 16 GiB SkyPilot controller)",
+                "no Ready, untainted, non-GPU node can fit the Sim2Real CPU stage "
+                "plus SkyPilot controller (10 vCPU / 40 GiB allocatable)",
                 "add a dedicated CPU node pool such as cpu-e2/16vcpu-64gb (the "
                 "8vcpu-32gb nominal preset loses capacity to Kubernetes reserve), wait for "
                 "Ready, then rerun `kubectl get nodes -o json`",

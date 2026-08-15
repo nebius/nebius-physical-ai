@@ -73,7 +73,7 @@ def test_static_preflight_rejects_mutable_images_and_missing_eula_before_launch(
     assert "omni_kit_accept_eula" in rendered
 
 
-def _nodes(*, cpu="8", memory="32Gi", gpu="0", taints=None):
+def _nodes(*, cpu="10", memory="40Gi", gpu="0", taints=None):
     return json.dumps(
         {
             "items": [
@@ -96,8 +96,8 @@ def _nodes(*, cpu="8", memory="32Gi", gpu="0", taints=None):
 
 def test_cpu_node_parser_requires_the_real_schedulable_profile():
     assert _ready_schedulable_cpu_nodes(_nodes()) == ["cpu-0"]
-    assert _ready_schedulable_cpu_nodes(_nodes(cpu="7500m")) == []
-    assert _ready_schedulable_cpu_nodes(_nodes(memory="31Gi")) == []
+    assert _ready_schedulable_cpu_nodes(_nodes(cpu="9500m")) == []
+    assert _ready_schedulable_cpu_nodes(_nodes(memory="39Gi")) == []
     assert _ready_schedulable_cpu_nodes(_nodes(gpu="1")) == []
     assert _ready_schedulable_cpu_nodes(
         _nodes(taints=[{"key": "dedicated", "effect": "NoSchedule"}])

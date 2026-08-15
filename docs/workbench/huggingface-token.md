@@ -70,6 +70,7 @@ variable → `~/.npa/credentials.yaml`.
 
 ```bash
 npa workbench health access          # checks HF (and NGC) access to gated models
+npa workbench health access --capability paidf    # Cosmos Transfer only
 # or, credentials-presence only (no network):
 npa workbench health preflight --offline
 ```

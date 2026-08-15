@@ -704,6 +704,7 @@ def submit_cmd(
     registry_auth_plan = None
     deploy_targets = []
     resolved_deploy_plans: dict[str, Any] = {}
+    paidf_kubernetes_checked = False
     source_action = "not-required"
     planned_source_uri = ""
     if is_npa_spec:
@@ -872,6 +873,24 @@ def submit_cmd(
                 requires_npa_source=requires_npa_source,
                 source_staging_planned=stage_source_planned,
             )
+            if not plan_only and is_paidf_spec:
+                from npa.clients.huggingface import validate_hf_access
+                from npa.orchestration.npa_workflow.paidf_preflight import (
+                    static_prerequisites as paidf_static_prerequisites,
+                )
+
+                missing.extend(
+                    paidf_static_prerequisites(
+                        requested_secret_envs=secret_env,
+                        secret_values=extra_env,
+                        hf_validator=validate_hf_access,
+                    )
+                )
+                if infra_context and _adopt_npa_kubeconfig(infra_context):
+                    missing.extend(
+                        _paidf_kubernetes_prerequisites_for_submit(infra_context)
+                    )
+                    paidf_kubernetes_checked = True
             if not plan_only and workflow_identity == "sim2real":
                 from npa.clients.huggingface import validate_hf_access
                 from npa.clients.kube import run_kubectl
@@ -1151,6 +1170,28 @@ def submit_cmd(
                 verify_controller_owner(project, infra_context)
             except ClusterOwnerIdentityMismatchError as exc:
                 _fail(str(exc))
+                return
+        if (
+            is_paidf_spec
+            and not paidf_kubernetes_checked
+            and not skip_preflight
+            and not plan_only
+        ):
+            placement_context = infra_context or next(
+                (
+                    target.resolved_context
+                    for target in deploy_targets
+                    if target.cloud.strip().lower() in {"k8s", "kubernetes"}
+                ),
+                "",
+            )
+            if placement_context:
+                _adopt_npa_kubeconfig(placement_context)
+            paidf_missing = _paidf_kubernetes_prerequisites_for_submit(
+                placement_context
+            )
+            if paidf_missing:
+                _fail_missing_prerequisites(yaml_path, paidf_missing)
                 return
         npa_render_options = SkypilotRenderOptions(
             registry=_resolve_submit_registry(registry, project),
@@ -2583,6 +2624,29 @@ def _infra_kube_context(infra: str) -> str:
     if kind.strip().lower() not in {"k8s", "kubernetes"}:
         return ""
     return context.strip()
+
+
+def _paidf_kubernetes_prerequisites_for_submit(
+    context: str,
+) -> list[tuple[str, str]]:
+    """Run PAIDF's placement check with the exact submit kube context."""
+
+    from npa.clients.kube import run_kubectl
+    from npa.orchestration.npa_workflow.paidf_preflight import (
+        kubernetes_prerequisites,
+    )
+
+    kubeconfig = os.environ.get("KUBECONFIG", "")
+
+    def _run(args: list[str]):
+        return run_kubectl(
+            args,
+            context=context,
+            kubeconfig=kubeconfig,
+            timeout=30,
+        )
+
+    return kubernetes_prerequisites(runner=_run)
 
 
 def _available_kube_contexts() -> list[str] | None:
