@@ -1,91 +1,250 @@
-# Compositional Sim2Real workflow
+# Compositional Sim2Real operator runbook
 
-The single canonical operator spec is
-[`npa/workflows/workbench/npa-workflows/sim2real.yaml`](../../../npa/workflows/workbench/npa-workflows/sim2real.yaml), beside the Physical AI Data Factory spec. It is a normal
-`npa.workflow/v0.0.1` graph. The normal planner renders each state into a
-SkyPilot task, the normal runtime persists its S3 ledger, and `--resume`
-reconciles completed or in-flight waves. There is no Sim2Real detector bypass,
-driver pod, or hidden sibling-Job controller on this path.
+This is the onboarding source of truth for the canonical 14-stage workflow:
+[`sim2real.yaml`](../../../npa/workflows/workbench/npa-workflows/sim2real.yaml).
+Complete the gates in order. A production submit repeats the decisive S3,
+model-access, cluster-object, immutable-image, and image-pull checks before it
+creates a run or launches work.
 
-## What the graph executes
+## 1. Accept the exact third-party terms
 
-The visible states preserve the canonical 14-stage contract:
+The runtime downloads three gated checkpoints under the operator's Hugging Face
+account. Sign in, review the NVIDIA Open Model License, and request/accept access
+on all three pages:
 
-1. validate the task-aligned Isaac trigger and seed manifest;
-2. consume the asset, task, robot, camera, and strict-success contract;
-3. run real input-conditioned Cosmos Transfer 2.5;
-4. generate raw environment shards in parallel GPU tasks;
-5. curate and seal disjoint train, validation, and untouched gold sets;
-6. publish the explicit token/scenario handoff;
-7. execute real Isaac policy rollouts with primary/side/overhead cameras;
-8. execute real Cosmos Reason2 and Reason3 lanes in parallel;
-9. merge bounded temporal signals, run genuine BYO Isaac RSL-RL PPO, and use
-   only validation scenarios for checkpoint selection;
-10. load that exact checkpoint for real Isaac evaluation on untouched gold;
-11. record the unchanged strict 5 cm stable-placement metric and loop decision;
-12. record the external physical-validation boundary as `SEAM`, never `WORKS`;
-13. persist the retrigger/loop record; and
-14. publish the final report, Rerun recording, and MCAP recording.
+- [`nvidia/Cosmos-Transfer2.5-2B`](https://huggingface.co/nvidia/Cosmos-Transfer2.5-2B)
+- [`nvidia/Cosmos-Reason2-8B`](https://huggingface.co/nvidia/Cosmos-Reason2-8B)
+- [`nvidia/Cosmos-Reason2-2B`](https://huggingface.co/nvidia/Cosmos-Reason2-2B)
 
-Policy quality is reported honestly but is not a workflow-plumbing success
-gate. Long 3x3 PPO-500 efficacy studies are post-merge work. A reduced 1x1 run
-may lower counts to prove every real boundary and artifact handoff, while the
-strict metric and sealed gold contract remain unchanged.
+Isaac runtime warming and execution additionally require the operator to review
+the [NVIDIA Omniverse terms](https://docs.omniverse.nvidia.com/usd/latest/common/NVIDIA_Omniverse_License_Agreement.html),
+[Isaac Sim additional licenses](https://docs.isaacsim.omniverse.nvidia.com/latest/common/licenses.html),
+and [NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/).
+The repository never supplies consent: the cache warmer and workflow must receive
+both `OMNI_KIT_ACCEPT_EULA=YES` and `ISAACSIM_ACCEPT_EULA=YES` from the operator.
 
-## Required operator inputs
-
-The committed spec is tenant-neutral. At submission, set the S3 bucket/trigger,
-six registry-qualified immutable images, and the prewarmed Isaac cache PVC.
-The image adapters require `NPA_TASK_IMAGE` to contain `@sha256:` and attest the
-image source SHA. Isaac also verifies its read-only content-addressed runtime
-cache before simulator startup. The operator must also pass explicit NVIDIA
-acceptance through `omni_kit_accept_eula` and `isaacsim_accept_eula`; both
-committed defaults are empty. The inline Isaac adapter validates both values
-before starting Kit, so the workflow never accepts terms on the operator's
-behalf and never falls through to an interactive prompt in an unattended Job.
-
-`controller_image` is the digest-pinned, CPU-only `npa-sim2real-control` image
-built from `npa/docker/workbench/sim2real-control/Dockerfile`. It deliberately
-contains no Genesis, Isaac, CUDA, or trainer runtime; using a GPU solution image
-for CPU bookkeeping is unsupported because its cold pull can exhaust a CPU
-node before Stage 1. It does contain the non-root SkyPilot Kubernetes bootstrap
-prerequisites, which are part of the schedulable-image contract and are tested
-through the same standard runtime path used live. Its exact source is installed
-as a site-packages path as well as exported through `PYTHONPATH`, because the
-SkyPilot setup login shell is allowed to rebuild its environment. Transfer,
-EnvGen, Reason, Isaac, and visualization each retain their own immutable image
-at the corresponding workflow boundary.
-
-SkyPilot 0.12.2 still performs its Kubernetes bootstrap through passwordless
-`sudo`. For this CPU-only, ephemeral task image the task pod is the security
-boundary; the finite exception and prohibited service/public-ingress uses are
-enforced in `packaging-contract.yaml`. Separately, the Isaac cache warmer and
-the retained standalone BYO Isaac Job builders run as uid/gid 1000 (the warmer
-uses an fsGroup-owned PVC); none of the Sim2Real Isaac paths may override
-`runAsUser: 0`.
+Create a read token and verify the same token can access every Sim2Real model:
 
 ```bash
-SPEC=npa/workflows/workbench/npa-workflows/sim2real.yaml
+export HF_TOKEN='<hugging-face-read-token>'
+npa/.venv/bin/npa configure --no-interactive --save-env-credentials
+npa/.venv/bin/npa workbench health access --capability sim2real
+```
 
-npa/.venv/bin/npa workbench workflow validate-spec "$SPEC"
-npa/.venv/bin/npa workbench workflow plan-spec "$SPEC" --waves \
-  --run-id <run-id>
+Expected: three `HF access ok` lines and a zero exit status. A `401` means the
+token is invalid or did not reach the check; a `403` means the account has not
+accepted access or a fine-grained token omits that repository. See
+[Hugging Face setup](../huggingface-token.md). `NGC_API_KEY` is not required by
+the submitted runtime when all six images are already in the selected registry;
+it may be required by a separate image-build/source-fetch path.
 
-npa/.venv/bin/npa workbench workflow submit "$SPEC" \
-  --runtime \
-  --run-id <run-id> \
-  --resume \
-  --max-wait-seconds 0 \
-  --var bucket=<bucket> \
-  --var trigger_uri=s3://<bucket>/<task-aligned-trigger>/ \
-  --var seed_manifest_uri=s3://<bucket>/<task-aligned-trigger>/dataset-manifest.json \
-  --var controller_image=<registry/controller@sha256:...> \
-  --var transfer_image=<registry/transfer@sha256:...> \
-  --var envgen_image=<registry/envgen@sha256:...> \
-  --var reason_image=<registry/reason@sha256:...> \
-  --var isaac_image=<registry/isaac@sha256:...> \
-  --var viewer_image=<registry/viewer@sha256:...> \
-  --var isaac_cache_pvc=<pvc> \
+## 2. Configure Nebius, storage, Kubernetes, and SkyPilot
+
+Start with the shared [quickstart](../../quickstart.md) and
+[Kubernetes setup](../kubernetes.md). Resolve the project once, ensure S3 and
+the cluster, select the exact kube context, and bootstrap the pinned SkyPilot:
+
+```bash
+export NPA_PROJECT='<configured-project-alias>'
+export NPA_CLUSTER='<cluster-name>'
+
+npa/.venv/bin/npa configure --show
+npa/.venv/bin/npa provision-if-absent --project "${NPA_PROJECT}" --dry-run --output-format json
+npa/.venv/bin/npa provision-if-absent --project "${NPA_PROJECT}"
+export KUBECONFIG="${HOME}/.npa/clusters/${NPA_CLUSTER}/kubeconfig"
+npa/.venv/bin/npa skypilot bootstrap
+export NPA_SKYPILOT_BIN="$(npa/.venv/bin/npa skypilot status --bin-path)"
+"${NPA_SKYPILOT_BIN}" check kubernetes
+```
+
+Expected: the dry run names the intended S3/Kubernetes actions without changing
+them; the real command converges them; `sky check` reports Kubernetes enabled.
+If the kubeconfig path differs, use the path printed by `npa cluster status`.
+Clear stale ambient bearer tokens if authentication disagrees with the Nebius
+CLI: `unset NEBIUS_IAM_TOKEN NPA_NEBIUS_IAM_TOKEN`.
+
+The workflow runtime needs its storage credentials inside every wave. Request
+their propagation explicitly at submit time even when values come from the
+selected project's private NPA credential store; never put values in YAML.
+
+## 3. Add a schedulable CPU pool before GPU work
+
+SkyPilot's Kubernetes jobs controller requests 2 vCPU/8 GiB. Sim2Real CPU states
+request 8 vCPU/32 GiB and deliberately use the small
+`npa-sim2real-control` image. Give them a Ready, schedulable, appropriately
+untainted node with enough allocatable CPU and memory. It may also advertise GPUs;
+the CPU profile has no GPU exclusion:
+
+```bash
+npa/.venv/bin/npa cluster node-group add-cpu \
+  --cluster-name "${NPA_CLUSTER}" \
+  --name sim2real-cpu \
+  --platform cpu-e2 \
+  --preset 16vcpu-64gb \
+  --node-count 1 \
+  --wait
+
+kubectl get nodes -o custom-columns=NAME:.metadata.name,READY:.status.conditions[-1].status,CPU:.status.allocatable.cpu,MEMORY:.status.allocatable.memory,GPU:.status.allocatable.nvidia\.com/gpu
+```
+
+Expected: at least one Ready row with roughly 16 CPU and 64 GiB memory.
+The larger preset is intentional: Kubernetes reserves part of nominal node
+capacity, so an `8vcpu-32gb` node cannot fit a pod that requests the full
+8 vCPU/32 GiB profile. A separate `8vcpu-32gb` pool is sufficient for the
+controller alone, but not for the canonical Sim2Real CPU states.
+If the preflight reports no fitting CPU node, remove `NoSchedule`/`NoExecute`
+taints that the tasks do not tolerate or add/resize this pool.
+
+## 4. Create Kueue admission objects and warm Isaac once
+
+The canonical defaults name the `sim2real-gpu` LocalQueue and
+`sim2real-production` PriorityClass. Create the queue objects with quotas that
+cover the cluster's actual concurrent GPU, CPU, and memory requests; the helper
+generates the exact repository-owned schemas:
+
+```bash
+export NPA_GPU_PRODUCT='<exact nvidia.com/gpu.product label from kubectl get nodes>'
+export NPA_GPU_QUOTA='<concurrent GPU count>'
+export NPA_CPU_QUOTA='<aggregate CPU quota, for example 64>'
+export NPA_MEMORY_QUOTA='<aggregate memory quota, for example 512Gi>'
+
+npa/.venv/bin/python - <<'PY' | kubectl apply -f -
+import os
+import yaml
+from npa.workflows.sim2real.job_scheduling import kueue_queue_manifests
+
+docs = kueue_queue_manifests(
+    namespace="default",
+    gpu_product=os.environ["NPA_GPU_PRODUCT"],
+    gpu_quota=int(os.environ["NPA_GPU_QUOTA"]),
+    cpu_quota=os.environ["NPA_CPU_QUOTA"],
+    memory_quota=os.environ["NPA_MEMORY_QUOTA"],
+)
+print(yaml.safe_dump_all(docs, sort_keys=False))
+PY
+
+kubectl get localqueue.kueue.x-k8s.io sim2real-gpu -n default
+kubectl get priorityclass sim2real-production
+```
+
+Expected: both `get` commands return their named object. Missing Kueue CRDs mean
+Kueue must be installed first; a queue with insufficient CPU or memory quota can
+leave a GPU Job suspended even when a GPU is free.
+
+Choose the digest-pinned Isaac image now, then warm a shared RWX cache. The
+template is the authoritative PVC/security/bootstrap contract:
+
+```bash
+export NPA_ISAAC_IMAGE='<registry>/npa-isaac-lab@sha256:<64-hex>'
+sed "s|image: cr.us-central1.nebius.cloud/<your-registry-id>/npa-isaac-lab@sha256:<64-hex-digest>|image: ${NPA_ISAAC_IMAGE}|" \
+  npa/docker/workbench/common/warm-isaac-cache.yaml | kubectl apply -f -
+kubectl wait --for=condition=complete job/npa-warm-isaac-cache --timeout=-1s
+kubectl logs job/npa-warm-isaac-cache
+kubectl get pvc npa-isaac-cache -o custom-columns=NAME:.metadata.name,PHASE:.status.phase,MODES:.status.accessModes
+```
+
+Expected: the Job completes, its log ends with a successful bootstrap, and the
+PVC is `Bound` with `RWX`. Exit 78 means one of the two EULA values was absent;
+image pull failures are handled in the next gate. See
+[runtime-fetch packaging](../container-packaging.md#nvidia-isaac--omniverse-runtime-fetch-images).
+
+## 5. Build/push once and prove the exact image pulls
+
+The workflow does not copy images into the configured registry. Build/push the
+runtime images using the repository scripts, or use already validated images
+from your private registry. Never submit tags: resolve and retain immutable
+`@sha256:` references for these six config keys:
+
+| Config key | Required image |
+| --- | --- |
+| `controller_image` | `npa-sim2real-control` |
+| `transfer_image` | `npa-cosmos2-transfer` |
+| `envgen_image` | `npa-envgen` |
+| `reason_image` | `npa-cosmos3-reason` |
+| `isaac_image` | `npa-isaac-lab` (same bytes used to warm the cache) |
+| `viewer_image` | `npa-rerun-viewer` |
+
+Relevant build entrypoints are
+`npa/docker/workbench/sim2real-build.sh`,
+`npa/docker/workbench/cosmos2-transfer/build.sh`, and
+`npa/docker/workbench/isaac-lab/build.sh`. Follow
+[build and push](../container-packaging.md) when images are absent.
+
+Put the six references in shell variables, then reproduce the actual manifest
+pulls with the same config used by submit:
+
+```bash
+export CONTROLLER_IMAGE='<registry>/npa-sim2real-control@sha256:<64-hex>'
+export TRANSFER_IMAGE='<registry>/npa-cosmos2-transfer@sha256:<64-hex>'
+export ENVGEN_IMAGE='<registry>/npa-envgen@sha256:<64-hex>'
+export REASON_IMAGE='<registry>/npa-cosmos3-reason@sha256:<64-hex>'
+export ISAAC_IMAGE="${NPA_ISAAC_IMAGE}"
+export VIEWER_IMAGE='<registry>/npa-rerun-viewer@sha256:<64-hex>'
+export SPEC=npa/workflows/workbench/npa-workflows/sim2real.yaml
+
+npa/.venv/bin/npa workbench workflow preflight-images "${SPEC}" \
+  --project "${NPA_PROJECT}" \
+  --infra "k8s/${NPA_CLUSTER}" \
+  --assume-decision promote_checkpoint \
+  --var controller_image="${CONTROLLER_IMAGE}" \
+  --var transfer_image="${TRANSFER_IMAGE}" \
+  --var envgen_image="${ENVGEN_IMAGE}" \
+  --var reason_image="${REASON_IMAGE}" \
+  --var isaac_image="${ISAAC_IMAGE}" \
+  --var viewer_image="${VIEWER_IMAGE}"
+```
+
+Expected: every image is pullable and bootstrap-compatible. `not_found` means
+build/push the printed image; `forbidden` means fix registry IAM. A real submit
+also refreshes `default/npa-nebius-registry` with a fresh short-lived Nebius IAM
+credential and refuses to launch if that Kubernetes pull-secret update fails.
+Do not hand-create a long-lived registry token. See
+[registry troubleshooting](../troubleshooting/known-footguns.md#registry-pull-secret-expires-silently).
+
+## 6. Validate, plan, and submit
+
+Set a real bucket and task-aligned seed prefix. The trigger prefix and its
+`dataset-manifest.json` must already be readable; customer data contracts are in
+[Sim2Real customer assets](sim2real-customer-assets.md).
+
+```bash
+export RUN_ID="sim2real-$(date -u +%Y%m%dT%H%M%SZ)"
+export NPA_BUCKET='<bucket-name>'
+
+npa/.venv/bin/npa workbench workflow validate-spec "${SPEC}" --json
+npa/.venv/bin/npa workbench workflow plan-spec "${SPEC}" \
+  --run-id "${RUN_ID}" --waves --assume-decision promote_checkpoint \
+  --var bucket="${NPA_BUCKET}" \
+  --var controller_image="${CONTROLLER_IMAGE}" \
+  --var transfer_image="${TRANSFER_IMAGE}" \
+  --var envgen_image="${ENVGEN_IMAGE}" \
+  --var reason_image="${REASON_IMAGE}" \
+  --var isaac_image="${ISAAC_IMAGE}" \
+  --var viewer_image="${VIEWER_IMAGE}" \
+  --var isaac_cache_pvc=npa-isaac-cache \
+  --var omni_kit_accept_eula=YES \
+  --var isaacsim_accept_eula=YES
+```
+
+Expected: validation reports valid, and the wave plan shows the 14-stage graph
+with Stage 4 and Stage 8 parallel waves. Then submit through the durable runtime:
+
+```bash
+npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
+  --project "${NPA_PROJECT}" \
+  --infra "k8s/${NPA_CLUSTER}" \
+  --runtime --resume --max-wait-seconds 0 \
+  --run-id "${RUN_ID}" \
+  --var bucket="${NPA_BUCKET}" \
+  --var trigger_uri="s3://${NPA_BUCKET}/sim2real-triggers/${RUN_ID}/" \
+  --var seed_manifest_uri="s3://${NPA_BUCKET}/sim2real-triggers/${RUN_ID}/dataset-manifest.json" \
+  --var controller_image="${CONTROLLER_IMAGE}" \
+  --var transfer_image="${TRANSFER_IMAGE}" \
+  --var envgen_image="${ENVGEN_IMAGE}" \
+  --var reason_image="${REASON_IMAGE}" \
+  --var isaac_image="${ISAAC_IMAGE}" \
+  --var viewer_image="${VIEWER_IMAGE}" \
+  --var isaac_cache_pvc=npa-isaac-cache \
   --var omni_kit_accept_eula=YES \
   --var isaacsim_accept_eula=YES \
   --secret-env AWS_ACCESS_KEY_ID \
@@ -93,27 +252,32 @@ npa/.venv/bin/npa workbench workflow submit "$SPEC" \
   --secret-env HF_TOKEN
 ```
 
-Use `--var outer_iterations=1 --var inner_iterations=1` and reduced scenario/PPO
-values for the merge-proof ladder. Omit those overrides for production-size
-defaults. `--max-wait-seconds 0` deliberately means no arbitrary per-wave
-deadline; managed-job state and the S3 runtime ledger remain observable.
+Before any launch, submit now fails with one consolidated prerequisite report if
+the required secret propagation, three gated model probes, CPU node, cache PVC,
+Kueue queue, PriorityClass, S3 write probe, immutable images, or image pulls are
+not ready. `--skip-preflight` is an expert escape hatch and is not part of this
+runbook.
 
-## Durable evidence
+For a reduced plumbing proof, add `--var outer_iterations=1 --var
+inner_iterations=1` and deliberately chosen smaller scenario/PPO values. Do not
+change the strict 5 cm metric or sealed gold contract. Do not add arbitrary run
+deadlines; `--max-wait-seconds 0` keeps durable status in
+`s3://<bucket>/sim2real/<run-id>/npa-workflow/runtime.json`.
 
-The runtime ledger is
-`s3://<bucket>/sim2real/<run-id>/npa-workflow/runtime.json`. Stage outputs are
-explicit S3 inputs to the next state. Each stage publishes a canonical
-`components/stage_XX.json` pointer backed by an immutable
-`components/history/stage_XX/<content-sha256>.json` record. Restarting at the
-Stage 8/9 barrier or during Stage 14 reuses successful output only after the
-runtime validates its declared artifacts.
+## Resume and verify
 
-Final artifacts are:
+```bash
+npa/.venv/bin/npa workbench workflow status "${RUN_ID}" --project "${NPA_PROJECT}" --watch
+# after an operator/controller restart:
+npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
+  --project "${NPA_PROJECT}" --infra "k8s/${NPA_CLUSTER}" \
+  --runtime --resume-run "${RUN_ID}" --max-wait-seconds 0 \
+  <the same --var and --secret-env arguments>
+```
 
-- `reports/sim2real-report.json`
-- `reports/sim2real.rrd`
-- `reports/sim2real.mcap`
-- the exact selected checkpoint and validation/gold lineage named by the report.
-
-See [the architecture/resume contract](../../architecture/sim2real-compositional-workflow.md)
-for execution ownership and compatibility details.
+Completion must include `reports/sim2real-report.json`, non-empty
+`reports/sim2real.rrd` and `reports/sim2real.mcap`, the selected checkpoint, and
+exact validation/gold lineage. Pipeline completion proves orchestration, not
+policy efficacy; report the measured strict success without weakening it. The
+[architecture/resume contract](../../architecture/sim2real-compositional-workflow.md)
+defines the 14 ComponentRecords and restart audit.
