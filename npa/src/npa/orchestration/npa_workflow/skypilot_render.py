@@ -976,6 +976,14 @@ def default_npa_setup() -> str:
         # Record where npa was installed from so a per-tool extra (see
         # TOOL_REF_PIP_EXTRAS) can be layered on top of the SAME source tree.
         "npa_record_src_root() { printf '%s' \"$1\" > /tmp/npa-src-root; }\n"
+        # Thin workbench images keep the installable project at /opt/npa rather than the
+        # legacy /opt/nebius-physical-ai/npa path.  Record it even when the baked `npa`
+        # launcher is already on PATH: vendor-interpreter setup still needs the source root
+        # to install NPA into the runtime-fetched Isaac environment.  Live Isaac job 4
+        # otherwise retained NPA_BAKED_PYTHON and failed on `No module named isaaclab`.
+        "if [ -f /opt/npa/pyproject.toml ] && [ -d /opt/npa/src/npa ]; then\n"
+        "  npa_record_src_root /opt/npa\n"
+        "fi\n"
         # Debian/Ubuntu >= 24.04 mark the system interpreter externally managed
         # (PEP 668), so a plain `pip install` fails with
         # "error: externally-managed-environment". A task container is disposable, so
