@@ -614,6 +614,7 @@ def test_isaac_image_installs_a_cli_for_skypilot_setup() -> None:
     launcher = NPA_CLI.read_text(encoding="utf-8")
 
     assert "npa_cli.sh /usr/local/bin/npa" in dockerfile
+    assert "env -u PYTHONPATH python3 -c 'import npa'" in dockerfile
     assert 'exec "${NPA_BAKED_PYTHON:-/opt/npa/sim/venv/bin/python}" -m npa "$@"' in launcher
 
 

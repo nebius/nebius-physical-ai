@@ -100,6 +100,13 @@ RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
 
 COPY --chmod=0755 docker/workbench/isaac-lab/npa_cli.sh /usr/local/bin/npa
 
+# SkyPilot intentionally clears PYTHONPATH while bootstrapping its SSH runtime, then
+# verifies that the system python can import npa. Keep the exact copied source visible
+# to that interpreter as well as to the curated Isaac venv used by the CLI launcher.
+RUN python3 -c \
+      "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-exact-source.pth').write_text('/opt/npa/src\\n', encoding='utf-8')" \
+    && env -u PYTHONPATH python3 -c 'import npa'
+
 # Exact controller source is part of the image digest. Isaac's pinned runtime
 # provides the scientific closure; these packages are never installed by Jobs.
 # This purpose-built runtime opts out of the public SDK's convenience imports so
