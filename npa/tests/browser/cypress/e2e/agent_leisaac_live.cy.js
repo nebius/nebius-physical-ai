@@ -481,9 +481,6 @@ function recordEpisode(outcome, episodeNumber, completedBefore) {
         .and("contain.text", selectedEnvironment)
         .and("contain.text", "RTX PRO 6000");
       redactLiveEvidenceIdentifiers();
-      cy.get("#leisaacViewMode").should("have.value", "single_fast");
-      cy.get("#leisaacRecordingCameras").should("have.value", "primary_only");
-      cy.get("#leisaacLiveGrid").should("have.class", "is-single");
       cy.get("#leisaacRecorderStatus").should("contain.text", "State: idle");
       if (completedEpisodes > 0) {
         cy.get("#leisaacRecorderStatus")
@@ -501,6 +498,18 @@ function recordEpisode(outcome, episodeNumber, completedBefore) {
         expect(status.task).to.equal(selectedTask);
         expect(status.environment_id).to.equal(selectedEnvironment);
         expect(status.recorder.state).to.equal("idle");
+        expect(
+          win.document.getElementById("leisaacViewMode").value,
+          "persisted requested view mode",
+        ).to.equal(status.requested_view_mode);
+        expect(
+          win.document.getElementById("leisaacRecordingCameras").value,
+          "persisted requested recording mode",
+        ).to.equal(status.requested_recording_camera_mode);
+        expect(
+          win.document.getElementById("leisaacLiveGrid").classList.contains("is-single"),
+          "persisted applied view layout",
+        ).to.equal(status.applied_view_mode === "single_fast");
         if (completedEpisodes > 0) {
           expect(status.recorder.completed_episode_count).to.equal(
             completedEpisodes,
@@ -526,6 +535,16 @@ function recordEpisode(outcome, episodeNumber, completedBefore) {
         "contain.text",
         "keyboard teleoperation active",
       );
+      cy.get("#leisaacViewMode").select("single_fast");
+      cy.get("#leisaacModeStatus", { timeout: 30000 }).should(
+        "contain.text",
+        "Applied view: Fast single",
+      );
+      cy.get("#leisaacRecordingCameras").select("primary_only");
+      cy.get("#leisaacModeStatus", { timeout: 30000 })
+        .should("contain.text", "Applied view: Fast single")
+        .and("contain.text", "recording: Primary only");
+      cy.get("#leisaacLiveGrid").should("have.class", "is-single");
       cy.get("#leisaacTransportStatus", { timeout: 120000 })
         .should("contain.text", "WebSocket")
         .and("contain.text", "preferred")

@@ -5700,6 +5700,11 @@
       }
       function closeLeIsaacSockets() {
         leisaacSocketGeneration += 1;
+        // A closed media/control pair is never ready, even when the simulator
+        // capability remains healthy during a bundle-driven restart.  Keeping
+        // this true left controls and the Connect button in a stale state when
+        // automatic recovery needed an explicit retry.
+        leisaacStreamReady = false;
         leisaacControlLeaseReady = false;
         stopLeIsaacHeartbeat();
         if (leisaacReconnectTimer !== null) window.clearTimeout(leisaacReconnectTimer);

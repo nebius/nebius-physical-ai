@@ -275,6 +275,62 @@ function frameStageSummary(frames) {
           const evidence = liveTransportEvidence(win);
           throw new Error(`${error.message}; transport evidence=${JSON.stringify(evidence)}`);
         }
+        const capability = await win.__NPA_AGENT_TEST__.refreshLeIsaacCapability(runId);
+        const customBundleCount = Number(
+          (capability.configuration && capability.configuration.custom_bundle_count) || 0,
+        );
+        if (customBundleCount > 0) {
+          const resetButton = win.document.getElementById("leisaacResetDefaults");
+          if (!resetButton || resetButton.disabled) {
+            throw new Error("built-in default reset is unavailable with a custom bundle active");
+          }
+          const resetFrameCount = liveTransportEvidence(win).frames.length;
+          resetButton.click();
+          let restored = false;
+          const resetDeadline = win.performance.now() + 180000;
+          while (win.performance.now() < resetDeadline) {
+            await new Promise((resolve) => win.setTimeout(resolve, 500));
+            const refreshed = await win.__NPA_AGENT_TEST__.refreshLeIsaacCapability(runId);
+            const configuration = refreshed.configuration || {};
+            const selectedBundles = refreshed.selected_bundles || {};
+            if (
+              Number(configuration.custom_bundle_count || 0) === 0 &&
+              Object.keys(selectedBundles).length === 0
+            ) {
+              restored = true;
+              break;
+            }
+          }
+          if (!restored) {
+            throw new Error("timed out restoring built-in defaults before the benchmark");
+          }
+          const disconnectButton = win.document.getElementById("leisaacDisconnect");
+          if (disconnectButton && !disconnectButton.disabled) disconnectButton.click();
+          await waitUntil(
+            win,
+            () => {
+              const connectButton = win.document.getElementById("leisaacConnect");
+              return connectButton && !connectButton.disabled ? connectButton : null;
+            },
+            30000,
+            "safe reconnect control after default reset",
+          ).then((connectButton) => connectButton.click());
+          await waitUntil(
+            win,
+            () => {
+              const evidence = liveTransportEvidence(win);
+              return ["websocket-v1", "webrtc-datachannel-v1", "webrtc-native-h264"].includes(evidence.active) &&
+                evidence.frames.slice(resetFrameCount)
+                  .some((frame) => frame.camera === "workspace");
+            },
+            180000,
+            "built-in default runtime reconnect",
+          );
+        }
+        const inputDevice = win.document.getElementById("leisaacInputDevice");
+        if (!inputDevice) throw new Error("LeIsaac input-device selector is missing");
+        inputDevice.value = "keyboard";
+        inputDevice.dispatchEvent(new win.Event("change", { bubbles: true }));
         const selector = win.document.getElementById("leisaacViewMode");
         selector.value = viewMode;
         selector.dispatchEvent(new win.Event("change", { bubbles: true }));
