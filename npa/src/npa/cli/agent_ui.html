@@ -13675,6 +13675,19 @@
         const loadedRunId = String(simViz.run_id || body.run_id || activeRunId || "").trim();
         if (loadedRunId) setActiveRunId(loadedRunId);
         updateRenderedDataSummary(simViz);
+        // Publish the authoritative selection before a potentially slow viewer
+        // mount. A subsequent filter/sort action may intentionally supersede
+        // that mount, but it must not leave the prior run's identity and status
+        // visible after this load response has already succeeded.
+        updateRunSelector(simViz);
+        const simRunId = document.getElementById("simRunId");
+        const simStage = document.getElementById("simStage");
+        const simCamera = document.getElementById("simCamera");
+        if (simRunId) simRunId.textContent = String(simViz.run_id || loadedRunId || "-");
+        if (simStage) simStage.textContent = String(simViz.stage || "artifact-loaded");
+        if (simCamera) simCamera.textContent = String(simViz.camera || "workspace");
+        lastSimVizStatus = simViz;
+        updateSimvizCta(simViz);
         // Mobile: the 3D Rerun wasm viewer isn't supported — open the run's data in
         // the Voxel51 tab instead of mounting the (unsupported) viewer.
         if (render === "rerun" && isMobileLayout()) {
@@ -13716,18 +13729,6 @@
           await showArtifactPreview(simViz, render, isCurrent, context);
         }
         if (!isCurrent()) return false;
-        // Apply the load response directly. A general refresh can race a newer
-        // artifact selection and repaint an older render mode after the newer
-        // request wins; the load response already contains selector/status data.
-        updateRunSelector(simViz);
-        const simRunId = document.getElementById("simRunId");
-        const simStage = document.getElementById("simStage");
-        const simCamera = document.getElementById("simCamera");
-        if (simRunId) simRunId.textContent = String(simViz.run_id || loadedRunId || "-");
-        if (simStage) simStage.textContent = String(simViz.stage || "artifact-loaded");
-        if (simCamera) simCamera.textContent = String(simViz.camera || "workspace");
-        lastSimVizStatus = simViz;
-        updateSimvizCta(simViz);
         if (loadedRunId && loadedRunId === activeArtifactInventoryRunId) {
           renderArtifactDerivedRunDetails(loadedRunId, activeArtifactInventory);
         }
