@@ -105,6 +105,8 @@ def test_leisaac_dockerfile_removes_parent_imageio_ffmpeg_payload() -> None:
     assert "NPA_ISAAC_OSS_DEPS_FILE=" in dockerfile
     assert "sed -E '/^(moviepy|imageio-ffmpeg)==/d'" in dockerfile
     assert "FROM ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab" not in dockerfile
+    assert 'rm -rf /root/.cache /home/"${NPA_RUNTIME_USER}"/.cache' in dockerfile
+    assert 'test ! -e /home/"${NPA_RUNTIME_USER}"/.cache' in dockerfile
 
 
 @pytest.mark.parametrize("path", PAYLOAD_PATHS)

@@ -115,6 +115,9 @@ RUN apt-get update \
     && test -z "$(find /opt/npa/sim/venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
     && rm -f /tmp/leisaac-upstream-observability.patch /tmp/leisaac-upstream-packaging.patch \
     && rm -rf /opt/leisaac/.git \
+    && rm -rf /root/.cache /home/"${NPA_RUNTIME_USER}"/.cache \
+    && test ! -e /root/.cache \
+    && test ! -e /home/"${NPA_RUNTIME_USER}"/.cache \
     && test ! -e /opt/leisaac/assets/robots/so101_follower.usd \
     && test ! -e /opt/leisaac/assets/scenes/kitchen_with_orange \
     && install -d -m 0775 -o ubuntu -g isaac-sim /opt/leisaac-cache \
