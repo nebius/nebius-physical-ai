@@ -438,7 +438,9 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
           s3_uri: s3Uri,
         });
         applyExactArtifactConfig(config, exported);
-        request.reply({ delay: 150, statusCode: 200, body: exported });
+        // Keep preparation observably in-flight across slower narrow-viewport
+        // rendering before the SDK-ready state can replace the progress text.
+        request.reply({ delay: 3000, statusCode: 200, body: exported });
       }).as("exactArtifactExport");
       cy.window().then((win) => {
         cy.stub(win, "open").as(`exactArtifactWindowOpen-${viewport.name}`);
@@ -698,6 +700,36 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     });
     cy.get("@rapidArtifactWindowOpen").should("not.have.been.called");
     cy.then(() => expect(requests, "both rapid exact selections reached the backend").to.eq(2));
+  });
+
+  it("uses the SDK command-ready contract when a hosted sign-in withholds ready", () => {
+    const config = stubFoxgloveApis({ embed_src: `${MOCK_EMBED_SRC}?complete=0` });
+    const runRef = "npa1_mock_non_stock";
+    const key = `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`;
+    const s3Uri = `s3://mock/${key}`;
+    const exported = exactArtifactExportResponse(NON_STOCK_RUN_ID, runRef, key, s3Uri);
+    cy.intercept("POST", "/api/foxglove/export", (request) => {
+      applyExactArtifactConfig(config, exported);
+      request.reply({ statusCode: 200, body: exported });
+    }).as("signInArtifactExport");
+    cy.window().then((win) => cy.stub(win, "open").as("signInArtifactWindowOpen"));
+
+    cy.get("#tabRerun").click();
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@artifactRuns");
+    cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
+    cy.wait("@nonStockArtifactList");
+    cy.get(`button[data-action="open-foxglove-artifact"][data-key="${key}"]`)
+      .should("be.enabled")
+      .click();
+    cy.wait("@signInArtifactExport");
+    cy.get("#foxgloveHost")
+      .should("have.attr", "data-sdk-ready", "true")
+      .and("have.attr", "data-set-data-source-count", "1")
+      .and("have.attr", "data-data-source-url", exported.export.recording_url);
+    mockAppFrame().its("0.contentDocument.body").should("contain.text", "usable-with-sign-in");
+    cy.get("#foxgloveStatus").should("contain.text", "exact selected MCAP sent");
+    cy.get("@signInArtifactWindowOpen").should("not.have.been.called");
   });
 
   it("mounts the real @foxglove/embed SDK and completes the viewer handshake", () => {

@@ -6715,9 +6715,12 @@
         if (host) host._previewObjectUrl = objectUrl;
         return objectUrl;
       }
-      async function showArtifactPreview(simViz, render, is_current_request) {
+      async function showArtifactPreview(simViz, render, is_current_request, options) {
         const host = document.getElementById("artifactPreviewHost");
         if (!host) return;
+        const renderModeOptions = options && options.operator === true
+          ? { operator: true }
+          : undefined;
         const isCurrent = () => typeof is_current_request !== "function" || is_current_request();
         if (!isCurrent()) return;
         const previewUrl = String((simViz && simViz.artifact_preview_url) || "");
@@ -6729,17 +6732,17 @@
           // Foxglove pane when the operator is already there, and keep it fed.
           hideArtifactPreview();
           if (safeRender === "foxglove" || activeRenderMode === "foxglove") {
-            setRenderMode("foxglove");
+            setRenderMode("foxglove", renderModeOptions);
             await refreshFoxgloveViewer();
           } else {
-            setRenderMode("lichtblick");
+            setRenderMode("lichtblick", renderModeOptions);
             mountLichtblickIframe(simViz);
           }
           return;
         }
-        if (safeRender === "video") setRenderMode("video");
-        else if (safeRender === "image") setRenderMode("image");
-        else if (safeRender === "json" || safeRender === "text" || safeRender === "download") setRenderMode("data");
+        if (safeRender === "video") setRenderMode("video", renderModeOptions);
+        else if (safeRender === "image") setRenderMode("image", renderModeOptions);
+        else if (safeRender === "json" || safeRender === "text" || safeRender === "download") setRenderMode("data", renderModeOptions);
         if (!previewUrl) {
           host.hidden = false;
           host.innerHTML = "<p>No preview URL available. Use download.</p>";
@@ -8197,7 +8200,9 @@
                 s3_uri: String(item.s3_uri || ""),
                 render: String(item.render || ""),
               };
-              const promise = mode === "load" ? loadArtifact(payload) : previewArtifact(payload);
+              const promise = mode === "load"
+                ? loadArtifact(payload, { operator: true })
+                : previewArtifact(payload);
               Promise.resolve(promise).catch((err) => showToast("Replay failed: " + String((err && err.message) || err), "error"));
             });
             actions.appendChild(button);
@@ -8475,7 +8480,7 @@
               key: String(btn.getAttribute("data-key") || "").trim(),
               bucket: String(btn.getAttribute("data-bucket") || "").trim(),
             };
-            await loadArtifact(payload);
+            await loadArtifact(payload, { operator: true });
           });
         });
         list.querySelectorAll("button[data-action='open-foxglove-artifact']").forEach((btn) => {
@@ -9057,6 +9062,7 @@
         operatorMediaPreviewActive = false;
         const requestContext = arguments.length > 1 ? arguments[1] : null;
         const context = requestContext && typeof requestContext === "object" ? requestContext : {};
+        const renderModeOptions = context.operator === true ? { operator: true } : undefined;
         const isCurrent = () => requestId === artifactLoadRequestId &&
           loadGeneration === artifactLoadGeneration &&
           (!context.isCurrent || context.isCurrent());
@@ -9103,7 +9109,7 @@
         await activateMainTab("rerun", { skipEnsure: true });
         if (!isCurrent()) return false;
         if (render === "rerun") {
-          setRenderMode("rerun", { operator: true });
+          setRenderMode("rerun", renderModeOptions);
           hideArtifactPreview();
           lastRrdUpdatedAt = "";
           // Soft-swap when possible; only force remount if the viewer is not alive.
@@ -9124,11 +9130,11 @@
           }
         } else if (render === "mcap" || render === "lichtblick") {
           hideArtifactPreview();
-          setRenderMode("lichtblick", { operator: true });
+          setRenderMode("lichtblick", renderModeOptions);
           mountLichtblickIframe(simViz);
         } else {
           // Keep the Rerun iframe mounted; switch viewer pane instead of tearing down wasm.
-          await showArtifactPreview(simViz, render, isCurrent);
+          await showArtifactPreview(simViz, render, isCurrent, context);
         }
         if (!isCurrent()) return false;
         // Apply the load response directly. A general refresh can race a newer
@@ -9882,7 +9888,7 @@
                 render: String(btn.getAttribute("data-render") || "download").trim(),
               };
               if (selected.render === "rerun" || selected.render === "mcap") {
-                loadArtifact(selected);
+                loadArtifact(selected, { operator: true });
               } else {
                 previewArtifact(selected);
               }

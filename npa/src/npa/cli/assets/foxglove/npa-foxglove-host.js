@@ -224,16 +224,33 @@ export function mountFoxgloveViewer(params) {
   let resolveReady;
   let readinessSettled = false;
   let readinessError = "";
+  let readinessPoll = null;
   const readyPromise = new Promise((resolve) => {
     resolveReady = resolve;
   });
-
-  viewer.addEventListener("ready", () => {
+  const settleReady = () => {
     if (readinessSettled) return;
     readinessSettled = true;
+    if (readinessPoll != null) clearTimeout(readinessPoll);
+    readinessPoll = null;
     resolveReady(true);
     if (typeof onReady === "function") onReady();
-  });
+  };
+  const pollUsableReadiness = () => {
+    if (readinessSettled) return;
+    // `isReady()` is the SDK's command-readiness contract. It turns true when
+    // the embedded app requests and receives its handshake acknowledgement;
+    // a clean unsigned hosted surface may intentionally withhold the later
+    // `ready` event while it presents sign-in. Never substitute iframe
+    // existence for this SDK-owned signal.
+    if (viewer.isReady()) {
+      settleReady();
+      return;
+    }
+    readinessPoll = setTimeout(pollUsableReadiness, 50);
+  };
+
+  viewer.addEventListener("ready", settleReady);
   viewer.addEventListener("error", (event) => {
     const message = formatViewerError(event && event.detail);
     if (!readinessSettled) {
@@ -246,6 +263,7 @@ export function mountFoxgloveViewer(params) {
     }
     if (typeof onError === "function") onError(message);
   });
+  pollUsableReadiness();
 
   return {
     viewer,
@@ -275,6 +293,13 @@ export function mountFoxgloveViewer(params) {
       viewer.seekPlayback(time);
     },
     destroy() {
+      if (!readinessSettled) {
+        readinessSettled = true;
+        readinessError = "Foxglove viewer was replaced before readiness";
+        if (readinessPoll != null) clearTimeout(readinessPoll);
+        readinessPoll = null;
+        resolveReady(false);
+      }
       if (!viewer.isDestroyed()) viewer.destroy();
     },
   };

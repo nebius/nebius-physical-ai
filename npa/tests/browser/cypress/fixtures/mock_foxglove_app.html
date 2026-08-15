@@ -96,8 +96,12 @@
               setState("topic-error-sent");
               return;
             }
-            toParent({ type: "foxglove-handshake-complete" });
-            setState("ready");
+            if (params.get("complete") !== "0") {
+              toParent({ type: "foxglove-handshake-complete" });
+              setState("ready");
+            } else {
+              setState("usable-with-sign-in");
+            }
             return;
           }
           if (data.type === "get-layout") {
