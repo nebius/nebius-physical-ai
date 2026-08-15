@@ -13,6 +13,8 @@ INDEX = REPO_ROOT / "skills/index.yaml"
 LINKED_SKILLS = (
     REPO_ROOT / "skills/workflows/sim2real-operate/SKILL.md",
     REPO_ROOT / "skills/tools/isaac-lab/SKILL.md",
+    REPO_ROOT / "skills/tools/sonic/SKILL.md",
+    REPO_ROOT / "skills/tools/groot/SKILL.md",
     REPO_ROOT / "skills/atomic/solution-licensing/SKILL.md",
 )
 EULA_VALUE = "ACCEPT_EULA=Y"
@@ -31,19 +33,32 @@ def test_eula_preflight_is_canonical_and_discoverable() -> None:
 
 def test_eula_preflight_documents_scoped_default_and_explicit_opt_out() -> None:
     text = SKILL.read_text(encoding="utf-8")
+    normalized = " ".join(text.split()).lower()
     required = (
         "official terms links",
         "defaults vendor acceptance on",
         "explicit opt-out",
         "fail before provisioning",
         "Do not reuse this",
-        "Never default optional privacy",
+        "Never default optional",
+        "PRIVACY_CONSENT",
+        "npa-isaac-lab",
+        "Isaac-backed SONIC modes",
+        "GR00T Isaac simulation",
+        "absent variable succeeds",
+        "--no-accept-eula",
+        "OMNI_KIT_ACCEPT_EULA=YES",
+        "do not add duplicate",
+        "telemetry off by default",
+        "built layers contain no proprietary Isaac or Kit bytes",
         "Do not store",
         "secret values or unnecessary personal data",
     )
     for phrase in required:
-        assert phrase.lower() in text.lower(), phrase
+        assert phrase.lower() in normalized, phrase
     assert EULA_VALUE in text
+    assert "${ACCEPT_EULA-Y}" in text
+    assert "${ACCEPT_EULA:-Y}" in text
 
 
 def test_operational_skills_link_the_preflight() -> None:
@@ -51,3 +66,17 @@ def test_operational_skills_link_the_preflight() -> None:
         assert "skills/atomic/third-party-eula-preflight/SKILL.md" in path.read_text(
             encoding="utf-8"
         ), path
+
+
+def test_isaac_tool_skills_preserve_default_opt_out_and_internal_plumbing() -> None:
+    for tool in ("isaac-lab", "sonic", "groot"):
+        path = REPO_ROOT / f"skills/tools/{tool}/SKILL.md"
+        text = " ".join(path.read_text(encoding="utf-8").split())
+        for phrase in (
+            "defaults `ACCEPT_EULA=Y`",
+            "empty/non-`Y`",
+            "before download",
+            "derives `OMNI_KIT_ACCEPT_EULA=YES` internally",
+            "Keep `PRIVACY_CONSENT` and telemetry off",
+        ):
+            assert phrase in text, f"{path}: {phrase}"

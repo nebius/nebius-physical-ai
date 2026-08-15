@@ -1,6 +1,6 @@
 ---
 name: third-party-eula-preflight
-description: Use before provisioning, building, downloading, or submitting a workload whose image, software, model, or data requires a third-party EULA or gated terms; discover the exact agreements and acceptance mechanism, apply product acceptance defaults, and preserve explicit opt-out behavior.
+description: Use before provisioning, building, downloading, or submitting a workload whose image, software, model, or data requires third-party EULAs or gated terms; apply the scoped Isaac ACCEPT_EULA default and explicit opt-out correctly without conflating credentials, privacy, telemetry, or redistribution rights.
 ---
 
 # Third-Party EULA Preflight
@@ -19,18 +19,28 @@ documents a default.
    (for example, exact environment variables and accepted values). Do not infer
    acceptance from credentials, registry access, prior use, or acceptance of a
    different agreement.
-3. Apply the documented product policy. Isaac workloads default `ACCEPT_EULA=Y`;
-   setting it to an empty or non-Y value is an explicit opt-out. Do not reuse this
-   default for unrelated vendor, model, data, privacy, telemetry, or preview terms.
+3. Apply the documented product policy. NPA defaults `ACCEPT_EULA=Y` only for
+   `npa-isaac-lab`, Isaac-backed SONIC modes, and GR00T Isaac simulation. An
+   absent variable succeeds non-interactively. An explicitly empty or non-`Y`
+   value, including `--no-accept-eula`, opts out and must refuse before download.
+   Do not reuse this default for unrelated vendor, model, data, privacy,
+   telemetry, or preview terms.
 4. When a product remains opt-in, ask clearly before provisioning, building,
    downloading, or submitting. Show the exact agreements, official links,
    mechanism, and the expensive action that is blocked.
 5. For non-interactive Isaac execution, forward the default only to Isaac-backed
    tasks. If the operator opted out, fail before provisioning and print the exact
    resume command needed to re-enable acceptance.
-6. Never default optional privacy or telemetry consent. Keep EULA defaults scoped
-   to runtime orchestration rather than baking proprietary vendor bytes into images.
-7. Preserve a redacted run record containing agreement names, official links,
+6. Expose only `ACCEPT_EULA` to users. The pip-runtime launcher derives
+   `OMNI_KIT_ACCEPT_EULA=YES` internally after validating the public value; do
+   not add duplicate CLI, workflow, or configuration plumbing for it.
+7. Never default optional privacy or telemetry consent. Keep `PRIVACY_CONSENT`
+   and telemetry off by default; enable them only independently and explicitly,
+   and do not derive either from EULA acceptance.
+8. Keep acceptance UX separate from redistribution classification. A convenient
+   default does not grant redistribution rights; the Isaac-family images remain
+   public because their built layers contain no proprietary Isaac or Kit bytes.
+9. Preserve a redacted run record containing agreement names, official links,
    the operator-stated scope, preflight result, and resume command. Do not store
    secret values or unnecessary personal data.
 
@@ -51,9 +61,13 @@ The repository mechanism defaults this value for Isaac-backed workloads:
 ACCEPT_EULA=Y <resume-command>
 ```
 
-An unset value becomes `Y`. An explicitly empty or non-Y value makes
+An unset value becomes `Y`. An explicitly empty or non-`Y` value makes
 `isaac-bootstrap` exit `78` before downloading. The default covers only the named
 NVIDIA terms; it does not enable unrelated privacy or telemetry terms.
+
+The bootstrap preserves the unset-versus-empty distinction with shell defaulting
+equivalent to `${ACCEPT_EULA-Y}`. Do not replace it with `${ACCEPT_EULA:-Y}`;
+that would turn an explicit empty opt-out back into acceptance.
 
 ## Guardrails
 

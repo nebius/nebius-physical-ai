@@ -51,6 +51,10 @@ conversion, serving, inference, and validation.
 
 ## Runtime Isaac bootstrap (the container ships no Isaac Sim)
 
+Before a GR00T Isaac simulation run, load
+`skills/atomic/third-party-eula-preflight/SKILL.md`. Standard inference and
+fine-tuning do not trigger this preflight.
+
 The `npa-groot` image contains **no NVIDIA Isaac Sim or Isaac Lab code**. It used to bake
 Omniverse Kit, which made it non-redistributable; Isaac is now downloaded on first use of
 `/isaac-sim/python.sh` from `https://pypi.nvidia.com`, into a cache volume, under the
@@ -59,10 +63,12 @@ Omniverse Kit, which made it non-redistributable; Isaac is now downloaded on fir
 
 What this changes in practice:
 
-- **Set `ACCEPT_EULA=Y`, or Isaac will not start.** Missing or changing
-  NVIDIA's documented value makes the container exit **78**
-  with an actionable message. That refusal is deliberate and load-bearing — do not "fix"
-  it by baking acceptance into the image; a guard fails the build if anyone does.
+- **Only Isaac simulation defaults acceptance.** NPA defaults
+  `ACCEPT_EULA=Y` on that path. An explicitly empty/non-`Y` value or
+  `--no-accept-eula` exits **78** before download. The launcher derives
+  `OMNI_KIT_ACCEPT_EULA=YES` internally; do not expose duplicate user plumbing.
+  Keep `PRIVACY_CONSENT` and telemetry off. Standard GR00T inference and
+  fine-tuning do not require Isaac acceptance.
 - **Reach Isaac through `/isaac-sim/python.sh`** (the value of `ISAAC_LAB_PYTHON`). That is
   the bootstrap shim, and it is what every SkyPilot template, the sim2real engine and the
   workbench CLI already use. A bare `python3` is the *system* interpreter and will not
