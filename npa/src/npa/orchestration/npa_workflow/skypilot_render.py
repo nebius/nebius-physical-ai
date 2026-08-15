@@ -1124,18 +1124,20 @@ def default_npa_setup() -> str:
         # Record a python COMMAND that can import npa, so stage bodies can be pointed
         # at it. Three candidates are tried in order, because each of them is the right
         # answer on some real image:
-        #   1. sys.executable - correct on normal images;
-        #   2. the alias target - the Isaac Lab image aliases python3 to
+        #   1. NPA_BAKED_PYTHON - the image's declared, dependency-complete runtime;
+        #   2. sys.executable - correct on normal images;
+        #   3. the alias target - the Isaac Lab image aliases python3 to
         #      /workspace/isaaclab/_isaac_sim/python.sh, and its embedded kit python
         #      cannot import its own site-packages unless launched through that
         #      wrapper (live run: "could not record a usable npa interpreter");
-        #   3. `type -P python3` - the PATH binary, ignoring any alias.
+        #   4. `type -P python3` - the PATH binary, ignoring any alias.
         "python3 -c 'import npa' >/dev/null 2>&1 || "
         "{ echo 'npa is not importable after setup' >&2; exit 1; }\n"
         'npa_python=""\n'
         'alias_target="$(alias python3 2>/dev/null | sed -e "s/^alias python3=//" '
         '-e "s/^\'//" -e "s/\'$//")"\n'
-        "for candidate in \"$(python3 -c 'import sys; print(sys.executable)' "
+        'for candidate in "$NPA_BAKED_PYTHON" '
+        "\"$(python3 -c 'import sys; print(sys.executable)' "
         '2>/dev/null || true)" "$alias_target" "$(type -P python3 2>/dev/null '
         '|| true)"; do\n'
         '  if [ -n "$candidate" ] && [ -x "$candidate" ] && '

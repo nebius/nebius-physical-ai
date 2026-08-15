@@ -69,6 +69,22 @@ def test_sonic_stage_setup_installs_torch_stack(
         assert "torch>=2.12.1" in setup, doc["name"]
 
 
+def test_setup_prefers_the_dependency_complete_baked_npa_interpreter() -> None:
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="demo"),
+        run_id="demo",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    setup = [doc for doc in yaml.safe_load_all(rendered) if doc][1]["setup"]
+
+    candidate_loop = setup.split("for candidate in ", 1)[1].split("; do", 1)[0]
+    assert candidate_loop.index('"$NPA_BAKED_PYTHON"') < candidate_loop.index(
+        "sys.executable"
+    )
+
+
 def test_sonic_specs_train_with_the_in_job_runtime() -> None:
     # `serverless` (and vm/container) delegate to more infrastructure, which a
     # stage that already holds a GPU cannot provision.
