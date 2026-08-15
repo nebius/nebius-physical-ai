@@ -263,7 +263,7 @@ def check_ngc_key(
     if ngc_validator is None:
         return CheckResult(
             name="ngc",
-            status=PASS,
+            status=WARN,
             summary=(
                 "NGC_API_KEY is present and well-formed; repository entitlement "
                 "was not probed in offline mode."

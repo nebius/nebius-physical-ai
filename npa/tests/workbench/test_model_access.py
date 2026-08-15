@@ -154,6 +154,13 @@ def test_ngc_pass_with_valid_prefix() -> None:
     )
 
 
+def test_ngc_well_formed_key_is_unverified_offline() -> None:
+    result = check_ngc_key("nvapi-abc", needed=True)
+
+    assert result.status == WARN
+    assert "not probed in offline mode" in result.summary
+
+
 def test_ngc_credential_does_not_masquerade_as_entitlement() -> None:
     result = check_ngc_key(
         "nvapi-abc",

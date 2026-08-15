@@ -5,8 +5,8 @@ fetched on first run from ``pypi.nvidia.com`` with EULA acceptance enabled by de
 Two properties of that mechanism are load-bearing and must not regress:
 
 1. **Default and opt-out behavior.** An unset value defaults to NVIDIA's documented
-   ``ACCEPT_EULA=Y`` so workflows remain non-interactive. An explicit empty/non-Y value
-   opts out, and the bootstrap must then download nothing and exit non-zero.
+   ``ACCEPT_EULA=Y`` so workflows remain non-interactive. Recognized negative values
+   opt out, invalid values fail distinctly, and the bootstrap must download nothing.
 2. **Concurrency safety.** Eight GPUs per node means up to eight pods racing one cache
    volume. A partially-written cache would be an extremely unpleasant bug to debug on a
    customer's cluster.

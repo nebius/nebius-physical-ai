@@ -271,11 +271,9 @@ def supported_tool_version(tool: str) -> str:
 def public_mirror_tag_for_tool(tool: str) -> str:
     """Return the exact repository pin that the public mirror must carry.
 
-    SONIC's normal resolver selects a hardware variant and defaults to the L40S
-    ``0.1.2`` image. The public inventory contract instead pins the validated
-    cross-architecture Kubernetes runtime from ``SUPPORTED_TOOL_VERSIONS``. A
-    publisher that called ``supported_tool_version('sonic')`` would silently
-    mirror only the default variant and leave the repository pin unavailable.
+    SONIC's runtime resolver accepts only the active host-mounted Kubernetes
+    variant. The public inventory contract pins that validated cross-architecture
+    runtime from ``SUPPORTED_TOOL_VERSIONS`` rather than either quarantined tag.
     """
     if tool == "sonic":
         return SUPPORTED_TOOL_VERSIONS[tool]

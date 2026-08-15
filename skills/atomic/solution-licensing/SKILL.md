@@ -235,14 +235,19 @@ bytes at all**. On first run they download Isaac Sim and Isaac Lab from
 `ACCEPT_EULA=Y` for these non-interactive workloads and preserves an explicit opt-out.
 NVIDIA still delivers the runtime directly to each operator; we redistribute no Isaac
 bytes, so the redistribution conclusion does not depend on the EULA UX default.
-So `isaac-lab`, `sonic`, `sonic-mujoco` and `groot` are now `redistribution: public`.
+The clean runtime-fetch `isaac-lab`, `sonic`, and `groot` images may therefore be
+classified `redistribution: public`. Historical SONIC L40S and MuJoCo images remain
+restricted and quarantined because their built layers contain the old payload; a new
+runtime-fetch build must be scanned before it can replace them.
 
 Three things made that verdict defensible rather than merely plausible, and a new
 solution should expect to produce all three:
 
 1. **Default acceptance and explicit opt-out are tested features.** Unset acceptance
-   must run non-interactively, while an explicit empty/non-Y value must refuse before
-   downloading. The public-image control remains the verified absence of Isaac bytes.
+   must run non-interactively. Empty, `N`, `NO`, `0`, and `FALSE` must refuse
+   before downloading; `Y`, `YES`, `1`, and `TRUE` normalize to acceptance;
+   unrecognized values fail separately as invalid. The public-image control
+   remains the verified absence of Isaac bytes.
 2. **The absence is verified on the artefact.** `npa/scripts/scan_image_omniverse_payload.py`
    streams the built image's filesystem and layer history and fails on Kit payload
    signatures. Reading the Dockerfile is not evidence — the claim is about bytes in

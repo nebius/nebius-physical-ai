@@ -15,8 +15,8 @@
 # Consequences an operator should know about, measured on RTX PRO 6000:
 #   * first run downloads ~4.5 GB and materialises ~10.0 GiB of cache (111 s in-cluster)
 #   * subsequent runs add 32 ms
-#   * the shared bootstrap defaults ACCEPT_EULA=Y; an explicit empty/non-Y value
-#     refuses before downloading;
+#   * the shared bootstrap defaults ACCEPT_EULA=Y; recognized negative values
+#     refuse before downloading and unrecognized values fail as invalid;
 #     see npa/docker/workbench/common/isaac_bootstrap.sh.
 #   * pre-warm the cache once per node/PVC to avoid paying the cold start per pod:
 #     npa/docker/workbench/common/warm-isaac-cache.yaml

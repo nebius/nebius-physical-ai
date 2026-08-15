@@ -232,17 +232,12 @@ SUPPORTED_EMBODIMENT_TAGS = (
 
 
 def _groot_deploy_models(model: str = DEFAULT_MODEL) -> list[str]:
-    """Assets the base deploy actually fetches; optional Reason2 is checked at use."""
-
     return [model or DEFAULT_MODEL]
 
 
 def _require_groot_isaac_consent(context: str) -> str:
     try:
-        return require_isaac_eula_acceptance(
-            context=context,
-            resume_command="npa workbench groot deploy ...",
-        )
+        return require_isaac_eula_acceptance(context=context, resume_command="npa workbench groot deploy ...")
     except MissingIsaacEulaAcceptanceError as exc:
         _fail(str(exc))
 
@@ -3516,9 +3511,7 @@ def finetune_cmd(
         None, "--dataloader-num-workers", help="Override dataloader workers."
     ),
     logging_steps: int | None = typer.Option(
-        None,
-        "--logging-steps",
-        help="Emit a real trainer loss every N optimizer steps.",
+        None, "--logging-steps", help="Emit a real trainer loss every N optimizer steps."
     ),
     save_steps: int | None = typer.Option(
         None, "--save-steps", help="Override checkpoint save interval."
@@ -3711,12 +3704,8 @@ def eval_cmd(
         False, "--sim", help="Create a sim-eval request for an Isaac Lab workbench."
     ),
     accept_eula: bool = typer.Option(
-        True,
-        "--accept-eula/--no-accept-eula",
-        help=(
-            "Run-scoped Isaac Sim/Omniverse acceptance for --sim only. "
-            "Enabled by default; use --no-accept-eula to refuse before creating work."
-        ),
+        True, "--accept-eula/--no-accept-eula",
+        help="Isaac EULA acceptance for --sim; use --no-accept-eula to opt out.",
     ),
     isaac_lab_workbench: str = typer.Option(
         "",
@@ -3758,9 +3747,8 @@ def eval_cmd(
     if sim:
         if not accept_eula:
             _fail(
-                "Refusing GR00T Isaac simulation because --no-accept-eula was set. "
-                "Offline GR00T evaluation does not require Isaac acceptance; rerun "
-                "without --sim or use --accept-eula after accepting the named terms."
+                "Refusing GR00T Isaac simulation after --no-accept-eula; offline "
+                "evaluation needs no acceptance. Use --accept-eula or omit --sim."
             )
         if not isaac_lab_workbench:
             _fail("--isaac-lab-workbench is required with --sim")

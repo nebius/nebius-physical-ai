@@ -74,7 +74,9 @@ def test_isaac_tool_skills_preserve_default_opt_out_and_internal_plumbing() -> N
         text = " ".join(path.read_text(encoding="utf-8").split())
         for phrase in (
             "defaults `ACCEPT_EULA=Y`",
-            "empty/non-`Y`",
+            "`N`, `NO`, `0`, `FALSE`",
+            "`Y`, `YES`, `1`, and `TRUE`",
+            "other values are invalid",
             "before download",
             "derives `OMNI_KIT_ACCEPT_EULA=YES` internally",
             "Keep `PRIVACY_CONSENT` and telemetry off",

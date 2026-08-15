@@ -7,8 +7,8 @@ The workflow composes three Workbench stages:
 
 1. Retarget source motion artifacts into the SONIC embodiment schema with
    `npa workbench sonic retargeting run`.
-2. Fine-tune or smoke-validate the SONIC locomotion checkpoint on L40S with the
-   baked SONIC image variant.
+2. Fine-tune or smoke-validate the SONIC locomotion checkpoint on RTX PRO 6000
+   Kubernetes with the active host-mounted runtime-fetch image.
 3. Evaluate the resulting checkpoint with MJLab metrics through
    `npa workbench mjlab eval`.
 

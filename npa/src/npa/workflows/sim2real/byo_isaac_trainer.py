@@ -591,7 +591,7 @@ def _isaac_eula_env_entries() -> list[dict[str, str]]:
     """Kubernetes ``env`` entries carrying the operator's NVIDIA licence acceptance.
 
     Forward an explicit submitting-process value when present. When absent, the runtime
-    image applies its default acceptance; an explicitly empty/non-Y value remains an
+    image applies its default acceptance; an explicitly present value, including empty,
     opt-out and fails before download.
     """
 
