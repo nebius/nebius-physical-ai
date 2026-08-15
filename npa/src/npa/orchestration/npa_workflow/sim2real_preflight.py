@@ -8,6 +8,7 @@ import re
 from typing import Any
 
 from npa.orchestration.npa_workflow.kubernetes_prerequisites import (
+    format_cpu_memory_requirement,
     ready_schedulable_cpu_nodes,
 )
 from npa.orchestration.skypilot.controller import (
@@ -32,6 +33,14 @@ _REQUIRED_SECRET_ENVS = (
     "HF_TOKEN",
 )
 _DIGEST_IMAGE = re.compile(r"^[^/\s]+/.+@sha256:[0-9a-fA-F]{64}$")
+_SIM2REAL_CPU_MILLICORES = (8 + DEFAULT_K8S_CONTROLLER_CPUS) * 1000
+_SIM2REAL_MEMORY_BYTES = (32 + DEFAULT_K8S_CONTROLLER_MEMORY_GB) * 1024**3
+
+
+def cpu_placement_requirement() -> str:
+    return format_cpu_memory_requirement(
+        _SIM2REAL_CPU_MILLICORES, _SIM2REAL_MEMORY_BYTES
+    )
 
 
 def static_prerequisites(
@@ -133,8 +142,8 @@ def _ready_schedulable_cpu_nodes(nodes_json: str) -> list[str]:
     """Return nodes able to host one CPU stage and the SkyPilot controller."""
     return ready_schedulable_cpu_nodes(
         nodes_json,
-        minimum_cpu_millicores=(8 + DEFAULT_K8S_CONTROLLER_CPUS) * 1000,
-        minimum_memory_bytes=(32 + DEFAULT_K8S_CONTROLLER_MEMORY_GB) * 1024**3,
+        minimum_cpu_millicores=_SIM2REAL_CPU_MILLICORES,
+        minimum_memory_bytes=_SIM2REAL_MEMORY_BYTES,
     )
 
 
@@ -159,11 +168,13 @@ def kubernetes_prerequisites(
     elif not _ready_schedulable_cpu_nodes(str(getattr(nodes, "stdout", ""))):
         issues.append(
             (
-                "no Ready, untainted, non-GPU node can fit the Sim2Real CPU stage "
-                "plus SkyPilot controller (10 vCPU / 40 GiB allocatable)",
-                "add a dedicated CPU node pool such as cpu-e2/16vcpu-64gb (the "
+                "no Ready, schedulable, appropriately untainted node can fit the "
+                "Sim2Real CPU stage plus SkyPilot controller "
+                f"({cpu_placement_requirement()})",
+                "provide a node with sufficient allocatable CPU and memory, such as "
+                "cpu-e2/16vcpu-64gb (the "
                 "8vcpu-32gb nominal preset loses capacity to Kubernetes reserve), wait for "
-                "Ready, then rerun `kubectl get nodes -o json`",
+                "Ready, then rerun `kubectl get nodes -o json` on the selected context",
             )
         )
 

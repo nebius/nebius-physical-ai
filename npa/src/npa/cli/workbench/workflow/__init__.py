@@ -704,7 +704,6 @@ def submit_cmd(
     registry_auth_plan = None
     deploy_targets = []
     resolved_deploy_plans: dict[str, Any] = {}
-    paidf_kubernetes_checked = False
     source_action = "not-required"
     planned_source_uri = ""
     if is_npa_spec:
@@ -717,6 +716,39 @@ def submit_cmd(
         # its cluster kubeconfigs outside ~/.kube/config, so a context it
         # provisioned looks missing until KUBECONFIG points at it.
         infra_context = _infra_kube_context(infra)
+        from npa.orchestration.npa_workflow.deploy import (
+            bind_deploy_targets_to_submit,
+            parse_deploy_targets,
+        )
+
+        try:
+            deploy_targets = bind_deploy_targets_to_submit(
+                parse_deploy_targets(load_spec(yaml_path)),
+                project=project,
+                infra=infra,
+            )
+        except Exception as exc:  # noqa: BLE001 - fail before any mutation
+            _fail(f"deployIfAbsent target resolution failed: {exc}")
+            return
+        if is_paidf_spec and not infra_context:
+            declared_contexts = sorted(
+                {
+                    target.resolved_context
+                    for target in deploy_targets
+                    if target.cloud.strip().lower() in {"k8s", "kubernetes"}
+                    and target.resolved_context
+                }
+            )
+            if len(declared_contexts) != 1:
+                _fail(
+                    "PAIDF Kubernetes target cannot be resolved safely without "
+                    "--infra: expected exactly one Kubernetes deployIfAbsent context, "
+                    f"found {declared_contexts or 'none'}. Pass --infra k8s/<context>; "
+                    "no S3 input or source was written."
+                )
+                return
+            infra_context = declared_contexts[0]
+            infra = f"k8s/{infra_context}"
         if infra_context and not plan_only:
             _adopt_npa_kubeconfig(infra_context)
         image_value_for_source = str(image or "").strip().lower()
@@ -836,20 +868,10 @@ def submit_cmd(
         # temporary mutation.
         if deploy_if_absent:
             from npa.orchestration.npa_workflow.deploy import (
-                bind_deploy_targets_to_submit,
-                parse_deploy_targets,
                 plan_infra_present,
-            )
-            from npa.orchestration.npa_workflow.spec import (
-                load_spec as _load_deploy_spec,
             )
 
             try:
-                deploy_targets = bind_deploy_targets_to_submit(
-                    parse_deploy_targets(_load_deploy_spec(yaml_path)),
-                    project=project,
-                    infra=infra,
-                )
                 resolved_deploy_plans = plan_infra_present(
                     deploy_targets, mutation=not plan_only
                 )
@@ -872,6 +894,7 @@ def submit_cmd(
                 ),
                 requires_npa_source=requires_npa_source,
                 source_staging_planned=stage_source_planned,
+                probe_storage=False,
             )
             if not plan_only and is_paidf_spec:
                 from npa.clients.huggingface import validate_hf_access
@@ -886,11 +909,6 @@ def submit_cmd(
                         hf_validator=validate_hf_access,
                     )
                 )
-                if infra_context and _adopt_npa_kubeconfig(infra_context):
-                    missing.extend(
-                        _paidf_kubernetes_prerequisites_for_submit(infra_context)
-                    )
-                    paidf_kubernetes_checked = True
             if not plan_only and workflow_identity == "sim2real":
                 from npa.clients.huggingface import validate_hf_access
                 from npa.clients.kube import run_kubectl
@@ -907,13 +925,12 @@ def submit_cmd(
                         hf_validator=validate_hf_access,
                     )
                 )
-                context = _infra_kube_context(infra)
                 kubeconfig = os.environ.get("KUBECONFIG", "")
 
                 def _run_sim2real_kubectl(args: list[str]):
                     return run_kubectl(
                         args,
-                        context=context,
+                        context=infra_context,
                         kubeconfig=kubeconfig,
                         timeout=30,
                     )
@@ -950,11 +967,115 @@ def submit_cmd(
             enabled=preflight_images and not plan_only,
             infra=infra,
         )
+
+        # Provision/adopt the exact submission target before any writable-S3
+        # probe, PAIDF input upload, or NPA source staging. PAIDF derives
+        # ``infra`` from its sole deployIfAbsent context when the caller omits it,
+        # so kubectl and SkyPilot can never diverge onto an ambient context.
+        if deploy_if_absent and deploy_targets:
+            from npa.orchestration.npa_workflow.deploy import ensure_infra_present
+
+            try:
+                if not plan_only:
+                    records = ensure_infra_present(
+                        deploy_targets,
+                        dry_run=False,
+                        gpu_readiness_timeout=gpu_readiness_timeout,
+                        gpu_readiness_poll_interval=gpu_readiness_poll_interval,
+                        sky_bin=sky_bin,
+                        resolved_plans=resolved_deploy_plans,
+                    )
+                else:
+                    records = [
+                        {
+                            "profile": next(
+                                target.profile
+                                for target in deploy_targets
+                                if target.resolved_context == context
+                            ),
+                            "status": plan.decision,
+                            "context": context,
+                            "actions": [],
+                            "warnings": list(plan.reasons),
+                            "topology": plan.topology.to_dict(),
+                            "quotas": [quota.to_dict() for quota in plan.quotas],
+                        }
+                        for context, plan in resolved_deploy_plans.items()
+                    ]
+                for record in records:
+                    typer.echo(
+                        "deployIfAbsent["
+                        f"{record['profile']}]: {record['status']} "
+                        f"context={record['context']} "
+                        f"actions={','.join(record['actions']) or 'none'}",
+                        err=True,
+                    )
+                    for warning in record.get("warnings", []) or []:
+                        typer.echo(
+                            f"deployIfAbsent[{record['profile']}]: warning: {warning}",
+                            err=True,
+                        )
+            except NpaWorkflowError as exc:
+                _fail(str(exc))
+                return
+
+        if infra_context and not plan_only and not _adopt_npa_kubeconfig(infra_context):
+            _fail(
+                f"Kube context {infra_context!r} (submission target {infra!r}) is not "
+                "available in KUBECONFIG or under "
+                f"~/.npa/clusters/{infra_context}/. Provision it with `npa "
+                "provision-if-absent --project <alias>`, or pass "
+                "--infra k8s/<context> for an available context; no S3 input or source "
+                "was written."
+            )
+            return
+        if infra_context and not plan_only:
+            from npa.controller_ownership import (
+                ClusterOwnerIdentityMismatchError,
+                bind_controller_owner,
+                resolve_controller_candidate,
+                verify_controller_owner,
+            )
+
+            try:
+                if bind_controller is True:
+                    bind_controller_owner(
+                        resolve_controller_candidate(project, infra_context)
+                    )
+                verify_controller_owner(project, infra_context)
+            except ClusterOwnerIdentityMismatchError as exc:
+                _fail(str(exc))
+                return
+
+        if not skip_preflight and not plan_only:
+            post_infra_missing: list[tuple[str, str]] = []
+            if is_paidf_spec:
+                post_infra_missing.extend(
+                    _paidf_kubernetes_prerequisites_for_submit(infra_context)
+                )
+            if post_infra_missing:
+                _fail_missing_prerequisites(yaml_path, post_infra_missing)
+                return
+            storage_missing = _submit_storage_prerequisites(
+                spec_config,
+                requires_s3=_spec_requires_s3(yaml_path),
+                s3_endpoint=submit_credentials.endpoint_url,
+                s3_access_key_id=getattr(
+                    submit_credentials, "access_key_id", ""
+                ),
+                s3_secret_access_key=getattr(
+                    submit_credentials, "secret_access_key", ""
+                ),
+            )
+            if storage_missing:
+                _fail_missing_prerequisites(yaml_path, storage_missing)
+                return
+
         if not plan_only:
             # Establish the exact run and current-schema no-launch evidence
-            # before PAIDF input/source staging or deployIfAbsent can mutate
-            # storage/paid infrastructure. Status can therefore prove
-            # NOT_SUBMITTED locally if any later prerequisite fails.
+            # before PAIDF input/source staging mutates storage. Infrastructure
+            # is already resolved and placement-checked above. Status can
+            # therefore prove NOT_SUBMITTED if a later staging step fails.
             try:
                 persisted_identity = prepare_run(
                     project=project,
@@ -1089,110 +1210,6 @@ def submit_cmd(
             image_overrides["*"] = image_value
         image_overrides.update(specific_image_overrides)
 
-        if deploy_if_absent and deploy_targets:
-            from npa.orchestration.npa_workflow.deploy import (
-                ensure_infra_present,
-            )
-
-            try:
-                if not plan_only:
-                    records = ensure_infra_present(
-                        deploy_targets,
-                        dry_run=False,
-                        gpu_readiness_timeout=gpu_readiness_timeout,
-                        gpu_readiness_poll_interval=gpu_readiness_poll_interval,
-                        sky_bin=sky_bin,
-                        resolved_plans=resolved_deploy_plans,
-                    )
-                else:
-                    records = [
-                        {
-                            "profile": next(
-                                target.profile
-                                for target in deploy_targets
-                                if target.resolved_context == context
-                            ),
-                            "status": plan.decision,
-                            "context": context,
-                            "actions": [],
-                            "warnings": list(plan.reasons),
-                            "topology": plan.topology.to_dict(),
-                            "quotas": [quota.to_dict() for quota in plan.quotas],
-                        }
-                        for context, plan in resolved_deploy_plans.items()
-                    ]
-                for record in records:
-                    typer.echo(
-                        "deployIfAbsent["
-                        f"{record['profile']}]: {record['status']} "
-                        f"context={record['context']} "
-                        f"actions={','.join(record['actions']) or 'none'}",
-                        err=True,
-                    )
-                    # A `partial` outcome (no project_id, no bucket, ...) used to
-                    # print its status with the reason dropped, and the submit
-                    # carried on into a launch that could not work.
-                    for warning in record.get("warnings", []) or []:
-                        typer.echo(
-                            f"deployIfAbsent[{record['profile']}]: warning: {warning}",
-                            err=True,
-                        )
-            except NpaWorkflowError as exc:
-                _fail(str(exc))
-                return
-
-        # Provisioning may have just created the context (or failed to). Either way
-        # the launch cannot work without it, so stop here with the remedy rather
-        # than deep inside `sky jobs launch`.
-        if infra_context and not plan_only and not _adopt_npa_kubeconfig(infra_context):
-            _fail(
-                f"Kube context {infra_context!r} (from --infra {infra!r}) is not available: "
-                "it is not in your kubeconfig and npa has no kubeconfig for it under "
-                f"~/.npa/clusters/{infra_context}/. Provision the cluster with "
-                "`npa provision-if-absent --project <alias>` (check its output for "
-                "warnings), or point KUBECONFIG at the cluster you want and pass a "
-                "context from `kubectl config get-contexts`."
-            )
-            return
-        if infra_context and not plan_only:
-            from npa.controller_ownership import (
-                ClusterOwnerIdentityMismatchError,
-                bind_controller_owner,
-                resolve_controller_candidate,
-                verify_controller_owner,
-            )
-
-            try:
-                if bind_controller is True:
-                    bind_controller_owner(
-                        resolve_controller_candidate(project, infra_context)
-                    )
-                verify_controller_owner(project, infra_context)
-            except ClusterOwnerIdentityMismatchError as exc:
-                _fail(str(exc))
-                return
-        if (
-            is_paidf_spec
-            and not paidf_kubernetes_checked
-            and not skip_preflight
-            and not plan_only
-        ):
-            placement_context = infra_context or next(
-                (
-                    target.resolved_context
-                    for target in deploy_targets
-                    if target.cloud.strip().lower() in {"k8s", "kubernetes"}
-                ),
-                "",
-            )
-            if placement_context:
-                _adopt_npa_kubeconfig(placement_context)
-            paidf_missing = _paidf_kubernetes_prerequisites_for_submit(
-                placement_context
-            )
-            if paidf_missing:
-                _fail_missing_prerequisites(yaml_path, paidf_missing)
-                return
         npa_render_options = SkypilotRenderOptions(
             registry=_resolve_submit_registry(registry, project),
             image_overrides=image_overrides,
@@ -2783,6 +2800,7 @@ def _submit_prerequisites(
     s3_secret_access_key: str = "",
     requires_npa_source: bool = True,
     source_staging_planned: bool = False,
+    probe_storage: bool = True,
 ) -> list[tuple[str, str]]:
     """Return ``[(missing, remedy)]`` for an npa.workflow submit.
 
@@ -2842,28 +2860,16 @@ def _submit_prerequisites(
             )
         )
 
-    if not plan_only and requires_s3 and not _is_placeholder_bucket(bucket):
-        from npa.clients.storage_validation import (
-            StorageCapabilityProfile,
-            probe_storage_write,
-        )
-
-        probe = probe_storage_write(
-            bucket=bucket,
-            endpoint_url=s3_endpoint,
-            access_key_id=s3_access_key_id,
-            secret_access_key=s3_secret_access_key,
-            profile=StorageCapabilityProfile.WORKFLOW_SUBMISSION,
-        )
-        if not probe.ok:
-            missing.append(
-                (
-                    f"writable S3 for this workflow ({probe.summary})",
-                    "run `npa provision-if-absent --project <alias> --skip-k8s`, "
-                    "then retry; this append-only preflight uses a unique object and "
-                    "does not require DeleteObject",
-                )
+    if probe_storage and not plan_only:
+        missing.extend(
+            _submit_storage_prerequisites(
+                spec_config,
+                requires_s3=requires_s3,
+                s3_endpoint=s3_endpoint,
+                s3_access_key_id=s3_access_key_id,
+                s3_secret_access_key=s3_secret_access_key,
             )
+        )
 
     # Catch an `--infra k8s/<context>` that names a context the kubeconfig does
     # not define, up front. Otherwise `sky jobs launch` fails late with a long
@@ -2888,6 +2894,43 @@ def _submit_prerequisites(
                 )
             )
     return missing
+
+
+def _submit_storage_prerequisites(
+    spec_config: Mapping[str, Any],
+    *,
+    requires_s3: bool,
+    s3_endpoint: str,
+    s3_access_key_id: str,
+    s3_secret_access_key: str,
+) -> list[tuple[str, str]]:
+    """Run the cleaned writable-storage probe at its explicit mutation boundary."""
+
+    bucket = str((spec_config or {}).get("bucket", "") or "")
+    if not requires_s3 or _is_placeholder_bucket(bucket):
+        return []
+    from npa.clients.storage_validation import (
+        StorageCapabilityProfile,
+        probe_storage_write,
+    )
+
+    probe = probe_storage_write(
+        bucket=bucket,
+        endpoint_url=s3_endpoint,
+        access_key_id=s3_access_key_id,
+        secret_access_key=s3_secret_access_key,
+        profile=StorageCapabilityProfile.WORKFLOW_SUBMISSION,
+    )
+    if probe.ok:
+        return []
+    return [
+        (
+            f"writable S3 for this workflow ({probe.summary})",
+            "run `npa provision-if-absent --project <alias> --skip-k8s`, then "
+            "retry; this append-only preflight uses a unique object and does not "
+            "require DeleteObject",
+        )
+    ]
 
 
 def _fail_missing_prerequisites(

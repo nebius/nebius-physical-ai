@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from npa.orchestration.npa_workflow.kubernetes_prerequisites import (
+    format_cpu_memory_requirement,
     ready_schedulable_cpu_nodes,
 )
 from npa.orchestration.skypilot.controller import (
@@ -24,6 +25,12 @@ _REQUIRED_SECRET_ENVS = (
 _TRANSFER_REPO = "nvidia/Cosmos-Transfer2.5-2B"
 _PAIDF_CPU_MILLICORES = (4 + DEFAULT_K8S_CONTROLLER_CPUS) * 1000
 _PAIDF_MEMORY_BYTES = (16 + DEFAULT_K8S_CONTROLLER_MEMORY_GB) * 1024**3
+
+
+def cpu_placement_requirement() -> str:
+    return format_cpu_memory_requirement(
+        _PAIDF_CPU_MILLICORES, _PAIDF_MEMORY_BYTES
+    )
 
 
 def static_prerequisites(
@@ -88,9 +95,10 @@ def kubernetes_prerequisites(*, runner: Callable[[list[str]], Any]) -> list[Issu
         return []
     return [
         (
-            "no Ready, untainted, non-GPU node can fit the PAIDF CPU stage plus "
-            "SkyPilot controller (6 vCPU / 24 GiB allocatable)",
-            "provision at least one CPU node (recommended: cpu-d3/8vcpu-32gb), "
-            "wait for Ready, then rerun `kubectl get nodes -o json`",
+            "no Ready, schedulable, appropriately untainted node can fit the "
+            f"PAIDF CPU stage plus SkyPilot controller ({cpu_placement_requirement()})",
+            "provide a node with sufficient allocatable CPU and memory (the default "
+            "cpu-d3/8vcpu-32gb preset is sufficient), wait for Ready, then rerun "
+            "`kubectl get nodes -o json` on the selected context",
         )
     ]

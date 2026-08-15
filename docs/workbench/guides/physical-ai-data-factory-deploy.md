@@ -622,8 +622,8 @@ No extra flag is the production starter path. To replace it, add exactly one of:
 --seed-fixture  # developers/tests only: explicitly synthetic geometry
 ```
 
-Local and S3 replacements must be decodable H.264 MP4s. Validation and staging
-happen before automatic provisioning. Conflicts, missing media, unsupported
+Local and S3 replacements must be decodable H.264 MP4s. Kubernetes placement is
+checked before input or source staging. Conflicts, missing media, unsupported
 codec/container/shape, checksum mismatch, or an unavailable object fail with an
 actionable error and never fall back to shapes. `NPA_PAIDF_OFFLINE=1` permits
 only a verified cache hit. A committed run input is immutable, so a repeated
@@ -702,7 +702,8 @@ npa workbench workflow submit "$SPEC" \
   --assume-decision promote_checkpoint \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID \
-  --secret-env AWS_SECRET_ACCESS_KEY
+  --secret-env AWS_SECRET_ACCESS_KEY \
+  --secret-env HF_TOKEN
 ```
 
 When no valid `NPA_SRC_S3_URI` or image override is supplied, real submit

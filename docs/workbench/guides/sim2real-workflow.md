@@ -71,8 +71,9 @@ selected project's private NPA credential store; never put values in YAML.
 
 SkyPilot's Kubernetes jobs controller requests 2 vCPU/8 GiB. Sim2Real CPU states
 request 8 vCPU/32 GiB and deliberately use the small
-`npa-sim2real-control` image. Give them a Ready, untainted, non-GPU node so they
-do not contend with RT-core workers:
+`npa-sim2real-control` image. Give them a Ready, schedulable, appropriately
+untainted node with enough allocatable CPU and memory. It may also advertise GPUs;
+the CPU profile has no GPU exclusion:
 
 ```bash
 npa/.venv/bin/npa cluster node-group add-cpu \
@@ -86,7 +87,7 @@ npa/.venv/bin/npa cluster node-group add-cpu \
 kubectl get nodes -o custom-columns=NAME:.metadata.name,READY:.status.conditions[-1].status,CPU:.status.allocatable.cpu,MEMORY:.status.allocatable.memory,GPU:.status.allocatable.nvidia\.com/gpu
 ```
 
-Expected: at least one Ready row with roughly 16 CPU, 64 GiB memory, and no GPU.
+Expected: at least one Ready row with roughly 16 CPU and 64 GiB memory.
 The larger preset is intentional: Kubernetes reserves part of nominal node
 capacity, so an `8vcpu-32gb` node cannot fit a pod that requests the full
 8 vCPU/32 GiB profile. A separate `8vcpu-32gb` pool is sufficient for the

@@ -96,9 +96,9 @@ def _nodes(*, cpu="10", memory="40Gi", gpu="0", taints=None):
 
 def test_cpu_node_parser_requires_the_real_schedulable_profile():
     assert _ready_schedulable_cpu_nodes(_nodes()) == ["cpu-0"]
+    assert _ready_schedulable_cpu_nodes(_nodes(gpu="8")) == ["cpu-0"]
     assert _ready_schedulable_cpu_nodes(_nodes(cpu="9500m")) == []
     assert _ready_schedulable_cpu_nodes(_nodes(memory="39Gi")) == []
-    assert _ready_schedulable_cpu_nodes(_nodes(gpu="1")) == []
     assert _ready_schedulable_cpu_nodes(
         _nodes(taints=[{"key": "dedicated", "effect": "NoSchedule"}])
     ) == []

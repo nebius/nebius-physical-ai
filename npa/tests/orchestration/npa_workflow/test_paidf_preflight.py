@@ -72,9 +72,9 @@ def test_static_preflight_passes_with_forwarded_secrets_and_gated_access():
 
 def test_cpu_node_parser_budgets_controller_and_one_paidf_cpu_stage():
     assert _ready_schedulable_cpu_nodes(_nodes()) == ["cpu-0"]
+    assert _ready_schedulable_cpu_nodes(_nodes(gpu="4")) == ["cpu-0"]
     assert _ready_schedulable_cpu_nodes(_nodes(cpu="5900m")) == []
     assert _ready_schedulable_cpu_nodes(_nodes(memory="23Gi")) == []
-    assert _ready_schedulable_cpu_nodes(_nodes(gpu="1")) == []
     assert _ready_schedulable_cpu_nodes(
         _nodes(taints=[{"key": "dedicated", "effect": "NoSchedule"}])
     ) == []
@@ -90,7 +90,7 @@ def test_kubernetes_preflight_reports_cpu_placement_or_api_failure():
         return SimpleNamespace(returncode=0, stdout=_nodes(cpu="4"), stderr="")
 
     issue, remedy = kubernetes_prerequisites(runner=too_small)[0]
-    assert "6 vCPU / 24 GiB" in issue
+    assert "6 CPU / 24 GiB" in issue
     assert "8vcpu-32gb" in remedy
 
     def unavailable(_args):

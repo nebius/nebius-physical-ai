@@ -267,8 +267,9 @@ spec's default two-variant multiply or raise it with the requested GPU count.
 
 `submit` reports missing prerequisites together: SkyPilot, source staging,
 bucket/S3, the four forwarded runtime secrets, gated Cosmos Transfer access,
-and a Ready non-GPU node with 6 vCPU/24 GiB allocatable for one PAIDF CPU stage
-plus the SkyPilot controller. Image preflight proves each selected manifest;
+and a Ready, schedulable, appropriately untainted node with 6 CPU/24 GiB
+allocatable for one PAIDF CPU stage plus the SkyPilot controller. A qualifying
+GPU node is valid. Image preflight proves each selected manifest;
 private Nebius pulls refresh the Kubernetes secret before launch. `--plan-only`
 skips runtime-only checks; `--skip-preflight` bypasses them.
 
