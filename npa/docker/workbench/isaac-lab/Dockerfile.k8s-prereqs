@@ -31,6 +31,8 @@
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
+COPY --chmod=0755 docker/workbench/isaac-lab/npa_cli.sh /usr/local/bin/npa
+
 USER root
 
 RUN apt-get update \

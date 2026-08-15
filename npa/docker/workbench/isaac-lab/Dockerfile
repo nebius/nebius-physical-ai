@@ -98,6 +98,8 @@ RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
        NPA_ISAAC_VENV=/opt/npa/sim/venv \
        /opt/npa/docker/workbench/common/install_isaac_runtime_base.sh
 
+COPY --chmod=0755 docker/workbench/isaac-lab/npa_cli.sh /usr/local/bin/npa
+
 # Exact controller source is part of the image digest. Isaac's pinned runtime
 # provides the scientific closure; these packages are never installed by Jobs.
 # This purpose-built runtime opts out of the public SDK's convenience imports so

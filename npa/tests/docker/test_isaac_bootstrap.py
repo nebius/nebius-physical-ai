@@ -35,6 +35,7 @@ COMMON = REPO_ROOT / "npa" / "docker" / "workbench" / "common"
 BOOTSTRAP = COMMON / "isaac_bootstrap.sh"
 SHIM = COMMON / "isaac_python.sh"
 BASE_INSTALLER = COMMON / "install_isaac_runtime_base.sh"
+NPA_CLI = COMMON.parent / "isaac-lab" / "npa_cli.sh"
 WHEELS = COMMON / "isaac-nvidia-wheels.txt"
 OSS_DEPS = COMMON / "isaac-oss-deps.txt"
 
@@ -602,8 +603,18 @@ def test_base_installer_upgrades_linux_headers_from_the_fixed_snapshot() -> None
 
 
 def test_shim_and_bootstrap_are_valid_bash() -> None:
-    for script in (BOOTSTRAP, SHIM, BASE_INSTALLER):
+    for script in (BOOTSTRAP, SHIM, BASE_INSTALLER, NPA_CLI):
         subprocess.run(["bash", "-n", str(script)], check=True, timeout=60)
+
+
+def test_isaac_image_installs_a_cli_for_skypilot_setup() -> None:
+    dockerfile = (COMMON.parent / "isaac-lab" / "Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    launcher = NPA_CLI.read_text(encoding="utf-8")
+
+    assert "npa_cli.sh /usr/local/bin/npa" in dockerfile
+    assert 'exec "${NPA_BAKED_PYTHON:-/opt/npa/sim/venv/bin/python}" -m npa "$@"' in launcher
 
 
 def test_readonly_runtime_redirects_kit_portable_state_to_scratch() -> None:
