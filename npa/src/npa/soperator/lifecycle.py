@@ -14,17 +14,21 @@ Reuses the terraform subprocess helpers from ``npa.cli.cluster.terraform_lifecyc
 from __future__ import annotations
 
 import base64
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
+import fcntl
 import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
+import uuid
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from npa.cli.cluster.terraform_lifecycle import (
     _require_bin,
@@ -37,6 +41,7 @@ from npa.soperator.spec import (
     DEFAULT_SOLUTIONS_LIBRARY_REF,
     DEFAULT_SLURM_OPERATOR_VERSION,
     SoperatorSpec,
+    WorkerPoolSpec,
     validate_ssh_public_key_record,
 )
 from npa.soperator.tfvars import render_tfvars
@@ -55,6 +60,22 @@ _PROMETHEUS_CRDS = (
 _MONITORING_NAMESPACE = "monitoring-system"
 _MONITORING_RELEASE_SUFFIX = "-monitoring-dashboards"
 _ACTIVECHECKS_RELEASE_SUFFIX = "-soperator-activechecks"
+DEFAULT_GPU_CREATION_CHECK_TIMEOUT_SECONDS = 30 * 60
+_GPU_CHECK_CLEANUP_TIMEOUT_SECONDS = 30
+_SAFE_LOCAL_RECONCILIATION_REPLACEMENTS = {
+    (
+        "module.k8s.terraform_data.kubectl_cluster_context",
+        "terraform.io/builtin/terraform",
+    ),
+    (
+        "module.login_script.terraform_data.lb_service_ip",
+        "terraform.io/builtin/terraform",
+    ),
+    (
+        "module.login_script.local_file.this",
+        "registry.terraform.io/hashicorp/local",
+    ),
+}
 
 # Sidecar written next to the generated tfvars so ``destroy`` can rebuild the
 # same TF_VAR_* env the recipe requires. region/tenant/project/subnet/o11y are
@@ -66,6 +87,102 @@ _ENV_SIDECAR = ".npa-soperator-env.json"
 
 class UpstreamContractError(ValueError):
     """Raised before provider mutation when the pinned recipe contract differs."""
+
+
+class SolutionsLibraryReconciliationError(UpstreamContractError):
+    """Raised when an existing source checkout cannot be reconciled safely."""
+
+
+class ProviderReplacementPlanError(RuntimeError):
+    """Raised when a deploy plan contains an unsafe destructive action."""
+
+    def __init__(self, replacements: list[str]) -> None:
+        self.replacements = list(replacements)
+        super().__init__(
+            "Terraform planned "
+            f"{len(self.replacements)} provider or unexpected destructive action(s); "
+            "refusing to apply. The saved installation identity, Terraform state, "
+            "and live cluster were preserved"
+        )
+
+
+@dataclass(frozen=True)
+class GuardedTerraformPlan:
+    """One inspected plan plus its exact non-cloud local refresh replacements."""
+
+    path: Path
+    safe_local_replacements: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class DeploymentValidationFailure:
+    """Public-safe details for a mandatory post-apply validation failure."""
+
+    code: str
+    message: str
+    check: str
+    pool: str | None = None
+    phase: str | None = None
+    cleanup_confirmed: bool | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "status": "failed",
+            "code": self.code,
+            "check": self.check,
+            "message": self.message,
+        }
+        if self.pool is not None:
+            result["pool"] = self.pool
+        if self.phase is not None:
+            result["phase"] = self.phase
+        if self.cleanup_confirmed is not None:
+            result["cleanup_confirmed"] = self.cleanup_confirmed
+        return result
+
+
+class SoperatorDeploymentValidationError(RuntimeError):
+    """A cluster was applied but a mandatory validation gate failed.
+
+    Successful SDK calls keep returning the historical dictionary. Failed
+    post-apply validation raises this typed exception and retains the same
+    deployment metadata in :attr:`result`, clearly marked as degraded rather
+    than deployed successfully.
+    """
+
+    def __init__(
+        self,
+        deployment: dict[str, Any],
+        failure: DeploymentValidationFailure,
+    ) -> None:
+        self.deployment = dict(deployment)
+        self.failure = failure
+        self.result = {
+            **self.deployment,
+            "status": "degraded-validation",
+            "deployment_status": "applied",
+            "validation": failure.to_dict(),
+        }
+        super().__init__(failure.message)
+
+
+class GPUCreationCheckError(RuntimeError):
+    """Internal typed failure from the mandatory direct Slurm/CUDA gate."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        pool: str | None,
+        phase: str,
+        cleanup_confirmed: bool | None = None,
+        completed_checks: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self.pool = pool
+        self.phase = phase
+        self.cleanup_confirmed = cleanup_confirmed
+        self.completed_checks = list(completed_checks or [])
+        super().__init__(message)
 
 
 @dataclass(frozen=True)
@@ -86,18 +203,25 @@ def _write_env_sidecar(
     subnet_id: str,
     o11y_profile: str,
 ) -> None:
-    (install_dir / _ENV_SIDECAR).write_text(
-        json.dumps(
-            {
-                "region": region,
-                "tenant_id": tenant_id,
-                "project_id": project_id,
-                "subnet_id": subnet_id,
-                "o11y_profile": o11y_profile,
-            },
-            indent=2,
+    path = install_dir / _ENV_SIDECAR
+    temporary = install_dir / f".{_ENV_SIDECAR}.{uuid.uuid4().hex}.tmp"
+    try:
+        temporary.write_text(
+            json.dumps(
+                {
+                    "region": region,
+                    "tenant_id": tenant_id,
+                    "project_id": project_id,
+                    "subnet_id": subnet_id,
+                    "o11y_profile": o11y_profile,
+                },
+                indent=2,
+            )
         )
-    )
+        temporary.chmod(0o600)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _load_env_sidecar(install_dir: Path) -> dict[str, str] | None:
@@ -106,9 +230,649 @@ def _load_env_sidecar(install_dir: Path) -> dict[str, str] | None:
         return None
     try:
         data = json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError):
-        return None
-    return data if isinstance(data, dict) else None
+    except (json.JSONDecodeError, OSError) as exc:
+        raise ValueError(
+            f"persisted Soperator installation identity at {path} is unreadable; "
+            "refusing to fall back to an ambient project"
+        ) from exc
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"persisted Soperator installation identity at {path} is not an object; "
+            "refusing to fall back to an ambient project"
+        )
+    return data
+
+
+def _resolve_deploy_environment(
+    spec: SoperatorSpec,
+    recipe_dir: Path,
+    *,
+    project: str | None,
+) -> tuple[str, str, str, str | None, dict[str, str] | None]:
+    """Resolve deploy identity without drifting an existing Terraform install.
+
+    The persisted apply-time sidecar is authoritative for omitted identity
+    fields. Ambient/default project configuration is only a fallback for a new
+    install. Re-resolving an existing install against a changed default project
+    would otherwise produce a Terraform replacement plan for the whole cluster.
+    """
+
+    install_dir = recipe_dir / "installations" / spec.name
+    saved = _load_env_sidecar(install_dir)
+    explicit = {
+        "region": spec.region,
+        "tenant_id": spec.tenant_id,
+        "project_id": spec.project_id,
+        "subnet_id": spec.subnet_id,
+    }
+    if saved is not None:
+        persisted = {
+            field: str(saved.get(field) or "").strip()
+            for field in ("region", "tenant_id", "project_id", "subnet_id")
+        }
+        missing = [field for field, value in persisted.items() if not value]
+        if missing:
+            raise ValueError(
+                f"persisted identity for existing installation {spec.name!r} is "
+                f"incomplete (missing {', '.join(missing)}); refusing to resolve "
+                "replacement-sensitive fields from an ambient project"
+            )
+        for field, requested in explicit.items():
+            if requested and requested != persisted[field]:
+                raise ValueError(
+                    f"existing installation {spec.name!r} is pinned to its persisted "
+                    f"{field}; refusing a provider-replacement deploy. Restore the "
+                    "original value or deploy a distinct cluster name"
+                )
+        if project is not None:
+            configured = resolve_environment(project=project)
+            for field in ("region", "tenant_id", "project_id"):
+                requested = str(getattr(configured, field) or "")
+                if requested and requested != persisted[field]:
+                    raise ValueError(
+                        f"project {project!r} does not match the persisted {field} for "
+                        f"existing installation {spec.name!r}; refusing a provider-"
+                        "replacement deploy"
+                    )
+        return (
+            persisted["region"],
+            persisted["tenant_id"],
+            persisted["project_id"],
+            persisted["subnet_id"],
+            saved,
+        )
+
+    configured = resolve_environment(
+        project=project,
+        project_id=spec.project_id or None,
+        tenant_id=spec.tenant_id or None,
+        region=spec.region or None,
+    )
+    region = spec.region or configured.region
+    tenant_id = spec.tenant_id or configured.tenant_id
+    project_id = spec.project_id or configured.project_id
+    if not (region and tenant_id and project_id):
+        raise ValueError(
+            "region, tenant_id and project_id must be resolvable from the spec, "
+            "the existing installation sidecar, or ~/.npa config"
+        )
+    subnet_id = spec.subnet_id or None
+    return region, tenant_id, project_id, subnet_id, None
+
+
+def worker_capacity_summary(
+    spec: SoperatorSpec, *, reservations_verified: bool = False
+) -> list[dict[str, Any]]:
+    """Return public-safe worker capacity metadata for plans/results/status."""
+
+    return [
+        {
+            "name": pool.name,
+            "platform": pool.platform,
+            "preset": pool.preset,
+            "size": pool.size,
+            "capacity_mode": pool.capacity_mode(),
+            "reservation_selector": pool.reservation_selector_kind() or None,
+            "reservation_verified": (
+                reservations_verified if pool.capacity_mode() == "reserved" else None
+            ),
+        }
+        for pool in spec.workers
+    ]
+
+
+def plan_cluster(spec: SoperatorSpec) -> dict[str, Any]:
+    """Return a provider-free public plan for one declarative Soperator spec."""
+
+    spec.validate()
+    return {
+        "name": spec.name,
+        "region": spec.region or "(resolve-at-deploy)",
+        "control_plane": {
+            "system_min_size": spec.system_min_size,
+            "system_max_size": spec.effective_system_max_size(),
+        },
+        "workers": worker_capacity_summary(spec),
+        "reservation_preflight": (
+            "required"
+            if any(pool.capacity_mode() == "reserved" for pool in spec.workers)
+            else "not-required"
+        ),
+        "provider_mutation": False,
+    }
+
+
+def _status_installation_dir(
+    name: str,
+    *,
+    terraform_dir: Path | None = None,
+    work_root: Path | None = None,
+) -> Path | None:
+    """Find one existing installation without cloning or reconciling source."""
+
+    if terraform_dir is not None:
+        candidate = terraform_dir.expanduser().resolve() / "installations" / name
+        return candidate if candidate.is_dir() else None
+    root = (work_root or Path.home() / ".npa" / "soperator").expanduser()
+    candidates = [
+        root / "nebius-solutions-library" / "soperator" / "installations" / name,
+        *sorted(
+            root.glob(
+                f"nebius-solutions-library-*/soperator/installations/{name}"
+            )
+        ),
+    ]
+    existing = [candidate for candidate in candidates if candidate.is_dir()]
+    if len(existing) > 1:
+        raise ValueError(
+            f"multiple local installations exist for cluster {name!r}; pass "
+            "--terraform-dir to select the authoritative one"
+        )
+    return existing[0] if existing else None
+
+
+def worker_capacity_status(
+    name: str,
+    *,
+    terraform_dir: Path | None = None,
+    work_root: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Read applied worker capacity modes from local Terraform state."""
+
+    install_dir = _status_installation_dir(
+        name, terraform_dir=terraform_dir, work_root=work_root
+    )
+    if install_dir is None:
+        return []
+    state_path = install_dir / "terraform.tfstate"
+    if not state_path.is_file():
+        return []
+    try:
+        state = json.loads(state_path.read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        raise ValueError(
+            "local Terraform state is unreadable; worker capacity mode is unknown"
+        ) from exc
+    resources = state.get("resources") if isinstance(state, dict) else None
+    if not isinstance(resources, list):
+        raise ValueError(
+            "local Terraform state has no valid resource inventory; worker "
+            "capacity mode is unknown"
+        )
+    pools: dict[str, dict[str, Any]] = {}
+    for resource in resources:
+        if not isinstance(resource, dict) or resource.get("type") != "nebius_mk8s_v1_node_group":
+            continue
+        if resource.get("name") != "worker_v2":
+            continue
+        for instance in resource.get("instances") or []:
+            attributes = instance.get("attributes") if isinstance(instance, dict) else None
+            if not isinstance(attributes, dict):
+                continue
+            node_group_name = str(attributes.get("name") or "")
+            pool_name = re.sub(r"-[0-9]+$", "", node_group_name) or node_group_name
+            template = attributes.get("template") or {}
+            policy = template.get("reservation_policy") or {}
+            reservation_ids = (
+                policy.get("reservation_ids") if isinstance(policy, dict) else []
+            ) or []
+            if (
+                isinstance(policy, dict)
+                and policy.get("policy") == "STRICT"
+                and isinstance(reservation_ids, list)
+                and reservation_ids
+            ):
+                mode = "reserved"
+            elif isinstance(template, dict) and template.get("preemptible") is not None:
+                mode = "preemptible"
+            else:
+                mode = "on-demand"
+            existing = pools.get(pool_name)
+            if existing and existing["capacity_mode"] != mode:
+                raise ValueError(
+                    f"worker pool {pool_name!r} has mixed applied capacity modes"
+                )
+            entry = existing or {
+                "name": pool_name,
+                "capacity_mode": mode,
+                "node_groups": 0,
+                "nodes": 0,
+            }
+            entry["node_groups"] += 1
+            entry["nodes"] += int(attributes.get("fixed_node_count") or 0)
+            pools[pool_name] = entry
+    return [pools[key] for key in sorted(pools)]
+
+
+def _provider_json(
+    command: list[str],
+    *,
+    env: dict[str, str],
+    description: str,
+) -> dict[str, Any]:
+    """Run one read-only provider query and require an object-shaped response."""
+
+    try:
+        completed = _run_capture(
+            command,
+            env=env,
+            check=False,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError(f"{description} timed out; refusing provider mutation") from exc
+    if completed.returncode != 0 or not completed.stdout.strip():
+        raise ValueError(f"{description} failed; refusing provider mutation")
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"{description} returned invalid JSON; refusing provider mutation"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise ValueError(
+            f"{description} returned an incompatible response; refusing provider mutation"
+        )
+    return payload
+
+
+def _current_reserved_gpu_usage(install_dir: Path) -> dict[tuple[str, str], int]:
+    """Read already-applied STRICT GPU usage so deploy preflight is idempotent."""
+
+    state_path = install_dir / "terraform.tfstate"
+    if not state_path.is_file():
+        return {}
+    try:
+        state = json.loads(state_path.read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        raise ValueError(
+            "existing Terraform state is unreadable; reservation availability "
+            "cannot be checked safely"
+        ) from exc
+    resources = state.get("resources") if isinstance(state, dict) else None
+    if not isinstance(resources, list):
+        raise ValueError(
+            "existing Terraform state has no valid resource inventory; reservation "
+            "availability cannot be checked safely"
+        )
+    usage: dict[tuple[str, str], int] = {}
+    for resource in resources:
+        if not isinstance(resource, dict) or resource.get("type") != "nebius_mk8s_v1_node_group":
+            continue
+        if resource.get("name") != "worker_v2":
+            continue
+        for instance in resource.get("instances") or []:
+            attributes = instance.get("attributes") if isinstance(instance, dict) else None
+            if not isinstance(attributes, dict):
+                continue
+            template = attributes.get("template") or {}
+            if not isinstance(template, dict):
+                continue
+            policy = template.get("reservation_policy") or {}
+            if not isinstance(policy, dict) or policy.get("policy") != "STRICT":
+                continue
+            reservation_ids = policy.get("reservation_ids") or []
+            if not isinstance(reservation_ids, list) or len(reservation_ids) != 1:
+                raise ValueError(
+                    "existing worker reservation policy is ambiguous; refusing to "
+                    "guess available reserved capacity"
+                )
+            reservation_id = str(reservation_ids[0] or "").strip()
+            preset = str((template.get("resources") or {}).get("preset") or "")
+            try:
+                node_count = int(attributes.get("fixed_node_count") or 0)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "existing reserved worker count is invalid; refusing provider mutation"
+                ) from exc
+            if not reservation_id or node_count < 0:
+                raise ValueError(
+                    "existing worker reservation policy is incomplete; refusing "
+                    "provider mutation"
+                )
+            key = (reservation_id, preset)
+            usage[key] = usage.get(key, 0) + (
+                node_count * _gpu_count_from_preset(preset)
+            )
+    return usage
+
+
+def _resolve_reserved_worker_capacity(
+    spec: SoperatorSpec,
+    *,
+    install_dir: Path,
+    nebius_bin: str,
+    tenant_id: str,
+    project_id: str,
+    region: str,
+    env: dict[str, str],
+    on_status: Callable[[str], None] | None = None,
+) -> tuple[SoperatorSpec, list[dict[str, Any]]]:
+    """Resolve and verify every explicit STRICT capacity-block selector.
+
+    The selected project is first verified to belong to the selected tenant and
+    region. Group IDs/names are then resolved only within that tenant, checked
+    for a unique active region/platform/fabric match, and capacity-checked after
+    crediting already-applied STRICT workers from the same installation.
+    """
+
+    reserved_pools = [
+        pool for pool in spec.workers if pool.capacity_mode() == "reserved"
+    ]
+    if not reserved_pools:
+        return spec, worker_capacity_summary(spec)
+
+    project = _provider_json(
+        [nebius_bin, "iam", "project", "get", "--id", project_id, "--format", "json"],
+        env=env,
+        description="selected-project identity preflight",
+    )
+    project_metadata = project.get("metadata") or {}
+    project_status = project.get("status") or {}
+    project_spec = project.get("spec") or {}
+    if (
+        not isinstance(project_metadata, dict)
+        or str(project_metadata.get("id") or "") != project_id
+        or str(project_metadata.get("parent_id") or "") != tenant_id
+    ):
+        raise ValueError(
+            "selected project does not belong to the selected tenant; refusing "
+            "reserved-capacity provider mutation"
+        )
+    project_region = str(
+        (project_status if isinstance(project_status, dict) else {}).get("region")
+        or (project_spec if isinstance(project_spec, dict) else {}).get("region")
+        or ""
+    )
+    if project_region != region:
+        raise ValueError(
+            "selected project region does not match the Soperator region; refusing "
+            "reserved-capacity provider mutation"
+        )
+
+    inventory = _provider_json(
+        [
+            nebius_bin,
+            "capacity",
+            "capacity-block-group",
+            "list",
+            "--parent-id",
+            tenant_id,
+            "--all",
+            "--format",
+            "json",
+        ],
+        env=env,
+        description="capacity-block inventory preflight",
+    )
+    items = inventory.get("items")
+    if not isinstance(items, list):
+        raise ValueError(
+            "capacity-block inventory omitted a valid items list; refusing provider mutation"
+        )
+    from npa.fleet.quotas import parse_capacity_blocks
+
+    blocks = parse_capacity_blocks(json.dumps(inventory))
+    advice_inventory = _provider_json(
+        [
+            nebius_bin,
+            "capacity",
+            "resource-advice",
+            "list",
+            "--parent-id",
+            tenant_id,
+            "--all",
+            "--format",
+            "json",
+        ],
+        env=env,
+        description="reserved preset-availability preflight",
+    )
+    advice_items = advice_inventory.get("items")
+    if not isinstance(advice_items, list):
+        raise ValueError(
+            "reserved preset-availability preflight omitted a valid items list; "
+            "refusing provider mutation"
+        )
+    existing_usage = _current_reserved_gpu_usage(install_dir)
+    resolved_workers: list[WorkerPoolSpec] = []
+    requirements: dict[str, dict[str, Any]] = {}
+
+    for pool in spec.workers:
+        if pool.capacity_mode() != "reserved":
+            resolved_workers.append(pool)
+            continue
+        selector_kind = pool.reservation_selector_kind()
+        selector = (
+            pool.capacity_block_group
+            if selector_kind == "id"
+            else pool.capacity_block_group_name
+        )
+        if selector_kind == "id":
+            matches = [
+                item
+                for item in items
+                if isinstance(item, dict)
+                and str((item.get("metadata") or {}).get("id") or "") == selector
+            ]
+            if not matches:
+                # Distinguish a wrong-tenant ID from a missing/unreadable one
+                # without echoing the private selector in public diagnostics.
+                try:
+                    foreign = _provider_json(
+                        [
+                            nebius_bin,
+                            "capacity",
+                            "capacity-block-group",
+                            "get",
+                            "--id",
+                            selector,
+                            "--format",
+                            "json",
+                        ],
+                        env=env,
+                        description="capacity-block selector lookup",
+                    )
+                except ValueError:
+                    foreign = {}
+                foreign_parent = str((foreign.get("metadata") or {}).get("parent_id") or "")
+                reason = (
+                    "belongs to another tenant"
+                    if foreign_parent and foreign_parent != tenant_id
+                    else "was not found in the selected tenant"
+                )
+                raise ValueError(
+                    f"worker pool {pool.name!r} capacity-block ID {reason}; "
+                    "refusing provider mutation"
+                )
+        else:
+            matches = [
+                item
+                for item in items
+                if isinstance(item, dict)
+                and str((item.get("metadata") or {}).get("name") or "") == selector
+            ]
+            if not matches:
+                raise ValueError(
+                    f"worker pool {pool.name!r} capacity-block name was not found "
+                    "in the selected tenant; refusing provider mutation"
+                )
+            if len(matches) > 1:
+                raise ValueError(
+                    f"worker pool {pool.name!r} capacity-block name is ambiguous "
+                    "in the selected tenant; use its immutable ID"
+                )
+        if len(matches) != 1:
+            raise ValueError(
+                f"worker pool {pool.name!r} capacity-block selector is ambiguous; "
+                "refusing provider mutation"
+            )
+        metadata = matches[0].get("metadata") or {}
+        reservation_id = str(metadata.get("id") or "")
+        block = blocks.get(reservation_id)
+        if not reservation_id or block is None:
+            raise ValueError(
+                f"worker pool {pool.name!r} capacity-block response is incomplete; "
+                "refusing provider mutation"
+            )
+        if block["parent_id"] != tenant_id:
+            raise ValueError(
+                f"worker pool {pool.name!r} capacity block belongs to another tenant"
+            )
+        if block["state"] != "STATE_ACTIVE":
+            raise ValueError(
+                f"worker pool {pool.name!r} capacity block is not active"
+            )
+        if block["region"] != region:
+            raise ValueError(
+                f"worker pool {pool.name!r} capacity-block region does not match {region}"
+            )
+        if block["platform"] != pool.platform:
+            raise ValueError(
+                f"worker pool {pool.name!r} capacity-block platform does not match "
+                f"{pool.platform}"
+            )
+        if block["fabric"] != pool.fabric:
+            raise ValueError(
+                f"worker pool {pool.name!r} capacity-block fabric does not match "
+                f"{pool.fabric}"
+            )
+        required_gpus = pool.size * _gpu_count_from_preset(pool.preset)
+        advice_matches = [
+            item
+            for item in advice_items
+            if isinstance(item, dict)
+            and str(((item.get("spec") or {}).get("compute_instance") or {}).get("platform") or "")
+            == pool.platform
+            and str(
+                ((((item.get("spec") or {}).get("compute_instance") or {}).get("preset") or {}).get("name"))
+                or ""
+            )
+            == pool.preset
+            and str((item.get("spec") or {}).get("region") or "") == region
+            and str((item.get("spec") or {}).get("fabric") or "") == pool.fabric
+        ]
+        if len(advice_matches) != 1:
+            raise ValueError(
+                f"worker pool {pool.name!r} reserved preset availability is "
+                "missing or ambiguous; refusing provider mutation"
+            )
+        reserved_advice = (advice_matches[0].get("status") or {}).get("reserved") or {}
+        advice_is_fresh = (
+            isinstance(reserved_advice, dict)
+            and reserved_advice.get("data_state") == "DATA_STATE_FRESH"
+            and reserved_advice.get("available") is not None
+        )
+        available_nodes: int | None = None
+        if advice_is_fresh:
+            try:
+                available_nodes = int(reserved_advice["available"])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"worker pool {pool.name!r} reserved preset availability is invalid; "
+                    "refusing provider mutation"
+                ) from exc
+        previous = requirements.get(reservation_id)
+        if previous and (
+            previous["platform"] != pool.platform
+            or previous["fabric"] != pool.fabric
+            or previous["preset"] != pool.preset
+        ):
+            raise ValueError(
+                "one capacity block cannot back incompatible Soperator worker pools"
+            )
+        requirement = previous or {
+            "platform": pool.platform,
+            "fabric": pool.fabric,
+            "preset": pool.preset,
+            "required_gpus": 0,
+            "required_nodes": 0,
+            "available_gpus": block["available_gpus"],
+            "available_nodes": available_nodes,
+            "pools": [],
+        }
+        requirement["required_gpus"] += required_gpus
+        requirement["required_nodes"] += pool.size
+        if requirement["available_nodes"] is None or available_nodes is None:
+            requirement["available_nodes"] = None
+        else:
+            requirement["available_nodes"] = min(
+                requirement["available_nodes"], available_nodes
+            )
+        requirement["pools"].append(pool.name)
+        requirements[reservation_id] = requirement
+        resolved_workers.append(
+            replace(pool, resolved_capacity_block_group_id=reservation_id)
+        )
+
+    for reservation_id, requirement in requirements.items():
+        available = requirement["available_gpus"]
+        if available is None:
+            raise ValueError(
+                "reserved GPU availability is unavailable; refusing provider mutation"
+            )
+        already_applied = existing_usage.get(
+            (reservation_id, requirement["preset"]), 0
+        )
+        additional = max(0, requirement["required_gpus"] - already_applied)
+        if available < additional:
+            pools = ", ".join(sorted(requirement["pools"]))
+            raise ValueError(
+                f"reserved capacity is insufficient for worker pool(s) {pools}: "
+                f"needs {additional} additional GPUs, only {available} are available; "
+                "STRICT reservation-backed workers cannot fall back to on-demand "
+                "or preemptible capacity"
+            )
+        gpus_per_node = _gpu_count_from_preset(requirement["preset"])
+        already_applied_nodes = already_applied // gpus_per_node
+        additional_nodes = max(
+            0, requirement["required_nodes"] - already_applied_nodes
+        )
+        if additional_nodes and requirement["available_nodes"] is None:
+            pools = ", ".join(sorted(requirement["pools"]))
+            raise ValueError(
+                f"worker pool(s) {pools} reserved preset availability is stale "
+                "or unavailable; refusing provider mutation"
+            )
+        if (
+            additional_nodes
+            and requirement["available_nodes"] < additional_nodes
+        ):
+            pools = ", ".join(sorted(requirement["pools"]))
+            raise ValueError(
+                f"reserved preset capacity is insufficient for worker pool(s) "
+                f"{pools}: needs {additional_nodes} additional node(s), only "
+                f"{requirement['available_nodes']} are available for preset "
+                f"{requirement['preset']}; STRICT reservation-backed workers "
+                "cannot fall back to on-demand or preemptible capacity"
+            )
+    resolved = replace(spec, workers=resolved_workers)
+    _log(
+        on_status,
+        f"reserved-capacity preflight passed: {len(reserved_pools)} worker pool(s), "
+        f"{len(requirements)} active capacity block group(s)",
+    )
+    return resolved, worker_capacity_summary(resolved, reservations_verified=True)
 
 
 def _log(on_status: Callable[[str], None] | None, message: str) -> None:
@@ -205,24 +969,6 @@ def _resolve_root_login_ssh_public_key(
     )
 
 
-def _with_resolved_ssh_public_keys(
-    spec: SoperatorSpec, *, home: Path | None = None
-) -> SoperatorSpec:
-    """Compatibility wrapper returning *spec* with its canonical root-login key."""
-
-    resolved = _resolve_root_login_ssh_public_key(spec, home=home)
-    if (
-        spec.root_login_ssh_public_key == resolved.value
-        and not spec.ssh_public_keys
-    ):
-        return spec
-    return replace(
-        spec,
-        root_login_ssh_public_key=resolved.value,
-        ssh_public_keys=[],
-    )
-
-
 def _validate_immutable_solutions_library_ref(ref: str) -> str:
     normalized = ref.strip().lower()
     if not _IMMUTABLE_GIT_REF_RE.fullmatch(normalized):
@@ -233,8 +979,183 @@ def _validate_immutable_solutions_library_ref(ref: str) -> str:
     return normalized
 
 
+@contextmanager
+def _solutions_library_lock(work_root: Path):
+    """Serialize source reconciliation without locking Terraform operations."""
+
+    work_root.mkdir(parents=True, exist_ok=True)
+    lock_path = work_root / ".solutions-library.lock"
+    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    os.fchmod(descriptor, 0o600)
+    try:
+        with os.fdopen(descriptor, "a+") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            yield
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    except BaseException:
+        # ``os.fdopen`` owns the descriptor once entered; close it only when an
+        # exception happened before ownership transferred.
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+        raise
+
+
+def _git_capture(
+    git: str,
+    repo_root: Path,
+    args: list[str],
+    *,
+    timeout: int = 600,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [git, "-C", str(repo_root), *args],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout,
+        check=False,
+    )
+
+
+def _reconcile_existing_solutions_library_checkout(
+    repo_root: Path,
+    *,
+    ref: str,
+    git: str,
+) -> None:
+    """Move a clean legacy checkout to *ref* without touching untracked state."""
+
+    inside = _git_capture(git, repo_root, ["rev-parse", "--is-inside-work-tree"])
+    if inside.returncode != 0 or inside.stdout.strip() != "true":
+        raise SolutionsLibraryReconciliationError(
+            f"existing solutions-library path {repo_root} is not a Git checkout; "
+            "move it aside only after preserving its installations/Terraform state"
+        )
+
+    head = _git_capture(git, repo_root, ["rev-parse", "HEAD"])
+    actual = head.stdout.strip().lower() if head.returncode == 0 else ""
+    symbolic_ref = _git_capture(git, repo_root, ["symbolic-ref", "-q", "HEAD"])
+    if actual == ref:
+        if symbolic_ref.returncode == 0:
+            detached = _git_capture(git, repo_root, ["checkout", "--detach", ref])
+            if detached.returncode != 0:
+                raise SolutionsLibraryReconciliationError(
+                    "the solutions-library checkout is at the pinned commit but could "
+                    "not detach from its moving branch; preserve its installation state, "
+                    "resolve the reported Git conflict, and retry"
+                )
+        # The later contract assertion accepts only pristine source plus NPA's
+        # exact idempotent patches, and rejects every other tracked mutation.
+        return
+
+    if symbolic_ref.returncode != 0 and actual:
+        raise SolutionsLibraryReconciliationError(
+            "existing solutions-library checkout is already detached at a different "
+            f"immutable commit ({actual[:12]}); retry with that installation's ref or "
+            "use a separate work root. The checkout and Terraform state were unchanged"
+        )
+
+    tracked = _git_capture(
+        git,
+        repo_root,
+        ["status", "--porcelain", "--untracked-files=no"],
+    )
+    if tracked.returncode != 0:
+        raise SolutionsLibraryReconciliationError(
+            "could not inspect the existing solutions-library checkout; no files were changed"
+        )
+    if tracked.stdout.strip():
+        raise SolutionsLibraryReconciliationError(
+            "existing solutions-library checkout has tracked changes and cannot be migrated "
+            "safely; commit, stash, or revert the tracked changes and retry. Untracked "
+            "installations/Terraform state were preserved"
+        )
+
+    present = _git_capture(git, repo_root, ["cat-file", "-e", f"{ref}^{{commit}}"])
+    if present.returncode != 0:
+        fetched = _git_capture(git, repo_root, ["fetch", "--no-tags", "origin", ref])
+        if fetched.returncode != 0:
+            raise SolutionsLibraryReconciliationError(
+                "the pinned solutions-library commit is missing from this checkout and "
+                f"`git fetch origin {ref}` failed; restore network/remote access and retry. "
+                "The checkout and all installation state were left unchanged"
+            )
+        present = _git_capture(git, repo_root, ["cat-file", "-e", f"{ref}^{{commit}}"])
+        if present.returncode != 0:
+            raise SolutionsLibraryReconciliationError(
+                "the solutions-library fetch completed but the pinned commit is still "
+                "unavailable; verify the origin remote and retry. No state was removed"
+            )
+
+    checked_out = _git_capture(git, repo_root, ["checkout", "--detach", ref])
+    if checked_out.returncode != 0:
+        raise SolutionsLibraryReconciliationError(
+            "could not check out the pinned solutions-library commit, commonly because an "
+            "untracked file conflicts with the pinned tree; move only the reported conflict "
+            "aside and retry. Installations/Terraform state were not deleted"
+        )
+    verified = _git_capture(git, repo_root, ["rev-parse", "HEAD"])
+    if verified.returncode != 0 or verified.stdout.strip().lower() != ref:
+        raise SolutionsLibraryReconciliationError(
+            "solutions-library checkout did not reach the requested immutable commit"
+        )
+
+
+def _clone_solutions_library_atomically(
+    clone_dir: Path,
+    *,
+    ref: str,
+    git: str,
+) -> None:
+    """Publish a complete checkout atomically; never expose a partial clone."""
+
+    with tempfile.TemporaryDirectory(
+        prefix=f".{clone_dir.name}.clone-",
+        dir=clone_dir.parent,
+    ) as temp_root:
+        candidate = Path(temp_root) / "checkout"
+        cloned = subprocess.run(
+            [
+                git,
+                "clone",
+                "--filter=blob:none",
+                "--no-checkout",
+                _SOLUTIONS_LIBRARY_REPO,
+                str(candidate),
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=600,
+            check=False,
+        )
+        if cloned.returncode != 0:
+            raise SolutionsLibraryReconciliationError(
+                "could not clone the solutions library; restore GitHub/network access and retry"
+            )
+        present = _git_capture(git, candidate, ["cat-file", "-e", f"{ref}^{{commit}}"])
+        if present.returncode != 0:
+            fetched = _git_capture(git, candidate, ["fetch", "--no-tags", "origin", ref])
+            if fetched.returncode != 0:
+                raise SolutionsLibraryReconciliationError(
+                    "the fresh clone could not fetch the pinned solutions-library commit"
+                )
+        checked_out = _git_capture(git, candidate, ["checkout", "--detach", ref])
+        if checked_out.returncode != 0:
+            raise SolutionsLibraryReconciliationError(
+                "the fresh clone could not check out the pinned solutions-library commit"
+            )
+        if not (candidate / "soperator" / "installations" / "example").is_dir():
+            raise SolutionsLibraryReconciliationError(
+                "the pinned solutions-library checkout is missing soperator/installations/example"
+            )
+        os.replace(candidate, clone_dir)
+
+
 def _resolve_solutions_library(terraform_dir: Path | None, work_root: Path, ref: str) -> Path:
-    """Resolve a checkout of one immutable solutions-library commit."""
+    """Resolve and safely reconcile one immutable solutions-library commit."""
 
     ref = _validate_immutable_solutions_library_ref(ref)
 
@@ -245,27 +1166,41 @@ def _resolve_solutions_library(terraform_dir: Path | None, work_root: Path, ref:
                 f"{path} is not a soperator recipe dir (missing installations/example)"
             )
         return path
-    # Preserve the historical default location when it exists so an already
-    # deployed installation keeps using its Terraform state. The contract
-    # assertion immediately after resolution still requires its HEAD to equal
-    # the requested immutable commit and permits only NPA's two known patches.
-    legacy_clone = work_root / "nebius-solutions-library"
-    if (legacy_clone / "soperator" / "installations" / "example").exists():
-        return legacy_clone / "soperator"
-    clone_dir = work_root / f"nebius-solutions-library-{ref[:12]}"
-    if not (clone_dir / "soperator" / "installations" / "example").exists():
-        work_root.mkdir(parents=True, exist_ok=True)
-        git = _require_bin("git")
-        _run_stream(
-            [git, "clone", "--filter=blob:none", "--no-checkout", _SOLUTIONS_LIBRARY_REPO, str(clone_dir)],
-            timeout=600,
-        )
-        _run_stream(
-            [git, "checkout", "--detach", ref],
-            cwd=clone_dir,
-            timeout=600,
-        )
-    return clone_dir / "soperator"
+    git = _require_bin("git")
+    with _solutions_library_lock(work_root):
+        # Preserve and migrate the historical default location in place so its
+        # untracked installations, Terraform state, and operator files retain
+        # both path identity and bytes.
+        legacy_clone = work_root / "nebius-solutions-library"
+        if legacy_clone.exists():
+            _reconcile_existing_solutions_library_checkout(
+                legacy_clone,
+                ref=ref,
+                git=git,
+            )
+            recipe = legacy_clone / "soperator"
+            if not (recipe / "installations" / "example").is_dir():
+                raise SolutionsLibraryReconciliationError(
+                    "the reconciled legacy solutions-library checkout is missing "
+                    "soperator/installations/example; no state was removed"
+                )
+            return recipe
+
+        clone_dir = work_root / f"nebius-solutions-library-{ref[:12]}"
+        if clone_dir.exists():
+            _reconcile_existing_solutions_library_checkout(
+                clone_dir,
+                ref=ref,
+                git=git,
+            )
+        else:
+            _clone_solutions_library_atomically(clone_dir, ref=ref, git=git)
+        recipe = clone_dir / "soperator"
+        if not (recipe / "installations" / "example").is_dir():
+            raise SolutionsLibraryReconciliationError(
+                "the pinned solutions-library checkout is incomplete; no files were deleted"
+            )
+        return recipe
 
 
 def _nebius_cli_env() -> dict[str, str]:
@@ -344,6 +1279,80 @@ _NODECONFIGURATOR_USERNS_VALUES = (
     "                      sysctl -w net.ipv4.tcp_rmem=\"4096 131072 536870912\"\n"
     "                      sysctl -w net.ipv4.tcp_wmem=\"4096 16384 536870912\"\n"
 )
+_STABLE_KUBECTL_CONTEXT_MARKER = "# npa: refresh credentials only when the cluster id changes"
+_STABLE_LOGIN_IP_MARKER = "# npa: regenerate the login script only when its public IP changes"
+
+
+def _patch_kubectl_context_trigger_text(text: str) -> tuple[str, bool]:
+    """Remove the pinned recipe's perpetual timestamp replacement trigger."""
+
+    if _STABLE_KUBECTL_CONTEXT_MARKER in text:
+        return text, False
+    original = (
+        "  triggers_replace = [\n"
+        "    nebius_mk8s_v1_cluster.this.id,\n"
+        "    timestamp(),\n"
+        "  ]\n"
+    )
+    if text.count(original) != 1:
+        raise UpstreamContractError(
+            "pinned kubectl context trigger does not match the verified timestamp contract"
+        )
+    replacement = (
+        "  " + _STABLE_KUBECTL_CONTEXT_MARKER + "\n"
+        "  triggers_replace = [\n"
+        "    nebius_mk8s_v1_cluster.this.id,\n"
+        "  ]\n"
+    )
+    return text.replace(original, replacement, 1), True
+
+
+def _patch_login_ip_trigger_text(text: str) -> tuple[str, bool]:
+    """Key the local login script refresh to its IP, not Service metadata churn."""
+
+    if _STABLE_LOGIN_IP_MARKER in text:
+        return text, False
+    original = (
+        "  triggers_replace = [\n"
+        "    one(data.kubernetes_service_v1.slurm_login.metadata).resource_version\n"
+        "  ]\n"
+    )
+    if text.count(original) != 1:
+        raise UpstreamContractError(
+            "pinned login-script trigger does not match the verified Service contract"
+        )
+    replacement = (
+        "  " + _STABLE_LOGIN_IP_MARKER + "\n"
+        "  triggers_replace = [\n"
+        "    one(one(one(data.kubernetes_service_v1.slurm_login.status).load_balancer).ingress).ip\n"
+        "  ]\n"
+    )
+    return text.replace(original, replacement, 1), True
+
+
+def _patch_stable_local_reconciliation_triggers(recipe_dir: Path) -> bool:
+    """Stabilize two local-only resources that otherwise replace every reconcile."""
+
+    targets = (
+        (
+            recipe_dir / "modules" / "k8s" / "k8s_cluster.tf",
+            _patch_kubectl_context_trigger_text,
+        ),
+        (
+            recipe_dir / "modules" / "login" / "main.tf",
+            _patch_login_ip_trigger_text,
+        ),
+    )
+    staged: list[tuple[Path, str]] = []
+    for path, transform in targets:
+        if not path.is_file():
+            raise UpstreamContractError(f"missing pinned local reconciliation target {path}")
+        patched, target_changed = transform(path.read_text())
+        if target_changed:
+            staged.append((path, patched))
+    for path, patched in staged:
+        path.write_text(patched)
+    return bool(staged)
 
 
 def _patch_active_checks_text(text: str) -> tuple[str, bool]:
@@ -563,6 +1572,14 @@ def _assert_solutions_library_contract(
 
     patch_contracts = (
         (
+            "soperator/modules/k8s/k8s_cluster.tf",
+            _patch_kubectl_context_trigger_text,
+        ),
+        (
+            "soperator/modules/login/main.tf",
+            _patch_login_ip_trigger_text,
+        ),
+        (
             "soperator/modules/slurm/locals_active_checks.tf",
             _patch_active_checks_text,
         ),
@@ -590,6 +1607,7 @@ def _prepare_installation(recipe_dir: Path, spec: SoperatorSpec, region: str) ->
     """Create installations/<name> with the recipe files + generated tfvars."""
 
     _patch_active_checks_locals(recipe_dir)
+    _patch_stable_local_reconciliation_triggers(recipe_dir)
     if not spec.use_default_apparmor_profile:
         _patch_nodeconfigurator_userns(recipe_dir)
     example = recipe_dir / "installations" / "example"
@@ -1141,6 +2159,164 @@ def _mid_apply_fix_loop(
             time.sleep(15)
 
 
+def _run_terraform_command(
+    args: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    timeout: int,
+    stream_output: bool,
+) -> None:
+    """Run Terraform while preserving a machine-readable caller's stdout."""
+
+    if stream_output:
+        _run_stream(args, cwd=cwd, env=env, timeout=timeout)
+        return
+    completed = _run_capture(
+        args,
+        cwd=cwd,
+        env=env,
+        timeout=timeout,
+        check=False,
+    )
+    if completed.returncode != 0:
+        from npa.clients.nebius import redact_nebius_output
+
+        detail = redact_nebius_output(
+            _tail_diagnostic(completed.stderr, completed.stdout)
+        )
+        raise RuntimeError(
+            f"Terraform command failed ({completed.returncode}): {' '.join(args[:2])}"
+            + (f": {detail}" if detail else "")
+        )
+
+
+@contextmanager
+def _terraform_plan_without_unsafe_replacements(
+    terraform_bin: str,
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    timeout: int,
+    targets: tuple[str, ...] = (),
+    on_status: Callable[[str], None] | None = None,
+) -> Iterator[GuardedTerraformPlan]:
+    """Yield a saved plan after rejecting provider/unexpected destruction.
+
+    Applying the exact inspected plan closes the gap between a safety preflight
+    and Terraform's provider mutation. Plan files can contain sensitive values,
+    so they live in an owner-only temporary directory inside the installation
+    and are removed on every exit path. The pinned recipe has three audited
+    local-only refresh resources; their exact replacement addresses/providers
+    are allowed once while every other replacement or pure delete fails closed.
+    """
+
+    phase = ", ".join(targets) if targets else "full deployment"
+    _log(on_status, f"terraform replacement guard: planning {phase}")
+    with tempfile.TemporaryDirectory(prefix=".npa-plan-", dir=cwd) as temporary:
+        temporary_path = Path(temporary)
+        temporary_path.chmod(0o700)
+        plan_path = temporary_path / "deploy.tfplan"
+        plan_command = [
+            terraform_bin,
+            "plan",
+            "-input=false",
+            "-detailed-exitcode",
+            f"-out={plan_path}",
+            *(f"-target={target}" for target in targets),
+        ]
+        try:
+            planned = _run_capture(
+                plan_command,
+                cwd=cwd,
+                env=env,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                "Terraform replacement-guard plan timed out before provider mutation"
+            ) from exc
+        if planned.returncode not in (0, 2):
+            from npa.clients.nebius import redact_nebius_output
+
+            detail = redact_nebius_output(
+                _tail_diagnostic(planned.stderr, planned.stdout)
+            )
+            raise RuntimeError(
+                f"Terraform replacement-guard plan failed ({planned.returncode}) "
+                "before provider mutation"
+                + (f": {detail}" if detail else "")
+            )
+        if not plan_path.is_file():
+            raise RuntimeError(
+                "Terraform replacement-guard plan did not produce a saved plan; "
+                "no provider mutation was attempted"
+            )
+        plan_path.chmod(0o600)
+
+        try:
+            shown = _run_capture(
+                [terraform_bin, "show", "-json", str(plan_path)],
+                cwd=cwd,
+                env=env,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                "Terraform replacement-guard plan inspection timed out before "
+                "provider mutation"
+            ) from exc
+        if shown.returncode != 0:
+            from npa.clients.nebius import redact_nebius_output
+
+            detail = redact_nebius_output(_tail_diagnostic(shown.stderr, shown.stdout))
+            raise RuntimeError(
+                "Terraform replacement-guard plan inspection failed before provider mutation"
+                + (f": {detail}" if detail else "")
+            )
+        try:
+            plan = json.loads(shown.stdout)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                "Terraform replacement-guard plan inspection returned invalid JSON; "
+                "no provider mutation was attempted"
+            ) from exc
+        resource_changes = plan.get("resource_changes", [])
+        if not isinstance(resource_changes, list):
+            raise RuntimeError(
+                "Terraform replacement-guard plan omitted a valid resource_changes list; "
+                "no provider mutation was attempted"
+            )
+        safe_local_replacements: list[str] = []
+        unsafe_destructive_actions: list[str] = []
+        for change in resource_changes:
+            if not isinstance(change, dict) or not isinstance(change.get("change"), dict):
+                continue
+            actions = change["change"].get("actions")
+            if not isinstance(actions, list) or "delete" not in actions:
+                continue
+            address = str(change.get("address") or "<unknown-resource>")
+            provider = str(change.get("provider_name") or "<unknown-provider>")
+            replacement = "create" in actions
+            if replacement and (address, provider) in _SAFE_LOCAL_RECONCILIATION_REPLACEMENTS:
+                safe_local_replacements.append(address)
+            else:
+                unsafe_destructive_actions.append(address)
+        if unsafe_destructive_actions:
+            raise ProviderReplacementPlanError(sorted(unsafe_destructive_actions))
+        _log(
+            on_status,
+            "terraform replacement guard passed: 0 provider/unexpected destructive "
+            f"actions; safe local refresh replacements={len(safe_local_replacements)}",
+        )
+        yield GuardedTerraformPlan(
+            path=plan_path,
+            safe_local_replacements=tuple(sorted(safe_local_replacements)),
+        )
+
+
 def deploy_cluster(
     spec: SoperatorSpec,
     *,
@@ -1150,12 +2326,16 @@ def deploy_cluster(
     root_login_ssh_public_key_file: Path | None = None,
     project: str | None = None,
     timeout_minutes: int = 90,
+    gpu_creation_check_timeout_seconds: int = DEFAULT_GPU_CREATION_CHECK_TIMEOUT_SECONDS,
     apply_fixes: bool = True,
+    source_preflight_only: bool = False,
+    stream_terraform_output: bool = True,
     on_status: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Deploy or reconcile *spec* after pinned-contract and key preflight."""
 
     spec.validate()
+    _validate_gpu_creation_check_timeout(gpu_creation_check_timeout_seconds)
     root_login_key = _resolve_root_login_ssh_public_key(
         spec, explicit_file=root_login_ssh_public_key_file
     )
@@ -1170,31 +2350,55 @@ def deploy_cluster(
         "login-node root SSH access enabled: "
         f"source={root_login_key.source}; fingerprint={root_login_key.fingerprint}",
     )
-    envcfg = resolve_environment(
-        project=project,
-        project_id=spec.project_id or None,
-        tenant_id=spec.tenant_id or None,
-        region=spec.region or None,
-    )
-    region = spec.region or envcfg.region
-    tenant_id = spec.tenant_id or envcfg.tenant_id
-    project_id = spec.project_id or envcfg.project_id
-    if not (region and tenant_id and project_id):
-        raise ValueError(
-            "region, tenant_id and project_id must be resolvable from the spec or ~/.npa config"
-        )
-
-    terraform_bin = _require_bin(os.environ.get("NPA_TERRAFORM_BIN") or "terraform")
-    nebius_bin = _require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius")
-
     work_root = (work_root or Path.home() / ".npa" / "soperator").expanduser()
     recipe_dir = _resolve_solutions_library(terraform_dir, work_root, solutions_library_ref)
     _assert_solutions_library_contract(recipe_dir, ref=solutions_library_ref)
     _log(on_status, f"verified solutions-library contract {solutions_library_ref[:12]}")
+    region, tenant_id, project_id, persisted_subnet_id, _saved = (
+        _resolve_deploy_environment(spec, recipe_dir, project=project)
+    )
+    if source_preflight_only:
+        result = {
+            "name": spec.name,
+            "region": region,
+            "install_dir": str(recipe_dir / "installations" / spec.name),
+            "kube_context": f"nebius-{spec.name}-slurm",
+            "worker_pools": [pool.name for pool in spec.workers],
+            "docker_cache_pools": [pool.name for pool in spec.workers if pool.docker_cache],
+            "control_plane": {
+                "system_min_size": spec.system_min_size,
+                "system_max_size": spec.effective_system_max_size(),
+            },
+            "workers": worker_capacity_summary(spec),
+            "solutions_library_ref": solutions_library_ref,
+            "status": "source-preflight-passed",
+            "provider_mutation": False,
+        }
+        _log(
+            on_status,
+            f"deploy source preflight passed: {spec.name}; provider mutation disabled",
+        )
+        return result
+
+    terraform_bin = _require_bin(os.environ.get("NPA_TERRAFORM_BIN") or "terraform")
+    nebius_bin = _require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius")
+    install_dir = recipe_dir / "installations" / spec.name
+    spec, capacity_workers = _resolve_reserved_worker_capacity(
+        spec,
+        install_dir=install_dir,
+        nebius_bin=nebius_bin,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        region=region,
+        env=_nebius_cli_env(),
+        on_status=on_status,
+    )
     install_dir = _prepare_installation(recipe_dir, spec, region)
     _log(on_status, f"Installation dir: {install_dir}")
 
-    subnet_id = spec.subnet_id or _resolve_subnet(nebius_bin, project_id, _nebius_cli_env())
+    subnet_id = persisted_subnet_id or _resolve_subnet(
+        nebius_bin, project_id, _nebius_cli_env()
+    )
     env = _soperator_tf_env(
         nebius_bin,
         region=region,
@@ -1202,19 +2406,35 @@ def deploy_cluster(
         project_id=project_id,
         subnet_id=subnet_id,
     )
-    # Persist the env the recipe requires so ``destroy`` can reconstruct it.
-    _write_env_sidecar(
-        install_dir,
-        region=region,
-        tenant_id=tenant_id,
-        project_id=project_id,
-        subnet_id=subnet_id,
-        o11y_profile=env["TF_VAR_o11y_profile"],
-    )
+    sidecar_persisted = False
+
+    def persist_identity_before_apply() -> None:
+        """Checkpoint the guarded identity immediately before provider mutation."""
+
+        nonlocal sidecar_persisted
+        if sidecar_persisted:
+            return
+        _write_env_sidecar(
+            install_dir,
+            region=region,
+            tenant_id=tenant_id,
+            project_id=project_id,
+            subnet_id=subnet_id,
+            o11y_profile=env["TF_VAR_o11y_profile"],
+        )
+        sidecar_persisted = True
 
     context = f"nebius-{spec.name}-slurm"
+    replacement_plans_checked = 0
+    safe_local_replacements_applied = 0
     _log(on_status, "terraform init")
-    _run_stream([terraform_bin, "init"], cwd=install_dir, env=env, timeout=900)
+    _run_terraform_command(
+        [terraform_bin, "init"],
+        cwd=install_dir,
+        env=env,
+        timeout=900,
+        stream_output=stream_terraform_output,
+    )
 
     if apply_fixes:
         # Two-phase apply: the soperator operator HelmRelease is reconciled inside
@@ -1226,12 +2446,26 @@ def deploy_cluster(
         # install cleanly in phase 2.
         kubectl_bin = _require_bin(os.environ.get("NPA_KUBECTL_BIN") or "kubectl")
         _log(on_status, "terraform apply (phase 1: k8s cluster + node groups)")
-        _run_stream(
-            [terraform_bin, "apply", "-target=module.k8s", "-auto-approve"],
+        with _terraform_plan_without_unsafe_replacements(
+            terraform_bin,
             cwd=install_dir,
             env=env,
             timeout=timeout_minutes * 60,
-        )
+            targets=("module.k8s",),
+            on_status=on_status,
+        ) as guarded_plan:
+            replacement_plans_checked += 1
+            safe_local_replacements_applied += len(
+                guarded_plan.safe_local_replacements
+            )
+            persist_identity_before_apply()
+            _run_terraform_command(
+                [terraform_bin, "apply", str(guarded_plan.path)],
+                cwd=install_dir,
+                env=env,
+                timeout=timeout_minutes * 60,
+                stream_output=stream_terraform_output,
+            )
         cluster_id = _terraform_cluster_id(terraform_bin, install_dir, env)
         if cluster_id:
             _log(on_status, "refreshing kube admin credentials")
@@ -1252,25 +2486,50 @@ def deploy_cluster(
             kwargs={"stop": stop, "on_status": on_status},
             daemon=True,
         )
-        fixer.start()
-        try:
-            _run_stream(
-                [terraform_bin, "apply", "-auto-approve"],
-                cwd=install_dir,
-                env=env,
-                timeout=timeout_minutes * 60,
-            )
-        finally:
-            stop.set()
-            fixer.join(timeout=10)
-    else:
-        _log(on_status, f"terraform apply ({len(spec.workers)} worker pool(s))")
-        _run_stream(
-            [terraform_bin, "apply", "-auto-approve"],
+        with _terraform_plan_without_unsafe_replacements(
+            terraform_bin,
             cwd=install_dir,
             env=env,
             timeout=timeout_minutes * 60,
-        )
+            on_status=on_status,
+        ) as guarded_plan:
+            replacement_plans_checked += 1
+            safe_local_replacements_applied += len(
+                guarded_plan.safe_local_replacements
+            )
+            fixer.start()
+            try:
+                _run_terraform_command(
+                    [terraform_bin, "apply", str(guarded_plan.path)],
+                    cwd=install_dir,
+                    env=env,
+                    timeout=timeout_minutes * 60,
+                    stream_output=stream_terraform_output,
+                )
+            finally:
+                stop.set()
+                fixer.join(timeout=10)
+    else:
+        _log(on_status, f"terraform apply ({len(spec.workers)} worker pool(s))")
+        with _terraform_plan_without_unsafe_replacements(
+            terraform_bin,
+            cwd=install_dir,
+            env=env,
+            timeout=timeout_minutes * 60,
+            on_status=on_status,
+        ) as guarded_plan:
+            replacement_plans_checked += 1
+            safe_local_replacements_applied += len(
+                guarded_plan.safe_local_replacements
+            )
+            persist_identity_before_apply()
+            _run_terraform_command(
+                [terraform_bin, "apply", str(guarded_plan.path)],
+                cwd=install_dir,
+                env=env,
+                timeout=timeout_minutes * 60,
+                stream_output=stream_terraform_output,
+            )
 
     result: dict[str, Any] = {
         "name": spec.name,
@@ -1280,6 +2539,17 @@ def deploy_cluster(
         "kube_context": context,
         "worker_pools": [p.name for p in spec.workers],
         "docker_cache_pools": [p.name for p in spec.workers if p.docker_cache],
+        "control_plane": {
+            "system_min_size": spec.system_min_size,
+            "system_max_size": spec.effective_system_max_size(),
+        },
+        "workers": capacity_workers,
+        "replacement_guard": {
+            "status": "passed",
+            "plans_checked": replacement_plans_checked,
+            "replacement_count": 0,
+            "safe_local_replacements_applied": safe_local_replacements_applied,
+        },
     }
 
     if apply_fixes:
@@ -1290,13 +2560,45 @@ def deploy_cluster(
 
     # GPU validation is a deploy contract, not an optional repair. Keep it
     # active even when an operator deliberately selects --skip-fixes.
-    kubectl_bin = _require_bin(os.environ.get("NPA_KUBECTL_BIN") or "kubectl")
-    result["gpu_creation_checks"] = _run_gpu_creation_checks(
-        spec,
-        context,
-        kubectl_bin,
-        on_status=on_status,
-    )
+    if any(pool.is_gpu() for pool in spec.workers):
+        try:
+            kubectl_bin = _require_bin(os.environ.get("NPA_KUBECTL_BIN") or "kubectl")
+            result["gpu_creation_checks"] = _run_gpu_creation_checks(
+                spec,
+                context,
+                kubectl_bin,
+                timeout_seconds=gpu_creation_check_timeout_seconds,
+                on_status=on_status,
+            )
+        except GPUCreationCheckError as exc:
+            result["gpu_creation_checks"] = exc.completed_checks
+            failure = DeploymentValidationFailure(
+                code="gpu_creation_check_failed",
+                message=str(exc),
+                check="gpu-creation",
+                pool=exc.pool,
+                phase=exc.phase,
+                cleanup_confirmed=exc.cleanup_confirmed,
+            )
+            raise SoperatorDeploymentValidationError(result, failure) from exc
+        except Exception as exc:
+            result["gpu_creation_checks"] = []
+            failure = DeploymentValidationFailure(
+                code="gpu_creation_check_failed",
+                message=f"GPU creation-check preflight failed: {exc}",
+                check="gpu-creation",
+                phase="preflight",
+            )
+            raise SoperatorDeploymentValidationError(result, failure) from exc
+    else:
+        result["gpu_creation_checks"] = []
+
+    result["status"] = "ready"
+    result["deployment_status"] = "applied"
+    result["validation"] = {
+        "status": "passed",
+        "check": "gpu-creation",
+    }
 
     return result
 
@@ -1309,18 +2611,30 @@ def destroy_cluster(
     solutions_library_ref: str = DEFAULT_SOLUTIONS_LIBRARY_REF,
     project: str | None = None,
     timeout_minutes: int = 90,
+    source_preflight_only: bool = False,
     on_status: Callable[[str], None] | None = None,
-) -> None:
+) -> dict[str, Any] | None:
     """Destroy an npa-managed soperator cluster by name."""
 
-    terraform_bin = _require_bin(os.environ.get("NPA_TERRAFORM_BIN") or "terraform")
-    nebius_bin = _require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius")
     work_root = (work_root or Path.home() / ".npa" / "soperator").expanduser()
     recipe_dir = _resolve_solutions_library(terraform_dir, work_root, solutions_library_ref)
     _assert_solutions_library_contract(recipe_dir, ref=solutions_library_ref)
     install_dir = recipe_dir / "installations" / name
     if not install_dir.exists():
         raise ValueError(f"no installation found for cluster {name!r} at {install_dir}")
+    if source_preflight_only:
+        result = {
+            "name": name,
+            "status": "source-preflight-passed",
+            "install_dir": str(install_dir),
+            "solutions_library_ref": solutions_library_ref,
+            "provider_mutation": False,
+        }
+        _log(on_status, f"destroy source preflight passed: {name}; provider mutation disabled")
+        return result
+
+    terraform_bin = _require_bin(os.environ.get("NPA_TERRAFORM_BIN") or "terraform")
+    nebius_bin = _require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius")
 
     # ``terraform destroy`` still parses the config, so the region/tenant/project/
     # subnet/o11y variables (passed as env at apply time, never written to
@@ -1622,12 +2936,257 @@ def _gpu_count_from_preset(preset: str) -> int:
     return int(match.group(1))
 
 
+def _validate_gpu_creation_check_timeout(timeout_seconds: int) -> int:
+    """Validate the independent end-to-end GPU creation-check budget."""
+
+    if (
+        isinstance(timeout_seconds, bool)
+        or not isinstance(timeout_seconds, int)
+        or timeout_seconds < 1
+    ):
+        raise ValueError(
+            "gpu creation-check timeout must be an integer of at least 1 second"
+        )
+    return timeout_seconds
+
+
+def _tail_diagnostic(*parts: str | bytes | None) -> str:
+    text_parts: list[str] = []
+    for part in parts:
+        if isinstance(part, bytes):
+            text_parts.append(part.decode(errors="replace"))
+        elif part:
+            text_parts.append(part)
+    return "\n".join("\n".join(text_parts).strip().splitlines()[-20:])
+
+
+def _slurm_time_limit(seconds: int) -> str:
+    """Render a Slurm wall-time value without dropping a sub-minute remainder."""
+
+    days, remainder = divmod(max(1, seconds), 24 * 60 * 60)
+    hours, remainder = divmod(remainder, 60 * 60)
+    minutes, seconds = divmod(remainder, 60)
+    clock = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    return f"{days}-{clock}" if days else clock
+
+
+def _slurm_exec_command(
+    kubectl_bin: str,
+    context: str,
+    namespace: str,
+    pod: str,
+    container: str | None,
+    args: list[str],
+    *,
+    jailed: bool = False,
+) -> list[str]:
+    command = [
+        kubectl_bin,
+        "--context",
+        context,
+        "exec",
+        "-n",
+        namespace,
+        pod,
+    ]
+    if container:
+        command += ["-c", container]
+    command += ["--"]
+    if jailed:
+        command += ["chroot", "/mnt/jail"]
+    return [*command, *args]
+
+
+def _discover_slurm_gpu_nodes(
+    spec: SoperatorSpec,
+    context: str,
+    kubectl_bin: str,
+    namespace: str,
+    *,
+    timeout_seconds: int,
+    kube_env: dict[str, str],
+) -> dict[str, list[str]]:
+    """Discover node names from Slurm and validate their spec-pool mapping."""
+
+    command = _slurm_exec_command(
+        kubectl_bin,
+        context,
+        namespace,
+        "controller-0",
+        "slurmctld",
+        ["sinfo", "-h", "-N", "-o", "%N"],
+    )
+    try:
+        completed = _run_capture(
+            command,
+            env=kube_env,
+            check=False,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        diagnostic = _tail_diagnostic(exc.stderr, exc.stdout)
+        raise GPUCreationCheckError(
+            "GPU creation check timed out while discovering live Slurm nodes"
+            + (f":\n{diagnostic}" if diagnostic else ""),
+            pool=None,
+            phase="node-discovery",
+        ) from exc
+    if completed.returncode != 0:
+        diagnostic = _tail_diagnostic(completed.stderr, completed.stdout)
+        raise GPUCreationCheckError(
+            "GPU creation check could not query live Slurm nodes"
+            + (f":\n{diagnostic}" if diagnostic else ""),
+            pool=None,
+            phase="node-discovery",
+        )
+
+    discovered = sorted(
+        {
+            line.strip().split()[0]
+            for line in completed.stdout.splitlines()
+            if line.strip()
+        }
+    )
+    if not discovered:
+        raise GPUCreationCheckError(
+            "GPU creation check found no nodes in live Slurm state",
+            pool=None,
+            phase="node-discovery",
+        )
+
+    mapping: dict[str, list[str]] = {}
+    for pool in (worker for worker in spec.workers if worker.is_gpu()):
+        pattern = re.compile(rf"^{re.escape(pool.name)}-[0-9]+$")
+        nodes = [node for node in discovered if pattern.fullmatch(node)]
+        if len(nodes) != pool.size:
+            shown = ", ".join(discovered)
+            raise GPUCreationCheckError(
+                f"GPU creation check cannot map pool {pool.name!r}: expected "
+                f"{pool.size} live Slurm node(s) named {pool.name}-<index>, found "
+                f"{len(nodes)}; Slurm reported: {shown}. Verify the upstream "
+                "nodeset naming contract before retrying",
+                pool=pool.name,
+                phase="node-mapping",
+            )
+        mapping[pool.name] = nodes
+    return mapping
+
+
+def _cancel_and_verify_gpu_check_job(
+    context: str,
+    kubectl_bin: str,
+    namespace: str,
+    job_name: str,
+    *,
+    kube_env: dict[str, str],
+) -> tuple[bool, str]:
+    """Cancel one uniquely named gate job and prove it left Slurm's queue."""
+
+    scancel = _slurm_exec_command(
+        kubectl_bin,
+        context,
+        namespace,
+        "login-0",
+        None,
+        ["scancel", "--name", job_name],
+        jailed=True,
+    )
+    diagnostics: list[str] = []
+    try:
+        cancelled = _run_capture(
+            scancel,
+            env=kube_env,
+            check=False,
+            timeout=_GPU_CHECK_CLEANUP_TIMEOUT_SECONDS,
+        )
+        if cancelled.returncode != 0:
+            detail = _tail_diagnostic(cancelled.stderr, cancelled.stdout)
+            if detail:
+                diagnostics.append(f"scancel: {detail}")
+    except subprocess.TimeoutExpired:
+        diagnostics.append("scancel timed out")
+
+    squeue = _slurm_exec_command(
+        kubectl_bin,
+        context,
+        namespace,
+        "login-0",
+        None,
+        ["squeue", "--noheader", "--name", job_name, "--format=%A"],
+        jailed=True,
+    )
+    deadline = time.monotonic() + _GPU_CHECK_CLEANUP_TIMEOUT_SECONDS
+    while True:
+        remaining = max(1, int(deadline - time.monotonic()))
+        try:
+            queued = _run_capture(
+                squeue,
+                env=kube_env,
+                check=False,
+                timeout=remaining,
+            )
+        except subprocess.TimeoutExpired:
+            diagnostics.append("squeue cleanup verification timed out")
+            return False, "; ".join(diagnostics)
+        if queued.returncode == 0 and not queued.stdout.strip():
+            return True, "; ".join(diagnostics)
+        if queued.returncode != 0:
+            detail = _tail_diagnostic(queued.stderr, queued.stdout)
+            diagnostics.append("could not verify Slurm queue" + (f": {detail}" if detail else ""))
+            return False, "; ".join(diagnostics)
+        if time.monotonic() >= deadline:
+            diagnostics.append(f"job {job_name} remains in Slurm after cancellation")
+            return False, "; ".join(diagnostics)
+        time.sleep(1)
+
+
+def _verify_gpu_check_job_absent(
+    context: str,
+    kubectl_bin: str,
+    namespace: str,
+    job_name: str,
+    *,
+    kube_env: dict[str, str],
+) -> bool:
+    """Allow Slurm's completion accounting to settle, then prove queue absence."""
+
+    command = _slurm_exec_command(
+        kubectl_bin,
+        context,
+        namespace,
+        "login-0",
+        None,
+        ["squeue", "--noheader", "--name", job_name, "--format=%A"],
+        jailed=True,
+    )
+    deadline = time.monotonic() + _GPU_CHECK_CLEANUP_TIMEOUT_SECONDS
+    while True:
+        remaining = max(1, int(deadline - time.monotonic()))
+        try:
+            queued = _run_capture(
+                command,
+                env=kube_env,
+                check=False,
+                timeout=remaining,
+            )
+        except subprocess.TimeoutExpired:
+            return False
+        if queued.returncode != 0:
+            return False
+        if not queued.stdout.strip():
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(1)
+
+
 def _run_gpu_creation_checks(
     spec: SoperatorSpec,
     context: str,
     kubectl_bin: str,
     *,
     namespace: str = "soperator",
+    timeout_seconds: int = DEFAULT_GPU_CREATION_CHECK_TIMEOUT_SECONDS,
     on_status: Callable[[str], None] | None = None,
 ) -> list[dict[str, Any]]:
     """Run real CUDA samples on every GPU worker through the login jail.
@@ -1642,20 +3201,49 @@ def _run_gpu_creation_checks(
     Any failed/missing node or CUDA result fails the deploy.
     """
 
+    timeout_seconds = _validate_gpu_creation_check_timeout(timeout_seconds)
     checks: list[dict[str, Any]] = []
     kube_env = _nebius_cli_env()
-    for pool in (worker for worker in spec.workers if worker.is_gpu()):
+    gpu_pools = [worker for worker in spec.workers if worker.is_gpu()]
+    if not gpu_pools:
+        return checks
+    deadline = time.monotonic() + timeout_seconds
+    node_mapping = _discover_slurm_gpu_nodes(
+        spec,
+        context,
+        kubectl_bin,
+        namespace,
+        timeout_seconds=timeout_seconds,
+        kube_env=kube_env,
+    )
+    for pool in gpu_pools:
+        remaining = int(deadline - time.monotonic())
+        if remaining < 1:
+            raise GPUCreationCheckError(
+                f"GPU creation check exceeded its {timeout_seconds}-second end-to-end "
+                f"timeout before pool {pool.name!r} could start",
+                pool=pool.name,
+                phase="queue",
+                completed_checks=checks,
+            )
         gpu_count = _gpu_count_from_preset(pool.preset)
-        nodes = [f"{pool.name}-{index}" for index in range(pool.size)]
+        nodes = node_mapping[pool.name]
         node_list = ",".join(nodes)
         task_script = f"""
 set -uo pipefail
-gpu_count=$(nvidia-smi -L | wc -l)
+if ! gpu_inventory=$(nvidia-smi -L); then
+  echo "NPA_GPU_CREATION_CHECK_RESULT host=$(hostname) status=FAIL phase=nvidia-smi-inventory"
+  exit 1
+fi
+gpu_count=$(printf '%s\n' "$gpu_inventory" | wc -l)
 if [ "$gpu_count" -ne {gpu_count} ]; then
   echo "NPA_GPU_CREATION_CHECK_RESULT host=$(hostname) status=FAIL expected_gpus={gpu_count} actual_gpus=$gpu_count"
   exit 1
 fi
-gpu_name=$(nvidia-smi --query-gpu=name --format=csv,noheader | sort -u)
+if ! gpu_name=$(nvidia-smi --query-gpu=name --format=csv,noheader | sort -u); then
+  echo "NPA_GPU_CREATION_CHECK_RESULT host=$(hostname) status=FAIL phase=nvidia-smi-name"
+  exit 1
+fi
 case "$gpu_name" in
   "NVIDIA H100") platform=8xH100 ;;
   "NVIDIA H200") platform=8xH200 ;;
@@ -1665,34 +3253,43 @@ case "$gpu_name" in
   *) echo "NPA_GPU_CREATION_CHECK_RESULT host=$(hostname) status=FAIL unsupported_gpu=$gpu_name"; exit 1 ;;
 esac
 echo "NPA_GPU_CREATION_CHECK_START host=$(hostname) gpu_count=$gpu_count platform=$platform"
+command_rc=0
 out=$(health-checker run -e soperator -p "$platform" \
   -n deviceQuery,vectorAdd,simpleMultiGPU,p2pBandwidthLatencyTest \
   -f json-partial \
-  --tests-stdout-path /opt/soperator-outputs/health_checker_cmd_stdout)
-command_rc=$?
-status=$(printf '%s\n' "$out" | awk '/^[[:space:]]*{{/,/^[[:space:]]*}}/' | jq -r '.status // empty')
+  --tests-stdout-path /opt/soperator-outputs/health_checker_cmd_stdout) || command_rc=$?
+status=$(printf '%s\n' "$out" | awk '/^[[:space:]]*{{/,/^[[:space:]]*}}/' | jq -r '.status // empty') || {{
+  echo "NPA_GPU_CREATION_CHECK_RESULT host=$(hostname) status=FAIL command_rc=$command_rc phase=result-parse"
+  exit 1
+}}
 echo "NPA_GPU_CREATION_CHECK_RESULT host=$(hostname) status=$status command_rc=$command_rc"
-test "$command_rc" -eq 0
-test "$status" = PASS
+if [ "$command_rc" -ne 0 ] || [ "$status" != PASS ]; then
+  exit 1
+fi
 """.strip()
+        job_name = f"npa-gpu-check-{uuid.uuid4().hex[:12]}"
         command = [
-            kubectl_bin,
-            "--context",
-            context,
-            "exec",
-            "-n",
-            namespace,
-            "login-0",
-            "--",
-            "chroot",
-            "/mnt/jail",
+            *_slurm_exec_command(
+                kubectl_bin,
+                context,
+                namespace,
+                "login-0",
+                None,
+                [],
+                jailed=True,
+            ),
             "srun",
             "--label",
+            f"--job-name={job_name}",
             f"--nodes={pool.size}",
             f"--ntasks={pool.size}",
             "--ntasks-per-node=1",
             f"--gpus-per-node={gpu_count}",
             "--exclusive",
+            "--kill-on-bad-exit=1",
+            "--wait=10",
+            f"--immediate={remaining}",
+            f"--time={_slurm_time_limit(remaining)}",
             f"--nodelist={node_list}",
             "bash",
             "-lc",
@@ -1702,9 +3299,36 @@ test "$status" = PASS
             on_status,
             "GPU creation check: "
             f"pool={pool.name}; nodes={pool.size}; GPUs/node={gpu_count}; "
+            f"timeout={remaining}s; "
             "tests=deviceQuery,vectorAdd,simpleMultiGPU,p2pBandwidthLatencyTest",
         )
-        completed = _run_capture(command, env=kube_env, check=False)
+        try:
+            completed = _run_capture(
+                command,
+                env=kube_env,
+                check=False,
+                timeout=remaining,
+            )
+        except subprocess.TimeoutExpired as exc:
+            cleanup_confirmed, cleanup_detail = _cancel_and_verify_gpu_check_job(
+                context,
+                kubectl_bin,
+                namespace,
+                job_name,
+                kube_env=kube_env,
+            )
+            diagnostic = _tail_diagnostic(exc.stderr, exc.stdout)
+            detail_parts = [part for part in (diagnostic, cleanup_detail) if part]
+            detail = "\n".join(detail_parts)
+            raise GPUCreationCheckError(
+                f"GPU creation check timed out after {remaining} seconds for pool "
+                f"{pool.name!r}; the queued/running Slurm job was cancelled"
+                + (f":\n{detail}" if detail else ""),
+                pool=pool.name,
+                phase="process-timeout",
+                cleanup_confirmed=cleanup_confirmed,
+                completed_checks=checks,
+            ) from exc
         passes = completed.stdout.count("NPA_GPU_CREATION_CHECK_RESULT")
         passes_with_status = completed.stdout.count("status=PASS")
         if (
@@ -1712,13 +3336,47 @@ test "$status" = PASS
             or passes != pool.size
             or passes_with_status != pool.size
         ):
-            diagnostic = "\n".join(
-                (completed.stderr or completed.stdout).strip().splitlines()[-20:]
+            cleanup_confirmed, cleanup_detail = _cancel_and_verify_gpu_check_job(
+                context,
+                kubectl_bin,
+                namespace,
+                job_name,
+                kube_env=kube_env,
             )
-            raise RuntimeError(
+            diagnostic = _tail_diagnostic(completed.stderr, completed.stdout)
+            detail_parts = [part for part in (diagnostic, cleanup_detail) if part]
+            detail = "\n".join(detail_parts)
+            raise GPUCreationCheckError(
                 f"GPU creation check failed for pool {pool.name!r} "
                 f"({passes_with_status}/{pool.size} workers reported PASS)"
-                + (f":\n{diagnostic}" if diagnostic else "")
+                + (f":\n{detail}" if detail else ""),
+                pool=pool.name,
+                phase="slurm-step",
+                cleanup_confirmed=cleanup_confirmed,
+                completed_checks=checks,
+            )
+        if not _verify_gpu_check_job_absent(
+            context,
+            kubectl_bin,
+            namespace,
+            job_name,
+            kube_env=kube_env,
+        ):
+            cleanup_confirmed, cleanup_detail = _cancel_and_verify_gpu_check_job(
+                context,
+                kubectl_bin,
+                namespace,
+                job_name,
+                kube_env=kube_env,
+            )
+            raise GPUCreationCheckError(
+                f"GPU creation check tasks passed for pool {pool.name!r}, but Slurm "
+                "still reported the gate job; cancellation was requested"
+                + (f": {cleanup_detail}" if cleanup_detail else ""),
+                pool=pool.name,
+                phase="cleanup-verification",
+                cleanup_confirmed=cleanup_confirmed,
+                completed_checks=checks,
             )
         checks.append(
             {

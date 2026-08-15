@@ -26,16 +26,22 @@ Example::
 from __future__ import annotations
 
 from npa.soperator.lifecycle import (
+    DeploymentValidationFailure,
+    SoperatorDeploymentValidationError,
     apply_post_deploy_fixes,
     deploy_cluster as deploy,
     destroy_cluster as destroy,
+    plan_cluster as plan,
 )
 from npa.soperator.spec import SoperatorSpec, WorkerPoolSpec, load_spec, spec_from_mapping
 
 __all__ = [
     "deploy",
     "destroy",
+    "plan",
     "apply_post_deploy_fixes",
+    "DeploymentValidationFailure",
+    "SoperatorDeploymentValidationError",
     "SoperatorSpec",
     "WorkerPoolSpec",
     "load_spec",

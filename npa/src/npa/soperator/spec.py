@@ -145,9 +145,37 @@ class WorkerPoolSpec:
     docker_cache: bool = False
     docker_cache_gib: int = 372  # must be divisible by 93 for IO_M3 (keep IO_M3 quota modest)
     docker_cache_disk_type: str = "NETWORK_SSD_IO_M3"
+    # Reserved-capacity selectors are runtime inputs. ``capacity_block_group``
+    # matches the fleet contract and accepts an immutable group ID;
+    # ``capacity_block_group_name`` is resolved to exactly one tenant-owned
+    # group before Terraform is rendered. Live selector values must not be
+    # committed in public examples.
+    capacity_block_group: str = ""
+    capacity_block_group_name: str = ""
+    # Populated only by the provider preflight for name-based selectors. It is
+    # deliberately absent from YAML parsing and public plan/status output.
+    resolved_capacity_block_group_id: str = field(
+        default="", repr=False, compare=False
+    )
 
     def is_gpu(self) -> bool:
         return self.platform.startswith("gpu-")
+
+    def capacity_mode(self) -> str:
+        """Return the public worker-capacity mode without exposing selectors."""
+
+        if self.capacity_block_group or self.capacity_block_group_name:
+            return "reserved"
+        return "preemptible" if self.preemptible else "on-demand"
+
+    def reservation_selector_kind(self) -> str:
+        """Return the configured selector kind, never its private value."""
+
+        if self.capacity_block_group:
+            return "id"
+        if self.capacity_block_group_name:
+            return "name"
+        return ""
 
     def validate(self) -> None:
         if not self.name or not self.name.replace("-", "").isalnum():
@@ -168,6 +196,21 @@ class WorkerPoolSpec:
         if not self.is_gpu() and self.fabric:
             raise SoperatorSpecError(
                 f"worker pool {self.name}: CPU preset must not set 'fabric'"
+            )
+        if self.capacity_block_group and self.capacity_block_group_name:
+            raise SoperatorSpecError(
+                f"worker pool {self.name}: set only one of capacity_block_group "
+                "or capacity_block_group_name"
+            )
+        if self.capacity_mode() == "reserved" and not self.is_gpu():
+            raise SoperatorSpecError(
+                f"worker pool {self.name}: reserved capacity selectors are valid "
+                "only for GPU worker pools"
+            )
+        if self.capacity_mode() == "reserved" and self.preemptible:
+            raise SoperatorSpecError(
+                f"worker pool {self.name}: reserved capacity is mutually exclusive "
+                "with preemptible=true; disable preemptibility to use a capacity block"
             )
         if self.docker_cache and self.docker_cache_gib % 93 != 0:
             raise SoperatorSpecError(
@@ -217,7 +260,10 @@ class SoperatorSpec:
     # New fields are declared last so existing positional SDK construction keeps
     # its historical meaning. The canonical key name makes the root grant clear.
     root_login_ssh_public_key: str = ""
-    system_max_size: int | None = None  # omitted -> max(min_size, upstream example's 24)
+    # Compatibility migration: the old NPA renderer fixed max_size to min_size.
+    # Omission now preserves the pinned upstream autoscaling ceiling of 24 while
+    # explicit values remain available for operator-controlled capacity/cost.
+    system_max_size: int | None = None
     accounting_preset: str | None = None
     # ``None`` preserves the historical default (follow accounting) while an
     # explicit bool makes the public contract independent. The pinned 4.1.6
@@ -238,6 +284,13 @@ class SoperatorSpec:
         if self.slurm_rest_enabled is None:
             return self.accounting
         return self.slurm_rest_enabled
+
+    def effective_system_max_size(self) -> int:
+        """Return the rendered autoscaling ceiling (visible in plans/results)."""
+
+        if self.system_max_size is not None:
+            return self.system_max_size
+        return max(self.system_min_size, 24)
 
     def validate(self) -> None:
         if not self.name or not self.name.replace("-", "").isalnum():
@@ -261,9 +314,19 @@ class SoperatorSpec:
             )
         if self.slurm_operator_version not in _VERIFIED_OPERATOR_VERSIONS:
             supported = ", ".join(sorted(_VERIFIED_OPERATOR_VERSIONS))
+            if self.slurm_operator_version == "4.1.0":
+                raise SoperatorSpecError(
+                    "slurm_operator_version 4.1.0 is no longer verified; replace it "
+                    f"with {DEFAULT_SLURM_OPERATOR_VERSION} for the default unconfined "
+                    "Enroot/Pyxis setup. Version 4.1.7 is accepted only with "
+                    "use_default_apparmor_profile=true after separately validating that "
+                    "profile on the nodes; 4.1.0 is not safe to re-enable"
+                )
             raise SoperatorSpecError(
                 "slurm_operator_version is outside the pinned runtime contract; "
-                f"verified overrides are: {supported}"
+                f"use {DEFAULT_SLURM_OPERATOR_VERSION} for the default unconfined "
+                f"Enroot/Pyxis setup; verified overrides are: {supported} (4.1.7 "
+                "requires use_default_apparmor_profile=true)"
             )
         if (
             not self.use_default_apparmor_profile
@@ -341,6 +404,12 @@ def spec_from_mapping(data: dict[str, Any]) -> SoperatorSpec:
                 docker_cache_disk_type=str(
                     entry.get("docker_cache_disk_type", "NETWORK_SSD_IO_M3")
                 ),
+                capacity_block_group=str(
+                    entry.get("capacity_block_group", "") or ""
+                ).strip(),
+                capacity_block_group_name=str(
+                    entry.get("capacity_block_group_name", "") or ""
+                ).strip(),
             )
         )
 

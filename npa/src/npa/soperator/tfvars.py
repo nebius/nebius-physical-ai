@@ -22,13 +22,31 @@ def _bool(value: bool) -> str:
 
 
 def _tfstr(value: str) -> str:
-    """Render a Terraform/HCL string with JSON and template escaping."""
+    """Render a Terraform/HCL string with single-pass template escaping."""
 
     # HCL quoted strings still evaluate ${...} interpolation and %{...}
-    # directives after JSON-compatible escaping. Doubling their introducers is
-    # Terraform's literal form and prevents a public-key comment (or any other
-    # user-controlled string) from changing the generated expression.
-    escaped = value.replace("${", "$${").replace("%{", "%%{")
+    # directives after JSON-compatible escaping. Scan once so literal forms that
+    # are already escaped ($${...} / %%{...}) remain unchanged instead of
+    # becoming $$${...} / %%%{...} and changing Terraform template semantics.
+    escaped_parts: list[str] = []
+    index = 0
+    while index < len(value):
+        if value.startswith("$${", index):
+            escaped_parts.append("$${")
+            index += 3
+        elif value.startswith("${", index):
+            escaped_parts.append("$${")
+            index += 2
+        elif value.startswith("%%{", index):
+            escaped_parts.append("%%{")
+            index += 3
+        elif value.startswith("%{", index):
+            escaped_parts.append("%%{")
+            index += 2
+        else:
+            escaped_parts.append(value[index])
+            index += 1
+    escaped = "".join(escaped_parts)
     return json.dumps(escaped, ensure_ascii=True)
 
 
@@ -57,7 +75,24 @@ def _render_worker(pool: WorkerPoolSpec) -> str:
         lines.append("    gpu_cluster = {")
         lines.append(f"      infiniband_fabric = {_tfstr(pool.fabric)}")
         lines.append("    }")
+    reservation_id = (
+        pool.resolved_capacity_block_group_id or pool.capacity_block_group
+    )
+    if pool.capacity_block_group_name and not reservation_id:
+        raise ValueError(
+            f"worker pool {pool.name}: capacity block name must be provider-resolved "
+            "before rendering Terraform"
+        )
     lines.append(f"    preemptible = {'{}' if pool.preemptible else 'null'}")
+    if reservation_id:
+        # STRICT is the only safe reservation policy for an explicit capacity
+        # block. AUTO could silently fall back to ordinary on-demand capacity.
+        lines.append("    reservation_policy = {")
+        lines.append('      policy          = "STRICT"')
+        lines.append(f"      reservation_ids = [{_tfstr(reservation_id)}]")
+        lines.append("    }")
+    else:
+        lines.append("    reservation_policy = null")
     lines.append("    features = null")
     lines.append("    create_partition = null")
     lines.append("    ephemeral_nodes                = false")
@@ -183,7 +218,7 @@ slurm_partition_config_type = "default"
 # --- Nodes ---
 slurm_nodeset_system = {{
   min_size = {spec.system_min_size}
-  max_size = {spec.system_max_size or max(spec.system_min_size, 24)}
+  max_size = {spec.effective_system_max_size()}
   resource = {{
     platform = "cpu-d3"
     preset   = {_nullable_tfstr(spec.system_preset)}
