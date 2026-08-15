@@ -43,6 +43,11 @@ def _registry_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "cr.eu-north1.nebius.cloud")
     monkeypatch.setenv("SKYPILOT_DOCKER_USERNAME", "iam")
     monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "test-token")
+    # Refresh deliberately ignores the ambient password and mints a new
+    # profile-scoped credential.  Unit tests must never reach that live exchange.
+    monkeypatch.setattr(
+        registry_auth, "mint_nebius_registry_token", lambda: "test-token"
+    )
 
 
 def test_hosts_are_deduplicated_per_registry() -> None:
