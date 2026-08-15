@@ -385,7 +385,7 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
     }
     const desktopCardEvidence = path.join(
       evidenceDir,
-      "live-artifact-card-desktop-after.png",
+      "live-hosted-preflight-artifact-card-desktop.png",
     );
     await artifactCard.screenshot({ path: desktopCardEvidence });
     fs.chmodSync(desktopCardEvidence, 0o600);
@@ -426,7 +426,7 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
       null,
       { timeout: 0 },
     );
-    const desktopEvidence = path.join(evidenceDir, "live-agent-desktop-after.png");
+    const desktopEvidence = path.join(evidenceDir, "live-hosted-preflight-desktop.png");
     await page.screenshot({ path: desktopEvidence });
     fs.chmodSync(desktopEvidence, 0o600);
 
@@ -442,7 +442,7 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
     }
     const mobileCardEvidence = path.join(
       evidenceDir,
-      "live-artifact-card-mobile-after.png",
+      "live-hosted-preflight-artifact-card-mobile.png",
     );
     await artifactCard.screenshot({ path: mobileCardEvidence });
     fs.chmodSync(mobileCardEvidence, 0o600);
@@ -462,18 +462,50 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
       }
     }
     await viewerTabs.getByRole("tab", { name: "Foxglove", exact: true }).click();
-    const mobileEvidence = path.join(evidenceDir, "live-agent-mobile-after.png");
+    const mobileEvidence = path.join(evidenceDir, "live-hosted-preflight-mobile.png");
     await page.locator("section.rerun-stage").screenshot({ path: mobileEvidence });
     fs.chmodSync(mobileEvidence, 0o600);
 
     await page.setViewportSize({ width: 1440, height: 1000 });
+    const cardUrl = page.url();
+    const cardPageCount = context.pages().length;
+    const cardExportResponsePromise = page.waitForResponse(
+      (response) => response.url().includes("/api/foxglove/export") &&
+        response.request().method() === "POST",
+      { timeout: 0 },
+    );
+    await exactButton.click();
+    const cardExportResponse = await cardExportResponsePromise;
+    if (cardExportResponse.status() !== 200) {
+      throw new Error("artifact-card Foxglove export did not return HTTP 200");
+    }
+    const cardPayload = await cardExportResponse.json();
+    const cardSource = String(cardPayload.export?.recording_url || "");
+    await page.waitForFunction(
+      ({ key, source }) => {
+        const pane = document.querySelector("#viewerPaneFoxglove");
+        const host = document.querySelector("#foxgloveHost");
+        return pane?.dataset.artifactKey === key && pane?.dataset.recordingUrl === source &&
+          host?.dataset.sdkReady === "true" && host?.dataset.dataSourceUrl === source;
+      },
+      { key: artifactKey, source: cardSource },
+      { timeout: 0 },
+    );
+    if (page.url() !== cardUrl || context.pages().length !== cardPageCount) {
+      throw new Error("artifact-card View in Foxglove created a target or navigated the Agent page");
+    }
+
     const popupPromise = context.waitForEvent("page");
     const exportResponsePromise = page.waitForResponse(
       (response) => response.url().includes("/api/foxglove/export") &&
         response.request().method() === "POST",
       { timeout: 0 },
     );
-    await exactButton.click();
+    const externalAction = page.locator("#foxgloveOpenWeb");
+    if (String(await externalAction.textContent() || "").trim() !== "Open in Foxglove") {
+      throw new Error("Foxglove pane does not separate the hosted navigation action");
+    }
+    await externalAction.click();
     const popup = await popupPromise;
     const exportResponse = await exportResponsePromise;
     if (exportResponse.status() !== 200) {
@@ -538,6 +570,11 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
       artifactKey,
       labels: expectedLabels,
       paneGeometry,
+      cardNavigation: {
+        stayedInPage: true,
+        pagesBefore: cardPageCount,
+        pagesAfter: context.pages().length - 1,
+      },
       artifactCard: {
         desktopLabels: desktopCardLabels,
         mobileLabels: mobileCardLabels,
@@ -559,6 +596,260 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
         desktop: desktopEvidence,
         mobile: mobileEvidence,
         hosted: hostedEvidence,
+        artifactCardDesktop: desktopCardEvidence,
+        artifactCardMobile: mobileCardEvidence,
+      },
+    };
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+}
+
+async function verifyFoxgloveEmbeddedArtifact(config, taskInput) {
+  const credentials = liveCredentials(config);
+  const executablePath = String(process.env.NPA_PLAYWRIGHT_CHROMIUM_EXECUTABLE || "").trim();
+  const evidenceDir = path.resolve(String(process.env.NPA_AGENT_CYPRESS_EVIDENCE_DIR || ""));
+  const runId = String((taskInput && taskInput.runId) || "").trim();
+  const runRef = String((taskInput && taskInput.runRef) || "").trim();
+  const artifactKey = String((taskInput && taskInput.artifactKey) || "").trim();
+  const expectedProjectId = String((taskInput && taskInput.projectId) || "").trim();
+  const expectedResourceBucket = String((taskInput && taskInput.resourceBucket) || "").trim();
+  const expectedResolvedPrefix = String((taskInput && taskInput.resolvedPrefix) || "").trim();
+  const expectedS3Uri = String((taskInput && taskInput.s3Uri) || "").trim();
+  if (!executablePath || !fs.existsSync(executablePath)) {
+    throw new Error("real-browser embedded Foxglove verification requires Chromium");
+  }
+  if (!runId.match(/^[A-Za-z0-9][A-Za-z0-9._-]*$/) || !runRef.match(/^npa1_[A-Za-z0-9_-]+$/)) {
+    throw new Error("real-browser embedded Foxglove verification requires an exact run selector");
+  }
+  if (!artifactKey.endsWith(".mcap")) {
+    throw new Error("real-browser embedded Foxglove verification requires an MCAP key");
+  }
+  if (!process.env.NPA_AGENT_CYPRESS_EVIDENCE_DIR || evidenceDir.startsWith(repoRoot)) {
+    throw new Error("real-browser evidence directory must be explicit and outside the clone");
+  }
+  fs.mkdirSync(evidenceDir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(evidenceDir, 0o700);
+
+  const browser = await chromium.launch({
+    executablePath,
+    headless: true,
+    args: ["--ignore-certificate-errors", "--disable-gpu-blocklist"],
+  });
+  const context = await browser.newContext({
+    httpCredentials: { username: credentials.username, password: credentials.password },
+    ignoreHTTPSErrors: true,
+    serviceWorkers: "block",
+    viewport: { width: 1440, height: 1000 },
+  });
+  const networkRequests = [];
+  context.on("request", (request) => {
+    networkRequests.push({ url: request.url(), method: request.method() });
+  });
+  try {
+    const page = await context.newPage();
+    page.setDefaultTimeout(0);
+    page.setDefaultNavigationTimeout(0);
+    const newTargets = [];
+    context.on("page", (target) => {
+      if (target !== page) {
+        const url = new URL(target.url());
+        newTargets.push({ origin: url.origin, path: url.pathname });
+      }
+    });
+    await page.goto(credentials.baseUrl, { waitUntil: "domcontentloaded", timeout: 0 });
+    await page.locator("#tabRerun").click();
+    await page.locator("#artifactPrefix").fill(runId);
+    await page.locator("#artifactPrefix").press("Enter");
+    await page.waitForFunction(
+      (expected) => [...(document.querySelector("#runIdSelect")?.options || [])]
+        .some((option) => option.value === expected),
+      runRef,
+      { timeout: 0 },
+    );
+    await page.locator("#runIdInput").fill(runId);
+    await page.locator("#loadRunData").click();
+    await page.locator('#loadRunData[aria-busy="false"]').waitFor({ state: "visible", timeout: 0 });
+    await page.locator("#artifactLoadRunArtifacts").click();
+    const exactButton = page.locator(
+      `button[data-action="open-foxglove-artifact"][data-key=${JSON.stringify(artifactKey)}]`,
+    );
+    await exactButton.waitFor({ state: "visible", timeout: 0 });
+    await page.waitForFunction(
+      (key) => {
+        const button = [...document.querySelectorAll("button[data-action='open-foxglove-artifact']")]
+          .find((candidate) => candidate.getAttribute("data-key") === key);
+        return Boolean(button && !button.disabled && button.getAttribute("aria-disabled") === "false");
+      },
+      artifactKey,
+      { timeout: 0 },
+    );
+    const artifactCard = exactButton.locator(
+      "xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' artifact-card ')][1]",
+    );
+    const labels = (await artifactCard.locator(".artifact-card-actions .btn").allTextContents())
+      .map((value) => value.trim());
+    if (labels.join("|") !== "View in Foxglove|View in Lichtblick|Download") {
+      throw new Error("live MCAP artifact card action order is incorrect");
+    }
+    const desktopCardEvidence = path.join(evidenceDir, "live-artifact-card-desktop-after.png");
+    await artifactCard.screenshot({ path: desktopCardEvidence });
+    fs.chmodSync(desktopCardEvidence, 0o600);
+
+    const beforeUrl = page.url();
+    const beforePages = context.pages().length;
+    const responsePromise = page.waitForResponse(
+      (response) => response.url().includes("/api/foxglove/export") &&
+        response.request().method() === "POST",
+      { timeout: 0 },
+    );
+    await exactButton.click();
+    await page.waitForFunction(
+      () => document.querySelector("#renderModeFoxglove")?.getAttribute("aria-selected") === "true" &&
+        document.querySelector("#viewerPaneFoxglove")?.getAttribute("aria-hidden") === "false",
+      null,
+      { timeout: 0 },
+    );
+    const exportResponse = await responsePromise;
+    if (exportResponse.status() !== 200) {
+      throw new Error(`live artifact-card export returned HTTP ${exportResponse.status()}`);
+    }
+    const exportPayload = await exportResponse.json();
+    const selected = exportPayload.selected_artifact || exportPayload.export?.selected_artifact || {};
+    const recordingUrl = String(exportPayload.export?.recording_url || "");
+    const sha256 = String(exportPayload.export?.sha256 || "");
+    const requestPayload = exportResponse.request().postDataJSON();
+    for (const [label, actual, expected] of [
+      ["run", selected.run_id, runId],
+      ["run ref", selected.run_ref, runRef],
+      ["key", selected.key, artifactKey],
+      ["request run", requestPayload.run_id, runId],
+      ["request run ref", requestPayload.run_ref, runRef],
+      ["request key", requestPayload.key, artifactKey],
+      ["request project", requestPayload.project_id, expectedProjectId],
+      ["request resource bucket", requestPayload.resource_bucket, expectedResourceBucket],
+      ["request resolved prefix", requestPayload.resolved_prefix, expectedResolvedPrefix],
+      ["request S3 URI", requestPayload.s3_uri, expectedS3Uri],
+      ["selected project", selected.project_id, expectedProjectId],
+      ["selected resource bucket", selected.resource_bucket || selected.bucket, expectedResourceBucket],
+      ["selected resolved prefix", selected.resolved_prefix, expectedResolvedPrefix],
+      ["selected S3 URI", selected.s3_uri, expectedS3Uri],
+    ]) {
+      if (String(actual || "") !== String(expected || "")) {
+        throw new Error(`live embedded Foxglove ${label} mismatch`);
+      }
+    }
+    if (!/^https:\/\//.test(recordingUrl) || !/^[a-f0-9]{64}$/.test(sha256)) {
+      throw new Error("live embedded Foxglove response lacks HTTPS URL/SHA identity");
+    }
+    await page.waitForFunction(
+      ({ key, sha, source }) => {
+        const pane = document.querySelector("#viewerPaneFoxglove");
+        const host = document.querySelector("#foxgloveHost");
+        return pane?.dataset.artifactKey === key && pane?.dataset.sha256 === sha &&
+          pane?.dataset.recordingUrl === source && host?.dataset.dataSourceUrl === source &&
+          host?.dataset.sdkReady === "true" &&
+          Number(host?.dataset.setDataSourceCount || 0) === 1;
+      },
+      { key: artifactKey, sha: sha256, source: recordingUrl },
+      { timeout: 0 },
+    );
+    const iframe = page.locator("#viewerPaneFoxglove iframe");
+    await iframe.waitFor({ state: "visible", timeout: 0 });
+    const paneBox = await page.locator("#viewerPaneFoxglove").boundingBox();
+    const iframeBox = await iframe.boundingBox();
+    if (!paneBox || paneBox.width <= 0 || paneBox.height <= 0 ||
+        !iframeBox || iframeBox.width <= 0 || iframeBox.height <= 0) {
+      throw new Error("live embedded Foxglove pane or SDK iframe has zero geometry");
+    }
+    const state = await page.evaluate(async () => {
+      const read = async (url) => {
+        const response = await fetch(url, { credentials: "include", cache: "no-store" });
+        return await response.json();
+      };
+      return { config: await read("/api/foxglove/config"), status: await read("/api/foxglove/status") };
+    });
+    for (const payload of [state.config, state.status]) {
+      if (String(payload.run_id || "") !== runId ||
+          String(payload.artifact_run_ref || "") !== runRef ||
+          String(payload.artifact_key || "") !== artifactKey ||
+          String(payload.project_id || "") !== String(selected.project_id || "") ||
+          String(payload.resource_bucket || "") !== String(selected.resource_bucket || selected.bucket || "") ||
+          String(payload.resolved_prefix || "") !== String(selected.resolved_prefix || "") ||
+          String(payload.artifact_sha256 || "") !== sha256 ||
+          String(payload.recording_url || "") !== recordingUrl) {
+        throw new Error("live Foxglove config/status lost exact selected artifact provenance");
+      }
+    }
+    const desktopEvidence = path.join(evidenceDir, "live-agent-desktop-after.png");
+    await page.screenshot({ path: desktopEvidence, fullPage: false });
+    fs.chmodSync(desktopEvidence, 0o600);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await artifactCard.scrollIntoViewIfNeeded();
+    const mobileLabels = (await artifactCard.locator(".artifact-card-actions .btn").allTextContents())
+      .map((value) => value.trim());
+    const mobileCardEvidence = path.join(evidenceDir, "live-artifact-card-mobile-after.png");
+    await artifactCard.screenshot({ path: mobileCardEvidence });
+    fs.chmodSync(mobileCardEvidence, 0o600);
+    const mobilePaneEvidence = path.join(evidenceDir, "live-agent-mobile-after.png");
+    await page.locator("section.rerun-stage").screenshot({ path: mobilePaneEvidence });
+    fs.chmodSync(mobilePaneEvidence, 0o600);
+    const mobilePaneBox = await page.locator("#viewerPaneFoxglove").boundingBox();
+    if (!mobilePaneBox || mobilePaneBox.width <= 0 || mobilePaneBox.height <= 0) {
+      throw new Error("mobile embedded Foxglove pane has zero geometry");
+    }
+    const externalLabel = String(await page.locator("#foxgloveOpenWeb").textContent() || "").trim();
+    const statusText = String(await page.locator("#foxgloveStatus").textContent() || "").trim();
+    const sdkRequestCount = networkRequests.filter(({ url }) => {
+      try {
+        const origin = new URL(url).origin;
+        return origin === "https://embed.foxglove.dev" ||
+          url.includes("/foxglove/sdk/") || url.includes("/foxglove/app/");
+      } catch (_error) {
+        return false;
+      }
+    }).length;
+    const recordingRequestCount = networkRequests.filter(({ url }) => url === recordingUrl).length;
+    return {
+      runId,
+      runRef,
+      artifactKey,
+      exactProvenance: {
+        projectId: String(selected.project_id || ""),
+        resourceBucket: String(selected.resource_bucket || selected.bucket || ""),
+        resolvedPrefix: String(selected.resolved_prefix || ""),
+        sha256,
+        recordingUrlSha256: crypto.createHash("sha256").update(recordingUrl).digest("hex"),
+      },
+      navigation: {
+        topUrlUnchanged: page.url() === beforeUrl,
+        pagesBefore: beforePages,
+        pagesAfter: context.pages().length,
+        newTargets,
+      },
+      embedded: {
+        selected: await page.locator("#renderModeFoxglove").getAttribute("aria-selected"),
+        paneAriaHidden: await page.locator("#viewerPaneFoxglove").getAttribute("aria-hidden"),
+        pane: { width: Math.round(paneBox.width), height: Math.round(paneBox.height) },
+        mobilePane: {
+          width: Math.round(mobilePaneBox.width),
+          height: Math.round(mobilePaneBox.height),
+        },
+        iframe: { width: Math.round(iframeBox.width), height: Math.round(iframeBox.height) },
+        iframeOrigin: new URL(String(await iframe.getAttribute("src"))).origin,
+        setDataSourceCount: Number(await page.locator("#foxgloveHost").getAttribute("data-set-data-source-count") || 0),
+        sdkReady: await page.locator("#foxgloveHost").getAttribute("data-sdk-ready"),
+        layoutStorageKey: String(await page.locator("#foxgloveHost").getAttribute("data-layout-storage-key") || ""),
+        statusText,
+        sdkRequestCount,
+        recordingRequestCount,
+      },
+      actions: { artifact: labels, mobileArtifact: mobileLabels, external: externalLabel },
+      evidence: {
+        desktop: desktopEvidence,
+        mobile: mobilePaneEvidence,
         artifactCardDesktop: desktopCardEvidence,
         artifactCardMobile: mobileCardEvidence,
       },
@@ -606,6 +897,9 @@ module.exports = defineConfig({
         server = startMockServer(Number(process.env.NPA_AGENT_CYPRESS_PORT || 47867));
       }
       on("task", {
+        verifyFoxgloveEmbeddedArtifact(input) {
+          return verifyFoxgloveEmbeddedArtifact(config, input);
+        },
         verifyFoxgloveHostedNavigation(input) {
           return verifyFoxgloveHostedNavigation(config, input);
         },

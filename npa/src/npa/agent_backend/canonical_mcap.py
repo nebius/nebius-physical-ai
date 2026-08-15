@@ -32,6 +32,7 @@ CANONICAL_MCAP_DEFAULT_STATE: dict[str, Any] = {
     "transport_state": "",
     "foxglove_cloud": {},
     "foxglove_cloud_layout": {},
+    "foxglove_selected_artifact": {},
 }
 
 

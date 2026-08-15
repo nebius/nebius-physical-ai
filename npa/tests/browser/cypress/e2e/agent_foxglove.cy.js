@@ -110,7 +110,25 @@ function foxgloveConfig(overrides) {
       live_url: "",
       data_source: { type: "remote-file", urls: [MCAP_URL] },
       run_id: "mock-run",
+      artifact_run_ref: "npa1_mock_run",
       artifact_key: "mock-run/reports/session.mcap",
+      artifact_uri: "s3://mock/mock-run/reports/session.mcap",
+      project_id: "project-local",
+      resource_bucket: "mock",
+      bucket: "mock",
+      resolved_prefix: "",
+      artifact_sha256: "a".repeat(64),
+      selected_artifact: {
+        run_id: "mock-run",
+        run_ref: "npa1_mock_run",
+        key: "mock-run/reports/session.mcap",
+        s3_uri: "s3://mock/mock-run/reports/session.mcap",
+        resource_bucket: "mock",
+        bucket: "mock",
+        project_id: "project-local",
+        resolved_prefix: "",
+        sha256: "a".repeat(64),
+      },
       recording_url: MCAP_URL,
       updated_at: "2026-07-30T00:00:00+00:00",
     },
@@ -120,13 +138,11 @@ function foxgloveConfig(overrides) {
 
 function stubFoxgloveApis(configOverrides) {
   const config = foxgloveConfig(configOverrides);
-  cy.intercept("GET", "/api/foxglove/config", {
-    statusCode: 200,
-    body: config,
+  cy.intercept("GET", "/api/foxglove/config", (request) => {
+    request.reply({ statusCode: 200, body: config });
   }).as("foxgloveConfig");
-  cy.intercept("GET", "/api/foxglove/status", {
-    statusCode: 200,
-    body: {
+  cy.intercept("GET", "/api/foxglove/status", (request) => {
+    request.reply({ statusCode: 200, body: {
       available: config.available,
       reason: config.reason,
       sdk_version: config.sdk_version,
@@ -137,12 +153,20 @@ function stubFoxgloveApis(configOverrides) {
       self_hosted_url: config.self_hosted_url,
       foxglove_ready: Boolean(config.data_source),
       run_id: config.run_id,
+      artifact_run_ref: config.artifact_run_ref,
       artifact_key: config.artifact_key,
+      artifact_uri: config.artifact_uri,
       artifact_render: "foxglove",
+      project_id: config.project_id,
+      resource_bucket: config.resource_bucket,
+      bucket: config.bucket,
+      resolved_prefix: config.resolved_prefix,
+      artifact_sha256: config.artifact_sha256,
+      selected_artifact: config.selected_artifact,
       recording_url: config.recording_url,
       data_source_type: config.data_source ? config.data_source.type : "",
       data_source: config.data_source,
-    },
+    }});
   }).as("foxgloveStatus");
   return config;
 }
@@ -165,24 +189,32 @@ function expectMockAppState(state) {
 
 function assertSingleFoxgloveWebAction(options = {}) {
   const enabled = options.enabled !== false;
-  cy.get('[data-testid="open-foxglove-web"]')
+  const visible = options.visible !== false;
+  const action = cy.get('[data-testid="open-foxglove-web"]')
     .should("have.length", 1)
-    .and("be.visible")
     .and("have.prop", "tagName", "BUTTON")
     .and("have.attr", "type", "button")
     .and("have.attr", "aria-describedby", "foxgloveExportNote");
-  cy.get("#foxgloveOpenWeb").should("have.text", "View in Foxglove");
+  action.should(visible ? "be.visible" : "not.be.visible");
+  cy.get("#foxgloveOpenWeb").should("have.text", "Open in Foxglove");
   cy.get("#foxgloveOpenWeb").should(enabled ? "be.enabled" : "be.disabled");
   cy.get("#foxgloveOpenDesktop").should("not.exist");
   cy.contains(/Foxglove Desktop/i).should("not.exist");
   cy.get("#renderModeLichtblick").should("have.length", 1);
 }
 
+function activateFoxglovePane() {
+  cy.get("#renderModeFoxglove").click();
+  cy.get("#viewerPaneFoxglove")
+    .should("have.attr", "aria-hidden", "false")
+    .and("have.class", "is-active-viewer");
+}
+
 function foxgloveExportResponse(runId, overrides = {}) {
   const canonicalHash = String(overrides.sha256 || "a".repeat(64));
   const layoutId = String(overrides.layoutId === undefined ? "layout_rich_v1" : overrides.layoutId);
   const seek = "2026-08-10T12:00:00.250000000Z";
-  const recordingUrl = `${window.location.origin}/foxglove/data/${runId}.mcap`;
+  const recordingUrl = `https://agent.example/foxglove/data/${runId}.mcap`;
   const params = new URLSearchParams();
   params.append("ds", "remote-file");
   params.append("ds.url", recordingUrl);
@@ -254,10 +286,12 @@ function exactArtifactExportResponse(runId, runRef, key, s3Uri) {
     key,
     s3_uri: s3Uri,
     bucket: "mock",
+    resource_bucket: "mock",
     project_id: "project-local",
     resolved_prefix: "",
     sha256: "b".repeat(64),
     size_bytes: 16384,
+    recording_url: response.export.recording_url,
   };
   response.artifact_key = key;
   response.selected_artifact = selectedArtifact;
@@ -266,6 +300,25 @@ function exactArtifactExportResponse(runId, runRef, key, s3Uri) {
   response.export.selected_artifact = selectedArtifact;
   response.export.sha256 = selectedArtifact.sha256;
   return response;
+}
+
+function applyExactArtifactConfig(config, response) {
+  const selected = response.selected_artifact;
+  Object.assign(config, {
+    run_id: selected.run_id,
+    artifact_run_ref: selected.run_ref,
+    artifact_key: selected.key,
+    artifact_uri: selected.s3_uri,
+    project_id: selected.project_id,
+    resource_bucket: selected.resource_bucket,
+    bucket: selected.bucket,
+    resolved_prefix: selected.resolved_prefix,
+    artifact_sha256: selected.sha256,
+    selected_artifact: { ...selected },
+    recording_url: response.export.recording_url,
+    data_source: { type: "remote-file", urls: [response.export.recording_url] },
+  });
+  return config;
 }
 
 function assertRichOfficialUrl(webUrl, expectedRecordingUrl = null) {
@@ -350,10 +403,11 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
             expect(rect.height, `${label} pane height`).to.be.greaterThan(0);
           });
       });
+      activateFoxglovePane();
       cy.get("#foxgloveOpenWeb")
         .scrollIntoView()
         .should("be.visible")
-        .and("have.text", "View in Foxglove");
+        .and("have.text", "Open in Foxglove");
     });
   });
 
@@ -363,7 +417,7 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
   ].forEach((viewport) => {
     it(`opens the exact discovered MCAP card in Foxglove at ${viewport.name} size`, () => {
       cy.viewport(viewport.width, viewport.height);
-      stubFoxgloveApis();
+      const config = stubFoxgloveApis();
       const runRef = "npa1_mock_non_stock";
       const key = `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`;
       const s3Uri = `s3://mock/${key}`;
@@ -378,25 +432,20 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
           run_id: NON_STOCK_RUN_ID,
           run_ref: runRef,
           key,
-          bucket: "mock",
+          resource_bucket: "mock",
+          project_id: "project-local",
+          resolved_prefix: "",
           s3_uri: s3Uri,
-          open_web: true,
         });
-        request.reply({ statusCode: 200, body: exported });
+        applyExactArtifactConfig(config, exported);
+        request.reply({ delay: 150, statusCode: 200, body: exported });
       }).as("exactArtifactExport");
       cy.window().then((win) => {
-        const replace = cy.stub().as(`exactArtifactNavigate-${viewport.name}`);
-        cy.stub(win, "open").returns({
-          opener: null,
-          location: { replace },
-          close: cy.stub(),
-        });
+        cy.stub(win, "open").as(`exactArtifactWindowOpen-${viewport.name}`);
       });
 
       cy.get("#tabRerun").click();
-      cy.get("#renderModeFoxglove").click();
-      cy.wait("@foxgloveConfig");
-      expectMockAppState("ready");
+      cy.location("href").as(`exactArtifactTopUrl-${viewport.name}`);
       cy.get("#artifactRefreshRuns").click();
       cy.wait("@artifactRuns");
       cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
@@ -417,14 +466,68 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
         .and("be.enabled")
         .and("have.attr", "aria-disabled", "false")
         .click();
+      cy.get("#renderModeFoxglove")
+        .should("have.attr", "aria-selected", "true")
+        .and("have.class", "is-active");
+      cy.get("#viewerPaneFoxglove")
+        .should("have.attr", "aria-hidden", "false")
+        .should(($pane) => {
+          const rect = $pane[0].getBoundingClientRect();
+          expect(rect.width, "embedded Foxglove pane width").to.be.greaterThan(0);
+          expect(rect.height, "embedded Foxglove pane height").to.be.greaterThan(0);
+        });
+      cy.get("#foxgloveStatus").should("contain.text", "Preparing exact MCAP");
       cy.wait("@exactArtifactExport");
-      cy.get(`@exactArtifactNavigate-${viewport.name}`).should(
-        "have.been.calledOnceWith",
-        exported.export.web_url,
-      );
+      expectMockAppState("ready");
+      mockAppFrame().should(($frame) => {
+        const rect = $frame[0].getBoundingClientRect();
+        expect(rect.width, "embedded Foxglove iframe width").to.be.greaterThan(0);
+        expect(rect.height, "embedded Foxglove iframe height").to.be.greaterThan(0);
+        const messages = $frame[0].contentWindow.__mockFoxgloveReceived || [];
+        const source = messages.find((message) => message?.type === "set-data-source");
+        expect(source, "exact setDataSource command").to.exist;
+        expect(source.payload).to.deep.eq({
+          type: "remote-file",
+          urls: [exported.export.recording_url],
+        });
+        const layout = messages.find((message) => message?.type === "select-layout");
+        expect(layout, "canonical selectLayout command").to.exist;
+        expect(layout.payload.storageKey).to.eq("npa-agent-foxglove-robot-motion-v3");
+        expect(layout.payload.layout).to.deep.eq(config.layout);
+        expect(layout.payload.force).to.eq(undefined);
+      });
+      cy.get(`@exactArtifactWindowOpen-${viewport.name}`).should("not.have.been.called");
+      cy.get(`@exactArtifactTopUrl-${viewport.name}`).then((topUrl) => {
+        cy.location("href").should("eq", topUrl);
+      });
+      cy.get("#viewerPaneFoxglove")
+        .should("have.attr", "data-run-id", NON_STOCK_RUN_ID)
+        .and("have.attr", "data-run-ref", runRef)
+        .and("have.attr", "data-artifact-key", key)
+        .and("have.attr", "data-project-id", "project-local")
+        .and("have.attr", "data-resource-bucket", "mock")
+        .and("have.attr", "data-resolved-prefix", "")
+        .and("have.attr", "data-sha256", exported.export.sha256)
+        .and("have.attr", "data-recording-url", exported.export.recording_url);
+      cy.get("#foxgloveHost")
+        .should("have.attr", "data-sdk-ready", "true")
+        .and("have.attr", "data-set-data-source-count", "1")
+        .and("have.attr", "data-data-source-type", "remote-file")
+        .and("have.attr", "data-data-source-url", exported.export.recording_url)
+        .and(
+          "have.attr",
+          "data-layout-storage-key",
+          "npa-agent-foxglove-robot-motion-v3",
+        );
       cy.get("#foxgloveExportNote")
         .should("have.attr", "data-state", "success")
-        .and("contain.text", "selected MCAP artifact");
+        .and("contain.text", "Embedded source is the selected MCAP");
+      cy.get("#foxgloveOpenWeb")
+        .should("have.text", "Open in Foxglove")
+        .and("be.visible");
+      cy.get(`button[data-action="open-foxglove-artifact"][data-key="${key}"]`)
+        .should("have.attr", "aria-busy", "false")
+        .and("be.enabled");
       mockAppFrame().its("0.contentWindow.__mockFoxgloveTopicErrors").should(
         "deep.equal",
         [],
@@ -433,7 +536,7 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
   });
 
   it("keeps the exact selected MCAP open when its card rerenders during preparation", () => {
-    stubFoxgloveApis();
+    const config = stubFoxgloveApis();
     const runRef = "npa1_mock_non_stock";
     const key = `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`;
     const s3Uri = `s3://mock/${key}`;
@@ -444,12 +547,11 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
       s3Uri,
     );
     cy.intercept("POST", "/api/foxglove/export", (request) => {
+      applyExactArtifactConfig(config, exported);
       request.reply({ delay: 900, statusCode: 200, body: exported });
     }).as("rerenderedCardExport");
     cy.window().then((win) => {
-      const replace = cy.stub().as("rerenderedCardNavigate");
-      const close = cy.stub().as("rerenderedCardClose");
-      cy.stub(win, "open").returns({ opener: null, location: { replace }, close });
+      cy.stub(win, "open").as("rerenderedCardWindowOpen");
     });
 
     cy.get("#tabRerun").click();
@@ -467,39 +569,135 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     cy.get("#artifactLoadRunArtifacts").click();
     cy.wait("@nonStockArtifactList");
     cy.wait("@rerenderedCardExport");
-    cy.get("@rerenderedCardNavigate").should(
-      "have.been.calledOnceWith",
-      exported.export.web_url,
-    );
-    cy.get("@rerenderedCardClose").should("not.have.been.called");
+    expectMockAppState("ready");
+    cy.get("#viewerPaneFoxglove")
+      .should("have.attr", "aria-hidden", "false")
+      .and("have.attr", "data-run-id", NON_STOCK_RUN_ID)
+      .and("have.attr", "data-artifact-key", key)
+      .and("have.attr", "data-sha256", exported.export.sha256);
+    cy.get("@rerenderedCardWindowOpen").should("not.have.been.called");
     cy.get("#foxgloveExportNote")
       .should("have.attr", "data-state", "success")
-      .and("contain.text", "selected MCAP artifact");
+      .and("contain.text", "Embedded source is the selected MCAP");
   });
 
-  it("reports a blocked popup from an MCAP card without starting preparation", () => {
-    stubFoxgloveApis();
+  it("shows an actionable embedded preparation error and retries the exact card", () => {
+    const config = stubFoxgloveApis();
+    const runRef = "npa1_mock_non_stock";
+    const key = `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`;
+    const s3Uri = `s3://mock/${key}`;
+    const exported = exactArtifactExportResponse(NON_STOCK_RUN_ID, runRef, key, s3Uri);
     let exports = 0;
-    cy.intercept("POST", "/api/foxglove/export", () => {
+    cy.intercept("POST", "/api/foxglove/export", (request) => {
       exports += 1;
-    });
-    cy.window().then((win) => cy.stub(win, "open").returns(null));
+      if (exports === 1) {
+        request.reply({ statusCode: 503, body: { detail: "selected MCAP transport unavailable" } });
+        return;
+      }
+      applyExactArtifactConfig(config, exported);
+      request.reply({ statusCode: 200, body: exported });
+    }).as("retryArtifactExport");
+    cy.window().then((win) => cy.stub(win, "open").as("retryArtifactWindowOpen"));
     cy.get("#tabRerun").click();
-    cy.get("#renderModeFoxglove").click();
-    cy.wait("@foxgloveConfig");
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRuns");
     cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
     cy.wait("@nonStockArtifactList");
-    cy.get("button[data-action='open-foxglove-artifact']")
+    cy.get(`button[data-action="open-foxglove-artifact"][data-key="${key}"]`)
       .scrollIntoView()
       .should("be.enabled")
       .click();
-    cy.get("#foxgloveExportNote")
-      .should("have.attr", "data-state", "error")
-      .and("contain.text", "blocked")
-      .and("contain.text", "Allow popups");
-    cy.then(() => expect(exports, "no preparation request").to.eq(0));
+    cy.wait("@retryArtifactExport");
+    cy.get("#foxgloveStatus")
+      .should("have.class", "is-error")
+      .and("contain.text", "selected MCAP transport unavailable");
+    cy.get("#foxgloveMessage")
+      .should("not.have.attr", "hidden");
+    cy.get("#foxgloveMessage")
+      .should("contain.text", "Could not load this MCAP")
+      .and("contain.text", "verify that the object is a valid MCAP");
+    cy.get("#foxgloveArtifactRetry").should("be.visible").click();
+    cy.wait("@retryArtifactExport");
+    expectMockAppState("ready");
+    cy.get("#viewerPaneFoxglove")
+      .should("have.attr", "data-run-id", NON_STOCK_RUN_ID)
+      .and("have.attr", "data-artifact-key", key)
+      .and("have.attr", "data-sha256", exported.export.sha256);
+    cy.get("#foxgloveMessage").should("have.attr", "hidden");
+    cy.get("@retryArtifactWindowOpen").should("not.have.been.called");
+    cy.then(() => expect(exports, "one failed request and one exact retry").to.eq(2));
+  });
+
+  it("lets a rapid second MCAP click win without binding the stale first source", () => {
+    const config = stubFoxgloveApis();
+    const runRef = "npa1_mock_non_stock";
+    const canonicalKey = `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`;
+    const nativeKey = `${NON_STOCK_RUN_ID}/recordings/native-single-camera.mcap`;
+    const canonical = exactArtifactExportResponse(
+      NON_STOCK_RUN_ID,
+      runRef,
+      canonicalKey,
+      `s3://mock/${canonicalKey}`,
+    );
+    const native = exactArtifactExportResponse(
+      NON_STOCK_RUN_ID,
+      runRef,
+      nativeKey,
+      `s3://mock/${nativeKey}`,
+    );
+    native.selected_artifact.sha256 = "c".repeat(64);
+    native.export.selected_artifact.sha256 = native.selected_artifact.sha256;
+    native.export.sha256 = native.selected_artifact.sha256;
+    native.export.recording_url = "https://agent.example/foxglove/data/native-single-camera.mcap";
+    native.export.download_url = native.export.recording_url;
+    native.selected_artifact.recording_url = native.export.recording_url;
+    let requests = 0;
+    cy.intercept("POST", "/api/foxglove/export", (request) => {
+      requests += 1;
+      const response = request.body.key === nativeKey ? native : canonical;
+      applyExactArtifactConfig(config, response);
+      if (response === native) {
+        config.layout = {};
+        config.layout_storage_key = "npa-agent-foxglove-source-default";
+        config.visualization = { checked: false };
+      }
+      request.reply({
+        delay: response === native ? 100 : 900,
+        statusCode: 200,
+        body: response,
+      });
+    }).as("rapidArtifactExport");
+    cy.window().then((win) => cy.stub(win, "open").as("rapidArtifactWindowOpen"));
+
+    cy.get("#tabRerun").click();
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@artifactRuns");
+    cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
+    cy.wait("@nonStockArtifactList");
+    cy.get(`button[data-action="open-foxglove-artifact"][data-key="${canonicalKey}"]`)
+      .should("be.enabled")
+      .click();
+    cy.get(`button[data-action="open-foxglove-artifact"][data-key="${nativeKey}"]`)
+      .should("be.enabled")
+      .click();
+    cy.wait("@rapidArtifactExport");
+    expectMockAppState("ready");
+    cy.get("#viewerPaneFoxglove")
+      .should("have.attr", "data-artifact-key", nativeKey)
+      .and("have.attr", "data-sha256", native.selected_artifact.sha256)
+      .and("have.attr", "data-recording-url", native.export.recording_url);
+    mockAppFrame().should(($frame) => {
+      const messages = $frame[0].contentWindow.__mockFoxgloveReceived || [];
+      const sourceCommands = messages.filter((message) => message?.type === "set-data-source");
+      expect(sourceCommands, "only the latest generation binds a source").to.have.length(1);
+      expect(sourceCommands[0].payload.urls).to.deep.eq([native.export.recording_url]);
+      expect(
+        messages.filter((message) => message?.type === "select-layout"),
+        "generic native MCAP does not inherit the canonical layout",
+      ).to.have.length(0);
+    });
+    cy.get("@rapidArtifactWindowOpen").should("not.have.been.called");
+    cy.then(() => expect(requests, "both rapid exact selections reached the backend").to.eq(2));
   });
 
   it("mounts the real @foxglove/embed SDK and completes the viewer handshake", () => {
@@ -687,7 +885,7 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     cy.get("#renderedDataSummary").should("contain.text", "Persistent S3 canonical");
     cy.get("#renderedDataSummary").should("contain.text", canonicalHash);
     cy.get("#renderedDataSummary").should("contain.text", "Ephemeral transport");
-    cy.get("#foxgloveOpenWeb").should("have.text", "View in Foxglove").click();
+    cy.get("#foxgloveOpenWeb").should("have.text", "Open in Foxglove").click();
     cy.wait("@foxgloveExport").its("request.body.open_web").should("eq", true);
     cy.get("@foxgloveNavigate").should("have.been.calledWith", webUrl);
     cy.then(() => assertRichOfficialUrl(webUrl, exportedResponse.export.recording_url));
@@ -707,7 +905,9 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     const exports = [];
     cy.intercept("POST", "/api/foxglove/export", (request) => {
       const runId = String(request.body.run_id || "");
-      exports.push(runId);
+      const openWeb = request.body.open_web === true;
+      exports.push({ runId, openWeb });
+      if (openWeb) request.alias = "commonFoxgloveWebExport";
       request.reply({ statusCode: 200, body: foxgloveExportResponse(runId, {
         converted: runId === "mock-run",
         reused: runId !== "mock-run",
@@ -722,22 +922,23 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     });
 
     cy.get("#tabRerun").click();
-    assertSingleFoxgloveWebAction();
+    assertSingleFoxgloveWebAction({ visible: false });
     ["View", "Foxglove", "Lichtblick", "Video", "Image", "Data"].forEach((label) => {
       cy.contains(".render-mode-tabs .render-mode-tab", new RegExp(`^${label}$`)).click();
-      assertSingleFoxgloveWebAction();
+      assertSingleFoxgloveWebAction({ visible: label === "Foxglove" });
     });
 
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRuns");
-    assertSingleFoxgloveWebAction();
+    assertSingleFoxgloveWebAction({ visible: false });
     cy.get("#runIdInput").clear().type("non-stock-customer-run");
     cy.get("#loadRunData").click();
     cy.get("#simRunId").should("contain.text", "non-stock-customer-run");
-    assertSingleFoxgloveWebAction();
+    assertSingleFoxgloveWebAction({ visible: false });
 
+    activateFoxglovePane();
     cy.get("#foxgloveOpenWeb").click();
-    cy.wait("@commonFoxgloveExport").its("request.body").should("deep.include", {
+    cy.wait("@commonFoxgloveWebExport").its("request.body").should("deep.include", {
       run_id: "non-stock-customer-run",
       open_web: true,
     });
@@ -751,7 +952,11 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     cy.get("#loadRunData").click();
     cy.get("#simRunId").should("contain.text", "mock-run");
     assertSingleFoxgloveWebAction();
-    cy.then(() => expect(exports).to.deep.eq(["non-stock-customer-run"]));
+    cy.then(() => {
+      expect(exports.filter((item) => item.openWeb).map((item) => item.runId)).to.deep.eq([
+        "non-stock-customer-run",
+      ]);
+    });
   });
 
   it("uses conversion for a source-only run and opens each selected canonical recording", () => {
@@ -769,12 +974,14 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
       cy.stub(win, "open").callsFake(() => ({ opener: null, location: { replace }, close: cy.stub() }));
     });
     cy.get("#tabRerun").click();
+    activateFoxglovePane();
     cy.get("#foxgloveOpenWeb").click();
     cy.wait("@pathExport").its("request.body.run_id").should("eq", "mock-run");
     cy.get("#foxgloveExportNote").should("contain.text", "remote-file source");
     cy.get("#runIdInput").clear().type("non-stock-customer-run");
     cy.get("#loadRunData").click();
     cy.get("#simRunId").should("contain.text", "non-stock-customer-run");
+    activateFoxglovePane();
     cy.get("#foxgloveOpenWeb").click();
     cy.wait("@pathExport").its("request.body.run_id").should("eq", "non-stock-customer-run");
     cy.get("#foxgloveExportNote").should("contain.text", "remote-file source");
@@ -806,11 +1013,12 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
       }));
     });
     cy.get("#tabRerun").click();
+    activateFoxglovePane();
     cy.get("#foxgloveOpenWeb").click();
     cy.wait("@layoutExport").then(({ response }) => {
       assertRichOfficialUrl(
         response.body.export.web_url,
-        `${window.location.origin}/foxglove/data/mock-run.mcap`,
+        "https://agent.example/foxglove/data/mock-run.mcap",
       );
     });
     cy.get("#foxgloveOpenWeb").click();
@@ -838,6 +1046,7 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
       cy.stub(win, "open").returns({ opener: null, location: { replace: cy.stub() }, close: cy.stub() });
     });
     cy.get("#tabRerun").click();
+    activateFoxglovePane();
     cy.get("#foxgloveOpenWeb").click();
     cy.get("#foxgloveOpenWeb")
       .should("be.disabled")
@@ -869,6 +1078,7 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     });
 
     cy.get("#tabRerun").click();
+    activateFoxglovePane();
     cy.get("#foxgloveOpenWeb").click();
     cy.wait("@slowMcapExport", { timeout: 20000 });
     cy.get("@slowCloudNavigate").should(
@@ -892,6 +1102,7 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
       cy.stub(win, "open").onFirstCall().returns({ opener: null, location: { replace: cy.stub() }, close: cy.stub() }).onSecondCall().returns(null);
     });
     cy.get("#tabRerun").click();
+    activateFoxglovePane();
     cy.get("#foxgloveOpenWeb").click();
     cy.wait("@failedExport");
     assertSingleFoxgloveWebAction();
@@ -917,10 +1128,12 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
       cy.stub(win, "open").returns({ opener: null, location: { replace }, close });
     });
     cy.get("#tabRerun").click();
+    activateFoxglovePane();
     cy.get("#foxgloveOpenWeb").click();
     cy.get("#runIdInput").clear().type("non-stock-customer-run");
     cy.get("#loadRunData").click();
     cy.get("#simRunId").should("contain.text", "non-stock-customer-run");
+    activateFoxglovePane();
     cy.get("#foxgloveOpenWeb").should("be.enabled").and("have.attr", "aria-busy", "false");
     cy.wait("@staleExport");
     cy.get("@staleNavigate").should("not.have.been.called");
@@ -948,6 +1161,7 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     cy.visit("/");
     cy.wait("@emptySession");
     cy.get("#tabRerun").click();
+    activateFoxglovePane();
     assertSingleFoxgloveWebAction({ enabled: false });
     cy.get("#foxgloveOpenWeb").should("have.attr", "aria-busy", "false");
     cy.get("#foxgloveExportNote").should("contain.text", "Load a run").and("have.attr", "data-state", "idle");

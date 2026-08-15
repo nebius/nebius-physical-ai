@@ -64,6 +64,10 @@ function discoverVerificationRun() {
         ...run,
         artifact,
         bucket: String(artifactsResponse.body.bucket || run.bucket || ""),
+        project_id: String(artifactsResponse.body.project_id || run.project_id || ""),
+        resolved_prefix: String(
+          artifactsResponse.body.resolved_prefix || run.resolved_prefix || "",
+        ),
       };
     });
   });
@@ -98,15 +102,16 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
     currentLiveAgentConfig();
   });
 
-  it("mounts the official SDK and opens the selected public MCAP remote-file link", () => {
+  it("binds the selected MCAP in-page and keeps hosted navigation separate", () => {
     discoverVerificationRun().then((run) => {
       const requestBody = {
         run_id: String(run.run_id),
         run_ref: String(run.run_ref),
         key: String(run.artifact.key),
-        bucket: String(run.bucket),
+        resource_bucket: String(run.bucket),
+        project_id: String(run.project_id),
+        resolved_prefix: String(run.resolved_prefix),
         s3_uri: String(run.artifact.s3_uri),
-        open_web: true,
       };
       liveAgentRequest("/api/foxglove/export", {
         method: "POST",
@@ -120,6 +125,9 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
           run_ref: run.run_ref,
           key: run.artifact.key,
           s3_uri: run.artifact.s3_uri,
+          resource_bucket: run.bucket,
+          project_id: run.project_id,
+          resolved_prefix: run.resolved_prefix,
         });
         const exported = prepared.body.export;
         assertRemoteFileLink(exported);
@@ -289,17 +297,21 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
         cy.get('[data-testid="open-foxglove-web"]')
           .should("be.visible")
           .and("be.enabled")
-          .and("have.text", "View in Foxglove");
+          .and("have.text", "Open in Foxglove");
 
-        // This Cypress task launches a separate clean Chromium profile and uses
-        // the real button click plus Playwright's browser page event. It never
-        // stubs window.open and returns only non-secret contract/evidence facts.
+        // This task uses a clean Chromium profile and clicks the actual artifact
+        // card action. It proves the Agent page stays put while the official SDK
+        // handshake binds the exact selected remote-file source.
         cy.task(
-          "verifyFoxgloveHostedNavigation",
+          "verifyFoxgloveEmbeddedArtifact",
           {
             runId: String(run.run_id),
             runRef: String(run.run_ref),
             artifactKey: String(run.artifact.key),
+            projectId: String(run.project_id),
+            resourceBucket: String(run.bucket),
+            resolvedPrefix: String(run.resolved_prefix),
+            s3Uri: String(run.artifact.s3_uri),
           },
           // Cypress interprets timeout: 0 as "fail immediately" (unlike
           // Playwright, where it disables the timeout). Keep the existing
@@ -308,20 +320,68 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
           { log: false, timeout: 600000 },
         ).then((result) => {
           expect(result.runId).to.eq(run.run_id);
+          expect(result.runRef).to.eq(run.run_ref);
           expect(result.artifactKey).to.eq(run.artifact.key);
-          expect(result.artifactCard.desktopLabels).to.deep.eq([
+          expect(result.exactProvenance).to.deep.include({
+            projectId: run.project_id,
+            resourceBucket: run.bucket,
+            resolvedPrefix: run.resolved_prefix,
+            sha256: exported.sha256,
+          });
+          expect(result.navigation).to.deep.include({
+            topUrlUnchanged: true,
+            pagesBefore: 1,
+            pagesAfter: 1,
+          });
+          expect(result.navigation.newTargets).to.deep.eq([]);
+          expect(result.actions.artifact).to.deep.eq([
             "View in Foxglove", "View in Lichtblick", "Download",
           ]);
-          expect(result.artifactCard.mobileLabels).to.deep.eq([
+          expect(result.actions.mobileArtifact).to.deep.eq([
             "View in Foxglove", "View in Lichtblick", "Download",
           ]);
-          expect(result.labels).to.deep.eq([
-            "View", "Foxglove", "Lichtblick", "Video", "Image", "Data",
-          ]);
-          for (const label of ["View", "Foxglove", "Lichtblick"]) {
-            expect(result.paneGeometry[label].width).to.be.greaterThan(0);
-            expect(result.paneGeometry[label].height).to.be.greaterThan(0);
+          expect(result.actions.external).to.eq("Open in Foxglove");
+          expect(result.embedded).to.deep.include({
+            selected: "true",
+            paneAriaHidden: "false",
+            iframeOrigin: "https://embed.foxglove.dev",
+            setDataSourceCount: 1,
+            sdkReady: "true",
+            layoutStorageKey: "npa-agent-foxglove-robot-motion-v3",
+          });
+          for (const geometry of [
+            result.embedded.pane,
+            result.embedded.mobilePane,
+            result.embedded.iframe,
+          ]) {
+            expect(geometry.width).to.be.greaterThan(0);
+            expect(geometry.height).to.be.greaterThan(0);
           }
+          expect(result.embedded.sdkRequestCount).to.be.greaterThan(0);
+          expect(result.embedded.statusText).to.match(/exact selected MCAP sent|Exact MCAP sent/);
+          expect(result.evidence.desktop).to.match(/live-agent-desktop-after\.png$/);
+          expect(result.evidence.mobile).to.match(/live-agent-mobile-after\.png$/);
+          expect(result.evidence.artifactCardDesktop).to.match(
+            /live-artifact-card-desktop-after\.png$/,
+          );
+        });
+
+        // Hosted navigation is still available, but only from the distinctly
+        // labeled action inside the selected Foxglove pane.
+        cy.task(
+          "verifyFoxgloveHostedNavigation",
+          {
+            runId: String(run.run_id),
+            runRef: String(run.run_ref),
+            artifactKey: String(run.artifact.key),
+          },
+          { log: false, timeout: 600000 },
+        ).then((result) => {
+          expect(result.cardNavigation).to.deep.eq({
+            stayedInPage: true,
+            pagesBefore: 1,
+            pagesAfter: 1,
+          });
           expect(result.officialContract).to.deep.include({
             requestMatchedResponse: true,
             sourceType: "remote-file",
@@ -332,8 +392,6 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
           expect(result.officialContract.responseStatus).to.be.within(200, 399);
           expect(result.hostedSurface.finalOrigin).to.eq("https://app.foxglove.dev");
           expect(result.hostedSurface.pixels.nonblank).to.eq(true);
-          expect(result.evidence.desktop).to.match(/live-agent-desktop-after\.png$/);
-          expect(result.evidence.mobile).to.match(/live-agent-mobile-after\.png$/);
           expect(result.evidence.hosted).to.match(/live-hosted-foxglove-after\.png$/);
         });
       });

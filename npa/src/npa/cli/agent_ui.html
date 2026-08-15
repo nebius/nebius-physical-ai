@@ -696,6 +696,23 @@
         background: #0b1020;
       }
       .foxglove-host iframe { width: 100%; height: 100%; border: 0; }
+      .foxglove-pane-actions {
+        position: absolute;
+        z-index: 4;
+        top: 10px;
+        right: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+        gap: 8px;
+        max-width: min(720px, calc(100% - 20px));
+        padding: 6px;
+        border-radius: 10px;
+        background: rgba(11, 16, 32, 0.9);
+        color: #cbd5e1;
+      }
+      .foxglove-pane-actions .hint { margin: 0; font-size: 11px; }
       .foxglove-message {
         position: absolute;
         inset: 0;
@@ -2150,13 +2167,8 @@
                   <button id="loadLichtblickViewer" class="btn" type="button" title="Reload the embedded Lichtblick MCAP recording">Reload Lichtblick data</button>
                   <button id="describeVisual" class="btn btn-primary" type="button" title="Capture the current viewer and ask the agent for feedback">Describe this</button>
                   <button id="downloadMcap" class="btn" type="button" title="Export the active run as MCAP and download it">Download MCAP</button>
-                  <button id="foxgloveOpenWeb" class="btn" type="button"
-                    data-testid="open-foxglove-web" aria-describedby="foxgloveExportNote"
-                    aria-busy="false" disabled
-                    title="Open this public MCAP as a remote-file data source in Foxglove Web">View in Foxglove</button>
                   <a id="openFullRerun" class="btn" href="/rerun/?hide_welcome_screen=1&theme=dark&camera=workspace" target="_blank" rel="noopener">Open full Rerun</a>
                 </div>
-                <p id="foxgloveExportNote" class="hint" role="status" aria-live="polite">Load a run to open its canonical MCAP in Foxglove Web.</p>
                 <p id="simvizCta" class="cta">Embedded recording uses a same-origin iframe with a public `.rrd` URL (Rerun wasm cannot send basic auth).</p>
               </div>
               <div id="rerunPlaceholder" class="rerun-placeholder" hidden>
@@ -2185,6 +2197,13 @@
               </div>
               <div id="viewerPaneFoxglove" class="viewer-pane is-inactive-viewer" role="tabpanel" aria-labelledby="renderModeFoxglove" aria-hidden="true">
                 <div id="foxgloveHost" class="foxglove-host"></div>
+                <div class="foxglove-pane-actions">
+                  <span id="foxgloveExportNote" class="hint" role="status" aria-live="polite">Load a run to open its canonical MCAP externally.</span>
+                  <button id="foxgloveOpenWeb" class="btn" type="button"
+                    data-testid="open-foxglove-web" aria-describedby="foxgloveExportNote"
+                    aria-busy="false" disabled
+                    title="Open this public MCAP as a remote-file data source in Foxglove Web">Open in Foxglove</button>
+                </div>
                 <div id="foxgloveMessage" class="foxglove-message" hidden></div>
                 <div id="foxgloveStatus" class="foxglove-status" role="status" aria-live="polite">Foxglove viewer idle.</div>
                 <p id="foxgloveVisualizationSummary" class="hint" role="status" aria-live="polite">Select a real MCAP to inspect its robot-motion visualization contract.</p>
@@ -3178,7 +3197,7 @@
             // run auto-selection.  Otherwise a slow JSON fetch can repaint Data
             // after the operator has already switched to another viewer.
             artifactLoadRequestId += 1;
-            setRenderMode(mode);
+            setRenderMode(mode, { operator: true });
             // Clicking the Lichtblick tab should load the active run's MCAP, not just
             // reveal an empty viewer (the .mcap is 1-of-many artifacts, easy to miss).
             if (mode === "lichtblick") {
@@ -4974,6 +4993,11 @@
       let activeArtifactRender = "";
       let foxgloveWebOperation = null;
       let foxgloveWebOperationSequence = 0;
+      let foxgloveArtifactOperation = null;
+      let foxgloveArtifactOperationSequence = 0;
+      let foxgloveArtifactRetrySelection = null;
+      let foxglovePinnedArtifactSelection = null;
+      let foxglovePinnedConfig = null;
       function setFoxgloveWebNote(message, state) {
         const note = document.getElementById("foxgloveExportNote");
         if (!note) return;
@@ -5005,7 +5029,7 @@
         const busy = Boolean(current && current.runId === runId && current.runRef === runRef);
         button.disabled = !runId || busy;
         button.setAttribute("aria-busy", busy ? "true" : "false");
-        button.textContent = busy ? "Opening Foxglove…" : "View in Foxglove";
+        button.textContent = busy ? "Opening Foxglove…" : "Open in Foxglove";
         if (!runId && !busy && !staleOperationCancelled) {
           setFoxgloveWebNote(
             "Load a run to open its canonical MCAP in Foxglove Web.",
@@ -5026,7 +5050,7 @@
           config.sdk_ready === true &&
           String(config.viewer_backend || "") === "foxglove-sdk"
         ) {
-          return { available: true, reason: "Open this exact MCAP in official Foxglove Web." };
+          return { available: true, reason: "View this exact MCAP in the embedded Foxglove pane." };
         }
         return {
           available: false,
@@ -5039,6 +5063,11 @@
           run_ref: String(button && button.getAttribute("data-run-ref") || "").trim(),
           key: String(button && button.getAttribute("data-key") || "").trim(),
           bucket: String(button && button.getAttribute("data-bucket") || "").trim(),
+          project_id: String(button && button.getAttribute("data-project-id") || "").trim(),
+          resolved_prefix: String(button && button.getAttribute("data-resolved-prefix") || "").trim(),
+          resolved_prefix_present: Boolean(
+            button && button.hasAttribute("data-resolved-prefix")
+          ),
           s3_uri: String(button && button.getAttribute("data-s3-uri") || "").trim(),
           button,
         };
@@ -5049,36 +5078,61 @@
           "button[data-action='open-foxglove-artifact'], button[data-sd-action='foxglove']"
         ).forEach((button) => {
           const selected = artifactFoxgloveSelection(button);
-          const operation = foxgloveWebOperation;
+          const operation = foxgloveArtifactOperation;
           const busy = Boolean(
             operation && operation.key && operation.key === selected.key &&
-            operation.runId === selected.run_id && operation.runRef === selected.run_ref
+            operation.runId === selected.run_id && operation.runRef === selected.run_ref &&
+            !operation.stale
           );
-          button.disabled = !destination.available || Boolean(operation);
+          // Only the exact in-flight card is disabled. A different rapid click
+          // supersedes this generation; its response is then the only one that
+          // may bind the viewer.
+          button.disabled = !destination.available || busy;
           button.setAttribute("aria-disabled", button.disabled ? "true" : "false");
           button.setAttribute("aria-busy", busy ? "true" : "false");
           button.textContent = busy ? "Preparing Foxglove…" : "View in Foxglove";
           button.title = busy
             ? "Preparing and publishing this exact MCAP…"
-            : (operation
-              ? "Another Foxglove preparation is already in progress."
-              : destination.reason);
+            : destination.reason;
         });
       }
       function cancelFoxgloveWebOperationForPendingRun(nextRunId) {
         const target = String(nextRunId || "").trim();
         const operation = foxgloveWebOperation;
-        if (!operation || !target || operation.runId === target) return false;
-        operation.stale = true;
-        try { operation.popup.close(); } catch (_closeErr) { /* best effort */ }
-        foxgloveWebOperation = null;
-        setFoxgloveWebNote(
-          "The active run changed during selection; the previous Foxglove export was not opened. " +
-            "Retry after " + target + " finishes loading.",
-          "warning"
-        );
+        let cancelled = false;
+        if (operation && target && operation.runId !== target) {
+          operation.stale = true;
+          try { operation.popup.close(); } catch (_closeErr) { /* best effort */ }
+          foxgloveWebOperation = null;
+          setFoxgloveWebNote(
+            "The active run changed during selection; the previous Foxglove export was not opened. " +
+              "Retry after " + target + " finishes loading.",
+            "warning"
+          );
+          cancelled = true;
+        }
+        const artifactOperation = foxgloveArtifactOperation;
+        if (artifactOperation && target && artifactOperation.runId !== target) {
+          artifactOperation.stale = true;
+          if (artifactOperation.controller) artifactOperation.controller.abort();
+          foxgloveArtifactOperation = null;
+          setFoxgloveStatus(
+            "The selected run changed. Choose an MCAP card and retry in the Foxglove pane.",
+            "error"
+          );
+          cancelled = true;
+        }
+        if (
+          foxglovePinnedArtifactSelection && target &&
+          String(foxglovePinnedArtifactSelection.run_id || "") !== target
+        ) {
+          foxglovePinnedArtifactSelection = null;
+          foxglovePinnedConfig = null;
+          cancelled = true;
+        }
         syncFoxgloveWebAction();
-        return true;
+        syncArtifactFoxgloveActions();
+        return cancelled;
       }
       function setActiveRunId(nextRunId) {
         activeRunId = String(nextRunId || "").trim();
@@ -5501,8 +5555,19 @@
               "for stage progress and result."
             : "Checking this run for a Rerun recording...";
       }
-      function setRenderMode(mode) {
+      function setRenderMode(mode, options) {
         const next = String(mode || "rerun");
+        const opts = options || {};
+        if (opts.operator && next !== "foxglove") {
+          foxglovePinnedArtifactSelection = null;
+          foxglovePinnedConfig = null;
+        }
+        if (
+          (foxgloveArtifactOperation || foxglovePinnedArtifactSelection) &&
+          next !== "foxglove" && !opts.operator
+        ) {
+          return activeRenderMode;
+        }
         activeRenderMode = ["video", "image", "data", "lichtblick", "foxglove"].includes(next)
           ? next
           : "rerun";
@@ -5554,6 +5619,7 @@
           ensureFoxgloveViewer().catch((err) => console.warn("foxglove mount failed", err));
         }
         updateSimvizCta(lastSimVizStatus);
+        return activeRenderMode;
       }
       // --- Lichtblick (Foxglove-compatible MCAP viewer) embed ---------------
       // /lichtblick/recordings/ serves the MCAP unauthenticated and grants no CORS,
@@ -5780,6 +5846,7 @@
       let foxgloveConfig = null;
       let foxgloveConfigWarmPromise = null;
       let foxgloveMountPromise = null;
+      let foxgloveMountGeneration = 0;
       let foxglovePreparePromise = null;
       let foxgloveLastSourceKey = "";
       let foxgloveSignInTimer = null;
@@ -5927,7 +5994,10 @@
       }
       function prepareFoxgloveVisualizationAfterMount(config) {
         const visualization = (config && config.visualization) || {};
-        if (visualization.checked || !String(activeRunId || "").trim()) return;
+        if (
+          foxgloveArtifactOperation || visualization.checked ||
+          !String(activeRunId || "").trim()
+        ) return;
         // Do not make a slow S3 lookup/conversion a prerequisite for a visible
         // official viewer pane. The SDK iframe mounts first; this single-flight
         // task applies the canonical source as soon as it is ready.
@@ -5944,10 +6014,9 @@
             String(prepared.layout_storage_key || "") !==
               String((config && config.layout_storage_key) || "");
           if (needsCanonicalRemount) {
-            // `selectLayout` accepts Foxglove's opaque saved-layout payload, not
-            // this SDK's structured seed. Remount once with initialLayoutParams
-            // so the stable storage key restores user edits and seeds the NPA
-            // arrangement only when that key has no saved layout.
+            // Remount with initialLayoutParams so the stable storage key restores
+            // user edits and seeds the structured NPA arrangement only when that
+            // key has no saved layout.
             await ensureFoxgloveViewer({ remount: true, config: prepared });
             return;
           }
@@ -5963,10 +6032,12 @@
       async function ensureFoxgloveViewer(options) {
         const opts = options || {};
         if (foxgloveMountPromise) return foxgloveMountPromise;
-        foxgloveMountPromise = (async () => {
+        const mountGeneration = foxgloveMountGeneration;
+        const mountPromise = (async () => {
           const loadedConfig = opts.config && typeof opts.config === "object"
             ? opts.config
             : (foxgloveConfig || await warmFoxgloveConfig());
+          if (mountGeneration !== foxgloveMountGeneration) return false;
           let config = foxgloveConfigForActiveRun(loadedConfig);
           foxgloveConfig = config;
           updateFoxgloveVisualizationSummary(config);
@@ -5978,7 +6049,7 @@
           }
           if (foxgloveHandle && !opts.remount) {
             hideFoxgloveMessage();
-            await setFoxgloveDataSource(config);
+            if (!opts.deferDataSource) await setFoxgloveDataSource(config);
             prepareFoxgloveVisualizationAfterMount(config);
             return true;
           }
@@ -5995,7 +6066,8 @@
           try {
             const moduleUrl = String(config.host_module_url || "/foxglove/app/npa-foxglove-host.js");
             const mod = await import(moduleUrl);
-            teardownFoxgloveViewer();
+            if (mountGeneration !== foxgloveMountGeneration) return false;
+            teardownFoxgloveViewer({ preserveMountGeneration: true, preserveMountPromise: true });
             if (selfHosted) {
               // OSS backend: renders the run's MCAP in-page, no account needed.
               foxgloveHandle = mod.mountSelfHostedViewer({
@@ -6016,6 +6088,8 @@
                 onReady: () => {
                   if (foxgloveSignInTimer) clearTimeout(foxgloveSignInTimer);
                   foxgloveSignInTimer = null;
+                  const readyHost = document.getElementById("foxgloveHost");
+                  if (readyHost) readyHost.dataset.sdkReady = "true";
                   const source = (foxgloveConfig && foxgloveConfig.data_source) || null;
                   setFoxgloveStatus(
                     source
@@ -6061,22 +6135,35 @@
             return false;
           }
         })();
+        foxgloveMountPromise = mountPromise;
         try {
-          return await foxgloveMountPromise;
+          return await mountPromise;
         } finally {
-          foxgloveMountPromise = null;
+          if (foxgloveMountPromise === mountPromise) foxgloveMountPromise = null;
         }
       }
-      function teardownFoxgloveViewer() {
+      function teardownFoxgloveViewer(options) {
+        const opts = options || {};
+        if (!opts.preserveMountGeneration) foxgloveMountGeneration += 1;
+        if (!opts.preserveMountPromise) foxgloveMountPromise = null;
         if (foxgloveSignInTimer) clearTimeout(foxgloveSignInTimer);
         foxgloveSignInTimer = null;
         if (foxgloveHandle) {
           try { foxgloveHandle.destroy(); } catch (_err) { /* already gone */ }
         }
+        const host = document.getElementById("foxgloveHost");
+        if (host) {
+          delete host.dataset.setDataSourceCount;
+          delete host.dataset.dataSourceType;
+          delete host.dataset.dataSourceUrl;
+          delete host.dataset.layoutStorageKey;
+          delete host.dataset.sdkReady;
+        }
         foxgloveHandle = null;
         foxgloveLastSourceKey = "";
       }
       async function setFoxgloveDataSource(config) {
+        const options = arguments.length > 1 && arguments[1] ? arguments[1] : {};
         const cfg = config || (await loadFoxgloveConfig());
         foxgloveConfig = cfg;
         if (!foxgloveHandle || !cfg || !cfg.available) return false;
@@ -6085,8 +6172,16 @@
           setFoxgloveStatus("Foxglove viewer ready — no recording loaded yet.", "ready");
           return false;
         }
-        if (key === foxgloveLastSourceKey) return true;
-        foxgloveHandle.setDataSource(cfg);
+        if (key === foxgloveLastSourceKey && !options.force) return true;
+        const appliedSource = foxgloveHandle.setDataSource(cfg);
+        const host = document.getElementById("foxgloveHost");
+        if (host && appliedSource) {
+          host.dataset.setDataSourceCount = String(
+            Number(host.dataset.setDataSourceCount || "0") + 1
+          );
+          host.dataset.dataSourceType = String(appliedSource.type || "");
+          host.dataset.dataSourceUrl = String((appliedSource.urls || [])[0] || appliedSource.url || "");
+        }
         if (String(cfg.viewer_backend || "") === "self-hosted") {
           foxgloveLastSourceKey = key;
           setFoxgloveStatus("Loading recording into the self-hosted viewer…");
@@ -6098,8 +6193,32 @@
       }
       async function refreshFoxgloveViewer() {
         // Called after a run/artifact load so the pane follows the active recording.
+        // Exact card preparation owns the source while its generation is live;
+        // a status/config refresh must never replace it with an earlier source.
+        if (foxgloveArtifactOperation) return false;
         if (activeRenderMode !== "foxglove" && !foxgloveHandle) return false;
-        const config = await loadFoxgloveConfig();
+        let config;
+        if (foxglovePinnedArtifactSelection) {
+          config = await loadJson("/api/foxglove/config");
+          const match = foxgloveArtifactIdentityMatches(
+            (config && config.selected_artifact) || config,
+            foxglovePinnedArtifactSelection
+          );
+          if (!match.ok) {
+            foxgloveConfig = foxglovePinnedConfig || foxgloveConfig;
+            setFoxgloveStatus(
+              "A background refresh described a different recording; keeping the exact selected MCAP.",
+              "warning"
+            );
+            return false;
+          }
+          foxgloveConfig = config;
+          foxglovePinnedConfig = config;
+          updateFoxgloveVisualizationSummary(config);
+          syncArtifactFoxgloveActions();
+        } else {
+          config = await loadFoxgloveConfig();
+        }
         if (!config || !config.available) {
           if (activeRenderMode === "foxglove") {
             teardownFoxgloveViewer();
@@ -6163,11 +6282,257 @@
           return false;
         }
       }
+      function foxgloveConfigForSelection(config, selected) {
+        const cfg = config && typeof config === "object" ? config : {};
+        return {
+          ...cfg,
+          run_id: String(selected.run_id || ""),
+          artifact_run_ref: String(selected.run_ref || ""),
+          artifact_key: String(selected.key || ""),
+          artifact_uri: String(selected.s3_uri || ""),
+          project_id: String(selected.project_id || ""),
+          resource_bucket: String(selected.bucket || ""),
+          bucket: String(selected.bucket || ""),
+          resolved_prefix: String(selected.resolved_prefix || ""),
+          selected_artifact: {},
+          artifact_sha256: "",
+          recording_url: "",
+          data_source: null,
+          layout: {},
+          layout_storage_key:
+            String(cfg.layout_storage_key || "npa-agent-foxglove") + "-preparing",
+          visualization: { checked: false },
+        };
+      }
+      function foxgloveArtifactIdentityMatches(actual, selected) {
+        const value = actual && typeof actual === "object" ? actual : {};
+        const expected = selected && typeof selected === "object" ? selected : {};
+        const pairs = [
+          ["run id", value.run_id, expected.run_id],
+          ["run reference", value.run_ref || value.artifact_run_ref, expected.run_ref],
+          ["object key", value.key || value.artifact_key, expected.key],
+          ["S3 URI", value.s3_uri || value.artifact_uri, expected.s3_uri],
+          ["resource bucket", value.resource_bucket || value.bucket, expected.bucket],
+          ["project id", value.project_id, expected.project_id],
+          ["resolved prefix", value.resolved_prefix, expected.resolved_prefix],
+        ];
+        for (const [label, received, wanted] of pairs) {
+          if (String(received || "").trim() !== String(wanted || "").trim()) {
+            return { ok: false, reason: "prepared " + label + " does not match the selected artifact" };
+          }
+        }
+        return { ok: true, reason: "" };
+      }
+      function setFoxgloveActiveArtifactState(selected, config, sha256) {
+        const pane = document.getElementById("viewerPaneFoxglove");
+        if (!pane) return;
+        pane.dataset.runId = String(selected.run_id || "");
+        pane.dataset.runRef = String(selected.run_ref || "");
+        pane.dataset.artifactKey = String(selected.key || "");
+        pane.dataset.projectId = String(selected.project_id || "");
+        pane.dataset.resourceBucket = String(selected.bucket || "");
+        pane.dataset.resolvedPrefix = String(selected.resolved_prefix || "");
+        pane.dataset.sha256 = String(sha256 || "");
+        pane.dataset.recordingUrl = String((config && config.recording_url) || "");
+      }
+      function showFoxgloveArtifactFailure(selected, message) {
+        foxgloveArtifactRetrySelection = { ...selected, button: null };
+        showFoxgloveMessage(
+          '<h4>Could not load this MCAP in Foxglove</h4>' +
+          '<p>' + escapeHtml(String(message || "Unknown Foxglove preparation error")) + '</p>' +
+          '<p>Retry the exact artifact. If the error persists, verify that the object is a valid ' +
+          'MCAP and that the agent still has read access to its project and bucket.</p>' +
+          '<button id="foxgloveArtifactRetry" class="btn btn-primary" type="button">Retry exact MCAP</button>'
+        );
+        const retry = document.getElementById("foxgloveArtifactRetry");
+        if (retry) {
+          retry.addEventListener("click", () => {
+            const selection = foxgloveArtifactRetrySelection;
+            if (selection) void viewFoxgloveArtifact(selection);
+          });
+        }
+      }
+      async function viewFoxgloveArtifact(selection) {
+        const selected = selection && typeof selection === "object" ? { ...selection } : {};
+        selected.run_id = String(selected.run_id || "").trim();
+        selected.run_ref = String(selected.run_ref || "").trim();
+        selected.key = String(selected.key || "").trim();
+        selected.bucket = String(selected.bucket || "").trim();
+        selected.project_id = String(selected.project_id || "").trim();
+        selected.resolved_prefix = String(selected.resolved_prefix || "").trim();
+        selected.s3_uri = String(selected.s3_uri || "").trim();
+        const scope = activeRunResourceScope && activeRunResourceScope.run_id === selected.run_id
+          ? activeRunResourceScope
+          : {};
+        selected.bucket = selected.bucket || String(scope.bucket || "").trim();
+        selected.project_id = selected.project_id || String(scope.project_id || "").trim();
+        if (!selected.resolved_prefix_present) {
+          selected.resolved_prefix = String(scope.resolved_prefix || "").trim();
+        }
+        if (!selected.run_id || !selected.run_ref || !selected.key.toLowerCase().endsWith(".mcap")) {
+          setRenderMode("foxglove");
+          setFoxgloveStatus("Select a discovered MCAP card with exact run provenance and retry.", "error");
+          showFoxgloveArtifactFailure(selected, "The artifact card did not provide a run reference and MCAP key.");
+          return false;
+        }
+        if (!selected.bucket || !selected.project_id) {
+          setRenderMode("foxglove");
+          setFoxgloveStatus("The artifact source provenance is incomplete.", "error");
+          showFoxgloveArtifactFailure(
+            selected,
+            "Project and resource-bucket provenance are required for embedded playback; the resolved prefix is preserved even when it is empty."
+          );
+          return false;
+        }
+        const prior = foxgloveArtifactOperation;
+        if (prior) {
+          prior.stale = true;
+          if (prior.controller) prior.controller.abort();
+        }
+        const controller = new AbortController();
+        const operation = {
+          id: ++foxgloveArtifactOperationSequence,
+          runId: selected.run_id,
+          runRef: selected.run_ref,
+          key: selected.key,
+          controller,
+          stale: false,
+        };
+        foxgloveArtifactOperation = operation;
+        foxgloveArtifactRetrySelection = { ...selected, button: null };
+        foxglovePinnedArtifactSelection = { ...selected, button: null };
+        foxglovePinnedConfig = null;
+        artifactLoadRequestId += 1;
+        operatorMediaPreviewActive = false;
+        activeArtifactRender = "foxglove";
+        // Remove a prior iframe/source before revealing the pane; an old MCAP
+        // must never remain visible while the exact selected one is prepared.
+        teardownFoxgloveViewer();
+        foxgloveConfig = foxgloveConfigForSelection(foxgloveConfig, selected);
+        updateFoxgloveVisualizationSummary(foxgloveConfig);
+        syncArtifactFoxgloveActions();
+        setRenderMode("foxglove");
+        setFoxgloveStatus(
+          "Preparing exact MCAP: " + selected.run_id + " · " + selected.key,
+          "loading"
+        );
+        setStatus("Preparing the selected MCAP for embedded Foxglove…");
+        showToast("Preparing the selected MCAP in the Foxglove pane…", "info");
+        // Mount the official app immediately with no source. The real SDK queues
+        // setDataSource/selectLayout until its handshake is usable.
+        void ensureFoxgloveViewer().catch((err) => {
+          if (foxgloveArtifactOperation === operation && !operation.stale) {
+            setFoxgloveStatus("Foxglove SDK mount failed: " + String(err), "error");
+          }
+        });
+        try {
+          const data = await apiJson("/api/foxglove/export", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              run_id: selected.run_id,
+              run_ref: selected.run_ref,
+              key: selected.key,
+              resource_bucket: selected.bucket,
+              project_id: selected.project_id,
+              resolved_prefix: selected.resolved_prefix,
+              s3_uri: selected.s3_uri,
+            }),
+            signal: controller.signal,
+          });
+          if (operation.stale || foxgloveArtifactOperation !== operation) return false;
+          const preparedArtifact = (data && data.selected_artifact) ||
+            (data && data.export && data.export.selected_artifact) || {};
+          const preparedMatch = foxgloveArtifactIdentityMatches(preparedArtifact, selected);
+          if (!preparedMatch.ok) throw new Error(preparedMatch.reason);
+          const exported = (data && data.export) || {};
+          const recordingUrl = String(exported.recording_url || "").trim();
+          if (!exported.available || !/^https:\/\//i.test(recordingUrl)) {
+            throw new Error(String(exported.reason || "the public HTTPS MCAP transport is unavailable"));
+          }
+          if (!/^[a-f0-9]{64}$/i.test(String(exported.sha256 || ""))) {
+            throw new Error("the selected MCAP response did not provide its SHA-256 identity");
+          }
+          const config = await apiJson("/api/foxglove/config", { signal: controller.signal });
+          if (operation.stale || foxgloveArtifactOperation !== operation) return false;
+          const configMatch = foxgloveArtifactIdentityMatches(
+            (config && config.selected_artifact) || config,
+            selected
+          );
+          if (!configMatch.ok) throw new Error(configMatch.reason);
+          const urls = config && config.data_source && Array.isArray(config.data_source.urls)
+            ? config.data_source.urls.map((value) => String(value))
+            : [];
+          if (
+            String(config.viewer_backend || "") !== "foxglove-sdk" ||
+            String(config.data_source && config.data_source.type || "") !== "remote-file" ||
+            urls.length !== 1 || urls[0] !== recordingUrl ||
+            String(config.recording_url || "") !== recordingUrl ||
+            String(config.artifact_sha256 || "") !== String(exported.sha256 || "")
+          ) {
+            throw new Error("the refreshed Foxglove config does not identify the exact prepared MCAP transport");
+          }
+          foxgloveConfig = config;
+          foxglovePinnedConfig = config;
+          updateFoxgloveVisualizationSummary(config);
+          const mounted = await ensureFoxgloveViewer({ deferDataSource: true });
+          if (operation.stale || foxgloveArtifactOperation !== operation) return false;
+          if (!mounted || !foxgloveHandle) throw new Error("the official Foxglove SDK did not mount");
+          if (typeof foxgloveHandle.whenReady !== "function") {
+            throw new Error("the official Foxglove SDK readiness contract is unavailable");
+          }
+          setFoxgloveStatus("Waiting for the Foxglove SDK handshake before loading the exact MCAP…");
+          await foxgloveHandle.whenReady();
+          if (operation.stale || foxgloveArtifactOperation !== operation) return false;
+          const sourceApplied = await setFoxgloveDataSource(config, { force: true });
+          if (!sourceApplied) throw new Error("the exact remote-file source could not be applied");
+          if (config.layout && config.layout.version === 1 && config.layout.content) {
+            foxgloveHandle.selectLayout(config.layout_storage_key, config.layout, false);
+            const host = document.getElementById("foxgloveHost");
+            if (host) host.dataset.layoutStorageKey = String(config.layout_storage_key || "");
+          }
+          setFoxgloveActiveArtifactState(selected, config, exported.sha256);
+          hideFoxgloveMessage();
+          const viewerReady = Boolean(foxgloveHandle.isReady && foxgloveHandle.isReady());
+          setFoxgloveStatus(
+            viewerReady
+              ? "Foxglove SDK ready — exact selected MCAP sent: " + selected.key +
+                ". Sign in inside Foxglove if its hosted surface requests it."
+              : "Exact MCAP sent after the Foxglove handshake: " + selected.key,
+            viewerReady ? "ready" : "warning"
+          );
+          setFoxgloveWebNote(
+            "Embedded source is the selected MCAP. Use Open in Foxglove only for separate hosted navigation.",
+            "success"
+          );
+          showToast("Selected MCAP bound to the embedded Foxglove viewer.", "success");
+          setStatus("Ready");
+          return true;
+        } catch (err) {
+          if (
+            operation.stale || foxgloveArtifactOperation !== operation ||
+            (err && err.name === "AbortError")
+          ) return false;
+          const message = String((err && err.message) || err);
+          // Invalidate an SDK import/mount that may still be completing. It must
+          // not hide this exact-artifact error after the failed request returns.
+          teardownFoxgloveViewer();
+          setFoxgloveStatus("Could not load the selected MCAP: " + message, "error");
+          showFoxgloveArtifactFailure(selected, message);
+          showToast("Embedded Foxglove load failed: " + message, "error");
+          setStatus("Ready");
+          return false;
+        } finally {
+          if (foxgloveArtifactOperation === operation) foxgloveArtifactOperation = null;
+          syncArtifactFoxgloveActions();
+        }
+      }
       async function openFoxgloveWeb(selection) {
-        const selected = selection && typeof selection === "object" &&
+        const explicitSelection = selection && typeof selection === "object" &&
           Object.prototype.hasOwnProperty.call(selection, "key")
           ? selection
           : null;
+        const selected = explicitSelection || foxglovePinnedArtifactSelection;
         const runId = String((selected && selected.run_id) || activeRunId || "").trim();
         const runRef = String((selected && selected.run_ref) || activeArtifactRunRef || "").trim();
         const artifactKey = String((selected && selected.key) || "").trim();
@@ -6231,7 +6596,9 @@
               ...(runRef ? { run_ref: runRef } : {}),
               ...(artifactKey ? {
                 key: artifactKey,
-                bucket: String(selected.bucket || "").trim(),
+                resource_bucket: String(selected.bucket || "").trim(),
+                project_id: String(selected.project_id || "").trim(),
+                resolved_prefix: String(selected.resolved_prefix || "").trim(),
                 s3_uri: String(selected.s3_uri || "").trim(),
               } : {}),
               open_web: true,
@@ -6256,10 +6623,14 @@
           if (!info || !info.available || !info.web_url) {
             throw new Error(String((info && info.reason) || "Foxglove Web is unavailable"));
           }
-          if (artifactKey && String(selectedResult.key || "").trim() !== artifactKey) {
-            throw new Error(
-              "The prepared Foxglove destination does not match the selected artifact; retry from the artifact card."
-            );
+          if (artifactKey) {
+            const preparedMatch = foxgloveArtifactIdentityMatches(selectedResult, selected);
+            if (!preparedMatch.ok) {
+              throw new Error(
+                "The prepared Foxglove destination does not match the selected artifact (" +
+                  preparedMatch.reason + "); retry from the artifact card."
+              );
+            }
           }
           const layoutNote = String(info.layout_note || "");
           setFoxgloveWebNote(
@@ -8041,6 +8412,8 @@
               'aria-disabled="true" title="Checking the official Foxglove integration…" data-run-id="' +
               escapeHtml(runId) + '" data-run-ref="' + escapeHtml(runRef) +
               '" data-key="' + escapeHtml(key) + '" data-bucket="' + escapeHtml(bucket) +
+              '" data-project-id="' + escapeHtml(String(data.project_id || "")) +
+              '" data-resolved-prefix="' + escapeHtml(String(data.resolved_prefix || "")) +
               '" data-s3-uri="' + escapeHtml(s3uri) + '">View in Foxglove</button>'
             : "";
           return (
@@ -8108,7 +8481,7 @@
         list.querySelectorAll("button[data-action='open-foxglove-artifact']").forEach((btn) => {
           btn.addEventListener("click", (event) => {
             event.preventDefault();
-            void openFoxgloveWeb(artifactFoxgloveSelection(btn));
+            void viewFoxgloveArtifact(artifactFoxgloveSelection(btn));
           });
         });
         syncArtifactFoxgloveActions();
@@ -8557,9 +8930,9 @@
         activeArtifactRender = render;
         operatorMediaPreviewActive = true;
         await activateMainTab("rerun", { skipEnsure: true });
-        if (render === "video") setRenderMode("video");
-        else if (render === "image") setRenderMode("image");
-        else setRenderMode("data");
+        if (render === "video") setRenderMode("video", { operator: true });
+        else if (render === "image") setRenderMode("image", { operator: true });
+        else setRenderMode("data", { operator: true });
         if (host._previewObjectUrl) {
           try { URL.revokeObjectURL(host._previewObjectUrl); } catch (_err) { /* ignore */ }
           host._previewObjectUrl = "";
@@ -8730,7 +9103,7 @@
         await activateMainTab("rerun", { skipEnsure: true });
         if (!isCurrent()) return false;
         if (render === "rerun") {
-          setRenderMode("rerun");
+          setRenderMode("rerun", { operator: true });
           hideArtifactPreview();
           lastRrdUpdatedAt = "";
           // Soft-swap when possible; only force remount if the viewer is not alive.
@@ -8751,7 +9124,7 @@
           }
         } else if (render === "mcap" || render === "lichtblick") {
           hideArtifactPreview();
-          setRenderMode("lichtblick");
+          setRenderMode("lichtblick", { operator: true });
           mountLichtblickIframe(simViz);
         } else {
           // Keep the Rerun iframe mounted; switch viewer pane instead of tearing down wasm.
@@ -9441,7 +9814,10 @@
                   'aria-disabled="true" title="Checking the official Foxglove integration…" data-run-id="' +
                   escapeHtml(rid) + '" data-run-ref="' + escapeHtml(stageRunRef) +
                   '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) +
-                  '" data-bucket="' + escapeHtml(bucket) + '">View in Foxglove</button>'
+                  '" data-bucket="' + escapeHtml(bucket) +
+                  '" data-project-id="' + escapeHtml(String((data && data.project_id) || "")) +
+                  '" data-resolved-prefix="' + escapeHtml(String((data && data.resolved_prefix) || "")) +
+                  '">View in Foxglove</button>'
                 : "";
               return '<div class="stage-detail-row"><code title="' + escapeHtml(key) + '">' +
                 escapeHtml(base) + '</code> <span class="pill">' + escapeHtml(render) + "</span>" +
@@ -9515,7 +9891,7 @@
           host.querySelectorAll("button[data-sd-action='foxglove']").forEach((btn) => {
             btn.addEventListener("click", (event) => {
               event.preventDefault();
-              void openFoxgloveWeb(artifactFoxgloveSelection(btn));
+              void viewFoxgloveArtifact(artifactFoxgloveSelection(btn));
             });
           });
           syncArtifactFoxgloveActions();

@@ -562,11 +562,30 @@ def test_resolve_config_never_echoes_secrets(tmp_path: Path) -> None:
 def test_status_payload_and_describe_context(tmp_path: Path) -> None:
     assets = _install_assets(tmp_path)
     sim_viz = {
-        "foxglove_url": "/foxglove/data/tok-run.mcap",
         "foxglove_ready": True,
         "run_id": "run-7",
         "artifact_key": "run-7/reports/session.mcap",
+        "artifact_run_ref": "npa1_run_7",
+        "artifact_uri": "s3://bucket-a/run-7/reports/session.mcap",
         "artifact_render": "mcap",
+        "project_id": "project-a",
+        "bucket": "bucket-a",
+        "resolved_prefix": "runs",
+        "foxglove_selected_artifact": {
+            "run_id": "run-7",
+            "run_ref": "npa1_run_7",
+            "key": "run-7/reports/session.mcap",
+            "s3_uri": "s3://bucket-a/run-7/reports/session.mcap",
+            "resource_bucket": "bucket-a",
+            "bucket": "bucket-a",
+            "project_id": "project-a",
+            "resolved_prefix": "runs",
+            "sha256": "a" * 64,
+            "recording_url": "https://agent.example/foxglove/data/exact-run.mcap",
+        },
+        # General sim-viz state may move while the selected Foxglove transport
+        # remains pinned to the exact card.
+        "foxglove_url": "/foxglove/data/background-other.mcap",
         "mcap_updated_at": "2026-07-30T00:00:00+00:00",
     }
     config = resolve_foxglove_config(
@@ -580,7 +599,16 @@ def test_status_payload_and_describe_context(tmp_path: Path) -> None:
     assert status["foxglove_ready"] is True
     assert status["data_source_type"] == "remote-file"
     assert status["artifact_key"] == "run-7/reports/session.mcap"
-    assert status["recording_url"].endswith("/foxglove/data/tok-run.mcap")
+    assert status["artifact_run_ref"] == "npa1_run_7"
+    assert status["artifact_uri"].startswith("s3://bucket-a/")
+    assert status["project_id"] == "project-a"
+    assert status["resource_bucket"] == "bucket-a"
+    assert status["resolved_prefix"] == "runs"
+    assert status["artifact_sha256"] == "a" * 64
+    assert status["recording_url"].endswith("/foxglove/data/exact-run.mcap")
+    assert config["data_source"]["urls"] == [
+        "https://agent.example/foxglove/data/exact-run.mcap"
+    ]
     assert "export" not in status
 
     context = describe_foxglove_context(config, sim_viz)

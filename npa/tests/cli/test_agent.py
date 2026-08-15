@@ -1201,13 +1201,43 @@ def test_bootstrap_ui_lichtblick_autoloads_run_mcap() -> None:
     assert "ensureLichtblickForActiveRun()" in source
 
 
-def test_bootstrap_ui_mcap_cards_expose_exact_popup_safe_foxglove_action() -> None:
+def test_bootstrap_ui_mcap_cards_bind_exact_provenance_in_page() -> None:
     source = _agent_ui_bundle()
     assert 'data-action="open-foxglove-artifact"' in source
     assert 'data-sd-action="foxglove"' in source
     assert "artifactFoxgloveSelection" in source
-    assert "selectedResult.key" in source
+    assert "viewFoxgloveArtifact(artifactFoxgloveSelection(btn))" in source
     assert 'String(selected.s3_uri || "").trim()' in source
+    embedded_handler = source.split("async function viewFoxgloveArtifact", 1)[1].split(
+        "async function openFoxgloveWeb", 1
+    )[0]
+    assert 'setRenderMode("foxglove")' in embedded_handler
+    assert 'apiJson("/api/foxglove/export"' in embedded_handler
+    assert "resource_bucket: selected.bucket" in embedded_handler
+    assert "project_id: selected.project_id" in embedded_handler
+    assert "resolved_prefix: selected.resolved_prefix" in embedded_handler
+    assert "await setFoxgloveDataSource(config, { force: true })" in embedded_handler
+    assert "await foxgloveHandle.whenReady()" in embedded_handler
+    assert "foxgloveHandle.selectLayout" in embedded_handler
+    assert "setFoxgloveActiveArtifactState" in embedded_handler
+    assert "++foxgloveArtifactOperationSequence" in embedded_handler
+    assert "prior.controller.abort()" in embedded_handler
+    assert "foxgloveArtifactOperation !== operation" in embedded_handler
+    assert "foxglovePinnedArtifactSelection" in embedded_handler
+    assert "showFoxgloveArtifactFailure" in embedded_handler
+    assert 'id="foxgloveArtifactRetry"' in source
+    assert 'button.setAttribute("aria-busy", busy ? "true" : "false")' in source
+    assert "window.open" not in embedded_handler
+    assert "location.replace" not in embedded_handler
+    external_handler = source.split("async function openFoxgloveWeb", 1)[1].split(
+        "async function captureFoxgloveContext", 1
+    )[0]
+    assert 'window.open("about:blank", "_blank")' in external_handler
+    assert 'id="viewerPaneFoxglove"' in source
+    foxglove_pane = source.split('id="viewerPaneFoxglove"', 1)[1].split(
+        'id="viewerPaneMedia"', 1
+    )[0]
+    assert "Open in Foxglove</button>" in foxglove_pane
     assert source.index("View in Foxglove") < source.index("View in Lichtblick")
 
 
@@ -1452,6 +1482,7 @@ def test_bootstrap_embeds_cameras_panel() -> None:
     assert 'role="tab" aria-selected="true" aria-controls="viewerPaneRerun"' in source
     assert 'data-testid="open-foxglove-web"' in source
     assert "View in Foxglove</button>" in source
+    assert "Open in Foxglove</button>" in source
     assert 'id="foxgloveVisualizationSummary"' in source
     assert "prepareFoxgloveVisualization" in source
     assert "let foxglovePreparePromise = null" in source

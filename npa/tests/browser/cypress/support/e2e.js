@@ -208,6 +208,13 @@ const NON_STOCK_ARTIFACTS = [
     size: 16384,
   },
   {
+    key: `${NON_STOCK_RUN_ID}/recordings/native-single-camera.mcap`,
+    s3_uri: `s3://mock/${NON_STOCK_RUN_ID}/recordings/native-single-camera.mcap`,
+    render: "mcap",
+    inline: true,
+    size: 4096,
+  },
+  {
     key: `${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4`,
     s3_uri: `s3://mock/${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4`,
     render: "video",

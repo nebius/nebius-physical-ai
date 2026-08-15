@@ -566,10 +566,20 @@ def data_source_for_state(
     empty viewer rather than claiming data it does not have).
     """
     state = sim_viz if isinstance(sim_viz, dict) else {}
-    published = str(state.get("foxglove_url") or "").strip()
+    selected = state.get("foxglove_selected_artifact")
+    selected_artifact = selected if isinstance(selected, dict) else {}
+    published = str(
+        selected_artifact.get("recording_url") or state.get("foxglove_url") or ""
+    ).strip()
     if published:
         urls = [_absolute(published, origin)]
-        start_ns, end_ns = _recording_time_bounds(state)
+        canonical_key = str(state.get("canonical_mcap_key") or "").strip()
+        selected_key = str(selected_artifact.get("key") or "").strip()
+        start_ns, end_ns = (
+            _recording_time_bounds(state)
+            if not selected_key or selected_key == canonical_key
+            else (0, 0)
+        )
         start_time = (
             min(end_ns, start_ns + 250_000_000) / 1_000_000_000
             if start_ns > 0 and end_ns >= start_ns
@@ -670,6 +680,8 @@ def resolve_foxglove_config(
             # SDK gap so an operator who wanted the official app knows why.
             reason = ""
 
+    selected = state.get("foxglove_selected_artifact")
+    selected_artifact = selected if isinstance(selected, dict) else {}
     data_source = data_source_for_state(state, origin=origin, env=environ)
     # The in-page OSS viewer must read a same-origin recording; the published
     # Lichtblick path is exactly that (the CORS copy is for the official app).
@@ -707,10 +719,46 @@ def resolve_foxglove_config(
         "layout_storage_key": layout_key,
         "live_url": live_url,
         "data_source": data_source,
-        "run_id": str(state.get("run_id") or ""),
-        "artifact_key": str(state.get("artifact_key") or ""),
-        "artifact_uri": str(state.get("artifact_uri") or ""),
-        "recording_url": _absolute(str(state.get("foxglove_url") or ""), origin),
+        "run_id": str(selected_artifact.get("run_id") or state.get("run_id") or ""),
+        "artifact_run_ref": str(
+            selected_artifact.get("run_ref") or state.get("artifact_run_ref") or ""
+        ),
+        "artifact_key": str(
+            selected_artifact.get("key") or state.get("artifact_key") or ""
+        ),
+        "artifact_uri": str(
+            selected_artifact.get("s3_uri") or state.get("artifact_uri") or ""
+        ),
+        "project_id": str(
+            selected_artifact.get("project_id") or state.get("project_id") or ""
+        ),
+        "resource_bucket": str(
+            selected_artifact.get("resource_bucket")
+            or selected_artifact.get("bucket")
+            or state.get("bucket")
+            or ""
+        ),
+        "bucket": str(
+            selected_artifact.get("bucket")
+            or selected_artifact.get("resource_bucket")
+            or state.get("bucket")
+            or ""
+        ),
+        "resolved_prefix": str(
+            selected_artifact.get("resolved_prefix")
+            if "resolved_prefix" in selected_artifact
+            else state.get("resolved_prefix") or ""
+        ),
+        "selected_artifact": dict(selected_artifact),
+        "artifact_sha256": str(selected_artifact.get("sha256") or ""),
+        "recording_url": _absolute(
+            str(
+                selected_artifact.get("recording_url")
+                or state.get("foxglove_url")
+                or ""
+            ),
+            origin,
+        ),
         "updated_at": str(state.get("mcap_updated_at") or ""),
         "requires_account_note": (
             "The embedded viewer application is hosted by Foxglove (or your "
@@ -816,6 +864,8 @@ def foxglove_status_payload(config: dict, sim_viz: dict | None = None) -> dict:
     """Return the compact ``/api/foxglove/status`` payload for UI + chat grounding."""
     state = sim_viz if isinstance(sim_viz, dict) else {}
     source = config.get("data_source") if isinstance(config, dict) else None
+    selected = state.get("foxglove_selected_artifact")
+    selected_artifact = selected if isinstance(selected, dict) else {}
     return {
         "available": bool(config.get("available")),
         "reason": str(config.get("reason") or ""),
@@ -826,9 +876,39 @@ def foxglove_status_payload(config: dict, sim_viz: dict | None = None) -> dict:
         "embed_src": str(config.get("embed_src") or ""),
         "org_slug": str(config.get("org_slug") or ""),
         "foxglove_ready": bool(state.get("foxglove_ready")),
-        "run_id": str(state.get("run_id") or ""),
-        "artifact_key": str(state.get("artifact_key") or ""),
+        "run_id": str(selected_artifact.get("run_id") or state.get("run_id") or ""),
+        "artifact_run_ref": str(
+            selected_artifact.get("run_ref") or state.get("artifact_run_ref") or ""
+        ),
+        "artifact_key": str(
+            selected_artifact.get("key") or state.get("artifact_key") or ""
+        ),
+        "artifact_uri": str(
+            selected_artifact.get("s3_uri") or state.get("artifact_uri") or ""
+        ),
         "artifact_render": str(state.get("artifact_render") or ""),
+        "project_id": str(
+            selected_artifact.get("project_id") or state.get("project_id") or ""
+        ),
+        "resource_bucket": str(
+            selected_artifact.get("resource_bucket")
+            or selected_artifact.get("bucket")
+            or state.get("bucket")
+            or ""
+        ),
+        "bucket": str(
+            selected_artifact.get("bucket")
+            or selected_artifact.get("resource_bucket")
+            or state.get("bucket")
+            or ""
+        ),
+        "resolved_prefix": str(
+            selected_artifact.get("resolved_prefix")
+            if "resolved_prefix" in selected_artifact
+            else state.get("resolved_prefix") or ""
+        ),
+        "selected_artifact": dict(selected_artifact),
+        "artifact_sha256": str(selected_artifact.get("sha256") or ""),
         "canonical_mcap_s3_uri": str(state.get("canonical_mcap_s3_uri") or ""),
         "canonical_mcap_key": str(state.get("canonical_mcap_key") or ""),
         "canonical_mcap_sha256": str(state.get("canonical_mcap_sha256") or ""),

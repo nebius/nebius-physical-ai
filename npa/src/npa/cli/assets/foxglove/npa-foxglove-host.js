@@ -182,7 +182,7 @@ export function pinSelfHostedDataSource(viewerUrl, origin) {
  * @param {function} [params.onDescribe]   Ctrl+Shift+S handler inside the viewer
  * @param {string} [params.origin]         origin used to absolutize data URLs
  * @returns {{viewer: FoxgloveViewer, setDataSource: function, selectLayout: function,
- *            seek: function, destroy: function, isReady: function}}
+ *            seek: function, destroy: function, isReady: function, whenReady: function}}
  */
 export function mountFoxgloveViewer(params) {
   const { parent, config, onReady, onError, onDescribe } = params || {};
@@ -221,17 +221,40 @@ export function mountFoxgloveViewer(params) {
   if (initialSource) options.initialDataSource = initialSource;
 
   const viewer = new FoxgloveViewer(options);
+  let resolveReady;
+  let readinessSettled = false;
+  let readinessError = "";
+  const readyPromise = new Promise((resolve) => {
+    resolveReady = resolve;
+  });
 
-  if (typeof onReady === "function") {
-    viewer.addEventListener("ready", () => onReady());
-  }
-  if (typeof onError === "function") {
-    viewer.addEventListener("error", (event) => onError(formatViewerError(event && event.detail)));
-  }
+  viewer.addEventListener("ready", () => {
+    if (readinessSettled) return;
+    readinessSettled = true;
+    resolveReady(true);
+    if (typeof onReady === "function") onReady();
+  });
+  viewer.addEventListener("error", (event) => {
+    const message = formatViewerError(event && event.detail);
+    if (!readinessSettled) {
+      readinessSettled = true;
+      readinessError = message;
+      // Resolve the internal promise so an error before a consumer calls
+      // whenReady never becomes an unhandled rejection. whenReady translates
+      // this settled state into an actionable rejection for exact-card loads.
+      resolveReady(false);
+    }
+    if (typeof onError === "function") onError(message);
+  });
 
   return {
     viewer,
     isReady: () => viewer.isReady(),
+    whenReady: async () => {
+      const ready = await readyPromise;
+      if (!ready) throw new Error(readinessError || "Foxglove viewer failed before readiness");
+      return true;
+    },
     /** Apply a new data source from a config/status payload (or a raw DataSource). */
     setDataSource(next) {
       const source =
@@ -242,9 +265,9 @@ export function mountFoxgloveViewer(params) {
       viewer.setDataSource(source);
       return source;
     },
-    selectLayout(storageKey, opaqueLayout, force) {
+    selectLayout(storageKey, layout, force) {
       const params2 = { storageKey: String(storageKey || DEFAULT_LAYOUT_STORAGE_KEY) };
-      if (opaqueLayout !== undefined) params2.opaqueLayout = opaqueLayout;
+      if (layout !== undefined) params2.layout = layout;
       if (force) params2.force = true;
       viewer.selectLayout(params2);
     },

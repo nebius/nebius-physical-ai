@@ -2713,7 +2713,14 @@ def _foxglove_config(state: dict | None = None) -> dict:
         sim_viz=sim_viz,
         self_hosted_ready=_self_hosted_viewer_healthy(),
     )
-    provenance = dict(sim_viz.get("canonical_mcap_provenance") or {{}})
+    selected_foxglove = dict(sim_viz.get("foxglove_selected_artifact") or {{}})
+    selected_key = str(selected_foxglove.get("key") or "")
+    canonical_key = str(sim_viz.get("canonical_mcap_key") or "")
+    provenance = (
+        dict(sim_viz.get("canonical_mcap_provenance") or {{}})
+        if not selected_key or selected_key == canonical_key
+        else {{}}
+    )
     rich_visualization = has_rich_visualization_contract(provenance)
     if provenance:
         payload["layout"] = (

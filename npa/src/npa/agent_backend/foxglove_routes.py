@@ -97,9 +97,7 @@ def _reusable_canonical_transport(sim_viz: dict, path: Path | None) -> bool:
         return False
     expected = str(sim_viz.get("canonical_mcap_sha256") or "").strip().lower()
     provenance = sim_viz.get("canonical_mcap_provenance")
-    if not re.fullmatch(r"[0-9a-f]{64}", expected) or not isinstance(
-        provenance, dict
-    ):
+    if not re.fullmatch(r"[0-9a-f]{64}", expected) or not isinstance(provenance, dict):
         return False
     if str(provenance.get("sha256") or "").strip().lower() != expected:
         return False
@@ -299,17 +297,23 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
             }
             if requested_run_ref:
                 load_request["run_ref"] = requested_run_ref
-            selected_bucket = str(body.get("bucket") or "").strip()
+            selected_bucket = str(
+                body.get("resource_bucket") or body.get("bucket") or ""
+            ).strip()
+            selected_project = str(body.get("project_id") or "").strip()
+            selected_prefix = str(body.get("resolved_prefix") or "").strip()
             if selected_bucket:
                 load_request["bucket"] = selected_bucket
+            if selected_project:
+                load_request["project_id"] = selected_project
+            if "resolved_prefix" in body:
+                load_request["resolved_prefix"] = selected_prefix
             selected_uri = str(body.get("s3_uri") or "").strip()
             if selected_uri:
                 load_request["s3_uri"] = selected_uri
             loaded = deps.load_artifact(load_request)
             loaded_viz = (
-                dict(loaded.get("sim_viz") or {})
-                if isinstance(loaded, dict)
-                else {}
+                dict(loaded.get("sim_viz") or {}) if isinstance(loaded, dict) else {}
             )
             loaded_key = str(loaded_viz.get("artifact_key") or "").strip()
             if not isinstance(loaded, dict) or not loaded.get("ok") or not loaded_key:
@@ -336,9 +340,51 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
                     sim_viz.get("artifact_uri") or loaded.get("artifact_uri") or ""
                 ),
                 "bucket": str(sim_viz.get("bucket") or selected_bucket),
+                "resource_bucket": str(sim_viz.get("bucket") or selected_bucket),
                 "project_id": str(sim_viz.get("project_id") or ""),
                 "resolved_prefix": str(sim_viz.get("resolved_prefix") or ""),
             }
+            for field, requested, actual, enforce in (
+                ("run id", requested_run, selected_artifact["run_id"], True),
+                (
+                    "run reference",
+                    requested_run_ref,
+                    selected_artifact["run_ref"],
+                    bool(requested_run_ref),
+                ),
+                (
+                    "resource bucket",
+                    selected_bucket,
+                    selected_artifact["bucket"],
+                    "resource_bucket" in body or "bucket" in body,
+                ),
+                (
+                    "project id",
+                    selected_project,
+                    selected_artifact["project_id"],
+                    "project_id" in body,
+                ),
+                (
+                    "resolved prefix",
+                    selected_prefix,
+                    selected_artifact["resolved_prefix"],
+                    "resolved_prefix" in body,
+                ),
+                (
+                    "S3 URI",
+                    selected_uri,
+                    selected_artifact["s3_uri"],
+                    "s3_uri" in body,
+                ),
+            ):
+                if enforce and requested != actual:
+                    raise http_error(
+                        status_code=409,
+                        detail=(
+                            f"the prepared Foxglove artifact {field} does not match "
+                            "the selected artifact card"
+                        ),
+                    )
         active_url = str(sim_viz.get("foxglove_url") or "").strip()
         active_run = str(sim_viz.get("run_id") or "").strip()
         active_path = deps.data_dir / Path(active_url).name if active_url else None
@@ -403,7 +449,17 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
         else:
             summary = None
             canonical = {}
-        config = deps.foxglove_config(state)
+        config_state = state
+        if exact_selection:
+            # The loader has just made this selected artifact the active local
+            # transport. Ignore a prior same-run pinned artifact while deriving
+            # the response URL; otherwise a fast second click could pair the new
+            # key/SHA with the first click's recording URL.
+            config_viz = dict(sim_viz)
+            config_viz["foxglove_selected_artifact"] = {}
+            config_state = dict(state)
+            config_state["sim_viz"] = config_viz
+        config = deps.foxglove_config(config_state)
         export = foxglove_download_export(str(config.get("recording_url") or ""))
         if not export["available"]:
             raise http_error(status_code=409, detail=export["reason"])
@@ -421,21 +477,25 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
             export["canonical_s3_uri"] = str(selected_artifact.get("s3_uri") or "")
             export["provenance"] = {}
         else:
-            export["canonical_s3_uri"] = str(
-                sim_viz.get("canonical_mcap_s3_uri") or ""
-            )
+            export["canonical_s3_uri"] = str(sim_viz.get("canonical_mcap_s3_uri") or "")
             export["sha256"] = str(sim_viz.get("canonical_mcap_sha256") or "")
-            export["provenance"] = dict(
-                sim_viz.get("canonical_mcap_provenance") or {}
-            )
+            export["provenance"] = dict(sim_viz.get("canonical_mcap_provenance") or {})
         if exact_selection:
             selected_artifact.update(
                 {
                     "sha256": export["sha256"],
                     "size_bytes": active_path.stat().st_size,
+                    "recording_url": str(export.get("recording_url") or ""),
                 }
             )
             export["selected_artifact"] = selected_artifact
+            # Persist the selected transport identity independently of the
+            # canonical-cache identity. A generic/native MCAP in the same run
+            # must not inherit another artifact's SHA, provenance, or layout.
+            sim_viz["foxglove_selected_artifact"] = dict(selected_artifact)
+            sim_viz["transport_state"] = "published-selected-artifact"
+            state["sim_viz"] = sim_viz
+            deps.save_state(state)
         if bool(body.get("open_web")):
             provenance = dict(export.get("provenance") or {})
             layout: dict[str, Any] = {}

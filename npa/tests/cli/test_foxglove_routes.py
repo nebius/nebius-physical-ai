@@ -97,9 +97,7 @@ def harness(tmp_path: Path):
                     "run_id": str(body.get("run_id") or "run-1"),
                     "artifact_run_ref": str(body.get("run_ref") or ""),
                     "artifact_key": loaded_key,
-                    "artifact_uri": str(
-                        body.get("s3_uri") or f"s3://bucket/{key}"
-                    ),
+                    "artifact_uri": str(body.get("s3_uri") or f"s3://bucket/{key}"),
                     "artifact_render": "mcap",
                     "bucket": str(body.get("bucket") or "bucket"),
                     "project_id": "project-1",
@@ -346,9 +344,18 @@ def test_export_exact_discovered_mcap_preserves_selection_and_once_encoded_url(
         "run_id": "run-1",
         "run_ref": "npa1_exact_source",
         "key": key,
-        "bucket": "bucket",
+        "resource_bucket": "bucket",
+        "project_id": "project-1",
+        "resolved_prefix": "runs",
         "s3_uri": uri,
         "open_web": True,
+    }
+    # A prior same-run selection must not supply this request's transport URL.
+    harness["state"]["sim_viz"]["foxglove_selected_artifact"] = {
+        "run_id": "run-1",
+        "run_ref": "npa1_exact_source",
+        "key": "runs/run-1/stages/older.mcap",
+        "recording_url": "https://agent.example/foxglove/data/older.mcap",
     }
 
     response = harness["client"].post("/foxglove/export", json=request)
@@ -360,6 +367,8 @@ def test_export_exact_discovered_mcap_preserves_selection_and_once_encoded_url(
         "run_ref": "npa1_exact_source",
         "key": key,
         "bucket": "bucket",
+        "project_id": "project-1",
+        "resolved_prefix": "runs",
         "s3_uri": uri,
     }
     assert body["artifact_key"] == key
@@ -368,9 +377,11 @@ def test_export_exact_discovered_mcap_preserves_selection_and_once_encoded_url(
     assert body["selected_artifact"]["run_ref"] == "npa1_exact_source"
     assert body["selected_artifact"]["s3_uri"] == uri
     assert body["selected_artifact"]["bucket"] == "bucket"
+    assert body["selected_artifact"]["resource_bucket"] == "bucket"
     assert body["selected_artifact"]["project_id"] == "project-1"
     assert body["selected_artifact"]["resolved_prefix"] == "runs"
     assert re.fullmatch(r"[0-9a-f]{64}", body["selected_artifact"]["sha256"])
+    assert body["selected_artifact"]["recording_url"] == body["export"]["recording_url"]
     query = parse_qs(urlparse(body["export"]["web_url"]).query)
     assert query["ds"][0] == "remote-file"
     assert query["ds.url"][0] == (
@@ -380,6 +391,66 @@ def test_export_exact_discovered_mcap_preserves_selection_and_once_encoded_url(
     assert "layoutId" not in query
     assert "default topic browser" in body["export"]["layout_note"]
     assert harness["layout_calls"] == []
+    assert (
+        harness["state"]["sim_viz"]["foxglove_selected_artifact"]
+        == body["selected_artifact"]
+    )
+    config = harness["client"].get("/foxglove/config").json()
+    status = harness["client"].get("/foxglove/status").json()
+    for payload in (config, status):
+        assert payload["run_id"] == "run-1"
+        assert payload["artifact_run_ref"] == "npa1_exact_source"
+        assert payload["artifact_key"] == key
+        assert payload["artifact_uri"] == uri
+        assert payload["project_id"] == "project-1"
+        assert payload["resource_bucket"] == "bucket"
+        assert payload["resolved_prefix"] == "runs"
+        assert payload["artifact_sha256"] == body["selected_artifact"]["sha256"]
+        assert payload["selected_artifact"] == body["selected_artifact"]
+
+    # A later same-run preview may mutate the general sim-viz aliases. The
+    # selected Foxglove transport remains authoritative until another exact
+    # card is prepared.
+    harness["state"]["sim_viz"].update(
+        {
+            "artifact_key": "runs/run-1/other.mcap",
+            "artifact_uri": "s3://bucket/runs/run-1/other.mcap",
+            "foxglove_url": "/foxglove/data/background-other.mcap",
+        }
+    )
+    refreshed = harness["client"].get("/foxglove/config").json()
+    assert refreshed["artifact_key"] == key
+    assert refreshed["recording_url"] == body["export"]["recording_url"]
+    assert refreshed["data_source"]["urls"] == [body["export"]["recording_url"]]
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("project_id", "project-other", "project id"),
+        ("resolved_prefix", "other-prefix", "resolved prefix"),
+        ("resolved_prefix", "", "resolved prefix"),
+    ],
+)
+def test_export_exact_artifact_rejects_conflicting_source_provenance(
+    harness, field: str, value: str, message: str
+) -> None:
+    key = "runs/run-1/stages/native.mcap"
+    request = {
+        "run_id": "run-1",
+        "run_ref": "npa1_exact_source",
+        "key": key,
+        "resource_bucket": "bucket",
+        "project_id": "project-1",
+        "resolved_prefix": "runs",
+        "s3_uri": f"s3://bucket/{key}",
+        field: value,
+    }
+
+    response = harness["client"].post("/foxglove/export", json=request)
+
+    assert response.status_code == 409
+    assert message in response.json()["detail"]
 
 
 def test_export_exact_artifact_rejects_non_mcap_before_publication(harness) -> None:
