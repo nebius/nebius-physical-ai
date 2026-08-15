@@ -63,13 +63,13 @@ SOLUTION_CAPABILITY_CONTRACTS = {
         ],
     },
     "openpi": {
-        "capability_name": "policy_config_materialization",
-        "smoke_artifact_name": "openpi_pi05_droid_config.json",
+        "capability_name": "pi05_droid_jointpos_polaris_served_infer",
+        "smoke_artifact_name": "openpi_pi05_droid_jointpos_polaris_inference.json",
         "spec": "byof-openpi.yaml",
         "must_exercise": [
-            "policy_config_materialization",
-            "pi05_droid_checkpoint_download",
-            "pi05_droid_checkpoint_infer",
+            "pi05_droid_jointpos_polaris_checkpoint_download",
+            "pi05_droid_jointpos_polaris_direct_infer",
+            "pi05_droid_jointpos_polaris_served_infer",
         ],
     },
     "droid-policy-learning": {
@@ -159,6 +159,36 @@ def test_byof_solution_smokes_are_not_import_only() -> None:
         assert '"capability"' in smoke or "'capability'" in smoke, path.name
         assert '"solution"' in smoke or "'solution'" in smoke, path.name
         assert "capabilities_exercised" in smoke, path.name
+
+
+def test_openpi_polaris_contract_is_runtime_only_and_position_targeted() -> None:
+    config = _load_config(WORKFLOW_DIR / "byof-openpi.yaml")
+    build = str(config["build_command"])
+    smoke = str(config["smoke_command"])
+    spec_text = (WORKFLOW_DIR / "byof-openpi.yaml").read_text(encoding="utf-8")
+
+    assert config["repo_ref"] == "15a9616a00943ada6c20a0f158e3adb39df2ccac"
+    assert config["resource_profile_yaml"] == "byof-solution-smoke-openpi-b200-gpu"
+    assert config["capability_name"] == "pi05_droid_jointpos_polaris_served_infer"
+    assert config["smoke_artifact_name"] == "openpi_pi05_droid_jointpos_polaris_inference.json"
+    assert "-arch=sm_100" in build
+    assert "pi05_droid_jointpos_polaris" not in build
+    assert "openpi-assets/checkpoints" not in build
+    assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES" not in spec_text
+    assert '"weights_baked": False' in smoke
+    assert "gs://openpi-assets/checkpoints/polaris/pi05_droid_jointpos_polaris" in smoke
+    assert 'download.maybe_download(CHECKPOINT_URI, token="anon")' in smoke
+    assert "jax_backend.get_backend().platform_version" in smoke
+    assert "WebsocketPolicyServer" in smoke
+    assert "WebsocketClientPolicy" in smoke
+    assert "policy.infer(observation)" in smoke
+    assert "actions.shape[0] < 5" in smoke and "actions.shape[1] != 8" in smoke
+    assert "np.isfinite(actions).all()" in smoke
+    assert "joint_position_targets_dims_0_6_radians" in smoke
+    assert "execute_about_5_targets_at_15_hz_then_requery" in smoke
+    assert "deterministic_transport_smoke_only" in smoke
+    assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS" in smoke
+    assert '"live_validated": False' in smoke
 
 
 def test_solution_capability_contracts_match_specs() -> None:

@@ -18,6 +18,7 @@ means editing the spec; picking a *pod shape* means picking a profile here.
 | `byof-datagen-rtxpro-smoke.yaml` | `datagen` smoke | RTX PRO, scripted LeIsaac datagen |
 | `byof-container-smoke-rtxpro.yaml` | `container-verify` / `solution-smoke` | CPU only |
 | `byof-solution-smoke-rtxpro-gpu.yaml` | `solution-smoke` needing CUDA/EGL/Vulkan | RTX PRO |
+| `byof-solution-smoke-openpi-b200-gpu.yaml` | OpenPI pi0.5 Polaris direct + served inference, runtime-only checkpoint | `B200:1` (`sm_100`) |
 | `byof-solution-smoke-wan22-rtxpro-gpu.yaml` | Wan TI2V-5B tensor-only `solution-smoke` with SM120-tested PyTorch SDPA | `RTXPRO-6000-BLACKWELL-SERVER-EDITION:1` |
 | `byof-solution-smoke-wan22-b200-4gpu.yaml` | Wan TI2V-5B distributed `solution-smoke` with FSDP + Ulysses | one Kubernetes pod, `B200:4` |
 | `skypilot-kubernetes-rtxpro.yaml` | *not a task* — SkyPilot **global config** (`--config`) setting `imagePullSecrets` | — |

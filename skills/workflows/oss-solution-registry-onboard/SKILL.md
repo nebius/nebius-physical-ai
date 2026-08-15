@@ -98,7 +98,7 @@ Use the project's own vocabulary. Examples of good ids:
 - ManiSkill: `pickcube_cpu_step`, `pickcube_parallel_envs`
 - MuJoCo Playground: `mjx_cartpole_step`, `train_jax_ppo_cartpole_smoke`
 - RoboCasa: `kitchen_task_registration`, `download_kitchen_assets_lw`
-- OpenPI: `policy_config_materialization`, `pi05_droid_checkpoint_infer`
+- OpenPI: `pi05_droid_jointpos_polaris_direct_infer`, `pi05_droid_jointpos_polaris_served_infer`
 - DROID: `rlds_config_generator_contract`, `droid_100_config_gen`
 
 ### 2. Choose a golden hello-world per accepted claim
@@ -219,14 +219,27 @@ Also exercised in the same smoke (live-accepted with S3 evidence):
 
 Pinned: `Physical-Intelligence/openpi` `15a9616a00943ada6c20a0f158e3adb39df2ccac`
 
-Hard-gate capability: `policy_config_materialization` (`get_config("pi05_droid")`).
+Hard-gate capability: `pi05_droid_jointpos_polaris_served_infer` using the
+upstream WebSocket policy server/client on one B200 (`sm_100`).
 
-Also exercised in the same smoke (live-accepted with S3 evidence):
+Also hard-gated in the same smoke:
 
-- `pi05_droid_checkpoint_download`
-- `pi05_droid_checkpoint_infer` (`create_trained_policy` + `policy.infer`)
+- `pi05_droid_jointpos_polaris_checkpoint_download` from the runtime-only GCS source
+- `pi05_droid_jointpos_polaris_direct_infer` (`create_trained_policy` + `policy.infer`)
+- finite joint-position action chunks shaped `[T>=5,8]` from both paths
 
-Follow-up: LoRA / fine-tune recipes.
+Live accepted on one datacenter B200 (`sm_100`) in
+`byof-openpi-polaris-e2e-20260815T021414Z`: the runtime-only GCS fetch
+materialized 27 objects / 12,434,530,837 bytes, and direct plus upstream
+WebSocket inference returned finite `float64[15,8]` joint-position targets. The
+served round trip was 55.52 ms after first-call JAX compilation.
+
+This checkpoint contains Gemma-derived material. Require the exact run-scoped
+`NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES` gate before build or download; forward it
+only through the secret channel and never bake/persist it. The image contains
+the pinned Apache-2.0 source and CUDA/JAX runtime, not checkpoint bytes. Training
+and evaluation remain unclaimed until a compatible real dataset and a real
+optimization/evaluation step are executed.
 
 ### DROID policy learning (`byof-droid-policy-learning.yaml`)
 

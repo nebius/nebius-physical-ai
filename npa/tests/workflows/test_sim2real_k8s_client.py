@@ -13,6 +13,7 @@ from npa.workflows.sim2real.k8s_client import (
     SPEC_DIGEST_ANNOTATION,
     KubernetesJobClient,
     KubernetesReconcileError,
+    _kubeconfig_with_bearer_token,
     job_spec_digest,
 )
 
@@ -151,6 +152,33 @@ def _manifest() -> dict[str, Any]:
             }
         },
     }
+
+
+def test_bearer_override_replaces_only_selected_exec_credential() -> None:
+    payload = {
+        "current-context": "selected",
+        "contexts": [
+            {"name": "selected", "context": {"user": "selected-user"}},
+            {"name": "other", "context": {"user": "other-user"}},
+        ],
+        "users": [
+            {
+                "name": "selected-user",
+                "user": {
+                    "exec": {"command": "nebius", "args": ["iam", "get-access-token"]},
+                    "tokenFile": "/tmp/stale",
+                },
+            },
+            {"name": "other-user", "user": {"exec": {"command": "other"}}},
+        ],
+    }
+    result = _kubeconfig_with_bearer_token(
+        payload, context="selected", bearer_token="fresh-token"
+    )
+    selected = result["users"][0]["user"]
+    assert selected == {"token": "fresh-token"}
+    assert result["users"][1] == payload["users"][1]
+    assert "token" not in payload["users"][0]["user"]
 
 
 def test_snapshot_uses_structured_job_pod_container_and_owner_fields() -> None:

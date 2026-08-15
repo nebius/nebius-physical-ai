@@ -18,6 +18,7 @@ from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import storage_env_for_project
 from npa.deploy.images import container_image_for_tool, wan_accepted_image_manifest
 from npa.workflows.byof.live import resolve_byof_kubernetes_target
+from npa.workflows.byof.openpi import is_openpi_request, require_openpi_terms
 from npa.workflows.byof.postprocess import (
     PostprocessContext,
     has_registered_postprocess,
@@ -190,7 +191,13 @@ def _live_runner_env(project: str) -> dict[str, str]:
     if target.namespace:
         env["NPA_BYOF_K8S_NAMESPACE"] = target.namespace
     try:
-        env.update(storage_env_for_project(project or None, allow_host_creds=True))
+        env.update(
+            storage_env_for_project(
+                project or None,
+                allow_host_creds=True,
+                endpoint_url=os.environ.get("NPA_BYOF_S3_ENDPOINT", ""),
+            )
+        )
     except Exception as exc:
         print(f"WARN: skipped BYOF storage env resolution: {exc}", file=sys.stderr)
     # Project configs often store checkpoint_bucket as s3://bucket/prefix. BYOF
@@ -483,6 +490,25 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    if is_openpi_request(
+        solution_name=args.solution_name,
+        repo_url=args.repo_url,
+        smoke_command=args.smoke_command,
+    ):
+        try:
+            require_openpi_terms()
+        except ValueError as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "failed",
+                        "solution_name": args.solution_name or "openpi",
+                        "error": str(exc),
+                    },
+                    indent=2,
+                )
+            )
+            return 1
     explicit_base = _normalize_optional(args.base_image)
     base_profile = _normalize_optional(args.base_profile) or "ubuntu"
     registry = args.registry.strip() or resolve_container_registry(args.project or None)

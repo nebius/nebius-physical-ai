@@ -10,7 +10,8 @@ from npa.cli.demo import stage_artifacts
 from npa.cli.main import app
 from npa.clients import config
 from npa.clients import credentials as credentials_mod
-from npa.clients.project_credentials import resolve_credentials
+from npa.clients.project_credentials import resolve_credentials, storage_env_for_project
+from npa.clients.project_credential_store import write_project_credentials
 from npa.errors import ScopedCredentialError
 from fakes import _access_denied, _fake_s3_factory, _manifest
 
@@ -66,6 +67,51 @@ def test_resolve_credentials_other_project(cross_project_config: Path) -> None:
     assert credentials.project == "project-target"
     assert credentials.endpoint_url == "https://target-storage.example"
     assert credentials.aws_access_key_id == "tgt-key"
+
+
+def test_storage_endpoint_override_keeps_project_credentials(
+    cross_project_config: Path,
+) -> None:
+    env = storage_env_for_project(
+        "project-target", endpoint_url="https://target-storage.correct-region"
+    )
+
+    assert env["AWS_ENDPOINT_URL"] == "https://target-storage.correct-region"
+    assert env["NEBIUS_S3_ENDPOINT"] == "https://target-storage.correct-region"
+    assert env["AWS_ACCESS_KEY_ID"] == "tgt-key"
+    assert env["AWS_SECRET_ACCESS_KEY"] == "tgt-secret"
+
+
+def test_validated_exact_project_storage_overrides_stale_inline_config(
+    cross_project_config: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    credential_path = tmp_path / "credentials.yaml"
+    monkeypatch.setattr(credentials_mod, "CREDENTIALS_PATH", credential_path)
+    project_id = "project-target-id"
+    config_data = yaml.safe_load(cross_project_config.read_text())
+    config_data["projects"]["project-target"]["project_id"] = project_id
+    cross_project_config.write_text(yaml.safe_dump(config_data), encoding="utf-8")
+    write_project_credentials(
+        project_id,
+        {
+            "storage": {
+                "bucket": "s3://validated-bucket/",
+                "endpoint_url": "https://storage.us-central1.example",
+                "aws_access_key_id": "validated-key",
+                "aws_secret_access_key": "validated-secret",
+            }
+        },
+        alias="project-target",
+    )
+
+    resolved = config.resolve_project_storage("project-target")
+
+    assert resolved.checkpoint_bucket == "s3://validated-bucket/"
+    assert resolved.endpoint_url == "https://storage.us-central1.example"
+    assert resolved.aws_access_key_id == "validated-key"
+    assert resolved.aws_secret_access_key == "validated-secret"
 
 
 def test_resolve_credentials_nonexistent_project_raises(

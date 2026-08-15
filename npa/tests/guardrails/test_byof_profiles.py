@@ -24,6 +24,7 @@ EXPECTED_PROFILES = frozenset(
     {
         "byof-container-smoke-rtxpro.yaml",
         "byof-datagen-rtxpro-smoke.yaml",
+        "byof-solution-smoke-openpi-b200-gpu.yaml",
         "byof-solution-smoke-wan22-rtxpro-gpu.yaml",
         "byof-solution-smoke-wan22-b200-4gpu.yaml",
         "byof-solution-smoke-rtxpro-2gpu.yaml",

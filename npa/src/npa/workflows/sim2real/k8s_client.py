@@ -192,6 +192,48 @@ def job_spec_digest(manifest: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _kubeconfig_with_bearer_token(
+    payload: dict[str, Any], *, context: str, bearer_token: str
+) -> dict[str, Any]:
+    """Replace one kubeconfig exec credential with an already-minted token.
+
+    Nebius kubeconfigs normally use an exec plugin.  If the operator shell has
+    a stale ``NEBIUS_IAM_TOKEN``, the Kubernetes Python client's plugin process
+    inherits it and can become anonymous even after NPA minted a fresh registry
+    token.  Registry-secret rotation can reuse that fresh IAM token directly,
+    avoiding both the poisoned subprocess environment and secret persistence.
+    """
+
+    result = copy.deepcopy(payload)
+    selected_context = context.strip() or _string(result.get("current-context")).strip()
+    context_entry = next(
+        (
+            item
+            for item in result.get("contexts", [])
+            if _string(item.get("name")).strip() == selected_context
+        ),
+        None,
+    )
+    user_name = _string((context_entry or {}).get("context", {}).get("user")).strip()
+    user_entry = next(
+        (
+            item
+            for item in result.get("users", [])
+            if _string(item.get("name")).strip() == user_name
+        ),
+        None,
+    )
+    if not selected_context or not user_name or user_entry is None:
+        raise KubernetesReconcileError(
+            "kubeconfig bearer-token override could not resolve the selected context user"
+        )
+    user = user_entry.setdefault("user", {})
+    for key in ("exec", "auth-provider", "tokenFile"):
+        user.pop(key, None)
+    user["token"] = bearer_token
+    return result
+
+
 class KubernetesJobClient:
     """Official-client facade with create-or-adopt and typed Job watching."""
 
@@ -219,8 +261,14 @@ class KubernetesJobClient:
         namespace: str = "default",
         kubeconfig: str = "",
         context: str = "",
+        bearer_token: str = "",
     ) -> "KubernetesJobClient":
-        """Load in-cluster credentials or one explicitly isolated kubeconfig."""
+        """Load in-cluster credentials or one explicitly isolated kubeconfig.
+
+        ``bearer_token`` is an in-memory override for out-of-cluster calls that
+        already performed a fresh IAM exchange.  It is never written back to the
+        kubeconfig because ``persist_config`` remains disabled.
+        """
 
         from kubernetes import client, config, watch
 
@@ -237,6 +285,22 @@ class KubernetesJobClient:
         def load_credentials() -> None:
             if in_cluster:
                 config.load_incluster_config(client_configuration=client_configuration)
+                return
+            if bearer_token:
+                import yaml
+
+                kubeconfig_path = Path(resolved or Path.home() / ".kube" / "config")
+                payload = yaml.safe_load(kubeconfig_path.read_text(encoding="utf-8"))
+                if not isinstance(payload, dict):
+                    raise KubernetesReconcileError("kubeconfig is not a mapping")
+                config.load_kube_config_from_dict(
+                    _kubeconfig_with_bearer_token(
+                        payload, context=context, bearer_token=bearer_token
+                    ),
+                    context=context or None,
+                    persist_config=False,
+                    client_configuration=client_configuration,
+                )
                 return
             config.load_kube_config(
                 config_file=resolved or None,

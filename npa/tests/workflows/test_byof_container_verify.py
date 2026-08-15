@@ -40,6 +40,7 @@ def test_render_workflow_injects_solution_smoke_metadata(monkeypatch) -> None:
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIA_TEST")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret")
     monkeypatch.setenv("NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS", "YES")
+    monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", "YES")
     monkeypatch.setattr(module, "_resolved_storage_env", lambda: {})
     docs = module.render_workflow(
         YAML_PATH,
@@ -66,6 +67,7 @@ def test_render_workflow_injects_solution_smoke_metadata(monkeypatch) -> None:
     assert "AWS_SECRET_ACCESS_KEY" not in envs
     assert "AWS_SESSION_TOKEN" not in envs
     assert "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS" not in envs
+    assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS" not in envs
     assert task["resources"]["image_id"] == "docker:registry.example/npa-byof:demo"
 
 
@@ -82,6 +84,22 @@ def test_wan_runtime_acceptance_uses_secret_channel(monkeypatch) -> None:
     ]
     assert module.resolve_secret_envs(["HF_TOKEN"]) == [
         "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS"
+    ]
+
+
+def test_openpi_runtime_acceptance_uses_secret_channel(monkeypatch) -> None:
+    module = _load_module()
+    monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", "YES")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "probe-id")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "probe-secret")
+
+    assert module.resolve_secret_envs(None) == [
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "NPA_OPENPI_ACCEPT_GEMMA_TERMS",
+    ]
+    assert module.resolve_secret_envs(["HF_TOKEN"]) == [
+        "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
     ]
 
 
@@ -110,12 +128,15 @@ def test_output_storage_preflight_writes_reads_and_deletes(monkeypatch) -> None:
     monkeypatch.setattr(
         module,
         "s3_client_for_project",
-        lambda project, *, allow_host_creds: (
+        lambda project, *, allow_host_creds, endpoint_url: (
             FakeS3()
-            if project == "demo-project" and allow_host_creds
+            if project == "demo-project"
+            and allow_host_creds
+            and endpoint_url == "https://storage.override"
             else pytest.fail("unexpected S3 credential scope")
         ),
     )
+    monkeypatch.setenv("NPA_BYOF_S3_ENDPOINT", "https://storage.override")
 
     module.preflight_output_storage(
         output_root="s3://bucket/prefix", run_id="byof-demo"
@@ -360,6 +381,53 @@ def test_ensure_infra_enabled_skips_non_kubernetes(monkeypatch) -> None:
     assert called is False
 
 
+def test_ensure_infra_enabled_rejects_zero_exit_with_disabled_provider(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout="{}", stderr=""
+        ),
+    )
+
+    with pytest.raises(module.SkyPilotConfigError, match="did not enable compute"):
+        module._ensure_infra_enabled(
+            sky_bin="/opt/sky", infra="k8s/customer-mk8s"
+        )
+
+
+def test_ensure_infra_enabled_parses_json_after_api_startup_prose(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    calls = 0
+
+    def fake_run(cmd, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout="",
+            stderr=(
+                "Failed to connect to local API server; starting one.\n"
+                '{"default": {"Kubernetes": ["compute"]}}\n'
+            ),
+        )
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    module._ensure_infra_enabled(
+        sky_bin="/opt/sky", infra="k8s/customer-mk8s"
+    )
+
+
 def test_direct_launch_uses_sky_launch_with_down(monkeypatch, tmp_path, capsys) -> None:
     module = _load_module()
     monkeypatch.setenv("NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS", "YES")
@@ -415,6 +483,8 @@ def test_write_default_k8s_config_adds_pull_secrets(tmp_path) -> None:
     assert "imagePullSecrets" in text
     assert "agent-sa" in text
     assert "npa-nebius-registry" not in text
+    assert "allowed_contexts" in text
+    assert "customer-mk8s" in text
 
 
 def test_normalize_kubeconfig_current_context(monkeypatch, tmp_path) -> None:

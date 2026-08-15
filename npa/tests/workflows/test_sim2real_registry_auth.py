@@ -131,6 +131,8 @@ def test_docker_config_json_uses_iam_username() -> None:
 def test_ensure_nebius_registry_pull_secret_applies_secret(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("NEBIUS_IAM_TOKEN", raising=False)
+    monkeypatch.delenv("NEBIUS_IAM_TOKEN_FILE", raising=False)
     monkeypatch.setattr(
         "npa.workflows.sim2real.registry_auth.mint_nebius_registry_token",
         lambda **kwargs: "fresh-token",
@@ -163,12 +165,54 @@ def test_ensure_nebius_registry_pull_secret_applies_secret(
         "namespace": "default",
         "kubeconfig": "",
         "context": "demo-context",
+        "bearer_token": "",
+    }
+
+
+def test_stale_ambient_token_is_replaced_for_kubeconfig_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NEBIUS_IAM_TOKEN", "stale-token")
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.registry_auth.mint_nebius_registry_token",
+        lambda **kwargs: "fresh-token",
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.registry_auth._docker_helper_credential",
+        lambda *args, **kwargs: None,
+    )
+    captured: dict[str, object] = {}
+
+    class FakeClient:
+        def apply_secret(self, payload):
+            captured["payload"] = payload
+
+    def fake_client(**kwargs):
+        captured["client_kwargs"] = kwargs
+        return FakeClient()
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.k8s_client.KubernetesJobClient.from_environment",
+        fake_client,
+    )
+    ensure_nebius_registry_pull_secret(
+        registry_server="cr.us-central1.nebius.cloud",
+        kubeconfig="/restricted/kubeconfig",
+        k8s_context="fresh-context",
+    )
+    assert captured["client_kwargs"] == {
+        "namespace": "default",
+        "kubeconfig": "/restricted/kubeconfig",
+        "context": "fresh-context",
+        "bearer_token": "fresh-token",
     }
 
 
 def test_ensure_materializes_configured_docker_credential_helper(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    monkeypatch.delenv("NEBIUS_IAM_TOKEN", raising=False)
+    monkeypatch.delenv("NEBIUS_IAM_TOKEN_FILE", raising=False)
     docker_config = tmp_path / "docker"
     docker_config.mkdir()
     (docker_config / "config.json").write_text(
@@ -227,6 +271,9 @@ def test_ensure_materializes_direct_docker_auth(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A launcher-local `docker login` credential must not be overwritten."""
+
+    monkeypatch.delenv("NEBIUS_IAM_TOKEN", raising=False)
+    monkeypatch.delenv("NEBIUS_IAM_TOKEN_FILE", raising=False)
 
     docker_config = tmp_path / "docker"
     docker_config.mkdir()

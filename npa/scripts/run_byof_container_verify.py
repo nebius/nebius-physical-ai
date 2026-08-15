@@ -53,7 +53,10 @@ DEFAULT_IMAGE_PULL_SECRETS = ("agent-sa",)
 #: rendered YAML). Without this a run provisions, pulls the image, executes the profile
 #: and then dies at the upload with
 #: ``botocore.exceptions.NoCredentialsError: Unable to locate credentials``.
-OPERATOR_RUNTIME_ENVS = ("NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS",)
+OPERATOR_RUNTIME_ENVS = (
+    "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS",
+    "NPA_OPENPI_ACCEPT_GEMMA_TERMS",
+)
 DEFAULT_SECRET_ENVS = (
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
@@ -251,7 +254,11 @@ def preflight_output_storage(*, output_root: str, run_id: str) -> None:
         or os.environ.get("NPA_PROJECT", "").strip()
         or os.environ.get("NPA_BYOF_PROJECT", "").strip()
     )
-    client = s3_client_for_project(project or None, allow_host_creds=True)
+    client = s3_client_for_project(
+        project or None,
+        allow_host_creds=True,
+        endpoint_url=os.environ.get("NPA_BYOF_S3_ENDPOINT", ""),
+    )
     created = False
     try:
         existing = client.list_objects_v2(Bucket=bucket, Prefix=run_prefix, MaxKeys=1)
@@ -634,20 +641,25 @@ def _write_default_k8s_config(tmp_path: Path, infra: str) -> str:
     normalized = infra.strip().lower()
     if not (normalized.startswith("k8s") or normalized.startswith("kubernetes")):
         return ""
+    context = infra.split("/", 1)[1].strip() if "/" in infra else ""
+    kubernetes_config: dict[str, Any] = {
+        "pod_config": {
+            "spec": {
+                "imagePullSecrets": [
+                    {"name": name} for name in DEFAULT_IMAGE_PULL_SECRETS
+                ],
+            }
+        }
+    }
+    if context:
+        # An inherited Sky config can carry an allowlist for a different
+        # workload cluster. Pin the explicitly selected infra context so `sky
+        # check` and `sky launch` cannot silently diverge.
+        kubernetes_config["allowed_contexts"] = [context]
     path = tmp_path / "skypilot-byof-k8s-config.yaml"
     path.write_text(
         yaml.safe_dump(
-            {
-                "kubernetes": {
-                    "pod_config": {
-                        "spec": {
-                            "imagePullSecrets": [
-                                {"name": name} for name in DEFAULT_IMAGE_PULL_SECRETS
-                            ],
-                        }
-                    }
-                }
-            },
+            {"kubernetes": kubernetes_config},
             sort_keys=False,
         ),
         encoding="utf-8",
@@ -681,10 +693,43 @@ def _ensure_infra_enabled(*, sky_bin: str, infra: str, config_path: str = "") ->
         stderr=subprocess.PIPE,
         check=False,
     )
-    if result.returncode != 0:
+    enabled = False
+    if result.returncode == 0:
+        combined = "\n".join(part for part in (result.stdout, result.stderr) if part)
+        decoder = json.JSONDecoder()
+        payload: dict[str, Any] = {}
+        index = 0
+        while index < len(combined):
+            start = combined.find("{", index)
+            if start < 0:
+                break
+            try:
+                candidate, end = decoder.raw_decode(combined, start)
+            except json.JSONDecodeError:
+                index = start + 1
+                continue
+            if isinstance(candidate, dict):
+                payload = candidate
+            index = max(end, start + 1)
+
+        def has_kubernetes_compute(value: Any) -> bool:
+            if not isinstance(value, dict):
+                return False
+            for key, item in value.items():
+                if str(key).strip().lower() == "kubernetes":
+                    return isinstance(item, list) and "compute" in {
+                        str(capability).strip().lower() for capability in item
+                    }
+                if has_kubernetes_compute(item):
+                    return True
+            return False
+
+        enabled = has_kubernetes_compute(payload)
+    if result.returncode != 0 or not enabled:
         detail = (result.stderr or result.stdout or "").strip()
         raise SkyPilotConfigError(
-            f"SkyPilot Kubernetes check failed before BYOF smoke submission: {detail}"
+            "SkyPilot Kubernetes check did not enable compute before BYOF smoke "
+            f"submission: {detail or 'empty structured result'}"
         )
 
 

@@ -1506,6 +1506,15 @@ def resolve_project_storage(
             project_storage_credentials = saved_storage
 
     def pick(*keys: str, default: str = "") -> str:
+        # The exact-project credential store is written only after NPA proves
+        # bucket access and records project ownership. Prefer that validated
+        # generation over an older inline project stanza; otherwise
+        # `provision-if-absent` can reconcile storage successfully and the next
+        # process immediately returns to the stale endpoint/key that failed.
+        for key in keys:
+            value = project_storage_credentials.get(key)
+            if value:
+                return str(value)
         for key in keys:
             value = storage.get(key)
             if value:
@@ -1524,8 +1533,9 @@ def resolve_project_storage(
     env_access_key = os.environ.get("AWS_ACCESS_KEY_ID", "")
     env_secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
 
-    # Shared credentials are host-scoped. Keep scoped project settings primary
-    # and only use these when no project storage key is configured.
+    # Shared credentials are host-scoped. Exact-project validated credentials
+    # and the scoped config stanza remain primary; shared values are only a
+    # fallback when neither contains a field.
     credentials_bucket = str(project_storage_credentials.get("bucket", "") or "")
     credentials_endpoint = str(project_storage_credentials.get("endpoint_url", "") or "")
     credentials_access_key = str(project_storage_credentials.get("aws_access_key_id", "") or "")
