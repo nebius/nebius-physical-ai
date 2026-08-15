@@ -399,6 +399,46 @@ def test_render_vlm_eval_single_produces_serial_pipeline() -> None:
     assert "set -euo pipefail" in task["run"]
 
 
+@pytest.mark.parametrize("nested_shell_key", ["run", "setup"])
+def test_placeholder_guard_distinguishes_shell_from_declarative_fields(
+    nested_shell_key: str,
+) -> None:
+    rendered = """\
+name: placeholder-contract
+execution: serial
+---
+name: task
+# ${COMMENT_ONLY} is removed by YAML parsing and is not executable.
+setup: |
+  export CACHE_DIR="${CACHE_DIR:-/workspace/cache}"
+run: |
+  printf '%s\\n' "${CACHE_DIR}"
+envs:
+  MATERIALIZED: ready
+resources:
+  image_id: docker:registry.example/npa-tool:tag
+"""
+    assert_no_unresolved_placeholders(rendered)
+
+    unresolved_env = rendered.replace("MATERIALIZED: ready", 'MATERIALIZED: "${MISSING}"')
+    with pytest.raises(NpaWorkflowRenderError, match=r"\$\{MISSING\}"):
+        assert_no_unresolved_placeholders(unresolved_env)
+
+    nested_shell_name = rendered.replace(
+        "MATERIALIZED: ready",
+        f'{nested_shell_key}: "${{NESTED_SHELL_VALUE}}"',
+    )
+    with pytest.raises(NpaWorkflowRenderError, match=r"\$\{NESTED_SHELL_VALUE\}"):
+        assert_no_unresolved_placeholders(nested_shell_name)
+
+    unresolved_image = rendered.replace(
+        "docker:registry.example/npa-tool:tag",
+        'docker:registry.example/npa-tool:"${IMAGE_TAG}"',
+    )
+    with pytest.raises(NpaWorkflowRenderError, match=r"\$\{IMAGE_TAG\}"):
+        assert_no_unresolved_placeholders(unresolved_image)
+
+
 def test_render_self_hosted_vlm_includes_vllm_setup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -669,7 +709,7 @@ def test_workbench_workflow_submit_npa_workflow_renders_and_submits(mocker) -> N
     content = str(captured["content"])
     assert "execution: serial" in content
     assert "score-rollouts" in content
-    assert "${" not in content
+    assert_no_unresolved_placeholders(content)
     receipt = load_submission_state("default", "npa-submit-1")
     assert receipt["launch"]["sky_job_id"] == "42"
     assert receipt["workflow"]["name"] == "vlm-eval-single"

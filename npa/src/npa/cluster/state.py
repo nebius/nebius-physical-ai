@@ -35,6 +35,10 @@ class ClusterState:
     node_group_id: str = ""
     endpoint: str = ""
     kubeconfig_path: str = ""
+    # Usually equal to ``name`` (the local kube context), but fleet contexts are
+    # deliberately prefixed for uniqueness while the provider cluster keeps the
+    # operator-authored cluster name.
+    provider_name: str = ""
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ClusterState":
@@ -55,6 +59,7 @@ class ClusterState:
                 node_group_id=str(data.get("node_group_id", "")),
                 endpoint=str(data.get("endpoint", "")),
                 kubeconfig_path=str(data.get("kubeconfig_path", "")),
+                provider_name=str(data.get("provider_name", "")),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise ClusterStateError(f"Malformed cluster state: {exc}") from exc

@@ -178,13 +178,16 @@ def test_publication_accepts_exact_digest_bootstrap_attestation(monkeypatch) -> 
     assert digest in detail
 
 
-def test_preflight_skips_bootstrap_gate_for_uncontracted_image(monkeypatch) -> None:
+@pytest.mark.parametrize("tool", ["cosmos", "groot"])
+def test_preflight_skips_bootstrap_gate_for_uncontracted_image(
+    monkeypatch, tool: str
+) -> None:
     from npa.deploy import publish_public
 
     item = PublishItem(
-        tool="cosmos",
-        source_ref="source.example/npa-cosmos:release",
-        target_ref="target.example/npa-cosmos:release",
+        tool=tool,
+        source_ref=f"source.example/npa-{tool}:release",
+        target_ref=f"target.example/npa-{tool}:release",
     )
     monkeypatch.setattr(
         publish_public, "_crane_manifest_readable", lambda ref, **_: (True, "ok")

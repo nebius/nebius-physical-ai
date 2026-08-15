@@ -101,6 +101,232 @@ def test_submit_preflight_does_not_reach_skypilot(mocker) -> None:
     submit_workflow.assert_not_called()
 
 
+def test_sim2real_submit_collects_pipeline_prerequisites_before_image_or_launch(
+    monkeypatch: pytest.MonkeyPatch, mocker
+) -> None:
+    from subprocess import CompletedProcess
+
+    image_preflight = mocker.patch(
+        "npa.cli.workbench.workflow._preflight_submit_images"
+    )
+    launch = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
+    monkeypatch.setattr(
+        "npa.clients.kube.run_kubectl",
+        lambda *args, **kwargs: CompletedProcess(args, 1, stdout="", stderr="NotFound"),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(SIM2REAL_SPEC),
+            "--run-id",
+            "sim2real-cold-start",
+            "--no-deploy-if-absent",
+            "--var",
+            "bucket=real-bucket",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "missing prerequisites" in result.output
+    assert "controller_image" in result.output
+    assert "AWS_ACCESS_KEY_ID" in result.output
+    assert "no Ready" not in result.output  # node listing itself failed
+    assert "Kubernetes nodes cannot be listed" in result.output
+    assert "config.isaac_cache_pvc is empty" in result.output
+    image_preflight.assert_not_called()
+    launch.assert_not_called()
+
+
+def test_paidf_submit_collects_runtime_prerequisites_before_image_or_launch(
+    mocker,
+) -> None:
+    image_preflight = mocker.patch(
+        "npa.cli.workbench.workflow._preflight_submit_images"
+    )
+    launch = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(SPEC),
+            "--run-id",
+            "paidf-cold-start",
+            "--no-deploy-if-absent",
+            "--var",
+            "bucket=real-bucket",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "missing prerequisites" in result.output
+    assert "PAIDF runtime credentials" in result.output
+    assert "NEBIUS_TOKEN_FACTORY_KEY" in result.output
+    assert "HF_TOKEN" in result.output
+    image_preflight.assert_not_called()
+    launch.assert_not_called()
+
+
+def test_paidf_kubernetes_helper_propagates_context_and_kubeconfig(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from subprocess import CompletedProcess
+
+    from npa.cli.workbench.workflow import (
+        _paidf_kubernetes_prerequisites_for_submit,
+    )
+
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append((args, kwargs))
+        return CompletedProcess(args, 1, stdout="", stderr="Forbidden")
+
+    monkeypatch.setenv("KUBECONFIG", "/tmp/review-kubeconfig")
+    monkeypatch.setattr("npa.clients.kube.run_kubectl", run)
+
+    issues = _paidf_kubernetes_prerequisites_for_submit("paidf-review")
+
+    assert issues
+    assert calls == [
+        (
+            ["get", "nodes", "-o", "json"],
+            {
+                "context": "paidf-review",
+                "kubeconfig": "/tmp/review-kubeconfig",
+                "timeout": 30,
+            },
+        )
+    ]
+
+
+def test_paidf_placement_fails_before_storage_or_staging_without_explicit_infra(
+    monkeypatch: pytest.MonkeyPatch, mocker
+) -> None:
+    from types import SimpleNamespace
+
+    for name in (
+        "NEBIUS_TOKEN_FACTORY_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "HF_TOKEN",
+    ):
+        monkeypatch.setenv(name, "redacted")
+    monkeypatch.setenv("NPA_SKYPILOT_BIN", "/bin/true")
+    monkeypatch.setattr(
+        "npa.clients.huggingface.validate_hf_access",
+        lambda *_args, **_kwargs: SimpleNamespace(ok=True),
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._available_kube_contexts",
+        lambda: ["npa-cluster"],
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._adopt_npa_kubeconfig", lambda _context: True
+    )
+    monkeypatch.setattr(
+        "npa.controller_ownership.verify_controller_owner", lambda *_args: None
+    )
+    placement = mocker.patch(
+        "npa.cli.workbench.workflow._paidf_kubernetes_prerequisites_for_submit",
+        return_value=[("placement blocked", "resize the selected node")],
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._preflight_submit_images", return_value={}
+    )
+    storage = mocker.patch("npa.clients.storage_validation.probe_storage_write")
+    prepare_input = mocker.patch(
+        "npa.workflows.data_factory_input.prepare_paidf_input"
+    )
+    stage_source = mocker.patch(
+        "npa.orchestration.npa_workflow.src_staging.stage_npa_source"
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(SPEC),
+            "--run-id",
+            "paidf-placement-order",
+            "--no-deploy-if-absent",
+            "--var",
+            "bucket=real-bucket",
+            "--assume-decision",
+            "promote_checkpoint",
+            "--secret-env",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "--secret-env",
+            "AWS_ACCESS_KEY_ID",
+            "--secret-env",
+            "AWS_SECRET_ACCESS_KEY",
+            "--secret-env",
+            "HF_TOKEN",
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "placement blocked" in result.output
+    placement.assert_called_once_with("npa-cluster")
+    storage.assert_not_called()
+    prepare_input.assert_not_called()
+    stage_source.assert_not_called()
+
+
+def test_sim2real_submit_propagates_explicit_kubernetes_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from subprocess import CompletedProcess
+
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append((args, kwargs))
+        return CompletedProcess(args, 1, stdout="", stderr="NotFound")
+
+    monkeypatch.setenv("KUBECONFIG", "/tmp/sim2real-kubeconfig")
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._adopt_npa_kubeconfig", lambda _context: True
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._available_kube_contexts",
+        lambda: ["sim2real-review"],
+    )
+    monkeypatch.setattr("npa.clients.kube.run_kubectl", run)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(SIM2REAL_SPEC),
+            "--run-id",
+            "sim2real-context",
+            "--no-deploy-if-absent",
+            "--infra",
+            "k8s/sim2real-review",
+            "--var",
+            "bucket=real-bucket",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert calls
+    assert all(call[1]["context"] == "sim2real-review" for call in calls)
+    assert all(
+        call[1]["kubeconfig"] == "/tmp/sim2real-kubeconfig" for call in calls
+    )
+
+
 def test_submit_preflight_clears_as_prerequisites_are_met(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -384,6 +610,43 @@ def test_config_pinned_resource_images_satisfy_the_npa_source_requirement() -> N
         )
         is False
     )
+
+
+def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None:
+    """An empty canonical image input must be overridable before pull probes."""
+    digest_image = f"cr.example.invalid/npa@sha256:{'a' * 64}"
+    checks = mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        return_value=[],
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts",
+        return_value=[],
+    )
+    args = [
+        "workbench",
+        "workflow",
+        "preflight-images",
+        str(SIM2REAL_SPEC),
+        "--assume-decision",
+        "promote_checkpoint",
+    ]
+    for name in (
+        "controller_image",
+        "transfer_image",
+        "envgen_image",
+        "reason_image",
+        "isaac_image",
+        "viewer_image",
+    ):
+        args.extend(["--var", f"{name}={digest_image}"])
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 0, result.output
+    checked_images = checks.call_args.args[0]
+    assert checked_images
+    assert set(checked_images) == {digest_image}
 
 
 def test_image_none_automatically_plans_npa_source_staging() -> None:

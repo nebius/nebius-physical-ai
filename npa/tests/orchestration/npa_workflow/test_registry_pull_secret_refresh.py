@@ -73,18 +73,29 @@ def test_every_host_lands_in_one_apply(
     host by host would leave only the last host authenticated.
     """
 
-    calls: list[tuple[str, tuple[str, ...]]] = []
+    calls: list[dict[str, object]] = []
     monkeypatch.setattr(
         "npa.workflows.sim2real.registry_auth.ensure_nebius_registry_pull_secret",
-        lambda *, registry_server="", registry_servers=(), **kwargs: calls.append(
-            (registry_server, tuple(registry_servers))
-        ),
+        lambda **kwargs: calls.append(kwargs),
     )
     rendered = tmp_path / "workflow.yaml"
     rendered.write_text(RENDERED, encoding="utf-8")
 
-    _refresh_kubernetes_pull_secrets(rendered)
-    assert calls == [("", ("cr.eu-north1.nebius.cloud", "cr.us-central1.nebius.cloud"))]
+    _refresh_kubernetes_pull_secrets(
+        rendered, k8s_context="target", kubeconfig="/tmp/target-kubeconfig"
+    )
+    assert calls == [
+        {
+            "registry_servers": [
+                "cr.eu-north1.nebius.cloud",
+                "cr.us-central1.nebius.cloud",
+            ],
+            "username": "iam",
+            "token": "test-token",
+            "kubeconfig": "/tmp/target-kubeconfig",
+            "k8s_context": "target",
+        }
+    ]
 
 
 def test_the_applied_secret_authenticates_every_host(

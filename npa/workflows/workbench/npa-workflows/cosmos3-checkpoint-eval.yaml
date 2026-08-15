@@ -1,0 +1,42 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: cosmos3-checkpoint-eval
+  description: >-
+    Run one decision-quality Cosmos 3 still-image checkpoint evaluation phase on
+    a B200. The published npa-cosmos3 image contains the pinned framework but no
+    weights; checkpoints, the Wan VAE, and guardrails download at runtime under
+    the operator's accepted licenses and Hugging Face credentials.
+
+config:
+  source_sha: ""
+  require_baked_npa: "1"
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/cosmos3-checkpoint-eval"
+
+  campaign_config_uri: "s3://{{config.bucket}}/{{config.prefix}}/inputs/campaign.json"
+  eval_phase: primary
+  top_checkpoint_1: ""
+  top_checkpoint_2: ""
+  output_uri: "s3://{{config.bucket}}/{{config.prefix}}/artifacts"
+  work_dir: /tmp/npa-cosmos3-checkpoint-eval
+
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: B200:1
+    cpus: 20
+    memory: 192Gi
+
+initial: evaluate
+
+states:
+  evaluate:
+    description: Run and durably publish the selected checkpoint evaluation phase.
+    toolRef: workbench.cosmos3.checkpoint_eval
+    resources: gpu
+    outputs:
+      - uri: "{{config.output_uri}}/{{config.eval_phase}}.json"
+        schema: npa.cosmos3.checkpoint-eval.phase.v1
+    terminal: true

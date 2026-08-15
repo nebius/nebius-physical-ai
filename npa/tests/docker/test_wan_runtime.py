@@ -10,12 +10,25 @@ from pathlib import Path
 
 import pytest
 
+from npa.solutions.wan2_2.dependency_closure import (
+    DependencyClosureError,
+    DistributionMetadata,
+    RUNTIME_ONLY_DISTRIBUTIONS,
+    parse_runtime_requirements,
+    validate_dependency_union,
+)
+
 
 ROOT = Path(__file__).resolve().parents[3]
 RUNTIME_SCRIPT = ROOT / "npa" / "docker" / "workbench" / "wan2-2" / "wan_runtime.sh"
 RUNTIME_REQUIREMENTS = (
     ROOT / "npa" / "docker" / "workbench" / "wan2-2" / "runtime-requirements.txt"
 )
+BAKED_CONSTRAINTS = (
+    ROOT / "npa" / "docker" / "workbench" / "wan2-2" / "baked-constraints.txt"
+)
+WAN_DOCKERFILE = ROOT / "npa" / "docker" / "workbench" / "wan2-2" / "Dockerfile"
+WAN_SMOKE = ROOT / "npa" / "docker" / "workbench" / "wan2-2" / "smoke.sh"
 
 
 def test_runtime_requirements_are_hash_locked() -> None:
@@ -34,6 +47,115 @@ def test_runtime_requirements_are_hash_locked() -> None:
     assert requirements
     assert all(" --hash=sha256:" in line for line in requirements)
     assert "--require-hashes" in RUNTIME_SCRIPT.read_text(encoding="utf-8")
+
+
+def test_security_fixed_runtime_and_baked_image_are_fully_pinned() -> None:
+    runtime = RUNTIME_REQUIREMENTS.read_text(encoding="utf-8")
+    baked = BAKED_CONSTRAINTS.read_text(encoding="utf-8")
+    dockerfile = WAN_DOCKERFILE.read_text(encoding="utf-8")
+
+    assert "torch==2.13.0" in runtime
+    assert "pillow==12.3.0" in runtime
+    assert "nvidia-nccl-cu13==2.29.7" in runtime
+    assert "torchaudio" not in runtime
+    assert "pillow==12.3.0" in baked
+    assert "diffusers==0.38.0" in baked
+    assert "transformers==5.5.0" in baked
+    assert "sentencepiece==0.2.1" in baked
+    assert "pip==26.1.2" in baked
+    assert "setuptools==83.0.0" in baked
+    assert "wheel==0.46.2" in baked
+    assert not any(
+        line.startswith(("torch==", "torchvision==", "torchaudio=="))
+        for line in baked.splitlines()
+    )
+    assert "pip install --no-cache-dir --no-deps" in dockerfile
+    assert "https://download.pytorch.org/whl/cpu" not in dockerfile
+    assert "^(torch|torchvision|torchaudio|nvidia-)" in dockerfile
+    assert "dependency_closure.py validate" in dockerfile
+    assert '"opencv-python-headless>=4.9.0.80"' in dockerfile
+    assert "-e '/\"easydict\",/d'" in dockerfile
+    assert "-e '/\"flash_attn\",/d'" in dockerfile
+    assert "pip install --no-cache-dir --no-deps -e /opt/byof" in dockerfile
+    assert "-m compileall -q --invalidation-mode checked-hash" in dockerfile
+    assert "-type d -name __pycache__ -prune" not in dockerfile
+    assert '"$tree/venv/bin/python" -m pip check' in RUNTIME_SCRIPT.read_text(
+        encoding="utf-8"
+    )
+    smoke = WAN_SMOKE.read_text(encoding="utf-8")
+    assert 'find_spec("torch") is None' in smoke
+    assert "dependency_closure.py verify-report" in smoke
+    assert "resolve_wan_input_contract" in smoke
+    assert "test -r /opt/byof/wan/textimage2video.py" not in smoke
+    assert "wan-runtime ensure" in smoke
+
+
+def _metadata(
+    name: str, version: str, *requires_dist: str
+) -> DistributionMetadata:
+    return DistributionMetadata(
+        name=name,
+        version=version,
+        requires_dist=tuple(requires_dist),
+    )
+
+
+def test_dependency_closure_allows_only_declared_runtime_only_family() -> None:
+    report = validate_dependency_union(
+        {
+            "wan": _metadata("wan", "2.2", "torch>=2.13", "shared==1.0"),
+            "shared": _metadata("shared", "1.0"),
+        },
+        {"torch": _metadata("torch", "2.13.0", "shared>=1")},
+        runtime_only_allowlist=frozenset({"torch"}),
+    )
+
+    assert report["status"] == "validated"
+    assert report["runtime_only_distributions"] == ["torch"]
+    assert report["applicable_dependency_edges_checked"] == 3
+
+
+def test_dependency_closure_rejects_unapproved_runtime_only_package() -> None:
+    with pytest.raises(DependencyClosureError, match="runtime-only distribution set"):
+        validate_dependency_union(
+            {"wan": _metadata("wan", "2.2")},
+            {"unreviewed": _metadata("unreviewed", "1.0")},
+            runtime_only_allowlist=frozenset(),
+        )
+
+
+def test_dependency_closure_rejects_missing_transitive_requirement() -> None:
+    with pytest.raises(DependencyClosureError, match="requires missing omitted"):
+        validate_dependency_union(
+            {"wan": _metadata("wan", "2.2", "omitted>=1")},
+            {},
+            runtime_only_allowlist=frozenset(),
+        )
+
+
+def test_dependency_closure_rejects_incompatible_transitive_requirement() -> None:
+    with pytest.raises(
+        DependencyClosureError, match=r"requires shared<2; effective shared==2\.0"
+    ):
+        validate_dependency_union(
+            {
+                "wan": _metadata("wan", "2.2", "shared<2"),
+                "shared": _metadata("shared", "2.0"),
+            },
+            {},
+            runtime_only_allowlist=frozenset(),
+        )
+
+
+def test_checked_in_runtime_only_set_is_exact() -> None:
+    runtime = set(parse_runtime_requirements(RUNTIME_REQUIREMENTS))
+    baked = {
+        line.split("==", 1)[0].lower().replace("_", "-")
+        for line in BAKED_CONSTRAINTS.read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
+    }
+
+    assert runtime.difference(baked) == RUNTIME_ONLY_DISTRIBUTIONS
 
 
 def _offline_runtime_env(
@@ -111,34 +233,47 @@ def _real_runtime_verification_env(
     tree = (tmp_path / "cache" / "current").resolve()
     fake_python = tree / "venv" / "bin" / "python"
     fake_python.unlink()
-    fake_python.symlink_to(sys.executable)
+    fake_python.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "-m" && "${2:-}" == "pip" && "${3:-}" == "check" ]]; then
+  exit 0
+fi
+exec "${NPA_TEST_REAL_PYTHON}" "$@"
+""",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
 
     module_root = tmp_path / "runtime-modules"
     torch_module = module_root / "torch"
     torch_module.mkdir(parents=True)
     versions = {
-        "torch": "2.7.1+cu128",
-        "torchvision": "0.22.1+cu128",
-        "torchaudio": "2.7.1+cu128",
-        "triton": "3.3.1",
-        "nvidia-cublas-cu12": "12.8.3.14",
-        "nvidia-cuda-cupti-cu12": "12.8.57",
-        "nvidia-cuda-nvrtc-cu12": "12.8.61",
-        "nvidia-cuda-runtime-cu12": "12.8.57",
-        "nvidia-cudnn-cu12": "9.7.1.26",
-        "nvidia-cufft-cu12": "11.3.3.41",
-        "nvidia-cufile-cu12": "1.13.0.11",
-        "nvidia-curand-cu12": "10.3.9.55",
-        "nvidia-cusolver-cu12": "11.7.2.55",
-        "nvidia-cusparse-cu12": "12.5.7.53",
-        "nvidia-cusparselt-cu12": "0.6.3",
-        "nvidia-nccl-cu12": "2.27.7",
-        "nvidia-nvjitlink-cu12": "12.8.61",
-        "nvidia-nvtx-cu12": "12.8.55",
+        "torch": "2.13.0",
+        "torchvision": "0.28.0",
+        "cuda-toolkit": "13.0.3.0",
+        "cuda-bindings": "13.3.1",
+        "cuda-pathfinder": "1.6.0",
+        "nvidia-cublas": "13.1.1.3",
+        "nvidia-cuda-cupti": "13.0.85",
+        "nvidia-cuda-nvrtc": "13.0.88",
+        "nvidia-cuda-runtime": "13.0.96",
+        "nvidia-cudnn-cu13": "9.20.0.48",
+        "nvidia-cufft": "12.0.0.61",
+        "nvidia-cufile": "1.15.1.6",
+        "nvidia-curand": "10.4.0.35",
+        "nvidia-cusolver": "12.0.4.66",
+        "nvidia-cusparse": "12.6.3.3",
+        "nvidia-cusparselt-cu13": "0.8.1",
+        "nvidia-nccl-cu13": "2.29.7",
+        "nvidia-nvjitlink": "13.3.33",
+        "nvidia-nvshmem-cu13": "3.4.5",
+        "nvidia-nvtx": "13.0.85",
+        "triton": "3.7.1",
     }
     versions.update(overrides or {})
     torch_module.joinpath("__init__.py").write_text(
-        f'__version__ = "{versions["torch"]}"\nclass version:\n    cuda = "12.8"\n',
+        f'__version__ = "{versions["torch"]}"\nclass version:\n    cuda = "13.0"\n',
         encoding="utf-8",
     )
     for name, version in versions.items():
@@ -151,6 +286,7 @@ def _real_runtime_verification_env(
             encoding="utf-8",
         )
     env["PYTHONPATH"] = str(module_root)
+    env["NPA_TEST_REAL_PYTHON"] = sys.executable
     return env
 
 
@@ -170,8 +306,8 @@ def test_runtime_verification_accepts_only_intended_local_version_suffixes(
 @pytest.mark.parametrize(
     "overrides",
     [
-        {"torch": "2.7.10"},
-        {"nvidia-nccl-cu12": "2.27.70"},
+        {"torch": "2.13.00"},
+        {"nvidia-nccl-cu13": "2.29.70"},
     ],
 )
 def test_runtime_verification_rejects_prefix_extension_versions(

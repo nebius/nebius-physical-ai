@@ -25,14 +25,17 @@ Also load `byof-onboard`, `oss-solution-registry-onboard`,
 - Official model: `Wan-AI/Wan2.2-TI2V-5B`, pinned to
   `921dbaf3f1674a56f47e83fb80a34bac8a8f203e`.
 - TI2V-5B is a stock generative-video model supporting text and image inputs.
-- A private validation record accepted the real single-GPU
+- A historical private validation record accepted the real single-GPU
   text-to-video path on RTX PRO 6000 Blackwell (`sm_120`) from immutable image
   digest `sha256:1baa4e2e89999ea26df81891ac786fa99c7498cbf173e5c5abad54c6f1dd1d13`,
   including exact MP4/RRD byte identity.
-- A private validation record accepted one shared official
+- A historical private validation record accepted one shared official
   generation from that same observed image digest on four B200s (`sm_100`) with
   world size 4, NCCL, T5 and DiT FULL_SHARD FSDP, Ulysses size 4, and exact
   MP4/RRD byte identity.
+- Those records used Torch 2.7.1/CUDA 12.8 and NCCL 2.27.7. The current
+  acceptance gate is Torch 2.13.0/CUDA 13.0 and NCCL 2.29.7; it requires fresh
+  operator-accepted single- and four-GPU evidence before publication.
 - I2V, A14B, speech-to-video, Animate, and training are separate capabilities.
 - Stock Wan does not predict robot actions. Never claim that it is
   action-conditioned.
@@ -48,10 +51,10 @@ no checkpoint weights, credentials, private code, or user data. The runtime
 must remain non-root, with `/opt/byof` and its venv readable and executable.
 
 The single-GPU baseline requests one RTX PRO 6000 Blackwell (`sm_120`), uses the
-official PyTorch 2.7.1 CUDA 12.8 wheel line, and binds pinned Wan attention to
-native PyTorch SDPA instead of FlashAttention. Record the device, compute
-capability, driver, CUDA, torch version, compiled arch list, and finite SDPA
-probe.
+security-fixed PyTorch 2.13.0 CUDA 13.0 wheel line, and binds pinned Wan
+attention to native PyTorch SDPA instead of FlashAttention. Record the device,
+compute capability, driver, CUDA, torch version, compiled arch list, and finite
+SDPA probe.
 
 The distributed spec uses `byof-solution-smoke-wan22-b200-4gpu.yaml` and exactly
 four ranks. Invoke the official path with:
@@ -115,11 +118,11 @@ verified manifest may name `wan2.2_verified_rerun_recording`.
 
 | Capability | Status |
 | --- | --- |
-| `wan2.2_ti2v_5b_text_to_video` | accepted; real RTX PRO run |
-| `wan2.2_decoded_mp4_validation` | accepted; 17 decoded 1280×704 frames at 24 fps |
-| `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted; real 4×B200 official path |
-| `wan2.2_distributed_rank_topology_validation` | accepted; four unique ranks/devices and collective/barrier evidence |
-| `wan2.2_verified_rerun_recording` | accepted only with the uploaded verified RRD manifest |
+| `wan2.2_ti2v_5b_text_to_video` | accepted historical evidence; current runtime needs a fresh RTX PRO run |
+| `wan2.2_decoded_mp4_validation` | accepted historical evidence; 17 decoded 1280×704 frames at 24 fps |
+| `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted historical evidence; current runtime needs a fresh 4×B200 official run |
+| `wan2.2_distributed_rank_topology_validation` | accepted historical evidence; four unique ranks/devices and collective/barrier evidence |
+| `wan2.2_verified_rerun_recording` | accepted historical evidence only for the prior runtime; current acceptance still requires an uploaded verified RRD manifest |
 | `wan2.2_ti2v_5b_image_to_video` | deferred |
 | A14B / S2V / Animate | deferred |
 | official TI2V fine-tuning | deferred; no pinned-source entrypoint |

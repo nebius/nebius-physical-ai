@@ -66,3 +66,17 @@ def test_empty_stream_is_an_assertion_not_a_json_error() -> None:
 
     with pytest.raises(AssertionError):
         parse("")
+
+
+def test_live_bucket_prefers_explicit_e2e_bucket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    helpers = _helpers()
+    monkeypatch.setenv("NPA_E2E_S3_BUCKET", "s3://project-owned-live/evidence")
+    monkeypatch.setattr(
+        helpers,
+        "resolve_project_storage",
+        lambda _project: pytest.fail("configured stale bucket must not override live env"),
+    )
+
+    assert helpers.live_bucket("project") == "project-owned-live"

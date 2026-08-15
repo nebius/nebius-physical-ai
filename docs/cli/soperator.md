@@ -10,7 +10,8 @@ Deploy and manage Nebius soperator (Slurm-on-Kubernetes) clusters.
 Options
 --help  Show this message and exit.
 Commands
-deploy  Deploy a soperator cluster from a spec (multiple presets + optional docker cache).
+plan  Show a public-safe, provider-free Soperator capacity plan.
+deploy  Deploy or reconcile a pinned-contract Soperator cluster spec.
 destroy  Destroy an npa-managed soperator cluster by name.
 status  Show a soperator cluster's Slurm partitions/nodes via kubectl.
 ```
@@ -25,7 +26,8 @@ status  Show a soperator cluster's Slurm partitions/nodes via kubectl.
 
 | Command | Description |
 | --- | --- |
-| `deploy` | Deploy a soperator cluster from a spec (multiple presets + optional docker cache). |
+| `plan` | Show a public-safe, provider-free Soperator capacity plan. |
+| `deploy` | Deploy or reconcile a pinned-contract Soperator cluster spec. |
 | `destroy` | Destroy an npa-managed soperator cluster by name. |
 | `status` | Show a soperator cluster's Slurm partitions/nodes via kubectl. |
 
@@ -33,7 +35,7 @@ status  Show a soperator cluster's Slurm partitions/nodes via kubectl.
 
 ```bash
 npa soperator --help
-npa soperator deploy --help
+npa soperator plan --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `soperator`.

@@ -277,6 +277,10 @@ NPA_SRC_S3_URI=s3://<your-bucket>/npa-src/npa/ \
 ## Submit (real run)
 
 ```bash
+SPEC=npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
+npa workbench health access --capability paidf
+npa workbench workflow preflight-images "$SPEC" \
+  --project <alias> --registry <registry>
 RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project <alias>)"
 npa workbench workflow submit "$SPEC" \
   --project <alias> --run-id "$RUN_ID" \
@@ -286,7 +290,8 @@ npa workbench workflow submit "$SPEC" \
   --infra k8s/<your-kube-context> \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID \
-  --secret-env AWS_SECRET_ACCESS_KEY
+  --secret-env AWS_SECRET_ACCESS_KEY \
+  --secret-env HF_TOKEN
 ```
 
 `--var bucket=` points `config.bucket` at the artifact bucket your NPA agent
@@ -301,6 +306,12 @@ that optional handoff. Submit checks prerequisites up front and prints anything
 still missing in a single list; the
 [deploy runbook](physical-ai-data-factory-deploy.md) has the full ordered
 quickstart (`configure` → `skypilot bootstrap` → `provision-if-absent` → submit).
+The PAIDF submit preflight also requires one Ready, schedulable, appropriately
+untainted node with 6 CPU and 24 GiB allocatable for the SkyPilot controller and
+one CPU stage. A qualifying GPU node is valid because the CPU profile has no
+GPU exclusion. The check uses the exact submission context before S3/input/source
+mutation, verifies gated Cosmos Transfer access with the forwarded `HF_TOKEN`,
+and reuses the generic image-pull check/secret refresh.
 
 Monitor an exact run using NPA alone:
 

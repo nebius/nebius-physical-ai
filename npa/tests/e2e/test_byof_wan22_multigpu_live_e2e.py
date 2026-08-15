@@ -340,7 +340,7 @@ def test_wan22_live_four_b200_fsdp_ulysses_generate_and_decode(
     assert all(
         device["compute_capability"] == [10, 0] for device in inventory["devices"]
     )
-    assert inventory["package_versions"]["nvidia-nccl-cu12"] == "2.27.7"
+    assert inventory["package_versions"]["nvidia-nccl-cu13"] == "2.29.7"
 
     output = artifact["output"]
     video_key = key_prefix + output["filename"]

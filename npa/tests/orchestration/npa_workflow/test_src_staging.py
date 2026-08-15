@@ -32,6 +32,22 @@ PAIDF_SPEC = (
 )
 
 
+def _mock_paidf_submit_boundaries(mocker) -> None:
+    """Keep staging tests explicit about earlier Kubernetes/storage gates."""
+
+    mocker.patch(
+        "npa.cli.workbench.workflow._adopt_npa_kubeconfig", return_value=True
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._paidf_kubernetes_prerequisites_for_submit",
+        return_value=[],
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._submit_storage_prerequisites", return_value=[]
+    )
+    mocker.patch("npa.controller_ownership.verify_controller_owner")
+
+
 class FakeStorageClient:
     def __init__(self) -> None:
         self.uploads: list[tuple[str, str]] = []
@@ -523,6 +539,7 @@ def test_real_submit_persists_no_submit_ledger_before_source_staging(
     from npa.workflows.data_factory_input import PreparedPaidfInput
 
     spec = PAIDF_SPEC
+    _mock_paidf_submit_boundaries(mocker)
     monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
     monkeypatch.delenv("NPA_E2E_NPA_SRC_S3_URI", raising=False)
     stage = mocker.patch(
@@ -530,6 +547,10 @@ def test_real_submit_persists_no_submit_ledger_before_source_staging(
         side_effect=RuntimeError("stop during staging"),
     )
     mocker.patch("npa.cli.workbench.workflow._submit_prerequisites", return_value=[])
+    mocker.patch(
+        "npa.orchestration.npa_workflow.paidf_preflight.static_prerequisites",
+        return_value=[],
+    )
     mocker.patch("npa.cli.workbench.workflow._preflight_submit_images")
     mocker.patch(
         "npa.workflows.data_factory_input.prepare_paidf_input",
@@ -586,8 +607,13 @@ def test_source_upload_failure_preserves_durable_no_submit_ledger(
     from npa.orchestration.npa_workflow.first_run_state import RunPreparation
 
     spec = PAIDF_SPEC
+    _mock_paidf_submit_boundaries(mocker)
     monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
     mocker.patch("npa.cli.workbench.workflow._submit_prerequisites", return_value=[])
+    mocker.patch(
+        "npa.orchestration.npa_workflow.paidf_preflight.static_prerequisites",
+        return_value=[],
+    )
     mocker.patch("npa.cli.workbench.workflow._preflight_submit_images")
     mocker.patch(
         "npa.orchestration.npa_workflow.src_staging.stage_npa_source",
@@ -643,8 +669,13 @@ def test_input_preflight_failure_prevents_source_upload_after_durable_ledger(
     from npa.workflows.data_factory_input import PaidfInputError
 
     spec = PAIDF_SPEC
+    _mock_paidf_submit_boundaries(mocker)
     monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
     mocker.patch("npa.cli.workbench.workflow._submit_prerequisites", return_value=[])
+    mocker.patch(
+        "npa.orchestration.npa_workflow.paidf_preflight.static_prerequisites",
+        return_value=[],
+    )
     mocker.patch("npa.cli.workbench.workflow._preflight_submit_images")
     stage = mocker.patch("npa.cli.workbench.workflow._stage_npa_src_for_submit")
     mocker.patch(

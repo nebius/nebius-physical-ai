@@ -23,6 +23,19 @@ profile: ""
 # Shared cluster profile merged under every cluster below. Because both projects
 # omit `clusters`, they each deploy exactly this profile (an "identical" fleet).
 defaults:
+  # Safe default for every GPU platform. Alternate recipe sources must expose a
+  # compatible managed-image input or Fleet fails before Terraform apply.
+  gpu_driver_mode: auto # auto | managed-image | operator
+  managed_driver_preset: cuda13.0
+  allow_unsafe_nvswitch_operator: false
+
+  # A GPU cluster becomes `deployed` only after this stable-health window and a
+  # CUDA vectorAdd on every requested GPU node. The overall health timeout is
+  # independent of Terraform's apply timeout.
+  gpu_health_stabilization_seconds: 120
+  gpu_health_timeout_minutes: 60
+  gpu_cuda_smoke: true
+
   cpu_nodes:
     count: 1
     platform: cpu-d3

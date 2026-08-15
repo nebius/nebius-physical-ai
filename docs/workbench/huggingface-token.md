@@ -27,7 +27,9 @@ while signed in and click **Agree and access repository**. The workbench's gated
 models include, among others:
 
 - <https://huggingface.co/nvidia/GR00T-N1.7-3B>
+- <https://huggingface.co/nvidia/Cosmos-Transfer2.5-2B>
 - <https://huggingface.co/nvidia/Cosmos-Reason2-2B>
+- <https://huggingface.co/nvidia/Cosmos-Reason2-8B>
 - <https://huggingface.co/nvidia/Cosmos-Reason1-7B>
 - <https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct> (only needed if you
   self-host it; Nebius Token Factory serves it hosted with no HF gating)
@@ -68,6 +70,7 @@ variable → `~/.npa/credentials.yaml`.
 
 ```bash
 npa workbench health access          # checks HF (and NGC) access to gated models
+npa workbench health access --capability paidf    # Cosmos Transfer only
 # or, credentials-presence only (no network):
 npa workbench health preflight --offline
 ```

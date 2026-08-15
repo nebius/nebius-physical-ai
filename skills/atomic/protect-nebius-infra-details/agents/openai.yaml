@@ -1,0 +1,4 @@
+interface:
+  display_name: "Protect Nebius Infra Details"
+  short_description: "Prevent live Nebius infrastructure disclosure"
+  default_prompt: "Use $protect-nebius-infra-details to sanitize repository and collaboration content before publication."

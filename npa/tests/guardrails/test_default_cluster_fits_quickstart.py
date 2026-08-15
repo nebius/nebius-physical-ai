@@ -168,3 +168,32 @@ def test_npa_and_terraform_agree_on_the_default_cpu_preset() -> None:
     from npa.cluster.config import DEFAULT_CPU_NODE_GROUP_PRESET
 
     assert _terraform_default("cpu_nodes_preset") == DEFAULT_CPU_NODE_GROUP_PRESET
+
+
+def test_paidf_self_provisioning_keeps_the_controller_cpu_node_explicit() -> None:
+    spec = yaml.safe_load(QUICKSTART_SPEC.read_text(encoding="utf-8"))
+    directive = spec["resources"]["gpu"]["deployIfAbsent"]
+    assert directive == {
+        "cpuNodes": 1,
+        "cpuPlatform": "cpu-d3",
+        "cpuPreset": "8vcpu-32gb",
+        "gpuNodes": 1,
+        "gpuPlatform": "gpu-rtx6000",
+        "gpuPreset": "1gpu-24vcpu-218gb",
+    }
+
+
+def test_paidf_declared_cpu_preset_clears_the_allocatable_preflight_threshold() -> None:
+    """The self-provisioned preset cannot deadlock its own placement gate."""
+
+    from npa.orchestration.npa_workflow.paidf_preflight import (
+        _PAIDF_CPU_MILLICORES,
+        _PAIDF_MEMORY_BYTES,
+    )
+
+    spec = yaml.safe_load(QUICKSTART_SPEC.read_text(encoding="utf-8"))
+    preset = spec["resources"]["gpu"]["deployIfAbsent"]["cpuPreset"]
+    vcpu, memory_gib = _preset_capacity(preset)
+
+    assert int((vcpu - CPU_RESERVE) * 1000) >= _PAIDF_CPU_MILLICORES
+    assert int((memory_gib - MEMORY_RESERVE_GIB) * 1024**3) >= _PAIDF_MEMORY_BYTES

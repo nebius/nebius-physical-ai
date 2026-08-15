@@ -22,13 +22,14 @@ tool — every stage is an existing workbench tool or a real `run.shell` step.
 
 ## Run PAIDF with a coding agent
 
-First [configure and authenticate the Nebius CLI](https://docs.nebius.com/cli/configure)
-for the target project. Create a [Token Factory project API
-key](https://docs.tokenfactory.nebius.com/quickstart), a [Hugging Face read
-token](https://huggingface.co/docs/hub/en/security-tokens), and an [NGC Personal
-API Key](https://docs.nvidia.com/ngc/latest/ngc-user-guide.html#generating-ngc-api-keys)
-with NGC Catalog access. Save each value alone in a file outside this repository
-and run `chmod 600 <file>`; give the agent paths, never secret values.
+First [authenticate the Nebius CLI](https://docs.nebius.com/cli/configure).
+Create a [Token Factory key](https://docs.tokenfactory.nebius.com/quickstart)
+and a [Hugging Face read token](https://huggingface.co/docs/hub/en/security-tokens)
+whose account has accepted the
+[Cosmos Transfer 2.5 terms](https://huggingface.co/nvidia/Cosmos-Transfer2.5-2B).
+Save each value alone in a `chmod 600` file outside the repository; give the
+agent file paths, never secret values. NGC is not required when using the public
+GHCR images in this runbook.
 
 Copy this prompt into your coding agent from the repository root:
 
@@ -47,7 +48,6 @@ Project: <project-id>
 Region: <region>
 Token Factory key file: </absolute/path/token-factory-key>
 Hugging Face token file: </absolute/path/hf-token>
-NGC API key file: </absolute/path/ngc-api-key>
 
 Never print secrets or copy them into the repository, logs, or shell history.
 Use NPA commands, continue autonomously, and report blockers and usability gaps
@@ -90,6 +90,7 @@ REGISTRY="$NPA_REGISTRY"
 RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project "$PROJECT")"
 
 npa workbench health preflight
+npa workbench health access --capability paidf
 npa provision-if-absent --project "$PROJECT" \
   --cpu-nodes 1 --cpu-platform cpu-d3 --cpu-preset 8vcpu-32gb \
   --gpu-nodes 1 --gpu-platform gpu-rtx6000 \
@@ -109,15 +110,13 @@ npa workbench workflow plan-spec "$SPEC" --run-id "$RUN_ID" \
   --var bucket="$BUCKET" \
   --var n_augmentations=1 --json
 
-# With GHCR this uses the Registry v2 anonymous token flow. With a configured
-# private registry it uses the matching configured credentials and submit also
-# refreshes the Kubernetes imagePullSecret before launch.
+# Proves manifest pulls. GHCR is anonymous; for a private Nebius registry,
+# submit also refreshes the Kubernetes imagePullSecret before launch.
 npa workbench workflow preflight-images "$SPEC" \
   --project "$PROJECT" --registry "$REGISTRY"
 
-# Source staging is automatic, content-addressed, verified, and persisted. Each
-# --secret-env NAME is resolved from the current environment first, then the
-# selected project's NPA credentials; a missing value fails before setup.
+# Source staging is automatic and content-addressed. Each secret name resolves
+# from the environment or project store; a missing gate fails before GPU launch.
 npa workbench workflow submit "$SPEC" \
   --project "$PROJECT" --registry "$REGISTRY" \
   --run-id "$RUN_ID" --runtime --auto-load \
@@ -138,6 +137,19 @@ npa workbench workflow status "$RUN_ID" --project "$PROJECT" \
 npa workbench workflow logs "$MANIFEST_URI" --project "$PROJECT" --stage augment
 npa workbench workflow load-artifact "$RUN_ID" --project "$PROJECT" # idempotent retry only
 ```
+
+The sequence has five fail-fast gates:
+
+| Gate | Success |
+| --- | --- |
+| Credentials | S3 and Token Factory checks pass |
+| Model terms | Cosmos Transfer reports `HF access ok` |
+| Cluster | one CPU node fits the controller plus a PAIDF CPU stage; one GPU node fits Transfer |
+| Images | every manifest is pullable; private Nebius credentials refresh `npa-nebius-registry` |
+| Submit secrets | Token Factory, S3, and `HF_TOKEN` are forwarded without entering YAML |
+
+Stop at the first nonzero command; it prints the remedy. Detailed recovery is
+below.
 
 For a pre-authenticated service-account/federation profile with known IDs, the
 prompt-free equivalent is:
@@ -610,8 +622,8 @@ No extra flag is the production starter path. To replace it, add exactly one of:
 --seed-fixture  # developers/tests only: explicitly synthetic geometry
 ```
 
-Local and S3 replacements must be decodable H.264 MP4s. Validation and staging
-happen before automatic provisioning. Conflicts, missing media, unsupported
+Local and S3 replacements must be decodable H.264 MP4s. Kubernetes placement is
+checked before input or source staging. Conflicts, missing media, unsupported
 codec/container/shape, checksum mismatch, or an unavailable object fail with an
 actionable error and never fall back to shapes. `NPA_PAIDF_OFFLINE=1` permits
 only a verified cache hit. A committed run input is immutable, so a repeated
@@ -690,7 +702,8 @@ npa workbench workflow submit "$SPEC" \
   --assume-decision promote_checkpoint \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID \
-  --secret-env AWS_SECRET_ACCESS_KEY
+  --secret-env AWS_SECRET_ACCESS_KEY \
+  --secret-env HF_TOKEN
 ```
 
 When no valid `NPA_SRC_S3_URI` or image override is supplied, real submit

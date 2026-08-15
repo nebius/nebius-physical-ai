@@ -2060,6 +2060,33 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{run.id}}",
         ],
     ),
+    "workbench.cosmos3.checkpoint_eval": ToolEntry(
+        name="workbench.cosmos3.checkpoint_eval",
+        description=(
+            "Run a guarded Cosmos 3 still-image checkpoint evaluation phase in "
+            "the npa-cosmos3 image. Checkpoints and guardrails download at runtime."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "cosmos3",
+            "checkpoint-eval",
+            "--campaign-config",
+            "{{config.campaign_config_uri}}",
+            "--phase",
+            "{{config.eval_phase}}",
+            "--output-uri",
+            "{{config.output_uri}}",
+            "--top-checkpoint",
+            "{{config.top_checkpoint_1}}",
+            "--top-checkpoint",
+            "{{config.top_checkpoint_2}}",
+            "--work-dir",
+            "{{config.work_dir}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
     "workbench.cosmos3.reason": ToolEntry(
         name="workbench.cosmos3.reason",
         description="Build a Cosmos3 reason-stage manifest over input frames.",

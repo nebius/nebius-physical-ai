@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -28,6 +29,70 @@ app = typer.Typer(
     help="Cosmos3 omni-model generation and reasoning workflow contracts.",
     no_args_is_help=True,
 )
+
+
+@app.command("checkpoint-eval")
+def checkpoint_eval_cmd(
+    campaign_config: str = typer.Option(
+        ...,
+        "--campaign-config",
+        help="Local path or s3:// URI for the versioned checkpoint-evaluation config.",
+    ),
+    phase: str = typer.Option(
+        ...,
+        "--phase",
+        help="Evaluation phase: primary or consistency.",
+    ),
+    output_uri: str = typer.Option(
+        ...,
+        "--output-uri",
+        help="Durable s3:// campaign root for generated media and evidence.",
+    ),
+    top_checkpoint: list[str] = typer.Option(
+        [],
+        "--top-checkpoint",
+        help="Consistency only: repeat exactly twice for the selected top two checkpoints.",
+    ),
+    work_dir: Path = typer.Option(
+        Path("/tmp/npa-cosmos3-checkpoint-eval"),
+        "--work-dir",
+        help="Ephemeral local output and Hugging Face cache root.",
+    ),
+    run_id: str = typer.Option("", "--run-id", help="Workflow run id carried into evidence."),
+    runtime_image: str = typer.Option(
+        "",
+        "--runtime-image",
+        help="Resolved npa-cosmos3 image reference recorded in provenance.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Validate the config and show arms without probing a GPU or downloading weights.",
+    ),
+) -> None:
+    """Evaluate Cosmos3 text-to-image checkpoints in guarded, load-once batches."""
+
+    from npa.workbench.cosmos.checkpoint_eval import (
+        Cosmos3CheckpointEvalError,
+        execute_phase,
+    )
+
+    try:
+        result = execute_phase(
+            campaign_config=campaign_config,
+            phase=phase,
+            output_uri=output_uri,
+            top_checkpoints=top_checkpoint,
+            work_dir=work_dir,
+            run_id=run_id,
+            runtime_image=runtime_image.strip()
+            or os.environ.get("NPA_TASK_IMAGE", "").strip(),
+            dry_run=dry_run,
+        )
+    except (Cosmos3CheckpointEvalError, Cosmos3GenerateError) as exc:
+        typer.echo(f"cosmos3 checkpoint-eval failed: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(json.dumps(result, indent=2, sort_keys=True))
 
 
 @app.command("generate")

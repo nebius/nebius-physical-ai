@@ -57,6 +57,7 @@ class GatedAsset:
 # Face before the token can download them.
 WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
     GatedAsset("nvidia/GR00T-N1.7-3B", HF, ("groot",), True),
+    GatedAsset("nvidia/Cosmos-Transfer2.5-2B", HF, ("paidf", "sim2real"), True),
     GatedAsset("nvidia/Cosmos-Reason2-2B", HF, ("groot", "sim2real"), True),
     GatedAsset("nvidia/Cosmos-Reason2-8B", HF, ("sim2real",), True),
     GatedAsset("nvidia/Cosmos-Reason1-7B", HF, ("cosmos",), True),

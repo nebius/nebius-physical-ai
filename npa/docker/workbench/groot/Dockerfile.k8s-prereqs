@@ -9,12 +9,14 @@
 #     --tag <registry>/npa-groot:0.1.0-sky1 \
 #     --dockerfile npa/docker/workbench/groot/Dockerfile.k8s-prereqs
 #
-# SkyPilot's Kubernetes bootstrap needs a system Python, rsync, an SSH client,
-# and netcat.  The GR00T workflow's pod template explicitly runs the bootstrap
-# as uid 0, so this derived image must not grant the final runtime user an
-# unrestricted passwordless privilege-escalation path.
+# SkyPilot's Kubernetes bootstrap needs a system Python, rsync, SSH, netcat, and
+# passwordless sudo. The GR00T workflow runs as the image's declared ubuntu user;
+# this derived repair must therefore satisfy the same non-root bootstrap contract
+# as a fresh canonical build instead of relying on a uid-0 pod override.
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
+
+LABEL org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 USER root
 
@@ -25,13 +27,33 @@ USER root
 RUN apt-get update \
     && apt-get install -y --no-install-recommends --fix-broken
 
+# SkyPilot starts the service directly before its first rsync. Make that start
+# generate per-container host keys, then remove the keys created during build so
+# a published image never shares SSH server identity between workloads.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-         python3 python3-venv python3-pip rsync curl openssh-client netcat-openbsd \
+         python3 python3-venv python3-pip rsync curl openssh-client openssh-server \
+         netcat-openbsd sudo \
     && rm -rf /var/lib/apt/lists/* \
     && (id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu) \
+    && install -d -m 0755 /run/sshd \
+    && sed -i '/^  start)$/a\    ssh-keygen -A' /etc/init.d/ssh \
+    && grep -q 'ssh-keygen -A' /etc/init.d/ssh \
+    && rm -f /etc/ssh/ssh_host_* \
+    && printf '%s\n' \
+         'PasswordAuthentication no' \
+         'PermitRootLogin no' \
+         > /etc/ssh/sshd_config.d/99-npa-container.conf \
+    && printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' \
+         > /etc/sudoers.d/99-npa-runtime-user \
+    && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
+    && install -d -m 0755 -o ubuntu -g ubuntu /opt/groot /workspace \
     && python3 --version
 
 USER ubuntu
+ENV HOME=/home/ubuntu
 WORKDIR /opt/groot
-ENTRYPOINT ["/bin/bash"]
+# Preserve the interactive shell default while forwarding every orchestrator
+# command verbatim. Kubernetes otherwise appends pod args to /bin/bash, which
+# tries to read /bin/sh as a script and fails before the bootstrap probe starts.
+ENTRYPOINT ["/bin/sh", "-c", "if [ \"$#\" -gt 0 ]; then exec \"$@\"; fi; exec /bin/bash", "npa-groot-entrypoint"]

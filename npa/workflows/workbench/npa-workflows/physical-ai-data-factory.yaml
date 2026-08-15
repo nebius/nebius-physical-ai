@@ -204,7 +204,15 @@ resources:
     # blueprint-specific command. `npa provision-if-absent` beforehand is still
     # fine, and `--no-deploy-if-absent` opts out. The GPU quota gate in
     # `npa cluster up` refuses before spending anything when quota is short.
-    deployIfAbsent: true
+    deployIfAbsent:
+      # One CPU node is mandatory: it hosts the 2 CPU / 8 GiB SkyPilot jobs
+      # controller alongside each 4 CPU / 16 GiB PAIDF CPU stage.
+      cpuNodes: 1
+      cpuPlatform: cpu-d3
+      cpuPreset: 8vcpu-32gb
+      gpuNodes: 1
+      gpuPlatform: gpu-rtx6000
+      gpuPreset: 1gpu-24vcpu-218gb
   cpu:
     cloud: kubernetes
     # The same cluster serves both profiles, so only the GPU one declares

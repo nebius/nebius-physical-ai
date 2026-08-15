@@ -237,6 +237,23 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "cosmos3-checkpoint-eval.yaml",
+        "gpu",
+        secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="cosmos3",
+        plan_only=True,
+        plan_only_justification=(
+            "operator-driven gated benchmark is covered by its dedicated live B200 "
+            "campaign; the generic rotation cannot supply task-scoped license "
+            "acceptance or intentionally launch a 40-image checkpoint matrix"
+        ),
+        notes=(
+            "B200-only guarded checkpoint comparison. The dedicated campaign executes "
+            "the primary and consistency phases through this spec with an accepted, "
+            "versioned config staged to operator-owned S3."
+        ),
+    ),
+    SubmitLiveCase(
         "cosmos2-transfer.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
@@ -708,9 +725,10 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "byof-openpi.yaml",
         "multi",
+        secret_envs=("NPA_OPENPI_ACCEPT_GEMMA_TERMS",),
         plan_only=True,
         plan_only_justification="delegated BYOF execution is covered by its dedicated live onboarding tier",
-        notes="BYOF onboarding flow; covered by test_byof_onboarding_live_e2e.py.",
+        notes="OpenPI Polaris B200 inference; covered by test_byof_openpi_polaris_live_e2e.py.",
     ),
     SubmitLiveCase(
         "byof-droid-policy-learning.yaml",

@@ -1461,7 +1461,9 @@ def resolve_project_storage(
     blocks and falls back to ``terraform_state`` for older configs. When
     ``include_shared_credentials`` is true, host-scoped credentials from
     ``~/.npa/credentials.yaml`` are used as a final fallback for operator
-    workflows that only need a writable default bucket.
+    workflows that only need a writable default bucket. Exact-project
+    credential-store records are selected atomically: a partial record is
+    ignored rather than mixed with routing or key fields from another source.
     """
     yml = _load_yaml()
     try:
@@ -1505,16 +1507,65 @@ def resolve_project_storage(
         if isinstance(saved_storage, dict):
             project_storage_credentials = saved_storage
 
-    def pick(*keys: str, default: str = "") -> str:
+    def source_value(source: dict[str, Any], *keys: str) -> str:
         for key in keys:
-            value = storage.get(key)
+            value = source.get(key)
             if value:
                 return str(value)
+        return ""
+
+    # A committed exact-project storage record is one validated identity
+    # generation: bucket, endpoint, access key, and secret key were proved and
+    # written together by StorageSetupTransaction.commit(). Select that record
+    # only as a complete unit. A hand-edited, legacy, or interrupted partial
+    # record must not combine its key pair with routing fields from a different
+    # config generation (or vice versa). When the exact-project record is
+    # absent or partial, it contributes no fields at all; the pre-existing
+    # project/config resolution path below remains the fallback.
+    project_storage = StorageConfig(
+        checkpoint_bucket=source_value(
+            project_storage_credentials,
+            "checkpoint_bucket",
+            "bucket",
+            "s3_bucket",
+        ),
+        endpoint_url=source_value(
+            project_storage_credentials,
+            "endpoint_url",
+            "endpoint",
+            "s3_endpoint",
+        ),
+        aws_access_key_id=source_value(
+            project_storage_credentials,
+            "aws_access_key_id",
+            "access_key",
+            "nebius_api_key",
+        ),
+        aws_secret_access_key=source_value(
+            project_storage_credentials,
+            "aws_secret_access_key",
+            "secret_key",
+            "nebius_secret_key",
+        ),
+    )
+    if project_storage_credentials and all(
+        (
+            project_storage.checkpoint_bucket,
+            project_storage.endpoint_url,
+            project_storage.aws_access_key_id,
+            project_storage.aws_secret_access_key,
+        )
+    ):
+        return project_storage
+
+    def pick(*keys: str, default: str = "") -> str:
+        value = source_value(storage, *keys)
+        if value:
+            return value
         return default
 
-    env_bucket = (
-        os.environ.get("NPA_CHECKPOINT_BUCKET", "")
-        or os.environ.get("NEBIUS_S3_BUCKET", "")
+    env_bucket = os.environ.get("NPA_CHECKPOINT_BUCKET", "") or os.environ.get(
+        "NEBIUS_S3_BUCKET", ""
     )
     env_endpoint = (
         os.environ.get("AWS_ENDPOINT_URL", "")
@@ -1524,26 +1575,27 @@ def resolve_project_storage(
     env_access_key = os.environ.get("AWS_ACCESS_KEY_ID", "")
     env_secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
 
-    # Shared credentials are host-scoped. Keep scoped project settings primary
-    # and only use these when no project storage key is configured.
-    credentials_bucket = str(project_storage_credentials.get("bucket", "") or "")
-    credentials_endpoint = str(project_storage_credentials.get("endpoint_url", "") or "")
-    credentials_access_key = str(project_storage_credentials.get("aws_access_key_id", "") or "")
-    credentials_secret_key = str(project_storage_credentials.get("aws_secret_access_key", "") or "")
+    # Shared credentials are host-scoped. The scoped config stanza remains
+    # primary; shared values are only a fallback for projects without an exact
+    # provider project ID.
+    credentials_bucket = ""
+    credentials_endpoint = ""
+    credentials_access_key = ""
+    credentials_secret_key = ""
     if include_shared_credentials and not project_id:
         credentials_bucket = credentials_bucket or credentials.s3_bucket
         credentials_endpoint = credentials_endpoint or credentials.s3_endpoint
         credentials_access_key = credentials_access_key or credentials.s3_access_key_id
-        credentials_secret_key = credentials_secret_key or credentials.s3_secret_access_key
+        credentials_secret_key = (
+            credentials_secret_key or credentials.s3_secret_access_key
+        )
 
     bucket = pick(
         "checkpoint_bucket",
         "bucket",
         "s3_bucket",
         default=(
-            str(state.get("bucket", "") or "")
-            or env_bucket
-            or credentials_bucket
+            str(state.get("bucket", "") or "") or env_bucket or credentials_bucket
         ),
     )
     endpoint = pick(
@@ -1551,9 +1603,7 @@ def resolve_project_storage(
         "endpoint",
         "s3_endpoint",
         default=(
-            str(state.get("endpoint", "") or "")
-            or env_endpoint
-            or credentials_endpoint
+            str(state.get("endpoint", "") or "") or env_endpoint or credentials_endpoint
         ),
     )
     access_key = pick(

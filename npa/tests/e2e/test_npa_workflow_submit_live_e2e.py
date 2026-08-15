@@ -37,7 +37,16 @@ from npa.orchestration.npa_workflow.submit_matrix import (
     one_shot_submit_cases,
     runtime_submit_cases,
 )
+from npa.orchestration.npa_workflow.skypilot_render import (
+    assert_no_unresolved_placeholders,
+)
 from npa.orchestration.skypilot.workflow import workflow_status
+from .npa_workflow_live_argv import (
+    one_shot_submit_args,
+    plan_submit_args,
+    runtime_submit_args,
+    status_args,
+)
 from .npa_workflow_live_helpers import (
     SUBMIT_LIVE_MATRIX,
     SubmitLiveCase,
@@ -243,55 +252,38 @@ def test_npa_workflow_submit_live_reaches_terminal(
     )
 
     # Preflight: render only (no cluster).
-    plan_args = [
-        "workbench",
-        "workflow",
-        "submit",
-        str(path),
-        "--run-id",
-        f"{run_id}-plan",
-        "--plan-only",
-        "--registry",
-        e2e_registry,
-        "--output-format",
-        "json",
-    ]
-    plan_args.extend(_image_args(case, e2e_registry))
-    plan_args.extend(_skypilot_config_args())
     assume = assume_decision_for(case.spec)
-    if assume:
-        plan_args.extend(["--assume-decision", assume])
+    plan_args = plan_submit_args(
+        path,
+        run_id=f"{run_id}-plan",
+        registry=e2e_registry,
+        project=e2e_project,
+        assume_decision=assume,
+        image_args=_image_args(case, e2e_registry),
+        skypilot_config_args=_skypilot_config_args(),
+    )
     planned = RUNNER.invoke(app, plan_args)
     plan_payload = parse_json_payload(planned, forbidden_markers)
     assert plan_payload["status"] == "PLANNED"
     assert plan_payload["steps"] >= 1
-    assert "${" not in plan_payload.get("skypilot_yaml", "")
+    assert_no_unresolved_placeholders(plan_payload.get("skypilot_yaml", ""))
 
     if case.plan_only:
         return
 
-    submit_args = [
-        "workbench",
-        "workflow",
-        "submit",
-        str(path),
-        "--run-id",
-        run_id,
-        "--registry",
-        e2e_registry,
-        "--submit-timeout",
-        "1800",
-        "--output-format",
-        "json",
-    ]
-    if assume:
-        submit_args.extend(["--assume-decision", assume])
     # Workbench images often fail SkyPilot k8s apt-ssh setup, so pins are cleared by default
     # and the stage relies on NPA_SRC_S3_URI + the default image — except for a case that
     # declares `image_tool`, whose stages need the vendor image's own libraries.
-    submit_args.extend(_image_args(case, e2e_registry))
-    submit_args.extend(_secret_env_args(case))
-    submit_args.extend(_skypilot_config_args())
+    submit_args = one_shot_submit_args(
+        path,
+        run_id=run_id,
+        registry=e2e_registry,
+        project=e2e_project,
+        assume_decision=assume,
+        image_args=_image_args(case, e2e_registry),
+        secret_env_args=_secret_env_args(case),
+        skypilot_config_args=_skypilot_config_args(),
+    )
 
     if (
         os.environ.get("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "").strip() in {"1", "true", "yes"}
@@ -392,43 +384,6 @@ def _skip_or_fail_infra(case: SubmitLiveCase, payload: dict) -> None:
     )
 
 
-def _runtime_submit_args(
-    path: Path,
-    *,
-    run_id: str,
-    registry: str,
-    case: SubmitLiveCase,
-    extra_vars: dict[str, str] | None = None,
-) -> list[str]:
-    args = [
-        "workbench",
-        "workflow",
-        "submit",
-        str(path),
-        "--run-id",
-        run_id,
-        "--runtime",
-        "--registry",
-        registry,
-        "--poll-seconds",
-        os.environ.get("NPA_E2E_NPA_WORKFLOW_SUBMIT_POLL_SECONDS", "30"),
-        "--max-wait-seconds",
-        str(_case_max_wait(case)),
-        "--submit-timeout",
-        "1800",
-        "--output-format",
-        "json",
-    ]
-    if not _cancel_on_timeout():
-        args.append("--no-cancel-on-timeout")
-    for key, value in [*case.config_vars, *sorted((extra_vars or {}).items())]:
-        args.extend(["--var", f"{key}={value}"])
-    args.extend(_image_args(case, registry))
-    args.extend(_secret_env_args(case))
-    args.extend(_skypilot_config_args())
-    return args
-
-
 def _prepare_runtime_run(
     case: SubmitLiveCase,
     tmp_path: Path,
@@ -484,7 +439,20 @@ def test_npa_workflow_runtime_live_reaches_terminal(
         )
     try:
         result = RUNNER.invoke(
-            app, _runtime_submit_args(path, run_id=run_id, registry=e2e_registry, case=case)
+            app,
+            runtime_submit_args(
+                path,
+                run_id=run_id,
+                registry=e2e_registry,
+                project=e2e_project,
+                poll_seconds=_poll_seconds(),
+                max_wait_seconds=_case_max_wait(case),
+                cancel_on_timeout=_cancel_on_timeout(),
+                config_vars=case.config_vars,
+                image_args=_image_args(case, e2e_registry),
+                secret_env_args=_secret_env_args(case),
+                skypilot_config_args=_skypilot_config_args(),
+            ),
         )
     finally:
         if trigger_seeder is not None:
@@ -504,10 +472,16 @@ def test_npa_workflow_runtime_live_reaches_terminal(
             run_id=run_id,
             e2e_project=e2e_project,
         )
-        _assert_paidf_status_and_zero_launch_resume(
+
+    if case.spec in {
+        "physical-ai-data-factory.yaml",
+        "token-factory-parallel-fanout.yaml",
+    }:
+        _assert_status_and_zero_launch_resume(
             case=case,
             path=path,
             run_id=run_id,
+            run_prefix_uri=str(payload.get("run_prefix_uri") or ""),
             registry=e2e_registry,
             e2e_project=e2e_project,
             forbidden_markers=forbidden_markers,
@@ -625,16 +599,17 @@ def _assert_paidf_live_artifacts(
     assert int(final.get("artifact_count") or 0) > 0
 
 
-def _assert_paidf_status_and_zero_launch_resume(
+def _assert_status_and_zero_launch_resume(
     *,
     case: SubmitLiveCase,
     path: Path,
     run_id: str,
+    run_prefix_uri: str,
     registry: str,
     e2e_project: str | None,
     forbidden_markers: list[str],
 ) -> None:
-    """Prove S3 durability after local receipt loss and zero-launch resume."""
+    """Prove project-scoped S3 durability and zero-launch resume."""
 
     from npa.orchestration.npa_workflow.submission_state import submission_state_path
 
@@ -643,11 +618,24 @@ def _assert_paidf_status_and_zero_launch_resume(
     assert receipt.is_file(), f"missing local submission receipt {receipt}"
     receipt.unlink()
 
-    status_args = ["workbench", "workflow", "status", run_id, "--json"]
-    if e2e_project:
-        status_args.extend(["--project", e2e_project])
+    # PAIDF has a canonical run-id-only S3 locator that remains important to
+    # exercise. Ordinary workflows may choose any author-owned config.prefix,
+    # so after deliberate local receipt loss status needs the exact durable URI
+    # returned by the completed runtime instead of guessing a bucket layout.
+    status_uri = ""
+    if case.spec != "physical-ai-data-factory.yaml":
+        assert run_prefix_uri, "runtime report did not return its durable run prefix"
+        status_uri = f"{run_prefix_uri.rstrip('/')}/npa-workflow"
     durable_status = parse_json_payload(
-        RUNNER.invoke(app, status_args), forbidden_markers
+        RUNNER.invoke(
+            app,
+            status_args(
+                run_id,
+                project=e2e_project,
+                workflow_s3_uri=status_uri,
+            ),
+        ),
+        forbidden_markers,
     )
     assert str(durable_status.get("status") or "").upper() in TERMINAL_OK
 
@@ -665,10 +653,20 @@ def _assert_paidf_status_and_zero_launch_resume(
 
     assert nonterminal_jobs() == []
 
-    resume_args = _runtime_submit_args(
-        path, run_id=run_id, registry=registry, case=case
+    resume_args = runtime_submit_args(
+        path,
+        run_id=run_id,
+        registry=registry,
+        project=e2e_project,
+        poll_seconds=_poll_seconds(),
+        max_wait_seconds=_case_max_wait(case),
+        cancel_on_timeout=_cancel_on_timeout(),
+        config_vars=case.config_vars,
+        image_args=_image_args(case, registry),
+        secret_env_args=_secret_env_args(case),
+        skypilot_config_args=_skypilot_config_args(),
+        resume=True,
     )
-    resume_args.append("--resume")
     resumed = parse_runtime_json(
         RUNNER.invoke(app, resume_args), forbidden_markers
     )
@@ -704,12 +702,18 @@ def test_npa_workflow_runtime_gate_loop_early_exit_vs_full_budget(
     payloads: dict[str, dict] = {}
     for label, threshold in (("early", "0.0"), ("full", "1.01")):
         run_id, path = _prepare_runtime_run(case, tmp_path, e2e_project, suffix=label)
-        args = _runtime_submit_args(
+        args = runtime_submit_args(
             path,
             run_id=run_id,
             registry=e2e_registry,
-            case=case,
-            extra_vars={"grade_threshold": threshold},
+            project=e2e_project,
+            poll_seconds=_poll_seconds(),
+            max_wait_seconds=_case_max_wait(case),
+            cancel_on_timeout=_cancel_on_timeout(),
+            config_vars=[*case.config_vars, ("grade_threshold", threshold)],
+            image_args=_image_args(case, e2e_registry),
+            secret_env_args=_secret_env_args(case),
+            skypilot_config_args=_skypilot_config_args(),
         )
         result = RUNNER.invoke(app, args)
         payload = parse_runtime_json(result, forbidden_markers)
@@ -751,29 +755,21 @@ def test_npa_workflow_submit_plan_only_matrix_no_leak(
     bucket = live_bucket(e2e_project)
     run_id = f"plan-{uuid.uuid4().hex[:8]}"
     path = materialize_live_spec(tmp_path, case.spec, bucket=bucket, run_id=run_id)
-    args = [
-        "workbench",
-        "workflow",
-        "submit",
-        str(path),
-        "--run-id",
-        run_id,
-        "--plan-only",
-        "--registry",
-        e2e_registry,
-        "--output-format",
-        "json",
-    ]
     assume = assume_decision_for(case.spec)
-    if assume:
-        args.extend(["--assume-decision", assume])
+    args = plan_submit_args(
+        path,
+        run_id=run_id,
+        registry=e2e_registry,
+        project=e2e_project,
+        assume_decision=assume,
+    )
     result = RUNNER.invoke(app, args)
     payload = parse_json_payload(result, forbidden_markers)
     assert payload["status"] == "PLANNED"
     assert payload["steps"] >= 1
     yaml_text = payload.get("skypilot_yaml", "")
     assert "execution: serial" in yaml_text
-    assert "${" not in yaml_text
+    assert_no_unresolved_placeholders(yaml_text)
     # Plan-only must never mint/print live registry passwords.
     if "SKYPILOT_DOCKER_PASSWORD" in yaml_text:
         assert "<SKYPILOT_DOCKER_PASSWORD>" in yaml_text

@@ -135,8 +135,13 @@ def build_cosmos3_inference_args(
     seed: int = 0,
     no_guardrails: bool = False,
     parallelism_preset: str = "latency",
+    benchmark: bool = False,
 ) -> list[str]:
-    """Build Cosmos3 inference script arguments with guardrails on by default."""
+    """Build Cosmos3 inference arguments with guardrails on by default.
+
+    ``benchmark`` is an additive evidence option used by checkpoint evaluation;
+    it does not alter the shared guardrail posture.
+    """
 
     args = [
         "--parallelism-preset",
@@ -151,6 +156,8 @@ def build_cosmos3_inference_args(
     if no_guardrails:
         args.append("--no-guardrails")
     args.append(f"--seed={seed}")
+    if benchmark:
+        args.append("--benchmark")
     return args
 
 

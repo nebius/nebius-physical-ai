@@ -9,6 +9,15 @@ its provider domain for the target region, and drive it with a rendered
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from npa.cluster.gpu_driver import (
+    CANONICAL_RECIPE_CAPABILITIES,
+    RecipeGpuDriverCapabilities,
+    inspect_recipe_gpu_driver_capabilities,
+    recipe_driver_tfvars,
+    resolve_gpu_driver_strategy,
+)
 from npa.fleet.spec import ClusterSpec
 
 _EU_DOMAIN = "api.eu.nebius.cloud:443"
@@ -31,7 +40,13 @@ def _tfstr(value: str) -> str:
     return f'"{escaped}"'
 
 
-def render_tfvars(cluster: ClusterSpec, *, ssh_public_key: str = "") -> str:
+def render_tfvars(
+    cluster: ClusterSpec,
+    *,
+    ssh_public_key: str = "",
+    recipe_dir: Path | None = None,
+    recipe_capabilities: RecipeGpuDriverCapabilities | None = None,
+) -> str:
     """Return ``terraform.tfvars`` for a single cluster (k8s-training root vars).
 
     tenant/project/region/subnet/iam_token are supplied via ``TF_VAR_*`` env at
@@ -58,7 +73,27 @@ def render_tfvars(cluster: ClusterSpec, *, ssh_public_key: str = "") -> str:
     lines.append("gpu_nodes_preemptible        = false")
     lines.append('mig_strategy                 = "none"')
     lines.append("custom_driver                = false")
-    lines.append("gpu_nodes_driverfull_image   = false")
+
+    driver_selection = resolve_gpu_driver_strategy(
+        gpu_nodes=gpu.count if gpu else 0,
+        platform=gpu.platform if gpu else "",
+        preset=gpu.preset if gpu else "",
+        mode=cluster.gpu_driver_mode,
+        managed_driver_preset=cluster.managed_driver_preset,
+        enable_gpu_cluster=cluster.resolved_enable_gpu_cluster(),
+        allow_unsafe_nvswitch_operator=cluster.allow_unsafe_nvswitch_operator,
+    )
+    capabilities = recipe_capabilities
+    if capabilities is None and recipe_dir is not None:
+        capabilities = inspect_recipe_gpu_driver_capabilities(recipe_dir)
+    capabilities = capabilities or CANONICAL_RECIPE_CAPABILITIES
+    lines.extend(
+        recipe_driver_tfvars(
+            driver_selection,
+            capabilities,
+            recipe_label=str(recipe_dir or "canonical k8s-training recipe"),
+        )
+    )
 
     cpu_count = cpu.count if cpu else 0
     lines.append(f"cpu_nodes_fixed_count = {cpu_count}")

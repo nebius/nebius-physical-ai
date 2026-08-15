@@ -1,0 +1,130 @@
+{
+  "schema": "npa.cosmos3.checkpoint-eval.config.v1",
+  "campaign": "cosmos3-checkpoint-evaluation",
+  "mode": "text2image",
+  "guardrails_enabled": true,
+  "guardrail_posture": {
+    "prompt_input": "Blocklist plus Qwen3Guard; a blocked prompt fails the arm",
+    "generated_media_content_safety": "No content-safety model at the pinned upstream commit; the upstream list is empty because the filter produced excessive false positives, so this check is fail-open",
+    "generated_media_postprocessing": "RetinaFaceFilter enabled",
+    "evaluation_consequence": "Human visual review is still required and results must not be described as having passed generated-image content-safety screening"
+  },
+  "framework_version": "1.2.2",
+  "framework_commit": "5e67049cd94acb667786f1e6dd0dab821cb90c97",
+  "runtime_image_digest": "sha256:7635e798c70ce8e53d0836170888dd77b1580bba7b46eba7eefd9d5a82f5cf15",
+  "runtime_parent_image_digest": "sha256:c65712832f6a50f3734d9b01a10699352d59b37949f551c38a33859ba0eedae8",
+  "parallelism_preset": "latency",
+  "primary_seed": 314159,
+  "additional_seeds": [271828, 161803],
+  "sampling_contract": {
+    "aspect_ratio": "1:1",
+    "resolution": "checkpoint-native supported still-image resolution",
+    "settings": "Pinned framework defaults; no step, guidance, or resolution override",
+    "comparison_note": "The 4Step checkpoint keeps its required fixed four-step schedule; native resolution and intrinsic checkpoint sampling are recorded rather than forced to an incompatible common override."
+  },
+  "checkpoints": [
+    {
+      "name": "Cosmos3-Edge",
+      "model_id": "nvidia/Cosmos3-Edge",
+      "preflight_revision": "9eff1178c4e6dcbed1e27c8113109a6cd6d3706e"
+    },
+    {
+      "name": "Cosmos3-Nano",
+      "model_id": "nvidia/Cosmos3-Nano",
+      "preflight_revision": "411f42a8fdfb8c5b2583cb8786e0938f49796eaa"
+    },
+    {
+      "name": "Cosmos3-Super",
+      "model_id": "nvidia/Cosmos3-Super",
+      "preflight_revision": "e0262be9d8f7586bc24c069a2aed2b665bdff266"
+    },
+    {
+      "name": "Cosmos3-Super-Text2Image",
+      "model_id": "nvidia/Cosmos3-Super-Text2Image",
+      "preflight_revision": "6d029507a7b5e0c35642aa48d24d043e379c6bcd"
+    },
+    {
+      "name": "Cosmos3-Super-Text2Image-4Step",
+      "model_id": "nvidia/Cosmos3-Super-Text2Image-4Step",
+      "preflight_revision": "0573a4b26b8e15d13d416e51f4680c8bc8b8c33d"
+    }
+  ],
+  "prompts": [
+    {
+      "id": "p01-block-stacking",
+      "text": "Documentary robotics photograph, square composition: a six-axis industrial robot arm on the left stacks exactly three matte cubes on a clean steel workbench, red cube on the bottom, blue cube in the middle, yellow cube on top. The parallel gripper is still touching the yellow cube, all cube edges are straight, the stack is vertical, realistic shadows and contact points, bright neutral laboratory lighting, no text or logos."
+    },
+    {
+      "id": "p02-gear-insertion",
+      "text": "High-detail Physical AI scene, square composition: two robotic hands perform a precision gearbox assembly on a fixture. The left gripper holds a silver spur gear directly above a matching vertical shaft while the right gripper steadies the dark gearbox housing. Clearly visible gear teeth, concentric shaft alignment, rigid metal geometry, believable finger and fixture contact, diffuse factory lighting, no text or logos."
+    },
+    {
+      "id": "p03-warehouse-forklift",
+      "text": "Photorealistic square warehouse scene: an autonomous orange forklift carries one wooden pallet loaded with four identical sealed cardboard boxes through a marked aisle. Both forks are fully under the pallet and level, all four boxes rest flat without floating, shelving lines remain straight, a small blue mobile robot waits behind a yellow safety line, physically plausible scale and shadows, no people, no text or logos."
+    },
+    {
+      "id": "p04-roadwork-av",
+      "text": "Photorealistic autonomous-driving perception scene, square composition, camera at vehicle windshield height: a white delivery van turns left through a temporary roadwork chicane formed by six orange cones, a cyclist in a green jacket waits on the far right behind the cone line, wet asphalt has restrained reflections, lane boundaries and vehicle wheels have coherent geometry, overcast daylight, no readable text or logos."
+    },
+    {
+      "id": "p05-quadruped-steps",
+      "text": "Cinematic but realistic square photograph of a compact yellow quadruped inspection robot crossing five irregular concrete stepping stones over shallow water. Three feet make firm contact with separate stones while the front-right leg reaches toward the next stone, joint articulation is anatomically consistent, ripples occur only around contacted stones, accurate reflection and weight-bearing posture, cloudy outdoor light, no text or logos."
+    },
+    {
+      "id": "p06-drone-inspection",
+      "text": "Photorealistic square aerial robotics scene: a four-rotor inspection drone hovers two meters from the leading edge of a large white wind-turbine blade at dawn. Exactly four rotors with coherent arms, level body, camera gimbal aimed at a small hairline crack on the blade, turbine tower and blade connect with plausible rigid geometry, distant landscape and soft atmospheric depth, no text or logos."
+    },
+    {
+      "id": "p07-liquid-pour",
+      "text": "Close documentary square image in a robotics lab: a robotic gripper tilts a transparent laboratory pitcher and pours a single continuous stream of blue liquid into a clear graduated beaker held upright in a circular fixture. The stream connects pitcher spout to beaker opening without gaps, liquid surface and refraction are physically plausible, gripper fingers contact the handle, clean white bench, no spills, no readable text or logos."
+    },
+    {
+      "id": "p08-cable-routing",
+      "text": "Photorealistic square manufacturing scene: a dual-arm robot routes one flexible black cable through exactly four white clips mounted in a straight line on a green metal panel. The cable passes continuously through every clip with smooth bends and no impossible intersections; the left gripper holds the free end while the right gripper presses the cable into the final clip, crisp panel and gripper geometry, neutral industrial light, no text or logos."
+    }
+  ],
+  "review": {
+    "blind": true,
+    "score_scale": "1-5 integer per category",
+    "categories": [
+      "prompt_adherence",
+      "visual_quality",
+      "geometry",
+      "contact_physics_plausibility",
+      "visible_artifacts"
+    ],
+    "visible_artifacts_direction": "5 means artifact-free; 1 means severe visible artifacts"
+  },
+  "licenses": [
+    {
+      "assets": "nvidia/Cosmos3-Edge, nvidia/Cosmos3-Nano, nvidia/Cosmos3-Super, nvidia/Cosmos3-Super-Text2Image, nvidia/Cosmos3-Super-Text2Image-4Step",
+      "agreement": "OpenMDW License Agreement 1.1",
+      "url": "https://openmdw.ai/license/1-1/"
+    },
+    {
+      "assets": "nvidia/Cosmos-Guardrail1",
+      "agreement": "NVIDIA Open Model License Agreement",
+      "url": "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license"
+    },
+    {
+      "assets": "Wan-AI/Wan2.2-TI2V-5B and Qwen/Qwen3Guard-Gen-0.6B",
+      "agreement": "Apache License 2.0",
+      "url": "https://www.apache.org/licenses/LICENSE-2.0"
+    }
+  ],
+  "required_runtime_assets": [
+    {
+      "model_id": "nvidia/Cosmos-Guardrail1",
+      "revision": "d6d4bfa899a71454a700907664f3e88f503950cf"
+    },
+    {
+      "model_id": "Wan-AI/Wan2.2-TI2V-5B",
+      "revision": "921dbaf3f1674a56f47e83fb80a34bac8a8f203e",
+      "file": "Wan2.2_VAE.pth"
+    },
+    {
+      "model_id": "Qwen/Qwen3Guard-Gen-0.6B",
+      "preflight_revision": "fada3b2f655b89601929198343c94cd2f64d93cc"
+    }
+  ]
+}

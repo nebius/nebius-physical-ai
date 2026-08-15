@@ -25,6 +25,19 @@ from npa.cluster.state import (
     save_cluster_state,
     utc_now_iso,
 )
+from npa.cluster.gpu_driver import (
+    DEFAULT_MANAGED_DRIVER_PRESET,
+    GpuDriverSelection,
+    GpuDriverStrategyError,
+    resolve_gpu_driver_strategy,
+)
+from npa.cluster.gpu_health import (
+    DEFAULT_CUDA_SMOKE_IMAGE,
+    DEFAULT_STABILIZATION_SECONDS,
+    GpuHealthConfig,
+    probe_gpu_health,
+    validate_gpu_health,
+)
 from npa.provisioning_journal import (
     ProvisioningOperation,
     current_operation,
@@ -194,6 +207,7 @@ def _rollback_fresh_cluster_apply(
             tenant_id=str(operation.read().get("tenant_id") or ""),
             region=str(operation.read().get("region") or ""),
             cluster_id="",
+            operation_id="",
             context_name=context,
             keep_local_state=False,
             force=True,
@@ -233,7 +247,7 @@ def up_cmd(
     validate: bool = typer.Option(
         True,
         "--validate/--skip-validate",
-        help="Validate nodes, GPU allocatable resources, GPU Operator pods, and default StorageClass.",
+        help="Validate stable nodes, GPU capacity/fabric/driver components, CUDA vectorAdd, and the default StorageClass.",
     ),
     sky_smoke: bool = typer.Option(
         True,
@@ -244,6 +258,11 @@ def up_cmd(
         "",
         "--sky-gpus",
         help="SkyPilot GPU demand for the smoke task. Defaults to auto-detecting the first Kubernetes GPU.",
+    ),
+    sky_bin: str = typer.Option(
+        "",
+        "--sky-bin",
+        help="Pinned NPA SkyPilot executable override for GPU readiness and smoke.",
     ),
     capacity_block_group: str = typer.Option(
         "",
@@ -282,6 +301,36 @@ def up_cmd(
         "",
         "--gpu-preset",
         help="GPU node preset (overrides tfvars/TF_VAR_gpu_nodes_preset).",
+    ),
+    gpu_driver_mode: str = typer.Option(
+        "",
+        "--gpu-driver-mode",
+        help="GPU driver strategy: auto, managed-image, or operator. Empty keeps tfvars/default auto.",
+    ),
+    managed_driver_preset: str = typer.Option(
+        "",
+        "--managed-driver-preset",
+        help="Nebius managed driver preset for auto/managed-image mode (default: cuda13.0).",
+    ),
+    allow_unsafe_nvswitch_operator: bool | None = typer.Option(
+        None,
+        "--allow-unsafe-nvswitch-operator/--deny-unsafe-nvswitch-operator",
+        help="Explicitly acknowledge the unsafe operator/Fabric Manager ordering path on NVSwitch systems (diagnostics only).",
+    ),
+    gpu_health_stabilization_seconds: int = typer.Option(
+        DEFAULT_STABILIZATION_SECONDS,
+        "--gpu-health-stabilization-seconds",
+        help="Seconds GPU nodes, boot IDs, fabric, capacity, and components must remain healthy before success.",
+    ),
+    gpu_cuda_smoke: bool = typer.Option(
+        True,
+        "--gpu-cuda-smoke/--skip-gpu-cuda-smoke",
+        help="Run NVIDIA's CUDA vectorAdd smoke on every requested GPU node.",
+    ),
+    gpu_cuda_smoke_image: str = typer.Option(
+        DEFAULT_CUDA_SMOKE_IMAGE,
+        "--gpu-cuda-smoke-image",
+        help="Container image for the post-deploy CUDA vectorAdd smoke.",
     ),
     preemptible: bool | None = typer.Option(
         None,
@@ -351,10 +400,16 @@ def up_cmd(
         ("cpu_nodes_preset", cpu_preset),
         ("gpu_nodes_platform", gpu_platform),
         ("gpu_nodes_preset", gpu_preset),
+        ("gpu_driver_mode", gpu_driver_mode),
+        ("managed_driver_preset", managed_driver_preset),
     ):
         _apply_string_override(tfvars, key, value)
     if preemptible is not None:
         tfvars["gpu_nodes_preemptible"] = bool(preemptible)
+    if allow_unsafe_nvswitch_operator is not None:
+        tfvars["allow_unsafe_nvswitch_operator"] = bool(
+            allow_unsafe_nvswitch_operator
+        )
     context = explicit_context or str(tfvars.get("cluster_name") or "npa-cluster")
 
     with isolated_terraform_data_dir(tf_dir, context) as terraform_data:
@@ -370,6 +425,21 @@ def up_cmd(
         _preflight_whole_path_capacity(
             tfvars, env, context=context, project_alias=project
         )
+        driver = _resolve_gpu_driver_selection(tfvars, env)
+        typer.echo(
+            "GPU driver strategy: "
+            + (
+                f"{driver.effective_mode} ({driver.managed_driver_preset})"
+                if driver.uses_managed_image
+                else driver.effective_mode
+            )
+        )
+        if driver.unsafe_operator_acknowledged:
+            typer.echo(
+                "WARNING: operator mode on this NVSwitch topology explicitly "
+                "re-enables the unsafe driver/Fabric Manager host-device ordering path.",
+                err=True,
+            )
         _terraform_init(terraform_bin, tf_dir, env)
         _apply_capacity_block_group_tfvars(tfvars, capacity_block_group)
         _guard_unmanaged_duplicate(nebius_bin, terraform_bin, tf_dir, tfvars, env)
@@ -393,6 +463,17 @@ def up_cmd(
             *_string_var_args("cpu_nodes_preset", cpu_preset),
             *_string_var_args("gpu_nodes_platform", gpu_platform),
             *_string_var_args("gpu_nodes_preset", gpu_preset),
+            *_string_var_args("gpu_driver_mode", gpu_driver_mode),
+            *_string_var_args("managed_driver_preset", managed_driver_preset),
+            *(
+                [
+                    "-var",
+                    "allow_unsafe_nvswitch_operator="
+                    + str(bool(allow_unsafe_nvswitch_operator)).lower(),
+                ]
+                if allow_unsafe_nvswitch_operator is not None
+                else []
+            ),
             *(
                 ["-var", f"gpu_nodes_preemptible={str(bool(preemptible)).lower()}"]
                 if preemptible is not None
@@ -528,7 +609,12 @@ def up_cmd(
         kubeconfig_path = kubeconfig or kubeconfig_file(context)
         _write_kubeconfig(nebius_bin, cluster_id, kubeconfig_path, context)
         _save_terraform_cluster_state(
-            tfvars, cluster, context, kubeconfig_path, env=env
+            tfvars,
+            cluster,
+            context,
+            kubeconfig_path,
+            env=env,
+            last_seen_state="VALIDATING",
         )
 
         typer.echo(f"Cluster ID: {cluster_id}")
@@ -537,7 +623,14 @@ def up_cmd(
 
         if validate:
             validation = _validate_cluster(
-                kubectl_bin, kubeconfig_path, tfvars, validation_timeout
+                kubectl_bin,
+                kubeconfig_path,
+                tfvars,
+                validation_timeout,
+                gpu_health_stabilization_seconds=gpu_health_stabilization_seconds,
+                gpu_cuda_smoke=gpu_cuda_smoke,
+                gpu_cuda_smoke_image=gpu_cuda_smoke_image,
+                env=env,
             )
             typer.echo(
                 "Validation: "
@@ -546,7 +639,33 @@ def up_cmd(
                 f"default StorageClass {validation['default_storage_class']}"
             )
         if sky_smoke:
-            _run_skypilot_smoke(kubeconfig_path, context, cluster_name, sky_gpus)
+            from npa.orchestration.skypilot.k8s_gpu_catalog import (
+                wait_for_kubernetes_accelerators,
+            )
+
+            wait_for_kubernetes_accelerators(
+                [sky_gpus] if sky_gpus.strip() else [],
+                context=context,
+                kubeconfig=kubeconfig_path,
+                sky_bin=sky_bin or None,
+                label_known_gpus=True,
+                on_status=lambda message: typer.echo(message, err=True),
+            )
+            _run_skypilot_smoke(
+                kubeconfig_path,
+                context,
+                cluster_name,
+                sky_gpus,
+                sky_bin=sky_bin,
+            )
+        _save_terraform_cluster_state(
+            tfvars,
+            cluster,
+            context,
+            kubeconfig_path,
+            env=env,
+            last_seen_state="RUNNING",
+        )
 
 
 @intent_boundary(OperationIntent.DESTROY)
@@ -1451,27 +1570,73 @@ def _run_stream(
     a graceful shutdown that still persists state) and the reason is raised.
     """
     if cancel is None:
-        result = subprocess.run(
-            args,
-            cwd=cwd,
-            env=env,
-            text=True,
-            timeout=timeout,
-            check=False,
-            stdout=subprocess.PIPE if capture_output else None,
-            stderr=subprocess.PIPE if capture_output else None,
-        )
-        safe_stdout = result.stdout or ""
-        safe_stderr = result.stderr or ""
         if capture_output:
             from npa.clients.nebius import redact_nebius_output
 
-            safe_stdout = redact_nebius_output(safe_stdout)
-            safe_stderr = redact_nebius_output(safe_stderr)
-        if capture_output and safe_stdout:
-            typer.echo(safe_stdout, nl=not safe_stdout.endswith("\n"))
-        if capture_output and safe_stderr:
-            typer.echo(safe_stderr, err=True, nl=not safe_stderr.endswith("\n"))
+            process = subprocess.Popen(
+                args,
+                cwd=cwd,
+                env=env,
+                text=True,
+                bufsize=1,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            captured_stdout: list[str] = []
+            captured_stderr: list[str] = []
+
+            def drain(
+                pipe: Any, captured: list[str], *, stderr: bool
+            ) -> None:
+                if pipe is None:
+                    return
+                for line in iter(pipe.readline, ""):
+                    safe_line = redact_nebius_output(line)
+                    captured.append(safe_line)
+                    typer.echo(safe_line, err=stderr, nl=False)
+                pipe.close()
+
+            readers = [
+                threading.Thread(
+                    target=drain,
+                    args=(process.stdout, captured_stdout),
+                    kwargs={"stderr": False},
+                    daemon=True,
+                ),
+                threading.Thread(
+                    target=drain,
+                    args=(process.stderr, captured_stderr),
+                    kwargs={"stderr": True},
+                    daemon=True,
+                ),
+            ]
+            for reader in readers:
+                reader.start()
+            try:
+                returncode = process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                _stop_process(process)
+                raise
+            finally:
+                for reader in readers:
+                    reader.join(timeout=5)
+            result = subprocess.CompletedProcess(
+                args=args,
+                returncode=returncode,
+                stdout="".join(captured_stdout),
+                stderr="".join(captured_stderr),
+            )
+        else:
+            result = subprocess.run(
+                args,
+                cwd=cwd,
+                env=env,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        safe_stdout = result.stdout or ""
+        safe_stderr = result.stderr or ""
         if result.returncode != 0:
             detail = ""
             if capture_output:
@@ -1538,6 +1703,7 @@ def _run_capture(
     env: dict[str, str] | None = None,
     timeout: int | None = None,
     check: bool = True,
+    input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
         args,
@@ -1546,6 +1712,7 @@ def _run_capture(
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        input=input_text,
         timeout=timeout,
         check=False,
     )
@@ -2566,6 +2733,47 @@ def _tfvar_bool(
     return bool(value)
 
 
+def _resolve_gpu_driver_selection(
+    tfvars: dict[str, Any], env: dict[str, str]
+) -> GpuDriverSelection:
+    """Resolve direct-cluster Terraform/CLI values through the shared contract."""
+
+    try:
+        return resolve_gpu_driver_strategy(
+            gpu_nodes=int(_tfvar_value(tfvars, env, "gpu_nodes_count", 1) or 0),
+            platform=str(
+                _tfvar_value(
+                    tfvars, env, "gpu_nodes_platform", "gpu-rtx6000"
+                )
+                or ""
+            ),
+            preset=str(
+                _tfvar_value(
+                    tfvars, env, "gpu_nodes_preset", "1gpu-24vcpu-218gb"
+                )
+                or ""
+            ),
+            mode=str(_tfvar_value(tfvars, env, "gpu_driver_mode", "auto") or "auto"),
+            managed_driver_preset=str(
+                _tfvar_value(
+                    tfvars,
+                    env,
+                    "managed_driver_preset",
+                    DEFAULT_MANAGED_DRIVER_PRESET,
+                )
+                or DEFAULT_MANAGED_DRIVER_PRESET
+            ),
+            enable_gpu_cluster=_tfvar_bool(
+                tfvars, env, "enable_gpu_cluster", False
+            ),
+            allow_unsafe_nvswitch_operator=_tfvar_bool(
+                tfvars, env, "allow_unsafe_nvswitch_operator", False
+            ),
+        )
+    except GpuDriverStrategyError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+
 def _shared_filesystem_requested(tfvars: dict[str, Any], env: dict[str, str]) -> bool:
     """Whether the config asks for a shared filesystem (created or attached).
 
@@ -2706,6 +2914,7 @@ def _save_terraform_cluster_state(
     kubeconfig_path: Path,
     *,
     env: dict[str, str] | None = None,
+    last_seen_state: str = "RUNNING",
 ) -> None:
     raw_endpoints = cluster.get("endpoints")
     endpoints: dict[str, Any] = (
@@ -2723,7 +2932,7 @@ def _save_terraform_cluster_state(
         k8s_version=str(tfvars.get("k8s_version") or ""),
         subnet_id=str(tfvars.get("subnet_id") or ""),
         created_at=utc_now_iso(),
-        last_seen_state="RUNNING",
+        last_seen_state=last_seen_state,
         endpoint=str(endpoints.get("public_endpoint") or ""),
         kubeconfig_path=str(kubeconfig_path),
     )
@@ -2731,7 +2940,11 @@ def _save_terraform_cluster_state(
         state,
         metadata={
             "managed_by": "npa cluster terraform",
-            "event": "kubeconfig_written",
+            "event": (
+                "gpu_health_validated"
+                if last_seen_state == "RUNNING"
+                else "kubeconfig_written_validation_pending"
+            ),
             "updated_at": utc_now_iso(),
             "teardown": "Run `npa cluster down --terraform-dir deploy/cluster --force` when finished.",
         },
@@ -2743,12 +2956,82 @@ def _validate_cluster(
     kubeconfig_path: Path,
     tfvars: dict[str, Any],
     timeout_minutes: int,
+    *,
+    gpu_health_stabilization_seconds: int = DEFAULT_STABILIZATION_SECONDS,
+    gpu_cuda_smoke: bool = True,
+    gpu_cuda_smoke_image: str = DEFAULT_CUDA_SMOKE_IMAGE,
+    env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
+    resolved_env = dict(env or os.environ)
+    driver = _resolve_gpu_driver_selection(tfvars, resolved_env)
+    expected_gpu_nodes = int(
+        _tfvar_value(tfvars, resolved_env, "gpu_nodes_count", 1) or 0
+    )
+    expected_cpu_nodes = int(
+        _tfvar_value(tfvars, resolved_env, "cpu_nodes_count", 1) or 0
+    )
+    if expected_gpu_nodes > 0:
+        try:
+            gpu_report = validate_gpu_health(
+                _run_capture,
+                kubectl_bin=kubectl_bin,
+                kubeconfig_path=kubeconfig_path,
+                config=GpuHealthConfig(
+                    expected_nodes=expected_cpu_nodes + expected_gpu_nodes,
+                    expected_gpu_nodes=expected_gpu_nodes,
+                    gpu_preset=str(
+                        _tfvar_value(
+                            tfvars,
+                            resolved_env,
+                            "gpu_nodes_preset",
+                            "1gpu-24vcpu-218gb",
+                        )
+                        or ""
+                    ),
+                    gpu_platform=str(
+                        _tfvar_value(
+                            tfvars,
+                            resolved_env,
+                            "gpu_nodes_platform",
+                            "gpu-rtx6000",
+                        )
+                        or ""
+                    ),
+                    driver_mode=driver.effective_mode,
+                    nvswitch=driver.nvswitch,
+                    stabilization_seconds=gpu_health_stabilization_seconds,
+                    timeout_seconds=timeout_minutes * 60,
+                    cuda_smoke=gpu_cuda_smoke,
+                    cuda_smoke_image=gpu_cuda_smoke_image,
+                ),
+                evidence_path=kubeconfig_path.parent / "gpu-health.json",
+                on_status=lambda message: typer.echo(message),
+            )
+        except (RuntimeError, ValueError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        final = gpu_report["final_snapshot"]
+        result = {
+            "ready_nodes": final["ready_nodes"],
+            "gpu_nodes": len(final["gpu_nodes"]),
+            "total_gpus": final["total_gpus"],
+            "driver_mode": driver.effective_mode,
+            "cuda_smokes": gpu_report["cuda_smokes"],
+        }
+    else:
+        result = {}
+
     deadline = time.monotonic() + timeout_minutes * 60
     last_error = ""
     while time.monotonic() <= deadline:
         try:
-            return _validate_cluster_once(kubectl_bin, kubeconfig_path, tfvars)
+            once = _validate_cluster_once(
+                kubectl_bin,
+                kubeconfig_path,
+                tfvars,
+                env=resolved_env,
+                skip_gpu_probe=expected_gpu_nodes > 0,
+            )
+            return {**once, **result, "default_storage_class": once["default_storage_class"]}
         except typer.BadParameter as exc:
             last_error = str(exc)
             typer.echo(f"Validation pending: {last_error}")
@@ -2759,61 +3042,104 @@ def _validate_cluster(
 
 
 def _validate_cluster_once(
-    kubectl_bin: str, kubeconfig_path: Path, tfvars: dict[str, Any]
+    kubectl_bin: str,
+    kubeconfig_path: Path,
+    tfvars: dict[str, Any],
+    *,
+    env: dict[str, str] | None = None,
+    skip_gpu_probe: bool = False,
 ) -> dict[str, Any]:
-    env = os.environ.copy()
-    env["KUBECONFIG"] = str(kubeconfig_path)
-    nodes = json.loads(
-        _run_capture([kubectl_bin, "get", "nodes", "-o", "json"], env=env).stdout
+    resolved_env = dict(env or os.environ)
+    kubectl_env = os.environ.copy()
+    kubectl_env["KUBECONFIG"] = str(kubeconfig_path)
+    expected_gpu_nodes = int(
+        _tfvar_value(tfvars, resolved_env, "gpu_nodes_count", 1) or 0
     )
-    ready_nodes = 0
-    total_gpus = 0
-    gpu_node_count = 0
-    for node in nodes.get("items", []):
-        conditions = node.get("status", {}).get("conditions", [])
-        if any(
-            c.get("type") == "Ready" and c.get("status") == "True" for c in conditions
-        ):
-            ready_nodes += 1
-        gpu_count = int(
-            node.get("status", {}).get("allocatable", {}).get("nvidia.com/gpu") or 0
-        )
-        if gpu_count:
-            gpu_node_count += 1
-            total_gpus += gpu_count
-
-    expected_gpu_nodes = int(tfvars.get("gpu_nodes_count") or 0)
-    expected_gpus = expected_gpu_nodes * _gpus_per_node(
-        str(tfvars.get("gpu_nodes_preset") or "")
+    expected_cpu_nodes = int(
+        _tfvar_value(tfvars, resolved_env, "cpu_nodes_count", 1) or 0
     )
-    if expected_gpu_nodes and gpu_node_count != expected_gpu_nodes:
-        raise typer.BadParameter(
-            f"Expected {expected_gpu_nodes} GPU nodes, found {gpu_node_count}"
+    if expected_gpu_nodes and not skip_gpu_probe:
+        driver = _resolve_gpu_driver_selection(tfvars, resolved_env)
+        try:
+            snapshot = probe_gpu_health(
+                _run_capture,
+                kubectl_bin=kubectl_bin,
+                kubeconfig_path=kubeconfig_path,
+                config=GpuHealthConfig(
+                    expected_nodes=expected_cpu_nodes + expected_gpu_nodes,
+                    expected_gpu_nodes=expected_gpu_nodes,
+                    gpu_preset=str(
+                        _tfvar_value(
+                            tfvars,
+                            resolved_env,
+                            "gpu_nodes_preset",
+                            "1gpu-24vcpu-218gb",
+                        )
+                        or ""
+                    ),
+                    gpu_platform=str(
+                        _tfvar_value(
+                            tfvars,
+                            resolved_env,
+                            "gpu_nodes_platform",
+                            "gpu-rtx6000",
+                        )
+                        or ""
+                    ),
+                    driver_mode=driver.effective_mode,
+                    nvswitch=driver.nvswitch,
+                    stabilization_seconds=0,
+                    cuda_smoke=False,
+                ),
+            )
+        except (RuntimeError, ValueError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        if snapshot["errors"]:
+            raise typer.BadParameter("; ".join(snapshot["errors"]))
+        ready_nodes = snapshot["ready_nodes"]
+        gpu_node_count = len(snapshot["gpu_nodes"])
+        total_gpus = snapshot["total_gpus"]
+    elif expected_gpu_nodes:
+        ready_nodes = expected_cpu_nodes + expected_gpu_nodes
+        gpu_node_count = expected_gpu_nodes
+        total_gpus = expected_gpu_nodes * _gpus_per_node(
+            str(
+                _tfvar_value(
+                    tfvars,
+                    resolved_env,
+                    "gpu_nodes_preset",
+                    "1gpu-24vcpu-218gb",
+                )
+                or ""
+            )
         )
-    if expected_gpus and total_gpus != expected_gpus:
-        raise typer.BadParameter(
-            f"Expected {expected_gpus} allocatable GPUs, found {total_gpus}"
+    else:
+        nodes = json.loads(
+            _run_capture(
+                [kubectl_bin, "get", "nodes", "-o", "json"], env=kubectl_env
+            ).stdout
+        ).get("items", [])
+        ready_nodes = sum(
+            1
+            for node in nodes
+            if any(
+                condition.get("type") == "Ready"
+                and condition.get("status") == "True"
+                for condition in (node.get("status") or {}).get("conditions", [])
+            )
         )
-
-    pods = json.loads(
-        _run_capture(
-            [kubectl_bin, "get", "pods", "-n", "gpu-operator", "-o", "json"], env=env
-        ).stdout
-    )
-    if not pods.get("items"):
-        raise typer.BadParameter("GPU Operator namespace has no pods")
-    bad_pods = [
-        pod.get("metadata", {}).get("name", "")
-        for pod in pods.get("items", [])
-        if pod.get("status", {}).get("phase") not in {"Running", "Succeeded"}
-    ]
-    if bad_pods:
-        raise typer.BadParameter(
-            f"GPU Operator pods are not ready: {', '.join(bad_pods)}"
-        )
+        if len(nodes) < expected_cpu_nodes or ready_nodes != len(nodes):
+            raise typer.BadParameter(
+                f"Expected {expected_cpu_nodes} Ready CPU nodes, found "
+                f"{ready_nodes}/{len(nodes)} Ready"
+            )
+        gpu_node_count = 0
+        total_gpus = 0
 
     storage_classes = json.loads(
-        _run_capture([kubectl_bin, "get", "storageclass", "-o", "json"], env=env).stdout
+        _run_capture(
+            [kubectl_bin, "get", "storageclass", "-o", "json"], env=kubectl_env
+        ).stdout
     )
     default_sc = ""
     for item in storage_classes.get("items", []):
@@ -2824,7 +3150,7 @@ def _validate_cluster_once(
     # The filesystem CSI is installed only when the shared filesystem is enabled.
     # Respect environment overrides and existing-filesystem attachment semantics,
     # then validate the exact expected default on both sides of that decision.
-    filestore_enabled = _shared_filesystem_requested(tfvars, dict(os.environ))
+    filestore_enabled = _shared_filesystem_requested(tfvars, resolved_env)
     expected_default_sc = (
         "csi-mounted-fs-path-sc"
         if filestore_enabled
@@ -2848,21 +3174,60 @@ def _gpus_per_node(preset: str) -> int:
 
 
 def _run_skypilot_smoke(
-    kubeconfig_path: Path, context: str, cluster_name: str, sky_gpus: str
+    kubeconfig_path: Path,
+    context: str,
+    cluster_name: str,
+    sky_gpus: str,
+    *,
+    sky_bin: str = "",
 ) -> None:
-    sky_bin = os.environ.get("NPA_SKYPILOT_BIN") or str(_DEFAULT_SKYPILOT_BIN)
-    sky = _require_bin(sky_bin)
+    executable = (
+        sky_bin or os.environ.get("NPA_SKYPILOT_BIN") or str(_DEFAULT_SKYPILOT_BIN)
+    )
+    sky = _require_bin(executable)
     env = os.environ.copy()
     env["KUBECONFIG"] = str(kubeconfig_path)
     infra = f"k8s/{context}"
-    _run_stream([sky, "check", "kubernetes"], env=env, timeout=300)
-    accelerator = sky_gpus.strip() or _detect_skypilot_gpu(sky, infra, env)
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        exact_kubernetes_context_config,
+    )
+
+    config_override = exact_kubernetes_context_config(context)
+    check_result = _run_stream(
+        [
+            sky,
+            "check",
+            "--config",
+            config_override,
+            "kubernetes",
+        ],
+        env=env,
+        timeout=300,
+        capture_output=True,
+    )
+    plain_check = re.sub(
+        r"\x1b\[[0-?]*[ -/]*[@-~]",
+        "",
+        "\n".join((check_result.stdout or "", check_result.stderr or "")),
+    )
+    if not re.search(
+        r"\bKubernetes:\s+enabled\b", plain_check, flags=re.IGNORECASE
+    ):
+        raise RuntimeError(
+            "SkyPilot returned success without enabling the exact Kubernetes context"
+        )
+    typer.echo(f"SkyPilot Kubernetes credentials verified for context {context!r}.")
+    accelerator = sky_gpus.strip() or _detect_skypilot_gpu(
+        sky, infra, env, config_override=config_override
+    )
     smoke_name = _sky_cluster_name(cluster_name)
     try:
         _run_stream(
             [
                 sky,
                 "launch",
+                "--config",
+                config_override,
                 "-c",
                 smoke_name,
                 "--infra",
@@ -2876,14 +3241,29 @@ def _run_skypilot_smoke(
             timeout=1800,
         )
     finally:
-        _run_stream([sky, "down", "--yes", smoke_name], env=env, timeout=600)
-        _wait_for_sky_down(sky, smoke_name, env)
+        _run_stream(
+            [sky, "down", "--config", config_override, "--yes", smoke_name],
+            env=env,
+            timeout=600,
+        )
+        _wait_for_sky_down(
+            sky, smoke_name, env, config_override=config_override
+        )
     typer.echo(f"SkyPilot smoke passed and {smoke_name} was removed.")
 
 
-def _detect_skypilot_gpu(sky: str, infra: str, env: dict[str, str]) -> str:
+def _detect_skypilot_gpu(
+    sky: str,
+    infra: str,
+    env: dict[str, str],
+    *,
+    config_override: str = "",
+) -> str:
+    cmd = [sky, "show-gpus", "--infra", infra, "--all"]
+    if config_override:
+        cmd[2:2] = ["--config", config_override]
     result = _run_capture(
-        [sky, "show-gpus", "--infra", infra, "--all"], env=env, timeout=300
+        cmd, env=env, timeout=300
     )
     for line in result.stdout.splitlines():
         if "RTX" not in line.upper() or "6000" not in line:
@@ -2901,10 +3281,19 @@ def _sky_cluster_name(cluster_name: str) -> str:
     return f"{normalized[:40]}-sky-smoke"
 
 
-def _wait_for_sky_down(sky: str, cluster_name: str, env: dict[str, str]) -> None:
+def _wait_for_sky_down(
+    sky: str,
+    cluster_name: str,
+    env: dict[str, str],
+    *,
+    config_override: str = "",
+) -> None:
     for _ in range(30):
+        cmd = [sky, "status", "--refresh"]
+        if config_override:
+            cmd[2:2] = ["--config", config_override]
         result = _run_capture(
-            [sky, "status", "--refresh"], env=env, timeout=120, check=False
+            cmd, env=env, timeout=120, check=False
         )
         if cluster_name not in result.stdout:
             return

@@ -35,6 +35,13 @@ from typing import Any
 
 import yaml  # type: ignore[import-untyped]
 
+from npa.cluster.gpu_driver import (
+    DEFAULT_MANAGED_DRIVER_PRESET,
+    GpuDriverStrategyError,
+    resolve_gpu_driver_strategy,
+)
+from npa.cluster.gpu_health import DEFAULT_CUDA_SMOKE_IMAGE, DEFAULT_STABILIZATION_SECONDS
+
 API_VERSION = "npa.fleet/v0.0.1"
 
 
@@ -102,6 +109,16 @@ class ClusterSpec:
     # cloud-init fstab entry must agree on one stable virtiofs tag and mount.
     filestore_mount_path: str = "/mnt/data"
     filestore_mount_tag: str = "data"
+    # Stable cross-path GPU driver contract. Auto selects Nebius's managed
+    # driver-full node image for every requested GPU pool when the active recipe
+    # supports it; operator is the explicit legacy/debug escape hatch.
+    gpu_driver_mode: str = "auto"
+    managed_driver_preset: str = DEFAULT_MANAGED_DRIVER_PRESET
+    allow_unsafe_nvswitch_operator: bool = False
+    gpu_health_stabilization_seconds: int = DEFAULT_STABILIZATION_SECONDS
+    gpu_health_timeout_minutes: int = 60
+    gpu_cuda_smoke: bool = True
+    gpu_cuda_smoke_image: str = DEFAULT_CUDA_SMOKE_IMAGE
 
     def resolved_enable_gpu_cluster(self) -> bool:
         if self.enable_gpu_cluster is not None:
@@ -199,6 +216,30 @@ class ClusterSpec:
         ):
             raise FleetSpecError(
                 f"cluster {self.name!r}: gpu_disk_size_gib must be positive"
+            )
+        try:
+            resolve_gpu_driver_strategy(
+                gpu_nodes=self.gpu_count(),
+                platform=gpu.platform if gpu else "",
+                preset=gpu.preset if gpu else "",
+                mode=self.gpu_driver_mode,
+                managed_driver_preset=self.managed_driver_preset,
+                enable_gpu_cluster=self.resolved_enable_gpu_cluster(),
+                allow_unsafe_nvswitch_operator=self.allow_unsafe_nvswitch_operator,
+            )
+        except GpuDriverStrategyError as exc:
+            raise FleetSpecError(f"cluster {self.name!r}: {exc}") from exc
+        if self.gpu_health_stabilization_seconds < 0:
+            raise FleetSpecError(
+                f"cluster {self.name!r}: gpu_health_stabilization_seconds cannot be negative"
+            )
+        if self.gpu_health_timeout_minutes <= 0:
+            raise FleetSpecError(
+                f"cluster {self.name!r}: gpu_health_timeout_minutes must be positive"
+            )
+        if self.gpu_cuda_smoke and not self.gpu_cuda_smoke_image.strip():
+            raise FleetSpecError(
+                f"cluster {self.name!r}: gpu_cuda_smoke_image cannot be empty when enabled"
             )
 
 
@@ -329,6 +370,25 @@ def _cluster_from(data: dict[str, Any]) -> ClusterSpec:
         subnet_id=str(data.get("subnet_id", "") or ""),
         filestore_mount_path=str(data.get("filestore_mount_path", "/mnt/data") or ""),
         filestore_mount_tag=str(data.get("filestore_mount_tag", "data") or ""),
+        gpu_driver_mode=str(data.get("gpu_driver_mode", "auto") or "auto"),
+        managed_driver_preset=str(
+            data.get("managed_driver_preset", DEFAULT_MANAGED_DRIVER_PRESET)
+            or DEFAULT_MANAGED_DRIVER_PRESET
+        ),
+        allow_unsafe_nvswitch_operator=bool(
+            data.get("allow_unsafe_nvswitch_operator", False)
+        ),
+        gpu_health_stabilization_seconds=int(
+            data.get(
+                "gpu_health_stabilization_seconds", DEFAULT_STABILIZATION_SECONDS
+            )
+        ),
+        gpu_health_timeout_minutes=int(data.get("gpu_health_timeout_minutes", 60)),
+        gpu_cuda_smoke=bool(data.get("gpu_cuda_smoke", True)),
+        gpu_cuda_smoke_image=str(
+            data.get("gpu_cuda_smoke_image", DEFAULT_CUDA_SMOKE_IMAGE)
+            or DEFAULT_CUDA_SMOKE_IMAGE
+        ),
     )
 
 

@@ -1,4 +1,4 @@
-# Complete Python dependency closure for the shipped CPU-only environment.
+# Complete Python dependency closure for the shipped non-CUDA environment.
 # Refresh intentionally from a reviewed build; never relax these to ranges.
 accelerate==1.9.0
 aiohappyeyeballs==2.7.1
@@ -16,19 +16,19 @@ charset-normalizer==3.4.9
 cryptography==50.0.0
 dashscope==1.26.5
 decord==0.6.0
-diffusers==0.35.1
+diffusers==0.38.0
 einops==0.8.1
 exceptiongroup==1.3.1
-filelock==3.29.0
+filelock==3.32.3
 frozenlist==1.8.0
-fsspec==2026.4.0
+fsspec==2026.7.0
 ftfy==6.3.1
 h11==0.16.0
 hf-xet==1.6.0
 httpcore==1.0.9
 httpx==0.28.1
 httpx-sse==0.4.3
-huggingface-hub==0.34.4
+huggingface_hub==1.7.1
 idna==3.18
 imageio==2.37.0
 imageio-ffmpeg==0.6.0
@@ -45,8 +45,8 @@ numpy==1.26.4
 opencv-python-headless==4.11.0.86
 packaging==26.3
 peft==0.17.0
-pillow==12.2.0
-pip==25.1.1
+pillow==12.3.0
+pip==26.1.2
 propcache==0.5.2
 psutil==7.2.2
 pycparser==3.0
@@ -57,23 +57,20 @@ regex==2026.7.19
 requests==2.34.2
 rich==15.0.0
 s3transfer==0.13.1
-safetensors==0.5.3
-sentencepiece==0.2.0
-setuptools==80.9.0
+safetensors==0.8.0
+sentencepiece==0.2.1
+setuptools==83.0.0
 shellingham==1.5.4
 six==1.17.0
 sympy==1.14.0
-tokenizers==0.21.4
-torch==2.7.1+cpu
-torchaudio==2.7.1+cpu
-torchvision==0.22.1+cpu
-tqdm==4.67.1
-transformers==4.51.3
+tokenizers==0.22.2
+tqdm==4.70.0
+transformers==5.5.0
 typer==0.27.1
-typing_extensions==4.15.0
+typing_extensions==4.16.0
 urllib3==2.7.0
 wcwidth==0.8.2
 websocket-client==1.9.0
-wheel==0.45.1
+wheel==0.46.2
 yarl==1.24.5
 zipp==4.1.0

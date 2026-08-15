@@ -39,6 +39,37 @@ def test_isolated_data_cleanup_failure_stays_owned_and_reportable(
     assert not scratch.exists()
 
 
+def test_cleanup_never_removes_scratch_held_by_an_active_terraform_run(
+    tmp_path: Path,
+) -> None:
+    terraform_dir = tmp_path / "deploy" / "cluster"
+    terraform_dir.mkdir(parents=True)
+
+    with terraform_runtime.isolated_terraform_data_dir(
+        terraform_dir, "cluster-a"
+    ) as scratch:
+        assert scratch.parent.name == "active"
+        provider = scratch / "providers" / "keep"
+        provider.parent.mkdir()
+        provider.write_text("in use\n")
+
+        residue = next(
+            item
+            for item in terraform_runtime.collect_terraform_residue(start=tmp_path)
+            if item.path == scratch
+        )
+        assert not residue.removable
+        assert "active Terraform run" in residue.reason
+        assert "active Terraform run" in terraform_runtime.remove_terraform_residue(
+            terraform_runtime.TerraformResidue(
+                "Terraform runtime scratch", scratch, True
+            )
+        )
+        assert provider.read_text() == "in use\n"
+
+    assert not scratch.exists()
+
+
 def test_isolated_data_creation_failure_never_leaves_an_unowned_run_dir(
     monkeypatch, tmp_path: Path
 ) -> None:

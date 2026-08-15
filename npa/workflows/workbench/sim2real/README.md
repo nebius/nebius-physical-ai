@@ -1,6 +1,12 @@
 # Sim2Real workflow
 
-Use the single canonical spec:
+Use the single canonical spec and complete the operator runbook before submit:
+
+- [onboarding, preflight, submit, and remediation](../../../../docs/workbench/guides/sim2real-workflow.md)
+- [data and customer-asset contracts](../../../../docs/workbench/guides/sim2real-customer-assets.md)
+- [architecture and durable resume](../../../../docs/architecture/sim2real-compositional-workflow.md)
+
+Configured operators submit through the standard durable runtime:
 
 ```bash
 npa workbench workflow submit \
@@ -13,7 +19,12 @@ npa workbench workflow submit \
   --var reason_image=<immutable-ref> \
   --var isaac_image=<immutable-ref> \
   --var viewer_image=<immutable-ref> \
-  --var isaac_cache_pvc=<pvc>
+  --var isaac_cache_pvc=<bound-rwx-pvc> \
+  --var omni_kit_accept_eula=YES \
+  --var isaacsim_accept_eula=YES \
+  --secret-env AWS_ACCESS_KEY_ID \
+  --secret-env AWS_SECRET_ACCESS_KEY \
+  --secret-env HF_TOKEN
 ```
 
 The YAML exposes all 14 stages and runs through the standard workflow runtime.
@@ -36,5 +47,7 @@ The legacy `npa.workflows.sim2real` controller modules have a finite compatibili
 window for archived callers and artifacts. They are lazy, are not called by the
 canonical workflow, and cannot materialize or submit its retired controller.
 
-See `docs/workbench/guides/sim2real-workflow.md` for preflight, reduced proof,
-resume, monitoring, and evidence-audit commands.
+The submit path fails before launch when storage, secret propagation, gated
+model access, the dedicated CPU capacity, Kueue/PriorityClass, Isaac cache PVC,
+immutable images, or real image pulls are not ready. The linked runbook gives
+copy-paste setup, expected results, and remediation without duplicating it here.

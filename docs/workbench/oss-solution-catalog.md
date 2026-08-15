@@ -19,7 +19,7 @@ unique and must be tested with its own upstream-named capabilities.
 | ManiSkill | `mani-skill/ManiSkill` `v3.0.1` | `gymnasium_pickcube_registration` | `maniskill_pickcube_step.json` | `byof-maniskill.yaml` |
 | MuJoCo Playground | `google-deepmind/mujoco_playground` `v0.2.0` | `mjx_cartpole_step` (+ CheetahRun) | `mujoco_playground_cartpole_step.json` | `byof-mujoco-playground.yaml` |
 | RoboCasa | `robocasa/robocasa` `v1.0` | `kitchen_task_registration` | `robocasa_kitchen_env_reset.json` | `byof-robocasa.yaml` |
-| OpenPI | `Physical-Intelligence/openpi` `15a9616a…` | `policy_config_materialization` | `openpi_pi05_droid_config.json` | `byof-openpi.yaml` |
+| OpenPI | `Physical-Intelligence/openpi` `15a9616a…` | `pi05_droid_jointpos_polaris_served_infer` | `openpi_pi05_droid_jointpos_polaris_inference.json` | `byof-openpi.yaml` |
 | DROID policy learning | `droid-dataset/droid_policy_learning` `9a29c832…` | `rlds_config_generator_contract` | `droid_rlds_config_generator.json` | `byof-droid-policy-learning.yaml` |
 | Open Dreamer (world model, **2-GPU min**) | `next-state/open-dreamer` `2b10640` | `dreamer4_tokenizer_train_two_gpu` | `open_dreamer_world_model_2gpu.json` | `byof-open-dreamer.yaml` |
 | Alibaba Wan 2.2 TI2V-5B | `Wan-Video/Wan2.2` `42bf4cf…` | `wan2.2_ti2v_5b_text_to_video` | capability JSON + runtime inventory + MP4 | `byof-wan2.2.yaml` |
@@ -38,9 +38,9 @@ unique and must be tested with its own upstream-named capabilities.
 | RoboCasa | `download_kitchen_assets_lw` | **accepted** | `defcap17-robocasa-20260709-060243` (IIFAN fixtures+objects; restored git accessories) |
 | RoboCasa | `kitchen_egl_env_reset` | **accepted** | `defcap17-robocasa-20260709-060243` (post-download subprocess; 58 lightwheel cats; obs dict) |
 | RoboCasa | `kitchen_random_rollout` | **accepted** | `defcap20-robocasa-20260710-032142` (`run_random_rollouts` + mp4 `22150` bytes; `gymnasium==0.29.1` + `env.sim` bind) |
-| OpenPI | `policy_config_materialization` | **accepted** | `defcap9-openpi-20260709-034059` (+ prior) |
-| OpenPI | `pi05_droid_checkpoint_download` | **accepted** | `defcap9-openpi-20260709-034059` via `maybe_download` |
-| OpenPI | `pi05_droid_checkpoint_infer` | **accepted** | `defcap9-openpi-20260709-034059` (`make_droid_example`, actions `[15,8]`) |
+| OpenPI | `pi05_droid_jointpos_polaris_checkpoint_download` | **accepted** | Canonical isolated B200 gate: image build/push/digest verification, exit-64 negative terms workload, then 12,434,530,837 runtime-only GCS bytes with 27-object generation-manifest provenance |
+| OpenPI | `pi05_droid_jointpos_polaris_direct_infer` | **accepted** | Same digest-pinned B200 `sm_100` gate; deterministic Franka input produced finite `float64[15,8]` joint-position targets |
+| OpenPI | `pi05_droid_jointpos_polaris_served_infer` | **accepted hard gate** | Same gate; upstream WebSocket health + same-pod client round trip produced finite `float64[15,8]` |
 | DROID | `rlds_config_generator_contract` | **accepted** | `defcap8-droid-policy-learning-20260709-024455` (+ prior) |
 | DROID | `droid_100_download` | **accepted** | Same run (`https_meta` `dataset_info.json`) |
 | DROID | `droid_100_config_gen` | **accepted** | Same run (`EXP_NAMES` droid_100 wiring) |
@@ -51,11 +51,11 @@ unique and must be tested with its own upstream-named capabilities.
 | Open Dreamer | `dreamer4_dynamics_train_two_gpu` | **accepted** | Same run (`scripts/train_dynamics.py` exit 0, 15000 steps on the Minecraft latents) |
 | Open Dreamer | `dreamer4_action_conditioned_dream_rollout` | **accepted** | Same run (`sample_video` context→dream; dream maintains coherent Minecraft scenery across the 32-frame horizon; dream PSNR 17.3 dB) |
 | Open Dreamer | `world_model_rerun_visualization` | **accepted** | Same run (21 MB `.rrd` = 64 frames × observation/dream/gt_decoded + 10 reconstruction grids, `rerun-sdk==0.31.4`, loaded live into the agent Rerun viewer) |
-| Wan 2.2 TI2V-5B | `wan2.2_ti2v_5b_text_to_video` | **accepted** | private validation record: pulled the accepted runtime-fetch candidate; native TI2V-5B generation on RTX PRO 6000 Blackwell (`sm_120`) |
-| Wan 2.2 TI2V-5B | `wan2.2_decoded_mp4_validation` | **accepted** | Same run: 2,923,858-byte H.264 MP4, 1280x704, 17 frames at 24 fps; full decode and non-uniform-content gates passed |
-| Wan 2.2 TI2V-5B | `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | **accepted** | private validation record: one node, 4×B200 (`sm_100`), world size 4, loaded NCCL 2.27.7 + T5/DiT FULL_SHARD FSDP + Ulysses size 4; `torch.distributed.run` launches the instrumentation wrapper, which executes pinned official `generate.py` as `__main__` |
-| Wan 2.2 TI2V-5B | `wan2.2_distributed_rank_topology_validation` | **accepted** | Same run: four unique GPU hashes/ranks 0–3, NCCL sum 10/10 per rank, 480 distributed-attention and 1,920 all-to-all calls per rank, three barriers, final barrier, and process-group teardown |
-| Wan 2.2 TI2V-5B | `wan2.2_decoded_mp4_validation` (distributed run) | **accepted** | Same run: 2,809,770-byte H.264 MP4, 1280x704, 17 frames at 24 fps; spatial stddev 71.9485, pixel range 255, temporal delta 9.714725, SHA-256 `9574f79c…94865` |
+| Wan 2.2 TI2V-5B | `wan2.2_ti2v_5b_text_to_video` | **accepted historical evidence** | prior Torch 2.7.1/CUDA 12.8 runtime: native TI2V-5B generation on RTX PRO 6000 Blackwell (`sm_120`); current Torch 2.13.0/CUDA 13.0 gate is not yet live-qualified |
+| Wan 2.2 TI2V-5B | `wan2.2_decoded_mp4_validation` | **accepted historical evidence** | same prior run: 2,923,858-byte H.264 MP4, 1280x704, 17 frames at 24 fps; full decode and non-uniform-content gates passed |
+| Wan 2.2 TI2V-5B | `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | **accepted historical evidence** | prior Torch 2.7.1/CUDA 12.8/NCCL 2.27.7 runtime: one node, 4×B200 (`sm_100`), world size 4, T5/DiT FULL_SHARD FSDP, Ulysses size 4, and official `generate.py`; current NCCL 2.29.7 gate is not yet live-qualified |
+| Wan 2.2 TI2V-5B | `wan2.2_distributed_rank_topology_validation` | **accepted historical evidence** | same prior run: four unique GPU hashes/ranks 0–3, NCCL sum 10/10 per rank, 480 distributed-attention and 1,920 all-to-all calls per rank, three barriers, final barrier, and process-group teardown |
+| Wan 2.2 TI2V-5B | `wan2.2_decoded_mp4_validation` (distributed run) | **accepted historical evidence** | same prior run: 2,809,770-byte H.264 MP4, 1280x704, 17 frames at 24 fps; spatial stddev 71.9485, pixel range 255, temporal delta 9.714725, SHA-256 `9574f79c…94865` |
 
 ## Native Capabilities Per Container
 
@@ -89,9 +89,16 @@ unique and must be tested with its own upstream-named capabilities.
 
 | Capability | Status | Upstream basis |
 | --- | --- | --- |
-| `policy_config_materialization` | accepted hard gate (live) | `get_config("pi05_droid")` |
-| `pi05_droid_checkpoint_download` | accepted (live) | `download.maybe_download(gs://openpi-assets/…)` |
-| `pi05_droid_checkpoint_infer` | accepted (live) | `make_droid_example()` + `policy.infer` |
+| `pi05_droid_jointpos_polaris_checkpoint_download` | accepted (live) | canonical build/push/digest gate plus a separate exit-64 negative terms workload; anonymous runtime `download.maybe_download(gs://openpi-assets/checkpoints/polaris/…)`; 27 objects / 12,434,530,837 bytes; weights never baked |
+| `pi05_droid_jointpos_polaris_direct_infer` | accepted (live) | digest-pinned B200 `sm_100` `get_config("pi05_droid_jointpos_polaris")` + direct `policy.infer`; finite `float64[15,8]` joint-position targets |
+| `pi05_droid_jointpos_polaris_served_infer` | accepted hard gate (live) | upstream `WebsocketPolicyServer` + same-pod `WebsocketClientPolicy`; served finite `float64[15,8]` |
+
+The Polaris request/response schema, terms gate, licensing boundary, B200 stack,
+and 15 Hz re-query guidance are documented in
+[`openpi-pi05-polaris.md`](openpi-pi05-polaris.md). Historical validation of
+the older generic `pi05_droid` checkpoint is not treated as Polaris/B200 proof.
+This gate does not claim physical Franka success, cross-pod/Ingress serving, or
+training/evaluation.
 
 ### DROID policy learning
 
@@ -146,20 +153,26 @@ upstream PyTorch SDPA fallback. The separate distributed profile requests four
 B200s in one pod. `torch.distributed.run` launches an instrumentation wrapper
 on the four ranks, and the wrapper executes pinned official `generate.py` as
 `__main__` with `--dit_fsdp --t5_fsdp --ulysses_size 4`; the 24 attention heads divide evenly
-across the four Ulysses ranks. The distributed smoke fails unless the CUDA 12.8
-PyTorch wheel contains `sm_100`, every observed device is compute capability
-10.0, NCCL connects all four unique devices, both T5 and WanModel use
+across the four Ulysses ranks. The current distributed smoke fails unless the
+Torch 2.13.0/CUDA 13.0 wheel contains `sm_100`, every observed device is compute
+capability 10.0, NCCL 2.29.7 connects all four unique devices, both T5 and WanModel use
 FULL_SHARD FSDP, and Ulysses performs real distributed attention/all-to-all
 collectives during the shared generation.
 
+The accepted live records below are historical evidence from the prior Torch
+2.7.1/CUDA 12.8/NCCL 2.27.7 runtime. They remain evidence that the capabilities
+ran, but the current postprocessor intentionally rejects them as acceptance
+inputs for the Torch 2.13.0/CUDA 13.0/NCCL 2.29.7 closure. That closure requires
+a new operator-accepted single- and four-GPU qualification before publication.
+
 | Capability | Status | Upstream basis / NPA evidence |
 | --- | --- | --- |
-| `wan2.2_ti2v_5b_text_to_video` | accepted (live validated) | private validation record: native `wan.WanTI2V.generate` at 1280x704 on RTX PRO 6000 Blackwell (`sm_120`) |
-| `wan2.2_decoded_mp4_validation` | accepted (live validated) | same run: all 17 frames decoded at 24 fps; 2,923,858 bytes, spatial stddev 78.0124, pixel range 255, mean temporal delta 11.7294 |
-| `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted (live validated) | private validation record: `torch.distributed.run` launches four wrapper ranks on one 4×B200 node; each wrapper executes pinned official `generate.py` as `__main__`; loaded NCCL 2.27.7, T5/DiT FULL_SHARD FSDP, Ulysses size 4 |
-| `wan2.2_distributed_rank_topology_validation` | accepted (live validated) | same run: ranks/local ranks 0–3 mapped to four unique GPU hashes; each rank recorded NCCL sum 10/10, 480 Ulysses attention calls, 1,920 all-to-all calls, three barriers, the observed final barrier, and teardown |
-| `wan2.2_decoded_mp4_validation` (distributed run) | accepted (live validated) | same run: all 17 H.264 frames decoded at 24 fps; 2,809,770 bytes, spatial stddev 71.9485, pixel range 255, mean temporal delta 9.714725, SHA-256 `9574f79c…94865` |
-| `wan2.2_verified_rerun_recording` | accepted (live artifact verified) | fresh four-GPU evidence produced a 2,948,508-byte RRD (`5a4f7746…0606`) with local/remote parse and identity checks; the fresh 3,045,269-byte single-GPU RRD (`49a57f5b…fb10`) was also served byte-identically and visibly rendered by the live agent |
+| `wan2.2_ti2v_5b_text_to_video` | accepted historical evidence | prior runtime: native `wan.WanTI2V.generate` at 1280x704 on RTX PRO 6000 Blackwell (`sm_120`) |
+| `wan2.2_decoded_mp4_validation` | accepted historical evidence | same prior run: all 17 frames decoded at 24 fps; 2,923,858 bytes, spatial stddev 78.0124, pixel range 255, mean temporal delta 11.7294 |
+| `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted historical evidence | prior runtime: `torch.distributed.run` launched four wrapper ranks on one 4×B200 node; each wrapper executed pinned official `generate.py` as `__main__`; loaded NCCL 2.27.7, T5/DiT FULL_SHARD FSDP, Ulysses size 4 |
+| `wan2.2_distributed_rank_topology_validation` | accepted historical evidence | same prior run: ranks/local ranks 0–3 mapped to four unique GPU hashes; each rank recorded NCCL sum 10/10, 480 Ulysses attention calls, 1,920 all-to-all calls, three barriers, the observed final barrier, and teardown |
+| `wan2.2_decoded_mp4_validation` (distributed run) | accepted historical evidence | same prior run: all 17 H.264 frames decoded at 24 fps; 2,809,770 bytes, spatial stddev 71.9485, pixel range 255, mean temporal delta 9.714725, SHA-256 `9574f79c…94865` |
+| `wan2.2_verified_rerun_recording` | accepted historical evidence | prior four-GPU evidence produced a 2,948,508-byte RRD (`5a4f7746…0606`) with local/remote parse and identity checks; the 3,045,269-byte single-GPU RRD (`49a57f5b…fb10`) was also served byte-identically and visibly rendered by the live agent |
 | `wan2.2_ti2v_5b_image_to_video` | deferred | official unified-model capability and a real optional S3-image code path exist, but no separate live input/output evidence |
 | `wan2.2_t2v_a14b` / `wan2.2_i2v_a14b` | deferred | separate MoE checkpoints and materially different GPU contract; not in this image gate |
 | `wan2.2_s2v_14b` | deferred | separate speech/audio inputs and checkpoint |
@@ -174,8 +187,8 @@ distributed workflow emits `wan2_2_ti2v_5b_multigpu.json`,
 `wan2_2_ti2v_5b_multigpu.mp4`. The successful BYOF path then publishes
 `wan2_2_ti2v_5b_multigpu.rrd` and its verified manifest. The recording embeds
 the exact MP4 and exposes the real run evidence in the NPA agent's Rerun viewer.
-The accepted single- and distributed runs use the same immutable runtime-fetch
-candidate; CUDA Python distributions and model/tokenizer bytes remain in
+The historical accepted single- and distributed runs used the same immutable
+runtime-fetch candidate; CUDA Python distributions and model/tokenizer bytes remain in
 operator-owned runtime volumes. A historical private image that baked CUDA
 Python distributions remains excluded from publication. Live capability results
 do not by themselves authorize public image publication. See

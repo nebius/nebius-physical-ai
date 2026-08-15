@@ -358,7 +358,7 @@ def resolve_verified_cluster_identity(
             project_id=project_id,
             context=selected_context,
             cluster_id=state.cluster_id,
-            cluster_name=state.name,
+            cluster_name=state.provider_name or state.name,
             kubeconfig=saved_kubeconfig,
             endpoint=state.endpoint,
             cluster_absent=True,
@@ -374,9 +374,14 @@ def resolve_verified_cluster_identity(
         mismatches.append(f"cluster id {remote.id!r} != {state.cluster_id!r}")
     if remote.project_id and remote.project_id != project_id:
         mismatches.append(f"project id {remote.project_id!r} != {project_id!r}")
-    if remote.name and remote.name not in {state.name, selected_context}:
+    expected_provider_names = {
+        state.provider_name or state.name,
+        selected_context,
+    }
+    if remote.name and remote.name not in expected_provider_names:
         mismatches.append(
-            f"cluster name {remote.name!r} is not {state.name!r}/{selected_context!r}"
+            f"cluster name {remote.name!r} is not one of "
+            f"{sorted(expected_provider_names)!r}"
         )
     remote_host = _endpoint_host(remote.endpoint or state.endpoint)
     kube_host = _endpoint_host(kube_server)
@@ -394,7 +399,7 @@ def resolve_verified_cluster_identity(
         project_id=project_id,
         context=selected_context,
         cluster_id=state.cluster_id,
-        cluster_name=remote.name or state.name,
+        cluster_name=remote.name or state.provider_name or state.name,
         kubeconfig=saved_kubeconfig,
         endpoint=remote.endpoint or state.endpoint,
     )

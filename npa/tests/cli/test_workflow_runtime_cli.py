@@ -305,7 +305,7 @@ def test_submit_runtime_refreshes_pull_secret_before_driver(
 
     events: list[tuple[str, str]] = []
 
-    def refresh(rendered_path: Path) -> None:
+    def refresh(rendered_path: Path, **_kwargs) -> None:
         events.append(("refresh", rendered_path.name))
 
     monkeypatch.setattr(

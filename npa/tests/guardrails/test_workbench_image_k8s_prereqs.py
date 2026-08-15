@@ -151,8 +151,33 @@ def test_groot_enables_the_shared_skypilot_prerequisite_layer() -> None:
         encoding="utf-8"
     )
     assert "--fix-broken" in derived
-    assert "NOPASSWD:ALL" not in derived
-    assert "sudo -V" not in derived
+    for token in (
+        "openssh-server",
+        "rsync",
+        "sudo",
+        "ubuntu ALL=(ALL) NOPASSWD:ALL",
+        "/etc/sudoers.d/99-npa-runtime-user",
+        'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"',
+        "ENV HOME=/home/ubuntu",
+        "ssh-keygen -A",
+        "rm -f /etc/ssh/ssh_host_*",
+        r'exec \"$@\"',
+    ):
+        assert token in derived, f"derived GR00T image missing {token!r}"
+    service_keygen = (
+        r"&& sed -i '/^  start)$/a\    ssh-keygen -A' /etc/init.d/ssh"
+    )
+    remove_build_keys = "&& rm -f /etc/ssh/ssh_host_*"
+    assert service_keygen in derived
+    assert derived.index(service_keygen) < derived.index(
+        remove_build_keys
+    ), "service start must regenerate host keys before the build-time keys are removed"
+    user_lines = [
+        line.strip()
+        for line in derived.splitlines()
+        if line.strip().startswith("USER ")
+    ]
+    assert user_lines[-1] == "USER ubuntu"
 
 
 @pytest.mark.parametrize("tool", SKYPILOT_HOSTED_IMAGES)

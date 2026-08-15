@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 from typer.testing import CliRunner
 
@@ -112,9 +113,76 @@ def test_add_node_group_saves_state(monkeypatch) -> None:
     assert "Node group ID: mk8snodegroup-gpu" in result.output
 
 
+def test_add_node_group_normalizes_live_provider_k8s_version(monkeypatch) -> None:
+    seen_configs: list[NodeGroupConfig] = []
+    live_state = replace(
+        _cluster_state(), k8s_version="v1.33.7-nebius-node.64"
+    )
+
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def get_cluster(self, name, *, project_id=""):
+            return _cluster()
+
+        def create_gpu_node_group(self, config, cluster_id):
+            seen_configs.append(config)
+            return _node_group(state="PROVISIONING")
+
+        def wait_for_node_group_ready(self, cluster_id, name, **kwargs):
+            return _node_group(state="RUNNING")
+
+    monkeypatch.setattr(node_group_mod, "MK8sClient", FakeClient)
+    monkeypatch.setattr(node_group_mod, "load_cluster_state", lambda name: live_state)
+    monkeypatch.setattr(node_group_mod, "save_node_group_state", lambda state: None)
+
+    result = runner.invoke(
+        app,
+        ["node-group", "add", "--cluster-name", "cluster-a", "--gpu-type", "h100"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen_configs[0].k8s_version == "1.33"
+
+
+def test_add_node_group_uses_default_when_discovery_has_no_k8s_version(monkeypatch) -> None:
+    seen_configs: list[NodeGroupConfig] = []
+    live_state = replace(_cluster_state(), k8s_version="")
+
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def get_cluster(self, name, *, project_id=""):
+            return _cluster()
+
+        def create_gpu_node_group(self, config, cluster_id):
+            seen_configs.append(config)
+            return _node_group(state="PROVISIONING")
+
+        def wait_for_node_group_ready(self, cluster_id, name, **kwargs):
+            return _node_group(state="RUNNING")
+
+    monkeypatch.setattr(node_group_mod, "MK8sClient", FakeClient)
+    monkeypatch.setattr(node_group_mod, "load_cluster_state", lambda name: live_state)
+    monkeypatch.setattr(node_group_mod, "save_node_group_state", lambda state: None)
+
+    result = runner.invoke(
+        app,
+        ["node-group", "add", "--cluster-name", "cluster-a", "--gpu-type", "h100"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen_configs[0].k8s_version == "1.33"
+
+
 def test_add_cpu_node_group_saves_state(monkeypatch) -> None:
     saved: list[NodeGroupState] = []
     seen: list[dict] = []
+    live_state = replace(
+        _cluster_state(), k8s_version="v1.33.7-nebius-node.64"
+    )
 
     def _cpu_node_group(state: str = "RUNNING") -> NodeGroupInfo:
         return NodeGroupInfo(
@@ -142,7 +210,7 @@ def test_add_cpu_node_group_saves_state(monkeypatch) -> None:
             return _cpu_node_group(state="RUNNING")
 
     monkeypatch.setattr(node_group_mod, "MK8sClient", FakeClient)
-    monkeypatch.setattr(node_group_mod, "load_cluster_state", lambda name: _cluster_state())
+    monkeypatch.setattr(node_group_mod, "load_cluster_state", lambda name: live_state)
     monkeypatch.setattr(node_group_mod, "save_node_group_state", saved.append)
 
     result = runner.invoke(
@@ -166,6 +234,7 @@ def test_add_cpu_node_group_saves_state(monkeypatch) -> None:
     assert seen[0]["preset"] == "16vcpu-64gb"
     assert seen[0]["autoscaling_min"] == 0
     assert seen[0]["autoscaling_max"] == 3
+    assert seen[0]["k8s_version"] == "1.33"
     assert seen[0]["subnet_id"] == "vpcsubnet-a"
     assert saved[-1].gpu_type == "cpu"
     assert saved[-1].platform == "cpu-e2"

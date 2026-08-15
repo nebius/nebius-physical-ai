@@ -173,10 +173,10 @@ class _NestedArchiveBudget:
 # replacement bytes have been independently audited.
 AUDITED_SECRET_LITERAL_FILE_SHA256: dict[str, str] = {
     "opt/wan-base/lib/python3.10/site-packages/PIL/ImageFont.py": (
-        "bd7d3f79eb42bbd4dbe9e00e8e9143568d131702dfecaad2a780eaad6c68c91c"
+        "24fa5feeb91b4bf63eaad0ebba08a8161e9c889d9fd056a37c928134097b9649"
     ),
     "opt/wan-base/lib/python3.10/site-packages/PIL/__pycache__/ImageFont.cpython-310.pyc": (
-        "f2c6f8e55d30d03dcbd7718beeb0fd3197ff315389d4ff77ec2e6e8b8e588ff1"
+        "59632aaf913b02078acc5d366bcef3e28a14194acaf7904c4c13ac4714c319a2"
     ),
     "opt/wan-base/lib/python3.10/site-packages/accelerate/commands/config/sagemaker.py": (
         "4912eea7d5eb57f67edb703777c8196e4a9ba270dcb1c3030e66e99b2b42cdb6"
@@ -208,14 +208,14 @@ AUDITED_SECRET_LITERAL_FILE_SHA256: dict[str, str] = {
     "opt/wan-base/lib/python3.10/site-packages/botocore-1.39.17.dist-info/METADATA": (
         "d1ce694b50d009bb3dab11331a281323d70c46ff4724e692dab3c2481ed62074"
     ),
-    "opt/wan-base/lib/python3.10/site-packages/cryptography/hazmat/primitives/serialization/__pycache__/ssh.cpython-310.pyc": (
-        "f2ed8e3aa7939c79a2b2826463aaffb9d2613624ab6a2cc08a4fb70c4c65bdb1"
-    ),
     "opt/wan-base/lib/python3.10/site-packages/cryptography/hazmat/primitives/serialization/ssh.py": (
         "162b177bf9d429d3c67ea10d5612a99a86b399a23ca87f067be5466dcd1dca4c"
     ),
+    "opt/wan-base/lib/python3.10/site-packages/cryptography/hazmat/primitives/serialization/__pycache__/ssh.cpython-310.pyc": (
+        "b269114f93539cfc4c55511c3ecb8e55e7a8f1f9dd8755deef8762f9938eec3e"
+    ),
     "opt/wan-base/lib/python3.10/site-packages/diffusers/loaders/textual_inversion.py": (
-        "621e0cc3edc401459a4290d7a6d20cb8d6f201884d462afe8abaa81d23ef3b1f"
+        "9cc89fb4b0ac9762e4434723f8447d8833d26b03844804ee11493ce4b5f7512a"
     ),
     "usr/bin/ssh": "04f2ff5f506a3f332e7adeb1478a4c551ae74acdd328e6fb5c2495664d4064e6",
     "usr/bin/ssh-add": (

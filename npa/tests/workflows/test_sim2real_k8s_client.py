@@ -13,6 +13,8 @@ from npa.workflows.sim2real.k8s_client import (
     SPEC_DIGEST_ANNOTATION,
     KubernetesJobClient,
     KubernetesReconcileError,
+    _kubeconfig_with_bearer_token,
+    kubeconfig_uses_nebius_iam_auth,
     job_spec_digest,
 )
 
@@ -151,6 +153,183 @@ def _manifest() -> dict[str, Any]:
             }
         },
     }
+
+
+def test_bearer_override_replaces_only_selected_exec_credential() -> None:
+    payload = {
+        "current-context": "selected",
+        "contexts": [
+            {"name": "selected", "context": {"user": "selected-user"}},
+            {"name": "other", "context": {"user": "other-user"}},
+        ],
+        "users": [
+            {
+                "name": "selected-user",
+                "user": {
+                    "exec": {"command": "nebius", "args": ["iam", "get-access-token"]},
+                    "tokenFile": "/tmp/stale",
+                    "client-certificate-data": "stale-certificate",
+                    "client-key-data": "stale-private-key",
+                },
+            },
+            {"name": "other-user", "user": {"exec": {"command": "other"}}},
+        ],
+    }
+    result = _kubeconfig_with_bearer_token(
+        payload, context="selected", bearer_token="fresh-token"
+    )
+    selected = result["users"][0]["user"]
+    assert selected == {"token": "fresh-token"}
+    assert result["users"][1] == payload["users"][1]
+    assert "token" not in payload["users"][0]["user"]
+
+
+def test_selected_context_controls_nebius_auth_detection(tmp_path) -> None:
+    path = tmp_path / "kubeconfig"
+    path.write_text(
+        """
+current-context: static-context
+contexts:
+- name: static-context
+  context: {user: static-user}
+- name: mk8s-context
+  context: {user: mk8s-user}
+users:
+- name: static-user
+  user:
+    client-certificate-data: certificate
+    client-key-data: private-key
+- name: mk8s-user
+  user:
+    exec:
+      command: /usr/local/bin/nebius
+      args: [iam, get-access-token]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    assert (
+        kubeconfig_uses_nebius_iam_auth(kubeconfig=str(path), context="mk8s-context")
+        is True
+    )
+    assert (
+        kubeconfig_uses_nebius_iam_auth(kubeconfig=str(path), context="static-context")
+        is False
+    )
+    assert kubeconfig_uses_nebius_iam_auth(kubeconfig=str(path), context="") is False
+
+
+def test_bearer_override_rejects_non_nebius_static_user() -> None:
+    payload = {
+        "current-context": "selected",
+        "contexts": [{"name": "selected", "context": {"user": "cert-user"}}],
+        "users": [
+            {
+                "name": "cert-user",
+                "user": {
+                    "client-certificate-data": "certificate",
+                    "client-key-data": "private-key",
+                },
+            }
+        ],
+    }
+
+    with pytest.raises(KubernetesReconcileError, match="requires a selected Nebius"):
+        _kubeconfig_with_bearer_token(
+            payload, context="selected", bearer_token="must-not-be-injected"
+        )
+    assert payload["users"][0]["user"] == {
+        "client-certificate-data": "certificate",
+        "client-key-data": "private-key",
+    }
+
+
+def test_bearer_override_supports_nebius_auth_provider_without_cert_coexistence() -> (
+    None
+):
+    payload = {
+        "current-context": "selected",
+        "contexts": [{"name": "selected", "context": {"user": "provider-user"}}],
+        "users": [
+            {
+                "name": "provider-user",
+                "user": {
+                    "auth-provider": {"name": "nebius-iam"},
+                    "client-certificate": "/tmp/stale.crt",
+                    "client-key": "/tmp/stale.key",
+                },
+            }
+        ],
+    }
+
+    result = _kubeconfig_with_bearer_token(
+        payload, context="selected", bearer_token="fresh-token"
+    )
+
+    assert result["users"][0]["user"] == {"token": "fresh-token"}
+
+
+def test_from_environment_keeps_static_cert_auth_when_bearer_is_supplied(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text(
+        """
+current-context: cert-context
+contexts:
+- name: cert-context
+  context: {user: cert-user}
+users:
+- name: cert-user
+  user:
+    client-certificate-data: certificate
+    client-key-data: private-key
+""".strip(),
+        encoding="utf-8",
+    )
+    calls: list[tuple[str, object]] = []
+
+    fake_configuration = NS()
+    fake_client = NS(
+        Configuration=lambda: fake_configuration,
+        ApiClient=lambda configuration: configuration,
+        BatchV1Api=lambda _client: "batch",
+        CoreV1Api=lambda _client: "core",
+        CustomObjectsApi=lambda _client: "custom",
+    )
+    fake_config = NS(
+        load_incluster_config=lambda **_kwargs: pytest.fail("not in cluster"),
+        load_kube_config=lambda **kwargs: calls.append(("file", kwargs)),
+        load_kube_config_from_dict=lambda *_args, **_kwargs: pytest.fail(
+            "static cert auth must not be rewritten to an Authorization bearer token"
+        ),
+    )
+    fake_kubernetes = NS(
+        client=fake_client,
+        config=fake_config,
+        watch=NS(Watch=lambda: None),
+    )
+    monkeypatch.setitem(__import__("sys").modules, "kubernetes", fake_kubernetes)
+    monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
+
+    client = KubernetesJobClient.from_environment(
+        kubeconfig=str(kubeconfig),
+        context="cert-context",
+        bearer_token="ambient-token-must-not-be-used",
+    )
+
+    assert client.batch == "batch"
+    assert calls == [
+        (
+            "file",
+            {
+                "config_file": str(kubeconfig),
+                "context": "cert-context",
+                "persist_config": False,
+                "client_configuration": fake_configuration,
+            },
+        )
+    ]
 
 
 def test_snapshot_uses_structured_job_pod_container_and_owner_fields() -> None:

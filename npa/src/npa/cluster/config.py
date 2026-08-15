@@ -69,6 +69,7 @@ GPU_TYPE_DEFAULTS = {
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
 _K8S_VERSION_RE = re.compile(r"^\d+\.\d+$")
+_PROVIDER_K8S_VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)(?:[.-].*)?$")
 _PROJECT_ENV_VARS = (
     "NPA_CLUSTER_PROJECT_ID",
     "NPA_PROJECT_ID",
@@ -268,6 +269,24 @@ def validate_cluster_name(name: str) -> None:
             "cluster name must be 1-63 characters, using letters, numbers, and hyphens, "
             "and must not start or end with a hyphen"
         )
+
+
+def normalize_provider_k8s_version(version: str) -> str:
+    """Return the ``major.minor`` release accepted by node-group creation.
+
+    Managed Kubernetes reports live node versions such as
+    ``v1.33.7-nebius-node.64``.  Local cluster reconciliation persists that
+    provider value, while the node-group API's ``--version`` field accepts only
+    ``major.minor``.  Normalize provider-derived versions at that boundary and
+    keep the public configuration validators strict.
+    """
+
+    match = _PROVIDER_K8S_VERSION_RE.fullmatch(version.strip())
+    if not match:
+        raise ClusterConfigError(
+            f"could not derive <major>.<minor> from provider Kubernetes version '{version}'"
+        )
+    return f"{match.group(1)}.{match.group(2)}"
 
 
 def validate_region(region: str) -> None:

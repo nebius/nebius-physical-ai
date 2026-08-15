@@ -238,9 +238,12 @@ npa workbench workflow plan-spec "$SPEC" --run-id demo \
   --assume-decision promote_checkpoint --var bucket=<bucket> --json
 
 # Prerequisites, in order, on a fresh machine/account:
+npa workbench health preflight
+npa workbench health access --capability paidf   # Cosmos Transfer gate must PASS
 npa skypilot bootstrap                          # persists skypilot.sky_bin
 npa provision-if-absent --project <alias> --cluster-name <context> \
-  --accelerator RTXPRO6000:1                    # creates + atomically binds exact owner
+  --cpu-nodes 1 --cpu-preset 8vcpu-32gb \
+  --accelerator RTXPRO6000:1                    # CPU hosts controller + CPU stages
 # Submit stages missing/outdated content-addressed NPA source automatically.
 # `stage-src` or submit `--stage-src` remains the explicit force/restage path.
 
@@ -262,10 +265,13 @@ explicitly synthetic developer/test input.
 The one-variant override keeps the first real run decisive; omit it for the
 spec's default two-variant multiply or raise it with the requested GPU count.
 
-`submit` runs a prerequisite check first and reports **every** missing item at
-once (SkyPilot CLI, npa source for image-less steps, placeholder bucket) with
-the command that fixes each. `--plan-only` skips the runtime-only checks;
-`--skip-preflight` bypasses them.
+`submit` reports missing prerequisites together: SkyPilot, source staging,
+bucket/S3, the four forwarded runtime secrets, gated Cosmos Transfer access,
+and a Ready, schedulable, appropriately untainted node with 6 CPU/24 GiB
+allocatable for one PAIDF CPU stage plus the SkyPilot controller. A qualifying
+GPU node is valid. Image preflight proves each selected manifest;
+private Nebius pulls refresh the Kubernetes secret before launch. `--plan-only`
+skips runtime-only checks; `--skip-preflight` bypasses them.
 
 The immutable infrastructure plan also checks boot-disk count and
 `compute.disk.size.network-ssd` byte capacity before any mutation. The shipped

@@ -12,11 +12,52 @@ from pathlib import Path
 
 import typer
 
+from npa.soperator.lifecycle import DEFAULT_GPU_CREATION_CHECK_TIMEOUT_SECONDS
+from npa.soperator.spec import DEFAULT_SOLUTIONS_LIBRARY_REF
+
 app = typer.Typer(
     name="soperator",
     help="Deploy and manage Nebius soperator (Slurm-on-Kubernetes) clusters.",
     no_args_is_help=True,
 )
+
+
+def plan_cmd(
+    spec_path: Path = typer.Option(
+        ...,
+        "--spec",
+        "-f",
+        help="Path to an npa.soperator/v0.0.1 cluster spec YAML.",
+    ),
+    output: str = typer.Option("text", "--output", help="Output format: text or json."),
+) -> None:
+    """Show a public-safe, provider-free Soperator capacity plan."""
+
+    from npa.soperator.lifecycle import plan_cluster
+    from npa.soperator.spec import SoperatorSpecError, load_spec
+
+    try:
+        result = plan_cluster(load_spec(spec_path))
+    except (SoperatorSpecError, FileNotFoundError, OSError) as exc:
+        raise typer.BadParameter(f"Invalid soperator spec: {exc}") from exc
+    if output not in {"text", "json"}:
+        raise typer.BadParameter("--output must be text or json")
+    if output == "json":
+        typer.echo(json.dumps(result, indent=2))
+        return
+    typer.echo(f"Soperator plan for '{result['name']}' ({result['region']}):")
+    typer.echo(
+        "  system autoscaling: "
+        f"{result['control_plane']['system_min_size']}.."
+        f"{result['control_plane']['system_max_size']}"
+    )
+    for worker in result["workers"]:
+        typer.echo(
+            f"  worker {worker['name']}: size={worker['size']} "
+            f"preset={worker['preset']} capacity={worker['capacity_mode']}"
+        )
+    if result["reservation_preflight"] == "required":
+        typer.echo("  reserved-capacity provider preflight: required before apply")
 
 
 def deploy_cmd(
@@ -36,20 +77,43 @@ def deploy_cmd(
         "If omitted, the library is cloned under ~/.npa/soperator.",
     ),
     solutions_library_ref: str = typer.Option(
-        "main", "--ref", help="Git ref of nebius-solutions-library to clone when needed."
+        DEFAULT_SOLUTIONS_LIBRARY_REF,
+        "--ref",
+        help="Immutable 40-character nebius-solutions-library commit SHA.",
+    ),
+    root_login_ssh_public_key_file: Path | None = typer.Option(
+        None,
+        "--root-login-ssh-public-key-file",
+        help="Public-key file granting root SSH access on the public login node; "
+        "overrides the spec, environment, and operator-home discovery.",
     ),
     timeout: int = typer.Option(90, "--timeout", help="Terraform apply timeout in minutes."),
+    gpu_creation_check_timeout: int = typer.Option(
+        DEFAULT_GPU_CREATION_CHECK_TIMEOUT_SECONDS,
+        "--gpu-creation-check-timeout",
+        min=1,
+        help="Independent end-to-end mandatory GPU gate timeout in seconds. Bounds "
+        "Slurm queueing, job wall time, and the local kubectl process; --timeout "
+        "continues to apply only to Terraform.",
+    ),
     apply_fixes: bool = typer.Option(
         True,
         "--apply-fixes/--skip-fixes",
-        help="Apply the post-deploy fixes (monitoring CRDs, CRD patch, scripts configmap) "
-        "the 4.1.0-stable recipe needs to reach a working Slurm.",
+        help="Apply monitoring prerequisites/repair, CRD and scripts compatibility "
+        "fixes, Ubuntu userns setup, and best-effort worker recovery. Mandatory "
+        "direct CUDA creation checks for GPU pools run with either setting.",
+    ),
+    source_preflight_only: bool = typer.Option(
+        False,
+        "--source-preflight-only",
+        help="Reconcile/verify the pinned source and planned installation path, "
+        "then stop before Terraform initialization or provider mutation.",
     ),
     output: str = typer.Option("text", "--output", help="Output format: text or json."),
 ) -> None:
-    """Deploy a soperator cluster from a spec (multiple presets + optional docker cache)."""
+    """Deploy or reconcile a pinned-contract Soperator cluster spec."""
 
-    from npa.soperator.lifecycle import deploy_cluster
+    from npa.soperator.lifecycle import SoperatorDeploymentValidationError, deploy_cluster
     from npa.soperator.spec import SoperatorSpecError, load_spec
 
     try:
@@ -57,17 +121,56 @@ def deploy_cmd(
     except (SoperatorSpecError, FileNotFoundError, OSError) as exc:
         raise typer.BadParameter(f"Invalid soperator spec: {exc}") from exc
 
-    result = deploy_cluster(
-        spec,
-        terraform_dir=terraform_dir,
-        solutions_library_ref=solutions_library_ref,
-        project=project or None,
-        timeout_minutes=timeout,
-        apply_fixes=apply_fixes,
-        on_status=lambda msg: typer.echo(f"  - {msg}"),
-    )
+    if output not in {"text", "json"}:
+        raise typer.BadParameter("--output must be text or json")
+    json_mode = output == "json"
+    try:
+        result = deploy_cluster(
+            spec,
+            terraform_dir=terraform_dir,
+            solutions_library_ref=solutions_library_ref,
+            root_login_ssh_public_key_file=root_login_ssh_public_key_file,
+            project=project or None,
+            timeout_minutes=timeout,
+            gpu_creation_check_timeout_seconds=gpu_creation_check_timeout,
+            apply_fixes=apply_fixes,
+            source_preflight_only=source_preflight_only,
+            stream_terraform_output=not json_mode,
+            on_status=lambda msg: typer.echo(f"  - {msg}", err=json_mode),
+        )
+    except SoperatorDeploymentValidationError as exc:
+        if json_mode:
+            typer.echo(json.dumps(exc.result, indent=2))
+        else:
+            result = exc.result
+            typer.echo(
+                f"Soperator cluster '{result['name']}' was applied, but mandatory "
+                "post-apply validation failed.",
+                err=True,
+            )
+            typer.echo(f"  validation: {result['validation']['message']}", err=True)
+            typer.echo(f"  kube context: {result['kube_context']}", err=True)
+            typer.echo(f"  worker pools: {', '.join(result['worker_pools'])}", err=True)
+            typer.echo(f"  install dir: {result['install_dir']}", err=True)
+        raise typer.Exit(1) from exc
     if output == "json":
         typer.echo(json.dumps(result, indent=2))
+    elif source_preflight_only:
+        typer.echo(
+            f"Deploy source preflight passed for soperator cluster '{result['name']}'; "
+            "no provider mutation was performed."
+        )
+        for worker in result.get("workers", []):
+            verification = (
+                " (reservation not provider-verified in source-only mode)"
+                if worker["capacity_mode"] == "reserved"
+                else ""
+            )
+            typer.echo(
+                f"  worker {worker['name']} capacity: "
+                f"{worker['capacity_mode']}{verification}"
+            )
+        typer.echo(f"  install dir: {result['install_dir']}")
     else:
         typer.echo(f"Deployed soperator cluster '{result['name']}' in {result['region']}.")
         typer.echo(f"  kube context: {result['kube_context']}")
@@ -75,6 +178,10 @@ def deploy_cmd(
         if result.get("docker_cache_pools"):
             typer.echo(
                 f"  docker-cache pools (IO_M3): {', '.join(result['docker_cache_pools'])}"
+            )
+        for worker in result.get("workers", []):
+            typer.echo(
+                f"  worker {worker['name']} capacity: {worker['capacity_mode']}"
             )
         typer.echo(f"  install dir: {result['install_dir']}")
 
@@ -84,7 +191,11 @@ def destroy_cmd(
     terraform_dir: Path | None = typer.Option(
         None, "--terraform-dir", help="solutions-library 'soperator' recipe dir (if not the default)."
     ),
-    solutions_library_ref: str = typer.Option("main", "--ref"),
+    solutions_library_ref: str = typer.Option(
+        DEFAULT_SOLUTIONS_LIBRARY_REF,
+        "--ref",
+        help="Immutable 40-character nebius-solutions-library commit SHA.",
+    ),
     project: str = typer.Option(
         "",
         "--project",
@@ -92,27 +203,48 @@ def destroy_cmd(
         "(only used for installs predating the env sidecar).",
     ),
     timeout: int = typer.Option(90, "--timeout", help="Terraform destroy timeout in minutes."),
+    source_preflight_only: bool = typer.Option(
+        False,
+        "--source-preflight-only",
+        help="Reconcile/verify the pinned source and installation path, then stop "
+        "before Terraform initialization or any provider deletion.",
+    ),
     force: bool = typer.Option(False, "--force", help="Skip confirmation."),
 ) -> None:
     """Destroy an npa-managed soperator cluster by name."""
 
     from npa.soperator.lifecycle import destroy_cluster
 
-    if not force and not typer.confirm(f"Destroy soperator cluster '{name}'?"):
+    if not source_preflight_only and not force and not typer.confirm(
+        f"Destroy soperator cluster '{name}'?"
+    ):
         raise typer.Exit(1)
-    destroy_cluster(
+    result = destroy_cluster(
         name,
         terraform_dir=terraform_dir,
         solutions_library_ref=solutions_library_ref,
         project=project or None,
         timeout_minutes=timeout,
+        source_preflight_only=source_preflight_only,
         on_status=lambda msg: typer.echo(f"  - {msg}"),
     )
+    if source_preflight_only:
+        assert result is not None
+        typer.echo(
+            f"Destroy source preflight passed for soperator cluster '{name}'; "
+            "no provider mutation was performed."
+        )
+        return
     typer.echo(f"Destroyed soperator cluster '{name}'.")
 
 
 def status_cmd(
     name: str = typer.Option(..., "--name", help="Cluster name."),
+    terraform_dir: Path | None = typer.Option(
+        None,
+        "--terraform-dir",
+        help="Optional authoritative solutions-library soperator recipe directory.",
+    ),
     output: str = typer.Option("text", "--output", help="Output format: text or json."),
 ) -> None:
     """Show a soperator cluster's Slurm partitions/nodes via kubectl."""
@@ -136,12 +268,36 @@ def status_cmd(
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout).strip()
         raise typer.BadParameter(f"Could not query Slurm on '{name}': {detail}")
+    from npa.soperator.lifecycle import worker_capacity_status
+
+    workers = worker_capacity_status(name, terraform_dir=terraform_dir)
+    if output not in {"text", "json"}:
+        raise typer.BadParameter("--output must be text or json")
     if output == "json":
-        typer.echo(json.dumps({"name": name, "context": context, "sinfo": proc.stdout}))
+        typer.echo(
+            json.dumps(
+                {
+                    "name": name,
+                    "context": context,
+                    "sinfo": proc.stdout,
+                    "workers": workers,
+                    "capacity_status": "applied" if workers else "unknown",
+                }
+            )
+        )
     else:
         typer.echo(proc.stdout)
+        if workers:
+            for worker in workers:
+                typer.echo(
+                    f"worker {worker['name']} capacity: {worker['capacity_mode']} "
+                    f"({worker['nodes']} node(s))"
+                )
+        else:
+            typer.echo("worker capacity: unknown (local Terraform state not found)")
 
 
+app.command("plan")(plan_cmd)
 app.command("deploy")(deploy_cmd)
 app.command("destroy")(destroy_cmd)
 app.command("status")(status_cmd)

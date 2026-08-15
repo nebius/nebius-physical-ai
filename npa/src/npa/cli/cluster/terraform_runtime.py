@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import shutil
@@ -14,6 +15,7 @@ from typing import Iterator
 
 
 _SCRATCH_MARKER = ".npa-owned.json"
+_SCRATCH_LOCK = ".npa-in-use.lock"
 _INVENTORY_NAME = "terraform-lifecycle.json"
 _LEGACY_CACHE_PARTS = ("deploy", "cluster", ".terraform")
 
@@ -37,8 +39,18 @@ def _now() -> str:
 
 
 def terraform_scratch_root() -> Path:
-    """Return the NPA-owned parent used for ephemeral Terraform data."""
+    """Return the NPA-owned parent used for active Terraform data.
 
+    The extra ``active`` level is an upgrade-safety boundary.  Older NPA cleanup
+    versions scan only the immediate children of ``terraform-data/cluster``;
+    they therefore preserve this unmarked parent instead of deleting a newer
+    run whose advisory-lock contract they do not understand.
+    """
+
+    return _legacy_terraform_scratch_root() / "active"
+
+
+def _legacy_terraform_scratch_root() -> Path:
     return Path(
         os.environ.get("NPA_CONFIG_DIR", "").strip() or (Path.home() / ".npa")
     ) / "terraform-data" / "cluster"
@@ -115,6 +127,9 @@ def isolated_terraform_data_dir(
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
         root.chmod(0o700)
         scratch = Path(tempfile.mkdtemp(prefix="run-", dir=root))
+        lock_fd = os.open(scratch / _SCRATCH_LOCK, os.O_RDWR | os.O_CREAT, 0o600)
+        os.fchmod(lock_fd, 0o600)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         _write_private_json(
             scratch / _SCRATCH_MARKER,
             {
@@ -128,6 +143,11 @@ def isolated_terraform_data_dir(
             },
         )
     except OSError as exc:
+        if "lock_fd" in locals():
+            try:
+                os.close(lock_fd)
+            except OSError:
+                pass
         if "scratch" in locals():
             try:
                 shutil.rmtree(scratch)
@@ -149,7 +169,11 @@ def isolated_terraform_data_dir(
         primary_error = exc
         raise
     finally:
-        cleanup_error = _remove_owned_scratch(scratch)
+        cleanup_error = _remove_owned_scratch(scratch, held_lock_fd=lock_fd)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        finally:
+            os.close(lock_fd)
         try:
             root.rmdir()
             root.parent.rmdir()
@@ -170,17 +194,20 @@ def collect_terraform_residue(start: Path | None = None) -> list[TerraformResidu
     """Find exact NPA Terraform scratch and legacy source-cache residue."""
 
     found: list[TerraformResidue] = []
-    root = terraform_scratch_root()
-    if root.is_symlink() or (root.exists() and not root.is_dir()):
-        found.append(
-            TerraformResidue(
-                "Unverified Terraform scratch root",
-                root,
-                False,
-                "scratch root is not an exact NPA-owned directory",
+    current_root = terraform_scratch_root()
+    for root in (current_root, _legacy_terraform_scratch_root()):
+        if root.is_symlink() or (root.exists() and not root.is_dir()):
+            found.append(
+                TerraformResidue(
+                    "Unverified Terraform scratch root",
+                    root,
+                    False,
+                    "scratch root is not an exact NPA-owned directory",
+                )
             )
-        )
-    elif root.is_dir():
+            continue
+        if not root.is_dir():
+            continue
         try:
             children = sorted(root.iterdir())
         except OSError as exc:
@@ -194,9 +221,17 @@ def collect_terraform_residue(start: Path | None = None) -> list[TerraformResidu
             )
         else:
             for child in children:
+                if root != current_root and child == current_root:
+                    continue
                 if _owned_scratch_marker(child):
+                    active, reason = _scratch_lock_status(child)
                     found.append(
-                        TerraformResidue("Terraform runtime scratch", child, True)
+                        TerraformResidue(
+                            "Terraform runtime scratch",
+                            child,
+                            not active,
+                            reason,
+                        )
                     )
                 else:
                     found.append(
@@ -248,14 +283,25 @@ def remove_terraform_residue(item: TerraformResidue) -> str:
     return "unsupported Terraform residue type"
 
 
-def _remove_owned_scratch(path: Path) -> str:
+def _remove_owned_scratch(path: Path, *, held_lock_fd: int | None = None) -> str:
     if not _owned_scratch_marker(path):
         return "ownership marker is missing, malformed, or mismatched"
+    lock_fd = held_lock_fd
+    if lock_fd is None:
+        lock_fd, reason = _acquire_scratch_lock(path)
+        if reason:
+            return reason
     try:
         shutil.rmtree(path)
     except OSError as exc:
         return str(exc)
-    root = terraform_scratch_root()
+    finally:
+        if lock_fd is not None and held_lock_fd is None:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            finally:
+                os.close(lock_fd)
+    root = path.parent
     try:
         root.rmdir()
         root.parent.rmdir()
@@ -264,13 +310,56 @@ def _remove_owned_scratch(path: Path) -> str:
     return ""
 
 
+def _acquire_scratch_lock(path: Path) -> tuple[int | None, str]:
+    """Acquire an existing scratch lock or explain why removal is unsafe."""
+
+    lock_path = path / _SCRATCH_LOCK
+    try:
+        descriptor = os.open(lock_path, os.O_RDWR)
+    except FileNotFoundError:
+        # Compatibility for marked scratch from versions before the lock existed.
+        return None, ""
+    except OSError as exc:
+        return None, f"scratch ownership lock could not be verified: {exc}"
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(descriptor)
+        return None, "active Terraform run holds the scratch ownership lock"
+    except OSError as exc:
+        os.close(descriptor)
+        return None, f"scratch ownership lock could not be verified: {exc}"
+    return descriptor, ""
+
+
+def _scratch_lock_status(path: Path) -> tuple[bool, str]:
+    """Return whether an owned scratch directory is in use by another process.
+
+    ``npa cleanup --full`` may run concurrently with a long Terraform apply from
+    another checkout that shares ``~/.npa``.  The ownership marker proves that a
+    directory belongs to NPA; it does not prove that deleting it is safe *now*.
+    A non-blocking advisory lock closes that gap without relying on PIDs or
+    wall-clock age.  Scratch created before this lock existed remains removable.
+    """
+
+    descriptor, reason = _acquire_scratch_lock(path)
+    if reason:
+        return True, reason
+    if descriptor is not None:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+    return False, ""
+
+
 def _owned_scratch_marker(path: Path) -> bool:
-    root = terraform_scratch_root()
+    roots = (terraform_scratch_root(), _legacy_terraform_scratch_root())
     try:
         if (
             not path.is_dir()
             or path.is_symlink()
-            or path.parent.resolve() != root.resolve()
+            or path.parent.resolve() not in {root.resolve() for root in roots}
             or not path.name.startswith("run-")
         ):
             return False

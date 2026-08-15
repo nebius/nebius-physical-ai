@@ -131,6 +131,8 @@ def test_docker_config_json_uses_iam_username() -> None:
 def test_ensure_nebius_registry_pull_secret_applies_secret(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("NEBIUS_IAM_TOKEN", raising=False)
+    monkeypatch.delenv("NEBIUS_IAM_TOKEN_FILE", raising=False)
     monkeypatch.setattr(
         "npa.workflows.sim2real.registry_auth.mint_nebius_registry_token",
         lambda **kwargs: "fresh-token",
@@ -163,12 +165,160 @@ def test_ensure_nebius_registry_pull_secret_applies_secret(
         "namespace": "default",
         "kubeconfig": "",
         "context": "demo-context",
+        "bearer_token": "",
+    }
+
+
+@pytest.mark.parametrize("ambient_kind", ["env", "file"])
+def test_stale_ambient_token_is_replaced_for_exec_mk8s_kubeconfig_auth(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    ambient_kind: str,
+) -> None:
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text(
+        """
+current-context: other-context
+contexts:
+- name: other-context
+  context: {user: cert-user}
+- name: fresh-context
+  context: {user: mk8s-user}
+users:
+- name: cert-user
+  user: {token: static-token}
+- name: mk8s-user
+  user:
+    exec:
+      command: nebius
+      args: [iam, get-access-token]
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("NEBIUS_IAM_TOKEN", raising=False)
+    monkeypatch.delenv("NEBIUS_IAM_TOKEN_FILE", raising=False)
+    if ambient_kind == "env":
+        monkeypatch.setenv("NEBIUS_IAM_TOKEN", "stale-token")
+    else:
+        token_file = tmp_path / "token"
+        token_file.write_text("stale-token", encoding="utf-8")
+        monkeypatch.setenv("NEBIUS_IAM_TOKEN_FILE", str(token_file))
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.registry_auth.mint_nebius_registry_token",
+        lambda **kwargs: "fresh-token",
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.registry_auth._docker_helper_credential",
+        lambda *args, **kwargs: None,
+    )
+    captured: dict[str, object] = {}
+
+    class FakeClient:
+        def apply_secret(self, payload):
+            captured["payload"] = payload
+
+    def fake_client(**kwargs):
+        captured["client_kwargs"] = kwargs
+        return FakeClient()
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.k8s_client.KubernetesJobClient.from_environment",
+        fake_client,
+    )
+    ensure_nebius_registry_pull_secret(
+        registry_server="cr.us-central1.nebius.cloud",
+        kubeconfig=str(kubeconfig),
+        k8s_context="fresh-context",
+    )
+    assert captured["client_kwargs"] == {
+        "namespace": "default",
+        "kubeconfig": str(kubeconfig),
+        "context": "fresh-context",
+        "bearer_token": "fresh-token",
+    }
+
+
+@pytest.mark.parametrize(
+    "static_user",
+    [
+        {"token": "configured-static-token"},
+        {
+            "client-certificate-data": "certificate",
+            "client-key-data": "private-key",
+        },
+    ],
+)
+@pytest.mark.parametrize("ambient_kind", ["env", "file"])
+def test_ambient_token_does_not_override_or_mint_for_static_kubeconfig_auth(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    static_user: dict[str, str],
+    ambient_kind: str,
+) -> None:
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text(
+        json.dumps(
+            {
+                "current-context": "static-context",
+                "contexts": [
+                    {"name": "static-context", "context": {"user": "static-user"}}
+                ],
+                "users": [{"name": "static-user", "user": static_user}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("NEBIUS_IAM_TOKEN", raising=False)
+    monkeypatch.delenv("NEBIUS_IAM_TOKEN_FILE", raising=False)
+    if ambient_kind == "env":
+        monkeypatch.setenv("NEBIUS_IAM_TOKEN", "ambient-token")
+    else:
+        token_file = tmp_path / "ambient-token"
+        token_file.write_text("ambient-token", encoding="utf-8")
+        monkeypatch.setenv("NEBIUS_IAM_TOKEN_FILE", str(token_file))
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.registry_auth._docker_helper_credential",
+        lambda *args, **kwargs: ("registry-user", "registry-token"),
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.registry_auth.mint_nebius_registry_token",
+        lambda **kwargs: pytest.fail(
+            "static kubeconfig auth must not invoke the Nebius CLI token path"
+        ),
+    )
+    captured: dict[str, object] = {}
+
+    class FakeClient:
+        def apply_secret(self, payload):
+            captured["payload"] = payload
+
+    def fake_client(**kwargs):
+        captured["client_kwargs"] = kwargs
+        return FakeClient()
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.k8s_client.KubernetesJobClient.from_environment",
+        fake_client,
+    )
+    ensure_nebius_registry_pull_secret(
+        registry_server="cr.us-central1.nebius.cloud",
+        kubeconfig=str(kubeconfig),
+        k8s_context="static-context",
+    )
+
+    assert captured["client_kwargs"] == {
+        "namespace": "default",
+        "kubeconfig": str(kubeconfig),
+        "context": "static-context",
+        "bearer_token": "",
     }
 
 
 def test_ensure_materializes_configured_docker_credential_helper(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    monkeypatch.delenv("NEBIUS_IAM_TOKEN", raising=False)
+    monkeypatch.delenv("NEBIUS_IAM_TOKEN_FILE", raising=False)
     docker_config = tmp_path / "docker"
     docker_config.mkdir()
     (docker_config / "config.json").write_text(
@@ -227,6 +377,9 @@ def test_ensure_materializes_direct_docker_auth(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A launcher-local `docker login` credential must not be overwritten."""
+
+    monkeypatch.delenv("NEBIUS_IAM_TOKEN", raising=False)
+    monkeypatch.delenv("NEBIUS_IAM_TOKEN_FILE", raising=False)
 
     docker_config = tmp_path / "docker"
     docker_config.mkdir()

@@ -109,11 +109,23 @@ def resolve_credentials(
     )
 
 
-def s3_client_for_project(project: str | None, *, allow_host_creds: bool = False):
+def s3_client_for_project(
+    project: str | None,
+    *,
+    allow_host_creds: bool = False,
+    endpoint_url: str = "",
+):
+    """Create a project-credentialed client with an optional regional endpoint.
+
+    The override changes only routing. The selected project's access key and
+    secret remain authoritative, so a live run can correct stale regional
+    metadata without crossing a credential boundary.
+    """
+
     credentials = resolve_credentials(project, allow_host_creds=allow_host_creds)
     return boto3.client(
         "s3",
-        endpoint_url=credentials.endpoint_url or None,
+        endpoint_url=endpoint_url.strip() or credentials.endpoint_url or None,
         aws_access_key_id=credentials.aws_access_key_id or None,
         aws_secret_access_key=credentials.aws_secret_access_key or None,
         config=BotoConfig(signature_version="s3v4"),
@@ -137,11 +149,13 @@ def storage_env_for_project(
     project: str | None,
     *,
     allow_host_creds: bool = False,
+    endpoint_url: str = "",
 ) -> dict[str, str]:
     credentials = resolve_credentials(project, allow_host_creds=allow_host_creds)
+    resolved_endpoint = endpoint_url.strip() or credentials.endpoint_url
     env = {
-        "AWS_ENDPOINT_URL": credentials.endpoint_url,
-        "NEBIUS_S3_ENDPOINT": credentials.endpoint_url,
+        "AWS_ENDPOINT_URL": resolved_endpoint,
+        "NEBIUS_S3_ENDPOINT": resolved_endpoint,
     }
     if credentials.aws_access_key_id:
         env["AWS_ACCESS_KEY_ID"] = credentials.aws_access_key_id

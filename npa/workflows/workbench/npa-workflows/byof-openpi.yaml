@@ -3,9 +3,10 @@ kind: Workflow
 metadata:
   name: byof-openpi
   description: >
-    Registry-candidate BYOF workflow for Physical Intelligence OpenPI. Materializes
-    pi05_droid config, downloads the public checkpoint, and runs one dummy
-    policy.infer inside the pushed registry image.
+    Registry-candidate BYOF workflow for Physical Intelligence OpenPI. Builds
+    the pinned source for datacenter Blackwell, fetches the Polaris pi0.5
+    checkpoint at run time, and hard-gates direct plus WebSocket-served Franka
+    joint-position inference on one B200.
 config:
   bucket: example-bucket
   repo_url: "https://github.com/Physical-Intelligence/openpi.git"
@@ -15,183 +16,406 @@ config:
   build_command: >
     apt-get update &&
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends
-    python3 python3-dev python3-pip python3-venv git git-lfs curl ca-certificates &&
+    python3 python3-dev python3-pip python3-venv git git-lfs ca-certificates &&
+    rm -rf /var/lib/apt/lists/* &&
     python3 -m venv /opt/venv &&
-    /opt/venv/bin/python -m pip install --no-cache-dir --upgrade pip &&
-    /opt/venv/bin/python -m pip install --no-cache-dir uv &&
-    GIT_LFS_SKIP_SMUDGE=1 /opt/venv/bin/uv pip install --python /opt/venv/bin/python --no-cache -e . &&
-    curl -sSL https://sdk.cloud.google.com/install.sh | bash -s -- --disable-prompts --install-dir=/opt &&
-    ln -sf /opt/google-cloud-sdk/bin/gsutil /usr/local/bin/gsutil || true
+    /opt/venv/bin/python -m pip install --no-cache-dir --upgrade pip uv &&
+    GIT_LFS_SKIP_SMUDGE=1 /opt/venv/bin/uv pip install
+    --python /opt/venv/bin/python --no-cache -e . &&
+    printf '%s\n'
+    '#include <cuda_runtime.h>'
+    '#include <cstdio>'
+    'int main(){cudaDeviceProp p{}; if(cudaGetDeviceProperties(&p,0)!=cudaSuccess)return 2; std::printf("%s cc=%d.%d\\n",p.name,p.major,p.minor); return (p.major==10 && p.minor==0)?0:3;}'
+    > /tmp/npa-openpi-sm100.cu &&
+    nvcc -O2 -arch=sm_100 /tmp/npa-openpi-sm100.cu
+    -o /usr/local/bin/npa-openpi-sm100-probe &&
+    rm /tmp/npa-openpi-sm100.cu
   workload: solution-smoke
   smoke_command: |
-    export PATH="/opt/google-cloud-sdk/bin:/usr/local/bin:${PATH}"
+    test "${NPA_OPENPI_ACCEPT_GEMMA_TERMS:-}" = "YES" || {
+      printf '%s\n' '{"schema":"npa.workbench.openpi.terms-gate.v1","status":"refused","exit_code":64,"checkpoint_fetch_started":false,"model_import_started":false}' \
+        > "${NPA_SMOKE_OUTPUT_DIR}/openpi_terms_gate.json"
+      echo "OpenPI checkpoint access requires scoped Gemma terms acceptance" >&2
+      exit 64
+    }
+    export OPENPI_DATA_HOME="/workspace/openpi-cache/${NPA_BYOF_RUN_ID}"
+    mkdir -p "${OPENPI_DATA_HOME}"
     /opt/venv/bin/python - <<'PY'
+    import hashlib
+    import importlib.metadata
     import json
     import os
-    import shutil
+    import re
     import subprocess
+    import threading
+    import time
+    import urllib.parse
+    import urllib.request
     from pathlib import Path
 
+    import jax
     import numpy as np
-    from openpi.training import config as openpi_config
+    from jax.extend import backend as jax_backend
     from openpi.policies import policy_config
+    from openpi.serving import websocket_policy_server
     from openpi.shared import download
+    from openpi.training import config as openpi_config
+    from openpi_client import websocket_client_policy
+
+    CONFIG_NAME = "pi05_droid_jointpos_polaris"
+    CHECKPOINT_URI = "gs://openpi-assets/checkpoints/polaris/pi05_droid_jointpos_polaris"
+    SOURCE_REF = "15a9616a00943ada6c20a0f158e3adb39df2ccac"
+    ACTION_SEMANTICS = "joint_position_targets_dims_0_6_radians; parallel_jaw_gripper_dim_7"
+    CAPABILITIES = {
+        "pi05_droid_jointpos_polaris_checkpoint_download",
+        "pi05_droid_jointpos_polaris_direct_infer",
+        "pi05_droid_jointpos_polaris_served_infer",
+    }
+
+    if os.environ.get("NPA_OPENPI_ACCEPT_GEMMA_TERMS") != "YES":
+        raise SystemExit("scoped Gemma terms acceptance was not forwarded")
 
     output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
-    results = {
-        "solution": "openpi",
-        "capability": "pi05_droid_checkpoint_infer",
-        "capabilities_exercised": [],
-        "gsutil_path": shutil.which("gsutil") or "",
-    }
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    cfg = openpi_config.get_config("pi05_droid")
-    assert cfg is not None
-    results["config"] = {
-        "config_name": cfg.name,
-        "model_type": type(cfg.model).__name__ if getattr(cfg, "model", None) is not None else "",
-        "data_type": type(cfg.data).__name__ if getattr(cfg, "data", None) is not None else "",
-    }
-    results["capabilities_exercised"].append("policy_config_materialization")
-    (output_dir / "openpi_pi05_droid_config.json").write_text(
-        json.dumps({"solution": "openpi", "capability": "policy_config_materialization", **results["config"]}, indent=2)
+    runtime_image = os.environ.get("BYOF_IMAGE", "")
+    if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", runtime_image):
+        raise RuntimeError(f"OpenPI workload image must be digest-pinned, got {runtime_image!r}")
+
+    source_metadata = json.loads(
+        (Path(os.environ["BYOF_REPO_ROOT"]) / "npa_source_metadata.json").read_text(
+            encoding="utf-8"
+        )
     )
+    if source_metadata.get("ref") != SOURCE_REF:
+        raise RuntimeError(f"unexpected built source metadata: {source_metadata}")
+    build_metadata = json.loads(
+        (Path(os.environ["BYOF_REPO_ROOT"]) / "npa_build_metadata.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    if (
+        build_metadata.get("schema") != "npa.byof.build.v1"
+        or build_metadata.get("build_command_executed") is not True
+        or not re.fullmatch(
+            r"[0-9a-f]{64}", str(build_metadata.get("build_command_sha256", ""))
+        )
+    ):
+        raise RuntimeError(f"build command execution metadata is invalid: {build_metadata}")
 
-    checkpoint = {"uri": "gs://openpi-assets/checkpoints/pi05_droid", "ok": False, "error": "", "path": ""}
-    infer = {"ok": False, "error": "", "action_shape": []}
-    checkpoint_dir = None
-    try:
-        # Prefer upstream helper (routes openpi-assets through gsutil when present).
-        checkpoint_dir = download.maybe_download("gs://openpi-assets/checkpoints/pi05_droid")
-        checkpoint["path"] = str(checkpoint_dir)
-        checkpoint["ok"] = Path(checkpoint_dir).exists()
-        checkpoint["mode"] = "maybe_download"
-    except Exception as exc:  # noqa: BLE001
-        checkpoint["maybe_download_error"] = f"{type(exc).__name__}: {exc}"
-        # Anonymous HTTPS fallback via google storage JSON API + curl for a tiny proof,
-        # then full gsutil/fsspec retry with anonymous token.
+    editable_install = None
+    for distribution in importlib.metadata.distributions():
+        direct_url_text = distribution.read_text("direct_url.json")
+        if not direct_url_text:
+            continue
         try:
-            dest = Path(os.environ.get("OPENPI_DATA_HOME", str(Path.home() / ".cache" / "openpi"))) / "openpi-assets" / "checkpoints" / "pi05_droid"
-            dest.mkdir(parents=True, exist_ok=True)
-            if shutil.which("gsutil"):
-                completed = subprocess.run(
-                    ["gsutil", "-m", "cp", "-r", "gs://openpi-assets/checkpoints/pi05_droid/*", str(dest)],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                    timeout=7200,
+            direct_url = json.loads(direct_url_text)
+        except json.JSONDecodeError:
+            continue
+        if (
+            direct_url.get("dir_info", {}).get("editable") is True
+            and direct_url.get("url") == "file:///opt/byof"
+        ):
+            editable_install = {
+                "distribution": distribution.metadata.get("Name", ""),
+                "editable": True,
+                "url": direct_url["url"],
+            }
+            break
+    if editable_install is None:
+        raise RuntimeError("uv editable installation from /opt/byof was not found")
+
+    def checkpoint_provenance():
+        prefix = "checkpoints/polaris/pi05_droid_jointpos_polaris/"
+        page_token = ""
+        records = []
+        while True:
+            query = {"prefix": prefix, "maxResults": "1000"}
+            if page_token:
+                query["pageToken"] = page_token
+            url = "https://storage.googleapis.com/storage/v1/b/openpi-assets/o?" + urllib.parse.urlencode(query)
+            with urllib.request.urlopen(url) as response:
+                payload = json.load(response)
+            for item in payload.get("items", []):
+                records.append(
+                    {
+                        "name": item["name"],
+                        "generation": item.get("generation", ""),
+                        "size": int(item.get("size", 0)),
+                        "md5Hash": item.get("md5Hash", ""),
+                        "crc32c": item.get("crc32c", ""),
+                    }
                 )
-                checkpoint["gsutil_returncode"] = completed.returncode
-                checkpoint["gsutil_stderr_tail"] = (completed.stderr or "")[-1500:]
-                if completed.returncode == 0 and any(dest.rglob("*")):
-                    checkpoint_dir = dest
-                    checkpoint["path"] = str(dest)
-                    checkpoint["ok"] = True
-                    checkpoint["mode"] = "gsutil_direct"
-            if not checkpoint["ok"]:
-                import fsspec
+            page_token = payload.get("nextPageToken", "")
+            if not page_token:
+                break
+        records.sort(key=lambda item: item["name"])
+        canonical = json.dumps(records, sort_keys=True, separators=(",", ":")).encode()
+        return {
+            "scheme": "gcs_object_generation_manifest_sha256",
+            "sha256": hashlib.sha256(canonical).hexdigest(),
+            "object_count": len(records),
+            "total_size_bytes": sum(item["size"] for item in records),
+        }
 
-                fs = fsspec.filesystem("gs", token="anon")
-                fs.get("openpi-assets/checkpoints/pi05_droid", str(dest), recursive=True)
-                checkpoint_dir = dest
-                checkpoint["path"] = str(dest)
-                checkpoint["ok"] = True
-                checkpoint["mode"] = "fsspec_anon"
-        except Exception as exc2:  # noqa: BLE001
-            checkpoint["error"] = (
-                f"maybe_download={checkpoint.get('maybe_download_error')}; fallback={type(exc2).__name__}: {exc2}"
-            )
+    frame_values = np.arange(224 * 224 * 3, dtype=np.uint32).reshape(224, 224, 3)
+    exterior = np.asarray(frame_values % 251, dtype=np.uint8)
+    wrist = np.asarray(np.flip(frame_values, axis=1) % 253, dtype=np.uint8)
+    observation = {
+        "observation/exterior_image_1_left": exterior,
+        "observation/wrist_image_left": wrist,
+        "observation/joint_position": np.asarray(
+            [0.0, -0.785398, 0.0, -2.356194, 0.0, 1.570796, 0.785398],
+            dtype=np.float32,
+        ),
+        "observation/gripper_position": np.asarray([0.04], dtype=np.float32),
+        "prompt": "pick up the fork",
+    }
 
-    if checkpoint["ok"] and checkpoint_dir is not None:
-        results["capabilities_exercised"].append("pi05_droid_checkpoint_download")
-        try:
-            policy = policy_config.create_trained_policy(cfg, checkpoint_dir)
-            # Prefer upstream droid example helper when available.
-            try:
-                from openpi.policies import droid_policy
+    devices = jax.devices()
+    if len(devices) != 1:
+        raise RuntimeError(f"expected exactly one workload GPU, got {devices}")
+    device = devices[0]
+    compute_capability_raw = getattr(device, "compute_capability", "")
+    if callable(compute_capability_raw):
+        compute_capability_raw = compute_capability_raw()
 
-                example = droid_policy.make_droid_example()
-                example["prompt"] = "pick up the fork"
-            except Exception:  # noqa: BLE001
-                example = {
-                    "observation/exterior_image_1_left": np.zeros((224, 224, 3), dtype=np.uint8),
-                    "observation/wrist_image_left": np.zeros((224, 224, 3), dtype=np.uint8),
-                    "observation/joint_position": np.zeros((7,), dtype=np.float64),
-                    "observation/gripper_position": np.zeros((1,), dtype=np.float64),
-                    "prompt": "pick up the fork",
-                }
-            out = policy.infer(example)
-            actions = out["actions"]
-            infer["ok"] = True
-            infer["action_type"] = type(actions).__name__
-            infer["action_shape"] = list(getattr(actions, "shape", []))
-            results["capabilities_exercised"].append("pi05_droid_checkpoint_infer")
-        except Exception as exc:  # noqa: BLE001
-            infer["error"] = f"{type(exc).__name__}: {exc}"
-    elif not checkpoint.get("error"):
-        checkpoint["error"] = checkpoint.get("maybe_download_error") or "checkpoint_download_failed"
-
-    results["checkpoint"] = checkpoint
-    results["infer"] = infer
-    (output_dir / "openpi_pi05_droid_checkpoint_infer.json").write_text(
-        json.dumps(
-            {
-                "solution": "openpi",
-                "capability": "pi05_droid_checkpoint_infer",
-                "checkpoint": checkpoint,
-                "infer": infer,
-            },
-            indent=2,
+    def normalized_compute_capability(value):
+        major = getattr(value, "major", None)
+        minor = getattr(value, "minor", None)
+        if major is not None and minor is not None:
+            return int(major), int(minor)
+        if isinstance(value, (tuple, list)) and len(value) >= 2:
+            return int(value[0]), int(value[1])
+        if isinstance(value, int):
+            return (value // 10, value % 10) if value >= 100 else (value, 0)
+        if isinstance(value, float):
+            if value.is_integer() and value >= 100:
+                integer = int(value)
+                return integer // 10, integer % 10
+            return int(value), int(round((value - int(value)) * 10))
+        text = str(value).strip()
+        compact = re.fullmatch(r"(?:sm_)?(\d{1,3})", text, flags=re.IGNORECASE)
+        if compact:
+            number = int(compact.group(1))
+            return (number // 10, number % 10) if number >= 100 else (number, 0)
+        dotted = re.search(r"(?<!\d)(\d{1,2})\s*[.,]\s*(\d)(?!\d)", text)
+        if dotted:
+            return int(dotted.group(1)), int(dotted.group(2))
+        labeled = re.search(
+            r"major\s*[=:]\s*(\d{1,2}).*minor\s*[=:]\s*(\d)",
+            text,
+            flags=re.IGNORECASE,
         )
+        if labeled:
+            return int(labeled.group(1)), int(labeled.group(2))
+        pair = re.search(r"[\[(]\s*(\d{1,2})\s*,\s*(\d)\s*[\])]", text)
+        if pair:
+            return int(pair.group(1)), int(pair.group(2))
+        raise RuntimeError(f"unrecognized JAX compute capability {value!r}")
+
+    compute_capability = normalized_compute_capability(compute_capability_raw)
+    compute_capability_text = f"{compute_capability[0]}.{compute_capability[1]}"
+    if compute_capability != (10, 0):
+        raise RuntimeError(f"expected B200 sm_100, got compute capability {compute_capability_raw!r}")
+    if "B200" not in str(getattr(device, "device_kind", "")).upper():
+        raise RuntimeError(f"expected NVIDIA B200, got {getattr(device, 'device_kind', '')!r}")
+
+    sm100_probe = subprocess.run(
+        ["/usr/local/bin/npa-openpi-sm100-probe"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    sm100_elf_result = subprocess.run(
+        ["cuobjdump", "--list-elf", "/usr/local/bin/npa-openpi-sm100-probe"],
+        check=True,
+        capture_output=True,
+        text=True,
     )
+    sm100_elf = "\n".join(
+        part.strip()
+        for part in (sm100_elf_result.stdout, sm100_elf_result.stderr)
+        if part.strip()
+    )
+    if "sm_100" not in sm100_elf.lower():
+        raise RuntimeError(f"compiled CUDA probe does not contain sm_100 ELF: {sm100_elf!r}")
+    nvidia_smi = subprocess.run(
+        [
+            "nvidia-smi",
+            "--query-gpu=index,name,driver_version,memory.total",
+            "--format=csv,noheader",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip().splitlines()
+    if len(nvidia_smi) != 1 or "B200" not in nvidia_smi[0].upper():
+        raise RuntimeError(f"nvidia-smi did not prove exactly one B200: {nvidia_smi!r}")
+    platform_version = str(jax_backend.get_backend().platform_version)
 
-    if "pi05_droid_checkpoint_download" not in results["capabilities_exercised"]:
-        results.setdefault("deferred", []).append(
-            {"capability": "pi05_droid_checkpoint_download", "blocker": checkpoint.get("error")}
-        )
-    if "pi05_droid_checkpoint_infer" not in results["capabilities_exercised"]:
-        results.setdefault("deferred", []).append(
-            {"capability": "pi05_droid_checkpoint_infer", "blocker": infer.get("error") or checkpoint.get("error")}
-        )
+    provenance = checkpoint_provenance()
+    checkpoint_started = time.perf_counter()
+    checkpoint_dir = Path(download.maybe_download(CHECKPOINT_URI, token="anon"))
+    checkpoint_seconds = time.perf_counter() - checkpoint_started
+    if not checkpoint_dir.is_dir():
+        raise RuntimeError(f"checkpoint cache was not materialized: {checkpoint_dir}")
 
-    (output_dir / "openpi_pi05_droid_config.json").write_text(json.dumps(results, indent=2))
-    print(json.dumps(results, indent=2))
-    # Hard gate: documented pi05_droid config materialization. Checkpoint download
-    # + infer remain attempted evidence (GCS/network and model runtime deps).
-    if "policy_config_materialization" not in results["capabilities_exercised"]:
-        raise SystemExit("openpi policy_config_materialization failed")
+    cfg = openpi_config.get_config(CONFIG_NAME)
+    if cfg.name != CONFIG_NAME or cfg.model.action_horizon != 15:
+        raise RuntimeError(f"unexpected Polaris config: {cfg}")
+    policy_started = time.perf_counter()
+    policy = policy_config.create_trained_policy(cfg, checkpoint_dir)
+    policy_load_seconds = time.perf_counter() - policy_started
+
+    direct_started = time.perf_counter()
+    direct_response = policy.infer(observation)
+    direct_seconds = time.perf_counter() - direct_started
+    direct_actions = np.asarray(direct_response["actions"])
+
+    server = websocket_policy_server.WebsocketPolicyServer(
+        policy=policy,
+        host="0.0.0.0",
+        port=8000,
+        metadata=policy.metadata,
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    client = websocket_client_policy.WebsocketClientPolicy("127.0.0.1", 8000)
+    with urllib.request.urlopen("http://127.0.0.1:8000/healthz") as response:
+        health = response.read().decode().strip()
+    served_started = time.perf_counter()
+    served_response = client.infer(observation)
+    served_seconds = time.perf_counter() - served_started
+    served_actions = np.asarray(served_response["actions"])
+
+    def validate_actions(label, actions):
+        if actions.ndim != 2 or actions.shape[0] < 5 or actions.shape[1] != 8:
+            raise RuntimeError(f"{label} actions must have shape (T>=5, 8), got {actions.shape}")
+        if not np.isfinite(actions).all():
+            raise RuntimeError(f"{label} actions contain non-finite values")
+        if actions.dtype != np.dtype("float64"):
+            raise RuntimeError(f"{label} actions must be float64, got {actions.dtype}")
+        return {
+            "ok": True,
+            "action_shape": list(actions.shape),
+            "action_dtype": str(actions.dtype),
+            "finite": True,
+            "latency_ms": round((direct_seconds if label == "direct" else served_seconds) * 1000, 3),
+        }
+
+    direct = validate_actions("direct", direct_actions)
+    served = validate_actions("served", served_actions)
+    served["server_infer_ms"] = round(float(served_response["server_timing"]["infer_ms"]), 3)
+    served["healthz"] = health
+    served["transport"] = "upstream_openpi_websocket"
+    served["execution_scope"] = "kubernetes_workload"
+    served["client_origin"] = "same_pod_loopback"
+
+    results = {
+        "status": "passed",
+        "solution": "openpi",
+        "capability": "pi05_droid_jointpos_polaris_served_infer",
+        "capabilities_exercised": sorted(CAPABILITIES),
+        "source": {
+            "repository": "https://github.com/Physical-Intelligence/openpi",
+            "ref": SOURCE_REF,
+            "license": "Apache-2.0",
+        },
+        "build": {
+            "runtime_image": runtime_image,
+            "source_metadata": source_metadata,
+            "build_metadata": build_metadata,
+            "editable_install": editable_install,
+            "cuda_probe_elf": sm100_elf.splitlines(),
+            "nvcc_arch": "sm_100",
+            "weights_baked": False,
+        },
+        "checkpoint": {
+            "uri": CHECKPOINT_URI,
+            "cache_scope": "ephemeral_operator_project_workload",
+            "download_seconds": round(checkpoint_seconds, 3),
+            "provenance": provenance,
+            "weights_baked": False,
+        },
+        "terms": {
+            "forwarded": True,
+            "scope": "this_openpi_workload_only",
+            "persisted": False,
+        },
+        "config": {
+            "name": cfg.name,
+            "action_horizon": int(cfg.model.action_horizon),
+            "policy_load_seconds": round(policy_load_seconds, 3),
+        },
+        "request": {
+            "exterior_image": {"shape": list(exterior.shape), "dtype": str(exterior.dtype)},
+            "wrist_image": {"shape": list(wrist.shape), "dtype": str(wrist.dtype)},
+            "joint_position": {"shape": [7], "dtype": "float32"},
+            "gripper_position": {"shape": [1], "dtype": "float32"},
+            "prompt": observation["prompt"],
+            "synthetic_frames": "deterministic_transport_smoke_only",
+        },
+        "response": {
+            "action_semantics": ACTION_SEMANTICS,
+            "consumer_guidance": "execute_about_5_targets_at_15_hz_then_requery",
+            "direct": direct,
+            "served": served,
+            "first_five_targets": served_actions[:5].tolist(),
+        },
+        "runtime": {
+            "jax": jax.__version__,
+            "jaxlib": importlib.metadata.version("jaxlib"),
+            "jax_cuda_plugin": importlib.metadata.version("jax-cuda12-plugin"),
+            "xla_platform_version": platform_version,
+            "device_kind": str(getattr(device, "device_kind", "")),
+            "compute_capability": compute_capability_text,
+            "compute_capability_raw": repr(compute_capability_raw),
+            "sm100_probe": sm100_probe,
+            "nvidia_smi": nvidia_smi,
+            "visible_device_count": len(devices),
+        },
+        "training_evaluation": {
+            "interfaces_present": True,
+            "live_validated": False,
+            "reason": "no compatible real optimization or evaluation dataset was supplied",
+        },
+    }
+    artifact = output_dir / "openpi_pi05_droid_jointpos_polaris_inference.json"
+    artifact.write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(results), flush=True)
     PY
   solution_name: "openpi"
-  capability_name: "policy_config_materialization"
-  smoke_artifact_name: "openpi_pi05_droid_config.json"
-  # The packaged profile NAME, not a repo path: this stage runs in a pod where the
-  # checkout does not exist. `resolve_byof_profile_path` looks it up inside the
-  # installed package (npa/src/npa/workflows/byof/profiles/).
-  resource_profile_yaml: "byof-solution-smoke-rtxpro-gpu"
-  task: "pi05_droid"
+  capability_name: "pi05_droid_jointpos_polaris_served_infer"
+  smoke_artifact_name: "openpi_pi05_droid_jointpos_polaris_inference.json"
+  resource_profile_yaml: "byof-solution-smoke-openpi-b200-gpu"
+  task: "pi05_droid_jointpos_polaris"
   iterations: 1
   num_envs: 1
   num_demos: 1
-  wait_timeout: 21600
+  wait_timeout: -1
   poll_interval: 60
 
   output_root: s3://{{config.bucket}}/oss-solutions/openpi/{{run.id}}
   summary_uri: "{{config.output_root}}/npa_byof_summary.json"
-  dataset_uri: "{{config.output_root}}/dataset.hdf5"
-  checkpoint_uri: "{{config.output_root}}/npa_isaac_lab_checkpoint.pt"
+  inference_uri: "{{config.output_root}}/openpi_pi05_droid_jointpos_polaris_inference.json"
 resources:
   gpu:
     cloud: kubernetes
-    accelerators: RTXPRO6000:1
+    accelerators: B200:1
+    cpus: 16
+    memory: 96Gi
+    disk_size: 100
 initial: byof-run
 states:
   byof-run:
     description: >
-      Build/push OpenPI and run pi05_droid config + checkpoint infer capability
-      smokes from the registry image in live Kubernetes.
+      Build/push the pinned OpenPI source and hard-gate direct plus served
+      Polaris pi0.5 Franka inference in a one-B200 Kubernetes workload.
     toolRef: workbench.byof.repo
     resources: gpu
     outputs:
       - uri: "{{config.summary_uri}}"
         schema: npa.workbench.byof.summary.v1
+      - uri: "{{config.inference_uri}}"
+        schema: npa.workbench.openpi.pi05-polaris-inference.v1
     terminal: true

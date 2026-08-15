@@ -14,6 +14,8 @@ from urllib.parse import urlparse
 
 from npa.clients import config as config_module
 from npa.clients.config import ConfigError, EnvironmentConfig, StorageConfig
+from npa.cluster.gpu_driver import DEFAULT_MANAGED_DRIVER_PRESET
+from npa.cluster.gpu_health import DEFAULT_CUDA_SMOKE_IMAGE, DEFAULT_STABILIZATION_SECONDS
 from npa.cluster.state import kubeconfig_file, load_cluster_state
 from npa.provisioning_journal import (
     ProvisioningOperation,
@@ -74,6 +76,14 @@ def _provision_recovery_argv(
         str(float(arguments.get("gpu_readiness_timeout") or 600.0)),
         "--gpu-readiness-poll-interval",
         str(float(arguments.get("gpu_readiness_poll_interval") or 10.0)),
+        "--gpu-health-stabilization-seconds",
+        str(
+            int(
+                arguments.get("gpu_health_stabilization_seconds")
+                if arguments.get("gpu_health_stabilization_seconds") is not None
+                else DEFAULT_STABILIZATION_SECONDS
+            )
+        ),
         "--output-format",
         str(arguments.get("output_format") or "text"),
     ]
@@ -87,6 +97,9 @@ def _provision_recovery_argv(
         ("cpu_preset", "--cpu-preset"),
         ("gpu_platform", "--gpu-platform"),
         ("gpu_preset", "--gpu-preset"),
+        ("gpu_driver_mode", "--gpu-driver-mode"),
+        ("managed_driver_preset", "--managed-driver-preset"),
+        ("gpu_cuda_smoke_image", "--gpu-cuda-smoke-image"),
         ("accelerator", "--accelerator"),
         ("sky_bin", "--sky-bin"),
     ):
@@ -96,6 +109,7 @@ def _provision_recovery_argv(
     for key, enabled, disabled in (
         ("validate", "--validate", "--skip-validate"),
         ("sky_smoke", "--sky-smoke", "--skip-sky-smoke"),
+        ("gpu_cuda_smoke", "--gpu-cuda-smoke", "--skip-gpu-cuda-smoke"),
     ):
         argv.append(enabled if bool(arguments.get(key)) else disabled)
     if bool(arguments.get("skip_k8s")):
@@ -107,6 +121,13 @@ def _provision_recovery_argv(
     preemptible = arguments.get("preemptible")
     if preemptible is not None:
         argv.append("--preemptible" if bool(preemptible) else "--on-demand")
+    unsafe_operator = arguments.get("allow_unsafe_nvswitch_operator")
+    if unsafe_operator is not None:
+        argv.append(
+            "--allow-unsafe-nvswitch-operator"
+            if bool(unsafe_operator)
+            else "--deny-unsafe-nvswitch-operator"
+        )
     return argv
 
 
@@ -278,6 +299,12 @@ def provision_if_absent(
     cpu_preset: str = "",
     gpu_platform: str = "",
     gpu_preset: str = "",
+    gpu_driver_mode: str = "",
+    managed_driver_preset: str = "",
+    allow_unsafe_nvswitch_operator: bool | None = None,
+    gpu_health_stabilization_seconds: int = DEFAULT_STABILIZATION_SECONDS,
+    gpu_cuda_smoke: bool = True,
+    gpu_cuda_smoke_image: str = DEFAULT_CUDA_SMOKE_IMAGE,
     preemptible: bool | None = None,
     accelerator: str = "",
     gpu_readiness_timeout: float = 600.0,
@@ -359,7 +386,7 @@ def provision_if_absent(
             storage_ready = True
         else:
             probe = probe_storage_write(
-                bucket=storage.checkpoint_bucket,
+                bucket=bucket_name,
                 endpoint_url=storage.endpoint_url,
                 access_key_id=storage.aws_access_key_id,
                 secret_access_key=storage.aws_secret_access_key,
@@ -404,6 +431,39 @@ def provision_if_absent(
         actions.append("k8s:skipped")
     elif _has_cached_kubeconfig(context, kubeconfig_path):
         actions.append(f"k8s:reused kubeconfig {kubeconfig_path}")
+        if validate and gpu_nodes > 0:
+            from npa.cli.cluster.terraform_lifecycle import (
+                _require_bin,
+                _validate_cluster,
+            )
+
+            kubectl_bin = _require_bin(
+                os.environ.get("NPA_KUBECTL_BIN") or "kubectl"
+            )
+            _validate_cluster(
+                kubectl_bin,
+                Path(kubeconfig_path),
+                {
+                    "cpu_nodes_count": cpu_nodes,
+                    "gpu_nodes_count": gpu_nodes,
+                    "gpu_nodes_platform": gpu_platform,
+                    "gpu_nodes_preset": gpu_preset,
+                    "gpu_driver_mode": gpu_driver_mode or "auto",
+                    "managed_driver_preset": (
+                        managed_driver_preset or DEFAULT_MANAGED_DRIVER_PRESET
+                    ),
+                    "allow_unsafe_nvswitch_operator": bool(
+                        allow_unsafe_nvswitch_operator
+                    ),
+                },
+                60,
+                gpu_health_stabilization_seconds=(
+                    gpu_health_stabilization_seconds
+                ),
+                gpu_cuda_smoke=gpu_cuda_smoke,
+                gpu_cuda_smoke_image=gpu_cuda_smoke_image,
+            )
+            actions.append("k8s:validated stable GPU health and CUDA vectorAdd")
         k8s_ready = True
     elif not environment.project_id or not environment.tenant_id:
         warnings.append("project_id and tenant_id are required to ensure Kubernetes")
@@ -426,6 +486,8 @@ def provision_if_absent(
                     ("cpu_preset", cpu_preset),
                     ("gpu_platform", gpu_platform),
                     ("gpu_preset", gpu_preset),
+                    ("gpu_driver_mode", gpu_driver_mode),
+                    ("managed_driver_preset", managed_driver_preset),
                 )
                 if value.strip()
             ]
@@ -452,8 +514,12 @@ def provision_if_absent(
                 context_name=context,
                 project=alias or "",
                 validate=validate,
-                sky_smoke=sky_smoke,
+                # Provisioning owns one shared cached/fresh GPU-readiness and
+                # smoke boundary below. Running smoke inside up_cmd would put
+                # the fresh path ahead of label repair and readiness.
+                sky_smoke=False,
                 sky_gpus="",
+                sky_bin=sky_bin,
                 capacity_block_group="",
                 gpu_nodes=gpu_nodes,
                 cpu_nodes=cpu_nodes,
@@ -461,6 +527,14 @@ def provision_if_absent(
                 cpu_preset=cpu_preset,
                 gpu_platform=gpu_platform,
                 gpu_preset=gpu_preset,
+                gpu_driver_mode=gpu_driver_mode,
+                managed_driver_preset=managed_driver_preset,
+                allow_unsafe_nvswitch_operator=allow_unsafe_nvswitch_operator,
+                gpu_health_stabilization_seconds=(
+                    gpu_health_stabilization_seconds
+                ),
+                gpu_cuda_smoke=gpu_cuda_smoke,
+                gpu_cuda_smoke_image=gpu_cuda_smoke_image,
                 preemptible=preemptible,
                 validation_timeout=60,
                 timeout=timeout,
@@ -469,15 +543,14 @@ def provision_if_absent(
         k8s_ready = True
 
     requested_accelerator = str(accelerator or "").strip()
-    if requested_accelerator and k8s_ready and not skip_k8s and not dry_run:
+    needs_gpu_setup = bool(requested_accelerator or sky_smoke)
+    if needs_gpu_setup and k8s_ready and not skip_k8s and not dry_run:
         from npa.controller_ownership import ensure_controller_owner
+        from npa.cli.cluster.terraform_lifecycle import _run_skypilot_smoke
         from npa.orchestration.skypilot.k8s_gpu_catalog import (
-            KubernetesGpuCatalogError,
             wait_for_kubernetes_accelerators,
         )
 
-        previous_kubeconfig = os.environ.get("KUBECONFIG")
-        os.environ["KUBECONFIG"] = str(kubeconfig_path)
         try:
             owner = ensure_controller_owner(alias, context)
             actions.append(
@@ -493,15 +566,28 @@ def provision_if_absent(
                     operation.heartbeat(details={"gpu_readiness": message})
 
             wait_for_kubernetes_accelerators(
-                [requested_accelerator],
+                [requested_accelerator] if requested_accelerator else [],
                 context=context,
+                kubeconfig=kubeconfig_path,
                 sky_bin=sky_bin or None,
+                label_known_gpus=True,
                 timeout=gpu_readiness_timeout,
                 poll_interval=gpu_readiness_poll_interval,
                 on_status=report_gpu_status,
             )
-        except (KubernetesGpuCatalogError, RuntimeError, ValueError) as exc:
-            gpu_readiness = "timeout"
+            if sky_smoke:
+                _run_skypilot_smoke(
+                    Path(kubeconfig_path),
+                    context,
+                    cluster_name,
+                    requested_accelerator,
+                    sky_bin=sky_bin,
+                )
+                actions.append("sky-smoke:passed")
+        except Exception as exc:  # noqa: BLE001 - return a resumable partial result
+            gpu_readiness = (
+                "timeout" if str(exc).startswith("Timed out after ") else "failed"
+            )
             warnings.append(str(exc))
             operation = current_operation()
             created_cluster = bool(
@@ -520,15 +606,16 @@ def provision_if_absent(
             )
         else:
             gpu_readiness = "ready"
-            actions.append(f"gpu:SkyPilot ready for {requested_accelerator}")
-        finally:
-            if previous_kubeconfig is None:
-                os.environ.pop("KUBECONFIG", None)
-            else:
-                os.environ["KUBECONFIG"] = previous_kubeconfig
-    elif requested_accelerator and dry_run:
+            actions.append(
+                "gpu:SkyPilot ready for "
+                + (requested_accelerator or "auto-detected smoke accelerator")
+            )
+    elif needs_gpu_setup and dry_run:
         gpu_readiness = "dry-run"
-        actions.append(f"gpu:dry-run wait for SkyPilot {requested_accelerator}")
+        actions.append(
+            "gpu:dry-run wait for SkyPilot "
+            + (requested_accelerator or "auto-detected smoke accelerator")
+        )
 
     status = "ok" if not warnings and (skip_s3 or storage_ready) else "partial"
     if dry_run:
@@ -888,7 +975,9 @@ def _runtime_env(
         "NPA_REGION": environment.region,
         "NPA_REGISTRY": registry,
         "NPA_REGISTRY_ID": registry_id,
-        "NPA_S3_BUCKET": storage.checkpoint_bucket,
+        # Consumers of NPA_S3_BUCKET pass it as the provider Bucket argument;
+        # keep URI/prefix forms in checkpoint_bucket only.
+        "NPA_S3_BUCKET": _bucket_name(storage.checkpoint_bucket),
         "NPA_STORAGE_ENDPOINT": storage.endpoint_url,
         "AWS_ENDPOINT_URL": storage.endpoint_url,
         "NEBIUS_S3_ENDPOINT": storage.endpoint_url,
