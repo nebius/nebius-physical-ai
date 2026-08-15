@@ -42,6 +42,8 @@ from npa.cli.cluster.terraform_lifecycle import (
     _run_stream,
     _terraform_env,
 )
+from npa.cluster.gpu_driver import resolve_gpu_driver_strategy
+from npa.cluster.gpu_health import GpuHealthConfig, validate_gpu_health
 from npa.fleet.quotas import preflight_region, shortfall_message
 from npa.fleet.spec import ClusterSpec, FleetSpec, ProjectSpec
 from npa.fleet.tfvars import patch_provider_domain, provider_domain, render_tfvars
@@ -55,6 +57,9 @@ _MODULES_SUBDIR = "modules"
 # copy (deploy/cluster/vendor + the single-cluster wrapper) so a fleet run from an
 # installed package doesn't silently drift onto upstream ``main`` HEAD.
 _PINNED_LIBRARY_REF = "main-v2026-05-25+local-cluster-patches"
+_FILESYSTEM_VERIFIER = (
+    Path("filesystem-csi-validation") / "01-verify-node-filesystem-mounts.sh"
+)
 _ENV_SIDECAR = ".npa-fleet-env.json"
 _PROJECT_NETWORK_STATE = ".npa-fleet-network.json"
 _FLEET_STATE = "fleet-state.json"
@@ -322,6 +327,7 @@ def _list_projects(
             "list",
             "--parent-id",
             tenant_id,
+            "--all",
             "--format",
             "json",
         ],
@@ -706,6 +712,19 @@ def _prepare_install_dir(
         shutil.rmtree(modules_dst, ignore_errors=True)
     shutil.copytree(recipe_root / _MODULES_SUBDIR, modules_dst)
 
+    # kubectl 1.36's `debug --quiet` suppresses both attached verifier output and
+    # the generated debugger-pod name. That defeats success-evidence checking and
+    # cleanup. Apply this compatibility shim to the materialized recipe so local,
+    # ref-cloned, package-fallback, and vendored sources all receive the fix.
+    verifier = workdir / _FILESYSTEM_VERIFIER
+    if verifier.is_file():
+        original = verifier.read_text()
+        patched = re.sub(r"(?m)^[ \t]*--quiet[ \t]*\\\n", "", original)
+        patched = patched.replace("kubectl debug --quiet ", "kubectl debug ")
+        if patched != original:
+            verifier.write_text(patched)
+            _log(on_status, "patched filesystem verifier for kubectl debug output")
+
     provider_tf = workdir / "provider.tf"
     if provider_tf.exists():
         original = provider_tf.read_text()
@@ -730,7 +749,9 @@ def _prepare_install_dir(
         )
 
     (workdir / "terraform.tfvars").write_text(
-        render_tfvars(cluster, ssh_public_key=ssh_public_key)
+        render_tfvars(
+            cluster, ssh_public_key=ssh_public_key, recipe_dir=workdir
+        )
     )
     return workdir
 
@@ -1185,6 +1206,18 @@ def plan_fleet(
     for project in spec.projects:
         clusters = []
         for cluster in project.clusters:
+            gpu = cluster.gpu_nodes
+            driver = resolve_gpu_driver_strategy(
+                gpu_nodes=cluster.gpu_count(),
+                platform=gpu.platform if gpu else "",
+                preset=gpu.preset if gpu else "",
+                mode=cluster.gpu_driver_mode,
+                managed_driver_preset=cluster.managed_driver_preset,
+                enable_gpu_cluster=cluster.resolved_enable_gpu_cluster(),
+                allow_unsafe_nvswitch_operator=(
+                    cluster.allow_unsafe_nvswitch_operator
+                ),
+            )
             clusters.append(
                 {
                     "name": cluster.name,
@@ -1201,6 +1234,19 @@ def plan_fleet(
                         else "on-demand"
                     ),
                     "enable_gpu_cluster": cluster.resolved_enable_gpu_cluster(),
+                    "gpu_driver_mode": driver.effective_mode,
+                    "managed_driver_preset": (
+                        driver.managed_driver_preset
+                        if driver.uses_managed_image
+                        else None
+                    ),
+                    "unsafe_nvswitch_operator": (
+                        driver.unsafe_operator_acknowledged
+                    ),
+                    "gpu_health_stabilization_seconds": (
+                        cluster.gpu_health_stabilization_seconds
+                    ),
+                    "gpu_cuda_smoke": cluster.gpu_cuda_smoke,
                     "enable_filestore": cluster.enable_filestore,
                     "filestore_disk_size_gibibytes": cluster.filestore_disk_size_gibibytes,
                     "filestore_mount_path": cluster.filestore_mount_path,
@@ -1312,21 +1358,50 @@ def deploy_fleet(
     # Phase 0: quota preflight, before any project is created. Regions come from
     # the spec, so this needs no project ids -- and running it first means a
     # quota-blocked deploy does not leave a freshly created, empty project behind.
+    preflight_project_ids: dict[str, str] = {}
     if preflight:
         scoped: dict[str, list[ClusterSpec]] = {}
+        new_projects_by_region: dict[str, int] = {}
+        scoped_projects: list[tuple[ProjectSpec, str]] = []
         for project in spec.projects:
             if not _project_in_scope(project, only_projects, prefix):
                 continue
             region = project.region or fleet_region
+            project_has_scoped_cluster = False
             for cluster in project.clusters:
                 if only_clusters and cluster.name not in only_clusters:
                     continue
                 scoped.setdefault(region, []).append(cluster)
+                project_has_scoped_cluster = True
+            if project_has_scoped_cluster:
+                scoped_projects.append((project, region))
+
+        named_projects = [
+            project for project, _region in scoped_projects if not project.project_id
+        ]
+        existing_projects = (
+            _list_projects(nebius_bin, tenant_id, cli_env, nebius_profile)
+            if named_projects
+            else []
+        )
+        for project, region in scoped_projects:
+            if project.project_id:
+                continue
+            name = project.display_name(prefix)
+            found = _find_project_id(existing_projects, name)
+            if found:
+                preflight_project_ids[project.key()] = found
+                _log(on_status, f"project {name!r} exists ({found})")
+            else:
+                new_projects_by_region[region] = (
+                    new_projects_by_region.get(region, 0) + 1
+                )
         if scoped:
             _preflight_quotas(
                 nebius_bin,
                 tenant_id=tenant_id,
                 by_region=scoped,
+                new_projects_by_region=new_projects_by_region,
                 env=cli_env,
                 profile=nebius_profile,
                 on_status=on_status,
@@ -1347,17 +1422,21 @@ def deploy_fleet(
             continue
         region = project.region or fleet_region
         try:
-            project_id, created = resolve_project_id(
-                nebius_bin,
-                tenant_id,
-                project,
-                prefix=prefix,
-                create=create_projects,
-                env=cli_env,
-                region=region,
-                profile=nebius_profile,
-                on_status=on_status,
-            )
+            if project.key() in preflight_project_ids:
+                project_id = preflight_project_ids[project.key()]
+                created = False
+            else:
+                project_id, created = resolve_project_id(
+                    nebius_bin,
+                    tenant_id,
+                    project,
+                    prefix=prefix,
+                    create=create_projects,
+                    env=cli_env,
+                    region=region,
+                    profile=nebius_profile,
+                    on_status=on_status,
+                )
             shared_subnet_id = ""
             if any(not cluster.subnet_id for cluster in scoped_clusters):
                 shared_subnet_id, _created_network_id = ensure_subnet(
@@ -1471,6 +1550,7 @@ def _preflight_quotas(
     *,
     tenant_id: str,
     by_region: dict[str, list[ClusterSpec]],
+    new_projects_by_region: dict[str, int],
     env: dict[str, str],
     profile: str,
     on_status: Callable[[str], None] | None,
@@ -1488,6 +1568,7 @@ def _preflight_quotas(
             tenant_id=tenant_id,
             region=region,
             clusters=clusters,
+            new_projects=new_projects_by_region.get(region, 0),
             env=env,
             profile=profile,
             run_capture=_run_capture,
@@ -1524,6 +1605,22 @@ def _deploy_one_cluster(
     label = f"{project_key}/{cluster.name}"
     log_metadata = {"terraform_log": str(log_path)} if log_path is not None else {}
     try:
+        gpu = cluster.gpu_nodes
+        driver = resolve_gpu_driver_strategy(
+            gpu_nodes=cluster.gpu_count(),
+            platform=gpu.platform if gpu else "",
+            preset=gpu.preset if gpu else "",
+            mode=cluster.gpu_driver_mode,
+            managed_driver_preset=cluster.managed_driver_preset,
+            enable_gpu_cluster=cluster.resolved_enable_gpu_cluster(),
+            allow_unsafe_nvswitch_operator=cluster.allow_unsafe_nvswitch_operator,
+        )
+        if driver.unsafe_operator_acknowledged:
+            _log(
+                on_status,
+                f"[{label}] WARNING: explicitly acknowledged unsafe operator-mode "
+                "driver/Fabric Manager ordering on an NVSwitch topology",
+            )
         _ensure_private_directory(fleet_root)
         _ensure_private_directory(install_dir.parent)
         _ensure_private_directory(install_dir)
@@ -1555,6 +1652,10 @@ def _deploy_one_cluster(
             "cluster_name": cluster.name,
             "context": context,
             "profile": profile,
+            "gpu_driver_mode": driver.effective_mode,
+            "managed_driver_preset": (
+                driver.managed_driver_preset if driver.uses_managed_image else ""
+            ),
             "status": "provisioning",
         }
         _write_env_sidecar(install_dir, sidecar)
@@ -1635,8 +1736,89 @@ def _deploy_one_cluster(
                 "error": message,
                 **log_metadata,
             }
+        gpu_health: dict[str, Any] | None = None
+        gpu_health_path = install_dir / "gpu-health.json"
+        if cluster.gpu_count() > 0:
+            _write_env_sidecar(
+                install_dir,
+                {
+                    **sidecar,
+                    "cluster_id": cluster_id,
+                    "status": "validating-gpu-health",
+                    "gpu_health_evidence": str(gpu_health_path),
+                },
+            )
+            _log(
+                on_status,
+                f"[{label}] validating {cluster.gpu_count()} GPU node(s) in "
+                f"{driver.effective_mode} mode",
+            )
+            try:
+                kubectl_bin = _require_bin(
+                    os.environ.get("NPA_KUBECTL_BIN") or "kubectl"
+                )
+                gpu_health = validate_gpu_health(
+                    _run_capture,
+                    kubectl_bin=kubectl_bin,
+                    kubeconfig_path=kubeconfig_path,
+                    config=GpuHealthConfig(
+                        expected_nodes=cluster.cpu_count() + cluster.gpu_count(),
+                        expected_gpu_nodes=cluster.gpu_count(),
+                        gpu_preset=gpu.preset if gpu else "",
+                        gpu_platform=gpu.platform if gpu else "",
+                        driver_mode=driver.effective_mode,
+                        nvswitch=driver.nvswitch,
+                        stabilization_seconds=(
+                            cluster.gpu_health_stabilization_seconds
+                        ),
+                        timeout_seconds=cluster.gpu_health_timeout_minutes * 60,
+                        cuda_smoke=cluster.gpu_cuda_smoke,
+                        cuda_smoke_image=cluster.gpu_cuda_smoke_image,
+                    ),
+                    evidence_path=gpu_health_path,
+                    on_status=lambda message: _log(
+                        on_status, f"[{label}] {message}"
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001 - retain applied state/evidence
+                message = str(exc)
+                _write_env_sidecar(
+                    install_dir,
+                    {
+                        **sidecar,
+                        "cluster_id": cluster_id,
+                        "status": "deployed-validation-failed",
+                        "gpu_health_evidence": str(gpu_health_path),
+                        "error": message,
+                    },
+                )
+                _log(on_status, f"[{label}] GPU validation FAILED: {message}")
+                return {
+                    "project_key": project_key,
+                    "project_id": project_id,
+                    "cluster_name": cluster.name,
+                    "region": region,
+                    "cluster_id": cluster_id,
+                    "kube_context": context,
+                    "kubeconfig": str(kubeconfig_path),
+                    "install_dir": str(install_dir),
+                    "status": "deployed-validation-failed",
+                    "gpu_health_evidence": str(gpu_health_path),
+                    "error": message,
+                    **log_metadata,
+                }
         _write_env_sidecar(
-            install_dir, {**sidecar, "cluster_id": cluster_id, "status": "deployed"}
+            install_dir,
+            {
+                **sidecar,
+                "cluster_id": cluster_id,
+                "status": "deployed",
+                **(
+                    {"gpu_health_evidence": str(gpu_health_path)}
+                    if gpu_health is not None
+                    else {}
+                ),
+            },
         )
         return {
             "project_key": project_key,
@@ -1649,6 +1831,14 @@ def _deploy_one_cluster(
             "kubeconfig": str(kubeconfig_path) if cluster_id else "",
             "install_dir": str(install_dir),
             "status": "deployed",
+            **(
+                {
+                    "gpu_health": gpu_health,
+                    "gpu_health_evidence": str(gpu_health_path),
+                }
+                if gpu_health is not None
+                else {}
+            ),
             **log_metadata,
         }
     except Exception as exc:  # noqa: BLE001 - capture per-cluster failure

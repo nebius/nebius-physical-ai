@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shlex
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
@@ -445,9 +446,10 @@ def render_pip_extra_setup(extra: str) -> str:
         "fi\n"
         'if [ -n "$npa_src_root" ]; then\n'
         f'  echo "installing npa[{extra}] from $npa_src_root" >&2\n'
-        # Compose with printf, never "${var}[extra]": braced expansions are what the
-        # rendered-YAML placeholder guard (assert_no_unresolved_placeholders) rejects,
-        # because SkyPilot would leave a literal ${NAME} in the document.
+        # Compose with printf so the optional-extra suffix is visibly separate from the
+        # source path. Braced expansions are valid here because top-level SkyPilot setup
+        # and run values are author-controlled shell programs; only declarative and
+        # nested fields are subject to the unresolved-placeholder guard.
         f'  npa_extra_target="$(printf \'%s[{extra}]\' "$npa_src_root")"\n'
         '  npa_pip_install -e "$npa_extra_target"\n'
         "else\n"
@@ -586,8 +588,9 @@ def render_self_hosted_vlm_preamble(config: Mapping[str, Any]) -> str:
     ``DEFAULT_ENDPOINT_URL`` points at), so a spec needs no extra config to work;
     ``config.vlm_model`` / ``config.vlm_serve_port`` override them.
 
-    Unbraced ``$var`` throughout: a ``${var}`` would trip
-    :func:`assert_no_unresolved_placeholders`.
+    The generated program uses ordinary shell expansion. Top-level SkyPilot
+    ``setup`` and ``run`` programs are intentionally exempt from
+    :func:`assert_no_unresolved_placeholders`; declarative and nested fields are not.
     """
 
     from npa.workbench.vlm_eval import DEFAULT_MODEL
@@ -1851,17 +1854,62 @@ def _render_docs(
     return "\n---\n".join(chunks) + "\n"
 
 
-_SKYPILOT_PLACEHOLDER_RE = __import__("re").compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_SKYPILOT_PLACEHOLDER_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_SKYPILOT_SHELL_FIELDS = frozenset({"run", "setup"})
+
+
+def _placeholder_names(value: object) -> set[str]:
+    """Return bare placeholders from a parsed YAML value."""
+
+    unresolved: set[str] = set()
+    if isinstance(value, Mapping):
+        for raw_key, child in value.items():
+            unresolved.update(_SKYPILOT_PLACEHOLDER_RE.findall(str(raw_key)))
+            unresolved.update(_placeholder_names(child))
+    elif isinstance(value, list):
+        for child in value:
+            unresolved.update(_placeholder_names(child))
+    elif isinstance(value, str):
+        unresolved.update(_SKYPILOT_PLACEHOLDER_RE.findall(value))
+    return unresolved
+
+
+def _document_declarative_placeholder_names(document: object) -> set[str]:
+    """Return placeholders outside top-level SkyPilot shell-script fields."""
+
+    if not isinstance(document, Mapping):
+        return _placeholder_names(document)
+    unresolved: set[str] = set()
+    for raw_key, child in document.items():
+        key = str(raw_key)
+        unresolved.update(_SKYPILOT_PLACEHOLDER_RE.findall(key))
+        if key not in _SKYPILOT_SHELL_FIELDS:
+            unresolved.update(_placeholder_names(child))
+    return unresolved
 
 
 def assert_no_unresolved_placeholders(yaml_text: str) -> None:
-    """Fail if rendered YAML still contains SkyPilot-style ``${NAME}`` placeholders.
+    """Fail on bare ``${NAME}`` placeholders in rendered declarative fields.
 
-    Allows bash parameter expansions such as ``$NAME`` (no braces) used in setup
-    scripts. Flags only bare ``${NAME}`` forms that SkyPilot would leave literal.
+    SkyPilot cannot resolve self-references such as ``envs: {PATH: ${PATH}:...}``,
+    so declarative fields must be fully materialized before submit. ``setup`` and
+    ``run`` are shell programs, however, where both ``${NAME}`` and
+    ``${NAME:-default}`` are ordinary author-controlled shell syntax. Parsing the
+    rendered YAML also means comments are ignored instead of being mistaken for
+    executable placeholders.
     """
 
-    unresolved = sorted(set(_SKYPILOT_PLACEHOLDER_RE.findall(yaml_text)))
+    try:
+        documents = list(yaml.safe_load_all(yaml_text))
+    except yaml.YAMLError as exc:
+        raise NpaWorkflowRenderError(
+            f"rendered SkyPilot YAML is invalid while checking placeholders: {exc}"
+        ) from exc
+    unresolved = sorted({
+        name
+        for document in documents
+        for name in _document_declarative_placeholder_names(document)
+    })
     if unresolved:
         joined = ", ".join(f"${{{name}}}" for name in unresolved)
         raise NpaWorkflowRenderError(

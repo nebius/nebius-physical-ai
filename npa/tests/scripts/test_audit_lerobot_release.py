@@ -9,11 +9,15 @@ inspection, which is all the script does — it never imports LeRobot.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
+import re
+import shutil
 import sys
 from pathlib import Path
 
+import packaging.markers as packaging_markers
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -134,6 +138,95 @@ def test_removed_symbol_is_caught(monkeypatch, wheel):
     assert _status(report, "import-surface") == "FAIL"
 
 
+def test_symbol_nested_inside_a_function_is_not_a_module_export(monkeypatch, wheel):
+    path = wheel / "lerobot/utils/device_utils.py"
+    path.write_text(
+        "def device_factory():\n"
+        "    def get_safe_torch_device(): ...\n"
+        "    return get_safe_torch_device\n",
+        encoding="utf-8",
+    )
+    report = _run(monkeypatch, wheel)
+    assert _status(report, "import-surface") == "FAIL"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "try:\n"
+        "    from backend import get_safe_torch_device\n"
+        "except ModuleNotFoundError:\n"
+        "    from fallback import get_safe_torch_device\n",
+        "try:\n"
+        "    from backend import get_safe_torch_device\n"
+        "except Exception:\n"
+        "    from fallback import get_safe_torch_device\n",
+        "if sys.version_info >= (3, 12):\n"
+        "    from backend import get_safe_torch_device\n",
+        "try:\n"
+        "    from backend import get_safe_torch_device\n"
+        "finally:\n"
+        "    cleaned_up = True\n",
+        pytest.param(
+            "try:\n"
+            "    from backend import get_safe_torch_device\n"
+            "except* Exception:\n"
+            "    from fallback import get_safe_torch_device\n",
+            id="try-star",
+            marks=pytest.mark.skipif(
+                sys.version_info < (3, 11),
+                reason="except* syntax requires Python 3.11",
+            ),
+        ),
+        "with import_context():\n"
+        "    from backend import get_safe_torch_device\n",
+        "for backend in backends:\n"
+        "    from backend import get_safe_torch_device\n",
+        "while select_backend():\n"
+        "    from backend import get_safe_torch_device\n",
+        "match backend_name:\n"
+        "    case _:\n"
+        "        from backend import get_safe_torch_device\n",
+    ],
+    ids=[
+        "module-not-found-error",
+        "broad-exception",
+        "version-if",
+        "try-finally",
+        "try-star",
+        "with",
+        "for",
+        "while",
+        "match",
+    ],
+)
+def test_module_scope_conditional_exports_are_found(monkeypatch, wheel, source):
+    (wheel / "lerobot/utils/device_utils.py").write_text(source, encoding="utf-8")
+    report = _run(monkeypatch, wheel)
+    assert _status(report, "import-surface") == "PASS"
+
+
+def _make_device_export_lazy(wheel: Path) -> None:
+    (wheel / "lerobot/utils/device_utils.py").write_text(
+        "def __getattr__(name):\n"
+        "    if name == 'get_safe_torch_device':\n"
+        "        return load_device_helper()\n"
+        "    raise AttributeError(name)\n",
+        encoding="utf-8",
+    )
+
+
+def test_lazy_getattr_export_is_an_unverifiable_warning(monkeypatch, wheel):
+    _make_device_export_lazy(wheel)
+    report = _run(monkeypatch, wheel)
+    check = next(c for c in report.checks if c["check"] == "import-surface")
+
+    assert check["status"] == "WARN"
+    assert "lazily re-exported" in check["detail"]
+    assert "could not verify statically" in check["detail"]
+    assert "symbol gone" not in check["detail"]
+
+
 def test_dropped_keyword_parameter_is_caught(monkeypatch, wheel):
     # `env_cfg` is passed by keyword from npa/server/app.py.
     (wheel / "lerobot/policies/factory.py").write_text(
@@ -197,9 +290,117 @@ def test_forced_torch_pin_inside_declared_bounds_passes(monkeypatch, wheel):
     assert _status(report, "manifest torch pins") == "PASS"
 
 
+def test_bare_requires_dist_does_not_disable_pin_check(monkeypatch, wheel):
+    metadata = wheel / "lerobot-9.9.9.dist-info" / "METADATA"
+    metadata.write_text(
+        metadata.read_text(encoding="utf-8").replace(
+            "Requires-Dist: torch<2.12.0,>=2.7",
+            "Requires-Dist: torch\nRequires-Dist: torch<2.12.0,>=2.7",
+        ),
+        encoding="utf-8",
+    )
+    report = _run(monkeypatch, wheel, manifest={"torch_pin": "torch==99.0.0"})
+    assert _status(report, "manifest torch pins") == "FAIL"
+
+
+def test_marker_gated_requirement_is_not_applied_unconditionally(monkeypatch, wheel):
+    metadata = wheel / "lerobot-9.9.9.dist-info" / "METADATA"
+    metadata.write_text(
+        metadata.read_text(encoding="utf-8").replace(
+            "Requires-Dist: torch<2.12.0,>=2.7",
+            'Requires-Dist: torch==2.5.0; platform_machine == "aarch64"\n'
+            "Requires-Dist: torch<2.12.0,>=2.7",
+        ),
+        encoding="utf-8",
+    )
+    report = _run(monkeypatch, wheel)
+    assert _status(report, "b300-image torch stack") == "PASS"
+
+
+def test_marker_evaluation_uses_x86_64_linux_image_not_aarch64_host(
+    monkeypatch, wheel
+):
+    metadata = wheel / "lerobot-9.9.9.dist-info" / "METADATA"
+    metadata.write_text(
+        metadata.read_text(encoding="utf-8").replace(
+            "Requires-Dist: torch<2.12.0,>=2.7",
+            'Requires-Dist: torch==2.5.0; platform_machine == "aarch64"\n'
+            "Requires-Dist: torch<2.12.0,>=2.7",
+        ),
+        encoding="utf-8",
+    )
+    aarch64_host = packaging_markers.default_environment()
+    aarch64_host.update(
+        {
+            "os_name": "posix",
+            "platform_machine": "aarch64",
+            "platform_system": "Linux",
+            "sys_platform": "linux",
+        }
+    )
+    monkeypatch.setattr(
+        packaging_markers,
+        "default_environment",
+        lambda: aarch64_host.copy(),
+    )
+
+    report = _run(monkeypatch, wheel)
+    assert _status(report, "b300-image torch stack") == "PASS"
+
+
+def test_uninstalled_extra_does_not_constrain_image_pins(monkeypatch, wheel):
+    metadata = wheel / "lerobot-9.9.9.dist-info" / "METADATA"
+    metadata.write_text(
+        metadata.read_text(encoding="utf-8")
+        + 'Requires-Dist: torch==2.7.1; extra == "jetson"\n',
+        encoding="utf-8",
+    )
+
+    report = _run(monkeypatch, wheel, manifest={"pip_extras": "training,evaluation"})
+    assert _status(report, "b300-image torch stack") == "PASS"
+
+
+def test_installed_extra_still_constrains_image_pins(monkeypatch, wheel):
+    metadata = wheel / "lerobot-9.9.9.dist-info" / "METADATA"
+    metadata.write_text(
+        metadata.read_text(encoding="utf-8")
+        + 'Requires-Dist: torch==2.7.1; extra == "jetson"\n',
+        encoding="utf-8",
+    )
+
+    report = _run(monkeypatch, wheel, manifest={"pip_extras": "jetson"})
+    assert _status(report, "b300-image torch stack") == "FAIL"
+
+
+def test_transitively_installed_extra_constrains_image_pins(monkeypatch, wheel):
+    metadata = wheel / "lerobot-9.9.9.dist-info" / "METADATA"
+    metadata.write_text(
+        metadata.read_text(encoding="utf-8")
+        + 'Requires-Dist: lerobot[jetson]; extra == "hardware"\n'
+        + 'Requires-Dist: torch==2.7.1; extra == "jetson"\n',
+        encoding="utf-8",
+    )
+
+    report = _run(monkeypatch, wheel, manifest={"pip_extras": "hardware"})
+    assert _status(report, "b300-image torch stack") == "FAIL"
+
+
+@pytest.mark.parametrize(
+    "pin",
+    ["torch<2.11.0", "torch~=2.9.0", "torch!=2.10.0", "torch>=2.7,<2.11"],
+)
+def test_pin_floor_handles_every_specifier_form(monkeypatch, wheel, pin):
+    report = _run(monkeypatch, wheel, manifest={"torch_pin": pin})
+    assert _status(report, "manifest torch pins") == "FAIL"
+
+
 def test_lower_bound_pin_below_declared_ceiling_is_caught(monkeypatch, wheel):
     # `diffusers>=0.30.0` floors below the declared >=0.38.0 floor.
-    report = _run(monkeypatch, wheel, manifest={"diffusers_pin": "diffusers>=0.30.0"})
+    report = _run(
+        monkeypatch,
+        wheel,
+        manifest={"diffusers_pin": "diffusers>=0.30.0", "pip_extras": "diffusion"},
+    )
     assert _status(report, "manifest torch pins") == "FAIL"
 
 
@@ -241,6 +442,110 @@ def test_ungated_policy_needs_no_extra(monkeypatch, wheel):
     # ACT declares no require_package gate, so a bare install can construct it.
     report = _run(monkeypatch, wheel, manifest={"pip_extras": "pusht"})
     assert _status(report, "policy-extras") == "PASS"
+
+
+def test_missing_dist_info_is_a_check_failure_not_a_traceback(monkeypatch, wheel):
+    shutil.rmtree(wheel / "lerobot-9.9.9.dist-info")
+    report = _run(monkeypatch, wheel)
+    assert [(check["check"], check["status"]) for check in report.checks] == [
+        ("wheel-metadata", "FAIL")
+    ]
+
+
+def test_json_mode_stdout_is_pure_json(monkeypatch, wheel, capsys):
+    monkeypatch.setattr(audit_mod, "fetch_wheel", lambda *a, **k: wheel)
+    monkeypatch.setattr(audit_mod, "load_manifest_entry", lambda version: None)
+
+    assert audit_mod.main(["9.9.9", "--offline", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload[0]["version"] == "9.9.9"
+
+
+def test_lazy_warning_human_summary_is_honest_and_non_blocking(
+    monkeypatch, wheel, capsys
+):
+    _make_device_export_lazy(wheel)
+    monkeypatch.setattr(audit_mod, "fetch_wheel", lambda *a, **k: wheel)
+    monkeypatch.setattr(
+        audit_mod,
+        "load_manifest_entry",
+        lambda version: {"pip_extras": "", "train_env_eval_flag": "env_eval_freq"},
+    )
+
+    assert audit_mod.main(["9.9.9", "--offline"]) == 0
+    captured = capsys.readouterr()
+    assert "[WARN] import-surface" in captured.out
+    assert "WARN: 1 non-blocking unverifiable finding(s)" in captured.out
+    assert "PASS: lerobot 9.9.9 satisfies" not in captured.out
+    assert captured.err == ""
+
+
+def test_lazy_warning_json_stdout_is_pure_and_summary_is_on_stderr(
+    monkeypatch, wheel, capsys
+):
+    _make_device_export_lazy(wheel)
+    monkeypatch.setattr(audit_mod, "fetch_wheel", lambda *a, **k: wheel)
+    monkeypatch.setattr(
+        audit_mod,
+        "load_manifest_entry",
+        lambda version: {"pip_extras": "", "train_env_eval_flag": "env_eval_freq"},
+    )
+
+    assert audit_mod.main(["9.9.9", "--offline", "--json"]) == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    import_check = next(c for c in payload[0]["checks"] if c["check"] == "import-surface")
+    assert import_check["status"] == "WARN"
+    assert "WARN: 1 non-blocking unverifiable finding(s)" in captured.err
+    assert "PASS: lerobot 9.9.9 satisfies" not in captured.err
+
+
+def test_import_surface_covers_every_static_lerobot_import():
+    covered: dict[tuple[str, str | None], set[str]] = {}
+    for module, symbol, provenance in audit_mod.IMPORT_SURFACE:
+        assert isinstance(provenance, tuple), (
+            f"{module}:{symbol} provenance must be a tuple of repository-relative paths"
+        )
+        covered.setdefault((module, symbol), set()).update(provenance)
+    imports: dict[tuple[str, str | None], set[str]] = {}
+
+    for root in (REPO_ROOT / "npa/src", REPO_ROOT / "npa/demo", REPO_ROOT / "research"):
+        for path in root.rglob("*.py"):
+            relative = path.relative_to(REPO_ROOT).as_posix()
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.ImportFrom) and node.module and (
+                    node.module == "lerobot" or node.module.startswith("lerobot.")
+                ):
+                    for alias in node.names:
+                        imports.setdefault((node.module, alias.name), set()).add(relative)
+                elif isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name == "lerobot" or alias.name.startswith("lerobot."):
+                            imports.setdefault((alias.name, None), set()).add(relative)
+
+    missing_bindings = {
+        binding: paths for binding, paths in imports.items() if binding not in covered
+    }
+    missing_provenance = {
+        binding: paths - covered.get(binding, set())
+        for binding, paths in imports.items()
+        if paths - covered.get(binding, set())
+    }
+    assert missing_bindings == {}
+    assert missing_provenance == {}
+
+
+def test_b300_image_pins_match_the_dockerfile():
+    dockerfile = (REPO_ROOT / "npa/docker/workbench/lerobot/Dockerfile.b300").read_text(
+        encoding="utf-8"
+    )
+    found = {}
+    for package in audit_mod.B300_IMAGE_PINS:
+        matches = re.findall(rf"(?<![\w-]){re.escape(package)}==([\w.+-]+)", dockerfile)
+        assert len(matches) == 1, f"expected one {package} pin, found {matches}"
+        found[package] = matches[0]
+
+    assert found == audit_mod.B300_IMAGE_PINS
 
 
 def test_repo_manifest_versions_are_all_auditable():

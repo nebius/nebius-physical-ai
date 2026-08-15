@@ -300,20 +300,21 @@ Pinned official source:
 TI2V-5B checkpoint:
 `Wan-AI/Wan2.2-TI2V-5B@921dbaf3f1674a56f47e83fb80a34bac8a8f203e`.
 The candidate uses one RTX PRO 6000 Blackwell (`sm_120`), native
-`wan.WanTI2V.generate`, the official PyTorch 2.7.1 CUDA 12.8 wheel line with
-an explicit `sm_120` architecture check, and run-time model acquisition. No
-weights are baked, and the upstream native PyTorch SDPA fallback is used.
+`wan.WanTI2V.generate`, the security-fixed PyTorch 2.13.0 CUDA 13.0 wheel line
+with an explicit `sm_120` architecture check, and run-time model acquisition.
+No weights are baked, and the upstream native PyTorch SDPA fallback is used.
 
-Accepted live hard-gate capabilities, validated by
-A private validation record on one RTX PRO 6000 Blackwell (`sm_120`):
+Accepted historical hard-gate evidence, validated by a prior private record on
+one RTX PRO 6000 Blackwell (`sm_120`) using Torch 2.7.1/CUDA 12.8:
 
 - `wan2.2_ti2v_5b_text_to_video` (real 1280x704 MP4)
 - `wan2.2_decoded_mp4_validation` (decode all frames; dimensions/count/fps and
   conservative non-uniform-content checks)
 
-Accepted distributed hard-gate capabilities, validated by
-A private validation record on one node with four B200s
-(`sm_100`, world/local world size 4):
+Accepted historical distributed evidence, validated by a prior private record
+on one node with four B200s (`sm_100`, world/local world size 4) using NCCL
+2.27.7. The current NCCL 2.29.7 closure requires fresh operator-accepted live
+qualification:
 
 - `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses`
   (`torch.distributed.run` launches an instrumentation wrapper on four ranks;

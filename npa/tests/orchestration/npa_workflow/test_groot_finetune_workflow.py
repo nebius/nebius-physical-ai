@@ -13,6 +13,7 @@ from npa.orchestration.npa_workflow.scheduler import build_scheduler_plan
 from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
 from npa.orchestration.npa_workflow.spec import load_spec
 from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
+from npa.orchestration.skypilot.image_bootstrap_contract import is_trusted_npa_image
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -120,13 +121,20 @@ def test_not_improved_outcome_does_not_bypass_diagnostic_or_ui_stages() -> None:
     assert spec.states[STATES[-1]].terminal is True
 
 
-def test_groot_workflow_reaches_plan_scheduler_and_vendor_render(monkeypatch) -> None:
+def test_groot_workflow_reaches_plan_scheduler_and_vendor_render(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = "cr.ci.invalid/workbench"
+    monkeypatch.setenv("NPA_REGISTRY", registry)
+    monkeypatch.setenv(
+        "NPA_PUBLIC_REGISTRY", "ghcr.io/nebius/nebius-physical-ai"
+    )
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/source/npa")
     prepared = prepare_npa_workflow_for_submit(
         SPEC_PATH,
         run_id="groot-operational-render",
         render_options=SkypilotRenderOptions(
-            registry="cr.example.invalid/workbench",
+            registry=registry,
             materialize_registry_secrets=False,
         ),
     )
@@ -154,9 +162,20 @@ def test_groot_workflow_reaches_plan_scheduler_and_vendor_render(monkeypatch) ->
         assert "groot_learning publish" in by_name[STATES[9]]["run"]
         assert "groot_learning verify-agent-ui" in by_name[STATES[10]]["run"]
         assert "[viz]" in by_name[STATES[7]]["setup"]
-        assert by_name[STATES[3]]["config"]["kubernetes"]["pod_config"]["spec"][
-            "securityContext"
-        ] == {"runAsUser": 0, "runAsGroup": 0}
+        trusted_images = [
+            stage["resources"]["image_id"]
+            for stage in documents[1:]
+            if stage.get("resources", {}).get("image_id")
+            and is_trusted_npa_image(stage["resources"]["image_id"])
+        ]
+        assert trusted_images, "test must traverse the configured trusted-image guard"
+        for state in (STATES[2], STATES[3], STATES[5]):
+            assert "securityContext" not in yaml.safe_dump(
+                by_name[state].get("config", {})
+            )
+        assert "runAsUser: 0" not in prepared.skypilot_yaml_path.read_text(
+            encoding="utf-8"
+        )
     finally:
         prepared.temp_dir.cleanup()
 

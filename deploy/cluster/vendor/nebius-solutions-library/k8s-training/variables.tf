@@ -183,6 +183,17 @@ variable "gpu_nodes_driverfull_image" {
   default     = false
 }
 
+variable "gpu_nodes_driver_preset" {
+  description = "Nebius managed GPU driver preset used by driver-full node images."
+  type        = string
+  default     = "cuda13.0"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9._-]*$", var.gpu_nodes_driver_preset))
+    error_message = "gpu_nodes_driver_preset must be a non-empty preset name containing only letters, digits, '.', '_' or '-'."
+  }
+}
+
 variable "gpu_nodes_preset" {
   description = "Configuration for GPU amount, CPU, and RAM for nodes in the GPU node group."
   type        = string

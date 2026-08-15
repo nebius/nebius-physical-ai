@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from copy import deepcopy
 import re
 from pathlib import Path
 
@@ -11,6 +13,7 @@ import yaml
 from npa.deploy.images import (
     CONTAINER_IMAGE_NAMES,
     SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS,
+    SKYPILOT_BOOTSTRAP_RUNTIME_PROBED_TOOLS,
 )
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -74,6 +77,104 @@ def _normalize_dockerfile(dockerfile_text: str) -> str:
         joined.append(buffer)
     # Drop `# ...` shell comments used inside continued RUN lines.
     return "\n".join(re.sub(r"`#[^`]*`", " ", line) for line in joined)
+
+
+_SUDOERS_ENTRY_RE = re.compile(
+    r"(?P<principal>[A-Za-z_][A-Za-z0-9_.-]*)\s+ALL\s*=\s*"
+    r"\(\s*ALL\s*\)\s+NOPASSWD\s*:\s*(?P<commands>ALL|/[^\s'\"\\]+)"
+)
+
+
+def _passwordless_root_grants(text: str) -> set[str]:
+    """Return normalized unconditional sudoers grants from executable source."""
+
+    instructions = _normalize_dockerfile(text)
+    return {
+        f"{match.group('principal')} ALL=(ALL) NOPASSWD:{match.group('commands')}"
+        for match in _SUDOERS_ENTRY_RE.finditer(instructions)
+    }
+
+
+def _validate_structured_passwordless_root_exemption(
+    image_name: str,
+    exemption: object,
+    *,
+    source_texts: Mapping[str, str] | None = None,
+) -> None:
+    """Bind one exemption to its exact build sources and exact sudoers grants."""
+
+    assert isinstance(exemption, Mapping), image_name
+    rationale = str(exemption.get("rationale") or "").strip()
+    assert len(rationale) >= 80, f"{image_name}: passwordless-root rationale is missing"
+    sources = [str(value) for value in exemption.get("sources") or []]
+    assert sources and len(sources) == len(set(sources)), (
+        f"{image_name}: passwordless-root sources must be non-empty and unique"
+    )
+    declared = {
+        (str(item.get("source") or ""), str(item.get("sudoers_entry") or ""))
+        for item in exemption.get("grants") or []
+        if isinstance(item, Mapping)
+    }
+    assert declared and all(source and grant for source, grant in declared), (
+        f"{image_name}: passwordless-root grants must name source and sudoers_entry"
+    )
+    assert {source for source, _grant in declared} <= set(sources), (
+        f"{image_name}: declared grants must belong to the reviewed source set"
+    )
+
+    actual: set[tuple[str, str]] = set()
+    for source in sources:
+        path = WORKBENCH_DOCKER / source
+        text = (
+            source_texts[source]
+            if source_texts is not None and source in source_texts
+            else path.read_text(encoding="utf-8")
+        )
+        assert path.is_file() or source_texts is not None, (
+            f"{image_name}: passwordless-root source not found: {source}"
+        )
+        actual.update((source, grant) for grant in _passwordless_root_grants(text))
+    assert actual == declared, (
+        f"{image_name}: passwordless-root grants differ from the reviewed contract; "
+        f"added={sorted(actual - declared)}, removed={sorted(declared - actual)}"
+    )
+
+
+def _validate_derived_bootstrap_source(
+    image_name: str,
+    entry: Mapping[str, object],
+    *,
+    source_text: str | None = None,
+) -> None:
+    """Verify the exact derived Dockerfile that declares the bootstrap label."""
+
+    derived = entry.get("derived_skypilot_bootstrap_contract")
+    assert isinstance(derived, Mapping), image_name
+    assert derived.get("version") == "skypilot-0.12.2-v1", image_name
+    assert derived.get("verification") == "runtime_probe_required", image_name
+    dockerfile = WORKBENCH_DOCKER / str(derived.get("dockerfile") or "")
+    assert dockerfile != WORKBENCH_DOCKER / str(entry.get("dockerfile") or ""), (
+        f"{image_name}: derived contract must not attest the canonical Dockerfile"
+    )
+    text = source_text if source_text is not None else dockerfile.read_text(encoding="utf-8")
+    version = str(derived["version"])
+    assert f'org.nebius.npa.skypilot-bootstrap-contract="{version}"' in text
+    for token in (
+        "openssh-server",
+        "rsync",
+        "sudo",
+        "ubuntu ALL=(ALL) NOPASSWD:ALL",
+        "ssh-keygen -A",
+        "rm -f /etc/ssh/ssh_host_*",
+        'PasswordAuthentication no',
+        'PermitRootLogin no',
+        r'exec \"$@\"',
+    ):
+        assert token in text, f"{image_name}: derived source missing {token!r}"
+    assert _final_user(text) == "ubuntu", image_name
+    assert text.index("ssh-keygen -A") < text.index("rm -f /etc/ssh/ssh_host_*"), (
+        f"{image_name}: runtime host-key generation must precede build-key removal"
+    )
 
 
 def _bake_matches(dockerfile_text: str, patterns: list[dict]) -> list[str]:
@@ -207,6 +308,56 @@ def test_packaged_skypilot_attestation_inventory_matches_contract() -> None:
     assert SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS == declared
 
 
+def test_runtime_probed_bootstrap_inventory_matches_exact_derived_sources() -> None:
+    contract = _load_contract()
+    declared = {
+        name
+        for name, item in contract["images"].items()
+        if (
+            isinstance(item.get("derived_skypilot_bootstrap_contract"), Mapping)
+            and item["derived_skypilot_bootstrap_contract"].get("verification")
+            == "runtime_probe_required"
+        )
+    }
+    assert SKYPILOT_BOOTSTRAP_RUNTIME_PROBED_TOOLS == declared
+    for name in sorted(declared):
+        _validate_derived_bootstrap_source(name, contract["images"][name])
+
+
+@pytest.mark.parametrize(
+    "removed_token",
+    [
+        "openssh-server",
+        "ssh-keygen -A",
+        "rm -f /etc/ssh/ssh_host_*",
+        r'exec \"$@\"',
+        'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"',
+    ],
+)
+def test_derived_bootstrap_source_guard_rejects_contract_mutations(
+    removed_token: str,
+) -> None:
+    entry = _load_contract()["images"]["groot"]
+    dockerfile = WORKBENCH_DOCKER / entry["derived_skypilot_bootstrap_contract"][
+        "dockerfile"
+    ]
+    text = dockerfile.read_text(encoding="utf-8")
+    assert removed_token in text
+
+    with pytest.raises(AssertionError):
+        _validate_derived_bootstrap_source(
+            "groot", entry, source_text=text.replace(removed_token, "removed")
+        )
+
+
+def test_derived_bootstrap_contract_cannot_be_redirected_to_canonical_source() -> None:
+    entry = deepcopy(_load_contract()["images"]["groot"])
+    entry["derived_skypilot_bootstrap_contract"]["dockerfile"] = "groot/Dockerfile"
+
+    with pytest.raises(AssertionError, match="must not attest the canonical"):
+        _validate_derived_bootstrap_source("groot", entry)
+
+
 def test_fiftyone_image_has_skypilot_kubernetes_prerequisites() -> None:
     """The workflow image must survive SkyPilot's non-root pod bootstrap."""
     text = (WORKBENCH_DOCKER / "fiftyone" / "Dockerfile").read_text(encoding="utf-8")
@@ -229,11 +380,59 @@ def test_public_images_explain_passwordless_root(image_name: str) -> None:
     grants_passwordless_root = bool(
         re.search(r"(?im)^\s*[^#\n]+\bNOPASSWD\s*:\s*(?:ALL|/)", text)
     )
-    if grants_passwordless_root:
-        rationale = str(entry.get("passwordless_root_exemption") or "").strip()
+    exemption = entry.get("passwordless_root_exemption")
+    if isinstance(exemption, Mapping):
+        _validate_structured_passwordless_root_exemption(image_name, exemption)
+    elif grants_passwordless_root:
+        rationale = str(exemption or "").strip()
         assert len(rationale) >= 80, (
             f"{image_name}: public image grants passwordless root without a narrow "
             "passwordless_root_exemption in packaging-contract.yaml"
+        )
+
+
+def test_groot_passwordless_root_contract_is_mutation_sensitive() -> None:
+    exemption = _load_contract()["images"]["groot"]["passwordless_root_exemption"]
+    assert exemption["sources"] == [
+        "groot/Dockerfile",
+        "common/install_isaac_runtime_base.sh",
+        "groot/Dockerfile.k8s-prereqs",
+    ]
+    source_texts = {
+        source: (WORKBENCH_DOCKER / source).read_text(encoding="utf-8")
+        for source in exemption["sources"]
+    }
+    _validate_structured_passwordless_root_exemption(
+        "groot", exemption, source_texts=source_texts
+    )
+
+    added_grant = dict(source_texts)
+    added_grant["groot/Dockerfile"] += (
+        "\nRUN printf 'root ALL=(ALL) NOPASSWD:ALL\\n' > /etc/sudoers.d/root\n"
+    )
+    with pytest.raises(AssertionError, match="grants differ"):
+        _validate_structured_passwordless_root_exemption(
+            "groot", exemption, source_texts=added_grant
+        )
+
+    for source in (
+        "common/install_isaac_runtime_base.sh",
+        "groot/Dockerfile.k8s-prereqs",
+    ):
+        removed_grant = dict(source_texts)
+        removed_grant[source] = removed_grant[source].replace(
+            "ubuntu ALL=(ALL) NOPASSWD:ALL", "ubuntu ALL=(ALL) PASSWD:ALL", 1
+        )
+        with pytest.raises(AssertionError, match="grants differ"):
+            _validate_structured_passwordless_root_exemption(
+                "groot", exemption, source_texts=removed_grant
+            )
+
+    missing_rationale = deepcopy(exemption)
+    missing_rationale["rationale"] = ""
+    with pytest.raises(AssertionError, match="rationale is missing"):
+        _validate_structured_passwordless_root_exemption(
+            "groot", missing_rationale, source_texts=source_texts
         )
 
 

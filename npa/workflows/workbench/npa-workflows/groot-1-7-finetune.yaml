@@ -76,24 +76,11 @@ resources:
     accelerators: "{{config.gpu_type}}:{{config.gpu_count}}"
     cpus: 32
     memory: 200Gi
-    kubernetes:
-      pod_config:
-        spec:
-          # The pinned upstream GR00T image writes its uv environment, model cache,
-          # and checkpoint tree below root-owned image paths during startup.
-          # Cluster admission, read-only inputs, and Trivy remain required gates.
-          securityContext: {runAsUser: 0, runAsGroup: 0}
   evaluator-gpu:
     cloud: kubernetes
     accelerators: "{{config.gpu_type}}:1"
     cpus: 16
     memory: 96Gi
-    kubernetes:
-      pod_config:
-        spec:
-          # Baseline initialization and the pinned torchcodec/GR00T evaluator write
-          # train-stat-derived processor files below the root-owned checkpoint tree.
-          securityContext: {runAsUser: 0, runAsGroup: 0}
   artifact-cpu:
     cloud: kubernetes
     cpus: 8

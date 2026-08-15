@@ -41,6 +41,12 @@ TOKENIZER_ID = "google/umt5-xxl"
 TOKENIZER_REF = (
     "66cb9e7e85526fe440a945569e42c72fb6cbc0ad"  # gitleaks:allow; public revision
 )
+ACCEPTED_TORCH_VERSION = "2.13.0"
+ACCEPTED_CUDA_VERSION = "13.0"
+ACCEPTED_TORCHVISION_VERSION = "0.28.0"
+ACCEPTED_NCCL_VERSION = "2.29.7"
+ACCEPTED_NCCL_VERSION_CODE = 22907
+ACCEPTED_NCCL_BUILD_API_VERSION = (2, 29, 7)
 
 
 class WanRrdError(RuntimeError):
@@ -129,6 +135,22 @@ def _require_list(value: Any, message: str) -> list[Any]:
     if not isinstance(value, list):
         raise WanRrdError(message)
     return value
+
+
+def _public_version(value: Any) -> str:
+    return str(value or "").split("+", 1)[0]
+
+
+def _require_torch_cuda_runtime(
+    runtime: dict[str, Any], *, required_arch: str, context: str
+) -> None:
+    _require(
+        _public_version(runtime.get("torch")) == ACCEPTED_TORCH_VERSION
+        and runtime.get("torch_cuda") == ACCEPTED_CUDA_VERSION
+        and required_arch in (runtime.get("torch_cuda_arch_list") or []),
+        f"{context} is not the accepted Torch {ACCEPTED_TORCH_VERSION} / "
+        f"CUDA {ACCEPTED_CUDA_VERSION} / {required_arch} closure",
+    )
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -475,6 +497,14 @@ def _validate_multigpu(
             "sm_100" in (item.get("torch_cuda_arch_list") or []),
             f"rank {rank} lacks sm_100",
         )
+        _require_torch_cuda_runtime(
+            item, required_arch="sm_100", context=f"rank {rank} CUDA runtime"
+        )
+        _require(
+            tuple(item.get("nccl_build_api_version") or ())
+            == ACCEPTED_NCCL_BUILD_API_VERSION,
+            f"rank {rank} has the wrong NCCL build API version",
+        )
         gpu_hashes.add(str(device.get("uuid_sha256") or ""))
         host_hashes.add(str(item.get("hostname_sha256") or ""))
 
@@ -529,12 +559,13 @@ def _validate_multigpu(
             item.get("loaded_nccl"), f"rank {rank} lacks loaded NCCL evidence"
         )
         _require(
-            loaded_nccl.get("version") == "2.27.7"
-            and loaded_nccl.get("version_code") == 22707
+            loaded_nccl.get("version") == ACCEPTED_NCCL_VERSION
+            and loaded_nccl.get("version_code") == ACCEPTED_NCCL_VERSION_CODE
             and str(loaded_nccl.get("library_basename") or "").startswith(
                 "libnccl.so.2"
             ),
-            f"rank {rank} did not load the accepted NCCL 2.27.7 runtime",
+            f"rank {rank} did not load the accepted NCCL "
+            f"{ACCEPTED_NCCL_VERSION} runtime",
         )
 
     _require(
@@ -565,8 +596,8 @@ def _validate_multigpu(
         "NCCL summary schema is invalid",
     )
     _require(
-        nccl_summary.get("loaded_version") == "2.27.7",
-        "NCCL summary does not prove loaded version 2.27.7",
+        nccl_summary.get("loaded_version") == ACCEPTED_NCCL_VERSION,
+        f"NCCL summary does not prove loaded version {ACCEPTED_NCCL_VERSION}",
     )
     log_entries = _require_list(
         nccl_summary.get("rank_logs"), "NCCL summary must contain four rank logs"
@@ -597,7 +628,11 @@ def _validate_multigpu(
             f"rank {rank} NCCL log hash/size is invalid",
         )
         _require(
-            re.search(r"\bNCCL version 2\.27\.7(?:\+cuda[0-9.]+)?\b", log_text)
+            re.search(
+                rf"\bNCCL version {re.escape(ACCEPTED_NCCL_VERSION)}"
+                r"(?:\+cuda[0-9.]+)?\b",
+                log_text,
+            )
             is not None
             and re.search(r"\bInit COMPLETE\b", log_text) is not None
             and entry.get("version_line_observed") is True
@@ -631,11 +666,10 @@ def _validate_single_gpu(
         and device.get("compute_capability") == [12, 0],
         "single-GPU evidence is not the accepted RTX PRO 6000 sm_120 device",
     )
-    _require(
-        str(topology.get("torch") or "").startswith("2.7.1+cu128")
-        and topology.get("torch_cuda") == "12.8"
-        and "sm_120" in (topology.get("torch_cuda_arch_list") or []),
-        "single-GPU CUDA runtime is not the accepted sm_120 closure",
+    _require_torch_cuda_runtime(
+        topology,
+        required_arch="sm_120",
+        context="single-GPU CUDA runtime",
     )
     driver_versions = _require_list(
         topology.get("driver_versions"),
@@ -748,7 +782,20 @@ def validate_wan_run(run_dir: Path, layout: WanRunLayout) -> dict[str, Any]:
         _require_mapping(
             primary.get("generation"), "multi-GPU generation object is absent"
         )
-        _require_mapping(primary.get("runtime"), "multi-GPU runtime object is absent")
+        primary_runtime = _require_mapping(
+            primary.get("runtime"), "multi-GPU runtime object is absent"
+        )
+        _require_torch_cuda_runtime(
+            primary_runtime,
+            required_arch="sm_100",
+            context="multi-GPU primary runtime",
+        )
+        _require(
+            primary_runtime.get("nccl_loaded_version") == ACCEPTED_NCCL_VERSION
+            and tuple(primary_runtime.get("nccl_build_api_version") or ())
+            == ACCEPTED_NCCL_BUILD_API_VERSION,
+            "multi-GPU primary runtime has the wrong NCCL version closure",
+        )
         _require(
             model.get("weights_baked") is False,
             "model weights must remain runtime-only",
@@ -779,6 +826,34 @@ def validate_wan_run(run_dir: Path, layout: WanRunLayout) -> dict[str, Any]:
         _require(
             inventory.get("weights_baked") is False,
             "runtime inventory reports baked weights",
+        )
+        inventory_runtime = _require_mapping(
+            inventory.get("runtime"), "multi-GPU runtime inventory is absent"
+        )
+        for key in (
+            "torch",
+            "torch_cuda",
+            "torch_cuda_arch_list",
+            "driver_versions",
+            "nccl_build_api_version",
+            "nccl_loaded_version",
+        ):
+            _require(
+                inventory_runtime.get(key) == primary_runtime.get(key),
+                f"multi-GPU runtime inventory disagrees on {key}",
+            )
+        package_versions = _require_mapping(
+            inventory.get("package_versions"),
+            "multi-GPU package-version inventory is absent",
+        )
+        _require(
+            _public_version(package_versions.get("torch"))
+            == ACCEPTED_TORCH_VERSION
+            and _public_version(package_versions.get("torchvision"))
+            == ACCEPTED_TORCHVISION_VERSION
+            and package_versions.get("nvidia-nccl-cu13")
+            == ACCEPTED_NCCL_VERSION,
+            "multi-GPU package-version inventory is not the accepted runtime closure",
         )
     else:
         _require(
@@ -975,7 +1050,7 @@ def _execution_markdown(evidence: dict[str, Any]) -> str:
         f"- Ulysses: size `{distributed['ulysses']['size']}`, distributed-attention calls "
         f"`{attention_calls}`, all-to-all calls `{all_to_all_calls}` per rank\n"
         f"- Upstream barriers: `{barrier_calls}` per rank; observer terminal barrier: `true` on every rank\n"
-        "- Loaded NCCL: `2.27.7`, independently confirmed in every rank log\n"
+        f"- Loaded NCCL: `{ACCEPTED_NCCL_VERSION}`, independently confirmed in every rank log\n"
         "- Process-group teardown: `process_group_destroyed` on every rank"
     )
 

@@ -92,10 +92,10 @@ break: extras became mandatory for dataset/training deps, `eval_freq` became
 
 Checked against the 0.5.1, 0.6.0, and 0.6.1 wheels:
 
-- **Import surface: 19/19 bindings resolve in 0.6.1**, unchanged all the way
+- **Import surface: 19/19 bindings resolve statically in 0.6.1**, unchanged all the way
   back from 0.5.1. `lerobot.types` is not imported anywhere in this repo — the
-  only reference is an archived work log — so 0.6.1's one breaking change is a
-  no-op here.
+  module is not referenced anywhere else in the tree — so 0.6.1's one breaking
+  change is a no-op here.
 - **Signatures are additive only.** `make_pre_post_processors` gained
   `pretrained_revision` and `EpisodeAwareSampler` gained `seed` /
   `absolute_to_relative_idx` (both in 0.6.0); `LeRobotDataset.__init__` gained
@@ -297,7 +297,7 @@ contract rather than reading it:
 
 | Claim | Result |
 |---|---|
-| 19/19 bindings resolve | all 19 **import** for real, including `DiffusionPolicy` and `SmolVLAPolicy` |
+| 19/19 bindings import at runtime | all 19 **import** for real, including `DiffusionPolicy` and `SmolVLAPolicy` |
 | `env_eval_freq` replaces `eval_freq` | `lerobot-train --help` offers `--env_eval_freq`, and no longer `--eval_freq` |
 | `--policy.path` still works | accepted — parsing reaches a Hub lookup, while a bogus `--policy.x` is rejected as unrecognized. It is absent from `--help` because draccus resolves the path alias before argument parsing, which is easy to misread as a break |
 | adapters need no migration | a dataset written by `npa/adapter/sim_to_lerobot.py` loads under 0.6.1 `LeRobotDataset`, with video frames decoded and the expected `observation.state` / `action` / `observation.images.*` keys |

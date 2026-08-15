@@ -67,7 +67,7 @@ locals {
   gpu_nodes_platform = coalesce(var.gpu_nodes_platform, local.current_region_defaults.gpu_nodes_platform)
   gpu_nodes_preset   = coalesce(var.gpu_nodes_preset, local.current_region_defaults.gpu_nodes_preset)
   infiniband_fabric  = coalesce(var.infiniband_fabric, local.current_region_defaults.infiniband_fabric)
-  device_preset      = "cuda13.0"
+  device_preset      = var.gpu_nodes_driver_preset
   gpu_operator_cdi_enabled = (
     !var.gpu_nodes_driverfull_image &&
     var.mig_strategy != null &&

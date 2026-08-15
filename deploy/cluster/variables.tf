@@ -90,6 +90,34 @@ variable "gpu_nodes_preemptible" {
   default     = false
 }
 
+variable "gpu_driver_mode" {
+  description = "GPU driver strategy: auto and managed-image use the Nebius managed driver-full node image; operator installs the in-cluster NVIDIA GPU Operator. CPU-only clusters are unaffected."
+  type        = string
+  default     = "auto"
+
+  validation {
+    condition     = contains(["auto", "managed-image", "operator"], var.gpu_driver_mode)
+    error_message = "gpu_driver_mode must be one of auto, managed-image, or operator."
+  }
+}
+
+variable "managed_driver_preset" {
+  description = "Nebius gpu_settings.drivers_preset selected by auto/managed-image mode."
+  type        = string
+  default     = "cuda13.0"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9._-]*$", var.managed_driver_preset))
+    error_message = "managed_driver_preset must start with an alphanumeric character and contain only letters, digits, '.', '_' or '-'."
+  }
+}
+
+variable "allow_unsafe_nvswitch_operator" {
+  description = "Explicit diagnostic acknowledgement required to use operator mode on an NVSwitch topology. This can reintroduce the driver/Fabric Manager host-device ordering race."
+  type        = bool
+  default     = false
+}
+
 variable "capacity_block_group" {
   description = "Optional capacity block group ID used as a strict GPU node-group reservation selector. Leave empty for on-demand capacity."
   type        = string

@@ -25,6 +25,21 @@ lands only in `/workspace/.cache/npa/wan2-2/runtime`.
 Offline reuse succeeds only for a complete cache whose requirements/Python-ABI
 stamp matches exactly; empty or deliberately stale caches fail closed with exit
 69, while missing operator acceptance fails before download with exit 78.
+The image build validates the dependency union from two independent sources:
+the metadata of every distribution actually installed in `/opt/wan-base`, and
+PEP 658 core-metadata sidecars selected by the exact wheel hashes in
+`runtime-requirements.txt`. It checks every applicable `Requires-Dist` edge and
+allows only the declared Torch/CUDA family to be absent from the public image;
+the Torch/NVIDIA wheel payloads are not downloaded or baked during that check.
+The resulting hash-bound closure report is rechecked by the image smoke.
+
+Before the private runtime overlay exists, importing full `wan` is intentionally
+invalid because upstream imports Torch eagerly. The base-image smoke therefore
+executes the input-contract and EasyDict compatibility modules, verifies Wan
+package discovery and compiled source bytecode, confirms Torch is absent, and
+rechecks the closure report. This proves the strongest honest pre-overlay
+boundary; the real single- and multi-GPU workflows prove the full import and
+inference path only after operator-accepted runtime provisioning.
 Workflow submissions must forward the acceptance gate and Hugging Face token
 through the secret channel with `--secret-env NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS`
 and `--secret-env HF_TOKEN`; neither value belongs in a spec or rendered YAML.
@@ -67,7 +82,7 @@ live input/output evidence is accepted.
 ## GPU and runtime gates
 
 The single-GPU path requires exactly one compute-capability 12.0 device. Its
-PyTorch 2.7.1 CUDA 12.8 wheel must report `sm_120`, FlashAttention must remain
+PyTorch 2.13.0 CUDA 13.0 wheel must report `sm_120`, FlashAttention must remain
 absent, the patched official model binding must point at native PyTorch SDPA,
 and a BF16 SDPA probe must be finite.
 
@@ -160,11 +175,11 @@ local plus remote verification results. Only a verified manifest names the
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
-| `wan2.2_ti2v_5b_text_to_video` | accepted | private validation record: fresh real 1280×704 output on RTX PRO 6000 Blackwell from the accepted runtime-fetch candidate |
-| `wan2.2_decoded_mp4_validation` | accepted | same run decoded all 17 frames at 24 fps and passed non-uniform-content gates |
-| `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted | private validation record: official four-rank path on 4×B200 with the accepted runtime-fetch candidate |
-| `wan2.2_distributed_rank_topology_validation` | accepted | same run proved unique ranks/devices, NCCL 2.27.7 runtime transport and sum 10/10, T5/DiT FULL_SHARD, Ulysses calls, and process-group teardown |
-| `wan2.2_verified_rerun_recording` | accepted | fresh single- and four-GPU RRDs were built from their exact MP4/JSON evidence, uploaded, and remotely re-verified; the single-GPU RRD was loaded byte-identically and visibly rendered in the live agent |
+| `wan2.2_ti2v_5b_text_to_video` | accepted historical evidence | prior Torch 2.7.1/CUDA 12.8 runtime produced a real 1280×704 output on RTX PRO 6000 Blackwell; the current Torch 2.13.0/CUDA 13.0 gate requires new operator-accepted live evidence |
+| `wan2.2_decoded_mp4_validation` | accepted historical evidence | the same prior run decoded all 17 frames at 24 fps and passed non-uniform-content gates |
+| `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted historical evidence | the prior runtime completed the official four-rank path on 4×B200 |
+| `wan2.2_distributed_rank_topology_validation` | accepted historical evidence | the prior runtime proved unique ranks/devices, NCCL 2.27.7 transport and sum 10/10, T5/DiT FULL_SHARD, Ulysses calls, and process-group teardown; the current NCCL 2.29.7 gate requires new operator-accepted live qualification |
+| `wan2.2_verified_rerun_recording` | accepted historical evidence | prior single- and four-GPU RRDs were built from their exact MP4/JSON evidence, uploaded, and remotely re-verified; those artifacts document the prior runtime and do not satisfy the current runtime gate |
 | `wan2.2_ti2v_5b_image_to_video` | deferred | optional real input path exists but lacks separately accepted live evidence |
 | A14B, S2V-14B, Animate-14B | deferred | separate models and input/GPU contracts |
 | official TI2V fine-tuning | deferred | pinned official source has no TI2V training entrypoint |
@@ -173,13 +188,14 @@ local plus remote verification results. Only a verified manifest names the
 The generated RRD is an evidence visualization of official inference. It does
 not turn Wan into a world model or add action conditioning.
 
-Kubernetes independently reported the accepted OCI digest as the running
-container `imageID` for both the one-GPU and four-GPU pods. The immutable tuple
+For the historical qualification, Kubernetes independently reported the then-
+accepted OCI digest as the running container `imageID` for both the one-GPU and
+four-GPU pods. The immutable tuple
 of OCI/platform digests, runtime-requirements hash, source/model/tokenizer
 revisions, observed image IDs, run IDs, and MP4/RRD proof hashes is recorded in
 `npa/src/npa/deploy/wan2_2_image_manifest.json`.
 
-The materialized accepted distributed recording is:
+The materialized historical distributed recording is:
 
 - `s3://<project-bucket>/oss-solutions/wan2.2-multigpu/<private-run-id>/wan2_2_ti2v_5b_multigpu.rrd`
   (2,948,508 bytes; SHA-256
@@ -197,8 +213,8 @@ visibly rendered the 3,045,269-byte single-GPU RRD
 ## Licensing and publication
 
 The pinned source, model, and tokenizer declare Apache-2.0. The shipped runtime
-contains only the digest-pinned official Python/Debian base, CPU-only PyTorch,
-and audited OSS dependencies; Debian copyright records and wheel metadata carry
+contains only the digest-pinned official Python/Debian base and audited OSS
+dependencies; Debian copyright records and wheel metadata carry
 their GPL/LGPL/BSD/MIT/Apache notices. CUDA Python distributions, model/tokenizer,
 credentials, data, and caches are runtime-only. Public eligibility requires four
 separate checks: scan the pushed digest and every individual layer/history entry

@@ -646,11 +646,13 @@ containers:
       runs_as: ubuntu
       base_image: python:3.10-slim-bookworm (digest pinned)
       network: runtime-only PyTorch CUDA, Hugging Face model/tokenizer, and S3
-      external_fetch: [pytorch-cu128-after-operator-acceptance, huggingface, s3]
+      external_fetch: [pytorch-cu130-after-operator-acceptance, huggingface, s3]
       notes: >-
         Ships no CUDA/NVIDIA Python distribution or model bytes. The no-GPU
-        golden eval proves source/health and refusal; accepted CUDA execution is
-        a dedicated live workflow gate.
+        golden eval proves source/health, the current Torch 2.13.0/CUDA 13.0
+        metadata closure, and refusal. The prior Torch 2.7.1/CUDA 12.8 live
+        evidence is historical; current CUDA execution remains a dedicated
+        operator-accepted live workflow gate.
     golden_eval:
       kind: container-smoke
       command: bash /opt/npa/wan2-2/smoke.sh
