@@ -460,6 +460,33 @@ def test_agent_relay_client_is_secret_mounted_as_non_gpu_sidecar() -> None:
     assert all(len(item["name"]) <= 15 for item in turn["ports"])
 
 
+def test_agent_relay_deployment_requires_resolved_private_service_ip() -> None:
+    with pytest.raises(LeIsaacConfigError, match="agent relay media server must be an IP"):
+        deployment_manifest(
+            run_id="live-relay",
+            namespace="leisaac",
+            image=IMAGE,
+            media_host="8.8.8.8",
+            session_nonce=NONCE,
+            relay_client_secret="live-relay-relay-client",
+            recorder_secret=RECORDER_SECRET,
+            eula_env=EULA_ENV,
+        )
+
+    with pytest.raises(LeIsaacConfigError, match="private IPv4"):
+        deployment_manifest(
+            run_id="live-relay",
+            namespace="leisaac",
+            image=IMAGE,
+            media_host="8.8.8.8",
+            media_server="8.8.4.4",
+            session_nonce=NONCE,
+            relay_client_secret="live-relay-relay-client",
+            recorder_secret=RECORDER_SECRET,
+            eula_env=EULA_ENV,
+        )
+
+
 def test_agent_relay_manifest_keeps_tcp_private_and_media_on_agent_public_ip() -> None:
     manifest = session_manifest(
         run_id="live-relay",

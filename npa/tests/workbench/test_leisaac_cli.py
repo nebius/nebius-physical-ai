@@ -413,9 +413,16 @@ def _patch_launch(monkeypatch):
         "npa.cli.workbench.leisaac._agent_certificate_sha256", lambda _ip: "f" * 64
     )
     monkeypatch.setattr("npa.cli.workbench.leisaac._wait_ready", lambda *_args: None)
+    def resolve_relay_media_server(*_args):
+        # Regression: the Service must already have been applied, while the
+        # Deployment must not yet exist when its stable ClusterIP is resolved.
+        assert any(item.get("kind") == "Service" for item in applied)
+        assert not any(item.get("kind") == "Deployment" for item in applied)
+        return "10.96.34.22"
+
     monkeypatch.setattr(
         "npa.cli.workbench.leisaac._relay_media_server",
-        lambda *_args: "10.96.34.22",
+        resolve_relay_media_server,
     )
     monkeypatch.setattr(
         "npa.cli.workbench.leisaac._remove_agent_turn",
@@ -621,7 +628,9 @@ def test_launch_agent_relay_wires_private_cluster_public_agent_and_manifest(
             },
         )
     ]
-    assert applied[0]["spec"]["type"] == "ClusterIP"
+    services = [item for item in applied if item.get("kind") == "Service"]
+    assert len(services) == 1
+    assert services[0]["spec"]["type"] == "ClusterIP"
     assert applied[1]["kind"] == "Secret"
     assert applied[2]["kind"] == "Secret"
     assert applied[2]["metadata"]["name"].endswith("-recorder")
@@ -640,7 +649,8 @@ def test_launch_agent_relay_wires_private_cluster_public_agent_and_manifest(
     )
     assert "hostPort" not in media_port
     assert (
-        "npa.nebius.com/turn-peer-source" not in applied[-1]["metadata"]["annotations"]
+        "npa.nebius.com/turn-peer-source"
+        not in services[0]["metadata"]["annotations"]
     )
     assert ingress_calls == [
         {
@@ -819,11 +829,11 @@ def test_relaunch_migrates_and_removes_only_the_prior_gpu_egress_rule(
     result = runner.invoke(app, _args())
 
     assert result.exit_code == 0, result.output
+    services = [item for item in applied if item.get("kind") == "Service"]
+    assert len(services) == 1
     assert (
-        "npa.nebius.com/turn-peer-source" not in applied[0]["metadata"]["annotations"]
-    )
-    assert (
-        "npa.nebius.com/turn-peer-source" not in applied[-1]["metadata"]["annotations"]
+        "npa.nebius.com/turn-peer-source"
+        not in services[0]["metadata"]["annotations"]
     )
     assert removals == [
         (

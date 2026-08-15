@@ -450,10 +450,12 @@ def deployment_manifest(
             "LeIsaac demonstration collection requires a recorder Secret"
         )
     media_host = validate_public_ip(media_host, "media host")
-    del media_server  # compatibility-only; the deployment never consumes it
-    # Relay media addressing belongs to the post-start session manifest, not
-    # this pod template. Coturn binds the downward-API pod IP, so deployment
-    # creation must not require the later-discovered Service ClusterIP.
+    if relay_client_secret:
+        # The stable relay Service must exist before this manifest is rendered.
+        # Coturn still binds the downward-API pod IP, but validating the
+        # Service peer here makes launch ordering and the eventual session
+        # manifest agree before the GPU Deployment is applied.
+        validate_private_ip(media_server, "agent relay media server")
     if not re.fullmatch(r"[a-f0-9]{64}", session_nonce):
         raise LeIsaacConfigError(
             "session nonce must be 64 lowercase hexadecimal characters"

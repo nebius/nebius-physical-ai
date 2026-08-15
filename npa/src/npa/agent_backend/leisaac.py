@@ -136,7 +136,11 @@ def load_manifest_artifact(
             return None
         try:
             response = s3.get_object(Bucket=primary_bucket, Key=exact_key)
-        except Exception:  # noqa: BLE001 - exact run credential fails closed
+        except Exception as exc:  # noqa: BLE001 - SDK error types vary
+            LOG.debug(
+                "Exact registered LeIsaac manifest lookup failed (%s)",
+                type(exc).__name__,
+            )
             return None
         body = response["Body"].read(131073)
         if len(body) > 131072:
@@ -166,7 +170,10 @@ def load_manifest_artifact(
         try:
             response = s3.get_object(Bucket=primary_bucket, Key=canonical_key)
         except Exception as exc:  # noqa: BLE001 - SDKs expose different not-found types
-            LOG.debug("Exact LeIsaac manifest lookup missed; using discovery", exc_info=exc)
+            LOG.debug(
+                "Exact LeIsaac manifest lookup missed; using discovery (%s)",
+                type(exc).__name__,
+            )
         else:
             body = response["Body"].read(131073)
             if len(body) <= 131072:

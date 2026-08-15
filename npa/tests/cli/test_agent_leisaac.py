@@ -312,6 +312,37 @@ def test_manifest_artifact_loader_reads_configured_canonical_key_without_discove
     ]
 
 
+def test_manifest_fast_path_logs_credential_safely_and_preserves_discovery(
+    caplog,
+) -> None:
+    payload = b'{"schema":"npa.leisaac.session.v1"}'
+    secret = "opaque-credential-detail"
+
+    class S3:
+        calls = 0
+
+        def get_object(self, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError(secret)
+            return {"Body": io.BytesIO(payload)}
+
+    artifact = SimpleNamespace(key="runs/live/reports/leisaac-session.json")
+    with caplog.at_level(logging.DEBUG, logger="npa.agent_backend.leisaac"):
+        loaded = load_manifest_artifact(
+            "live",
+            validate_run_id=lambda value: value,
+            s3_client=lambda: (S3(), {"bucket": "bucket", "prefix": "runs"}),
+            s3_buckets=lambda _s3, _settings: ["bucket"],
+            find_artifacts=lambda *_args, **_kwargs: ("bucket", [artifact]),
+        )
+
+    assert loaded == {"schema": "npa.leisaac.session.v1"}
+    assert "Exact LeIsaac manifest lookup missed; using discovery" in caplog.text
+    assert "RuntimeError" in caplog.text
+    assert secret not in caplog.text
+
+
 @pytest.mark.parametrize(
     "override,reason_fragment",
     [

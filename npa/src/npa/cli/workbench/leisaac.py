@@ -940,6 +940,11 @@ def launch_cmd(
             )
             _apply(context, namespace, [service])
             relay_installed = True
+            # The ClusterIP is allocated when the relay Service is created and
+            # remains stable for this launch transaction. Resolve it before
+            # rendering the Deployment so the relay topology is validated
+            # before any GPU workload is scheduled.
+            media_server = _relay_media_server(context, namespace, name)
             # Sessions from the previous topology ran coturn on the public agent
             # itself. Remove only this run's matching unit before the backhaul
             # relay takes ownership of public UDP 3478.
@@ -1003,6 +1008,7 @@ def launch_cmd(
             image=image,
             media_host=media_host,
             session_nonce=nonce,
+            media_server=media_server,
             image_pull_secret=image_pull_secret,
             relay_client_secret=(
                 f"{name}-relay-client" if transport == Transport.agent_relay else ""
@@ -1019,7 +1025,6 @@ def launch_cmd(
         if transport == Transport.agent_relay:
             if ssh is None:
                 raise RuntimeError("LeIsaac agent relay has no SSH transport")
-            media_server = _relay_media_server(context, namespace, name)
             for source in source_ranges:
                 for protocol in ("UDP", "TCP"):
                     ingress_tool = (
@@ -1044,19 +1049,6 @@ def launch_cmd(
                     tool=_TURN_MEDIA_TOOL,
                     protocol="UDP",
                 )
-            _apply(
-                context,
-                namespace,
-                [
-                    relay_service_manifest(
-                        run_id=run_id,
-                        namespace=namespace,
-                        agent_project=agent_project,
-                        agent_name=agent_name,
-                        source_ranges=source_ranges,
-                    )
-                ],
-            )
         health = (
             _relay_status(ssh, session_nonce=nonce)
             if ssh is not None
