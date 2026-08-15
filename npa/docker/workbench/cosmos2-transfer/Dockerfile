@@ -206,8 +206,6 @@ RUN set -eux; \
     id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu; \
     ln -sfn /opt/npa/src/npa \
       /opt/cosmos/cosmos-transfer2.5/.venv/lib/python3.10/site-packages/npa; \
-    env -u PYTHONPATH "${NPA_BAKED_PYTHON}" -c \
-      'import npa.cli.main; import npa.workflows.sim2real.runtime_attestation'; \
     printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu; \
     chmod 0440 /etc/sudoers.d/ubuntu; \
     printf '%s\n' '#!/bin/sh' \
@@ -250,7 +248,7 @@ RUN set -eux; \
       'exec /opt/cosmos/cosmos-transfer2.5/.venv/bin/python -m npa.cli.main "$@"' \
       > /opt/cosmos/cosmos-transfer2.5/.venv/bin/npa; \
     chmod 0755 /opt/cosmos/cosmos-transfer2.5/.venv/bin/npa; \
-    /opt/cosmos/cosmos-transfer2.5/.venv/bin/python -c \
+    env -u PYTHONPATH "${NPA_BAKED_PYTHON}" -c \
       'import npa.cli.main; import npa.workflows.sim2real.runtime_attestation'; \
     /opt/cosmos/cosmos-transfer2.5/.venv/bin/npa \
       workbench cosmos2 transfer --help > /tmp/npa-cosmos2-help.txt; \
