@@ -222,6 +222,24 @@ function screenshotStats(filePath) {
   };
 }
 
+async function screenshotLocatorRegion(page, locator, filePath) {
+  // Artifact inventory refresh replaces card nodes in place. Resolve its
+  // current geometry, then capture that region at page level so evidence does
+  // not depend on the same element instance surviving font/layout work inside
+  // Playwright's element-screenshot action.
+  await locator.waitFor({ state: "visible", timeout: 0 });
+  const box = await locator.boundingBox();
+  const viewport = page.viewportSize();
+  if (!box || !viewport) throw new Error("artifact-card evidence region is unavailable");
+  const x = Math.max(0, box.x);
+  const y = Math.max(0, box.y);
+  const width = Math.min(box.width, viewport.width - x);
+  const height = Math.min(box.height, viewport.height - y);
+  if (width <= 0 || height <= 0) throw new Error("artifact-card evidence region has zero geometry");
+  await page.screenshot({ path: filePath, clip: { x, y, width, height } });
+  fs.chmodSync(filePath, 0o600);
+}
+
 function downloadPublicMcap(url, destination, redirects = 0) {
   if (redirects > 3) return Promise.reject(new Error("public MCAP redirected too many times"));
   return new Promise((resolve, reject) => {
@@ -387,8 +405,7 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
       evidenceDir,
       "live-hosted-preflight-artifact-card-desktop.png",
     );
-    await artifactCard.screenshot({ path: desktopCardEvidence });
-    fs.chmodSync(desktopCardEvidence, 0o600);
+    await screenshotLocatorRegion(page, artifactCard, desktopCardEvidence);
     const expectedLabels = ["View", "Foxglove", "Lichtblick", "Video", "Image", "Data"];
     const desktopLabels = await page.locator(".render-mode-tabs .render-mode-tab").allTextContents();
     if (desktopLabels.map((value) => value.trim()).join("|") !== expectedLabels.join("|")) {
@@ -444,8 +461,7 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
       evidenceDir,
       "live-hosted-preflight-artifact-card-mobile.png",
     );
-    await artifactCard.screenshot({ path: mobileCardEvidence });
-    fs.chmodSync(mobileCardEvidence, 0o600);
+    await screenshotLocatorRegion(page, artifactCard, mobileCardEvidence);
     const mobileLabels = await page.locator(".render-mode-tabs .render-mode-tab").allTextContents();
     if (mobileLabels.map((value) => value.trim()).join("|") !== expectedLabels.join("|")) {
       throw new Error("mobile deployed viewer tab order does not match the required labels");
@@ -697,8 +713,7 @@ async function verifyFoxgloveEmbeddedArtifact(config, taskInput) {
       throw new Error("live MCAP artifact card action order is incorrect");
     }
     const desktopCardEvidence = path.join(evidenceDir, "live-artifact-card-desktop-after.png");
-    await artifactCard.screenshot({ path: desktopCardEvidence });
-    fs.chmodSync(desktopCardEvidence, 0o600);
+    await screenshotLocatorRegion(page, artifactCard, desktopCardEvidence);
 
     const beforeUrl = page.url();
     const beforePages = context.pages().length;
@@ -797,8 +812,7 @@ async function verifyFoxgloveEmbeddedArtifact(config, taskInput) {
     const mobileLabels = (await artifactCard.locator(".artifact-card-actions .btn").allTextContents())
       .map((value) => value.trim());
     const mobileCardEvidence = path.join(evidenceDir, "live-artifact-card-mobile-after.png");
-    await artifactCard.screenshot({ path: mobileCardEvidence });
-    fs.chmodSync(mobileCardEvidence, 0o600);
+    await screenshotLocatorRegion(page, artifactCard, mobileCardEvidence);
     const mobilePaneEvidence = path.join(evidenceDir, "live-agent-mobile-after.png");
     await page.locator("section.rerun-stage").screenshot({ path: mobilePaneEvidence });
     fs.chmodSync(mobilePaneEvidence, 0o600);
