@@ -176,6 +176,8 @@ COPY --from=build --chown=1000:1000 /opt/cosmos /opt/cosmos
 COPY --chown=1000:1000 pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=1000:1000 src/npa /opt/npa/src/npa
 COPY --chown=1000:1000 workflows /opt/npa/workflows
+COPY docker/workbench/cosmos2-transfer/npa-cli-requirements.txt \
+    /tmp/npa-cli-requirements.txt
 COPY --from=build /usr/local/bin/assert-no-forbidden-cosmos2-payload \
     /usr/local/bin/assert-no-forbidden-cosmos2-payload
 COPY --chmod=755 docker/workbench/cosmos2-transfer/smoke_functional.sh \
@@ -224,9 +226,22 @@ RUN set -eux; \
     su ubuntu -s /bin/bash -c \
       'test -w /opt/cosmos/model-cache/huggingface && test -x /opt/cosmos/cosmos-transfer2.5/.venv/bin/python'
 
-RUN /opt/cosmos/cosmos-transfer2.5/.venv/bin/python -m pip install --no-deps /opt/npa \
-    && /opt/cosmos/cosmos-transfer2.5/.venv/bin/python -c \
-      'import npa.workflows.sim2real.runtime_attestation'
+# The full top-level NPA command tree is imported by the console script even for
+# `workbench cosmos2`.  Install its missing import-time packages as an exact,
+# hash-verified overlay without resolving or upgrading the vendor lock.  Merely
+# checking `import npa` is insufficient: that package is intentionally lazy and
+# was green in the image that failed live with a missing Typer dependency.
+RUN set -eux; \
+    uv pip install --python /opt/cosmos/cosmos-transfer2.5/.venv/bin/python \
+      --no-deps --require-hashes \
+      --requirement /tmp/npa-cli-requirements.txt; \
+    /opt/cosmos/cosmos-transfer2.5/.venv/bin/python -m pip install --no-deps /opt/npa; \
+    /opt/cosmos/cosmos-transfer2.5/.venv/bin/python -c \
+      'import npa.cli.main; import npa.workflows.sim2real.runtime_attestation'; \
+    /opt/cosmos/cosmos-transfer2.5/.venv/bin/npa \
+      workbench cosmos2 transfer --help > /tmp/npa-cosmos2-help.txt; \
+    grep -q -- '--control-asset' /tmp/npa-cosmos2-help.txt; \
+    rm -f /tmp/npa-cli-requirements.txt /tmp/npa-cosmos2-help.txt
 
 ENV PYTHONPATH=/opt/npa/src
 
