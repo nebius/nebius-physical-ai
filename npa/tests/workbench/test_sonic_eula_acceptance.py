@@ -24,11 +24,11 @@ def test_acceptance_reaches_the_entrypoint_trainer() -> None:
         )
 
 
-def test_acceptance_is_off_by_default_everywhere_it_appears() -> None:
+def test_acceptance_is_on_by_default_everywhere_it_appears() -> None:
     for function in (train_cmd, train_local, _run_entrypoint_trainer):
         parameter = inspect.signature(function).parameters["accept_eula"]
         default = getattr(parameter.default, "default", parameter.default)
-        assert default is False
+        assert default is True
 
 
 def test_workflow_catalog_does_not_manufacture_acceptance() -> None:

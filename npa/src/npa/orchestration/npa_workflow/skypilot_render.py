@@ -293,8 +293,9 @@ class SkypilotRenderOptions:
     # When False (``--plan-only``), embed placeholders instead of minting live
     # Nebius registry tokens into rendered YAML that may be printed to stdout.
     materialize_registry_secrets: bool = True
-    # Explicit run-scoped operator consent. Never read from repository config.
-    accept_eula: bool = False
+    # Isaac acceptance defaults on so non-interactive workflows do not stop at the
+    # vendor prompt. Callers retain an explicit --no-accept-eula opt-out.
+    accept_eula: bool = True
 
 
 def normalize_resources(
@@ -942,13 +943,12 @@ def isaac_eula_envs(
     tool_ref: str,
     *,
     resources: Mapping[str, Any] | None = None,
-    accepted: bool = False,
+    accepted: bool = True,
 ) -> dict[str, str]:
-    """Declare NVIDIA's acceptance gate for an Isaac stage, EMPTY unless the operator set it.
+    """Declare NVIDIA's acceptance value for an Isaac stage.
 
-    Declared rather than omitted so the task documents what it needs and **fails closed** with
-    the actionable message instead of an unexplained exit 78. Never defaulted to YES: accepting
-    NVIDIA's terms is the operator's act, not the repo's.
+    Acceptance defaults on for non-interactive workflows. ``accepted=False`` renders an empty
+    value, preserving an explicit opt-out that the runtime bootstrap rejects before download.
 
     This lives in the renderer rather than in each spec because a spec reaches an Isaac image
     through its ``toolRef``, not by naming an image — so a spec author cannot reasonably be

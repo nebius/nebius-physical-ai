@@ -953,14 +953,9 @@ os._exit(0)
 def _isaac_eula_env_entries() -> list[dict[str, str]]:
     """Kubernetes ``env`` entries carrying the operator's NVIDIA licence acceptance.
 
-    The Isaac image ships no Isaac Sim and refuses to fetch it (exit 78) unless
-    NVIDIA's documented ``ACCEPT_EULA=Y`` is set. These jobs invoke
-    /isaac-sim/python.sh, so without forwarding they cannot run at all.
-
-    Read from the submitting process's environment and never defaulted to "YES": the
-    operator driving the pipeline is the one consenting, and hardcoding acceptance here
-    would put us in the position of accepting on their behalf. Unset stays unset, and the
-    job then fails with the bootstrap's actionable refusal instead of silently consenting.
+    Forward an explicit submitting-process value when present. When absent, the runtime
+    image applies its default acceptance; an explicitly empty/non-Y value remains an
+    opt-out and fails before download.
     """
 
     return [

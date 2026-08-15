@@ -136,9 +136,10 @@ each operator under that operator's own acceptance; we ship only instructions.
 **Runtime fetch of the whole SDK.** Build-your-own has a real cost: the customer needs
 vendor credentials, and *we* cannot publish a working image at all. Where the vendor
 serves the runtime from an index the customer can reach directly, the stronger move is to
-ship an image containing none of it and fetch on first run under the customer's own EULA
-acceptance — with a hard refusal when acceptance is absent, since that refusal is the
-mechanism. This is how the Isaac images became publishable; see the worked precedent.
+ship an image containing none of it and fetch on first run on the customer's runtime.
+The absence of proprietary bytes from published layers is the redistribution control;
+EULA acceptance governs runtime use separately. This is how the Isaac images became
+publishable; see the worked precedent.
 Check whether the vendor's index actually requires a credential before assuming
 build-your-own is the only option: `pypi.nvidia.com` serves Isaac Sim anonymously, so the
 credential was never the gate — acceptance was.
@@ -193,19 +194,18 @@ form "we keep baking it but add an access control" is answering the wrong questi
 **The answer that worked: move the vendor's delivery to the customer — for the whole
 SDK, not just the weights.** The images were re-architected to contain **no NVIDIA Isaac
 bytes at all**. On first run they download Isaac Sim and Isaac Lab from
-`https://pypi.nvidia.com` into a cache volume, and **refuse to run** unless the operator
-has set NVIDIA's documented `ACCEPT_EULA=Y`. Nothing is baked
-with acceptance pre-granted. NVIDIA delivers to each operator under that operator's own
-acceptance; we redistribute nothing; the licensing question is moot rather than argued.
+`https://pypi.nvidia.com` into a cache volume. NPA defaults NVIDIA's documented
+`ACCEPT_EULA=Y` for these non-interactive workloads and preserves an explicit opt-out.
+NVIDIA still delivers the runtime directly to each operator; we redistribute no Isaac
+bytes, so the redistribution conclusion does not depend on the EULA UX default.
 So `isaac-lab`, `sonic`, `sonic-mujoco` and `groot` are now `redistribution: public`.
 
 Three things made that verdict defensible rather than merely plausible, and a new
 solution should expect to produce all three:
 
-1. **The refusal is a tested feature, not a comment.** It is the legal mechanism, so it
-   is asserted in a unit test, inside the image build itself, and against the built
-   image. If it can be bypassed by forgetting an environment variable, it is not a
-   mechanism.
+1. **Default acceptance and explicit opt-out are tested features.** Unset acceptance
+   must run non-interactively, while an explicit empty/non-Y value must refuse before
+   downloading. The public-image control remains the verified absence of Isaac bytes.
 2. **The absence is verified on the artefact.** `npa/scripts/scan_image_omniverse_payload.py`
    streams the built image's filesystem and layer history and fails on Kit payload
    signatures. Reading the Dockerfile is not evidence — the claim is about bytes in

@@ -269,12 +269,12 @@ def submit_cmd(
         ),
     ),
     accept_eula: bool = typer.Option(
-        False,
+        True,
         "--accept-eula/--no-accept-eula",
         help=(
             "Run-scoped acceptance of NVIDIA's Isaac Sim/Omniverse licence terms. "
-            "Required only when the selected workflow routes a stage through Isaac; "
-            "never enabled or persisted by default."
+            "Applied only when the selected workflow routes a stage through Isaac; "
+            "enabled by default. Use --no-accept-eula to opt out."
         ),
     ),
     details: bool = typer.Option(

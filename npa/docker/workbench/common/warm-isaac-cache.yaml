@@ -98,7 +98,7 @@ spec:
           image: cr.us-central1.nebius.cloud/<your-registry-id>/npa-isaac-lab@sha256:<64-hex-digest>
           command: ["/opt/npa/bin/isaac-bootstrap", "warm"]
           env:
-            # YOUR run-scoped acceptance of NVIDIA's terms.
+            # Explicitly documents the default; set empty/non-Y to opt out.
             - name: ACCEPT_EULA
               value: "Y"
             - name: NPA_ISAAC_CACHE_DIR

@@ -12,7 +12,7 @@ class MissingS3CredentialsError(ValueError):
 
 
 class MissingIsaacEulaAcceptanceError(ValueError):
-    """Raised before remote work when explicit Isaac EULA acceptance is absent."""
+    """Raised before remote work when Isaac EULA acceptance is explicitly disabled."""
 
 
 def require_s3_credentials(
@@ -53,29 +53,31 @@ def require_s3_credentials(
 
 #: NVIDIA licence acceptance for the Isaac images, forwarded from the CALLER's environment.
 #:
-#: The Isaac workbench images ship no Isaac Sim and refuse to fetch it (exit 78) unless the
-#: operator has accepted NVIDIA's terms. So a submitter that does not carry that acceptance
-#: cannot run them at all -- which is what a real golden-eval submission discovered.
+#: The Isaac workbench images ship no Isaac Sim and default NVIDIA acceptance on at runtime.
+#: An explicit empty/non-Y value opts out and makes them refuse before fetching (exit 78).
 #:
 #: This lives in the SHARED builder, not in one caller, because every CLI serverless path
 #: (isaac_lab, groot, genesis, cosmos, fiftyone) and the golden-eval runner go through here.
 #: Fixing it in one place fixes `npa workbench isaac-lab train --runtime serverless` too.
 #:
-#: It must never default to "YES": that would be us accepting on the operator's behalf and
-#: would gut the mechanism the whole runtime-fetch architecture rests on. Unset stays unset,
-#: and the job then fails with the actionable refusal rather than silently consenting.
+#: Isaac CLI entrypoints default this value to Y. Explicit empty/non-Y values remain an
+#: opt-out and fail before provisioning.
 ISAAC_EULA_ENV = "ACCEPT_EULA"
 ISAAC_EULA_VARS = (ISAAC_EULA_ENV,)
 
 
 def require_isaac_eula_acceptance(*, context: str, resume_command: str) -> None:
-    """Refuse before provisioning unless the caller explicitly accepted the terms."""
+    """Default acceptance on, while honoring an explicit empty/non-Y opt-out."""
+
+    if ISAAC_EULA_ENV not in os.environ:
+        os.environ[ISAAC_EULA_ENV] = "Y"
+        return
 
     if str(os.environ.get(ISAAC_EULA_ENV) or "").strip() == "Y":
         return
     resume = f"ACCEPT_EULA=Y {resume_command.strip()}"
     raise MissingIsaacEulaAcceptanceError(
-        f"Refusing to provision {context}: explicit operator acceptance is missing "
+        f"Refusing to provision {context}: NVIDIA EULA acceptance was explicitly disabled "
         "for ACCEPT_EULA=Y. The required agreements are the NVIDIA "
         "Omniverse Licence Agreement, NVIDIA Isaac Sim Additional Software and "
         "Materials Licence, and NVIDIA Software Licence Agreement; official links "

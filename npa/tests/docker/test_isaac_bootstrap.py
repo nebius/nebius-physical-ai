@@ -1,14 +1,12 @@
 """Tests for the runtime Isaac bootstrap.
 
 The four Isaac workbench images ship no NVIDIA Isaac bytes; Isaac Sim and Isaac Lab are
-fetched on first run from ``pypi.nvidia.com`` under the operator's own EULA acceptance.
+fetched on first run from ``pypi.nvidia.com`` with EULA acceptance enabled by default.
 Two properties of that mechanism are load-bearing and must not regress:
 
-1. **The refusal is the legal mechanism.** Without the exact, NVIDIA-documented
-   ``ACCEPT_EULA=Y`` value the bootstrap must download nothing and exit non-zero. It is
-   what makes "we do not redistribute Omniverse Kit" true, so it is tested directly
-   rather than assumed. ``pypi.nvidia.com`` serves these wheels anonymously, so a
-   credential was never the gate — acceptance is.
+1. **Default and opt-out behavior.** An unset value defaults to NVIDIA's documented
+   ``ACCEPT_EULA=Y`` so workflows remain non-interactive. An explicit empty/non-Y value
+   opts out, and the bootstrap must then download nothing and exit non-zero.
 2. **Concurrency safety.** Eight GPUs per node means up to eight pods racing one cache
    volume. A partially-written cache would be an extremely unpleasant bug to debug on a
    customer's cluster.
@@ -238,25 +236,21 @@ exit 0
 
 
 # --------------------------------------------------------------------------------------
-# The EULA refusal — the legal mechanism
+# Default acceptance and explicit opt-out
 # --------------------------------------------------------------------------------------
 
 
-def test_bootstrap_refuses_and_downloads_nothing_without_eula(tmp_path: Path) -> None:
+def test_bootstrap_accepts_and_downloads_when_eula_is_unset(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
     result = harness.run("ensure")
 
-    assert result.returncode == EX_CONFIG, result.stderr
-    assert "ACCEPT_EULA=Y" in result.stderr
-    assert "Nothing has been downloaded" in result.stderr
-    # Stronger than the exit code: prove no fetch was even attempted.
-    assert not harness.downloaded_anything(), harness.call_log
-    # Callers parse this interpreter's stdout; the refusal must not pollute it.
-    assert result.stdout == ""
+    assert result.returncode == 0, result.stderr
+    assert harness.downloaded_anything()
+    assert result.stdout.strip()
 
 
 def test_refusal_links_the_terms_the_operator_is_accepting(tmp_path: Path) -> None:
-    result = Harness(tmp_path).run("ensure")
+    result = Harness(tmp_path).run("ensure", ACCEPT_EULA="")
     assert "nvidia.com" in result.stderr
     assert "Omniverse" in result.stderr and "Isaac Sim" in result.stderr
 
@@ -280,13 +274,12 @@ def test_bootstrap_accepts_only_the_documented_value(tmp_path: Path) -> None:
     assert harness.downloaded_anything(), "acceptance should let the install proceed"
 
 
-def test_status_needs_no_acceptance_and_no_network(tmp_path: Path) -> None:
-    """Operators must be able to ask what is cached without consenting to anything."""
+def test_status_reports_default_acceptance_and_uses_no_network(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
     result = harness.run("status")
 
     assert result.returncode == 0, result.stderr
-    assert "eula_accepted=no" in result.stdout
+    assert "eula_accepted=yes" in result.stdout
     assert "ready=no" in result.stdout
     assert "isaacsim=" in result.stdout and "isaaclab=" in result.stdout
     assert not harness.downloaded_anything()
@@ -310,10 +303,10 @@ def test_ensure_is_idempotent_and_makes_no_calls_when_warm(tmp_path: Path) -> No
     assert not harness.downloaded_anything(), "a warm cache must not re-download"
 
 
-def test_warm_cache_still_requires_run_scoped_acceptance(tmp_path: Path) -> None:
+def test_warm_cache_honors_explicit_opt_out(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
     harness.fake_ready_tree()
-    result = harness.run("ensure")
+    result = harness.run("ensure", ACCEPT_EULA="")
     assert result.returncode == EX_CONFIG
     assert not harness.downloaded_anything()
 
@@ -642,9 +635,29 @@ def test_shim_derives_internal_kit_acceptance_only_from_exact_public_consent() -
     """The bootstrap subprocess cannot export into the launcher that starts Kit."""
 
     shim = SHIM.read_text(encoding="utf-8")
+    assert 'ACCEPT_EULA="${ACCEPT_EULA-Y}"' in shim
     assert 'if [ "${ACCEPT_EULA:-}" = "Y" ]; then' in shim
     assert "export OMNI_KIT_ACCEPT_EULA=YES" in shim
     assert "PRIVACY_CONSENT" not in shim
+
+
+def test_shim_defaults_internal_kit_acceptance_without_manual_env(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    result = subprocess.run(
+        [
+            "bash",
+            str(SHIM),
+            "-c",
+            "import os; print(os.environ.get('OMNI_KIT_ACCEPT_EULA', ''))",
+        ],
+        env=harness.env(NPA_ISAAC_BOOTSTRAP=str(BOOTSTRAP)),
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "YES"
 
 
 def test_shim_propagates_the_refusal_exit_code(tmp_path: Path) -> None:
@@ -652,7 +665,7 @@ def test_shim_propagates_the_refusal_exit_code(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
     result = subprocess.run(
         ["bash", str(SHIM), "-c", "print('THIS MUST NOT RUN')"],
-        env=harness.env(NPA_ISAAC_BOOTSTRAP=str(BOOTSTRAP)),
+        env=harness.env(NPA_ISAAC_BOOTSTRAP=str(BOOTSTRAP), ACCEPT_EULA=""),
         capture_output=True,
         text=True,
         timeout=120,

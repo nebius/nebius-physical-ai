@@ -29,15 +29,15 @@ def test_eula_preflight_is_canonical_and_discoverable() -> None:
     assert "before provisioning" in entry["when_to_use"].lower()
 
 
-def test_eula_preflight_requires_scoped_explicit_consent_and_early_refusal() -> None:
+def test_eula_preflight_documents_scoped_default_and_explicit_opt_out() -> None:
     text = SKILL.read_text(encoding="utf-8")
     required = (
-        "explicit operator",
         "official terms links",
+        "defaults vendor acceptance on",
+        "explicit opt-out",
         "fail before provisioning",
-        "exact resume command",
-        "Never precheck a box",
-        "Do not reuse it",
+        "Do not reuse this",
+        "Never default optional privacy",
         "Do not store",
         "secret values or unnecessary personal data",
     )

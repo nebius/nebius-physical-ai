@@ -25,6 +25,10 @@
 #
 set -uo pipefail
 
+# Match isaac_bootstrap.sh: unset means accepted by default, while an explicitly
+# empty/non-Y value remains an opt-out.
+ACCEPT_EULA="${ACCEPT_EULA-Y}"
+
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 BOOTSTRAP="${NPA_ISAAC_BOOTSTRAP:-}"
 if [ -z "$BOOTSTRAP" ]; then
@@ -52,7 +56,7 @@ PYTHON="$TREE/venv/bin/python"
 
 # `ensure` runs in command substitution, so exports made by the bootstrap cannot reach
 # this launcher. Propagate the vendor's internal Kit acknowledgement only from the exact
-# public consent value the bootstrap already validated. This keeps ACCEPT_EULA=Y as the
+# public consent value the bootstrap already validated. This keeps ACCEPT_EULA as the
 # single operator-facing mechanism and never derives or enables privacy consent.
 if [ "${ACCEPT_EULA:-}" = "Y" ]; then
   export OMNI_KIT_ACCEPT_EULA=YES

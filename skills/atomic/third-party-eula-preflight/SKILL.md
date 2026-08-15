@@ -1,12 +1,14 @@
 ---
 name: third-party-eula-preflight
-description: Use before provisioning, building, downloading, or submitting a workload whose image, software, model, or data requires a third-party EULA or gated terms; discover the exact agreements and acceptance mechanism, verify scoped operator consent, and fail fast before expensive work when consent is absent.
+description: Use before provisioning, building, downloading, or submitting a workload whose image, software, model, or data requires a third-party EULA or gated terms; discover the exact agreements and acceptance mechanism, apply product acceptance defaults, and preserve explicit opt-out behavior.
 ---
 
 # Third-Party EULA Preflight
 
-Run this preflight before any costly or state-changing setup. Consent is an
-operator decision, never a default supplied by NPA or an agent.
+Run this preflight before any costly or state-changing setup. NPA's Isaac product
+policy defaults vendor acceptance on for non-interactive workflows while retaining an
+explicit opt-out. Other third-party agreements remain opt-in unless their product policy
+documents a default.
 
 ## Procedure
 
@@ -17,21 +19,17 @@ operator decision, never a default supplied by NPA or an agent.
    (for example, exact environment variables and accepted values). Do not infer
    acceptance from credentials, registry access, prior use, or acceptance of a
    different agreement.
-3. Search the current conversation and run record for an explicit operator
-   statement accepting each named agreement. Treat consent as valid only for the
-   named agreements, workload/run scope, and mechanism stated. Do not reuse it
-   for unrelated vendor, model, data, privacy, telemetry, or preview terms.
-4. If any acceptance is absent, ask clearly before provisioning, building,
+3. Apply the documented product policy. Isaac workloads default `ACCEPT_EULA=Y`;
+   setting it to an empty or non-Y value is an explicit opt-out. Do not reuse this
+   default for unrelated vendor, model, data, privacy, telemetry, or preview terms.
+4. When a product remains opt-in, ask clearly before provisioning, building,
    downloading, or submitting. Show the exact agreements, official links,
-   mechanism, and the expensive action that is blocked. Never precheck a box,
-   imply consent, or accept on the operator's behalf.
-5. For non-interactive or detached execution, fail before provisioning when
-   consent is absent. Exit non-zero and print: the missing agreement names, the
-   exact acceptance needed, confirmation that no expensive action began, and an
-   exact resume command with acceptance values supplied at launch.
-6. When consent is present, forward only its documented acceptance values to
-   the authorized workload. Keep acceptance unset in repository defaults,
-   images, specs, and persistent global configuration.
+   mechanism, and the expensive action that is blocked.
+5. For non-interactive Isaac execution, forward the default only to Isaac-backed
+   tasks. If the operator opted out, fail before provisioning and print the exact
+   resume command needed to re-enable acceptance.
+6. Never default optional privacy or telemetry consent. Keep EULA defaults scoped
+   to runtime orchestration rather than baking proprietary vendor bytes into images.
 7. Preserve a redacted run record containing agreement names, official links,
    the operator-stated scope, preflight result, and resume command. Do not store
    secret values or unnecessary personal data.
@@ -47,21 +45,21 @@ Isaac runtime-fetch workloads require all of these official terms:
 - NVIDIA Software Licence Agreement:
   `https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/`
 
-The repository mechanism requires this caller-supplied, run-scoped value:
+The repository mechanism defaults this value for Isaac-backed workloads:
 
 ```bash
 ACCEPT_EULA=Y <resume-command>
 ```
 
-Absent that exact value, `isaac-bootstrap` must exit `78` before downloading. It
-accepts only the named NVIDIA terms; it does not accept unrelated terms.
+An unset value becomes `Y`. An explicitly empty or non-Y value makes
+`isaac-bootstrap` exit `78` before downloading. The default covers only the named
+NVIDIA terms; it does not enable unrelated privacy or telemetry terms.
 
 ## Guardrails
 
-- Keep the legal/runtime refusal strict and early; do not weaken it to make a
-  smoke test pass.
-- Test both paths: missing consent refuses before download/provision, and
-  explicit caller consent is forwarded without being invented or persisted.
+- Keep explicit opt-out refusal strict and early.
+- Test both paths: unset acceptance defaults to `Y`, and explicit opt-out refuses
+  before download/provision.
 - Run `npa/tests/guardrails/test_third_party_eula_preflight_skill.py`,
   `npa/tests/guardrails/test_isaac_eula_plumbing.py`, and
   `npa/tests/docker/test_isaac_bootstrap.py` for Isaac-facing changes.

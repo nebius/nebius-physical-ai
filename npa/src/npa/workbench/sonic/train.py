@@ -127,7 +127,7 @@ def train_local(
     device: str = "",
     entrypoint: str = "",
     allow_entrypoint: bool = True,
-    accept_eula: bool = False,
+    accept_eula: bool = True,
     storage_client: "StorageClient | None" = None,
 ) -> dict[str, Any]:
     """Train a SONIC locomotion policy inside the current container."""
@@ -241,13 +241,12 @@ def _run_entrypoint_trainer(
     embodiment: str,
     num_envs: int,
     max_iterations: int,
-    accept_eula: bool = False,
+    accept_eula: bool = True,
 ) -> LocalTrainResult:
     """Run the SONIC image's own trainer in this container."""
 
     env = dict(os.environ)
-    if accept_eula:
-        env["ACCEPT_EULA"] = "Y"
+    env["ACCEPT_EULA"] = "Y" if accept_eula else ""
     env.update(
         {
             "SONIC_RUN_REAL_TRAIN": "1",

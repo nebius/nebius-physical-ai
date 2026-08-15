@@ -95,7 +95,7 @@ def materialize_sonic_workflow(
     region: str = "",
     use_spot: bool | None = None,
     env_overrides: dict[str, str] | None = None,
-    accept_eula: bool = False,
+    accept_eula: bool = True,
 ) -> SonicWorkflowPlan:
     """Return a concrete SONIC workflow YAML with no submit-time env indirection."""
 
@@ -211,7 +211,7 @@ def submit_sonic_workflow(
     region: str = "",
     use_spot: bool | None = None,
     env_overrides: dict[str, str] | None = None,
-    accept_eula: bool = False,
+    accept_eula: bool = True,
     isolated_config_dir: Path | None = None,
     config_path: Path | None = None,
     sky_bin: str | None = None,
@@ -442,8 +442,8 @@ def _materialize_task_doc(
     for key, value in env_overrides.items():
         if key in envs:
             envs[key] = value
-    if accept_eula and has_sonic_env:
-        envs["ACCEPT_EULA"] = "Y"
+    if has_sonic_env:
+        envs["ACCEPT_EULA"] = "Y" if accept_eula else ""
     if registry_auth and _uses_registry_auth_target(doc, registry_auth.server, policy_image):
         envs[SKYPILOT_DOCKER_USERNAME] = registry_auth.username
         envs[SKYPILOT_DOCKER_PASSWORD] = registry_auth.password

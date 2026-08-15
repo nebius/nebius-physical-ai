@@ -477,7 +477,7 @@ def test_workbench_workflow_submit_warns_on_unresolved_placeholders(
     )
 
 
-def test_workbench_workflow_submit_refuses_sonic_without_run_scoped_consent(mocker) -> None:
+def test_workbench_workflow_submit_honors_explicit_eula_opt_out(mocker) -> None:
     submit = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
 
     result = runner.invoke(
@@ -489,6 +489,7 @@ def test_workbench_workflow_submit_refuses_sonic_without_run_scoped_consent(mock
             str(SKYPILOT_FIXTURES / "sonic-train-standalone.yaml"),
             "--run-id",
             "sonic-no-consent",
+            "--no-accept-eula",
         ],
     )
 
@@ -527,7 +528,6 @@ def test_workbench_workflow_submit_materializes_sonic_yaml(mocker) -> None:
             "registry.example/workbench",
             "--gpu-target",
             "gpu-rtx6000",
-            "--accept-eula",
             "--s3-endpoint",
             "https://storage.example",
             "--s3-bucket",

@@ -25,11 +25,12 @@ def _isaac_tool_refs() -> tuple[str, ...]:
 
 
 @pytest.mark.parametrize("tool_ref", _isaac_tool_refs())
-def test_renderer_fails_closed_and_forwards_only_scoped_consent(tool_ref: str) -> None:
+def test_renderer_defaults_acceptance_and_preserves_explicit_opt_out(tool_ref: str) -> None:
     from npa.orchestration.npa_workflow.skypilot_render import isaac_eula_envs
 
-    assert isaac_eula_envs(tool_ref) == {EULA_ENV: ""}
+    assert isaac_eula_envs(tool_ref) == {EULA_ENV: "Y"}
     assert isaac_eula_envs(tool_ref, accepted=True) == {EULA_ENV: "Y"}
+    assert isaac_eula_envs(tool_ref, accepted=False) == {EULA_ENV: ""}
 
 
 def test_renderer_does_not_add_consent_to_non_isaac_tasks() -> None:

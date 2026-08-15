@@ -16,11 +16,11 @@
 #   already uses for runtime model weights, which is why
 #   those images are already public.
 #
-# THE EULA REFUSAL IS THE LOAD-BEARING PART
-#   Nothing here is baked with acceptance pre-granted. If the operator has not set
-#   NVIDIA's documented ACCEPT_EULA=Y for this operation, this script refuses and downloads
-#   NOTHING. That refusal is the legal mechanism, not a convenience check - treat it as
-#   a feature and see npa/tests/docker/test_isaac_bootstrap.py, which tests it directly.
+# DEFAULT ACCEPTANCE
+#   NPA defaults NVIDIA's documented ACCEPT_EULA to Y for Isaac-backed workloads so
+#   non-interactive workflows do not stop at the vendor prompt. Operators can explicitly
+#   opt out by setting ACCEPT_EULA to an empty or non-Y value; in that case this script
+#   refuses and downloads NOTHING.
 #   (https://pypi.nvidia.com serves these wheels anonymously, so the credential was
 #   never the gate. Acceptance is.)
 #
@@ -32,7 +32,7 @@
 #   status   report what is cached without installing (no EULA required, no network)
 #
 # ENVIRONMENT
-#   ACCEPT_EULA                   required: Y - operator's run-scoped acceptance
+#   ACCEPT_EULA                   defaults to Y; set empty/non-Y to opt out
 #   NPA_ISAAC_CACHE_DIR           cache volume root                (/opt/isaac-cache)
 #   NPA_ISAAC_INDEX_URL           NVIDIA wheel index               (https://pypi.nvidia.com)
 #   NPA_ISAAC_BASE_PYTHON         image python3.11 that has torch  (per image)
@@ -74,6 +74,9 @@ ISAAC_LAB_SRC_COMMIT="${NPA_ISAAC_LAB_SRC_COMMIT:-37ddf626871758333d6ed89cf64ad7
 OFFLINE="${NPA_ISAAC_BOOTSTRAP_OFFLINE:-0}"
 READONLY="${NPA_ISAAC_CACHE_READONLY:-0}"
 LOCK_TIMEOUT="${NPA_ISAAC_BOOTSTRAP_TIMEOUT:-3600}"
+# Default only when the variable is absent. An explicitly empty/non-Y value remains an
+# opt-out and is rejected by require_eula_acceptance below.
+ACCEPT_EULA="${ACCEPT_EULA-Y}"
 
 log()  { printf 'isaac-bootstrap: %s\n' "$*" >&2; }
 die()  { local code="$1"; shift; printf 'isaac-bootstrap: %s\n' "$*" >&2; exit "$code"; }
@@ -112,11 +115,12 @@ require_eula_acceptance() {
 isaac-bootstrap: refusing to download NVIDIA Isaac Sim / Isaac Lab.
 
   This image deliberately ships NO NVIDIA Isaac Sim or Isaac Lab code. Continuing
-  would download them from NVIDIA (${INDEX_URL}) onto this machine, which requires
-  YOUR acceptance of NVIDIA's licence terms. We do not and cannot accept on your
-  behalf, so acceptance is never baked into the image.
+  would download them from NVIDIA (${INDEX_URL}) onto this machine under NVIDIA's
+  licence terms. NPA normally enables acceptance for Isaac workloads, but this run
+  explicitly disabled it. Acceptance and proprietary Isaac bytes are never baked
+  into the image.
 
-  Not accepted (exact value required): ACCEPT_EULA=Y
+  Acceptance was explicitly disabled (exact accepted value: ACCEPT_EULA=Y).
 
   To accept and continue for this operation, set exactly:
 

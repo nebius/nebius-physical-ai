@@ -111,7 +111,7 @@ def _run_serverless_train(
     timeout: float,
     output_format: OutputFormat,
     training_config: TrainingConfig,
-    accept_eula: bool = False,
+    accept_eula: bool = True,
 ) -> None:
     if not output_path:
         fail("SONIC train --runtime serverless requires --output-path.")
@@ -153,8 +153,7 @@ def _run_serverless_train(
             "SONIC_CHECKPOINT": checkpoint,
         },
     )
-    if accept_eula:
-        env["ACCEPT_EULA"] = "Y"
+    env["ACCEPT_EULA"] = "Y" if accept_eula else ""
     env.update(training_config.env())
     safe_env, secret_env = split_serverless_env(env)
     extra_env.update(secret_env)
@@ -248,7 +247,7 @@ def _run_local_train(
     device: str,
     output_path: str,
     output_format: OutputFormat,
-    accept_eula: bool = False,
+    accept_eula: bool = True,
     training_config: TrainingConfig,
 ) -> None:
     from npa.workbench.sonic.train import SonicTrainError, train_local
@@ -322,11 +321,11 @@ def train_cmd(
         "2.3+", "--isaac-lab-version", help="Expected Isaac Lab version."
     ),
     accept_eula: bool = typer.Option(
-        False,
+        True,
         "--accept-eula/--no-accept-eula",
         help=(
-            "Run-scoped acceptance of NVIDIA's Omniverse / Isaac Sim licence terms. "
-            "Never enabled by default and never persisted."
+            "Acceptance of NVIDIA's Omniverse / Isaac Sim licence terms. "
+            "Enabled by default; use --no-accept-eula to opt out."
         ),
     ),
     seed: int = typer.Option(
