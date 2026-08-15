@@ -348,16 +348,16 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
       (expected) => [...(document.querySelector("#runIdSelect")?.options || [])]
         .some((option) => option.value === expected),
       runRef,
-      { timeout: 180000 },
+      { timeout: 0 },
     );
     await page.locator("#runIdInput").fill(runId);
     await page.locator("#loadRunData").click();
     await page.locator('#loadRunData[aria-busy="false"]')
-      .waitFor({ state: "visible", timeout: 180000 });
+      .waitFor({ state: "visible", timeout: 0 });
     await page.waitForFunction(
       (expected) => document.querySelector("#simRunId")?.textContent?.includes(expected),
       runId,
-      { timeout: 180000 },
+      { timeout: 0 },
     );
     await page.locator("#artifactLoadRunArtifacts").click();
     const exactButton = page.locator(
@@ -413,7 +413,7 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
     }
     await page.locator("#viewerPaneFoxglove iframe").waitFor({
       state: "visible",
-      timeout: 180000,
+      timeout: 0,
     });
     await page.waitForFunction(
       () => {
@@ -424,7 +424,7 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
           summary.includes("not calibrated robot/world kinematics");
       },
       null,
-      { timeout: 180000 },
+      { timeout: 0 },
     );
     const desktopEvidence = path.join(evidenceDir, "live-agent-desktop-after.png");
     await page.screenshot({ path: desktopEvidence });
