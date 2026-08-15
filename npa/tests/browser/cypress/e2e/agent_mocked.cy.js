@@ -1809,7 +1809,7 @@ describe("NPA agent UI with mocked APIs", () => {
     // until the response is represented in the DOM instead of sampling the old
     // options synchronously on a busy CI host.
     cy.get(`#runIdSelect option[value="${TRAIN_RUN}"]`).should("have.length", 1);
-    cy.get("#runIdSelect option").then(($opts) => {
+    cy.get("#runIdSelect option").should(($opts) => {
       const values = [...$opts].map((opt) => opt.value).filter(Boolean);
       expect(values).not.to.include("checkpoints");
       expect(values).not.to.include("evidence");
