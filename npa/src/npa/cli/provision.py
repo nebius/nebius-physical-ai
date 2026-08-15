@@ -8,6 +8,7 @@ from pathlib import Path
 
 import typer
 
+from npa.cluster.gpu_health import DEFAULT_CUDA_SMOKE_IMAGE, DEFAULT_STABILIZATION_SECONDS
 from npa.provisioning import provision_if_absent
 
 app = typer.Typer(
@@ -69,6 +70,36 @@ def provision_if_absent_cmd(
     gpu_preset: str = typer.Option(
         "", "--gpu-preset", help="GPU node preset, matching `npa cluster up`."
     ),
+    gpu_driver_mode: str = typer.Option(
+        "",
+        "--gpu-driver-mode",
+        help="GPU driver strategy (auto, managed-image, or operator), matching `npa cluster up`.",
+    ),
+    managed_driver_preset: str = typer.Option(
+        "",
+        "--managed-driver-preset",
+        help="Nebius managed driver preset, matching `npa cluster up`.",
+    ),
+    allow_unsafe_nvswitch_operator: bool | None = typer.Option(
+        None,
+        "--allow-unsafe-nvswitch-operator/--deny-unsafe-nvswitch-operator",
+        help="Explicit diagnostic acknowledgement for operator mode on NVSwitch systems.",
+    ),
+    gpu_health_stabilization_seconds: int = typer.Option(
+        DEFAULT_STABILIZATION_SECONDS,
+        "--gpu-health-stabilization-seconds",
+        help="Required stable GPU-health interval, matching `npa cluster up`.",
+    ),
+    gpu_cuda_smoke: bool = typer.Option(
+        True,
+        "--gpu-cuda-smoke/--skip-gpu-cuda-smoke",
+        help="Run CUDA vectorAdd on every requested GPU node.",
+    ),
+    gpu_cuda_smoke_image: str = typer.Option(
+        DEFAULT_CUDA_SMOKE_IMAGE,
+        "--gpu-cuda-smoke-image",
+        help="Container image for CUDA vectorAdd validation.",
+    ),
     preemptible: bool | None = typer.Option(
         None,
         "--preemptible/--on-demand",
@@ -123,6 +154,12 @@ def provision_if_absent_cmd(
         cpu_preset=cpu_preset,
         gpu_platform=gpu_platform,
         gpu_preset=gpu_preset,
+        gpu_driver_mode=gpu_driver_mode,
+        managed_driver_preset=managed_driver_preset,
+        allow_unsafe_nvswitch_operator=allow_unsafe_nvswitch_operator,
+        gpu_health_stabilization_seconds=gpu_health_stabilization_seconds,
+        gpu_cuda_smoke=gpu_cuda_smoke,
+        gpu_cuda_smoke_image=gpu_cuda_smoke_image,
         preemptible=preemptible,
         accelerator=accelerator,
         gpu_readiness_timeout=gpu_readiness_timeout,

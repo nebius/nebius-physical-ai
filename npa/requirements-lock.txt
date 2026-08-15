@@ -6,9 +6,9 @@ boto3==1.42.91
 botocore==1.42.91
 certifi==2026.2.25
 cffi==2.0.0
-click==8.3.2
+click==8.3.3
 coverage==7.13.5
-cryptography==49.0.0
+cryptography==50.0.0
 fastapi==0.136.1
 h11==0.16.0
 httpcore==1.0.9

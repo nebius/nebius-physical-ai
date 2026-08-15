@@ -11,7 +11,9 @@ small FTUE / Physical AI Data Factory cluster**, not a training farm:
 - **1× CPU node** (`cpu-d3`, preset `8vcpu-32gb`) for CPU stages — big enough to
   schedule the shipped workflows' CPU requests (the Physical AI Data Factory asks
   for 4 CPU / 16Gi, which a 4vcpu-16gb node cannot fit after kubelet reserve).
-- NVIDIA GPU Operator through the upstream solution.
+- Nebius managed GPU driver image (`gpu_driver_mode = "auto"`) plus the
+  provider-managed NVIDIA device plugin. CPU-only pools do not receive GPU
+  driver settings.
 - Nebius Network Operator through the upstream solution.
 - **Shared Filesystem OFF by default** (`enable_filestore = false`). npa.workflow
   stages — including the Physical AI Data Factory — hand off artifacts via S3
@@ -44,8 +46,44 @@ These remain available as explicit opt-in via `terraform.tfvars`, `TF_VAR_*`, or
   promotes the filesystem CSI StorageClass to the cluster default.
 
 The vendored solution is based on upstream tag `main-v2026-05-25` with local
-patches for GPU node-group reservation policy and zero-CPU node-group omission
-so raw Terraform usage stays standalone.
+patches for GPU node-group reservation policy, configurable managed-driver
+preset, and zero-CPU node-group omission so raw Terraform usage stays
+standalone.
+
+### GPU driver strategy and health gate
+
+`gpu_driver_mode` has three stable values:
+
+- `auto` (default) selects a Nebius managed-driver node image for every GPU
+  node group and leaves CPU-only clusters untouched.
+- `managed-image` explicitly requires that same safe path.
+- `operator` uses the recipe's in-cluster NVIDIA GPU Operator driver path. It
+  is an escape hatch for diagnostics and recipes that genuinely require it.
+
+The managed preset defaults to `cuda13.0` and is configurable through
+`managed_driver_preset`. Operator mode on an NVSwitch topology (a multi-GPU
+SXM/NVL preset or `enable_gpu_cluster = true`) is rejected unless
+`allow_unsafe_nvswitch_operator = true` is also set. That acknowledgement is
+deliberately noisy: the operator/Fabric Manager path can start before the
+Network Operator/MOFED has exposed host `/dev/infiniband/umad*` and `issm*`
+devices, leaving Fabric in progress and CUDA uninitialized.
+
+`npa cluster up` does not record the cluster as `RUNNING` merely because
+Terraform and kubeconfig creation succeeded. For GPU clusters it waits for the
+requested node topology to remain stable, verifies Ready nodes, boot IDs,
+`NebiusGPUError`, generalized `nvidia.com/gpu` allocatable capacity, exposed
+NVSwitch Fabric state, and mode-appropriate NVIDIA components, then runs CUDA
+vectorAdd on every requested GPU node. Use `--validation-timeout` and
+`--gpu-health-stabilization-seconds` to tune the wait; live validation can only
+be disabled explicitly with `--skip-validate` or the CUDA workload alone with
+`--skip-gpu-cuda-smoke`.
+
+Changing these settings does not repair nodes that have already booted with the
+operator-managed driver. Existing affected GPU pools require a controlled
+rolling node-group update or recreation under the managed-image setting so
+each replacement node boots from the new image. Follow workload disruption and
+capacity-reservation policy; a code or CLI upgrade by itself cannot retrofit
+the image on an existing node.
 
 ## Usage
 
@@ -95,8 +133,12 @@ npa cluster up --terraform-dir deploy/cluster --capacity-block-group <capacity-b
 ```
 
 The command runs `terraform init`, `terraform apply -auto-approve`, writes a
-kubeconfig under `~/.npa/clusters/<cluster-name>/kubeconfig`, validates the
-cluster with `kubectl`, and can run a SkyPilot Kubernetes GPU smoke test.
+kubeconfig under `~/.npa/clusters/<cluster-name>/kubeconfig`, validates stable
+GPU health and CUDA execution with `kubectl`, and can run an additional
+SkyPilot Kubernetes GPU smoke test. See
+[`docs/workbench/mk8s-gpu-driver-strategy.md`](../../docs/workbench/mk8s-gpu-driver-strategy.md)
+for direct and Fleet configuration, recipe compatibility, diagnostics, and
+migration guidance.
 
 To inspect Terraform outputs alongside the local cluster cache:
 

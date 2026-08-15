@@ -28,11 +28,13 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
     && find /opt/npa/src /opt/npa/workflows -type f -exec chmod a+r {} + \
     && chmod a+r /opt/npa/pyproject.toml \
+    && python -m pip uninstall -y transformers \
     && python -m pip install --no-deps \
       -r /opt/npa/sim2real-control-requirements.txt \
       -r /opt/npa/sim2real-genesis-requirements.txt \
     && python -m pip install --no-deps -e /opt/npa \
     && python -m pip check \
+    && python -c 'import importlib.metadata as m; assert not any(d.metadata["Name"].lower() == "transformers" for d in m.distributions())' \
     && python - <<'PY'
 from npa.workbench.lerobot.policy_container import parse_vlm_signal_batch
 

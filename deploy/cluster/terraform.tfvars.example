@@ -20,6 +20,17 @@ gpu_nodes_count    = 1
 gpu_nodes_platform = "gpu-rtx6000"
 gpu_nodes_preset   = "1gpu-24vcpu-218gb"
 
+# Safe default for every GPU platform: boot the node from a Nebius managed
+# driver image and install the provider device plugin. CPU-only clusters ignore
+# these values. The preset is validated and can track a supported recipe value.
+gpu_driver_mode       = "auto" # auto | managed-image | operator
+managed_driver_preset = "cuda13.0"
+
+# Operator mode is a diagnostics escape hatch. Multi-GPU SXM/NVL and explicit
+# GPU-cluster (NVSwitch) topologies reject it unless this unsafe-path
+# acknowledgement is deliberately enabled.
+allow_unsafe_nvswitch_operator = false
+
 # Preemptible GPU nodes draw on a different capacity pool than on-demand. Set
 # this when the tenant's on-demand GPU quota is exhausted (`npa cluster up`
 # reports the quota and what `nebius capacity resource-advice list` has free);

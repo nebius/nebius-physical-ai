@@ -98,13 +98,13 @@ def _rank(rank: int) -> dict[str, Any]:
             "uuid_sha256": hashlib.sha256(f"gpu-{rank}".encode()).hexdigest(),
         },
         "current_cuda_device": rank,
-        "torch": "2.7.1+cu128",
-        "torch_cuda": "12.8",
+        "torch": "2.13.0+cu130",
+        "torch_cuda": "13.0",
         "torch_cuda_arch_list": ["sm_100", "sm_120", "compute_120"],
-        "nccl_build_api_version": [2, 26, 2],
+        "nccl_build_api_version": [2, 29, 7],
         "loaded_nccl": {
-            "version": "2.27.7",
-            "version_code": 22707,
+            "version": "2.29.7",
+            "version_code": 22907,
             "library_basename": "libnccl.so.2",
             "mapped_path_sha256": hashlib.sha256(
                 f"/runtime/rank-{rank}/libnccl.so.2".encode()
@@ -207,12 +207,12 @@ def _materialize_multigpu_run(root: Path) -> None:
                 "sha256": video_sha256,
             },
             "runtime": {
-                "torch": "2.7.1+cu128",
-                "torch_cuda": "12.8",
+                "torch": "2.13.0+cu130",
+                "torch_cuda": "13.0",
                 "torch_cuda_arch_list": ["sm_100", "sm_120"],
                 "driver_versions": ["580.159.04"],
-                "nccl_build_api_version": [2, 26, 2],
-                "nccl_loaded_version": "2.27.7",
+                "nccl_build_api_version": [2, 29, 7],
+                "nccl_loaded_version": "2.29.7",
             },
             "capabilities_exercised": [
                 "wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses",
@@ -256,7 +256,7 @@ def _materialize_multigpu_run(root: Path) -> None:
     for rank in range(4):
         log_path = root / f"wan2_2_multigpu_nccl_rank_{rank}.log"
         log_path.write_text(
-            f"rank {rank}: NCCL version 2.27.7+cuda12.9\nrank {rank}: Init COMPLETE\n",
+            f"rank {rank}: NCCL version 2.29.7+cuda13.0\nrank {rank}: Init COMPLETE\n",
             encoding="utf-8",
         )
         rank_logs.append(
@@ -273,7 +273,7 @@ def _materialize_multigpu_run(root: Path) -> None:
         root / "wan2_2_multigpu_nccl_summary.json",
         {
             "schema": "npa.workbench.byof.wan2_2_multigpu_nccl_summary.v1",
-            "loaded_version": "2.27.7",
+            "loaded_version": "2.29.7",
             "process_group_destroyed_on_all_ranks": True,
             "rank_logs": rank_logs,
         },
@@ -286,13 +286,18 @@ def _materialize_multigpu_run(root: Path) -> None:
             "source_ref": "42bf4cfaa384bc21833865abc2f9e6c0e67233dc",
             "weights_baked": False,
             "runtime": {
-                "torch": "2.7.1+cu128",
-                "torch_cuda": "12.8",
+                "torch": "2.13.0+cu130",
+                "torch_cuda": "13.0",
+                "torch_cuda_arch_list": ["sm_100", "sm_120"],
                 "driver_versions": ["580.159.04"],
-                "nccl_build_api_version": [2, 26, 2],
-                "nccl_loaded_version": "2.27.7",
+                "nccl_build_api_version": [2, 29, 7],
+                "nccl_loaded_version": "2.29.7",
             },
-            "package_versions": {"torch": "2.7.1+cu128"},
+            "package_versions": {
+                "torch": "2.13.0+cu130",
+                "torchvision": "0.28.0",
+                "nvidia-nccl-cu13": "2.29.7",
+            },
             "devices": [rank["device"] for rank in ranks],
         },
     )
@@ -366,8 +371,8 @@ def _materialize_single_gpu_run(root: Path) -> None:
                         "total_memory_bytes": 1024,
                     }
                 ],
-                "torch": "2.7.1+cu128",
-                "torch_cuda": "12.8",
+                "torch": "2.13.0+cu130",
+                "torch_cuda": "13.0",
                 "torch_cuda_arch_list": ["sm_100", "sm_120", "compute_120"],
                 "driver_versions": ["580.159.04"],
                 "attention_backend": "torch.nn.functional.scaled_dot_product_attention",
@@ -404,8 +409,8 @@ def _materialize_single_gpu_run(root: Path) -> None:
                         "total_memory_bytes": 1024,
                     }
                 ],
-                "torch": "2.7.1+cu128",
-                "torch_cuda": "12.8",
+                "torch": "2.13.0+cu130",
+                "torch_cuda": "13.0",
                 "torch_cuda_arch_list": ["sm_100", "sm_120", "compute_120"],
                 "driver_versions": ["580.159.04"],
                 "attention_backend": "torch.nn.functional.scaled_dot_product_attention",
@@ -504,6 +509,23 @@ def test_single_gpu_layout_builds_and_uses_accurate_execution_entity(
     entities = {str(chunk.entity_path) for chunk in load_recording(output).chunks()}
     assert "/wan2_2/evidence/execution" in entities
     assert not any("/distributed" in entity for entity in entities)
+
+
+def test_single_gpu_rejects_stale_torch_cuda_evidence(tmp_path: Path) -> None:
+    run_dir = tmp_path / "single"
+    _materialize_single_gpu_run(run_dir)
+    artifact_path = run_dir / "wan2_2_ti2v_5b_text_to_video.json"
+    artifact = json.loads(artifact_path.read_text())
+    artifact["device_topology"]["torch"] = "2.7.1+cu128"
+    artifact["device_topology"]["torch_cuda"] = "12.8"
+    _write_json(artifact_path, artifact)
+    inventory_path = run_dir / SINGLE_GPU_LAYOUT.inventory_filename
+    inventory = json.loads(inventory_path.read_text())
+    inventory["runtime_stack"] = artifact["device_topology"]
+    _write_json(inventory_path, inventory)
+
+    with pytest.raises(WanRrdError, match="Torch 2.13.0 / CUDA 13.0"):
+        build_wan_rrd(run_dir, tmp_path / "broken.rrd", layout=SINGLE_GPU_LAYOUT)
 
 
 def test_single_gpu_schema_drift_fails_with_structured_error(tmp_path: Path) -> None:
@@ -663,6 +685,60 @@ def test_build_wan_rrd_rejects_rank_evidence_disagreement(tmp_path: Path) -> Non
     _write_json(run_dir / "wan2_2_multigpu_rank_0.json", rank)
 
     with pytest.raises(WanRrdError, match="disagrees with topology"):
+        build_wan_rrd(
+            run_dir,
+            tmp_path / MULTI_GPU_LAYOUT.rrd_filename,
+            layout=MULTI_GPU_LAYOUT,
+        )
+
+
+def test_multigpu_rejects_stale_primary_torch_cuda_evidence(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    _materialize_multigpu_run(run_dir)
+    artifact_path = run_dir / "wan2_2_ti2v_5b_multigpu.json"
+    artifact = json.loads(artifact_path.read_text())
+    artifact["runtime"]["torch"] = "2.7.1+cu128"
+    artifact["runtime"]["torch_cuda"] = "12.8"
+    _write_json(artifact_path, artifact)
+
+    with pytest.raises(WanRrdError, match="Torch 2.13.0 / CUDA 13.0"):
+        build_wan_rrd(
+            run_dir,
+            tmp_path / MULTI_GPU_LAYOUT.rrd_filename,
+            layout=MULTI_GPU_LAYOUT,
+        )
+
+
+def test_multigpu_rejects_stale_loaded_nccl_evidence(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    _materialize_multigpu_run(run_dir)
+    topology_path = run_dir / "wan2_2_multigpu_topology.json"
+    topology = json.loads(topology_path.read_text())
+    stale_rank = topology["rank_evidence"][0]
+    stale_rank["loaded_nccl"]["version"] = "2.27.7"
+    stale_rank["loaded_nccl"]["version_code"] = 22707
+    _write_json(topology_path, topology)
+    _write_json(run_dir / "wan2_2_multigpu_rank_0.json", stale_rank)
+
+    with pytest.raises(WanRrdError, match="accepted NCCL 2.29.7"):
+        build_wan_rrd(
+            run_dir,
+            tmp_path / MULTI_GPU_LAYOUT.rrd_filename,
+            layout=MULTI_GPU_LAYOUT,
+        )
+
+
+def test_multigpu_rejects_stale_nccl_build_api_evidence(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    _materialize_multigpu_run(run_dir)
+    topology_path = run_dir / "wan2_2_multigpu_topology.json"
+    topology = json.loads(topology_path.read_text())
+    stale_rank = topology["rank_evidence"][0]
+    stale_rank["nccl_build_api_version"] = [2, 26, 2]
+    _write_json(topology_path, topology)
+    _write_json(run_dir / "wan2_2_multigpu_rank_0.json", stale_rank)
+
+    with pytest.raises(WanRrdError, match="wrong NCCL build API version"):
         build_wan_rrd(
             run_dir,
             tmp_path / MULTI_GPU_LAYOUT.rrd_filename,

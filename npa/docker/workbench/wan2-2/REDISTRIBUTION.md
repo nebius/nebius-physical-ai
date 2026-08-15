@@ -1,6 +1,6 @@
 # Wan 2.2 container redistribution record
 
-Review date: 2026-08-08. This is an engineering classification, not a legal
+Review date: 2026-08-13. This is an engineering classification, not a legal
 opinion or substitute for counsel.
 
 ## Three separately classified layers
@@ -14,11 +14,11 @@ opinion or substitute for counsel.
    Apache-2.0 patches select only TI2V exports and replace the historical
    LGPL-3.0 EasyDict dependency; the S2V-only LGPL audio closure is absent.
 2. **Shipped runtime.** Only the digest-pinned official Python base, Debian
-   packages, CPU-only BSD-3-Clause PyTorch, and OSS Wan dependencies are image
-   bytes. No CUDA, cuDNN, NCCL, TensorRT, `nvidia-*` Python distribution,
+   packages, and OSS Wan dependencies are image bytes. No Torch, torchvision,
+   torchaudio, CUDA, cuDNN, NCCL, TensorRT, `nvidia-*` Python distribution,
    NVIDIA SDK, checkpoint, tokenizer, credential, or cache is shipped.
-3. **Runtime-fetched software, weights, and data.** CUDA-enabled PyTorch 2.7.1
-   and its NVIDIA dependencies are delivered into the operator's writable
+3. **Runtime-fetched software, weights, and data.** CUDA-enabled PyTorch 2.13.0
+   and its CUDA 13.0 NVIDIA dependencies are delivered into the operator's writable
    volume only after `NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS=YES`; current terms:
    <https://docs.nvidia.com/cuda/eula/index.html> and
    <https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/>.

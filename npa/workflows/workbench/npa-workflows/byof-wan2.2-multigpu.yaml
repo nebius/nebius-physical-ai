@@ -34,10 +34,9 @@ config:
     export WAN22_CACHE_DIR="${WAN22_CACHE_DIR:-/workspace/model-cache/wan2.2}"
     export WAN22_EXPECTED_WORLD_SIZE="4"
     export WAN22_OUTPUT_NAME="wan2_2_ti2v_5b_multigpu.mp4"
-    # The runtime pins NCCL 2.27.7: the formerly pinned 2.26.2 initialized all
-    # four B200 ranks but hung on the first all-reduce, while the same isolated
-    # probe passed on every rank after the 2.27.7 correction. Keep the supported
-    # legacy device allocator and shared-memory host fallback used by that probe.
+    # The security-fixed runtime pins NCCL 2.29.7. Retain the conservative
+    # device allocator and shared-memory host fallback from the historical
+    # topology while this runtime awaits live qualification.
     export NCCL_CUMEM_ENABLE="0"
     export NCCL_CUMEM_HOST_ENABLE="0"
     # The eight-B200 host exposes NVSwitch, but an unprivileged four-GPU
@@ -51,7 +50,7 @@ config:
     export NCCL_SOCKET_IFNAME="=eth0"
     export NCCL_SOCKET_FAMILY="AF_INET"
     export NCCL_IB_DISABLE="1"
-    # PyTorch 2.7 supports NCCL's asynchronous communicator initialization.
+    # PyTorch 2.13 supports NCCL's asynchronous communicator initialization.
     # Use it to avoid blocking ncclCommInitRank on this containerized B200
     # driver/runtime combination while keeping async errors fail-closed.
     export TORCH_NCCL_USE_COMM_NONBLOCKING="1"
@@ -134,6 +133,12 @@ config:
     import torch.distributed as dist
     from torch.distributed.fsdp import FullyShardedDataParallel, ShardingStrategy
 
+    if torch.__version__.split("+", 1)[0] != "2.13.0" or torch.version.cuda != "13.0":
+        raise RuntimeError(
+            f"Wan runtime must be Torch 2.13.0 / CUDA 13.0, observed "
+            f"{torch.__version__} / {torch.version.cuda}"
+        )
+
     # torch.distributed.run executes this generated wrapper by path, which puts
     # the run directory (not the immutable checkout) at sys.path[0].
     sys.path.insert(0, "/opt/byof")
@@ -204,8 +209,8 @@ config:
             raise RuntimeError(f"ncclGetVersion failed with code {result}")
         value = int(version_code.value)
         version = f"{value // 10000}.{(value // 100) % 100}.{value % 100}"
-        if version != "2.27.7":
-            raise RuntimeError(f"loaded NCCL version is {version}, not 2.27.7")
+        if version != "2.29.7":
+            raise RuntimeError(f"loaded NCCL version is {version}, not 2.29.7")
         mapped = sorted({
             line.rsplit(None, 1)[-1]
             for line in Path("/proc/self/maps").read_text(encoding="utf-8").splitlines()
@@ -366,8 +371,11 @@ config:
                         or item["nccl_socket_family"] != "AF_INET"
                         or item["nccl_ib_disable"] != "1"
                         or item["torch_nccl_use_comm_nonblocking"] != "1"
-                        or item["loaded_nccl"]["version"] != "2.27.7"
-                        or item["loaded_nccl"]["version_code"] != 22707
+                        or item["loaded_nccl"]["version"] != "2.29.7"
+                        or item["loaded_nccl"]["version_code"] != 22907
+                        or item["torch"].split("+", 1)[0] != "2.13.0"
+                        or item["torch_cuda"] != "13.0"
+                        or item["nccl_build_api_version"] != [2, 29, 7]
                         or len(wrappers) != 2
                         or "WanModel" not in wrapper_sources
                         or not any(wrapper["sequence_parallel_active_before_wrap"] for wrapper in wrappers)
@@ -436,6 +444,12 @@ config:
     import numpy as np
     import torch
 
+    if torch.__version__.split("+", 1)[0] != "2.13.0" or torch.version.cuda != "13.0":
+        raise SystemExit(
+            f"Wan runtime must be Torch 2.13.0 / CUDA 13.0, observed "
+            f"{torch.__version__} / {torch.version.cuda}"
+        )
+
     out = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
     video = out / os.environ["WAN22_OUTPUT_NAME"]
     topology = json.loads((out / "wan2_2_multigpu_topology.json").read_text(encoding="utf-8"))
@@ -457,7 +471,7 @@ config:
         progress.append(marker)
         log_path = out / f"wan2_2_multigpu_nccl_rank_{rank}.log"
         log_text = log_path.read_text(encoding="utf-8", errors="replace")
-        version_observed = "NCCL version 2.27.7" in log_text
+        version_observed = "NCCL version 2.29.7" in log_text
         init_observed = "Init COMPLETE" in log_text
         if not version_observed or not init_observed:
             raise SystemExit(f"rank {rank} NCCL log lacks version/init evidence")
@@ -472,11 +486,11 @@ config:
     loaded_versions = {
         item["loaded_nccl"]["version"] for item in topology["rank_evidence"]
     }
-    if loaded_versions != {"2.27.7"}:
+    if loaded_versions != {"2.29.7"}:
         raise SystemExit(f"rank loaded NCCL versions disagree: {loaded_versions}")
     nccl_summary = {
         "schema": "npa.workbench.byof.wan2_2_multigpu_nccl_summary.v1",
-        "loaded_version": "2.27.7",
+        "loaded_version": "2.29.7",
         "process_group_destroyed_on_all_ranks": True,
         "rank_logs": rank_logs,
     }
@@ -549,7 +563,7 @@ config:
         "generation": {"prompt": os.environ["WAN22_PROMPT"], "seed": 42, "width": 1280, "height": 704, "frames": 17, "fps": 24.0, "steps": 8},
         "observed": {"width": 1280, "height": 704, "channels": 3, "frame_count": len(frames), "fps": fps, "codec": ffprobe, "max_spatial_std": spatial_std, "pixel_range": pixel_range, "mean_temporal_abs_delta": temporal_delta},
         "output": {"filename": video.name, "size_bytes": size, "sha256": digest},
-        "runtime": {"torch": torch.__version__, "torch_cuda": torch.version.cuda, "torch_cuda_arch_list": torch.cuda.get_arch_list(), "driver_versions": sorted(set(value.strip() for value in driver if value.strip())), "nccl_build_api_version": topology["rank_evidence"][0]["nccl_build_api_version"], "nccl_loaded_version": "2.27.7"},
+        "runtime": {"torch": torch.__version__, "torch_cuda": torch.version.cuda, "torch_cuda_arch_list": torch.cuda.get_arch_list(), "driver_versions": sorted(set(value.strip() for value in driver if value.strip())), "nccl_build_api_version": topology["rank_evidence"][0]["nccl_build_api_version"], "nccl_loaded_version": "2.29.7"},
         "capabilities_exercised": capabilities,
         "deferred": [],
         "not_claimed": ["wan2.2_ti2v_5b_image_to_video", "wan2.2_action_prediction", "wan2.2_training"],
@@ -568,7 +582,7 @@ config:
         "customer_data_in_image": False,
         "runtime": result["runtime"],
         "devices": [item["device"] for item in topology["rank_evidence"]],
-        "package_versions": {name: importlib.metadata.version(name) for name in ("torch", "torchvision", "transformers", "diffusers", "opencv-python-headless", "nvidia-nccl-cu12")},
+        "package_versions": {name: importlib.metadata.version(name) for name in ("torch", "torchvision", "transformers", "diffusers", "opencv-python-headless", "nvidia-nccl-cu13")},
     }
     if not inventory["non_root"]:
         raise SystemExit("Wan multi-GPU image must execute as non-root")

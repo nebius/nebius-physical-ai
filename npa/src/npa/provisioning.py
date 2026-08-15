@@ -14,6 +14,8 @@ from urllib.parse import urlparse
 
 from npa.clients import config as config_module
 from npa.clients.config import ConfigError, EnvironmentConfig, StorageConfig
+from npa.cluster.gpu_driver import DEFAULT_MANAGED_DRIVER_PRESET
+from npa.cluster.gpu_health import DEFAULT_CUDA_SMOKE_IMAGE, DEFAULT_STABILIZATION_SECONDS
 from npa.cluster.state import kubeconfig_file, load_cluster_state
 from npa.provisioning_journal import (
     ProvisioningOperation,
@@ -74,6 +76,14 @@ def _provision_recovery_argv(
         str(float(arguments.get("gpu_readiness_timeout") or 600.0)),
         "--gpu-readiness-poll-interval",
         str(float(arguments.get("gpu_readiness_poll_interval") or 10.0)),
+        "--gpu-health-stabilization-seconds",
+        str(
+            int(
+                arguments.get("gpu_health_stabilization_seconds")
+                if arguments.get("gpu_health_stabilization_seconds") is not None
+                else DEFAULT_STABILIZATION_SECONDS
+            )
+        ),
         "--output-format",
         str(arguments.get("output_format") or "text"),
     ]
@@ -87,6 +97,9 @@ def _provision_recovery_argv(
         ("cpu_preset", "--cpu-preset"),
         ("gpu_platform", "--gpu-platform"),
         ("gpu_preset", "--gpu-preset"),
+        ("gpu_driver_mode", "--gpu-driver-mode"),
+        ("managed_driver_preset", "--managed-driver-preset"),
+        ("gpu_cuda_smoke_image", "--gpu-cuda-smoke-image"),
         ("accelerator", "--accelerator"),
         ("sky_bin", "--sky-bin"),
     ):
@@ -96,6 +109,7 @@ def _provision_recovery_argv(
     for key, enabled, disabled in (
         ("validate", "--validate", "--skip-validate"),
         ("sky_smoke", "--sky-smoke", "--skip-sky-smoke"),
+        ("gpu_cuda_smoke", "--gpu-cuda-smoke", "--skip-gpu-cuda-smoke"),
     ):
         argv.append(enabled if bool(arguments.get(key)) else disabled)
     if bool(arguments.get("skip_k8s")):
@@ -107,6 +121,13 @@ def _provision_recovery_argv(
     preemptible = arguments.get("preemptible")
     if preemptible is not None:
         argv.append("--preemptible" if bool(preemptible) else "--on-demand")
+    unsafe_operator = arguments.get("allow_unsafe_nvswitch_operator")
+    if unsafe_operator is not None:
+        argv.append(
+            "--allow-unsafe-nvswitch-operator"
+            if bool(unsafe_operator)
+            else "--deny-unsafe-nvswitch-operator"
+        )
     return argv
 
 
@@ -278,6 +299,12 @@ def provision_if_absent(
     cpu_preset: str = "",
     gpu_platform: str = "",
     gpu_preset: str = "",
+    gpu_driver_mode: str = "",
+    managed_driver_preset: str = "",
+    allow_unsafe_nvswitch_operator: bool | None = None,
+    gpu_health_stabilization_seconds: int = DEFAULT_STABILIZATION_SECONDS,
+    gpu_cuda_smoke: bool = True,
+    gpu_cuda_smoke_image: str = DEFAULT_CUDA_SMOKE_IMAGE,
     preemptible: bool | None = None,
     accelerator: str = "",
     gpu_readiness_timeout: float = 600.0,
@@ -404,6 +431,39 @@ def provision_if_absent(
         actions.append("k8s:skipped")
     elif _has_cached_kubeconfig(context, kubeconfig_path):
         actions.append(f"k8s:reused kubeconfig {kubeconfig_path}")
+        if validate and gpu_nodes > 0:
+            from npa.cli.cluster.terraform_lifecycle import (
+                _require_bin,
+                _validate_cluster,
+            )
+
+            kubectl_bin = _require_bin(
+                os.environ.get("NPA_KUBECTL_BIN") or "kubectl"
+            )
+            _validate_cluster(
+                kubectl_bin,
+                Path(kubeconfig_path),
+                {
+                    "cpu_nodes_count": cpu_nodes,
+                    "gpu_nodes_count": gpu_nodes,
+                    "gpu_nodes_platform": gpu_platform,
+                    "gpu_nodes_preset": gpu_preset,
+                    "gpu_driver_mode": gpu_driver_mode or "auto",
+                    "managed_driver_preset": (
+                        managed_driver_preset or DEFAULT_MANAGED_DRIVER_PRESET
+                    ),
+                    "allow_unsafe_nvswitch_operator": bool(
+                        allow_unsafe_nvswitch_operator
+                    ),
+                },
+                60,
+                gpu_health_stabilization_seconds=(
+                    gpu_health_stabilization_seconds
+                ),
+                gpu_cuda_smoke=gpu_cuda_smoke,
+                gpu_cuda_smoke_image=gpu_cuda_smoke_image,
+            )
+            actions.append("k8s:validated stable GPU health and CUDA vectorAdd")
         k8s_ready = True
     elif not environment.project_id or not environment.tenant_id:
         warnings.append("project_id and tenant_id are required to ensure Kubernetes")
@@ -426,6 +486,8 @@ def provision_if_absent(
                     ("cpu_preset", cpu_preset),
                     ("gpu_platform", gpu_platform),
                     ("gpu_preset", gpu_preset),
+                    ("gpu_driver_mode", gpu_driver_mode),
+                    ("managed_driver_preset", managed_driver_preset),
                 )
                 if value.strip()
             ]
@@ -461,6 +523,14 @@ def provision_if_absent(
                 cpu_preset=cpu_preset,
                 gpu_platform=gpu_platform,
                 gpu_preset=gpu_preset,
+                gpu_driver_mode=gpu_driver_mode,
+                managed_driver_preset=managed_driver_preset,
+                allow_unsafe_nvswitch_operator=allow_unsafe_nvswitch_operator,
+                gpu_health_stabilization_seconds=(
+                    gpu_health_stabilization_seconds
+                ),
+                gpu_cuda_smoke=gpu_cuda_smoke,
+                gpu_cuda_smoke_image=gpu_cuda_smoke_image,
                 preemptible=preemptible,
                 validation_timeout=60,
                 timeout=timeout,

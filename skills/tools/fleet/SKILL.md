@@ -40,6 +40,12 @@ region: us-central1
 profile: ""                  # ~/.nebius profile to authenticate as; "" = active
 project_prefix: "fleet1-test-"
 defaults:
+  gpu_driver_mode: auto
+  managed_driver_preset: cuda13.0
+  allow_unsafe_nvswitch_operator: false
+  gpu_health_stabilization_seconds: 120
+  gpu_health_timeout_minutes: 60
+  gpu_cuda_smoke: true
   cpu_nodes: { count: 1, platform: cpu-d3, preset: 48vcpu-192gb }
   gpu_nodes:
     count: 1
@@ -109,6 +115,14 @@ depends on it.
    valid on fabric-capable 8-GPU SXM presets. Single-GPU presets (e.g. RTX PRO
    6000 `1gpu-24vcpu-218gb`) auto-set `enable_gpu_cluster=false`; set it `true`
    only with an 8-GPU preset **and** `infiniband_fabric`.
+   Every GPU pool defaults to `gpu_driver_mode: auto`, which selects Nebius's
+   managed driver image plus the provider device plugin; CPU-only clusters emit
+   no GPU-driver input. `managed_driver_preset` defaults to the vendored
+   recipe's supported `cuda13.0` and is configurable. `operator` remains an
+   explicit escape hatch, but NVSwitch topologies reject it unless
+   `allow_unsafe_nvswitch_operator: true` acknowledges the Network
+   Operator/MOFED versus Fabric Manager host-device race. The same strategy
+   resolver applies to `npa cluster up` and Fleet.
 4. **Bind reserved GPU capacity explicitly when required.** Set
    `gpu_nodes.capacity_block_group` to a runtime-supplied Capacity Block Group
    ID. Fleet renders `gpu_nodes_reservation_policy = { policy = "STRICT", ... }`,
@@ -141,16 +155,42 @@ depends on it.
    frequently **0**), `compute.disk.count`/`compute.disk.size.network-ssd`,
    `compute.gpucluster.count` when `enable_gpu_cluster`, and
    `compute.filesystem.count` + `compute.filesystem.size.network-ssd` when
-   `enable_filestore`. List them all at once with
-   `nebius --profile <p> quotas quota-allowance list --parent-id <tenant> --format json`
+   `enable_filestore`. Each private worker consumes two
+   `vpc.allocation.count` slots (its private address and pod alias range); the
+   managed control-plane endpoint is service-owned. A create-on-demand project
+   additionally needs one `vpc.network.count`, one `vpc.subnet.count`, two
+   `vpc.pool.count`, one `vpc.routetable.count`, and one `vpc.route.count`.
+   List them all at once with
+   `nebius --profile <p> quotas quota-allowance list --parent-id <tenant> --all --format json`
    (each item carries `metadata.name`, `spec.region`, `spec.limit`).
 
    `deploy` does this automatically (`--preflight`, on by default) and refuses to
    apply when a capacity block or tenant limit cannot cover the in-scope
-   clusters; `--no-preflight` attempts it anyway. Ordinary quota checks subtract
-   exact usage when reported, otherwise the live wire's 0..1 fractional
-   `status.usage_percentage`. Filesystem size is byte-valued and must report
-   `status.unit: byte`; an incompatible/missing unit fails closed.
+   clusters; `--no-preflight` attempts it anyway. Before calculating
+   creation-only VPC requirements, preflight lists projects once and reuses an
+   existing immutable project ID when a name already exists. An unreadable
+   project inventory fails closed rather than assuming the project exists.
+
+   The allowance read is paged to completion and selects records whose
+   `metadata.parent_id` is the requested tenant. A project/unset allowance can
+   never shadow a finite tenant allowance; duplicate finite evidence must agree
+   exactly. Older unscoped records are a fallback only when no authoritative
+   tenant record exists. Required finite allowances fail closed when their
+   limit, unit, state, or consumption evidence cannot be interpreted. Exact
+   usage wins; otherwise the API's fractional `status.usage_percentage` is used
+   (values above 1 mean over-limit), and `USAGE_STATE_NOT_USED` is accepted as
+   zero consumption. Disk/filesystem sizes require `byte`; vCPU and GPU quotas
+   accept only their explicit compatible `count`/`vcpu` and `count`/`gpu` units.
+   A selected unlimited allowance may omit status because no arithmetic is
+   required.
+
+   The five creation-topology allowances (`vpc.network.count`,
+   `vpc.subnet.count`, `vpc.pool.count`, `vpc.routetable.count`, and
+   `vpc.route.count`) are optional catalog entries: when absent from a completed,
+   readable regional tenant catalog, preflight reports them as unadvertised and
+   does not reject the region. If any is advertised with a finite limit, it is
+   checked strictly. All compute, disk, mk8s, allocation, GPU-cluster, and
+   filesystem allowances required by the selected shape remain mandatory.
 
    Project-level allowances only *subdivide* the tenant allowance, so a tenant
    limit of 0 cannot be worked around by creating a project quota: raising a
@@ -166,7 +206,15 @@ depends on it.
    deployed vs failed clusters with kube contexts.
 7. **Consume the latest recipe**: `--k8s-training-ref main` clones
    `nebius-solutions-library` and uses its `k8s-training` (or `--k8s-training-dir`
-   for a local checkout). Omit both to use the repo-vendored, tested copy.
+   for a local checkout). Omit both to use the repo-vendored, tested copy. NPA
+   applies its compatibility preparation after materializing every source,
+   including the package-only pinned-ref fallback; currently this removes
+   `kubectl debug --quiet` from the filesystem verifier because kubectl 1.36
+   otherwise hides both required success evidence and the debugger-pod name.
+   For GPU clusters it also inspects the materialized recipe's variables and
+   `gpu_settings` wiring. If the selected managed-driver mode/preset cannot be
+   represented, deployment fails with an actionable compatibility error rather
+   than silently reverting to the operator driver.
 8. **Status / teardown**: `npa fleet status --spec fleet.yaml`; `npa fleet
    destroy --spec fleet.yaml` (prompts; `--yes`/`-y` or `--force` to skip).
 
@@ -196,9 +244,14 @@ Both `deploy` and `destroy` confirm before acting (bypass with `--yes`/`-y`;
 - **Per-cluster isolation**: each `(project, cluster)` gets its own Terraform
   install dir + local state under `~/.npa/fleet/<name>/<project>/<cluster>` and
   an env sidecar so `destroy` can rebuild the required `TF_VAR_*`. The sidecar's
-  `status` starts as `provisioning` and is promoted to `deployed` only after a
-  successful apply and kubeconfig write. Credential failures report
-  `deployed-credentials-failed` and retain Terraform/cloud state for recovery.
+  `status` starts as `provisioning`. GPU clusters move through
+  `validating-gpu-health` and are promoted to `deployed` only after the requested
+  Ready-node/GPU topology, absence of `NebiusGPUError`, exposed Fabric state,
+  driver components, stable boot IDs, and per-node CUDA vectorAdd all pass for
+  the configured stabilization interval. Health failures report
+  `deployed-validation-failed`; credential failures report
+  `deployed-credentials-failed`. Both retain Terraform/cloud state, kubeconfig,
+  and local evidence for diagnosis and an idempotent retry.
 - **Region domain**: the recipe's `provider.tf` domain is patched to
   `api.nebius.cloud` for non-EU regions automatically (EU uses
   `api.eu.nebius.cloud`). If the upstream recipe drifts (renames `provider.tf`,
@@ -211,6 +264,11 @@ Both `deploy` and `destroy` confirm before acting (bypass with `--yes`/`-y`;
   and the o11y/kuberay/gatekeeper `enable_*` flags. Pulling a newer recipe whose
   variables changed can require updating `fleet/tfvars.py`; validate with
   `npa fleet plan` + a `terraform plan` before a fleet-wide apply.
+- **Existing GPU pools do not change their boot image in place**: after moving
+  an affected spec to `auto`/`managed-image`, perform a controlled rolling
+  node-group update or recreation. A newer NPA binary alone cannot repair
+  already-booted operator-driver nodes; preserve reservation capacity and obey
+  workload disruption policy while replacing them.
 - **Filesystem quota**: `enable_filestore: true` creates one shared filesystem
   per cluster and consumes tenant `compute.filesystem.count` +
   `compute.filesystem.size.network-ssd` quota. Set `enable_filestore: false`

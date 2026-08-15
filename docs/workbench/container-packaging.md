@@ -13,6 +13,18 @@ entrypoint that forwards orchestrator arguments. Compliant first-party images
 record `org.nebius.npa.skypilot-bootstrap-contract=skypilot-0.12.2-v1` in OCI
 config, with Dockerfile behavior covered by build tests.
 
+The canonical `npa-groot:0.1.0` is not in that attested publication set. It has
+the non-root `ubuntu` user, system Python, `rsync`, an SSH client, and
+passwordless sudo, but lacks `openssh-server`, runtime host-key generation, and
+an argument-forwarding entrypoint. `groot/Dockerfile.k8s-prereqs` is the exact
+derived source for those missing capabilities. Its source contract is checked
+from `packaging-contract.yaml`, but its OCI label is only a declaration: because
+the canonical and repaired artifacts share the `npa-groot` repository, submit
+ignores label-backed (including cached) evidence and requires a capability probe
+against the selected immutable digest. Public-image verification continues to
+check only canonical Dockerfiles that independently satisfy the declared
+publication contract; GR00T is deliberately absent from that set.
+
 Submit resolves the selected tag to an immutable digest and validates metadata
 on that digest. Missing/mismatched first-party evidence fails before launch.
 Arbitrary unattested images get one bounded exact-context capability pod; probe

@@ -312,7 +312,31 @@ images:
     isaac_runtime_fetch: true
     tier: interactive
     ports: [8080]
-    notes: "EXPOSE 8080 without default server CMD; promote to service when ready."
+    passwordless_root_exemption:
+      rationale: >-
+        SkyPilot's Kubernetes bootstrap invokes package and SSH setup through
+        passwordless sudo as the non-root ubuntu user. Neither source starts
+        sshd by default or bakes credentials, and the container boundary remains
+        the reviewed trust boundary for these ephemeral workflow task pods.
+      sources:
+        - groot/Dockerfile
+        - common/install_isaac_runtime_base.sh
+        - groot/Dockerfile.k8s-prereqs
+      grants:
+        - source: common/install_isaac_runtime_base.sh
+          sudoers_entry: "ubuntu ALL=(ALL) NOPASSWD:ALL"
+        - source: groot/Dockerfile.k8s-prereqs
+          sudoers_entry: "ubuntu ALL=(ALL) NOPASSWD:ALL"
+    derived_skypilot_bootstrap_contract:
+      dockerfile: groot/Dockerfile.k8s-prereqs
+      version: skypilot-0.12.2-v1
+      verification: runtime_probe_required
+    notes: >-
+      EXPOSE 8080 without default server CMD. The canonical build supplies the
+      ubuntu user and passwordless sudo but not the complete SkyPilot contract;
+      the derived repair source supplies sshd, runtime host keys, and argument
+      forwarding. Its label is never trusted by itself: submit requires an exact-
+      digest runtime capability probe. Promote to service when ready.
     redistribution: public
   retargeting:
     dockerfile: retargeting/Dockerfile

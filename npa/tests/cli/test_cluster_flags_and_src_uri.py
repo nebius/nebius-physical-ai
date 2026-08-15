@@ -37,6 +37,21 @@ def test_cluster_up_accepts_the_same_flag_as_provision_if_absent() -> None:
     assert "--context" in _option_names(["cluster", "up"])
 
 
+def test_gpu_driver_and_health_flags_align_across_direct_entrypoints() -> None:
+    expected = {
+        "--gpu-driver-mode",
+        "--managed-driver-preset",
+        "--allow-unsafe-nvswitch-operator",
+        "--deny-unsafe-nvswitch-operator",
+        "--gpu-health-stabilization-seconds",
+        "--gpu-cuda-smoke",
+        "--skip-gpu-cuda-smoke",
+        "--gpu-cuda-smoke-image",
+    }
+    assert expected <= _option_names(["cluster", "up"])
+    assert expected <= _option_names(["provision-if-absent"])
+
+
 def test_cluster_up_rejects_an_unknown_flag_but_not_cluster_name(
     tmp_path: Path,
 ) -> None:

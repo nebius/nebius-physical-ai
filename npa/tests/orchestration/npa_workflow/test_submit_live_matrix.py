@@ -30,6 +30,15 @@ def _load_live_helpers():
     return mod
 
 
+def _load_live_argv():
+    path = Path(__file__).resolve().parents[2] / "e2e" / "npa_workflow_live_argv.py"
+    spec = importlib.util.spec_from_file_location("npa_workflow_live_argv", path)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def test_force_accelerators_on_cpu_profiles() -> None:
     helpers = _load_live_helpers()
     src = """resources:
@@ -49,6 +58,81 @@ def test_force_accelerators_on_cpu_profiles() -> None:
     assert "cpus: 4+" in out
     assert "memory: 16+" in out
     assert "cpus: 4\n" not in out
+
+
+def test_live_workflow_argv_builders_forward_selected_project_through_lifecycle() -> None:
+    argv = _load_live_argv()
+    path = Path("/tmp/catalog-spec.yaml")
+    common = {
+        "path": path,
+        "run_id": "project-forwarding-run",
+        "registry": "registry.example/workbench",
+        "project": "non-default-project",
+    }
+    built = [
+        argv.plan_submit_args(**common, assume_decision="promote_checkpoint"),
+        argv.one_shot_submit_args(
+            **common,
+            image_args=("--image", "registry.example/workbench/npa-tool:tag"),
+            secret_env_args=("--secret-env", "TOKEN"),
+        ),
+        argv.runtime_submit_args(
+            **common,
+            poll_seconds=2,
+            max_wait_seconds=30,
+            cancel_on_timeout=False,
+            config_vars=(("bucket", "fixture-bucket"),),
+        ),
+        argv.runtime_submit_args(
+            **common,
+            poll_seconds=2,
+            max_wait_seconds=30,
+            cancel_on_timeout=True,
+            resume=True,
+        ),
+        argv.status_args(
+            common["run_id"],
+            project=common["project"],
+            workflow_s3_uri=(
+                "s3://fixture-bucket/custom-prefix/npa-workflow"
+            ),
+        ),
+    ]
+
+    for command in built:
+        assert command.count("--project") == 1, command
+        project_index = command.index("--project")
+        assert command[project_index + 1] == "non-default-project", command
+    assert "--plan-only" in built[0]
+    assert "--runtime" in built[2]
+    assert "--resume" in built[3]
+    assert built[4][:3] == ["workbench", "workflow", "status"]
+    assert built[4][built[4].index("--workflow-s3-uri") + 1] == (
+        "s3://fixture-bucket/custom-prefix/npa-workflow"
+    )
+
+
+def test_live_workflow_argv_builders_omit_project_only_when_unselected() -> None:
+    argv = _load_live_argv()
+    path = Path("/tmp/catalog-spec.yaml")
+    common = {
+        "path": path,
+        "run_id": "implicit-project-run",
+        "registry": "registry.example/workbench",
+        "project": None,
+    }
+    built = [
+        argv.plan_submit_args(**common),
+        argv.one_shot_submit_args(**common),
+        argv.runtime_submit_args(
+            **common,
+            poll_seconds=2,
+            max_wait_seconds=30,
+            cancel_on_timeout=True,
+        ),
+        argv.status_args(common["run_id"], project=None),
+    ]
+    assert all("--project" not in command for command in built)
 
 
 def test_submit_live_matrix_specs_exist() -> None:

@@ -419,6 +419,98 @@ def test_ordinary_exact_workflow_contract_remains_supported(
     assert resolved.manifest == manifest
 
 
+def test_explicit_nested_ordinary_workflow_uri_uses_manifest_run_id(
+    resolver_env: ExactS3,
+) -> None:
+    run_id = "ordinary-nested-run"
+    workflow = "token-factory-parallel-fanout"
+    explicit = f"s3://alias-bucket/runs/{run_id}/{workflow}/npa-workflow"
+    manifest = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "workflow_name": workflow,
+        "sky_job_id": "9",
+        "stages": {"aggregate": {"name": "aggregate"}},
+    }
+    resolver_env.put_json(
+        "alias-bucket",
+        f"runs/{run_id}/{workflow}/npa-workflow/manifest.json",
+        manifest,
+    )
+
+    resolved = resolve_run(
+        run_id,
+        project="paidf",
+        workflow_s3_uri=explicit,
+    )
+
+    assert resolved.found is True
+    assert resolved.source == "explicit_workflow_s3_uri"
+    assert resolved.run_id == run_id
+    assert resolved.manifest == manifest
+
+
+def test_explicit_nested_uri_supports_manifest_pending_exact_prefix(
+    resolver_env: ExactS3,
+) -> None:
+    run_id = "ordinary-nested-pending"
+    workflow = "token-factory-parallel-fanout"
+    explicit = f"s3://alias-bucket/runs/{run_id}/{workflow}/npa-workflow"
+    partial_key = f"runs/{run_id}/{workflow}/reports/partial.json"
+    resolver_env.objects[("alias-bucket", partial_key)] = b"{}"
+
+    resolved = resolve_run(
+        run_id,
+        project="paidf",
+        workflow_s3_uri=explicit,
+    )
+
+    assert resolved.found is True
+    assert resolved.manifest_pending is True
+    assert resolved.source == "explicit_workflow_s3_uri"
+    assert resolver_env.queries == [
+        (
+            "alias-bucket",
+            f"runs/{run_id}/{workflow}/",
+            {"MaxItems": 1, "PageSize": 1},
+        )
+    ]
+
+
+def test_explicit_nested_uri_must_contain_supplied_run_id(
+    resolver_env: ExactS3,
+) -> None:
+    with pytest.raises(WorkflowStateError, match="trailing run/workflow layout"):
+        resolve_run(
+            "wanted-run",
+            project="paidf",
+            workflow_s3_uri=(
+                "s3://alias-bucket/runs/another-run/workflow/npa-workflow"
+            ),
+        )
+    assert resolver_env.queries == []
+
+
+def test_explicit_uri_rejects_misleading_earlier_run_component_before_prefix_probe(
+    resolver_env: ExactS3,
+) -> None:
+    explicit = (
+        "s3://alias-bucket/archive/wanted-run/unrelated/other/npa-workflow"
+    )
+    resolver_env.objects[
+        ("alias-bucket", "archive/wanted-run/unrelated/other/reports/partial.json")
+    ] = b"{}"
+
+    with pytest.raises(WorkflowStateError, match="trailing run/workflow layout"):
+        resolve_run(
+            "wanted-run",
+            project="paidf",
+            workflow_s3_uri=explicit,
+        )
+
+    assert resolver_env.queries == []
+
+
 def test_stale_planned_receipt_cannot_override_terminal_s3_manifest(
     resolver_env: ExactS3,
 ) -> None:

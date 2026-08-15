@@ -15,7 +15,9 @@ only subdivide the tenant allowance, so the tenant is the meaningful container
 to check.
 
 Only read APIs are used (``nebius capacity capacity-block-group list`` and
-``nebius quotas quota-allowance list``).
+``nebius quotas quota-allowance list``). Quota evidence is fail-closed: an
+unreadable, incomplete, malformed, or unpaged allowance response is not proof
+that a deployment fits.
 """
 
 from __future__ import annotations
@@ -33,6 +35,16 @@ _CPU_DISK_GIB = 128
 _FILESYSTEM_SIZE_QUOTA = "compute.filesystem.size.network-ssd"
 _FILESYSTEM_SIZE_UNIT = "byte"
 _BYTE_QUOTAS = {_FILESYSTEM_SIZE_QUOTA, "compute.disk.size.network-ssd"}
+_VCPU_QUOTAS = {"compute.instance.non-gpu.vcpu"}
+_OPTIONAL_UNADVERTISED_QUOTAS = frozenset(
+    {
+        "vpc.network.count",
+        "vpc.subnet.count",
+        "vpc.pool.count",
+        "vpc.routetable.count",
+        "vpc.route.count",
+    }
+)
 
 # GPU quotas are keyed by accelerator family, not by the platform name:
 # platform "gpu-h200-sxm" consumes "compute.instance.gpu.h200".
@@ -281,7 +293,9 @@ def reservation_shortfall_message(shortfalls: list[ReservationShortfall]) -> str
     )
 
 
-def required_quotas(clusters: Iterable[ClusterSpec]) -> dict[str, int]:
+def required_quotas(
+    clusters: Iterable[ClusterSpec], *, new_projects: int = 0
+) -> dict[str, int]:
     """Aggregate the tenant quota amounts *clusters* need in one region.
 
     GPU-node vCPUs are deliberately not added to ``compute.instance.non-gpu.vcpu``
@@ -298,6 +312,11 @@ def required_quotas(clusters: Iterable[ClusterSpec]) -> dict[str, int]:
         cpu, gpu = cluster.cpu_nodes, cluster.gpu_nodes
         nodes = cluster.cpu_count() + cluster.gpu_count()
         add("mk8s.cluster.count", 1)
+        # Every private worker consumes two tenant VPC allocations: its /32
+        # address plus the delegated pod alias range. The managed control plane
+        # endpoint is service-owned and consumes neither a tenant allocation nor
+        # public-address quota; worker public IPs are disabled by the recipe.
+        add("vpc.allocation.count", 2 * nodes)
         # Managed control-plane etcd is service-owned: it consumes control-plane
         # IP allocations, but not the tenant's Compute VM or disk quotas. Only
         # node-group VMs and their explicitly rendered boot disks count here.
@@ -327,69 +346,237 @@ def required_quotas(clusters: Iterable[ClusterSpec]) -> dict[str, int]:
         if cluster.enable_filestore and not cluster.existing_filestore:
             add("compute.filesystem.count", 1)
             add(_FILESYSTEM_SIZE_QUOTA, cluster.filestore_disk_size_gibibytes * _GIB)
+    # A create-on-demand project needs one default/owned topology before the
+    # recipe can run. Live inventory contains private and public project pools,
+    # plus the network's default route table and egress route.
+    add("vpc.network.count", new_projects)
+    add("vpc.subnet.count", new_projects)
+    add("vpc.pool.count", 2 * new_projects)
+    add("vpc.routetable.count", new_projects)
+    add("vpc.route.count", new_projects)
     return needed
 
 
-def parse_allowances(payload: str, region: str) -> dict[str, dict[str, Any]]:
-    """Index ``quota-allowance list`` JSON by quota name for *region*.
+def _quota_units(name: str) -> frozenset[str]:
+    """Return explicitly supported wire units for one required quota."""
 
-    An allowance with an unset ``limit`` means "no limit at this container"
-    (project allowances are usually unset and draw on the tenant pool), so those
-    entries are skipped rather than read as a limit of zero.
+    if name in _BYTE_QUOTAS:
+        return frozenset({_FILESYSTEM_SIZE_UNIT})
+    if name in _VCPU_QUOTAS:
+        # Current tenant payloads use count; older/catalog-specific payloads use
+        # the semantically equivalent vcpu label.
+        return frozenset({"count", "vcpu"})
+    if name.startswith("compute.instance.gpu."):
+        return frozenset({"count", "gpu"})
+    return frozenset({"count"})
+
+
+def _parse_uint(value: Any, *, field: str) -> int:
+    """Parse a protobuf uint64 JSON value without truncating floats/bools."""
+
+    if isinstance(value, bool):
+        raise ValueError(f"{field} is not an unsigned integer")
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, str) and value.strip().isdigit():
+        parsed = int(value.strip())
+    else:
+        raise ValueError(f"{field} is not an unsigned integer")
+    if parsed < 0:
+        raise ValueError(f"{field} is negative")
+    return parsed
+
+
+def _finite_allowance(name: str, item: dict[str, Any]) -> dict[str, Any]:
+    """Interpret one finite allowance, raising when capacity is not provable."""
+
+    spec = item["spec"]
+    status = item.get("status")
+    try:
+        parsed_limit = _parse_uint(spec["limit"], field="limit")
+        if not isinstance(status, dict):
+            raise ValueError("finite allowance has no status mapping")
+        state = str(status.get("state") or "")
+        if state and state != "STATE_ACTIVE":
+            raise ValueError(f"allowance state is not active: {state}")
+        unit = str(status.get("unit") or "").strip().lower()
+        compatible_units = _quota_units(name)
+        if unit not in compatible_units:
+            expected = ", ".join(sorted(compatible_units))
+            raise ValueError(
+                f"quota {name!r} reported incompatible unit {unit!r}; "
+                f"expected one of: {expected}"
+            )
+
+        raw_usage = status.get("usage")
+        if raw_usage not in (None, ""):
+            usage = _parse_uint(raw_usage, field="usage")
+            available = max(0, parsed_limit - usage)
+            usage_source = "exact"
+        elif status.get("usage_percentage") not in (None, ""):
+            fraction = Decimal(str(status["usage_percentage"]))
+            # The API defines this as a 0..1 fraction, but explicitly permits
+            # values above 1 when consumption exceeds the allowance.
+            if not fraction.is_finite() or fraction < 0:
+                raise ValueError("usage_percentage is not a non-negative fraction")
+            available = max(
+                0,
+                int(
+                    (
+                        Decimal(parsed_limit) * (Decimal(1) - fraction)
+                    ).to_integral_value(rounding=ROUND_FLOOR)
+                ),
+            )
+            usage = max(0, parsed_limit - available)
+            usage_source = "fraction"
+        elif status.get("usage_state") == "USAGE_STATE_NOT_USED":
+            usage = 0
+            available = parsed_limit
+            usage_source = "not-used"
+        else:
+            raise ValueError(
+                "finite allowance has no usage, usage_percentage, or not-used state"
+            )
+    except (InvalidOperation, KeyError, TypeError, ValueError) as exc:
+        if isinstance(exc, ValueError) and "incompatible unit" in str(exc):
+            raise
+        raise ValueError(f"quota {name!r} has unusable capacity evidence") from exc
+    return {
+        "limit": parsed_limit,
+        "available": available,
+        "unit": unit,
+        "unlimited": False,
+        "usage": usage,
+        "usage_source": usage_source,
+    }
+
+
+def _unlimited_allowance(name: str, item: dict[str, Any]) -> dict[str, Any]:
+    """Interpret an allowance whose optional API ``limit`` field is omitted."""
+
+    status = item.get("status")
+    if status is not None and not isinstance(status, dict):
+        raise ValueError(f"quota {name!r} has a non-mapping status")
+    state = str((status or {}).get("state") or "")
+    if state and state != "STATE_ACTIVE":
+        raise ValueError(f"quota {name!r} allowance state is not active: {state}")
+    unit = str((status or {}).get("unit") or "").strip().lower()
+    if unit and unit not in _quota_units(name):
+        expected = ", ".join(sorted(_quota_units(name)))
+        raise ValueError(
+            f"quota {name!r} reported incompatible unit {unit!r}; "
+            f"expected one of: {expected}"
+        )
+    return {
+        "limit": None,
+        "available": None,
+        "unit": unit,
+        "unlimited": True,
+        "usage_source": "unlimited",
+    }
+
+
+def _select_allowance(
+    name: str,
+    candidates: list[tuple[str, dict[str, Any]]],
+    *,
+    container_id: str,
+) -> dict[str, Any] | None:
+    """Select one deterministic allowance for the requested container scope."""
+
+    if container_id:
+        authoritative = [item for parent, item in candidates if parent == container_id]
+        if authoritative:
+            selected = authoritative
+            # A finite legacy/unscoped candidate alongside an authoritative
+            # unlimited record is contradictory rather than proof of infinity.
+            if all(item["spec"].get("limit") is None for item in selected) and any(
+                not parent and item["spec"].get("limit") is not None
+                for parent, item in candidates
+            ):
+                raise ValueError(
+                    f"quota {name!r} has ambiguous scoped/unscoped candidates"
+                )
+        else:
+            # Older fixtures/clients may omit parent metadata. They are usable
+            # only when no explicitly scoped target allowance was returned.
+            selected = [item for parent, item in candidates if not parent]
+    else:
+        selected = [item for _parent, item in candidates]
+    if not selected:
+        return None
+
+    finite = [item for item in selected if item["spec"].get("limit") is not None]
+    if finite:
+        parsed = [_finite_allowance(name, item) for item in finite]
+        first = parsed[0]
+        if any(candidate != first for candidate in parsed[1:]):
+            raise ValueError(f"quota {name!r} has ambiguous finite candidates")
+        return first
+    parsed_unlimited = [_unlimited_allowance(name, item) for item in selected]
+    units = {candidate["unit"] for candidate in parsed_unlimited if candidate["unit"]}
+    if len(units) > 1:
+        raise ValueError(f"quota {name!r} has ambiguous unlimited candidates")
+    result = parsed_unlimited[0]
+    result["unit"] = next(iter(units), "")
+    return result
+
+
+def parse_allowances(
+    payload: str,
+    region: str,
+    required: Iterable[str] | None = None,
+    *,
+    container_id: str = "",
+) -> dict[str, dict[str, Any]]:
+    """Select and index allowances for *region* and the requested container.
+
+    ``QuotaAllowanceSpec.limit`` is optional. An omitted limit is treated as
+    unlimited only after scope selection proves that the record belongs to the
+    requested tenant (or is the sole legacy unscoped evidence). A concrete limit
+    always beats an unscoped unlimited collision, independent of response order.
     """
 
+    required_names = set(required or ())
     try:
-        items = json.loads(payload or "{}").get("items", [])
-    except json.JSONDecodeError:
-        return {}
-    indexed: dict[str, dict[str, Any]] = {}
-    for item in items if isinstance(items, list) else []:
-        meta = item.get("metadata", {}) or {}
-        spec = item.get("spec", {}) or {}
+        document = json.loads(payload or "{}")
+    except json.JSONDecodeError as exc:
+        raise ValueError("could not parse quota allowance JSON") from exc
+    if not isinstance(document, dict) or not isinstance(document.get("items"), list):
+        raise ValueError("quota allowance JSON has a non-list 'items' field")
+    if document.get("next_page_token"):
+        raise ValueError("quota allowance JSON is incomplete after paginated read")
+
+    grouped: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    for item in document["items"]:
+        if not isinstance(item, dict):
+            raise ValueError("quota allowance JSON contains a non-mapping item")
+        meta = item.get("metadata")
+        spec = item.get("spec")
+        if not isinstance(meta, dict) or not isinstance(spec, dict):
+            raise ValueError("quota allowance has non-mapping metadata or spec")
         name = str(meta.get("name") or "")
         if not name or str(spec.get("region") or "") != region:
             continue
-        limit = spec.get("limit")
-        if limit is None:
+        if required_names and name not in required_names:
             continue
-        status = item.get("status", {}) or {}
-        unit = str(status.get("unit") or "")
-        if name in _BYTE_QUOTAS and unit != _FILESYSTEM_SIZE_UNIT:
-            raise ValueError(
-                f"quota {name!r} reported unit {unit!r}; expected {_FILESYSTEM_SIZE_UNIT!r}"
-            )
-        try:
-            parsed_limit = int(limit)
-            available = parsed_limit
-            raw_usage = status.get("usage")
-            if raw_usage not in (None, ""):
-                available = max(0, parsed_limit - int(raw_usage))
-            elif status.get("usage_percentage") not in (None, ""):
-                fraction = Decimal(str(status["usage_percentage"]))
-                # Authoritative live quota wire data uses a 0..1 fraction (0.10
-                # means 10%), despite the field name. Fail closed on drift.
-                if fraction < 0 or fraction > 1:
-                    raise ValueError(
-                        f"quota {name!r} reported unexpected usage_percentage "
-                        f"{status['usage_percentage']!r}; expected a 0..1 fraction"
-                    )
-                available = max(
-                    0,
-                    int(
-                        (
-                            Decimal(parsed_limit) * (Decimal(1) - fraction)
-                        ).to_integral_value(rounding=ROUND_FLOOR)
-                    ),
-                )
-            indexed[name] = {
-                "limit": parsed_limit,
-                "available": available,
-                "unit": unit,
-            }
-        except (InvalidOperation, TypeError, ValueError):
-            if name == _FILESYSTEM_SIZE_QUOTA:
-                raise
-            continue
+        scope_values = {
+            str(meta.get(field) or "")
+            for field in ("parent_id", "container_id")
+            if meta.get(field)
+        }
+        if len(scope_values) > 1:
+            raise ValueError(f"quota {name!r} has conflicting container metadata")
+        parent_id = next(iter(scope_values), "")
+        grouped.setdefault(name, []).append((parent_id, item))
+
+    indexed: dict[str, dict[str, Any]] = {}
+    for name in sorted(grouped):
+        selected = _select_allowance(
+            name, grouped[name], container_id=container_id
+        )
+        if selected is not None:
+            indexed[name] = selected
     return indexed
 
 
@@ -405,9 +592,11 @@ def find_shortfalls(
     shortfalls: list[QuotaShortfall] = []
     for name, required in sorted(needed.items()):
         allowance = allowances.get(name)
-        if allowance is None:  # not advertised for this region -> nothing to assert
+        if allowance is None:
             continue
-        available = allowance.get("available", allowance["limit"])
+        if allowance.get("unlimited"):
+            continue
+        available = allowance["available"]
         if required > available:
             shortfalls.append(
                 QuotaShortfall(
@@ -441,6 +630,7 @@ def preflight_region(
     region: str,
     clusters: Iterable[ClusterSpec],
     env: dict[str, str],
+    new_projects: int = 0,
     profile: str = "",
     run_capture: Callable[..., Any],
     nebius_argv: Callable[[str, str], list[str]],
@@ -448,11 +638,9 @@ def preflight_region(
 ) -> list[QuotaShortfall]:
     """Check one region's tenant allowances against *clusters*' requirements.
 
-    Returns quota shortfalls (empty when the fleet fits). A quota API that cannot
-    be read is reported and treated as "no shortfall": losing the quota check
-    must not block a deploy that would otherwise succeed. In contrast, an
-    unreadable or incompatible explicitly bound capacity block raises: STRICT
-    reservation safety must not be silently bypassed.
+    Returns quota shortfalls (empty when the fleet fits). Unreadable, incomplete,
+    or malformed capacity/quota evidence raises before project creation. A
+    preflight that cannot prove remaining capacity must not authorize mutation.
     """
 
     clusters = list(clusters)
@@ -496,7 +684,7 @@ def preflight_region(
                 "capacity block group(s); ordinary GPU quota excluded"
             )
 
-    needed = required_quotas(clusters)
+    needed = required_quotas(clusters, new_projects=new_projects)
     if not needed:
         return []
     result = run_capture(
@@ -507,6 +695,7 @@ def preflight_region(
             "list",
             "--parent-id",
             tenant_id,
+            "--all",
             "--format",
             "json",
         ],
@@ -518,18 +707,43 @@ def preflight_region(
         getattr(result, "returncode", 1) != 0
         or not (getattr(result, "stdout", "") or "").strip()
     ):
-        if on_status is not None:
+        raise ValueError(
+            f"could not read tenant quota allowances for {region}; refusing to "
+            "create projects or resources without capacity evidence"
+        )
+    allowances = parse_allowances(
+        result.stdout, region, required=needed, container_id=tenant_id
+    )
+    missing = sorted(set(needed) - set(allowances))
+    required_missing = [
+        name for name in missing if name not in _OPTIONAL_UNADVERTISED_QUOTAS
+    ]
+    if required_missing:
+        raise ValueError(
+            f"tenant quota response for {region} omitted required allowances: "
+            f"{', '.join(required_missing)}"
+        )
+    if on_status is not None:
+        for name in missing:
             on_status(
-                f"WARNING: could not read tenant quota allowances for {region}; "
-                "skipping quota preflight"
+                f"quota {name} [{region}]: unadvertised optional quota in completed "
+                "tenant catalog; treating it as not quota-controlled in this region"
             )
-        return []
-    allowances = parse_allowances(result.stdout, region)
-    if not allowances:
-        if on_status is not None:
-            on_status(
-                f"WARNING: no quota allowances reported for region {region}; "
-                "skipping quota preflight"
-            )
-        return []
+        for name, required_amount in sorted(needed.items()):
+            if name not in allowances:
+                continue
+            allowance = allowances[name]
+            unit = f" {allowance['unit']}" if allowance["unit"] else ""
+            if allowance.get("unlimited"):
+                on_status(
+                    f"quota {name} [{region}]: needs {required_amount}{unit}; "
+                    "tenant allowance is unlimited"
+                )
+            else:
+                on_status(
+                    f"quota {name} [{region}]: needs {required_amount}{unit}; "
+                    f"{allowance['available']} available from limit "
+                    f"{allowance['limit']} (usage evidence: "
+                    f"{allowance['usage_source']})"
+                )
     return find_shortfalls(needed, allowances, region)

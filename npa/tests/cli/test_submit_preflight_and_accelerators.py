@@ -12,6 +12,12 @@ import yaml
 
 from npa.cli.main import app
 from npa.cli.workbench import workflow as workflow_cli
+from npa.orchestration.skypilot.image_bootstrap_contract import (
+    ATTESTATION_LABEL,
+    CONTRACT_VERSION,
+    ImageContractEvidence,
+    store_cached_evidence,
+)
 from npa.orchestration.skypilot.k8s_gpu_catalog import KubernetesGpuCatalog
 from npa.orchestration.skypilot.registry_preflight import ImagePullCheck
 
@@ -360,6 +366,74 @@ def test_first_party_image_without_attestation_fails_instead_of_probing(
             context="exact-context",
         )
     assert excinfo.type.__name__ == "Exit"
+
+
+def test_groot_label_and_label_backed_cache_cannot_bypass_runtime_probe(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Canonical and repaired GR00T use one repo, so only selected bytes are evidence."""
+
+    digest = "sha256:" + "b" * 64
+    image = "cr.us-central1.nebius.cloud/u000/npa-groot:0.1.0-sky1"
+    immutable = image.rsplit(":", 1)[0] + "@" + digest
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("NPA_REGISTRY", "cr.us-central1.nebius.cloud/u000")
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.resolve_registry_credentials",
+        lambda *_args, **_kwargs: ("iam", "opaque"),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.fetch_image_config_metadata",
+        lambda *_args, **_kwargs: (
+            digest,
+            {ATTESTATION_LABEL: CONTRACT_VERSION},
+        ),
+    )
+    cache_path = tmp_path / ".npa" / "cache" / "sky-image-bootstrap.json"
+    store_cached_evidence(
+        cache_path,
+        ImageContractEvidence(
+            image=immutable,
+            digest=digest,
+            contract_version=CONTRACT_VERSION,
+            state="compatible",
+            source="oci_attestation",
+        ),
+    )
+    calls: list[tuple[str, str, str]] = []
+
+    def probe(*, image: str, digest: str, context: str, **_kwargs):
+        calls.append((image, digest, context))
+        return ImageContractEvidence(
+            image=immutable,
+            digest=digest,
+            contract_version=CONTRACT_VERSION,
+            state="compatible",
+            source="ephemeral_capability_probe",
+            checks=("runtime_capabilities",),
+            cleanup="deleted",
+        )
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.image_bootstrap_contract.probe_image_capabilities",
+        probe,
+    )
+
+    result = workflow_cli._preflight_image_bootstrap_contracts(
+        images=[image],
+        pull_checks=[
+            ImagePullCheck(
+                image=image,
+                status="ok",
+                http_status=200,
+                digest=digest,
+            )
+        ],
+        context="exact-context",
+    )
+
+    assert calls == [(image, digest, "exact-context")]
+    assert result[0]["source"] == "ephemeral_capability_probe"
 
 
 def test_preflight_is_skipped_when_disabled(

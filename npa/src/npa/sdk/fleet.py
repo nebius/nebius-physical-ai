@@ -17,6 +17,8 @@ Example::
         projects=[
             ProjectSpec(name="a", clusters=[ClusterSpec(
                 name="cluster",
+                gpu_driver_mode="auto",  # managed image; operator is opt-in
+                managed_driver_preset="cuda13.0",
                 cpu_nodes=NodePoolSpec(count=1, platform="cpu-d3", preset="48vcpu-192gb"),
                 gpu_nodes=NodePoolSpec(
                     count=1,

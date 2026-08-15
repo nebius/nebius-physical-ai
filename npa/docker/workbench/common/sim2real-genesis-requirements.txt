@@ -1,6 +1,7 @@
-# The digest-pinned Genesis base currently contains transformers 5.14.1 with
-# huggingface-hub 0.35.3, while its LeRobot distribution requires hub <0.36.
-# This exact pair restores one compatible, resolver-closed environment.
+# The digest-pinned Genesis base currently contains huggingface-hub 0.35.3,
+# which is the latest line compatible with LeRobot 0.4.4. Transformers is not
+# used by these three stage images and is removed in their Dockerfiles: the
+# security-fixed 5.x line requires huggingface-hub >=1.5 and cannot coexist
+# with LeRobot's required huggingface-hub <0.36.
 huggingface-hub==0.35.3
 tomli==2.4.1
-transformers==4.57.6
