@@ -30,6 +30,10 @@ GOLDEN_EVALS = REPO_ROOT / "npa" / "src" / "npa" / "smoke" / "golden_evals.yaml"
 
 UNBUILT_TAG_SUFFIX = "-unbuilt"
 PENDING_BUILD = "pending-build"
+#: Built, bytes checked, but never run on a GPU. Still unvalidated for
+#: publication - the byte evidence is only half of what publication claims.
+PENDING_GPU = "pending-gpu"
+UNPROVEN_STATES = frozenset({PENDING_BUILD, PENDING_GPU})
 
 
 def _blackwell_images() -> dict[str, dict[str, object]]:
@@ -62,9 +66,11 @@ def test_every_unbuilt_tool_says_so_in_all_four_records() -> None:
 
         entry = blackwell.get(_image_name(tool))
         if entry is not None:
-            assert entry.get("validation") == PENDING_BUILD, (
-                f"{tool} is unvalidated but blackwell-dc-images.json records "
-                f"validation={entry.get('validation')!r}"
+            assert entry.get("validation") in UNPROVEN_STATES, (
+                f"{tool} is unvalidated for publication but "
+                f"blackwell-dc-images.json records "
+                f"validation={entry.get('validation')!r}; publication needs both "
+                "byte evidence and a GPU result"
             )
 
         container = containers.get(tool)
@@ -97,7 +103,8 @@ def test_pending_build_never_carries_a_confident_verdict() -> None:
 
     ``pending-build`` says in its own definition: "never upgrade this from a
     reading of the Dockerfile". A ``ready`` verdict beside it does exactly that,
-    which is how ``npa-ltx2`` came to claim both at once.
+    which is how ``npa-ltx2`` came to claim both at once. ``pending-gpu`` is the
+    same: bytes checked is not an architecture result.
     """
 
     payload = json.loads(BLACKWELL.read_text(encoding="utf-8"))
@@ -106,7 +113,7 @@ def test_pending_build_never_carries_a_confident_verdict() -> None:
     offenders = sorted(
         str(image["name"])
         for image in payload["images"]
-        if image.get("validation") == PENDING_BUILD
+        if image.get("validation") in UNPROVEN_STATES
         and str(image.get("verdict")) in confident
     )
 

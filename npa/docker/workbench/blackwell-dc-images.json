@@ -48,7 +48,8 @@
     "validated": "get_device_capability() confirmed on a real B200/B300 node with the image's real capability smoke passing.",
     "pending-hardware": "Wheel arch set confirmed on the built image, but not yet run on a real datacenter Blackwell node.",
     "pending-build": "The Dockerfile is in tree but the image has not been built, so no wheel arch set and no GPU result exist yet. Never upgrade this from a reading of the Dockerfile.",
-    "not-required": "CPU-only image; no arch assertion applies."
+    "not-required": "CPU-only image; no arch assertion applies.",
+    "pending-gpu": "The image has been built and its bytes checked (payload scan, layer history), but it has never run on a real datacenter Blackwell node, so no wheel arch set and no GPU result exist. Distinct from pending-build, which means no artifact exists at all."
   },
   "images": [
     {
@@ -221,12 +222,12 @@
       "dockerfile": "ltx2/Dockerfile",
       "build_script": "ltx2/build.sh",
       "verdict": "unknown",
-      "validation": "pending-build",
+      "validation": "pending-gpu",
       "redistribution": "public",
       "torch": "not baked; the operator-owned runtime volume resolves upstream LTX-2's own cu132 torch pin (packages/ltx-core/pyproject.toml) under the operator's own HF_TOKEN and NVIDIA runtime-terms acceptance",
       "source_compiled_extensions": [],
       "smoke": "bash /opt/npa/ltx2/smoke.sh proves health, that the source and weight fetches each refuse without the operator's own HF_TOKEN (and names which gate refused), and the absence of any LTX or CUDA payload. Generation itself is the BYOF workflow, not a CLI subcommand.",
-      "notes": "The image itself is CPU-only and carries zero Lightricks bytes, so nothing about datacenter Blackwell has been measured. It HAS been built and byte-scanned (payload scan clean over 18 archives at the digest recorded in docs/workbench/ltx2.md); what is missing is a GPU run, which needs an operator's own entitlement on the gated Lightricks/LTX-2.5 repository. Keep validation at pending-build until that produces a result."
+      "notes": "The image itself is CPU-only and carries zero Lightricks bytes, so nothing about datacenter Blackwell has been measured. Built and byte-scanned: payload scan clean over 16 archives at the digest recorded in docs/workbench/ltx2.md. What is missing is a GPU run - one attempt reached real weight downloads and died on node ephemeral storage - so the verdict stays unknown until that produces a result."
     },
     {
       "name": "npa-cosmos3-reason",

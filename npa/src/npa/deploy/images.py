@@ -110,7 +110,8 @@ OMNIVERSE_RESTRICTED_TOOLS: frozenset[str] = frozenset({"cosmos3-serving"})
 OMNIVERSE_RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
 
 # Tools that are licence-eligible for public redistribution but have no built,
-# validated artifact yet, so there is nothing whose bytes we could have checked.
+# GPU result yet. For ltx2 the image has been built and byte-scanned; what is
+# missing is a run on real hardware, and publication claims both.
 #
 # This is a different question from `OMNIVERSE_RESTRICTED_TOOLS`, and conflating
 # them would be wrong in both directions: these are not restricted (the licensing
@@ -187,6 +188,9 @@ SUPPORTED_TOOL_VERSIONS = {
     # been built or GPU-validated yet, and publish_public refuses it until an
     # accepted-image manifest exists. Everything LTX (source AND weights) is a
     # runtime fetch under the operator's own Hugging Face entitlement.
+    # The suffix predates the build and is now half-wrong: the image exists and
+    # has been scanned. It stays until the GPU run, because renaming it would
+    # imply the whole claim is earned, and re-tagging is part of that change.
     "ltx2": "2.5-rtfetch-unbuilt",
     "nebius-cli": "0.12.254",
     "terraform": "~> 0.5.201",

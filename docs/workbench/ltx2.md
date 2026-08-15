@@ -194,7 +194,7 @@ docker run --rm <your-registry>/npa-ltx2@sha256:<digest> ltx-runtime ensure
 ```
 
 **4. Accept the terms yourself.** Read the
-[Agreement](https://github.com/Lightricks/LTX-2/blob/main/LICENSE.md) and the
+[Agreement](https://github.com/Lightricks/LTX-2/blob/fd4ded7f2d88d3da713abcdd4ad41ecc4a9314ca/LICENSE.md) and the
 [Acceptable Use Policy](https://static.lightricks.com/legal/ltx-acceptable-use-policy.pdf),
 request access on the gated repository with your own Hugging Face account, and
 export the resulting `HF_TOKEN`. Nobody else can hold that entitlement for you —

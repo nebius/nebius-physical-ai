@@ -71,6 +71,15 @@ OPERATOR_RUNTIME_ENVS_BY_SOLUTION: dict[str, tuple[str, ...]] = {
         "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS",
         "HF_TOKEN",
     ),
+    # The distributed Wan spec declares its own solution_name, and its smoke runs
+    # the same `wan-runtime ensure` that exits 78 without the acceptance. Its
+    # resource profile does not declare the variable in `envs:`, so this secret
+    # channel is the only way it reaches the pod - omitting the key here broke
+    # the 4xB200 live run in a way no unit test could see.
+    "wan2.2-multigpu": (
+        "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS",
+        "HF_TOKEN",
+    ),
     "ltx2.5": (
         "NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS",
         # The gated-repository entitlement, which the container requires for the

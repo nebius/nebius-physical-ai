@@ -40,7 +40,10 @@ ENTITLEMENT_ENVS=(
 # the duplication is tested rather than trusted.
 readonly LICENSE_NAME="LTX-2.x Community License Agreement"
 readonly LICENSE_DATE="2026-08-11"
-readonly LICENSE_URL="https://github.com/Lightricks/LTX-2/blob/main/LICENSE.md"
+# Pinned to the fetched ref, not `main`: the licence is versioned by date and
+# has been reissued once, so a mutable URL would stop naming the text a given
+# run was accepted against.
+readonly LICENSE_URL="https://github.com/Lightricks/LTX-2/blob/fd4ded7f2d88d3da713abcdd4ad41ecc4a9314ca/LICENSE.md"
 readonly ACCEPTABLE_USE_POLICY_URL="https://static.lightricks.com/legal/ltx-acceptable-use-policy.pdf"
 readonly COMMERCIAL_LICENSE_CONTACT="ltxv-licensing@lightricks.com"
 
@@ -162,6 +165,11 @@ fetch_source() {
   : > "$tmp/.complete"
   rm -rf "$tree"
   mv "$tmp" "$tree"
+  # Release the install lock explicitly. The fd is not CLOEXEC, so in `exec`
+  # mode it would otherwise stay open for the entire generation job and block
+  # any sibling that arrived mid-install on a shared cache volume.
+  flock -u 9
+  exec 9>&-
   trap - EXIT
   log "source ${SOURCE_REF} installed at ${tree}"
 }
@@ -202,6 +210,8 @@ fetch_weights() {
   # Record what was actually delivered, next to the bytes, so a later reader
   # can name the weights rather than just the repository they came from.
   printf '%s\n' "$revision" > "$MODEL_CACHE/$WEIGHTS_REVISION_FILE"
+  # Written last, so an interrupted pull does not read back as a complete one.
+  : > "$MODEL_CACHE/.complete"
 }
 
 unentitled() {
@@ -296,8 +306,10 @@ EOF
 status() {
   local ready="absent" weights="absent"
   ready_source && ready="ready"
-  [[ -n "$(find "$MODEL_CACHE" -name '*.safetensors' -print -quit 2>/dev/null)" ]] \
-    && weights="present"
+  [[ -f "$MODEL_CACHE/.complete" ]] && weights="present"
+  [[ "$weights" == "absent" \
+     && -n "$(find "$MODEL_CACHE" -name '*.safetensors' -print -quit 2>/dev/null)" ]] \
+    && weights="partial"
   local revision="unknown"
   [[ -s "$MODEL_CACHE/$WEIGHTS_REVISION_FILE" ]] \
     && revision="$(<"$MODEL_CACHE/$WEIGHTS_REVISION_FILE")"
@@ -335,6 +347,9 @@ case "$mode" in
       || exit "$EX_SOFTWARE"
     [[ -r /usr/share/doc/npa-ltx2/REDISTRIBUTION.md ]] || exit "$EX_SOFTWARE"
     command -v uv >/dev/null 2>&1 || exit "$EX_SOFTWARE"
+  # `hf` is how the gated weights arrive; a HEALTHCHECK that ignores it defers
+  # the failure to fetch-weights, long after the pod looked healthy.
+  command -v hf >/dev/null 2>&1 || exit "$EX_SOFTWARE"
     printf '{"status":"ok","source_ref":"%s","payload":"runtime-fetch"}\n' "$SOURCE_REF"
     ;;
   version)

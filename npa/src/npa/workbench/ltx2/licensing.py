@@ -40,7 +40,6 @@ from __future__ import annotations
 # text applies rather than just "the LTX licence".
 LICENSE_NAME = "LTX-2.x Community License Agreement"
 LICENSE_DATE = "2026-08-11"
-LICENSE_URL = "https://github.com/Lightricks/LTX-2/blob/main/LICENSE.md"
 ACCEPTABLE_USE_POLICY_URL = (
     "https://static.lightricks.com/legal/ltx-acceptable-use-policy.pdf"
 )
@@ -52,6 +51,11 @@ COMMERCIAL_REVENUE_THRESHOLD_USD = 10_000_000
 # own gated-repository entitlement. See npa/docker/workbench/ltx2/REDISTRIBUTION.md.
 SOURCE_REPO = "https://github.com/Lightricks/LTX-2"
 SOURCE_REF = "fd4ded7f2d88d3da713abcdd4ad41ecc4a9314ca"
+
+# Pinned to the ref we fetch, not to `main`: the licence is versioned by date and
+# Lightricks has already reissued it once, so a mutable URL would stop naming the
+# text a given run was accepted against. REDISTRIBUTION.md says the same.
+LICENSE_URL = f"https://github.com/Lightricks/LTX-2/blob/{SOURCE_REF}/LICENSE.md"
 WEIGHTS_REPO = "Lightricks/LTX-2.5"
 WEIGHTS_REPO_URL = f"https://huggingface.co/{WEIGHTS_REPO}"
 
