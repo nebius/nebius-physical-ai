@@ -979,7 +979,6 @@ def submit_cmd(
                 probe_storage=False,
             )
             if not plan_only and is_paidf_spec:
-                from npa.clients.huggingface import validate_hf_access
                 from npa.orchestration.npa_workflow.paidf_preflight import (
                     static_prerequisites as paidf_static_prerequisites,
                 )
@@ -987,8 +986,6 @@ def submit_cmd(
                 missing.extend(
                     paidf_static_prerequisites(
                         requested_secret_envs=secret_env,
-                        secret_values=extra_env,
-                        hf_validator=validate_hf_access,
                     )
                 )
             if not plan_only and workflow_identity == "sim2real":
@@ -2038,6 +2035,19 @@ def _run_npa_workflow_runtime(
     resolved_secret_envs = secret_env_names(
         secret_envs, values=secret_env_values
     )
+    pre_submit_hook = None
+    if refresh_registry_secret:
+        runtime_k8s_context = _infra_kube_context(infra)
+        runtime_kubeconfig = os.environ.get("KUBECONFIG", "")
+
+        def _refresh_runtime_pull_secret(rendered_path: Path) -> None:
+            _refresh_kubernetes_pull_secrets(
+                rendered_path,
+                k8s_context=runtime_k8s_context,
+                kubeconfig=runtime_kubeconfig,
+            )
+
+        pre_submit_hook = _refresh_runtime_pull_secret
     options = RuntimeOptions(
         poll_seconds=poll_seconds,
         max_wait_seconds=max_wait_seconds,
@@ -2058,9 +2068,7 @@ def _run_npa_workflow_runtime(
             project=project,
             requested=list(resolved_secret_envs),
         ),
-        pre_submit_hook=(
-            _refresh_kubernetes_pull_secrets if refresh_registry_secret else None
-        ),
+        pre_submit_hook=pre_submit_hook,
     )
     runtime_env = dict(secret_env_values)
     endpoint = str(getattr(render_options, "aws_endpoint_url", "") or "").strip()

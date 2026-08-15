@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from npa.orchestration.npa_workflow.kubernetes_prerequisites import (
@@ -22,7 +22,6 @@ _REQUIRED_SECRET_ENVS = (
     "AWS_SECRET_ACCESS_KEY",
     "HF_TOKEN",
 )
-_TRANSFER_REPO = "nvidia/Cosmos-Transfer2.5-2B"
 _PAIDF_CPU_MILLICORES = (4 + DEFAULT_K8S_CONTROLLER_CPUS) * 1000
 _PAIDF_MEMORY_BYTES = (16 + DEFAULT_K8S_CONTROLLER_MEMORY_GB) * 1024**3
 
@@ -36,10 +35,14 @@ def cpu_placement_requirement() -> str:
 def static_prerequisites(
     *,
     requested_secret_envs: Sequence[str],
-    secret_values: Mapping[str, str],
-    hf_validator: Callable[[str, str], Any],
 ) -> list[Issue]:
-    """Validate runtime secret forwarding and gated Transfer access."""
+    """Validate runtime secret forwarding without probing model endpoints.
+
+    The submit path separately verifies the selected modality's exact pinned
+    checkpoint after existing-cluster placement and before image, provisioning,
+    or launch work.  A broad repository probe here would be both weaker and in
+    the wrong failure order.
+    """
 
     issues: list[Issue] = []
     requested = {str(name).strip() for name in requested_secret_envs}
@@ -56,18 +59,6 @@ def static_prerequisites(
             )
         )
 
-    hf_token = str(secret_values.get("HF_TOKEN") or "").strip()
-    if hf_token:
-        result = hf_validator(hf_token, _TRANSFER_REPO)
-        if not getattr(result, "ok", False):
-            detail = str(getattr(result, "error", "") or "access not verified")
-            issues.append(
-                (
-                    f"Hugging Face access failed for {_TRANSFER_REPO} ({detail})",
-                    f"accept the NVIDIA model terms at https://huggingface.co/{_TRANSFER_REPO}, "
-                    "then run `npa workbench health access --capability paidf`",
-                )
-            )
     return issues
 
 

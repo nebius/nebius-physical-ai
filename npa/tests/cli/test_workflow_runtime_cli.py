@@ -310,14 +310,28 @@ def test_submit_runtime_passes_options_and_emits_json(
 
 
 def test_submit_runtime_refreshes_pull_secret_before_driver(
-    fake_runtime, monkeypatch: pytest.MonkeyPatch
+    fake_runtime, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The runtime branch must not bypass private-registry secret refresh."""
 
-    events: list[tuple[str, str]] = []
+    kubeconfig = tmp_path / "pinned-kubeconfig"
+    kubeconfig.write_text("current-context: ambient-other-cluster\n", encoding="utf-8")
+    monkeypatch.setenv("KUBECONFIG", str(kubeconfig))
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._adopt_npa_kubeconfig", lambda _context: True
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._available_kube_contexts", lambda: ["target"]
+    )
+    monkeypatch.setattr(
+        "npa.controller_ownership.verify_controller_owner", lambda *_args: None
+    )
+    events: list[tuple[str, str, str, str]] = []
 
-    def refresh(rendered_path: Path, **_kwargs) -> None:
-        events.append(("refresh", rendered_path.name))
+    def refresh(
+        rendered_path: Path, *, k8s_context: str = "", kubeconfig: str = ""
+    ) -> None:
+        events.append(("refresh", rendered_path.name, k8s_context, kubeconfig))
 
     monkeypatch.setattr(
         "npa.cli.workbench.workflow._refresh_kubernetes_pull_secrets", refresh
@@ -328,7 +342,7 @@ def test_submit_runtime_refreshes_pull_secret_before_driver(
     ).run_workflow_runtime
 
     def ordered_driver(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
-        events.append(("driver", str(kwargs.get("run_id") or "")))
+        events.append(("driver", str(kwargs.get("run_id") or ""), "", ""))
         return original(*args, **kwargs)
 
     monkeypatch.setattr(
@@ -345,6 +359,8 @@ def test_submit_runtime_refreshes_pull_secret_before_driver(
             "--run-id",
             "rt-pull-secret-order",
             "--runtime",
+            "--infra",
+            "k8s/target",
             "--var",
             "bucket=rt-bucket",
             "--output-format",
@@ -353,9 +369,23 @@ def test_submit_runtime_refreshes_pull_secret_before_driver(
     )
 
     assert result.exit_code == 0, result.output
-    assert events[0] == ("refresh", "token-factory-parallel-fanout.skypilot.yaml")
-    assert events[1] == ("driver", "rt-pull-secret-order")
-    assert fake_runtime["options"].pre_submit_hook is refresh
+    assert events[0] == (
+        "refresh",
+        "token-factory-parallel-fanout.skypilot.yaml",
+        "target",
+        str(kubeconfig),
+    )
+    assert events[1] == ("driver", "rt-pull-secret-order", "", "")
+    hook = fake_runtime["options"].pre_submit_hook
+    assert hook is not None
+    wave = tmp_path / "wave.yaml"
+    wave.write_text("name: wave\n", encoding="utf-8")
+    hook(wave)
+    hook(wave)
+    assert events[2:] == [
+        ("refresh", "wave.yaml", "target", str(kubeconfig)),
+        ("refresh", "wave.yaml", "target", str(kubeconfig)),
+    ]
 
 
 def test_submit_runtime_can_preserve_managed_registry_secret(

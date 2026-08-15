@@ -230,8 +230,6 @@ def test_paidf_kubernetes_helper_propagates_context_and_kubeconfig(
 def test_paidf_placement_fails_before_storage_or_staging_without_explicit_infra(
     monkeypatch: pytest.MonkeyPatch, mocker
 ) -> None:
-    from types import SimpleNamespace
-
     for name in (
         "NEBIUS_TOKEN_FACTORY_KEY",
         "AWS_ACCESS_KEY_ID",
@@ -240,10 +238,6 @@ def test_paidf_placement_fails_before_storage_or_staging_without_explicit_infra(
     ):
         monkeypatch.setenv(name, "redacted")
     monkeypatch.setenv("NPA_SKYPILOT_BIN", "/bin/true")
-    monkeypatch.setattr(
-        "npa.clients.huggingface.validate_hf_access",
-        lambda *_args, **_kwargs: SimpleNamespace(ok=True),
-    )
     monkeypatch.setattr(
         "npa.cli.workbench.workflow._available_kube_contexts",
         lambda: ["npa-cluster"],
@@ -257,6 +251,9 @@ def test_paidf_placement_fails_before_storage_or_staging_without_explicit_infra(
     placement = mocker.patch(
         "npa.cli.workbench.workflow._paidf_kubernetes_prerequisites_for_submit",
         return_value=[("placement blocked", "resize the selected node")],
+    )
+    exact_access = mocker.patch(
+        "npa.workbench.cosmos.checkpoint_access.preflight_control_checkpoint_access"
     )
     mocker.patch(
         "npa.cli.workbench.workflow._preflight_submit_images", return_value={}
@@ -297,9 +294,85 @@ def test_paidf_placement_fails_before_storage_or_staging_without_explicit_infra(
     assert result.exit_code == 1, result.output
     assert "placement blocked" in result.output
     placement.assert_called_once_with("npa-cluster")
+    exact_access.assert_not_called()
     storage.assert_not_called()
     prepare_input.assert_not_called()
     stage_source.assert_not_called()
+
+
+def test_paidf_existing_target_orders_placement_exact_access_then_image(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    for name in (
+        "NEBIUS_TOKEN_FACTORY_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "HF_TOKEN",
+    ):
+        monkeypatch.setenv(name, "redacted")
+    monkeypatch.setenv("NPA_SKYPILOT_BIN", "/bin/true")
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._available_kube_contexts",
+        lambda: ["npa-cluster"],
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._adopt_npa_kubeconfig", lambda _context: True
+    )
+
+    def placement(_context: str):
+        events.append("placement")
+        return []
+
+    def exact_access(*, modality: str, token: str):
+        assert token == "redacted"
+        events.append(f"exact:{modality}")
+        return {"status_code": 302}
+
+    def image_preflight(*_args, **_kwargs):
+        events.append("image")
+        raise RuntimeError("stop after ordered image boundary")
+
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._paidf_kubernetes_prerequisites_for_submit",
+        placement,
+    )
+    monkeypatch.setattr(
+        "npa.workbench.cosmos.checkpoint_access.preflight_control_checkpoint_access",
+        exact_access,
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._preflight_submit_images", image_preflight
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(SPEC),
+            "--run-id",
+            "paidf-model-order",
+            "--no-deploy-if-absent",
+            "--var",
+            "bucket=real-bucket",
+            "--assume-decision",
+            "promote_checkpoint",
+            "--secret-env",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "--secret-env",
+            "AWS_ACCESS_KEY_ID",
+            "--secret-env",
+            "AWS_SECRET_ACCESS_KEY",
+            "--secret-env",
+            "HF_TOKEN",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, RuntimeError)
+    assert events == ["placement", "exact:edge", "image"]
 
 
 def test_sim2real_submit_propagates_explicit_kubernetes_target(
