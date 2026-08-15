@@ -516,7 +516,16 @@ def _validate_executable_resource_contracts(spec: NpaWorkflowSpec) -> None:
                 f"num_nodes={nodes}, but this executable is not declared sharded; "
                 "identical workers could duplicate or race output writers"
             )
-        if entry is None or not entry.semantic_contract:
+        if entry is None:
+            continue
+        if not any(
+            (
+                entry.semantic_contract,
+                entry.variant_count_config,
+                entry.shard_activation_config,
+                entry.shard_output_config,
+            )
+        ):
             continue
         from npa.orchestration.npa_workflow.tokens import TokenError, resolve_value
 
@@ -532,6 +541,26 @@ def _validate_executable_resource_contracts(spec: NpaWorkflowSpec) -> None:
         if not isinstance(resolved_params, Mapping):  # defensive: params is typed mapping
             raise NpaWorkflowError(f"state {state.name}: params must resolve to a mapping")
         effective_config.update(resolved_params)
+        if nodes > 1 and entry.shard_activation_config:
+            activation = str(
+                effective_config.get(entry.shard_activation_config, "") or ""
+            ).strip()
+            if not activation:
+                raise NpaWorkflowError(
+                    f"state {state.name}: sharded execution requires non-empty "
+                    f"config {entry.shard_activation_config!r}; without it every "
+                    "gang member could run the unsharded writer"
+                )
+        if nodes > 1 and entry.shard_output_config:
+            shard_output = str(
+                effective_config.get(entry.shard_output_config, "") or ""
+            ).strip()
+            if not shard_output.startswith("s3://"):
+                raise NpaWorkflowError(
+                    f"state {state.name}: sharded execution requires config "
+                    f"{entry.shard_output_config!r} to be a durable s3:// URI; "
+                    "without it workers cannot publish and join fenced shards"
+                )
         if entry.semantic_contract == "cosmos_transfer_control":
             from npa.workbench.cosmos.control_contract import (
                 ControlContractError,
@@ -549,7 +578,7 @@ def _validate_executable_resource_contracts(spec: NpaWorkflowSpec) -> None:
                 )
             except ControlContractError as exc:
                 raise NpaWorkflowError(f"state {state.name}: {exc}") from exc
-        else:
+        elif entry.semantic_contract:
             raise NpaWorkflowError(
                 f"state {state.name}: unknown semantic contract "
                 f"{entry.semantic_contract!r}"

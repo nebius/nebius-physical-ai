@@ -339,6 +339,45 @@ def test_more_augment_nodes_than_variants_fails_before_render(
         merge_config_overrides(spec, {"augment_nodes": "3"})
 
 
+@pytest.mark.parametrize(
+    ("overrides", "match"),
+    [
+        (
+            {
+                "augment_nodes": "2",
+                "n_augmentations": "2",
+                "configs_uri": "",
+            },
+            "sharded execution requires non-empty config 'configs_uri'",
+        ),
+        (
+            {
+                "augment_nodes": "2",
+                "n_augmentations": "2",
+                "augment_uri": "/tmp/shared-looking-output",
+            },
+            "sharded execution requires config 'augment_uri' to be a durable s3:// URI",
+        ),
+    ],
+)
+def test_cosmos_multi_node_requires_its_real_shard_publication_path(
+    overrides: dict[str, str], match: str
+) -> None:
+    """Profile reuse cannot silently select the generic duplicate-writer path."""
+
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
+
+    blueprint = (
+        Path(__file__).resolve().parents[3]
+        / "workflows"
+        / "workbench"
+        / "npa-workflows"
+        / "physical-ai-data-factory.yaml"
+    )
+    with pytest.raises(NpaWorkflowError, match=match):
+        merge_config_overrides(load_spec(blueprint), overrides)
+
+
 def test_multi_node_profile_reuse_by_unsharded_writer_fails(tmp_path: Path) -> None:
     text = SPEC_TEMPLATE.format(nodes=2).replace(
         "    multiNodeMode: sharded\n", "", 1

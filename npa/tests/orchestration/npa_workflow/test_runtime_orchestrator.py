@@ -849,6 +849,14 @@ def test_wave_retry_recovers_from_a_transient_failure(tmp_path: Path) -> None:
     assert {doc["envs"]["NPA_WORKFLOW_FENCE_ATTEMPT"] for doc in second_docs[1:]} == {
         "2"
     }
+    first_attempt_ids = {
+        doc["envs"]["NPA_WORKFLOW_ATTEMPT_ID"] for doc in first_docs[1:]
+    }
+    second_attempt_ids = {
+        doc["envs"]["NPA_WORKFLOW_ATTEMPT_ID"] for doc in second_docs[1:]
+    }
+    assert len(first_attempt_ids) == len(second_attempt_ids) == 1
+    assert first_attempt_ids.isdisjoint(second_attempt_ids)
     assert {
         doc["envs"]["NPA_WORKFLOW_FENCE_SEQUENCE"] for doc in first_docs[1:]
     } == {doc["envs"]["NPA_WORKFLOW_FENCE_SEQUENCE"] for doc in second_docs[1:]}

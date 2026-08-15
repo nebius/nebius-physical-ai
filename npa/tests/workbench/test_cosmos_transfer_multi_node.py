@@ -242,6 +242,152 @@ def test_gang_identity_cross_checks_renderer_and_skypilot(
         cosmos2._gang_environment()
 
 
+def test_managed_job_evidence_without_authoritative_count_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NPA_COSMOS_NODE_COUNT", raising=False)
+    monkeypatch.setenv("SKYPILOT_MANAGED_JOB_ID", "7")
+
+    with pytest.raises(cosmos2.typer.BadParameter, match="authoritative"):
+        cosmos2._gang_environment()
+
+
+def test_ordinary_single_node_skypilot_task_does_not_require_cosmos_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sky exports these for all tasks; only a real gang needs NPA's contract."""
+
+    monkeypatch.delenv("NPA_COSMOS_NODE_COUNT", raising=False)
+    monkeypatch.setenv("SKYPILOT_NUM_NODES", "1")
+    monkeypatch.setenv("SKYPILOT_NODE_RANK", "0")
+    monkeypatch.setenv("SKYPILOT_NODE_IPS", "10.0.0.1")
+    monkeypatch.setenv("SKYPILOT_INTERNAL_JOB_ID", "42")
+    monkeypatch.setenv("SKYPILOT_MANAGED_JOB_ID", "7")
+
+    assert cosmos2._gang_contract_required() is False
+
+    monkeypatch.setenv("SKYPILOT_NUM_NODES", "2")
+    assert cosmos2._gang_contract_required() is True
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("NPA_COSMOS_NODE_RANK", "1"),
+        ("NPA_COSMOS_ATTEMPT_ID", ATTEMPT),
+    ],
+)
+def test_partial_local_identity_without_authoritative_count_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    monkeypatch.delenv("NPA_COSMOS_NODE_COUNT", raising=False)
+    monkeypatch.setenv(name, value)
+
+    assert cosmos2._gang_contract_required() is True
+    with pytest.raises(cosmos2.typer.BadParameter, match="authoritative"):
+        cosmos2._gang_environment()
+
+
+def test_partial_single_node_sky_identity_requires_full_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NPA_COSMOS_NODE_COUNT", raising=False)
+    monkeypatch.setenv("SKYPILOT_NUM_NODES", "1")
+    monkeypatch.setenv("SKYPILOT_NODE_RANK", "0")
+    monkeypatch.delenv("SKYPILOT_NODE_IPS", raising=False)
+
+    assert cosmos2._gang_contract_required() is True
+    with pytest.raises(cosmos2.typer.BadParameter, match="authoritative"):
+        cosmos2._gang_environment()
+
+
+def test_direct_cli_sky_gang_without_authoritative_count_fails_before_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NPA_COSMOS_NODE_COUNT", raising=False)
+    monkeypatch.setenv("SKYPILOT_NUM_NODES", "2")
+    monkeypatch.setenv("SKYPILOT_NODE_RANK", "0")
+    monkeypatch.setenv("SKYPILOT_NODE_IPS", "10.0.0.1\n10.0.0.2")
+    monkeypatch.setenv("SKYPILOT_INTERNAL_JOB_ID", "42")
+    monkeypatch.setenv("SKYPILOT_MANAGED_JOB_ID", "7")
+    monkeypatch.setenv("NPA_WORKFLOW_ATTEMPT_ID", "wave")
+
+    def unexpected_runtime_probe() -> bool:
+        raise AssertionError("runtime must not be probed before gang identity")
+
+    monkeypatch.setattr(tx, "cosmos_transfer_available", unexpected_runtime_probe)
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos2",
+            "transfer",
+            "--input-uri",
+            "s3://bkt/run1/input/",
+            "--output-uri",
+            "s3://bkt/run1/cosmos_augmented/",
+            "--run-id",
+            "run1",
+            "--configs-uri",
+            "s3://bkt/run1/configs/",
+            "--execute",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "authoritative" in result.output
+
+
+@pytest.mark.parametrize(
+    ("configs_uri", "output_uri", "match"),
+    [
+        (
+            "",
+            "s3://bkt/run1/cosmos_augmented/",
+            "requires a non-empty --configs-uri",
+        ),
+        (
+            "/tmp/configs/",
+            "/tmp/output",
+            "requires an s3:// --output-uri",
+        ),
+    ],
+)
+def test_direct_cli_rejects_a_gang_without_active_durable_sharding(
+    monkeypatch: pytest.MonkeyPatch,
+    configs_uri: str,
+    output_uri: str,
+    match: str,
+) -> None:
+    monkeypatch.setenv("NPA_COSMOS_NODE_COUNT", "2")
+    monkeypatch.setenv("NPA_COSMOS_NODE_RANK", "0")
+    monkeypatch.setenv("NPA_COSMOS_ATTEMPT_ID", ATTEMPT)
+
+    def unexpected_runtime_probe() -> bool:
+        raise AssertionError("runtime must not be probed before gang preflight")
+
+    monkeypatch.setattr(tx, "cosmos_transfer_available", unexpected_runtime_probe)
+    argv = [
+        "workbench",
+        "cosmos2",
+        "transfer",
+        "--input-uri",
+        "s3://bkt/run1/input/",
+        "--output-uri",
+        output_uri,
+        "--run-id",
+        "run1",
+        "--execute",
+    ]
+    if configs_uri:
+        argv.extend(("--configs-uri", configs_uri))
+
+    result = runner.invoke(app, argv)
+
+    assert result.exit_code == 2
+    assert match in result.output
+
+
 def test_local_multi_node_execution_fails_before_an_unfenced_publish(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

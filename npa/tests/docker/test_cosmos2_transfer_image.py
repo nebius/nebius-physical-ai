@@ -127,6 +127,10 @@ def test_lfs_media_models_and_build_credentials_are_excluded() -> None:
     assert len(requirement_lines) == 17
     assert cli_requirements.count("--hash=sha256:") == len(requirement_lines)
     assert "--no-deps --require-hashes" in text
+    assert "pip install --no-deps /opt/npa" not in text
+    assert "python -m npa.cli.main" in text
+    assert "PYTHONPATH=/opt/npa/src" in text
+    assert "no build backend or package index is consulted" in text
     assert "import npa.cli.main" in text
     assert "workbench cosmos2 transfer --help" in text
     assert "grep -q -- '--control-asset'" in text

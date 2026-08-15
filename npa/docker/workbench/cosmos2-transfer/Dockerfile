@@ -189,10 +189,14 @@ COPY --chmod=755 src/npa/workbench/cosmos/fixture.py \
 COPY docker/workbench/cosmos2-transfer/REDISTRIBUTION.md \
     /usr/share/doc/npa-cosmos2-transfer/REDISTRIBUTION.md
 
-# This purpose-built component image installs the exact NPA source without the
-# unrelated SDK extras.  Keep package initialization lazy so importing the
-# attestation and Cosmos component modules does not require CLI/viewer extras.
-ENV NPA_SKIP_EAGER_IMPORTS=1
+# This purpose-built component image runs the exact NPA source tree without
+# invoking a PEP 517 backend.  The source is already immutable via
+# NPA_SOURCE_SHA; avoiding a package build also removes any implicit Hatchling
+# download or mutable build-isolation environment. Keep package initialization
+# lazy so importing the attestation and Cosmos component modules does not
+# require CLI/viewer extras.
+ENV NPA_SKIP_EAGER_IMPORTS=1 \
+    PYTHONPATH=/opt/npa/src
 
 # Deliberately shadow the global python3: SkyPilot and orchestrator-supplied
 # commands invoke python3; /usr/bin/python3 remains available to system tooling.
@@ -230,20 +234,23 @@ RUN set -eux; \
 # `workbench cosmos2`.  Install its missing import-time packages as an exact,
 # hash-verified overlay without resolving or upgrading the vendor lock.  Merely
 # checking `import npa` is insufficient: that package is intentionally lazy and
-# was green in the image that failed live with a missing Typer dependency.
+# was green in the image that failed live with a missing Typer dependency.  The
+# console wrapper is authored locally from fixed text and executes the copied
+# source directly; no build backend or package index is consulted.
 RUN set -eux; \
     uv pip install --python /opt/cosmos/cosmos-transfer2.5/.venv/bin/python \
       --no-deps --require-hashes \
       --requirement /tmp/npa-cli-requirements.txt; \
-    /opt/cosmos/cosmos-transfer2.5/.venv/bin/python -m pip install --no-deps /opt/npa; \
+    printf '%s\n' '#!/bin/sh' \
+      'exec /opt/cosmos/cosmos-transfer2.5/.venv/bin/python -m npa.cli.main "$@"' \
+      > /opt/cosmos/cosmos-transfer2.5/.venv/bin/npa; \
+    chmod 0755 /opt/cosmos/cosmos-transfer2.5/.venv/bin/npa; \
     /opt/cosmos/cosmos-transfer2.5/.venv/bin/python -c \
       'import npa.cli.main; import npa.workflows.sim2real.runtime_attestation'; \
     /opt/cosmos/cosmos-transfer2.5/.venv/bin/npa \
       workbench cosmos2 transfer --help > /tmp/npa-cosmos2-help.txt; \
     grep -q -- '--control-asset' /tmp/npa-cosmos2-help.txt; \
     rm -f /tmp/npa-cli-requirements.txt /tmp/npa-cosmos2-help.txt
-
-ENV PYTHONPATH=/opt/npa/src
 
 VOLUME ["/opt/cosmos/model-cache"]
 WORKDIR /opt/cosmos/cosmos-transfer2.5

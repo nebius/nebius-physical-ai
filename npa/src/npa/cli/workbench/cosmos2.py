@@ -238,6 +238,41 @@ def _gang_shard() -> tuple[int, int]:
     return rank, nodes
 
 
+def _gang_contract_required() -> bool:
+    """Return whether runtime evidence indicates the sharded contract applies.
+
+    SkyPilot exports rank/count/IP variables for ordinary one-node tasks too.
+    Such a generic Cosmos transfer has no renderer-owned NPA identity and must
+    remain valid.  Conversely, an authoritative NPA count, a SkyPilot count
+    above one, a nonzero rank, malformed numeric evidence, or multiple member
+    IPs is enough to require the complete fail-closed gang validation.
+    """
+
+    npa_evidence = any(
+        str(os.environ.get(name, "")).strip()
+        for name in (
+            "NPA_COSMOS_NODE_COUNT",
+            "NPA_COSMOS_NODE_RANK",
+            "NPA_COSMOS_ATTEMPT_ID",
+        )
+    )
+    if npa_evidence:
+        return True
+    sky_nodes = str(os.environ.get("SKYPILOT_NUM_NODES", "")).strip()
+    sky_rank = str(os.environ.get("SKYPILOT_NODE_RANK", "")).strip()
+    sky_internal_job = str(os.environ.get("SKYPILOT_INTERNAL_JOB_ID", "")).strip()
+    sky_managed_job = str(os.environ.get("SKYPILOT_MANAGED_JOB_ID", "")).strip()
+    node_ips = [
+        line.strip()
+        for line in str(os.environ.get("SKYPILOT_NODE_IPS", "")).splitlines()
+        if line.strip()
+    ]
+    sky_evidence = any((sky_nodes, sky_rank, node_ips, sky_internal_job, sky_managed_job))
+    if not sky_evidence:
+        return False
+    return not (sky_nodes == "1" and sky_rank == "0" and len(node_ips) == 1)
+
+
 def _gang_environment() -> tuple[int, int, dict[str, Any]]:
     """Validate scheduler identity and return its immutable gang evidence.
 
@@ -262,9 +297,19 @@ def _gang_environment() -> tuple[int, int, dict[str, Any]]:
     fence_sequence = _read("NPA_WORKFLOW_FENCE_SEQUENCE")
     fence_attempt = _read("NPA_WORKFLOW_FENCE_ATTEMPT")
     local_attempt = _read("NPA_COSMOS_ATTEMPT_ID")
-    sky_evidence = any((sky_nodes, sky_rank, sky_ips, sky_internal_job))
+    identity_evidence = any(
+        (
+            raw_local_rank,
+            sky_nodes,
+            sky_rank,
+            sky_ips,
+            sky_internal_job,
+            sky_managed_job,
+            local_attempt,
+        )
+    )
     if not raw_nodes:
-        if sky_evidence:
+        if identity_evidence:
             raise typer.BadParameter(
                 "multi-node augment identity is missing authoritative "
                 "NPA_COSMOS_NODE_COUNT"
@@ -277,6 +322,9 @@ def _gang_environment() -> tuple[int, int, dict[str, Any]]:
             "multi-node augment identity is not numeric "
             f"(authoritative node count {raw_nodes!r})"
         ) from exc
+    sky_evidence = any(
+        (sky_nodes, sky_rank, sky_ips, sky_internal_job, sky_managed_job)
+    )
     if sky_evidence:
         missing = [
             name
@@ -1036,6 +1084,25 @@ def transfer_cmd(
         raise typer.BadParameter(str(exc)) from exc
     control = checkpoint.modality
     control_weight = normalized_weight
+
+    # The renderer sets the authoritative count even for one-node tasks.  Check
+    # the complete scheduler identity and prove the shard-producing mode is
+    # active before probing the model runtime or touching input/model storage.
+    # Otherwise a reused multi-node profile would run the generic writer once
+    # per worker against the same output.
+    requested_nodes = 1
+    if _gang_contract_required():
+        _rank_hint, requested_nodes, _gang_metadata = _gang_environment()
+    if requested_nodes > 1 and not configs_uri.strip():
+        raise typer.BadParameter(
+            "multi-node Cosmos transfer requires a non-empty --configs-uri so "
+            "each worker executes a rank-local augmentation stride"
+        )
+    if requested_nodes > 1 and not output_uri.strip().startswith("s3://"):
+        raise typer.BadParameter(
+            "multi-node Cosmos transfer requires an s3:// --output-uri so "
+            "workers can publish and join attempt-fenced shards"
+        )
 
     payload = build_cosmos2_transfer_manifest(
         Cosmos2TransferConfig(

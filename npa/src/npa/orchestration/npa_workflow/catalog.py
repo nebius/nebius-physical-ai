@@ -20,6 +20,12 @@ class ToolEntry:
     # Named import-light semantic contract evaluated by validate/plan/submit.
     semantic_contract: str = ""
     variant_count_config: str = ""
+    # A sharded executable is safe only when its rank-aware path is active and
+    # its join is published through durable shared storage.  These config keys
+    # make that precondition machine-checkable whenever a future workflow
+    # reuses a multi-node resource profile.
+    shard_activation_config: str = ""
+    shard_output_config: str = ""
 
 
 # Public composable entries intentionally available to customer-authored specs,
@@ -401,6 +407,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         multi_node_mode="sharded",
         semantic_contract="cosmos_transfer_control",
         variant_count_config="n_augmentations",
+        shard_activation_config="configs_uri",
+        shard_output_config="augment_uri",
         argv_template=[
             "npa",
             "workbench",
