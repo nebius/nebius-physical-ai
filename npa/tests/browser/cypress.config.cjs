@@ -471,7 +471,7 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
     const exportResponsePromise = page.waitForResponse(
       (response) => response.url().includes("/api/foxglove/export") &&
         response.request().method() === "POST",
-      { timeout: 180000 },
+      { timeout: 0 },
     );
     await exactButton.click();
     const popup = await popupPromise;
@@ -493,7 +493,7 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
     const expectedWebUrl = String(exportPayload.export?.web_url || "");
     await popup.waitForURL(
       (url) => url.origin === "https://app.foxglove.dev",
-      { timeout: 180000 },
+      { timeout: 0 },
     );
     const requestedUrl = officialRequests.find((value) => value === expectedWebUrl) || "";
     if (!requestedUrl) {

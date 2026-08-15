@@ -299,9 +299,9 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
             artifactKey: String(run.artifact.key),
           },
           // The task performs several independently strict live waits in a
-          // second clean profile. Its outer budget must cover their sum rather
-          // than terminating before the individual assertions can report.
-          { log: false, timeout: 600000 },
+          // second clean profile. Do not cap real S3 preparation or hosted
+          // navigation; the assertions and browser events decide the gate.
+          { log: false, timeout: 0 },
         ).then((result) => {
           expect(result.runId).to.eq(run.run_id);
           expect(result.artifactKey).to.eq(run.artifact.key);
