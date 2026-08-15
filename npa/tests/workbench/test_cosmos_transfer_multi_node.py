@@ -15,6 +15,8 @@ No GPU or Cosmos runtime is touched: inference and S3 are both fakes.
 from __future__ import annotations
 
 import json
+import socket
+import threading
 from pathlib import Path
 
 import pytest
@@ -530,6 +532,324 @@ def test_rank_zero_rendezvous_shares_one_generation_over_scheduler_membership() 
         offered=None,
     )
     assert leader == follower == offered
+
+
+def test_rendezvous_retries_a_rank_when_the_first_response_is_not_acknowledged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    offered = {
+        "attempt_id": "f" * 64,
+        "publication_generation": 9,
+        "logical_wave_id": "loop-3",
+        "membership_digest": "members",
+        "internal_job_id": "44",
+        "node_count": 3,
+    }
+    claimant_nonce = "1" * 64
+    monkeypatch.setattr(cosmos2.secrets, "token_hex", lambda _size: claimant_nonce)
+    node_ips = ["127.0.0.1", "127.0.0.2", "127.0.0.3"]
+    cosmos2._sky_gang_rendezvous(
+        rank=0,
+        node_count=3,
+        node_ips=node_ips,
+        logical_wave_id="loop-3",
+        membership_digest="members",
+        internal_job_id="44",
+        offered=offered,
+    )
+    request = {
+        "protocol": "npa.cosmos.gang-attempt/v1",
+        "rank": 1,
+        "claimant_nonce": claimant_nonce,
+        "node_count": 3,
+        "logical_wave_id": "loop-3",
+        "membership_digest": "members",
+        "internal_job_id": "44",
+    }
+    port = cosmos2._rendezvous_port("loop-3", "members")
+    with cosmos2.socket.create_connection(
+        (node_ips[0], port), timeout=5.0, source_address=(node_ips[1], 0)
+    ) as connection:
+        connection.sendall(
+            json.dumps(request, sort_keys=True).encode("utf-8") + b"\n"
+        )
+        discarded = cosmos2._recv_json_line(connection)
+        assert discarded == {
+            "protocol": "npa.cosmos.gang-attempt/v1",
+            **offered,
+        }
+        # Simulate the response being lost above the transport after sendall()
+        # succeeded: close without the application acknowledgement.
+
+    assert cosmos2._sky_gang_rendezvous(
+        rank=1,
+        node_count=3,
+        node_ips=node_ips,
+        logical_wave_id="loop-3",
+        membership_digest="members",
+        internal_job_id="44",
+        offered=None,
+    ) == offered
+    assert cosmos2._sky_gang_rendezvous(
+        rank=2,
+        node_count=3,
+        node_ips=node_ips,
+        logical_wave_id="loop-3",
+        membership_digest="members",
+        internal_job_id="44",
+        offered=None,
+    ) == offered
+
+
+def test_hung_ack_does_not_block_a_later_rank(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    offered = {
+        "attempt_id": "e" * 64,
+        "publication_generation": 10,
+        "logical_wave_id": "loop-hung-ack",
+        "membership_digest": "members",
+        "internal_job_id": "45",
+        "node_count": 3,
+    }
+    claimant_nonce = "2" * 64
+    monkeypatch.setattr(cosmos2.secrets, "token_hex", lambda _size: claimant_nonce)
+    node_ips = ["127.0.0.1", "127.0.0.2", "127.0.0.3"]
+    cosmos2._sky_gang_rendezvous(
+        rank=0,
+        node_count=3,
+        node_ips=node_ips,
+        logical_wave_id="loop-hung-ack",
+        membership_digest="members",
+        internal_job_id="45",
+        offered=offered,
+    )
+    request = {
+        "protocol": "npa.cosmos.gang-attempt/v1",
+        "rank": 1,
+        "claimant_nonce": claimant_nonce,
+        "node_count": 3,
+        "logical_wave_id": "loop-hung-ack",
+        "membership_digest": "members",
+        "internal_job_id": "45",
+    }
+    port = cosmos2._rendezvous_port("loop-hung-ack", "members")
+    held = cosmos2.socket.create_connection(
+        (node_ips[0], port), timeout=5.0, source_address=(node_ips[1], 0)
+    )
+    try:
+        held.sendall(json.dumps(request, sort_keys=True).encode("utf-8") + b"\n")
+        response = cosmos2._recv_json_line(held)
+        assert response == {
+            "protocol": "npa.cosmos.gang-attempt/v1",
+            **offered,
+        }
+
+        # Rank 1 deliberately keeps the post-response socket open without an ACK.
+        # A per-connection handler must still let rank 2 receive and acknowledge.
+        assert cosmos2._sky_gang_rendezvous(
+            rank=2,
+            node_count=3,
+            node_ips=node_ips,
+            logical_wave_id="loop-hung-ack",
+            membership_digest="members",
+            internal_job_id="45",
+            offered=None,
+        ) == offered
+    finally:
+        held.close()
+
+    # The unacknowledged rank remains retryable and lets the server finish cleanly.
+    assert cosmos2._sky_gang_rendezvous(
+        rank=1,
+        node_count=3,
+        node_ips=node_ips,
+        logical_wave_id="loop-hung-ack",
+        membership_digest="members",
+        internal_job_id="45",
+        offered=None,
+    ) == offered
+
+
+def test_concurrent_duplicate_rank_has_exactly_one_committed_member() -> None:
+    offered = {
+        "attempt_id": "d" * 64,
+        "publication_generation": 11,
+        "logical_wave_id": "loop-duplicate-rank",
+        "membership_digest": "members",
+        "internal_job_id": "46",
+        "node_count": 3,
+    }
+    node_ips = ["127.0.0.1", "127.0.0.2", "127.0.0.3"]
+    cosmos2._sky_gang_rendezvous(
+        rank=0,
+        node_count=3,
+        node_ips=node_ips,
+        logical_wave_id="loop-duplicate-rank",
+        membership_digest="members",
+        internal_job_id="46",
+        offered=offered,
+    )
+    request = {
+        "protocol": "npa.cosmos.gang-attempt/v1",
+        "rank": 1,
+        "node_count": 3,
+        "logical_wave_id": "loop-duplicate-rank",
+        "membership_digest": "members",
+        "internal_job_id": "46",
+    }
+    port = cosmos2._rendezvous_port("loop-duplicate-rank", "members")
+    barrier = threading.Barrier(3)
+    responses: list[tuple[socket.socket, dict[str, object], str]] = []
+    response_lock = threading.Lock()
+
+    def request_generation(claimant_nonce: str) -> None:
+        connection = cosmos2.socket.create_connection(
+            (node_ips[0], port), timeout=5.0, source_address=(node_ips[1], 0)
+        )
+        barrier.wait()
+        connection.sendall(
+            json.dumps(
+                {**request, "claimant_nonce": claimant_nonce}, sort_keys=True
+            ).encode("utf-8")
+            + b"\n"
+        )
+        response = cosmos2._recv_json_line(connection)
+        with response_lock:
+            responses.append((connection, response, claimant_nonce))
+
+    contenders = [
+        threading.Thread(target=request_generation, args=(nonce,))
+        for nonce in ("3" * 64, "4" * 64)
+    ]
+    for contender in contenders:
+        contender.start()
+    barrier.wait()
+    for contender in contenders:
+        contender.join(timeout=5.0)
+        assert not contender.is_alive()
+
+    winners = [item for item in responses if not item[1].get("error")]
+    losers = [item for item in responses if item[1].get("error")]
+    assert len(winners) == 1
+    assert len(losers) == 1
+    winner_connection, winner_response, winner_nonce = winners[0]
+    assert winner_response == {
+        "protocol": "npa.cosmos.gang-attempt/v1",
+        **offered,
+    }
+    winner_connection.sendall(
+        json.dumps(
+            {
+                "protocol": "npa.cosmos.gang-attempt/v1",
+                "rank": 1,
+                "claimant_nonce": winner_nonce,
+                "acknowledged": True,
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+        + b"\n"
+    )
+    assert cosmos2._recv_json_line(winner_connection) == {
+        "protocol": "npa.cosmos.gang-attempt/v1",
+        "rank": 1,
+        "claimant_nonce": winner_nonce,
+        "committed": True,
+    }
+    winner_connection.sendall(
+        json.dumps(
+            {
+                "protocol": "npa.cosmos.gang-attempt/v1",
+                "rank": 1,
+                "claimant_nonce": winner_nonce,
+                "commitment_received": True,
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+        + b"\n"
+    )
+    for connection, _response, _nonce in responses:
+        connection.close()
+
+    assert cosmos2._sky_gang_rendezvous(
+        rank=2,
+        node_count=3,
+        node_ips=node_ips,
+        logical_wave_id="loop-duplicate-rank",
+        membership_digest="members",
+        internal_job_id="46",
+        offered=None,
+    ) == offered
+
+
+def test_lost_commit_confirmation_is_idempotent_for_the_same_claimant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    offered = {
+        "attempt_id": "c" * 64,
+        "publication_generation": 12,
+        "logical_wave_id": "loop-lost-commit",
+        "membership_digest": "members",
+        "internal_job_id": "47",
+        "node_count": 2,
+    }
+    node_ips = ["127.0.0.1", "127.0.0.2"]
+    claimant_nonce = "5" * 64
+    monkeypatch.setattr(cosmos2.secrets, "token_hex", lambda _size: claimant_nonce)
+    cosmos2._sky_gang_rendezvous(
+        rank=0,
+        node_count=2,
+        node_ips=node_ips,
+        logical_wave_id="loop-lost-commit",
+        membership_digest="members",
+        internal_job_id="47",
+        offered=offered,
+    )
+    request = {
+        "protocol": "npa.cosmos.gang-attempt/v1",
+        "rank": 1,
+        "claimant_nonce": claimant_nonce,
+        "node_count": 2,
+        "logical_wave_id": "loop-lost-commit",
+        "membership_digest": "members",
+        "internal_job_id": "47",
+    }
+    port = cosmos2._rendezvous_port("loop-lost-commit", "members")
+    with cosmos2.socket.create_connection(
+        (node_ips[0], port), timeout=5.0, source_address=(node_ips[1], 0)
+    ) as connection:
+        connection.sendall(
+            json.dumps(request, sort_keys=True).encode("utf-8") + b"\n"
+        )
+        assert cosmos2._recv_json_line(connection) == {
+            "protocol": "npa.cosmos.gang-attempt/v1",
+            **offered,
+        }
+        connection.sendall(
+            json.dumps(
+                {
+                    "protocol": "npa.cosmos.gang-attempt/v1",
+                    "rank": 1,
+                    "claimant_nonce": claimant_nonce,
+                    "acknowledged": True,
+                },
+                sort_keys=True,
+            ).encode("utf-8")
+            + b"\n"
+        )
+        discarded = cosmos2._recv_json_line(connection)
+        assert discarded["committed"] is True
+        # Discard the commitment confirmation and close without its receipt.
+
+    assert cosmos2._sky_gang_rendezvous(
+        rank=1,
+        node_count=2,
+        node_ips=node_ips,
+        logical_wave_id="loop-lost-commit",
+        membership_digest="members",
+        internal_job_id="47",
+        offered=None,
+    ) == offered
 
 
 def test_recovery_rendezvous_rejects_stale_launch_and_duplicate_rank() -> None:
@@ -1050,6 +1370,70 @@ def test_recovery_generation_fences_late_prior_finalization_and_writes() -> None
     )
     assert manifest["status"] == tx.TRANSFER_MANIFEST_STATUS
     assert manifest["attempt_id"] == new_id
+
+
+def test_superseded_leader_exits_unbounded_join_while_rank_is_missing() -> None:
+    storage = FakeStorage()
+    output_uri = "s3://bkt/run1/cosmos_augmented/"
+    old_id, old_etag, old_generation = tx.claim_run_publication(
+        output_uri,
+        run_id="run1",
+        logical_wave_id="managed-recovery-wave",
+        node_count=2,
+        membership_digest="old-members",
+        scheduler_fence_sequence=4,
+        scheduler_fence_attempt=1,
+        scheduler_launch_id="old-launch",
+        storage_client=storage,
+        nonce_factory=lambda: "1" * 32,
+    )
+    _write_shard(
+        [_attempt_clip(0, output_uri, old_id)],
+        output_uri,
+        run_id="run1",
+        rank=0,
+        node_count=2,
+        variant_total=2,
+        storage_client=storage,
+        attempt_id=old_id,
+        scheduler_fence_sequence=4,
+        scheduler_fence_attempt=1,
+        scheduler_launch_id="old-launch",
+        logical_wave_id="managed-recovery-wave",
+        publication_generation=old_generation,
+    )
+    sleeps = 0
+
+    def supersede(_seconds: float) -> None:
+        nonlocal sleeps
+        sleeps += 1
+        tx.claim_run_publication(
+            output_uri,
+            run_id="run1",
+            logical_wave_id="managed-recovery-wave",
+            node_count=2,
+            membership_digest="replacement-members",
+            scheduler_fence_sequence=4,
+            scheduler_fence_attempt=2,
+            scheduler_launch_id="replacement-launch",
+            storage_client=storage,
+            nonce_factory=lambda: "2" * 32,
+        )
+
+    with pytest.raises(RuntimeError, match="superseded|authoritative"):
+        tx.merge_shard_manifests(
+            output_uri,
+            run_id="run1",
+            node_count=2,
+            attempt_id=old_id,
+            publication_claim_etag=old_etag,
+            publication_generation=old_generation,
+            storage_client=storage,
+            sleep=supersede,
+            # Deliberately no timeout: the canonical recovery fence itself must
+            # evict an escaped old leader waiting for rank 1.
+        )
+    assert sleeps == 1
 
 
 def test_publication_claim_refuses_an_unexamined_foreign_manifest() -> None:

@@ -371,6 +371,8 @@ def discover_kubernetes_gpu_inventory(
             context, 0, 0, 0, 0, (), {}, "kubectl node inventory unavailable"
         )
     pod_cmd = ["kubectl"]
+    if kubeconfig is not None and os.fspath(kubeconfig).strip():
+        pod_cmd.extend(["--kubeconfig", str(Path(kubeconfig).expanduser())])
     if context:
         pod_cmd.extend(["--context", context])
     pod_cmd.extend(["get", "pods", "--all-namespaces", "-o", "json"])
@@ -382,6 +384,7 @@ def discover_kubernetes_gpu_inventory(
             text=True,
             timeout=30,
             check=False,
+            env=_kubeconfig_env(kubeconfig),
         )
         if pod_result.returncode != 0:
             return KubernetesGpuInventory(

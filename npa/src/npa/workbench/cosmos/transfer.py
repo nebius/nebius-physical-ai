@@ -206,11 +206,16 @@ def _classify_output_videos(
 ) -> tuple[list[str], dict[str, str], dict[str, str]]:
     """Split an inference output directory into generated / control / mask videos.
 
-    Upstream writes ``<name>.mp4`` for the generated clip and, per modality,
-    ``<name>_control_<key>.mp4`` plus ``<name>_mask_<key>.mp4`` when a region mask
-    was generated from a prompt. Both sidecars must be excluded from the generated
-    set: a full-frame binary mask compresses well but not always to less than the
-    render, so picking the largest file could publish a mask as the augmentation.
+    Upstream writes ``<name>.mp4`` for the generated clip and, per supported
+    modality, ``<name>_control_<key>.mp4`` plus ``<name>_mask_<key>.mp4`` when a
+    region mask was generated from a prompt. Both exact sidecar shapes must be
+    excluded from the generated set: a full-frame binary mask compresses well but
+    not always to less than the render, so picking the largest file could publish
+    a mask as the augmentation. Unknown sidecar keys are also quarantined when
+    their generated sibling exists, which fails closed if upstream adds a modality
+    before NPA learns how to publish its evidence. Ordinary run names may
+    themselves contain words such as ``control`` or ``_mask_`` and remain
+    generated output.
     """
 
     import re as _re
@@ -218,20 +223,36 @@ def _classify_output_videos(
     control: dict[str, str] = {}
     masks: dict[str, str] = {}
     generated: list[str] = []
-    for path in sorted(glob.glob(str(out_dir / "**" / "*.mp4"), recursive=True)):
-        name = Path(path).name
-        control_match = _re.search(r"_control_([a-z0-9]+)\.mp4$", name)
-        mask_match = _re.search(r"_mask_([a-z0-9]+)\.mp4$", name)
-        if control_match:
-            control.setdefault(control_match.group(1), path)
-        elif mask_match:
-            masks.setdefault(mask_match.group(1), path)
-        elif "control" in name or "_mask" in name:
-            # An unrecognized sidecar shape still must not be mistaken for the
-            # render; keep it out of both the generated set and the typed maps.
+    paths = [
+        Path(path)
+        for path in sorted(glob.glob(str(out_dir / "**" / "*.mp4"), recursive=True))
+    ]
+    path_set = set(paths)
+    sidecar_pattern = _re.compile(
+        r"^(?P<base>.+)_(?P<kind>control|mask)_"
+        r"(?P<key>[a-z0-9][a-z0-9_-]*)\.mp4$"
+    )
+    for candidate in paths:
+        match = sidecar_pattern.match(candidate.name)
+        if match is None:
+            generated.append(str(candidate))
             continue
-        else:
-            generated.append(path)
+        key = match.group("key")
+        has_generated_sibling = (
+            candidate.with_name(f"{match.group('base')}.mp4") in path_set
+        )
+        if not has_generated_sibling and key not in INPUT_CONTROLS:
+            # A standalone render may legitimately contain these words. Only a
+            # known modality suffix is intrinsically evidence-shaped; an unknown
+            # suffix needs the upstream sibling relationship to disambiguate it.
+            generated.append(str(candidate))
+            continue
+        if has_generated_sibling and key in INPUT_CONTROLS:
+            target = control if match.group("kind") == "control" else masks
+            target.setdefault(key, str(candidate))
+        # Unknown keys with a generated sibling, and known sidecars missing their
+        # sibling, are intentionally omitted until a coherent evidence contract
+        # can be established.
     return generated, control, masks
 
 
@@ -1407,31 +1428,42 @@ def merge_shard_manifests(
             "multi-node shard merge requires the rank-0 publication claim fence"
         )
     client = storage_client or StorageClient.from_environment()
-    claim_current = client.read_bytes_with_etag(transfer_manifest_uri_for(output_uri))
-    try:
-        claim_document = (
-            _json.loads(claim_current[0].decode("utf-8"))
-            if claim_current is not None
-            else {}
+
+    def _read_authoritative_claim() -> dict[str, Any]:
+        """Read and validate the canonical fence for every join iteration."""
+
+        claim_current = client.read_bytes_with_etag(
+            transfer_manifest_uri_for(output_uri)
         )
-    except (UnicodeDecodeError, TypeError, ValueError) as exc:
-        raise RuntimeError("multi-node shard-join fence is unreadable") from exc
-    if not (
-        claim_current is not None
-        and claim_current[1] == publication_claim_etag
-        and isinstance(claim_document, dict)
-        and claim_document.get("schema") == TRANSFER_MANIFEST_SCHEMA
-        and claim_document.get("mode") == TRANSFER_MANIFEST_MODE
-        and claim_document.get("status") == PUBLICATION_CLAIM_STATUS
-        and str(claim_document.get("run_id") or "") == str(run_id or "")
-        and str(claim_document.get("attempt_id") or "") == normalized_attempt_id
-        and int(claim_document.get("node_count", 0) or 0) == expected
-        and int(claim_document.get(PUBLICATION_GENERATION_FIELD, 0) or 0)
-        == int(publication_generation)
-    ):
-        raise RuntimeError(
-            "multi-node shard join has no current authoritative publication fence"
-        )
+        try:
+            claim_document = (
+                _json.loads(claim_current[0].decode("utf-8"))
+                if claim_current is not None
+                else {}
+            )
+        except (UnicodeDecodeError, TypeError, ValueError) as exc:
+            raise RuntimeError("multi-node shard-join fence is unreadable") from exc
+        if not (
+            claim_current is not None
+            and claim_current[1] == publication_claim_etag
+            and isinstance(claim_document, dict)
+            and claim_document.get("schema") == TRANSFER_MANIFEST_SCHEMA
+            and claim_document.get("mode") == TRANSFER_MANIFEST_MODE
+            and claim_document.get("status") == PUBLICATION_CLAIM_STATUS
+            and str(claim_document.get("run_id") or "") == str(run_id or "")
+            and str(claim_document.get("attempt_id") or "")
+            == normalized_attempt_id
+            and int(claim_document.get("node_count", 0) or 0) == expected
+            and int(claim_document.get(PUBLICATION_GENERATION_FIELD, 0) or 0)
+            == int(publication_generation)
+        ):
+            raise RuntimeError(
+                "multi-node shard join publication fence was superseded or is no "
+                "longer authoritative"
+            )
+        return claim_document
+
+    claim_document = _read_authoritative_claim()
     expected_shard_identity = {
         "logical_wave_id": str(claim_document.get("logical_wave_id") or ""),
         PUBLICATION_GENERATION_FIELD: int(publication_generation),
@@ -1506,6 +1538,19 @@ def merge_shard_manifests(
         )
 
     while True:
+        # A scheduler-authorized recovery may supersede this attempt while an old
+        # leader is waiting for a missing sibling. Re-read the canonical claim on
+        # every poll so the old process exits even when the default join has no
+        # deadline and can never reach the final compare-and-swap publication.
+        current_claim = _read_authoritative_claim()
+        if any(
+            current_claim.get(field) != value
+            for field, value in expected_shard_identity.items()
+        ):
+            raise RuntimeError(
+                "multi-node shard join publication fence is inconsistent with its "
+                "scheduler attempt identity"
+            )
         for rank in range(expected):
             if rank in shards:
                 continue

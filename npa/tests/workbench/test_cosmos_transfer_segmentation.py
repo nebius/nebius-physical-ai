@@ -44,17 +44,28 @@ def test_output_classifier_never_selects_control_evidence_as_generated(
     control = tmp_path / "clip_control_seg.mp4"
     mask = tmp_path / "clip_mask_seg.mp4"
     unknown = tmp_path / "clip_control_evidence_extra.mp4"
+    known_orphan = tmp_path / "orphan_control_depth.mp4"
+    ordinary_orphan = tmp_path / "orphan_control_experiment.mp4"
+    named_control = tmp_path / "control-surface.mp4"
+    named_mask = tmp_path / "robot_mask_trial.mp4"
     for path, size in (
         (generated, 1),
         (control, 100),
         (mask, 200),
         (unknown, 300),
+        (known_orphan, 350),
+        (ordinary_orphan, 375),
+        (named_control, 400),
+        (named_mask, 500),
     ):
         path.write_bytes(b"x" * size)
 
     videos, controls, masks = tx._classify_output_videos(tmp_path)
 
-    assert videos == [str(generated)]
+    assert videos == sorted(
+        str(path)
+        for path in (generated, ordinary_orphan, named_control, named_mask)
+    )
     assert controls == {"seg": str(control)}
     assert masks == {"seg": str(mask)}
 

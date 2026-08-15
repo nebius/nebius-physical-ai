@@ -7,6 +7,7 @@ import json
 import math
 import os
 from pathlib import Path
+import secrets
 import socket
 import threading
 import time
@@ -499,34 +500,80 @@ def _sky_gang_rendezvous(
             ) from exc
 
         def serve() -> None:
-            received: set[int] = set()
-            try:
-                while len(received) < node_count - 1:
-                    connection, _peer = server.accept()
-                    with connection:
+            committed_nonces: dict[int, str] = {}
+            delivered: set[int] = set()
+            in_flight: dict[int, str] = {}
+            received_lock = threading.Lock()
+
+            def handle(connection: socket.socket, peer: tuple[str, int]) -> None:
+                reserved_rank: int | None = None
+                claimant_nonce = ""
+                with connection:
+                    try:
                         member_rank = -1
+                        valid = False
+                        replay_committed = False
+                        retryable = False
                         try:
                             request = _recv_json_line(connection)
                             member_rank = int(request.get("rank", -1))
-                            valid = bool(
+                            claimant_nonce = str(
+                                request.get("claimant_nonce") or ""
+                            )
+                            identity_matches = bool(
                                 request.get("protocol") == protocol
-                                and request.get("logical_wave_id") == logical_wave_id
-                                and request.get("membership_digest") == membership_digest
+                                and request.get("logical_wave_id")
+                                == logical_wave_id
+                                and request.get("membership_digest")
+                                == membership_digest
                                 and request.get("internal_job_id") == internal_job_id
                                 and int(request.get("node_count", 0)) == node_count
                                 and 0 < member_rank < node_count
-                                and member_rank not in received
-                                and _peer[0] == node_ips[member_rank]
+                                and peer[0] == node_ips[member_rank]
+                                and len(claimant_nonce) == 64
+                                and all(
+                                    character in "0123456789abcdef"
+                                    for character in claimant_nonce
+                                )
                             )
+                            with received_lock:
+                                committed_nonce = committed_nonces.get(member_rank)
+                                in_flight_nonce = in_flight.get(member_rank)
+                                if identity_matches and committed_nonce == claimant_nonce:
+                                    valid = True
+                                    replay_committed = True
+                                elif (
+                                    identity_matches
+                                    and committed_nonce is None
+                                    and in_flight_nonce is None
+                                ):
+                                    valid = True
+                                    in_flight[member_rank] = claimant_nonce
+                                    reserved_rank = member_rank
+                                elif (
+                                    identity_matches
+                                    and committed_nonce is None
+                                    and in_flight_nonce == claimant_nonce
+                                ):
+                                    retryable = True
                             if not valid:
                                 response: dict[str, Any] = {
                                     "protocol": protocol,
-                                    "error": "contradictory gang identity",
+                                    "error": (
+                                        "gang identity exchange is still in flight"
+                                        if retryable
+                                        else "contradictory gang identity"
+                                    ),
+                                    "retryable": retryable,
                                 }
                             else:
-                                received.add(member_rank)
                                 response = {"protocol": protocol, **offered}
-                        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                        except (
+                            OSError,
+                            TypeError,
+                            ValueError,
+                            json.JSONDecodeError,
+                        ):
                             response = {
                                 "protocol": protocol,
                                 "error": "invalid gang identity request",
@@ -537,8 +584,106 @@ def _sky_gang_rendezvous(
                                 + b"\n"
                             )
                         except OSError:
-                            # The member retries if the response was interrupted.
-                            received.discard(member_rank)
+                            # The member retries if the response was interrupted;
+                            # it has not acknowledged this generation yet.
+                            return
+                        if not valid:
+                            return
+                        try:
+                            acknowledgement = _recv_json_line(connection)
+                        except (
+                            OSError,
+                            TypeError,
+                            ValueError,
+                            json.JSONDecodeError,
+                        ):
+                            # ``sendall`` only proves the kernel accepted bytes,
+                            # not that the member application received them. Keep
+                            # the rank retryable until it acknowledges the exact
+                            # response on the same authenticated connection. Each
+                            # connection has its own daemon handler, so a hung peer
+                            # cannot prevent another rank receiving the generation.
+                            return
+                        if not (
+                            acknowledgement.get("protocol") == protocol
+                            and acknowledgement.get("acknowledged") is True
+                            and int(acknowledgement.get("rank", -1)) == member_rank
+                            and acknowledgement.get("claimant_nonce")
+                            == claimant_nonce
+                        ):
+                            return
+                        with received_lock:
+                            if replay_committed:
+                                committed = (
+                                    committed_nonces.get(member_rank)
+                                    == claimant_nonce
+                                )
+                            else:
+                                committed = bool(
+                                    in_flight.get(member_rank) == claimant_nonce
+                                    and member_rank not in committed_nonces
+                                )
+                                if committed:
+                                    in_flight.pop(member_rank, None)
+                                    committed_nonces[member_rank] = claimant_nonce
+                                    reserved_rank = None
+                        if not committed:
+                            return
+                        connection.sendall(
+                            json.dumps(
+                                {
+                                    "protocol": protocol,
+                                    "rank": member_rank,
+                                    "claimant_nonce": claimant_nonce,
+                                    "committed": True,
+                                },
+                                sort_keys=True,
+                            ).encode("utf-8")
+                            + b"\n"
+                        )
+                        try:
+                            receipt = _recv_json_line(connection)
+                        except (
+                            OSError,
+                            TypeError,
+                            ValueError,
+                            json.JSONDecodeError,
+                        ):
+                            return
+                        if (
+                            receipt.get("protocol") == protocol
+                            and receipt.get("commitment_received") is True
+                            and int(receipt.get("rank", -1)) == member_rank
+                            and receipt.get("claimant_nonce") == claimant_nonce
+                        ):
+                            with received_lock:
+                                if (
+                                    committed_nonces.get(member_rank)
+                                    == claimant_nonce
+                                ):
+                                    delivered.add(member_rank)
+                    finally:
+                        if reserved_rank is not None:
+                            with received_lock:
+                                if in_flight.get(reserved_rank) == claimant_nonce:
+                                    in_flight.pop(reserved_rank, None)
+
+            try:
+                server.settimeout(0.2)
+                while True:
+                    with received_lock:
+                        if len(delivered) >= node_count - 1:
+                            break
+                    try:
+                        connection, peer = server.accept()
+                    except TimeoutError:
+                        continue
+                    threading.Thread(
+                        target=handle,
+                        args=(connection, peer),
+                        name="npa-cosmos-gang-attempt-member",
+                        daemon=True,
+                    ).start()
             finally:
                 server.close()
 
@@ -549,9 +694,11 @@ def _sky_gang_rendezvous(
         ).start()
         return offered
 
+    claimant_nonce = secrets.token_hex(32)
     request = {
         "protocol": protocol,
         "rank": rank,
+        "claimant_nonce": claimant_nonce,
         "node_count": node_count,
         "logical_wave_id": logical_wave_id,
         "membership_digest": membership_digest,
@@ -587,15 +734,56 @@ def _sky_gang_rendezvous(
                     json.dumps(request, sort_keys=True).encode("utf-8") + b"\n"
                 )
                 response = _recv_json_line(connection)
-            if response.get("protocol") != protocol:
-                raise typer.BadParameter(
-                    "multi-node augment identity rendezvous returned an invalid protocol"
+                if response.get("protocol") != protocol:
+                    raise typer.BadParameter(
+                        "multi-node augment identity rendezvous returned an invalid "
+                        "protocol"
+                    )
+                if response.get("error"):
+                    if response.get("retryable") is True:
+                        raise ConnectionError(str(response["error"]))
+                    raise typer.BadParameter(
+                        "multi-node augment identity is contradictory: "
+                        f"{response['error']}"
+                    )
+                connection.sendall(
+                    json.dumps(
+                        {
+                            "protocol": protocol,
+                            "rank": rank,
+                            "claimant_nonce": claimant_nonce,
+                            "acknowledged": True,
+                        },
+                        sort_keys=True,
+                    ).encode("utf-8")
+                    + b"\n"
                 )
-            if response.get("error"):
-                raise typer.BadParameter(
-                    f"multi-node augment identity is contradictory: {response['error']}"
+                commitment = _recv_json_line(connection)
+                if not (
+                    commitment.get("protocol") == protocol
+                    and commitment.get("committed") is True
+                    and int(commitment.get("rank", -1)) == rank
+                    and commitment.get("claimant_nonce") == claimant_nonce
+                ):
+                    raise typer.BadParameter(
+                        "multi-node augment identity rendezvous did not commit the "
+                        "rank reservation"
+                    )
+                connection.sendall(
+                    json.dumps(
+                        {
+                            "protocol": protocol,
+                            "rank": rank,
+                            "claimant_nonce": claimant_nonce,
+                            "commitment_received": True,
+                        },
+                        sort_keys=True,
+                    ).encode("utf-8")
+                    + b"\n"
                 )
-            return {key: value for key, value in response.items() if key != "protocol"}
+                return {
+                    key: value for key, value in response.items() if key != "protocol"
+                }
         except typer.BadParameter:
             raise
         except (OSError, ValueError, json.JSONDecodeError):

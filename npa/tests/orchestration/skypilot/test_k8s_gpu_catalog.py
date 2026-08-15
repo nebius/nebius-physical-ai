@@ -763,6 +763,40 @@ def test_live_inventory_uses_exact_context_and_subtracts_active_pods() -> None:
     assert inventory.unbound_pending_gpu_requests == 1
 
 
+def test_live_inventory_pins_explicit_kubeconfig_for_nodes_and_pods(
+    tmp_path,
+) -> None:  # noqa: ANN001
+    kubeconfig = tmp_path / "exact-kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    seen: list[tuple[list[str], str]] = []
+
+    def runner(cmd, **kwargs):  # noqa: ANN001 - test stub
+        seen.append((cmd, kwargs["env"]["KUBECONFIG"]))
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps({"items": []}), stderr=""
+        )
+
+    discover_kubernetes_gpu_inventory(
+        context="exact-context", kubeconfig=kubeconfig, runner=runner
+    )
+
+    prefix = [
+        "kubectl",
+        "--kubeconfig",
+        str(kubeconfig),
+        "--context",
+        "exact-context",
+        "get",
+    ]
+    assert seen == [
+        (prefix + ["nodes", "-o", "json"], str(kubeconfig)),
+        (
+            prefix + ["pods", "--all-namespaces", "-o", "json"],
+            str(kubeconfig),
+        ),
+    ]
+
+
 def test_gang_capacity_fails_unknown_for_unbound_pending_gpu_demand() -> None:
     inventory = KubernetesGpuInventory(
         context="exact-context",
