@@ -493,7 +493,11 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
     const expectedWebUrl = String(exportPayload.export?.web_url || "");
     await popup.waitForURL(
       (url) => url.origin === "https://app.foxglove.dev",
-      { timeout: 0 },
+      // A cross-origin hosted page may keep third-party resources pending and
+      // never emit a full load event. The committed top-level navigation is
+      // the authoritative real-popup gate; the nonblank screenshot below
+      // separately proves that Foxglove rendered its reachable surface.
+      { timeout: 0, waitUntil: "commit" },
     );
     const requestedUrl = officialRequests.find((value) => value === expectedWebUrl) || "";
     if (!requestedUrl) {

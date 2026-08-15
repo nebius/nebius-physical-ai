@@ -6239,15 +6239,15 @@
           });
           const selectedResult = (data && data.selected_artifact) ||
             (data && data.export && data.export.selected_artifact) || {};
+          // Artifact inventory refreshes legitimately replace card DOM nodes
+          // during a slow preparation. Staleness is the immutable run/ref
+          // selection, while the exact key is verified from the server echo
+          // below; DOM-node identity is not provenance.
           if (
             operation.stale ||
             foxgloveWebOperation !== operation ||
             String(activeRunId || "").trim() !== runId ||
-            String(activeArtifactRunRef || "").trim() !== runRef ||
-            (artifactButton && (
-              !artifactButton.isConnected ||
-              String(artifactButton.getAttribute("data-key") || "").trim() !== artifactKey
-            ))
+            String(activeArtifactRunRef || "").trim() !== runRef
           ) {
             try { popup.close(); } catch (_closeErr) { /* best effort */ }
             return false;

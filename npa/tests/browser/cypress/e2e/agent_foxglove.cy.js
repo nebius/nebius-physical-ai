@@ -432,6 +432,51 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     });
   });
 
+  it("keeps the exact selected MCAP open when its card rerenders during preparation", () => {
+    stubFoxgloveApis();
+    const runRef = "npa1_mock_non_stock";
+    const key = `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`;
+    const s3Uri = `s3://mock/${key}`;
+    const exported = exactArtifactExportResponse(
+      NON_STOCK_RUN_ID,
+      runRef,
+      key,
+      s3Uri,
+    );
+    cy.intercept("POST", "/api/foxglove/export", (request) => {
+      request.reply({ delay: 900, statusCode: 200, body: exported });
+    }).as("rerenderedCardExport");
+    cy.window().then((win) => {
+      const replace = cy.stub().as("rerenderedCardNavigate");
+      const close = cy.stub().as("rerenderedCardClose");
+      cy.stub(win, "open").returns({ opener: null, location: { replace }, close });
+    });
+
+    cy.get("#tabRerun").click();
+    cy.get("#renderModeFoxglove").click();
+    cy.wait("@foxgloveConfig");
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@artifactRuns");
+    cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
+    cy.wait("@nonStockArtifactList");
+    cy.get(`button[data-action="open-foxglove-artifact"][data-key="${key}"]`)
+      .should("be.enabled")
+      .click();
+    // A normal same-run inventory refresh replaces the card DOM node while
+    // the immutable run/ref/key export remains in flight.
+    cy.get("#artifactLoadRunArtifacts").click();
+    cy.wait("@nonStockArtifactList");
+    cy.wait("@rerenderedCardExport");
+    cy.get("@rerenderedCardNavigate").should(
+      "have.been.calledOnceWith",
+      exported.export.web_url,
+    );
+    cy.get("@rerenderedCardClose").should("not.have.been.called");
+    cy.get("#foxgloveExportNote")
+      .should("have.attr", "data-state", "success")
+      .and("contain.text", "selected MCAP artifact");
+  });
+
   it("reports a blocked popup from an MCAP card without starting preparation", () => {
     stubFoxgloveApis();
     let exports = 0;
