@@ -87,6 +87,34 @@ def test_every_host_lands_in_one_apply(
     assert calls == [("", ("cr.eu-north1.nebius.cloud", "cr.us-central1.nebius.cloud"))]
 
 
+def test_each_refresh_forces_a_new_token_despite_stale_ambient_password(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Long runtime loops must not reinstall the token minted for their first wave."""
+
+    minted = iter(["fresh-wave-1", "fresh-wave-2"])
+    applied: list[dict[str, object]] = []
+    monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "expired-initial-token")
+    monkeypatch.setenv("NPA_REGISTRY_PASSWORD", "also-expired")
+    monkeypatch.setattr(
+        registry_auth, "mint_nebius_registry_token", lambda: next(minted)
+    )
+    monkeypatch.setattr(
+        registry_auth,
+        "ensure_nebius_registry_pull_secret",
+        lambda **kwargs: applied.append(kwargs),
+    )
+    rendered = tmp_path / "workflow.yaml"
+    rendered.write_text(RENDERED, encoding="utf-8")
+
+    _refresh_kubernetes_pull_secrets(rendered)
+    _refresh_kubernetes_pull_secrets(rendered)
+
+    assert [call["token"] for call in applied] == ["fresh-wave-1", "fresh-wave-2"]
+    assert all(call["username"] == "iam" for call in applied)
+    assert all(call["token"] != "expired-initial-token" for call in applied)
+
+
 def test_the_applied_secret_authenticates_every_host(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -355,6 +355,37 @@ def test_submit_runtime_refreshes_pull_secret_before_driver(
     assert result.exit_code == 0, result.output
     assert events[0] == ("refresh", "token-factory-parallel-fanout.skypilot.yaml")
     assert events[1] == ("driver", "rt-pull-secret-order")
+    assert fake_runtime["options"].pre_submit_hook is refresh
+
+
+def test_submit_runtime_can_preserve_managed_registry_secret(
+    fake_runtime, mocker
+) -> None:
+    refresh = mocker.patch(
+        "npa.cli.workbench.workflow._refresh_kubernetes_pull_secrets"
+    )
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--run-id",
+            "rt-managed-registry-secret",
+            "--runtime",
+            "--no-refresh-registry-secret",
+            "--var",
+            "bucket=rt-bucket",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert fake_runtime["options"].pre_submit_hook is None
+    refresh.assert_not_called()
 
 
 def test_submit_runtime_pinned_no_source_preserves_registry_render_error(

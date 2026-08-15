@@ -664,6 +664,94 @@ def test_runtime_runs_full_budget_when_gate_keeps_looping(tmp_path: Path) -> Non
     assert work_fences == [1, 3, 5]
 
 
+def test_runtime_refreshes_launch_dependencies_for_every_wave(tmp_path: Path) -> None:
+    """A loop can outlive a short-lived registry credential minted at submit."""
+
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    submitter = FakeSubmitter()
+    refreshed: list[list[str]] = []
+
+    def refresh(path: Path) -> None:
+        docs = [doc for doc in yaml.safe_load_all(path.read_text()) if doc]
+        refreshed.append([doc["name"] for doc in docs[1:]])
+
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        pre_submit_hook=refresh,
+    )
+    executor = _executor(spec, submitter=submitter, options=options)
+
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-refresh-every-wave",
+        executor=executor,
+        options=options,
+        decision_reader=_decision_reader(["loop_back", "promote_checkpoint"]),
+    )
+
+    assert report.status == "succeeded"
+    assert refreshed == [["work"], ["gate"], ["work"], ["gate"], ["publish"]]
+    assert refreshed == [call["tasks"] for call in submitter.calls]
+
+
+def test_runtime_refreshes_launch_dependencies_again_before_retry(
+    tmp_path: Path,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    submitter = FakeSubmitter()
+    refreshed: list[str] = []
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        retries=1,
+        retry_backoff_seconds=0,
+        pre_submit_hook=lambda path: refreshed.append(path.read_text()),
+    )
+    executor = _executor(
+        spec,
+        submitter=submitter,
+        status_fn=FakeStatus(["FAILED", "SUCCEEDED"]),
+        options=options,
+    )
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-refresh-retry", executor=executor, options=options
+    )
+
+    assert report.status == "succeeded"
+    assert len(refreshed) == len(submitter.calls) == 4
+    assert submitter.calls[0]["tasks"] == submitter.calls[1]["tasks"] == [
+        "shard-a",
+        "shard-b",
+    ]
+
+
+def test_runtime_launch_dependency_refresh_failure_prevents_submit(
+    tmp_path: Path,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    submitter = FakeSubmitter()
+
+    def fail_refresh(_path: Path) -> None:
+        raise RuntimeError("registry credential refresh failed")
+
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        pre_submit_hook=fail_refresh,
+    )
+    executor = _executor(spec, submitter=submitter, options=options)
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-refresh-fail-closed", executor=executor, options=options
+    )
+
+    assert report.status == "failed"
+    assert "registry credential refresh failed" in report.error
+    assert submitter.calls == []
+
+
 def test_runtime_branch_follows_transition_goto(tmp_path: Path) -> None:
     """A promote decision routes straight to the transition target (data-dependent goto)."""
 

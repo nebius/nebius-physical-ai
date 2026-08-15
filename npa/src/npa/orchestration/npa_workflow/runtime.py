@@ -170,6 +170,7 @@ class RuntimeOptions:
     credential_resolver: Callable[[], Mapping[str, str]] | None = field(
         default=None, repr=False
     )
+    pre_submit_hook: Callable[[Path], None] | None = field(default=None, repr=False)
 
 
 class WaveWaitTimeout(NpaWorkflowError):
@@ -1161,6 +1162,14 @@ class SkyPilotWaveExecutor:
             from npa.orchestration.skypilot.workflow import submit_workflow
 
             submitter = submit_workflow
+
+        # Runtime workflows render and launch one wave at a time, potentially long
+        # after the CLI's initial preflight.  Refresh short-lived launch dependencies
+        # against the exact wave immediately before crossing the submit boundary.
+        # This also runs for every explicit retry.  A hook failure is deliberately
+        # fail-closed: no managed job has been launched at this point.
+        if self.options.pre_submit_hook is not None:
+            self.options.pre_submit_hook(path)
 
         secret_values = dict(self.options.secret_env_values)
         if self.options.credential_resolver is not None:

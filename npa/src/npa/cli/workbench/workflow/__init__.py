@@ -102,16 +102,22 @@ def _refresh_kubernetes_pull_secrets(rendered_path: Path) -> None:
     if not hosts:
         return
 
-    from npa.orchestration.skypilot.registry_preflight import (
-        resolve_registry_credentials,
+    from npa.workflows.sim2real.registry_auth import (
+        ensure_nebius_registry_pull_secret,
+        mint_nebius_registry_token,
     )
-    from npa.workflows.sim2real.registry_auth import ensure_nebius_registry_pull_secret
 
     joined = ", ".join(hosts)
     # One call with every host: the secret holds a single dockerconfigjson and each
     # apply replaces it, so refreshing host by host would leave only the last one.
+    # Do not consult SKYPILOT_DOCKER_PASSWORD/NPA_REGISTRY_PASSWORD here. Those are
+    # valid render/preflight overrides, but can be the short-lived token installed at
+    # the start of a long runtime loop. "Refresh" must mint a genuinely new,
+    # profile-scoped Nebius credential; callers with an independently managed secret
+    # explicitly select --no-refresh-registry-secret.
     try:
-        username, password = resolve_registry_credentials(hosts[0], mint=True)
+        username = "iam"
+        password = mint_nebius_registry_token()
         if not password:
             raise RuntimeError("no registry credential could be resolved")
         ensure_nebius_registry_pull_secret(
@@ -1250,7 +1256,10 @@ def submit_cmd(
                     config_overrides=substitutions,
                     render_options=npa_render_options,
                 )
-                _refresh_kubernetes_pull_secrets(registry_auth_plan.skypilot_yaml_path)
+                if refresh_registry_secret:
+                    _refresh_kubernetes_pull_secrets(
+                        registry_auth_plan.skypilot_yaml_path
+                    )
             except NpaWorkflowError as exc:
                 _fail(str(exc))
                 return
@@ -1277,6 +1286,7 @@ def submit_cmd(
                 retries=retries,
                 max_concurrency=max_concurrency,
                 resume=resume,
+                refresh_registry_secret=refresh_registry_secret,
                 output_format=output_format,
                 project=project,
                 auto_load=auto_load,
@@ -1840,6 +1850,7 @@ def _run_npa_workflow_runtime(
     retries: int,
     max_concurrency: int,
     resume: bool,
+    refresh_registry_secret: bool,
     output_format: "OutputFormat",
     project: str = "",
     auto_load: bool = True,
@@ -1916,6 +1927,9 @@ def _run_npa_workflow_runtime(
         credential_resolver=lambda: _resolve_runtime_secret_values(
             project=project,
             requested=list(resolved_secret_envs),
+        ),
+        pre_submit_hook=(
+            _refresh_kubernetes_pull_secrets if refresh_registry_secret else None
         ),
     )
     runtime_env = dict(secret_env_values)
