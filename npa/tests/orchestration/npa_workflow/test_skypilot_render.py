@@ -285,6 +285,14 @@ def test_kubernetes_private_image_references_the_refreshed_pull_secret(
         {"name": "npa-nebius-registry"}
     ]
 
+    authorities = plan_image_pull_secrets(
+        spec,
+        plan.steps,
+        run_id="demo",
+        options=SkypilotRenderOptions(registry="cr.eu-north1.nebius.cloud/reg"),
+    )
+    assert set(authorities.values()) == {("npa-nebius-registry",)}
+
 
 def test_nurec_plan_exposes_its_ngc_pull_authority_to_preflight() -> None:
     spec = load_spec(NPA_SPECS / "nurec-reconstruct.yaml")

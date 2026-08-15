@@ -2368,6 +2368,7 @@ def _preflight_submit_images(
         images=images,
         pull_checks=checks,
         context=context_from_infra(infra),
+        pull_secrets_by_image=pull_secrets_by_image,
     )
     typer.echo(
         f"image-preflight: {len(checks)} image(s) pullable and bootstrap-compatible",
@@ -2384,6 +2385,7 @@ def _preflight_image_bootstrap_contracts(
     images: list[str],
     pull_checks: Sequence[object],
     context: str,
+    pull_secrets_by_image: Mapping[str, tuple[str, ...]] | None = None,
 ) -> list[dict[str, object]]:
     """Verify each selected digest, never a mutable tag, against one contract."""
 
@@ -2456,6 +2458,9 @@ def _preflight_image_bootstrap_contracts(
                         digest=digest,
                         context=context,
                         kubeconfig=str(os.environ.get("KUBECONFIG") or ""),
+                        image_pull_secrets=tuple(
+                            (pull_secrets_by_image or {}).get(image, ())
+                        ),
                     )
                 store_cached_evidence(cache_path, evidence)
         except (ImageBootstrapContractError, RuntimeError, OSError, ValueError) as exc:
@@ -6091,6 +6096,7 @@ def preflight_images_cmd(
             images=images,
             pull_checks=checks,
             context=context_from_infra(infra),
+            pull_secrets_by_image=pull_secrets_by_image,
         )
     if json_output:
         typer.echo(
