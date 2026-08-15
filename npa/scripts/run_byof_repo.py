@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -171,6 +172,32 @@ def _registry_server(image_ref: str) -> str:
     return ref.split("/", 1)[0]
 
 
+def _repository_without_tag(image_ref: str) -> str:
+    ref = image_ref.removeprefix("docker:").split("@", 1)[0]
+    slash = ref.rfind("/")
+    colon = ref.rfind(":")
+    return ref[:colon] if colon > slash else ref
+
+
+def _resolve_pushed_image_digest(
+    image_ref: str, *, env: dict[str, str] | None = None
+) -> str:
+    """Resolve a just-pushed tag and return the immutable pull reference."""
+
+    inspected = _run(
+        ["docker", "buildx", "imagetools", "inspect", image_ref],
+        env=env,
+        capture=True,
+    )
+    combined = "\n".join((inspected.stdout or "", inspected.stderr or ""))
+    match = re.search(r"(?im)^\s*Digest:\s*(sha256:[0-9a-f]{64})\s*$", combined)
+    if match is None:
+        raise RuntimeError(
+            "pushed BYOF image did not resolve to an immutable sha256 digest"
+        )
+    return f"{_repository_without_tag(image_ref)}@{match.group(1)}"
+
+
 def _bare_s3_bucket(value: str) -> str:
     text = (value or "").strip()
     if not text:
@@ -312,9 +339,13 @@ def _dockerfile_text() -> str:
         f"  && chown -R ubuntu:ubuntu {BYOF_REPO_MOUNT}\n"
         f"WORKDIR {BYOF_REPO_MOUNT}\n"
         'RUN if [ -n "${BYOF_BUILD_COMMAND}" ]; then /bin/sh -lc "${BYOF_BUILD_COMMAND}"; fi\n'
+        "RUN build_command_sha256=\"$(printf '%s' \"${BYOF_BUILD_COMMAND}\" | sha256sum | cut -d' ' -f1)\" \\\n"
+        '  && if [ -n "${BYOF_BUILD_COMMAND}" ]; then build_command_executed=true; else build_command_executed=false; fi \\\n'
+        f'  && printf \'{{"schema":"npa.byof.build.v1","build_command_executed":%s,"build_command_sha256":"%s"}}\\n\' \\\n'
+        f'    "$build_command_executed" "$build_command_sha256" > {BYOF_REPO_MOUNT}/npa_build_metadata.json\n'
         f'RUN printf \'{{\\n  "source": "oss-byof",\\n  "repo": "%s",\\n  "ref": "%s"\\n}}\\n\' \\\n'
         f'  "${{OSS_REPO_URL}}" "${{OSS_REPO_REF}}" > {BYOF_REPO_MOUNT}/npa_source_metadata.json \\\n'
-        f"  && chown ubuntu:ubuntu {BYOF_REPO_MOUNT}/npa_source_metadata.json\n"
+        f"  && chown ubuntu:ubuntu {BYOF_REPO_MOUNT}/npa_source_metadata.json {BYOF_REPO_MOUNT}/npa_build_metadata.json\n"
         'LABEL npa.byof.repo="${OSS_REPO_URL}" npa.byof.ref="${OSS_REPO_REF}" '
         'npa.packaging.tier="interactive"\n'
         "USER ubuntu\n"
@@ -629,14 +660,20 @@ def main(argv: list[str] | None = None) -> int:
                     sys.stdout.write(push_proc.stdout)
                 if push_proc.stderr:
                     sys.stderr.write(push_proc.stderr)
-                try:
-                    _run(
-                        ["docker", "buildx", "imagetools", "inspect", image],
-                        env=docker_env or None,
-                    )
-                except Exception:
-                    pass
-            summary["build"] = {"ok": True, "pushed": not skip_push}
+                tagged_image = image
+                image = _resolve_pushed_image_digest(
+                    tagged_image, env=docker_env or None
+                )
+                summary["image_tag"] = tagged_image
+                summary["image"] = image
+                summary["build"] = {
+                    "ok": True,
+                    "pushed": True,
+                    "runtime_image": image,
+                    "digest": image.rsplit("@", 1)[1],
+                }
+            else:
+                summary["build"] = {"ok": True, "pushed": False}
         else:
             summary["build"] = {"ok": True, "skipped": True}
 

@@ -160,16 +160,24 @@ def render_workflow(
         if bucket:
             envs["NPA_S3_BUCKET"] = bucket
         storage_env = _resolved_storage_env()
+        explicit_endpoint = os.environ.get("NPA_BYOF_S3_ENDPOINT", "").strip()
         for key in (
             "AWS_ENDPOINT_URL",
             "NEBIUS_S3_ENDPOINT",
             "NPA_S3_BUCKET",
         ):
             value = ""
-            for candidate in (
-                os.environ.get(key, "").strip(),
-                storage_env.get(key, "").strip(),
-            ):
+            candidates = (
+                (
+                    explicit_endpoint,
+                    storage_env.get(key, "").strip(),
+                    os.environ.get(key, "").strip(),
+                )
+                if explicit_endpoint
+                and key in {"AWS_ENDPOINT_URL", "NEBIUS_S3_ENDPOINT"}
+                else (os.environ.get(key, "").strip(), storage_env.get(key, "").strip())
+            )
+            for candidate in candidates:
                 if candidate and not (
                     candidate.startswith("${") and candidate.endswith("}")
                 ):
@@ -233,7 +241,13 @@ def _resolved_storage_env() -> dict[str, str]:
         or os.environ.get("NPA_BYOF_PROJECT", "").strip()
     )
     try:
-        return dict(storage_env_for_project(project or None, allow_host_creds=True))
+        return dict(
+            storage_env_for_project(
+                project or None,
+                allow_host_creds=True,
+                endpoint_url=os.environ.get("NPA_BYOF_S3_ENDPOINT", ""),
+            )
+        )
     except Exception as exc:  # noqa: BLE001 - best-effort for render/launch paths
         print(f"WARN: skipped BYOF storage env resolution: {exc}", file=sys.stderr)
         return {}
@@ -667,6 +681,93 @@ def _write_default_k8s_config(tmp_path: Path, infra: str) -> str:
     return str(path)
 
 
+def _json_values_from_mixed_output(text: str) -> list[Any]:
+    """Decode every JSON value embedded in command prose, in source order."""
+
+    decoder = json.JSONDecoder()
+    values: list[Any] = []
+    index = 0
+    while index < len(text):
+        starts = [
+            position
+            for token in ("{", "[")
+            if (position := text.find(token, index)) >= 0
+        ]
+        if not starts:
+            break
+        start = min(starts)
+        try:
+            candidate, end = decoder.raw_decode(text, start)
+        except json.JSONDecodeError:
+            index = start + 1
+            continue
+        values.append(candidate)
+        index = max(end, start + 1)
+    return values
+
+
+def _kubernetes_value_enables_compute(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() == "compute"
+    if isinstance(value, list):
+        return any(_kubernetes_value_enables_compute(item) for item in value)
+    if not isinstance(value, dict):
+        return False
+
+    enabled = value.get("enabled")
+    status = str(value.get("status") or value.get("state") or "").strip().lower()
+    if enabled is False or status in {"disabled", "error", "failed", "unavailable"}:
+        return False
+    compute = value.get("compute")
+    if compute is True or (
+        isinstance(compute, str) and compute.strip().lower() == "enabled"
+    ):
+        return True
+    for key in ("capabilities", "features", "enabled_capabilities"):
+        if key in value and _kubernetes_value_enables_compute(value[key]):
+            return True
+    return False
+
+
+def _has_enabled_kubernetes_compute(value: Any) -> bool:
+    """Traverse the complete response; a disabled entry does not end the search."""
+
+    if isinstance(value, list):
+        return any(_has_enabled_kubernetes_compute(item) for item in value)
+    if not isinstance(value, dict):
+        return False
+    if _is_error_payload(value):
+        return False
+    for key, item in value.items():
+        if str(
+            key
+        ).strip().lower() == "kubernetes" and _kubernetes_value_enables_compute(item):
+            return True
+        if _has_enabled_kubernetes_compute(item):
+            return True
+    return False
+
+
+def _is_error_payload(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    if any(value.get(key) not in (None, "", [], {}) for key in ("error", "errors")):
+        return True
+    return str(value.get("status") or "").strip().lower() in {"error", "failed"}
+
+
+def _contains_error_payload(value: Any) -> bool:
+    """Return whether any structured branch reports an error."""
+
+    if isinstance(value, list):
+        return any(_contains_error_payload(item) for item in value)
+    if not isinstance(value, dict):
+        return False
+    return _is_error_payload(value) or any(
+        _contains_error_payload(item) for item in value.values()
+    )
+
+
 def _ensure_infra_enabled(*, sky_bin: str, infra: str, config_path: str = "") -> None:
     if os.environ.get("NPA_BYOF_SKIP_SKY_CHECK") == "1":
         return
@@ -696,35 +797,12 @@ def _ensure_infra_enabled(*, sky_bin: str, infra: str, config_path: str = "") ->
     enabled = False
     if result.returncode == 0:
         combined = "\n".join(part for part in (result.stdout, result.stderr) if part)
-        decoder = json.JSONDecoder()
-        payload: dict[str, Any] = {}
-        index = 0
-        while index < len(combined):
-            start = combined.find("{", index)
-            if start < 0:
-                break
-            try:
-                candidate, end = decoder.raw_decode(combined, start)
-            except json.JSONDecodeError:
-                index = start + 1
-                continue
-            if isinstance(candidate, dict):
-                payload = candidate
-            index = max(end, start + 1)
-
-        def has_kubernetes_compute(value: Any) -> bool:
-            if not isinstance(value, dict):
-                return False
-            for key, item in value.items():
-                if str(key).strip().lower() == "kubernetes":
-                    return isinstance(item, list) and "compute" in {
-                        str(capability).strip().lower() for capability in item
-                    }
-                if has_kubernetes_compute(item):
-                    return True
-            return False
-
-        enabled = has_kubernetes_compute(payload)
+        payloads = _json_values_from_mixed_output(combined)
+        enabled = (
+            bool(payloads)
+            and not any(_contains_error_payload(payload) for payload in payloads)
+            and any(_has_enabled_kubernetes_compute(payload) for payload in payloads)
+        )
     if result.returncode != 0 or not enabled:
         detail = (result.stderr or result.stdout or "").strip()
         raise SkyPilotConfigError(

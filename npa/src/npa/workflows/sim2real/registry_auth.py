@@ -205,7 +205,10 @@ def ensure_nebius_registry_pull_secret(
             ).decode("ascii")
         },
     }
-    from npa.workflows.sim2real.k8s_client import KubernetesJobClient
+    from npa.workflows.sim2real.k8s_client import (
+        KubernetesJobClient,
+        kubeconfig_uses_nebius_iam_auth,
+    )
 
     try:
         in_cluster = bool(
@@ -213,7 +216,14 @@ def ensure_nebius_registry_pull_secret(
             and Path("/var/run/secrets/kubernetes.io/serviceaccount/token").is_file()
         )
         bearer_token = ""
-        if not in_cluster and any(os.environ.get(name) for name in AMBIENT_TOKEN_ENVS):
+        if (
+            not in_cluster
+            and any(os.environ.get(name) for name in AMBIENT_TOKEN_ENVS)
+            and kubeconfig_uses_nebius_iam_auth(
+                kubeconfig=kubeconfig,
+                context=k8s_context,
+            )
+        ):
             # A kubeconfig exec plugin inherits ambient env. Reuse a token already
             # minted above, or mint one now when Docker auth came from a helper.
             bearer_token = fallback_token or mint_nebius_registry_token(

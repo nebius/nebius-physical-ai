@@ -42,8 +42,42 @@ export PATH="$(dirname "$(npa skypilot status --bin-path)"):$PATH"
 
 ```bash
 test -x "$NPA_SKYPILOT_BIN"
-npa skypilot verify
+npa skypilot verify --cluster <npa-cluster-context>
 ```
+
+Passing the NPA cluster context is important on workstations that already use
+SkyPilot with another Kubernetes cluster. NPA pins the check to that exact
+context and requires SkyPilot to report `Kubernetes: enabled`; a zero exit code
+with Kubernetes disabled is a failed verification. A bare `npa skypilot verify`
+remains a legacy runtime/dependency check and does not require Kubernetes merely
+because Kubernetes is the default controller backend; `--cluster`,
+`--kubeconfig`, or an explicit `--controller-backend kubernetes` opts into the
+strict Kubernetes gate.
+
+To prove GPU execution without creating a managed-jobs controller, use NPA's
+built-in smoke task:
+
+```bash
+npa provision-if-absent \
+  --project <project-alias> \
+  --cluster-name <npa-cluster-context> \
+  --context <npa-cluster-context> \
+  --kubeconfig <kubeconfig> \
+  --skip-s3 \
+  --sky-smoke \
+  --sky-bin "$NPA_SKYPILOT_BIN"
+```
+
+Omitting `--accelerator` makes the smoke discover a compatible GPU from the
+selected cluster; pass (for example) `--accelerator RTXPRO6000:1` to require a
+specific family. The smoke also runs when the cluster kubeconfig is already
+cached. Before either cached or fresh smoke, NPA explicitly reports and performs
+an idempotent node-label repair only for its reviewed GPU aliases, then waits for
+SkyPilot discovery. This mutation requires Kubernetes `get/list` on nodes plus
+`patch/update` when a label is absent; an RBAC failure is reported immediately.
+Every SkyPilot check, GPU discovery, launch, status poll, and cleanup remains
+scoped to the selected context, and the command succeeds only after the GPU task
+completes and its ephemeral SkyPilot cluster is removed.
 
 ## Managed-Jobs Controller
 

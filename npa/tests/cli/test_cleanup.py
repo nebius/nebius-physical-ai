@@ -159,9 +159,7 @@ def test_cleanup_explicit_skip_is_not_failure_and_preserves_unattested_sky() -> 
 def test_full_cleanup_accepts_exact_receipt_scope_after_alias_removal(
     monkeypatch,
 ) -> None:
-    from npa import controller_ownership, teardown_receipts
-
-    assert controller_ownership.CONFIG_PATH == Path.home() / ".npa" / "config.yaml"
+    from npa import teardown_receipts
 
     monkeypatch.setattr("npa.clients.config.resolve_environment", lambda _project: None)
     monkeypatch.setattr(

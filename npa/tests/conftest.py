@@ -150,10 +150,8 @@ def isolate_home_config(monkeypatch, tmp_path_factory, request):
 
     npa_dir = home / ".npa"
     monkeypatch.setattr(npa.clients.config, "CONFIG_PATH", npa_dir / "config.yaml")
-    monkeypatch.setattr(
-        npa.controller_ownership, "CONFIG_PATH", npa_dir / "config.yaml"
-    )
     monkeypatch.setattr(npa.clients.credentials, "CREDENTIALS_PATH", npa_dir / "credentials.yaml")
+    monkeypatch.setattr(npa.controller_ownership, "CONFIG_PATH", npa_dir / "config.yaml")
     monkeypatch.setattr(npa.orchestration.skypilot._bin, "CONFIG_PATH", npa_dir / "config.yaml")
     monkeypatch.setattr(npa.deploy.provisioner, "_WORKBENCH_BASE", npa_dir / "workbenches")
     monkeypatch.setattr(

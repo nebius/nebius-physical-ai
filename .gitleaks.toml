@@ -5,14 +5,32 @@ useDefault = true
 
 [[rules]]
 id = "nebius-generic-id"
-description = "Nebius account/resource identifier (e0x format)"
-regex = '''\be0[0-9][a-z0-9]{12,}\b'''
+description = "Nebius account/resource identifier (e00/u00 format)"
+regex = '''\b[eu]00[a-z0-9]{12,}\b'''
 tags = ["nebius", "identifier"]
 
 [[rules]]
 id = "nebius-prefixed-id"
-description = "Prefixed Nebius identifier (project/tenant/computeinstance/mk8snodegroup/cr)"
-regex = '''\b(project|tenant|computeinstance|mk8snodegroup|cr)-e0[0-9][a-z0-9]+\b'''
+description = "Prefixed Nebius infrastructure identifier"
+regex = '''\b(project|tenant|capacityblockgroup|computeinstance|mk8scluster|mk8snodegroup|storagebucket|registry|network|cr)-[eu]00[a-z0-9]+\b'''
+tags = ["nebius", "identifier"]
+
+[[rules]]
+id = "nebius-private-object-location"
+description = "Task-specific private Nebius object-store location"
+regex = '''(?i)\bs3://[a-z0-9][a-z0-9.-]*-(?:[0-9a-f]{8,}|(?:19|20)[0-9]{6})(?:[/\s`'"]|$)'''
+tags = ["nebius", "location"]
+
+[[rules]]
+id = "nebius-private-registry-location"
+description = "Task-specific private Nebius registry location"
+regex = '''(?i)\bcr\.[a-z0-9-]+\.nebius\.cloud/[a-z0-9][a-z0-9._-]*-(?:[0-9a-f]{8,}|(?:19|20)[0-9]{6})(?:[/:\s`'"]|$)'''
+tags = ["nebius", "location"]
+
+[[rules]]
+id = "nebius-dated-operational-name"
+description = "Dated task-specific Nebius resource or campaign name"
+regex = '''(?i)\b(?:tenant|project|capacity[ _-]?block|cluster|node[ _-]?group|compute[ _-]?instance|bucket|registry|network|campaign|job)(?:[ _-]?(?:id|name))?\b[^\n]{0,48}[:=|/]\s*[`'"]?[a-z0-9][a-z0-9-]{4,}-(?:19|20)[0-9]{6}\b'''
 tags = ["nebius", "identifier"]
 
 [[rules]]
@@ -51,6 +69,9 @@ regexes = [
     # Public content-addressable digest of the pinned SymPy 1.14.0 wheel. The
     # custom Nebius identifier rule matches it only because the hash starts e09.
     '''e091cc3e99d2141a0ba2847328f5479b05d94a6635cb96148ccb3f34671bd8f5''',
+    # Public Hugging Face revision of nvidia/Cosmos3-Super. The custom Nebius
+    # identifier rule matches it only because the Git SHA happens to start e02.
+    '''e0262be9d8f7586bc24c069a2aed2b665bdff266''',
 ]
 paths = [
     '''SECURITY\.md''',

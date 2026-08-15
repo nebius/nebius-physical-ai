@@ -114,6 +114,43 @@ def test_validated_exact_project_storage_overrides_stale_inline_config(
     assert resolved.aws_secret_access_key == "validated-secret"
 
 
+def test_partial_exact_project_storage_record_is_ignored_atomically(
+    cross_project_config: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A partial generation may not borrow the config stanza's missing field."""
+
+    credential_path = tmp_path / "credentials.yaml"
+    monkeypatch.setattr(credentials_mod, "CREDENTIALS_PATH", credential_path)
+    project_id = "project-target-id"
+    config_data = yaml.safe_load(cross_project_config.read_text())
+    config_data["projects"]["project-target"]["project_id"] = project_id
+    cross_project_config.write_text(yaml.safe_dump(config_data), encoding="utf-8")
+    write_project_credentials(
+        project_id,
+        {
+            "storage": {
+                # Deliberately lacks a bucket. Mixing this key generation with
+                # the config bucket would create an unverified storage identity.
+                "endpoint_url": "https://partial-storage.example",
+                "aws_access_key_id": "partial-key",
+                "aws_secret_access_key": "partial-secret",
+            }
+        },
+        alias="project-target",
+    )
+
+    resolved = config.resolve_project_storage("project-target")
+
+    # The config stanza still supplies the field absent from the credential
+    # record, but atomic fallback means it supplies the whole compatible group.
+    assert resolved.checkpoint_bucket == "s3://target/default/"
+    assert resolved.endpoint_url == "https://target-storage.example"
+    assert resolved.aws_access_key_id == "tgt-key"
+    assert resolved.aws_secret_access_key == "tgt-secret"
+
+
 def test_resolve_credentials_nonexistent_project_raises(
     cross_project_config: Path,
 ) -> None:

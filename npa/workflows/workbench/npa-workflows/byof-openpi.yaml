@@ -33,6 +33,8 @@ config:
   workload: solution-smoke
   smoke_command: |
     test "${NPA_OPENPI_ACCEPT_GEMMA_TERMS:-}" = "YES" || {
+      printf '%s\n' '{"schema":"npa.workbench.openpi.terms-gate.v1","status":"refused","exit_code":64,"checkpoint_fetch_started":false,"model_import_started":false}' \
+        > "${NPA_SMOKE_OUTPUT_DIR}/openpi_terms_gate.json"
       echo "OpenPI checkpoint access requires scoped Gemma terms acceptance" >&2
       exit 64
     }
@@ -43,6 +45,7 @@ config:
     import importlib.metadata
     import json
     import os
+    import re
     import subprocess
     import threading
     import time
@@ -74,6 +77,53 @@ config:
 
     output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    runtime_image = os.environ.get("BYOF_IMAGE", "")
+    if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", runtime_image):
+        raise RuntimeError(f"OpenPI workload image must be digest-pinned, got {runtime_image!r}")
+
+    source_metadata = json.loads(
+        (Path(os.environ["BYOF_REPO_ROOT"]) / "npa_source_metadata.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    if source_metadata.get("ref") != SOURCE_REF:
+        raise RuntimeError(f"unexpected built source metadata: {source_metadata}")
+    build_metadata = json.loads(
+        (Path(os.environ["BYOF_REPO_ROOT"]) / "npa_build_metadata.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    if (
+        build_metadata.get("schema") != "npa.byof.build.v1"
+        or build_metadata.get("build_command_executed") is not True
+        or not re.fullmatch(
+            r"[0-9a-f]{64}", str(build_metadata.get("build_command_sha256", ""))
+        )
+    ):
+        raise RuntimeError(f"build command execution metadata is invalid: {build_metadata}")
+
+    editable_install = None
+    for distribution in importlib.metadata.distributions():
+        direct_url_text = distribution.read_text("direct_url.json")
+        if not direct_url_text:
+            continue
+        try:
+            direct_url = json.loads(direct_url_text)
+        except json.JSONDecodeError:
+            continue
+        if (
+            direct_url.get("dir_info", {}).get("editable") is True
+            and direct_url.get("url") == "file:///opt/byof"
+        ):
+            editable_install = {
+                "distribution": distribution.metadata.get("Name", ""),
+                "editable": True,
+                "url": direct_url["url"],
+            }
+            break
+    if editable_install is None:
+        raise RuntimeError("uv editable installation from /opt/byof was not found")
 
     def checkpoint_provenance():
         prefix = "checkpoints/polaris/pi05_droid_jointpos_polaris/"
@@ -126,12 +176,48 @@ config:
     if len(devices) != 1:
         raise RuntimeError(f"expected exactly one workload GPU, got {devices}")
     device = devices[0]
-    compute_capability = getattr(device, "compute_capability", "")
-    if callable(compute_capability):
-        compute_capability = compute_capability()
-    compute_capability_text = str(compute_capability)
-    if compute_capability_text not in {"100", "10.0", "(10, 0)", "[10, 0]"}:
-        raise RuntimeError(f"expected B200 sm_100, got compute capability {compute_capability_text!r}")
+    compute_capability_raw = getattr(device, "compute_capability", "")
+    if callable(compute_capability_raw):
+        compute_capability_raw = compute_capability_raw()
+
+    def normalized_compute_capability(value):
+        major = getattr(value, "major", None)
+        minor = getattr(value, "minor", None)
+        if major is not None and minor is not None:
+            return int(major), int(minor)
+        if isinstance(value, (tuple, list)) and len(value) >= 2:
+            return int(value[0]), int(value[1])
+        if isinstance(value, int):
+            return (value // 10, value % 10) if value >= 100 else (value, 0)
+        if isinstance(value, float):
+            if value.is_integer() and value >= 100:
+                integer = int(value)
+                return integer // 10, integer % 10
+            return int(value), int(round((value - int(value)) * 10))
+        text = str(value).strip()
+        compact = re.fullmatch(r"(?:sm_)?(\d{1,3})", text, flags=re.IGNORECASE)
+        if compact:
+            number = int(compact.group(1))
+            return (number // 10, number % 10) if number >= 100 else (number, 0)
+        dotted = re.search(r"(?<!\d)(\d{1,2})\s*[.,]\s*(\d)(?!\d)", text)
+        if dotted:
+            return int(dotted.group(1)), int(dotted.group(2))
+        labeled = re.search(
+            r"major\s*[=:]\s*(\d{1,2}).*minor\s*[=:]\s*(\d)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if labeled:
+            return int(labeled.group(1)), int(labeled.group(2))
+        pair = re.search(r"[\[(]\s*(\d{1,2})\s*,\s*(\d)\s*[\])]", text)
+        if pair:
+            return int(pair.group(1)), int(pair.group(2))
+        raise RuntimeError(f"unrecognized JAX compute capability {value!r}")
+
+    compute_capability = normalized_compute_capability(compute_capability_raw)
+    compute_capability_text = f"{compute_capability[0]}.{compute_capability[1]}"
+    if compute_capability != (10, 0):
+        raise RuntimeError(f"expected B200 sm_100, got compute capability {compute_capability_raw!r}")
     if "B200" not in str(getattr(device, "device_kind", "")).upper():
         raise RuntimeError(f"expected NVIDIA B200, got {getattr(device, 'device_kind', '')!r}")
 
@@ -141,6 +227,19 @@ config:
         capture_output=True,
         text=True,
     ).stdout.strip()
+    sm100_elf_result = subprocess.run(
+        ["cuobjdump", "--list-elf", "/usr/local/bin/npa-openpi-sm100-probe"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    sm100_elf = "\n".join(
+        part.strip()
+        for part in (sm100_elf_result.stdout, sm100_elf_result.stderr)
+        if part.strip()
+    )
+    if "sm_100" not in sm100_elf.lower():
+        raise RuntimeError(f"compiled CUDA probe does not contain sm_100 ELF: {sm100_elf!r}")
     nvidia_smi = subprocess.run(
         [
             "nvidia-smi",
@@ -151,6 +250,8 @@ config:
         capture_output=True,
         text=True,
     ).stdout.strip().splitlines()
+    if len(nvidia_smi) != 1 or "B200" not in nvidia_smi[0].upper():
+        raise RuntimeError(f"nvidia-smi did not prove exactly one B200: {nvidia_smi!r}")
     platform_version = str(jax_backend.get_backend().platform_version)
 
     provenance = checkpoint_provenance()
@@ -192,6 +293,8 @@ config:
             raise RuntimeError(f"{label} actions must have shape (T>=5, 8), got {actions.shape}")
         if not np.isfinite(actions).all():
             raise RuntimeError(f"{label} actions contain non-finite values")
+        if actions.dtype != np.dtype("float64"):
+            raise RuntimeError(f"{label} actions must be float64, got {actions.dtype}")
         return {
             "ok": True,
             "action_shape": list(actions.shape),
@@ -217,6 +320,15 @@ config:
             "repository": "https://github.com/Physical-Intelligence/openpi",
             "ref": SOURCE_REF,
             "license": "Apache-2.0",
+        },
+        "build": {
+            "runtime_image": runtime_image,
+            "source_metadata": source_metadata,
+            "build_metadata": build_metadata,
+            "editable_install": editable_install,
+            "cuda_probe_elf": sm100_elf.splitlines(),
+            "nvcc_arch": "sm_100",
+            "weights_baked": False,
         },
         "checkpoint": {
             "uri": CHECKPOINT_URI,
@@ -257,6 +369,7 @@ config:
             "xla_platform_version": platform_version,
             "device_kind": str(getattr(device, "device_kind", "")),
             "compute_capability": compute_capability_text,
+            "compute_capability_raw": repr(compute_capability_raw),
             "sm100_probe": sm100_probe,
             "nvidia_smi": nvidia_smi,
             "visible_device_count": len(devices),
@@ -279,7 +392,7 @@ config:
   iterations: 1
   num_envs: 1
   num_demos: 1
-  wait_timeout: 21600
+  wait_timeout: -1
   poll_interval: 60
 
   output_root: s3://{{config.bucket}}/oss-solutions/openpi/{{run.id}}

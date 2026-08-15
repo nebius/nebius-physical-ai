@@ -9,9 +9,10 @@ regressing.
 
 from __future__ import annotations
 
-import re
 import importlib.util
 from pathlib import Path
+import re
+import subprocess
 
 try:  # tomllib is stdlib from 3.11; the repo still supports 3.10 via tomli.
     import tomllib
@@ -28,6 +29,8 @@ from npa.smoke.manifest import container
 REPO_ROOT = Path(__file__).resolve().parents[3]
 NPA_ROOT = REPO_ROOT / "npa"
 DOCKERFILE = NPA_ROOT / "docker/workbench/cosmos3/Dockerfile"
+BUILD_SCRIPT = NPA_ROOT / "docker/workbench/cosmos3/build.sh"
+ENTRYPOINT = NPA_ROOT / "docker/workbench/cosmos3/entrypoint.sh"
 SMOKE_SCRIPT = NPA_ROOT / "docker/workbench/cosmos3/smoke_functional.sh"
 VERIFY_ENV = NPA_ROOT / "docker/workbench/cosmos3/verify_env.py"
 CONTRACT = NPA_ROOT / "docker/workbench/packaging-contract.yaml"
@@ -105,6 +108,54 @@ def test_dockerfile_pins_the_framework_and_guards_against_baked_weights() -> Non
     assert "model weights baked into image" in instructions
     # Upstream attribution travels with the redistributed source.
     assert "/opt/cosmos3/licenses" in instructions
+
+
+def test_cosmos3_image_satisfies_the_skypilot_bootstrap_contract() -> None:
+    instructions = _dockerfile_instructions()
+    entrypoint = ENTRYPOINT.read_text(encoding="utf-8")
+
+    assert "org.nebius.npa.skypilot-bootstrap-contract" in instructions
+    assert "skypilot-0.12.2-v1" in instructions
+    assert "rsync" in instructions
+    assert "npa-cosmos3-entrypoint" in instructions
+    assert "ARG NPA_SOURCE_SHA" in instructions
+    assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in instructions
+    assert "NPA_BAKED_PYTHON=/opt/npa/.venv/bin/python" in instructions
+    assert 'test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40' in instructions
+    assert 'exec "$MODE" "$@"' in entrypoint
+    assert "checkpoint-eval|generate|reason|text-to-image" in entrypoint
+
+    completed = subprocess.run(
+        [
+            "bash",
+            str(ENTRYPOINT),
+            "/bin/sh",
+            "-c",
+            "printf %s skypilot-forwarded",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0
+    assert completed.stdout == "skypilot-forwarded"
+
+
+def test_cosmos3_has_one_canonical_build_source() -> None:
+    assert not (DOCKERFILE.parent / "Dockerfile.k8s-prereqs").exists()
+    contract = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
+    assert contract["images"]["cosmos3"]["dockerfile"] == "cosmos3/Dockerfile"
+
+
+def test_canonical_build_binds_source_sha_and_requires_registry_input() -> None:
+    build_script = BUILD_SCRIPT.read_text(encoding="utf-8")
+
+    assert BUILD_SCRIPT.stat().st_mode & 0o111
+    assert 'NPA_SOURCE_SHA="${NPA_SOURCE_SHA:-$(git -C' in build_script
+    assert '--build-arg "NPA_SOURCE_SHA=${NPA_SOURCE_SHA}"' in build_script
+    assert 'REGISTRY="${REGISTRY:-}"' in build_script
+    assert "pass --registry or set REGISTRY" in build_script
+    assert "nebius.cloud/" not in build_script
 
 
 def _load_verify_env():

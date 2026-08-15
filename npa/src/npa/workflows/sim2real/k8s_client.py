@@ -205,11 +205,47 @@ def _kubeconfig_with_bearer_token(
     """
 
     result = copy.deepcopy(payload)
-    selected_context = context.strip() or _string(result.get("current-context")).strip()
+    _selected_context, user_entry = _selected_kubeconfig_user(result, context=context)
+    user = user_entry.setdefault("user", {})
+    if not _user_uses_nebius_iam_flow(user):
+        raise KubernetesReconcileError(
+            "kubeconfig bearer-token override requires a selected Nebius exec or "
+            "auth-provider user"
+        )
+    # Authentication mechanisms are mutually exclusive in the rewritten
+    # in-memory kubeconfig. In particular, never leave client certificate/key
+    # material beside the injected bearer token.
+    for key in (
+        "exec",
+        "auth-provider",
+        "token",
+        "tokenFile",
+        "token-file",
+        "client-certificate",
+        "client-certificate-data",
+        "client-key",
+        "client-key-data",
+        "username",
+        "password",
+    ):
+        user.pop(key, None)
+    user["token"] = bearer_token
+    return result
+
+
+def _selected_kubeconfig_user(
+    payload: dict[str, Any], *, context: str
+) -> tuple[str, dict[str, Any]]:
+    """Resolve exactly the selected context and its user from a kubeconfig."""
+
+    selected_context = (
+        context.strip() or _string(payload.get("current-context")).strip()
+    )
     context_entry = next(
         (
             item
-            for item in result.get("contexts", [])
+            for item in payload.get("contexts", [])
+            if isinstance(item, dict)
             if _string(item.get("name")).strip() == selected_context
         ),
         None,
@@ -218,7 +254,8 @@ def _kubeconfig_with_bearer_token(
     user_entry = next(
         (
             item
-            for item in result.get("users", [])
+            for item in payload.get("users", [])
+            if isinstance(item, dict)
             if _string(item.get("name")).strip() == user_name
         ),
         None,
@@ -227,11 +264,51 @@ def _kubeconfig_with_bearer_token(
         raise KubernetesReconcileError(
             "kubeconfig bearer-token override could not resolve the selected context user"
         )
-    user = user_entry.setdefault("user", {})
-    for key in ("exec", "auth-provider", "tokenFile"):
-        user.pop(key, None)
-    user["token"] = bearer_token
-    return result
+    user = user_entry.get("user")
+    if not isinstance(user, dict):
+        raise KubernetesReconcileError(
+            "kubeconfig selected context user is not a mapping"
+        )
+    return selected_context, user_entry
+
+
+def _user_uses_nebius_iam_flow(user: dict[str, Any]) -> bool:
+    """Return whether an IAM token can safely replace this user auth flow."""
+
+    exec_config = user.get("exec")
+    if isinstance(exec_config, dict):
+        command = Path(_string(exec_config.get("command"))).name.lower()
+        if command in {"nebius", "nebius.exe"}:
+            return True
+    auth_provider = user.get("auth-provider")
+    if isinstance(auth_provider, dict):
+        provider_name = _string(auth_provider.get("name")).strip().lower()
+        if "nebius" in provider_name:
+            return True
+    return False
+
+
+def kubeconfig_uses_nebius_iam_auth(*, kubeconfig: str, context: str) -> bool:
+    """Inspect only the selected kubeconfig user for replaceable Nebius auth."""
+
+    import yaml
+
+    resolved = str(kubeconfig or os.environ.get("KUBECONFIG", "")).strip()
+    path = Path(resolved or Path.home() / ".kube" / "config").expanduser()
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    try:
+        _selected_context, user_entry = _selected_kubeconfig_user(
+            payload, context=context
+        )
+    except KubernetesReconcileError:
+        return False
+    user = user_entry.get("user")
+    return isinstance(user, dict) and _user_uses_nebius_iam_flow(user)
 
 
 class KubernetesJobClient:
@@ -293,15 +370,25 @@ class KubernetesJobClient:
                 payload = yaml.safe_load(kubeconfig_path.read_text(encoding="utf-8"))
                 if not isinstance(payload, dict):
                     raise KubernetesReconcileError("kubeconfig is not a mapping")
-                config.load_kube_config_from_dict(
-                    _kubeconfig_with_bearer_token(
-                        payload, context=context, bearer_token=bearer_token
-                    ),
-                    context=context or None,
-                    persist_config=False,
-                    client_configuration=client_configuration,
-                )
-                return
+                try:
+                    _selected_context, user_entry = _selected_kubeconfig_user(
+                        payload, context=context
+                    )
+                except KubernetesReconcileError:
+                    user_entry = {}
+                selected_user = user_entry.get("user")
+                if isinstance(selected_user, dict) and _user_uses_nebius_iam_flow(
+                    selected_user
+                ):
+                    config.load_kube_config_from_dict(
+                        _kubeconfig_with_bearer_token(
+                            payload, context=context, bearer_token=bearer_token
+                        ),
+                        context=context or None,
+                        persist_config=False,
+                        client_configuration=client_configuration,
+                    )
+                    return
             config.load_kube_config(
                 config_file=resolved or None,
                 context=context or None,

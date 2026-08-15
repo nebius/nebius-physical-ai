@@ -48,6 +48,34 @@ def _config() -> ClusterConfig:
     )
 
 
+def test_client_passes_selected_nebius_profile_globally(monkeypatch) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setenv("NPA_NEBIUS_PROFILE", "tenant-profile")
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        calls.append(args)
+        return _result(_cluster())
+
+    client = MK8sClient(nebius_bin="nebius", subprocess_runner=run)
+    info = client.get_cluster("mk8scluster-a", project_id="project-a")
+
+    assert info.id == "mk8scluster-a"
+    assert calls == [
+        [
+            "nebius",
+            "--profile",
+            "tenant-profile",
+            "mk8s",
+            "cluster",
+            "get",
+            "--id",
+            "mk8scluster-a",
+            "--format",
+            "json",
+        ]
+    ]
+
+
 def test_create_cluster_creates_cluster_then_node_group() -> None:
     calls: list[list[str]] = []
 

@@ -207,6 +207,7 @@ def _rollback_fresh_cluster_apply(
             tenant_id=str(operation.read().get("tenant_id") or ""),
             region=str(operation.read().get("region") or ""),
             cluster_id="",
+            operation_id="",
             context_name=context,
             keep_local_state=False,
             force=True,
@@ -257,6 +258,11 @@ def up_cmd(
         "",
         "--sky-gpus",
         help="SkyPilot GPU demand for the smoke task. Defaults to auto-detecting the first Kubernetes GPU.",
+    ),
+    sky_bin: str = typer.Option(
+        "",
+        "--sky-bin",
+        help="Pinned NPA SkyPilot executable override for GPU readiness and smoke.",
     ),
     capacity_block_group: str = typer.Option(
         "",
@@ -633,7 +639,25 @@ def up_cmd(
                 f"default StorageClass {validation['default_storage_class']}"
             )
         if sky_smoke:
-            _run_skypilot_smoke(kubeconfig_path, context, cluster_name, sky_gpus)
+            from npa.orchestration.skypilot.k8s_gpu_catalog import (
+                wait_for_kubernetes_accelerators,
+            )
+
+            wait_for_kubernetes_accelerators(
+                [sky_gpus] if sky_gpus.strip() else [],
+                context=context,
+                kubeconfig=kubeconfig_path,
+                sky_bin=sky_bin or None,
+                label_known_gpus=True,
+                on_status=lambda message: typer.echo(message, err=True),
+            )
+            _run_skypilot_smoke(
+                kubeconfig_path,
+                context,
+                cluster_name,
+                sky_gpus,
+                sky_bin=sky_bin,
+            )
         _save_terraform_cluster_state(
             tfvars,
             cluster,
@@ -1546,27 +1570,73 @@ def _run_stream(
     a graceful shutdown that still persists state) and the reason is raised.
     """
     if cancel is None:
-        result = subprocess.run(
-            args,
-            cwd=cwd,
-            env=env,
-            text=True,
-            timeout=timeout,
-            check=False,
-            stdout=subprocess.PIPE if capture_output else None,
-            stderr=subprocess.PIPE if capture_output else None,
-        )
-        safe_stdout = result.stdout or ""
-        safe_stderr = result.stderr or ""
         if capture_output:
             from npa.clients.nebius import redact_nebius_output
 
-            safe_stdout = redact_nebius_output(safe_stdout)
-            safe_stderr = redact_nebius_output(safe_stderr)
-        if capture_output and safe_stdout:
-            typer.echo(safe_stdout, nl=not safe_stdout.endswith("\n"))
-        if capture_output and safe_stderr:
-            typer.echo(safe_stderr, err=True, nl=not safe_stderr.endswith("\n"))
+            process = subprocess.Popen(
+                args,
+                cwd=cwd,
+                env=env,
+                text=True,
+                bufsize=1,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            captured_stdout: list[str] = []
+            captured_stderr: list[str] = []
+
+            def drain(
+                pipe: Any, captured: list[str], *, stderr: bool
+            ) -> None:
+                if pipe is None:
+                    return
+                for line in iter(pipe.readline, ""):
+                    safe_line = redact_nebius_output(line)
+                    captured.append(safe_line)
+                    typer.echo(safe_line, err=stderr, nl=False)
+                pipe.close()
+
+            readers = [
+                threading.Thread(
+                    target=drain,
+                    args=(process.stdout, captured_stdout),
+                    kwargs={"stderr": False},
+                    daemon=True,
+                ),
+                threading.Thread(
+                    target=drain,
+                    args=(process.stderr, captured_stderr),
+                    kwargs={"stderr": True},
+                    daemon=True,
+                ),
+            ]
+            for reader in readers:
+                reader.start()
+            try:
+                returncode = process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                _stop_process(process)
+                raise
+            finally:
+                for reader in readers:
+                    reader.join(timeout=5)
+            result = subprocess.CompletedProcess(
+                args=args,
+                returncode=returncode,
+                stdout="".join(captured_stdout),
+                stderr="".join(captured_stderr),
+            )
+        else:
+            result = subprocess.run(
+                args,
+                cwd=cwd,
+                env=env,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        safe_stdout = result.stdout or ""
+        safe_stderr = result.stderr or ""
         if result.returncode != 0:
             detail = ""
             if capture_output:
@@ -3104,21 +3174,60 @@ def _gpus_per_node(preset: str) -> int:
 
 
 def _run_skypilot_smoke(
-    kubeconfig_path: Path, context: str, cluster_name: str, sky_gpus: str
+    kubeconfig_path: Path,
+    context: str,
+    cluster_name: str,
+    sky_gpus: str,
+    *,
+    sky_bin: str = "",
 ) -> None:
-    sky_bin = os.environ.get("NPA_SKYPILOT_BIN") or str(_DEFAULT_SKYPILOT_BIN)
-    sky = _require_bin(sky_bin)
+    executable = (
+        sky_bin or os.environ.get("NPA_SKYPILOT_BIN") or str(_DEFAULT_SKYPILOT_BIN)
+    )
+    sky = _require_bin(executable)
     env = os.environ.copy()
     env["KUBECONFIG"] = str(kubeconfig_path)
     infra = f"k8s/{context}"
-    _run_stream([sky, "check", "kubernetes"], env=env, timeout=300)
-    accelerator = sky_gpus.strip() or _detect_skypilot_gpu(sky, infra, env)
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        exact_kubernetes_context_config,
+    )
+
+    config_override = exact_kubernetes_context_config(context)
+    check_result = _run_stream(
+        [
+            sky,
+            "check",
+            "--config",
+            config_override,
+            "kubernetes",
+        ],
+        env=env,
+        timeout=300,
+        capture_output=True,
+    )
+    plain_check = re.sub(
+        r"\x1b\[[0-?]*[ -/]*[@-~]",
+        "",
+        "\n".join((check_result.stdout or "", check_result.stderr or "")),
+    )
+    if not re.search(
+        r"\bKubernetes:\s+enabled\b", plain_check, flags=re.IGNORECASE
+    ):
+        raise RuntimeError(
+            "SkyPilot returned success without enabling the exact Kubernetes context"
+        )
+    typer.echo(f"SkyPilot Kubernetes credentials verified for context {context!r}.")
+    accelerator = sky_gpus.strip() or _detect_skypilot_gpu(
+        sky, infra, env, config_override=config_override
+    )
     smoke_name = _sky_cluster_name(cluster_name)
     try:
         _run_stream(
             [
                 sky,
                 "launch",
+                "--config",
+                config_override,
                 "-c",
                 smoke_name,
                 "--infra",
@@ -3132,14 +3241,29 @@ def _run_skypilot_smoke(
             timeout=1800,
         )
     finally:
-        _run_stream([sky, "down", "--yes", smoke_name], env=env, timeout=600)
-        _wait_for_sky_down(sky, smoke_name, env)
+        _run_stream(
+            [sky, "down", "--config", config_override, "--yes", smoke_name],
+            env=env,
+            timeout=600,
+        )
+        _wait_for_sky_down(
+            sky, smoke_name, env, config_override=config_override
+        )
     typer.echo(f"SkyPilot smoke passed and {smoke_name} was removed.")
 
 
-def _detect_skypilot_gpu(sky: str, infra: str, env: dict[str, str]) -> str:
+def _detect_skypilot_gpu(
+    sky: str,
+    infra: str,
+    env: dict[str, str],
+    *,
+    config_override: str = "",
+) -> str:
+    cmd = [sky, "show-gpus", "--infra", infra, "--all"]
+    if config_override:
+        cmd[2:2] = ["--config", config_override]
     result = _run_capture(
-        [sky, "show-gpus", "--infra", infra, "--all"], env=env, timeout=300
+        cmd, env=env, timeout=300
     )
     for line in result.stdout.splitlines():
         if "RTX" not in line.upper() or "6000" not in line:
@@ -3157,10 +3281,19 @@ def _sky_cluster_name(cluster_name: str) -> str:
     return f"{normalized[:40]}-sky-smoke"
 
 
-def _wait_for_sky_down(sky: str, cluster_name: str, env: dict[str, str]) -> None:
+def _wait_for_sky_down(
+    sky: str,
+    cluster_name: str,
+    env: dict[str, str],
+    *,
+    config_override: str = "",
+) -> None:
     for _ in range(30):
+        cmd = [sky, "status", "--refresh"]
+        if config_override:
+            cmd[2:2] = ["--config", config_override]
         result = _run_capture(
-            [sky, "status", "--refresh"], env=env, timeout=120, check=False
+            cmd, env=env, timeout=120, check=False
         )
         if cluster_name not in result.stdout:
             return

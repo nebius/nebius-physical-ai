@@ -64,6 +64,17 @@ skills:
         path: npa/src/npa/deploy/sonic_image_manifest.json
       - type: file_exists
         path: npa/docker/workbench/packaging-contract.yaml
+  - name: audit-container-docs
+    category: atomic
+    when_to_use: "Audit or update container-image catalogs and related container documentation after images are added, removed, renamed, retagged, republished, reclassified, or materially changed."
+    path: skills/atomic/audit-container-docs/SKILL.md
+    smoke:
+      - type: file_exists
+        path: docs/workbench/container-image-catalog.md
+      - type: file_exists
+        path: npa/docker/workbench/packaging-contract.yaml
+      - type: file_exists
+        path: npa/src/npa/deploy/images.py
   - name: cosmos3-codebase-nav
     category: atomic
     when_to_use: "Navigate NPA Cosmos3 integration and upstream Cosmos framework files."
@@ -133,6 +144,15 @@ skills:
       - type: workflow_yaml
         paths:
           - npa/workflows/workbench/npa-workflows/sim2real.yaml
+  - name: protect-nebius-infra-details
+    category: atomic
+    when_to_use: "Prepare commits, docs, reports, examples, tests, PR bodies, issues, or live-validation handoffs involving Nebius without publishing concrete live infrastructure details or credentials."
+    path: skills/atomic/protect-nebius-infra-details/SKILL.md
+    smoke:
+      - type: file_exists
+        path: skills/atomic/protect-nebius-infra-details/SKILL.md
+      - type: file_exists
+        path: npa/src/npa/guardrails/confidentiality.py
   - name: review-checklist
     category: atomic
     when_to_use: "Code reviews and risk classification."

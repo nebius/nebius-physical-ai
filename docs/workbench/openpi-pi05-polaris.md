@@ -78,24 +78,32 @@ npa workbench workflow plan-spec \
   --run-id openpi-polaris-plan
 ```
 
-On an already healthy B200 MK8s context configured for the `neb-phys-ai`
-project alias, run the dedicated live E2E. It reads the checked-in workflow and
-resource profile unchanged, consumes an immutable digest previously built and
-pushed through BYOF, launches through pinned SkyPilot, and verifies the
-published result:
+On a fresh, isolated B200 MK8s context configured for the selected project
+alias, run the dedicated live E2E. It reads the checked-in workflow and resource
+profile unchanged, builds the pinned source, runs the declared `uv pip install
+-e .` and `nvcc -arch=sm_100` build steps, pushes the image, resolves its
+registry digest, and inspects the built bytes before any workload is launched.
+It then pulls that digest for two B200 workloads: an invalid-acceptance run that
+must exit 64 before model/checkpoint loading, followed by the accepted direct
+and served inference run.
 
 ```bash
 NPA_INTEGRATION_E2E=1 \
 NPA_BYOF_OPENPI_LIVE_B200=1 \
-NPA_E2E_PROJECT=neb-phys-ai \
+NPA_E2E_PROJECT=<project-alias> \
 NPA_E2E_S3_BUCKET=<existing-project-bucket> \
 NPA_BYOF_S3_ENDPOINT=https://storage.<bucket-region>.nebius.cloud \
-NPA_BYOF_OPENPI_PROJECT_REGISTRY=cr.us-central1.nebius.cloud/<project-registry> \
-NPA_BYOF_OPENPI_REUSE_IMAGE=cr.us-central1.nebius.cloud/<project-registry>/npa-byof-openpi@sha256:<digest> \
+NPA_BYOF_OPENPI_PROJECT_REGISTRY=cr.<region>.nebius.cloud/<project-registry> \
 NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES \
 npa/.venv/bin/python -m pytest -q -s \
   npa/tests/e2e/test_byof_openpi_polaris_live_e2e.py
 ```
+
+`NPA_BYOF_OPENPI_REUSE_IMAGE` is intentionally rejected by this canonical gate.
+A previously built image may still be used for manual diagnosis, but reuse is
+not release evidence. The test forwards `YES` only as a runtime secret; its
+negative workload overrides the value with an invalid sentinel and records a
+separate terms-gate artifact.
 
 The current milestone is inference and serving. The pinned upstream config
 still exposes its RLDS training configuration and evaluation-compatible policy
@@ -104,11 +112,12 @@ real dataset and an executed optimization/evaluation step.
 
 ## Accepted live baseline
 
-The accepted `byof-openpi-polaris-e2e-20260815T021414Z` run used one B200
-(`sm_100`) with JAX/JAXlib/CUDA plugin 0.5.3 and the CUDA 12 userspace stack on a
-CUDA 13 managed-driver MK8s node. It fetched 27 checkpoint objects totaling
-12,434,530,837 bytes in 24.847 seconds. Direct first-call inference, including
-JAX compilation, took 34,976.96 ms; the subsequent upstream WebSocket client
-round trip took 55.52 ms (54.006 ms server inference). Both responses were
-finite `float64[15,8]` joint-position trajectories. The deterministic frames
-remain an inference/transport smoke, not evidence of physical task success.
+The accepted baseline uses one B200 (`sm_100`) on an isolated, reserved-capacity
+MK8s cluster. Its canonical gate includes build, private-registry push, digest
+resolution, built-byte inspection, an exit-64 negative terms workload, and the
+positive inference workload. The positive workload fetches the 27 checkpoint
+objects (12,434,530,837 bytes) at runtime and returns finite
+`float64[15,8]` joint-position trajectories from both direct and upstream
+WebSocket paths. The WebSocket client remains same-pod loopback; cross-pod or
+Ingress serving, physical Franka task success, training, and evaluation are not
+claimed.
