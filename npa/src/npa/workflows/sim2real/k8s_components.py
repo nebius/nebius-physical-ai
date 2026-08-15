@@ -285,9 +285,10 @@ def _kubernetes_component_env(
     safe["S3_ENDPOINT_URL"] = endpoint
     apply_cosmos_reason_kubernetes_env(safe)
     for key in ("ACCEPT_EULA",):
-        value = str(env.get(key) or os.environ.get(key) or "").strip()
-        if value:
-            safe[key] = value
+        if key in env:
+            safe[key] = str(env[key])
+        elif key in os.environ:
+            safe[key] = os.environ[key]
     safe["NPA_SIM2REAL_SOURCE_SHA"] = str(
         env.get("NPA_SIM2REAL_SOURCE_SHA")
         or os.environ.get("NPA_SIM2REAL_SOURCE_SHA")

@@ -19,8 +19,8 @@
 # DEFAULT ACCEPTANCE
 #   NPA defaults NVIDIA's documented ACCEPT_EULA to Y for Isaac-backed workloads so
 #   non-interactive workflows do not stop at the vendor prompt. Operators can explicitly
-#   opt out by setting ACCEPT_EULA to an empty or non-Y value; in that case this script
-#   refuses and downloads NOTHING.
+#   opt out with an empty value or N/NO/0/FALSE. Legacy affirmative spellings
+#   Y/YES/1/TRUE migrate case-insensitively. Other values are rejected as invalid.
 #   (https://pypi.nvidia.com serves these wheels anonymously, so the credential was
 #   never the gate. Acceptance is.)
 #
@@ -32,7 +32,7 @@
 #   status   report what is cached without installing (no EULA required, no network)
 #
 # ENVIRONMENT
-#   ACCEPT_EULA                   defaults to Y; set empty/non-Y to opt out
+#   ACCEPT_EULA                   defaults to Y; empty/N/NO/0/FALSE opt out
 #   NPA_ISAAC_CACHE_DIR           cache volume root                (/opt/isaac-cache)
 #   NPA_ISAAC_INDEX_URL           NVIDIA wheel index               (https://pypi.nvidia.com)
 #   NPA_ISAAC_BASE_PYTHON         image python3.11 that has torch  (per image)
@@ -74,7 +74,7 @@ ISAAC_LAB_SRC_COMMIT="${NPA_ISAAC_LAB_SRC_COMMIT:-37ddf626871758333d6ed89cf64ad7
 OFFLINE="${NPA_ISAAC_BOOTSTRAP_OFFLINE:-0}"
 READONLY="${NPA_ISAAC_CACHE_READONLY:-0}"
 LOCK_TIMEOUT="${NPA_ISAAC_BOOTSTRAP_TIMEOUT:-3600}"
-# Default only when the variable is absent. An explicitly empty/non-Y value remains an
+# Default only when the variable is absent. An explicitly empty/negative value remains an
 # opt-out and is rejected by require_eula_acceptance below.
 ACCEPT_EULA="${ACCEPT_EULA-Y}"
 
@@ -95,21 +95,36 @@ trap cleanup_tmp_tree EXIT
 # ---------------------------------------------------------------------------------
 # EULA acceptance. This is the whole legal mechanism; keep it first and keep it strict.
 # ---------------------------------------------------------------------------------
-_accepted() {
-  case "$(printf '%s' "${1:-}" | tr '[:lower:]' '[:upper:]')" in
-    YES|Y|1|TRUE) return 0 ;;
-    *) return 1 ;;
+_acceptance_state() {
+  case "$(printf '%s' "${1-}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr '[:lower:]' '[:upper:]')" in
+    YES|Y|1|TRUE) printf 'accepted' ;;
+    ''|N|NO|0|FALSE) printf 'opt-out' ;;
+    *) printf 'invalid' ;;
   esac
 }
 
 require_eula_acceptance() {
-  [ "${ACCEPT_EULA:-}" = "Y" ] && {
+  local state
+  state="$(_acceptance_state "$ACCEPT_EULA")"
+  [ "$state" = accepted ] && {
+    ACCEPT_EULA=Y
+    export ACCEPT_EULA
     # The Python-wheel launcher uses this vendor variable internally. It is
     # derived only inside the already-authorized operation, never user-facing
     # plumbing or a repository default.
     export OMNI_KIT_ACCEPT_EULA=YES
     return 0
   }
+
+  if [ "$state" = invalid ]; then
+    cat >&2 <<EOF
+isaac-bootstrap: invalid ACCEPT_EULA value '${ACCEPT_EULA}'.
+
+  Expected Y, YES, 1, TRUE, N, NO, 0, FALSE, or an empty string
+  (case-insensitive). Nothing has been downloaded.
+EOF
+    exit "$EX_CONFIG"
+  fi
 
   cat >&2 <<EOF
 isaac-bootstrap: refusing to download NVIDIA Isaac Sim / Isaac Lab.

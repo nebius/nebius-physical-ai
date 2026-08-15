@@ -11,8 +11,9 @@ Training must invoke headless mode. Verify training commands do not trigger rend
 
 Before provisioning, building, downloading, or submitting an Isaac workload,
 load `skills/atomic/third-party-eula-preflight/SKILL.md`. NPA defaults the
-run-scoped `ACCEPT_EULA=Y` value for non-interactive use and preserves an
-explicit empty/non-`Y` or `--no-accept-eula` opt-out.
+run-scoped `ACCEPT_EULA=Y` value for non-interactive use and preserves a
+recognized negative value or `--no-accept-eula` opt-out. Legacy affirmative
+spellings normalize case-insensitively; unrecognized values are errors.
 
 ## Runtime Isaac bootstrap (the container ships no Isaac Sim)
 
@@ -25,8 +26,9 @@ Omniverse Kit, which made it non-redistributable; Isaac is now downloaded on fir
 What this changes in practice:
 
 - **Unset acceptance succeeds; explicit opt-out refuses.** NPA defaults
-  `ACCEPT_EULA=Y`. An explicitly empty/non-`Y` value or `--no-accept-eula`
-  exits **78** before download. The launcher derives
+  `ACCEPT_EULA=Y`. Empty, `N`, `NO`, `0`, `FALSE`, or `--no-accept-eula`
+  exit **78** before download. `Y`, `YES`, `1`, and `TRUE` are accepted
+  case-insensitively; other values are invalid. The launcher derives
   `OMNI_KIT_ACCEPT_EULA=YES` internally; do not expose duplicate user plumbing.
   Keep `PRIVACY_CONSENT` and telemetry off.
 - **Reach Isaac through `/isaac-sim/python.sh`** (the value of `ISAAC_LAB_PYTHON`). That is

@@ -117,18 +117,6 @@
   ],
   "gpu_selection": [
     {
-      "variant": "sonic-mujoco-h100-mvp",
-      "matches": [
-        "h100",
-        "gpu-h100",
-        "gpu-h100-sxm",
-        "h200",
-        "gpu-h200",
-        "gpu-h200-sxm",
-        "sonic-mujoco"
-      ]
-    },
-    {
       "variant": "sonic-k8s-host-mounted",
       "matches": [
         "rtx6000",
@@ -138,14 +126,6 @@
         "sm_120",
         "gpu-rtx6000",
         "gpu-rtx-pro-6000"
-      ]
-    },
-    {
-      "variant": "sonic-l40s-baked",
-      "matches": [
-        "l40s",
-        "gpu-l40s-a",
-        "gpu-l40s-d"
       ]
     }
   ]

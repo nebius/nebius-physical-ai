@@ -255,23 +255,31 @@ def test_refusal_links_the_terms_the_operator_is_accepting(tmp_path: Path) -> No
     assert "Omniverse" in result.stderr and "Isaac Sim" in result.stderr
 
 
-@pytest.mark.parametrize(
-    "value", ["YES", "yes", "y", "1", "true", "no", "", "  ", "maybe"]
-)
-def test_bootstrap_rejects_values_that_are_not_acceptance(
+@pytest.mark.parametrize("value", ["Y", "YES", "yes", "y", "1", "true"])
+def test_bootstrap_migrates_affirmative_values(
     tmp_path: Path, value: str
 ) -> None:
     harness = Harness(tmp_path)
     result = harness.run("ensure", ACCEPT_EULA=value)
-    assert result.returncode == EX_CONFIG, f"{value!r} must not read as acceptance"
+    assert result.returncode == 0, result.stderr
+    assert harness.downloaded_anything()
+
+
+@pytest.mark.parametrize("value", ["no", "N", "0", "false", "", "  "])
+def test_bootstrap_preserves_recognized_opt_out(tmp_path: Path, value: str) -> None:
+    harness = Harness(tmp_path)
+    result = harness.run("ensure", ACCEPT_EULA=value)
+    assert result.returncode == EX_CONFIG
+    assert "explicitly disabled" in result.stderr
     assert not harness.downloaded_anything()
 
 
-def test_bootstrap_accepts_only_the_documented_value(tmp_path: Path) -> None:
+def test_bootstrap_rejects_unrecognized_value_distinctly(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
-    result = harness.run("ensure", ACCEPT_EULA="Y")
-    assert result.returncode == 0, result.stderr
-    assert harness.downloaded_anything(), "acceptance should let the install proceed"
+    result = harness.run("ensure", ACCEPT_EULA="maybe")
+    assert result.returncode == EX_CONFIG
+    assert "invalid ACCEPT_EULA value" in result.stderr
+    assert not harness.downloaded_anything()
 
 
 def test_status_reports_default_acceptance_and_uses_no_network(tmp_path: Path) -> None:
@@ -631,12 +639,12 @@ def test_readonly_runtime_redirects_kit_portable_state_to_scratch() -> None:
         assert f"export {variable}=" in shim
 
 
-def test_shim_derives_internal_kit_acceptance_only_from_exact_public_consent() -> None:
+def test_shim_derives_internal_kit_acceptance_only_after_shared_parser() -> None:
     """The bootstrap subprocess cannot export into the launcher that starts Kit."""
 
     shim = SHIM.read_text(encoding="utf-8")
     assert 'ACCEPT_EULA="${ACCEPT_EULA-Y}"' in shim
-    assert 'if [ "${ACCEPT_EULA:-}" = "Y" ]; then' in shim
+    assert 'TREE="$("$BOOTSTRAP" ensure)"' in shim
     assert "export OMNI_KIT_ACCEPT_EULA=YES" in shim
     assert "PRIVACY_CONSENT" not in shim
 

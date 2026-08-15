@@ -21,8 +21,11 @@ documents a default.
    different agreement.
 3. Apply the documented product policy. NPA defaults `ACCEPT_EULA=Y` only for
    `npa-isaac-lab`, Isaac-backed SONIC modes, and GR00T Isaac simulation. An
-   absent variable succeeds non-interactively. An explicitly empty or non-`Y`
-   value, including `--no-accept-eula`, opts out and must refuse before download.
+   absent variable succeeds non-interactively. The affirmative legacy spellings
+   `Y`, `YES`, `1`, and `TRUE` are accepted case-insensitively. Empty, `N`, `NO`,
+   `0`, and `FALSE`, including `--no-accept-eula`, opt out and must refuse before
+   download. Any other value is invalid and must fail with an invalid-value error,
+   not be described as an opt-out.
    Do not reuse this default for unrelated vendor, model, data, privacy,
    telemetry, or preview terms.
 4. When a product remains opt-in, ask clearly before provisioning, building,
@@ -61,9 +64,12 @@ The repository mechanism defaults this value for Isaac-backed workloads:
 ACCEPT_EULA=Y <resume-command>
 ```
 
-An unset value becomes `Y`. An explicitly empty or non-`Y` value makes
-`isaac-bootstrap` exit `78` before downloading. The default covers only the named
-NVIDIA terms; it does not enable unrelated privacy or telemetry terms.
+An unset value becomes `Y`. Affirmative legacy values (`Y`, `YES`, `1`, `TRUE`)
+normalize to `Y`; recognized negative values (empty, `N`, `NO`, `0`, `FALSE`)
+make `isaac-bootstrap` exit `78` before downloading. Matching is
+case-insensitive. Unrecognized values fail separately as invalid. The default
+covers only the named NVIDIA terms; it does not enable unrelated privacy or
+telemetry terms.
 
 The bootstrap preserves the unset-versus-empty distinction with shell defaulting
 equivalent to `${ACCEPT_EULA-Y}`. Do not replace it with `${ACCEPT_EULA:-Y}`;

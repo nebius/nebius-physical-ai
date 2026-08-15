@@ -203,9 +203,9 @@ def _remote_bash(script: str) -> str:
     return f"bash -lc {shlex.quote(script)}"
 
 
-def _require_isaac_consent(context: str, resume_command: str) -> None:
+def _require_isaac_consent(context: str, resume_command: str) -> str:
     try:
-        require_isaac_eula_acceptance(
+        return require_isaac_eula_acceptance(
             context=context,
             resume_command=resume_command,
         )
@@ -227,7 +227,7 @@ def _serverless_job_env(
     output_path: str,
     extra_env: dict[str, str] | None = None,
 ) -> tuple[dict[str, str], dict[str, str]]:
-    _require_isaac_consent(
+    acceptance = _require_isaac_consent(
         "Isaac Lab serverless job",
         "npa workbench isaac-lab train --runtime serverless ...",
     )
@@ -243,11 +243,13 @@ def _serverless_job_env(
         require_s3_credentials(s3_credentials, context="Isaac Lab serverless jobs")
     except MissingS3CredentialsError as exc:
         _fail(str(exc))
+    explicit_env = dict(extra_env or {})
+    explicit_env["ACCEPT_EULA"] = acceptance
     env = build_serverless_job_env(
         output_path=output_path,
         hf_token=shared_env.get("HF_TOKEN") or shared_env.get("HUGGING_FACE_HUB_TOKEN") or None,
         s3_credentials=s3_credentials,
-        extra_env=extra_env,
+        extra_env=explicit_env,
     )
     return split_serverless_env(env)
 

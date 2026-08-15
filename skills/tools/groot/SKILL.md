@@ -64,8 +64,9 @@ Omniverse Kit, which made it non-redistributable; Isaac is now downloaded on fir
 What this changes in practice:
 
 - **Only Isaac simulation defaults acceptance.** NPA defaults
-  `ACCEPT_EULA=Y` on that path. An explicitly empty/non-`Y` value or
-  `--no-accept-eula` exits **78** before download. The launcher derives
+  `ACCEPT_EULA=Y` on that path. Empty, `N`, `NO`, `0`, `FALSE`, or
+  `--no-accept-eula` exits **78** before download. `Y`, `YES`, `1`, and `TRUE`
+  are accepted case-insensitively; other values are invalid. The launcher derives
   `OMNI_KIT_ACCEPT_EULA=YES` internally; do not expose duplicate user plumbing.
   Keep `PRIVACY_CONSENT` and telemetry off. Standard GR00T inference and
   fine-tuning do not require Isaac acceptance.

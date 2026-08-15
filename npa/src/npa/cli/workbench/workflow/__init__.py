@@ -681,17 +681,19 @@ def submit_cmd(
     except Exception as exc:
         _fail(str(exc))
         return
-    routes_at_isaac = (
-        _plan_routes_at_isaac(
-            yaml_path,
-            run_id=resolved_run_id,
-            assume_decision=assume_decision,
-            config_overrides=substitutions,
+    routes_at_isaac = False
+    if not plan_only and not accept_eula:
+        routes_at_isaac = (
+            _plan_routes_at_isaac(
+                yaml_path,
+                run_id=resolved_run_id,
+                assume_decision=assume_decision,
+                config_overrides=substitutions,
+            )
+            if is_npa_spec
+            else _sky_yaml_routes_at_isaac(yaml_path)
         )
-        if is_npa_spec
-        else _sky_yaml_routes_at_isaac(yaml_path)
-    )
-    if not plan_only and routes_at_isaac and not accept_eula:
+    if routes_at_isaac:
         _fail(
             "Refusing before provisioning: this workflow acquires or uses NVIDIA "
             "Isaac Sim and requires the operator's explicit --accept-eula action "
@@ -2212,6 +2214,7 @@ def _plan_routes_at_isaac(
         routes_at_an_isaac_image(
             str(step.tool_ref or ""),
             build_scheduler_task(spec, step, run_id=run_id).get("resources") or {},
+            spec.config,
         )
         for step in plan.steps
     )

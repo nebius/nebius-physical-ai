@@ -27,6 +27,7 @@ from npa.serverless_common import (
     SubnetResolutionError,
     build_serverless_output_upload_cmd,
     resolve_gpu_platform,
+    resolve_isaac_eula_acceptance,
     resolve_subnet,
     split_serverless_env,
     validate_output_path,
@@ -115,6 +116,12 @@ def _run_serverless_train(
 ) -> None:
     if not output_path:
         fail("SONIC train --runtime serverless requires --output-path.")
+    if not accept_eula:
+        fail(
+            "Refusing SONIC serverless Isaac training because EULA acceptance "
+            "was explicitly disabled. No expensive action has begun. Use "
+            "--accept-eula after accepting the named NVIDIA terms."
+        )
     try:
         validate_output_path(output_path)
         platform, preset, resolved_gpu_count = resolve_gpu_platform(gpu_type, gpu_count)
@@ -125,6 +132,14 @@ def _run_serverless_train(
 
     ctx = context()
     resolved_project_id = resolve_project_id(project_id)
+    if not image:
+        fail(
+            "SONIC serverless compute-only execution has no published compatible "
+            "image. The active sonic-k8s-host-mounted variant requires RTX PRO 6000 "
+            "Kubernetes nodes with NVIDIA GPU Operator driver mounts; the former "
+            "L40S/H100/H200 images are quarantined. Use the Kubernetes workflow path, "
+            "or pass --image with a separately validated compute-only runtime."
+        )
     name = job_name or serverless_job_name(ctx.project, ctx.name, "sonic")
     out = output_path.rstrip("/") + "/"
     try:
@@ -328,6 +343,14 @@ def train_cmd(
             "Enabled by default; use --no-accept-eula to opt out."
         ),
     ),
+    accept_nvidia_eula: str | None = typer.Option(
+        None,
+        "--accept-nvidia-eula",
+        help=(
+            "Deprecated compatibility alias. Use --accept-eula or "
+            "--no-accept-eula; legacy Y/YES/1/TRUE and negative spellings are accepted."
+        ),
+    ),
     seed: int = typer.Option(
         0, "--seed", help="Seed for the in-job (--runtime local) trainer."
     ),
@@ -382,6 +405,28 @@ def train_cmd(
     ),
 ) -> None:
     """Run SONIC Isaac Lab training or smoke validation."""
+
+    if accept_nvidia_eula is not None:
+        typer.echo(
+            "Warning: --accept-nvidia-eula is deprecated; use --accept-eula or "
+            "--no-accept-eula.",
+            err=True,
+        )
+        try:
+            legacy_accepts = (
+                resolve_isaac_eula_acceptance(
+                    {"ACCEPT_EULA": accept_nvidia_eula}
+                )
+                == "Y"
+            )
+        except ValueError as exc:
+            fail(str(exc))
+        if not accept_eula and legacy_accepts:
+            fail(
+                "Conflicting EULA options: --no-accept-eula cannot be combined "
+                "with an affirmative --accept-nvidia-eula value."
+            )
+        accept_eula = accept_eula and legacy_accepts
 
     try:
         training_config = build_training_config(
@@ -446,6 +491,7 @@ def train_cmd(
             timeout=timeout,
             output_format=output_format,
             training_config=training_config,
+            accept_eula=accept_eula,
         )
         return
     output(

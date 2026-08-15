@@ -572,6 +572,16 @@ def resolve_task_image(
                     if options.image_variant:
                         kwargs["image_variant"] = options.image_variant
                 resolved = container_image_for_tool(tool, **kwargs)
+    if resolved.startswith("tool://"):
+        image_tool = resolved.removeprefix("tool://").strip()
+        if not image_tool:
+            raise NpaWorkflowError("tool:// image reference must name a workbench tool")
+        from npa.deploy.images import container_image_for_tool
+
+        resolved = container_image_for_tool(
+            image_tool,
+            registry=options.registry or None,
+        )
     return str(options.image_digest_pins.get(resolved, resolved)).strip()
 
 
@@ -922,11 +932,30 @@ ISAAC_IMAGE_TOOLS = frozenset({"isaac-lab", "sonic"})
 def routes_at_an_isaac_image(
     tool_ref: str,
     resources: Mapping[str, Any] | None = None,
+    config: Mapping[str, Any] | None = None,
 ) -> bool:
     """Whether the renderer sends this stage to an Isaac-based runtime."""
 
     if tool_image_key(tool_ref) in ISAAC_IMAGE_TOOLS:
         return True
+    workflow_config = config or {}
+    if tool_ref == "workbench.byof.repo":
+        base_profile = str(workflow_config.get("base_profile") or "").strip().lower()
+        base_image = str(workflow_config.get("base_image") or "").strip().lower()
+        if base_profile == "isaac-lab" or "isaac-lab" in base_image:
+            return True
+    if tool_ref.startswith("workbench.groot"):
+        if tool_ref.startswith("workbench.groot.isaac"):
+            return True
+        for key in ("sim_backend", "simulation_backend", "groot_runtime"):
+            if str(workflow_config.get(key) or "").strip().lower() in {
+                "isaac",
+                "isaac-lab",
+                "isaac_sim",
+            }:
+                return True
+        if workflow_config.get("sim") is True:
+            return True
     raw = resources or {}
     image = str(raw.get("image") or "").lower()
     if "isaac-lab" in image or "npa-sonic" in image:
@@ -943,6 +972,7 @@ def isaac_eula_envs(
     tool_ref: str,
     *,
     resources: Mapping[str, Any] | None = None,
+    config: Mapping[str, Any] | None = None,
     accepted: bool = True,
 ) -> dict[str, str]:
     """Declare NVIDIA's acceptance value for an Isaac stage.
@@ -955,7 +985,7 @@ def isaac_eula_envs(
     expected to know the routing, and a new Isaac toolRef is covered the moment it is added.
     """
 
-    if not routes_at_an_isaac_image(tool_ref, resources):
+    if not routes_at_an_isaac_image(tool_ref, resources, config):
         return {}
     return {ISAAC_EULA_ENV: "Y" if accepted else ""}
 
@@ -1593,6 +1623,7 @@ def build_skypilot_task_doc(
         isaac_eula_envs(
             str(scheduler_task.get("tool_ref") or ""),
             resources=scheduler_task.get("resources") or {},
+            config=spec.config,
             accepted=options.accept_eula,
         )
     )

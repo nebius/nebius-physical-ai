@@ -263,8 +263,11 @@ def check_ngc_key(
     if ngc_validator is None:
         return CheckResult(
             name="ngc",
-            status=WARN,
-            summary="NGC_API_KEY is set; repository entitlement was not verified (offline).",
+            status=PASS,
+            summary=(
+                "NGC_API_KEY is present and well-formed; repository entitlement "
+                "was not probed in offline mode."
+            ),
         )
     outcome = str(ngc_validator(key) or "unreachable")
     if outcome == "reachable":

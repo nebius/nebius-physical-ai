@@ -15,6 +15,10 @@ class MissingIsaacEulaAcceptanceError(ValueError):
     """Raised before remote work when Isaac EULA acceptance is explicitly disabled."""
 
 
+class InvalidIsaacEulaValueError(MissingIsaacEulaAcceptanceError):
+    """Raised when ACCEPT_EULA is neither a recognized acceptance nor opt-out."""
+
+
 def require_s3_credentials(
     s3_credentials: Mapping[str, str] | None,
     *,
@@ -51,30 +55,50 @@ def require_s3_credentials(
         )
 
 
-#: NVIDIA licence acceptance for the Isaac images, forwarded from the CALLER's environment.
+#: NVIDIA licence acceptance for Isaac-backed execution only.
 #:
-#: The Isaac workbench images ship no Isaac Sim and default NVIDIA acceptance on at runtime.
-#: An explicit empty/non-Y value opts out and makes them refuse before fetching (exit 78).
-#:
-#: This lives in the SHARED builder, not in one caller, because every CLI serverless path
-#: (isaac_lab, groot, genesis, cosmos, fiftyone) and the golden-eval runner go through here.
-#: Fixing it in one place fixes `npa workbench isaac-lab train --runtime serverless` too.
-#:
-#: Isaac CLI entrypoints default this value to Y. Explicit empty/non-Y values remain an
-#: opt-out and fail before provisioning.
+#: The parser is shared so Python command builders use the same spellings as the
+#: shell bootstrap. Generic serverless jobs do not inherit this value implicitly:
+#: each Isaac-dependent caller must preflight and propagate the canonical result.
 ISAAC_EULA_ENV = "ACCEPT_EULA"
 ISAAC_EULA_VARS = (ISAAC_EULA_ENV,)
+ISAAC_EULA_AFFIRMATIVE_VALUES = frozenset({"Y", "YES", "1", "TRUE"})
+ISAAC_EULA_NEGATIVE_VALUES = frozenset({"", "N", "NO", "0", "FALSE"})
 
 
-def require_isaac_eula_acceptance(*, context: str, resume_command: str) -> None:
-    """Default acceptance on, while honoring an explicit empty/non-Y opt-out."""
+def resolve_isaac_eula_acceptance(
+    environ: Mapping[str, str] | None = None,
+) -> str:
+    """Return canonical ``Y`` or an explicit empty opt-out without side effects.
 
-    if ISAAC_EULA_ENV not in os.environ:
-        os.environ[ISAAC_EULA_ENV] = "Y"
-        return
+    An absent value follows the product default and resolves to ``Y``. Legacy
+    affirmative spellings migrate case-insensitively; recognized negatives and
+    an explicitly empty value resolve to the canonical empty opt-out. Everything
+    else is rejected so a typo cannot silently change the operator's choice.
+    """
 
-    if str(os.environ.get(ISAAC_EULA_ENV) or "").strip() == "Y":
-        return
+    source = os.environ if environ is None else environ
+    if ISAAC_EULA_ENV not in source:
+        return "Y"
+    raw = str(source[ISAAC_EULA_ENV]).strip()
+    normalized = raw.upper()
+    if normalized in ISAAC_EULA_AFFIRMATIVE_VALUES:
+        return "Y"
+    if normalized in ISAAC_EULA_NEGATIVE_VALUES:
+        return ""
+    allowed = "Y, YES, 1, TRUE, N, NO, 0, FALSE, or an empty string"
+    raise InvalidIsaacEulaValueError(
+        f"Invalid ACCEPT_EULA value {raw!r}; expected one of {allowed} "
+        "(case-insensitive). No expensive action has begun."
+    )
+
+
+def require_isaac_eula_acceptance(*, context: str, resume_command: str) -> str:
+    """Return canonical acceptance, honoring opt-out without mutating the process."""
+
+    value = resolve_isaac_eula_acceptance()
+    if value == "Y":
+        return value
     resume = f"ACCEPT_EULA=Y {resume_command.strip()}"
     raise MissingIsaacEulaAcceptanceError(
         f"Refusing to provision {context}: NVIDIA EULA acceptance was explicitly disabled "
@@ -87,11 +111,15 @@ def require_isaac_eula_acceptance(*, context: str, resume_command: str) -> None:
     )
 
 
-def isaac_eula_env() -> dict[str, str]:
-    """Return the official run-scoped Isaac EULA value when explicitly set."""
+def isaac_eula_env(
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Normalize an explicitly present run-scoped value, preserving opt-out."""
 
-    value = str(os.environ.get(ISAAC_EULA_ENV) or "").strip()
-    return {ISAAC_EULA_ENV: value} if value else {}
+    source = os.environ if environ is None else environ
+    if ISAAC_EULA_ENV not in source:
+        return {}
+    return {ISAAC_EULA_ENV: resolve_isaac_eula_acceptance(source)}
 
 
 def build_serverless_job_env(
@@ -122,8 +150,6 @@ def build_serverless_job_env(
             env["AWS_ENDPOINT_URL"] = endpoint
             env["S3_ENDPOINT_URL"] = endpoint
             env["NEBIUS_S3_ENDPOINT"] = endpoint
-    # Before extra_env, so an explicit caller value still wins.
-    env.update(isaac_eula_env())
     if extra_env:
         env.update({str(key): str(value) for key, value in extra_env.items()})
     return env

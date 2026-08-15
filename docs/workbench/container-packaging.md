@@ -135,8 +135,11 @@ Kit was already in the layers. So the images were changed to make the statement 
 **How it works.** The images contain **no NVIDIA Isaac bytes**. On first use of
 `/isaac-sim/python.sh`, `npa/docker/workbench/common/isaac_bootstrap.sh`:
 
-1. **Refuses** unless the operator has set NVIDIA's documented `ACCEPT_EULA=Y`.
-   Without it the bootstrap exits 78 and downloads nothing. Nothing
+1. Applies NPA's non-interactive Isaac default when `ACCEPT_EULA` is unset, then
+   validates the value before download. `Y`, `YES`, `1`, and `TRUE` normalize to
+   acceptance case-insensitively. Empty, `N`, `NO`, `0`, and `FALSE` are explicit
+   opt-outs and exit 78; any other value is reported separately as invalid.
+   Nothing
    is baked with acceptance pre-granted — **this refusal is the legal mechanism**, and
    `npa/tests/docker/test_packaging_contract.py` fails the build if any image
    reintroduces a baked `*_ACCEPT_EULA`.
@@ -207,11 +210,11 @@ npa/docker/workbench/groot/build.sh    --registry cr.<region>.nebius.cloud/<id> 
 
 ### Promoting the canonical tags — mind the order
 
-Because the runtime-fetch images **refuse to run** without the operator's EULA acceptance,
+Because the runtime-fetch images validate the run-scoped operator EULA policy
+before fetching Isaac,
 promoting them onto the canonical tags is not a neutral swap. Four layers had to be taught
-to forward that acceptance: the golden-eval runner, the shared serverless job-env builder
-(`build_serverless_job_env`, which every `--runtime serverless` CLI path goes through), the
-SkyPilot templates, and the canonical Sim2Real standard-workflow Isaac resource profile.
+to forward that acceptance: the Isaac/GR00T/SONIC command builders, the SkyPilot
+renderer, and the canonical Sim2Real standard-workflow Isaac resource profile.
 
 **Promote only after that plumbing is on the default branch.** Anyone running from a branch
 without it who pulls a canonical tag gets an image their code cannot consent to, and the job

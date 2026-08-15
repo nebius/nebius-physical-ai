@@ -53,6 +53,10 @@ workflow composition with retargeting or MJLab.
   reconstruct that tag in callers.
 - SONIC render validation requires RT-capable GPUs. Use RTX PRO 6000 Blackwell;
   do not silently fall back to the quarantined H100/L40S images.
+- The built-in serverless compute-only default is intentionally unavailable:
+  its L40S/H100/H200 images are quarantined, while the active image requires
+  Kubernetes GPU Operator driver mounts. A serverless run must supply an
+  independently validated compute-only `--image`, or fail before provisioning.
 
 ## Runtime Isaac bootstrap (the container ships no Isaac Sim)
 
@@ -68,8 +72,11 @@ Omniverse Kit, which made it non-redistributable; Isaac is now downloaded on fir
 What this changes in practice:
 
 - **Isaac-backed modes default acceptance; explicit opt-out refuses.** NPA
-  defaults `ACCEPT_EULA=Y`. An explicitly empty/non-`Y` value or
-  `--no-accept-eula` exits **78** before download. The launcher derives
+  defaults `ACCEPT_EULA=Y`. Empty, `N`, `NO`, `0`, `FALSE`, or
+  `--no-accept-eula` exits **78** before download. `Y`, `YES`, `1`, and `TRUE`
+  are accepted case-insensitively; other values are invalid. The deprecated
+  `--accept-nvidia-eula VALUE` alias remains for migration and uses the same
+  parser. The launcher derives
   `OMNI_KIT_ACCEPT_EULA=YES` internally; do not expose duplicate user plumbing.
   Keep `PRIVACY_CONSENT` and telemetry off.
 - **Reach Isaac through `/isaac-sim/python.sh`** (the value of `ISAAC_LAB_PYTHON`). That is

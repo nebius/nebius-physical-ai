@@ -47,6 +47,28 @@ def test_renderer_does_not_add_consent_to_non_isaac_tasks() -> None:
     assert isaac_eula_envs("workbench.byof.repo", accepted=True) == {}
 
 
+def test_renderer_detects_isaac_identity_in_byof_base_config() -> None:
+    from npa.orchestration.npa_workflow.skypilot_render import isaac_eula_envs
+
+    assert isaac_eula_envs(
+        "workbench.byof.repo",
+        config={"base_profile": "isaac-lab", "base_image": "tool://isaac-lab"},
+    ) == {EULA_ENV: "Y"}
+    assert isaac_eula_envs(
+        "workbench.byof.repo",
+        config={"base_profile": "ubuntu", "base_image": "ubuntu:22.04"},
+    ) == {}
+
+
+def test_renderer_gates_only_groot_isaac_simulation() -> None:
+    from npa.orchestration.npa_workflow.skypilot_render import isaac_eula_envs
+
+    assert isaac_eula_envs("workbench.groot.finetune", config={}) == {}
+    assert isaac_eula_envs(
+        "workbench.groot.eval", config={"sim_backend": "isaac"}, accepted=False
+    ) == {EULA_ENV: ""}
+
+
 def test_serverless_forwarder_never_invents_acceptance(monkeypatch) -> None:
     from npa.serverless_common.env import build_serverless_job_env, isaac_eula_env
 
@@ -56,11 +78,26 @@ def test_serverless_forwarder_never_invents_acceptance(monkeypatch) -> None:
 
     monkeypatch.setenv(EULA_ENV, "Y")
     assert isaac_eula_env() == {EULA_ENV: "Y"}
-    assert build_serverless_job_env(output_path="s3://bucket/run/")[EULA_ENV] == "Y"
+    assert EULA_ENV not in build_serverless_job_env(output_path="s3://bucket/run/")
+    assert build_serverless_job_env(
+        output_path="s3://bucket/run/", extra_env=isaac_eula_env()
+    )[EULA_ENV] == "Y"
 
 
-@pytest.mark.parametrize("value", ["", "YES", "yes", "true", "1", "no"])
-def test_preflight_accepts_only_nvidias_documented_exact_value(
+@pytest.mark.parametrize("value", ["Y", "YES", "yes", "true", "1"])
+def test_preflight_migrates_legacy_affirmative_values(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    from npa.serverless_common.env import require_isaac_eula_acceptance
+
+    monkeypatch.setenv(EULA_ENV, value)
+    assert require_isaac_eula_acceptance(
+        context="test", resume_command="npa test"
+    ) == "Y"
+
+
+@pytest.mark.parametrize("value", ["", "N", "no", "false", "0"])
+def test_preflight_preserves_recognized_opt_out(
     monkeypatch: pytest.MonkeyPatch, value: str
 ) -> None:
     from npa.serverless_common.env import (
@@ -73,11 +110,27 @@ def test_preflight_accepts_only_nvidias_documented_exact_value(
         require_isaac_eula_acceptance(context="test", resume_command="npa test")
 
 
-def test_preflight_accepts_exact_y(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_preflight_rejects_unrecognized_value_distinctly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.serverless_common.env import (
+        InvalidIsaacEulaValueError,
+        require_isaac_eula_acceptance,
+    )
+
+    monkeypatch.setenv(EULA_ENV, "maybe")
+    with pytest.raises(InvalidIsaacEulaValueError, match="Invalid ACCEPT_EULA"):
+        require_isaac_eula_acceptance(context="test", resume_command="npa test")
+
+
+def test_preflight_unset_default_is_pure(monkeypatch: pytest.MonkeyPatch) -> None:
     from npa.serverless_common.env import require_isaac_eula_acceptance
 
-    monkeypatch.setenv(EULA_ENV, "Y")
-    require_isaac_eula_acceptance(context="test", resume_command="npa test")
+    monkeypatch.delenv(EULA_ENV, raising=False)
+    assert require_isaac_eula_acceptance(
+        context="test", resume_command="npa test"
+    ) == "Y"
+    assert EULA_ENV not in __import__("os").environ
 
 
 SIM2REAL_ISAAC_BUILDERS = (
@@ -153,10 +206,17 @@ def test_child_isaac_jobs_do_not_invent_acceptance(
     assert EULA_ENV not in _job_env(module_name, builder)
 
 
+@pytest.mark.parametrize(("module_name", "builder"), SIM2REAL_ISAAC_BUILDERS)
+def test_child_isaac_jobs_preserve_explicit_empty_opt_out(
+    monkeypatch, module_name, builder
+) -> None:
+    monkeypatch.setenv(EULA_ENV, "")
+    assert _job_env(module_name, builder)[EULA_ENV] == ""
+
+
 def test_no_user_facing_legacy_consent_or_privacy_defaults() -> None:
     forbidden = (
         "sonic_accept_nvidia_eula",
-        "--accept-nvidia-eula",
         '"PRIVACY_CONSENT": "Y"',
         "PRIVACY_CONSENT=Y",
     )

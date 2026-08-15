@@ -20,11 +20,10 @@ future composition workflow.
 - `serverless`: short Isaac Lab training or smoke jobs using Nebius Serverless
   Jobs.
 
-The SONIC container is self-contained. It installs SONIC from
-`NVlabs/GR00T-WholeBodyControl` and bundles Isaac Lab as a library dependency
-inside the SONIC image. It does not depend on the Workbench Isaac Lab tool image.
-The image targets `linux/amd64` for Nebius L40S and normalizes the Isaac Lab
-Python package to `isaaclab==2.3.2.post1` during build.
+The SONIC container installs SONIC from `NVlabs/GR00T-WholeBodyControl`, but the
+public image does not bake Isaac Lab or Isaac Sim. The Isaac stack is fetched at
+runtime after EULA preflight. It does not depend on the Workbench Isaac Lab tool
+image.
 
 The default image build is focused on training and smoke validation. It includes
 the SONIC C++ deploy source and build tools, but leaves `gear_sonic_deploy`
@@ -49,10 +48,14 @@ Verify the pushed image before launch with:
 docker manifest inspect "${NPA_REGISTRY}/npa-sonic:<active-runtime-fetch-tag>"
 ```
 
-The default embodiment is Unitree G1:
+The default embodiment is Unitree G1. The serverless command also needs an
+independently validated compute-only image because the old L40S/H100/H200 images
+are quarantined; the active first-party image is supported only on RTX PRO 6000
+Kubernetes with GPU Operator driver mounts:
 
 ```bash
-npa workbench sonic train --runtime serverless --embodiment unitree-g1
+npa workbench sonic train --runtime serverless --embodiment unitree-g1 \
+  --image <validated-compute-only-image>
 ```
 
 Internally this maps to the SONIC embodiment tag `UNITREE_G1_SONIC`.

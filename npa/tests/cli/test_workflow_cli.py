@@ -24,6 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: so that contract needs a raw task to exercise -- but not a SHIPPED one, which is what
 #: made these tests block the catalog's retirement. See tests/fixtures/skypilot/README.md.
 SKYPILOT_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures/skypilot"
+NPA_SPECS = REPO_ROOT / "workflows" / "workbench" / "npa-workflows"
 
 
 @pytest.mark.parametrize(
@@ -499,6 +500,32 @@ def test_workbench_workflow_submit_honors_explicit_eula_opt_out(mocker) -> None:
     submit.assert_not_called()
 
 
+def test_workbench_workflow_submit_rejects_isaac_byof_opt_out(mocker) -> None:
+    submit = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(NPA_SPECS / "byof.yaml"),
+            "--run-id",
+            "byof-isaac-no-consent",
+            "--no-accept-eula",
+            "--var",
+            "base_profile=isaac-lab",
+            "--var",
+            "base_image=tool://isaac-lab",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Isaac" in result.output
+    assert "No expensive action has begun" in result.output
+    submit.assert_not_called()
+
+
 def test_workbench_workflow_submit_materializes_sonic_yaml(mocker) -> None:
     yaml_path = SKYPILOT_FIXTURES / "sonic-train-standalone.yaml"
     captured: dict[str, object] = {}
@@ -671,7 +698,7 @@ def test_workbench_workflow_rejects_quarantined_sonic_mvp_workflow(mocker) -> No
 
     assert result.exit_code == 1
     assert "quarantined" in result.output
-    assert "restricted" in result.output
+    assert "retired" in result.output
     assert "content" not in captured
 
 

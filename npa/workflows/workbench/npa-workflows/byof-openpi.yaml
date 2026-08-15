@@ -401,6 +401,7 @@ config:
 resources:
   gpu:
     cloud: kubernetes
+    image: "{{config.base_image}}"
     accelerators: B200:1
     cpus: 16
     memory: 96Gi

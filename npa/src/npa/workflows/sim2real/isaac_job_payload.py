@@ -52,7 +52,9 @@ def decode_compressed_bash_args(args: list[str]) -> str:
 def _require_operator_eula_acceptance(env: dict[str, str]) -> None:
     """Fail before Kit starts unless the operator explicitly accepted the terms."""
 
-    if str(env.get(_ISAAC_EULA_ENV) or "").strip() != "Y":
+    from npa.serverless_common.env import resolve_isaac_eula_acceptance
+
+    if resolve_isaac_eula_acceptance(env) != "Y":
         raise RuntimeError(
             "inline Isaac execution requires explicit operator EULA acceptance: "
             "ACCEPT_EULA=Y"

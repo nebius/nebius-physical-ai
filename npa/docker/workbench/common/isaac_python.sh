@@ -26,7 +26,7 @@
 set -uo pipefail
 
 # Match isaac_bootstrap.sh: unset means accepted by default, while an explicitly
-# empty/non-Y value remains an opt-out.
+# empty/recognized-negative value remains an opt-out.
 ACCEPT_EULA="${ACCEPT_EULA-Y}"
 
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
@@ -55,12 +55,10 @@ PYTHON="$TREE/venv/bin/python"
 }
 
 # `ensure` runs in command substitution, so exports made by the bootstrap cannot reach
-# this launcher. Propagate the vendor's internal Kit acknowledgement only from the exact
-# public consent value the bootstrap already validated. This keeps ACCEPT_EULA as the
-# single operator-facing mechanism and never derives or enables privacy consent.
-if [ "${ACCEPT_EULA:-}" = "Y" ]; then
-  export OMNI_KIT_ACCEPT_EULA=YES
-fi
+# this launcher. A successful ensure has already normalized and validated the public
+# value through the single shell parser, so propagate only the internal Kit acknowledgement.
+# This never derives or enables privacy consent.
+export OMNI_KIT_ACCEPT_EULA=YES
 
 # Isaac Lab's repo layout (scripts/, source/, apps/) lives in the cache because the
 # isaaclab wheel ships the library without scripts/, and every SkyPilot Isaac task

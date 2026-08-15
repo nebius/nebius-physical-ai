@@ -302,7 +302,7 @@ def resolve_lerobot_image_tag(version: str | None = None) -> str:
 
 
 def sonic_image_variant_for_gpu(gpu_target: str | None = None) -> str:
-    """Return the SONIC image variant id for a GPU or provider target."""
+    """Return an active SONIC variant or reject unsupported GPU/runtime pairs."""
 
     manifest = sonic_image_manifest()
     default = str(manifest.get("default_variant", "sonic-k8s-host-mounted"))
@@ -316,7 +316,13 @@ def sonic_image_variant_for_gpu(gpu_target: str | None = None) -> str:
         for match in rule.get("matches", []):
             if str(match).lower() in normalized:
                 return variant
-    return default
+    raise ValueError(
+        f"Unsupported SONIC GPU target {gpu_target!r}. The only published active "
+        "variant is sonic-k8s-host-mounted on RTX PRO 6000 Blackwell Kubernetes "
+        "nodes with NVIDIA GPU Operator driver mounts. L40S/H100/H200 compute-only "
+        "variants are retired and quarantined; supply a separately validated custom "
+        "image explicitly or choose gpu-rtx6000 on Kubernetes."
+    )
 
 
 def sonic_image_entry(

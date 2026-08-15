@@ -1903,6 +1903,28 @@ def test_groot_eval_sim_writes_request_without_ssh(tmp_path: Path, mocker) -> No
     ssh_cls.assert_not_called()
 
 
+def test_groot_eval_sim_honors_explicit_eula_opt_out() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "eval",
+            "--sim",
+            "--no-accept-eula",
+            "--isaac-lab-workbench",
+            "isaac",
+            "--input-path",
+            "s3://bucket/checkpoints/groot/",
+            "--output-path",
+            "s3://bucket/sim-eval/",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Refusing GR00T Isaac simulation" in result.output
+
+
 def test_groot_serve_restarts_server_with_model(mocker) -> None:
     ssh = mocker.MagicMock()
     http = mocker.MagicMock()

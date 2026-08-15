@@ -237,9 +237,9 @@ def _groot_deploy_models(model: str = DEFAULT_MODEL) -> list[str]:
     return [model or DEFAULT_MODEL]
 
 
-def _require_groot_isaac_consent(context: str) -> None:
+def _require_groot_isaac_consent(context: str) -> str:
     try:
-        require_isaac_eula_acceptance(
+        return require_isaac_eula_acceptance(
             context=context,
             resume_command="npa workbench groot deploy ...",
         )
@@ -282,7 +282,7 @@ def _groot_service_env(
     service_env: dict[str, str],
     include_shared_creds: bool,
 ) -> dict[str, str]:
-    _require_groot_isaac_consent("GR00T service with Isaac Lab")
+    acceptance = _require_groot_isaac_consent("GR00T service with Isaac Lab")
     env = {
         "GROOT_MODEL_PATH": DEFAULT_MODEL,
         "GROOT_EMBODIMENT_TAG": DEFAULT_EMBODIMENT_TAG,
@@ -297,7 +297,7 @@ def _groot_service_env(
         "NEBIUS_S3_ENDPOINT": storage_ep,
         "NEBIUS_S3_BUCKET": bucket,
         "NEBIUS_REGION": env_region,
-        "ACCEPT_EULA": "Y",
+        "ACCEPT_EULA": acceptance,
         "PYTHONUNBUFFERED": "1",
         **service_env,
     }
@@ -3710,6 +3710,14 @@ def eval_cmd(
     sim: bool = typer.Option(
         False, "--sim", help="Create a sim-eval request for an Isaac Lab workbench."
     ),
+    accept_eula: bool = typer.Option(
+        True,
+        "--accept-eula/--no-accept-eula",
+        help=(
+            "Run-scoped Isaac Sim/Omniverse acceptance for --sim only. "
+            "Enabled by default; use --no-accept-eula to refuse before creating work."
+        ),
+    ),
     isaac_lab_workbench: str = typer.Option(
         "",
         "--isaac-lab-workbench",
@@ -3748,6 +3756,12 @@ def eval_cmd(
         _fail(str(exc))
 
     if sim:
+        if not accept_eula:
+            _fail(
+                "Refusing GR00T Isaac simulation because --no-accept-eula was set. "
+                "Offline GR00T evaluation does not require Isaac acceptance; rerun "
+                "without --sim or use --accept-eula after accepting the named terms."
+            )
         if not isaac_lab_workbench:
             _fail("--isaac-lab-workbench is required with --sim")
         if num_episodes <= 0:

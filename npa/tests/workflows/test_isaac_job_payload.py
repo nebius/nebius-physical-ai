@@ -71,7 +71,7 @@ def test_inline_payload_requires_and_attests_exact_workflow_image(
     assert proof["image"] == image
 
 
-def test_inline_payload_fails_before_kit_without_explicit_operator_eula(
+def test_inline_payload_uses_silent_default_acceptance_when_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     image = "registry.example/npa/isaac@sha256:" + "c" * 64
@@ -88,5 +88,6 @@ def test_inline_payload_fails_before_kit_without_explicit_operator_eula(
         }
     }
 
-    with pytest.raises(RuntimeError, match="ACCEPT_EULA=Y"):
+    with pytest.raises(subprocess.CalledProcessError) as exc_info:
         execute_manifest_container_inline(manifest)
+    assert exc_info.value.returncode == 99

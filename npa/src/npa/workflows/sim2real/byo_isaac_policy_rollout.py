@@ -616,7 +616,7 @@ def _isaac_eula_env_entries() -> list[dict[str, str]]:
     return [
         {"name": name, "value": os.environ[name]}
         for name in ("ACCEPT_EULA",)
-        if os.environ.get(name)
+        if name in os.environ
     ]
 
 
