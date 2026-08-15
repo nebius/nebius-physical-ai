@@ -85,7 +85,13 @@ The next agent deploy or bootstrap copies it into the VM's private
 
 Cloud imports are content-addressed by the canonical SHA-256, reuse unchanged or
 in-progress imports, and surface missing-token, project-selection, permission,
-indexing, plan, storage, and rate-quota errors.
+indexing, plan, storage, and rate-quota errors. The indexing wait has a monotonic
+300-second server deadline by default. Set
+`NPA_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS` before deploy/bootstrap to override
+it with a positive finite number of seconds up to 3600; invalid values fail before any
+infrastructure or remote bootstrap mutation. Cloud-import browser requests use a
+finite 360-second deadline, while local MCAP conversion retains its uncapped
+browser request because large local conversions can legitimately take longer.
 
 ## Download and transport contract
 

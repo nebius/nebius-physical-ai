@@ -619,6 +619,7 @@ def test_bootstrap_stages_explicit_official_foxglove_backend(monkeypatch) -> Non
 
     assert "NPA_FOXGLOVE_EMBED_SRC=https://embed.foxglove.dev/" in foxglove_env
     assert "NPA_FOXGLOVE_VIEWER_BACKEND=foxglove-sdk" in foxglove_env
+    assert "NPA_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS=300" in foxglove_env
 
 
 def test_bootstrap_rejects_unknown_foxglove_backend(monkeypatch) -> None:
@@ -1024,12 +1025,11 @@ def test_rerun_self_heal_preserves_same_run_canonical_mcap(
         assert repaired["run_id"] == run_id
         assert repaired["canonical_mcap_s3_uri"] == current["canonical_mcap_s3_uri"]
         assert repaired["canonical_mcap_sha256"] == "a" * 64
-        assert repaired["canonical_mcap_provenance"] == current[
-            "canonical_mcap_provenance"
-        ]
-        assert repaired["foxglove_cloud_layout"] == current[
-            "foxglove_cloud_layout"
-        ]
+        assert (
+            repaired["canonical_mcap_provenance"]
+            == current["canonical_mcap_provenance"]
+        )
+        assert repaired["foxglove_cloud_layout"] == current["foxglove_cloud_layout"]
         assert repaired["foxglove_url"] == current["foxglove_url"]
         assert state["sim_viz"] == repaired
         assert state["sim_viz_runs"][run_id]["canonical_mcap_sha256"] == "a" * 64

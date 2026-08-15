@@ -79,7 +79,9 @@ Published names are random (`<token>-<stem>.mcap`) and pruned to the newest few.
 
 Configuration (no secrets): `NPA_FOXGLOVE_EMBED_SRC`, `NPA_FOXGLOVE_ORG_SLUG`,
 `NPA_FOXGLOVE_LIVE_URL`, `NPA_FOXGLOVE_COLOR_SCHEME`,
-`NPA_FOXGLOVE_LAYOUT_STORAGE_KEY`, `NPA_FOXGLOVE_ENABLED`; or
+`NPA_FOXGLOVE_LAYOUT_STORAGE_KEY`, `NPA_FOXGLOVE_ENABLED`, and the positive,
+finite `NPA_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS` (default `300`, maximum
+`3600`); or
 `npa agent bootstrap --foxglove-embed-src <url> --foxglove-org-slug <slug>`.
 
 ## CLI

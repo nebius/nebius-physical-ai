@@ -8,6 +8,7 @@ in URLs, subprocess arguments, return payloads, or exception messages.
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 import re
 import time
@@ -23,6 +24,10 @@ from npa.agent_backend.canonical_mcap import has_rich_visualization_contract
 
 
 FOXGLOVE_API_ROOT = "https://api.foxglove.dev/v1"
+FOXGLOVE_CLOUD_IMPORT_TIMEOUT_ENV = "NPA_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS"
+DEFAULT_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS = 300.0
+MAX_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS = 3600.0
+FOXGLOVE_CLOUD_IMPORT_POLL_SECONDS = 2.0
 _SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 FOXGLOVE_LAYOUT_NAME = "NPA Physical AI robot motion v3"
 FOXGLOVE_LAYOUT_ID = (
@@ -36,6 +41,79 @@ class FoxgloveCloudError(RuntimeError):
     def __init__(self, message: str, *, status_code: int = 502) -> None:
         super().__init__(message)
         self.status_code = status_code
+
+
+def resolve_cloud_import_timeout_seconds(
+    value: object | None = None,
+    *,
+    environ: dict[str, str] | None = None,
+) -> float:
+    """Resolve and validate the bounded Cloud indexing wait."""
+    env = environ if environ is not None else os.environ
+    raw = value
+    if raw is None or not str(raw).strip():
+        raw = env.get(FOXGLOVE_CLOUD_IMPORT_TIMEOUT_ENV, "")
+    if raw is None or not str(raw).strip():
+        return DEFAULT_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS
+    try:
+        timeout = float(raw)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(
+            f"{FOXGLOVE_CLOUD_IMPORT_TIMEOUT_ENV} must be a positive finite number "
+            f"of seconds no greater than {MAX_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS:g}"
+        ) from exc
+    if (
+        not math.isfinite(timeout)
+        or timeout <= 0
+        or timeout > MAX_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS
+    ):
+        raise ValueError(
+            f"{FOXGLOVE_CLOUD_IMPORT_TIMEOUT_ENV} must be a positive finite number "
+            f"of seconds no greater than {MAX_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS:g}"
+        )
+    return timeout
+
+
+class FoxgloveCloudTimeoutError(FoxgloveCloudError):
+    """A token-safe, context-rich deadline failure while indexing an import."""
+
+    def __init__(
+        self,
+        *,
+        recording_key: str,
+        recording_status: str,
+        import_status: str,
+        elapsed_seconds: float,
+    ) -> None:
+        safe_key = (
+            recording_key
+            if re.fullmatch(r"npa-[0-9a-f]{64}", recording_key)
+            else "unknown"
+        )
+
+        def safe_status(value: str, fallback: str) -> str:
+            cleaned = str(value or "").strip().lower()
+            return cleaned if re.fullmatch(r"[a-z0-9_-]{1,32}", cleaned) else fallback
+
+        self.recording_key = safe_key
+        self.recording_status = safe_status(recording_status, "unknown")
+        self.import_status = safe_status(import_status, "not-observed")
+        self.elapsed_seconds = max(0.0, round(float(elapsed_seconds), 3))
+        self.context = {
+            "recording_key": self.recording_key,
+            "recording_status": self.recording_status,
+            "import_status": self.import_status,
+            "elapsed_seconds": self.elapsed_seconds,
+        }
+        super().__init__(
+            "Foxglove Cloud import did not reach complete before the server deadline "
+            f"(recording_key={self.recording_key}, "
+            f"recording_status={self.recording_status}, "
+            f"import_status={self.import_status}, "
+            f"elapsed_seconds={self.elapsed_seconds:.3f}). Retry to reuse the same "
+            "content-addressed import.",
+            status_code=504,
+        )
 
 
 @dataclass(frozen=True)
@@ -94,8 +172,10 @@ def data_aware_layout_data(provenance: dict[str, Any]) -> dict[str, Any]:
         "/robot/diagnostic_trajectory",
     }
     has_rich_3d = rich_topics.issubset(schemas)
-    primary_image = "/camera" if "/camera" in discovered_image_topics else (
-        discovered_image_topics[0] if discovered_image_topics else ""
+    primary_image = (
+        "/camera"
+        if "/camera" in discovered_image_topics
+        else (discovered_image_topics[0] if discovered_image_topics else "")
     )
     image_topics = ([primary_image] if primary_image else []) + [
         topic for topic in discovered_image_topics if topic != primary_image
@@ -153,7 +233,11 @@ def data_aware_layout_data(provenance: dict[str, Any]) -> dict[str, Any]:
             "tabs": [
                 {
                     "title": (
-                        ("Primary" if topic == "/camera" else topic.rsplit("/", 1)[-1].replace("_", " ").title())
+                        (
+                            "Primary"
+                            if topic == "/camera"
+                            else topic.rsplit("/", 1)[-1].replace("_", " ").title()
+                        )
                         + f" ({topic})"
                     ),
                     "content": image_panel(topic, index),
@@ -321,6 +405,8 @@ class FoxgloveCloudClient:
         api_root: str = FOXGLOVE_API_ROOT,
         client: httpx.Client | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
+        wait_timeout_seconds: float | str | None = None,
     ) -> None:
         cleaned = str(token or "").strip()
         if not cleaned:
@@ -335,6 +421,13 @@ class FoxgloveCloudClient:
         self._client = client or httpx.Client(timeout=60.0, follow_redirects=False)
         self._owns_client = client is None
         self._sleep = sleep
+        self._clock = clock
+        try:
+            self._wait_timeout_seconds = resolve_cloud_import_timeout_seconds(
+                wait_timeout_seconds
+            )
+        except ValueError as exc:
+            raise FoxgloveCloudError(str(exc), status_code=503) from exc
 
     def close(self) -> None:
         if self._owns_client:
@@ -355,6 +448,7 @@ class FoxgloveCloudClient:
         params: dict[str, Any] | None = None,
         allow_not_found: bool = False,
         allow_conflict: bool = False,
+        timeout_seconds: float | None = None,
     ) -> httpx.Response:
         try:
             response = self._client.request(
@@ -363,6 +457,11 @@ class FoxgloveCloudClient:
                 headers={"Authorization": f"Bearer {self._token}"},
                 json=json_body,
                 params=params,
+                **(
+                    {"timeout": max(0.001, float(timeout_seconds))}
+                    if timeout_seconds is not None
+                    else {}
+                ),
             )
         except httpx.HTTPError as exc:
             raise FoxgloveCloudError(
@@ -424,9 +523,14 @@ class FoxgloveCloudClient:
             )
         return ids[0]
 
-    def _get_recording(self, key: str) -> dict[str, Any] | None:
+    def _get_recording(
+        self, key: str, *, timeout_seconds: float | None = None
+    ) -> dict[str, Any] | None:
         response = self._api_request(
-            "GET", f"/recordings/{quote(key, safe='')}", allow_not_found=True
+            "GET",
+            f"/recordings/{quote(key, safe='')}",
+            allow_not_found=True,
+            timeout_seconds=timeout_seconds,
         )
         if response.status_code == 404:
             return None
@@ -435,11 +539,14 @@ class FoxgloveCloudClient:
             raise FoxgloveCloudError("Foxglove returned an invalid recording response.")
         return payload
 
-    def _pending_import(self, key: str) -> dict[str, Any] | None:
+    def _pending_import(
+        self, key: str, *, timeout_seconds: float | None = None
+    ) -> dict[str, Any] | None:
         response = self._api_request(
             "GET",
             "/data/pending-imports",
             params={"key": key, "showCompleted": "true", "limit": 20},
+            timeout_seconds=timeout_seconds,
         )
         payload = self._json(response)
         if not isinstance(payload, list):
@@ -498,25 +605,66 @@ class FoxgloveCloudClient:
     def _wait_for_ready(
         self, key: str, *, size_bytes: int, uploaded: bool
     ) -> FoxgloveCloudRecording:
+        started_at = self._clock()
+        deadline = started_at + self._wait_timeout_seconds
+        recording_status = "missing"
+        import_status = "not-observed"
+
+        def remaining_seconds() -> float:
+            return deadline - self._clock()
+
+        def timeout_error() -> FoxgloveCloudTimeoutError:
+            return FoxgloveCloudTimeoutError(
+                recording_key=key,
+                recording_status=recording_status,
+                import_status=import_status,
+                elapsed_seconds=self._clock() - started_at,
+            )
+
         while True:
+            remaining = remaining_seconds()
+            if remaining <= 0:
+                raise timeout_error()
+            try:
+                recording = self._get_recording(key, timeout_seconds=remaining)
+            except FoxgloveCloudError as exc:
+                if isinstance(exc.__cause__, httpx.TimeoutException):
+                    raise timeout_error() from exc
+                raise
+            recording_status = str((recording or {}).get("importStatus") or "missing")
+            if remaining_seconds() <= 0:
+                raise timeout_error()
             ready = self._ready_recording(
-                self._get_recording(key),
+                recording,
                 key=key,
                 size_bytes=size_bytes,
                 uploaded=uploaded,
             )
             if ready is not None:
                 return ready
-            pending = self._pending_import(key)
+            remaining = remaining_seconds()
+            if remaining <= 0:
+                raise timeout_error()
+            try:
+                pending = self._pending_import(key, timeout_seconds=remaining)
+            except FoxgloveCloudError as exc:
+                if isinstance(exc.__cause__, httpx.TimeoutException):
+                    raise timeout_error() from exc
+                raise
             if pending:
-                status = str(pending.get("status") or "")
-                if status == "error":
+                import_status = str(pending.get("status") or "unknown")
+                if import_status.lower() in {"error", "failed"}:
                     raise FoxgloveCloudError(
                         "Foxglove could not import the MCAP. Review the Foxglove import error "
                         "and available storage quota, then retry.",
                         status_code=422,
                     )
-            self._sleep(2.0)
+            if remaining_seconds() <= 0:
+                raise timeout_error()
+            remaining = remaining_seconds()
+            if remaining <= 0:
+                raise timeout_error()
+            self._sleep(min(FOXGLOVE_CLOUD_IMPORT_POLL_SECONDS, remaining))
 
     def ensure_recording(
         self, local_path: str | Path, *, run_id: str

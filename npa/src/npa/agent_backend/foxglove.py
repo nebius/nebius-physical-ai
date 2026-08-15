@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import math
 import os
 import re
 import secrets
@@ -44,6 +45,9 @@ FOXGLOVE_SDK_FILES: tuple[str, ...] = (
 FOXGLOVE_SDK_MANIFEST = "npa-sdk-manifest.json"
 FOXGLOVE_DEFAULT_EMBED_SRC = "https://embed.foxglove.dev/"
 FOXGLOVE_DEFAULT_LAYOUT_KEY = "npa-agent-foxglove-robot-motion-v3"
+FOXGLOVE_CLOUD_IMPORT_TIMEOUT_ENV = "NPA_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS"
+DEFAULT_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS = 300.0
+MAX_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS = 3600.0
 FOXGLOVE_WEB_APP_URL = "https://app.foxglove.dev/~/view"
 FOXGLOVE_ARTIFACT_EXTENSIONS: tuple[str, ...] = (
     ".mcap",
@@ -628,6 +632,30 @@ def _truthy(value: str, *, default: bool = True) -> bool:
     return raw not in {"0", "false", "no", "off"}
 
 
+def _cloud_import_timeout_seconds(environ: Mapping[str, str]) -> float:
+    """Return the validated deploy value or the documented safe default.
+
+    Deploy/bootstrap rejects invalid values before mutation. This defensive
+    fallback keeps a hand-edited remote environment from making the browser
+    deadline unbounded or non-numeric while the Cloud client reports its own
+    typed configuration error.
+    """
+
+    try:
+        value = float(
+            str(environ.get(FOXGLOVE_CLOUD_IMPORT_TIMEOUT_ENV, "")).strip()
+            or DEFAULT_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS
+        )
+    except (TypeError, ValueError, OverflowError):
+        return DEFAULT_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS
+    return (
+        value
+        if math.isfinite(value)
+        and 0 < value <= MAX_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS
+        else DEFAULT_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS
+    )
+
+
 def resolve_foxglove_config(
     env: Mapping[str, str] | None = None,
     *,
@@ -718,6 +746,7 @@ def resolve_foxglove_config(
         "color_scheme": color_scheme,
         "layout_storage_key": layout_key,
         "live_url": live_url,
+        "cloud_import_timeout_seconds": _cloud_import_timeout_seconds(environ),
         "data_source": data_source,
         "run_id": str(selected_artifact.get("run_id") or state.get("run_id") or ""),
         "artifact_run_ref": str(

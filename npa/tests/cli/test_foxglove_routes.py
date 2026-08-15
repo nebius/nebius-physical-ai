@@ -24,6 +24,9 @@ from npa.agent_backend.foxglove import (  # noqa: E402
     FOXGLOVE_SDK_FILES,
     resolve_foxglove_config,
 )
+from npa.agent_backend.foxglove_cloud import (  # noqa: E402
+    FoxgloveCloudTimeoutError,
+)
 from npa.agent_backend.foxglove_routes import (  # noqa: E402
     FoxgloveDeps,
     register_foxglove_routes,
@@ -143,23 +146,24 @@ def harness(tmp_path: Path):
         }
 
     app = FastAPI()
+    deps = FoxgloveDeps(
+        load_state=lambda: state,
+        save_state=lambda new: saved.append(dict(new)),
+        record_run=lambda st, viz: recorded.append(dict(viz)),
+        foxglove_config=_config,
+        load_artifact=_load_artifact,
+        convert_run=_convert_run,
+        now_iso=lambda: "2026-07-31T00:00:00+00:00",
+        validate_run_id=_validate_run_id,
+        data_dir=data_dir,
+        runs_dir=runs_dir,
+        keep_published=2,
+        ensure_cloud_recording=_cloud,
+        ensure_cloud_layout=_layout,
+    )
     register_foxglove_routes(
         app,
-        FoxgloveDeps(
-            load_state=lambda: state,
-            save_state=lambda new: saved.append(dict(new)),
-            record_run=lambda st, viz: recorded.append(dict(viz)),
-            foxglove_config=_config,
-            load_artifact=_load_artifact,
-            convert_run=_convert_run,
-            now_iso=lambda: "2026-07-31T00:00:00+00:00",
-            validate_run_id=_validate_run_id,
-            data_dir=data_dir,
-            runs_dir=runs_dir,
-            keep_published=2,
-            ensure_cloud_recording=_cloud,
-            ensure_cloud_layout=_layout,
-        ),
+        deps,
         HTTPException,
     )
     return {
@@ -174,6 +178,7 @@ def harness(tmp_path: Path):
         "loaded": loaded,
         "cloud_calls": cloud_calls,
         "layout_calls": layout_calls,
+        "deps": deps,
     }
 
 
@@ -183,10 +188,24 @@ def test_config_and_status_report_the_selected_backend(harness) -> None:
     config = client.get("/foxglove/config").json()
     assert config["viewer_backend"] == "foxglove-sdk"
     assert config["available"] is True
+    assert config["cloud_import_timeout_seconds"] == 300.0
 
     status = client.get("/foxglove/status").json()
     assert status["viewer_backend"] == "foxglove-sdk"
     assert status["available"] is True
+
+
+def test_config_advertises_the_validated_cloud_import_deadline(harness) -> None:
+    harness["env"]["NPA_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS"] = "425.5"
+    config = harness["client"].get("/foxglove/config").json()
+    assert config["cloud_import_timeout_seconds"] == 425.5
+
+    # Deploy/bootstrap reject this state. A hand-edited remote environment still
+    # receives a finite browser fallback while the Cloud client returns its
+    # typed invalid-configuration error.
+    harness["env"]["NPA_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS"] = "nan"
+    fallback = harness["client"].get("/foxglove/config").json()
+    assert fallback["cloud_import_timeout_seconds"] == 300.0
 
 
 def test_config_falls_back_to_the_self_hosted_viewer(harness) -> None:
@@ -302,6 +321,42 @@ def test_export_converts_active_run_when_no_mcap_is_published(harness) -> None:
     assert body["summary"]["message_count"] == 6
     assert body["export"]["available"] is True
     assert harness["convert_calls"]
+
+
+def test_cloud_timeout_maps_to_504_and_releases_export_lock(harness) -> None:
+    harness["data_dir"].mkdir()
+    active = harness["data_dir"] / "active.mcap"
+    active.write_bytes(b"\x89MCAP0\r\nbody")
+    harness["state"]["sim_viz"].update(
+        {
+            "foxglove_url": "/foxglove/data/active.mcap",
+            "foxglove_ready": True,
+        }
+    )
+
+    def timeout(_path: Path, _run_id: str, **_kwargs) -> dict:
+        raise FoxgloveCloudTimeoutError(
+            recording_key="npa-" + "a" * 64,
+            recording_status="missing",
+            import_status="processing",
+            elapsed_seconds=300,
+        )
+
+    harness["deps"].ensure_cloud_recording = timeout
+    failed = harness["client"].post("/foxglove/export", json={"cloud_import": True})
+
+    assert failed.status_code == 504
+    assert "server deadline" in failed.json()["detail"]
+
+    # The timeout escaped a route wrapped by the process-wide export lock. A
+    # subsequent conversion must still enter the same lock and complete.
+    harness["runs_dir"].mkdir(exist_ok=True)
+    (harness["runs_dir"] / "run-1").mkdir(exist_ok=True)
+    recovered = harness["client"].post(
+        "/foxglove/convert-run", json={"run_id": "run-1"}
+    )
+    assert recovered.status_code == 200
+    assert recovered.json()["ok"] is True
 
 
 def test_export_open_web_returns_selected_remote_file_link_without_cloud_upload(

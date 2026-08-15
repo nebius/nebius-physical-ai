@@ -124,7 +124,10 @@ from npa.cli.agent_contracts import (  # noqa: F401 - public compatibility expor
     rendered_agent_ui_html,
 )
 from npa.cli.agent_embed import embedded_python_source
-from npa.cli.agent_site import DEFAULT_LICHTBLICK_PORT, nginx_agent_site_body as _nginx_agent_site_body
+from npa.cli.agent_site import (
+    DEFAULT_LICHTBLICK_PORT,
+    nginx_agent_site_body as _nginx_agent_site_body,
+)
 from npa.cli.agent_deployment import (
     DeploymentIdentityError,
     assert_remote_owner_if_present,
@@ -146,6 +149,7 @@ from npa.workbench.foxglove import (
     FOXGLOVE_EMBED_SDK_VERSION,
 )
 from npa.cli import agent_foxglove_config
+
 app = typer.Typer(
     name="agent",
     help="Deploy and operate a public NPA chat agent VM.",
@@ -360,6 +364,45 @@ def _record_customer_url(record: dict[str, Any]) -> str:
 def _fail(message: str) -> NoReturn:
     typer.echo(f"Error: {message}", err=True)
     raise typer.Exit(code=1)
+
+
+def _resolve_foxglove_settings_or_fail(
+    *,
+    embed_src: str = "",
+    viewer_backend: str = "",
+    org_slug: str = "",
+    live_url: str = "",
+    saved: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    """Translate expected Foxglove setting errors at the CLI boundary."""
+    try:
+        return agent_foxglove_config.resolve_settings(
+            embed_src=embed_src,
+            viewer_backend=viewer_backend,
+            org_slug=org_slug,
+            live_url=live_url,
+            saved=saved,
+        )
+    except agent_foxglove_config.FoxgloveSettingsError as exc:
+        if exc.setting == "cloud_import_timeout_seconds":
+            _fail(str(exc))
+        if exc.setting == "embed_src":
+            _fail(str(exc))
+        selected = str(
+            viewer_backend
+            or os.environ.get("NPA_FOXGLOVE_VIEWER_BACKEND", "")
+            or (saved or {}).get("viewer_backend", "")
+        ).strip()
+        selected_display = (
+            repr(selected)
+            if len(selected) <= 64
+            and selected.replace("-", "").replace("_", "").isalnum()
+            else "<redacted-invalid-value>"
+        )
+        _fail(
+            "Invalid --foxglove-viewer-backend value "
+            f"{selected_display}: {exc}. Allowed values: foxglove-sdk, self-hosted."
+        )
 
 
 def _looks_like_compute_permission_denied(message: str) -> bool:
@@ -623,15 +666,16 @@ def _resolve_deploy_storage_credentials(
             project_bucket = str(project_storage.checkpoint_bucket or "").strip()
             project_prefix = ""
             if project_bucket.startswith("s3://"):
-                rest = project_bucket[len("s3://"):]
+                rest = project_bucket[len("s3://") :]
                 project_bucket, _sep, project_prefix = rest.partition("/")
                 project_prefix = project_prefix.strip("/")
             project_endpoint = str(
-                project_storage.endpoint_url
-                or f"https://storage.{region}.nebius.cloud"
+                project_storage.endpoint_url or f"https://storage.{region}.nebius.cloud"
             ).strip()
             project_access_key = str(project_storage.aws_access_key_id or "").strip()
-            project_secret_key = str(project_storage.aws_secret_access_key or "").strip()
+            project_secret_key = str(
+                project_storage.aws_secret_access_key or ""
+            ).strip()
             if project_bucket and _storage_credentials_allow_writes(
                 bucket=project_bucket,
                 endpoint=project_endpoint,
@@ -701,10 +745,12 @@ def _resolve_deploy_storage_credentials(
     shared_bucket = str(shared.s3_bucket or "").strip()
     shared_prefix = ""
     if shared_bucket.startswith("s3://"):
-        rest = shared_bucket[len("s3://"):]
+        rest = shared_bucket[len("s3://") :]
         shared_bucket, _sep, shared_prefix = rest.partition("/")
         shared_prefix = shared_prefix.strip("/")
-    shared_endpoint = str(shared.s3_endpoint or f"https://storage.{region}.nebius.cloud").strip()
+    shared_endpoint = str(
+        shared.s3_endpoint or f"https://storage.{region}.nebius.cloud"
+    ).strip()
     shared_access_key = str(shared.s3_access_key_id or "").strip()
     shared_secret_key = str(shared.s3_secret_access_key or "").strip()
     if shared_bucket and _storage_credentials_allow_writes(
@@ -716,9 +762,7 @@ def _resolve_deploy_storage_credentials(
         prefix=shared_prefix,
     ):
         if emit_status:
-            typer.echo(
-                "  Using health-verified shared artifact storage credentials."
-            )
+            typer.echo("  Using health-verified shared artifact storage credentials.")
         candidate["s3_bucket"] = shared_bucket
         candidate["s3_prefix"] = shared_prefix
         candidate["s3_endpoint"] = shared_endpoint
@@ -1093,7 +1137,6 @@ def _bootstrap_agent_stack(
     llm_models: list[str] | tuple[str, ...] = DEFAULT_LLM_MODELS,
     tf_api_key: str = "",
     nebius_ai_key: str = "",
-    foxglove_api_token: str = "",
     service_account_id: str = "",
     s3_bucket: str = "",
     s3_prefix: str = "",
@@ -1108,11 +1151,14 @@ def _bootstrap_agent_stack(
     foxglove_viewer_backend: str = "",
     foxglove_org_slug: str = "",
     foxglove_live_url: str = "",
+    foxglove_cloud_import_timeout_seconds: str = "",
     deployment: dict[str, str] | None = None,
     preload_stock_demo: bool = True,
 ) -> None:
     foxglove_settings = agent_foxglove_config.resolve_settings(
-        embed_src=foxglove_embed_src, viewer_backend=foxglove_viewer_backend
+        embed_src=foxglove_embed_src,
+        viewer_backend=foxglove_viewer_backend,
+        cloud_import_timeout_seconds=foxglove_cloud_import_timeout_seconds,
     )
     ssh = SSHClient(
         config=resolve_ssh_config(
@@ -1159,14 +1205,15 @@ def _bootstrap_agent_stack(
         backend_port=backend_port, rerun_port=rerun_port
     )
     foxglove_embed_src_value = _env_line_value(foxglove_settings["embed_src"])
-    foxglove_viewer_backend_value = _env_line_value(
-        foxglove_settings["viewer_backend"]
-    )
+    foxglove_viewer_backend_value = _env_line_value(foxglove_settings["viewer_backend"])
     foxglove_org_slug_value = _env_line_value(
         foxglove_org_slug or os.environ.get("NPA_FOXGLOVE_ORG_SLUG", "")
     )
     foxglove_live_url_value = _env_line_value(
         foxglove_live_url or os.environ.get("NPA_FOXGLOVE_LIVE_URL", "")
+    )
+    foxglove_cloud_import_timeout_value = _env_line_value(
+        foxglove_settings["cloud_import_timeout_seconds"]
     )
     foxglove_sdk_version = _env_line_value(FOXGLOVE_EMBED_SDK_VERSION)
     foxglove_sdk_integrity = shlex.quote(FOXGLOVE_EMBED_SDK_INTEGRITY)
@@ -1201,11 +1248,10 @@ server {{
     expected_agent_service_account_id = shlex.quote(service_account_id.strip())
     expected_agent_tenant_id = shlex.quote((nebius_tenant_id or tenant_id).strip())
     lichtblick_port = DEFAULT_LICHTBLICK_PORT
-    rerun_recording_arg = (
-        "/opt/npa-agent/sim2real.rrd " if preload_stock_demo else ""
-    )
+    rerun_recording_arg = "/opt/npa-agent/sim2real.rrd " if preload_stock_demo else ""
     lichtblick_image = str(
-        os.environ.get("NPA_AGENT_LICHTBLICK_IMAGE", "").strip() or "npa-lichtblick:1.26.0"
+        os.environ.get("NPA_AGENT_LICHTBLICK_IMAGE", "").strip()
+        or "npa-lichtblick:1.26.0"
     )
     # Region-agnostic image acquisition: the Lichtblick image is mirrored to both
     # the eu-north1 and us-central1 registries, so a fresh VM in any region pulls
@@ -1289,6 +1335,7 @@ NPA_FOXGLOVE_EMBED_SRC={foxglove_embed_src_value}
 NPA_FOXGLOVE_VIEWER_BACKEND={foxglove_viewer_backend_value}
 NPA_FOXGLOVE_ORG_SLUG={foxglove_org_slug_value}
 NPA_FOXGLOVE_LIVE_URL={foxglove_live_url_value}
+NPA_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS={foxglove_cloud_import_timeout_value}
 NPA_FOXGLOVE_SDK_VERSION={foxglove_sdk_version}
 ENV
 sudo mkdir -p /opt/npa-agent/foxglove/sdk /opt/npa-agent/foxglove/app /opt/npa-agent/foxglove/data
@@ -8545,7 +8592,6 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         region=region,
         tf_api_key=tf_api_key,
         nebius_ai_key=nebius_ai_key,
-        foxglove_api_token=foxglove_api_token,
         s3_bucket=s3_bucket,
         s3_prefix=s3_prefix,
         s3_endpoint=s3_endpoint,
@@ -8569,7 +8615,11 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
     if (
         tf_api_key.strip()
         or (s3_bucket.strip() and s3_access_key.strip() and s3_secret_key.strip())
-        or ((nebius_project_id or project_id).strip() and s3_access_key.strip() and s3_secret_key.strip())
+        or (
+            (nebius_project_id or project_id).strip()
+            and s3_access_key.strip()
+            and s3_secret_key.strip()
+        )
     ):
         ssh.run_or_raise(
             "sudo systemctl reset-failed npa-agent-backend || true; "
@@ -8653,6 +8703,7 @@ def _health(
         return False, 0
     return response.status_code == 200, response.status_code
 
+
 _artifact_only_http_probe = agent_resources.artifact_only_http_probe
 
 
@@ -8693,10 +8744,7 @@ def _verify_artifact_only_live(
     )
     typer.echo(format_bundle_budget_report(bundle_result))
     if not bundle_result.ok:
-        _fail(
-            "rerun bundle load budget failed: "
-            + "; ".join(bundle_result.errors[:4])
-        )
+        _fail("rerun bundle load budget failed: " + "; ".join(bundle_result.errors[:4]))
 
     test_env = {
         **dict(os.environ),
@@ -8761,6 +8809,7 @@ def _verify_artifact_only_live(
         f"runs={result['run_count']} tool_refs={result['tool_ref_count']} "
         f"state_sha256={result['state_sha256']}"
     )
+
 
 @app.command("preflight")
 def preflight_cmd(
@@ -9013,7 +9062,9 @@ def deploy_cmd(
     tf_var: list[str] = typer.Option(
         [], "--tf-var", help="Additional Terraform var key=value."
     ),
-    agent_only: bool = typer.Option(False, "--agent-only", help="Provision agent only."),
+    agent_only: bool = typer.Option(
+        False, "--agent-only", help="Provision agent only."
+    ),
     agent_port: int = typer.Option(
         DEFAULT_AGENT_PORT, "--agent-port", help="Public agent UI port."
     ),
@@ -9065,6 +9116,12 @@ def deploy_cmd(
     # (OptionInfo) can never crash `for item in tf_var` / `list(llm_models)`.
     tf_var = _coerce_cli_list(tf_var)
     llm_models = _coerce_cli_list(llm_models)
+    foxglove_settings = _resolve_foxglove_settings_or_fail(
+        embed_src=foxglove_embed_src,
+        viewer_backend=foxglove_viewer_backend,
+        org_slug=foxglove_org_slug,
+        live_url=foxglove_live_url,
+    )
     # Expand ``~`` up front so the absolute path flows into Terraform vars and
     # outputs (e.g. ssh_key_path). Terraform reads the key with pathexpand, but
     # the raw var also lands in outputs consumed downstream, where an unexpanded
@@ -9417,12 +9474,6 @@ def deploy_cmd(
     configured_llm_models = _normalize_llm_models(
         [configured_llm_model, *extra_llm_models]
     )
-    foxglove_settings = agent_foxglove_config.resolve_settings(
-        embed_src=foxglove_embed_src,
-        viewer_backend=foxglove_viewer_backend,
-        org_slug=foxglove_org_slug,
-        live_url=foxglove_live_url,
-    )
     # A missing Token Factory key is already surfaced up front (before Terraform)
     # by the deploy prerequisite check above.
     rollback_record = {
@@ -9510,6 +9561,9 @@ def deploy_cmd(
             "foxglove_viewer_backend": foxglove_settings["viewer_backend"],
             "foxglove_org_slug": foxglove_settings["org_slug"],
             "foxglove_live_url": foxglove_settings["live_url"],
+            "foxglove_cloud_import_timeout_seconds": foxglove_settings[
+                "cloud_import_timeout_seconds"
+            ],
         },
         reconcile_kwargs={
             "host": public_ip,
@@ -9920,7 +9974,7 @@ def bootstrap_cmd(
     record = _agent_record(project, name)
     if not record:
         _fail(f"Agent config not found for {project}/{name}")
-    foxglove_settings = agent_foxglove_config.resolve_settings(
+    foxglove_settings = _resolve_foxglove_settings_or_fail(
         embed_src=foxglove_embed_src,
         viewer_backend=foxglove_viewer_backend,
         org_slug=foxglove_org_slug,
@@ -10110,6 +10164,9 @@ def bootstrap_cmd(
             "foxglove_viewer_backend": foxglove_settings["viewer_backend"],
             "foxglove_org_slug": foxglove_settings["org_slug"],
             "foxglove_live_url": foxglove_settings["live_url"],
+            "foxglove_cloud_import_timeout_seconds": foxglove_settings[
+                "cloud_import_timeout_seconds"
+            ],
         },
         reconcile_kwargs={
             "host": public_ip,
@@ -10821,7 +10878,10 @@ def verify_live_cmd(
         access_payload = access_resp.json()
     except Exception as exc:  # noqa: BLE001
         _fail(f"agent access endpoint failed: {exc}")
-    if not isinstance(access_payload, dict) or access_payload.get("apiVersion") != ACCESS_SCHEMA:
+    if (
+        not isinstance(access_payload, dict)
+        or access_payload.get("apiVersion") != ACCESS_SCHEMA
+    ):
         _fail("agent access endpoint returned an invalid schema")
     if access_payload.get("status") not in ACCESS_STATES:
         _fail("agent access endpoint returned an invalid status")
@@ -10894,7 +10954,10 @@ def verify_live_cmd(
             auth=(auth_user, auth_password),
             json={
                 "messages": [
-                    {"role": "user", "content": "create 2-step sim2real workflow with 5000 environments, seed 9, an RTX PRO 6000 accelerator, and 1 GPU"}
+                    {
+                        "role": "user",
+                        "content": "create 2-step sim2real workflow with 5000 environments, seed 9, an RTX PRO 6000 accelerator, and 1 GPU",
+                    }
                 ]
             },
             timeout=30.0,

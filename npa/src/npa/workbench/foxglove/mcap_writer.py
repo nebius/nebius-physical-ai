@@ -905,10 +905,14 @@ def write_run_mcap(
         log_schema_id: int | None = None
         camera_channels: dict[str, int] = {}
         metric_channels: dict[str, int] = {}
+        pointcloud_schema_id: int | None = None
         pointcloud_channel_id: int | None = None
+        transform_schema_id: int | None = None
         transform_channel_id: int | None = None
         log_channel_id: int | None = None
         rich_channels: dict[str, int] = {}
+        rich_action_sequence = 0
+        rich_rollout_sources: list[str] = []
         first_ns = 0
         last_ns = 0
         previous_by_topic: dict[str, int] = {}
@@ -1012,49 +1016,52 @@ def write_run_mcap(
                     frame_transform_message,
                 )
 
-                schema_specs = {
-                    "/robot/diagnostic_scene": (
-                        "foxglove.SceneUpdate",
-                        SCENE_UPDATE_SCHEMA,
-                    ),
-                    "/robot/diagnostic_pose": (
-                        "foxglove.PoseInFrame",
-                        POSE_IN_FRAME_SCHEMA,
-                    ),
-                    "/robot/diagnostic_trajectory": (
-                        "foxglove.PosesInFrame",
-                        POSES_IN_FRAME_SCHEMA,
-                    ),
-                    "/robot/diagnostic_joint_states": (
-                        "foxglove.JointStates",
-                        JOINT_STATES_SCHEMA,
-                    ),
-                    "/actuators/commands": (
-                        "npa.ActuatorCommands",
-                        ACTUATOR_COMMANDS_SCHEMA,
-                    ),
-                    "/run/state": ("npa.RunState", RUN_STATE_SCHEMA),
-                }
-                for topic, (schema_name, schema) in schema_specs.items():
-                    schema_id = writer.register_schema(
-                        name=schema_name,
-                        encoding="jsonschema",
-                        data=json.dumps(schema).encode("utf-8"),
-                    )
-                    rich_channels[topic] = writer.register_channel(
-                        topic=topic, message_encoding="json", schema_id=schema_id
-                    )
+                if not rich_channels:
+                    schema_specs = {
+                        "/robot/diagnostic_scene": (
+                            "foxglove.SceneUpdate",
+                            SCENE_UPDATE_SCHEMA,
+                        ),
+                        "/robot/diagnostic_pose": (
+                            "foxglove.PoseInFrame",
+                            POSE_IN_FRAME_SCHEMA,
+                        ),
+                        "/robot/diagnostic_trajectory": (
+                            "foxglove.PosesInFrame",
+                            POSES_IN_FRAME_SCHEMA,
+                        ),
+                        "/robot/diagnostic_joint_states": (
+                            "foxglove.JointStates",
+                            JOINT_STATES_SCHEMA,
+                        ),
+                        "/actuators/commands": (
+                            "npa.ActuatorCommands",
+                            ACTUATOR_COMMANDS_SCHEMA,
+                        ),
+                        "/run/state": ("npa.RunState", RUN_STATE_SCHEMA),
+                    }
+                    for topic, (schema_name, schema) in schema_specs.items():
+                        schema_id = writer.register_schema(
+                            name=schema_name,
+                            encoding="jsonschema",
+                            data=json.dumps(schema).encode("utf-8"),
+                        )
+                        rich_channels[topic] = writer.register_channel(
+                            topic=topic, message_encoding="json", schema_id=schema_id
+                        )
 
-                transform_schema_id = writer.register_schema(
-                    name="foxglove.FrameTransform",
-                    encoding="jsonschema",
-                    data=json.dumps(_FRAME_TRANSFORM_SCHEMA).encode("utf-8"),
-                )
+                if transform_schema_id is None:
+                    transform_schema_id = writer.register_schema(
+                        name="foxglove.FrameTransform",
+                        encoding="jsonschema",
+                        data=json.dumps(_FRAME_TRANSFORM_SCHEMA).encode("utf-8"),
+                    )
                 transform_channel_id = transform_channel_id or writer.register_channel(
                     topic="/tf", message_encoding="json", schema_id=transform_schema_id
                 )
+                transform_epoch = base_ns + rich_action_sequence * step_ns
                 for camera in _camera_transforms(raw):
-                    transform_stamp = validate_channel_timestamp("/tf", base_ns)
+                    transform_stamp = validate_channel_timestamp("/tf", transform_epoch)
                     transform = frame_transform_message(
                         parent_frame_id=str(camera["parent_frame_id"]),
                         child_frame_id=str(camera["child_frame_id"]),
@@ -1100,7 +1107,7 @@ def write_run_mcap(
                         continue
                     while len(commands) < 8:
                         commands.append(0.0)
-                    stamp = base_ns + offset * step_ns
+                    stamp = base_ns + rich_action_sequence * step_ns
                     ground_truth = record.get("simulator_ground_truth")
                     ground_truth = (
                         ground_truth if isinstance(ground_truth, dict) else {}
@@ -1175,7 +1182,7 @@ def write_run_mcap(
                             channel_id=rich_channels[topic],
                             log_time=channel_stamp,
                             publish_time=channel_stamp,
-                            sequence=offset,
+                            sequence=rich_action_sequence,
                             data=json.dumps(message).encode("utf-8"),
                         )
                         summary.channels[topic] = summary.channels.get(topic, 0) + 1
@@ -1187,6 +1194,9 @@ def write_run_mcap(
                     previous_angles = angles
                     first_ns = stamp if not first_ns else min(first_ns, stamp)
                     last_ns = max(last_ns, stamp)
+                    rich_action_sequence += 1
+
+                rich_rollout_sources.append(metric.path.name)
 
                 metadata_payload.update(
                     {
@@ -1216,16 +1226,18 @@ def write_run_mcap(
                         f"{metric.path.name}: empty point-cloud series"
                     )
                     continue
-                pointcloud_schema_id = writer.register_schema(
-                    name="foxglove.PointCloud",
-                    encoding="jsonschema",
-                    data=json.dumps(_POINTCLOUD_SCHEMA).encode("utf-8"),
-                )
-                transform_schema_id = writer.register_schema(
-                    name="foxglove.FrameTransform",
-                    encoding="jsonschema",
-                    data=json.dumps(_FRAME_TRANSFORM_SCHEMA).encode("utf-8"),
-                )
+                if pointcloud_schema_id is None:
+                    pointcloud_schema_id = writer.register_schema(
+                        name="foxglove.PointCloud",
+                        encoding="jsonschema",
+                        data=json.dumps(_POINTCLOUD_SCHEMA).encode("utf-8"),
+                    )
+                if transform_schema_id is None:
+                    transform_schema_id = writer.register_schema(
+                        name="foxglove.FrameTransform",
+                        encoding="jsonschema",
+                        data=json.dumps(_FRAME_TRANSFORM_SCHEMA).encode("utf-8"),
+                    )
                 pointcloud_channel_id = (
                     pointcloud_channel_id
                     or writer.register_channel(
@@ -1396,6 +1408,19 @@ def write_run_mcap(
                 first_ns = timestamp_ns if not first_ns else min(first_ns, timestamp_ns)
                 last_ns = max(last_ns, timestamp_ns)
                 log_sequence += 1
+
+        if len(rich_rollout_sources) > 1:
+            metadata_payload.update(
+                {
+                    "action_rollout_count": str(len(rich_rollout_sources)),
+                    "action_rollout_sources": json.dumps(
+                        rich_rollout_sources, separators=(",", ":")
+                    ),
+                    "action_rollout_schedule": (
+                        "metric-input-order-global-synthetic-fps"
+                    ),
+                }
+            )
 
         metadata_payload.update(
             {

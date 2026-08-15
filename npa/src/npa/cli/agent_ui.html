@@ -7353,6 +7353,38 @@
           if (externalSignal) externalSignal.removeEventListener("abort", relayAbort);
         }
       }
+      function requestTimeoutMs(pathText, request, configOverride) {
+        if (pathText === "/api/foxglove/export") {
+          let cloudImport = false;
+          try {
+            const body = request && request.body;
+            const payload = typeof body === "string" ? JSON.parse(body) : body;
+            cloudImport = Boolean(payload && payload.cloud_import === true);
+          } catch (_err) {
+            cloudImport = false;
+          }
+          // Use the server-advertised Cloud indexing deadline and leave a full
+          // minute for response delivery. Local-only conversion retains its
+          // intentionally unbounded browser request budget.
+          const timeoutConfig = configOverride && typeof configOverride === "object"
+            ? configOverride
+            : foxgloveConfig;
+          const configuredSeconds = Number(
+            timeoutConfig && timeoutConfig.cloud_import_timeout_seconds
+          );
+          const serverSeconds = Number.isFinite(configuredSeconds) && configuredSeconds > 0
+            ? configuredSeconds
+            : 300;
+          return cloudImport ? Math.ceil((serverSeconds + 60) * 1000) : 0;
+        }
+        if (pathText.startsWith("/api/artifacts/")) return 60000;
+        if (
+          pathText === "/api/chat" ||
+          pathText === "/api/workflows/submit" ||
+          pathText === "/api/infra/provision"
+        ) return 900000;
+        return 12000;
+      }
       async function apiJson(path, init) {
         const req = init || {};
         const isMobile = document.body.classList.contains("mobile-agent");
@@ -7366,17 +7398,7 @@
           headers,
         };
         const pathText = String(path || "");
-        const timeoutMs = pathText === "/api/foxglove/export"
-          ? 0
-          : pathText.startsWith("/api/artifacts/")
-            ? 60000
-            : (
-              pathText === "/api/chat" ||
-              pathText === "/api/workflows/submit" ||
-              pathText === "/api/infra/provision"
-            )
-              ? 900000
-              : 12000;
+        const timeoutMs = requestTimeoutMs(pathText, req);
         const isChat = pathText === "/api/chat";
         let resp;
         let lastFetchErr = null;

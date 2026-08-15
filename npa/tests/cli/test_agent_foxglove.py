@@ -40,6 +40,14 @@ from npa.cli.agent_foxglove import (
     resolve_foxglove_config,
     sdk_assets_state,
 )
+from npa.agent_backend.foxglove import (
+    DEFAULT_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS as CONFIG_TIMEOUT_DEFAULT,
+    MAX_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS as CONFIG_TIMEOUT_MAX,
+)
+from npa.agent_backend.foxglove_cloud import (
+    DEFAULT_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS as CLOUD_TIMEOUT_DEFAULT,
+    MAX_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS as CLOUD_TIMEOUT_MAX,
+)
 from npa.workbench import foxglove as foxglove_pkg
 
 
@@ -129,6 +137,7 @@ def test_deploy_foxglove_settings_preserve_saved_values_and_validate_override(
         "viewer_backend": "foxglove-sdk",
         "org_slug": "saved-org",
         "live_url": "wss://robot.example/ws",
+        "cloud_import_timeout_seconds": "300",
     }
     with pytest.raises(ValueError, match="foxglove viewer backend"):
         resolve_settings(viewer_backend="unexpected")
@@ -146,6 +155,8 @@ def test_embedded_constants_match_workbench_package() -> None:
     assert FOXGLOVE_ARTIFACT_EXTENSIONS == foxglove_pkg.FOXGLOVE_ARTIFACT_EXTENSIONS
     assert MCAP_MAGIC == foxglove_pkg.MCAP_MAGIC
     assert FOXGLOVE_DEFAULT_EMBED_SRC == foxglove_pkg.DEFAULT_FOXGLOVE_EMBED_SRC
+    assert CONFIG_TIMEOUT_DEFAULT == CLOUD_TIMEOUT_DEFAULT
+    assert CONFIG_TIMEOUT_MAX == CLOUD_TIMEOUT_MAX
 
 
 # --------------------------------------------------------------------------- #

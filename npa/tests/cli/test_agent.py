@@ -36,6 +36,82 @@ def test_artifact_only_timeout_allows_preserved_run_inventory() -> None:
     assert ARTIFACT_ONLY_HTTP_TIMEOUT_SECONDS >= 60.0
 
 
+def test_canonical_artifact_only_probe_is_read_only_and_complete() -> None:
+    import httpx
+
+    from npa.cli.agent_resources import artifact_only_http_probe
+
+    digest = "a" * 64
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.raw_path.decode())
+        payloads = {
+            "/api/health": {"state_sha256": digest},
+            "/api/session": {"selection": {}},
+            "/api/artifacts/runs?prefix=&limit=100": {"runs": [{"run_id": "one"}]},
+            "/api/tools": {"tool_refs": ["workbench.foxglove.convert_run"]},
+            "/api/workflows/sim2real/status": {"stage": "idle"},
+            "/api/infra/k8s": {"has_infra": False},
+        }
+        return httpx.Response(200, json=payloads[paths[-1]])
+
+    with httpx.Client(
+        base_url="https://agent.example",
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        result = artifact_only_http_probe(client)
+
+    assert result["state_sha256"] == digest
+    assert result["run_count"] == result["tool_ref_count"] == 1
+    assert paths == [
+        "/api/health",
+        "/api/session",
+        "/api/artifacts/runs?prefix=&limit=100",
+        "/api/tools",
+        "/api/workflows/sim2real/status",
+        "/api/infra/k8s",
+        "/api/health",
+    ]
+
+
+def test_canonical_artifact_only_probe_rejects_state_mutation() -> None:
+    import httpx
+
+    from npa.cli.agent_deployment import DeploymentIdentityError
+    from npa.cli.agent_resources import artifact_only_http_probe
+
+    health_digests = iter(("a" * 64, "b" * 64))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/api/health":
+            return httpx.Response(200, json={"state_sha256": next(health_digests)})
+        if path == "/api/artifacts/runs":
+            return httpx.Response(200, json={"runs": []})
+        if path == "/api/tools":
+            return httpx.Response(200, json={"tool_refs": []})
+        return httpx.Response(200, json={})
+
+    with httpx.Client(
+        base_url="https://agent.example",
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        with pytest.raises(DeploymentIdentityError, match="mutated durable session"):
+            artifact_only_http_probe(client)
+
+
+def test_divergent_agent_helper_modules_are_not_packaged() -> None:
+    import importlib.util
+
+    cli_root = Path(agent_module.__file__).parent
+    duplicates = ("agent_credentials", "agent_live_verify", "agent_prereqs")
+    assert all(not (cli_root / f"{name}.py").exists() for name in duplicates)
+    assert all(
+        importlib.util.find_spec(f"npa.cli.{name}") is None for name in duplicates
+    )
+
+
 def test_staged_agent_source_is_readable_by_unprivileged_runtime(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -598,9 +674,7 @@ def test_agent_operator_profile_scopes_foxglove_token_to_private_credentials() -
     )
 
     credential_payloads = [
-        content
-        for _path, content in staged
-        if '"FOXGLOVE_API_TOKEN"' in content
+        content for _path, content in staged if '"FOXGLOVE_API_TOKEN"' in content
     ]
     assert len(credential_payloads) == 2
     assert all(
@@ -616,6 +690,66 @@ def test_agent_operator_profile_scopes_foxglove_token_to_private_credentials() -
         assert project["aliases"] == ["prod"]
         assert project["storage"]["bucket"] == "s3://agent-state"
         assert project["nebius"]["service_account_project_id"] == "project-abc"
+        # The legacy compatibility view is retained only alongside an exact
+        # selected owner; it must be byte-for-byte the selected project record.
+        assert project_store["current_project_id"] == "project-abc"
+        assert payload["storage"] == project["storage"]
+
+
+def test_agent_operator_profile_resolves_foxglove_token_only_into_private_credentials(
+    monkeypatch,
+) -> None:
+    import inspect
+
+    from npa.cli.agent import _write_agent_operator_profile
+
+    staged: list[tuple[str, str]] = []
+    commands: list[str] = []
+
+    class _FakeSSH:
+        def upload_private_text(self, content: str, remote_path: str) -> None:
+            staged.append((remote_path, content))
+
+        def run_or_raise(self, command: str, **_kwargs) -> str:
+            commands.append(command)
+            return ""
+
+        def run(self, command: str) -> str:
+            commands.append(command)
+            return ""
+
+    monkeypatch.setattr(
+        "npa.clients.credentials.load_credentials",
+        lambda: SimpleNamespace(foxglove_api_token="fox-fallback-unit-secret"),
+    )
+    _write_agent_operator_profile(
+        _FakeSSH(),
+        ssh_user="ubuntu",
+        project_alias="prod",
+        project_id="project-abc",
+        tenant_id="tenant-abc",
+        region="eu-north1",
+        tf_api_key="",
+        s3_bucket="agent-state",
+        s3_endpoint="https://storage.example",
+        s3_access_key="access",
+        s3_secret_key="secret",
+    )
+
+    public_payloads = [
+        content for _path, content in staged if '"default_project"' in content
+    ]
+    credential_payloads = [
+        content for _path, content in staged if '"FOXGLOVE_API_TOKEN"' in content
+    ]
+    assert len(public_payloads) == len(credential_payloads) == 2
+    assert all("fox-fallback-unit-secret" not in payload for payload in public_payloads)
+    assert all("fox-fallback-unit-secret" in payload for payload in credential_payloads)
+    assert all("fox-fallback-unit-secret" not in command for command in commands)
+    assert (
+        "foxglove_api_token"
+        not in inspect.signature(agent_module._bootstrap_agent_stack).parameters
+    )
 
 
 def test_resolve_deploy_storage_credentials_prefers_bootstrap_when_writable(
@@ -1019,7 +1153,9 @@ def test_ui_pins_lichtblick_recording_fetch_to_the_page_origin() -> None:
     assert "function pinLichtblickDsToSameOrigin" in source
     assert "window.location.origin" in source
     # The iframe URL always flows through the rewrite.
-    assert "const pinned = pinLichtblickDsToSameOrigin(url) || \"/lichtblick/\";" in source
+    assert (
+        'const pinned = pinLichtblickDsToSameOrigin(url) || "/lichtblick/";' in source
+    )
     assert 'viewer.searchParams.set("npa.layout", layoutKind);' in source
     assert 'viewer.searchParams.set("npa.camera"' in source
     assert "learningArtifactContractFor" in source
@@ -1067,8 +1203,7 @@ def test_bootstrap_injects_lichtblick_default_layout() -> None:
     # the upstream-provided placeholder, so the point cloud + camera show on load.
     assert "location = /lichtblick/ {" in nginx
     assert (
-        "sub_filter '/*LICHTBLICK_SUITE_DEFAULT_LAYOUT_PLACEHOLDER*/' '(()=>{"
-        in nginx
+        "sub_filter '/*LICHTBLICK_SUITE_DEFAULT_LAYOUT_PLACEHOLDER*/' '(()=>{" in nginx
     )
     assert "def _lichtblick_default_layout_json" in source
 
@@ -1087,21 +1222,20 @@ def test_bootstrap_injects_lichtblick_default_layout() -> None:
         v for k, v in learning_layout["configById"].items() if k.startswith("Image!")
     )
     assert learning_layout["layout"].startswith("Image!")
-    assert (
-        learning_image["imageMode"]["imageTopic"]
-        == "/camera/__NPA_PRIMARY_CAMERA__"
-    )
+    assert learning_image["imageMode"]["imageTopic"] == "/camera/__NPA_PRIMARY_CAMERA__"
     script = agent_site_module._lichtblick_default_layout_script()
     assert 'query.get("npa.layout")!=="learning"' in script
     assert 'query.get("npa.camera")' in script
     assert 'imageTopic="/camera/"+camera' in script
-    assert 'window.Worker=function(scriptUrl,options)' in script
+    assert "window.Worker=function(scriptUrl,options)" in script
     assert 'new URL("/lichtblick/npa-worker.js"' in script
     assert "location = /lichtblick/npa-worker.js {" in nginx
     assert "npa.target" in nginx
 
 
-def test_lichtblick_nginx_inline_javascript_has_no_nginx_variables_or_controls() -> None:
+def test_lichtblick_nginx_inline_javascript_has_no_nginx_variables_or_controls() -> (
+    None
+):
     """Inline nginx directive values cannot contain raw controls or bare ``$``."""
 
     from npa.cli.agent_site import (
@@ -1137,7 +1271,10 @@ eval(Buffer.from(process.argv[2], "base64").toString("utf8"));
         text=True,
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout == "IMPORTED=https://agent.example/lichtblick/assets/mcap.worker.js"
+    assert (
+        result.stdout
+        == "IMPORTED=https://agent.example/lichtblick/assets/mcap.worker.js"
+    )
     for target in (
         "//foreign.invalid/worker.js",
         "https://foreign.invalid/worker.js",
@@ -1166,7 +1303,9 @@ eval(Buffer.from(process.argv[2], "base64").toString("utf8"));
 
 def test_lichtblick_anonymous_routes_do_not_disable_api_authentication() -> None:
     source = _agent_nginx_site()
-    api_block = source.split("location /api/ {", 1)[1].split("location /assets/api/", 1)[0]
+    api_block = source.split("location /api/ {", 1)[1].split(
+        "location /assets/api/", 1
+    )[0]
     assert "auth_basic off" not in api_block
     assert "location = /lichtblick/npa-worker.js {" in source
     assert "location /lichtblick/recordings/ {" in source
@@ -1491,7 +1630,7 @@ def test_bootstrap_embeds_cameras_panel() -> None:
     assert "let foxgloveConfigWarmPromise = null" in source
     assert "void warmFoxgloveConfig()" in source
     assert "foxgloveConfigForActiveRun" in source
-    assert 'visualization.checked' in source
+    assert "visualization.checked" in source
     ensure_foxglove = source.split("async function ensureFoxgloveViewer", 1)[1].split(
         "function teardownFoxgloveViewer", 1
     )[0]
@@ -1500,9 +1639,9 @@ def test_bootstrap_embeds_cameras_panel() -> None:
         "prepareFoxgloveVisualizationAfterMount(config)"
     )
     assert '"-source-default"' in _agent_source()
-    assert "pane.setAttribute(\"aria-hidden\"" in source
-    assert "btn.setAttribute(\"aria-selected\"" in source
-    assert "event.key === \"ArrowRight\"" in source
+    assert 'pane.setAttribute("aria-hidden"' in source
+    assert 'btn.setAttribute("aria-selected"' in source
+    assert 'event.key === "ArrowRight"' in source
     assert "layout-rerun" in source
     assert "activateMainTab" in source
     assert "tab-panel.is-inactive" in source
@@ -1534,7 +1673,7 @@ def test_ui_renders_tenant_resource_states_and_refresh_control() -> None:
     source = _agent_ui_bundle()
     for marker in (
         'id="tenantResourcesPanel"',
-        '<h3>Tenant resources</h3>',
+        "<h3>Tenant resources</h3>",
         'id="tenantResourcesRefresh"',
         'id="tenantResourceCategories"',
         "refreshTenantResources",
@@ -1704,8 +1843,10 @@ def test_bootstrap_embeds_run_switching_controls() -> None:
     assert "reference proxy context" in source
     from npa.cli import agent as agent_module
 
-    stage_runtime = Path(agent_module.__file__).with_name("agent_stage_runtime.py").read_text(
-        encoding="utf-8"
+    stage_runtime = (
+        Path(agent_module.__file__)
+        .with_name("agent_stage_runtime.py")
+        .read_text(encoding="utf-8")
     )
     assert "def _artifact_backed_run_details" in stage_runtime
     assert "def _workflow_stage_defs_from_state" in stage_runtime
@@ -1714,7 +1855,9 @@ def test_bootstrap_embeds_run_switching_controls() -> None:
     assert "runDetailsRequestId" in source
     assert "runDetailsAbortController" in source
     assert "execution status unavailable" in source
-    assert "Never let a sparse update erase richer artifact fields from load-run" in source
+    assert (
+        "Never let a sparse update erase richer artifact fields from load-run" in source
+    )
     assert "Read-only: do not _record/_save here" in source
     assert (
         "Always use the stock demo run id and clear any prior media-artifact preview"
@@ -1847,13 +1990,17 @@ def test_bootstrap_run_finder_filters_by_name_or_id_not_path() -> None:
     assert "artifactPrefixValue" not in source
 
 
-def test_direct_run_load_cancels_background_discovery_and_uses_exact_artifacts() -> None:
+def test_direct_run_load_cancels_background_discovery_and_uses_exact_artifacts() -> (
+    None
+):
     source = _agent_ui_bundle()
 
     assert "let artifactRunsAbortController = null;" in source
     assert "artifactRunsAbortController.abort();" in source
     assert "Exact run loading takes precedence" in source
-    assert "await loadArtifactsForSelectedRun(runRef || runId, null, exactEntry" in source
+    assert (
+        "await loadArtifactsForSelectedRun(runRef || runId, null, exactEntry" in source
+    )
     assert "if (loaded && activeArtifactInventory.length)" in source
     assert 'const artifactsPromise = refreshArtifactRuns("", {' in source
     assert "singlePage: true," in source
@@ -1863,13 +2010,19 @@ def test_direct_run_load_cancels_background_discovery_and_uses_exact_artifacts()
     assert "deferPreferredViewer: true" in source
     assert 'showToast("Run loaded; preferred viewer failed: "' in source
     assert '"#stageList .stage-physical-job"' in source
-    assert "if (!physicalStageCount) await loadRunDetails(runId, detailOptions);" in source
+    assert (
+        "if (!physicalStageCount) await loadRunDetails(runId, detailOptions);" in source
+    )
 
 
 def test_artifact_backed_training_run_loads_without_rerun_recording() -> None:
     source = _agent_ui_bundle()
-    backend = Path(__file__).resolve().parents[2].joinpath("src/npa/cli/agent.py").read_text(
-        encoding="utf-8"
+    backend = (
+        Path(__file__)
+        .resolve()
+        .parents[2]
+        .joinpath("src/npa/cli/agent.py")
+        .read_text(encoding="utf-8")
     )
 
     assert '"output_artifact_count"' in backend
@@ -1906,7 +2059,10 @@ def test_bootstrap_artifact_stage_selector_and_clickable_timeline() -> None:
         "if (stageFilter && deriveArtifactStage(item.key, runId, stageWrapper) !== stageFilter) return false;"
         in source
     )
-    assert '["artifactStageFilter", "artifactTypeFilter", "artifactRoleFilter", "artifactSort"]' in source
+    assert (
+        '["artifactStageFilter", "artifactTypeFilter", "artifactRoleFilter", "artifactSort"]'
+        in source
+    )
     # Timeline stage rows are tagged and clickable to drive the stage filter.
     assert "stage_key: stageKey," in source
     assert 'data-stage-key="' in source
@@ -1949,7 +2105,9 @@ def test_groot_learning_recording_activates_real_rrd_and_truthful_note() -> None
     from npa.cli import agent_viewer_runtime
 
     source = Path(agent_viewer_runtime.__file__).read_text(encoding="utf-8")
-    branch = source.split('if render == "rerun":', 1)[1].split('elif render == "mcap":', 1)[0]
+    branch = source.split('if render == "rerun":', 1)[1].split(
+        'elif render == "mcap":', 1
+    )[0]
     assert "if is_learning:" in branch
     assert 'sim_viz["preview_entity"] = f"heldout/camera/{camera}"' in branch
     assert "validated primary camera is {camera}" in branch
@@ -1961,7 +2119,9 @@ def test_groot_learning_recording_activates_real_rrd_and_truthful_note() -> None
     )
     assert 'rrd_tmp = RRD_PATH.with_suffix(".rrd.tmp")' in branch
     assert "shutil.copy2(local_path, rrd_tmp)" in branch
-    assert branch.index("rrd_tmp.replace(RRD_PATH)") < branch.index("_restart_rerun_serve(force=True)")
+    assert branch.index("rrd_tmp.replace(RRD_PATH)") < branch.index(
+        "_restart_rerun_serve(force=True)"
+    )
 
 
 def test_bootstrap_visualize_run_selector_lists_discovered_runs() -> None:
@@ -2035,8 +2195,10 @@ def test_default_run_discovery_is_generic_not_hardcoded() -> None:
     assert "exclude=_discovery_exclude_roots()" in source
     assert "AGENT_DEFAULT_WORKFLOW_PREFIXES" not in source
     # Per-run lookup falls back to a generic cross-category, cross-bucket find.
-    runtime = Path(agent_module.__file__).with_name("agent_stage_runtime.py").read_text(
-        encoding="utf-8"
+    runtime = (
+        Path(agent_module.__file__)
+        .with_name("agent_stage_runtime.py")
+        .read_text(encoding="utf-8")
     )
     assert "find_run_artifacts_across_buckets(" in runtime
 
@@ -2047,19 +2209,24 @@ def test_run_details_resolves_run_generically_by_id() -> None:
     instead of the generic sim2real 'not_run' template — no path/prefix required.
     """
 
-    source = Path(agent_module.__file__).with_name("agent_stage_runtime.py").read_text(
-        encoding="utf-8"
+    source = (
+        Path(agent_module.__file__)
+        .with_name("agent_stage_runtime.py")
+        .read_text(encoding="utf-8")
     )
     # Backend resolves the run generically across categories (no prefix needed).
     assert "def _artifact_backed_run_details(" in source
-    assert "resource_bucket: str = \"\"" in source
+    assert 'resource_bucket: str = ""' in source
     assert "find_run_artifacts_across_buckets(" in source
     # Frontend loads run details / run by id WITHOUT a path prefix.
     ui = _agent_ui_bundle()
     assert '"/api/workflows/sim2real/runs/" + encodeURIComponent(target)' in ui
     assert "body: JSON.stringify({ run_id: targetRunId, run_ref: targetRunRef })" in ui
     assert 'entry.source_type === "artifact_storage"' in ui
-    assert "loadArtifactsForSelectedRun(chosen, null, entry, { pendingSelection: true })" in ui
+    assert (
+        "loadArtifactsForSelectedRun(chosen, null, entry, { pendingSelection: true })"
+        in ui
+    )
     assert "prefix: artifactPrefixValue()" not in ui
     assert 'params.set("resource_bucket", resourceBucket)' in ui
     assert 'params.set("resolved_prefix", resolvedPrefix)' in ui
@@ -2074,7 +2241,7 @@ def test_artifact_cards_define_runtime_metadata_before_rendering() -> None:
     assert "const learningSummary = data && data.summary && data.summary.learning" in ui
     assert "list.hidden = Boolean(learningSummary);" in ui
     assert 'const s3uri = String(item.s3_uri || "");' in ui
-    assert 'data-s3-uri="\' + escapeHtml(s3uri)' in ui
+    assert "data-s3-uri=\"' + escapeHtml(s3uri)" in ui
 
 
 def test_agent_ui_surfaces_physical_managed_job_ids_per_stage() -> None:
@@ -2378,7 +2545,12 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             )
         if url_s.endswith("/api/workflows/sim2real/status"):
             workflow_status_timeouts.append(float(_kwargs["timeout"]))
-            return _Resp({"latest_submit": {"run_id": "agent-run-123"}, "sim_viz": {"stage": "demo"}})
+            return _Resp(
+                {
+                    "latest_submit": {"run_id": "agent-run-123"},
+                    "sim_viz": {"stage": "demo"},
+                }
+            )
         if url_s.endswith("/welcome"):
             return _Resp("<html>NPA Agent is running</html>", status_code=200)
         if url_s.endswith("/healthz"):
@@ -2398,14 +2570,14 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 '<div id="stagesPanel"><h3>Stages</h3>'
                 '<div class="stages-run-picker">'
                 '<select id="stagesRunSelect"></select>'
-                '<label>Search NPA workflow/artifact runs</label>'
+                "<label>Search NPA workflow/artifact runs</label>"
                 '<input id="stagesRunInput" />'
                 '<button id="stagesLoadRun"></button></div></div>'
                 '<div id="tenantResourcesPanel"><h3>Tenant resources</h3>'
                 '<button id="tenantResourcesRefresh"></button>'
-                'Accessible / discovered; Configured references</div>'
-                '<script>function loadSelectedRun(){} function syncRunChooserFields(){} '
-                'function filterStagesRunSelect(){} function resolveStagesRunChoice(){}</script>'
+                "Accessible / discovered; Configured references</div>"
+                "<script>function loadSelectedRun(){} function syncRunChooserFields(){} "
+                "function filterStagesRunSelect(){} function resolveStagesRunChoice(){}</script>"
                 '<div id="renderModeVideo"></div><div id="artifactPreviewHost"></div>'
                 '<div id="viewerPaneMedia"></div><div id="rerunBundleCover"></div>'
                 '<button id="renderModeFoxglove"></button>'
@@ -2416,18 +2588,18 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 '<button id="chatDrawerToggle" class="chat-fab"></button>'
                 '<button id="chatDrawerClose"></button>'
                 '<form id="chatForm"></form><div id="mobileChatAuth"></div>'
-                '<script>function wireUi(){} function sendChat(){} function activateMainTab(){} '
-                'function authenticatedPreviewObjectUrl(){} function waitUntilRerunPastBundleSplash(){} '
-                'function scheduleRerunBundleUncover(){} function swapRerunRecordingInPlace(){} '
-                'function safeHideRerunBundleCover(){} function captureVisualContext(){} '
-                'function describeVisual(){} function enqueueChatJob(){} function processChatQueue(){} '
-                'function queueChatText(){} function waitForQualityRerunFrame(){} '
-                'function captureCanvasDataUrl(){} function ensureRerunCaptureBridge(){} '
-                'function pickBestIframeCanvas(){} function sampleFrameStats(){} '
-                'function openFullChatTab(){} '
+                "<script>function wireUi(){} function sendChat(){} function activateMainTab(){} "
+                "function authenticatedPreviewObjectUrl(){} function waitUntilRerunPastBundleSplash(){} "
+                "function scheduleRerunBundleUncover(){} function swapRerunRecordingInPlace(){} "
+                "function safeHideRerunBundleCover(){} function captureVisualContext(){} "
+                "function describeVisual(){} function enqueueChatJob(){} function processChatQueue(){} "
+                "function queueChatText(){} function waitForQualityRerunFrame(){} "
+                "function captureCanvasDataUrl(){} function ensureRerunCaptureBridge(){} "
+                "function pickBestIframeCanvas(){} function sampleFrameStats(){} "
+                "function openFullChatTab(){} "
                 'function refreshTenantResources(){ fetch("/api/resources"); } '
-                'do not prefetch .rrd bytes; skipUserAppend; Describe this — capturing; '
-                'async function loadArtifact(payload){ await swapRerunRecordingInPlace(); } '
+                "do not prefetch .rrd bytes; skipUserAppend; Describe this — capturing; "
+                "async function loadArtifact(payload){ await swapRerunRecordingInPlace(); } "
                 '<button id="openFullChatTab"></button>'
                 "async function refresh(){} "
                 "handle.add_receiver(recordingUrl, false); "
@@ -2948,9 +3120,15 @@ def test_bootstrap_installs_nebius_cli_and_sa_profile() -> None:
     assert "--token-file /mnt/cloud-metadata/token" in source
     assert 'nebius_profile = "cursor-sa"' in source
     assert "--profile {nebius_profile}" in source
-    assert '"$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token >/dev/null' in source
+    assert (
+        '"$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token >/dev/null'
+        in source
+    )
     assert 'sudo -H "$NEBIUS_BIN" profile create' in source
-    assert 'sudo -H "$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token' in source
+    assert (
+        'sudo -H "$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token'
+        in source
+    )
     assert "nebius CLI binary not found after install" in source
     assert "--parent-id" in source
 
@@ -3124,8 +3302,8 @@ def test_bootstrap_verifies_attached_identity_with_project_scoped_fallback() -> 
     assert "expected_sa={expected_agent_service_account_id}" in source
     assert "isinstance(value, str) and value == expected" in source
     assert '[[ "$whoami_json" != *"$expected_sa"* ]]' not in source
-    assert "iam project list --parent-id \"$expected_tenant\" --all" in source
-    assert "iam project get --id \"$expected_project\"" in source
+    assert 'iam project list --parent-id "$expected_tenant" --all' in source
+    assert 'iam project get --id "$expected_project"' in source
     assert "forcing a broad tenant editors grant" in source
     assert "env -u NEBIUS_IAM_TOKEN -u NPA_NEBIUS_IAM_TOKEN" in source
 
@@ -3352,6 +3530,28 @@ def test_agent_preflight_all_pass(monkeypatch, tmp_path) -> None:
     assert "[PASS] terraform" in result.output
     assert "[PASS] ssh_public_key" in result.output
     assert "[PASS] token_factory" in result.output
+
+
+def test_agent_hard_prereqs_fail_closed_on_provider_lock_error(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.terraform_lock import TerraformLockError
+
+    public_key = tmp_path / "id_ed25519.pub"
+    public_key.write_text("ssh-ed25519 AAAA test\n", encoding="utf-8")
+    (tmp_path / "id_ed25519").write_text("private\n", encoding="utf-8")
+    monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
+
+    def reject_lock(_terraform_dir):
+        raise TerraformLockError("provider lock does not cover test platform")
+
+    monkeypatch.setattr("npa.terraform_lock.validate_provider_lock", reject_lock)
+    results = agent_module._agent_hard_prereq_results(str(public_key))
+
+    terraform = next(result for result in results if result.name == "terraform")
+    assert terraform.status == "FAIL"
+    assert "provider-lock compatibility failed" in terraform.summary
+    assert terraform.remedy == "provider lock does not cover test platform"
 
 
 def test_agent_preflight_invokes_exact_deploy_storage_decision(
@@ -3714,8 +3914,10 @@ def test_run_details_surface_per_stage_workflow_logs() -> None:
     """Run details must surface real per-stage execution (command/returncode/status)
     from the npa.workflow run manifest so operators can view logs of each stage."""
 
-    source = Path(agent_module.__file__).with_name("agent_stage_runtime.py").read_text(
-        encoding="utf-8"
+    source = (
+        Path(agent_module.__file__)
+        .with_name("agent_stage_runtime.py")
+        .read_text(encoding="utf-8")
     )
     assert "def _workflow_run_steps(" in source
     assert "/npa-workflow/manifest.json" in source
@@ -4036,9 +4238,9 @@ def test_agent_deploy_keeps_s3_sentinels_out_of_terraform_and_agent_record(
         / "terraform"
         / "cloud_init.yaml.tpl"
     ).read_text(encoding="utf-8")
-    protected_write_files = template.split(
-        '%{ if workbench_type != "agent" ~}', 1
-    )[1].split("%{ endif ~}", 1)[0]
+    protected_write_files = template.split('%{ if workbench_type != "agent" ~}', 1)[
+        1
+    ].split("%{ endif ~}", 1)[0]
     assert "write_files:" in protected_write_files
     assert "${aws_access_key}" in protected_write_files
     assert "${aws_secret_key}" in protected_write_files
@@ -4237,7 +4439,9 @@ def test_agent_only_deploy_omits_paidf_capacity_reservation(
         "npa.cli.agent._agent_storage_result",
         return_value=SimpleNamespace(status="PASS"),
     )
-    mocker.patch("npa.cli.agent._resolve_deploy_llm_credentials", return_value=("k", "m"))
+    mocker.patch(
+        "npa.cli.agent._resolve_deploy_llm_credentials", return_value=("k", "m")
+    )
     mocker.patch(
         "npa.clients.nebius.bootstrap_agent_environment",
         return_value={"iam_token": "token-from-bootstrap"},

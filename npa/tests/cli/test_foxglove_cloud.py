@@ -7,11 +7,15 @@ import httpx
 import pytest
 
 from npa.agent_backend.foxglove_cloud import (
+    DEFAULT_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS,
+    FOXGLOVE_CLOUD_IMPORT_TIMEOUT_ENV,
     FOXGLOVE_LAYOUT_ID,
     FOXGLOVE_LAYOUT_NAME,
     FoxgloveCloudClient,
     FoxgloveCloudError,
+    FoxgloveCloudTimeoutError,
     data_aware_layout_data,
+    resolve_cloud_import_timeout_seconds,
 )
 
 
@@ -134,9 +138,7 @@ def test_data_aware_layout_omits_unsupported_empty_3d_panel() -> None:
     assert [panel["panelType"] for panel in _panel_nodes(layout["content"])] == [
         "Image"
     ]
-    assert _tab_nodes(layout["content"])[0]["tabs"][0]["title"] == (
-        "Primary (/camera)"
-    )
+    assert _tab_nodes(layout["content"])[0]["tabs"][0]["title"] == ("Primary (/camera)")
 
 
 def test_cloud_layout_is_created_then_reused_without_quota_churn() -> None:
@@ -381,16 +383,122 @@ def test_cloud_reuses_in_progress_import_without_upload(tmp_path: Path) -> None:
             raise AssertionError("unchanged pending recording must not upload again")
         raise AssertionError(str(request.url))
 
+    now = [10.0]
+    sleeps: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        now[0] += seconds
+
     cloud = FoxgloveCloudClient(
         "token",
         client=httpx.Client(transport=httpx.MockTransport(handler)),
-        sleep=lambda _: None,
+        sleep=sleep,
+        clock=lambda: now[0],
+        wait_timeout_seconds=10,
     )
 
     result = cloud.ensure_recording(recording, run_id="run")
 
     assert result.recording_id == "rec_pending"
     assert result.reused is True
+    assert sleeps == [2.0]
+
+
+def test_cloud_wait_surfaces_terminal_import_failure(tmp_path: Path) -> None:
+    recording = tmp_path / "run.mcap"
+    recording.write_bytes(b"\x89MCAP0\r\nfailed")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/v1/recordings/"):
+            return httpx.Response(404, json={})
+        if request.url.path == "/v1/data/pending-imports":
+            return httpx.Response(
+                200,
+                json=[{"requestId": "req", "status": "failed", "updatedAt": "now"}],
+            )
+        raise AssertionError(str(request.url))
+
+    cloud = FoxgloveCloudClient(
+        "token",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        sleep=lambda _seconds: None,
+        wait_timeout_seconds=10,
+    )
+    with pytest.raises(FoxgloveCloudError, match="could not import") as exc_info:
+        cloud.ensure_recording(recording, run_id="run")
+    assert exc_info.value.status_code == 422
+
+
+def test_cloud_wait_has_monotonic_deadline_and_safe_context(tmp_path: Path) -> None:
+    recording = tmp_path / "run.mcap"
+    recording.write_bytes(b"\x89MCAP0\r\nforever-pending")
+    digest = hashlib.sha256(recording.read_bytes()).hexdigest()
+    key = f"npa-{digest}"
+    now = [100.0]
+    sleeps: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/v1/recordings/{key}":
+            return httpx.Response(404, json={})
+        if request.url.path == "/v1/data/pending-imports":
+            return httpx.Response(
+                200,
+                json=[{"requestId": "req", "status": "processing", "updatedAt": "now"}],
+            )
+        raise AssertionError(str(request.url))
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    cloud = FoxgloveCloudClient(
+        "token-not-in-error",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        sleep=sleep,
+        clock=lambda: now[0],
+        wait_timeout_seconds=5,
+    )
+
+    with pytest.raises(FoxgloveCloudTimeoutError) as exc_info:
+        cloud.ensure_recording(recording, run_id="run")
+
+    error = exc_info.value
+    assert error.status_code == 504
+    assert error.context == {
+        "recording_key": key,
+        "recording_status": "missing",
+        "import_status": "processing",
+        "elapsed_seconds": 5.0,
+    }
+    assert sleeps == [2.0, 2.0, 1.0]
+    assert "token-not-in-error" not in str(error)
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "nan", "inf", "3600.1", "invalid"])
+def test_cloud_import_timeout_rejects_non_positive_or_non_finite_values(
+    value: str,
+) -> None:
+    with pytest.raises(ValueError, match=FOXGLOVE_CLOUD_IMPORT_TIMEOUT_ENV):
+        resolve_cloud_import_timeout_seconds(value, environ={})
+    with pytest.raises(FoxgloveCloudError) as exc_info:
+        FoxgloveCloudClient("token", wait_timeout_seconds=value)
+    assert exc_info.value.status_code == 503
+    assert isinstance(exc_info.value.__cause__, ValueError)
+    assert "no greater than 3600" in str(exc_info.value)
+
+
+def test_cloud_import_timeout_default_and_environment_override() -> None:
+    assert (
+        resolve_cloud_import_timeout_seconds(environ={})
+        == DEFAULT_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS
+    )
+    assert (
+        resolve_cloud_import_timeout_seconds(
+            environ={FOXGLOVE_CLOUD_IMPORT_TIMEOUT_ENV: "12.5"}
+        )
+        == 12.5
+    )
 
 
 def test_cloud_errors_are_actionable_and_do_not_echo_token(tmp_path: Path) -> None:

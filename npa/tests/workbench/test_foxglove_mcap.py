@@ -707,12 +707,9 @@ def test_action_rollout_emits_meaningful_robot_motion_contract(tmp_path: Path) -
     assert scene_schema["properties"]["deletions"]["items"]["title"] == (
         "foxglove.SceneEntityDeletion"
     )
-    entity_properties = scene_schema["properties"]["entities"]["items"][
-        "properties"
-    ]
+    entity_properties = scene_schema["properties"]["entities"]["items"]["properties"]
     assert {
-        name: entity_properties[name]["items"]["title"]
-        for name in official_array_items
+        name: entity_properties[name]["items"]["title"] for name in official_array_items
     } == official_array_items
 
     def arrays_without_items(node, path="$"):
@@ -725,9 +722,7 @@ def test_action_rollout_emits_meaningful_robot_motion_contract(tmp_path: Path) -
 
     assert arrays_without_items(scene_schema) == []
     malformed = copy.deepcopy(scene_schema)
-    del malformed["properties"]["entities"]["items"]["properties"]["models"][
-        "items"
-    ]
+    del malformed["properties"]["entities"]["items"]["properties"]["models"]["items"]
     assert arrays_without_items(malformed) == [
         "$.properties.entities.items.properties.models"
     ]
@@ -741,3 +736,148 @@ def test_action_rollout_emits_meaningful_robot_motion_contract(tmp_path: Path) -
     ):
         assert message_times[topic] == message_times["/camera"]
     assert messages["/tf"][0]["parent_frame_id"] == "isaac_world"
+
+
+def test_multiple_action_rollouts_share_channels_and_one_monotonic_schedule(
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("mcap")
+    from collections import Counter
+
+    from mcap.reader import make_reader
+
+    rollout_paths: list[Path] = []
+    expected_steps: list[int] = []
+    for rollout_index, action_count in enumerate((2, 3), start=1):
+        path = tmp_path / f"0{rollout_index}-action-rollout.json"
+        actions = []
+        for local_index in range(action_count):
+            step = (rollout_index - 1) * 100 + local_index
+            expected_steps.append(step)
+            actions.append(
+                {
+                    "step": step,
+                    "sim_step": step * 4,
+                    "action": [
+                        rollout_index * 10 + local_index + joint / 10
+                        for joint in range(8)
+                    ],
+                    "simulator_ground_truth": {
+                        "contact": local_index > 0,
+                        "stable_grasp": rollout_index == 2 and local_index > 0,
+                        "termination_reason": "running",
+                    },
+                }
+            )
+        path.write_text(
+            json.dumps(
+                {
+                    "schema": "npa.sim2real.action_rollout.v1",
+                    "actions": actions,
+                    "camera_metadata": [
+                        {
+                            "name": f"rollout_{rollout_index}_camera",
+                            "pose_frame": "isaac_world",
+                            "position": [float(rollout_index), 0.0, 1.0],
+                            "rotation": [1.0, 0.0, 0.0, 0.0],
+                            "quaternion_order": "wxyz",
+                        }
+                    ],
+                },
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        rollout_paths.append(path)
+
+    metrics = [MetricsInput(path=path, name=path.stem) for path in rollout_paths]
+    outputs = [tmp_path / "multi-a.mcap", tmp_path / "multi-b.mcap"]
+    summaries = [
+        write_run_mcap(
+            output=output,
+            metrics=metrics,
+            fps=5.0,
+            start_time_ns=1_000_000_000,
+            run_id="multi-rollout",
+        )
+        for output in outputs
+    ]
+
+    assert outputs[0].read_bytes() == outputs[1].read_bytes()
+    assert summaries[0].message_count == summaries[1].message_count == 32
+    assert summaries[0].scenes == 5
+    assert summaries[0].poses == 10
+    assert summaries[0].joint_states == 5
+    assert summaries[0].actuator_states == summaries[0].run_states == 5
+    assert summaries[0].transforms == 2
+
+    messages: dict[str, list[tuple[int, int, dict]]] = {}
+    with outputs[0].open("rb") as handle:
+        reader = make_reader(handle)
+        mcap_summary = reader.get_summary()
+        assert mcap_summary is not None
+        channels_per_topic = Counter(
+            channel.topic for channel in mcap_summary.channels.values()
+        )
+        for topic in (
+            "/robot/diagnostic_scene",
+            "/robot/diagnostic_pose",
+            "/robot/diagnostic_trajectory",
+            "/robot/diagnostic_joint_states",
+            "/actuators/commands",
+            "/run/state",
+            "/tf",
+        ):
+            assert channels_per_topic[topic] == 1
+        schema_names = Counter(schema.name for schema in mcap_summary.schemas.values())
+        assert schema_names["foxglove.SceneUpdate"] == 1
+        assert schema_names["foxglove.FrameTransform"] == 1
+
+        handle.seek(0)
+        for schema, channel, message in make_reader(handle).iter_messages():
+            messages.setdefault(channel.topic, []).append(
+                (message.log_time, message.sequence, json.loads(message.data))
+            )
+            if channel.topic == "/robot/diagnostic_scene":
+                assert schema is not None
+                wire_schema = json.loads(schema.data)
+                assert wire_schema == SCENE_UPDATE_SCHEMA
+                jsonschema.validate(json.loads(message.data), wire_schema)
+
+        handle.seek(0)
+        metadata = {
+            record.name: dict(record.metadata)
+            for record in make_reader(handle).iter_metadata()
+        }["npa"]
+
+    rich_topics = (
+        "/robot/diagnostic_scene",
+        "/robot/diagnostic_pose",
+        "/robot/diagnostic_trajectory",
+        "/robot/diagnostic_joint_states",
+        "/actuators/commands",
+        "/run/state",
+    )
+    expected_times = [1_000_000_000 + index * 200_000_000 for index in range(5)]
+    for topic in rich_topics:
+        times = [timestamp for timestamp, _sequence, _payload in messages[topic]]
+        sequences = [sequence for _timestamp, sequence, _payload in messages[topic]]
+        assert times == expected_times
+        assert all(later > earlier for earlier, later in zip(times, times[1:]))
+        assert sequences == list(range(5))
+    tf_times = [timestamp for timestamp, _sequence, _payload in messages["/tf"]]
+    assert tf_times == [1_000_000_000, 1_400_000_000]
+    assert all(later >= earlier for earlier, later in zip(tf_times, tf_times[1:]))
+    assert [payload["step"] for _time, _seq, payload in messages["/run/state"]] == (
+        expected_steps
+    )
+    assert metadata["action_rollout_count"] == "2"
+    assert json.loads(metadata["action_rollout_sources"]) == [
+        path.name for path in rollout_paths
+    ]
+    assert metadata["action_rollout_schedule"] == (
+        "metric-input-order-global-synthetic-fps"
+    )
+    independently_inspected = summarize_mcap(outputs[0])
+    assert independently_inspected.channels_monotonic is True
+    assert independently_inspected.message_count == 32
