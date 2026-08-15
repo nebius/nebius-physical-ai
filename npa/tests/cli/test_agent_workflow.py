@@ -922,6 +922,15 @@ def test_bootstrap_embeds_workflow_endpoints() -> None:
     assert "pip install -e" in source
     assert "deploy/cluster" in source
     assert "_soperator_deploy_from_payload" in source
+    assert "DEFAULT_SOLUTIONS_LIBRARY_REF" in source
+    assert "_validate_immutable_solutions_library_ref" in source
+    assert "SoperatorDeploymentValidationError" in source
+    assert '"status": "degraded-validation"' in source
+    assert "gpu_creation_check_timeout_seconds" in source
+    assert "_validate_gpu_creation_check_timeout" in source
+    assert '"system_max_size": spec.effective_system_max_size()' in source
+    assert '"capacity_mode": pool.capacity_mode()' in source
+    assert '"reservation_selector": pool.reservation_selector_kind() or None' in source
     assert '@app.get("/workflows/draft")' in source
     assert "workflowYaml" in bundled
     assert "validateWorkflowYaml" in bundled

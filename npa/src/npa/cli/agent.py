@@ -3939,6 +3939,10 @@ def _soperator_validate_payload(body: dict) -> dict:
             "apiVersion": "npa.soperator/v0.0.1",
             "name": spec.name,
             "region": spec.region,
+            "control_plane": {{
+                "system_min_size": spec.system_min_size,
+                "system_max_size": spec.effective_system_max_size(),
+            }},
             "worker_pools": [pool.name for pool in spec.workers],
             "docker_cache_pools": [pool.name for pool in spec.workers if pool.docker_cache],
             "workers": [
@@ -3948,6 +3952,8 @@ def _soperator_validate_payload(body: dict) -> dict:
                     "preset": pool.preset,
                     "size": pool.size,
                     "preemptible": pool.preemptible,
+                    "capacity_mode": pool.capacity_mode(),
+                    "reservation_selector": pool.reservation_selector_kind() or None,
                     "docker_cache": pool.docker_cache,
                 }}
                 for pool in spec.workers
@@ -3960,6 +3966,13 @@ def _soperator_validate_payload(body: dict) -> dict:
 
 
 def _soperator_deploy_from_payload(body: dict) -> dict:
+    from npa.soperator.lifecycle import (
+        SoperatorDeploymentValidationError,
+        _validate_gpu_creation_check_timeout,
+        _validate_immutable_solutions_library_ref,
+    )
+    from npa.soperator.spec import DEFAULT_SOLUTIONS_LIBRARY_REF
+
     ready, reason = _agent_npa_ready()
     if not ready:
         return {{"ok": False, "status": "blocked", "error": reason}}
@@ -3967,6 +3980,24 @@ def _soperator_deploy_from_payload(body: dict) -> dict:
     validation = _soperator_validate_payload(body)
     if not validation.get("ok"):
         return {{"ok": False, "status": "invalid", "validation": validation}}
+    try:
+        ref = _validate_immutable_solutions_library_ref(
+            str(
+                body.get("ref")
+                or body.get("solutions_library_ref")
+                or DEFAULT_SOLUTIONS_LIBRARY_REF
+            )
+        )
+    except ValueError as exc:
+        return {{"ok": False, "status": "invalid", "error": str(exc), "validation": validation}}
+    try:
+        raw_gpu_timeout = body.get("gpu_creation_check_timeout_seconds")
+        gpu_creation_check_timeout_seconds = (
+            30 * 60 if raw_gpu_timeout is None else int(raw_gpu_timeout)
+        )
+        _validate_gpu_creation_check_timeout(gpu_creation_check_timeout_seconds)
+    except (TypeError, ValueError) as exc:
+        return {{"ok": False, "status": "invalid", "error": str(exc), "validation": validation}}
     if dry_run:
         return {{
             "ok": True,
@@ -3974,12 +4005,13 @@ def _soperator_deploy_from_payload(body: dict) -> dict:
             "dry_run": True,
             "validation": validation,
             "command": "npa soperator deploy --spec <validated-spec> --output json",
+            "solutions_library_ref": ref,
+            "gpu_creation_check_timeout_seconds": gpu_creation_check_timeout_seconds,
         }}
     timeout_minutes = int(body.get("timeout_minutes") or body.get("timeout") or 90)
     project = _agent_project_alias(str(body.get("project") or ""))
     terraform_dir_text = str(body.get("terraform_dir") or "").strip()
     terraform_dir = Path(terraform_dir_text).expanduser() if terraform_dir_text else None
-    ref = str(body.get("ref") or body.get("solutions_library_ref") or "main")
     apply_fixes = bool(body.get("apply_fixes", True))
     spec_path = _write_soperator_temp_spec(_soperator_spec_text_from_payload(body))
     try:
@@ -3993,7 +4025,9 @@ def _soperator_deploy_from_payload(body: dict) -> dict:
             solutions_library_ref=ref,
             project=project or None,
             timeout_minutes=timeout_minutes,
+            gpu_creation_check_timeout_seconds=gpu_creation_check_timeout_seconds,
             apply_fixes=apply_fixes,
+            stream_terraform_output=False,
             on_status=lambda msg: None,
         )
         return {{
@@ -4002,6 +4036,14 @@ def _soperator_deploy_from_payload(body: dict) -> dict:
             "dry_run": False,
             "validation": validation,
             "result": result,
+        }}
+    except SoperatorDeploymentValidationError as exc:
+        return {{
+            "ok": False,
+            "status": "degraded-validation",
+            "error": str(exc),
+            "validation": validation,
+            "result": exc.result,
         }}
     except Exception as exc:
         return {{"ok": False, "status": "error", "error": str(exc), "validation": validation}}
