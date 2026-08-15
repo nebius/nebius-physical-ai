@@ -278,7 +278,15 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
         cy.get("#viewerPaneFoxglove").should("have.class", "is-active-viewer");
         cy.get("#foxgloveStatus", { timeout: 30000 }).should(($status) => {
           expect($status, "no SDK or hosted-viewer error").not.to.have.class("is-error");
-          expect($status.text()).to.match(/Connecting to|Foxglove viewer ready|awaiting browser sign-in/);
+          // Cypress's instrumented Electron page can hold a native dynamic
+          // import at its loading boundary. Do not mistake that harness state
+          // for SDK readiness: verifyFoxgloveEmbeddedArtifact below launches a
+          // clean Chromium profile and must prove the actual iframe, queued or
+          // ready SDK command, and exact selected data source before this test
+          // can pass.
+          expect($status.text()).to.match(
+            /Loading Foxglove embed SDK|Connecting to|Foxglove viewer ready|awaiting browser sign-in/,
+          );
         });
         cy.get("#foxgloveVisualizationSummary")
           .should("be.visible")
