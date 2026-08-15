@@ -519,14 +519,17 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
     if (/%25(?:2f|3a)/i.test(parsed.search)) {
       throw new Error("real popup double-encoded the recording URL");
     }
-    await popup.waitForLoadState("domcontentloaded").catch(() => {});
-    await popup.waitForTimeout(2500);
     const hostedEvidence = path.join(evidenceDir, "live-hosted-foxglove-after.png");
-    await popup.screenshot({ path: hostedEvidence });
-    fs.chmodSync(hostedEvidence, 0o600);
-    const pixels = screenshotStats(hostedEvidence);
-    if (!pixels.nonblank) {
-      throw new Error("hosted Foxglove/sign-in/error surface is visually blank");
+    let pixels = { nonblank: false };
+    while (!pixels.nonblank) {
+      // Navigation commit can precede the cross-origin application's first
+      // paint by many seconds. Keep sampling the owner-only evidence path
+      // until Foxglove renders a real sign-in/viewer/error surface; a blank
+      // placeholder is never accepted as hosted visual evidence.
+      await popup.screenshot({ path: hostedEvidence });
+      fs.chmodSync(hostedEvidence, 0o600);
+      pixels = screenshotStats(hostedEvidence);
+      if (!pixels.nonblank) await popup.waitForTimeout(500);
     }
     const response = officialResponses.find((item) => item.url === expectedWebUrl) ||
       officialResponses[0] || { status: 0 };
