@@ -116,14 +116,15 @@ test "$(dpkg-query -W -f='${Version}' python3.11)" = "$PYTHON_VERSION"
 rm -rf /tmp/npa-python311
 
 if [ "$INSTALL_SKYPILOT_PREREQS" = "1" ]; then
-  # SkyPilot's in-pod Kubernetes bootstrap needs a SYSTEM python3 plus rsync, an ssh
-  # client, and passwordless sudo; without all of them provisioning fails with
+  # SkyPilot's in-pod Kubernetes bootstrap needs a SYSTEM python3 plus rsync, an SSH
+  # client/server, and passwordless sudo; without all of them provisioning fails with
   # `container not found ("ray-node")`. Guarded by
   # npa/tests/guardrails/test_workbench_image_k8s_prereqs.py.
   apt-get install -y --no-install-recommends \
-    python3 python3-venv python3-pip rsync openssh-client sudo netcat-openbsd
+    python3 python3-venv python3-pip rsync openssh-client openssh-server sudo netcat-openbsd
   printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/99-npa-runtime-user
   chmod 0440 /etc/sudoers.d/99-npa-runtime-user
+  install -d -m 0755 /run/sshd
 fi
 
 rm -rf /var/lib/apt/lists/*
