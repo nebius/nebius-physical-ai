@@ -298,10 +298,11 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
             runRef: String(run.run_ref),
             artifactKey: String(run.artifact.key),
           },
-          // The task performs several independently strict live waits in a
-          // second clean profile. Do not cap real S3 preparation or hosted
-          // navigation; the assertions and browser events decide the gate.
-          { log: false, timeout: 0 },
+          // Cypress interprets timeout: 0 as "fail immediately" (unlike
+          // Playwright, where it disables the timeout). Keep the existing
+          // outer task watchdog; the real S3 and hosted-navigation waits
+          // inside the task remain uncapped and report their own assertions.
+          { log: false, timeout: 600000 },
         ).then((result) => {
           expect(result.runId).to.eq(run.run_id);
           expect(result.artifactKey).to.eq(run.artifact.key);
