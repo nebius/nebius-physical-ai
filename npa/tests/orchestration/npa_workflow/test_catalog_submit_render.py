@@ -43,6 +43,11 @@ def test_shipped_catalog_prepares_for_submit(
         spec_path,
         run_id=f"catalog-render-{spec_path.stem}",
         assume_decision="promote_checkpoint",
+        # Immutable baked images bind their NPA package to an exact checkout.
+        # Supply the same operator input CI supplies for the digest below.
+        config_overrides=(
+            {"source_sha": "0" * 40} if requires_baked_image else None
+        ),
         render_options=SkypilotRenderOptions(
             registry=TEST_REGISTRY,
             # Specs that fail closed on image provenance require the same

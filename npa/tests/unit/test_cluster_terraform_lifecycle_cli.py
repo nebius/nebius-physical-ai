@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -71,6 +72,103 @@ def _find_call(stream_calls: list[list[str]], *prefix: str) -> list[str] | None:
         if call[: len(prefix)] == list(prefix):
             return call
     return None
+
+
+def test_run_stream_capture_output_is_visible_and_retained(capsys) -> None:
+    result = tf_mod._run_stream(
+        [
+            sys.executable,
+            "-c",
+            "import sys; print('check-visible'); print('check-detail', file=sys.stderr)",
+        ],
+        capture_output=True,
+    )
+
+    visible = capsys.readouterr()
+    assert "check-visible" in visible.out
+    assert "check-detail" in visible.err
+    assert "check-visible" in result.stdout
+    assert "check-detail" in result.stderr
+
+
+def test_skypilot_smoke_scopes_check_and_uses_explicit_binary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    streams: list[tuple[list[str], dict[str, str]]] = []
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda value: value)
+
+    def stream(cmd, **kwargs):  # noqa: ANN001
+        streams.append((cmd, kwargs["env"]))
+        output = "Kubernetes: enabled [compute]\n" if cmd[1] == "check" else ""
+        return _completed(output)
+
+    monkeypatch.setattr(tf_mod, "_run_stream", stream)
+    monkeypatch.setattr(
+        tf_mod, "_wait_for_sky_down", lambda *_args, **_kwargs: None
+    )
+
+    tf_mod._run_skypilot_smoke(
+        kubeconfig,
+        "fleet-exact",
+        "provider-cluster",
+        "RTXPRO6000:1",
+        sky_bin="/opt/npa/sky",
+    )
+
+    assert streams[0][0] == [
+        "/opt/npa/sky",
+        "check",
+        "--config",
+        'kubernetes.allowed_contexts=["fleet-exact"]',
+        "kubernetes",
+    ]
+    assert streams[0][1]["KUBECONFIG"] == str(kubeconfig)
+    launch = streams[1][0]
+    assert launch[0:2] == ["/opt/npa/sky", "launch"]
+    assert launch[launch.index("--config") + 1] == (
+        'kubernetes.allowed_contexts=["fleet-exact"]'
+    )
+    assert launch[launch.index("--gpus") + 1] == "RTXPRO6000:1"
+    down = streams[2][0]
+    assert down[0:2] == ["/opt/npa/sky", "down"]
+    assert down[down.index("--config") + 1] == (
+        'kubernetes.allowed_contexts=["fleet-exact"]'
+    )
+
+
+def test_skypilot_auto_detection_uses_exact_context_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[list[str]] = []
+
+    def capture(cmd, **_kwargs):  # noqa: ANN001
+        seen.append(cmd)
+        return _completed(
+            "RTXPRO-6000-BLACKWELL-SERVER-EDITION  1  1 of 1 free\n"
+        )
+
+    monkeypatch.setattr(tf_mod, "_run_capture", capture)
+    accelerator = tf_mod._detect_skypilot_gpu(
+        "/opt/npa/sky",
+        "k8s/fleet-exact",
+        {},
+        config_override='kubernetes.allowed_contexts=["fleet-exact"]',
+    )
+
+    assert accelerator == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+    assert seen == [
+        [
+            "/opt/npa/sky",
+            "show-gpus",
+            "--config",
+            'kubernetes.allowed_contexts=["fleet-exact"]',
+            "--infra",
+            "k8s/fleet-exact",
+            "--all",
+        ]
+    ]
 
 
 def test_explicit_context_is_the_terraform_resource_name() -> None:
@@ -145,6 +243,7 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
     )
     stream_calls: list[list[str]] = []
     stream_envs: list[dict[str, str]] = []
+    gpu_events: list[tuple[str, object]] = []
 
     def fake_require_bin(binary: str) -> str:
         return binary
@@ -260,6 +359,19 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
     monkeypatch.setattr(tf_mod, "_run_stream", fake_stream)
     monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
     monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog."
+        "wait_for_kubernetes_accelerators",
+        lambda accelerators, **kwargs: gpu_events.append(
+            ("readiness", (accelerators, kwargs))
+        )
+        or {},
+    )
+    monkeypatch.setattr(
+        tf_mod,
+        "_run_skypilot_smoke",
+        lambda *args, **kwargs: gpu_events.append(("smoke", (args, kwargs))),
+    )
+    monkeypatch.setattr(
         tf_mod, "save_cluster_state", lambda state, metadata=None: saved.append(state)
     )
 
@@ -274,7 +386,11 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
             "--gpu-health-stabilization-seconds",
             "0",
             "--skip-gpu-cuda-smoke",
-            "--skip-sky-smoke",
+            "--sky-smoke",
+            "--sky-gpus",
+            "RTXPRO6000:1",
+            "--sky-bin",
+            "/opt/npa/sky",
         ],
     )
 
@@ -299,6 +415,13 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
     assert [state.last_seen_state for state in saved] == ["VALIDATING", "RUNNING"]
     assert saved[-1].cluster_id == "mk8scluster-a"
     assert "16 allocatable GPUs" in result.output
+    assert [event[0] for event in gpu_events] == ["readiness", "smoke"]
+    readiness_args, readiness_kwargs = gpu_events[0][1]
+    assert readiness_args == ["RTXPRO6000:1"]
+    assert readiness_kwargs["label_known_gpus"] is True
+    assert readiness_kwargs["sky_bin"] == "/opt/npa/sky"
+    _smoke_args, smoke_kwargs = gpu_events[1][1]
+    assert smoke_kwargs["sky_bin"] == "/opt/npa/sky"
 
 
 def test_inherited_topology_overrides_every_effective_terraform_input() -> None:
@@ -522,6 +645,7 @@ def test_failed_fresh_apply_rolls_back_only_its_new_terraform_state(
     assert "provider race after network create" in result.output
     down.assert_called_once()
     assert down.call_args.kwargs["context_name"] == "cluster-a"
+    assert down.call_args.kwargs["operation_id"] == ""
 
 
 def test_validate_cluster_accepts_compute_csi_when_filestore_is_disabled(

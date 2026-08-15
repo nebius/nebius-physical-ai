@@ -514,8 +514,12 @@ def provision_if_absent(
                 context_name=context,
                 project=alias or "",
                 validate=validate,
-                sky_smoke=sky_smoke,
+                # Provisioning owns one shared cached/fresh GPU-readiness and
+                # smoke boundary below. Running smoke inside up_cmd would put
+                # the fresh path ahead of label repair and readiness.
+                sky_smoke=False,
                 sky_gpus="",
+                sky_bin=sky_bin,
                 capacity_block_group="",
                 gpu_nodes=gpu_nodes,
                 cpu_nodes=cpu_nodes,
@@ -539,15 +543,14 @@ def provision_if_absent(
         k8s_ready = True
 
     requested_accelerator = str(accelerator or "").strip()
-    if requested_accelerator and k8s_ready and not skip_k8s and not dry_run:
+    needs_gpu_setup = bool(requested_accelerator or sky_smoke)
+    if needs_gpu_setup and k8s_ready and not skip_k8s and not dry_run:
         from npa.controller_ownership import ensure_controller_owner
+        from npa.cli.cluster.terraform_lifecycle import _run_skypilot_smoke
         from npa.orchestration.skypilot.k8s_gpu_catalog import (
-            KubernetesGpuCatalogError,
             wait_for_kubernetes_accelerators,
         )
 
-        previous_kubeconfig = os.environ.get("KUBECONFIG")
-        os.environ["KUBECONFIG"] = str(kubeconfig_path)
         try:
             owner = ensure_controller_owner(alias, context)
             actions.append(
@@ -563,15 +566,28 @@ def provision_if_absent(
                     operation.heartbeat(details={"gpu_readiness": message})
 
             wait_for_kubernetes_accelerators(
-                [requested_accelerator],
+                [requested_accelerator] if requested_accelerator else [],
                 context=context,
+                kubeconfig=kubeconfig_path,
                 sky_bin=sky_bin or None,
+                label_known_gpus=True,
                 timeout=gpu_readiness_timeout,
                 poll_interval=gpu_readiness_poll_interval,
                 on_status=report_gpu_status,
             )
-        except (KubernetesGpuCatalogError, RuntimeError, ValueError) as exc:
-            gpu_readiness = "timeout"
+            if sky_smoke:
+                _run_skypilot_smoke(
+                    Path(kubeconfig_path),
+                    context,
+                    cluster_name,
+                    requested_accelerator,
+                    sky_bin=sky_bin,
+                )
+                actions.append("sky-smoke:passed")
+        except Exception as exc:  # noqa: BLE001 - return a resumable partial result
+            gpu_readiness = (
+                "timeout" if str(exc).startswith("Timed out after ") else "failed"
+            )
             warnings.append(str(exc))
             operation = current_operation()
             created_cluster = bool(
@@ -590,15 +606,16 @@ def provision_if_absent(
             )
         else:
             gpu_readiness = "ready"
-            actions.append(f"gpu:SkyPilot ready for {requested_accelerator}")
-        finally:
-            if previous_kubeconfig is None:
-                os.environ.pop("KUBECONFIG", None)
-            else:
-                os.environ["KUBECONFIG"] = previous_kubeconfig
-    elif requested_accelerator and dry_run:
+            actions.append(
+                "gpu:SkyPilot ready for "
+                + (requested_accelerator or "auto-detected smoke accelerator")
+            )
+    elif needs_gpu_setup and dry_run:
         gpu_readiness = "dry-run"
-        actions.append(f"gpu:dry-run wait for SkyPilot {requested_accelerator}")
+        actions.append(
+            "gpu:dry-run wait for SkyPilot "
+            + (requested_accelerator or "auto-detected smoke accelerator")
+        )
 
     status = "ok" if not warnings and (skip_s3 or storage_ready) else "partial"
     if dry_run:

@@ -147,7 +147,7 @@ def resolve_controller_candidate(project: str, context: str) -> ControllerOwner:
         project_alias=alias,
         project_id=environment.project_id,
         cluster_id=cluster.cluster_id,
-        cluster_name=cluster.name,
+        cluster_name=cluster.provider_name or cluster.name,
         context=context,
         context_fingerprint=digest.hexdigest(),
         operation_id=operation_id,

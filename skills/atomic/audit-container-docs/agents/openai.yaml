@@ -1,0 +1,4 @@
+interface:
+  display_name: "Audit Container Docs"
+  short_description: "Audit image catalogs against source and registry"
+  default_prompt: "Use $audit-container-docs to audit and update the workbench container documentation."

@@ -237,11 +237,14 @@ def _intercept_sky_check(monkeypatch: pytest.MonkeyPatch, captured: dict[str, ob
     original = skypilot_cli._run_no_raise
 
     def fake_run(cmd, *, env=None):  # noqa: ANN001 - test stub
-        if cmd[-1] == "check":
+        if "check" in cmd:
             captured["cmd"] = cmd
             captured["env"] = env
             return subprocess.CompletedProcess(
-                cmd, 0, stdout="checks passed", stderr=""
+                cmd,
+                0,
+                stdout="Kubernetes: enabled [compute]\nchecks passed",
+                stderr="",
             )
         return original(cmd, env=env)
 
@@ -265,6 +268,129 @@ def test_verify_pins_kubeconfig_from_flag(
     assert result.exit_code == 0, result.output
     assert captured["cmd"][-1] == "check"
     assert captured["env"]["KUBECONFIG"] == str(kubeconfig)
+
+
+def test_verify_scopes_existing_kubeconfig_to_its_current_context(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    venv = _fake_installed_venv(tmp_path / "sky-venv")
+    kubeconfig = tmp_path / "kube.yaml"
+    kubeconfig.write_text(
+        "apiVersion: v1\ncurrent-context: fleet-exact\n", encoding="utf-8"
+    )
+    captured: dict[str, object] = {}
+    _intercept_sky_check(monkeypatch, captured)
+
+    result = runner.invoke(
+        app,
+        ["skypilot", "verify", "--path", str(venv), "--kubeconfig", str(kubeconfig)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["cmd"][-4:] == [
+        "check",
+        "--config",
+        'kubernetes.allowed_contexts=["fleet-exact"]',
+        "kubernetes",
+    ]
+
+
+def test_verify_rejects_zero_exit_when_kubernetes_is_disabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    venv = _fake_installed_venv(tmp_path / "sky-venv")
+    original = skypilot_cli._run_no_raise
+
+    def fake_run(cmd, *, env=None):  # noqa: ANN001
+        if cmd[-1] == "check":
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="Kubernetes: disabled\nNo infra to check/enabled.", stderr=""
+            )
+        return original(cmd, env=env)
+
+    monkeypatch.setattr(skypilot_cli, "_run_no_raise", fake_run)
+    result = runner.invoke(
+        app,
+        [
+            "skypilot",
+            "verify",
+            "--path",
+            str(venv),
+            "--controller-backend",
+            "kubernetes",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["status"] == "failed"
+    assert payload["kubernetes_enabled"] is False
+
+
+def test_bare_verify_keeps_legacy_runtime_semantics_without_kubernetes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    venv = _fake_installed_venv(tmp_path / "sky-venv")
+    original = skypilot_cli._run_no_raise
+
+    def fake_run(cmd, *, env=None):  # noqa: ANN001
+        if cmd[-1] == "check":
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="Kubernetes: disabled\nchecks passed", stderr=""
+            )
+        return original(cmd, env=env)
+
+    monkeypatch.setattr(skypilot_cli, "_run_no_raise", fake_run)
+    result = runner.invoke(
+        app,
+        ["skypilot", "verify", "--path", str(venv), "--output-format", "json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "ok"
+    assert payload["kubernetes_required"] is False
+    assert payload["kubernetes_enabled"] is False
+
+
+def test_verify_with_kubeconfig_requires_kubernetes_without_backend_flag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    venv = _fake_installed_venv(tmp_path / "sky-venv")
+    kubeconfig = tmp_path / "kube.yaml"
+    kubeconfig.write_text(
+        "apiVersion: v1\ncurrent-context: fleet-exact\n", encoding="utf-8"
+    )
+    original = skypilot_cli._run_no_raise
+
+    def fake_run(cmd, *, env=None):  # noqa: ANN001
+        if "check" in cmd:
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="Kubernetes: disabled\nchecks passed", stderr=""
+            )
+        return original(cmd, env=env)
+
+    monkeypatch.setattr(skypilot_cli, "_run_no_raise", fake_run)
+    result = runner.invoke(
+        app,
+        [
+            "skypilot",
+            "verify",
+            "--path",
+            str(venv),
+            "--kubeconfig",
+            str(kubeconfig),
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["kubernetes_required"] is True
+    assert payload["kubernetes_enabled"] is False
 
 
 def test_verify_without_kubeconfig_inherits_ambient_env(
@@ -291,7 +417,10 @@ def test_verify_kubernetes_mode_marks_nebius_profile_optional(
             return subprocess.CompletedProcess(
                 cmd,
                 0,
-                stdout="Unable to create Nebius profile\nSetup completed\n",
+                stdout=(
+                    "Kubernetes: enabled [compute]\n"
+                    "Unable to create Nebius profile\nSetup completed\n"
+                ),
                 stderr="",
             )
         return original(cmd, env=env)

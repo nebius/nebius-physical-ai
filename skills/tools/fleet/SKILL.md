@@ -203,7 +203,10 @@ depends on it.
    pass `--yes`/`-y` for non-interactive runs. Missing projects are created via
    the `nebius` CLI unless `--no-create-projects`. Deploy runs per cluster and
    continues past a failing target (`--fail-fast` to stop); a JSON summary lists
-   deployed vs failed clusters with kube contexts.
+   deployed vs failed clusters with kube contexts. A successful kubeconfig
+   write also registers the fleet target under `~/.npa/clusters/<context>` so
+   project-scoped workflow, controller, and `provision-if-absent` commands can
+   consume it without a second manual cluster registration step.
 7. **Consume the latest recipe**: `--k8s-training-ref main` clones
    `nebius-solutions-library` and uses its `k8s-training` (or `--k8s-training-dir`
    for a local checkout). Omit both to use the repo-vendored, tested copy. NPA
@@ -252,6 +255,12 @@ Both `deploy` and `destroy` confirm before acting (bypass with `--yes`/`-y`;
   `deployed-validation-failed`; credential failures report
   `deployed-credentials-failed`. Both retain Terraform/cloud state, kubeconfig,
   and local evidence for diagnosis and an idempotent retry.
+- **Idempotent preflight is live-verified**: a repeat deploy counts an existing
+  target as zero incremental quota only when its saved tfvars still match and
+  the exact provider project, cluster, and node groups are all running with the
+  requested shapes. Reserved pools must still report non-preemptible nodes and
+  the exact `STRICT` reservation binding; stale or incomplete evidence falls
+  back to the ordinary conservative quota preflight.
 - **Region domain**: the recipe's `provider.tf` domain is patched to
   `api.nebius.cloud` for non-EU regions automatically (EU uses
   `api.eu.nebius.cloud`). If the upstream recipe drifts (renames `provider.tf`,

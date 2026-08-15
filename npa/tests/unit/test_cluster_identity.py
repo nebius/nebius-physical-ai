@@ -11,7 +11,12 @@ from npa.cluster.exceptions import ClusterNotFoundError
 from npa.cluster.state import ClusterState
 
 
-def _state(kubeconfig: Path, *, project_id: str = "project-a") -> ClusterState:
+def _state(
+    kubeconfig: Path,
+    *,
+    project_id: str = "project-a",
+    provider_name: str = "",
+) -> ClusterState:
     return ClusterState(
         name="npa-cluster",
         cluster_id="cluster-a",
@@ -25,6 +30,7 @@ def _state(kubeconfig: Path, *, project_id: str = "project-a") -> ClusterState:
         created_at="2026-08-06T00:00:00Z",
         endpoint="https://api.cluster.example",
         kubeconfig_path=str(kubeconfig),
+        provider_name=provider_name,
     )
 
 
@@ -105,6 +111,37 @@ def test_explicit_project_and_context_take_precedence(
     assert verified.project_alias == "selected"
     assert verified.context == "npa-cluster"
     assert client.calls == [("cluster-a", "project-a")]
+
+
+def test_provider_name_may_differ_from_unique_local_context(
+    monkeypatch, tmp_path: Path
+) -> None:  # noqa: ANN001
+    kubeconfig = tmp_path / "kubeconfig"
+    _write_kubeconfig(kubeconfig)
+    state = _state(kubeconfig, provider_name="fleet-cluster")
+    from npa.clients import config
+
+    monkeypatch.setattr(
+        config, "list_projects", lambda: {"selected": {"project_id": "project-a"}}
+    )
+    monkeypatch.setattr(config, "default_project_name", lambda: "selected")
+    monkeypatch.setattr(identity, "load_cluster_state", lambda context: state)
+    monkeypatch.setattr(identity, "existing_kubeconfig", lambda context: kubeconfig)
+    client = _Client(
+        remote=SimpleNamespace(
+            id="cluster-a",
+            project_id="project-a",
+            name="fleet-cluster",
+            endpoint="https://api.cluster.example",
+        )
+    )
+
+    verified = identity.resolve_verified_cluster_identity(
+        project="selected", context="npa-cluster", client=client
+    )
+
+    assert verified.context == "npa-cluster"
+    assert verified.cluster_name == "fleet-cluster"
 
 
 def test_context_project_mismatch_fails_before_provider_access(

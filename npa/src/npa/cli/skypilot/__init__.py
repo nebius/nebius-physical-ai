@@ -21,6 +21,7 @@ import fcntl
 
 import typer
 from rich.console import Console
+import yaml  # type: ignore[import-untyped]
 
 from npa.orchestration.skypilot._bin import REQUIRED_SKYPILOT_VERSION
 from npa.orchestration.skypilot.workflow_state import redact_text
@@ -593,10 +594,14 @@ def verify_cmd(
             "--kubeconfig is not given."
         ),
     ),
-    controller_backend: str = typer.Option(
-        "kubernetes",
+    controller_backend: str | None = typer.Option(
+        None,
         "--controller-backend",
-        help="Controller backend: kubernetes (Nebius profile optional) or nebius (required).",
+        help=(
+            "Controller backend: kubernetes (Nebius profile optional) or nebius "
+            "(required). Defaults to kubernetes without making a bare legacy "
+            "runtime check require cluster setup."
+        ),
     ),
     output_format: str = typer.Option(
         "text",
@@ -616,20 +621,36 @@ def verify_cmd(
         _fail(kubernetes_client_remedy(state.kubernetes_version))
         return
 
-    check_env = _verify_kube_env(kubeconfig=kubeconfig, cluster=cluster)
-    result = _run_observable(
-        [str(state.sky_bin), "check"],
-        label="SkyPilot verification",
-        env=check_env,
-        emit_progress=output_format != "json",
-    )
-    backend = controller_backend.strip().lower()
+    backend_was_explicit = controller_backend is not None
+    backend = str(controller_backend or "kubernetes").strip().lower()
     if backend not in {"kubernetes", "nebius"}:
         _fail("--controller-backend must be kubernetes or nebius")
         return
     if output_format not in {"text", "json"}:
         _fail("--output-format must be text or json")
         return
+    check_env, exact_context = _verify_kube_env(
+        kubeconfig=kubeconfig, cluster=cluster
+    )
+    kubernetes_required = backend == "kubernetes" and bool(
+        backend_was_explicit or kubeconfig is not None or cluster
+    )
+    check_cmd = [str(state.sky_bin), "check"]
+    if backend == "kubernetes" and exact_context:
+        # A pre-existing SkyPilot config can restrict allowed_contexts to other
+        # clusters.  Verify the kubeconfig the operator explicitly selected,
+        # rather than silently checking that stale allowlist and returning 0
+        # with Kubernetes disabled.
+        allowed_contexts = json.dumps([exact_context], separators=(",", ":"))
+        check_cmd.extend(
+            ["--config", f"kubernetes.allowed_contexts={allowed_contexts}", "kubernetes"]
+        )
+    result = _run_observable(
+        check_cmd,
+        label="SkyPilot verification",
+        env=check_env,
+        emit_progress=output_format != "json",
+    )
     combined_lines = [
         line
         for line in "\n".join((result.stdout or "", result.stderr or "")).splitlines()
@@ -637,7 +658,17 @@ def verify_cmd(
     ]
     profile_failure = any("unable to create nebius profile" in line.lower() for line in combined_lines)
     required = backend == "nebius"
-    ok = result.returncode == 0 and not (profile_failure and required)
+    plain_output = re.sub(
+        r"\x1b\[[0-?]*[ -/]*[@-~]", "", "\n".join(combined_lines)
+    )
+    kubernetes_enabled = bool(
+        re.search(r"\bKubernetes:\s+enabled\b", plain_output, flags=re.IGNORECASE)
+    )
+    ok = (
+        result.returncode == 0
+        and not (profile_failure and required)
+        and (not kubernetes_required or kubernetes_enabled)
+    )
     if profile_failure and not required:
         profile_status = "skipped_not_required"
         detail = "Nebius profile skipped; not required for Kubernetes-controller mode"
@@ -656,6 +687,8 @@ def verify_cmd(
     payload = {
         "status": "ok" if ok else "failed",
         "controller_backend": backend,
+        "kubernetes_required": kubernetes_required,
+        "kubernetes_enabled": kubernetes_enabled,
         "nebius_profile": profile_status,
         "nebius_profile_detail": detail,
         "sky_check_returncode": result.returncode,
@@ -675,7 +708,7 @@ def verify_cmd(
 
 def _verify_kube_env(
     *, kubeconfig: Path | None, cluster: str | None
-) -> dict[str, str] | None:
+) -> tuple[dict[str, str] | None, str]:
     """Build the env for `sky check`, pinning KUBECONFIG when known.
 
     Without an explicit kubeconfig/cluster the behavior is unchanged (inherits
@@ -688,7 +721,7 @@ def _verify_kube_env(
 
         resolved = kubeconfig_file(cluster)
     if resolved is None:
-        return None
+        return None, str(cluster or "").strip()
     resolved = resolved.expanduser()
     if not resolved.exists():
         _fail(
@@ -697,7 +730,15 @@ def _verify_kube_env(
         )
     env = os.environ.copy()
     env["KUBECONFIG"] = str(resolved)
-    return env
+    exact_context = str(cluster or "").strip()
+    if not exact_context:
+        try:
+            payload = yaml.safe_load(resolved.read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError):
+            payload = {}
+        if isinstance(payload, dict):
+            exact_context = str(payload.get("current-context") or "").strip()
+    return env, exact_context
 
 
 def bootstrap_skypilot(

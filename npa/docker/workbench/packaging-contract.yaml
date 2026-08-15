@@ -233,9 +233,9 @@ images:
       NPA_COSMOS3_REQUIRE_NGC=1), so distribution never carries weight bytes. The
       build fails if a checkpoint file lands in a layer or if the known-bad
       huggingface_hub 1.23.0 / hf-xet 1.5.1 pair is resolved; the compatible
-      frozen pair keeps Xet enabled. Ships sudo +
-      openssh-server with a NOPASSWD grant for the non-root runtime user because
-      the SkyPilot Kubernetes bootstrap installs its SSH runtime in-pod; see
+      frozen pair keeps Xet enabled. Ships sudo, rsync, and openssh-server with
+      a command-passthrough entrypoint and a NOPASSWD grant for the non-root
+      runtime user because the SkyPilot Kubernetes bootstrap installs its SSH runtime in-pod; see
       docs/security/container-golden-evals.md.
     redistribution: public
   cosmos3-serving:
