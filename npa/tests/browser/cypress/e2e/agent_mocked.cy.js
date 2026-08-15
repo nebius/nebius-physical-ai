@@ -756,7 +756,11 @@ describe("NPA agent UI with mocked APIs", () => {
 
     cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`);
     cy.get("#artifactList").should("contain.text", "mcap");
+    cy.get("#artifactList").should("contain.text", "View in Foxglove");
     cy.get("#artifactList").should("contain.text", "View in Lichtblick");
+    cy.get(
+      `#artifactList button[data-action="open-foxglove-artifact"][data-key="${NON_STOCK_RUN_ID}/reports/sim2real.mcap"]`,
+    ).should("have.length", 1);
 
     cy.get(`#artifactList button[data-action="load-artifact"][data-key="${NON_STOCK_RUN_ID}/reports/sim2real.mcap"]`).click();
     cy.wait("@loadArtifact");
@@ -782,6 +786,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#artifactLoadRunArtifacts").click();
     cy.wait("@nonStockArtifactList");
     cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`);
+    cy.get("#artifactList").should("contain.text", "View in Foxglove");
     cy.get("#artifactList").should("contain.text", "View in Lichtblick");
     cy.get("#artifactList").should("not.contain.text", "mock-run/preview.png");
   });

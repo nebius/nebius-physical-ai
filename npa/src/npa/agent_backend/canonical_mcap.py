@@ -11,7 +11,7 @@ from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
-RICH_VISUALIZATION_CONTRACT = "npa.foxglove.robot-motion.v2"
+RICH_VISUALIZATION_CONTRACT = "npa.foxglove.robot-motion.v3"
 _RICH_VISUALIZATION_TOPICS = {
     "/camera": "foxglove.CompressedImage",
     "/robot/diagnostic_scene": "foxglove.SceneUpdate",
@@ -84,7 +84,7 @@ def sha256_file(path: Path) -> str:
 
 
 def has_rich_visualization_contract(info: dict[str, Any]) -> bool:
-    """Prove that a rich canonical MCAP has the v2 robot-motion contract."""
+    """Prove that a rich canonical MCAP has the current robot-motion contract."""
     schemas = dict(info.get("schemas") or {})
     metadata = dict(info.get("metadata") or {})
     npa_metadata = dict(metadata.get("npa") or {})
@@ -259,7 +259,7 @@ def prepare_canonical_mcap(
         native_info = summarize(local_path).to_dict()
         if rich_run and not has_rich_visualization_contract(native_info):
             converted = generate_rich_canonical()
-            source = "regenerated-rich-visualization-v2"
+            source = "regenerated-rich-visualization-v3"
             saved_provenance = {}
         prior = next(
             (item for item in artifacts if str(item.key) == provenance_key), None
@@ -293,7 +293,7 @@ def prepare_canonical_mcap(
     metadata = dict(info.get("metadata") or {})
     timestamps = str((metadata.get("npa") or {}).get("timestamps") or "source")
     provenance = {
-        "schema": "npa.canonical-mcap.v1",
+        "schema": "npa.canonical-mcap.v2",
         "run_id": normalized,
         "canonical_key": canonical_key,
         "canonical_s3_uri": f"s3://{bucket}/{canonical_key}",
@@ -313,6 +313,9 @@ def prepare_canonical_mcap(
         "fps": str((metadata.get("npa") or {}).get("fps") or ""),
         "visualization_contract": str(
             (metadata.get("npa") or {}).get("visualization_contract") or ""
+        ),
+        "scene_update_schema_source": str(
+            (metadata.get("npa") or {}).get("scene_update_schema_source") or ""
         ),
         "visualization_fixed_frame": str(
             (metadata.get("npa") or {}).get("visualization_fixed_frame") or ""
@@ -349,7 +352,7 @@ def prepare_canonical_mcap(
         "sha256": digest,
         "size_bytes": int(info["size_bytes"]),
         "source": source,
-        "created": native is None,
+        "created": native is None or bool(converted),
         "provenance": provenance,
         "summary": summary,
     }

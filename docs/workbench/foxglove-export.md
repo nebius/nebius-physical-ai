@@ -16,13 +16,15 @@ tab, with its established open and reload controls.
 Every explicit export starts from a real S3-discovered run. Its stable artifact
 is `<run-prefix>/<run-id>/reports/sim2real.mcap`; provenance is stored beside it
 as `reports/sim2real.mcap.provenance.json` using schema
-`npa.canonical-mcap.v1`. The sidecar records the S3 URI, SHA-256, byte size,
+`npa.canonical-mcap.v2`. The sidecar records the S3 URI, SHA-256, byte size,
 source artifacts, source mode (`native-reused` or
 `generated-from-s3-artifacts`), channels, message count, timestamp ranges, and
 timestamp semantics.
 
-A valid existing native `reports/sim2real.mcap` is authoritative and is never
-repacked. The agent validates MCAP magic and structure before reuse. If the run
+A valid existing native `reports/sim2real.mcap` is authoritative when it carries
+the current visualization contract. The agent validates MCAP magic, structure,
+and contract version before reuse; an older rich contract is regenerated at the
+same exact S3 key so incompatible cached bytes cannot survive. If the run
 has no canonical recording, its S3 artifacts are staged into a temporary
 directory, converted once, and uploaded to that reserved reports key. Export
 fails visibly if discovery, download, validation, upload, or provenance storage
@@ -102,8 +104,13 @@ conventional `/camera` topic is assigned to a real stream named `camera`, or to
 the first deterministic real image stream when no stream has that name. The
 remaining streams retain descriptive topics. No image, transform, pose, point
 cloud, joint state, or telemetry is fabricated.
-The embedded default selects only that guaranteed real image topic; optional
-channels remain available in Topics instead of being pinned to empty panels.
+The shared layout discovers every `foxglove.CompressedImage` topic. It presents
+the guaranteed `/camera` stream first and exposes every additional source camera
+as a clearly labelled tab; single-camera recordings retain one working tab. The
+current rich contract uses the official `@foxglove/schemas@2.1.0`
+`foxglove.SceneUpdate` JSON shape, including an explicit `items` schema on every
+primitive array. RGB frames are source-faithful; no depth, calibration,
+extrinsics, or world reprojection is implied unless the input provides it.
 
 CLI callers can convert/export locally with `npa workbench foxglove export-run`
 and build a web-only link for an already indexed recording with:

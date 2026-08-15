@@ -111,6 +111,7 @@ def test_prepare_canonical_mcap_persists_and_reuses_exact_s3_bytes(
     provenance = json.loads(
         s3.objects["runs/run-1/reports/sim2real.mcap.provenance.json"]
     )
+    assert provenance["schema"] == "npa.canonical-mcap.v2"
     assert (
         provenance["canonical_s3_uri"] == "s3://bucket/runs/run-1/reports/sim2real.mcap"
     )
@@ -154,7 +155,7 @@ def test_rich_visualization_contract_requires_every_meaningful_topic() -> None:
     }
     info = {
         "schemas": schemas,
-        "metadata": {"npa": {"visualization_contract": "npa.foxglove.robot-motion.v2"}},
+        "metadata": {"npa": {"visualization_contract": "npa.foxglove.robot-motion.v3"}},
     }
 
     assert has_rich_visualization_contract(info) is True
@@ -162,7 +163,7 @@ def test_rich_visualization_contract_requires_every_meaningful_topic() -> None:
         has_rich_visualization_contract(
             {
                 "schemas": schemas,
-                "visualization_contract": "npa.foxglove.robot-motion.v2",
+                "visualization_contract": "npa.foxglove.robot-motion.v3",
             }
         )
         is True
@@ -178,6 +179,115 @@ def test_rich_visualization_contract_requires_every_meaningful_topic() -> None:
             {**info, "metadata": {"npa": {"visualization_contract": "v1"}}}
         )
         is False
+    )
+    assert (
+        has_rich_visualization_contract(
+            {
+                **info,
+                "metadata": {
+                    "npa": {
+                        "visualization_contract": "npa.foxglove.robot-motion.v2"
+                    }
+                },
+            }
+        )
+        is False
+    )
+
+
+def test_prepare_canonical_mcap_replaces_stale_v2_native_bytes(
+    tmp_path: Path,
+) -> None:
+    s3 = _S3()
+    canonical_key = "runs/run-1/reports/sim2real.mcap"
+    old_bytes = b"old-v2-canonical"
+    new_bytes = b"new-v3-canonical"
+    s3.objects[canonical_key] = old_bytes
+    s3.objects["runs/run-1/reports/rich-run-manifest.json"] = json.dumps(
+        {
+            "schema": "npa.foxglove.rich-run.v1",
+            "run_id": "run-1",
+            "engine_provenance": {"engine": "Isaac"},
+            "duration_seconds": 3.2,
+            "sample_count": 33,
+            "fps": 10,
+            "camera_counts": {"primary": 33, "side": 33, "workspace": 33},
+            "limitations": ["RGB only; no calibrated depth or extrinsics."],
+        }
+    ).encode()
+
+    def find(_buckets, **_kwargs):
+        return "bucket", [
+            SimpleNamespace(key=key, s3_uri=f"s3://bucket/{key}")
+            for key in sorted(s3.objects)
+        ]
+
+    def download(uri: str, destination: Path, **_kwargs):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(s3.objects[uri.removeprefix("s3://bucket/")])
+        return destination
+
+    def convert(*, output_path: Path, **_kwargs):
+        output_path.write_bytes(new_bytes)
+        return SimpleNamespace(to_dict=lambda: {"message_count": 32})
+
+    schemas = {
+        "/camera": "foxglove.CompressedImage",
+        "/robot/diagnostic_scene": "foxglove.SceneUpdate",
+        "/robot/diagnostic_pose": "foxglove.PoseInFrame",
+        "/robot/diagnostic_trajectory": "foxglove.PosesInFrame",
+        "/robot/diagnostic_joint_states": "foxglove.JointStates",
+        "/actuators/commands": "npa.ActuatorCommands",
+        "/run/state": "npa.RunState",
+        "/metrics/execution": "npa.RunMetrics.execution",
+        "/log": "foxglove.Log",
+    }
+
+    def summarize(path: Path):
+        contract = (
+            "npa.foxglove.robot-motion.v2"
+            if path.read_bytes() == old_bytes
+            else "npa.foxglove.robot-motion.v3"
+        )
+        return SimpleNamespace(
+            to_dict=lambda: {
+                "valid_magic": True,
+                "size_bytes": path.stat().st_size,
+                "message_count": 32,
+                "channels": {topic: 1 for topic in schemas},
+                "schemas": schemas,
+                "metadata": {
+                    "npa": {
+                        "visualization_contract": contract,
+                        "scene_update_schema_source": "@foxglove/schemas@2.1.0",
+                    }
+                },
+            }
+        )
+
+    result = prepare_canonical_mcap(
+        run_id="run-1",
+        fps=10,
+        max_frames=100,
+        validate_run_id=lambda value: value,
+        s3_client=lambda: (s3, {"prefix": "runs"}),
+        list_buckets=lambda *_args: ["bucket"],
+        find_artifacts=find,
+        safe_key=_safe_key,
+        download=download,
+        convert=convert,
+        summarize=summarize,
+        invalidate_cache=lambda: None,
+        now_iso=lambda: "2026-08-14T00:00:00+00:00",
+        recordings_dir=tmp_path,
+    )
+
+    assert s3.objects[canonical_key] == new_bytes
+    assert result["created"] is True
+    assert result["source"] == "regenerated-rich-visualization-v3"
+    assert result["provenance"]["visualization_contract"].endswith(".v3")
+    assert result["provenance"]["scene_update_schema_source"] == (
+        "@foxglove/schemas@2.1.0"
     )
 
 

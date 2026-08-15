@@ -23,7 +23,7 @@ export const FOXGLOVE_LIVE_PROTOCOLS = Object.freeze([
 ]);
 
 /** Default layout storage key used when the backend does not configure one. */
-export const DEFAULT_LAYOUT_STORAGE_KEY = "npa-agent-foxglove-robot-motion-v2";
+export const DEFAULT_LAYOUT_STORAGE_KEY = "npa-agent-foxglove-robot-motion-v3";
 
 /**
  * Resolve a possibly relative URL against an origin.

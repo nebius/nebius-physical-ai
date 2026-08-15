@@ -1201,6 +1201,16 @@ def test_bootstrap_ui_lichtblick_autoloads_run_mcap() -> None:
     assert "ensureLichtblickForActiveRun()" in source
 
 
+def test_bootstrap_ui_mcap_cards_expose_exact_popup_safe_foxglove_action() -> None:
+    source = _agent_ui_bundle()
+    assert 'data-action="open-foxglove-artifact"' in source
+    assert 'data-sd-action="foxglove"' in source
+    assert "artifactFoxgloveSelection" in source
+    assert "selectedResult.key" in source
+    assert 'String(selected.s3_uri || "").trim()' in source
+    assert source.index("View in Foxglove") < source.index("View in Lichtblick")
+
+
 def test_bootstrap_artifact_file_transcodes_ppm_to_png() -> None:
     source = _agent_source()
     # .ppm/.bmp/.tiff are transcoded to PNG on serve so the browser can render them.

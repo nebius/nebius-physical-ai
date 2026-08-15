@@ -24,9 +24,9 @@ from npa.agent_backend.canonical_mcap import has_rich_visualization_contract
 
 FOXGLOVE_API_ROOT = "https://api.foxglove.dev/v1"
 _SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
-FOXGLOVE_LAYOUT_NAME = "NPA Physical AI robot motion v2"
+FOXGLOVE_LAYOUT_NAME = "NPA Physical AI robot motion v3"
 FOXGLOVE_LAYOUT_ID = (
-    "lay_" + uuid.uuid5(uuid.NAMESPACE_URL, "npa/foxglove/robot-motion-v2").hex[:16]
+    "lay_" + uuid.uuid5(uuid.NAMESPACE_URL, "npa/foxglove/robot-motion-v3").hex[:16]
 )
 
 
@@ -82,7 +82,7 @@ def data_aware_layout_data(provenance: dict[str, Any]) -> dict[str, Any]:
     """Build an intentional, data-aware Foxglove v1 programmatic layout."""
     schemas = dict(provenance.get("schemas") or {})
     numeric_paths = dict(provenance.get("numeric_paths") or {})
-    image_topics = sorted(
+    discovered_image_topics = sorted(
         topic
         for topic, schema in schemas.items()
         if schema == "foxglove.CompressedImage"
@@ -94,11 +94,12 @@ def data_aware_layout_data(provenance: dict[str, Any]) -> dict[str, Any]:
         "/robot/diagnostic_trajectory",
     }
     has_rich_3d = rich_topics.issubset(schemas)
-    primary_image = (
-        "/camera"
-        if "/camera" in image_topics
-        else (image_topics[0] if image_topics else "")
+    primary_image = "/camera" if "/camera" in discovered_image_topics else (
+        discovered_image_topics[0] if discovered_image_topics else ""
     )
+    image_topics = ([primary_image] if primary_image else []) + [
+        topic for topic in discovered_image_topics if topic != primary_image
+    ]
 
     def panel(panel_type: str, title: str, config: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -118,6 +119,46 @@ def data_aware_layout_data(provenance: dict[str, Any]) -> dict[str, Any]:
             "items": [
                 {"proportion": proportion, "content": content}
                 for proportion, content in items
+            ],
+        }
+
+    def image_panel(topic: str, index: int) -> dict[str, Any]:
+        camera_name = topic.strip("/").rsplit("/", 1)[-1] or "camera"
+        label = camera_name.replace("_", " ").title()
+        if topic == "/camera":
+            label = "Primary"
+        return panel(
+            "Image",
+            f"{label} camera — preserved source RGB",
+            {
+                "imageMode": {
+                    "imageTopic": topic,
+                    "imageSchemaName": "foxglove.CompressedImage",
+                },
+                "synchronize": True,
+                "syncedTopics": {topic: True},
+                "npaCamera": {
+                    "index": index,
+                    "label": label,
+                    "topic": topic,
+                    "sourceFidelity": "source-rgb-only",
+                },
+            },
+        )
+
+    def camera_tabs(topics: list[str]) -> dict[str, Any]:
+        return {
+            "type": "tabs",
+            "selectedTabIndex": 0,
+            "tabs": [
+                {
+                    "title": (
+                        ("Primary" if topic == "/camera" else topic.rsplit("/", 1)[-1].replace("_", " ").title())
+                        + f" ({topic})"
+                    ),
+                    "content": image_panel(topic, index),
+                }
+                for index, topic in enumerate(topics)
             ],
         }
 
@@ -172,18 +213,7 @@ def data_aware_layout_data(provenance: dict[str, Any]) -> dict[str, Any]:
                 "syncedTopics": {topic: True for topic in sorted(rich_topics)},
             },
         )
-        image = panel(
-            "Image",
-            "Primary camera — preserved Isaac renderer frames",
-            {
-                "imageMode": {
-                    "imageTopic": primary_image,
-                    "imageSchemaName": "foxglove.CompressedImage",
-                },
-                "synchronize": True,
-                "syncedTopics": {primary_image: True},
-            },
-        )
+        cameras = camera_tabs(image_topics)
         preferred_fields = [
             ("/metrics/execution", "reward", "reward"),
             ("/metrics/execution", "object_lift_m", "object lift (m)"),
@@ -260,7 +290,7 @@ def data_aware_layout_data(provenance: dict[str, Any]) -> dict[str, Any]:
             "content": split(
                 "column",
                 [
-                    (0.72, split("row", [(0.68, three_dee), (0.32, image)])),
+                    (0.72, split("row", [(0.58, three_dee), (0.42, cameras)])),
                     (
                         0.28,
                         split("row", [(0.45, plot), (0.30, transitions), (0.25, log)]),
@@ -269,19 +299,14 @@ def data_aware_layout_data(provenance: dict[str, Any]) -> dict[str, Any]:
             ),
         }
 
-    fallback_panels = [
-        panel(
-            "Image",
-            topic.rsplit("/", 1)[-1].replace("_", " ").title(),
-            {"imageMode": {"imageTopic": topic}},
-        )
-        for topic in image_topics[:2]
-    ]
-    if not fallback_panels:
-        fallback_panels = [panel("RawMessages", "Messages", {})]
+    fallback_content = (
+        camera_tabs(image_topics)
+        if image_topics
+        else panel("RawMessages", "Messages", {})
+    )
     return {
         "version": 1,
-        "content": split("row", [(1.0, value) for value in fallback_panels]),
+        "content": fallback_content,
     }
 
 
@@ -565,7 +590,7 @@ class FoxgloveCloudClient:
         """Create one schema-versioned org layout, or reuse it unchanged."""
         if not has_rich_visualization_contract(provenance):
             raise FoxgloveCloudError(
-                "The selected MCAP does not expose the NPA robot-motion v2 topic contract; "
+                "The selected MCAP does not expose the NPA robot-motion v3 topic contract; "
                 "the canonical shared layout was not created.",
                 status_code=409,
             )

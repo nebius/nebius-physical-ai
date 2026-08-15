@@ -43,7 +43,7 @@ FOXGLOVE_SDK_FILES: tuple[str, ...] = (
 )
 FOXGLOVE_SDK_MANIFEST = "npa-sdk-manifest.json"
 FOXGLOVE_DEFAULT_EMBED_SRC = "https://embed.foxglove.dev/"
-FOXGLOVE_DEFAULT_LAYOUT_KEY = "npa-agent-foxglove-robot-motion-v2"
+FOXGLOVE_DEFAULT_LAYOUT_KEY = "npa-agent-foxglove-robot-motion-v3"
 FOXGLOVE_WEB_APP_URL = "https://app.foxglove.dev/~/view"
 FOXGLOVE_ARTIFACT_EXTENSIONS: tuple[str, ...] = (
     ".mcap",

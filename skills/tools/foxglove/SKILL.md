@@ -108,10 +108,11 @@ is the same CORS + byte-range transport used by the official embed SDK. The
 button synchronously reserves a popup during the user gesture and reports
 blocked or failed navigation honestly.
 
-For recordings that advertise `npa.foxglove.robot-motion.v2`, the server
-idempotently creates the versioned `NPA Physical AI robot motion v2` organization
+For recordings that advertise `npa.foxglove.robot-motion.v3`, the server
+idempotently creates the versioned `NPA Physical AI robot motion v3` organization
 layout and adds its non-secret `layoutId` to the hosted link. The layout seeds a
-large 3D robot/trajectory panel, camera, metrics, phase/state, and logs. Existing
+large 3D robot/trajectory panel, discovered source-camera tabs, metrics,
+phase/state, and logs. Existing
 versioned layouts and SDK `storageKey` arrangements are reused without forcing or
 overwriting user changes. If the layout API is unavailable, the link still opens
 the rich topics and the UI says that a saved layout must be selected after sign-in.
@@ -132,7 +133,7 @@ an argument.
 `foxglove.CompressedImage` on `/camera/<name>` (PNG/JPEG passed through, PPM/BMP/TIFF
 transcoded), `foxglove.Log` on `/log`, and `npa.RunMetrics.<name>` on `/metrics/<name>`.
 When a real `npa.sim2real.action_rollout.v1` artifact is present, it also emits
-the `npa.foxglove.robot-motion.v2` contract: an explicitly labelled action-derived
+the `npa.foxglove.robot-motion.v3` contract: an explicitly labelled action-derived
 diagnostic robot (`foxglove.SceneUpdate`), end-effector pose and cumulative
 trajectory (`PoseInFrame` / `PosesInFrame`), `foxglove.JointStates`, actuator
 commands, run phase/progress, camera transforms, metrics, and logs on one coherent

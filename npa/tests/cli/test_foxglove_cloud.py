@@ -17,9 +17,10 @@ from npa.agent_backend.foxglove_cloud import (
 
 def _rich_provenance() -> dict:
     return {
-        "visualization_contract": "npa.foxglove.robot-motion.v2",
+        "visualization_contract": "npa.foxglove.robot-motion.v3",
         "schemas": {
             "/camera": "foxglove.CompressedImage",
+            "/camera/side": "foxglove.CompressedImage",
             "/camera/workspace": "foxglove.CompressedImage",
             "/robot/diagnostic_scene": "foxglove.SceneUpdate",
             "/robot/diagnostic_pose": "foxglove.PoseInFrame",
@@ -46,11 +47,26 @@ def _rich_provenance() -> dict:
 def _panel_nodes(node: dict) -> list[dict]:
     if node.get("type") == "panel":
         return [node]
-    return [
+    split_panels = [
         panel
         for item in node.get("items", [])
         for panel in _panel_nodes(item.get("content", {}))
     ]
+    tab_panels = [
+        panel
+        for item in node.get("tabs", [])
+        for panel in _panel_nodes(item.get("content", {}))
+    ]
+    return split_panels + tab_panels
+
+
+def _tab_nodes(node: dict) -> list[dict]:
+    found = [node] if node.get("type") == "tabs" else []
+    for item in node.get("items", []):
+        found.extend(_tab_nodes(item.get("content", {})))
+    for item in node.get("tabs", []):
+        found.extend(_tab_nodes(item.get("content", {})))
+    return found
 
 
 def test_data_aware_layout_binds_only_real_rich_topics() -> None:
@@ -60,6 +76,8 @@ def test_data_aware_layout_binds_only_real_rich_topics() -> None:
     assert [panel["panelType"] for panel in panels] == [
         "ThreeDee",
         "Image",
+        "Image",
+        "Image",
         "Plot",
         "StateTransitions",
         "Log",
@@ -68,7 +86,18 @@ def test_data_aware_layout_binds_only_real_rich_topics() -> None:
         panel["config"]["imageMode"]["imageTopic"]
         for panel in panels
         if panel["panelType"] == "Image"
-    ] == ["/camera"]
+    ] == ["/camera", "/camera/side", "/camera/workspace"]
+    camera_tabs = _tab_nodes(layout["content"])[0]
+    assert camera_tabs["selectedTabIndex"] == 0
+    assert [tab["title"] for tab in camera_tabs["tabs"]] == [
+        "Primary (/camera)",
+        "Side (/camera/side)",
+        "Workspace (/camera/workspace)",
+    ]
+    assert [
+        tab["content"]["config"]["npaCamera"]["sourceFidelity"]
+        for tab in camera_tabs["tabs"]
+    ] == ["source-rgb-only"] * 3
     three_dee = panels[0]
     assert three_dee["config"]["fixedFrame"] == "npa_action_space"
     assert set(three_dee["config"]["topics"]) == {
@@ -105,6 +134,9 @@ def test_data_aware_layout_omits_unsupported_empty_3d_panel() -> None:
     assert [panel["panelType"] for panel in _panel_nodes(layout["content"])] == [
         "Image"
     ]
+    assert _tab_nodes(layout["content"])[0]["tabs"][0]["title"] == (
+        "Primary (/camera)"
+    )
 
 
 def test_cloud_layout_is_created_then_reused_without_quota_churn() -> None:
@@ -214,7 +246,7 @@ def test_cloud_layout_refuses_non_rich_recording() -> None:
 
     assert result.available is False
     assert result.layout_id == ""
-    assert "robot-motion v2" in result.reason
+    assert "robot-motion v3" in result.reason
 
 
 def test_cloud_layout_plan_failure_has_explicit_token_safe_fallback() -> None:

@@ -46,7 +46,23 @@ function discoverVerificationRun() {
       /^[A-Za-z0-9][A-Za-z0-9._-]*$/,
     );
     expect(run.run_ref, "source-qualified run reference").to.match(/^npa1_/);
-    return run;
+    return liveAgentRequest(
+      `/api/artifacts/run/${encodeURIComponent(String(run.run_ref))}?limit=1000`,
+    ).then((artifactsResponse) => {
+      expect(artifactsResponse.status).to.eq(200);
+      const artifacts = Array.isArray(artifactsResponse.body.artifacts)
+        ? artifactsResponse.body.artifacts
+        : [];
+      const artifact = artifacts.find((item) =>
+        String(item.key || "").endsWith("/reports/sim2real.mcap")
+      );
+      expect(artifact, "the exact discovered canonical MCAP artifact").to.exist;
+      return {
+        ...run,
+        artifact,
+        bucket: String(artifactsResponse.body.bucket || run.bucket || ""),
+      };
+    });
   });
 }
 
@@ -84,6 +100,9 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
       const requestBody = {
         run_id: String(run.run_id),
         run_ref: String(run.run_ref),
+        key: String(run.artifact.key),
+        bucket: String(run.bucket),
+        s3_uri: String(run.artifact.s3_uri),
         open_web: true,
       };
       liveAgentRequest("/api/foxglove/export", {
@@ -93,6 +112,12 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
         expect(prepared.status).to.eq(200);
         expect(prepared.body.ok).to.eq(true);
         expect(prepared.body.run_id).to.eq(run.run_id);
+        expect(prepared.body.selected_artifact).to.deep.include({
+          run_id: run.run_id,
+          run_ref: run.run_ref,
+          key: run.artifact.key,
+          s3_uri: run.artifact.s3_uri,
+        });
         const exported = prepared.body.export;
         assertRemoteFileLink(exported);
         expect(exported.canonical_s3_uri).to.match(
@@ -101,12 +126,14 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
         expect(exported.sha256).to.match(/^[a-f0-9]{64}$/);
         expect(Number(exported.size_bytes || prepared.body.size_bytes)).to.be.greaterThan(8);
         expect(exported.provenance.visualization_contract).to.eq(
-          "npa.foxglove.robot-motion.v2",
+          "npa.foxglove.robot-motion.v3",
         );
         expect(exported.provenance.visualization_fixed_frame).to.eq("npa_action_space");
         expect(exported.provenance.visualization_fidelity).to.match(/not calibrated/i);
         expect(exported.provenance.schemas).to.deep.include({
           "/camera": "foxglove.CompressedImage",
+          "/camera/side": "foxglove.CompressedImage",
+          "/camera/workspace": "foxglove.CompressedImage",
           "/robot/diagnostic_scene": "foxglove.SceneUpdate",
           "/robot/diagnostic_pose": "foxglove.PoseInFrame",
           "/robot/diagnostic_trajectory": "foxglove.PosesInFrame",
@@ -119,6 +146,23 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
           Object.values(exported.provenance.schemas),
           "numeric metrics schema",
         ).to.include("npa.RunMetrics.execution");
+        cy.task(
+          "validatePublishedMcap",
+          { recordingUrl: exported.recording_url, sha256: exported.sha256 },
+          { log: false },
+        ).then((validation) => {
+          expect(validation.sha256).to.eq(exported.sha256);
+          expect(validation.camera_counts).to.deep.eq({
+            "/camera": 33,
+            "/camera/side": 33,
+            "/camera/workspace": 33,
+          });
+          expect(validation.synchronized).to.eq(true);
+          expect(validation.distinct_aligned_triplets).to.eq(33);
+          expect(validation.scene_message_count).to.eq(32);
+          expect(validation.scene_validation_errors).to.deep.eq([]);
+          expect(validation.schema_arrays_without_items).to.deep.eq([]);
+        });
 
         cy.request({ url: exported.recording_url, method: "HEAD", log: false }).then((head) => {
           expect(head.status).to.eq(200);
@@ -160,12 +204,23 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
           expect(response.body.data_source).to.deep.include({ type: "remote-file" });
           expect(response.body.data_source.urls).to.deep.eq([exported.recording_url]);
           expect(response.body.layout.version).to.eq(1);
+          const collectPanels = (node) => node && node.type === "panel"
+            ? [node]
+            : [
+              ...((node && node.items) || []).flatMap((item) => collectPanels(item.content)),
+              ...((node && node.tabs) || []).flatMap((item) => collectPanels(item.content)),
+            ];
+          const panels = collectPanels(response.body.layout.content);
+          expect(
+            panels.filter((panel) => panel.panelType === "Image")
+              .map((panel) => panel.config.imageMode.imageTopic),
+          ).to.deep.eq(["/camera", "/camera/side", "/camera/workspace"]);
           expect(response.body.visualization).to.deep.include({
-            contract: "npa.foxglove.robot-motion.v2",
+            contract: "npa.foxglove.robot-motion.v3",
             fixed_frame: "npa_action_space",
           });
           expect(response.body.layout_storage_key).to.eq(
-            "npa-agent-foxglove-robot-motion-v2",
+            "npa-agent-foxglove-robot-motion-v3",
           );
         });
         liveAgentRequest("/api/foxglove/status").then((response) => {
@@ -238,13 +293,24 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
         // stubs window.open and returns only non-secret contract/evidence facts.
         cy.task(
           "verifyFoxgloveHostedNavigation",
-          { runId: String(run.run_id), runRef: String(run.run_ref) },
+          {
+            runId: String(run.run_id),
+            runRef: String(run.run_ref),
+            artifactKey: String(run.artifact.key),
+          },
           // The task performs several independently strict live waits in a
           // second clean profile. Its outer budget must cover their sum rather
           // than terminating before the individual assertions can report.
           { log: false, timeout: 600000 },
         ).then((result) => {
           expect(result.runId).to.eq(run.run_id);
+          expect(result.artifactKey).to.eq(run.artifact.key);
+          expect(result.artifactCard.desktopLabels).to.deep.eq([
+            "View in Foxglove", "View in Lichtblick", "Download",
+          ]);
+          expect(result.artifactCard.mobileLabels).to.deep.eq([
+            "View in Foxglove", "View in Lichtblick", "Download",
+          ]);
           expect(result.labels).to.deep.eq([
             "View", "Foxglove", "Lichtblick", "Video", "Image", "Data",
           ]);

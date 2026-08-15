@@ -1,6 +1,10 @@
 const { defineConfig } = require("cypress");
+const crypto = require("crypto");
+const { spawnSync } = require("child_process");
 const fs = require("fs");
 const http = require("http");
+const https = require("https");
+const os = require("os");
 const path = require("path");
 const { chromium } = require("playwright-core");
 const { PNG } = require("pngjs");
@@ -218,6 +222,59 @@ function screenshotStats(filePath) {
   };
 }
 
+function downloadPublicMcap(url, destination, redirects = 0) {
+  if (redirects > 3) return Promise.reject(new Error("public MCAP redirected too many times"));
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const client = parsed.protocol === "https:" ? https : http;
+    const request = client.get(parsed, { rejectUnauthorized: false }, (response) => {
+      if ([301, 302, 303, 307, 308].includes(response.statusCode) && response.headers.location) {
+        response.resume();
+        const next = new URL(response.headers.location, parsed).toString();
+        resolve(downloadPublicMcap(next, destination, redirects + 1));
+        return;
+      }
+      if (response.statusCode !== 200) {
+        response.resume();
+        reject(new Error(`public MCAP download returned HTTP ${response.statusCode}`));
+        return;
+      }
+      const output = fs.createWriteStream(destination, { mode: 0o600 });
+      response.pipe(output);
+      output.on("finish", () => output.close(resolve));
+      output.on("error", reject);
+    });
+    request.on("error", reject);
+  });
+}
+
+async function validatePublishedMcap(taskInput) {
+  const recordingUrl = String((taskInput && taskInput.recordingUrl) || "");
+  const expectedSha = String((taskInput && taskInput.sha256) || "").toLowerCase();
+  if (!recordingUrl.match(/^https:\/\//) || !expectedSha.match(/^[a-f0-9]{64}$/)) {
+    throw new Error("public MCAP validation requires HTTPS URL and SHA-256");
+  }
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "npa-foxglove-live-"));
+  fs.chmodSync(tempDir, 0o700);
+  const mcapPath = path.join(tempDir, "recording.mcap");
+  try {
+    await downloadPublicMcap(recordingUrl, mcapPath);
+    const actualSha = crypto.createHash("sha256").update(fs.readFileSync(mcapPath)).digest("hex");
+    if (actualSha !== expectedSha) throw new Error("public MCAP SHA-256 does not match export");
+    const result = spawnSync(
+      path.join(repoRoot, ".venv/bin/python"),
+      [path.join(repoRoot, "tests/browser/scripts/validate_published_mcap.py"), mcapPath],
+      { encoding: "utf8", env: { ...process.env, PYTHONUNBUFFERED: "1" } },
+    );
+    if (result.status !== 0) {
+      throw new Error(`public MCAP validator failed: ${String(result.stderr || "").trim()}`);
+    }
+    return JSON.parse(result.stdout);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 async function verifyFoxgloveHostedNavigation(config, taskInput) {
   const credentials = liveCredentials(config);
   const executablePath = String(
@@ -228,6 +285,7 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
   );
   const runId = String((taskInput && taskInput.runId) || "").trim();
   const runRef = String((taskInput && taskInput.runRef) || "").trim();
+  const artifactKey = String((taskInput && taskInput.artifactKey) || "").trim();
   if (!executablePath || !fs.existsSync(executablePath)) {
     throw new Error("real-browser Foxglove verification requires a Chromium executable");
   }
@@ -236,6 +294,9 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
   }
   if (!runRef.match(/^npa1_[A-Za-z0-9_-]+$/)) {
     throw new Error("real-browser Foxglove verification requires a source-qualified run ref");
+  }
+  if (!artifactKey.endsWith("/reports/sim2real.mcap")) {
+    throw new Error("real-browser Foxglove verification requires the exact canonical MCAP key");
   }
   if (!process.env.NPA_AGENT_CYPRESS_EVIDENCE_DIR || evidenceDir.startsWith(repoRoot)) {
     throw new Error("real-browser evidence directory must be explicit and outside the clone");
@@ -298,6 +359,36 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
       runId,
       { timeout: 180000 },
     );
+    await page.locator("#artifactLoadRunArtifacts").click();
+    const exactButton = page.locator(
+      `button[data-action="open-foxglove-artifact"][data-key=${JSON.stringify(artifactKey)}]`,
+    );
+    await exactButton.waitFor({ state: "visible" });
+    await page.locator("#renderModeFoxglove").click();
+    await page.waitForFunction(
+      (key) => {
+        const button = [...document.querySelectorAll(
+          "button[data-action='open-foxglove-artifact']",
+        )].find((candidate) => candidate.getAttribute("data-key") === key);
+        return Boolean(button && !button.disabled && button.getAttribute("aria-disabled") === "false");
+      },
+      artifactKey,
+    );
+    const artifactCard = exactButton.locator(
+      "xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' artifact-card ')][1]",
+    );
+    const cardLabels = async () => (await artifactCard.locator(".artifact-card-actions .btn")
+      .allTextContents()).map((value) => value.trim());
+    const desktopCardLabels = await cardLabels();
+    if (desktopCardLabels.join("|") !== "View in Foxglove|View in Lichtblick|Download") {
+      throw new Error("desktop MCAP artifact card does not expose all three actions in order");
+    }
+    const desktopCardEvidence = path.join(
+      evidenceDir,
+      "live-artifact-card-desktop-after.png",
+    );
+    await artifactCard.screenshot({ path: desktopCardEvidence });
+    fs.chmodSync(desktopCardEvidence, 0o600);
     const expectedLabels = ["View", "Foxglove", "Lichtblick", "Video", "Image", "Data"];
     const desktopLabels = await page.locator(".render-mode-tabs .render-mode-tab").allTextContents();
     if (desktopLabels.map((value) => value.trim()).join("|") !== expectedLabels.join("|")) {
@@ -340,6 +431,21 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
     fs.chmodSync(desktopEvidence, 0o600);
 
     await page.setViewportSize({ width: 390, height: 844 });
+    await exactButton.scrollIntoViewIfNeeded();
+    const mobileCardLabels = await cardLabels();
+    if (mobileCardLabels.join("|") !== "View in Foxglove|View in Lichtblick|Download") {
+      throw new Error("mobile MCAP artifact card does not expose all three actions in order");
+    }
+    const mobileCardBox = await artifactCard.boundingBox();
+    if (!mobileCardBox || mobileCardBox.width <= 0 || mobileCardBox.height <= 0) {
+      throw new Error("mobile MCAP artifact card has zero geometry");
+    }
+    const mobileCardEvidence = path.join(
+      evidenceDir,
+      "live-artifact-card-mobile-after.png",
+    );
+    await artifactCard.screenshot({ path: mobileCardEvidence });
+    fs.chmodSync(mobileCardEvidence, 0o600);
     const mobileLabels = await page.locator(".render-mode-tabs .render-mode-tab").allTextContents();
     if (mobileLabels.map((value) => value.trim()).join("|") !== expectedLabels.join("|")) {
       throw new Error("mobile deployed viewer tab order does not match the required labels");
@@ -367,7 +473,7 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
         response.request().method() === "POST",
       { timeout: 180000 },
     );
-    await page.getByRole("button", { name: "View in Foxglove", exact: true }).click();
+    await exactButton.click();
     const popup = await popupPromise;
     const exportResponse = await exportResponsePromise;
     if (exportResponse.status() !== 200) {
@@ -376,6 +482,13 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
     const exportPayload = await exportResponse.json();
     if (String(exportPayload.run_id || "") !== runId) {
       throw new Error("real-click Foxglove export selected the wrong run");
+    }
+    const requestPayload = exportResponse.request().postDataJSON();
+    if (
+      String(requestPayload.key || "") !== artifactKey ||
+      String(exportPayload.selected_artifact?.key || "") !== artifactKey
+    ) {
+      throw new Error("real-click Foxglove export did not preserve the selected artifact key");
     }
     const expectedWebUrl = String(exportPayload.export?.web_url || "");
     await popup.waitForURL(
@@ -415,8 +528,13 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
       officialResponses[0] || { status: 0 };
     return {
       runId,
+      artifactKey,
       labels: expectedLabels,
       paneGeometry,
+      artifactCard: {
+        desktopLabels: desktopCardLabels,
+        mobileLabels: mobileCardLabels,
+      },
       officialContract: {
         requestMatchedResponse: true,
         responseStatus: response.status,
@@ -434,6 +552,8 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
         desktop: desktopEvidence,
         mobile: mobileEvidence,
         hosted: hostedEvidence,
+        artifactCardDesktop: desktopCardEvidence,
+        artifactCardMobile: mobileCardEvidence,
       },
     };
   } finally {
@@ -481,6 +601,9 @@ module.exports = defineConfig({
       on("task", {
         verifyFoxgloveHostedNavigation(input) {
           return verifyFoxgloveHostedNavigation(config, input);
+        },
+        validatePublishedMcap(input) {
+          return validatePublishedMcap(input);
         },
       });
       on("after:run", () => {

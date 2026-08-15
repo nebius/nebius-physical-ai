@@ -508,7 +508,7 @@ def test_resolve_config_available_with_assets(tmp_path: Path) -> None:
     assert config["host_module_url"] == FOXGLOVE_HOST_MODULE_URL
     assert config["sdk_version"] == "9.9.9"
     assert config["color_scheme"] == "dark"
-    assert config["layout_storage_key"] == "npa-agent-foxglove-robot-motion-v2"
+    assert config["layout_storage_key"] == "npa-agent-foxglove-robot-motion-v3"
     assert config["data_source"]["urls"] == [
         "https://agent.example/foxglove/data/tok-run.mcap"
     ]

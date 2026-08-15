@@ -264,22 +264,81 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
     @app.post("/foxglove/export")
     @_serialized_export
     def foxglove_export_route(payload: dict | None = None) -> dict:
-        """Export the active MCAP through the existing public recording path.
+        """Export an exact selected MCAP through the public recording path.
 
-        If the active run has not been converted yet, delegate to the registered
-        conversion route so conversion, publication, pruning, and state updates
-        continue to have one implementation.
+        Artifact-card requests carry their server-issued run reference and exact
+        S3 key.  The shared loader authorizes and publishes those bytes before a
+        destination is returned.  The reserved canonical recording additionally
+        passes through canonical preparation so a stale format cannot survive a
+        user selecting an existing native ``reports/sim2real.mcap``.
         """
         body = payload if isinstance(payload, dict) else {}
         state = deps.load_state()
         sim_viz = _sim_viz(state)
         requested_run = str(body.get("run_id") or sim_viz.get("run_id") or "").strip()
+        requested_run_ref = str(body.get("run_ref") or "").strip()
+        selected_key = str(body.get("key") or "").strip()
         if not requested_run:
             raise http_error(status_code=400, detail="no active run to export")
         try:
             deps.validate_run_id(requested_run)
         except Exception as exc:  # noqa: BLE001 - validator message is operator-facing
             raise http_error(status_code=400, detail=str(exc))
+
+        exact_selection = bool(selected_key)
+        selected_artifact: dict[str, Any] = {}
+        if exact_selection:
+            if not selected_key.lower().endswith(".mcap"):
+                raise http_error(
+                    status_code=400,
+                    detail="View in Foxglove requires an exact .mcap artifact",
+                )
+            load_request = {
+                "run_id": requested_run,
+                "key": selected_key,
+            }
+            if requested_run_ref:
+                load_request["run_ref"] = requested_run_ref
+            selected_bucket = str(body.get("bucket") or "").strip()
+            if selected_bucket:
+                load_request["bucket"] = selected_bucket
+            selected_uri = str(body.get("s3_uri") or "").strip()
+            if selected_uri:
+                load_request["s3_uri"] = selected_uri
+            loaded = deps.load_artifact(load_request)
+            loaded_viz = (
+                dict(loaded.get("sim_viz") or {})
+                if isinstance(loaded, dict)
+                else {}
+            )
+            loaded_key = str(loaded_viz.get("artifact_key") or "").strip()
+            if not isinstance(loaded, dict) or not loaded.get("ok") or not loaded_key:
+                raise http_error(
+                    status_code=502,
+                    detail="the selected MCAP could not be prepared for Foxglove",
+                )
+            if loaded_key != selected_key:
+                raise http_error(
+                    status_code=409,
+                    detail="artifact selection changed while Foxglove preparation was running",
+                )
+            state = deps.load_state()
+            sim_viz = _sim_viz(state)
+            selected_artifact = {
+                "run_id": str(sim_viz.get("run_id") or requested_run),
+                "run_ref": str(
+                    sim_viz.get("artifact_run_ref")
+                    or loaded.get("run_ref")
+                    or requested_run_ref
+                ),
+                "key": loaded_key,
+                "s3_uri": str(
+                    sim_viz.get("artifact_uri") or loaded.get("artifact_uri") or ""
+                ),
+                "bucket": str(sim_viz.get("bucket") or selected_bucket),
+                "project_id": str(sim_viz.get("project_id") or ""),
+                "resolved_prefix": str(sim_viz.get("resolved_prefix") or ""),
+            }
         active_url = str(sim_viz.get("foxglove_url") or "").strip()
         active_run = str(sim_viz.get("run_id") or "").strip()
         active_path = deps.data_dir / Path(active_url).name if active_url else None
@@ -299,7 +358,33 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
             if deps.prepare_canonical_mcap is not None
             else has_active_transport
         )
-        if (
+        selected_is_canonical = exact_selection and selected_key.endswith(
+            "/reports/sim2real.mcap"
+        )
+        if selected_is_canonical:
+            converted = foxglove_convert_run_route(body)
+            sim_viz = dict(converted.get("sim_viz") or {})
+            state = deps.load_state()
+            summary = converted.get("summary")
+            canonical = dict(converted.get("canonical") or {})
+            active_url = str(sim_viz.get("foxglove_url") or "").strip()
+            active_path = deps.data_dir / Path(active_url).name if active_url else None
+            canonical_key = str(sim_viz.get("artifact_key") or "").strip()
+            if canonical_key != selected_key:
+                raise http_error(
+                    status_code=409,
+                    detail="canonical preparation did not preserve the selected artifact key",
+                )
+            selected_artifact.update(
+                {
+                    "key": canonical_key,
+                    "s3_uri": str(sim_viz.get("canonical_mcap_s3_uri") or ""),
+                }
+            )
+        elif exact_selection:
+            summary = None
+            canonical = {}
+        elif (
             bool(body.get("force_convert"))
             or not active_url
             or requested_run != active_run
@@ -327,13 +412,36 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
                 status_code=404, detail="exported MCAP is missing on the agent VM"
             )
         export["size_bytes"] = active_path.stat().st_size
-        export["canonical_s3_uri"] = str(sim_viz.get("canonical_mcap_s3_uri") or "")
-        export["sha256"] = str(sim_viz.get("canonical_mcap_sha256") or "")
-        export["provenance"] = dict(sim_viz.get("canonical_mcap_provenance") or {})
+        if exact_selection and not selected_is_canonical:
+            digest = hashlib.sha256()
+            with active_path.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            export["sha256"] = digest.hexdigest()
+            export["canonical_s3_uri"] = str(selected_artifact.get("s3_uri") or "")
+            export["provenance"] = {}
+        else:
+            export["canonical_s3_uri"] = str(
+                sim_viz.get("canonical_mcap_s3_uri") or ""
+            )
+            export["sha256"] = str(sim_viz.get("canonical_mcap_sha256") or "")
+            export["provenance"] = dict(
+                sim_viz.get("canonical_mcap_provenance") or {}
+            )
+        if exact_selection:
+            selected_artifact.update(
+                {
+                    "sha256": export["sha256"],
+                    "size_bytes": active_path.stat().st_size,
+                }
+            )
+            export["selected_artifact"] = selected_artifact
         if bool(body.get("open_web")):
-            provenance = dict(sim_viz.get("canonical_mcap_provenance") or {})
+            provenance = dict(export.get("provenance") or {})
             layout: dict[str, Any] = {}
-            if deps.ensure_cloud_layout is not None:
+            if deps.ensure_cloud_layout is not None and (
+                not exact_selection or provenance.get("schemas")
+            ):
                 try:
                     layout = dict(deps.ensure_cloud_layout(provenance=provenance) or {})
                 except FoxgloveCloudError as exc:
@@ -342,6 +450,15 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
                         "layout_id": "",
                         "reason": str(exc),
                     }
+            elif exact_selection and not selected_is_canonical:
+                layout = {
+                    "available": False,
+                    "layout_id": "",
+                    "reason": (
+                        "This native MCAP has no canonical NPA layout metadata; "
+                        "Foxglove will open it with its default topic browser."
+                    ),
+                }
             web = foxglove_data_source_link(
                 config.get("data_source"),
                 layout_id=str(layout.get("layout_id") or "")
@@ -376,13 +493,13 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
                 cloud = deps.ensure_cloud_recording(
                     active_path,
                     requested_run,
-                    provenance=dict(sim_viz.get("canonical_mcap_provenance") or {}),
+                    provenance=dict(export.get("provenance") or {}),
                 )
             except FoxgloveCloudError as exc:
                 raise http_error(
                     status_code=int(getattr(exc, "status_code", 502)), detail=str(exc)
                 )
-            provenance = dict(sim_viz.get("canonical_mcap_provenance") or {})
+            provenance = dict(export.get("provenance") or {})
             layout = dict(cloud.get("layout") or {})
             web = foxglove_recording_link(
                 str(cloud.get("recording_id") or ""),
@@ -396,7 +513,7 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
                 raise http_error(status_code=502, detail=web["reason"])
             export.update(web)
             export["cloud"] = cloud
-            expected_key = f"npa-{str(sim_viz.get('canonical_mcap_sha256') or '')}"
+            expected_key = f"npa-{str(export.get('sha256') or '')}"
             cloud_key = str(cloud.get("recording_key") or "")
             if expected_key != "npa-" and cloud_key != expected_key:
                 raise http_error(
@@ -405,9 +522,7 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
                 )
             sim_viz["foxglove_cloud"] = dict(cloud)
             sim_viz["foxglove_cloud"]["web_url"] = str(web.get("web_url") or "")
-            sim_viz["foxglove_cloud"]["sha256"] = str(
-                sim_viz.get("canonical_mcap_sha256") or ""
-            )
+            sim_viz["foxglove_cloud"]["sha256"] = str(export.get("sha256") or "")
             state["sim_viz"] = sim_viz
             deps.save_state(state)
         return {
@@ -418,6 +533,7 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
             "summary": summary,
             "run_id": str(sim_viz.get("run_id") or ""),
             "artifact_key": str(sim_viz.get("artifact_key") or ""),
+            "selected_artifact": selected_artifact,
             "size_bytes": active_path.stat().st_size,
             "sim_viz": sim_viz,
             "export": export,

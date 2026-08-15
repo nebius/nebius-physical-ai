@@ -10,8 +10,9 @@
     "cy:foxglove": "cypress run --spec cypress/e2e/agent_foxglove.cy.js"
   },
   "devDependencies": {
-    "cypress": "^15.18.0",
     "@foxglove/embed": "0.58.0",
+    "@foxglove/schemas": "2.1.0",
+    "cypress": "^15.18.0",
     "playwright-core": "1.55.0",
     "pngjs": "7.0.0"
   }

@@ -12,6 +12,7 @@ import json
 import hashlib
 import re
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -83,6 +84,30 @@ def harness(tmp_path: Path):
 
     def _load_artifact(body: dict):
         loaded.append(body)
+        key = str(body.get("key") or "")
+        if key.lower().endswith(".mcap"):
+            data_dir.mkdir(parents=True, exist_ok=True)
+            published = data_dir / "selected-native.mcap"
+            published.write_bytes(b"\x89MCAP0\r\nselected-exact-bytes")
+            loaded_key = (
+                "runs/run-1/other.mcap" if key.endswith("requested.mcap") else key
+            )
+            state["sim_viz"].update(
+                {
+                    "run_id": str(body.get("run_id") or "run-1"),
+                    "artifact_run_ref": str(body.get("run_ref") or ""),
+                    "artifact_key": loaded_key,
+                    "artifact_uri": str(
+                        body.get("s3_uri") or f"s3://bucket/{key}"
+                    ),
+                    "artifact_render": "mcap",
+                    "bucket": str(body.get("bucket") or "bucket"),
+                    "project_id": "project-1",
+                    "resolved_prefix": "runs",
+                    "foxglove_url": "/foxglove/data/selected-native.mcap",
+                    "foxglove_ready": True,
+                }
+            )
         return {"ok": True, "render": "mcap", "sim_viz": state["sim_viz"]}
 
     def _validate_run_id(value: str) -> str:
@@ -312,6 +337,72 @@ def test_export_open_web_returns_selected_remote_file_link_without_cloud_upload(
     assert harness["layout_calls"] == [{}]
 
 
+def test_export_exact_discovered_mcap_preserves_selection_and_once_encoded_url(
+    harness,
+) -> None:
+    key = "runs/run-1/stages/native camera.mcap"
+    uri = f"s3://bucket/{key}"
+    request = {
+        "run_id": "run-1",
+        "run_ref": "npa1_exact_source",
+        "key": key,
+        "bucket": "bucket",
+        "s3_uri": uri,
+        "open_web": True,
+    }
+
+    response = harness["client"].post("/foxglove/export", json=request)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert harness["loaded"][-1] == {
+        "run_id": "run-1",
+        "run_ref": "npa1_exact_source",
+        "key": key,
+        "bucket": "bucket",
+        "s3_uri": uri,
+    }
+    assert body["artifact_key"] == key
+    assert body["selected_artifact"] == body["export"]["selected_artifact"]
+    assert body["selected_artifact"]["key"] == key
+    assert body["selected_artifact"]["run_ref"] == "npa1_exact_source"
+    assert body["selected_artifact"]["s3_uri"] == uri
+    assert body["selected_artifact"]["bucket"] == "bucket"
+    assert body["selected_artifact"]["project_id"] == "project-1"
+    assert body["selected_artifact"]["resolved_prefix"] == "runs"
+    assert re.fullmatch(r"[0-9a-f]{64}", body["selected_artifact"]["sha256"])
+    query = parse_qs(urlparse(body["export"]["web_url"]).query)
+    assert query["ds"][0] == "remote-file"
+    assert query["ds.url"][0] == (
+        "https://agent.example/foxglove/data/selected-native.mcap"
+    )
+    assert "%253A" not in body["export"]["web_url"]
+    assert "layoutId" not in query
+    assert "default topic browser" in body["export"]["layout_note"]
+    assert harness["layout_calls"] == []
+
+
+def test_export_exact_artifact_rejects_non_mcap_before_publication(harness) -> None:
+    response = harness["client"].post(
+        "/foxglove/export",
+        json={"run_id": "run-1", "key": "runs/run-1/reports/report.json"},
+    )
+
+    assert response.status_code == 400
+    assert "exact .mcap" in response.json()["detail"]
+    assert harness["loaded"] == []
+
+
+def test_export_exact_artifact_rejects_selection_race(harness) -> None:
+    response = harness["client"].post(
+        "/foxglove/export",
+        json={"run_id": "run-1", "key": "runs/run-1/requested.mcap"},
+    )
+
+    assert response.status_code == 409
+    assert "selection changed" in response.json()["detail"]
+
+
 def test_export_different_safe_run_converts_that_run(harness) -> None:
     (harness["runs_dir"] / "run-2").mkdir()
 
@@ -354,7 +445,7 @@ def test_export_uses_one_canonical_s3_contract_for_viewers_download_and_cloud(
             else "native-reused"
         )
         provenance = {
-            "schema": "npa.canonical-mcap.v1",
+            "schema": "npa.canonical-mcap.v2",
             "canonical_s3_uri": uri,
             "sha256": digest,
             "source": source,

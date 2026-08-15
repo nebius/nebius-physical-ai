@@ -471,6 +471,19 @@
         font-size: 11px;
         word-break: break-all;
       }
+      .artifact-card-actions,
+      .stage-detail-actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+        margin-top: 6px;
+      }
+      .artifact-card-actions .btn,
+      .stage-detail-actions .btn {
+        max-width: 100%;
+        white-space: normal;
+      }
       .artifact-thumb {
         margin-top: 8px;
         max-width: 260px;
@@ -4999,6 +5012,73 @@
             "idle"
           );
         }
+        syncArtifactFoxgloveActions();
+      }
+      function artifactFoxgloveDestination() {
+        const config = foxgloveConfig && typeof foxgloveConfig === "object"
+          ? foxgloveConfig
+          : null;
+        if (!config) {
+          return { available: false, reason: "Checking the official Foxglove integration…" };
+        }
+        if (
+          config.enabled !== false &&
+          config.sdk_ready === true &&
+          String(config.viewer_backend || "") === "foxglove-sdk"
+        ) {
+          return { available: true, reason: "Open this exact MCAP in official Foxglove Web." };
+        }
+        return {
+          available: false,
+          reason: String(config.reason || "The official Foxglove integration is unavailable on this agent."),
+        };
+      }
+      function artifactFoxgloveSelection(button) {
+        return {
+          run_id: String(button && button.getAttribute("data-run-id") || "").trim(),
+          run_ref: String(button && button.getAttribute("data-run-ref") || "").trim(),
+          key: String(button && button.getAttribute("data-key") || "").trim(),
+          bucket: String(button && button.getAttribute("data-bucket") || "").trim(),
+          s3_uri: String(button && button.getAttribute("data-s3-uri") || "").trim(),
+          button,
+        };
+      }
+      function syncArtifactFoxgloveActions() {
+        const destination = artifactFoxgloveDestination();
+        document.querySelectorAll(
+          "button[data-action='open-foxglove-artifact'], button[data-sd-action='foxglove']"
+        ).forEach((button) => {
+          const selected = artifactFoxgloveSelection(button);
+          const operation = foxgloveWebOperation;
+          const busy = Boolean(
+            operation && operation.key && operation.key === selected.key &&
+            operation.runId === selected.run_id && operation.runRef === selected.run_ref
+          );
+          button.disabled = !destination.available || Boolean(operation);
+          button.setAttribute("aria-disabled", button.disabled ? "true" : "false");
+          button.setAttribute("aria-busy", busy ? "true" : "false");
+          button.textContent = busy ? "Preparing Foxglove…" : "View in Foxglove";
+          button.title = busy
+            ? "Preparing and publishing this exact MCAP…"
+            : (operation
+              ? "Another Foxglove preparation is already in progress."
+              : destination.reason);
+        });
+      }
+      function cancelFoxgloveWebOperationForPendingRun(nextRunId) {
+        const target = String(nextRunId || "").trim();
+        const operation = foxgloveWebOperation;
+        if (!operation || !target || operation.runId === target) return false;
+        operation.stale = true;
+        try { operation.popup.close(); } catch (_closeErr) { /* best effort */ }
+        foxgloveWebOperation = null;
+        setFoxgloveWebNote(
+          "The active run changed during selection; the previous Foxglove export was not opened. " +
+            "Retry after " + target + " finishes loading.",
+          "warning"
+        );
+        syncFoxgloveWebAction();
+        return true;
       }
       function setActiveRunId(nextRunId) {
         activeRunId = String(nextRunId || "").trim();
@@ -5721,7 +5801,7 @@
           return;
         }
         el.textContent =
-          "Visualization: robot + trajectory 3D, preserved camera, actuator/joint state, " +
+          "Visualization: robot + trajectory 3D, preserved RGB camera angles, actuator/joint state, " +
           "phase/progress, metrics and logs · fixed frame " +
           String(visualization.fixed_frame || "unknown") + " · " +
           String(topics.length) + " topics. " + String(visualization.fidelity || "");
@@ -5779,6 +5859,7 @@
           };
         }
         updateFoxgloveVisualizationSummary(foxgloveConfig);
+        syncArtifactFoxgloveActions();
         return foxgloveConfig;
       }
       function warmFoxgloveConfig() {
@@ -6082,15 +6163,29 @@
           return false;
         }
       }
-      async function openFoxgloveWeb() {
-        const runId = String(activeRunId || "").trim();
-        const runRef = String(activeArtifactRunRef || "").trim();
+      async function openFoxgloveWeb(selection) {
+        const selected = selection && typeof selection === "object" &&
+          Object.prototype.hasOwnProperty.call(selection, "key")
+          ? selection
+          : null;
+        const runId = String((selected && selected.run_id) || activeRunId || "").trim();
+        const runRef = String((selected && selected.run_ref) || activeArtifactRunRef || "").trim();
+        const artifactKey = String((selected && selected.key) || "").trim();
+        const artifactButton = selected && selected.button;
         if (!runId) {
           setFoxgloveWebNote(
             "Load a run before opening Foxglove Web; there is no active run to export.",
             "error"
           );
           syncFoxgloveWebAction();
+          return false;
+        }
+        if (selected && (!artifactKey || !artifactKey.toLowerCase().endsWith(".mcap"))) {
+          setFoxgloveWebNote(
+            "The selected artifact is not an eligible MCAP destination.",
+            "error"
+          );
+          syncArtifactFoxgloveActions();
           return false;
         }
         if (foxgloveWebOperation) return false;
@@ -6113,13 +6208,16 @@
           id: ++foxgloveWebOperationSequence,
           runId,
           runRef,
+          key: artifactKey,
+          button: artifactButton || null,
           popup,
           stale: false,
         };
         foxgloveWebOperation = operation;
         syncFoxgloveWebAction();
         setFoxgloveWebNote(
-          "Preparing the canonical MCAP for " + runId + " and its Foxglove remote-file link…",
+          "Preparing " + (artifactKey ? "the selected MCAP" : "the canonical MCAP") +
+            " for " + runId + " and its Foxglove remote-file link…",
           "loading"
         );
         setStatus("Preparing the Foxglove remote-file link…");
@@ -6131,14 +6229,25 @@
             body: JSON.stringify({
               run_id: runId,
               ...(runRef ? { run_ref: runRef } : {}),
+              ...(artifactKey ? {
+                key: artifactKey,
+                bucket: String(selected.bucket || "").trim(),
+                s3_uri: String(selected.s3_uri || "").trim(),
+              } : {}),
               open_web: true,
             }),
           });
+          const selectedResult = (data && data.selected_artifact) ||
+            (data && data.export && data.export.selected_artifact) || {};
           if (
             operation.stale ||
             foxgloveWebOperation !== operation ||
             String(activeRunId || "").trim() !== runId ||
-            String(activeArtifactRunRef || "").trim() !== runRef
+            String(activeArtifactRunRef || "").trim() !== runRef ||
+            (artifactButton && (
+              !artifactButton.isConnected ||
+              String(artifactButton.getAttribute("data-key") || "").trim() !== artifactKey
+            ))
           ) {
             try { popup.close(); } catch (_closeErr) { /* best effort */ }
             return false;
@@ -6147,9 +6256,14 @@
           if (!info || !info.available || !info.web_url) {
             throw new Error(String((info && info.reason) || "Foxglove Web is unavailable"));
           }
+          if (artifactKey && String(selectedResult.key || "").trim() !== artifactKey) {
+            throw new Error(
+              "The prepared Foxglove destination does not match the selected artifact; retry from the artifact card."
+            );
+          }
           const layoutNote = String(info.layout_note || "");
           setFoxgloveWebNote(
-            "Opened the selected canonical MCAP for " + runId +
+            "Opened the selected " + (artifactKey ? "MCAP artifact" : "canonical MCAP") + " for " + runId +
               " as a Foxglove remote-file source. " + layoutNote +
               " A Foxglove browser sign-in and eligible plan may still be required to render it.",
             "success"
@@ -6190,6 +6304,7 @@
         } finally {
           if (foxgloveWebOperation === operation) foxgloveWebOperation = null;
           syncFoxgloveWebAction();
+          syncArtifactFoxgloveActions();
         }
       }
       async function captureFoxgloveContext() {
@@ -7921,6 +8036,13 @@
               '" data-run-ref="' + escapeHtml(runRef) + '" data-s3-uri="' + escapeHtml(s3uri) +
               '" data-render="' + escapeHtml(render) + '">' + actionLabel + '</button> '
             : "";
+          const foxgloveButton = render === "mcap"
+            ? '<button class="btn btn-primary" type="button" data-action="open-foxglove-artifact" disabled ' +
+              'aria-disabled="true" title="Checking the official Foxglove integration…" data-run-id="' +
+              escapeHtml(runId) + '" data-run-ref="' + escapeHtml(runRef) +
+              '" data-key="' + escapeHtml(key) + '" data-bucket="' + escapeHtml(bucket) +
+              '" data-s3-uri="' + escapeHtml(s3uri) + '">View in Foxglove</button>'
+            : "";
           return (
             '<div class="artifact-card' + (isPreferred ? " is-preferred" : "") + '" data-render="' + escapeHtml(render) + '" data-role="' + escapeHtml(artifactRole) + '">' +
             '<div class="artifact-card-head"><strong>' + escapeHtml(displayName) + '</strong>' +
@@ -7945,8 +8067,8 @@
                 '" data-bucket="' + escapeHtml(bucket) +
                 '"><span class="hint">&hellip;</span></div>'
               : "") +
-            '<div style="margin-top:6px;">' + viewButton +
-            ' <button class="btn" type="button" data-action="download-artifact" data-run-id="' +
+            '<div class="artifact-card-actions">' + foxgloveButton + viewButton +
+            '<button class="btn" type="button" data-action="download-artifact" data-run-id="' +
             escapeHtml(runId) + '" data-run-ref="' + escapeHtml(runRef) +
             '" data-key="' + escapeHtml(key) + '" data-bucket="' + escapeHtml(bucket) +
             '" data-s3-uri="' + escapeHtml(s3uri) +
@@ -7983,6 +8105,13 @@
             await loadArtifact(payload);
           });
         });
+        list.querySelectorAll("button[data-action='open-foxglove-artifact']").forEach((btn) => {
+          btn.addEventListener("click", (event) => {
+            event.preventDefault();
+            void openFoxgloveWeb(artifactFoxgloveSelection(btn));
+          });
+        });
+        syncArtifactFoxgloveActions();
         list.querySelectorAll("button[data-action='preview-artifact']").forEach((btn) => {
           btn.addEventListener("click", async (event) => {
             event.preventDefault();
@@ -9251,6 +9380,9 @@
         }
         const description = String((data && data.description) || "");
         const artifacts = Array.isArray(data && data.artifacts) ? data.artifacts : [];
+        const stageRunRef = String(
+          (data && data.run_ref) || (rid === activeRunId ? activeArtifactRunRef : "") || ""
+        ).trim();
         const info = (data && data.info && typeof data.info === "object") ? data.info : {};
         // The agent describes the stage inline in the stage-detail panel below —
         // no chat message (stage/artifact inspection must not spam the chat log).
@@ -9300,15 +9432,23 @@
               const actionLabel = render === "rerun" ? "View in Rerun" : (render === "mcap" ? "View in Lichtblick" : "View");
               const viewButton = previewable
                 ? ' <button class="btn" type="button" data-sd-action="load" data-run-id="' + escapeHtml(rid) +
+                  '" data-run-ref="' + escapeHtml(stageRunRef) +
                   '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) +
                   '" data-bucket="' + escapeHtml(bucket) + '" data-render="' + escapeHtml(render) + '">' + actionLabel + "</button>"
                 : "";
+              const foxgloveButton = render === "mcap"
+                ? '<button class="btn btn-primary" type="button" data-sd-action="foxglove" disabled ' +
+                  'aria-disabled="true" title="Checking the official Foxglove integration…" data-run-id="' +
+                  escapeHtml(rid) + '" data-run-ref="' + escapeHtml(stageRunRef) +
+                  '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) +
+                  '" data-bucket="' + escapeHtml(bucket) + '">View in Foxglove</button>'
+                : "";
               return '<div class="stage-detail-row"><code title="' + escapeHtml(key) + '">' +
                 escapeHtml(base) + '</code> <span class="pill">' + escapeHtml(render) + "</span>" +
-                viewButton +
-                ' <button class="btn" type="button" data-sd-action="download" data-run-id="' + escapeHtml(rid) +
+                '<span class="stage-detail-actions">' + foxgloveButton + viewButton +
+                '<button class="btn" type="button" data-sd-action="download" data-run-id="' + escapeHtml(rid) +
                 '" data-key="' + escapeHtml(key) + '" data-bucket="' + escapeHtml(bucket) +
-                '" data-name="' + escapeHtml(base) + '">Download</button></div>';
+                '" data-name="' + escapeHtml(base) + '">Download</button></span></div>';
             }).join("") + "</div>"
           : '<p class="hint">No artifacts found for this stage.</p>';
         if (host) {
@@ -9372,6 +9512,13 @@
               }
             });
           });
+          host.querySelectorAll("button[data-sd-action='foxglove']").forEach((btn) => {
+            btn.addEventListener("click", (event) => {
+              event.preventDefault();
+              void openFoxgloveWeb(artifactFoxgloveSelection(btn));
+            });
+          });
+          syncArtifactFoxgloveActions();
           host.querySelectorAll("button[data-sd-action='download']").forEach((btn) => {
             btn.addEventListener("click", (event) => {
               event.preventDefault();
@@ -9594,6 +9741,7 @@
         if (!runId) {
           throw new Error("Enter or select a run_id first");
         }
+        cancelFoxgloveWebOperationForPendingRun(runId);
         operatorMediaPreviewActive = false;
         // Exact run loading takes precedence over the best-effort, whole-bucket
         // discovery that starts during page boot. Stop that pagination before it

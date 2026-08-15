@@ -1005,7 +1005,7 @@ def test_rerun_self_heal_preserves_same_run_canonical_mcap(
         "canonical_mcap_size_bytes": 4096,
         "canonical_mcap_source": "native-reused",
         "canonical_mcap_provenance": {
-            "visualization_contract": "npa.foxglove.robot-motion.v2"
+            "visualization_contract": "npa.foxglove.robot-motion.v3"
         },
         "transport_state": "published-local-cache",
         "foxglove_cloud_layout": {"layout_id": "lay_a9618be1fa915fb8"},
@@ -1059,7 +1059,7 @@ def test_same_run_without_preferred_rrd_preserves_canonical_mcap(
         "canonical_mcap_size_bytes": 4096,
         "canonical_mcap_source": "generated-rich-diagnostic",
         "canonical_mcap_provenance": {
-            "visualization_contract": "npa.foxglove.robot-motion.v2"
+            "visualization_contract": "npa.foxglove.robot-motion.v3"
         },
         "transport_state": "published-local-cache",
         "foxglove_cloud_layout": {"layout_id": "lay_a9618be1fa915fb8"},

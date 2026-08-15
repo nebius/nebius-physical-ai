@@ -116,7 +116,8 @@ LOG_SCHEMA: dict[str, Any] = {
 
 LOG_LEVELS = {"unknown": 0, "debug": 1, "info": 2, "warning": 3, "error": 4, "fatal": 5}
 
-VISUALIZATION_CONTRACT = "npa.foxglove.robot-motion.v2"
+VISUALIZATION_CONTRACT = "npa.foxglove.robot-motion.v3"
+SCENE_UPDATE_SCHEMA_SOURCE = "@foxglove/schemas@2.1.0"
 DIAGNOSTIC_FRAME_ID = "npa_action_space"
 DIAGNOSTIC_FIDELITY = (
     "Action-derived diagnostic schematic; not calibrated robot/world kinematics. "
@@ -220,8 +221,68 @@ ACTUATOR_COMMANDS_SCHEMA = _object_schema(
 
 
 def _scene_update_schema() -> dict[str, Any]:
-    """Return the JSON shape of the official ``foxglove.SceneUpdate`` schema."""
+    """Return the official-schema-compatible ``foxglove.SceneUpdate`` shape.
+
+    Foxglove traverses every primitive array in the channel schema, including
+    arrays that happen to be empty in a particular message.  Keep an explicit
+    ``items`` schema on every array to match ``@foxglove/schemas`` 2.1.0; an
+    untyped empty array is not a harmless relaxation for the Foxglove parser.
+    """
     primitive_common = {"pose": _POSE_SCHEMA, "color": _COLOR_SCHEMA}
+    key_value = _object_schema(
+        "foxglove.KeyValuePair",
+        {"key": {"type": "string"}, "value": {"type": "string"}},
+        required=["key", "value"],
+    )
+    deletion = _object_schema(
+        "foxglove.SceneEntityDeletion",
+        {
+            "timestamp": _TIME_SCHEMA,
+            "type": {
+                "title": "foxglove.SceneEntityDeletionType",
+                "oneOf": [
+                    {"title": "MATCHING_ID", "const": 0},
+                    {"title": "ALL", "const": 1},
+                ],
+            },
+            "id": {"type": "string"},
+        },
+        required=["timestamp", "type", "id"],
+    )
+    arrow = _object_schema(
+        "foxglove.ArrowPrimitive",
+        {
+            "pose": _POSE_SCHEMA,
+            "shaft_length": {"type": "number"},
+            "shaft_diameter": {"type": "number"},
+            "head_length": {"type": "number"},
+            "head_diameter": {"type": "number"},
+            "color": _COLOR_SCHEMA,
+        },
+        required=[
+            "pose",
+            "shaft_length",
+            "shaft_diameter",
+            "head_length",
+            "head_diameter",
+            "color",
+        ],
+    )
+    cube = _object_schema(
+        "foxglove.CubePrimitive",
+        {**primitive_common, "size": _VECTOR3_SCHEMA},
+        required=["pose", "size", "color"],
+    )
+    cylinder = _object_schema(
+        "foxglove.CylinderPrimitive",
+        {
+            **primitive_common,
+            "size": _VECTOR3_SCHEMA,
+            "bottom_scale": {"type": "number"},
+            "top_scale": {"type": "number"},
+        },
+        required=["pose", "size", "bottom_scale", "top_scale", "color"],
+    )
     line = _object_schema(
         "foxglove.LinePrimitive",
         {
@@ -250,6 +311,17 @@ def _scene_update_schema() -> dict[str, Any]:
         {**primitive_common, "size": _VECTOR3_SCHEMA},
         required=["pose", "size", "color"],
     )
+    triangle = _object_schema(
+        "foxglove.TriangleListPrimitive",
+        {
+            "pose": _POSE_SCHEMA,
+            "points": {"type": "array", "items": _VECTOR3_SCHEMA},
+            "color": _COLOR_SCHEMA,
+            "colors": {"type": "array", "items": _COLOR_SCHEMA},
+            "indices": {"type": "array", "items": {"type": "integer"}},
+        },
+        required=["pose", "points", "color", "colors", "indices"],
+    )
     text = _object_schema(
         "foxglove.TextPrimitive",
         {
@@ -268,6 +340,27 @@ def _scene_update_schema() -> dict[str, Any]:
             "text",
         ],
     )
+    model = _object_schema(
+        "foxglove.ModelPrimitive",
+        {
+            "pose": _POSE_SCHEMA,
+            "scale": _VECTOR3_SCHEMA,
+            "color": _COLOR_SCHEMA,
+            "override_color": {"type": "boolean"},
+            "url": {"type": "string"},
+            "media_type": {"type": "string"},
+            "data": {"type": "string", "contentEncoding": "base64"},
+        },
+        required=[
+            "pose",
+            "scale",
+            "color",
+            "override_color",
+            "url",
+            "media_type",
+            "data",
+        ],
+    )
     entity = _object_schema(
         "foxglove.SceneEntity",
         {
@@ -276,15 +369,15 @@ def _scene_update_schema() -> dict[str, Any]:
             "id": {"type": "string"},
             "lifetime": _TIME_SCHEMA,
             "frame_locked": {"type": "boolean"},
-            "metadata": {"type": "array"},
-            "arrows": {"type": "array"},
-            "cubes": {"type": "array"},
+            "metadata": {"type": "array", "items": key_value},
+            "arrows": {"type": "array", "items": arrow},
+            "cubes": {"type": "array", "items": cube},
             "spheres": {"type": "array", "items": sphere},
-            "cylinders": {"type": "array"},
+            "cylinders": {"type": "array", "items": cylinder},
             "lines": {"type": "array", "items": line},
-            "triangles": {"type": "array"},
+            "triangles": {"type": "array", "items": triangle},
             "texts": {"type": "array", "items": text},
-            "models": {"type": "array"},
+            "models": {"type": "array", "items": model},
         },
         required=[
             "timestamp",
@@ -306,7 +399,7 @@ def _scene_update_schema() -> dict[str, Any]:
     return _object_schema(
         "foxglove.SceneUpdate",
         {
-            "deletions": {"type": "array"},
+            "deletions": {"type": "array", "items": deletion},
             "entities": {"type": "array", "items": entity},
         },
         required=["deletions", "entities"],
@@ -1098,6 +1191,7 @@ def write_run_mcap(
                 metadata_payload.update(
                     {
                         "visualization_contract": VISUALIZATION_CONTRACT,
+                        "scene_update_schema_source": SCENE_UPDATE_SCHEMA_SOURCE,
                         "visualization_fixed_frame": DIAGNOSTIC_FRAME_ID,
                         "robot_representation": "diagnostic-action-derived",
                         "visualization_fidelity": DIAGNOSTIC_FIDELITY,

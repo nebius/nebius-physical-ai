@@ -8,7 +8,8 @@
  * handshake and records every command the UI sends.
  */
 
-import { resolveLiveAgentConfig } from "../support/e2e";
+import { NON_STOCK_RUN_ID, resolveLiveAgentConfig } from "../support/e2e";
+import { SceneUpdate as OfficialSceneUpdate } from "@foxglove/schemas/jsonschema";
 
 // The SDK requires an absolute embed URL (`new URL(src)`), exactly like a real
 // Foxglove deployment; the agent backend enforces the same rule.
@@ -17,6 +18,8 @@ const MCAP_URL = "/foxglove/data/tok-session.mcap";
 
 const RICH_TOPICS = {
   "/camera": "foxglove.CompressedImage",
+  "/camera/side": "foxglove.CompressedImage",
+  "/camera/workspace": "foxglove.CompressedImage",
   "/robot/diagnostic_scene": "foxglove.SceneUpdate",
   "/robot/diagnostic_pose": "foxglove.PoseInFrame",
   "/robot/diagnostic_trajectory": "foxglove.PosesInFrame",
@@ -36,11 +39,30 @@ function richLayout() {
     direction,
     items: items.map(([proportion, content]) => ({ proportion, content })),
   });
+  const cameraPanel = (topic, label, index) => panel(
+    "Image",
+    `${label} camera — preserved source RGB`,
+    {
+      imageMode: { imageTopic: topic, imageSchemaName: "foxglove.CompressedImage" },
+      synchronize: true,
+      syncedTopics: { [topic]: true },
+      npaCamera: { index, label, topic, sourceFidelity: "source-rgb-only" },
+    },
+  );
+  const cameraTabs = {
+    type: "tabs",
+    selectedTabIndex: 0,
+    tabs: [
+      { title: "Primary (/camera)", content: cameraPanel("/camera", "Primary", 0) },
+      { title: "Side (/camera/side)", content: cameraPanel("/camera/side", "Side", 1) },
+      { title: "Workspace (/camera/workspace)", content: cameraPanel("/camera/workspace", "Workspace", 2) },
+    ],
+  };
   return {
     version: 1,
     content: split("column", [
       [0.72, split("row", [
-        [0.68, panel("ThreeDee", "Robot motion and end-effector trajectory", {
+        [0.58, panel("ThreeDee", "Robot motion and end-effector trajectory", {
           fixedFrame: "npa_action_space",
           topics: {
             "/robot/diagnostic_scene": { visible: true },
@@ -48,7 +70,7 @@ function richLayout() {
             "/robot/diagnostic_trajectory": { visible: true },
           },
         })],
-        [0.32, panel("Image", "Primary camera", { imageMode: { imageTopic: "/camera" } })],
+        [0.42, cameraTabs],
       ])],
       [0.28, split("row", [
         [0.45, panel("Plot", "Execution performance", { paths: [{ value: "/metrics/execution.reward" }] })],
@@ -76,10 +98,10 @@ function foxgloveConfig(overrides) {
       self_hosted_url: "",
       org_slug: "acme-robotics",
       color_scheme: "dark",
-      layout_storage_key: "npa-agent-foxglove-robot-motion-v2",
+      layout_storage_key: "npa-agent-foxglove-robot-motion-v3",
       layout: richLayout(),
       visualization: {
-        contract: "npa.foxglove.robot-motion.v2",
+        contract: "npa.foxglove.robot-motion.v3",
         fixed_frame: "npa_action_space",
         fidelity: "Action-derived diagnostic schematic; not calibrated robot/world kinematics.",
         topics: RICH_TOPICS,
@@ -149,7 +171,7 @@ function assertSingleFoxgloveWebAction(options = {}) {
     .and("have.prop", "tagName", "BUTTON")
     .and("have.attr", "type", "button")
     .and("have.attr", "aria-describedby", "foxgloveExportNote");
-  cy.contains("button", "View in Foxglove").should("have.length", 1);
+  cy.get("#foxgloveOpenWeb").should("have.text", "View in Foxglove");
   cy.get("#foxgloveOpenWeb").should(enabled ? "be.enabled" : "be.disabled");
   cy.get("#foxgloveOpenDesktop").should("not.exist");
   cy.contains(/Foxglove Desktop/i).should("not.exist");
@@ -224,6 +246,28 @@ function foxgloveExportResponse(runId, overrides = {}) {
   };
 }
 
+function exactArtifactExportResponse(runId, runRef, key, s3Uri) {
+  const response = foxgloveExportResponse(runId);
+  const selectedArtifact = {
+    run_id: runId,
+    run_ref: runRef,
+    key,
+    s3_uri: s3Uri,
+    bucket: "mock",
+    project_id: "project-local",
+    resolved_prefix: "",
+    sha256: "b".repeat(64),
+    size_bytes: 16384,
+  };
+  response.artifact_key = key;
+  response.selected_artifact = selectedArtifact;
+  response.sim_viz.artifact_key = key;
+  response.sim_viz.artifact_run_ref = runRef;
+  response.export.selected_artifact = selectedArtifact;
+  response.export.sha256 = selectedArtifact.sha256;
+  return response;
+}
+
 function assertRichOfficialUrl(webUrl, expectedRecordingUrl = null) {
   const parsed = new URL(webUrl);
   expect(parsed.origin).to.eq("https://app.foxglove.dev");
@@ -245,6 +289,35 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     cy.visitMockAgent();
     cy.wait("@session");
     cy.get("#rerunBundleCover", { timeout: 20000 }).should("have.attr", "hidden");
+  });
+
+  it("pins the authoritative Foxglove SceneUpdate array contract", () => {
+    expect(OfficialSceneUpdate.title).to.eq("foxglove.SceneUpdate");
+    expect(OfficialSceneUpdate.properties.deletions.items.title).to.eq(
+      "foxglove.SceneEntityDeletion",
+    );
+    const entity = OfficialSceneUpdate.properties.entities.items.properties;
+    expect({
+      metadata: entity.metadata.items.title,
+      arrows: entity.arrows.items.title,
+      cubes: entity.cubes.items.title,
+      spheres: entity.spheres.items.title,
+      cylinders: entity.cylinders.items.title,
+      lines: entity.lines.items.title,
+      triangles: entity.triangles.items.title,
+      texts: entity.texts.items.title,
+      models: entity.models.items.title,
+    }).to.deep.eq({
+      metadata: "foxglove.KeyValuePair",
+      arrows: "foxglove.ArrowPrimitive",
+      cubes: "foxglove.CubePrimitive",
+      spheres: "foxglove.SpherePrimitive",
+      cylinders: "foxglove.CylinderPrimitive",
+      lines: "foxglove.LinePrimitive",
+      triangles: "foxglove.TriangleListPrimitive",
+      texts: "foxglove.TextPrimitive",
+      models: "foxglove.ModelPrimitive",
+    });
   });
 
   [
@@ -282,6 +355,106 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
         .should("be.visible")
         .and("have.text", "View in Foxglove");
     });
+  });
+
+  [
+    { name: "desktop", width: 1440, height: 1000 },
+    { name: "mobile-safe", width: 390, height: 844 },
+  ].forEach((viewport) => {
+    it(`opens the exact discovered MCAP card in Foxglove at ${viewport.name} size`, () => {
+      cy.viewport(viewport.width, viewport.height);
+      stubFoxgloveApis();
+      const runRef = "npa1_mock_non_stock";
+      const key = `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`;
+      const s3Uri = `s3://mock/${key}`;
+      const exported = exactArtifactExportResponse(
+        NON_STOCK_RUN_ID,
+        runRef,
+        key,
+        s3Uri,
+      );
+      cy.intercept("POST", "/api/foxglove/export", (request) => {
+        expect(request.body).to.deep.eq({
+          run_id: NON_STOCK_RUN_ID,
+          run_ref: runRef,
+          key,
+          bucket: "mock",
+          s3_uri: s3Uri,
+          open_web: true,
+        });
+        request.reply({ statusCode: 200, body: exported });
+      }).as("exactArtifactExport");
+      cy.window().then((win) => {
+        const replace = cy.stub().as(`exactArtifactNavigate-${viewport.name}`);
+        cy.stub(win, "open").returns({
+          opener: null,
+          location: { replace },
+          close: cy.stub(),
+        });
+      });
+
+      cy.get("#tabRerun").click();
+      cy.get("#renderModeFoxglove").click();
+      cy.wait("@foxgloveConfig");
+      expectMockAppState("ready");
+      cy.get("#artifactRefreshRuns").click();
+      cy.wait("@artifactRuns");
+      cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
+      cy.wait("@nonStockArtifactList");
+      cy.get(`.artifact-card:has([data-key="${key}"])`)
+        .as("exactArtifactCard")
+        .scrollIntoView()
+        .should("be.visible");
+      cy.get("@exactArtifactCard").find(".artifact-card-actions .btn").then(($buttons) => {
+        expect([...$buttons].map((button) => button.textContent.trim())).to.deep.eq([
+          "View in Foxglove",
+          "View in Lichtblick",
+          "Download",
+        ]);
+      });
+      cy.get(`button[data-action="open-foxglove-artifact"][data-key="${key}"]`)
+        .should("be.visible")
+        .and("be.enabled")
+        .and("have.attr", "aria-disabled", "false")
+        .click();
+      cy.wait("@exactArtifactExport");
+      cy.get(`@exactArtifactNavigate-${viewport.name}`).should(
+        "have.been.calledOnceWith",
+        exported.export.web_url,
+      );
+      cy.get("#foxgloveExportNote")
+        .should("have.attr", "data-state", "success")
+        .and("contain.text", "selected MCAP artifact");
+      mockAppFrame().its("0.contentWindow.__mockFoxgloveTopicErrors").should(
+        "deep.equal",
+        [],
+      );
+    });
+  });
+
+  it("reports a blocked popup from an MCAP card without starting preparation", () => {
+    stubFoxgloveApis();
+    let exports = 0;
+    cy.intercept("POST", "/api/foxglove/export", () => {
+      exports += 1;
+    });
+    cy.window().then((win) => cy.stub(win, "open").returns(null));
+    cy.get("#tabRerun").click();
+    cy.get("#renderModeFoxglove").click();
+    cy.wait("@foxgloveConfig");
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@artifactRuns");
+    cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
+    cy.wait("@nonStockArtifactList");
+    cy.get("button[data-action='open-foxglove-artifact']")
+      .scrollIntoView()
+      .should("be.enabled")
+      .click();
+    cy.get("#foxgloveExportNote")
+      .should("have.attr", "data-state", "error")
+      .and("contain.text", "blocked")
+      .and("contain.text", "Allow popups");
+    cy.then(() => expect(exports, "no preparation request").to.eq(0));
   });
 
   it("mounts the real @foxglove/embed SDK and completes the viewer handshake", () => {
@@ -325,17 +498,29 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
         expect(ack, "handshake-ack was sent by the SDK").to.exist;
         expect(ack.payload.orgSlug).to.eq("acme-robotics");
         expect(ack.payload.initialLayoutParams.storageKey).to.eq(
-          "npa-agent-foxglove-robot-motion-v2",
+          "npa-agent-foxglove-robot-motion-v3",
         );
         expect(ack.payload.initialLayoutParams.force).to.eq(undefined);
         const layout = ack.payload.initialLayoutParams.layout;
         expect(layout.version).to.eq(1);
         const collectPanels = (node) => node.type === "panel"
           ? [node]
-          : (node.items || []).flatMap((item) => collectPanels(item.content));
+          : [
+            ...(node.items || []).flatMap((item) => collectPanels(item.content)),
+            ...(node.tabs || []).flatMap((item) => collectPanels(item.content)),
+          ];
         const panels = collectPanels(layout.content);
         expect(panels.map((panel) => panel.panelType)).to.deep.eq([
-          "ThreeDee", "Image", "Plot", "StateTransitions", "Log",
+          "ThreeDee", "Image", "Image", "Image", "Plot", "StateTransitions", "Log",
+        ]);
+        expect(
+          panels.filter((panel) => panel.panelType === "Image")
+            .map((panel) => panel.config.imageMode.imageTopic),
+        ).to.deep.eq(["/camera", "/camera/side", "/camera/workspace"]);
+        const cameraTabs = layout.content.items[0].content.items[1].content;
+        expect(cameraTabs.type).to.eq("tabs");
+        expect(cameraTabs.tabs.map((tab) => tab.title)).to.deep.eq([
+          "Primary (/camera)", "Side (/camera/side)", "Workspace (/camera/workspace)",
         ]);
         expect(panels[0].config.fixedFrame).to.eq("npa_action_space");
         expect(Object.keys(panels[0].config.topics)).to.deep.eq([
@@ -359,7 +544,7 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
   it("mounts promptly, then prepares and remounts an unchecked run with the rich layout", () => {
     const rich = foxgloveConfig();
     const unchecked = foxgloveConfig({
-      layout_storage_key: "npa-agent-foxglove-robot-motion-v2-source-default",
+      layout_storage_key: "npa-agent-foxglove-robot-motion-v3-source-default",
       layout: {},
       visualization: { checked: false },
     });
@@ -391,7 +576,7 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
       const ack = messages.find((message) => message && message.type === "handshake-ack");
       expect(ack, "prepared rich-viewer handshake").to.exist;
       expect(ack.payload.initialLayoutParams.storageKey).to.eq(
-        "npa-agent-foxglove-robot-motion-v2",
+        "npa-agent-foxglove-robot-motion-v3",
       );
       expect(ack.payload.initialLayoutParams.layout.version).to.eq(1);
     });

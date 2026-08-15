@@ -7,9 +7,11 @@ when it is absent; the graceful-degradation path is asserted unconditionally.
 from __future__ import annotations
 
 import base64
+import copy
 import json
 from pathlib import Path
 
+import jsonschema
 import pytest
 
 from npa.workbench.foxglove import (
@@ -27,6 +29,8 @@ from npa.workbench.foxglove.inspect import (
 from npa.workbench.foxglove.mcap_writer import (
     COMPRESSED_IMAGE_SCHEMA,
     LOG_SCHEMA,
+    SCENE_UPDATE_SCHEMA,
+    SCENE_UPDATE_SCHEMA_SOURCE,
     FrameInput,
     LogInput,
     McapWriteError,
@@ -628,7 +632,10 @@ def test_action_rollout_emits_meaningful_robot_motion_contract(tmp_path: Path) -
     assert summary.poses == 6
     assert summary.joint_states == summary.actuator_states == summary.run_states == 3
     assert (
-        info.metadata["npa"]["visualization_contract"] == "npa.foxglove.robot-motion.v2"
+        info.metadata["npa"]["visualization_contract"] == "npa.foxglove.robot-motion.v3"
+    )
+    assert info.metadata["npa"]["scene_update_schema_source"] == (
+        SCENE_UPDATE_SCHEMA_SOURCE
     )
     assert info.metadata["npa"]["visualization_fixed_frame"] == "npa_action_space"
     assert "not calibrated" in info.metadata["npa"]["visualization_fidelity"]
@@ -670,6 +677,59 @@ def test_action_rollout_emits_meaningful_robot_motion_contract(tmp_path: Path) -
     assert wire_schemas["/robot/diagnostic_scene"]["required"] == [
         "deletions",
         "entities",
+    ]
+    # Validate every emitted SceneUpdate through jsonschema, independently of
+    # the MCAP writer/reader.  The explicit item-title table mirrors the current
+    # official @foxglove/schemas 2.1.0 contract and catches the former channel
+    # schema whose empty primitive arrays had no `items` shape.
+    official_array_items = {
+        "metadata": "foxglove.KeyValuePair",
+        "arrows": "foxglove.ArrowPrimitive",
+        "cubes": "foxglove.CubePrimitive",
+        "spheres": "foxglove.SpherePrimitive",
+        "cylinders": "foxglove.CylinderPrimitive",
+        "lines": "foxglove.LinePrimitive",
+        "triangles": "foxglove.TriangleListPrimitive",
+        "texts": "foxglove.TextPrimitive",
+        "models": "foxglove.ModelPrimitive",
+    }
+    scene_schema = wire_schemas["/robot/diagnostic_scene"]
+    jsonschema.Draft7Validator.check_schema(scene_schema)
+    validator = jsonschema.Draft7Validator(scene_schema)
+    scene_messages = messages["/robot/diagnostic_scene"]
+    assert len(scene_messages) == 3
+    assert [list(validator.iter_errors(message)) for message in scene_messages] == [
+        [],
+        [],
+        [],
+    ]
+    assert scene_schema == SCENE_UPDATE_SCHEMA
+    assert scene_schema["properties"]["deletions"]["items"]["title"] == (
+        "foxglove.SceneEntityDeletion"
+    )
+    entity_properties = scene_schema["properties"]["entities"]["items"][
+        "properties"
+    ]
+    assert {
+        name: entity_properties[name]["items"]["title"]
+        for name in official_array_items
+    } == official_array_items
+
+    def arrays_without_items(node, path="$"):
+        if not isinstance(node, dict):
+            return []
+        missing = [path] if node.get("type") == "array" and "items" not in node else []
+        for key, value in node.items():
+            missing.extend(arrays_without_items(value, f"{path}.{key}"))
+        return missing
+
+    assert arrays_without_items(scene_schema) == []
+    malformed = copy.deepcopy(scene_schema)
+    del malformed["properties"]["entities"]["items"]["properties"]["models"][
+        "items"
+    ]
+    assert arrays_without_items(malformed) == [
+        "$.properties.entities.items.properties.models"
     ]
     for topic in (
         "/robot/diagnostic_scene",

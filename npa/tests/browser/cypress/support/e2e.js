@@ -1006,6 +1006,10 @@ function installAgentApiMocks() {
   }).as("artifactRuns");
   cy.intercept("GET", `/api/artifacts/run/${NON_STOCK_RUN_ID}*`, json({
     run_id: NON_STOCK_RUN_ID,
+    run_ref: "npa1_mock_non_stock",
+    bucket: "mock",
+    project_id: "project-local",
+    resolved_prefix: "",
     prefix: "sim2real-b",
     count: NON_STOCK_ARTIFACTS.length,
     artifacts: NON_STOCK_ARTIFACTS,

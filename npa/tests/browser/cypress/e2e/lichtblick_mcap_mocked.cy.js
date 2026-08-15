@@ -216,6 +216,7 @@ describe("Lichtblick MCAP viewer (mocked smoke)", () => {
     cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
     cy.wait("@nonStockArtifactList");
     cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`);
+    cy.get("#artifactList").should("contain.text", "View in Foxglove");
     cy.get("#artifactList").should("contain.text", "View in Lichtblick");
     // Non-MCAP artifacts are hidden by the type filter.
     cy.get("#artifactList").should("not.contain.text", ".rrd");
