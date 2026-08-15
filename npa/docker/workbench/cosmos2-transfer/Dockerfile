@@ -196,13 +196,18 @@ COPY docker/workbench/cosmos2-transfer/REDISTRIBUTION.md \
 # lazy so importing the attestation and Cosmos component modules does not
 # require CLI/viewer extras.
 ENV NPA_SKIP_EAGER_IMPORTS=1 \
-    PYTHONPATH=/opt/npa/src
+    PYTHONPATH=/opt/npa/src \
+    NPA_BAKED_PYTHON=/opt/cosmos/cosmos-transfer2.5/.venv/bin/python
 
 # Deliberately shadow the global python3: SkyPilot and orchestrator-supplied
 # commands invoke python3; /usr/bin/python3 remains available to system tooling.
 RUN set -eux; \
     test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40; \
     id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu; \
+    ln -sfn /opt/npa/src/npa \
+      /opt/cosmos/cosmos-transfer2.5/.venv/lib/python3.10/site-packages/npa; \
+    env -u PYTHONPATH "${NPA_BAKED_PYTHON}" -c \
+      'import npa.cli.main; import npa.workflows.sim2real.runtime_attestation'; \
     printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu; \
     chmod 0440 /etc/sudoers.d/ubuntu; \
     printf '%s\n' '#!/bin/sh' \

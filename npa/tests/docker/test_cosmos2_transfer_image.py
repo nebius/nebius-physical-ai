@@ -130,6 +130,11 @@ def test_lfs_media_models_and_build_credentials_are_excluded() -> None:
     assert "pip install --no-deps /opt/npa" not in text
     assert "python -m npa.cli.main" in text
     assert "PYTHONPATH=/opt/npa/src" in text
+    assert (
+        "NPA_BAKED_PYTHON=/opt/cosmos/cosmos-transfer2.5/.venv/bin/python" in text
+    )
+    assert "ln -sfn /opt/npa/src/npa" in text
+    assert 'env -u PYTHONPATH "${NPA_BAKED_PYTHON}" -c' in text
     assert "no build backend or package index is consulted" in text
     assert "import npa.cli.main" in text
     assert "workbench cosmos2 transfer --help" in text
