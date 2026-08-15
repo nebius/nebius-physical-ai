@@ -84,7 +84,17 @@ function waitForCapability(predicate) {
   });
 }
 
-function uploadAndApplyBundle(kind, name, fileName, contents) {
+function uploadAndApplyBundle(kind, name, fileName, contents, apply = true) {
+  cy.get("#leisaacDisconnect").then(($button) => {
+    if (!$button.prop("hidden") && !$button.prop("disabled")) {
+      cy.wrap($button).click();
+    }
+  });
+  cy.get("#leisaacBundleRefresh").click();
+  cy.get("#leisaacBundleStatus", { timeout: 30000 }).should(
+    "contain.text",
+    "Loaded ",
+  );
   cy.get("#leisaacBundleName")
     .clear()
     .type(name, { delay: 0 })
@@ -95,12 +105,67 @@ function uploadAndApplyBundle(kind, name, fileName, contents) {
     fileName,
     mimeType: kind === "device" ? "application/json" : "application/octet-stream",
   });
+  cy.get("#leisaacBundleFiles").should(($input) => {
+    expect($input[0].files, "selected bundle files").to.have.length(1);
+    expect($input[0].files[0].size, "selected bundle bytes").to.be.greaterThan(0);
+  });
+  cy.window().then((win) => {
+    const label = win.document.getElementById("leisaacBundleStatus");
+    const toastHost = win.document.getElementById("toastHost");
+    win.__LEISAAC_BUNDLE_UPLOAD_OUTCOME__ = new Cypress.Promise(
+      (resolve, reject) => {
+        const finish = (error) => {
+          win.clearTimeout(timer);
+          observer.disconnect();
+          if (error) reject(error);
+          else resolve();
+        };
+        const inspect = () => {
+          const toast = toastHost && toastHost.querySelector(".toast-error");
+          if (toast) {
+            finish(new Error(String(toast.textContent || "Bundle upload failed")));
+            return;
+          }
+          if (
+            label &&
+            String(label.textContent || "").includes(
+              "Validated immutable " + kind + " bundle",
+            )
+          ) {
+            finish();
+          }
+        };
+        const observer = new win.MutationObserver(inspect);
+        observer.observe(win.document.body, {
+          childList: true,
+          subtree: true,
+          characterData: true,
+        });
+        const timer = win.setTimeout(
+          () => finish(new Error("Timed out awaiting bundle upload outcome")),
+          30000,
+        );
+        inspect();
+      },
+    );
+  });
   cy.get("#leisaacBundleUpload").click();
+  cy.window().then((win) => win.__LEISAAC_BUNDLE_UPLOAD_OUTCOME__);
   cy.get("#leisaacBundleStatus", { timeout: 30000 }).should(
     "contain.text",
     "Validated immutable " + kind + " bundle",
   );
   cy.get("#leisaacBundleSelection").should("not.have.value", "");
+  if (!apply) {
+    return cy.get("#leisaacBundleLibrary").should("contain.text", name);
+  }
+  cy.get("#leisaacConnect").then(($button) => {
+    if (!$button.prop("disabled")) cy.wrap($button).click();
+  });
+  cy.get("#leisaacStreamStatus", { timeout: 120000 }).should(
+    "contain.text",
+    "keyboard teleoperation active",
+  );
   cy.get("#leisaacBundleSelect").click();
   cy.get("#leisaacBundleStatus", { timeout: 30000 })
     .should("contain.text", "Selected " + kind + " bundle")
@@ -564,8 +629,8 @@ function recordEpisode(outcome, episodeNumber, completedBefore) {
       cy.get("#leisaacSecondaryCanvas", { timeout: 120000 })
         .should("be.visible")
         .and(($canvas) => {
-          expect($canvas[0].width, "overview frame width").to.be.greaterThan(640);
-          expect($canvas[0].height, "overview frame height").to.be.greaterThan(360);
+          expect($canvas[0].width, "overview frame width").to.equal(640);
+          expect($canvas[0].height, "overview frame height").to.equal(360);
         });
       cy.screenshot("04-dual-slow-two-distinct-viewports", { capture: "viewport" });
       cy.window().then((win) => {
@@ -753,24 +818,24 @@ function recordEpisode(outcome, episodeNumber, completedBefore) {
         .then(() => verifyExactUploadedEpisode(true));
     });
 
-    it("applies checksum-verified SO-101, scene, and device bundles and records their provenance", () => {
+    it("stores checksum-verified assets and records applied device provenance", () => {
       const selectedRun = runId();
       let completedBefore = 0;
       const robot = `#usda 1.0
 (
     defaultPrim = "SO101"
 )
-def Xform "SO101" (
-    prepend references = @/opt/leisaac-cache/assets/runtime/robots/so101_follower.usd@
-) {}
+def Xform "SO101" {}
 `;
       const scene = `#usda 1.0
 (
     defaultPrim = "Scene"
 )
-def Xform "Scene" (
-    prepend references = @/opt/leisaac-cache/assets/runtime/scenes/table_with_cube/scene.usd@
-) {}
+def Xform "Scene" {
+    def Cube "LiftCube" {
+        double size = 0.05
+    }
+}
 `;
       const device = JSON.stringify({
         schema: "npa.leisaac.so101-device.v1",
@@ -801,9 +866,21 @@ def Xform "Scene" (
       cy.get("#leisaacTransportStatus", { timeout: 120000 })
         .should("contain.text", "WebSocket")
         .and("contain.text", "preferred");
-      uploadAndApplyBundle("robot", "queue-custom-so101", "robot.usda", robot)
+      uploadAndApplyBundle(
+        "robot",
+        "queue-custom-so101",
+        "robot.usda",
+        robot,
+        false,
+      )
         .then(() =>
-          uploadAndApplyBundle("scene", "queue-custom-table", "scene.usda", scene),
+          uploadAndApplyBundle(
+            "scene",
+            "queue-custom-table",
+            "scene.usda",
+            scene,
+            false,
+          ),
         )
         .then(() =>
           uploadAndApplyBundle(
@@ -847,7 +924,7 @@ def Xform "Scene" (
           });
         })
         .then(() => {
-          cy.screenshot("12-custom-so101-scene-device-selected", {
+          cy.screenshot("12-custom-device-selected-assets-storage-only", {
             capture: "fullPage",
           });
           return recordEpisode("success", 2, completedBefore);
@@ -856,12 +933,8 @@ def Xform "Scene" (
         .then(() => verifyExactUploadedEpisode())
         .then(() =>
           loadRecorderStatus().then((status) => {
-            expect(status.selected_bundles.robot.name).to.equal(
-              "queue-custom-so101",
-            );
-            expect(status.selected_bundles.scene.name).to.equal(
-              "queue-custom-table",
-            );
+            expect(status.selected_bundles.robot).to.equal(undefined);
+            expect(status.selected_bundles.scene).to.equal(undefined);
             expect(status.selected_bundles.device.name).to.equal(
               "queue-custom-so101-device",
             );

@@ -342,6 +342,14 @@ def test_bundle_routes_require_same_origin_upload_and_persist_exact_selection() 
         "x-npa-leisaac-lease-id": "d" * 64,
         "sec-fetch-site": "same-origin",
     }
+    hostile = _payload()
+    hostile["files"][0] = _file(
+        "robot.usda",
+        b'#usda 1.0\ndef Xform "Robot" (references = @/etc/passwd@) {}\n',
+    )
+    rejected = client.post(url, headers=headers, json=hostile)
+    assert rejected.status_code == 400
+    assert rejected.json()["detail"] == "USD asset reference escapes the bundle root"
     uploaded = client.post(url, headers=headers, json=_payload())
     assert uploaded.status_code == 201
     digest = uploaded.json()["bundle_sha256"]

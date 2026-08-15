@@ -769,6 +769,7 @@ async function fetchStatus(win, runId) {
             ...envelope("resume", clientId),
             last_acked_seq: 1,
             keys_down: ["W"],
+            lease_id: String(initialResume.lease_id || ""),
           }),
         );
         const resumed = await waitForMessage(

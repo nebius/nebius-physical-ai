@@ -809,12 +809,13 @@ def register_leisaac_routes(app: Any, deps: LeIsaacDeps) -> None:
             return bundle_error(BundleError("bundle request size is invalid"))
         try:
             payload = await request.json()
+        except ValueError:
+            return bundle_error(BundleError("bundle request is not valid JSON"))
+        try:
             store = await asyncio.to_thread(
                 bundle_store, str(request.query_params.get("run_id") or "")
             )
             result = await asyncio.to_thread(store.publish, payload)
-        except ValueError:
-            return bundle_error(BundleError("bundle request is not valid JSON"))
         except BundleError as exc:
             return bundle_error(exc)
         return deps.response(
