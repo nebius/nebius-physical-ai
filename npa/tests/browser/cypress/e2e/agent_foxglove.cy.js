@@ -732,6 +732,44 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     cy.get("@signInArtifactWindowOpen").should("not.have.been.called");
   });
 
+  it("queues the exact source without claiming ready when sign-in prevents a handshake", () => {
+    const config = stubFoxgloveApis({ embed_src: `${MOCK_EMBED_SRC}?handshake=0` });
+    const runRef = "npa1_mock_non_stock";
+    const key = `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`;
+    const s3Uri = `s3://mock/${key}`;
+    const exported = exactArtifactExportResponse(NON_STOCK_RUN_ID, runRef, key, s3Uri);
+    cy.intercept("POST", "/api/foxglove/export", (request) => {
+      applyExactArtifactConfig(config, exported);
+      request.reply({ statusCode: 200, body: exported });
+    }).as("unsignedArtifactExport");
+    cy.window().then((win) => cy.stub(win, "open").as("unsignedArtifactWindowOpen"));
+
+    cy.get("#tabRerun").click();
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@artifactRuns");
+    cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
+    cy.wait("@nonStockArtifactList");
+    cy.get(`button[data-action="open-foxglove-artifact"][data-key="${key}"]`)
+      .should("be.enabled")
+      .click();
+    cy.wait("@unsignedArtifactExport");
+    cy.get("#foxgloveHost").should("not.have.attr", "data-sdk-ready");
+    cy.get("#foxgloveHost")
+      .should("have.attr", "data-set-data-source-count", "1")
+      .and("have.attr", "data-data-source-url", exported.export.recording_url)
+      .and("have.attr", "data-layout-storage-key", "npa-agent-foxglove-robot-motion-v3");
+    mockAppFrame().its("0.contentDocument.body").should("contain.text", "sign-in-required");
+    cy.get("#foxgloveStatus")
+      .should("have.class", "is-warning")
+      .and("contain.text", "queued in the official Foxglove SDK")
+      .and("contain.text", "not marked ready");
+    cy.get(`button[data-action="open-foxglove-artifact"][data-key="${key}"]`)
+      .should("have.attr", "aria-busy", "false")
+      .and("be.enabled");
+    cy.get("#foxgloveOpenWeb").should("have.text", "Open in Foxglove").and("be.enabled");
+    cy.get("@unsignedArtifactWindowOpen").should("not.have.been.called");
+  });
+
   it("mounts the real @foxglove/embed SDK and completes the viewer handshake", () => {
     stubFoxgloveApis();
     cy.get("#tabRerun").click();

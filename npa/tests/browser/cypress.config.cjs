@@ -485,8 +485,11 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
       ({ key, source }) => {
         const pane = document.querySelector("#viewerPaneFoxglove");
         const host = document.querySelector("#foxgloveHost");
+        const status = String(document.querySelector("#foxgloveStatus")?.textContent || "");
+        const truthfulHostedState = host?.dataset.sdkReady === "true" ||
+          /queued in the official Foxglove SDK/i.test(status);
         return pane?.dataset.artifactKey === key && pane?.dataset.recordingUrl === source &&
-          host?.dataset.sdkReady === "true" && host?.dataset.dataSourceUrl === source;
+          truthfulHostedState && host?.dataset.dataSourceUrl === source;
       },
       { key: artifactKey, source: cardSource },
       { timeout: 0 },
@@ -747,9 +750,12 @@ async function verifyFoxgloveEmbeddedArtifact(config, taskInput) {
       ({ key, sha, source }) => {
         const pane = document.querySelector("#viewerPaneFoxglove");
         const host = document.querySelector("#foxgloveHost");
+        const status = String(document.querySelector("#foxgloveStatus")?.textContent || "");
+        const truthfulHostedState = host?.dataset.sdkReady === "true" ||
+          /queued in the official Foxglove SDK/i.test(status);
         return pane?.dataset.artifactKey === key && pane?.dataset.sha256 === sha &&
           pane?.dataset.recordingUrl === source && host?.dataset.dataSourceUrl === source &&
-          host?.dataset.sdkReady === "true" &&
+          truthfulHostedState &&
           Number(host?.dataset.setDataSourceCount || 0) === 1;
       },
       { key: artifactKey, sha: sha256, source: recordingUrl },
@@ -812,6 +818,9 @@ async function verifyFoxgloveEmbeddedArtifact(config, taskInput) {
       }
     }).length;
     const recordingRequestCount = networkRequests.filter(({ url }) => url === recordingUrl).length;
+    const sdkReady = await page.locator("#foxgloveHost").getAttribute("data-sdk-ready");
+    const signInRequired = sdkReady !== "true" &&
+      /queued in the official Foxglove SDK/i.test(statusText);
     return {
       runId,
       runRef,
@@ -840,7 +849,8 @@ async function verifyFoxgloveEmbeddedArtifact(config, taskInput) {
         iframe: { width: Math.round(iframeBox.width), height: Math.round(iframeBox.height) },
         iframeOrigin: new URL(String(await iframe.getAttribute("src"))).origin,
         setDataSourceCount: Number(await page.locator("#foxgloveHost").getAttribute("data-set-data-source-count") || 0),
-        sdkReady: await page.locator("#foxgloveHost").getAttribute("data-sdk-ready"),
+        sdkReady,
+        signInRequired,
         layoutStorageKey: String(await page.locator("#foxgloveHost").getAttribute("data-layout-storage-key") || ""),
         statusText,
         sdkRequestCount,

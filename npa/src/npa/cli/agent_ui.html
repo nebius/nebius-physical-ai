@@ -741,6 +741,7 @@
         pointer-events: none;
       }
       .foxglove-status.is-ready { color: #4ade80; }
+      .foxglove-status.is-warning { color: #fbbf24; }
       .foxglove-status.is-error { color: #f87171; }
       .media-preview-host {
         height: 100%;
@@ -5855,7 +5856,9 @@
         if (!el) return;
         el.textContent = String(text || "");
         el.classList.toggle("is-ready", kind === "ready");
+        el.classList.toggle("is-warning", kind === "warning");
         el.classList.toggle("is-error", kind === "error");
+        el.dataset.state = String(kind || "idle");
       }
       function updateFoxgloveVisualizationSummary(config) {
         const el = document.getElementById("foxgloveVisualizationSummary");
@@ -6481,9 +6484,17 @@
           if (typeof foxgloveHandle.whenReady !== "function") {
             throw new Error("the official Foxglove SDK readiness contract is unavailable");
           }
-          setFoxgloveStatus("Waiting for the Foxglove SDK handshake before loading the exact MCAP…");
-          await foxgloveHandle.whenReady();
-          if (operation.stale || foxgloveArtifactOperation !== operation) return false;
+          const selectedHandle = foxgloveHandle;
+          const readyBeforeSource = Boolean(
+            selectedHandle.isReady && selectedHandle.isReady()
+          );
+          const readinessPromise = selectedHandle.whenReady();
+          setFoxgloveStatus(
+            readyBeforeSource
+              ? "Foxglove SDK handshake is usable; loading the exact MCAP…"
+              : "Queuing the exact MCAP in the official SDK while Foxglove awaits sign-in/handshake…",
+            readyBeforeSource ? "loading" : "warning"
+          );
           const sourceApplied = await setFoxgloveDataSource(config, { force: true });
           if (!sourceApplied) throw new Error("the exact remote-file source could not be applied");
           if (config.layout && config.layout.version === 1 && config.layout.content) {
@@ -6493,19 +6504,60 @@
           }
           setFoxgloveActiveArtifactState(selected, config, exported.sha256);
           hideFoxgloveMessage();
-          const viewerReady = Boolean(foxgloveHandle.isReady && foxgloveHandle.isReady());
+          const viewerReady = Boolean(
+            selectedHandle.isReady && selectedHandle.isReady()
+          );
           setFoxgloveStatus(
             viewerReady
               ? "Foxglove SDK ready — exact selected MCAP sent: " + selected.key +
                 ". Sign in inside Foxglove if its hosted surface requests it."
-              : "Exact MCAP sent after the Foxglove handshake: " + selected.key,
+              : "Exact selected MCAP queued in the official Foxglove SDK: " + selected.key +
+                ". Sign in inside Foxglove to complete its hosted handshake; this pane is not marked ready.",
             viewerReady ? "ready" : "warning"
           );
           setFoxgloveWebNote(
-            "Embedded source is the selected MCAP. Use Open in Foxglove only for separate hosted navigation.",
-            "success"
+            viewerReady
+              ? "Embedded source is the selected MCAP. Use Open in Foxglove only for separate hosted navigation."
+              : "The selected MCAP is queued in the embedded SDK; hosted sign-in is still required. Open in Foxglove remains a separate action.",
+            viewerReady ? "success" : "warning"
           );
-          showToast("Selected MCAP bound to the embedded Foxglove viewer.", "success");
+          showToast(
+            viewerReady
+              ? "Selected MCAP bound to the embedded Foxglove viewer."
+              : "Selected MCAP queued in Foxglove; complete hosted sign-in in the pane.",
+            viewerReady ? "success" : "warning"
+          );
+          if (!viewerReady) {
+            void readinessPromise.then(() => {
+              const pinned = foxglovePinnedArtifactSelection || {};
+              if (
+                foxgloveHandle !== selectedHandle ||
+                String(pinned.run_id || "") !== selected.run_id ||
+                String(pinned.run_ref || "") !== selected.run_ref ||
+                String(pinned.key || "") !== selected.key
+              ) return;
+              setFoxgloveStatus(
+                "Foxglove SDK ready — exact selected MCAP sent: " + selected.key,
+                "ready"
+              );
+              setFoxgloveWebNote(
+                "Embedded source is the selected MCAP. Use Open in Foxglove only for separate hosted navigation.",
+                "success"
+              );
+            }).catch((readinessError) => {
+              const pinned = foxglovePinnedArtifactSelection || {};
+              if (
+                foxgloveHandle !== selectedHandle ||
+                String(pinned.run_id || "") !== selected.run_id ||
+                String(pinned.key || "") !== selected.key
+              ) return;
+              setFoxgloveStatus(
+                "Foxglove SDK could not complete its hosted handshake: " +
+                  String((readinessError && readinessError.message) || readinessError),
+                "error"
+              );
+            });
+          }
           setStatus("Ready");
           return true;
         } catch (err) {

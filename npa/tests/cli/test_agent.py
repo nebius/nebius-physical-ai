@@ -1217,7 +1217,9 @@ def test_bootstrap_ui_mcap_cards_bind_exact_provenance_in_page() -> None:
     assert "project_id: selected.project_id" in embedded_handler
     assert "resolved_prefix: selected.resolved_prefix" in embedded_handler
     assert "await setFoxgloveDataSource(config, { force: true })" in embedded_handler
-    assert "await foxgloveHandle.whenReady()" in embedded_handler
+    assert "const readinessPromise = selectedHandle.whenReady()" in embedded_handler
+    assert "void readinessPromise.then" in embedded_handler
+    assert "this pane is not marked ready" in embedded_handler
     assert "foxgloveHandle.selectLayout" in embedded_handler
     assert "setFoxgloveActiveArtifactState" in embedded_handler
     assert "++foxgloveArtifactOperationSequence" in embedded_handler

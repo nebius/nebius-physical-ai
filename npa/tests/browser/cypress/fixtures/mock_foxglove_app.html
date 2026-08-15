@@ -51,6 +51,10 @@
           if (!data || typeof data !== "object" || typeof data.type !== "string") return;
           record(data);
           if (data.type === "origin-ack") {
+            if (params.get("handshake") === "0") {
+              setState("sign-in-required");
+              return;
+            }
             // Parent acknowledged our origin request: start the handshake.
             toParent({ type: "foxglove-handshake-request" });
             setState("handshake-requested");
