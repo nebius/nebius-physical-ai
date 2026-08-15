@@ -1588,6 +1588,10 @@ describe("NPA agent UI with mocked APIs", () => {
       cy.get("#chatSend").click();
       cy.wait("@chat");
     }
+    // The network alias resolves before queueChatText finishes applying the
+    // response. Wait for the queue to release the composer so a late final
+    // append cannot snap the log back to the bottom after scrollTo("top").
+    cy.get("#chatSend").should("not.be.disabled");
     cy.get("#chatLog .msg-row").should("have.length.at.least", 12);
     cy.get("#chatLog").should(($log) => {
       const el = $log[0];
