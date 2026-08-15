@@ -60,18 +60,25 @@ async function waitUntil(win, predicate, timeoutMs, label, intervalMs = 5) {
   throw new Error(`timed out waiting for ${label}`);
 }
 
-async function refreshCapability(win, runId, timeoutMs = 30000) {
+async function refreshCapability(
+  win,
+  runId,
+  timeoutMs = 30000,
+  predicate = () => true,
+  label = "authoritative LeIsaac capability",
+) {
   const deadline = win.performance.now() + timeoutMs;
   while (win.performance.now() < deadline) {
     const status = await win.__NPA_AGENT_TEST__.refreshLeIsaacCapability(runId);
     if (
       status &&
       status.available === true &&
-      String(status.run_id || "") === runId
+      String(status.run_id || "") === runId &&
+      predicate(status)
     ) return status;
     await new Promise((resolve) => win.setTimeout(resolve, 100));
   }
-  throw new Error("timed out refreshing the authoritative LeIsaac capability");
+  throw new Error(`timed out refreshing ${label}`);
 }
 
 function sampleCanvas(win, id) {
@@ -300,7 +307,19 @@ function frameStageSummary(frames) {
           }
           const resetFrameCount = liveTransportEvidence(win).frames.length;
           resetButton.click();
-          const restored = await refreshCapability(win, runId, 180000);
+          const restored = await refreshCapability(
+            win,
+            runId,
+            180000,
+            (status) => {
+              const configuration = status.configuration || {};
+              const selectedBundles = status.selected_bundles || {};
+              return Number(configuration.custom_bundle_count || 0) === 0 &&
+                Object.keys(selectedBundles).length === 0 &&
+                status.bundle_selection_pending !== true;
+            },
+            "the authoritative built-in-default bundle reset",
+          );
           const configuration = restored.configuration || {};
           const selectedBundles = restored.selected_bundles || {};
           if (
