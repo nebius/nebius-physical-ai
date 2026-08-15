@@ -304,17 +304,12 @@ function frameStageSummary(frames) {
           if (!restored) {
             throw new Error("timed out restoring built-in defaults before the benchmark");
           }
-          const disconnectButton = win.document.getElementById("leisaacDisconnect");
-          if (disconnectButton && !disconnectButton.disabled) disconnectButton.click();
-          await waitUntil(
-            win,
-            () => {
-              const connectButton = win.document.getElementById("leisaacConnect");
-              return connectButton && !connectButton.disabled ? connectButton : null;
-            },
-            30000,
-            "safe reconnect control after default reset",
-          ).then((connectButton) => connectButton.click());
+          await win.__NPA_AGENT_TEST__.disconnectLeIsaac();
+          const resetCapability = await win.__NPA_AGENT_TEST__.refreshLeIsaacCapability(runId);
+          if (!(resetCapability && resetCapability.available)) {
+            throw new Error("built-in default runtime is unavailable after reset");
+          }
+          await win.__NPA_AGENT_TEST__.connectLeIsaac();
           await waitUntil(
             win,
             () => {
