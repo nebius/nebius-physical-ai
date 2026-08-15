@@ -381,6 +381,7 @@ def test_submit_runtime_refreshes_pull_secret_before_driver(
     wave = tmp_path / "wave.yaml"
     wave.write_text("name: wave\n", encoding="utf-8")
     hook(wave)
+    monkeypatch.setenv("KUBECONFIG", str(tmp_path / "ambient-after-submit"))
     hook(wave)
     assert events[2:] == [
         ("refresh", "wave.yaml", "target", str(kubeconfig)),

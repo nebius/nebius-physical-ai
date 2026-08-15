@@ -319,6 +319,12 @@ def test_paidf_existing_target_orders_placement_exact_access_then_image(
     monkeypatch.setattr(
         "npa.cli.workbench.workflow._adopt_npa_kubeconfig", lambda _context: True
     )
+    monkeypatch.setattr(
+        "npa.clients.huggingface.validate_hf_access",
+        lambda *_args, **_kwargs: pytest.fail(
+            "broad repository-level Hugging Face probe must not run"
+        ),
+    )
 
     def placement(_context: str):
         events.append("placement")
