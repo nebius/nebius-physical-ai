@@ -73,23 +73,16 @@ function discoverVerificationRun() {
   });
 }
 
-function assertRemoteFileLink(exported) {
-  const parsed = new URL(exported.web_url);
-  expect(parsed.origin).to.eq("https://app.foxglove.dev");
-  expect(parsed.pathname).to.eq("/~/view");
-  expect(parsed.searchParams.get("ds")).to.eq("remote-file");
-  expect(parsed.searchParams.getAll("ds.url")).to.deep.eq([exported.recording_url]);
-  expect(parsed.searchParams.get("ds.recordingId")).to.eq(null);
-  expect(parsed.searchParams.get("openIn")).to.eq(null);
-  expect(exported.data_source).to.eq("remote-file");
-  expect(exported.web_open_mode).to.eq("remote-file");
-  expect(exported.layout, "server-side shared layout result").to.deep.include({
-    available: true,
-  });
-  expect(exported.layout.layout_id).to.match(/^[A-Za-z0-9_-]+$/);
-  expect(parsed.searchParams.get("layoutId")).to.eq(exported.layout.layout_id);
-  expect(exported.recording_url).to.match(/^https:\/\//);
-  expect(exported.web_url).not.to.match(/authorization|basic|password|api.?token/i);
+function assertEmbeddedExport(exported) {
+  const parsed = new URL(exported.recording_url);
+  expect(exported.available).to.eq(true);
+  expect(parsed.protocol).to.eq("https:");
+  expect(parsed.pathname).to.match(/\.mcap$/);
+  expect(exported.download_url).to.eq(exported.recording_url);
+  expect(exported.recording_url).not.to.match(/authorization|basic|password|api.?token/i);
+  expect(exported.web_url, "in-page preparation does not create an external destination").to.eq(
+    undefined,
+  );
 }
 
 describe("NPA agent official Foxglove embed against live infrastructure", () => {
@@ -130,7 +123,7 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
           resolved_prefix: run.resolved_prefix,
         });
         const exported = prepared.body.export;
-        assertRemoteFileLink(exported);
+        assertEmbeddedExport(exported);
         expect(exported.canonical_s3_uri).to.match(
           /^s3:\/\/.+\/reports\/sim2real\.mcap$/,
         );
