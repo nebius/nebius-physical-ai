@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ast
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -63,13 +65,13 @@ SOLUTION_CAPABILITY_CONTRACTS = {
         ],
     },
     "openpi": {
-        "capability_name": "policy_config_materialization",
-        "smoke_artifact_name": "openpi_pi05_droid_config.json",
+        "capability_name": "pi05_droid_jointpos_polaris_served_infer",
+        "smoke_artifact_name": "openpi_pi05_droid_jointpos_polaris_inference.json",
         "spec": "byof-openpi.yaml",
         "must_exercise": [
-            "policy_config_materialization",
-            "pi05_droid_checkpoint_download",
-            "pi05_droid_checkpoint_infer",
+            "pi05_droid_jointpos_polaris_checkpoint_download",
+            "pi05_droid_jointpos_polaris_direct_infer",
+            "pi05_droid_jointpos_polaris_served_infer",
         ],
     },
     "droid-policy-learning": {
@@ -159,6 +161,88 @@ def test_byof_solution_smokes_are_not_import_only() -> None:
         assert '"capability"' in smoke or "'capability'" in smoke, path.name
         assert '"solution"' in smoke or "'solution'" in smoke, path.name
         assert "capabilities_exercised" in smoke, path.name
+
+
+def test_openpi_polaris_contract_is_runtime_only_and_position_targeted() -> None:
+    config = _load_config(WORKFLOW_DIR / "byof-openpi.yaml")
+    build = str(config["build_command"])
+    smoke = str(config["smoke_command"])
+    spec_text = (WORKFLOW_DIR / "byof-openpi.yaml").read_text(encoding="utf-8")
+
+    assert config["repo_ref"] == "15a9616a00943ada6c20a0f158e3adb39df2ccac"
+    assert config["resource_profile_yaml"] == "byof-solution-smoke-openpi-b200-gpu"
+    assert config["capability_name"] == "pi05_droid_jointpos_polaris_served_infer"
+    assert config["wait_timeout"] == -1
+    assert (
+        config["smoke_artifact_name"]
+        == "openpi_pi05_droid_jointpos_polaris_inference.json"
+    )
+    assert "-arch=sm_100" in build
+    assert "/opt/venv/bin/uv pip install" in build
+    assert "--no-cache -e ." in build
+    assert "pi05_droid_jointpos_polaris" not in build
+    assert "openpi-assets/checkpoints" not in build
+    assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES" not in spec_text
+    assert '"weights_baked": False' in smoke
+    assert "gs://openpi-assets/checkpoints/polaris/pi05_droid_jointpos_polaris" in smoke
+    assert 'download.maybe_download(CHECKPOINT_URI, token="anon")' in smoke
+    assert "jax_backend.get_backend().platform_version" in smoke
+    assert "WebsocketPolicyServer" in smoke
+    assert "WebsocketClientPolicy" in smoke
+    assert "policy.infer(observation)" in smoke
+    assert "actions.shape[0] < 5" in smoke and "actions.shape[1] != 8" in smoke
+    assert "np.isfinite(actions).all()" in smoke
+    assert "joint_position_targets_dims_0_6_radians" in smoke
+    assert "execute_about_5_targets_at_15_hz_then_requery" in smoke
+    assert "deterministic_transport_smoke_only" in smoke
+    assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS" in smoke
+    assert "openpi_terms_gate.json" in smoke
+    assert '"exit_code":64' in smoke
+    assert '"checkpoint_fetch_started":false' in smoke
+    assert '"model_import_started":false' in smoke
+    assert "npa_build_metadata.json" in smoke
+    assert 'build_metadata.get("build_command_executed") is not True' in smoke
+    assert 'actions.dtype != np.dtype("float64")' in smoke
+    assert "cuobjdump" in smoke
+    assert "check=True" in smoke
+    assert "len(nvidia_smi) != 1" in smoke
+    assert "compute_capability != (10, 0)" in smoke
+    assert "value.is_integer() and value >= 100" in smoke
+    assert 're.fullmatch(r"(?:sm_)?(\\d{1,3})"' in smoke
+    assert '"live_validated": False' in smoke
+
+    python_smoke = smoke.split("/opt/venv/bin/python - <<'PY'\n", 1)[1].rsplit(
+        "\nPY", 1
+    )[0]
+    tree = ast.parse(python_smoke)
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "normalized_compute_capability"
+    )
+    namespace = {"re": re}
+    exec(
+        compile(
+            ast.fix_missing_locations(ast.Module(body=[function], type_ignores=[])),
+            "<openpi-smoke>",
+            "exec",
+        ),
+        namespace,
+    )
+    normalize = namespace["normalized_compute_capability"]
+    for representation in (
+        10,
+        100,
+        10.0,
+        100.0,
+        "10",
+        "100",
+        "10.0",
+        "sm_100",
+        (10, 0),
+    ):
+        assert normalize(representation) == (10, 0), representation
 
 
 def test_solution_capability_contracts_match_specs() -> None:

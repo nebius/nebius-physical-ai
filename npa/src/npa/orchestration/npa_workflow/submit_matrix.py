@@ -725,9 +725,10 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "byof-openpi.yaml",
         "multi",
+        secret_envs=("NPA_OPENPI_ACCEPT_GEMMA_TERMS",),
         plan_only=True,
         plan_only_justification="delegated BYOF execution is covered by its dedicated live onboarding tier",
-        notes="BYOF onboarding flow; covered by test_byof_onboarding_live_e2e.py.",
+        notes="OpenPI Polaris B200 inference; covered by test_byof_openpi_polaris_live_e2e.py.",
     ),
     SubmitLiveCase(
         "byof-droid-policy-learning.yaml",

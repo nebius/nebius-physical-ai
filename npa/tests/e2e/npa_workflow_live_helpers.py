@@ -188,10 +188,15 @@ def assume_decision_for(name: str, *, mode: str = "promote") -> str:
 
 
 def live_bucket(e2e_project: str | None) -> str:
-    storage = resolve_project_storage(e2e_project)
-    raw = storage.checkpoint_bucket or ""
+    raw = os.environ.get("NPA_E2E_S3_BUCKET", "").strip()
     if not raw:
-        pytest.fail("checkpoint_bucket is not configured for live npa.workflow tests")
+        storage = resolve_project_storage(e2e_project)
+        raw = storage.checkpoint_bucket or ""
+    if not raw:
+        pytest.fail(
+            "NPA_E2E_S3_BUCKET or checkpoint_bucket is required for live "
+            "npa.workflow tests"
+        )
     parsed = urlparse(raw if "://" in raw else f"s3://{raw}")
     bucket = parsed.netloc if parsed.scheme == "s3" else raw.split("/")[0]
     if not bucket:

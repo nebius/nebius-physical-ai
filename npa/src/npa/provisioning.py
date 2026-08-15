@@ -386,7 +386,7 @@ def provision_if_absent(
             storage_ready = True
         else:
             probe = probe_storage_write(
-                bucket=storage.checkpoint_bucket,
+                bucket=bucket_name,
                 endpoint_url=storage.endpoint_url,
                 access_key_id=storage.aws_access_key_id,
                 secret_access_key=storage.aws_secret_access_key,
@@ -975,7 +975,9 @@ def _runtime_env(
         "NPA_REGION": environment.region,
         "NPA_REGISTRY": registry,
         "NPA_REGISTRY_ID": registry_id,
-        "NPA_S3_BUCKET": storage.checkpoint_bucket,
+        # Consumers of NPA_S3_BUCKET pass it as the provider Bucket argument;
+        # keep URI/prefix forms in checkpoint_bucket only.
+        "NPA_S3_BUCKET": _bucket_name(storage.checkpoint_bucket),
         "NPA_STORAGE_ENDPOINT": storage.endpoint_url,
         "AWS_ENDPOINT_URL": storage.endpoint_url,
         "NEBIUS_S3_ENDPOINT": storage.endpoint_url,

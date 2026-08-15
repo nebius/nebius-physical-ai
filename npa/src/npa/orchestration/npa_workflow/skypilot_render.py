@@ -65,6 +65,8 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     "workbench.groot": ("HF_TOKEN",),
 }
 
+OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
+
 # Optional dependency groups a toolRef's stage needs, declared as npa extras in
 # npa/pyproject.toml. A workbench image bakes these already, but a stage running on
 # SkyPilot's default image (no `--image`, npa installed from NPA_SRC_S3_URI) gets only
@@ -1372,6 +1374,13 @@ def secret_env_hints_for_plan(steps: Sequence[PlanStep]) -> tuple[str, ...]:
     seen: set[str] = set()
     for step in steps:
         tool_ref = step.tool_ref or ""
+        if tool_ref == "workbench.byof.repo" and any(
+            value == "openpi" or "pi05_droid_jointpos_polaris" in value
+            for value in step.argv
+        ):
+            if OPENPI_TERMS_ENV not in seen:
+                seen.add(OPENPI_TERMS_ENV)
+                hints.append(OPENPI_TERMS_ENV)
         for prefix, names in SECRET_ENV_HINTS.items():
             if tool_ref == prefix or tool_ref.startswith(prefix + "."):
                 for name in names:

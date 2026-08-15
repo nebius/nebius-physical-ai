@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -142,6 +143,44 @@ def test_provision_if_absent_dry_run_reports_actions(
         for action in result.actions
     )
     assert result.storage_bucket == "s3://bucket/checkpoints/"
+
+
+def test_provisioning_normalizes_uri_bucket_for_probe_and_runtime_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_runtime(tmp_path, monkeypatch)
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    seen: dict[str, str] = {}
+
+    from npa.clients.storage_validation import StorageProbeResult
+
+    def probe(**kwargs):  # noqa: ANN003, ANN202
+        seen["probe_bucket"] = kwargs["bucket"]
+        return StorageProbeResult(
+            True,
+            "ok",
+            "Writable S3 verified with a cleaned write/delete probe.",
+            cleanup_attempted=True,
+            cleanup_succeeded=True,
+        )
+
+    monkeypatch.setattr("npa.clients.storage_validation.probe_storage_write", probe)
+
+    alias, environment, storage, registry = provisioning._resolve_project_runtime(
+        "proj"
+    )
+    with provisioning._runtime_env(alias, environment, storage, registry):
+        seen["runtime_bucket"] = os.environ["NPA_S3_BUCKET"]
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        cluster_name="npa-cluster",
+        kubeconfig=kubeconfig,
+    )
+
+    assert result.status == "ok"
+    assert seen == {"runtime_bucket": "bucket", "probe_bucket": "bucket"}
 
 
 def test_quota_blocker_reaches_no_storage_or_cluster_mutation(
