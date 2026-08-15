@@ -10,7 +10,10 @@ function liveAgentRequest(path, options = {}) {
     url: `${String(baseUrl).replace(/\/$/, "")}${path}`,
     auth: { username, password },
     log: false,
-    timeout: 180000,
+    // Cypress treats timeout: 0 as an immediate failure. Give real tenant-wide
+    // S3 discovery the same outer infrastructure watchdog as the clean-browser
+    // task; the server-side query and exact-match assertions still decide pass.
+    timeout: 600000,
     ...options,
   });
 }
