@@ -468,6 +468,9 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
         .and("be.enabled")
         .and("have.attr", "aria-disabled", "false")
         .click();
+      cy.get(`button[data-action="open-foxglove-artifact"][data-key="${key}"]`)
+        .should("have.attr", "aria-busy", "true")
+        .and("be.disabled");
       cy.get("#renderModeFoxglove")
         .should("have.attr", "aria-selected", "true")
         .and("have.class", "is-active");
@@ -478,7 +481,6 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
           expect(rect.width, "embedded Foxglove pane width").to.be.greaterThan(0);
           expect(rect.height, "embedded Foxglove pane height").to.be.greaterThan(0);
         });
-      cy.get("#foxgloveStatus").should("contain.text", "Preparing exact MCAP");
       cy.wait("@exactArtifactExport");
       expectMockAppState("ready");
       mockAppFrame().should(($frame) => {
