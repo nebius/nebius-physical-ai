@@ -228,13 +228,14 @@ async function screenshotLocatorRegion(page, locator, filePath) {
   // not depend on the same element instance surviving font/layout work inside
   // Playwright's element-screenshot action.
   await locator.waitFor({ state: "visible", timeout: 0 });
+  await locator.evaluate((node) => node.scrollIntoView({ block: "center", inline: "nearest" }));
   const box = await locator.boundingBox();
   const viewport = page.viewportSize();
   if (!box || !viewport) throw new Error("artifact-card evidence region is unavailable");
   const x = Math.max(0, box.x);
   const y = Math.max(0, box.y);
-  const width = Math.min(box.width, viewport.width - x);
-  const height = Math.min(box.height, viewport.height - y);
+  const width = Math.min(viewport.width, box.x + box.width) - x;
+  const height = Math.min(viewport.height, box.y + box.height) - y;
   if (width <= 0 || height <= 0) throw new Error("artifact-card evidence region has zero geometry");
   await page.screenshot({ path: filePath, clip: { x, y, width, height } });
   fs.chmodSync(filePath, 0o600);
