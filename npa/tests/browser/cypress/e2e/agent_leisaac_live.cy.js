@@ -96,8 +96,8 @@ function uploadAndApplyBundle(kind, name, fileName, contents, apply = true) {
     "Loaded ",
   );
   cy.get("#leisaacBundleName")
-    .clear()
-    .type(name, { delay: 0 })
+    .invoke("val", name)
+    .trigger("input")
     .should("have.value", name);
   cy.get("#leisaacBundleKind").select(kind);
   cy.get("#leisaacBundleFiles").selectFile({

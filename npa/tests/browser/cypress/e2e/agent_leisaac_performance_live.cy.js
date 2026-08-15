@@ -60,6 +60,20 @@ async function waitUntil(win, predicate, timeoutMs, label, intervalMs = 5) {
   throw new Error(`timed out waiting for ${label}`);
 }
 
+async function refreshCapability(win, runId, timeoutMs = 30000) {
+  const deadline = win.performance.now() + timeoutMs;
+  while (win.performance.now() < deadline) {
+    const status = await win.__NPA_AGENT_TEST__.refreshLeIsaacCapability(runId);
+    if (
+      status &&
+      status.available === true &&
+      String(status.run_id || "") === runId
+    ) return status;
+    await new Promise((resolve) => win.setTimeout(resolve, 100));
+  }
+  throw new Error("timed out refreshing the authoritative LeIsaac capability");
+}
+
 function sampleCanvas(win, id) {
   let source = win.document.getElementById(id);
   if (id === "leisaacCanvas" && (!source || source.hidden)) {
@@ -190,7 +204,7 @@ function frameStageSummary(frames) {
         // source of truth. Pin it before the direct refresh so a generic active
         // run cannot race the benchmark back to a non-LeIsaac selection.
         win.__NPA_AGENT_TEST__.selectActiveRunId(runId);
-        return win.__NPA_AGENT_TEST__.refreshLeIsaacCapability(runId);
+        return refreshCapability(win, runId);
       });
       cy.get("#tabLeIsaac", { timeout: 30000 }).should("be.visible").click();
 
@@ -275,7 +289,7 @@ function frameStageSummary(frames) {
           const evidence = liveTransportEvidence(win);
           throw new Error(`${error.message}; transport evidence=${JSON.stringify(evidence)}`);
         }
-        const capability = await win.__NPA_AGENT_TEST__.refreshLeIsaacCapability(runId);
+        const capability = await refreshCapability(win, runId);
         const customBundleCount = Number(
           (capability.configuration && capability.configuration.custom_bundle_count) || 0,
         );
@@ -286,26 +300,17 @@ function frameStageSummary(frames) {
           }
           const resetFrameCount = liveTransportEvidence(win).frames.length;
           resetButton.click();
-          let restored = false;
-          const resetDeadline = win.performance.now() + 180000;
-          while (win.performance.now() < resetDeadline) {
-            await new Promise((resolve) => win.setTimeout(resolve, 500));
-            const refreshed = await win.__NPA_AGENT_TEST__.refreshLeIsaacCapability(runId);
-            const configuration = refreshed.configuration || {};
-            const selectedBundles = refreshed.selected_bundles || {};
-            if (
-              Number(configuration.custom_bundle_count || 0) === 0 &&
-              Object.keys(selectedBundles).length === 0
-            ) {
-              restored = true;
-              break;
-            }
-          }
-          if (!restored) {
-            throw new Error("timed out restoring built-in defaults before the benchmark");
+          const restored = await refreshCapability(win, runId, 180000);
+          const configuration = restored.configuration || {};
+          const selectedBundles = restored.selected_bundles || {};
+          if (
+            Number(configuration.custom_bundle_count || 0) !== 0 ||
+            Object.keys(selectedBundles).length !== 0
+          ) {
+            throw new Error("built-in default reset left a custom bundle selected");
           }
           await win.__NPA_AGENT_TEST__.disconnectLeIsaac();
-          const resetCapability = await win.__NPA_AGENT_TEST__.refreshLeIsaacCapability(runId);
+          const resetCapability = await refreshCapability(win, runId);
           if (!(resetCapability && resetCapability.available)) {
             throw new Error("built-in default runtime is unavailable after reset");
           }
