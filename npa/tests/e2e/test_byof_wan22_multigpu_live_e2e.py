@@ -130,6 +130,7 @@ def test_wan22_multigpu_spec_plans_the_real_official_path() -> None:
     resources = payload["resources"]["gpu"]
     assert resources == {
         "cloud": "kubernetes",
+        "image": "{{config.base_image}}",
         "accelerators": "B200:4",
         "cpus": 32,
         "memory": "256Gi",
