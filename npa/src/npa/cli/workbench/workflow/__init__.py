@@ -71,7 +71,9 @@ def nebius_registry_hosts(rendered_yaml: str) -> list[str]:
     )
 
 
-def _refresh_kubernetes_pull_secrets(rendered_path: Path) -> None:
+def _refresh_kubernetes_pull_secrets(
+    rendered_path: Path, *, k8s_context: str = "", kubeconfig: str = ""
+) -> None:
     """Refresh the cluster's Nebius registry pull secret before launching.
 
     Kubernetes pulls private images with an ``imagePullSecret``, and the Nebius
@@ -111,6 +113,8 @@ def _refresh_kubernetes_pull_secrets(rendered_path: Path) -> None:
             registry_servers=hosts,
             username=username,
             token=password,
+            kubeconfig=kubeconfig,
+            k8s_context=k8s_context,
         )
     except Exception as exc:
         raise RuntimeError(
@@ -868,6 +872,39 @@ def submit_cmd(
                 requires_npa_source=requires_npa_source,
                 source_staging_planned=stage_source_planned,
             )
+            if not plan_only and workflow_identity == "sim2real":
+                from npa.clients.huggingface import validate_hf_access
+                from npa.clients.kube import run_kubectl
+                from npa.orchestration.npa_workflow.sim2real_preflight import (
+                    kubernetes_prerequisites,
+                    static_prerequisites,
+                )
+
+                missing.extend(
+                    static_prerequisites(
+                        spec_config,
+                        requested_secret_envs=secret_env,
+                        secret_values=extra_env,
+                        hf_validator=validate_hf_access,
+                    )
+                )
+                context = _infra_kube_context(infra)
+                kubeconfig = os.environ.get("KUBECONFIG", "")
+
+                def _run_sim2real_kubectl(args: list[str]):
+                    return run_kubectl(
+                        args,
+                        context=context,
+                        kubeconfig=kubeconfig,
+                        timeout=30,
+                    )
+
+                missing.extend(
+                    kubernetes_prerequisites(
+                        spec_config,
+                        runner=_run_sim2real_kubectl,
+                    )
+                )
             if missing:
                 _fail_missing_prerequisites(yaml_path, missing)
                 return
@@ -1150,7 +1187,11 @@ def submit_cmd(
                     config_overrides=substitutions,
                     render_options=npa_render_options,
                 )
-                _refresh_kubernetes_pull_secrets(registry_auth_plan.skypilot_yaml_path)
+                _refresh_kubernetes_pull_secrets(
+                    registry_auth_plan.skypilot_yaml_path,
+                    k8s_context=infra_context,
+                    kubeconfig=os.environ.get("KUBECONFIG", ""),
+                )
             except NpaWorkflowError as exc:
                 _fail(str(exc))
                 return
@@ -1311,7 +1352,11 @@ def submit_cmd(
             return
 
         if refresh_registry_secret:
-            _refresh_kubernetes_pull_secrets(prepared_npa.skypilot_yaml_path)
+            _refresh_kubernetes_pull_secrets(
+                prepared_npa.skypilot_yaml_path,
+                k8s_context=infra_context,
+                kubeconfig=os.environ.get("KUBECONFIG", ""),
+            )
 
         # Skip SkyPilot-path materializers; npa.workflow already planned.
         materializer = ""
@@ -5734,6 +5779,11 @@ def run_spec_cmd(
 @app.command("preflight-images")
 def preflight_images_cmd(
     yaml_path: Path = typer.Argument(help="npa.workflow spec path."),
+    var: list[str] = typer.Option(
+        [],
+        "--var",
+        help="Workflow config override as KEY=VALUE (same as submit --var).",
+    ),
     registry: str = typer.Option("", "--registry", help="Container registry override."),
     project: str = typer.Option(
         "",
@@ -5768,6 +5818,7 @@ def preflight_images_cmd(
     """
 
     from npa.orchestration.npa_workflow import build_plan
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
     from npa.orchestration.npa_workflow.skypilot_render import (
         SkypilotRenderOptions,
         plan_image_pull_secrets,
@@ -5777,7 +5828,9 @@ def preflight_images_cmd(
         check_image_pulls_with_credentials,
     )
 
-    spec = _load_npa_workflow(yaml_path)
+    spec = merge_config_overrides(
+        _load_npa_workflow(yaml_path), _parse_submit_vars(var)
+    )
     image_overrides: dict[str, str] = {}
     if image.strip():
         image_overrides["*"] = image.strip()

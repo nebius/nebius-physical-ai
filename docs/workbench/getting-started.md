@@ -233,26 +233,12 @@ projects are configured.
 
 ## First Sim-To-Real Run
 
-After the gates above pass, submit the staged VLM-to-RL loop:
-
-```bash
-npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/sim2real.yaml \
-  --run-id <run-id> \
-  --var NPA_SIM2REAL_BUCKET=<your-bucket> \
-  --var NPA_SIM2REAL_TRIGGER_DATASET_URI=s3://<your-bucket>/<trigger-prefix>/
-```
-
-The command prints the run ID, wall-clock time, task-success metric, checkpoint
-URI, report URI, Rerun URI, and `cluster_absent=True` after teardown. The first
-proof checkpoint path has this structure:
-
-```bash
-s3://${NPA_S3_BUCKET}/sim-to-real/<run-id>/checkpoints/policy/
-```
-
-Continue with [guides/sim2real-workflow.md](guides/sim2real-workflow.md) for the
-exact output format and override options.
+The production loop has gated models, Isaac runtime terms/cache, private images,
+Kueue objects, and a dedicated CPU scheduling requirement. Follow the
+[compositional Sim2Real operator runbook](guides/sim2real-workflow.md) in order;
+it is the authoritative copy-paste path from access checks through durable
+submit and resume. Do not adapt the older environment-variable examples: the
+canonical `npa.workflow` uses lower-case `--var` config keys.
 
 ## First BYOF Run
 

@@ -101,6 +101,46 @@ def test_submit_preflight_does_not_reach_skypilot(mocker) -> None:
     submit_workflow.assert_not_called()
 
 
+def test_sim2real_submit_collects_pipeline_prerequisites_before_image_or_launch(
+    monkeypatch: pytest.MonkeyPatch, mocker
+) -> None:
+    from subprocess import CompletedProcess
+
+    image_preflight = mocker.patch(
+        "npa.cli.workbench.workflow._preflight_submit_images"
+    )
+    launch = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
+    monkeypatch.setattr(
+        "npa.clients.kube.run_kubectl",
+        lambda *args, **kwargs: CompletedProcess(args, 1, stdout="", stderr="NotFound"),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(SIM2REAL_SPEC),
+            "--run-id",
+            "sim2real-cold-start",
+            "--no-deploy-if-absent",
+            "--var",
+            "bucket=real-bucket",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "missing prerequisites" in result.output
+    assert "controller_image" in result.output
+    assert "AWS_ACCESS_KEY_ID" in result.output
+    assert "no Ready" not in result.output  # node listing itself failed
+    assert "Kubernetes nodes cannot be listed" in result.output
+    assert "config.isaac_cache_pvc is empty" in result.output
+    image_preflight.assert_not_called()
+    launch.assert_not_called()
+
+
 def test_submit_preflight_clears_as_prerequisites_are_met(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -384,6 +424,43 @@ def test_config_pinned_resource_images_satisfy_the_npa_source_requirement() -> N
         )
         is False
     )
+
+
+def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None:
+    """An empty canonical image input must be overridable before pull probes."""
+    digest_image = f"cr.example.invalid/npa@sha256:{'a' * 64}"
+    checks = mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        return_value=[],
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts",
+        return_value=[],
+    )
+    args = [
+        "workbench",
+        "workflow",
+        "preflight-images",
+        str(SIM2REAL_SPEC),
+        "--assume-decision",
+        "promote_checkpoint",
+    ]
+    for name in (
+        "controller_image",
+        "transfer_image",
+        "envgen_image",
+        "reason_image",
+        "isaac_image",
+        "viewer_image",
+    ):
+        args.extend(["--var", f"{name}={digest_image}"])
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 0, result.output
+    checked_images = checks.call_args.args[0]
+    assert checked_images
+    assert set(checked_images) == {digest_image}
 
 
 def test_image_none_automatically_plans_npa_source_staging() -> None:
