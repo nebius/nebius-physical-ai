@@ -50,6 +50,14 @@ PYTHON="$TREE/venv/bin/python"
   exit 70
 }
 
+# `ensure` runs in command substitution, so exports made by the bootstrap cannot reach
+# this launcher. Propagate the vendor's internal Kit acknowledgement only from the exact
+# public consent value the bootstrap already validated. This keeps ACCEPT_EULA=Y as the
+# single operator-facing mechanism and never derives or enables privacy consent.
+if [ "${ACCEPT_EULA:-}" = "Y" ]; then
+  export OMNI_KIT_ACCEPT_EULA=YES
+fi
+
 # Isaac Lab's repo layout (scripts/, source/, apps/) lives in the cache because the
 # isaaclab wheel ships the library without scripts/, and every SkyPilot Isaac task
 # asserts `test -f /workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py`.

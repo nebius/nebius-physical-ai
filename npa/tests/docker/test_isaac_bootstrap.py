@@ -638,6 +638,15 @@ def test_readonly_runtime_redirects_kit_portable_state_to_scratch() -> None:
         assert f"export {variable}=" in shim
 
 
+def test_shim_derives_internal_kit_acceptance_only_from_exact_public_consent() -> None:
+    """The bootstrap subprocess cannot export into the launcher that starts Kit."""
+
+    shim = SHIM.read_text(encoding="utf-8")
+    assert 'if [ "${ACCEPT_EULA:-}" = "Y" ]; then' in shim
+    assert "export OMNI_KIT_ACCEPT_EULA=YES" in shim
+    assert "PRIVACY_CONSENT" not in shim
+
+
 def test_shim_propagates_the_refusal_exit_code(tmp_path: Path) -> None:
     """`/isaac-sim/python.sh` must fail closed, not fall back to a system python."""
     harness = Harness(tmp_path)
