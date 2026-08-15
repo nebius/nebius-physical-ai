@@ -103,4 +103,8 @@ commits = [
     # prose `authentication, Kubernetes/RBAC calls...` as an assignment. The
     # source contains no credential; the pushed PR commit cannot be rewritten.
     '''adee7e5a24dbb9215f12ed54227a8aee27b65deb''',
+    # Historical LeIsaac validation evidence used a dated operational run name.
+    # HEAD removes the stale record; PR #287 forbids rewriting or force-pushing
+    # its already-pushed first commit, so exempt that immutable commit only.
+    '''2ab1e0857bb25e1e36eec07741af8779a8c4ed8c''',
 ]
