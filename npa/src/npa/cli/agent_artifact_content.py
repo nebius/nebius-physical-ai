@@ -4,6 +4,17 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from npa.cli.agent_access_runtime import _resolve_accessible_run_artifact
+    from npa.workflows.artifacts import (
+        Artifact,
+        artifact_role_for_relative_key,
+        is_inline_render,
+        render_hint_for_object,
+        validate_run_id,
+    )
 
 # This module is source-embedded after the backend and artifact helpers are
 # defined. Names intentionally resolve in that generated backend namespace.
