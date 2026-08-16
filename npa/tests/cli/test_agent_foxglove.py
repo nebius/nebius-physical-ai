@@ -143,6 +143,27 @@ def test_deploy_foxglove_settings_preserve_saved_values_and_validate_override(
         resolve_settings(viewer_backend="unexpected")
 
 
+def test_bootstrap_foxglove_env_is_single_line_and_invalid_values_are_safe() -> None:
+    from npa.cli.agent_foxglove_config import bootstrap_env_values, resolve_settings
+
+    values = bootstrap_env_values(
+        viewer_backend="self-hosted",
+        org_slug="first\nsecond",
+        live_url="wss://robot.example/ws\r\nignored",
+        environ={},
+    )
+
+    assert values["org_slug"] == "first second"
+    assert values["live_url"] == "wss://robot.example/ws ignored"
+    assert values["cloud_import_timeout_seconds"] == "300"
+    assert values["sdk_version"]
+    assert values["sdk_integrity"].startswith("sha512-")
+    with pytest.raises(ValueError) as error:
+        resolve_settings(viewer_backend="unsafe/value with spaces", environ={})
+    assert "<redacted-invalid-value>" in str(error.value)
+    assert "unsafe/value" not in str(error.value)
+
+
 # --------------------------------------------------------------------------- #
 # constants stay in sync with the shipped workbench package
 # --------------------------------------------------------------------------- #

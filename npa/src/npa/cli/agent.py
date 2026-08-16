@@ -56,6 +56,12 @@ from npa.cli.agent_preflight import (
     _agent_token_factory_result,
     _render_agent_checks,
 )
+from npa.cli.agent_records import (  # noqa: F401 - compatibility re-exports
+    agent_record as _agent_record,
+    remove_agent_record as _remove_agent_record,
+    resolve_project_agents,
+    store_agent_record as _store_agent_record,
+)
 from npa.cli.agent_network import (
     _agent_ssh_egress_result,
 )
@@ -143,10 +149,6 @@ from npa.provisioning_journal import (
     emit_recovery_summary,
     operation_context,
     operation_heartbeats,
-)
-from npa.workbench.foxglove import (
-    FOXGLOVE_EMBED_SDK_INTEGRITY,
-    FOXGLOVE_EMBED_SDK_VERSION,
 )
 from npa.cli import agent_foxglove_config
 
@@ -366,43 +368,12 @@ def _fail(message: str) -> NoReturn:
     raise typer.Exit(code=1)
 
 
-def _resolve_foxglove_settings_or_fail(
-    *,
-    embed_src: str = "",
-    viewer_backend: str = "",
-    org_slug: str = "",
-    live_url: str = "",
-    saved: dict[str, Any] | None = None,
-) -> dict[str, str]:
+def _resolve_foxglove_settings_or_fail(**settings: Any) -> dict[str, str]:
     """Translate expected Foxglove setting errors at the CLI boundary."""
     try:
-        return agent_foxglove_config.resolve_settings(
-            embed_src=embed_src,
-            viewer_backend=viewer_backend,
-            org_slug=org_slug,
-            live_url=live_url,
-            saved=saved,
-        )
+        return agent_foxglove_config.resolve_settings(**settings)
     except agent_foxglove_config.FoxgloveSettingsError as exc:
-        if exc.setting == "cloud_import_timeout_seconds":
-            _fail(str(exc))
-        if exc.setting == "embed_src":
-            _fail(str(exc))
-        selected = str(
-            viewer_backend
-            or os.environ.get("NPA_FOXGLOVE_VIEWER_BACKEND", "")
-            or (saved or {}).get("viewer_backend", "")
-        ).strip()
-        selected_display = (
-            repr(selected)
-            if len(selected) <= 64
-            and selected.replace("-", "").replace("_", "").isalnum()
-            else "<redacted-invalid-value>"
-        )
-        _fail(
-            "Invalid --foxglove-viewer-backend value "
-            f"{selected_display}: {exc}. Allowed values: foxglove-sdk, self-hosted."
-        )
+        _fail(str(exc))
 
 
 def _looks_like_compute_permission_denied(message: str) -> bool:
@@ -437,53 +408,6 @@ def _resolve_project_alias(project: str) -> str:
     if len(projects) == 1:
         return next(iter(projects))
     return configured or DEFAULT_PROJECT_ALIAS
-
-
-def _agent_record(project_alias: str, name: str) -> dict[str, Any]:
-    cfg = resolve_project_agents(project_alias)
-    record = cfg.get(name, {})
-    return record if isinstance(record, dict) else {}
-
-
-def resolve_project_agents(project_alias: str) -> dict[str, Any]:
-    from npa.clients.config import list_projects
-
-    projects = list_projects()
-    project = projects.get(project_alias, {})
-    agents = project.get("agents", {}) if isinstance(project, dict) else {}
-    return agents if isinstance(agents, dict) else {}
-
-
-def _store_agent_record(project_alias: str, name: str, payload: dict[str, Any]) -> None:
-    write_config({"projects": {project_alias: {"agents": {name: payload}}}})
-
-
-def _remove_agent_record(project_alias: str, name: str) -> None:
-    from copy import deepcopy
-
-    from npa.clients.config import update_config_document
-
-    def remove(current: dict[str, Any]) -> dict[str, Any]:
-        data = deepcopy(current)
-        projects = data.get("projects", {})
-        if not isinstance(projects, dict):
-            return data
-        project = projects.get(project_alias, {})
-        if not isinstance(project, dict):
-            return data
-        agents = project.get("agents", {})
-        if not isinstance(agents, dict) or name not in agents:
-            return data
-        del agents[name]
-        if agents:
-            project["agents"] = agents
-        else:
-            project.pop("agents", None)
-        projects[project_alias] = project
-        data["projects"] = projects
-        return data
-
-    update_config_document(remove)
 
 
 def _agent_extra_ingress_ports(
@@ -996,15 +920,6 @@ def _store_project_environment(
     )
 
 
-def _env_line_value(value: str) -> str:
-    """Return ``value`` as a single safe ``KEY=value`` line fragment.
-
-    Bootstrap writes plain env files inside a quoted heredoc, so the only real
-    hazard is an embedded newline (which would inject an extra assignment).
-    """
-    return " ".join(str(value or "").split()).strip()
-
-
 def _create_agent_source_archive() -> str:
     """Package the NPA source tree needed for agent-side workflow execution."""
     repo_root = Path(__file__).resolve().parents[4]
@@ -1155,9 +1070,11 @@ def _bootstrap_agent_stack(
     deployment: dict[str, str] | None = None,
     preload_stock_demo: bool = True,
 ) -> None:
-    foxglove_settings = agent_foxglove_config.resolve_settings(
+    foxglove_env = agent_foxglove_config.bootstrap_env_values(
         embed_src=foxglove_embed_src,
         viewer_backend=foxglove_viewer_backend,
+        org_slug=foxglove_org_slug,
+        live_url=foxglove_live_url,
         cloud_import_timeout_seconds=foxglove_cloud_import_timeout_seconds,
     )
     ssh = SSHClient(
@@ -1204,19 +1121,6 @@ def _bootstrap_agent_stack(
     nginx_site_body = _nginx_agent_site_body(
         backend_port=backend_port, rerun_port=rerun_port
     )
-    foxglove_embed_src_value = _env_line_value(foxglove_settings["embed_src"])
-    foxglove_viewer_backend_value = _env_line_value(foxglove_settings["viewer_backend"])
-    foxglove_org_slug_value = _env_line_value(
-        foxglove_org_slug or os.environ.get("NPA_FOXGLOVE_ORG_SLUG", "")
-    )
-    foxglove_live_url_value = _env_line_value(
-        foxglove_live_url or os.environ.get("NPA_FOXGLOVE_LIVE_URL", "")
-    )
-    foxglove_cloud_import_timeout_value = _env_line_value(
-        foxglove_settings["cloud_import_timeout_seconds"]
-    )
-    foxglove_sdk_version = _env_line_value(FOXGLOVE_EMBED_SDK_VERSION)
-    foxglove_sdk_integrity = shlex.quote(FOXGLOVE_EMBED_SDK_INTEGRITY)
     login_form_html = _agent_public_login_form_html(auth_user)
     mobile_login_help_html = _agent_mobile_login_help_html()
     strip_url_credentials_js = _agent_strip_url_credentials_js()
@@ -1331,12 +1235,12 @@ NPA_AGENT_PRELOAD_STOCK_DEMO={preload_stock_demo_value}
 ENV
 cat <<'ENV' | sudo tee /opt/npa-agent/foxglove.env >/dev/null
 NPA_FOXGLOVE_ENABLED=1
-NPA_FOXGLOVE_EMBED_SRC={foxglove_embed_src_value}
-NPA_FOXGLOVE_VIEWER_BACKEND={foxglove_viewer_backend_value}
-NPA_FOXGLOVE_ORG_SLUG={foxglove_org_slug_value}
-NPA_FOXGLOVE_LIVE_URL={foxglove_live_url_value}
-NPA_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS={foxglove_cloud_import_timeout_value}
-NPA_FOXGLOVE_SDK_VERSION={foxglove_sdk_version}
+NPA_FOXGLOVE_EMBED_SRC={foxglove_env["embed_src"]}
+NPA_FOXGLOVE_VIEWER_BACKEND={foxglove_env["viewer_backend"]}
+NPA_FOXGLOVE_ORG_SLUG={foxglove_env["org_slug"]}
+NPA_FOXGLOVE_LIVE_URL={foxglove_env["live_url"]}
+NPA_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS={foxglove_env["cloud_import_timeout_seconds"]}
+NPA_FOXGLOVE_SDK_VERSION={foxglove_env["sdk_version"]}
 ENV
 sudo mkdir -p /opt/npa-agent/foxglove/sdk /opt/npa-agent/foxglove/app /opt/npa-agent/foxglove/data
 # Install the pinned, sha512-verified @foxglove/embed browser SDK. Non-fatal: an
@@ -1344,8 +1248,8 @@ sudo mkdir -p /opt/npa-agent/foxglove/sdk /opt/npa-agent/foxglove/app /opt/npa-a
 # /api/foxglove/config reports exactly why the viewer is unavailable.
 if sudo bash {AGENT_SOURCE_ROOT}/npa/docker/workbench/foxglove-embed/install-sdk.sh \\
     --dest /opt/npa-agent/foxglove/sdk \\
-    --version {foxglove_sdk_version} \\
-    --integrity {foxglove_sdk_integrity}; then
+    --version {foxglove_env["sdk_version"]} \\
+    --integrity {foxglove_env["sdk_integrity"]}; then
   sudo rm -f /opt/npa-agent/foxglove/INSTALL_FAILED
 else
   echo "install-sdk.sh failed at $(date -u +%Y-%m-%dT%H:%M:%SZ)" | sudo tee /opt/npa-agent/foxglove/INSTALL_FAILED >/dev/null
