@@ -81,6 +81,20 @@ def test_runtime_secret_channel_has_no_invented_wan_consent(monkeypatch) -> None
     assert module.resolve_secret_envs(["HF_TOKEN"]) == []
 
 
+def test_openpi_runtime_acceptance_uses_secret_channel(monkeypatch) -> None:
+    module = _load_module()
+    monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", "YES")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "probe-id")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "probe-secret")
+
+    assert module.resolve_secret_envs(None) == [
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "NPA_OPENPI_ACCEPT_GEMMA_TERMS",
+    ]
+    assert module.resolve_secret_envs(["HF_TOKEN"]) == ["NPA_OPENPI_ACCEPT_GEMMA_TERMS"]
+
+
 def test_output_storage_preflight_writes_reads_and_deletes(monkeypatch) -> None:
     module = _load_module()
     calls: list[tuple[str, str, str]] = []

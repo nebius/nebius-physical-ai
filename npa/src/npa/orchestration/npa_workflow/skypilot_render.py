@@ -50,7 +50,10 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.groot": "groot",
 }
 
+OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
+
 SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
+    "workbench.openpi": (OPENPI_TERMS_ENV,),
     "workbench.token_factory": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workbench.vlm_eval": (),
     # Attribute verification generates and answers its questions on Token Factory.
@@ -97,6 +100,11 @@ DECLARATIVE_PIP_EXTRAS = frozenset({"viz"})
 #: `huggingface_hub`, and the interpreter running npa in a vendor image is not the vendor's own
 #: venv, so the library is not necessarily importable there (live job 244).
 TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
+    # The OpenPI BYOF environment intentionally contains only upstream's
+    # pinned runtime. Four-mode stages publish/read private object-storage
+    # artifacts from that same interpreter, so install the NPA storage client
+    # there without resolving the rest of NPA over the vendor JAX closure.
+    "workbench.openpi": (("python:boto3", "boto3>=1.34"),),
     # The redistributable image security layer upgrades Transformers with
     # ``--no-deps``. GR00T commit 3df8b382 pins 4.57.3; Transformers 5.3 changes
     # PretrainedConfig dataclass behavior and the pinned GR00T model config then
@@ -333,7 +341,15 @@ def normalize_resources(
     # NOTE: `num_nodes` is deliberately absent. SkyPilot puts it at the TASK level, next
     # to `resources`, so the renderer lifts it out of the profile in
     # build_skypilot_task_doc. Adding it here would produce an invalid resources block.
-    for key in ("cloud", "accelerators", "cpus", "memory", "use_spot", "region"):
+    for key in (
+        "cloud",
+        "accelerators",
+        "cpus",
+        "memory",
+        "disk_size",
+        "use_spot",
+        "region",
+    ):
         if key not in resources or resources[key] in (None, ""):
             continue
         value = resources[key]
@@ -1446,6 +1462,13 @@ def secret_env_hints_for_plan(steps: Sequence[PlanStep]) -> tuple[str, ...]:
     seen: set[str] = set()
     for step in steps:
         tool_ref = step.tool_ref or ""
+        if tool_ref == "workbench.byof.repo" and any(
+            value == "openpi" or "pi05_droid_jointpos_polaris" in value
+            for value in step.argv
+        ):
+            if OPENPI_TERMS_ENV not in seen:
+                seen.add(OPENPI_TERMS_ENV)
+                hints.append(OPENPI_TERMS_ENV)
         matches = [
             (prefix, names)
             for prefix, names in SECRET_ENV_HINTS.items()
@@ -2063,11 +2086,13 @@ def assert_no_unresolved_placeholders(yaml_text: str) -> None:
         raise NpaWorkflowRenderError(
             f"rendered SkyPilot YAML is invalid while checking placeholders: {exc}"
         ) from exc
-    unresolved = sorted({
-        name
-        for document in documents
-        for name in _document_declarative_placeholder_names(document)
-    })
+    unresolved = sorted(
+        {
+            name
+            for document in documents
+            for name in _document_declarative_placeholder_names(document)
+        }
+    )
     if unresolved:
         joined = ", ".join(f"${{{name}}}" for name in unresolved)
         raise NpaWorkflowRenderError(

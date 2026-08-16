@@ -97,7 +97,6 @@ def test_retired_manual_gate_surfaces_do_not_return() -> None:
     retired = (
         "--accept-nvidia-eula",
         "--skip-model-check",
-        "NPA_OPENPI_ACCEPT_GEMMA_TERMS",
         "omni_kit_accept_eula",
         "isaacsim_accept_eula",
     )
@@ -111,3 +110,14 @@ def test_retired_manual_gate_surfaces_do_not_return() -> None:
                 continue
             for marker in retired:
                 assert marker not in text, f"retired manual gate {marker!r} in {path}"
+
+
+def test_openpi_product_policy_keeps_its_scoped_runtime_gate() -> None:
+    text = SKILL.read_text(encoding="utf-8")
+    assert "## OpenPI pi0.5 Reference" in text
+    assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES" in text
+    assert "before any accepted checkpoint" in text
+    assert "Forward it only as a runtime secret" in text
+
+    workflow = REPO_ROOT / "npa/workflows/workbench/npa-workflows/byof-openpi.yaml"
+    assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS" in workflow.read_text(encoding="utf-8")

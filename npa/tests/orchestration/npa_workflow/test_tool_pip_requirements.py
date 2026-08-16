@@ -25,7 +25,13 @@ from npa.orchestration.npa_workflow.skypilot_render import (
 )
 from npa.orchestration.npa_workflow.spec import load_spec
 
-SPECS = Path(__file__).resolve().parents[4] / "npa" / "workflows" / "workbench" / "npa-workflows"
+SPECS = (
+    Path(__file__).resolve().parents[4]
+    / "npa"
+    / "workflows"
+    / "workbench"
+    / "npa-workflows"
+)
 
 
 def test_requirements_resolve_by_exact_ref_and_by_prefix() -> None:
@@ -40,7 +46,9 @@ def test_requirements_resolve_by_exact_ref_and_by_prefix() -> None:
 def test_install_is_conditional_on_the_executable_being_absent() -> None:
     """A purpose-built image that already ships the CLI must be left alone."""
 
-    setup = render_pip_requirements_setup(tool_pip_requirements("workbench.cosmos.fetch"))
+    setup = render_pip_requirements_setup(
+        tool_pip_requirements("workbench.cosmos.fetch")
+    )
 
     assert "if ! command -v huggingface-cli >/dev/null 2>&1; then" in setup
     assert "-m pip install -q 'huggingface_hub[cli]>=0.23,<1.0'" in setup
@@ -61,10 +69,15 @@ def test_every_declared_requirement_names_an_executable_and_a_spec() -> None:
         for executable, requirement in requirements:
             assert executable and " " not in executable, (tool_ref, executable)
             # A pip requirement, not a bare import name.
-            assert any(marker in requirement for marker in "=<>[") or requirement.isidentifier()
+            assert (
+                any(marker in requirement for marker in "=<>[")
+                or requirement.isidentifier()
+            )
 
 
-def test_shipped_cosmos_spec_renders_the_installer(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_shipped_cosmos_spec_renders_the_installer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/prefix/npa")
     spec = load_spec(SPECS / "cosmos-fetch.yaml")
     plan = build_plan(spec, run_id="pip-requirements-check")
@@ -93,7 +106,9 @@ def test_a_library_requirement_is_probed_by_import_not_by_command_v() -> None:
     `/opt/lerobot/venv`.
     """
 
-    setup = render_pip_requirements_setup(tool_pip_requirements("workbench.lerobot.policy_train"))
+    setup = render_pip_requirements_setup(
+        tool_pip_requirements("workbench.lerobot.policy_train")
+    )
 
     assert "-c 'import huggingface_hub' >/dev/null 2>&1; then" in setup
     assert "command -v" not in setup
@@ -118,12 +133,14 @@ def test_groot_restores_exact_upstream_transformers_runtime() -> None:
     assert 'uv pip install -q --python "$npa_req_python"' in setup
 
 
-def test_groot_finetune_installs_python310_tomli_into_the_recorded_environment() -> None:
+def test_groot_finetune_installs_python310_tomli_into_the_recorded_environment() -> (
+    None
+):
     requirements = tool_pip_requirements("workbench.groot.finetune")
     assert requirements[0] == ("python:tomli", "tomli>=2.0.0")
     setup = render_pip_requirements_setup(requirements)
-    assert '"$npa_req_python" -c \'import tomli\'' in setup
-    assert 'uv pip install -q --python "$npa_req_python" \'tomli>=2.0.0\'' in setup
+    assert "\"$npa_req_python\" -c 'import tomli'" in setup
+    assert "uv pip install -q --python \"$npa_req_python\" 'tomli>=2.0.0'" in setup
 
 
 def test_executable_and_module_probes_can_coexist() -> None:
@@ -135,7 +152,9 @@ def test_executable_and_module_probes_can_coexist() -> None:
     assert "-c 'import numpy'" in setup
 
 
-def test_shipped_lerobot_spec_installs_the_library(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_shipped_lerobot_spec_installs_the_library(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/prefix/npa")
     spec = load_spec(SPECS / "tokenfactory-train-triage.yaml")
     plan = build_plan(spec, run_id="pip-requirements-check")
@@ -163,6 +182,10 @@ def test_vendor_interpreter_resolves_by_prefix() -> None:
         "/opt/lerobot/venv/bin/python",
     )
     assert tool_vendor_interpreters("workbench.mjlab.eval") == ()
+    # OpenPI's GPU stage commands name /opt/venv/bin/python explicitly. Its
+    # prepare-data and service-control stages run in the normal Sky image, so a
+    # prefix-wide vendor override would select an interpreter that is absent there.
+    assert tool_vendor_interpreters("workbench.openpi.direct") == ()
     # Live job 267: npa went into /usr/bin/python3 and the capture stage died with
     # `No module named 'isaaclab'` — the simulator lives in the Omniverse kit environment.
     assert tool_vendor_interpreters("workbench.isaac_lab.capture_frames") == (
@@ -209,7 +232,9 @@ def test_vendor_setup_installs_npa_there_and_records_it() -> None:
     assert '[ -x "$npa_vendor_python" ] || continue' in setup
     # And when it gives up on a candidate it says why: job 268's bare warning blamed a
     # shadowing partial npa when the cause was missing dependencies.
-    assert "\"$npa_vendor_python\" -c 'import npa.workbench' 2>&1 | tail -3 >&2" in setup
+    assert (
+        "\"$npa_vendor_python\" -c 'import npa.workbench' 2>&1 | tail -3 >&2" in setup
+    )
     assert "${" not in setup
 
 
@@ -226,7 +251,9 @@ def test_default_setup_records_thin_image_source_for_vendor_interpreter() -> Non
 
 
 def test_no_vendor_interpreter_renders_nothing() -> None:
-    from npa.orchestration.npa_workflow.skypilot_render import render_vendor_interpreter_setup
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        render_vendor_interpreter_setup,
+    )
 
     assert render_vendor_interpreter_setup(()) == ""
 
@@ -234,10 +261,12 @@ def test_no_vendor_interpreter_renders_nothing() -> None:
 def test_requirements_install_into_the_recorded_interpreter() -> None:
     """A library installed into miniconda is invisible to the vendor interpreter."""
 
-    setup = render_pip_requirements_setup(tool_pip_requirements("workbench.lerobot.policy_train"))
+    setup = render_pip_requirements_setup(
+        tool_pip_requirements("workbench.lerobot.policy_train")
+    )
 
     assert 'npa_req_python="$(cat /tmp/npa-python)"' in setup
-    assert '"$npa_req_python" -c \'import huggingface_hub\'' in setup
+    assert "\"$npa_req_python\" -c 'import huggingface_hub'" in setup
     assert '"$npa_req_python" -m pip install -q' in setup
 
 
@@ -273,7 +302,7 @@ def test_the_npa_console_script_is_looked_for_in_the_user_scheme_too() -> None:
 
     setup = default_npa_setup()
 
-    assert 'scheme=\"posix_user\"' in setup
+    assert 'scheme="posix_user"' in setup
     assert '"$HOME/.local/bin"' in setup
     assert "ln -sf" in setup
 
@@ -330,6 +359,8 @@ def test_the_source_overlay_installs_dependencies_when_the_cli_will_not_load() -
     first = setup.index("npa_pip_install -e /tmp/npa-src-overlay --no-deps")
     guard = setup.index("import npa.cli.main")
     second = setup.index("npa_pip_install -e /tmp/npa-src-overlay\n")
-    assert first < guard < second, "the with-deps attempt must be guarded and come second"
+    assert first < guard < second, (
+        "the with-deps attempt must be guarded and come second"
+    )
     # `import npa` is not the right probe: it succeeded in job 309. The command tree is.
     assert "python3 -c 'import npa.cli.main'" in setup

@@ -725,9 +725,28 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "byof-openpi.yaml",
         "multi",
+        secret_envs=("NPA_OPENPI_ACCEPT_GEMMA_TERMS",),
         plan_only=True,
         plan_only_justification="delegated BYOF execution is covered by its dedicated live onboarding tier",
         notes="OpenPI Polaris B200 inference; covered by test_byof_openpi_polaris_live_e2e.py.",
+    ),
+    SubmitLiveCase(
+        "openpi-pi05-four-mode.yaml",
+        "multi",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "NPA_OPENPI_ACCEPT_GEMMA_TERMS",
+        ),
+        plan_only=True,
+        plan_only_justification=(
+            "the immutable runtime digest is produced by the connected BYOF build and "
+            "the dedicated OpenPI live E2E submits the complete graph"
+        ),
+        notes=(
+            "Real direct, cross-pod ClusterIP serve, LoRA optimizer, checkpoint reload, "
+            "and held-out evaluation; dedicated E2E uses top-level workflow submit."
+        ),
     ),
     SubmitLiveCase(
         "byof-droid-policy-learning.yaml",

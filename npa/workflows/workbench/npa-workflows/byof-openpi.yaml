@@ -5,7 +5,7 @@ metadata:
   description: >
     Registry-candidate BYOF workflow for Physical Intelligence OpenPI. Builds
     the pinned source for datacenter Blackwell, fetches the Polaris pi0.5
-    checkpoint at run time, and validates direct plus WebSocket-served Franka
+    checkpoint at run time, and hard-gates direct plus WebSocket-served Franka
     joint-position inference on one B200.
 config:
   bucket: example-bucket
@@ -21,7 +21,7 @@ config:
     python3 -m venv /opt/venv &&
     /opt/venv/bin/python -m pip install --no-cache-dir --upgrade pip uv &&
     GIT_LFS_SKIP_SMUDGE=1 /opt/venv/bin/uv pip install
-    --python /opt/venv/bin/python --no-cache -e . &&
+    --python /opt/venv/bin/python --no-cache -e . 'boto3>=1.34' &&
     printf '%s\n'
     '#include <cuda_runtime.h>'
     '#include <cstdio>'
@@ -32,6 +32,12 @@ config:
     rm /tmp/npa-openpi-sm100.cu
   workload: solution-smoke
   smoke_command: |
+    test "${NPA_OPENPI_ACCEPT_GEMMA_TERMS:-}" = "YES" || {
+      printf '%s\n' '{"schema":"npa.workbench.openpi.terms-gate.v1","status":"refused","exit_code":64,"checkpoint_fetch_started":false,"model_import_started":false}' \
+        > "${NPA_SMOKE_OUTPUT_DIR}/openpi_terms_gate.json"
+      echo "OpenPI checkpoint access requires scoped Gemma terms acceptance" >&2
+      exit 64
+    }
     export OPENPI_DATA_HOME="/workspace/openpi-cache/${NPA_BYOF_RUN_ID}"
     mkdir -p "${OPENPI_DATA_HOME}"
     /opt/venv/bin/python - <<'PY'
@@ -65,6 +71,9 @@ config:
         "pi05_droid_jointpos_polaris_direct_infer",
         "pi05_droid_jointpos_polaris_served_infer",
     }
+
+    if os.environ.get("NPA_OPENPI_ACCEPT_GEMMA_TERMS") != "YES":
+        raise SystemExit("scoped Gemma terms acceptance was not forwarded")
 
     output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
     output_dir.mkdir(parents=True, exist_ok=True)

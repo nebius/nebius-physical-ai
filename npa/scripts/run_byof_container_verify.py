@@ -53,6 +53,7 @@ DEFAULT_IMAGE_PULL_SECRETS = ("agent-sa",)
 #: rendered YAML). Without this a run provisions, pulls the image, executes the profile
 #: and then dies at the upload with
 #: ``botocore.exceptions.NoCredentialsError: Unable to locate credentials``.
+OPERATOR_RUNTIME_ENVS = ("NPA_OPENPI_ACCEPT_GEMMA_TERMS",)
 DEFAULT_SECRET_ENVS = (
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
@@ -63,11 +64,14 @@ DEFAULT_SECRET_ENVS = (
 def resolve_secret_envs(explicit: list[str] | None) -> list[str]:
     """Return the secret env names to forward to SkyPilot.
 
-    An explicit ``--secret-env`` list replaces the default storage names. Names
-    with no value are dropped, since SkyPilot rejects a secret it cannot resolve.
+    An explicit ``--secret-env`` list replaces the default storage names. An
+    explicitly set OpenPI run gate is appended in either case so it can only
+    travel through SkyPilot's redacted secret channel. Names with no value are
+    dropped, since SkyPilot rejects a secret it cannot resolve.
     """
 
     names = list(explicit if explicit is not None else DEFAULT_SECRET_ENVS)
+    names.extend(OPERATOR_RUNTIME_ENVS)
     return [name for name in dict.fromkeys(names) if os.environ.get(name)]
 
 

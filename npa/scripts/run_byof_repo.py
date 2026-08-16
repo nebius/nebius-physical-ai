@@ -19,6 +19,7 @@ from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import storage_env_for_project
 from npa.deploy.images import container_image_for_tool, wan_accepted_image_manifest
 from npa.workflows.byof.live import resolve_byof_kubernetes_target
+from npa.workflows.byof.openpi import is_openpi_request, require_openpi_terms
 from npa.workflows.byof.postprocess import (
     PostprocessContext,
     has_registered_postprocess,
@@ -294,10 +295,14 @@ def _registry_path(image_ref: str) -> str:
 
 
 def _docker_login_nebius(server: str, *, env: dict[str, str] | None = None) -> None:
-    # Prefer an explicit write-capable profile when operators set one (e.g. agent-sa).
+    # Keep registry write authority separate from the profile used by kubeconfig
+    # exec plugins.  A registry-only service account may intentionally have no
+    # Kubernetes RBAC, so reusing NPA_NEBIUS_PROFILE for both operations can make
+    # an otherwise valid build fail when pull secrets are refreshed.
     merged = {**os.environ, **(env or {})}
     profile = (
-        merged.get("NPA_NEBIUS_PROFILE", "").strip()
+        merged.get("NEBIUS_REGISTRY_PROFILE", "").strip()
+        or merged.get("NPA_NEBIUS_PROFILE", "").strip()
         or merged.get("NEBIUS_PROFILE", "").strip()
     )
     token_cmd = ["nebius"]
@@ -324,10 +329,18 @@ def _dockerfile_text() -> str:
         "ARG BYOF_BUILD_COMMAND\n"
         "USER root\n"
         "RUN apt-get update && apt-get install -y --no-install-recommends \\\n"
-        "      git ca-certificates python3 python3-pip sudo \\\n"
+        "      git ca-certificates python3 python3-pip sudo rsync \\\n"
+        "      openssh-client openssh-server netcat-openbsd \\\n"
         "  && rm -rf /var/lib/apt/lists/*\n"
         "RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu\n"
-        "RUN echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu \\\n"
+        "RUN install -d -m 0755 /run/sshd \\\n"
+        "  && (grep -q 'ssh-keygen -A' /etc/init.d/ssh \\\n"
+        "    || sed -i '/^  start)$/a\\    ssh-keygen -A' /etc/init.d/ssh) \\\n"
+        "  && grep -q 'ssh-keygen -A' /etc/init.d/ssh \\\n"
+        "  && rm -f /etc/ssh/ssh_host_* \\\n"
+        "  && printf '%s\\n' 'PasswordAuthentication no' 'PermitRootLogin no' \\\n"
+        "    > /etc/ssh/sshd_config.d/99-npa-container.conf \\\n"
+        "  && echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu \\\n"
         "  && chmod 440 /etc/sudoers.d/ubuntu\n"
         "RUN mkdir -p /workspace && chown ubuntu:ubuntu /workspace\n"
         f'RUN git clone --depth 1 --branch "${{OSS_REPO_REF}}" "${{OSS_REPO_URL}}" {BYOF_REPO_MOUNT} \\\n'
@@ -346,9 +359,13 @@ def _dockerfile_text() -> str:
         f'  "${{OSS_REPO_URL}}" "${{OSS_REPO_REF}}" > {BYOF_REPO_MOUNT}/npa_source_metadata.json \\\n'
         f"  && chown ubuntu:ubuntu {BYOF_REPO_MOUNT}/npa_source_metadata.json {BYOF_REPO_MOUNT}/npa_build_metadata.json\n"
         'LABEL npa.byof.repo="${OSS_REPO_URL}" npa.byof.ref="${OSS_REPO_REF}" '
-        'npa.packaging.tier="interactive"\n'
+        'npa.packaging.tier="interactive" '
+        'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"\n'
         "USER ubuntu\n"
+        "ENV HOME=/home/ubuntu\n"
         f"WORKDIR {BYOF_REPO_MOUNT}\n"
+        'ENTRYPOINT ["/bin/sh", "-c", "if [ \\"$#\\" -gt 0 ]; then exec \\"$@\\"; fi; exec /bin/bash", "npa-byof-entrypoint"]\n'
+        'CMD ["/bin/bash"]\n'
     )
 
 
@@ -414,9 +431,7 @@ def _base_image_candidates(
             colon = resolved.rfind(":")
             repository = resolved[:colon] if colon > slash else resolved
             resolved = (
-                repository
-                + "@"
-                + str(wan_accepted_image_manifest()["oci_digest"])
+                repository + "@" + str(wan_accepted_image_manifest()["oci_digest"])
             )
         return [resolved]
     if explicit_base:
@@ -520,6 +535,25 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    if is_openpi_request(
+        solution_name=args.solution_name,
+        repo_url=args.repo_url,
+        smoke_command=args.smoke_command,
+    ):
+        try:
+            require_openpi_terms()
+        except ValueError as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "failed",
+                        "solution_name": args.solution_name or "openpi",
+                        "error": str(exc),
+                    },
+                    indent=2,
+                )
+            )
+            return 1
     explicit_base = _normalize_optional(args.base_image)
     base_profile = _normalize_optional(args.base_profile) or "ubuntu"
     registry = args.registry.strip() or resolve_container_registry(args.project or None)

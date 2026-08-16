@@ -31,7 +31,16 @@ def mint_nebius_registry_token(*, nebius_cli: str = "nebius") -> str:
     obtained, which best-effort callers catch.
     """
 
-    return mint_nebius_iam_token(nebius_cli=nebius_cli)
+    # Registry write/read authority is often intentionally separate from the
+    # profile used by kubeconfig exec plugins.  Honor the registry-only selector
+    # here so every shared registry consumer (Docker login, pull preflight,
+    # manifest attestation and Kubernetes pull-secret refresh) uses one identity
+    # without changing cluster authentication.
+    registry_profile = os.environ.get("NEBIUS_REGISTRY_PROFILE", "").strip()
+    return mint_nebius_iam_token(
+        nebius_cli=nebius_cli,
+        profile=registry_profile or None,
+    )
 
 
 def _registry_server_from_image(image: str) -> str:
@@ -216,14 +225,25 @@ def ensure_nebius_registry_pull_secret(
             and Path("/var/run/secrets/kubernetes.io/serviceaccount/token").is_file()
         )
         bearer_token = ""
-        if (
-            not in_cluster
-            and any(os.environ.get(name) for name in AMBIENT_TOKEN_ENVS)
-            and kubeconfig_uses_nebius_iam_auth(
-                kubeconfig=kubeconfig,
-                context=k8s_context,
+        exec_auth = not in_cluster and kubeconfig_uses_nebius_iam_auth(
+            kubeconfig=kubeconfig,
+            context=k8s_context,
+        )
+        registry_profile = os.environ.get("NEBIUS_REGISTRY_PROFILE", "").strip()
+        if exec_auth and registry_profile:
+            # The registry service account can intentionally have no Kubernetes
+            # RBAC.  Do not let its selector leak into the kubeconfig exec plugin:
+            # mint a distinct cluster token from the remaining profile/default
+            # environment and pass it only in memory.
+            from npa.clients.nebius_auth import mint_nebius_iam_token
+
+            cluster_env = dict(os.environ)
+            cluster_env.pop("NEBIUS_REGISTRY_PROFILE", None)
+            bearer_token = mint_nebius_iam_token(
+                nebius_cli=nebius_cli,
+                env=cluster_env,
             )
-        ):
+        elif exec_auth and any(os.environ.get(name) for name in AMBIENT_TOKEN_ENVS):
             # A kubeconfig exec plugin inherits ambient env. Reuse a token already
             # minted above, or mint one now when Docker auth came from a helper.
             bearer_token = fallback_token or mint_nebius_registry_token(

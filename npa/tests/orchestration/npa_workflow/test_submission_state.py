@@ -37,6 +37,38 @@ def test_submission_state_rejects_credentials(
         update_submission_state("demo", "run-1", {"aws_secret_access_key": "nope"})
 
 
+def test_submission_state_allows_only_names_under_image_pull_secret_references(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    payload = update_submission_state(
+        "demo",
+        "run-image-pull-secret",
+        {
+            "workflow": {
+                "resources_profile": {
+                    "kubernetes": {
+                        "pod_config": {
+                            "spec": {"imagePullSecrets": [{"name": "registry-pull"}]}
+                        }
+                    }
+                }
+            }
+        },
+    )
+
+    assert payload["workflow"]["resources_profile"]["kubernetes"]["pod_config"]["spec"][
+        "imagePullSecrets"
+    ] == [{"name": "registry-pull"}]
+    with pytest.raises(ValueError, match="must not contain credentials"):
+        update_submission_state(
+            "demo",
+            "run-malformed-image-pull-secret",
+            {"imagePullSecrets": [{"password": "forbidden-inline-value"}]},
+        )
+
+
 def test_concurrent_updates_do_not_corrupt_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -58,7 +90,9 @@ def test_locked_update_supports_a_multi_step_transaction(
     monkeypatch.setenv("HOME", str(tmp_path))
 
     with submission_lock("demo", "run-1"):
-        update_submission_state("demo", "run-1", {"launch_state": "reserved"}, locked=True)
+        update_submission_state(
+            "demo", "run-1", {"launch_state": "reserved"}, locked=True
+        )
 
     assert load_submission_state("demo", "run-1")["launch_state"] == "reserved"
 

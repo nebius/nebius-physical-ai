@@ -59,6 +59,19 @@ validates its selected checkpoint. Do not provide `--skip-model-check`, an
 Hugging Face token is an access failure from Hugging Face, not an NPA consent
 workflow. Keep restricted weights out of image layers regardless of access.
 
+## OpenPI pi0.5 Reference
+
+OpenPI's public Polaris checkpoint is fetched anonymously from GCS, but it
+contains Gemma-derived material governed by the Gemma Terms of Use and Gemma
+Prohibited Use Policy. NPA's OpenPI product policy is explicit opt-in: require
+the exact run-scoped `NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES` value before an OpenPI
+image build or checkpoint fetch. This is not a Hugging Face credential proxy or
+an Isaac default. Forward it only as a runtime secret, never render it into YAML
+or persist it in an image, repository file, credential store, checkpoint, or
+dataset. A separate invalid-value workload must exit before importing the model
+or starting checkpoint access, and must run before any accepted checkpoint
+fetch. Acceptance covers only the two named Gemma policies.
+
 ## Isaac Reference
 
 Isaac runtime-fetch workloads require all of these official terms:
@@ -90,6 +103,7 @@ that would turn an explicit empty opt-out back into acceptance.
 ## Guardrails
 
 - Keep explicit opt-out refusal strict and early.
+- Keep the OpenPI pi0.5 exact-value negative gate strict and runtime-only.
 - For gated runtime weights, test every required upstream access probe before
   provisioning and test that no bypass or duplicate consent flag exists.
 - Test both paths: unset acceptance defaults to `Y`, and explicit opt-out refuses

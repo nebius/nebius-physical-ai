@@ -134,6 +134,30 @@ def test_submit_remaps_the_spec_accelerator_onto_the_cluster_name(
     assert overrides == {"RTXPRO6000:1": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"}
 
 
+def test_submit_accelerator_readiness_uses_resolved_config_overrides(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str
+) -> None:
+    monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
+    spec = yaml.safe_load(yaml.safe_dump(SPEC))
+    spec["config"].update({"gpu_type": "RTXPRO6000", "gpu_count": "8"})
+    spec["resources"]["gpu"]["accelerators"] = (
+        "{{config.gpu_type}}:{{config.gpu_count}}"
+    )
+    path = tmp_path / "templated-accelerator.yaml"
+    path.write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
+    _stub_catalog(monkeypatch, CATALOG_OUTPUT)
+
+    overrides = workflow_cli._resolve_submit_accelerators(
+        path,
+        infra="k8s/npa-cluster",
+        sky_bin=sky_bin,
+        config_overrides={"gpu_count": "1"},
+        enabled=True,
+    )
+
+    assert overrides == {"RTXPRO6000:1": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"}
+
+
 def test_submit_refuses_two_gpus_per_task_on_single_gpu_nodes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str
 ) -> None:
@@ -374,6 +398,38 @@ def test_pullable_images_pass(
     assert "1 image(s) pullable" in capsys.readouterr().err
 
 
+def test_image_preflight_plans_with_submit_config_overrides(
+    monkeypatch: pytest.MonkeyPatch, spec_path: Path
+) -> None:
+    observed: dict[str, str] = {}
+
+    def plan_images(spec, *_args, **_kwargs):
+        observed["runtime_image"] = str(spec.config["runtime_image"])
+        return []
+
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.skypilot_render.plan_images", plan_images
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.skypilot_render.plan_image_pull_secrets",
+        lambda *_args, **_kwargs: {},
+    )
+    digest = "cr.example/openpi@sha256:" + "b" * 64
+
+    assert (
+        workflow_cli._preflight_submit_images(
+            spec_path,
+            options=object(),
+            assume_decision="",
+            config_overrides={"runtime_image": digest},
+            enabled=True,
+        )
+        == {}
+    )
+
+    assert observed == {"runtime_image": digest}
+
+
 def test_first_party_image_without_attestation_fails_instead_of_probing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -390,7 +446,9 @@ def test_first_party_image_without_attestation_fails_instead_of_probing(
     )
 
     def probe_forbidden(**_kwargs):
-        raise AssertionError("first-party missing evidence must not use a runtime probe")
+        raise AssertionError(
+            "first-party missing evidence must not use a runtime probe"
+        )
 
     monkeypatch.setattr(
         "npa.orchestration.skypilot.image_bootstrap_contract.probe_image_capabilities",

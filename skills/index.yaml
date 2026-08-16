@@ -189,7 +189,7 @@ skills:
         contains: "Nebius Physical AI"
   - name: third-party-eula-preflight
     category: atomic
-    when_to_use: "Before provisioning, building, downloading, or submitting workloads whose images, software, models, or data require third-party terms: apply the Isaac default-accept/explicit-opt-out policy, verify real upstream credential access for gated runtime fetches, and keep privacy and redistribution controls separate."
+    when_to_use: "Before provisioning, building, downloading, or submitting workloads whose images, software, models, or data require third-party terms: apply the documented product policy (including Isaac default/opt-out and OpenPI scoped opt-in), verify real upstream credential access for gated runtime fetches, and keep privacy and redistribution controls separate."
     path: skills/atomic/third-party-eula-preflight/SKILL.md
     smoke:
       - type: file_exists

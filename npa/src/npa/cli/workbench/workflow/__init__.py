@@ -1133,6 +1133,7 @@ def submit_cmd(
                 materialize_registry_secrets=False,
             ),
             assume_decision=assume_decision,
+            config_overrides=substitutions,
             enabled=preflight_images and not plan_only,
             infra=infra,
         )
@@ -1229,9 +1230,7 @@ def submit_cmd(
                 spec_config,
                 requires_s3=_spec_requires_s3(yaml_path),
                 s3_endpoint=submit_credentials.endpoint_url,
-                s3_access_key_id=getattr(
-                    submit_credentials, "access_key_id", ""
-                ),
+                s3_access_key_id=getattr(submit_credentials, "access_key_id", ""),
                 s3_secret_access_key=getattr(
                     submit_credentials, "secret_access_key", ""
                 ),
@@ -1397,6 +1396,7 @@ def submit_cmd(
                 spec=merged_npa_spec,
                 infra=infra,
                 sky_bin=sky_bin,
+                assume_decision=assume_decision,
                 enabled=resolve_accelerators and not plan_only,
                 readiness_timeout=gpu_readiness_timeout,
                 readiness_poll_interval=gpu_readiness_poll_interval,
@@ -2487,6 +2487,7 @@ def _preflight_submit_images(
     *,
     options: SkypilotRenderOptions,
     assume_decision: str,
+    config_overrides: Mapping[str, str] | None = None,
     enabled: bool,
     infra: str = "",
 ) -> dict[str, str]:
@@ -2503,6 +2504,7 @@ def _preflight_submit_images(
 
     from npa.orchestration.npa_workflow import build_plan
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
     from npa.orchestration.npa_workflow.skypilot_render import (
         plan_image_pull_secrets,
         plan_images,
@@ -2513,7 +2515,7 @@ def _preflight_submit_images(
     )
 
     try:
-        spec = load_spec(yaml_path)
+        spec = merge_config_overrides(load_spec(yaml_path), config_overrides)
         run_id = f"{spec.name}-preflight"
         plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
         images = plan_images(spec, plan.steps, run_id=run_id, options=options)
@@ -2662,6 +2664,7 @@ def _resolve_submit_accelerators(
     spec=None,
     infra: str,
     sky_bin: str,
+    assume_decision: str = "",
     enabled: bool,
     readiness_timeout: float = 600.0,
     readiness_poll_interval: float = 10.0,
@@ -2681,6 +2684,7 @@ def _resolve_submit_accelerators(
         # An explicit blanket override is the operator's decision; honor it as-is.
         return {}
 
+    from npa.orchestration.npa_workflow import build_plan
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
     from npa.orchestration.skypilot._bin import SkyPilotNotInstalledError
     from npa.orchestration.skypilot.k8s_gpu_catalog import (
@@ -2692,7 +2696,18 @@ def _resolve_submit_accelerators(
     )
 
     try:
-        requested = spec_accelerators((spec or load_spec(yaml_path)).resources)
+        resolved_spec = spec or load_spec(yaml_path)
+        plan = build_plan(
+            resolved_spec,
+            run_id=f"{resolved_spec.name}-accelerator-preflight",
+            assume_decision=assume_decision,
+        )
+        requested = spec_accelerators(
+            {
+                f"step-{index}": step.resources_profile
+                for index, step in enumerate(plan.steps)
+            }
+        )
     except NpaWorkflowError:
         return {}
     if not requested:

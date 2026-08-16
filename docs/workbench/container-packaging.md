@@ -56,7 +56,11 @@ All first-class images live under `npa/docker/workbench/`:
 
 BYOF images (`npa-byof:<run-id>`) are **ad-hoc** and are not registered in
 `CONTAINER_IMAGE_NAMES` until promoted to Tier 2 (see
-`docs/architecture/oss-onboarding-ladder.md`).
+`docs/architecture/oss-onboarding-ladder.md`). The canonical BYOF builder still
+installs and byte-checks the shared SkyPilot prerequisites, removes build-time
+SSH host keys, forwards orchestrator arguments, and records the same
+`skypilot-0.12.2-v1` OCI attestation. Ad-hoc means the solution is not a catalog
+image; it does not exempt its runtime bytes from the worker bootstrap contract.
 
 ## Packaging tiers
 

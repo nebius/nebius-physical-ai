@@ -1,8 +1,10 @@
-"""Contract and canonical live B200 E2E for OpenPI pi0.5 Polaris serving.
+"""Contract and canonical live B200 E2E for all OpenPI pi0.5 Polaris modes.
 
 The live test builds and pushes the pinned source through the canonical BYOF
 runner, resolves the result to a registry digest, verifies the built bytes, then
 pulls that digest for separate negative-terms and positive-inference workloads.
+The same digest then runs the connected direct, cross-pod serve, real optimizer,
+and held-out evaluation graph through the top-level npa.workflow controller.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from npa.workflows.byof.live import (
     resolve_skypilot_bin,
     skypilot_config_for_project,
 )
+from npa.workflows.byof.openpi_service import controller_service_account_name
 from npa.workflows.sim2real.registry_auth import ensure_nebius_registry_pull_secret
 
 from .npa_workflow_live_helpers import live_bucket
@@ -40,6 +43,14 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 BYOF_RUNNER = REPO_ROOT / "npa" / "scripts" / "run_byof_repo.py"
 OPENPI_SPEC = (
     REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "byof-openpi.yaml"
+)
+FOUR_MODE_SPEC = (
+    REPO_ROOT
+    / "npa"
+    / "workflows"
+    / "workbench"
+    / "npa-workflows"
+    / "openpi-pi05-four-mode.yaml"
 )
 EXPECTED_CAPABILITIES = {
     "pi05_droid_jointpos_polaris_checkpoint_download",
@@ -121,6 +132,257 @@ def _read_json(s3, bucket: str, key: str) -> dict[str, object]:
     return value
 
 
+def _sha256_s3_object(s3, bucket: str, key: str) -> tuple[str, int]:
+    digest = hashlib.sha256()
+    size = 0
+    body = s3.get_object(Bucket=bucket, Key=key)["Body"]
+    for chunk in body.iter_chunks(chunk_size=8 * 1024 * 1024):
+        if chunk:
+            digest.update(chunk)
+            size += len(chunk)
+    return digest.hexdigest(), size
+
+
+def _assert_float64_trajectory(value: dict[str, object]) -> None:
+    assert value["dtype"] == "float64"
+    assert value["finite"] is True
+    shape = list(value["shape"])
+    assert int(shape[0]) >= 5 and shape[1:] == [8]
+    targets = value.get("first_five_targets", [])
+    assert len(targets) == 5
+    assert all(len(row) == 8 for row in targets)
+    assert all(math.isfinite(float(item)) for row in targets for item in row)
+
+
+def _assert_service_objects_absent(
+    *, artifact: dict[str, object], env: dict[str, str], namespace: str
+) -> None:
+    identity = artifact["cleanup_identity"]
+    assert isinstance(identity, dict)
+    names = identity["exact_names"]
+    assert isinstance(names, dict)
+    context = env["NPA_BYOF_K8S_CONTEXT"]
+    kubeconfig = env["NPA_BYOF_KUBECONFIG"]
+    for key, kind in (
+        ("client_job", "job"),
+        ("deployment", "deployment"),
+        ("service", "service"),
+        ("secret", "secret"),
+    ):
+        result = subprocess.run(
+            [
+                "kubectl",
+                "--kubeconfig",
+                kubeconfig,
+                "--context",
+                context,
+                "get",
+                kind,
+                str(names[key]),
+                "--namespace",
+                namespace,
+                "--ignore-not-found",
+                "-o",
+                "name",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert not result.stdout.strip(), (kind, names[key], result.stdout)
+    pod_selector = str(identity["pod_selector"])
+    pods = subprocess.run(
+        [
+            "kubectl",
+            "--kubeconfig",
+            kubeconfig,
+            "--context",
+            context,
+            "get",
+            "pods",
+            "--namespace",
+            namespace,
+            "--selector",
+            pod_selector,
+            "-o",
+            "name",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert not pods.stdout.strip(), (pod_selector, pods.stdout)
+
+
+def _assert_controller_rbac_absent(
+    *, run_id: str, env: dict[str, str], namespace: str
+) -> None:
+    name = controller_service_account_name(run_id)
+    for kind in ("serviceaccount", "role", "rolebinding"):
+        result = subprocess.run(
+            [
+                "kubectl",
+                "--kubeconfig",
+                env["NPA_BYOF_KUBECONFIG"],
+                "--context",
+                env["NPA_BYOF_K8S_CONTEXT"],
+                "get",
+                kind,
+                name,
+                "--namespace",
+                namespace,
+                "--ignore-not-found",
+                "-o",
+                "name",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert not result.stdout.strip(), (kind, name, result.stdout)
+
+
+def _run_four_mode_workflow(
+    *,
+    run_id: str,
+    image: str,
+    bucket: str,
+    project: str | None,
+    registry: str,
+    env: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    target = resolve_byof_kubernetes_target(project)
+    assert target.context and target.kubeconfig
+    sky_bin = resolve_skypilot_bin()
+    assert sky_bin
+    isolated_config_dir = env.get("NPA_BYOF_SKY_ISOLATED_CONFIG_DIR", "").strip()
+    assert isolated_config_dir, (
+        "the fresh-cluster OpenPI gate requires isolated SkyPilot state via "
+        "NPA_BYOF_SKY_ISOLATED_CONFIG_DIR"
+    )
+    assert Path(isolated_config_dir).is_absolute()
+    task_config_path = env.get("NPA_BYOF_SKY_CONFIG_PATH", "").strip()
+    assert task_config_path, (
+        "the fresh-cluster OpenPI gate requires an exact-context SkyPilot "
+        "config via NPA_BYOF_SKY_CONFIG_PATH"
+    )
+    assert Path(task_config_path).is_absolute()
+    namespace = target.namespace or "default"
+    service_account = controller_service_account_name(run_id)
+    prefix = f"oss-solutions/openpi/{run_id}"
+    command = [
+        str(REPO_ROOT / "npa" / ".venv" / "bin" / "npa"),
+        "workbench",
+        "workflow",
+        "submit",
+        str(FOUR_MODE_SPEC),
+        "--run-id",
+        run_id,
+        "--runtime",
+        "--max-wait-seconds",
+        "0",
+        "--poll-seconds",
+        "30",
+        "--stage-src",
+        "--sky-bin",
+        sky_bin,
+        "--isolated-config-dir",
+        isolated_config_dir,
+        "--infra",
+        f"k8s/{target.context}",
+        "--registry",
+        registry,
+        "--s3-endpoint",
+        env["AWS_ENDPOINT_URL"],
+        "--s3-bucket",
+        bucket,
+        "--var",
+        f"bucket={bucket}",
+        "--var",
+        f"prefix={prefix}",
+        "--var",
+        f"runtime_image={image}",
+        "--var",
+        f"service_namespace={namespace}",
+        "--var",
+        f"service_account={service_account}",
+        "--secret-env",
+        "NPA_OPENPI_ACCEPT_GEMMA_TERMS",
+        "--secret-env",
+        "AWS_ACCESS_KEY_ID",
+        "--secret-env",
+        "AWS_SECRET_ACCESS_KEY",
+        "--output-format",
+        "json",
+    ]
+    if project:
+        command.extend(["--project", project])
+    command.extend(["--config-path", task_config_path])
+    rbac_base = [
+        sys.executable,
+        "-m",
+        "npa.workflows.byof.openpi_service_rbac",
+        "--run-id",
+        run_id,
+        "--namespace",
+        namespace,
+        "--service-account",
+        service_account,
+        "--kubeconfig",
+        target.kubeconfig,
+        "--context",
+        target.context,
+    ]
+    apply = subprocess.run(
+        [*rbac_base[:3], "apply", *rbac_base[3:]],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+        env=env,
+    )
+    if apply.returncode != 0:
+        return apply
+    try:
+        submit = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            cwd=str(REPO_ROOT),
+            env=env,
+        )
+    finally:
+        delete = subprocess.run(
+            [*rbac_base[:3], "delete", *rbac_base[3:]],
+            check=False,
+            capture_output=True,
+            text=True,
+            cwd=str(REPO_ROOT),
+            env=env,
+        )
+    returncode = submit.returncode if delete.returncode == 0 else delete.returncode
+    lifecycle = {
+        "schema": "npa.workbench.openpi.four-mode-submit.v1",
+        "status": "SUCCEEDED" if returncode == 0 else "FAILED",
+        "workflow_returncode": submit.returncode,
+        "controller_rbac_apply_passed": apply.returncode == 0,
+        "controller_rbac_delete_passed": delete.returncode == 0,
+        "controller_service_account": service_account,
+    }
+    return subprocess.CompletedProcess(
+        args=command,
+        returncode=returncode,
+        stdout="\n".join(
+            (apply.stdout, submit.stdout, delete.stdout, json.dumps(lifecycle))
+        ),
+        stderr="\n".join((apply.stderr, submit.stderr, delete.stderr)),
+    )
+
+
 def _requested_gpu_pods(env: dict[str, str]) -> list[dict[str, object]]:
     context = env.get("NPA_BYOF_K8S_CONTEXT", "").strip()
     kubeconfig = env.get("NPA_BYOF_KUBECONFIG", "").strip()
@@ -161,6 +423,7 @@ def _requested_gpu_pods(env: dict[str, str]) -> list[dict[str, object]]:
                     "namespace": metadata.get("namespace", "default"),
                     "name": metadata.get("name", ""),
                     "labels": metadata.get("labels", {}),
+                    "annotations": metadata.get("annotations", {}),
                     "gpu_count": gpu_count,
                 }
             )
@@ -244,17 +507,18 @@ def _release_split_run(*, run_id: str, env: dict[str, str]) -> None:
     context = env.get("NPA_BYOF_K8S_CONTEXT", "").strip()
     kubeconfig = env.get("NPA_BYOF_KUBECONFIG", "").strip()
     assert context and kubeconfig
-    expected_prefix = run_id[:30]
     while True:
         pods = _requested_gpu_pods(env)
         if not pods:
             return
         for pod in pods:
             labels = pod.get("labels")
+            annotations = pod.get("annotations")
             assert isinstance(labels, dict)
-            sky_name = str(labels.get("skypilot-cluster-name", ""))
+            assert isinstance(annotations, dict)
+            full_sky_name = str(annotations.get("skypilot-cluster-name", ""))
             assert labels.get("parent") == "skypilot"
-            assert sky_name.startswith(expected_prefix), (sky_name, run_id)
+            assert full_sky_name == run_id, (full_sky_name, run_id)
             name = str(pod["name"])
             namespace = str(pod["namespace"])
             assert name and namespace
@@ -349,6 +613,11 @@ def _inspect_built_image(tag: str, *, build_command: str) -> dict[str, object]:
     assert image_config["Labels"]["npa.byof.ref"] == (
         "15a9616a00943ada6c20a0f158e3adb39df2ccac"
     )
+    assert (
+        image_config["Labels"]["org.nebius.npa.skypilot-bootstrap-contract"]
+        == "skypilot-0.12.2-v1"
+    )
+    assert image_config["Env"] and "HOME=/home/ubuntu" in image_config["Env"]
     assert not any(
         value.startswith("NPA_OPENPI_ACCEPT_GEMMA_TERMS=")
         or value.startswith("OPENPI_DATA_HOME=")
@@ -432,6 +701,43 @@ print(json.dumps({
     assert payload["baked_weight_files"] == []
     assert payload["populated_checkpoint_cache_roots"] == []
 
+    bootstrap_proc = subprocess.run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--entrypoint",
+            "/bin/sh",
+            tag,
+            "-ceu",
+            """
+            test "$(id -u)" != 0
+            test "$HOME" = /home/ubuntu
+            test -w /tmp
+            test -w "$HOME"
+            test -d /run/sshd
+            for command_name in sh sudo sshd rsync service; do
+              command -v "$command_name" >/dev/null || test -x "/usr/sbin/$command_name"
+            done
+            sudo -n true
+            test -z "$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit)"
+            """,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+    )
+    assert bootstrap_proc.returncode == 0
+    forwarding_proc = subprocess.run(
+        ["docker", "run", "--rm", tag, "/bin/sh", "-c", "printf npa-forwarded"],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+    )
+    assert forwarding_proc.stdout == "npa-forwarded"
+
     elf_proc = subprocess.run(
         [
             "docker",
@@ -454,6 +760,8 @@ print(json.dumps({
         "source_metadata": payload["source_metadata"],
         "build_command_sha256": payload["build_metadata"]["build_command_sha256"],
         "editable_install": True,
+        "bootstrap_attestation": "skypilot-0.12.2-v1",
+        "bootstrap_bytes_verified": True,
         "sm100_elf": True,
         "weights_baked": False,
         "terms_baked": False,
@@ -473,7 +781,7 @@ def test_openpi_polaris_spec_plans_real_b200_serving() -> None:
     assert "pi05_droid_jointpos_polaris" in rendered
     assert "WebsocketPolicyServer" in rendered
     assert "B200:1" in OPENPI_SPEC.read_text(encoding="utf-8")
-    assert secret_env_hints_for_plan(plan.steps) == ()
+    assert secret_env_hints_for_plan(plan.steps) == ("NPA_OPENPI_ACCEPT_GEMMA_TERMS",)
     profile = resolve_byof_profile_path(str(config["resource_profile_yaml"]))
     profile_text = profile.read_text(encoding="utf-8")
     assert "accelerators: B200:1" in profile_text
@@ -546,6 +854,62 @@ def test_openpi_split_live_env_uses_one_project_storage_identity(
     assert env["AWS_ENDPOINT_URL"] == "https://storage.correct-region"
 
 
+def test_openpi_four_mode_submit_uses_task_isolated_skypilot_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[tuple[list[str], dict[str, object]]] = []
+    isolated = tmp_path / "sky-state"
+    monkeypatch.setattr(
+        f"{__name__}.resolve_byof_kubernetes_target",
+        lambda _project: SimpleNamespace(
+            namespace="openpi",
+            kubeconfig="/tmp/task-kubeconfig",
+            context="task-context",
+        ),
+    )
+    monkeypatch.setattr(f"{__name__}.resolve_skypilot_bin", lambda: "/opt/sky")
+    monkeypatch.setattr(f"{__name__}.skypilot_config_for_project", lambda _: "")
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(f"{__name__}.subprocess.run", run)
+
+    result = _run_four_mode_workflow(
+        run_id="openpi-live",
+        image="cr.example.invalid/project/openpi@sha256:" + "a" * 64,
+        bucket="bucket",
+        project="project",
+        registry="cr.example.invalid/project",
+        env={
+            "AWS_ENDPOINT_URL": "https://storage.example.invalid",
+            "NPA_BYOF_SKY_ISOLATED_CONFIG_DIR": str(isolated),
+            "NPA_BYOF_SKY_CONFIG_PATH": str(tmp_path / "sky-config.yaml"),
+        },
+    )
+
+    assert result.returncode == 0
+    assert len(calls) == 3
+    apply_command, _ = calls[0]
+    command, kwargs = calls[1]
+    delete_command, _ = calls[2]
+    assert apply_command[3] == "apply"
+    assert delete_command[3] == "delete"
+    expected_service_account = controller_service_account_name("openpi-live")
+    assert apply_command[apply_command.index("--service-account") + 1] == (
+        expected_service_account
+    )
+    assert command[command.index("--var") + 1] == "bucket=bucket"
+    assert f"service_account={expected_service_account}" in command
+    assert command[command.index("--isolated-config-dir") + 1] == str(isolated)
+    assert command[command.index("--infra") + 1] == "k8s/task-context"
+    assert command[command.index("--config-path") + 1] == str(
+        tmp_path / "sky-config.yaml"
+    )
+    assert kwargs["cwd"] == str(REPO_ROOT)
+
+
 def test_openpi_split_run_waits_for_exact_context_gpu_release(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -558,6 +922,7 @@ def test_openpi_split_run_waits_for_exact_context_gpu_release(
                         "metadata": {
                             "namespace": "default",
                             "name": "negative-run-hash-head",
+                            "annotations": {"skypilot-cluster-name": "negative-run"},
                             "labels": {
                                 "parent": "skypilot",
                                 "skypilot-cluster-name": "negative-run-hash",
@@ -644,9 +1009,12 @@ def test_openpi_artifact_wait_keeps_live_gpu_until_object_exists(
     ),
 )
 @pytest.mark.e2e
-def test_openpi_polaris_live_b200_build_and_served_inference(
+def test_openpi_polaris_live_b200_all_four_modes(
     e2e_project: str | None,
 ) -> None:
+    assert os.environ.get("NPA_OPENPI_ACCEPT_GEMMA_TERMS") == "YES", (
+        "scoped Gemma terms acceptance must be forwarded for this OpenPI run"
+    )
     assert not os.environ.get("NPA_BYOF_OPENPI_REUSE_IMAGE", "").strip(), (
         "the canonical gate must build and push; use the runner manually for reuse debugging"
     )
@@ -658,6 +1026,7 @@ def test_openpi_polaris_live_b200_build_and_served_inference(
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     build_run_id = f"byof-openpi-polaris-build-{stamp}"
+    negative_run_id = f"byof-openpi-polaris-terms-{stamp}"
     positive_run_id = f"byof-openpi-polaris-e2e-{stamp}"
     planned = _planned_args(positive_run_id)
     bucket = live_bucket(e2e_project)
@@ -717,8 +1086,312 @@ def test_openpi_polaris_live_b200_build_and_served_inference(
     print(json.dumps({"openpi_build_evidence": build_byte_evidence}, sort_keys=True))
     _refresh_pull_secrets(project=e2e_project, registry=project_registry)
 
+    negative_env = dict(env)
+    negative_env["NPA_OPENPI_ACCEPT_GEMMA_TERMS"] = "NO"
+    negative_proc = _run_byof(
+        _smoke_command(
+            planned=planned,
+            project=e2e_project,
+            image=image,
+            run_id=negative_run_id,
+            output_root=output_root,
+        ),
+        env=negative_env,
+    )
+    _release_split_run(run_id=negative_run_id, env=negative_env)
     s3 = _s3_client(e2e_project)
+    negative_prefix = f"oss-solutions/openpi/{negative_run_id}/"
+    try:
+        negative_summary = _read_json(
+            s3, bucket, negative_prefix + "npa_byof_summary.json"
+        )
+        negative_gate = _read_json(
+            s3, bucket, negative_prefix + "openpi_terms_gate.json"
+        )
+    except Exception as exc:
+        combined = negative_proc.stdout + "\n" + negative_proc.stderr
+        raise AssertionError(
+            "negative OpenPI workload did not publish its required gate evidence:\n"
+            + combined[-16000:]
+        ) from exc
+    assert negative_proc.returncode != 0
+    assert negative_summary["status"] == "failed"
+    assert negative_summary["smoke_exit_code"] == 64
+    assert negative_summary["image"] == image
+    assert negative_gate == {
+        "schema": "npa.workbench.openpi.terms-gate.v1",
+        "status": "refused",
+        "exit_code": 64,
+        "checkpoint_fetch_started": False,
+        "model_import_started": False,
+    }
+    negative_objects = s3.list_objects_v2(Bucket=bucket, Prefix=negative_prefix).get(
+        "Contents", []
+    )
+    negative_keys = {str(item["Key"]) for item in negative_objects}
+    assert (
+        negative_prefix + "openpi_pi05_droid_jointpos_polaris_inference.json"
+        not in negative_keys
+    )
+    negative_stderr = (
+        s3.get_object(Bucket=bucket, Key=negative_prefix + "solution_smoke_stderr.log")[
+            "Body"
+        ]
+        .read()
+        .decode()
+    )
+    assert "requires scoped Gemma terms acceptance" in negative_stderr
+    negative_gpu = (
+        s3.get_object(Bucket=bucket, Key=negative_prefix + "nvidia_smi_list.txt")[
+            "Body"
+        ]
+        .read()
+        .decode()
+        .strip()
+        .splitlines()
+    )
+    assert len(negative_gpu) == 1 and "B200" in negative_gpu[0].upper()
+    print(
+        json.dumps(
+            {
+                "openpi_negative_gate_evidence": {
+                    **negative_gate,
+                    "gpu_product": "B200",
+                }
+            },
+            sort_keys=True,
+        )
+    )
+
+    # The connected graph is the acceptance surface for all four modes. It
+    # deliberately reuses only the immutable digest returned by this fresh
+    # builder; model/data/checkpoint bytes remain runtime-only.
+    four_mode_run_id = f"openpi-pi05-four-mode-{stamp}"
+    four_mode_env = dict(env)
+    four_mode_env["NPA_OPENPI_ACCEPT_GEMMA_TERMS"] = "YES"
+    four_mode_proc = _run_four_mode_workflow(
+        run_id=four_mode_run_id,
+        image=image,
+        bucket=bucket,
+        project=e2e_project,
+        registry=project_registry,
+        env=four_mode_env,
+    )
+    four_mode_combined = four_mode_proc.stdout + "\n" + four_mode_proc.stderr
+    assert four_mode_proc.returncode == 0, four_mode_combined[-30000:]
+    runtime_result = _last_json(four_mode_proc.stdout)
+    assert str(runtime_result.get("status", "")).upper() in {
+        "SUCCEEDED",
+        "SUCCESS",
+        "COMPLETED",
+        "DONE",
+    }, runtime_result
+    assert runtime_result["controller_rbac_apply_passed"] is True
+    assert runtime_result["controller_rbac_delete_passed"] is True
+    _assert_controller_rbac_absent(
+        run_id=four_mode_run_id,
+        env=four_mode_env,
+        namespace=resolve_byof_kubernetes_target(e2e_project).namespace or "default",
+    )
+
+    four_prefix = f"oss-solutions/openpi/{four_mode_run_id}/"
+    negative = _read_json(s3, bucket, four_prefix + "reports/negative-terms-gate.json")
+    dataset_manifest = _read_json(s3, bucket, four_prefix + "data/manifest.json")
+    direct = _read_json(s3, bucket, four_prefix + "reports/direct-inference.json")
+    serve = _read_json(s3, bucket, four_prefix + "reports/cross-pod-service.json")
+    serve_cleanup = _read_json(
+        s3, bucket, four_prefix + "reports/cross-pod-service.cleanup.json"
+    )
+    training = _read_json(s3, bucket, four_prefix + "reports/training.json")
+    checkpoint_manifest = _read_json(
+        s3, bucket, four_prefix + "checkpoints/trained/manifest.json"
+    )
+    evaluation = _read_json(s3, bucket, four_prefix + "reports/heldout-evaluation.json")
+
+    assert negative == {
+        "schema": "npa.workbench.openpi.live-negative-terms-gate.v1",
+        "status": "passed",
+        "exit_code": 64,
+        "checkpoint_fetch_started": False,
+        "model_import_started": False,
+        "required_env": "NPA_OPENPI_ACCEPT_GEMMA_TERMS",
+        "accepted_value": "YES",
+        "acceptance_persisted": False,
+        "tested_child_status": "refused",
+        "tested_child_exit_code": 64,
+        "execution_scope": "live_kubernetes_workload",
+        "runtime_image": image,
+        "accepted_checkpoint_fetch_started_after_probe": False,
+    }
+    assert dataset_manifest["schema"] == ("npa.workbench.openpi.mini-franka-dataset.v1")
+    assert dataset_manifest["split_isolation"] == {
+        "sample_id_intersection": [],
+        "sample_hash_intersection": [],
+        "disjoint": True,
+    }
+    assert dataset_manifest["redistribution"]["dataset"] == (
+        "private_operator_object_storage_only"
+    )
+    dataset_hash, dataset_size = _sha256_s3_object(
+        s3, bucket, four_prefix + "data/mini-franka-two-camera.npz"
+    )
+    assert dataset_hash == dataset_manifest["archive_sha256"]
+    assert dataset_size == dataset_manifest["archive_size_bytes"]
+
+    assert direct["schema"] == "npa.workbench.openpi.pi05-direct-inference.v2"
+    assert direct["status"] == "passed"
+    assert direct["runtime_image"] == image
+    assert direct["checkpoint"]["weights_baked"] is False
+    assert direct["redistribution"]["runtime_image"] == (
+        "restricted_private_operator_registry"
+    )
+    assert direct["checkpoint"]["provenance"]["object_count"] == 27
+    _assert_float64_trajectory(direct["trajectory"])
+
+    assert serve["schema"] == "npa.workbench.openpi.pi05-cross-pod-service.v1"
+    assert serve["status"] == "passed"
+    assert serve["runtime_image"] == image
+    assert serve["redistribution"]["runtime_image"] == (
+        "restricted_private_operator_registry"
+    )
+    assert serve["topology"]["service_type"] == "ClusterIP"
+    assert serve["topology"]["public_ingress"] is False
+    assert serve["topology"]["separate_pods"] is True
+    assert serve["topology"]["server_pod_uid"] != serve["topology"]["client_pod_uid"]
+    assert serve["topology"]["server_gpu_request"] == 1
+    assert serve["topology"]["client_gpu_request"] == 0
+    assert serve["probes"]["readiness"]["passed"] is True
+    assert serve["probes"]["liveness"]["configured"] is True
+    assert serve["probes"]["clusterip_health"] == "OK"
+    assert serve["request_count"] == 2
+    assert serve["all_trajectories_float64_finite_t_ge_5_x_8"] is True
+    serve_hardware = serve["hardware"]
+    assert serve_hardware["gpu_count_allocated"] == 1
+    assert all("B200" in item.upper() for item in serve_hardware["device_kinds"])
+    assert serve_hardware["compute_capabilities"] == ["10.0"]
+    assert serve_hardware["sm100_probe"]["passed"] is True
+    for request in serve["client"]["requests"]:
+        _assert_float64_trajectory(request)
+    assert serve_cleanup["schema"] == "npa.workbench.openpi.service-cleanup.v1"
+    assert serve_cleanup["all_exact_resources_absent"] is True
+    assert all(serve_cleanup["verified"].values())
+    target = resolve_byof_kubernetes_target(e2e_project)
+    _assert_service_objects_absent(
+        artifact=serve,
+        env=four_mode_env,
+        namespace=target.namespace or "default",
+    )
+
+    assert training["schema"] == "npa.workbench.openpi.pi05-training.v1"
+    assert training["status"] == "passed"
+    assert training["runtime_image"] == image
+    assert training["redistribution"]["trained_checkpoint"] == (
+        "private_operator_object_storage_only"
+    )
+    optimization = training["optimization"]
+    assert optimization["forward"] is True
+    assert optimization["backward"] is True
+    assert optimization["optimizer_steps"] >= 1
+    assert optimization["trainable_state_changed"] is True
+    assert (
+        optimization["trainable_state_sha256_before"]
+        != (optimization["trainable_state_sha256_after"])
+    )
+    assert math.isfinite(float(optimization["trainable_update_l2"]))
+    assert float(optimization["trainable_update_l2"]) > 0
+    assert optimization["all_metrics_finite"] is True
+    assert len(optimization["metrics"]) == optimization["optimizer_steps"]
+    assert all(
+        math.isfinite(float(value))
+        for row in optimization["metrics"]
+        for value in row.values()
+    )
+    checkpoint = training["checkpoint"]
+    assert checkpoint["reload_passed"] is True
+    assert checkpoint["saved_step"] == optimization["optimizer_steps"]
+    assert checkpoint["reloaded_train_state_step"] == checkpoint["saved_step"]
+    assert (
+        checkpoint["content_manifest_sha256"]
+        == (checkpoint_manifest["content_manifest_sha256"])
+    )
+    records = checkpoint_manifest["files"]
+    assert records and checkpoint_manifest["file_count"] == len(records)
+    canonical_records = json.dumps(
+        records, sort_keys=True, separators=(",", ":")
+    ).encode()
+    assert (
+        hashlib.sha256(canonical_records).hexdigest()
+        == (checkpoint_manifest["content_manifest_sha256"])
+    )
+    readback_size = 0
+    for record in records:
+        object_hash, object_size = _sha256_s3_object(
+            s3,
+            bucket,
+            four_prefix + "checkpoints/trained/" + record["path"],
+        )
+        assert object_hash == record["sha256"]
+        assert object_size == record["size"]
+        readback_size += object_size
+    assert readback_size == checkpoint_manifest["total_size_bytes"]
+
+    assert evaluation["schema"] == ("npa.workbench.openpi.pi05-heldout-evaluation.v1")
+    assert evaluation["status"] == "passed"
+    assert evaluation["runtime_image"] == image
+    assert evaluation["redistribution"]["trained_checkpoint"] == (
+        "private_operator_object_storage_only"
+    )
+    assert evaluation["lineage"]["exact_training_checkpoint_consumed"] is True
+    assert (
+        evaluation["lineage"]["trained_checkpoint_manifest_sha256"]
+        == (checkpoint_manifest["content_manifest_sha256"])
+    )
+    assert evaluation["split_isolation"]["sample_id_intersection"] == []
+    assert evaluation["split_isolation"]["disjoint"] is True
+    assert evaluation["split_isolation"]["normalization_source"] == (
+        "training_split_only"
+    )
+    assert evaluation["schema_checks"]["all_passed"] is True
+    metrics = evaluation["metrics"]
+    assert metrics["sample_count"] == dataset_manifest["splits"]["heldout"]["count"]
+    assert metrics["all_finite"] is True
+    for key in (
+        "heldout_model_loss_mean",
+        "heldout_action_mae",
+        "heldout_action_mse",
+    ):
+        assert math.isfinite(float(metrics[key]))
+    assert len(metrics["heldout_model_loss_per_sample"]) == metrics["sample_count"]
+    assert len(metrics["heldout_action_mae_per_dimension"]) == 8
+    _assert_float64_trajectory(evaluation["reloaded_trajectory"])
+
+    print(
+        json.dumps(
+            {
+                "openpi_four_mode_evidence": {
+                    "image_digest": image.rsplit("@", 1)[1],
+                    "direct": direct["trajectory"],
+                    "serve_requests": serve["client"]["requests"],
+                    "optimizer": optimization,
+                    "checkpoint_manifest_sha256": checkpoint_manifest[
+                        "content_manifest_sha256"
+                    ],
+                    "evaluation_metrics": metrics,
+                    "service_cleanup": serve_cleanup,
+                }
+            },
+            sort_keys=True,
+        )
+    )
+
     positive_env = dict(env)
+    positive_env["NPA_OPENPI_ACCEPT_GEMMA_TERMS"] = "YES"
+    # The connected four-mode run and independent multi-GB checkpoint readback
+    # can outlive the registry token materialized before the negative split run.
+    # Refresh immediately before this separate direct launch so a cache miss
+    # still proves digest-pinned private-registry auth rather than depending on
+    # stale credentials or a node-local image.
+    _refresh_pull_secrets(project=e2e_project, registry=project_registry)
     positive_proc = _run_byof(
         _smoke_command(
             planned=planned,
