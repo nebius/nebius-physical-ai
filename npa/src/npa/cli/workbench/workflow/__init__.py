@@ -1236,12 +1236,22 @@ def submit_cmd(
             # Runtime renders one wave at a time and historically returned before
             # the one-shot path refreshed Kubernetes pull credentials.  Validate
             # the complete selected plan once solely to install the exact private-
-            # registry secret before any managed job can enter ErrImagePull.
+            # registry secret before any managed job can enter ErrImagePull.  A
+            # dynamic runtime must still read its real gate artifact, so a branch
+            # assumption used only for this throwaway render must not leak into the
+            # runtime driver.  Prefer an operator/spec assumption when present and
+            # otherwise render the promotion branch, which includes the downstream
+            # states whose images need registry authentication.
             try:
+                registry_auth_assume = (
+                    assume_decision
+                    or str(spec_config.get("plan_assume_decision") or "").strip()
+                    or "promote_checkpoint"
+                )
                 registry_auth_plan = prepare_npa_workflow_for_submit(
                     yaml_path,
                     run_id=resolved_run_id,
-                    assume_decision=assume_decision,
+                    assume_decision=registry_auth_assume,
                     config_overrides=substitutions,
                     render_options=npa_render_options,
                 )

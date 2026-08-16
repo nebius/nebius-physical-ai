@@ -346,6 +346,38 @@ def test_submit_runtime_refreshes_pull_secret_before_driver(
     assert events[1] == ("driver", "rt-pull-secret-order")
 
 
+def test_dynamic_runtime_registry_render_does_not_assume_the_real_gate(
+    fake_runtime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Registry setup may choose a render branch; the runtime gate stays real."""
+
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._preflight_submit_images",
+        lambda *_args, **_kwargs: {},
+    )
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(GATE_LOOP),
+            "--run-id",
+            "rt-dynamic-real-gate",
+            "--runtime",
+            "--image",
+            "none",
+            "--var",
+            "bucket=rt-bucket",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert fake_runtime["assume_decision"] == ""
+
+
 def test_submit_runtime_pinned_no_source_preserves_registry_render_error(
     mocker, monkeypatch: pytest.MonkeyPatch, satisfied_preflight
 ) -> None:
