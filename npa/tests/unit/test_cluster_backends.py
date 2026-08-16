@@ -515,6 +515,8 @@ def test_pure_mk8s_production_route_uses_adapter_and_resolved_prefix(
     recipe = tmp_path / "recipe"
     recipe.mkdir()
     monkeypatch.setattr(lifecycle, "get_backend", lambda _name: Adapter())
+    monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/true")
+    monkeypatch.setenv("NPA_NEBIUS_BIN", "/usr/bin/true")
     monkeypatch.setattr(lifecycle, "_assert_terraform_version", lambda _bin: "1.12.3")
     monkeypatch.setattr(
         lifecycle,
