@@ -745,8 +745,14 @@ async function verifyFoxgloveEmbeddedArtifact(config, taskInput) {
       null,
       { timeout: 0 },
     );
-    const exactSourceLoaded = await page.evaluate(async (selection) => {
-      return await window.npaAgentArtifacts.loadExactSource(selection);
+    await page.evaluate((selection) => {
+      window.__npaExactSourceLoadError = "";
+      window.__npaExactSourceLoadPromise = window.npaAgentArtifacts.loadExactSource(selection)
+        .catch((error) => {
+          window.__npaExactSourceLoadError = String(error && error.message || error);
+          return false;
+        });
+      return true;
     }, {
       run_id: runId,
       run_ref: runRef,
@@ -754,9 +760,6 @@ async function verifyFoxgloveEmbeddedArtifact(config, taskInput) {
       project_id: expectedProjectId,
       resolved_prefix: expectedResolvedPrefix,
     });
-    if (exactSourceLoaded !== true) {
-      throw new Error("exact server-qualified artifact source did not render its cards");
-    }
     recordProgress("artifact_list_requested");
     const exactButton = page.locator(
       `button[data-action="open-foxglove-artifact"][data-key=${JSON.stringify(artifactKey)}]`,
@@ -766,11 +769,18 @@ async function verifyFoxgloveEmbeddedArtifact(config, taskInput) {
       (key) => {
         const button = [...document.querySelectorAll("button[data-action='open-foxglove-artifact']")]
           .find((candidate) => candidate.getAttribute("data-key") === key);
-        return Boolean(button && !button.disabled && button.getAttribute("aria-disabled") === "false");
+        return Boolean(window.__npaExactSourceLoadError) ||
+          Boolean(button && !button.disabled && button.getAttribute("aria-disabled") === "false");
       },
       artifactKey,
       { timeout: 0 },
     );
+    const exactSourceLoadError = await page.evaluate(
+      () => String(window.__npaExactSourceLoadError || ""),
+    );
+    if (exactSourceLoadError) {
+      throw new Error(`exact server-qualified artifact source failed: ${exactSourceLoadError}`);
+    }
     recordProgress("artifact_card_ready");
     const artifactCard = exactButton.locator(
       "xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' artifact-card ')][1]",

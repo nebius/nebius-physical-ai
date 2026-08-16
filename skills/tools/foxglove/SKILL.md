@@ -113,7 +113,10 @@ report or probe unrelated buckets on the exact artifact-inventory or playback
 path. Once discovery has issued this exact source tuple, browser verification
 must reuse it instead of repeating tenant-wide run search. A successfully
 rendered exact artifact card refreshes a 30-second, full-source-keyed access proof
-for its immediate playback click; explicit access refresh clears those proofs.
+and exact inventory for its immediate playback click; explicit access refresh
+clears access proofs. Rendering the cards and binding their actions precedes
+slower run-detail enrichment, so playback never waits behind that optional UI
+work.
 The backend then reads a fresh strong object-store identity (ETag or version id)
 and verifies the published
 bytes against the persisted SHA-256 and provenance. An unchanged selection skips

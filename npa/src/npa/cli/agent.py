@@ -6858,6 +6858,14 @@ def artifacts_for_run(
                 project_id=str(bucket_projects.get(run_bucket) or ""),
                 resolved_prefix=artifact_prefix,
             )
+            _remember_foxglove_exact_artifact_inventory(
+                run_id=normalized_run,
+                run_ref=requested_ref,
+                resource_bucket=run_bucket,
+                project_id=str(bucket_projects.get(run_bucket) or ""),
+                resolved_prefix=artifact_prefix,
+                artifacts=page.artifacts,
+            )
         return {{
             "ok": True,
             "contract": ARTIFACT_DISCOVERY_CONTRACT,
@@ -7400,6 +7408,73 @@ def _foxglove_convert_run(**kwargs):
     return convert_run(**kwargs)
 
 
+_FOXGLOVE_EXACT_INVENTORY_TTL_SECONDS = 30.0
+_FOXGLOVE_EXACT_INVENTORY_CACHE: dict[tuple[str, ...], tuple[float, tuple]] = {{}}
+_FOXGLOVE_EXACT_INVENTORY_LOCK = threading.Lock()
+
+
+def _foxglove_exact_inventory_key(
+    *, run_id: str, run_ref: str, resource_bucket: str, project_id: str, resolved_prefix: str
+) -> tuple[str, ...]:
+    return (
+        str(os.environ.get("NEBIUS_TENANT_ID") or "").strip(),
+        str(os.environ.get("NEBIUS_PROJECT_ID") or "").strip(),
+        str(project_id or "").strip(),
+        str(resource_bucket or "").strip(),
+        str(resolved_prefix or "").strip(),
+        str(run_id or "").strip(),
+        str(run_ref or "").strip(),
+    )
+
+
+def _remember_foxglove_exact_artifact_inventory(
+    *,
+    run_id: str,
+    run_ref: str,
+    resource_bucket: str,
+    project_id: str,
+    resolved_prefix: str,
+    artifacts,
+) -> None:
+    key = _foxglove_exact_inventory_key(
+        run_id=run_id,
+        run_ref=run_ref,
+        resource_bucket=resource_bucket,
+        project_id=project_id,
+        resolved_prefix=resolved_prefix,
+    )
+    with _FOXGLOVE_EXACT_INVENTORY_LOCK:
+        _FOXGLOVE_EXACT_INVENTORY_CACHE[key] = (
+            time.monotonic() + _FOXGLOVE_EXACT_INVENTORY_TTL_SECONDS,
+            tuple(artifacts or ()),
+        )
+
+
+def _cached_foxglove_exact_artifact_resolution(
+    *,
+    run_id: str,
+    run_ref: str,
+    resource_bucket: str,
+    project_id: str,
+    resolved_prefix: str,
+):
+    key = _foxglove_exact_inventory_key(
+        run_id=run_id,
+        run_ref=run_ref,
+        resource_bucket=resource_bucket,
+        project_id=project_id,
+        resolved_prefix=resolved_prefix,
+    )
+    now_mono = time.monotonic()
+    with _FOXGLOVE_EXACT_INVENTORY_LOCK:
+        entry = _FOXGLOVE_EXACT_INVENTORY_CACHE.get(key)
+        if entry is None or entry[0] <= now_mono:
+            _FOXGLOVE_EXACT_INVENTORY_CACHE.pop(key, None)
+            return None
+        artifacts = list(entry[1])
+    return RunResolution(run_id, resource_bucket, resolved_prefix, artifacts)
+
+
 def _foxglove_artifact_fingerprint(s3, bucket: str, artifact) -> tuple[str, int, str]:
     key = str(artifact.key)
     try:
@@ -7453,16 +7528,34 @@ def _foxglove_resolve_artifact(payload: dict) -> dict:
             resolved_prefix=str(body.get("resolved_prefix") or ""),
         )
         resolution_buckets = [source_bucket]
+        resolution = _cached_foxglove_exact_artifact_resolution(
+            run_id=run_id,
+            run_ref=run_ref,
+            resource_bucket=source_bucket,
+            project_id=source_project,
+            resolved_prefix=source_prefix,
+        )
     else:
         resolution_buckets = _agent_s3_buckets(s3, settings)
-    resolution = resolve_run_artifacts(
-        resolution_buckets,
-        base_prefix=settings.get("prefix", ""),
-        run_ref_or_id=run_ref or run_id,
-        s3=s3,
-    )
+        resolution = None
+    if resolution is None:
+        resolution = resolve_run_artifacts(
+            resolution_buckets,
+            base_prefix=settings.get("prefix", ""),
+            run_ref_or_id=run_ref or run_id,
+            s3=s3,
+        )
     if resolution is None:
         raise HTTPException(status_code=404, detail="run_id not found")
+    if exact_source_request:
+        _remember_foxglove_exact_artifact_inventory(
+            run_id=resolution.run_id,
+            run_ref=resolution.run_ref,
+            resource_bucket=source_bucket,
+            project_id=source_project,
+            resolved_prefix=source_prefix,
+            artifacts=resolution.artifacts,
+        )
     artifact = next((item for item in resolution.artifacts if item.key == key), None)
     if artifact is None:
         raise HTTPException(status_code=400, detail="artifact key is outside the selected run")

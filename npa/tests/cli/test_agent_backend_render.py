@@ -919,6 +919,27 @@ def test_rendered_foxglove_exact_source_avoids_tenant_wide_access_scan(
         assert details["project_id"] == "selected-project"
         assert details["access"]["scope"] == "selected_source"
         assert len(authorization_calls) == 2
+        monkeypatch.setattr(
+            module,
+            "resolve_run_artifacts",
+            lambda *_args, **_kwargs: pytest.fail(
+                "fresh exact card inventory must be reused for playback"
+            ),
+        )
+        cached_selected = module._foxglove_resolve_artifact(
+            {
+                "run_id": "run-one",
+                "run_ref": run_ref,
+                "key": key,
+                "resource_bucket": "selected-bucket",
+                "project_id": "selected-project",
+                "resolved_prefix": "nested/source",
+                "s3_uri": f"s3://selected-bucket/{key}",
+            }
+        )
+        assert cached_selected["key"] == key
+        assert cached_selected["source_fingerprint"]
+        assert len(authorization_calls) == 3
     finally:
         sys.modules.pop(module_name, None)
 
