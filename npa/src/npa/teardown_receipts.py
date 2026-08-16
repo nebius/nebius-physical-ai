@@ -644,8 +644,12 @@ def list_teardown_receipts(
                     found.update(collect(value, key))
             return found
 
-        subject_project_ids = collect(identity, "project_id") | ({receipt_project_id} if receipt_project_id else set())
-        subject_aliases = collect(identity, "project_alias") | ({receipt_alias} if receipt_alias else set())
+        subject_project_ids = collect(identity, "project_id") | (
+            {receipt_project_id} if receipt_project_id else set()
+        )
+        subject_aliases = collect(identity, "project_alias") | (
+            {receipt_alias} if receipt_alias else set()
+        )
         is_legacy = not subject_aliases and not subject_project_ids
         if legacy == "only" and not is_legacy:
             continue

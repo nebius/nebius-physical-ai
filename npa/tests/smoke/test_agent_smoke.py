@@ -99,7 +99,9 @@ def test_agent_bootstrap_source_smoke() -> None:
     assert (
         'add_header Cache-Control "no-store, no-cache, must-revalidate"' in site_source
     )
-    assert "local_media_type = artifact_media_type(safe_name)" in artifact_content_source
+    assert (
+        "local_media_type = artifact_media_type(safe_name)" in artifact_content_source
+    )
 
 
 def test_agent_live_tmux_script_help() -> None:

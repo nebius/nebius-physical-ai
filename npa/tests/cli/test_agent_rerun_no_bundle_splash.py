@@ -96,7 +96,9 @@ def test_boot_page_warms_before_mount() -> None:
     # Rerun itself still warms before mount, while unrelated UI controls are
     # already ready and optional data discovery continues in the background.
     assert "await warmPromise" in boot
-    assert boot.index("await warmPromise") < boot.index("await ensureFrankaRerunLoaded()")
+    assert boot.index("await warmPromise") < boot.index(
+        "await ensureFrankaRerunLoaded()"
+    )
     # Must not race mount with warm anymore.
     assert (
         "Promise.all([refreshPromise, artifactsPromise, warmPromise, mountPromise])"

@@ -159,11 +159,11 @@ def summarize_mcap(path: str | Path) -> McapInfo:
             channel_range["start_time_ns"] = min(
                 channel_range["start_time_ns"], timestamp
             )
-            channel_range["end_time_ns"] = max(
-                channel_range["end_time_ns"], timestamp
-            )
+            channel_range["end_time_ns"] = max(channel_range["end_time_ns"], timestamp)
             first_timestamp = (
-                timestamp if first_timestamp is None else min(first_timestamp, timestamp)
+                timestamp
+                if first_timestamp is None
+                else min(first_timestamp, timestamp)
             )
             last_timestamp = (
                 timestamp if last_timestamp is None else max(last_timestamp, timestamp)

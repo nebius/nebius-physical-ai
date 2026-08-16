@@ -185,9 +185,7 @@ def test_rich_visualization_contract_requires_every_meaningful_topic() -> None:
             {
                 **info,
                 "metadata": {
-                    "npa": {
-                        "visualization_contract": "npa.foxglove.robot-motion.v2"
-                    }
+                    "npa": {"visualization_contract": "npa.foxglove.robot-motion.v2"}
                 },
             }
         )

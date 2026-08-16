@@ -718,9 +718,7 @@ def test_cosmos_deploy_dry_run_probes_upstream_when_hf_token_missing(
 
     assert result.exit_code == 1
     assert "HF_TOKEN does not have upstream access" in result.output
-    access.assert_called_once_with(
-        "", "nvidia/Cosmos-1.0-Diffusion-7B-Text2World"
-    )
+    access.assert_called_once_with("", "nvidia/Cosmos-1.0-Diffusion-7B-Text2World")
     apply.assert_not_called()
 
 

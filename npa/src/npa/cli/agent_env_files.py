@@ -71,6 +71,7 @@ def _write_agent_s3_env(
         target="/opt/npa-agent/s3.env",
     )
 
+
 def _write_agent_operator_profile(
     ssh: SSHClient,
     *,
@@ -119,7 +120,13 @@ def _write_agent_operator_profile(
         "access_key_id": s3_access_key.strip(),
         "secret_access_key": s3_secret_key.strip(),
         "endpoint": s3_endpoint.strip(),
-        "bucket": "s3://" + s3_bucket.strip() + (("/" + s3_prefix.strip().strip("/") + "/") if s3_prefix.strip().strip("/") else ""),
+        "bucket": "s3://"
+        + s3_bucket.strip()
+        + (
+            ("/" + s3_prefix.strip().strip("/") + "/")
+            if s3_prefix.strip().strip("/")
+            else ""
+        ),
     }
     project_payload: dict[str, Any] = {}
     if any(storage_payload.values()):
@@ -165,6 +172,7 @@ def _write_agent_operator_profile(
             target=creds_path,
             owner=owner,
         )
+
 
 def _write_agent_nebius_env(
     ssh: SSHClient,
