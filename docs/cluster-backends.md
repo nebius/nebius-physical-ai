@@ -130,3 +130,40 @@ is not reported as fleet-owned success unless the backend discriminator and
 target identity can be written durably. Destroy requires the exact persisted
 provider ID, treats only authoritative NotFound as absence, and retains backend
 state on authentication, permission, network, schema, or cleanup uncertainty.
+
+Standalone `npa cluster up` supplies an explicit validation policy to the
+shared mk8s backend. The default validates the exact Ready-node count, the
+recipe-appropriate default StorageClass, and—when present—whole-GPU health and
+CUDA or the full MIG convergence/CUDA gate. `--skip-validate` skips all of those
+post-deploy checks, but never skips desired-state validation, capacity/quota
+preflight, Terraform apply safety, kubeconfig creation, or durable identity
+persistence. Fleet deploys explicitly retain their historical policy: GPU and
+MIG targets are validated, while CPU fleet targets are not made dependent on a
+standalone CLI flag.
+
+Legacy standalone state supports a narrow residual recovery case. If an exact
+persisted cluster was deleted out of band, or a prior destroy removed the
+cluster resource before its Terraform-owned network/auxiliary resources,
+`npa cluster down` may finish the retained Terraform destroy only after the
+requested project/context/cluster identity agrees, the retained state has valid
+lineage and managed residuals, no different cluster is present in state, and the
+provider authoritatively reports the exact persisted cluster absent. Missing,
+malformed, conflicting, or unreadable evidence fails closed and keeps the state.
+
+Soperator destroy first reconciles the exact auxiliary IDs recorded from
+Terraform. After exact cluster absence, it may additionally delete a CCM-
+recreated filesystem or VPC allocation only when its provider type, exact
+Terraform-derived name, project parent, and cluster-bound persisted ownership
+all agree uniquely. Prefix-only matching is never deletion authority;
+ambiguity or unreadable evidence retains state for retry.
+
+### Legacy mk8s execution compatibility seam
+
+`npa.fleet.lifecycle._call_legacy_execution` exists only for downstream tests
+and integrations that monkeypatch helpers which moved into
+`npa.cluster_backends.mk8s_execution`. Production dispatch uses the registered
+backend adapter. The seam is deprecated and scheduled for removal with the next
+breaking API revision after downstream callers migrate to injected process and
+provider collaborators. New production-route tests must patch only those
+external boundaries and assert dispatch through `get_backend("mk8s")`; no new
+caller may depend on legacy global swapping.

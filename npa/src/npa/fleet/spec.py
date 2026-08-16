@@ -789,8 +789,8 @@ def spec_from_mapping(data: dict[str, Any]) -> FleetSpec:
                     merged = _deep_merge(default_mk8s, raw_mk8s)
                     merged["name"] = raw.get("name") or merged.get("name")
                 else:
-                    # Historical v0.0.1 mapping: preserve its byte-for-byte
-                    # resolution semantics and permissive forward fields.
+                    # Historical v0.0.1 mapping: preserve its normalized
+                    # semantic resolution and permissive forward fields.
                     legacy_defaults = {
                         key: value
                         for key, value in defaults.items()

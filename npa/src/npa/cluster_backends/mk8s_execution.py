@@ -58,8 +58,20 @@ def verify_cluster(
     run_capture: Callable[..., Any] = _run_capture,
     mig_verifier: Callable[..., Any] = wait_for_mig_ready,
     gpu_health_verifier: Callable[..., Any] = validate_gpu_health,
+    validation_policy: str = "standalone-full",
+    basic_validation_timeout_seconds: int = 1800,
 ) -> dict[str, Any]:
     """Verify one mk8s target without routing back through a surface adapter."""
+
+    if validation_policy not in {"fleet", "standalone-full", "skip"}:
+        raise ValueError(f"unsupported mk8s validation policy {validation_policy!r}")
+    if validation_policy == "skip":
+        return {
+            "backend": "mk8s",
+            "cluster_name": cluster.name,
+            "status": "validation-skipped",
+            "verification": "skipped",
+        }
 
     if cluster.mig and cluster.mig.enabled:
         report = mig_verifier(
@@ -71,7 +83,7 @@ def verify_cluster(
             cuda_smoke_image=cluster.gpu_cuda_smoke_image,
             on_status=on_status,
         )
-        return {
+        result = {
             "backend": "mk8s",
             "cluster_name": cluster.name,
             "status": "verified",
@@ -81,7 +93,7 @@ def verify_cluster(
             "cuda_smoke": True,
             "mig": report.as_dict(),
         }
-    if cluster.gpu_count() > 0:
+    elif cluster.gpu_count() > 0:
         gpu = cluster.gpu_nodes
         driver = resolve_gpu_driver_strategy(
             gpu_nodes=cluster.gpu_count(),
@@ -111,19 +123,147 @@ def verify_cluster(
             evidence_path=evidence_path,
             on_status=on_status,
         )
-        return {
+        result = {
             "backend": "mk8s",
             "cluster_name": cluster.name,
             "status": "verified",
             "verification": "gpu-health",
             "gpu_health": health,
         }
+    else:
+        result = {
+            "backend": "mk8s",
+            "cluster_name": cluster.name,
+            "status": "verified",
+            "verification": "control-plane",
+        }
+    if validation_policy == "standalone-full":
+        result["cluster_basics"] = _wait_for_cluster_basics(
+            cluster=cluster,
+            kubeconfig=kubeconfig,
+            kubectl_bin=kubectl_bin,
+            run_capture=run_capture,
+            timeout_seconds=basic_validation_timeout_seconds,
+            on_status=on_status,
+        )
+    return result
+
+
+def _validate_cluster_basics_once(
+    *,
+    cluster: MK8sDesired,
+    kubeconfig: Path,
+    kubectl_bin: str,
+    run_capture: Callable[..., Any],
+) -> dict[str, Any]:
+    """Prove exact Ready-node count and the recipe's default StorageClass."""
+
+    kube_env = os.environ.copy()
+    kube_env["KUBECONFIG"] = str(kubeconfig)
+    nodes_result = run_capture(
+        [kubectl_bin, "get", "nodes", "-o", "json"], env=kube_env, check=False
+    )
+    if nodes_result.returncode != 0 or not nodes_result.stdout.strip():
+        raise RuntimeError("Kubernetes node inventory is unreadable")
+    try:
+        nodes_payload = json.loads(nodes_result.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Kubernetes node inventory returned invalid JSON") from exc
+    nodes = nodes_payload.get("items") if isinstance(nodes_payload, dict) else None
+    if not isinstance(nodes, list):
+        raise RuntimeError("Kubernetes node inventory has no valid items list")
+    ready_nodes = sum(
+        1
+        for node in nodes
+        if isinstance(node, dict)
+        and any(
+            condition.get("type") == "Ready" and condition.get("status") == "True"
+            for condition in ((node.get("status") or {}).get("conditions") or [])
+            if isinstance(condition, dict)
+        )
+    )
+    expected_nodes = cluster.cpu_count() + cluster.gpu_count()
+    if len(nodes) != expected_nodes or ready_nodes != expected_nodes:
+        raise RuntimeError(
+            f"expected exactly {expected_nodes} Ready nodes, found "
+            f"{ready_nodes}/{len(nodes)} Ready"
+        )
+
+    storage_result = run_capture(
+        [kubectl_bin, "get", "storageclass", "-o", "json"],
+        env=kube_env,
+        check=False,
+    )
+    if storage_result.returncode != 0 or not storage_result.stdout.strip():
+        raise RuntimeError("Kubernetes StorageClass inventory is unreadable")
+    try:
+        storage_payload = json.loads(storage_result.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            "Kubernetes StorageClass inventory returned invalid JSON"
+        ) from exc
+    items = storage_payload.get("items") if isinstance(storage_payload, dict) else None
+    if not isinstance(items, list):
+        raise RuntimeError("Kubernetes StorageClass inventory has no valid items list")
+    defaults = [
+        str((item.get("metadata") or {}).get("name") or "")
+        for item in items
+        if isinstance(item, dict)
+        and str(
+            ((item.get("metadata") or {}).get("annotations") or {}).get(
+                "storageclass.kubernetes.io/is-default-class"
+            )
+            or ""
+        ).lower()
+        == "true"
+    ]
+    expected_storage = (
+        "csi-mounted-fs-path-sc"
+        if cluster.enable_filestore or bool(cluster.existing_filestore)
+        else "compute-csi-default-sc"
+    )
+    if defaults != [expected_storage]:
+        rendered = ", ".join(defaults) if defaults else "none"
+        raise RuntimeError(
+            f"expected default StorageClass {expected_storage}, found {rendered}"
+        )
     return {
-        "backend": "mk8s",
-        "cluster_name": cluster.name,
-        "status": "verified",
-        "verification": "control-plane",
+        "ready_nodes": ready_nodes,
+        "expected_nodes": expected_nodes,
+        "default_storage_class": expected_storage,
     }
+
+
+def _wait_for_cluster_basics(
+    *,
+    cluster: MK8sDesired,
+    kubeconfig: Path,
+    kubectl_bin: str,
+    run_capture: Callable[..., Any],
+    timeout_seconds: int,
+    on_status: Callable[[str], None] | None,
+) -> dict[str, Any]:
+    if timeout_seconds <= 0:
+        raise ValueError("mk8s basic validation timeout must be positive")
+    deadline = time.monotonic() + timeout_seconds
+    last_error = "validation did not run"
+    while True:
+        try:
+            return _validate_cluster_basics_once(
+                cluster=cluster,
+                kubeconfig=kubeconfig,
+                kubectl_bin=kubectl_bin,
+                run_capture=run_capture,
+            )
+        except (RuntimeError, ValueError) as exc:
+            last_error = str(exc)
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    "cluster node/StorageClass validation did not converge: "
+                    + last_error
+                ) from exc
+            _log(on_status, f"validation pending: {last_error}")
+            time.sleep(min(30, max(1, timeout_seconds)))
 
 
 def _log(on_status: Callable[[str], None] | None, message: str) -> None:
@@ -246,6 +386,8 @@ def _persist_npa_cluster_identity(
     kubeconfig_path: Path,
     fleet_name: str,
     project_key: str,
+    endpoint: str = "",
+    node_group_id: str = "",
     base_dir: Path | None = None,
 ) -> None:
     """Register a fleet cluster for project-scoped workflow/controller use."""
@@ -311,8 +453,8 @@ def _persist_npa_cluster_identity(
         created_at=existing.created_at if existing else utc_now_iso(),
         last_seen_state="RUNNING",
         last_seen_at=utc_now_iso(),
-        node_group_id=existing.node_group_id if existing else "",
-        endpoint=existing.endpoint if existing else "",
+        node_group_id=node_group_id or (existing.node_group_id if existing else ""),
+        endpoint=endpoint or (existing.endpoint if existing else ""),
         kubeconfig_path=str(installed_kubeconfig),
         provider_name=cluster.name,
     )
@@ -681,6 +823,68 @@ def _cluster_id_from_outputs(outputs: dict[str, Any]) -> str:
     return ""
 
 
+def _cluster_endpoint_from_outputs(outputs: dict[str, Any]) -> str:
+    value = outputs.get("kube_cluster", {}).get("value")
+    if not isinstance(value, dict):
+        return ""
+    endpoints = value.get("endpoints")
+    return (
+        str(endpoints.get("public_endpoint") or "")
+        if isinstance(endpoints, dict)
+        else ""
+    )
+
+
+def _terraform_managed_ids(
+    terraform_bin: str,
+    install_dir: Path,
+    env: dict[str, str],
+    resource_type: str,
+) -> list[str]:
+    """Read exact managed IDs of one type from the just-applied state."""
+
+    pulled = _run_capture(
+        [terraform_bin, "state", "pull"],
+        cwd=install_dir,
+        env=env,
+        check=False,
+    )
+    if pulled.returncode != 0 or not pulled.stdout.strip():
+        raise RuntimeError("applied Terraform state could not be read")
+    try:
+        state = json.loads(pulled.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("applied Terraform state returned invalid JSON") from exc
+    resources = state.get("resources") if isinstance(state, dict) else None
+    if not isinstance(resources, list):
+        raise RuntimeError("applied Terraform state has no valid resource inventory")
+    ids: set[str] = set()
+    for resource in resources:
+        if (
+            not isinstance(resource, dict)
+            or resource.get("mode", "managed") != "managed"
+        ):
+            continue
+        if str(resource.get("type") or "") != resource_type:
+            continue
+        instances = resource.get("instances")
+        if not isinstance(instances, list):
+            raise RuntimeError(f"applied Terraform {resource_type} state is malformed")
+        for instance in instances:
+            attributes = (
+                instance.get("attributes") if isinstance(instance, dict) else None
+            )
+            resource_id = (
+                str(attributes.get("id") or "") if isinstance(attributes, dict) else ""
+            )
+            if not resource_id:
+                raise RuntimeError(
+                    f"applied Terraform {resource_type} state is missing an exact ID"
+                )
+            ids.add(resource_id)
+    return sorted(ids)
+
+
 def _write_kubeconfig(
     nebius_bin: str,
     cluster_id: str,
@@ -785,9 +989,9 @@ def _is_verified_unchanged_target(
         saved_tfvars = tfvars_path.read_text(encoding="utf-8")
         rendered_tfvars = render_tfvars(cluster, ssh_public_key=ssh_public_key)
 
-        # Alignment-only changes from the deterministic renderer do not alter
-        # HCL semantics and must not turn an idempotent apply into new quota
-        # demand. Values remain byte-for-byte significant.
+        # Normalize insignificant blank lines and whitespace around assignment
+        # operators before comparing the deterministic HCL. All remaining
+        # tokens and values stay significant.
         def normalize(text: str) -> str:
             return "\n".join(
                 re.sub(r"\s*=\s*", "=", line.strip())
@@ -948,14 +1152,17 @@ def _provider_node_group_matches_pool(
         if preemptible is _PROVIDER_FIELD_MISSING and strict_reserved
         else preemptible
     )
+    expected_preemptible = bool(pool.preemptible)
     if (
         str(status.get("state") or "") != "RUNNING"
         or fixed_node_count != pool.count
         or str(resources.get("platform") or "") != pool.platform
         or str(resources.get("preset") or "") != pool.preset
-        # Absence, relocation, or non-boolean data cannot prove an on-demand
-        # pool. Only an explicit provider boolean false is sufficient.
-        or effective_preemptible is not False
+        # A strict reservation proves non-preemptibility even when the provider
+        # omits its redundant false field. Every other capacity mode requires
+        # the exact provider boolean matching the desired pool; missing, null,
+        # string, or relocated evidence fails closed.
+        or effective_preemptible is not expected_preemptible
     ):
         return False
     if pool.capacity_block_group:
@@ -963,6 +1170,14 @@ def _provider_node_group_matches_pool(
     return not reservation_ids and not (
         isinstance(reservation, dict) and reservation.get("policy")
     )
+
+
+def _post_deploy_validation_phase(cluster: MK8sDesired) -> str:
+    if cluster.mig and cluster.mig.enabled:
+        return "validating-mig"
+    if cluster.gpu_count() > 0:
+        return "validating-gpu-health"
+    return "validating-cluster-basics"
 
 
 def _deploy_one_cluster(
@@ -984,6 +1199,9 @@ def _deploy_one_cluster(
     timeout_minutes: int,
     on_status: Callable[[str], None] | None,
     log_path: Path | None = None,
+    validation_policy: str = "fleet",
+    basic_validation_timeout_minutes: int = 30,
+    kubectl_bin: str = "kubectl",
 ) -> dict[str, Any]:
     project_key = project.key()
     install_dir = fleet_root / project_key / cluster.name
@@ -1071,6 +1289,14 @@ def _deploy_one_cluster(
         )
         outputs = _terraform_outputs(terraform_bin, workdir, env)
         cluster_id = _cluster_id_from_outputs(outputs)
+        endpoint = _cluster_endpoint_from_outputs(outputs)
+        node_group_ids = _terraform_managed_ids(
+            terraform_bin,
+            workdir,
+            env,
+            "nebius_mk8s_v1_node_group",
+        )
+        node_group_id = node_group_ids[0] if node_group_ids else ""
         kubeconfig_path = install_dir / "kubeconfig"
         if not cluster_id:
             message = "terraform apply succeeded but returned no Managed Kubernetes cluster id"
@@ -1108,6 +1334,8 @@ def _deploy_one_cluster(
                 kubeconfig_path=kubeconfig_path,
                 fleet_name=spec.name,
                 project_key=project_key,
+                endpoint=endpoint,
+                node_group_id=node_group_id,
             )
         except Exception as exc:  # noqa: BLE001 - retain applied state for credential retry
             message = str(exc)
@@ -1136,10 +1364,18 @@ def _deploy_one_cluster(
             }
         gpu_health_path = install_dir / "gpu-health.json"
         verification: dict[str, Any] = {}
-        if cluster.gpu_count() > 0:
-            kubectl_bin = _require_bin(os.environ.get("NPA_KUBECTL_BIN") or "kubectl")
+        if validation_policy == "skip":
+            _log(on_status, f"[{label}] post-deploy validation explicitly skipped")
+            verification = {
+                "verification": "skipped",
+                "status": "validation-skipped",
+            }
+        elif cluster.gpu_count() > 0 or validation_policy == "standalone-full":
+            kubectl_bin = _require_bin(
+                kubectl_bin or os.environ.get("NPA_KUBECTL_BIN") or "kubectl"
+            )
             is_mig = bool(cluster.mig and cluster.mig.enabled)
-            phase_status = "validating-mig" if is_mig else "validating-gpu-health"
+            phase_status = _post_deploy_validation_phase(cluster)
             _write_env_sidecar(
                 install_dir,
                 {
@@ -1159,6 +1395,10 @@ def _deploy_one_cluster(
                     run_capture=_run_capture,
                     mig_verifier=wait_for_mig_ready,
                     gpu_health_verifier=validate_gpu_health,
+                    validation_policy=validation_policy,
+                    basic_validation_timeout_seconds=(
+                        basic_validation_timeout_minutes * 60
+                    ),
                     on_status=(
                         (lambda message: _log(on_status, f"[{label}] {message}"))
                         if on_status
@@ -1187,6 +1427,9 @@ def _deploy_one_cluster(
                     "cluster_name": cluster.name,
                     "region": region,
                     "cluster_id": cluster_id,
+                    "endpoint": endpoint,
+                    "node_group_id": node_group_id,
+                    "node_group_ids": node_group_ids,
                     "kube_context": context,
                     "kubeconfig": str(kubeconfig_path),
                     "install_dir": str(install_dir),
@@ -1215,6 +1458,9 @@ def _deploy_one_cluster(
             "cluster_name": cluster.name,
             "region": region,
             "cluster_id": cluster_id,
+            "endpoint": endpoint,
+            "node_group_id": node_group_id,
+            "node_group_ids": node_group_ids,
             "kube_context": context,
             "kubeconfig": str(kubeconfig_path) if cluster_id else "",
             "install_dir": str(install_dir),
@@ -1232,6 +1478,12 @@ def _deploy_one_cluster(
                 if verification.get("verification") == "mig"
                 else {}
             ),
+            **(
+                {"cluster_basics": verification["cluster_basics"]}
+                if verification.get("cluster_basics")
+                else {}
+            ),
+            "validation": str(verification.get("verification") or "fleet-default"),
             **log_metadata,
         }
     except Exception as exc:  # noqa: BLE001 - capture per-cluster failure
@@ -1292,6 +1544,32 @@ def _destroy_one_cluster(
     saved = _load_env_sidecar(install_dir) or {}
     project_id = str(saved.get("project_id") or "")
     subnet_id = str(saved.get("subnet_id") or "")
+    identity_errors = []
+    # Pre-discriminator sidecars are read-compatible as mk8s only because this
+    # is the canonical mk8s state root. An explicit different backend remains
+    # a hard ownership mismatch.
+    recorded_backend = str(saved.get("backend") or "mk8s")
+    for label_name, recorded, expected in (
+        ("backend", recorded_backend, "mk8s"),
+        ("cluster name", str(saved.get("cluster_name") or ""), cluster.name),
+        ("project", project_id, project.project_id),
+        ("tenant", str(saved.get("tenant_id") or ""), spec.tenant_id),
+        ("region", str(saved.get("region") or ""), spec.region),
+    ):
+        if not recorded or (expected and recorded != expected):
+            identity_errors.append(
+                f"persisted {label_name} identity does not match request"
+            )
+    if identity_errors:
+        return {
+            "project_key": project.key(),
+            "cluster_name": cluster.name,
+            "status": "destroy-incomplete",
+            "errors": identity_errors,
+            "retry_command": retry_command,
+            "install_dir": str(install_dir),
+            **log_metadata,
+        }
     # Fall back to the profile the cluster was deployed with so a teardown never
     # authenticates as the wrong tenant's principal.
     profile = profile or str(saved.get("profile") or "")
@@ -1338,6 +1616,42 @@ def _destroy_one_cluster(
         exact_cluster_id = str(saved.get("cluster_id") or "")
         if project_id and exact_cluster_id:
             try:
+                exact = _run_capture(
+                    [
+                        *_nebius_argv(nebius_bin, profile),
+                        "mk8s",
+                        "cluster",
+                        "get",
+                        "--id",
+                        exact_cluster_id,
+                        "--format",
+                        "json",
+                    ],
+                    env=env,
+                    check=False,
+                    timeout=120,
+                )
+                if not _is_not_found_result(exact):
+                    if exact.returncode != 0 or not exact.stdout.strip():
+                        raise RuntimeError(
+                            "exact Managed Kubernetes identity is unreadable"
+                        )
+                    payload = json.loads(exact.stdout)
+                    metadata = (
+                        payload.get("metadata") if isinstance(payload, dict) else None
+                    )
+                    parent = _provider_field(metadata, "parent_id", "parentId")
+                    if (
+                        not isinstance(metadata, dict)
+                        or str(metadata.get("id") or "") != exact_cluster_id
+                        or str(metadata.get("name") or "") != cluster.name
+                        or parent is _PROVIDER_FIELD_MISSING
+                        or str(parent) != project_id
+                    ):
+                        raise RuntimeError(
+                            "exact Managed Kubernetes fallback identity does not "
+                            "match persisted project/name ownership"
+                        )
                 fallback = _run_capture(
                     [
                         *_nebius_argv(nebius_bin, profile),

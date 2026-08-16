@@ -900,9 +900,31 @@ def test_deploy_persists_exact_auxiliary_ids_before_reporting_success(
         lifecycle, "_terraform_cluster_id", lambda *a, **k: "mk8scluster-owned"
     )
     monkeypatch.setattr(
+        lifecycle, "_terraform_cluster_name", lambda *a, **k: "soperator-owned"
+    )
+    monkeypatch.setattr(
         lifecycle,
-        "_terraform_owned_auxiliary_ids",
-        lambda *a, **k: (["fs-jail", "fs-spool"], ["alloc-login"]),
+        "_terraform_owned_auxiliary_resources",
+        lambda *a, **k: [
+            {
+                "kind": "filesystem",
+                "provider_type": "nebius_compute_v1_filesystem",
+                "id": "fs-jail",
+                "name": "soperator-owned-jail",
+            },
+            {
+                "kind": "filesystem",
+                "provider_type": "nebius_compute_v1_filesystem",
+                "id": "fs-spool",
+                "name": "soperator-owned-controller-spool",
+            },
+            {
+                "kind": "allocation",
+                "provider_type": "nebius_vpc_v1_allocation",
+                "id": "alloc-login",
+                "name": "soperator-owned-public-static-ip",
+            },
+        ],
     )
 
     result = lifecycle.deploy_cluster(spec, terraform_dir=recipe, apply_fixes=False)
@@ -911,6 +933,7 @@ def test_deploy_persists_exact_auxiliary_ids_before_reporting_success(
     sidecar = lifecycle._load_env_sidecar(install)
     assert sidecar is not None
     assert sidecar["cluster_id"] == "mk8scluster-owned"
+    assert sidecar["provider_cluster_name"] == "soperator-owned"
     assert sidecar["owned_filesystem_ids"] == ["fs-jail", "fs-spool"]
     assert sidecar["owned_allocation_ids"] == ["alloc-login"]
 
@@ -927,17 +950,26 @@ def test_terraform_auxiliary_ownership_uses_only_exact_managed_ids(
             {
                 "mode": "managed",
                 "type": "nebius_compute_v1_filesystem",
-                "instances": [{"attributes": {"id": "fs-exact"}}],
+                "instances": [
+                    {"attributes": {"id": "fs-exact", "name": "soperator-c-jail"}}
+                ],
             },
             {
                 "mode": "managed",
                 "type": "nebius_vpc_v1_allocation",
-                "instances": [{"attributes": {"id": "alloc-exact"}}],
+                "instances": [
+                    {
+                        "attributes": {
+                            "id": "alloc-exact",
+                            "name": "soperator-c-public-static-ip",
+                        }
+                    }
+                ],
             },
             {
                 "mode": "data",
                 "type": "nebius_compute_v1_filesystem",
-                "instances": [{"attributes": {"id": "fs-foreign"}}],
+                "instances": [{"attributes": {"id": "fs-foreign", "name": "foreign"}}],
             },
         ]
     }
@@ -951,6 +983,105 @@ def test_terraform_auxiliary_ownership_uses_only_exact_managed_ids(
         ["fs-exact"],
         ["alloc-exact"],
     )
+
+
+def test_phase_one_failure_retains_typed_auxiliary_and_provider_name(
+    tmp_path, monkeypatch
+) -> None:
+    from npa.soperator import lifecycle
+
+    recipe = tmp_path / "soperator"
+    install = recipe / "installations" / "owned"
+    install.mkdir(parents=True)
+    prior_records = [
+        {
+            "kind": "allocation",
+            "provider_type": "nebius_vpc_v1_allocation",
+            "id": "alloc-old",
+            "name": "soperator-owned-public-static-ip",
+        }
+    ]
+    lifecycle._write_env_sidecar(
+        install,
+        region="us-central1",
+        tenant_id="tenant-test",
+        project_id="project-test",
+        subnet_id="subnet-test",
+        o11y_profile="default",
+        cluster_id="mk8scluster-old",
+        cluster_name="owned",
+        provider_cluster_name="soperator-owned",
+        owned_allocation_ids=["alloc-old"],
+        owned_auxiliary_resources=prior_records,
+    )
+    spec = SoperatorSpec(
+        name="owned",
+        region="us-central1",
+        tenant_id="tenant-test",
+        project_id="project-test",
+        subnet_id="subnet-test",
+        root_login_ssh_public_key="ssh-ed25519 AAAA operator",
+        workers=[WorkerPoolSpec(name="cpu")],
+    )
+    monkeypatch.setattr(lifecycle, "_resolve_solutions_library", lambda *a, **k: recipe)
+    monkeypatch.setattr(
+        lifecycle, "_assert_solutions_library_contract", lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "_resolve_deploy_environment",
+        lambda *a, **k: (
+            "us-central1",
+            "tenant-test",
+            "project-test",
+            "subnet-test",
+            lifecycle._load_env_sidecar(install),
+        ),
+    )
+    monkeypatch.setattr(lifecycle, "_require_bin", lambda name: name)
+    monkeypatch.setattr(
+        lifecycle,
+        "_resolve_reserved_worker_capacity",
+        lambda desired, **kwargs: (desired, []),
+    )
+    monkeypatch.setattr(lifecycle, "_prepare_installation", lambda *a, **k: install)
+    monkeypatch.setattr(
+        lifecycle,
+        "_soperator_tf_env",
+        lambda *a, **k: {"TF_VAR_o11y_profile": "default"},
+    )
+    monkeypatch.setattr(lifecycle, "_run_terraform_command", lambda *a, **k: None)
+
+    @contextmanager
+    def safe_plan(*args, **kwargs):
+        yield lifecycle.GuardedTerraformPlan(path=tmp_path / "plan")
+
+    monkeypatch.setattr(
+        lifecycle, "_terraform_plan_without_unsafe_replacements", safe_plan
+    )
+    monkeypatch.setattr(
+        lifecycle, "_terraform_cluster_id", lambda *a, **k: "mk8scluster-new"
+    )
+    monkeypatch.setattr(
+        lifecycle, "_terraform_cluster_name", lambda *a, **k: "soperator-owned"
+    )
+    monkeypatch.setattr(lifecycle, "_refresh_kube_credentials", lambda *a, **k: None)
+    monkeypatch.setattr(
+        lifecycle,
+        "_install_monitoring_crds",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("phase one stopped")),
+    )
+
+    with pytest.raises(RuntimeError, match="phase one stopped"):
+        lifecycle.deploy_cluster(spec, terraform_dir=recipe, apply_fixes=True)
+
+    retained = lifecycle._load_env_sidecar(install)
+    assert retained is not None
+    assert retained["cluster_id"] == "mk8scluster-new"
+    assert retained["cluster_name"] == "owned"
+    assert retained["provider_cluster_name"] == "soperator-owned"
+    assert retained["owned_allocation_ids"] == ["alloc-old"]
+    assert retained["owned_auxiliary_resources"] == prior_records
 
 
 @pytest.mark.parametrize(
@@ -1599,13 +1730,7 @@ def test_destroy_reconstructs_tf_var_env_from_sidecar(tmp_path, monkeypatch) -> 
 
 
 def test_destroy_deletes_orphaned_vpc_allocation(tmp_path, monkeypatch) -> None:
-    """destroy must delete a leftover ``soperator-<name>-*`` VPC allocation.
-
-    The cloud-controller-manager can re-create the login LoadBalancer's static IP
-    allocation mid-teardown after terraform deleted the in-state copy, leaving an
-    orphan not in state. A later deploy then fails with "Allocation ... already
-    exists", so destroy sweeps same-prefixed allocations after the cluster is gone.
-    """
+    """An old sidecar retries exact-ID cleanup after cluster NotFound."""
 
     from npa.soperator import lifecycle
 
@@ -1670,18 +1795,220 @@ def test_destroy_deletes_orphaned_vpc_allocation(tmp_path, monkeypatch) -> None:
 
     lifecycle.destroy_cluster("npasop", terraform_dir=recipe)
 
-    # Only the soperator-npasop-* allocation is swept; node-group aliases are left.
+    # Only the persisted exact allocation is deleted; unrelated inventory is left.
     assert deleted == ["alloc-orphan"]
 
 
-def test_destroy_deletes_orphaned_filesystems(tmp_path, monkeypatch) -> None:
-    """destroy must delete leftover ``soperator-<name>-*`` filesystems.
+def test_reconciles_ccm_recreated_allocation_by_typed_exact_name(
+    monkeypatch,
+) -> None:
+    import subprocess
+    from npa.soperator import lifecycle
 
-    The recipe names the jail / controller-spool / accounting filesystems
-    ``soperator-<name>-*``. If the destroy sweep matches only ``<name>-*`` they
-    survive teardown and the next deploy fails with "filesystem ... already
-    exists" (AlreadyExists). This locks in the full ``soperator-`` prefix.
-    """
+    deleted = []
+    get_calls = 0
+
+    def capture(command, **_kwargs):
+        nonlocal get_calls
+        if "list" in command:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                json.dumps(
+                    {
+                        "items": [
+                            {
+                                "metadata": {
+                                    "id": "alloc-recreated",
+                                    "name": "soperator-npasop-public-static-ip",
+                                    "parent_id": "project-test",
+                                }
+                            },
+                            {
+                                "metadata": {
+                                    "id": "alloc-unrelated",
+                                    "name": "soperator-other-public-static-ip",
+                                    "parent_id": "project-test",
+                                }
+                            },
+                        ]
+                    }
+                ),
+                "",
+            )
+        if "delete" in command:
+            deleted.append(command[command.index("--id") + 1])
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if "get" in command:
+            get_calls += 1
+            if get_calls == 1:
+                return subprocess.CompletedProcess(
+                    command, 2, "", "temporarily unavailable"
+                )
+            return subprocess.CompletedProcess(command, 1, "", "not found")
+        raise AssertionError(command)
+
+    monkeypatch.setattr(lifecycle, "_run_capture", capture)
+    monkeypatch.setattr(lifecycle.time, "sleep", lambda _seconds: None)
+    errors = lifecycle._reconcile_recreated_auxiliary_resources(
+        nebius_bin="nebius",
+        project_id="project-test",
+        cluster_name="npasop",
+        env={},
+        records=[
+            {
+                "kind": "allocation",
+                "provider_type": "nebius_vpc_v1_allocation",
+                "id": "alloc-original",
+                "name": "soperator-npasop-public-static-ip",
+            }
+        ],
+        deadline=lifecycle.time.monotonic() + 60,
+        on_status=None,
+    )
+    assert errors == []
+    assert deleted == ["alloc-recreated"]
+    assert get_calls == 2
+
+
+def test_recreated_allocation_ambiguity_fails_closed(monkeypatch) -> None:
+    import subprocess
+    from npa.soperator import lifecycle
+
+    payload = {
+        "items": [
+            {
+                "metadata": {
+                    "id": candidate,
+                    "name": "soperator-npasop-public-static-ip",
+                    "parent_id": "project-test",
+                }
+            }
+            for candidate in ("alloc-a", "alloc-b")
+        ]
+    }
+    monkeypatch.setattr(
+        lifecycle,
+        "_run_capture",
+        lambda command, **_kwargs: subprocess.CompletedProcess(
+            command, 0, json.dumps(payload), ""
+        ),
+    )
+    errors = lifecycle._reconcile_recreated_auxiliary_resources(
+        nebius_bin="nebius",
+        project_id="project-test",
+        cluster_name="npasop",
+        env={},
+        records=[
+            {
+                "kind": "allocation",
+                "provider_type": "nebius_vpc_v1_allocation",
+                "id": "alloc-original",
+                "name": "soperator-npasop-public-static-ip",
+            }
+        ],
+        deadline=lifecycle.time.monotonic() + 60,
+        on_status=None,
+    )
+    assert errors == ["allocation exact-name ownership evidence is ambiguous"]
+
+
+def test_exact_cluster_presence_retries_transient_read_then_proves_absence(
+    monkeypatch,
+) -> None:
+    import subprocess
+    from npa.soperator import lifecycle
+
+    responses = iter(
+        [
+            subprocess.CompletedProcess([], 2, "", "temporarily unavailable"),
+            subprocess.CompletedProcess([], 1, "", "not found"),
+        ]
+    )
+    monkeypatch.setattr(
+        lifecycle, "_run_capture", lambda *_args, **_kwargs: next(responses)
+    )
+    monkeypatch.setattr(lifecycle.time, "sleep", lambda _seconds: None)
+
+    present, error = lifecycle._resolve_exact_cluster_presence(
+        nebius_bin="nebius",
+        cluster_id="cluster-exact",
+        cluster_name="sop-exact",
+        project_id="project-exact",
+        env={},
+        deadline=lifecycle.time.monotonic() + 60,
+    )
+
+    assert present is False
+    assert error == ""
+
+
+def test_exact_cluster_presence_fails_closed_on_wrong_parent(monkeypatch) -> None:
+    import subprocess
+    from npa.soperator import lifecycle
+
+    payload = {
+        "metadata": {
+            "id": "cluster-exact",
+            "name": "sop-exact",
+            "parent_id": "project-foreign",
+        }
+    }
+    monkeypatch.setattr(
+        lifecycle,
+        "_run_capture",
+        lambda command, **_kwargs: subprocess.CompletedProcess(
+            command, 0, json.dumps(payload), ""
+        ),
+    )
+
+    present, error = lifecycle._resolve_exact_cluster_presence(
+        nebius_bin="nebius",
+        cluster_id="cluster-exact",
+        cluster_name="sop-exact",
+        project_id="project-exact",
+        env={},
+        deadline=lifecycle.time.monotonic() + 60,
+    )
+
+    assert present is None
+    assert error == "exact Managed Kubernetes ownership evidence is ambiguous"
+
+
+def test_exact_cluster_presence_accepts_pinned_provider_name(monkeypatch) -> None:
+    import subprocess
+    from npa.soperator import lifecycle
+
+    payload = {
+        "metadata": {
+            "id": "cluster-exact",
+            "name": "soperator-npasop",
+            "parent_id": "project-exact",
+        }
+    }
+    monkeypatch.setattr(
+        lifecycle,
+        "_run_capture",
+        lambda command, **_kwargs: subprocess.CompletedProcess(
+            command, 0, json.dumps(payload), ""
+        ),
+    )
+
+    present, error = lifecycle._resolve_exact_cluster_presence(
+        nebius_bin="nebius",
+        cluster_id="cluster-exact",
+        cluster_name="soperator-npasop",
+        project_id="project-exact",
+        env={},
+        deadline=lifecycle.time.monotonic() + 60,
+    )
+
+    assert present is True
+    assert error == ""
+
+
+def test_destroy_deletes_orphaned_filesystems(tmp_path, monkeypatch) -> None:
+    """Destroy deletes only persisted exact filesystem IDs from ownership state."""
 
     from npa.soperator import lifecycle
 
@@ -1697,6 +2024,7 @@ def test_destroy_deletes_orphaned_filesystems(tmp_path, monkeypatch) -> None:
         subnet_id="vpcsubnet-123",
         o11y_profile="npa-mk8s",
         cluster_id="mk8scluster-exact",
+        provider_cluster_name="soperator-npasop",
         owned_filesystem_ids=["fs-jail", "fs-spool"],
     )
 
@@ -1772,6 +2100,7 @@ def test_destroy_retains_state_when_exact_auxiliary_cleanup_is_uncertain(
         subnet_id="vpcsubnet-123",
         o11y_profile="default",
         cluster_id="mk8scluster-exact",
+        provider_cluster_name="soperator-npasafe",
         owned_filesystem_ids=["fs-exact"],
     )
     monkeypatch.setattr(lifecycle, "_require_bin", lambda name: name)
@@ -1814,6 +2143,12 @@ def test_destroy_retains_state_when_exact_auxiliary_cleanup_is_uncertain(
         return Done()
 
     monkeypatch.setattr(lifecycle, "_run_capture", capture)
+    if failure == "still-present":
+        monkeypatch.setattr(
+            lifecycle,
+            "_wait_for_provider_id_absence",
+            lambda **_kwargs: "owned filesystem fs-exact is still present",
+        )
 
     result = lifecycle.destroy_cluster("npasafe", terraform_dir=recipe)
 
@@ -2292,7 +2627,10 @@ def test_sdk_typed_degraded_validation_retains_deploy_metadata(
         lifecycle, "_terraform_cluster_id", lambda *a, **k: "mk8scluster-c"
     )
     monkeypatch.setattr(
-        lifecycle, "_terraform_owned_auxiliary_ids", lambda *a, **k: ([], [])
+        lifecycle, "_terraform_cluster_name", lambda *a, **k: "soperator-c"
+    )
+    monkeypatch.setattr(
+        lifecycle, "_terraform_owned_auxiliary_resources", lambda *a, **k: []
     )
     monkeypatch.setattr(
         lifecycle,

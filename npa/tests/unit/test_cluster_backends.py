@@ -15,6 +15,7 @@ from npa.cluster_backends.mk8s import (
     MK8sStatusRequest,
 )
 from npa.cluster_backends.mk8s_model import MK8sDesired, MK8sNodePool
+from npa.cluster_backends.mig import MigSpec
 from npa.cluster_backends.soperator import SoperatorApplyRequest
 from npa.fleet.lifecycle import fleet_status, plan_fleet
 from npa.fleet.spec import (
@@ -90,8 +91,12 @@ def test_legacy_fleet_defaults_to_mk8s_without_plan_drift() -> None:
     new_cluster = explicit.projects[0].clusters[0]
     assert old_cluster.backend_name() == "mk8s"
     assert old_cluster == new_cluster
-    assert "backend" not in plan_fleet(legacy)["projects"][0]["clusters"][0]
-    assert plan_fleet(explicit)["projects"][0]["clusters"][0]["backend"] == "mk8s"
+    legacy_plan = plan_fleet(legacy)
+    assert "backend" not in legacy_plan["projects"][0]["clusters"][0]
+    assert legacy_plan["backend_counts"] == {"mk8s": 1, "soperator": 0}
+    explicit_plan = plan_fleet(explicit)
+    assert explicit_plan["projects"][0]["clusters"][0]["backend"] == "mk8s"
+    assert explicit_plan["backend_counts"] == {"mk8s": 1, "soperator": 0}
 
 
 def test_mixed_fleet_plans_through_native_backend_adapters() -> None:
@@ -102,6 +107,7 @@ def test_mixed_fleet_plans_through_native_backend_adapters() -> None:
     ]
     spec = spec_from_mapping(mapping)
     plan = plan_fleet(spec)
+    assert plan["backend_counts"] == {"mk8s": 1, "soperator": 1}
 
     clusters = {item["name"]: item for item in plan["projects"][0]["clusters"]}
     assert clusters["kube"]["backend"] == "mk8s"
@@ -360,6 +366,58 @@ def test_corrupt_fleet_inventory_fails_closed(tmp_path) -> None:
         fleet_status(spec, work_root=tmp_path)
 
 
+def test_crash_before_fleet_summary_cannot_switch_target_backend(tmp_path) -> None:
+    from npa.fleet import lifecycle
+
+    fleet_root = tmp_path / "fleet"
+    lifecycle._persist_target_backend_owner(
+        fleet_root,
+        fleet_name="fleet",
+        project_key="project",
+        cluster_name="cluster",
+        expected_backend="mk8s",
+    )
+    assert not (fleet_root / "fleet-state.json").exists()
+
+    with pytest.raises(BackendOwnershipError, match="crash-residual state"):
+        lifecycle._persist_target_backend_owner(
+            fleet_root,
+            fleet_name="fleet",
+            project_key="project",
+            cluster_name="cluster",
+            expected_backend="soperator",
+        )
+
+
+def test_crash_residual_soperator_sidecar_blocks_mk8s_adoption(tmp_path) -> None:
+    from npa.fleet import lifecycle
+
+    target = (
+        tmp_path
+        / "fleet"
+        / "project"
+        / "cluster"
+        / "soperator"
+        / "nebius-solutions-library-pinned"
+        / "soperator"
+        / "installations"
+        / "cluster"
+    )
+    target.mkdir(parents=True)
+    (target / ".npa-soperator-env.json").write_text(
+        json.dumps({"backend": "soperator"})
+    )
+
+    with pytest.raises(BackendOwnershipError, match="crash-residual state"):
+        lifecycle._persist_target_backend_owner(
+            tmp_path / "fleet",
+            fleet_name="fleet",
+            project_key="project",
+            cluster_name="cluster",
+            expected_backend="mk8s",
+        )
+
+
 def test_fleet_inventory_write_failure_is_not_warning_only(
     tmp_path, monkeypatch
 ) -> None:
@@ -431,6 +489,76 @@ def test_mixed_deploy_dispatches_soperator_adapter_without_cli_shellout(
         "mk8s",
         "soperator",
     ]
+    assert result["backend_counts"] == {"mk8s": 1, "soperator": 1}
+
+
+def test_pure_mk8s_production_route_uses_adapter_and_resolved_prefix(
+    tmp_path, monkeypatch
+) -> None:
+    from npa.fleet import lifecycle
+
+    mapping = _legacy_mk8s_mapping()
+    mapping["projects"] = [{"name": "named"}]
+    spec = spec_from_mapping(mapping)
+    observed = []
+
+    class Adapter:
+        def apply(self, desired, request):
+            observed.append((desired, request))
+            return {
+                "backend": "mk8s",
+                "project_key": request.project.project_key,
+                "cluster_name": desired.name,
+                "status": "deployed",
+            }
+
+    recipe = tmp_path / "recipe"
+    recipe.mkdir()
+    monkeypatch.setattr(lifecycle, "get_backend", lambda _name: Adapter())
+    monkeypatch.setattr(lifecycle, "_assert_terraform_version", lambda _bin: "1.12.3")
+    monkeypatch.setattr(
+        lifecycle,
+        "_resolve_tenant_id",
+        lambda *_args, **_kwargs: "tenant-test",
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "_resolve_region",
+        lambda *_args, **_kwargs: "us-central1",
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "_resolve_ssh_public_key",
+        lambda *_args, **_kwargs: "ssh-key",
+    )
+    monkeypatch.setattr(
+        lifecycle, "_resolve_recipe_root", lambda *_args, **_kwargs: recipe
+    )
+    monkeypatch.setattr(lifecycle, "_nebius_cli_env", lambda: {})
+    monkeypatch.setattr(
+        lifecycle,
+        "resolve_project_id",
+        lambda *_args, **_kwargs: ("project-live", False),
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "ensure_subnet",
+        lambda *_args, **_kwargs: ("subnet-live", ""),
+    )
+
+    assert not lifecycle._legacy_helpers_patched()
+    result = lifecycle.deploy_fleet(
+        spec,
+        work_root=tmp_path,
+        project_prefix="caller-prefix-",
+        preflight=False,
+    )
+
+    assert result["backend_counts"] == {"mk8s": 1, "soperator": 0}
+    assert len(observed) == 1
+    request = observed[0][1]
+    assert request.scope.project_prefix == "caller-prefix-"
+    assert request.project.expected_provider_name == "caller-prefix-named"
 
 
 def test_soperator_backend_status_delegates_real_native_status(monkeypatch) -> None:
@@ -542,6 +670,8 @@ def test_standalone_mk8s_apply_adopts_native_one_target_result(
         return {
             "status": "deployed",
             "cluster_id": "cluster-test",
+            "endpoint": "https://cluster.example",
+            "node_group_id": "node-group-test",
             "kube_context": "fleet-generated",
             "kubeconfig": str(source),
         }
@@ -572,6 +702,10 @@ def test_standalone_mk8s_apply_adopts_native_one_target_result(
     assert metadata["backend"] == "mk8s"
     assert metadata["backend_cluster_id"] == "cluster-test"
     assert metadata["backend_state_root"] == str(backend_root.resolve())
+    saved = state.load_cluster_state("requested")
+    assert saved is not None
+    assert saved.endpoint == "https://cluster.example"
+    assert saved.node_group_id == "node-group-test"
 
 
 def test_mk8s_preflight_reuses_provider_verified_zero_increment(
@@ -981,6 +1115,189 @@ def test_strict_reservation_proves_nonpreemptible_when_provider_omits_false() ->
     }
 
     assert mk8s_execution._provider_node_group_matches_pool(payload, pool) is True
+
+
+@pytest.mark.parametrize("provider_value", [None, "true", 1, [], {}])
+def test_preemptible_pool_rejects_missing_or_nonboolean_provider_evidence(
+    provider_value,
+) -> None:
+    from npa.cluster_backends import mk8s_execution
+
+    pool = NodePoolSpec(
+        count=1,
+        platform="gpu-rtx6000",
+        preset="1gpu-24vcpu-218gb",
+        preemptible=True,
+    )
+    template = {
+        "resources": {
+            "platform": "gpu-rtx6000",
+            "preset": "1gpu-24vcpu-218gb",
+        }
+    }
+    if provider_value is not None:
+        template["preemptible"] = provider_value
+    payload = {
+        "spec": {"fixedNodeCount": "1", "template": template},
+        "status": {"state": "RUNNING"},
+    }
+    assert mk8s_execution._provider_node_group_matches_pool(payload, pool) is False
+
+
+def test_preemptible_pool_requires_explicit_provider_true() -> None:
+    from npa.cluster_backends import mk8s_execution
+
+    pool = NodePoolSpec(
+        count=1,
+        platform="gpu-rtx6000",
+        preset="1gpu-24vcpu-218gb",
+        preemptible=True,
+    )
+    payload = {
+        "spec": {
+            "fixedNodeCount": "1",
+            "template": {
+                "resources": {
+                    "platform": "gpu-rtx6000",
+                    "preset": "1gpu-24vcpu-218gb",
+                },
+                "preemptible": True,
+            },
+        },
+        "status": {"state": "RUNNING"},
+    }
+    assert mk8s_execution._provider_node_group_matches_pool(payload, pool) is True
+
+
+def test_full_cpu_validation_checks_exact_nodes_and_default_storage(tmp_path) -> None:
+    from types import SimpleNamespace
+    from npa.cluster_backends import mk8s_execution
+
+    desired = MK8sDesired(
+        name="cpu",
+        cpu_nodes=MK8sNodePool(count=1, platform="cpu-d3", preset="8vcpu-32gb"),
+    )
+
+    def capture(command, **_kwargs):
+        if command[2] == "nodes":
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "items": [
+                            {
+                                "status": {
+                                    "conditions": [{"type": "Ready", "status": "True"}]
+                                }
+                            }
+                        ]
+                    }
+                ),
+            )
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "items": [
+                        {
+                            "metadata": {
+                                "name": "compute-csi-default-sc",
+                                "annotations": {
+                                    "storageclass.kubernetes.io/is-default-class": "true"
+                                },
+                            }
+                        }
+                    ]
+                }
+            ),
+        )
+
+    result = mk8s_execution.verify_cluster(
+        cluster=desired,
+        kubeconfig=tmp_path / "kubeconfig",
+        run_capture=capture,
+        validation_policy="standalone-full",
+        basic_validation_timeout_seconds=1,
+    )
+    assert result["cluster_basics"] == {
+        "ready_nodes": 1,
+        "expected_nodes": 1,
+        "default_storage_class": "compute-csi-default-sc",
+    }
+
+
+@pytest.mark.parametrize(
+    "desired, phase",
+    [
+        (
+            MK8sDesired(
+                name="cpu",
+                cpu_nodes=MK8sNodePool(count=1, platform="cpu-d3", preset="8vcpu-32gb"),
+            ),
+            "validating-cluster-basics",
+        ),
+        (
+            MK8sDesired(
+                name="gpu",
+                gpu_nodes=MK8sNodePool(
+                    count=1, platform="gpu-rtx6000", preset="1gpu-24vcpu-218gb"
+                ),
+            ),
+            "validating-gpu-health",
+        ),
+        (
+            MK8sDesired(
+                name="mig",
+                gpu_nodes=MK8sNodePool(
+                    count=1, platform="gpu-rtx6000", preset="1gpu-24vcpu-218gb"
+                ),
+                mig=MigSpec(enabled=True),
+            ),
+            "validating-mig",
+        ),
+    ],
+)
+def test_post_deploy_validation_phase_is_topology_specific(desired, phase) -> None:
+    from npa.cluster_backends import mk8s_execution
+
+    assert mk8s_execution._post_deploy_validation_phase(desired) == phase
+
+
+@pytest.mark.parametrize("topology", ["cpu", "whole-gpu", "mig"])
+def test_skip_validation_never_invokes_cpu_gpu_or_mig_probes(
+    tmp_path, topology
+) -> None:
+    from npa.cluster_backends import mk8s_execution
+
+    desired = MK8sDesired(
+        name="target",
+        cpu_nodes=(
+            MK8sNodePool(count=1, platform="cpu-d3", preset="8vcpu-32gb")
+            if topology == "cpu"
+            else None
+        ),
+        gpu_nodes=(
+            MK8sNodePool(
+                count=2 if topology == "mig" else 1,
+                platform="gpu-rtx6000",
+                preset="1gpu-24vcpu-218gb",
+                disk_size_gib=128 if topology == "mig" else 0,
+                capacity_block_group="capacity-test" if topology == "mig" else "",
+            )
+            if topology != "cpu"
+            else None
+        ),
+        mig=MigSpec(enabled=True) if topology == "mig" else None,
+    )
+    result = mk8s_execution.verify_cluster(
+        cluster=desired,
+        kubeconfig=tmp_path / "kubeconfig",
+        validation_policy="skip",
+        run_capture=lambda *_a, **_k: pytest.fail("kubectl probe must be skipped"),
+        mig_verifier=lambda **_k: pytest.fail("MIG probe must be skipped"),
+        gpu_health_verifier=lambda *_a, **_k: pytest.fail("GPU probe must be skipped"),
+    )
+    assert result["verification"] == "skipped"
 
 
 def test_successful_soperator_destroy_removes_backend_root_and_reclaims_network(

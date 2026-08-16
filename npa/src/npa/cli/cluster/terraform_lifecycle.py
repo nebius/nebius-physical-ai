@@ -704,6 +704,9 @@ def up_cmd(
                     on_status=lambda message: typer.echo(message, err=True),
                     standalone_context=context,
                     standalone_kubeconfig=kubeconfig,
+                    post_deploy_validation=("standalone-full" if validate else "skip"),
+                    basic_validation_timeout_minutes=validation_timeout,
+                    kubectl_bin=kubectl_bin,
                 ),
             )
             if result.get("status") != "deployed":
@@ -714,6 +717,19 @@ def up_cmd(
             typer.echo(f"Cluster ID: {result['cluster_id']}")
             typer.echo(f"Cluster name: {backend_desired.name}")
             typer.echo(f"Kubeconfig: {kubeconfig_path}")
+            if validate:
+                basics = result.get("cluster_basics") or {}
+                typer.echo(
+                    "Validation: "
+                    f"{basics.get('ready_nodes', 0)} Ready nodes, "
+                    f"default StorageClass "
+                    f"{basics.get('default_storage_class', 'unknown')}"
+                )
+            else:
+                typer.echo(
+                    "Post-deploy validation skipped by --skip-validate; "
+                    "Terraform apply and identity persistence still completed."
+                )
             if sky_smoke and mig_desired is None:
                 from npa.orchestration.skypilot.k8s_gpu_catalog import (
                     wait_for_kubernetes_accelerators,
@@ -1668,11 +1684,58 @@ def down_cmd(
             managed_cluster_ids = _terraform_state_cluster_ids(
                 terraform_bin, tf_dir, env
             )
-            if managed_cluster_ids != {exact_cluster_id}:
+            if managed_cluster_ids and managed_cluster_ids != {exact_cluster_id}:
                 raise typer.BadParameter(
                     "Legacy Terraform state does not own exactly the persisted cluster "
                     f"ID {exact_cluster_id}; nothing was deleted."
                 )
+            if not managed_cluster_ids:
+                if (
+                    saved_cluster is None
+                    or not metadata_present
+                    or shared_metadata.get("managed_by") != "npa cluster terraform"
+                    or saved_cluster.cluster_id != exact_cluster_id
+                    or saved_cluster.project_id != exact_project_id
+                    or saved_cluster.name != preview_context
+                ):
+                    raise typer.BadParameter(
+                        "Legacy residual recovery lacks matching persisted cluster, "
+                        "project, context, and Terraform ownership evidence; nothing "
+                        "was deleted."
+                    )
+                residual_types = _verify_residual_terraform_ownership(
+                    terraform_bin,
+                    tf_dir,
+                    env,
+                    project_id=exact_project_id,
+                    cluster_id=exact_cluster_id,
+                )
+                from npa.cluster.api import MK8sClient
+                from npa.cluster.exceptions import ClusterNotFoundError
+
+                try:
+                    MK8sClient(timeout=120, poll_interval=15.0).get_cluster(
+                        exact_cluster_id,
+                        project_id=exact_project_id,
+                    )
+                except ClusterNotFoundError:
+                    typer.echo(
+                        "Legacy recovery: exact cluster is provider-absent; "
+                        "destroying retained Terraform-owned residuals ("
+                        + ", ".join(residual_types)
+                        + ").",
+                        err=True,
+                    )
+                except Exception as exc:
+                    raise typer.BadParameter(
+                        "Legacy recovery could not prove exact provider cluster "
+                        f"absence: {exc}. Nothing was deleted."
+                    ) from exc
+                else:
+                    raise typer.BadParameter(
+                        "Legacy recovery exact cluster is still present while retained "
+                        "Terraform state no longer owns it; nothing was deleted."
+                    )
         # `Still destroying...` every 10s with no detail made a ~6-minute node-group
         # drain look like a hang. Report node-group state while it happens.
         watcher = _NodeGroupWatcher(nebius_bin, tfvars, env)
@@ -3447,6 +3510,192 @@ def _terraform_state_cluster_ids(
             if cluster_id:
                 ids.add(str(cluster_id))
     return ids
+
+
+def _verify_residual_terraform_ownership(
+    terraform_bin: str,
+    terraform_dir: Path,
+    env: dict[str, str],
+    *,
+    project_id: str,
+    cluster_id: str,
+) -> list[str]:
+    """Validate residual-only state for an out-of-band/partial cluster delete."""
+
+    result = _run_capture(
+        [terraform_bin, "state", "pull"],
+        cwd=terraform_dir,
+        env=env,
+        check=False,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        raise typer.BadParameter(
+            "Legacy recovery requires readable retained Terraform state; nothing "
+            "was deleted. Restore the state and retry."
+        )
+    try:
+        state = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise typer.BadParameter(
+            "Legacy recovery Terraform state is malformed; nothing was deleted."
+        ) from exc
+    resources = state.get("resources") if isinstance(state, dict) else None
+    if (
+        not isinstance(resources, list)
+        or not str(state.get("lineage") or "").strip()
+        or not isinstance(state.get("serial"), int)
+    ):
+        raise typer.BadParameter(
+            "Legacy recovery Terraform state lacks valid lineage/resource ownership; "
+            "nothing was deleted."
+        )
+    project_scoped_types = {
+        "nebius_compute_v1_filesystem",
+        "nebius_compute_v1_gpu_cluster",
+        "nebius_applications_v1alpha1_k8s_release",
+        "nebius_iam_v1_service_account",
+        "nebius_storage_v1_bucket",
+        "nebius_vpc_v1_network",
+        "nebius_vpc_v1_subnet",
+    }
+    cluster_scoped_types = {
+        "nebius_mk8s_v1_node_group",
+    }
+    indirect_types = {
+        "nebius_iam_v1_group_membership",
+        "nebius_iam_v2_access_key",
+    }
+    managed_ids: dict[str, set[str]] = {}
+    for resource in resources:
+        if (
+            not isinstance(resource, dict)
+            or resource.get("mode", "managed") != "managed"
+        ):
+            continue
+        resource_type = str(resource.get("type") or "")
+        instances = resource.get("instances")
+        if not resource_type or not isinstance(instances, list):
+            raise typer.BadParameter(
+                "Legacy recovery Terraform state contains malformed managed "
+                "resource inventory; nothing was deleted."
+            )
+        for instance in instances:
+            attributes = (
+                instance.get("attributes") if isinstance(instance, dict) else None
+            )
+            if not isinstance(attributes, dict):
+                raise typer.BadParameter(
+                    "Legacy recovery Terraform state contains malformed ownership "
+                    "attributes; nothing was deleted."
+                )
+            resource_id = str(attributes.get("id") or "").strip()
+            if resource_type.startswith("nebius_") and not resource_id:
+                raise typer.BadParameter(
+                    "Legacy recovery Terraform state contains a Nebius resource "
+                    "without an exact provider ID; nothing was deleted."
+                )
+            if resource_id:
+                managed_ids.setdefault(resource_type, set()).add(resource_id)
+
+    service_account_ids = managed_ids.get("nebius_iam_v1_service_account", set())
+    residual_types: list[str] = []
+    for resource in resources:
+        if (
+            not isinstance(resource, dict)
+            or resource.get("mode", "managed") != "managed"
+        ):
+            continue
+        resource_type = str(resource.get("type") or "")
+        if not resource_type:
+            raise typer.BadParameter(
+                "Legacy recovery Terraform state contains a malformed managed "
+                "resource; nothing was deleted."
+            )
+        if resource_type == "nebius_mk8s_v1_cluster":
+            raise typer.BadParameter(
+                "Legacy recovery found an unidentifiable cluster resource; nothing "
+                "was deleted."
+            )
+        instances = resource.get("instances")
+        if not isinstance(instances, list):
+            raise typer.BadParameter(
+                "Legacy recovery Terraform state contains malformed managed "
+                "instances; nothing was deleted."
+            )
+        for instance in instances:
+            attributes = (
+                instance.get("attributes") if isinstance(instance, dict) else None
+            )
+            if not isinstance(attributes, dict):
+                raise typer.BadParameter(
+                    "Legacy recovery Terraform state contains malformed ownership "
+                    "attributes; nothing was deleted."
+                )
+            candidate_parents = {
+                str(attributes.get(key) or "").strip()
+                for key in ("parent_id", "project_id", "parentId", "projectId")
+                if str(attributes.get(key) or "").strip()
+            }
+            if resource_type in project_scoped_types and candidate_parents != {
+                project_id
+            }:
+                raise typer.BadParameter(
+                    "Legacy recovery Terraform residuals do not match the requested "
+                    "project; nothing was deleted."
+                )
+            if resource_type in cluster_scoped_types and candidate_parents != {
+                cluster_id
+            }:
+                raise typer.BadParameter(
+                    "Legacy recovery Terraform residuals do not match the exact "
+                    "persisted cluster; nothing was deleted."
+                )
+            if resource_type == "nebius_applications_v1alpha1_k8s_release":
+                linked_cluster_id = str(
+                    attributes.get("cluster_id") or attributes.get("clusterId") or ""
+                ).strip()
+                if linked_cluster_id != cluster_id:
+                    raise typer.BadParameter(
+                        "Legacy recovery application-release ownership is not "
+                        "linked to the exact persisted cluster; nothing was deleted."
+                    )
+            if resource_type == "nebius_iam_v2_access_key":
+                if len(candidate_parents) != 1 or not candidate_parents.issubset(
+                    service_account_ids
+                ):
+                    raise typer.BadParameter(
+                        "Legacy recovery access-key ownership is not linked to an "
+                        "exact Terraform-owned service account; nothing was deleted."
+                    )
+            if resource_type == "nebius_iam_v1_group_membership":
+                member = attributes.get("member")
+                member_id = str(
+                    attributes.get("member_id")
+                    or attributes.get("memberId")
+                    or (member.get("id") if isinstance(member, dict) else "")
+                ).strip()
+                if len(candidate_parents) != 1 or member_id not in service_account_ids:
+                    raise typer.BadParameter(
+                        "Legacy recovery group-membership ownership is not linked to "
+                        "an exact Terraform-owned service account; nothing was deleted."
+                    )
+            if (
+                resource_type.startswith("nebius_")
+                and resource_type not in project_scoped_types
+                and resource_type not in cluster_scoped_types
+                and resource_type not in indirect_types
+            ):
+                raise typer.BadParameter(
+                    f"Legacy recovery does not recognize Nebius residual type "
+                    f"{resource_type!r}; nothing was deleted."
+                )
+        residual_types.append(resource_type)
+    if not residual_types:
+        raise typer.BadParameter(
+            "Legacy recovery state contains no Terraform-owned residual resources; "
+            "nothing was deleted."
+        )
+    return sorted(set(residual_types))
 
 
 def _terraform_outputs(

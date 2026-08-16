@@ -3915,6 +3915,31 @@ def _write_workflow_temp_yaml(yaml_text: str) -> Path:
     return path
 
 
+def _agent_mk8s_numeric(value, *, field: str, minimum: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ValueError(f"{{field}} must be an integer >= {{minimum}}")
+    if isinstance(value, str) and not re.fullmatch(r"-?[0-9]+", value.strip()):
+        raise ValueError(f"{{field}} must be an integer >= {{minimum}}")
+    parsed = int(value)
+    if parsed < minimum:
+        raise ValueError(f"{{field}} must be an integer >= {{minimum}}")
+    return parsed
+
+
+def _normalize_agent_mk8s_desired(desired: dict | None) -> dict:
+    requested = dict(desired) if isinstance(desired, dict) else {{}}
+    for field, default, minimum in (
+        ("gpu_nodes", -1, -1),
+        ("cpu_nodes", -1, -1),
+        ("gpu_health_stabilization_seconds", 120, 0),
+        ("gpu_health_timeout_minutes", 60, 1),
+    ):
+        requested[field] = _agent_mk8s_numeric(
+            requested.get(field, default), field=field, minimum=minimum
+        )
+    return requested
+
+
 def _provision_agent_infra(
     project: str,
     cluster_name: str,
@@ -3930,7 +3955,7 @@ def _provision_agent_infra(
     try:
         from npa.provisioning import provision_if_absent
 
-        requested = desired if isinstance(desired, dict) else {{}}
+        requested = _normalize_agent_mk8s_desired(desired)
         mig_value = requested.get("mig", False)
         mig_mapping = mig_value if isinstance(mig_value, dict) else {{}}
         result = provision_if_absent(
@@ -3960,6 +3985,8 @@ def _provision_agent_infra(
         payload["ok"] = True
         payload["dry_run"] = dry_run
         return payload
+    except (TypeError, ValueError) as exc:
+        return {{"ok": False, "status": "invalid", "error": str(exc), "dry_run": dry_run}}
     except Exception as exc:
         return {{"ok": False, "status": "error", "error": str(exc), "dry_run": dry_run}}
 
@@ -4066,7 +4093,19 @@ def _soperator_deploy_from_payload(body: dict) -> dict:
             "solutions_library_ref": ref,
             "gpu_creation_check_timeout_seconds": gpu_creation_check_timeout_seconds,
         }}
-    timeout_minutes = int(body.get("timeout_minutes") or body.get("timeout") or 90)
+    try:
+        timeout_minutes = _agent_mk8s_numeric(
+            body.get("timeout_minutes") or body.get("timeout") or 90,
+            field="timeout_minutes",
+            minimum=1,
+        )
+    except (TypeError, ValueError) as exc:
+        return {{
+            "ok": False,
+            "status": "invalid",
+            "error": str(exc),
+            "validation": validation,
+        }}
     project = _agent_project_alias(str(body.get("project") or ""))
     terraform_dir_text = str(body.get("terraform_dir") or "").strip()
     terraform_dir = Path(terraform_dir_text).expanduser() if terraform_dir_text else None
@@ -8126,20 +8165,27 @@ def provision_infra(payload: dict | None = None):
     dry_run = bool(body.get("dry_run", True))
     validate = bool(body.get("validate", True))
     skip_s3 = bool(body.get("skip_s3", True))
+    desired = {{
+        key: body[key]
+        for key in (
+            "gpu_nodes", "cpu_nodes", "gpu_platform", "gpu_preset",
+            "gpu_driver_mode", "managed_driver_preset",
+            "gpu_health_stabilization_seconds", "gpu_health_timeout_minutes",
+            "gpu_cuda_smoke",
+            "gpu_cuda_smoke_image", "mig", "mig_strategy", "mig_config",
+            "capacity_block_group",
+        )
+        if key in body
+    }}
+    try:
+        desired = _normalize_agent_mk8s_desired(desired)
+    except (TypeError, ValueError) as exc:
+        return JSONResponse(
+            status_code=400,
+            content={{"ok": False, "status": "invalid", "error": str(exc)}},
+        )
     if not dry_run:
         confirm_token = str(body.get("confirm_token") or "").strip()
-        desired = {{
-            key: body[key]
-            for key in (
-                "gpu_nodes", "cpu_nodes", "gpu_platform", "gpu_preset",
-                "gpu_driver_mode", "managed_driver_preset",
-                "gpu_health_stabilization_seconds", "gpu_health_timeout_minutes",
-                "gpu_cuda_smoke",
-                "gpu_cuda_smoke_image", "mig", "mig_strategy", "mig_config",
-                "capacity_block_group",
-            )
-            if key in body
-        }}
         digest = "provision_infra:" + project + ":" + cluster_name + ":" + json.dumps(desired, sort_keys=True)
         if not confirm_token:
             token = _issue_agent_confirm_token(
@@ -8158,19 +8204,9 @@ def provision_infra(payload: dict | None = None):
         session_token, confirm_digest, _pending = _consume_agent_confirm_token()
         if not session_token or confirm_token != session_token or (confirm_digest and confirm_digest != digest):
             raise HTTPException(status_code=403, detail="invalid or expired confirm_token for provision")
-    desired = {{
-        key: body[key]
-        for key in (
-            "gpu_nodes", "cpu_nodes", "gpu_platform", "gpu_preset",
-            "gpu_driver_mode", "managed_driver_preset",
-            "gpu_health_stabilization_seconds", "gpu_health_timeout_minutes",
-            "gpu_cuda_smoke",
-            "gpu_cuda_smoke_image", "mig", "mig_strategy", "mig_config",
-            "capacity_block_group",
-        )
-        if key in body
-    }}
     result = _provision_agent_infra(project, cluster_name, dry_run=dry_run, validate=validate, skip_s3=skip_s3, desired=desired)
+    if not result.get("ok") and result.get("status") == "invalid":
+        return JSONResponse(status_code=400, content=result)
     status = _agent_k8s_backends(project)
     return {{"ok": bool(result.get("ok")), "project": project, "cluster_name": cluster_name, "result": result, "infra": status, "dry_run": dry_run}}
 

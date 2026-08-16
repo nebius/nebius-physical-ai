@@ -36,7 +36,11 @@ from npa.cli.cluster.terraform_lifecycle import (
     _run_stream,
     _terraform_env,
 )
-from npa.cluster_backends import get_backend, require_backend_ownership
+from npa.cluster_backends import (
+    BackendOwnershipError,
+    get_backend,
+    require_backend_ownership,
+)
 from npa.cluster_backends.mk8s import (
     MK8sApplyRequest,
     MK8sDestroyRequest,
@@ -82,6 +86,7 @@ _persist_npa_cluster_identity = _mk8s_execution._persist_npa_cluster_identity
 _remove_npa_cluster_identity = _mk8s_execution._remove_npa_cluster_identity
 _provider_node_group_matches_pool = _mk8s_execution._provider_node_group_matches_pool
 _run_to_log = _mk8s_execution._run_to_log
+_terraform_managed_ids = _mk8s_execution._terraform_managed_ids
 _terraform_outputs = _mk8s_execution._terraform_outputs
 _write_env_sidecar = _mk8s_execution._write_env_sidecar
 validate_gpu_health = _mk8s_execution.validate_gpu_health
@@ -110,6 +115,7 @@ _LEGACY_HELPER_DEFAULTS = {
         "_terraform_env",
         "_prepare_install_dir",
         "_run_stream",
+        "_terraform_managed_ids",
         "_terraform_outputs",
         "_write_kubeconfig",
         "_persist_npa_cluster_identity",
@@ -131,6 +137,7 @@ def _call_legacy_execution(function: Callable[..., dict[str, Any]], **kwargs: An
         "_terraform_env",
         "_prepare_install_dir",
         "_run_stream",
+        "_terraform_managed_ids",
         "_terraform_outputs",
         "_write_kubeconfig",
         "_persist_npa_cluster_identity",
@@ -180,6 +187,7 @@ logger = logging.getLogger(__name__)
 _SOLUTIONS_LIBRARY_REPO = "https://github.com/nebius/nebius-solutions-library.git"
 _K8S_TRAINING_SUBDIR = "k8s-training"
 _MODULES_SUBDIR = "modules"
+_TARGET_BACKEND_OWNER = ".npa-backend-owner.json"
 # Pinned ref cloned when no local recipe is available, matching the repo-vendored
 # copy (deploy/cluster/vendor + the single-cluster wrapper) so a fleet run from an
 # installed package doesn't silently drift onto upstream ``main`` HEAD.
@@ -997,6 +1005,14 @@ def plan_fleet(
                 "clusters": clusters,
             }
         )
+    backend_counts = {
+        backend: sum(
+            1
+            for _project, cluster in spec.cluster_targets()
+            if cluster.backend_name() == backend
+        )
+        for backend in ("mk8s", "soperator")
+    }
     return {
         "name": spec.name,
         "tenant_id": tenant or "(resolve-at-deploy)",
@@ -1005,8 +1021,82 @@ def plan_fleet(
         "profile": plan_profile or "(active)",
         "project_count": len(spec.projects),
         "cluster_count": len(spec.cluster_targets()),
+        "backend_counts": backend_counts,
         "projects": plan_projects,
     }
+
+
+def _persist_target_backend_owner(
+    fleet_root: Path,
+    *,
+    fleet_name: str,
+    project_key: str,
+    cluster_name: str,
+    expected_backend: str,
+) -> None:
+    """Fail closed on crash-residual backend evidence, then persist ownership."""
+
+    target_root = fleet_root / project_key / cluster_name
+    marker = target_root / _TARGET_BACKEND_OWNER
+    evidence: list[dict[str, Any]] = []
+    if marker.exists():
+        try:
+            payload = json.loads(marker.read_text())
+        except (json.JSONDecodeError, OSError) as exc:
+            raise BackendOwnershipError(
+                f"backend owner marker for {project_key}/{cluster_name} is unreadable"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise BackendOwnershipError(
+                f"backend owner marker for {project_key}/{cluster_name} is malformed"
+            )
+        evidence.append(payload)
+    mk8s_sidecar = target_root / ".npa-fleet-env.json"
+    if mk8s_sidecar.exists():
+        evidence.append({"backend": "mk8s"})
+    soperator_sidecars = sorted(
+        (target_root / "soperator").glob(
+            "nebius-solutions-library*/soperator/installations/"
+            + cluster_name
+            + "/.npa-soperator-env.json"
+        )
+    )
+    if len(soperator_sidecars) > 1:
+        raise BackendOwnershipError(
+            f"multiple soperator ownership sidecars exist for {project_key}/{cluster_name}"
+        )
+    if soperator_sidecars:
+        evidence.append({"backend": "soperator"})
+    discovered = {str(item.get("backend") or "mk8s") for item in evidence}
+    if len(discovered) > 1 or (discovered and discovered != {expected_backend}):
+        raise BackendOwnershipError(
+            f"crash-residual state for {project_key}/{cluster_name} belongs to "
+            f"backend(s) {sorted(discovered)}, but the spec selects {expected_backend!r}"
+        )
+    for item in evidence:
+        for key, expected in (
+            ("fleet_name", fleet_name),
+            ("project_key", project_key),
+            ("cluster_name", cluster_name),
+        ):
+            recorded = str(item.get(key) or "")
+            if recorded and recorded != expected:
+                raise BackendOwnershipError(
+                    f"backend owner marker {key} does not match requested target"
+                )
+    _ensure_private_directory(fleet_root.parent)
+    _ensure_private_directory(fleet_root)
+    _ensure_private_directory(fleet_root / project_key)
+    _ensure_private_directory(target_root)
+    _write_json_file(
+        marker,
+        {
+            "fleet_name": fleet_name,
+            "project_key": project_key,
+            "cluster_name": cluster_name,
+            "backend": expected_backend,
+        },
+    )
 
 
 def deploy_fleet(
@@ -1040,6 +1130,13 @@ def deploy_fleet(
         saved = prior.get((project.key(), cluster.name))
         if saved is not None:
             require_backend_ownership(saved, cluster.backend_name())
+        _persist_target_backend_owner(
+            fleet_root,
+            fleet_name=spec.name,
+            project_key=project.key(),
+            cluster_name=cluster.name,
+            expected_backend=cluster.backend_name(),
+        )
     mk8s_projects: list[ProjectSpec] = []
     soperator_targets: list[tuple[ProjectSpec, ClusterSpec]] = []
     for project in spec.projects:
@@ -1059,6 +1156,7 @@ def deploy_fleet(
         result = _deploy_mk8s_fleet(replace(spec, projects=mk8s_projects), **kwargs)
     if not soperator_targets:
         assert result is not None
+        result["backend_counts"] = _backend_counts(result.get("clusters", []))
         return result
 
     only_projects = kwargs.get("only_projects")
@@ -1258,12 +1356,7 @@ def deploy_fleet(
         }
     result["clusters"] = [*result.get("clusters", []), *soperator_results]
     result.update(_recount(result["clusters"]))
-    result["backend_counts"] = {
-        backend: sum(
-            1 for item in result["clusters"] if item.get("backend", "mk8s") == backend
-        )
-        for backend in ("mk8s", "soperator")
-    }
+    result["backend_counts"] = _backend_counts(result["clusters"])
     _upsert_fleet_state(
         fleet_root,
         {key: value for key, value in result.items() if key != "clusters"},
@@ -1553,15 +1646,13 @@ def _deploy_mk8s_fleet(
                     fleet_name=spec.name,
                     tenant_id=tenant_id,
                     region=t["region"],
-                    project_prefix=spec.project_prefix,
+                    project_prefix=prefix,
                 ),
                 project=MK8sProjectIdentity(
                     project_key=t["project"].key(),
                     project_id=t["project_id"],
                     project_name=t["project"].name,
-                    expected_provider_name=t["project"].display_name(
-                        spec.project_prefix
-                    ),
+                    expected_provider_name=t["project"].display_name(prefix),
                 ),
                 project_id=t["project_id"],
                 project_created=t["created"],
@@ -1675,6 +1766,15 @@ def _recount(clusters: list[dict[str, Any]]) -> dict[str, int]:
     }
 
 
+def _backend_counts(clusters: list[dict[str, Any]]) -> dict[str, int]:
+    """Return stable backend keys for pure and mixed fleet results."""
+
+    return {
+        backend: sum(1 for item in clusters if item.get("backend", "mk8s") == backend)
+        for backend in ("mk8s", "soperator")
+    }
+
+
 def _upsert_fleet_state(
     fleet_root: Path, base_meta: dict[str, Any], results: list[dict[str, Any]]
 ) -> None:
@@ -1704,13 +1804,23 @@ def _upsert_fleet_state(
             index[key] = len(clusters)
             clusters.append(entry)
     _write_fleet_state(
-        fleet_root, {**base_meta, "clusters": clusters, **_recount(clusters)}
+        fleet_root,
+        {
+            **base_meta,
+            "clusters": clusters,
+            **_recount(clusters),
+            "backend_counts": _backend_counts(clusters),
+        },
     )
 
 
 def _prune_fleet_state(fleet_root: Path, removed_keys: set[tuple[str, str]]) -> None:
     """Drop destroyed ``(project_key, cluster_name)`` entries from the summary."""
 
+    for project_key, cluster_name in removed_keys:
+        (fleet_root / project_key / cluster_name / _TARGET_BACKEND_OWNER).unlink(
+            missing_ok=True
+        )
     state = _load_fleet_state(fleet_root)
     clusters = (
         state.get("clusters", []) if isinstance(state.get("clusters"), list) else []
@@ -1720,7 +1830,15 @@ def _prune_fleet_state(fleet_root: Path, removed_keys: set[tuple[str, str]]) -> 
         for c in clusters
         if (c.get("project_key"), c.get("cluster_name")) not in removed_keys
     ]
-    _write_fleet_state(fleet_root, {**state, "clusters": kept, **_recount(kept)})
+    _write_fleet_state(
+        fleet_root,
+        {
+            **state,
+            "clusters": kept,
+            **_recount(kept),
+            "backend_counts": _backend_counts(kept),
+        },
+    )
 
 
 def _project_has_persisted_targets(fleet_root: Path, project_key: str) -> bool:
@@ -2001,6 +2119,7 @@ def destroy_fleet(
         "clusters": results,
         "networks": network_results,
         **_recount(results),
+        "backend_counts": _backend_counts(results),
         "failed": failed,
     }
 
@@ -2116,13 +2235,13 @@ def _destroy_mk8s_fleet(
                     fleet_name=spec.name,
                     tenant_id=spec.tenant_id,
                     region=spec.region,
-                    project_prefix=spec.project_prefix,
+                    project_prefix=prefix,
                 ),
                 project=MK8sProjectIdentity(
                     project_key=project.key(),
                     project_id=project.project_id,
                     project_name=project.name,
-                    expected_provider_name=project.display_name(spec.project_prefix),
+                    expected_provider_name=project.display_name(prefix),
                 ),
                 fleet_root=fleet_root,
                 terraform_bin=terraform_bin,
@@ -2190,6 +2309,7 @@ def _destroy_mk8s_fleet(
         "name": spec.name,
         "clusters": destroyed,
         "networks": network_results,
+        "backend_counts": _backend_counts(destroyed),
         "failed": failed,
     }
 
@@ -2359,6 +2479,7 @@ def fleet_status(
                     item for key, item in entries.items() if key not in persisted_keys
                 )
                 state.update(_recount(state["clusters"]))
+            state["backend_counts"] = _backend_counts(state.get("clusters", []))
             return state
         except (json.JSONDecodeError, OSError) as exc:
             raise RuntimeError(
@@ -2408,4 +2529,9 @@ def fleet_status(
                     **({k: v for k, v in saved.items()} if saved else {}),
                 }
             )
-    return {"name": spec.name, "clusters": clusters}
+    return {
+        "name": spec.name,
+        "clusters": clusters,
+        **_recount(clusters),
+        "backend_counts": _backend_counts(clusters),
+    }

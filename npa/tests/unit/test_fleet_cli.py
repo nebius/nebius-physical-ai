@@ -1076,6 +1076,11 @@ def _mock_deploy_boundary(monkeypatch, *, apply_fails: bool = False):
         "_terraform_outputs",
         lambda *a, **k: {"kube_cluster": {"value": {"id": "mk8s-1"}}},
     )
+    monkeypatch.setattr(
+        L,
+        "_terraform_managed_ids",
+        lambda *_args, **_kwargs: ["node-group-1"],
+    )
     monkeypatch.setattr(L, "_write_kubeconfig", lambda *a, **k: None)
     monkeypatch.setattr(L, "_persist_npa_cluster_identity", lambda **k: None)
     return L
@@ -2070,6 +2075,12 @@ def _fake_terraform_executable(tmp_path: Path) -> Path:
               output)
                 printf '{{"kube_cluster":{{"value":{{"id":"mk8s-test"}}}}}}\\n'
                 ;;
+              state)
+                if [ "${{2:-}}" != "pull" ]; then
+                  exit 19
+                fi
+                printf '{{"resources":[{{"mode":"managed","type":"nebius_mk8s_v1_node_group","instances":[{{"attributes":{{"id":"node-group-test"}}}}]}}]}}\\n'
+                ;;
               init|apply|destroy)
                 printf '{_FAKE_TERRAFORM_MARKER} stdout %s\\n' "$action"
                 printf '{_FAKE_TERRAFORM_MARKER} stderr %s\\n' "$action" >&2
@@ -2167,6 +2178,7 @@ def _prepare_destroy_state(L, work_root: Path, cluster_names: tuple[str, ...]) -
         L._write_env_sidecar(
             install_dir,
             {
+                "backend": "mk8s",
                 "tenant_id": "tenant-test",
                 "project_id": "project-test",
                 "region": "us-central1",
@@ -3807,7 +3819,24 @@ def test_destroy_fallback_failure_is_reported_and_state_retained(
         tmp_path, monkeypatch, destroy_fails=True
     )
     monkeypatch.setattr(L, "_find_cluster_id_by_name", lambda *a, **k: "cluster-test")
-    monkeypatch.setattr(L, "_run_capture", lambda *a, **k: _Cap("permission denied", 7))
+
+    def provider_call(args, **_kwargs):
+        if "get" in args:
+            return _Cap(
+                json.dumps(
+                    {
+                        "metadata": {
+                            "id": "cluster-test",
+                            "name": "c",
+                            "parent_id": "p1",
+                        }
+                    }
+                ),
+                0,
+            )
+        return _Cap("permission denied", 7)
+
+    monkeypatch.setattr(L, "_run_capture", provider_call)
     result = L._destroy_one_cluster(
         spec=FleetSpec(name="f"),
         project=ProjectSpec(name="a"),

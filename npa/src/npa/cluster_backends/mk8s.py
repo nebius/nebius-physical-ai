@@ -54,6 +54,13 @@ class MK8sApplyRequest:
     command_runner: Callable[..., Any] | None = None
     standalone_context: str = ""
     standalone_kubeconfig: Path | None = None
+    # Fleet historically validates GPU/MIG targets as part of deploy, while the
+    # standalone CLI additionally promises CPU node-count and default
+    # StorageClass validation. Keep that surface policy explicit instead of
+    # allowing the standalone ``--validate`` flag to leak into fleet semantics.
+    post_deploy_validation: str = "fleet"
+    basic_validation_timeout_minutes: int = 30
+    kubectl_bin: str = "kubectl"
 
 
 @dataclass(frozen=True)
@@ -67,6 +74,8 @@ class MK8sStatusRequest:
     run_capture: Callable[..., Any] | None = None
     mig_verifier: Callable[..., Any] | None = None
     gpu_health_verifier: Callable[..., Any] | None = None
+    validation_policy: str = "fleet"
+    basic_validation_timeout_minutes: int = 30
 
 
 @dataclass(frozen=True)
@@ -284,6 +293,9 @@ class MK8sBackend:
             timeout_minutes=request.timeout_minutes,
             on_status=request.on_status,
             log_path=request.log_path,
+            validation_policy=request.post_deploy_validation,
+            basic_validation_timeout_minutes=request.basic_validation_timeout_minutes,
+            kubectl_bin=request.kubectl_bin,
         )
         if request.standalone_context and result.get("status") == "deployed":
             result = self._adopt_standalone_result(desired, request, result)
@@ -347,6 +359,8 @@ class MK8sBackend:
             subnet_id=request.subnet_id,
             created_at=utc_now_iso(),
             last_seen_state="RUNNING",
+            node_group_id=str(result.get("node_group_id") or ""),
+            endpoint=str(result.get("endpoint") or ""),
             kubeconfig_path=str(target),
             provider_name=desired.name,
         )
@@ -407,6 +421,10 @@ class MK8sBackend:
             run_capture=request.run_capture or run_capture,
             mig_verifier=request.mig_verifier or wait_for_mig_ready,
             gpu_health_verifier=request.gpu_health_verifier or validate_gpu_health,
+            validation_policy=request.validation_policy,
+            basic_validation_timeout_seconds=(
+                request.basic_validation_timeout_minutes * 60
+            ),
         )
 
     def destroy(

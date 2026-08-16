@@ -212,6 +212,32 @@ def test_rendered_mk8s_provision_forwards_shared_backend_desired_state(
     assert captured["capacity_block_group"] == "runtime-reservation"
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("cpu_nodes", "one"),
+        ("gpu_nodes", {"count": 2}),
+        ("gpu_health_stabilization_seconds", None),
+        ("gpu_health_timeout_minutes", 0),
+    ],
+)
+def test_rendered_mk8s_provision_rejects_malformed_numeric_json_with_400(
+    monkeypatch, tmp_path, field, value
+) -> None:
+    import sys
+
+    module_name = f"npa_rendered_mk8s_bad_numeric_{field}"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    try:
+        response = module.provision_infra({field: value})
+        assert response.status_code == 400
+        payload = json.loads(response.body)
+        assert payload["status"] == "invalid"
+        assert field in payload["error"]
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 def test_session_owned_status_skips_cross_bucket_artifact_discovery(
     monkeypatch, tmp_path
 ) -> None:

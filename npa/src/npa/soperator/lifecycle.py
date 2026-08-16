@@ -206,6 +206,9 @@ def _write_env_sidecar(
     cluster_id: str = "",
     owned_filesystem_ids: list[str] | None = None,
     owned_allocation_ids: list[str] | None = None,
+    cluster_name: str = "",
+    provider_cluster_name: str = "",
+    owned_auxiliary_resources: list[dict[str, str]] | None = None,
 ) -> None:
     path = install_dir / _ENV_SIDECAR
     temporary = install_dir / f".{_ENV_SIDECAR}.{uuid.uuid4().hex}.tmp"
@@ -224,8 +227,11 @@ def _write_env_sidecar(
                     "auth_profile": auth_profile,
                     "backend": "soperator",
                     "cluster_id": cluster_id,
+                    "cluster_name": cluster_name,
+                    "provider_cluster_name": provider_cluster_name,
                     "owned_filesystem_ids": list(owned_filesystem_ids or []),
                     "owned_allocation_ids": list(owned_allocation_ids or []),
+                    "owned_auxiliary_resources": list(owned_auxiliary_resources or []),
                 },
                 indent=2,
             )
@@ -1766,45 +1772,60 @@ def _soperator_tf_env(
     return env
 
 
-def _terraform_cluster_id(
+def _terraform_cluster_identity(
     terraform_bin: str, install_dir: Path, env: dict[str, str]
-) -> str:
-    """Return the mk8s cluster id from Terraform state (empty if not found)."""
+) -> tuple[str, str]:
+    """Return the exact mk8s ID/name pair from authoritative Terraform state."""
 
     result = _run_capture(
         [terraform_bin, "state", "pull"], cwd=install_dir, env=env, check=False
     )
     if result.returncode != 0 or not result.stdout.strip():
-        return ""
+        return "", ""
     try:
         state = json.loads(result.stdout)
     except json.JSONDecodeError:
-        return ""
+        return "", ""
     for resource in state.get("resources", []):
         if resource.get("type") != "nebius_mk8s_v1_cluster":
             continue
         for instance in resource.get("instances", []):
-            cid = instance.get("attributes", {}).get("id")
+            attributes = instance.get("attributes", {})
+            cid = attributes.get("id")
             if cid:
-                return str(cid)
-    return ""
+                return str(cid), str(attributes.get("name") or "")
+    return "", ""
+
+
+def _terraform_cluster_id(
+    terraform_bin: str, install_dir: Path, env: dict[str, str]
+) -> str:
+    """Return the mk8s cluster ID from Terraform state (empty if not found)."""
+
+    return _terraform_cluster_identity(terraform_bin, install_dir, env)[0]
+
+
+def _terraform_cluster_name(
+    terraform_bin: str, install_dir: Path, env: dict[str, str]
+) -> str:
+    """Return the provider mk8s name from Terraform state (empty if not found)."""
+
+    return _terraform_cluster_identity(terraform_bin, install_dir, env)[1]
 
 
 _OWNED_AUXILIARY_RESOURCE_TYPES = {
     "nebius_compute_v1_filesystem": "filesystem",
+    # Verified against the pinned upstream recipe at
+    # soperator/modules/k8s/k8s_ng_login.tf: the login LoadBalancer allocation
+    # is a real nebius_vpc_v1_allocation Terraform resource.
     "nebius_vpc_v1_allocation": "allocation",
 }
 
 
-def _terraform_owned_auxiliary_ids(
+def _terraform_owned_auxiliary_resources(
     terraform_bin: str, install_dir: Path, env: dict[str, str]
-) -> tuple[list[str], list[str]]:
-    """Snapshot exact managed auxiliary IDs from the applied Terraform state.
-
-    An unreadable or structurally ambiguous state is not durable ownership
-    evidence. Refuse to report a successful deployment rather than writing an
-    empty ownership set that would make later cleanup unverifiable.
-    """
+) -> list[dict[str, str]]:
+    """Snapshot typed IDs and exact names from authoritative Terraform state."""
 
     result = _run_capture(
         [terraform_bin, "state", "pull"], cwd=install_dir, env=env, check=False
@@ -1827,14 +1848,15 @@ def _terraform_owned_auxiliary_ids(
             "applied Terraform state has no valid resource inventory; exact "
             "auxiliary ownership was not persisted"
         )
-    owned: dict[str, set[str]] = {"filesystem": set(), "allocation": set()}
+    owned: list[dict[str, str]] = []
     for resource in resources:
         if (
             not isinstance(resource, dict)
             or resource.get("mode", "managed") != "managed"
         ):
             continue
-        kind = _OWNED_AUXILIARY_RESOURCE_TYPES.get(str(resource.get("type") or ""))
+        provider_type = str(resource.get("type") or "")
+        kind = _OWNED_AUXILIARY_RESOURCE_TYPES.get(provider_type)
         if kind is None:
             continue
         instances = resource.get("instances")
@@ -1850,12 +1872,41 @@ def _terraform_owned_auxiliary_ids(
             resource_id = (
                 str(attributes.get("id") or "") if isinstance(attributes, dict) else ""
             )
-            if not resource_id:
+            resource_name = (
+                str(attributes.get("name") or "")
+                if isinstance(attributes, dict)
+                else ""
+            )
+            if not resource_id or not resource_name:
                 raise RuntimeError(
-                    f"applied Terraform {kind} state is missing an exact ID; "
+                    f"applied Terraform {kind} state is missing an exact ID/name; "
                     "exact ownership was not persisted"
                 )
-            owned[kind].add(resource_id)
+            owned.append(
+                {
+                    "kind": kind,
+                    "provider_type": provider_type,
+                    "id": resource_id,
+                    "name": resource_name,
+                }
+            )
+    return sorted(owned, key=lambda item: (item["kind"], item["name"], item["id"]))
+
+
+def _terraform_owned_auxiliary_ids(
+    terraform_bin: str, install_dir: Path, env: dict[str, str]
+) -> tuple[list[str], list[str]]:
+    """Snapshot exact managed auxiliary IDs from the applied Terraform state.
+
+    An unreadable or structurally ambiguous state is not durable ownership
+    evidence. Refuse to report a successful deployment rather than writing an
+    empty ownership set that would make later cleanup unverifiable.
+    """
+
+    records = _terraform_owned_auxiliary_resources(terraform_bin, install_dir, env)
+    owned: dict[str, set[str]] = {"filesystem": set(), "allocation": set()}
+    for record in records:
+        owned[record["kind"]].add(record["id"])
     return sorted(owned["filesystem"]), sorted(owned["allocation"])
 
 
@@ -1937,6 +1988,118 @@ def _provider_inventory_ids(
     return ids
 
 
+def _provider_read_terminal(result: Any) -> bool:
+    detail = (
+        f"{getattr(result, 'stdout', '')} {getattr(result, 'stderr', '')}".casefold()
+    )
+    return any(
+        marker in detail
+        for marker in (
+            "permission denied",
+            "permissiondenied",
+            "unauthenticated",
+            "unauthorized",
+            "forbidden",
+            "invalid argument",
+        )
+    )
+
+
+def _wait_for_provider_id_absence(
+    *,
+    command: list[str],
+    env: dict[str, str],
+    description: str,
+    deadline: float,
+) -> str | None:
+    """Poll exact provider identity; retry transient reads until the deadline."""
+
+    last_error = ""
+    while time.monotonic() < deadline:
+        try:
+            result = _run_capture(command, env=env, check=False, timeout=120)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            last_error = type(exc).__name__
+            time.sleep(2)
+            continue
+        if _is_not_found_result(result):
+            return None
+        if result.returncode == 0 and result.stdout.strip():
+            last_error = "resource is still present"
+        elif _provider_read_terminal(result):
+            return f"{description} absence check failed terminally"
+        else:
+            last_error = "provider read was transient or unreadable"
+        time.sleep(2)
+    return f"{description} absence was not confirmed before the configured deadline: {last_error}"
+
+
+def _resolve_exact_cluster_presence(
+    *,
+    nebius_bin: str,
+    cluster_id: str,
+    cluster_name: str,
+    project_id: str,
+    env: dict[str, str],
+    deadline: float,
+) -> tuple[bool | None, str]:
+    """Resolve an exact cluster as present/absent, retrying transient reads."""
+
+    last_error = ""
+    while time.monotonic() < deadline:
+        try:
+            result = _run_capture(
+                [
+                    nebius_bin,
+                    "mk8s",
+                    "cluster",
+                    "get",
+                    "--id",
+                    cluster_id,
+                    "--format",
+                    "json",
+                ],
+                env=env,
+                check=False,
+                timeout=120,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            last_error = type(exc).__name__
+            time.sleep(2)
+            continue
+        if _is_not_found_result(result):
+            return False, ""
+        if result.returncode != 0 or not result.stdout.strip():
+            if _provider_read_terminal(result):
+                return None, "exact Managed Kubernetes identity check failed terminally"
+            last_error = "transient or unreadable provider response"
+            time.sleep(2)
+            continue
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return None, "exact Managed Kubernetes identity returned invalid JSON"
+        metadata = payload.get("metadata") if isinstance(payload, dict) else None
+        parent_id = (
+            str(metadata.get("parent_id") or metadata.get("parentId") or "")
+            if isinstance(metadata, dict)
+            else ""
+        )
+        if (
+            not isinstance(metadata, dict)
+            or str(metadata.get("id") or "") != cluster_id
+            or str(metadata.get("name") or "") != cluster_name
+            or parent_id != project_id
+        ):
+            return None, "exact Managed Kubernetes ownership evidence is ambiguous"
+        return True, ""
+    return (
+        None,
+        "exact Managed Kubernetes identity was not resolved before the configured "
+        f"deadline: {last_error}",
+    )
+
+
 def _cleanup_owned_provider_ids(
     *,
     nebius_bin: str,
@@ -1946,6 +2109,7 @@ def _cleanup_owned_provider_ids(
     service: tuple[str, ...],
     description: str,
     on_status: Callable[[str], None] | None,
+    deadline: float,
 ) -> list[str]:
     """Delete only persisted exact IDs and prove each one is absent."""
 
@@ -2018,34 +2182,154 @@ def _cleanup_owned_provider_ids(
             if deleted.returncode != 0 and not _is_not_found_result(deleted):
                 errors.append(f"owned {description} {resource_id} delete failed")
                 continue
+        absence_error = _wait_for_provider_id_absence(
+            command=[
+                nebius_bin,
+                *service,
+                "get",
+                "--id",
+                resource_id,
+                "--format",
+                "json",
+            ],
+            env=env,
+            description=f"owned {description} {resource_id}",
+            deadline=deadline,
+        )
+        if absence_error:
+            errors.append(absence_error)
+    return errors
+
+
+def _reconcile_recreated_auxiliary_resources(
+    *,
+    nebius_bin: str,
+    project_id: str,
+    cluster_name: str,
+    env: dict[str, str],
+    records: list[dict[str, str]],
+    deadline: float,
+    on_status: Callable[[str], None] | None,
+) -> list[str]:
+    """Delete uniquely proven same-name replacements created by CCM teardown races."""
+
+    if not records:
+        return []
+    if not cluster_name:
+        return [
+            "persisted cluster name is missing; recreated auxiliary ownership "
+            "cannot be proven"
+        ]
+    services = {
+        "filesystem": ("compute", "filesystem"),
+        "allocation": ("vpc", "allocation"),
+    }
+    errors: list[str] = []
+    for kind in ("filesystem", "allocation"):
+        expected = [record for record in records if record.get("kind") == kind]
+        if not expected:
+            continue
+        service = services[kind]
+        listed = _run_capture(
+            [
+                nebius_bin,
+                *service,
+                "list",
+                "--parent-id",
+                project_id,
+                "--format",
+                "json",
+            ],
+            env=env,
+            check=False,
+            timeout=120,
+        )
+        if listed.returncode != 0 or not listed.stdout.strip():
+            errors.append(f"{kind} name reconciliation inventory could not be read")
+            continue
         try:
-            verified = _run_capture(
-                [
-                    nebius_bin,
-                    *service,
-                    "get",
-                    "--id",
-                    resource_id,
-                    "--format",
-                    "json",
-                ],
+            payload = json.loads(listed.stdout)
+        except json.JSONDecodeError:
+            errors.append(f"{kind} name reconciliation inventory returned invalid JSON")
+            continue
+        items = payload.get("items") if isinstance(payload, dict) else None
+        if not isinstance(items, list):
+            errors.append(
+                f"{kind} name reconciliation inventory has no valid items list"
+            )
+            continue
+        for record in expected:
+            expected_type = next(
+                (
+                    provider_type
+                    for provider_type, mapped_kind in _OWNED_AUXILIARY_RESOURCE_TYPES.items()
+                    if mapped_kind == kind
+                ),
+                "",
+            )
+            if record.get("provider_type") != expected_type:
+                errors.append(f"persisted {kind} provider type is invalid")
+                continue
+            exact_name = str(record.get("name") or "")
+            # The exact Terraform-derived name must remain tied to this cluster;
+            # never infer ownership from a prefix-only match.
+            if not exact_name or cluster_name not in exact_name:
+                errors.append(f"persisted {kind} exact name is not tied to the cluster")
+                continue
+            matches = []
+            malformed = False
+            for item in items:
+                metadata = item.get("metadata") if isinstance(item, dict) else None
+                if not isinstance(metadata, dict):
+                    malformed = True
+                    continue
+                if str(metadata.get("name") or "") != exact_name:
+                    continue
+                candidate_id = str(metadata.get("id") or "")
+                candidate_parent = str(
+                    metadata.get("parent_id") or metadata.get("parentId") or ""
+                )
+                if not candidate_id or candidate_parent != project_id:
+                    malformed = True
+                    continue
+                matches.append(candidate_id)
+            if malformed:
+                errors.append(
+                    f"{kind} exact-name ownership evidence is malformed or cross-project"
+                )
+                continue
+            if len(matches) > 1:
+                errors.append(f"{kind} exact-name ownership evidence is ambiguous")
+                continue
+            if not matches:
+                continue
+            replacement_id = matches[0]
+            _log(on_status, f"deleting recreated owned {kind} {replacement_id}")
+            deleted = _run_capture(
+                [nebius_bin, *service, "delete", "--id", replacement_id],
                 env=env,
                 check=False,
                 timeout=120,
             )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            errors.append(
-                f"owned {description} {resource_id} absence check failed: "
-                f"{type(exc).__name__}"
+            if deleted.returncode != 0 and not _is_not_found_result(deleted):
+                errors.append(f"recreated owned {kind} delete failed")
+                continue
+            absence_error = _wait_for_provider_id_absence(
+                command=[
+                    nebius_bin,
+                    *service,
+                    "get",
+                    "--id",
+                    replacement_id,
+                    "--format",
+                    "json",
+                ],
+                env=env,
+                description=f"recreated owned {kind} {replacement_id}",
+                deadline=deadline,
             )
-            continue
-        if not _is_not_found_result(verified):
-            if verified.returncode != 0:
-                errors.append(
-                    f"owned {description} {resource_id} absence check was unreadable"
-                )
-            else:
-                errors.append(f"owned {description} {resource_id} is still present")
+            if absence_error:
+                errors.append(absence_error)
     return errors
 
 
@@ -2850,8 +3134,15 @@ def deploy_cluster(
             o11y_profile=env["TF_VAR_o11y_profile"],
             auth_profile=profile,
             cluster_id=str((_saved or {}).get("cluster_id") or ""),
+            cluster_name=spec.name,
+            provider_cluster_name=str(
+                (_saved or {}).get("provider_cluster_name") or ""
+            ),
             owned_filesystem_ids=list((_saved or {}).get("owned_filesystem_ids") or []),
             owned_allocation_ids=list((_saved or {}).get("owned_allocation_ids") or []),
+            owned_auxiliary_resources=list(
+                (_saved or {}).get("owned_auxiliary_resources") or []
+            ),
         )
         sidecar_persisted = True
 
@@ -2897,6 +3188,14 @@ def deploy_cluster(
             )
         cluster_id = _terraform_cluster_id(terraform_bin, install_dir, env)
         if cluster_id:
+            provider_cluster_name = _terraform_cluster_name(
+                terraform_bin, install_dir, env
+            )
+            if not provider_cluster_name:
+                raise RuntimeError(
+                    "phase-1 Terraform state has no exact Managed Kubernetes "
+                    "provider name; durable ownership was not promoted"
+                )
             _write_env_sidecar(
                 install_dir,
                 region=region,
@@ -2906,11 +3205,16 @@ def deploy_cluster(
                 o11y_profile=env["TF_VAR_o11y_profile"],
                 auth_profile=profile,
                 cluster_id=cluster_id,
+                cluster_name=spec.name,
+                provider_cluster_name=provider_cluster_name,
                 owned_filesystem_ids=list(
                     (_saved or {}).get("owned_filesystem_ids") or []
                 ),
                 owned_allocation_ids=list(
                     (_saved or {}).get("owned_allocation_ids") or []
+                ),
+                owned_auxiliary_resources=list(
+                    (_saved or {}).get("owned_auxiliary_resources") or []
                 ),
             )
             _log(on_status, "refreshing kube admin credentials")
@@ -2979,8 +3283,20 @@ def deploy_cluster(
     # exact auxiliary ID and atomically promote the sidecar before any success
     # result or post-deploy validation can be returned.
     cluster_id = _require_applied_cluster_id(terraform_bin, install_dir, env)
-    owned_filesystem_ids, owned_allocation_ids = _terraform_owned_auxiliary_ids(
+    provider_cluster_name = _terraform_cluster_name(terraform_bin, install_dir, env)
+    if not provider_cluster_name:
+        raise RuntimeError(
+            "applied Terraform state has no exact Managed Kubernetes provider name; "
+            "refusing to overwrite durable ownership or report success"
+        )
+    owned_auxiliary_resources = _terraform_owned_auxiliary_resources(
         terraform_bin, install_dir, env
+    )
+    owned_filesystem_ids = sorted(
+        item["id"] for item in owned_auxiliary_resources if item["kind"] == "filesystem"
+    )
+    owned_allocation_ids = sorted(
+        item["id"] for item in owned_auxiliary_resources if item["kind"] == "allocation"
     )
     _write_env_sidecar(
         install_dir,
@@ -2991,8 +3307,11 @@ def deploy_cluster(
         o11y_profile=env["TF_VAR_o11y_profile"],
         auth_profile=profile,
         cluster_id=cluster_id,
+        cluster_name=spec.name,
+        provider_cluster_name=provider_cluster_name,
         owned_filesystem_ids=owned_filesystem_ids,
         owned_allocation_ids=owned_allocation_ids,
+        owned_auxiliary_resources=owned_auxiliary_resources,
     )
 
     result: dict[str, Any] = {
@@ -3156,7 +3475,13 @@ def destroy_cluster(
     _log(on_status, f"terraform destroy: {name}")
     _run_stream([terraform_bin, "init"], cwd=install_dir, env=env, timeout=900)
     terraform_cluster_id = _terraform_cluster_id(terraform_bin, install_dir, env)
+    terraform_provider_cluster_name = _terraform_cluster_name(
+        terraform_bin, install_dir, env
+    )
     persisted_cluster_id = str((saved or {}).get("cluster_id") or "")
+    persisted_provider_cluster_name = str(
+        (saved or {}).get("provider_cluster_name") or ""
+    )
     if (
         terraform_cluster_id
         and persisted_cluster_id
@@ -3166,6 +3491,18 @@ def destroy_cluster(
             "persisted Soperator cluster identity conflicts with Terraform state; refusing destroy"
         )
     cluster_id = persisted_cluster_id or terraform_cluster_id
+    if (
+        terraform_provider_cluster_name
+        and persisted_provider_cluster_name
+        and terraform_provider_cluster_name != persisted_provider_cluster_name
+    ):
+        raise ValueError(
+            "persisted Soperator provider cluster name conflicts with Terraform "
+            "state; refusing destroy"
+        )
+    provider_cluster_name = (
+        persisted_provider_cluster_name or terraform_provider_cluster_name
+    )
     project_id = str(
         (saved or {}).get("project_id") or env.get("TF_VAR_iam_project_id") or ""
     )
@@ -3223,37 +3560,23 @@ def destroy_cluster(
 
     # Ensure the mk8s cluster is actually gone (cascades node groups + instances).
     if cluster_id:
-        still = _run_capture(
-            [
-                nebius_bin,
-                "mk8s",
-                "cluster",
-                "get",
-                "--id",
-                cluster_id,
-                "--format",
-                "json",
-            ],
+        deadline = time.monotonic() + timeout_minutes * 60
+        still_present, presence_error = _resolve_exact_cluster_presence(
+            nebius_bin=nebius_bin,
+            cluster_id=cluster_id,
+            cluster_name=provider_cluster_name,
+            project_id=project_id,
             env=env,
-            check=False,
+            deadline=deadline,
         )
-        if still.returncode != 0 and not _is_not_found_result(still):
+        if still_present is None:
             return {
                 "name": name,
                 "status": "destroy-incomplete",
                 "install_dir": str(install_dir),
-                "errors": ["exact Managed Kubernetes identity could not be verified"],
+                "errors": [presence_error],
             }
-        if still.returncode == 0 and not still.stdout.strip():
-            return {
-                "name": name,
-                "status": "destroy-incomplete",
-                "install_dir": str(install_dir),
-                "errors": [
-                    "exact Managed Kubernetes identity returned empty provider evidence"
-                ],
-            }
-        if still.returncode == 0 and still.stdout.strip():
+        if still_present:
             _log(on_status, f"deleting mk8s cluster {cluster_id} directly")
             deleted = _run_capture(
                 [nebius_bin, "mk8s", "cluster", "delete", "--id", cluster_id],
@@ -3274,42 +3597,55 @@ def destroy_cluster(
             # allocation while the CCM is alive it will re-create a same-named orphan
             # that isn't in terraform state, and the next deploy fails with
             # "Allocation ... already exists" (AlreadyExists). Poll get until gone.
-            deadline = time.monotonic() + timeout_minutes * 60
             confirmed_absent = False
+            last_absence_error = ""
             while time.monotonic() < deadline:
-                gone = _run_capture(
-                    [
-                        nebius_bin,
-                        "mk8s",
-                        "cluster",
-                        "get",
-                        "--id",
-                        cluster_id,
-                        "--format",
-                        "json",
-                    ],
-                    env=env,
-                    check=False,
-                )
+                try:
+                    gone = _run_capture(
+                        [
+                            nebius_bin,
+                            "mk8s",
+                            "cluster",
+                            "get",
+                            "--id",
+                            cluster_id,
+                            "--format",
+                            "json",
+                        ],
+                        env=env,
+                        check=False,
+                    )
+                except (OSError, subprocess.TimeoutExpired) as exc:
+                    last_absence_error = type(exc).__name__
+                    time.sleep(2)
+                    continue
                 if _is_not_found_result(gone):
                     confirmed_absent = True
                     break
                 if gone.returncode != 0 or not gone.stdout.strip():
-                    return {
-                        "name": name,
-                        "status": "destroy-incomplete",
-                        "install_dir": str(install_dir),
-                        "errors": [
-                            "exact Managed Kubernetes absence check was unreadable"
-                        ],
-                    }
-                time.sleep(15)
+                    if _provider_read_terminal(gone):
+                        return {
+                            "name": name,
+                            "status": "destroy-incomplete",
+                            "install_dir": str(install_dir),
+                            "errors": [
+                                "exact Managed Kubernetes absence check failed terminally"
+                            ],
+                        }
+                    last_absence_error = "transient or unreadable provider response"
+                    time.sleep(2)
+                    continue
+                last_absence_error = "cluster is still present"
+                time.sleep(2)
             if not confirmed_absent:
                 return {
                     "name": name,
                     "status": "destroy-incomplete",
                     "install_dir": str(install_dir),
-                    "errors": ["exact Managed Kubernetes absence was not confirmed"],
+                    "errors": [
+                        "exact Managed Kubernetes absence was not confirmed before "
+                        f"the configured deadline: {last_absence_error}"
+                    ],
                 }
 
     # A direct exact-ID cluster delete cannot prove that Terraform-owned
@@ -3337,6 +3673,7 @@ def destroy_cluster(
         str(value) for value in (saved or {}).get("owned_allocation_ids", []) if value
     }
     auxiliary_errors: list[str] = []
+    auxiliary_deadline = time.monotonic() + timeout_minutes * 60
     if not project_id and (owned_filesystem_ids or owned_allocation_ids):
         auxiliary_errors.append(
             "persisted project identity is missing; exact auxiliary absence cannot be verified"
@@ -3351,6 +3688,7 @@ def destroy_cluster(
                 service=("compute", "filesystem"),
                 description="filesystem",
                 on_status=on_status,
+                deadline=auxiliary_deadline,
             )
         )
         auxiliary_errors.extend(
@@ -3362,8 +3700,24 @@ def destroy_cluster(
                 service=("vpc", "allocation"),
                 description="VPC allocation",
                 on_status=on_status,
+                deadline=auxiliary_deadline,
             )
         )
+        raw_records = (saved or {}).get("owned_auxiliary_resources") or []
+        if raw_records and not all(isinstance(item, dict) for item in raw_records):
+            auxiliary_errors.append("persisted typed auxiliary ownership is malformed")
+        else:
+            auxiliary_errors.extend(
+                _reconcile_recreated_auxiliary_resources(
+                    nebius_bin=nebius_bin,
+                    project_id=project_id,
+                    cluster_name=str((saved or {}).get("cluster_name") or name),
+                    env=env,
+                    records=[dict(item) for item in raw_records],
+                    deadline=auxiliary_deadline,
+                    on_status=on_status,
+                )
+            )
     if auxiliary_errors:
         return {
             "name": name,
