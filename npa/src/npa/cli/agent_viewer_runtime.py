@@ -138,7 +138,10 @@ def _stage_label(stage_key: str) -> str:
     key = str(stage_key or "").strip()
     if key in _STAGE_LABELS:
         return _STAGE_LABELS[key]
-    cleaned = key.replace("_", " ").replace("/", " / ").replace("-", " ").strip() or "Artifacts"
+    cleaned = (
+        key.replace("_", " ").replace("/", " / ").replace("-", " ").strip()
+        or "Artifacts"
+    )
     return cleaned[:1].upper() + cleaned[1:]
 
 
@@ -269,7 +272,9 @@ def _apply_loaded_artifact(
     clear_cross_run_mcap_state(sim_viz, run_id)
     camera = str(sim_viz.get("camera") or "workspace")
     contract = artifact_contract if isinstance(artifact_contract, dict) else {}
-    contract_matches = contract.get("matches") if isinstance(contract.get("matches"), dict) else {}
+    contract_matches = (
+        contract.get("matches") if isinstance(contract.get("matches"), dict) else {}
+    )
     learning_paths = {
         str(path)
         for semantic in ("rrd", "mcap")
@@ -283,7 +288,8 @@ def _apply_loaded_artifact(
     # guards that exact expression as source text.
     if (
         render == "rerun"
-        and _is_sim2real_pipeline_recording(key) and not _is_data_factory_recording(key)
+        and _is_sim2real_pipeline_recording(key)
+        and not _is_data_factory_recording(key)
         and not is_neural_reconstruction_recording(key)
     ):
         camera = _sim2real_pipeline_camera_label(camera)
@@ -301,7 +307,9 @@ def _apply_loaded_artifact(
             camera = _sim2real_pipeline_camera_label(requested_camera)
         elif is_learning:
             if requested_camera != contract_camera:
-                raise ValueError("requested camera differs from validated GR00T provenance")
+                raise ValueError(
+                    "requested camera differs from validated GR00T provenance"
+                )
             camera = contract_camera
         elif is_groot_training_recording(key):
             camera = GROOT_TRAINING_CAMERA_LABEL
@@ -323,7 +331,9 @@ def _apply_loaded_artifact(
             "camera": camera,
             "artifact_contract": contract if is_learning else {},
             "artifact_contract_authoritative": bool(is_learning),
-            "evaluation_kind": str(contract.get("evaluation_kind") or "") if is_learning else "",
+            "evaluation_kind": str(contract.get("evaluation_kind") or "")
+            if is_learning
+            else "",
             "closed_loop": bool(contract.get("closed_loop")) if is_learning else False,
             "bucket": str(resource_bucket or "").strip(),
             "project_id": str(project_id or "").strip(),
@@ -341,7 +351,9 @@ def _apply_loaded_artifact(
             rrd_tmp = RRD_PATH.with_suffix(".rrd.tmp")
             shutil.copy2(local_path, rrd_tmp)
             rrd_tmp.replace(RRD_PATH)
-        sim_viz["served_recording_sha256"] = hashlib.sha256(RECORDING_PATH.read_bytes()).hexdigest()
+        sim_viz["served_recording_sha256"] = hashlib.sha256(
+            RECORDING_PATH.read_bytes()
+        ).hexdigest()
         restarted = _restart_rerun_serve(force=True)
         rerun_ready = _wait_rerun_web_viewer_healthy() if restarted else False
         sim_viz["rrd_uri"] = f"file://{RECORDING_PATH}"
@@ -449,7 +461,9 @@ def _apply_loaded_artifact(
                 )
         else:
             sim_viz["lichtblick_ready"] = False
-            sim_viz["artifact_preview_url"] = published or _copy_artifact_preview(local_path, key)
+            sim_viz["artifact_preview_url"] = published or _copy_artifact_preview(
+                local_path, key
+            )
             sim_viz["artifact_download_url"] = sim_viz["artifact_preview_url"]
             sim_viz["visualization_note"] = (
                 f"Recording loaded ({Path(key).suffix.lower() or 'unknown'}). Foxglove-family "
