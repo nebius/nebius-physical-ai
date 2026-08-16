@@ -410,6 +410,9 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
             runId: String(run.run_id),
             runRef: String(run.run_ref),
             artifactKey: String(run.artifact.key),
+            projectId: String(run.project_id),
+            resourceBucket: String(run.bucket),
+            resolvedPrefix: String(run.resolved_prefix),
           },
           { log: false, timeout: 600000 },
         ).then((result) => {
@@ -424,7 +427,12 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
             oneAbsoluteHttpsMcap: true,
             encodedExactlyOnce: true,
             layoutIdPresent: true,
+            exactTransportCacheReused: true,
+            exportRequestCount: 2,
           });
+          expect(result.officialContract.serverTimingsMs.total).to.be.lessThan(
+            PRE_FIX_WARM_EXPORT_MS * 0.5,
+          );
           expect(result.officialContract.responseStatus).to.be.within(200, 399);
           expect(result.hostedSurface.finalOrigin).to.eq("https://app.foxglove.dev");
           expect(result.hostedSurface.pixels.nonblank).to.eq(true);

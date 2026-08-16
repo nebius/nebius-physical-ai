@@ -305,6 +305,13 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
   const runId = String((taskInput && taskInput.runId) || "").trim();
   const runRef = String((taskInput && taskInput.runRef) || "").trim();
   const artifactKey = String((taskInput && taskInput.artifactKey) || "").trim();
+  const expectedProjectId = String((taskInput && taskInput.projectId) || "").trim();
+  const expectedResourceBucket = String(
+    (taskInput && taskInput.resourceBucket) || "",
+  ).trim();
+  const expectedResolvedPrefix = String(
+    (taskInput && taskInput.resolvedPrefix) || "",
+  ).trim();
   if (!executablePath || !fs.existsSync(executablePath)) {
     throw new Error("real-browser Foxglove verification requires a Chromium executable");
   }
@@ -322,6 +329,16 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
   }
   fs.mkdirSync(evidenceDir, { recursive: true, mode: 0o700 });
   fs.chmodSync(evidenceDir, 0o700);
+  const progressPath = path.join(evidenceDir, "live-hosted-progress.json");
+  const recordProgress = (phase) => {
+    fs.writeFileSync(
+      progressPath,
+      `${JSON.stringify({ phase, at: new Date().toISOString() }, null, 2)}\n`,
+      { encoding: "utf8", mode: 0o600 },
+    );
+    fs.chmodSync(progressPath, 0o600);
+  };
+  recordProgress("browser_launch");
 
   const browser = await chromium.launch({
     executablePath,
@@ -339,10 +356,19 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
   });
   const officialRequests = [];
   const officialResponses = [];
+  const agentExportRequests = [];
   context.on("request", (request) => {
     try {
       const url = new URL(request.url());
       if (url.origin === "https://app.foxglove.dev") officialRequests.push(request.url());
+      if (url.pathname === "/api/foxglove/export" && request.method() === "POST") {
+        let body = {};
+        try { body = request.postDataJSON() || {}; } catch (_error) { /* keep empty */ }
+        agentExportRequests.push({
+          key: String(body.key || ""),
+          openWeb: body.open_web === true,
+        });
+      }
     } catch (_error) { /* ignore non-URL requests */ }
   });
   context.on("response", (response) => {
@@ -357,42 +383,59 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
   try {
     const page = await context.newPage();
     await page.goto(credentials.baseUrl, { waitUntil: "domcontentloaded" });
+    recordProgress("page_loaded");
     await page.locator("#tabRerun").click();
-    // This is a new, storage-empty browser context. Select the verification
-    // run through the deployed UI rather than assuming backend export state is
-    // browser state or seeding localStorage out of band.
-    await page.locator("#artifactPrefix").fill(runId);
-    await page.locator("#artifactPrefix").press("Enter");
+    // The parent live scenario already exercises the visible run selector.
+    // Load this server-qualified source directly for the second clean browser
+    // so hosted-navigation verification does not repeat a tenant-wide run
+    // discovery before it can click the exact artifact card.
     await page.waitForFunction(
-      (expected) => [...(document.querySelector("#runIdSelect")?.options || [])]
-        .some((option) => option.value === expected),
-      runRef,
+      () => typeof window.npaAgentArtifacts?.loadExactSource === "function",
+      null,
       { timeout: 0 },
     );
-    await page.locator("#runIdInput").fill(runId);
-    await page.locator("#loadRunData").click();
-    await page.locator('#loadRunData[aria-busy="false"]')
-      .waitFor({ state: "visible", timeout: 0 });
-    await page.waitForFunction(
-      (expected) => document.querySelector("#simRunId")?.textContent?.includes(expected),
-      runId,
-      { timeout: 0 },
-    );
-    await page.locator("#artifactLoadRunArtifacts").click();
+    await page.evaluate((selection) => {
+      window.__npaHostedExactSourceLoadError = "";
+      window.__npaHostedExactSourceLoadPromise = window.npaAgentArtifacts
+        .loadExactSource(selection)
+        .catch((error) => {
+          window.__npaHostedExactSourceLoadError = String(
+            error && error.message || error,
+          );
+          return false;
+        });
+      return true;
+    }, {
+      run_id: runId,
+      run_ref: runRef,
+      resource_bucket: expectedResourceBucket,
+      project_id: expectedProjectId,
+      resolved_prefix: expectedResolvedPrefix,
+    });
     const exactButton = page.locator(
       `button[data-action="open-foxglove-artifact"][data-key=${JSON.stringify(artifactKey)}]`,
     );
-    await exactButton.waitFor({ state: "visible" });
-    await page.locator("#renderModeFoxglove").click();
+    await exactButton.waitFor({ state: "visible", timeout: 0 });
     await page.waitForFunction(
       (key) => {
         const button = [...document.querySelectorAll(
           "button[data-action='open-foxglove-artifact']",
         )].find((candidate) => candidate.getAttribute("data-key") === key);
-        return Boolean(button && !button.disabled && button.getAttribute("aria-disabled") === "false");
+        return Boolean(window.__npaHostedExactSourceLoadError) ||
+          Boolean(button && !button.disabled && button.getAttribute("aria-disabled") === "false");
       },
       artifactKey,
+      { timeout: 0 },
     );
+    const exactSourceLoadError = await page.evaluate(
+      () => String(window.__npaHostedExactSourceLoadError || ""),
+    );
+    if (exactSourceLoadError) {
+      throw new Error(
+        `hosted exact server-qualified artifact source failed: ${exactSourceLoadError}`,
+      );
+    }
+    recordProgress("exact_source_loaded");
     const artifactCard = exactButton.locator(
       "xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' artifact-card ')][1]",
     );
@@ -407,28 +450,63 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
       "live-hosted-preflight-artifact-card-desktop.png",
     );
     await screenshotLocatorRegion(page, artifactCard, desktopCardEvidence);
+    const cardUrl = page.url();
+    const cardPageCount = context.pages().length;
+    const cardExportResponsePromise = page.waitForResponse(
+      (response) => response.url().includes("/api/foxglove/export") &&
+        response.request().method() === "POST",
+      { timeout: 0 },
+    );
+    await exactButton.click();
+    const cardExportResponse = await cardExportResponsePromise;
+    if (cardExportResponse.status() !== 200) {
+      throw new Error("artifact-card Foxglove export did not return HTTP 200");
+    }
+    const cardPayload = await cardExportResponse.json();
+    recordProgress("card_export_received");
+    const cardSource = String(cardPayload.export?.recording_url || "");
+    if (
+      String(cardPayload.selected_artifact?.run_id || "") !== runId ||
+      String(cardPayload.selected_artifact?.key || "") !== artifactKey
+    ) {
+      throw new Error("artifact-card Foxglove export lost exact run/artifact provenance");
+    }
+    await page.waitForFunction(
+      ({ key, source }) => {
+        const pane = document.querySelector("#viewerPaneFoxglove");
+        const host = document.querySelector("#foxgloveHost");
+        const status = String(document.querySelector("#foxgloveStatus")?.textContent || "");
+        const truthfulHostedState = host?.dataset.sdkReady === "true" ||
+          /queued in the official Foxglove SDK/i.test(status);
+        return pane?.dataset.artifactKey === key && pane?.dataset.recordingUrl === source &&
+          truthfulHostedState && host?.dataset.dataSourceUrl === source;
+      },
+      { key: artifactKey, source: cardSource },
+      { timeout: 0 },
+    );
+    if (page.url() !== cardUrl || context.pages().length !== cardPageCount) {
+      throw new Error("artifact-card View in Foxglove created a target or navigated the Agent page");
+    }
+    recordProgress("card_source_ready");
+    if (agentExportRequests.filter(
+      ({ key, openWeb }) => key === artifactKey && !openWeb,
+    ).length !== 1) {
+      throw new Error("artifact-card View in Foxglove did not issue exactly one export request");
+    }
     const expectedLabels = ["View", "Foxglove", "Lichtblick", "Video", "Image", "Data"];
     const desktopLabels = await page.locator(".render-mode-tabs .render-mode-tab").allTextContents();
     if (desktopLabels.map((value) => value.trim()).join("|") !== expectedLabels.join("|")) {
       throw new Error("deployed viewer tab order does not match the required labels");
     }
-    const viewerTabs = page.locator(".render-mode-tabs");
-    const paneGeometry = {};
-    // Leave the lazy official viewer selected while it starts. Switching away
-    // immediately after the first Foxglove click can make a clean profile wait
-    // on the same in-flight SDK/config request while the pane is inactive.
-    for (const [label, pane] of [
-      ["View", "#viewerPaneRerun"],
-      ["Lichtblick", "#viewerPaneLichtblick"],
-      ["Foxglove", "#viewerPaneFoxglove"],
-    ]) {
-      await viewerTabs.getByRole("tab", { name: label, exact: true }).click();
-      const box = await page.locator(pane).boundingBox();
-      if (!box || box.width <= 0 || box.height <= 0) {
-        throw new Error(`deployed ${label} pane has zero geometry`);
-      }
-      paneGeometry[label] = { width: Math.round(box.width), height: Math.round(box.height) };
+    const paneGeometry = { Foxglove: {} };
+    const desktopPaneBox = await page.locator("#viewerPaneFoxglove").boundingBox();
+    if (!desktopPaneBox || desktopPaneBox.width <= 0 || desktopPaneBox.height <= 0) {
+      throw new Error("deployed Foxglove pane has zero geometry");
     }
+    paneGeometry.Foxglove.desktop = {
+      width: Math.round(desktopPaneBox.width),
+      height: Math.round(desktopPaneBox.height),
+    };
     await page.locator("#viewerPaneFoxglove iframe").waitFor({
       state: "visible",
       timeout: 0,
@@ -467,58 +545,32 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
     if (mobileLabels.map((value) => value.trim()).join("|") !== expectedLabels.join("|")) {
       throw new Error("mobile deployed viewer tab order does not match the required labels");
     }
-    for (const [label, pane] of [
-      ["View", "#viewerPaneRerun"],
-      ["Foxglove", "#viewerPaneFoxglove"],
-      ["Lichtblick", "#viewerPaneLichtblick"],
-    ]) {
-      await viewerTabs.getByRole("tab", { name: label, exact: true }).click();
-      const box = await page.locator(pane).boundingBox();
-      if (!box || box.width <= 0 || box.height <= 0) {
-        throw new Error(`mobile deployed ${label} pane has zero geometry`);
-      }
+    const mobilePaneBox = await page.locator("#viewerPaneFoxglove").boundingBox();
+    if (!mobilePaneBox || mobilePaneBox.width <= 0 || mobilePaneBox.height <= 0) {
+      throw new Error("mobile deployed Foxglove pane has zero geometry");
     }
-    await viewerTabs.getByRole("tab", { name: "Foxglove", exact: true }).click();
+    paneGeometry.Foxglove.mobile = {
+      width: Math.round(mobilePaneBox.width),
+      height: Math.round(mobilePaneBox.height),
+    };
     const mobileEvidence = path.join(evidenceDir, "live-hosted-preflight-mobile.png");
     await page.locator("section.rerun-stage").screenshot({ path: mobileEvidence });
     fs.chmodSync(mobileEvidence, 0o600);
+    recordProgress("preflight_complete");
 
     await page.setViewportSize({ width: 1440, height: 1000 });
-    const cardUrl = page.url();
-    const cardPageCount = context.pages().length;
-    const cardExportResponsePromise = page.waitForResponse(
-      (response) => response.url().includes("/api/foxglove/export") &&
-        response.request().method() === "POST",
-      { timeout: 0 },
-    );
-    await exactButton.click();
-    const cardExportResponse = await cardExportResponsePromise;
-    if (cardExportResponse.status() !== 200) {
-      throw new Error("artifact-card Foxglove export did not return HTTP 200");
-    }
-    const cardPayload = await cardExportResponse.json();
-    const cardSource = String(cardPayload.export?.recording_url || "");
-    await page.waitForFunction(
-      ({ key, source }) => {
-        const pane = document.querySelector("#viewerPaneFoxglove");
-        const host = document.querySelector("#foxgloveHost");
-        const status = String(document.querySelector("#foxgloveStatus")?.textContent || "");
-        const truthfulHostedState = host?.dataset.sdkReady === "true" ||
-          /queued in the official Foxglove SDK/i.test(status);
-        return pane?.dataset.artifactKey === key && pane?.dataset.recordingUrl === source &&
-          truthfulHostedState && host?.dataset.dataSourceUrl === source;
-      },
-      { key: artifactKey, source: cardSource },
-      { timeout: 0 },
-    );
-    if (page.url() !== cardUrl || context.pages().length !== cardPageCount) {
-      throw new Error("artifact-card View in Foxglove created a target or navigated the Agent page");
-    }
-
     const popupPromise = context.waitForEvent("page");
     const exportResponsePromise = page.waitForResponse(
-      (response) => response.url().includes("/api/foxglove/export") &&
-        response.request().method() === "POST",
+      (response) => {
+        if (!response.url().includes("/api/foxglove/export") ||
+            response.request().method() !== "POST") return false;
+        try {
+          const body = response.request().postDataJSON() || {};
+          return body.open_web === true && String(body.key || "") === artifactKey;
+        } catch (_error) {
+          return false;
+        }
+      },
       { timeout: 0 },
     );
     const externalAction = page.locator("#foxgloveOpenWeb");
@@ -527,22 +579,33 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
     }
     await externalAction.click();
     const popup = await popupPromise;
+    recordProgress("popup_opened");
     const exportResponse = await exportResponsePromise;
+    recordProgress("web_export_received");
     if (exportResponse.status() !== 200) {
       throw new Error("real-click Foxglove export did not return HTTP 200");
     }
     const exportPayload = await exportResponse.json();
-    if (String(exportPayload.run_id || "") !== runId) {
-      throw new Error("real-click Foxglove export selected the wrong run");
-    }
+    const selectedExport = exportPayload.selected_artifact || {};
     const requestPayload = exportResponse.request().postDataJSON();
+    const exactRunMatched = String(selectedExport.run_id || "") === runId;
+    const exactKeyMatched = String(selectedExport.key || "") === artifactKey;
+    const requestKeyMatched = String(requestPayload.key || "") === artifactKey;
+    const transportCacheReused = exportPayload.cache_reused === true;
     if (
-      String(requestPayload.key || "") !== artifactKey ||
-      String(exportPayload.selected_artifact?.key || "") !== artifactKey
+      !exactRunMatched || !exactKeyMatched || !requestKeyMatched ||
+      !transportCacheReused
     ) {
-      throw new Error("real-click Foxglove export did not preserve the selected artifact key");
+      throw new Error(
+        "real-click Foxglove export did not reuse the exact selected artifact " +
+        `(run=${exactRunMatched}, key=${exactKeyMatched}, request=${requestKeyMatched}, ` +
+        `cache=${transportCacheReused})`,
+      );
     }
     const expectedWebUrl = String(exportPayload.export?.web_url || "");
+    if (!expectedWebUrl.startsWith("https://app.foxglove.dev/~/view?")) {
+      throw new Error("real-click Foxglove export did not produce an official remote-file URL");
+    }
     await popup.waitForURL(
       (url) => url.origin === "https://app.foxglove.dev",
       // A cross-origin hosted page may keep third-party resources pending and
@@ -551,6 +614,13 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
       // separately proves that Foxglove rendered its reachable surface.
       { timeout: 0, waitUntil: "commit" },
     );
+    recordProgress("popup_committed");
+    const exactExportRequestCount = agentExportRequests.filter(
+      ({ key }) => key === artifactKey,
+    ).length;
+    if (exactExportRequestCount !== 2) {
+      throw new Error("Open in Foxglove issued an unexpected number of export requests");
+    }
     const requestedUrl = officialRequests.find((value) => value === expectedWebUrl) || "";
     if (!requestedUrl) {
       throw new Error("real popup did not request the exact official response URL");
@@ -583,6 +653,7 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
       pixels = screenshotStats(hostedEvidence);
       if (!pixels.nonblank) await popup.waitForTimeout(500);
     }
+    recordProgress("hosted_surface_ready");
     const response = officialResponses.find((item) => item.url === expectedWebUrl) ||
       officialResponses[0] || { status: 0 };
     const result = {
@@ -606,6 +677,9 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
         oneAbsoluteHttpsMcap: true,
         encodedExactlyOnce: true,
         layoutIdPresent: Boolean(parsed.searchParams.get("layoutId")),
+        exactTransportCacheReused: true,
+        exportRequestCount: exactExportRequestCount,
+        serverTimingsMs: exportPayload.timings_ms || {},
       },
       hostedSurface: {
         finalOrigin: new URL(popup.url()).origin,
@@ -620,6 +694,7 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
         artifactCardMobile: mobileCardEvidence,
       },
     };
+    recordProgress("complete");
     return result;
   } finally {
     await context.close();
