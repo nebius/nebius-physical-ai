@@ -8,6 +8,7 @@ import importlib.util
 import io
 import json
 import os
+import subprocess
 import sys
 import tarfile
 import threading
@@ -28,7 +29,6 @@ from npa.agent_backend.leisaac_transport import AsyncLatestByKey, unpack_frame
 from npa.workbench.leisaac import (
     GPU_PRODUCT,
     MEDIA_PORT,
-    SIGNAL_PORT,
     TURN_PORT,
     TURN_RELAY_PORT,
     TURN_RELAY_MAX_PORT,
@@ -37,7 +37,6 @@ from npa.workbench.leisaac import (
     deployment_manifest,
     relay_service_manifest,
     relay_client_secret_manifest,
-    service_manifests,
     session_manifest,
 )
 
@@ -311,24 +310,6 @@ def test_runtime_datachannel_source_coalesces_stale_causal_frames() -> None:
     asyncio.run(verify())
 
 
-def test_service_manifests_source_restrict_tcp_and_udp_media() -> None:
-    tcp, media = service_manifests(
-        run_id="live-1", namespace="default", source_ranges=["8.8.8.8/32"]
-    )
-    assert tcp["spec"]["loadBalancerSourceRanges"] == ["8.8.8.8/32"]
-    assert {port["port"] for port in tcp["spec"]["ports"]} == {8080, SIGNAL_PORT}
-    assert all(port["protocol"] == "TCP" for port in tcp["spec"]["ports"])
-    assert media["spec"]["loadBalancerSourceRanges"] == ["8.8.8.8/32"]
-    assert media["spec"]["ports"] == [
-        {
-            "name": "media",
-            "protocol": "UDP",
-            "port": MEDIA_PORT,
-            "targetPort": MEDIA_PORT,
-        }
-    ]
-
-
 def test_deployment_is_real_rt_core_leisaac_and_operator_eula_runtime_config() -> None:
     deployment = deployment_manifest(
         run_id="live-1",
@@ -553,8 +534,9 @@ def test_manifest_records_exact_real_component_and_provenance() -> None:
     manifest = session_manifest(
         run_id="live-1",
         image=IMAGE,
-        signal_host="8.8.8.8",
+        signal_host="127.0.0.1",
         media_host="1.1.1.1",
+        media_server="10.96.0.5",
         session_nonce=NONCE,
         expires_at=(datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
         output_path=OUTPUT_PATH,
@@ -575,8 +557,9 @@ def test_manifest_has_no_implicit_session_time_limit() -> None:
     manifest = session_manifest(
         run_id="live-unbounded",
         image=IMAGE,
-        signal_host="8.8.8.8",
+        signal_host="127.0.0.1",
         media_host="1.1.1.1",
+        media_server="10.96.0.5",
         session_nonce=NONCE,
         output_path=OUTPUT_PATH,
     )
@@ -597,13 +580,7 @@ def test_image_must_be_digest_pinned(value: str) -> None:
         )
 
 
-def test_private_or_unrestricted_tcp_endpoints_are_rejected() -> None:
-    with pytest.raises(LeIsaacConfigError, match="at least one"):
-        service_manifests(run_id="live-1", namespace="default", source_ranges=[])
-    with pytest.raises(LeIsaacConfigError, match="public"):
-        service_manifests(
-            run_id="live-1", namespace="default", source_ranges=["0.0.0.0/0"]
-        )
+def test_private_media_endpoint_is_rejected() -> None:
     with pytest.raises(LeIsaacConfigError, match="public"):
         deployment_manifest(
             run_id="live-1",
@@ -1021,6 +998,90 @@ def test_recorder_control_reservation_prevents_duplicate_commits(
     assert "reused" in reused["detail"]
 
 
+def _resolve_live_browser_mode(**values: str) -> subprocess.CompletedProcess[str]:
+    environment = {
+        key: value for key, value in os.environ.items()
+        if key not in {
+            "NPA_AGENT_RUN_ID", "NPA_AGENT_CYPRESS_RUN_ID", "NPA_LEISAAC_RUN_ID",
+            "NPA_AGENT_CYPRESS_ARTIFACT_KEY", "NPA_AGENT_TASK",
+            "NPA_AGENT_ENVIRONMENT_ID", "NPA_AGENT_COMPLETED_EPISODES",
+        }
+    }
+    environment.update(values)
+    return subprocess.run(
+        ["bash", str(ROOT / "npa/scripts/run_agent_cypress.sh"), "--resolve-mode"],
+        check=False, capture_output=True, text=True, env=environment,
+    )
+
+
+def test_live_browser_runner_preserves_legacy_exact_rrd_selector() -> None:
+    result = _resolve_live_browser_mode(
+        NPA_AGENT_RUN_ID="legacy-rrd-run",
+        NPA_AGENT_CYPRESS_ARTIFACT_KEY="reports/sim2real.rrd",
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "cy:live-rrd"
+
+
+@pytest.mark.parametrize("selector", ["explicit", "legacy"])
+def test_live_browser_runner_resolves_complete_leisaac_context(selector: str) -> None:
+    run_key = "NPA_LEISAAC_RUN_ID" if selector == "explicit" else "NPA_AGENT_RUN_ID"
+    result = _resolve_live_browser_mode(**{
+        run_key: "leisaac-live-run",
+        "NPA_AGENT_TASK": "LeIsaac-SO101-LiftCube-v0",
+        "NPA_AGENT_ENVIRONMENT_ID": "lift-cube-a",
+        "NPA_AGENT_COMPLETED_EPISODES": "0",
+    })
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "cy:live-leisaac"
+
+
+def test_live_browser_runner_rejects_incomplete_leisaac_context() -> None:
+    result = _resolve_live_browser_mode(
+        NPA_LEISAAC_RUN_ID="leisaac-live-run",
+        NPA_AGENT_TASK="LeIsaac-SO101-LiftCube-v0",
+    )
+    assert result.returncode == 2
+    assert "requires NPA_LEISAAC_RUN_ID" in result.stderr
+
+
+def test_live_browser_runner_rejects_ambiguous_legacy_and_explicit_selectors() -> None:
+    result = _resolve_live_browser_mode(
+        NPA_AGENT_RUN_ID="legacy-run",
+        NPA_LEISAAC_RUN_ID="explicit-run",
+        NPA_AGENT_TASK="LeIsaac-SO101-LiftCube-v0",
+        NPA_AGENT_ENVIRONMENT_ID="lift-cube-a",
+        NPA_AGENT_COMPLETED_EPISODES="0",
+    )
+    assert result.returncode == 2
+    assert "compatibility selector" in result.stderr
+
+
+def test_mock_browser_runner_ignores_ambient_live_context(
+    tmp_path: Path,
+) -> None:
+    executable = tmp_path / "npm"
+    executable.write_text(
+        "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\"\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    environment = dict(os.environ)
+    environment.update(
+        PATH=f"{tmp_path}:{environment.get('PATH', '')}",
+        NPA_AGENT_TASK="LeIsaac-SO101-LiftCube-v0",
+    )
+    result = subprocess.run(
+        ["bash", str(ROOT / "npa/scripts/run_agent_cypress.sh"), "--mock"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "run cy:mock" in result.stdout
+
+
 def test_live_browser_runner_includes_leisaac_journey_and_environment_bridge() -> None:
     package = json.loads(
         (ROOT / "npa/tests/browser/package.json").read_text(encoding="utf-8")
@@ -1029,6 +1090,7 @@ def test_live_browser_runner_includes_leisaac_journey_and_environment_bridge() -
 
     assert "cypress/e2e/agent_leisaac_live.cy.js" in package["scripts"]["cy:live"]
     assert 'LIVE_RUN_ID="${NPA_AGENT_CYPRESS_RUN_ID:-}"' in runner
+    assert 'LIVE_LEISAAC_RUN_ID="${NPA_LEISAAC_RUN_ID:-}"' in runner
     assert 'CYPRESS_NPA_AGENT_CYPRESS_RUN_ID="${LIVE_RUN_ID}"' in runner
     assert 'CYPRESS_NPA_AGENT_RUN_ID="${LIVE_LEISAAC_RUN_ID}"' in runner
     assert 'CYPRESS_NPA_AGENT_TASK="${LIVE_TASK}"' in runner

@@ -195,6 +195,22 @@ def test_network_ensure_ingress_matching_spec_is_noop(mocker) -> None:
     assert _create_calls(calls) == []
 
 
+def test_network_empty_destination_ports_authoritatively_covers_all_ports(mocker) -> None:
+    calls = _mock_nebius(
+        mocker, rules=[_ingress_rule(name="allow-existing-all-ports", ports=[])]
+    )
+    result = runner.invoke(
+        app,
+        [
+            "network", "ensure-ingress", "--vm", "computeinstance-test",
+            "--ports", "443,8787",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "matching spec already covered, no rule changes" in result.output
+    assert _create_calls(calls) == []
+
+
 def test_network_ensure_ingress_same_name_different_spec_warns(mocker) -> None:
     calls = _mock_nebius(
         mocker,
@@ -751,6 +767,33 @@ def test_remove_internal_ports_exposes_partial_progress_on_mid_loop_failure(
     assert failure.value.deleted == ("rule-first",)
     assert isinstance(failure.value.__cause__, NebiusError)
     assert "provider delete failed" in str(failure.value)
+
+
+def test_remove_internal_ports_fails_closed_on_all_port_rule_with_progress(
+    mocker,
+) -> None:
+    from npa.clients import network as network_client
+
+    mocker.patch("npa.clients.network._get_instance", return_value=_instance())
+    mocker.patch(
+        "npa.clients.network._list_security_rules",
+        return_value=[
+            _ingress_rule(
+                rule_id="rule-first", name="allow-npa-agent-8787", ports=[8787]
+            ),
+            _ingress_rule(rule_id="rule-all", name="allow-npa-agent-all", ports=[]),
+        ],
+    )
+    run = mocker.patch("npa.clients.network.nebius._run")
+    with pytest.raises(network_client.NetworkIngressError) as failure:
+        network_client.remove_npa_ingress_for_instance_ports(
+            "computeinstance-test", ports=(8787,)
+        )
+    assert failure.value.deleted == ("rule-first",)
+    assert "exposes internal agent port" in str(failure.value)
+    run.assert_called_once_with(
+        ["vpc", "security-rule", "delete", "--id", "rule-first"]
+    )
 
 
 def test_remove_exact_udp_ingress_preserves_nonmatching_rules(mocker) -> None:

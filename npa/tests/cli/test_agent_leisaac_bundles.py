@@ -275,14 +275,18 @@ def test_bundle_routes_require_same_origin_upload_and_persist_exact_selection() 
         "schema": "npa.leisaac.session.v2",
         "run_id": "bundle-route-run",
         "provider": "nebius-kubernetes",
+        "transport": "agent-relay",
         "task": "LeIsaac-SO101-PickOrange-v0",
         "teleop_device": "keyboard",
-        "signal_host": "8.8.8.8",
+        "signal_host": "127.0.0.1",
         "signal_port": 49100,
         "media_host": "1.1.1.1",
-        "media_server": "1.1.1.1",
+        "media_server": "10.96.0.5",
         "media_port": 47998,
-        "service_url": "http://8.8.8.8:8080",
+        "turn_port": 3478,
+        "turn_relay_port": 47999,
+        "turn_relay_max_port": 48015,
+        "service_url": "http://127.0.0.1:48080",
         "session_nonce": nonce,
         "session_attestation": hashlib.sha256(
             f"npa-leisaac-session:{nonce}".encode()
@@ -385,7 +389,7 @@ def test_bundle_routes_require_same_origin_upload_and_persist_exact_selection() 
         "task": "LeIsaac-SO101-PickOrange-v0",
         "task_registry_fingerprint": REGISTRY_FINGERPRINT,
     }
-    assert posts[-1][0] == "http://8.8.8.8:8080/bundles/apply"
+    assert posts[-1][0] == "http://127.0.0.1:48080/bundles/apply"
     assert posts[-1][1]["json"] == {"selection": {"robot": digest}}
     assert posts[-1][1]["headers"] == {
         "X-NPA-LeIsaac-Nonce": nonce,
@@ -433,14 +437,18 @@ def test_bundle_selection_prunes_state_from_a_previous_dataset_prefix() -> None:
         "schema": "npa.leisaac.session.v2",
         "run_id": "bundle-stale-run",
         "provider": "nebius-kubernetes",
+        "transport": "agent-relay",
         "task": "LeIsaac-SO101-PickOrange-v0",
         "teleop_device": "keyboard",
-        "signal_host": "8.8.4.4",
+        "signal_host": "127.0.0.1",
         "signal_port": 49100,
         "media_host": "1.0.0.1",
-        "media_server": "1.0.0.1",
+        "media_server": "10.96.0.6",
         "media_port": 47998,
-        "service_url": "http://8.8.4.4:8080",
+        "turn_port": 3478,
+        "turn_relay_port": 47999,
+        "turn_relay_max_port": 48015,
+        "service_url": "http://127.0.0.1:48080",
         "session_nonce": nonce,
         "session_attestation": hashlib.sha256(
             f"npa-leisaac-session:{nonce}".encode()
@@ -527,14 +535,18 @@ def test_cumulative_bundle_selection_uses_atomic_backend_state_mutation() -> Non
         "schema": "npa.leisaac.session.v2",
         "run_id": "bundle-atomic-run",
         "provider": "nebius-kubernetes",
+        "transport": "agent-relay",
         "task": "LeIsaac-SO101-PickOrange-v0",
         "teleop_device": "keyboard",
-        "signal_host": "8.8.8.8",
+        "signal_host": "127.0.0.1",
         "signal_port": 49100,
         "media_host": "1.0.0.1",
-        "media_server": "1.0.0.1",
+        "media_server": "10.96.0.7",
         "media_port": 47998,
-        "service_url": "http://8.8.8.8:8080",
+        "turn_port": 3478,
+        "turn_relay_port": 47999,
+        "turn_relay_max_port": 48015,
+        "service_url": "http://127.0.0.1:48080",
         "session_nonce": nonce,
         "session_attestation": hashlib.sha256(
             f"npa-leisaac-session:{nonce}".encode()

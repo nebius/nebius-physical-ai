@@ -1932,6 +1932,8 @@ def test_curate_augmented_reports_real_fiftyone_engine(mocker) -> None:
             "s3://bucket/run/cosmos_augmented/",
             "--report-uri",
             "s3://bucket/run/curation/report.json",
+            "--curator-report-uri",
+            "s3://bucket/run/curation/cosmos_curator.json",
             "--require-fiftyone",
             "--output",
             "json",

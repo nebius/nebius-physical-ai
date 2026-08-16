@@ -33,12 +33,17 @@ MEDIA_LISTEN = ("0.0.0.0", 3478)
 # the agent VM, where the NPA source package is intentionally not installed.
 BACKHAUL_LISTEN = ("127.0.0.1", 48081)
 CONTROL_LISTEN = ("127.0.0.1", 48082)
+COMPATIBILITY_PEER_IPV4_FIELD = "0.0.0.0"
 HELLO, OPEN, DATA, CLOSE, UDP, UDP_CLOSE = 1, 2, 3, 4, 5, 6
 HEADER = struct.Struct("!BII")
 MAX_FRAME = 4 * 1024 * 1024
+MAX_BACKHAUL_CONNECTIONS = 16
 MAX_UDP_FLOWS = 64
 UDP_FLOW_TTL_SECONDS = 120.0
 UDP_SOCKET_BUFFER_BYTES = 8 * 1024 * 1024
+DEFAULT_HELLO_TIMEOUT_SECONDS = 5.0
+MIN_HELLO_TIMEOUT_SECONDS = 0.1
+MAX_HELLO_TIMEOUT_SECONDS = 60.0
 RUN_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 
 
@@ -83,6 +88,22 @@ def load_config(path: str | Path) -> dict[str, Any]:
         "expires_at": normalized_expiry,
         "expires_epoch": expires_epoch,
     }
+    try:
+        hello_timeout = float(
+            data.get("hello_timeout_seconds", DEFAULT_HELLO_TIMEOUT_SECONDS)
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("relay HELLO timeout must be numeric") from exc
+    if (
+        not math.isfinite(hello_timeout)
+        or hello_timeout < MIN_HELLO_TIMEOUT_SECONDS
+        or hello_timeout > MAX_HELLO_TIMEOUT_SECONDS
+    ):
+        raise ValueError(
+            "relay HELLO timeout must be between "
+            f"{MIN_HELLO_TIMEOUT_SECONDS} and {MAX_HELLO_TIMEOUT_SECONDS} seconds"
+        )
+    result["hello_timeout_seconds"] = hello_timeout
     media_host = str(data.get("media_target_host") or "").strip()
     media_port = int(data.get("media_target_port") or 0)
     if media_host or media_port:
@@ -134,6 +155,8 @@ class Backhaul:
         expires_epoch: float = float("inf"),
     ):
         self.nonce = nonce.encode("ascii")
+        self.lifecycle_lock = threading.Lock()
+        self.revoked = False
         self.condition = threading.Condition()
         self.connection: socket.socket | None = None
         self.send_lock = threading.Lock()
@@ -149,36 +172,51 @@ class Backhaul:
         self.direct_media: dict[tuple[str, int], tuple[socket.socket, float]] = {}
         self.peer_public_ip = ""
         self.expires_epoch = expires_epoch
+        self.preauth_lock = threading.Lock()
+        self.preauth_connections: set[socket.socket] = set()
 
     def expired(self, *, now: float | None = None) -> bool:
-        return (time.time() if now is None else now) >= self.expires_epoch
+        return self.revoked or (
+            time.time() if now is None else now
+        ) >= self.expires_epoch
 
     def revoke(self) -> None:
         """Close every credential-bound path when the short lease expires."""
 
-        with self.condition:
-            connection = self.connection
-            self.connection = None
-            self.peer_public_ip = ""
-            self.condition.notify_all()
-        if connection is not None:
-            try:
-                connection.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
-            connection.close()
-        with self.stream_lock:
-            streams = list(self.streams.values())
-            self.streams.clear()
-        for stream in streams:
-            try:
-                stream.close()
-            except OSError:
-                pass
-        with self.udp_lock:
-            self.udp_by_address.clear()
-            self.udp_by_stream.clear()
-        self.close_direct_media()
+        with self.lifecycle_lock:
+            self.revoked = True
+            with self.condition:
+                connection = self.connection
+                self.connection = None
+                self.peer_public_ip = ""
+                self.condition.notify_all()
+            if connection is not None:
+                try:
+                    connection.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                connection.close()
+            with self.preauth_lock:
+                preauth_connections = list(self.preauth_connections)
+                self.preauth_connections.clear()
+            for preauth in preauth_connections:
+                try:
+                    preauth.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                preauth.close()
+            with self.stream_lock:
+                streams = list(self.streams.values())
+                self.streams.clear()
+            for stream in streams:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+            with self.udp_lock:
+                self.udp_by_address.clear()
+                self.udp_by_stream.clear()
+            self.close_direct_media()
 
     def attach(self, connection: socket.socket) -> bool:
         if self.expired():
@@ -187,7 +225,8 @@ class Backhaul:
         try:
             hello = json.loads(payload)
             nonce = str(hello.get("nonce") or "").encode("ascii")
-            peer = ipaddress.ip_address(str(hello.get("peer_public_ip") or ""))
+            peer_text = str(hello.get("peer_public_ip") or "")
+            peer = ipaddress.ip_address(peer_text)
         except (AttributeError, UnicodeError, ValueError, json.JSONDecodeError):
             return False
         if (
@@ -195,33 +234,49 @@ class Backhaul:
             or stream_id != 0
             or not hmac.compare_digest(nonce, self.nonce)
             or peer.version != 4
-            or not peer.is_global
+            or (
+                not peer.is_global
+                and peer_text != COMPATIBILITY_PEER_IPV4_FIELD
+            )
         ):
             return False
-        with self.condition:
-            if self.connection is not None:
+        with self.lifecycle_lock:
+            if self.expired():
                 return False
-            self.connection = connection
-            self.peer_public_ip = peer.compressed
-            self.condition.notify_all()
+            with self.condition:
+                if self.connection is not None:
+                    return False
+                self.connection = connection
+                self.peer_public_ip = peer.compressed
+                self.condition.notify_all()
         return True
 
+    def begin_preauth(self, connection: socket.socket) -> None:
+        with self.preauth_lock:
+            self.preauth_connections.add(connection)
+
+    def end_preauth(self, connection: socket.socket) -> None:
+        with self.preauth_lock:
+            self.preauth_connections.discard(connection)
+
     def detach(self, connection: socket.socket) -> None:
-        with self.condition:
-            if self.connection is connection:
+        with self.lifecycle_lock:
+            with self.condition:
+                if self.connection is not connection:
+                    return
                 self.connection = None
                 self.peer_public_ip = ""
-        with self.stream_lock:
-            streams = list(self.streams.values())
-            self.streams.clear()
-        for stream in streams:
-            try:
-                stream.close()
-            except OSError:
-                pass
-        with self.udp_lock:
-            self.udp_by_address.clear()
-            self.udp_by_stream.clear()
+            with self.stream_lock:
+                streams = list(self.streams.values())
+                self.streams.clear()
+            for stream in streams:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+            with self.udp_lock:
+                self.udp_by_address.clear()
+                self.udp_by_stream.clear()
 
     def udp_stream_for(
         self, address: tuple[str, int], *, now: float | None = None
@@ -464,37 +519,71 @@ class _ControlServer(http.server.ThreadingHTTPServer):
         super().__init__(CONTROL_LISTEN, _ControlHandler)
 
 
+def _authenticate_backhaul(
+    backhaul: Backhaul,
+    connection: socket.socket,
+    *,
+    hello_timeout_seconds: float,
+) -> bool:
+    """Authenticate one peer under a deadline, then restore steady-state policy."""
+    steady_state_timeout = connection.gettimeout()
+    backhaul.begin_preauth(connection)
+    try:
+        connection.settimeout(hello_timeout_seconds)
+        authenticated = backhaul.attach(connection)
+        if authenticated:
+            connection.settimeout(steady_state_timeout)
+        return authenticated
+    finally:
+        backhaul.end_preauth(connection)
+
+
 def serve_backhaul(
     backhaul: Backhaul,
     *,
     stop: threading.Event,
+    hello_timeout_seconds: float = DEFAULT_HELLO_TIMEOUT_SECONDS,
 ) -> None:
     listener = socket.socket()
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.bind(BACKHAUL_LISTEN)
     listener.listen(2)
     listener.settimeout(0.5)
+    slots = threading.BoundedSemaphore(MAX_BACKHAUL_CONNECTIONS)
+
+    def serve_connection(raw: socket.socket) -> None:
+        authenticated = False
+        try:
+            authenticated = _authenticate_backhaul(
+                backhaul,
+                raw,
+                hello_timeout_seconds=hello_timeout_seconds,
+            )
+            if not authenticated:
+                return
+            while not stop.is_set():
+                backhaul.handle(*_receive_frame(raw))
+        except (EOFError, OSError, ValueError):
+            pass
+        finally:
+            if authenticated:
+                backhaul.detach(raw)
+            raw.close()
+            slots.release()
+
     try:
         while not stop.is_set():
             try:
                 raw, _address = listener.accept()
             except socket.timeout:
                 continue
-            try:
-                if not backhaul.attach(raw):
-                    raw.close()
-                    continue
-                connection = raw
-                try:
-                    while not stop.is_set():
-                        backhaul.handle(*_receive_frame(connection))
-                finally:
-                    backhaul.detach(connection)
-                    connection.close()
-            except (EOFError, OSError, ValueError):
+            if not slots.acquire(blocking=False):
                 raw.close()
+                continue
+            threading.Thread(target=serve_connection, args=(raw,), daemon=True).start()
     finally:
         listener.close()
+        backhaul.revoke()
 
 
 def relay_udp(backhaul: Backhaul, *, stop: threading.Event) -> None:
@@ -548,6 +637,9 @@ def serve(config: dict[str, Any]) -> None:
         stop.set()
 
     def request_stop(_signum: int, _frame: object) -> None:
+        # Signal handlers run on the main thread and can interrupt relay_udp
+        # while it owns a Backhaul lock. Only publish the stop request here;
+        # the main loop's finally block performs the lock-taking revocation.
         stop.set()
 
     signal.signal(signal.SIGTERM, request_stop)
@@ -563,6 +655,9 @@ def serve(config: dict[str, Any]) -> None:
             kwargs={
                 "backhaul": backhaul,
                 "stop": stop,
+                "hello_timeout_seconds": float(
+                    config.get("hello_timeout_seconds", DEFAULT_HELLO_TIMEOUT_SECONDS)
+                ),
             },
             daemon=True,
         ),
@@ -572,6 +667,7 @@ def serve(config: dict[str, Any]) -> None:
     try:
         relay_udp(backhaul, stop=stop)
     finally:
+        backhaul.revoke()
         status.shutdown()
         signaling.shutdown()
         turn_tcp.shutdown()

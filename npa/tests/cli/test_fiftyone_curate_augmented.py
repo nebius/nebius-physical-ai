@@ -22,6 +22,20 @@ def test_curate_augmented_help_documents_flags() -> None:
     assert result.exit_code == 0
     for flag in ("--augment-uri", "--report-uri", "--curator-report-uri", "--dedup-threshold"):
         assert flag in output
+    assert "--curator-report-uri" in output and "required" in output.lower()
+
+
+def test_curate_augmented_requires_curator_report_uri() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench", "fiftyone", "curate-augmented",
+            "--augment-uri", "s3://b/p/cosmos_augmented/",
+            "--report-uri", "s3://b/p/curation/report.json",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "--curator-report-uri" in strip_ansi(result.output)
 
 
 def test_curate_augmented_rejects_non_s3_augment_uri() -> None:
@@ -35,6 +49,8 @@ def test_curate_augmented_rejects_non_s3_augment_uri() -> None:
             "/tmp/aug",
             "--report-uri",
             "s3://b/p/curation/report.json",
+            "--curator-report-uri",
+            "s3://b/p/curation/cosmos_curator.json",
         ],
     )
     assert result.exit_code == 1
@@ -52,6 +68,8 @@ def test_curate_augmented_rejects_non_s3_report_uri() -> None:
             "s3://b/p/cosmos_augmented/",
             "--report-uri",
             "/tmp/report.json",
+            "--curator-report-uri",
+            "s3://b/p/curation/cosmos_curator.json",
         ],
     )
     assert result.exit_code == 1

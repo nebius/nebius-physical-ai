@@ -13,7 +13,6 @@ import ssl
 import struct
 import threading
 import time
-import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +21,7 @@ HEADER = struct.Struct("!BII")
 MAX_FRAME = 4 * 1024 * 1024
 MAX_UDP_FLOWS = 64
 BACKHAUL_SUBPROTOCOL = "npa.leisaac.backhaul.v1"
+COMPATIBILITY_PEER_IPV4_FIELD = "0.0.0.0"
 WEBSOCKET_HEARTBEAT_INTERVAL_SECONDS = 10.0
 WEBSOCKET_HEARTBEAT_TIMEOUT_SECONDS = 30.0
 _XOR_TABLES = tuple(bytes(value ^ mask for value in range(256)) for mask in range(256))
@@ -57,15 +57,19 @@ def _pod_ipv4() -> str:
     raise ValueError("LeIsaac relay client could not resolve its private pod IPv4")
 
 
-def _public_ipv4() -> str:
-    request = urllib.request.Request(
-        "https://api.ipify.org", headers={"User-Agent": "npa-leisaac-relay/0.4.0"}
-    )
-    with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310 - fixed HTTPS URL
-        address = ipaddress.ip_address(response.read(64).decode("ascii").strip())
-    if address.version != 4 or not address.is_global:
-        raise ValueError("LeIsaac relay client did not resolve a public IPv4")
-    return address.compressed
+def _hello_payload(config: dict[str, Any]) -> bytes:
+    """Build a rolling-upgrade HELLO whose peer value is not authoritative."""
+
+    return json.dumps(
+        {
+            "nonce": str(config["session_nonce"]),
+            # New agents replace this compatibility value with nginx's
+            # authenticated X-Real-IP. Older agents forward it unchanged,
+            # allowing a rolling upgrade without external IP discovery.
+            "peer_public_ip": COMPATIBILITY_PEER_IPV4_FIELD,
+        },
+        separators=(",", ":"),
+    ).encode("ascii")
 
 
 def load_config(path: str | Path) -> dict[str, Any]:
@@ -241,7 +245,6 @@ class Client:
         # backhaul. Coturn shares this pod's network namespace with Isaac Sim,
         # so its relay allocation reaches the 47998 media peer without NAT.
         self.media_target = (_pod_ipv4(), 3478)
-        self.peer_public_ip = _public_ipv4()
 
     def send(self, kind: int, stream_id: int, payload: bytes = b"") -> None:
         connection = self.connection
@@ -395,13 +398,7 @@ class Client:
                 self.send(
                     HELLO,
                     0,
-                    json.dumps(
-                        {
-                            "nonce": str(self.config["session_nonce"]),
-                            "peer_public_ip": self.peer_public_ip,
-                        },
-                        separators=(",", ":"),
-                    ).encode("ascii"),
+                    _hello_payload(self.config),
                 )
                 self.connection.start_heartbeat()
                 while True:

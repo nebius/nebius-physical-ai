@@ -28,9 +28,11 @@ class _Recorder:
     def __init__(self, results: list[_FakeProc]) -> None:
         self._results = results
         self.calls: list[dict[str, str]] = []
+        self.inputs: list[str | None] = []
 
     def __call__(self, cmd, *, env, **kwargs):  # noqa: ANN001 - test double
         self.calls.append(dict(env))
+        self.inputs.append(kwargs.get("input"))
         return self._results[len(self.calls) - 1]
 
 
@@ -78,6 +80,29 @@ def test_first_call_success_no_retry() -> None:
     assert len(rec.calls) == 1
     # token was left intact on the (only) successful call
     assert rec.calls[0].get("NEBIUS_IAM_TOKEN") == "stale"
+
+
+def test_stdin_and_both_valid_token_aliases_are_preserved() -> None:
+    rec = _Recorder([_FakeProc(0, "applied")])
+    result = run_kubectl(
+        ["apply", "-f", "-"],
+        binary="kubectl",
+        env={
+            "NEBIUS_IAM_TOKEN": "primary-token",
+            "NPA_NEBIUS_IAM_TOKEN": "alias-token",
+        },
+        stdin='{"kind":"List"}',
+        runner=rec,
+    )
+
+    assert result.returncode == 0
+    assert rec.calls == [
+        {
+            "NEBIUS_IAM_TOKEN": "primary-token",
+            "NPA_NEBIUS_IAM_TOKEN": "alias-token",
+        }
+    ]
+    assert rec.inputs == ['{"kind":"List"}']
 
 
 def test_retries_without_token_on_stale_auth_error() -> None:

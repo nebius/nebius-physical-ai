@@ -8,6 +8,7 @@ import json
 import subprocess
 import re
 import shutil
+from typing import NoReturn, get_type_hints
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -26,6 +27,13 @@ from npa.cli.agent import (
 )
 
 runner = CliRunner()
+
+
+def test_fail_is_typed_as_non_returning_and_preserves_cli_exit() -> None:
+    assert get_type_hints(agent_module._fail)["return"] is NoReturn
+    with pytest.raises(Exit) as caught:
+        agent_module._fail("focused failure")
+    assert caught.value.exit_code == 1
 
 
 def test_artifact_only_timeout_allows_preserved_run_inventory() -> None:
@@ -1393,15 +1401,17 @@ def test_existing_agent_bootstrap_fails_closed_when_https_ingress_cannot_be_ensu
 
 def test_leisaac_signaling_uses_backend_session_auth() -> None:
     source = _agent_source()
-    location = source.split("location ^~ /api/leisaac/signal {{", 1)[1].split(
-        "location /api/ {{", 1
-    )[0]
-    assert "auth_basic off" in location
-    assert "proxy_set_header Upgrade $http_upgrade;" in location
-    assert "proxy_set_header Host $http_host;" in location
-    assert "proxy_set_header Origin $http_origin;" in location
-    assert "allowlists the bare path and /sign_in" in source
-    assert "exact-origin backend policy" in source
+    assert "location ^~ /api/leisaac/signal {{" not in source
+    for route in ("/api/leisaac/signal", "/api/leisaac/signal/sign_in"):
+        location = source.split(f"location = {route} {{{{", 1)[1].split("  }}", 1)[0]
+        assert "auth_basic off" in location
+        assert "proxy_set_header Upgrade $http_upgrade;" in location
+        assert "proxy_set_header Host $http_host;" in location
+        assert "proxy_set_header Origin $http_origin;" in location
+    general_api = source.split("location /api/ {{", 1)[1].split("  }}", 1)[0]
+    assert "auth_basic off" not in general_api
+    assert "Server-level Basic auth protects the general /api/ location" in source
+    assert "exact signaling WebSocket routes turn it off" in source
 
 
 def test_leisaac_pod_backhaul_uses_authenticated_public_https_only() -> None:

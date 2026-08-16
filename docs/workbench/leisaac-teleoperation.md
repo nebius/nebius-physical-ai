@@ -137,18 +137,16 @@ mode, the no-store status response includes one derived session-scoped TURN
 credential, signaling uses `/api/leisaac/signal`, and the hash-pinned NVIDIA
 browser client is proxied through an authenticated route.
 
-The production default is `agent-relay`. It keeps the session nonce, control
+The supported transport is `agent-relay`. It keeps the session nonce, control
 messages, status, and relayed frames behind the agent's authenticated HTTPS
-origin. The legacy `public-load-balancer` mode is explicitly non-production:
-its public endpoints use plaintext HTTP/WebRTC, so the sole session nonce,
-robot controls, and frames are observable in transit. It is rejected unless
-the operator selects it explicitly and passes
-`--allow-insecure-public-load-balancer`.
+origin. The historical `public-load-balancer` transport is rejected before EULA
+or infrastructure mutation: its S3 manifest deliberately omits the nonce and
+has no secure credential-reinjection path, so browser discovery cannot complete
+without publishing a secret. Status and destroy retain compatibility only for
+cleaning up historical resources.
 
-Two transport modes preserve the browser contract. `public-load-balancer`
-source-restricts status/client TCP `8080`, signaling TCP `49100`, and UDP media
-`47998` on dedicated load balancers. `agent-relay` consumes no additional
-public IPv4 allocation: Kubernetes uses a private `ClusterIP` service, the saved
+`agent-relay` consumes no additional public IPv4 allocation: Kubernetes uses a
+private `ClusterIP` service, the saved
 NPA agent runs a hardened systemd relay, and a non-GPU sidecar in the simulation
 pod initiates an authenticated WSS backhaul through nginx `443` to it. A
 digest-pinned coturn sidecar shares the simulator's pod network for the
@@ -326,16 +324,50 @@ retains those exact leaf semantics, fixing the older duplicated
 `leisaac-session.json/<run>/reports/leisaac-session.json` behavior without
 hiding already-written historical objects from discovery.
 
+Launch waits are bounded without limiting the workload lifetime. The defaults
+allow 10 minutes for a historical LoadBalancer address and four hours for the
+Isaac Deployment to become ready. Operators with a known slower control plane
+may set positive `NPA_LEISAAC_EXTERNAL_IP_TIMEOUT_SECONDS` and
+`NPA_LEISAAC_READY_TIMEOUT_SECONDS` values to any finite positive number of
+seconds; timeout errors include the last Kubernetes provider or rollout
+observation and normal launch rollback still runs.
+
+Launch, destroy, and the live lifecycle proof share a per-run exclusion lock.
+Before any mutation they verify that the current Kubernetes identity can
+`get`, `create`, `update`, and `delete` Secrets in the selected namespace. This
+is the same resource kind used by LeIsaac relay and recorder credentials, but a
+cleanup-only custom role may need those verbs added; a failed preflight names
+the missing verbs and leaves all LeIsaac resources unchanged.
+
 `agent-relay` resolves the agent IP from live provider state and refuses a
 stale saved address, missing SSH key or agent auth, unrestricted source range,
 TLS certificate mismatch, invalid session nonce, or a second active relay
 session. The supported deployment uses a digest-pinned, non-root coturn sidecar
-and exposes no coturn port from the GPU cluster. Use
-`--transport public-load-balancer --allow-insecure-public-load-balancer` only
-for isolated non-production diagnostics where dedicated Kubernetes public IPv4
-allocations and plaintext exposure are knowingly accepted. Repeat
-`--source-range` for the agent and operator because the agent reaches the
-status/signaling load balancer. This mode does not provide TLS.
+and exposes no coturn port from the GPU cluster.
+The historical `--transport public-load-balancer` value is rejected. Use
+`agent-relay`; the old status/destroy branches exist only so operators can
+inspect and remove resources created by an earlier release.
+
+For a release-gated existing session, the mutating lifecycle proof exercises
+the exact authenticated browser control/video sockets, restarts the relay while
+a control is held, lets a bounded relay credential expiry fire, proves the old
+controller lease resumes with no held keys before any pod restart, proves the
+old credential cannot authenticate after rotation, and restores the same
+Deployment with a fresh session credential and a new immutable capability
+generation. During the authentication proof it temporarily scales that same
+Deployment to zero so acceptance of the new nonce and denial of the stale nonce
+are tested without an already-connected sidecar. It does not create a workload
+or modify the original capability or any immutable dataset object. Run it only
+when the operator has authorized
+restart/restore of that exact existing run; its evidence file is atomically
+written mode `0600` and contains no credentials, cookies, or provider IDs:
+
+```bash
+npa/.venv/bin/python npa/scripts/verify_leisaac_relay_lifecycle_live.py \
+  --project PROJECT_ALIAS --name AGENT_NAME \
+  --context KUBECTL_CONTEXT --namespace EXISTING_NAMESPACE \
+  --run-id EXISTING_RUN_ID --evidence /secure/evidence/relay-lifecycle.json
+```
 
 This is an interactive, lifecycle-bearing service rather than a finite batch
 stage, so it is intentionally launched and destroyed through the Workbench

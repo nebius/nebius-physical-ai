@@ -2069,14 +2069,20 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.intercept("GET", "/api/artifacts/runs*", (req) => {
       const q = String((req.query && req.query.q) || "").trim().toLowerCase();
       const matchesOld = q && OLD_RUN_ID.toLowerCase().includes(q);
+      const visible = matchesOld ? [oldRun] : (q ? [] : newestPage);
       if (matchesOld) req.alias = "artifactRunsOld";
       req.reply({
         statusCode: 200,
         body: {
           ok: true,
-          runs: matchesOld ? [oldRun] : newestPage,
-          total_runs: 328,
+          runs: visible,
+          total_runs: null,
+          total_runs_scope: "unavailable",
+          observed_run_count: 328,
+          observed_match_count: visible.length,
+          query_complete: false,
           truncated: true,
+          pagination_complete: false,
           query: q,
         },
       });
@@ -2100,6 +2106,14 @@ describe("NPA agent UI with mocked APIs", () => {
       const values = [...$opts].map((o) => o.value).filter(Boolean);
       expect(values, "server search surfaces the old run in the Rerun picker").to.include(OLD_RUN_ID);
     });
+    cy.get("#artifactDiscoverStatus")
+      .should("contain.text", "matching in bounded index 1")
+      .and("contain.text", "discovery incomplete");
+    cy.get("#artifactPrefix").clear().type("definitely-missing", { delay: 0 });
+    cy.wait("@artifactRunsPaged").its("request.url").should("include", "q=");
+    cy.get("#artifactDiscoverStatus")
+      .should("contain.text", "matching in bounded index 0")
+      .and("not.contain.text", "matching in bounded index 328");
 
     // Stages tab: same server-search path must populate the stages picker.
     cy.get("#tabMain").click();

@@ -74,9 +74,10 @@ def run_kubectl(
     *,
     context: str = "",
     kubeconfig: str = "",
-    timeout: float = 30.0,
+    timeout: float | None = 30.0,
     binary: str | None = None,
     env: Mapping[str, str] | None = None,
+    stdin: str | None = None,
     runner: Callable[..., subprocess.CompletedProcess] | None = None,
 ) -> KubectlResult:
     """Run ``kubectl <args>``, retrying once without a stale ambient IAM token.
@@ -105,6 +106,7 @@ def run_kubectl(
             proc = run(
                 cmd,
                 env=proc_env,
+                input=stdin,
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

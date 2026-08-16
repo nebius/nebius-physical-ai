@@ -10,12 +10,18 @@ import pytest
 from typer.testing import CliRunner
 
 from npa.cli.workbench.leisaac import (
+    _agent_artifact_storage,
     _delete_resources,
+    _external_ip,
     _install_agent_relay,
+    _kubectl,
     _put_manifest,
     _relay_media_server,
+    _require_lifecycle_lock_permissions,
+    _release_lifecycle_lock,
     _remove_agent_relay,
     _select_agent_leisaac_run,
+    _wait_timeout,
     _wait_ready,
     app,
 )
@@ -24,6 +30,153 @@ from npa.agent_backend.leisaac_registry import DEFAULT_TASK, REGISTRY_FINGERPRIN
 
 IMAGE = "registry.example/npa-leisaac@sha256:" + "1" * 64
 runner = CliRunner()
+
+
+class _FakeLifecycleLease:
+    def __init__(self, events: list[str] | None = None) -> None:
+        self.events = events
+
+    def assert_healthy(self) -> None:
+        if self.events is not None:
+            self.events.append("checked")
+
+    def close(self) -> None:
+        if self.events is not None:
+            self.events.append("closed")
+
+
+def test_kubectl_preserves_unbounded_mutation_contract(monkeypatch) -> None:
+    calls = []
+
+    def run_kubectl(args, **kwargs):
+        calls.append((args, kwargs))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("npa.cli.workbench.leisaac.run_kubectl", run_kubectl)
+
+    _kubectl("cluster", "namespace", ["apply", "-f", "-"], stdin="manifest")
+
+    assert calls == [
+        (
+            ["--namespace", "namespace", "apply", "-f", "-"],
+            {"context": "cluster", "stdin": "manifest", "timeout": None},
+        )
+    ]
+
+
+def test_lifecycle_lock_permissions_are_preflighted_before_mutation(monkeypatch) -> None:
+    calls = []
+
+    def kubectl(_context, _namespace, args, **_kwargs):
+        calls.append(args)
+        allowed = args[2] not in {"create", "update"}
+        return SimpleNamespace(
+            returncode=0,
+            stdout="yes\n" if allowed else "no\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("npa.cli.workbench.leisaac._kubectl", kubectl)
+
+    with pytest.raises(RuntimeError, match="missing or unverified: create, update"):
+        _require_lifecycle_lock_permissions("cluster", "namespace")
+
+    assert calls == [
+        ["auth", "can-i", verb, "secrets"]
+        for verb in ("get", "create", "update", "delete")
+    ]
+
+
+def test_lifecycle_lock_release_is_an_atomic_reclaimable_replace(monkeypatch) -> None:
+    results = iter(
+        (
+            SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "metadata": {
+                            "resourceVersion": "8",
+                            "uid": "lock-uid",
+                            "annotations": {
+                                "npa.nebius.com/lifecycle-holder": "holder-a"
+                            },
+                        },
+                    }
+                ),
+                stderr="",
+            ),
+            SimpleNamespace(returncode=0, stdout="replaced", stderr=""),
+            SimpleNamespace(returncode=0, stdout="deleted", stderr=""),
+        )
+    )
+    calls = []
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._kubectl",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or next(results),
+    )
+
+    _release_lifecycle_lock(
+        "cluster", "namespace", "deployment-lifecycle-lock", "holder-a"
+    )
+
+    assert calls[0][0][2][:3] == [
+        "get",
+        "secret",
+        "deployment-lifecycle-lock",
+    ]
+    assert calls[1][0][2] == ["replace", "-f", "-"]
+    assert calls[2][0][2] == [
+        "delete",
+        "secret",
+        "deployment-lifecycle-lock",
+        "--ignore-not-found=true",
+    ]
+    released = json.loads(calls[1][1]["stdin"])
+    assert released["kind"] == "Secret"
+    assert released["type"] == "Opaque"
+    assert released["metadata"]["name"] == "deployment-lifecycle-lock"
+    assert released["metadata"]["namespace"] == "namespace"
+    assert released["metadata"]["resourceVersion"] == "8"
+    assert released["metadata"]["uid"] == "lock-uid"
+    annotations = released["metadata"]["annotations"]
+    assert annotations["npa.nebius.com/lifecycle-holder"] == ""
+    assert float(annotations["npa.nebius.com/lifecycle-acquired-epoch"]) > 0
+    assert (
+        annotations["npa.nebius.com/lifecycle-renewed-epoch"]
+        == annotations["npa.nebius.com/lifecycle-acquired-epoch"]
+    )
+
+
+def test_agent_artifact_storage_uses_owner_only_project_credentials(
+    monkeypatch,
+) -> None:
+    record = {"region": "us-central1"}
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._agent_record", lambda *_args: record
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent._resolve_agent_storage_credentials",
+        lambda project, selected: (
+            "bucket",
+            "agent-prefix",
+            "https://storage.example",
+            "access",
+            "secret",
+            "service-account",
+        ),
+    )
+
+    storage = _agent_artifact_storage("rtxpro", "opendreamer")
+
+    assert storage == {
+        "bucket": "bucket",
+        "prefix": "agent-prefix",
+        "endpoint": "https://storage.example",
+        "access_key": "access",
+        "secret_key": "secret",
+        "region": "us-central1",
+    }
+    assert "credentials" not in record
 
 
 def test_select_agent_leisaac_run_pins_tls_before_sending_credentials(
@@ -187,6 +340,154 @@ def test_select_agent_leisaac_run_retries_transient_backhaul_unavailability(
     assert sleeps == [2]
 
 
+def test_select_agent_leisaac_run_bounds_transient_unavailability(
+    monkeypatch,
+) -> None:
+    certificate = b"agent-certificate"
+
+    class FakeTLS:
+        def getpeercert(self, *, binary_form=False):
+            assert binary_form is True
+            return certificate
+
+        def settimeout(self, _seconds):
+            return None
+
+        def close(self):
+            return None
+
+    class FakeContext:
+        check_hostname = True
+        verify_mode = None
+
+        def wrap_socket(self, _raw, *, server_hostname):
+            assert server_hostname == "8.8.4.4"
+            return FakeTLS()
+
+    class FakeResponse:
+        status = 503
+
+        def read(self, _limit):
+            return b'{"detail":"LeIsaac service is unavailable"}'
+
+    class FakeConnection:
+        def __init__(self, *_args, **_kwargs):
+            self.sock = None
+
+        def request(self, *_args, **_kwargs):
+            return None
+
+        def getresponse(self):
+            return FakeResponse()
+
+        def close(self):
+            self.sock.close()
+
+    monotonic = iter((0.0, 0.0, 1.0))
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac.ssl.create_default_context", FakeContext
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac.socket.create_connection",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac.http.client.HTTPConnection", FakeConnection
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac.time.monotonic", lambda: next(monotonic)
+    )
+
+    with pytest.raises(TimeoutError, match="agent run selection"):
+        _select_agent_leisaac_run(
+            "8.8.4.4",
+            auth_user="npa",
+            auth_password="secret",
+            run_id="live-relay",
+            certificate_sha256=hashlib.sha256(certificate).hexdigest(),
+            timeout_seconds=1.0,
+        )
+
+
+def test_select_agent_leisaac_run_aborts_retry_when_lifecycle_lease_is_lost(
+    monkeypatch,
+) -> None:
+    certificate = b"agent-certificate"
+    requests = []
+    checks = 0
+
+    class FakeTLS:
+        def getpeercert(self, *, binary_form=False):
+            assert binary_form is True
+            return certificate
+
+        def settimeout(self, _seconds):
+            return None
+
+        def close(self):
+            return None
+
+    class FakeContext:
+        check_hostname = True
+        verify_mode = None
+
+        def wrap_socket(self, _raw, *, server_hostname):
+            assert server_hostname == "8.8.4.4"
+            return FakeTLS()
+
+    class FakeResponse:
+        status = 503
+
+        def read(self, _limit):
+            return b'{"detail":"LeIsaac service is unavailable"}'
+
+    class FakeConnection:
+        def __init__(self, *_args, **_kwargs):
+            self.sock = None
+
+        def request(self, *_args, **_kwargs):
+            requests.append(True)
+
+        def getresponse(self):
+            return FakeResponse()
+
+        def close(self):
+            self.sock.close()
+
+    def assert_lease() -> None:
+        nonlocal checks
+        checks += 1
+        if checks == 2:
+            raise RuntimeError("selected run lifecycle lock renewal failed")
+
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac.ssl.create_default_context", FakeContext
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac.socket.create_connection",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac.http.client.HTTPConnection", FakeConnection
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac.time.sleep",
+        lambda *_args: pytest.fail("lease loss must abort before a retry sleep"),
+    )
+
+    with pytest.raises(RuntimeError, match="lock renewal failed"):
+        _select_agent_leisaac_run(
+            "8.8.4.4",
+            auth_user="npa",
+            auth_password="secret",
+            run_id="live-relay",
+            certificate_sha256=hashlib.sha256(certificate).hexdigest(),
+            progress_check=assert_lease,
+        )
+
+    assert len(requests) == 1
+
+
 def test_wait_ready_rejects_old_ready_replica_during_rollout(monkeypatch) -> None:
     old_replica = {
         "metadata": {"generation": 2},
@@ -215,7 +516,7 @@ def test_wait_ready_rejects_old_ready_replica_during_rollout(monkeypatch) -> Non
     calls = []
     monkeypatch.setattr(
         "npa.cli.workbench.leisaac._kubectl",
-        lambda *args: SimpleNamespace(
+        lambda *args, **_kwargs: SimpleNamespace(
             returncode=0, stdout=json.dumps(next(responses)), stderr=""
         ),
     )
@@ -226,6 +527,164 @@ def test_wait_ready_rejects_old_ready_replica_during_rollout(monkeypatch) -> Non
     _wait_ready("cluster", "leisaac", "leisaac-live")
 
     assert calls == [5]
+
+
+def test_wait_ready_checks_external_progress_before_polling(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._kubectl",
+        lambda *_args, **_kwargs: pytest.fail("readiness poll should not run"),
+    )
+
+    with pytest.raises(RuntimeError, match="lifecycle lease lost"):
+        _wait_ready(
+            "cluster",
+            "namespace",
+            "deployment",
+            progress_check=lambda: (_ for _ in ()).throw(
+                RuntimeError("lifecycle lease lost")
+            ),
+        )
+
+
+def test_external_ip_timeout_reports_last_provider_observation(monkeypatch) -> None:
+    times = iter((0.0, 0.0, 2.0))
+    monkeypatch.setattr("npa.cli.workbench.leisaac.time.monotonic", lambda: next(times))
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._kubectl",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1, stdout="", stderr="provider still allocating"
+        ),
+    )
+    with pytest.raises(TimeoutError, match="provider still allocating") as failure:
+        _external_ip(
+            "cluster",
+            "leisaac",
+            "leisaac-live",
+            timeout_seconds=1.0,
+            poll_interval_seconds=0.0,
+        )
+    assert "Service leisaac/leisaac-live" in str(failure.value)
+
+
+def test_wait_timeout_accepts_operator_deadline_beyond_one_day(monkeypatch) -> None:
+    monkeypatch.setenv("NPA_LEISAAC_TEST_TIMEOUT_SECONDS", "172800")
+
+    assert _wait_timeout("NPA_LEISAAC_TEST_TIMEOUT_SECONDS", 1.0) == 172800.0
+
+
+def test_wait_ready_timeout_reports_rollout_counters(monkeypatch) -> None:
+    times = iter((0.0, 0.0, 2.0))
+    monkeypatch.setattr("npa.cli.workbench.leisaac.time.monotonic", lambda: next(times))
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._kubectl",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "metadata": {"generation": 3},
+                    "spec": {"replicas": 1},
+                    "status": {
+                        "observedGeneration": 2,
+                        "readyReplicas": 0,
+                        "unavailableReplicas": 1,
+                    },
+                }
+            ),
+            stderr="",
+        ),
+    )
+    with pytest.raises(TimeoutError, match="generation=3") as failure:
+        _wait_ready(
+            "cluster",
+            "leisaac",
+            "leisaac-live",
+            timeout_seconds=1.0,
+            poll_interval_seconds=0.0,
+        )
+    assert "unavailable=1" in str(failure.value)
+
+
+def test_wait_progress_uses_stderr_without_polluting_json_output(monkeypatch) -> None:
+    messages = []
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac.typer.echo",
+        lambda message, **kwargs: messages.append((message, kwargs)),
+    )
+    monotonic = iter((0.0,) * 8)
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac.time.monotonic", lambda: next(monotonic)
+    )
+    external_results = iter(
+        (
+            SimpleNamespace(returncode=0, stdout="", stderr=""),
+            SimpleNamespace(returncode=0, stdout="203.0.113.20", stderr=""),
+        )
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._kubectl",
+        lambda *_args, **_kwargs: next(external_results),
+    )
+    monkeypatch.setattr("npa.cli.workbench.leisaac.time.sleep", lambda _seconds: None)
+
+    assert _external_ip("cluster", "namespace", "service") == "203.0.113.20"
+
+    not_ready = {
+        "metadata": {"generation": 2},
+        "spec": {"replicas": 1},
+        "status": {"observedGeneration": 1, "unavailableReplicas": 1},
+    }
+    ready = {
+        "metadata": {"generation": 2},
+        "spec": {"replicas": 1},
+        "status": {
+            "observedGeneration": 2,
+            "updatedReplicas": 1,
+            "readyReplicas": 1,
+            "availableReplicas": 1,
+        },
+    }
+    monotonic = iter((0.0,) * 8)
+    ready_results = iter((not_ready, ready))
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac.time.monotonic", lambda: next(monotonic)
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._kubectl",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0, stdout=json.dumps(next(ready_results)), stderr=""
+        ),
+    )
+
+    _wait_ready("cluster", "namespace", "deployment")
+
+    assert len(messages) == 2
+    assert all(kwargs.get("err") is True for _message, kwargs in messages)
+
+
+def test_readiness_poll_timeout_is_bounded_by_remaining_deadline(monkeypatch) -> None:
+    calls = []
+    monotonic = iter((10.0, 11.0))
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac.time.monotonic", lambda: next(monotonic)
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._kubectl",
+        lambda *args, **kwargs: (
+            calls.append((args, kwargs))
+            or SimpleNamespace(returncode=0, stdout="203.0.113.20", stderr="")
+        ),
+    )
+
+    assert (
+        _external_ip(
+            "cluster",
+            "namespace",
+            "service",
+            timeout_seconds=5.0,
+        )
+        == "203.0.113.20"
+    )
+    assert calls[0][1]["timeout"] == 4.0
 
 
 def test_delete_resources_addresses_each_kubernetes_kind_explicitly(
@@ -281,9 +740,7 @@ def test_install_relay_creates_required_agent_directories() -> None:
     assert "DynamicUser=yes" not in ssh.command  # unit is base64-encoded in transit
     assert "openssl req -x509" not in ssh.command
 
-    encoded_payloads = re.findall(
-        r"echo ([A-Za-z0-9+/=]+) \| base64 -d", ssh.command
-    )
+    encoded_payloads = re.findall(r"echo ([A-Za-z0-9+/=]+) \| base64 -d", ssh.command)
     unit = base64.b64decode(encoded_payloads[-1]).decode("utf-8")
     assert "${CREDENTIALS_DIRECTORY}/leisaac.json" in unit
     config = json.loads(base64.b64decode(encoded_payloads[-2]).decode("utf-8"))
@@ -360,6 +817,10 @@ def _args() -> list[str]:
 def _patch_launch(monkeypatch):
     monkeypatch.setenv("OMNI_KIT_ACCEPT_EULA", "YES")
     monkeypatch.setenv("ISAACSIM_ACCEPT_EULA", "YES")
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._acquire_run_lifecycle_lease",
+        lambda *_args: _FakeLifecycleLease(),
+    )
     registry_refreshes = []
     monkeypatch.setattr(
         "npa.cli.workbench.leisaac.ensure_registry_pull_secret_for_images",
@@ -412,7 +873,11 @@ def _patch_launch(monkeypatch):
     monkeypatch.setattr(
         "npa.cli.workbench.leisaac._agent_certificate_sha256", lambda _ip: "f" * 64
     )
-    monkeypatch.setattr("npa.cli.workbench.leisaac._wait_ready", lambda *_args: None)
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._wait_ready",
+        lambda *_args, **_kwargs: None,
+    )
+
     def resolve_relay_media_server(*_args):
         # Regression: the Service must already have been applied, while the
         # Deployment must not yet exist when its stable ClusterIP is resolved.
@@ -571,7 +1036,7 @@ def test_list_tasks_json_is_machine_readable_and_parallel_launch_is_rejected(
     assert "exactly one active environment" in rejected.output
 
 
-def test_launch_defaults_to_agent_relay_and_public_lb_requires_acknowledgement(
+def test_launch_defaults_to_agent_relay_and_rejects_undiscoverable_public_lb(
     monkeypatch,
 ) -> None:
     (
@@ -596,8 +1061,9 @@ def test_launch_defaults_to_agent_relay_and_public_lb_requires_acknowledgement(
     insecure_args[insecure_args.index("agent-relay")] = "public-load-balancer"
     rejected = runner.invoke(app, insecure_args)
     assert rejected.exit_code == 1
-    assert "insecure non-production transport" in rejected.output
-    assert "--allow-insecure-public-load-balancer" in rejected.output
+    assert "cannot securely provision browser credentials" in rejected.output
+    assert "use agent-relay" in rejected.output
+    assert len(manifests) == 1
 
 
 def test_launch_agent_relay_wires_private_cluster_public_agent_and_manifest(
@@ -649,8 +1115,7 @@ def test_launch_agent_relay_wires_private_cluster_public_agent_and_manifest(
     )
     assert "hostPort" not in media_port
     assert (
-        "npa.nebius.com/turn-peer-source"
-        not in services[0]["metadata"]["annotations"]
+        "npa.nebius.com/turn-peer-source" not in services[0]["metadata"]["annotations"]
     )
     assert ingress_calls == [
         {
@@ -676,17 +1141,46 @@ def test_launch_agent_relay_wires_private_cluster_public_agent_and_manifest(
     assert manifests[0]["signal_host"] == "127.0.0.1"
     assert manifests[0]["media_host"] == "8.8.4.4"
     assert manifests[0]["media_server"] == "10.96.34.22"
-    assert selections == [
-        (
-            ("8.8.4.4",),
-            {
-                "auth_user": "npa",
-                "auth_password": "secret",
-                "run_id": "live-relay",
-                "certificate_sha256": "f" * 64,
-            },
-        )
-    ]
+    assert "expires_at" not in manifests[0]
+    assert len(selections) == 1
+    selection_args, selection_kwargs = selections[0]
+    assert selection_args == ("8.8.4.4",)
+    assert selection_kwargs.pop("timeout_seconds") > 0
+    progress_check = selection_kwargs.pop("progress_check")
+    progress_check()
+    assert selection_kwargs == {
+        "auth_user": "npa",
+        "auth_password": "secret",
+        "run_id": "live-relay",
+        "certificate_sha256": "f" * 64,
+    }
+
+
+def test_successful_launch_warns_when_only_lifecycle_release_fails(monkeypatch) -> None:
+    _patch_launch(monkeypatch)
+    deleted = []
+
+    class ReleaseFailureLease(_FakeLifecycleLease):
+        def close(self) -> None:
+            raise RuntimeError("delete precondition failed")
+
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._acquire_run_lifecycle_lease",
+        lambda *_args: ReleaseFailureLease(),
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._delete_resources",
+        lambda *args: deleted.append(args),
+    )
+
+    result = runner.invoke(app, [*_args(), "--output", "json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "ready"
+    assert "lifecycle lock cleanup failed" in payload["warning"]
+    assert "delete precondition failed" in payload["warning"]
+    assert deleted == []
 
 
 def test_launch_fails_closed_before_deployment_when_registry_refresh_fails(
@@ -705,6 +1199,86 @@ def test_launch_fails_closed_before_deployment_when_registry_refresh_fails(
     assert result.exit_code == 1
     assert "registry credential refresh failed" in result.output
     assert applied == []
+
+
+def test_launch_rejects_invalid_readiness_timeout_before_lock_or_mutation(
+    monkeypatch,
+) -> None:
+    applied, *_middle, registry_refreshes, _selections = _patch_launch(monkeypatch)
+    lease_calls = []
+    deleted = []
+    monkeypatch.setenv("NPA_LEISAAC_READY_TIMEOUT_SECONDS", "not-a-duration")
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._acquire_run_lifecycle_lease",
+        lambda *args: lease_calls.append(args) or _FakeLifecycleLease(),
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._delete_resources",
+        lambda *args: deleted.append(args),
+    )
+
+    result = runner.invoke(app, _args())
+
+    assert result.exit_code == 1
+    assert "must be a positive number of seconds" in result.output
+    assert lease_calls == []
+    assert registry_refreshes == []
+    assert applied == []
+    assert deleted == []
+
+
+def test_launch_refuses_a_same_run_lifecycle_lock_before_any_mutation(
+    monkeypatch,
+) -> None:
+    applied, *_middle, registry_refreshes, _selections = _patch_launch(monkeypatch)
+    deleted = []
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._acquire_run_lifecycle_lease",
+        lambda *_args: (_ for _ in ()).throw(
+            RuntimeError(
+                "another LeIsaac lifecycle operation already holds the selected run lock"
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._delete_resources",
+        lambda *args: deleted.append(args),
+    )
+
+    result = runner.invoke(app, _args())
+
+    assert result.exit_code == 1
+    assert "already holds the selected run lock" in result.output
+    assert applied == []
+    assert registry_refreshes == []
+    assert deleted == []
+
+
+def test_interrupted_launch_rolls_back_and_always_releases_lifecycle_lease(
+    monkeypatch,
+) -> None:
+    _patch_launch(monkeypatch)
+    lease_events: list[str] = []
+    deleted = []
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._acquire_run_lifecycle_lease",
+        lambda *_args: _FakeLifecycleLease(lease_events),
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._wait_ready",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._delete_resources",
+        lambda *args: deleted.append(args),
+    )
+
+    result = runner.invoke(app, _args())
+
+    assert result.exit_code == 1
+    assert "LeIsaac launch interrupted" in result.output
+    assert deleted == [("cluster", "leisaac", "leisaac-live-relay")]
+    assert lease_events[-1] == "closed"
 
 
 def test_failed_agent_relay_launch_removes_partial_relay_ingress_and_kubernetes(
@@ -832,8 +1406,7 @@ def test_relaunch_migrates_and_removes_only_the_prior_gpu_egress_rule(
     services = [item for item in applied if item.get("kind") == "Service"]
     assert len(services) == 1
     assert (
-        "npa.nebius.com/turn-peer-source"
-        not in services[0]["metadata"]["annotations"]
+        "npa.nebius.com/turn-peer-source" not in services[0]["metadata"]["annotations"]
     )
     assert removals == [
         (
@@ -851,6 +1424,10 @@ def test_relaunch_migrates_and_removes_only_the_prior_gpu_egress_rule(
 def test_destroy_uses_service_metadata_to_remove_only_its_agent_relay(
     monkeypatch,
 ) -> None:
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._acquire_run_lifecycle_lease",
+        lambda *_args: _FakeLifecycleLease(),
+    )
     relay_service = {
         "metadata": {
             "annotations": {
@@ -926,3 +1503,38 @@ def test_destroy_uses_service_metadata_to_remove_only_its_agent_relay(
         "UDP",
     ]
     assert k8s_removals == [("cluster", "leisaac", "leisaac-live-relay")]
+
+
+def test_destroy_refuses_a_same_run_lifecycle_lock_before_any_mutation(
+    monkeypatch,
+) -> None:
+    kubectl_calls = []
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._acquire_run_lifecycle_lease",
+        lambda *_args: (_ for _ in ()).throw(
+            RuntimeError(
+                "another LeIsaac lifecycle operation already holds the selected run lock"
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._kubectl",
+        lambda *args, **kwargs: kubectl_calls.append((args, kwargs)),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "destroy",
+            "--run-id",
+            "live-relay",
+            "--context",
+            "cluster",
+            "--namespace",
+            "leisaac",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "already holds the selected run lock" in result.output
+    assert kubectl_calls == []

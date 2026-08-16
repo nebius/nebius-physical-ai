@@ -256,7 +256,9 @@ def remove_npa_ingress_for_instance_ports(
     exposed the backend port.  Delete only a dedicated ``allow-npa-*`` TCP
     rule whose destination ports are entirely within ``ports``.  An unmanaged,
     mixed-purpose, or all-port rule is not safe to rewrite automatically, so
-    fail closed and let the operator resolve it explicitly.
+    fail closed and let the operator resolve it explicitly. Nebius defines an
+    empty ``destination_ports`` list as matching any port, rather than none:
+    https://docs.nebius.com/terraform-provider/reference/resources/vpc_v1_security_rule
     """
 
     protected = {int(port) for port in ports}
@@ -273,8 +275,8 @@ def remove_npa_ingress_for_instance_ports(
             protocol = str(spec.get("protocol", "")).upper()
             raw_ports = ingress.get("destination_ports") or []
             destination_ports = {int(port) for port in raw_ports}
-            exposes_protected = protocol == "ANY" or bool(
-                protected.intersection(destination_ports)
+            exposes_protected = protocol in {"TCP", "ANY"} and (
+                not destination_ports or bool(protected.intersection(destination_ports))
             )
             if not exposes_protected:
                 continue
@@ -291,7 +293,8 @@ def remove_npa_ingress_for_instance_ports(
                 raise NetworkIngressError(
                     f"security rule {name or rule_id or '<unnamed>'!r} exposes "
                     f"internal agent port(s) {sorted(protected)} and is not a "
-                    "dedicated NPA-managed rule"
+                    "dedicated NPA-managed rule",
+                    deleted=tuple(deleted),
                 )
             try:
                 nebius._run(["vpc", "security-rule", "delete", "--id", rule_id])
@@ -619,7 +622,9 @@ def _covered_ports(
         if source not in (ingress.get("source_cidrs") or []):
             continue
         destination_ports = {int(port) for port in ingress.get("destination_ports") or []}
-        covered.update(requested.intersection(destination_ports))
+        covered.update(
+            requested if not destination_ports else requested.intersection(destination_ports)
+        )
     return covered
 
 
@@ -645,7 +650,7 @@ def _name_collision_warnings(
             spec.get("access", "").upper() == "ALLOW"
             and spec.get("protocol", "").upper() == protocol
             and source in source_cidrs
-            and requested.issubset(destination_ports)
+            and (not destination_ports or requested.issubset(destination_ports))
         )
         if not matches:
             warnings.append(

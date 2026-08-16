@@ -981,6 +981,117 @@ def _import_rendered_backend(monkeypatch, tmp_path, *, module_name: str):
     return module
 
 
+def test_artifact_only_load_run_preserves_ui_contract_and_active_state(
+    monkeypatch, tmp_path
+) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_artifact_only_backend"
+    )
+    state: dict[str, object] = {}
+    artifacts = [
+        module.Artifact(
+            run_id="artifact-only-run",
+            key=f"category/artifact-only-run/{role}/item-{index}.json",
+            s3_uri=f"s3://bucket/category/artifact-only-run/{role}/item-{index}.json",
+            size=10,
+            last_modified="2031-01-01T00:00:00Z",
+            render="json",
+            inline=True,
+            role=role,
+            relative_key=f"{role}/item-{index}.json",
+        )
+        for index, role in enumerate(("output", "output", "input", "metadata"))
+    ]
+    monkeypatch.setattr(module, "_load_session_run_if_known", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        module,
+        "_agent_s3_client",
+        lambda: (object(), {"bucket": "bucket", "prefix": ""}),
+    )
+    monkeypatch.setattr(module, "list_artifacts", lambda *_args, **_kwargs: artifacts)
+    monkeypatch.setattr(module, "_load_state", lambda: state)
+    monkeypatch.setattr(module, "_save_state", lambda value: state.update(value))
+    monkeypatch.setattr(module, "_record_sim_viz_run", lambda *_args: None)
+
+    response = module.sim_viz_load_run(
+        {"run_id": "artifact-only-run", "prefix": "category"}
+    )
+
+    sim_viz = response["sim_viz"]
+    assert response["artifacts_available"] is True
+    assert response["artifact_count"] == 4
+    assert response["output_artifact_count"] == 2
+    assert response["run_ref"]
+    assert state["active_run_id"] == "artifact-only-run"
+    assert sim_viz["preview_status"] == "no_previewable_recording"
+    assert sim_viz["visualization_note"] == "No previewable recording; artifacts available."
+    assert sim_viz["artifact_count"] == 4
+    assert sim_viz["output_artifact_count"] == 2
+    assert sim_viz["input_artifact_count"] == 1
+    assert sim_viz["metadata_artifact_count"] == 1
+
+
+def test_workflow_dry_run_plans_provision_even_with_existing_infra(
+    monkeypatch, tmp_path
+) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_workflow_dry_run_backend"
+    )
+    provisions: list[dict[str, object]] = []
+    state: dict[str, object] = {}
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("apiVersion: npa.workflow/v0.0.1\n", encoding="utf-8")
+    monkeypatch.setattr(module, "_resolve_workflow_yaml", lambda _body: "workflow")
+    monkeypatch.setattr(
+        module,
+        "validate_workflow_yaml_text",
+        lambda *_args, **_kwargs: {"ok": True, "name": "dry-plan"},
+    )
+    monkeypatch.setattr(
+        module,
+        "plan_workflow_yaml_text",
+        lambda *_args, **_kwargs: {"ok": True, "states": []},
+    )
+    monkeypatch.setattr(module, "_agent_project_alias", lambda value: value or "demo")
+    monkeypatch.setattr(
+        module,
+        "_agent_k8s_backends",
+        lambda _project: {"has_infra": True, "configured": ["existing"]},
+    )
+
+    def provision(project, cluster_name, **kwargs):
+        provisions.append({"project": project, "cluster_name": cluster_name, **kwargs})
+        return {"ok": True, "status": "dry-run", "actions": ["would provision"]}
+
+    monkeypatch.setattr(module, "_provision_agent_infra", provision)
+    monkeypatch.setattr(module, "_write_workflow_temp_yaml", lambda _text: yaml_path)
+    monkeypatch.setattr(module, "_run_agent_npa_json", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(module, "_load_state", lambda: state)
+    monkeypatch.setattr(module, "_save_state", lambda value: state.update(value))
+    monkeypatch.setattr(module, "_save_workflow_draft", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "_record_sim_viz_run", lambda *_args: None)
+
+    response = module.submit_npa_workflow(
+        {
+            "yaml": "workflow",
+            "run_id": "dry-run-existing-infra",
+            "project": "demo",
+            "allow_provision": True,
+            "dry_run": True,
+        }
+    )
+
+    assert response["ok"] is True
+    assert response["submit_mode"] == "agent-live-infra-dry-run"
+    assert provisions == [{
+        "project": "demo",
+        "cluster_name": "npa-cluster",
+        "dry_run": True,
+        "validate": False,
+        "skip_s3": True,
+    }]
+
+
 @pytest.mark.parametrize(
     ("module", "marker"),
     [
@@ -1987,10 +2098,11 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
         module.RunSummary(
             f"indexed-run-{index}",
             f"2031-01-0{index + 1}T00:00:00Z",
-            1,
-            False,
+            0,
+            None,
             bucket="bucket-test",
             project_id="project-test",
+            summary_complete=False,
             resolved_prefix=f"category-{index}",
         )
         for index in range(3)
@@ -2029,9 +2141,38 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
     searched = module.artifacts_runs(limit=20, q="RUN-1")
     assert [item["run_id"] for item in searched["runs"]] == ["indexed-run-1"]
     assert searched["total_runs"] == 1
+    assert searched["total_runs_scope"] == "filtered_global"
+    assert searched["observed_match_count"] == 1
+    assert searched["query_complete"] is True
+    assert searched["count_scope"] == "page"
+    assert searched["runs"][0]["summary_complete"] is False
+    assert searched["runs"][0]["has_viewable"] is None
     assert searched["query"] == "RUN-1"
     assert query_calls[0]["contains"] == ""
     assert query_calls[0]["lightweight"] is True
+
+    class _BoundedRunPage:
+        runs = indexed_runs
+        total_runs = 10_000
+        truncated = True
+        discovery_complete = False
+        source_errors = ({"bucket": "later-bucket", "error": "bounded"},)
+
+    monkeypatch.setattr(
+        module, "list_runs_cached_multi", lambda *_args, **_kwargs: _BoundedRunPage()
+    )
+    bounded = module.artifacts_runs(limit=1, q="RUN")
+    continued = module.artifacts_runs(limit=1, q="RUN", cursor=bounded["next_cursor"])
+    assert bounded["count"] == 1
+    assert bounded["next_cursor"]
+    assert bounded["total_runs"] is None
+    assert bounded["total_runs_scope"] == "unavailable"
+    assert bounded["observed_run_count"] == 10_000
+    assert bounded["observed_match_count"] == 3
+    assert bounded["query_complete"] is False
+    assert bounded["pagination_complete"] is False
+    assert bounded["truncated"] is True
+    assert continued["runs"][0]["run_id"] == "indexed-run-1"
 
     with pytest.raises(module.HTTPException) as exc_info:
         module.artifacts_runs(

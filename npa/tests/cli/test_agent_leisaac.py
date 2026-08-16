@@ -33,6 +33,8 @@ from npa.agent_backend.leisaac import (
 )
 from npa.agent_backend.leisaac_routes import (
     LeIsaacDeps,
+    _bind_backhaul_hello_peer,
+    _client_address,
     _health,
     _resolve,
     _same_https_origin,
@@ -58,17 +60,18 @@ def _manifest(**overrides):
         "schema": "npa.leisaac.session.v1",
         "run_id": "leisaac-live-1",
         "provider": "nebius-kubernetes",
+        "transport": "agent-relay",
         "task": LEISAAC_TASK,
         "teleop_device": "keyboard",
-        "signal_host": "8.8.8.8",
+        "signal_host": "127.0.0.1",
         "signal_port": LEISAAC_SIGNAL_PORT,
         "media_host": "1.1.1.1",
-        "media_server": "1.1.1.1",
+        "media_server": "10.96.0.5",
         "media_port": LEISAAC_MEDIA_PORT,
         "turn_port": LEISAAC_TURN_PORT,
         "turn_relay_port": LEISAAC_TURN_RELAY_PORT,
         "turn_relay_max_port": LEISAAC_TURN_RELAY_MAX_PORT,
-        "service_url": "http://8.8.8.8:8080",
+        "service_url": "http://127.0.0.1:48080",
         "session_nonce": "a" * 64,
         "created_at": now.isoformat(),
         "expires_at": (now + timedelta(hours=1)).isoformat(),
@@ -348,7 +351,7 @@ def test_manifest_fast_path_logs_credential_safely_and_preserves_discovery(
     [
         ({"task": "Isaac-Cartpole-v0"}, "supported task"),
         ({"teleop_device": "so101leader"}, "keyboard"),
-        ({"signal_host": "127.0.0.1"}, "network contract"),
+        ({"signal_host": "127.0.0.2"}, "network contract"),
         ({"service_url": "http://1.1.1.1:8080"}, "service endpoint"),
         ({"signal_port": "not-an-int"}, "signaling port"),
         ({"media_port": 80}, "media port"),
@@ -438,6 +441,20 @@ def test_agent_relay_manifest_accepts_only_fixed_loopback_tcp_contract() -> None
         assert rejected_reason
 
 
+def test_public_load_balancer_manifest_is_not_discoverable_even_with_nonce() -> None:
+    rejected, reason = normalize_manifest(
+        _manifest(
+            transport="public-load-balancer",
+            signal_host="8.8.8.8",
+            media_server="1.1.1.1",
+            service_url="http://8.8.8.8:8080",
+        ),
+        expected_run_id="leisaac-live-1",
+    )
+    assert rejected is None
+    assert "requires the secure agent-relay transport" in reason
+
+
 def test_live_health_attestation_gates_secret_free_status() -> None:
     manifest = _normalized()
     health, reason = validate_health(
@@ -463,9 +480,9 @@ def test_live_health_attestation_gates_secret_free_status() -> None:
     assert payload["video_datachannel_url"] == "/api/leisaac/transport/video-webrtc"
     assert payload["control_datachannel_url"] == "/api/leisaac/transport/control-webrtc"
     assert payload["preferred_control_transport"] == "websocket-v1"
-    assert payload["transport_security"] == "insecure-public-plaintext-non-production"
-    assert "public plaintext HTTP/WebRTC" in payload["transport_warning"]
-    assert payload["media_server"] == "1.1.1.1"
+    assert payload["transport_security"] == "secure-agent-relay"
+    assert payload["transport_warning"] == ""
+    assert payload["media_server"] == "10.96.0.5"
     serialized = repr(payload)
     assert manifest["session_nonce"] not in serialized
     assert manifest["service_url"] not in serialized
@@ -1022,7 +1039,7 @@ def test_manifest_cache_refreshes_same_run_id_after_bounded_freshness(
         expires_at=None,
         session_nonce="b" * 64,
         media_host="2.2.2.2",
-        media_server="2.2.2.2",
+        media_server="10.96.0.6",
     )
     calls: list[str] = []
     state = {"leisaac": {"run_id": raw_manifest["run_id"]}}
@@ -1073,11 +1090,11 @@ def test_manifest_cache_refreshes_same_run_id_after_bounded_freshness(
     headers = {"x-forwarded-proto": "https"}
     initial = client.get("/leisaac/status", headers=headers).json()
     assert initial["available"]
-    assert initial["media_server"] == "1.1.1.1"
+    assert initial["media_server"] == "10.96.0.5"
     clock[0] += 6.0
     relaunched = client.get("/leisaac/status", headers=headers).json()
     assert relaunched["available"]
-    assert relaunched["media_server"] == "2.2.2.2"
+    assert relaunched["media_server"] == "10.96.0.6"
     selection = client.post(
         "/leisaac/select",
         headers={**headers, "x-npa-leisaac-control": "1"},
@@ -1196,8 +1213,11 @@ def test_signaling_proxy_preserves_only_upstream_sign_in_path() -> None:
         f"/leisaac/signal/sign_in?{query}", headers=headers
     ) as websocket:
         assert websocket.receive_text() == '{"ackid":1}'
-    assert connected == [f"ws://8.8.8.8:{LEISAAC_SIGNAL_PORT}/sign_in?{query}"]
+    assert connected == [f"ws://127.0.0.1:{LEISAAC_SIGNAL_PORT}/sign_in?{query}"]
     assert health_checks_off_event_loop == [True]
+
+    with client.websocket_connect(f"/leisaac/signal?{query}", headers=headers) as websocket:
+        assert websocket.receive_text() == '{"ackid":1}'
 
     with pytest.raises(WebSocketDisconnect) as exc_info:
         with client.websocket_connect(
@@ -1206,6 +1226,12 @@ def test_signaling_proxy_preserves_only_upstream_sign_in_path() -> None:
         ):
             pass
     assert exc_info.value.code == 1008
+
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect(
+            f"/leisaac/signalXXX?run_id={raw_manifest['run_id']}", headers=headers
+        ):
+            pass
 
     for origin in (None, "https://foreign.example", "null", "not a url"):
         rejected_headers = {"x-forwarded-proto": "https", "host": "testserver"}
@@ -1434,6 +1460,27 @@ def test_backhaul_rejects_browser_shape_before_accept_and_accepts_scoped_pod(
             assert writers[-1].settled.wait(5), "backhaul cleanup did not complete"
     assert len(writers) == 10
     assert all(writer.closed and writer.waited for writer in writers)
+
+
+def test_backhaul_hello_uses_nginx_peer_and_normalizes_mapped_ipv4() -> None:
+    body = json.dumps(
+        {"nonce": "a" * 64, "peer_public_ip": "9.9.9.9"}, separators=(",", ":")
+    ).encode()
+    frame = bytes((1,)) + (0).to_bytes(4, "big") + len(body).to_bytes(4, "big") + body
+    bound = _bind_backhaul_hello_peer(frame, "8.8.8.8")
+    size = int.from_bytes(bound[5:9], "big")
+    hello = json.loads(bound[9 : 9 + size])
+    assert hello == {"nonce": "a" * 64, "peer_public_ip": "8.8.8.8"}
+    assert _client_address({"x-real-ip": "::ffff:8.8.8.8"}, None) == "8.8.8.8"
+    assert _client_address({"x-real-ip": "2001:4860:4860::8888"}, None) == ""
+
+
+@pytest.mark.parametrize(
+    "payload", [b"", bytes((2,)) + b"\0" * 8, bytes((1,)) + b"\0" * 8]
+)
+def test_backhaul_first_message_must_be_one_complete_hello(payload: bytes) -> None:
+    with pytest.raises(ValueError, match="HELLO"):
+        _bind_backhaul_hello_peer(payload, "8.8.8.8")
 
 
 def test_video_relay_credits_runtime_before_browser_ack() -> None:

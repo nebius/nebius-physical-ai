@@ -47,11 +47,12 @@ uses a digest-pinned coturn sidecar, session-scoped credentials, bounded relay
 ports, and operator CIDR restrictions. The browser never receives the raw
 session nonce or agent credentials.
 
-`public-load-balancer` is legacy, plaintext, and non-production. It exposes the
-sole session nonce, robot controls, and frames over public HTTP/WebRTC. The CLI
-rejects it unless the operator both selects it and passes
-`--allow-insecure-public-load-balancer`. Never describe that mode as TLS or
-secure.
+`public-load-balancer` is an unsupported historical transport. Its S3 manifest
+cannot securely deliver the browser credential, because publication strips the
+session nonce and there is no provenance-bound reinjection path. Launch rejects
+it before EULA or infrastructure mutation. Retain only status/destroy handling
+needed to diagnose and clean up already-existing historical resources; never
+describe that mode as usable, TLS, or secure.
 
 All control transports terminate in the same ordered runtime ledger and
 controller lease. WebSocket, data-channel, and HTTP polling fallbacks must
@@ -59,6 +60,12 @@ enforce identical ownership: a second authenticated browser cannot drive keys,
 direct actions, modes, or orbit while another browser owns the lease. Preserve
 exact-key bounded messages, idempotent sequence acknowledgements, disconnect
 release, and bounded replay semantics.
+
+All same-run mutators (launch, destroy, and the lifecycle proof) use a renewed
+Kubernetes Secret as an exclusion lock. Preflight requires `get`, `create`,
+`update`, and `delete` on Secrets in the selected namespace before mutation.
+Custom cleanup-only roles must include those verbs; never bypass the lock to
+make teardown proceed concurrently with launch or credential rotation.
 
 ## Operate
 
@@ -154,10 +161,25 @@ npm run cy:live-leisaac
 ```
 
 Set the required `NPA_AGENT_BASE_URL`, `NPA_AGENT_USER`,
-`NPA_AGENT_PASSWORD`, `NPA_AGENT_RUN_ID`, and `NPA_AGENT_TASK` environment
+`NPA_AGENT_PASSWORD`, `NPA_LEISAAC_RUN_ID`, and `NPA_AGENT_TASK` environment
 values without committing or logging secrets. Keep the session available when
 the operator requested continuing access; otherwise use the scoped `destroy`
 command and record cleanup status.
+
+When an operator explicitly requests relay restart and expiry proof against an
+existing run, use
+`npa/scripts/verify_leisaac_relay_lifecycle_live.py`. It is a mutating,
+same-Deployment check: it holds and safely releases a control across restart,
+verifies browser-facing control/video recovery, fires bounded credential
+expiry, resumes the same controller lease to prove its held keys were released
+before any pod restart, writes a new immutable capability generation for the
+rotated session credential, rejects the stale credential, and restores
+recorder-idle service.
+It temporarily scales that same Deployment to zero so current-nonce acceptance
+and stale-nonce denial are isolated from the single-active-backhaul rule. The
+original capability and immutable dataset objects remain unchanged. Never use
+it to infer EULA consent, launch a replacement workload, or test an unrelated
+run. Store its secret-free evidence outside Git with owner-only permissions.
 
 ## Validation
 

@@ -12570,12 +12570,19 @@
         const status = document.getElementById("artifactDiscoverStatus");
         if (status) {
           const trunc = data.pagination_complete === false ? " (discovery incomplete)" : "";
+          const totalIsExact = data.total_runs != null;
+          const discoveredCount = totalIsExact
+            ? Number(data.total_runs || 0)
+            : Number(data.observed_match_count ?? data.observed_run_count ?? 0);
+          const discoveredLabel = totalIsExact
+            ? (q ? " matching " : " discovered ")
+            : (q ? " matching in bounded index " : " observed in bounded index ");
           const scoped = scope.resourceBucket
             ? " · project " + String(scope.projectId || "unknown") + " · bucket " + String(scope.resourceBucket)
             : "";
           status.textContent =
             "Runs (latest first): " + String(merged.length) +
-            " consolidated · discovered " + String(runs.length) + trunc +
+            " consolidated ·" + discoveredLabel + String(discoveredCount) + trunc +
             (data.access && data.access.status ? " · access " + String(data.access.status) : "") + scoped;
         }
         return { data, runs, merged };

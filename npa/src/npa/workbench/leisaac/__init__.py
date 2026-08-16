@@ -69,7 +69,7 @@ def validate_run_id(run_id: str) -> str:
 
 
 def turn_credential(session_nonce: str) -> str:
-    """Derive the ephemeral TURN password without publishing the session nonce."""
+    """Derive a session-scoped TURN password whose use ends with the session."""
 
     nonce = str(session_nonce or "").strip().lower()
     if not re.fullmatch(r"[a-f0-9]{64}", nonce):
@@ -200,77 +200,6 @@ def recorder_secret_manifest(
             "NPA_LEISAAC_OUTPUT_PATH": output_path.rstrip("/"),
         },
     }
-
-
-def service_manifests(
-    *,
-    run_id: str,
-    namespace: str,
-    source_ranges: list[str] | tuple[str, ...],
-) -> list[dict[str, Any]]:
-    """Build the two LBs before the GPU pod so its public media IP is known."""
-
-    run_id = validate_run_id(run_id)
-    ranges = validate_source_ranges(source_ranges)
-    name = resource_name(run_id)
-    labels = {
-        "app": name,
-        "app.kubernetes.io/name": "leisaac",
-        "app.kubernetes.io/instance": name,
-        "app.kubernetes.io/managed-by": "npa",
-    }
-    return [
-        {
-            "apiVersion": "v1",
-            "kind": "Service",
-            "metadata": {
-                "name": f"{name}-tcp",
-                "namespace": namespace,
-                "labels": labels,
-            },
-            "spec": {
-                "type": "LoadBalancer",
-                "loadBalancerSourceRanges": ranges,
-                "selector": {"app": name},
-                "ports": [
-                    {
-                        "name": "status",
-                        "protocol": "TCP",
-                        "port": SERVICE_PORT,
-                        "targetPort": SERVICE_PORT,
-                    },
-                    {
-                        "name": "signal",
-                        "protocol": "TCP",
-                        "port": SIGNAL_PORT,
-                        "targetPort": SIGNAL_PORT,
-                    },
-                ],
-            },
-        },
-        {
-            "apiVersion": "v1",
-            "kind": "Service",
-            "metadata": {
-                "name": f"{name}-media",
-                "namespace": namespace,
-                "labels": labels,
-            },
-            "spec": {
-                "type": "LoadBalancer",
-                "loadBalancerSourceRanges": ranges,
-                "selector": {"app": name},
-                "ports": [
-                    {
-                        "name": "media",
-                        "protocol": "UDP",
-                        "port": MEDIA_PORT,
-                        "targetPort": MEDIA_PORT,
-                    }
-                ],
-            },
-        },
-    ]
 
 
 def relay_service_manifest(
@@ -737,7 +666,7 @@ def session_manifest(
     expires_at: str = "",
     gpu: str = GPU_PRODUCT,
     created_at: str | None = None,
-    transport: str = TRANSPORT_LOAD_BALANCER,
+    transport: str = TRANSPORT_AGENT_RELAY,
     task: str = DEFAULT_TASK,
     environment_id: str = DEFAULT_ENVIRONMENT_ID,
     environment_index: int = 0,
@@ -756,21 +685,14 @@ def session_manifest(
     except ValueError as exc:
         raise LeIsaacConfigError(str(exc)) from exc
     split_s3_uri(output_path)
-    if transport not in (TRANSPORT_LOAD_BALANCER, TRANSPORT_AGENT_RELAY):
-        raise LeIsaacConfigError(f"unsupported LeIsaac transport: {transport}")
-    if transport == TRANSPORT_AGENT_RELAY:
-        if signal_host != "127.0.0.1":
-            raise LeIsaacConfigError("agent-relay signaling must use 127.0.0.1")
-        media_server = validate_private_ip(media_server, "agent relay media server")
-    else:
-        signal_host = validate_public_ip(signal_host, "signal host")
-    media_host = validate_public_ip(media_host, "media host")
     if transport != TRANSPORT_AGENT_RELAY:
-        media_server = validate_public_ip(media_server or media_host, "media server")
-        if media_server != media_host:
-            raise LeIsaacConfigError(
-                "public load-balancer media server must match the media host"
-            )
+        raise LeIsaacConfigError(
+            "only the secure agent-relay LeIsaac transport is supported"
+        )
+    if signal_host != "127.0.0.1":
+        raise LeIsaacConfigError("agent-relay signaling must use 127.0.0.1")
+    media_server = validate_private_ip(media_server, "agent relay media server")
+    media_host = validate_public_ip(media_host, "media host")
     expires_at = validate_expiry(expires_at)
     if not re.fullmatch(r"[a-f0-9]{64}", session_nonce):
         raise LeIsaacConfigError(
@@ -806,11 +728,7 @@ def session_manifest(
         "turn_port": TURN_PORT,
         "turn_relay_port": TURN_RELAY_PORT,
         "turn_relay_max_port": TURN_RELAY_MAX_PORT,
-        "service_url": (
-            f"http://127.0.0.1:{RELAY_SERVICE_PORT}"
-            if transport == TRANSPORT_AGENT_RELAY
-            else f"http://{signal_host}:{SERVICE_PORT}"
-        ),
+        "service_url": f"http://127.0.0.1:{RELAY_SERVICE_PORT}",
         "session_nonce": session_nonce,
         "session_attestation": session_attestation(session_nonce),
         "created_at": created_at

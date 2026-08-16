@@ -16,7 +16,7 @@ import ipaddress
 import tarfile
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import httpx
 import typer
@@ -253,7 +253,7 @@ _embedded_agent_access_source = functools.partial(_embedded_agent_module_source,
 _embedded_agent_access_runtime_source = functools.partial(_embedded_agent_module_source, "agent_access_runtime.py")
 
 
-def _fail(message: str) -> None:
+def _fail(message: str) -> NoReturn:
     typer.echo(f"Error: {message}", err=True)
     raise typer.Exit(code=1)
 
@@ -6373,29 +6373,6 @@ def sim_viz_load_run(payload: dict | None = None):
             # artifact-backed active context so conditional tabs (LeIsaac in
             # particular) survive periodic refresh, while keeping Rerun
             # truthfully unavailable instead of downloading JSON as a viewer.
-            state = _load_state()
-            selected = {{
-                "run_id": resolved_run_id,
-                "stage": "artifacts_available",
-                "rrd_uri": "",
-                "rrd_updated_at": _now_iso(),
-                "artifact_uri": str(preferred.s3_uri if preferred else ""),
-                "artifact_key": str(preferred.key if preferred else ""),
-                "artifact_render": str(preferred.render if preferred else ""),
-                "camera": requested_camera,
-                "mode": "static",
-            }}
-            state["sim_viz"] = selected
-            _record_sim_viz_run(state, selected)
-            _save_state(state)
-            return {{
-                "ok": True,
-                "sim_viz": _sim_viz_load_response(state, selected, run_id=resolved_run_id),
-                "preferred": preferred.to_dict() if preferred else None,
-            }}
-        if requested_bucket:
-            raise HTTPException(status_code=404, detail="selected artifact source has no loadable artifacts")
-        if artifacts:
             role_counts = artifact_inventory_counts(artifacts)
             state = _load_state()
             sim_viz = dict(DEFAULT_SIM_VIZ)
@@ -6424,14 +6401,14 @@ def sim_viz_load_run(payload: dict | None = None):
             sim_viz.update({{
                 "run_id": resolved_run_id,
                 "artifact_run_ref": resolved_ref,
-                "stage": "artifacts",
+                "stage": "artifacts_available",
                 "camera": camera,
                 "rrd_uri": "",
                 "rerun_ready": False,
                 "rerun_iframe_url": "",
-                "artifact_key": "",
-                "artifact_uri": "",
-                "artifact_render": "",
+                "artifact_key": str(preferred.key if preferred else ""),
+                "artifact_uri": str(preferred.s3_uri if preferred else ""),
+                "artifact_render": str(preferred.render if preferred else ""),
                 "artifact_count": len(artifacts),
                 "output_artifact_count": role_counts["output"],
                 "input_artifact_count": role_counts["input"],
@@ -6453,6 +6430,8 @@ def sim_viz_load_run(payload: dict | None = None):
                 "preferred": preferred.to_dict() if preferred else None,
                 "run_ref": resolved_ref,
             }}
+        if requested_bucket:
+            raise HTTPException(status_code=404, detail="selected artifact source has no loadable artifacts")
     except AmbiguousRunError as exc:
         raise HTTPException(
             status_code=409,
@@ -6550,9 +6529,9 @@ def artifacts_runs(
     prefix: str = "", limit: int = 50, q: str = "", cursor: str = "",
     resource_bucket: str = "", project_id: str = "",
 ):
-    # q: case-insensitive substring search over run ids, applied across ALL runs
-    # (every bucket root) before the limit — so old runs beyond the newest `limit`
-    # are still findable by name from the "Find run" box.
+    # q is a case-insensitive substring filter over a bounded, cached discovery
+    # index. Response metadata says whether that source index was complete; a
+    # bounded observed match count is never represented as a global total.
     try:
         s3, settings = _agent_s3_client()
         access_report = _agent_access_report()
@@ -6575,6 +6554,8 @@ def artifacts_runs(
             if query:
                 needle = query.lower()
                 indexed = [item for item in indexed if needle in item.run_id.lower()]
+            source_complete = bool(not page.truncated and page.discovery_complete)
+            observed_match_count = len(indexed)
             end = min(offset + page_size, len(indexed))
             visible = indexed[offset:end]
             has_more = end < len(indexed)
@@ -6594,7 +6575,16 @@ def artifacts_runs(
                 "access": access_diagnostics,
                 "runs": [item.to_dict() for item in visible],
                 "count": len(visible),
-                "total_runs": len(indexed) if query else page.total_runs,
+                "count_scope": "page",
+                "total_runs": observed_match_count if source_complete else None,
+                "total_runs_scope": (
+                    "filtered_global" if query and source_complete
+                    else "global" if source_complete
+                    else "unavailable"
+                ),
+                "observed_run_count": int(page.total_runs),
+                "observed_match_count": observed_match_count,
+                "query_complete": source_complete,
                 "limit": page_size,
                 "cursor": cursor,
                 "next_cursor": next_cursor,
@@ -8364,7 +8354,7 @@ def submit_npa_workflow(payload: dict):
     if not infra_before.get("has_infra") and not allow_provision:
         return _workflow_no_infra_response(validation=validation, plan=plan, run_id=run_id, infra=infra_before)
     provision = {{"ok": True, "status": "skipped", "actions": ["k8s:existing backend detected"]}}
-    if allow_provision and not infra_before.get("has_infra"):
+    if allow_provision and (dry_run or not infra_before.get("has_infra")):
         # Real (non-dry-run) provision requires the confirm-token gate.
         if not dry_run and not infra_before.get("has_infra"):
             confirm_token = str(body.get("confirm_token") or "").strip()
@@ -8391,7 +8381,10 @@ def submit_npa_workflow(payload: dict):
             project,
             cluster_name,
             dry_run=dry_run,
-            validate=validate_infra,
+            # provision-if-absent may validate a cached kubeconfig before its
+            # own dry-run branch; validation launches real CUDA smoke pods.
+            # Keep workflow dry-run strictly read-only.
+            validate=False if dry_run else validate_infra,
             skip_s3=bool(body.get("skip_s3", True)),
         )
         if not provision.get("ok"):

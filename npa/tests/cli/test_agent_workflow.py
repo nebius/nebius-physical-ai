@@ -940,8 +940,6 @@ def test_bootstrap_embeds_workflow_endpoints() -> None:
     assert '@app.post("/infra/soperator/deploy")' in source
     assert '@app.get("/infra/soperator/status/{{name}}")' in source
     assert "agent-live-infra-plan" in source
-    assert 'if allow_provision and not infra_before.get("has_infra"):' in source
-    assert 'dry_run or not infra_before.get("has_infra")' not in source
     assert "pip install -e" in source
     assert "deploy/cluster" in source
     assert "_soperator_deploy_from_payload" in source

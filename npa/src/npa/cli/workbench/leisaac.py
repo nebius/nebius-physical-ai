@@ -7,18 +7,17 @@ import hashlib
 import http.client
 import ipaddress
 import json
+import math
 import os
 from pathlib import Path
 import secrets
 import shlex
 import socket
 import ssl
-import subprocess
+import threading
 import time
-import urllib.request
-from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, Callable, NoReturn
 
 import typer
 
@@ -33,7 +32,8 @@ from npa.agent_backend.leisaac_registry import (
     validate_seed,
     validate_task,
 )
-from npa.clients.config import SSHConfig, list_projects, resolve_project_storage
+from npa.clients.config import SSHConfig, list_projects
+from npa.clients.kube import KubectlResult, run_kubectl
 from npa.clients.network import (
     ensure_ingress,
     remove_exact_npa_ingress_for_instance,
@@ -55,7 +55,6 @@ from npa.workbench.leisaac import (
     recorder_secret_manifest,
     relay_service_manifest,
     resource_name,
-    service_manifests,
     session_manifest,
     session_attestation,
     split_s3_uri,
@@ -70,7 +69,6 @@ from npa.workbench.leisaac.paidf import (
     export_episode_to_paidf,
     materialize_paidf_dataset,
 )
-from npa.workbench.leisaac.dataset import resolve_s3_endpoint
 from npa.workflows.sim2real.registry_auth import ensure_registry_pull_secret_for_images
 
 app = typer.Typer(
@@ -100,22 +98,55 @@ _TURN_TCP_TOOL = "leisaac-turn-control-tcp"
 _TURN_MEDIA_TOOL = "leisaac-turn-media"
 _TURN_CONFIG = "/etc/npa/leisaac-turn.conf"
 _TURN_UNIT = "npa-leisaac-turn.service"
+_EXTERNAL_IP_TIMEOUT_ENV = "NPA_LEISAAC_EXTERNAL_IP_TIMEOUT_SECONDS"
+_READY_TIMEOUT_ENV = "NPA_LEISAAC_READY_TIMEOUT_SECONDS"
+# The release operator explicitly requires bounded launch waits. These bound
+# only CLI readiness observation (with rollback), never workload lifetime.
+_DEFAULT_EXTERNAL_IP_TIMEOUT_SECONDS = 600.0
+_DEFAULT_READY_TIMEOUT_SECONDS = 14_400.0
+_LIFECYCLE_LOCK_STALE_SECONDS = 10 * 60
+_LIFECYCLE_LOCK_RENEW_SECONDS = 30.0
+_LIFECYCLE_LOCK_IO_TIMEOUT_SECONDS = 30.0
 
 
-def _fail(message: str) -> None:
+def _fail(message: str) -> NoReturn:
     typer.echo(f"Error: {message}", err=True)
     raise typer.Exit(1)
 
 
+def _wait_timeout(environment_name: str, default: float) -> float:
+    raw = str(os.environ.get(environment_name) or "").strip()
+    try:
+        value = float(raw) if raw else default
+    except ValueError as exc:
+        raise ValueError(
+            f"{environment_name} must be a positive number of seconds"
+        ) from exc
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{environment_name} must be a finite number greater than 0")
+    return value
+
+
+def _kubectl_wait_diagnostic(result: KubectlResult) -> str:
+    detail = " ".join((result.stderr or result.stdout or "no provider detail").split())
+    return f"kubectl exit {result.returncode}: {detail[:400]}"
+
+
 def _kubectl(
-    context: str, namespace: str, args: list[str], stdin: str | None = None
-) -> subprocess.CompletedProcess[str]:
-    command = ["kubectl"]
-    if context:
-        command.extend(["--context", context])
-    command.extend(["--namespace", namespace, *args])
-    return subprocess.run(
-        command, input=stdin, capture_output=True, text=True, check=False
+    context: str,
+    namespace: str,
+    args: list[str],
+    stdin: str | None = None,
+    *,
+    timeout: float | None = None,
+) -> KubectlResult:
+    return run_kubectl(
+        ["--namespace", namespace, *args],
+        context=context,
+        stdin=stdin,
+        # Mutation calls were historically unbounded. Readiness observation is
+        # bounded separately by _external_ip/_wait_ready with useful state.
+        timeout=timeout,
     )
 
 
@@ -126,8 +157,377 @@ def _apply(context: str, namespace: str, documents: list[dict[str, Any]]) -> Non
         raise RuntimeError((result.stderr or result.stdout).strip())
 
 
-def _external_ip(context: str, namespace: str, service: str) -> str:
+def _lifecycle_lock_name(deployment: str) -> str:
+    """Return the shared lock name used by every same-run mutator."""
+
+    digest = hashlib.sha256(deployment.encode("utf-8")).hexdigest()[:12]
+    prefix = deployment[:34].rstrip("-") or "leisaac"
+    return f"{prefix}-{digest}-lifecycle-lock"
+
+
+def _lifecycle_lock_document(
+    *,
+    namespace: str,
+    name: str,
+    holder: str,
+    resource_version: str,
+    acquired_epoch: float,
+    renewed_epoch: float,
+    uid: str = "",
+) -> dict[str, Any]:
+    annotations = {
+        "npa.nebius.com/lifecycle-holder": holder,
+        "npa.nebius.com/lifecycle-acquired-epoch": f"{acquired_epoch:.6f}",
+        "npa.nebius.com/lifecycle-renewed-epoch": f"{renewed_epoch:.6f}",
+    }
+    document: dict[str, Any] = {
+        "apiVersion": "v1",
+        # LeIsaac already creates, reads, updates, and deletes per-run Secrets.
+        # Reuse that established RBAC surface instead of silently requiring
+        # ConfigMap permissions from scoped operator roles.
+        "kind": "Secret",
+        "type": "Opaque",
+        "metadata": {
+            "name": name,
+            "namespace": namespace,
+            "annotations": annotations,
+        },
+    }
+    if resource_version:
+        document["metadata"]["resourceVersion"] = resource_version
+    if uid:
+        document["metadata"]["uid"] = uid
+    return document
+
+
+def _lifecycle_lock_values(document: dict[str, Any]) -> dict[str, str]:
+    annotations = (document.get("metadata") or {}).get("annotations") or {}
+    return {
+        "holder": str(annotations.get("npa.nebius.com/lifecycle-holder") or ""),
+        "acquired_epoch": str(
+            annotations.get("npa.nebius.com/lifecycle-acquired-epoch") or ""
+        ),
+        "renewed_epoch": str(
+            annotations.get("npa.nebius.com/lifecycle-renewed-epoch") or ""
+        ),
+    }
+
+
+def _lifecycle_lock_json(result: KubectlResult, label: str) -> dict[str, Any]:
+    if result.returncode:
+        detail = " ".join((result.stderr or result.stdout or "").split())
+        raise RuntimeError(f"{label} failed: {detail[:500] or 'no provider detail'}")
+    try:
+        payload = json.loads(result.stdout)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"{label} returned invalid JSON") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{label} returned a non-object document")
+    return payload
+
+
+def _acquire_lifecycle_lock(
+    context: str,
+    namespace: str,
+    deployment: str,
+    holder: str,
+) -> str:
+    """Atomically exclude every launch, destroy, and live proof for one run."""
+
+    name = _lifecycle_lock_name(deployment)
+    acquired_epoch = time.time()
+    document = _lifecycle_lock_document(
+        namespace=namespace,
+        name=name,
+        holder=holder,
+        resource_version="",
+        acquired_epoch=acquired_epoch,
+        renewed_epoch=acquired_epoch,
+    )
+    result = _kubectl(
+        context,
+        namespace,
+        ["create", "-f", "-"],
+        stdin=json.dumps(document, sort_keys=True),
+        timeout=_LIFECYCLE_LOCK_IO_TIMEOUT_SECONDS,
+    )
+    if not result.returncode:
+        return name
+    detail = " ".join((result.stderr or result.stdout or "").split()).lower()
+    if "alreadyexists" not in detail and "already exists" not in detail:
+        raise RuntimeError("could not acquire the selected run lifecycle lock")
+
+    current = _lifecycle_lock_json(
+        _kubectl(
+            context,
+            namespace,
+            ["get", "secret", name, "-o", "json"],
+            timeout=_LIFECYCLE_LOCK_IO_TIMEOUT_SECONDS,
+        ),
+        "existing lifecycle lock lookup",
+    )
+    metadata = current.get("metadata") or {}
+    data = _lifecycle_lock_values(current)
+    resource_version = str(metadata.get("resourceVersion") or "")
+    try:
+        prior_epoch = float(str(data.get("renewed_epoch") or ""))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("existing lifecycle lock has no valid renewal time") from exc
+    age = acquired_epoch - prior_epoch
+    if not resource_version or age < 0 or age <= _LIFECYCLE_LOCK_STALE_SECONDS:
+        raise RuntimeError(
+            "another LeIsaac lifecycle operation already holds the selected run lock"
+        )
+
+    replacement = _lifecycle_lock_document(
+        namespace=namespace,
+        name=name,
+        holder=holder,
+        resource_version=resource_version,
+        acquired_epoch=acquired_epoch,
+        renewed_epoch=acquired_epoch,
+    )
+    reclaimed = _kubectl(
+        context,
+        namespace,
+        ["replace", "-f", "-"],
+        stdin=json.dumps(replacement, sort_keys=True),
+        timeout=_LIFECYCLE_LOCK_IO_TIMEOUT_SECONDS,
+    )
+    if reclaimed.returncode:
+        raise RuntimeError("stale lifecycle lock changed before it could be reclaimed")
+    return name
+
+
+def _renew_lifecycle_lock(
+    context: str,
+    namespace: str,
+    name: str,
+    holder: str,
+) -> None:
+    current = _lifecycle_lock_json(
+        _kubectl(
+            context,
+            namespace,
+            ["get", "secret", name, "-o", "json"],
+            timeout=_LIFECYCLE_LOCK_IO_TIMEOUT_SECONDS,
+        ),
+        "lifecycle lock renewal lookup",
+    )
+    metadata = current.get("metadata") or {}
+    data = _lifecycle_lock_values(current)
+    if str(data.get("holder") or "") != holder:
+        raise RuntimeError("selected run lifecycle lock ownership changed")
+    resource_version = str(metadata.get("resourceVersion") or "")
+    try:
+        acquired_epoch = float(str(data.get("acquired_epoch") or ""))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            "selected run lifecycle lock has no valid acquisition time"
+        ) from exc
+    if not resource_version:
+        raise RuntimeError("selected run lifecycle lock has no resource version")
+    renewed = _kubectl(
+        context,
+        namespace,
+        ["replace", "-f", "-"],
+        stdin=json.dumps(
+            _lifecycle_lock_document(
+                namespace=namespace,
+                name=name,
+                holder=holder,
+                resource_version=resource_version,
+                acquired_epoch=acquired_epoch,
+                renewed_epoch=time.time(),
+            ),
+            sort_keys=True,
+        ),
+        timeout=_LIFECYCLE_LOCK_IO_TIMEOUT_SECONDS,
+    )
+    if renewed.returncode:
+        raise RuntimeError("could not renew the selected run lifecycle lock")
+
+
+def _release_lifecycle_lock(
+    context: str,
+    namespace: str,
+    name: str,
+    holder: str,
+) -> None:
+    current = _lifecycle_lock_json(
+        _kubectl(
+            context,
+            namespace,
+            ["get", "secret", name, "-o", "json"],
+            timeout=_LIFECYCLE_LOCK_IO_TIMEOUT_SECONDS,
+        ),
+        "lifecycle lock lookup",
+    )
+    if _lifecycle_lock_values(current)["holder"] != holder:
+        raise RuntimeError("selected run lifecycle lock ownership changed")
+    metadata = current.get("metadata") or {}
+    resource_version = str(metadata.get("resourceVersion") or "")
+    uid = str(metadata.get("uid") or "")
+    if not resource_version or not uid:
+        raise RuntimeError("selected run lifecycle lock has no release preconditions")
+    # kubectl's ``delete --raw`` does not attach stdin as a DELETE body, so an
+    # apparent DeleteOptions precondition would actually be ignored. First use
+    # an atomic PUT to replace the owned Secret with a fresh quarantine marker.
+    # A contender treats that marker as held, so the following ordinary delete
+    # cannot race with a new owner. If deletion fails, the marker becomes
+    # reclaimable after the normal stale interval rather than blocking forever.
+    released_epoch = time.time()
+    released = _kubectl(
+        context,
+        namespace,
+        ["replace", "-f", "-"],
+        stdin=json.dumps(
+            _lifecycle_lock_document(
+                namespace=namespace,
+                name=name,
+                holder="",
+                resource_version=resource_version,
+                acquired_epoch=released_epoch,
+                renewed_epoch=released_epoch,
+                uid=uid,
+            ),
+            sort_keys=True,
+        ),
+        timeout=_LIFECYCLE_LOCK_IO_TIMEOUT_SECONDS,
+    )
+    if released.returncode:
+        raise RuntimeError("could not release the selected run lifecycle lock")
+    deleted = _kubectl(
+        context,
+        namespace,
+        ["delete", "secret", name, "--ignore-not-found=true"],
+        timeout=_LIFECYCLE_LOCK_IO_TIMEOUT_SECONDS,
+    )
+    if deleted.returncode:
+        raise RuntimeError("could not remove the released run lifecycle lock")
+
+
+class _RunLifecycleLease:
+    """Renewed Kubernetes lease shared by all same-run mutating operations."""
+
+    def __init__(
+        self,
+        context: str,
+        namespace: str,
+        name: str,
+        holder: str,
+    ) -> None:
+        self.context = context
+        self.namespace = namespace
+        self.name = name
+        self.holder = holder
+        self._stop_event = threading.Event()
+        self._state_lock = threading.Lock()
+        self._failure: Exception | None = None
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def _run(self) -> None:
+        while not self._stop_event.wait(_LIFECYCLE_LOCK_RENEW_SECONDS):
+            try:
+                _renew_lifecycle_lock(
+                    self.context, self.namespace, self.name, self.holder
+                )
+            except Exception as exc:  # noqa: BLE001 - latched for foreground
+                with self._state_lock:
+                    self._failure = exc
+                return
+
+    def assert_healthy(self) -> None:
+        with self._state_lock:
+            failure = self._failure
+        if failure is not None:
+            raise RuntimeError(
+                "selected run lifecycle lock renewal failed"
+            ) from failure
+
+    def close(self) -> None:
+        failures: list[str] = []
+        self._stop_event.set()
+        self._thread.join(_LIFECYCLE_LOCK_IO_TIMEOUT_SECONDS + 5.0)
+        if self._thread.is_alive():
+            failures.append("renewal did not stop")
+        else:
+            try:
+                self.assert_healthy()
+            except Exception as exc:  # noqa: BLE001 - preserve cleanup sequence
+                failures.append(str(exc))
+        try:
+            _release_lifecycle_lock(
+                self.context, self.namespace, self.name, self.holder
+            )
+        except Exception as exc:  # noqa: BLE001 - preserve cleanup sequence
+            failures.append(str(exc))
+        if failures:
+            raise RuntimeError("lifecycle lock cleanup failed: " + "; ".join(failures))
+
+
+def _require_lifecycle_lock_permissions(context: str, namespace: str) -> None:
+    """Fail before mutation when the operator cannot maintain the shared lock."""
+
+    missing: list[str] = []
+    for verb in ("get", "create", "update", "delete"):
+        result = _kubectl(
+            context,
+            namespace,
+            ["auth", "can-i", verb, "secrets"],
+            timeout=_LIFECYCLE_LOCK_IO_TIMEOUT_SECONDS,
+        )
+        if result.returncode or result.stdout.strip().lower() != "yes":
+            missing.append(verb)
+    if missing:
+        raise RuntimeError(
+            "LeIsaac lifecycle exclusion requires Kubernetes Secret permissions "
+            f"get/create/update/delete in namespace {namespace!r}; missing or "
+            f"unverified: {', '.join(missing)}. No LeIsaac resource was changed."
+        )
+
+
+def _acquire_run_lifecycle_lease(
+    context: str,
+    namespace: str,
+    deployment: str,
+) -> _RunLifecycleLease:
+    _require_lifecycle_lock_permissions(context, namespace)
+    holder = secrets.token_hex(16)
+    name = _acquire_lifecycle_lock(context, namespace, deployment, holder)
+    lease = _RunLifecycleLease(context, namespace, name, holder)
+    lease.start()
+    return lease
+
+
+def _external_ip(
+    context: str,
+    namespace: str,
+    service: str,
+    *,
+    timeout_seconds: float | None = None,
+    poll_interval_seconds: float = 3.0,
+) -> str:
+    timeout = (
+        _wait_timeout(_EXTERNAL_IP_TIMEOUT_ENV, _DEFAULT_EXTERNAL_IP_TIMEOUT_SECONDS)
+        if timeout_seconds is None
+        else timeout_seconds
+    )
+    started = time.monotonic()
+    deadline = started + timeout
+    last_diagnostic = "service has no assigned address"
+    next_progress = started
     while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(
+                f"Timed out after {timeout:g}s waiting for Service "
+                f"{namespace}/{service} external IPv4; last observation: "
+                f"{last_diagnostic}"
+            )
         result = _kubectl(
             context,
             namespace,
@@ -138,22 +538,73 @@ def _external_ip(context: str, namespace: str, service: str) -> str:
                 "-o",
                 "jsonpath={.status.loadBalancer.ingress[0].ip}",
             ],
+            timeout=min(30.0, remaining),
         )
         value = result.stdout.strip()
         if result.returncode == 0 and value:
             return value
-        time.sleep(3)
+        last_diagnostic = (
+            "service has no assigned address"
+            if result.returncode == 0
+            else _kubectl_wait_diagnostic(result)
+        )
+        now = time.monotonic()
+        if now >= deadline:
+            raise TimeoutError(
+                f"Timed out after {timeout:g}s waiting for Service "
+                f"{namespace}/{service} external IPv4; last observation: "
+                f"{last_diagnostic}"
+            )
+        if now >= next_progress:
+            typer.echo(
+                f"Waiting for Service {namespace}/{service} external IPv4; "
+                f"{last_diagnostic}.",
+                err=True,
+            )
+            next_progress = now + 60.0
+        time.sleep(min(poll_interval_seconds, max(0.0, deadline - now)))
 
 
-def _wait_ready(context: str, namespace: str, deployment: str) -> None:
+def _wait_ready(
+    context: str,
+    namespace: str,
+    deployment: str,
+    *,
+    timeout_seconds: float | None = None,
+    poll_interval_seconds: float = 5.0,
+    progress_check: Callable[[], None] | None = None,
+) -> None:
+    timeout = (
+        _wait_timeout(_READY_TIMEOUT_ENV, _DEFAULT_READY_TIMEOUT_SECONDS)
+        if timeout_seconds is None
+        else timeout_seconds
+    )
+    started = time.monotonic()
+    deadline = started + timeout
+    last_diagnostic = "deployment status has not been observed"
+    next_progress = started
     while True:
+        if progress_check is not None:
+            progress_check()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(
+                f"Timed out after {timeout:g}s waiting for Deployment "
+                f"{namespace}/{deployment} readiness; last observation: "
+                f"{last_diagnostic}"
+            )
         result = _kubectl(
             context,
             namespace,
             ["get", "deployment", deployment, "-o", "json"],
+            timeout=min(30.0, remaining),
         )
         if result.returncode == 0:
-            data = json.loads(result.stdout)
+            try:
+                data = json.loads(result.stdout)
+            except json.JSONDecodeError as exc:
+                last_diagnostic = f"invalid deployment JSON: {exc}"
+                data = {}
             metadata = data.get("metadata", {}) or {}
             spec = data.get("spec", {}) or {}
             status = data.get("status", {}) or {}
@@ -168,7 +619,33 @@ def _wait_ready(context: str, namespace: str, deployment: str) -> None:
                 and int(status.get("unavailableReplicas") or 0) == 0
             ):
                 return
-        time.sleep(5)
+            last_diagnostic = (
+                f"generation={generation}, "
+                f"observed={int(status.get('observedGeneration') or 0)}, "
+                f"desired={int(spec.get('replicas') or 0)}, "
+                f"updated={int(status.get('updatedReplicas') or 0)}, "
+                f"ready={int(status.get('readyReplicas') or 0)}, "
+                f"available={int(status.get('availableReplicas') or 0)}, "
+                f"unavailable={int(status.get('unavailableReplicas') or 0)}"
+            )
+        else:
+            last_diagnostic = _kubectl_wait_diagnostic(result)
+        if progress_check is not None:
+            progress_check()
+        now = time.monotonic()
+        if now >= deadline:
+            raise TimeoutError(
+                f"Timed out after {timeout:g}s waiting for Deployment "
+                f"{namespace}/{deployment} readiness; last observation: "
+                f"{last_diagnostic}"
+            )
+        if now >= next_progress:
+            typer.echo(
+                f"Waiting for Deployment {namespace}/{deployment}; {last_diagnostic}.",
+                err=True,
+            )
+            next_progress = now + 60.0
+        time.sleep(min(poll_interval_seconds, max(0.0, deadline - now)))
 
 
 def _delete_resources(context: str, namespace: str, name: str) -> None:
@@ -346,6 +823,8 @@ def _select_agent_leisaac_run(
     auth_password: str,
     run_id: str,
     certificate_sha256: str,
+    timeout_seconds: float | None = None,
+    progress_check: Callable[[], None] | None = None,
 ) -> None:
     """Register the live run through the selected agent's pinned TLS endpoint."""
 
@@ -363,11 +842,24 @@ def _select_agent_leisaac_run(
     credential = base64.b64encode(
         f"{auth_user}:{auth_password}".encode("utf-8")
     ).decode("ascii")
+    timeout = (
+        _wait_timeout(_READY_TIMEOUT_ENV, _DEFAULT_READY_TIMEOUT_SECONDS)
+        if timeout_seconds is None
+        else timeout_seconds
+    )
+    deadline = time.monotonic() + timeout
     while True:
+        if progress_check is not None:
+            progress_check()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(
+                f"Timed out after {timeout:g}s waiting for agent run selection"
+            )
         context = ssl.create_default_context()
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
-        raw = socket.create_connection((host, 443), timeout=10)
+        raw = socket.create_connection((host, 443), timeout=min(10.0, remaining))
         tls = context.wrap_socket(raw, server_hostname=host)
         connection: http.client.HTTPConnection | None = None
         try:
@@ -381,8 +873,10 @@ def _select_agent_leisaac_run(
             # resolution plus a conditional state write against object storage. Preserve
             # the pinned socket while giving those off-loop operations their own response
             # budget instead of inheriting the 10-second connect timeout.
-            tls.settimeout(60)
-            connection = http.client.HTTPConnection(host, 443, timeout=10)
+            tls.settimeout(min(60.0, remaining))
+            connection = http.client.HTTPConnection(
+                host, 443, timeout=min(10.0, remaining)
+            )
             connection.sock = tls
             connection.request(
                 "POST",
@@ -408,7 +902,14 @@ def _select_agent_leisaac_run(
         # live pod and retry with a freshly certificate-pinned HTTPS connection;
         # authentication and every other response class remain fail closed.
         if status == 503:
-            time.sleep(2)
+            if progress_check is not None:
+                progress_check()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    f"Timed out after {timeout:g}s waiting for agent run selection"
+                )
+            time.sleep(min(2.0, remaining))
             continue
         if status != 200 or len(body) > 131072:
             raise RuntimeError(
@@ -587,18 +1088,6 @@ sudo rm -f /etc/systemd/system/{_TURN_UNIT} {_TURN_CONFIG}
 sudo systemctl daemon-reload
 """
     ssh.run_or_raise(command, label="remove LeIsaac TURN relay")
-
-
-def _status(signal_host: str, *, session_nonce: str) -> dict[str, Any]:
-    request = urllib.request.Request(  # noqa: S310 - validated LB IP
-        f"http://{signal_host}:8080/status",
-        headers={"X-NPA-LeIsaac-Nonce": session_nonce},
-    )
-    with urllib.request.urlopen(request) as response:  # noqa: S310 - validated LB IP
-        payload = json.loads(response.read().decode("utf-8"))
-    if not isinstance(payload, dict):
-        raise RuntimeError("LeIsaac service returned a non-object health document")
-    return payload
 
 
 def _put_manifest(
@@ -810,12 +1299,7 @@ def launch_cmd(
     transport: Transport = typer.Option(
         Transport.agent_relay,
         "--transport",
-        help="Secure agent relay (default), or explicitly acknowledged insecure public LBs.",
-    ),
-    allow_insecure_public_load_balancer: bool = typer.Option(
-        False,
-        "--allow-insecure-public-load-balancer",
-        help="Acknowledge that public-load-balancer sends nonce, controls, and frames over plaintext HTTP/WebRTC and is non-production.",
+        help="Secure agent relay. The historical public-load-balancer value is rejected.",
     ),
     agent_project: str = typer.Option(
         "", "--agent-project", help="Saved NPA agent project alias for agent-relay."
@@ -829,27 +1313,10 @@ def launch_cmd(
 ) -> None:
     """Launch a supported SO101 task and publish its secure collector capability."""
 
-    if (
-        os.environ.get("OMNI_KIT_ACCEPT_EULA") != "YES"
-        or os.environ.get("ISAACSIM_ACCEPT_EULA") != "YES"
-    ):
-        _fail(
-            "set OMNI_KIT_ACCEPT_EULA=YES and ISAACSIM_ACCEPT_EULA=YES after accepting NVIDIA's EULAs"
-        )
-    if (
-        transport == Transport.load_balancer
-        and not allow_insecure_public_load_balancer
-    ):
-        _fail(
-            "public-load-balancer is an insecure non-production transport; "
-            "use agent-relay or explicitly pass "
-            "--allow-insecure-public-load-balancer"
-        )
     if transport == Transport.load_balancer:
-        typer.echo(
-            "WARNING: public-load-balancer exposes the session nonce, controls, "
-            "and frames over public plaintext HTTP/WebRTC; do not use it in production.",
-            err=True,
+        _fail(
+            "public-load-balancer is unsupported because its S3 discovery "
+            "manifest cannot securely provision browser credentials; use agent-relay"
         )
     name = ""
     instance_id = ""
@@ -862,6 +1329,10 @@ def launch_cmd(
     turn_cleanup_required = False
     prior_turn_peer_source = ""
     created_ingress_specs: list[tuple[int, str, str, str]] = []
+    resources_mutated = False
+    lifecycle_lease: _RunLifecycleLease | None = None
+    failure_message = ""
+    lifecycle_warning = ""
     try:
         run_id = validate_run_id(run_id)
         image = validate_image(image)
@@ -871,11 +1342,10 @@ def launch_cmd(
         seed = validate_seed(seed)
         num_envs = validate_num_envs(num_envs)
         expires_at = validate_expiry(expires_at)
-        if not expires_at:
-            expires_at = (
-                datetime.now(timezone.utc) + timedelta(hours=8)
-            ).isoformat().replace("+00:00", "Z")
         source_ranges = validate_source_ranges(source_range)
+        launch_timeout = _wait_timeout(
+            _READY_TIMEOUT_ENV, _DEFAULT_READY_TIMEOUT_SECONDS
+        )
         split_s3_uri(output_path)
         if manifest_prefix and artifact_uri:
             raise LeIsaacConfigError(
@@ -887,6 +1357,7 @@ def launch_cmd(
         split_s3_uri(resolved_manifest_prefix)
         exact_manifest_uri = _manifest_object_uri(resolved_manifest_prefix, run_id)
         name = resource_name(run_id)
+        lifecycle_lease = _acquire_run_lifecycle_lease(context, namespace, name)
         nonce = secrets.token_hex(32)
         if image_pull_secret:
             # Nebius IAM-backed registry credentials are intentionally short lived. Refresh
@@ -905,91 +1376,71 @@ def launch_cmd(
                 raise LeIsaacConfigError(
                     f"image pull secret {image_pull_secret!r} is missing in namespace {namespace!r}"
                 )
-        if transport == Transport.agent_relay:
-            if not agent_project or not agent_name:
-                raise LeIsaacConfigError(
-                    "agent-relay requires --agent-project and --agent-name"
-                )
-            instance_id, media_host, ssh, auth_user, auth_password = (
-                _agent_relay_context(agent_project, agent_name)
+        if not agent_project or not agent_name:
+            raise LeIsaacConfigError(
+                "agent-relay requires --agent-project and --agent-name"
             )
-            turn_cleanup_required = True
-            artifact_storage = _agent_artifact_storage(agent_project, agent_name)
-            dataset_bucket, dataset_prefix = split_s3_uri(output_path)
-            if dataset_bucket != artifact_storage["bucket"]:
-                raise LeIsaacConfigError(
-                    "agent-relay output path bucket must match the selected agent's bucket"
-                )
-            agent_prefix = artifact_storage["prefix"]
-            if agent_prefix and not (
-                dataset_prefix == agent_prefix
-                or dataset_prefix.startswith(agent_prefix + "/")
-            ):
-                raise LeIsaacConfigError(
-                    "agent-relay output path must be inside the selected agent's artifact prefix"
-                )
-            prior_turn_peer_source = _existing_turn_peer_source(
-                context, namespace, f"{name}-relay"
+        instance_id, media_host, ssh, auth_user, auth_password = _agent_relay_context(
+            agent_project, agent_name
+        )
+        turn_cleanup_required = True
+        artifact_storage = _agent_artifact_storage(agent_project, agent_name)
+        dataset_bucket, dataset_prefix = split_s3_uri(output_path)
+        if dataset_bucket != artifact_storage["bucket"]:
+            raise LeIsaacConfigError(
+                "agent-relay output path bucket must match the selected agent's bucket"
             )
-            service = relay_service_manifest(
-                run_id=run_id,
-                namespace=namespace,
-                agent_project=agent_project,
-                agent_name=agent_name,
-                source_ranges=source_ranges,
+        agent_prefix = artifact_storage["prefix"]
+        if agent_prefix and not (
+            dataset_prefix == agent_prefix
+            or dataset_prefix.startswith(agent_prefix + "/")
+        ):
+            raise LeIsaacConfigError(
+                "agent-relay output path must be inside the selected agent's artifact prefix"
             )
-            _apply(context, namespace, [service])
-            relay_installed = True
-            # The ClusterIP is allocated when the relay Service is created and
-            # remains stable for this launch transaction. Resolve it before
-            # rendering the Deployment so the relay topology is validated
-            # before any GPU workload is scheduled.
-            media_server = _relay_media_server(context, namespace, name)
-            # Sessions from the previous topology ran coturn on the public agent
-            # itself. Remove only this run's matching unit before the backhaul
-            # relay takes ownership of public UDP 3478.
-            _remove_agent_turn(ssh, run_id=run_id)
-            _install_agent_relay(
-                ssh,
-                run_id=run_id,
-                session_nonce=nonce,
-                expires_at=expires_at,
-                manifest_uri=exact_manifest_uri,
-            )
-            certificate_sha256 = _agent_certificate_sha256(media_host)
-            relay_secret = relay_client_secret_manifest(
-                run_id=run_id,
-                namespace=namespace,
-                agent_host=media_host,
-                session_nonce=nonce,
-                certificate_sha256=certificate_sha256,
-                auth_user=auth_user,
-                auth_password=auth_password,
-                client_source=_relay_source("reverse_client.py").decode("utf-8"),
-            )
-            _apply(context, namespace, [relay_secret])
-            signal_host = "127.0.0.1"
-        else:
-            configured_storage = resolve_project_storage(None)
-            artifact_storage = {
-                "bucket": split_s3_uri(output_path)[0],
-                "prefix": "",
-                "endpoint": resolve_s3_endpoint(
-                    config_endpoint=configured_storage.endpoint_url
-                ),
-                "access_key": os.environ.get("AWS_ACCESS_KEY_ID") or "",
-                "secret_key": os.environ.get("AWS_SECRET_ACCESS_KEY") or "",
-                "region": os.environ.get("AWS_REGION") or "eu-north1",
-            }
-            services = service_manifests(
-                run_id=run_id,
-                namespace=namespace,
-                source_ranges=source_ranges,
-            )
-            _apply(context, namespace, services)
-            signal_host = _external_ip(context, namespace, f"{name}-tcp")
-            media_host = _external_ip(context, namespace, f"{name}-media")
-            media_server = media_host
+        prior_turn_peer_source = _existing_turn_peer_source(
+            context, namespace, f"{name}-relay"
+        )
+        service = relay_service_manifest(
+            run_id=run_id,
+            namespace=namespace,
+            agent_project=agent_project,
+            agent_name=agent_name,
+            source_ranges=source_ranges,
+        )
+        lifecycle_lease.assert_healthy()
+        resources_mutated = True
+        _apply(context, namespace, [service])
+        relay_installed = True
+        # The ClusterIP is allocated when the relay Service is created and
+        # remains stable for this launch transaction. Resolve it before
+        # rendering the Deployment so the relay topology is validated
+        # before any GPU workload is scheduled.
+        media_server = _relay_media_server(context, namespace, name)
+        # Sessions from the previous topology ran coturn on the public agent
+        # itself. Remove only this run's matching unit before the backhaul
+        # relay takes ownership of public UDP 3478.
+        _remove_agent_turn(ssh, run_id=run_id)
+        _install_agent_relay(
+            ssh,
+            run_id=run_id,
+            session_nonce=nonce,
+            expires_at=expires_at,
+            manifest_uri=exact_manifest_uri,
+        )
+        certificate_sha256 = _agent_certificate_sha256(media_host)
+        relay_secret = relay_client_secret_manifest(
+            run_id=run_id,
+            namespace=namespace,
+            agent_host=media_host,
+            session_nonce=nonce,
+            certificate_sha256=certificate_sha256,
+            auth_user=auth_user,
+            auth_password=auth_password,
+            client_source=_relay_source("reverse_client.py").decode("utf-8"),
+        )
+        _apply(context, namespace, [relay_secret])
+        signal_host = "127.0.0.1"
         if artifact_storage is None:
             raise LeIsaacConfigError("recorder storage configuration is unavailable")
         recorder_secret = recorder_secret_manifest(
@@ -1010,9 +1461,7 @@ def launch_cmd(
             session_nonce=nonce,
             media_server=media_server,
             image_pull_secret=image_pull_secret,
-            relay_client_secret=(
-                f"{name}-relay-client" if transport == Transport.agent_relay else ""
-            ),
+            relay_client_secret=f"{name}-relay-client",
             recorder_secret=f"{name}-recorder",
             task=task,
             environment_id=environment_id,
@@ -1021,39 +1470,41 @@ def launch_cmd(
             num_envs=num_envs,
         )
         _apply(context, namespace, [deployment])
-        _wait_ready(context, namespace, name)
-        if transport == Transport.agent_relay:
-            if ssh is None:
-                raise RuntimeError("LeIsaac agent relay has no SSH transport")
-            for source in source_ranges:
-                for protocol in ("UDP", "TCP"):
-                    ingress_tool = (
-                        _TURN_CONTROL_TOOL if protocol == "UDP" else _TURN_TCP_TOOL
-                    )
-                    ingress = ensure_ingress(
-                        vm_id=instance_id,
-                        ports=(TURN_PORT,),
-                        source=source,
-                        tool=ingress_tool,
-                        protocol=protocol,
-                    )
-                    if ingress.changed:
-                        created_ingress_specs.append(
-                            (TURN_PORT, source, ingress_tool, protocol)
-                        )
-            if prior_turn_peer_source:
-                remove_exact_npa_ingress_for_instance(
-                    instance_id,
-                    ports=(TURN_RELAY_PORT,),
-                    source=prior_turn_peer_source,
-                    tool=_TURN_MEDIA_TOOL,
-                    protocol="UDP",
-                )
-        health = (
-            _relay_status(ssh, session_nonce=nonce)
-            if ssh is not None
-            else _status(signal_host, session_nonce=nonce)
+        launch_deadline = time.monotonic() + launch_timeout
+        _wait_ready(
+            context,
+            namespace,
+            name,
+            timeout_seconds=launch_timeout,
+            progress_check=lifecycle_lease.assert_healthy,
         )
+        if ssh is None:
+            raise RuntimeError("LeIsaac agent relay has no SSH transport")
+        for source in source_ranges:
+            for protocol in ("UDP", "TCP"):
+                ingress_tool = (
+                    _TURN_CONTROL_TOOL if protocol == "UDP" else _TURN_TCP_TOOL
+                )
+                ingress = ensure_ingress(
+                    vm_id=instance_id,
+                    ports=(TURN_PORT,),
+                    source=source,
+                    tool=ingress_tool,
+                    protocol=protocol,
+                )
+                if ingress.changed:
+                    created_ingress_specs.append(
+                        (TURN_PORT, source, ingress_tool, protocol)
+                    )
+        if prior_turn_peer_source:
+            remove_exact_npa_ingress_for_instance(
+                instance_id,
+                ports=(TURN_RELAY_PORT,),
+                source=prior_turn_peer_source,
+                tool=_TURN_MEDIA_TOOL,
+                protocol="UDP",
+            )
+        health = _relay_status(ssh, session_nonce=nonce)
         if (
             health.get("state") != "ready"
             or health.get("task") != task
@@ -1088,15 +1539,17 @@ def launch_cmd(
             manifest,
             storage=artifact_storage,
         )
-        if transport == Transport.agent_relay:
-            _select_agent_leisaac_run(
-                media_host,
-                auth_user=auth_user,
-                auth_password=auth_password,
-                run_id=run_id,
-                certificate_sha256=certificate_sha256,
-            )
-    except Exception as exc:  # noqa: BLE001 - CLI boundary reports SDK and kubectl failures
+        _select_agent_leisaac_run(
+            media_host,
+            auth_user=auth_user,
+            auth_password=auth_password,
+            run_id=run_id,
+            certificate_sha256=certificate_sha256,
+            timeout_seconds=max(0.0, launch_deadline - time.monotonic()),
+            progress_check=lifecycle_lease.assert_healthy,
+        )
+        lifecycle_lease.assert_healthy()
+    except (Exception, KeyboardInterrupt) as exc:  # noqa: BLE001 - CLI boundary
         cleanup_errors: list[str] = []
         if turn_cleanup_required and ssh is not None:
             try:
@@ -1119,45 +1572,59 @@ def launch_cmd(
                 )
             except Exception as cleanup_exc:  # noqa: BLE001 - preserve primary failure
                 cleanup_errors.append(f"ingress cleanup: {cleanup_exc}")
-        if name:
+        if resources_mutated:
             try:
                 _delete_resources(context, namespace, name)
             except Exception as cleanup_exc:  # noqa: BLE001 - preserve primary failure
                 cleanup_errors.append(f"Kubernetes cleanup: {cleanup_exc}")
+        primary_error = str(exc) or "LeIsaac launch interrupted"
+        failure_message = primary_error
         if cleanup_errors:
-            _fail(f"{exc}; cleanup also failed: {'; '.join(cleanup_errors)}")
-        _fail(str(exc))
-        return
-    _emit(
-        {
-            "status": "ready",
-            "run_id": run_id,
-            "task": task,
-            "environment_id": environment_id,
-            "environment_index": environment_index,
-            "seed": seed,
-            "dataset": output_path.rstrip("/"),
-            "gpu": health.get("gpu"),
-            "image": image,
-            "transport": transport.value,
-            "transport_security": (
-                "secure-agent-relay"
-                if transport == Transport.agent_relay
-                else "insecure-public-plaintext-non-production"
-            ),
-            "deployment": name,
-            "signal_host": signal_host,
-            "media_host": media_host,
-            "artifact": manifest_uri,
-            "public_agent_url": (
-                f"https://{media_host}/"
-                if transport == Transport.agent_relay
-                else "not used"
-            ),
-            "expires_at": expires_at or "none (service lifecycle)",
-        },
-        output,
-    )
+            failure_message = (
+                f"{primary_error}; cleanup also failed: {'; '.join(cleanup_errors)}"
+            )
+    finally:
+        # A normal error, Ctrl-C, or embedded caller cancellation must never
+        # leave the renewal thread running or the selected run locked.
+        if lifecycle_lease is not None:
+            try:
+                lifecycle_lease.close()
+                lifecycle_lease = None
+            except Exception as cleanup_exc:  # noqa: BLE001 - preserve primary failure
+                lock_error = f"lifecycle lock cleanup failed: {cleanup_exc}"
+                if failure_message:
+                    failure_message = f"{failure_message}; {lock_error}"
+                else:
+                    # The deployment, manifest publication, and authenticated
+                    # agent selection have already succeeded. A best-effort
+                    # lock-release failure must be visible, but reporting the
+                    # live workload as a failed launch invites a destructive
+                    # retry against resources that are serving traffic.
+                    lifecycle_warning = lock_error
+    if failure_message:
+        _fail(failure_message)
+    result = {
+        "status": "ready",
+        "run_id": run_id,
+        "task": task,
+        "environment_id": environment_id,
+        "environment_index": environment_index,
+        "seed": seed,
+        "dataset": output_path.rstrip("/"),
+        "gpu": health.get("gpu"),
+        "image": image,
+        "transport": transport.value,
+        "transport_security": "secure-agent-relay",
+        "deployment": name,
+        "signal_host": signal_host,
+        "media_host": media_host,
+        "artifact": manifest_uri,
+        "public_agent_url": f"https://{media_host}/",
+        "expires_at": expires_at or "none (service lifecycle)",
+    }
+    if lifecycle_warning:
+        result["warning"] = lifecycle_warning
+    _emit(result, output)
 
 
 @app.command("status")
@@ -1205,11 +1672,16 @@ def destroy_cmd(
     except LeIsaacConfigError as exc:
         _fail(str(exc))
         return
-    relay = _kubectl(
-        context, namespace, ["get", "service", f"{name}-relay", "-o", "json"]
-    )
-    if relay.returncode == 0:
-        try:
+    lifecycle_lease: _RunLifecycleLease | None = None
+    failure: Exception | None = None
+    failure_stage = "lifecycle lock acquisition"
+    try:
+        lifecycle_lease = _acquire_run_lifecycle_lease(context, namespace, name)
+        failure_stage = "agent relay cleanup"
+        relay = _kubectl(
+            context, namespace, ["get", "service", f"{name}-relay", "-o", "json"]
+        )
+        if relay.returncode == 0:
             annotations = (
                 json.loads(relay.stdout).get("metadata", {}).get("annotations", {})
                 or {}
@@ -1248,6 +1720,7 @@ def destroy_cmd(
                     (MEDIA_PORT, source, _RELAY_TOOL, "UDP") for source in sources
                 )
             for port, source, tool, protocol in ingress_specs:
+                lifecycle_lease.assert_healthy()
                 remove_exact_npa_ingress_for_instance(
                     instance_id,
                     ports=(port,),
@@ -1255,10 +1728,27 @@ def destroy_cmd(
                     tool=tool,
                     protocol=protocol,
                 )
-        except Exception as exc:  # noqa: BLE001 - CLI cleanup boundary
-            _fail(f"agent relay cleanup failed; Kubernetes resources retained: {exc}")
-    try:
+        lifecycle_lease.assert_healthy()
+        failure_stage = "Kubernetes cleanup"
         _delete_resources(context, namespace, name)
     except Exception as exc:  # noqa: BLE001 - CLI cleanup boundary
-        _fail(str(exc))
+        if failure_stage == "agent relay cleanup":
+            failure = RuntimeError(
+                f"agent relay cleanup failed; Kubernetes resources retained: {exc}"
+            )
+        else:
+            failure = exc
+    finally:
+        if lifecycle_lease is not None:
+            try:
+                lifecycle_lease.close()
+            except Exception as lock_exc:  # noqa: BLE001 - preserve primary failure
+                if failure is None:
+                    failure = lock_exc
+                else:
+                    failure = RuntimeError(
+                        f"{failure}; lifecycle lock cleanup also failed: {lock_exc}"
+                    )
+    if failure is not None:
+        _fail(str(failure))
     typer.echo("transient LeIsaac Kubernetes and relay resources removed")

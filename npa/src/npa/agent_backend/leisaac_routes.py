@@ -27,6 +27,7 @@ from starlette.websockets import WebSocket
 LOG = logging.getLogger(__name__)
 _BACKHAUL_HEADER_SIZE = 9
 _BACKHAUL_MAX_FRAME = 4 * 1024 * 1024
+_BACKHAUL_HELLO = 1
 _WS_SESSION_COOKIES = {
     "control": "npa_leisaac_control_ws",
     "signal": "npa_leisaac_signal_ws",
@@ -259,7 +260,42 @@ def _client_address(headers: Any, client: Any) -> str:
         parsed = ipaddress.ip_address(address)
     except ValueError:
         return ""
-    return parsed.compressed if parsed.is_global else ""
+    if isinstance(parsed, ipaddress.IPv6Address) and parsed.ipv4_mapped is not None:
+        parsed = parsed.ipv4_mapped
+    return parsed.compressed if parsed.version == 4 and parsed.is_global else ""
+
+
+def _bind_backhaul_hello_peer(payload: bytes, peer_public_ip: str) -> bytes:
+    """Bind the first HELLO to nginx's authenticated transport peer address."""
+    if len(payload) < _BACKHAUL_HEADER_SIZE:
+        raise ValueError("invalid LeIsaac backhaul HELLO frame")
+    kind = payload[0]
+    stream_id = int.from_bytes(payload[1:5], "big")
+    size = int.from_bytes(payload[5:9], "big")
+    body = payload[_BACKHAUL_HEADER_SIZE:]
+    if (
+        kind != _BACKHAUL_HELLO
+        or stream_id != 0
+        or size != len(body)
+        or size > _BACKHAUL_MAX_FRAME
+    ):
+        raise ValueError("invalid LeIsaac backhaul HELLO frame")
+    try:
+        hello = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("invalid LeIsaac backhaul HELLO payload") from exc
+    if not isinstance(hello, dict):
+        raise ValueError("invalid LeIsaac backhaul HELLO payload")
+    # Rolling upgrades may encounter an older sidecar that still supplies this
+    # field. It is deliberately overwritten: only nginx's connection peer is
+    # authoritative for source-restricted TURN ingress.
+    hello["peer_public_ip"] = peer_public_ip
+    bound = json.dumps(hello, sort_keys=True, separators=(",", ":")).encode("ascii")
+    if len(bound) > _BACKHAUL_MAX_FRAME:
+        raise ValueError("invalid LeIsaac backhaul HELLO payload")
+    return bytes((_BACKHAUL_HELLO,)) + (0).to_bytes(4, "big") + len(bound).to_bytes(
+        4, "big"
+    ) + bound
 
 
 def _mint_ws_session(
@@ -2420,12 +2456,13 @@ def register_leisaac_routes(app: Any, deps: LeIsaacDeps) -> None:
             ).split(",")
             if item.strip()
         }
+        client_address = _client_address(websocket.headers, websocket.client)
         if (
             str(websocket.headers.get("x-forwarded-proto") or "").lower() != "https"
             or websocket.headers.get("origin") is not None
             or protocols != {_BACKHAUL_SUBPROTOCOL}
             or websocket.url.query
-            or not _client_address(websocket.headers, websocket.client)
+            or not client_address
         ):
             LOG.warning("LeIsaac backhaul rejected by application-layer checks")
             await websocket.close(code=1008)
@@ -2440,6 +2477,7 @@ def register_leisaac_routes(app: Any, deps: LeIsaacDeps) -> None:
             return
 
         async def websocket_to_relay() -> None:
+            first_message = True
             while True:
                 message = await websocket.receive()
                 if message.get("type") == "websocket.disconnect":
@@ -2450,6 +2488,9 @@ def register_leisaac_routes(app: Any, deps: LeIsaacDeps) -> None:
                     or len(payload) > _BACKHAUL_MAX_FRAME + _BACKHAUL_HEADER_SIZE
                 ):
                     raise ValueError("invalid LeIsaac backhaul frame")
+                if first_message:
+                    payload = _bind_backhaul_hello_peer(payload, client_address)
+                    first_message = False
                 writer.write(payload)
                 await writer.drain()
 

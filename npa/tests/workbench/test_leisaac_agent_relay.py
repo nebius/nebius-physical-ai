@@ -10,6 +10,8 @@ from pathlib import Path
 import pytest
 
 from npa.workbench.leisaac.agent_relay import (
+    COMPATIBILITY_PEER_IPV4_FIELD as RELAY_COMPATIBILITY_PEER_IPV4_FIELD,
+    DEFAULT_HELLO_TIMEOUT_SECONDS,
     DATA,
     BACKHAUL_LISTEN,
     CONTROL_LISTEN,
@@ -18,22 +20,43 @@ from npa.workbench.leisaac.agent_relay import (
     UDP,
     UDP_SOCKET_BUFFER_BYTES,
     Backhaul,
+    _authenticate_backhaul,
     _tune_udp_socket,
     _receive_frame,
     load_config as load_server_config,
 )
 from npa.workbench.leisaac.reverse_client import (
+    COMPATIBILITY_PEER_IPV4_FIELD as CLIENT_COMPATIBILITY_PEER_IPV4_FIELD,
     Client,
     WebSocketConnection,
+    _hello_payload,
     _mask_websocket_payload,
     _pod_ipv4,
-    _public_ipv4,
     load_config as load_client_config,
 )
+from npa.workbench.leisaac import agent_relay
 from npa.workbench.leisaac import reverse_client
 
 
 NONCE = "a" * 64
+
+
+def test_rolling_upgrade_hello_uses_non_authoritative_compatibility_field() -> None:
+    assert CLIENT_COMPATIBILITY_PEER_IPV4_FIELD == "0.0.0.0"
+    assert RELAY_COMPATIBILITY_PEER_IPV4_FIELD == CLIENT_COMPATIBILITY_PEER_IPV4_FIELD
+    assert json.loads(_hello_payload({"session_nonce": NONCE})) == {
+        "nonce": NONCE,
+        "peer_public_ip": "0.0.0.0",
+    }
+
+    backhaul = Backhaul(NONCE)
+    server_connection, peer = socket.socketpair()
+    payload = _hello_payload({"session_nonce": NONCE})
+    peer.sendall(__import__("struct").pack("!BII", HELLO, 0, len(payload)) + payload)
+    assert backhaul.attach(server_connection) is True
+    assert backhaul.peer_public_ip == "0.0.0.0"
+    backhaul.revoke()
+    peer.close()
 
 
 def test_agent_relay_tunes_both_udp_socket_buffers() -> None:
@@ -86,6 +109,7 @@ def test_relay_configs_pin_nonce_public_agent_and_certificate(tmp_path: Path) ->
     assert loaded["session_nonce"] == NONCE
     assert loaded["expires_at"] == expires_at
     assert loaded["expires_epoch"] > datetime.now(timezone.utc).timestamp()
+    assert loaded["hello_timeout_seconds"] == DEFAULT_HELLO_TIMEOUT_SECONDS
 
     server_path.write_text(
         json.dumps(
@@ -116,6 +140,7 @@ def test_relay_configs_pin_nonce_public_agent_and_certificate(tmp_path: Path) ->
         "session_nonce": NONCE,
         "run_id": "run-123",
         "expires_at": expires_at,
+        "hello_timeout_seconds": DEFAULT_HELLO_TIMEOUT_SECONDS,
         "media_target_host": "10.96.0.22",
         "media_target_port": 3478,
     }
@@ -149,6 +174,19 @@ def test_relay_configs_pin_nonce_public_agent_and_certificate(tmp_path: Path) ->
     ):
         server_path.write_text(json.dumps(invalid), encoding="utf-8")
         with pytest.raises(ValueError, match="run id|expiry|expired"):
+            load_server_config(server_path)
+
+    for invalid_timeout in (0, 61, "not-a-number"):
+        server_path.write_text(
+            json.dumps({
+                "run_id": "run-123",
+                "session_nonce": NONCE,
+                "expires_at": expires_at,
+                "hello_timeout_seconds": invalid_timeout,
+            }),
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="HELLO timeout"):
             load_server_config(server_path)
 
     client_path = tmp_path / "client.json"
@@ -230,6 +268,159 @@ def test_backhaul_rejects_unauthenticated_hello() -> None:
     server_connection.close()
 
 
+def test_preauth_rejects_malformed_hello_deterministically() -> None:
+    server_connection, peer = socket.socketpair()
+    malformed = b"{not-json"
+    peer.sendall(
+        __import__("struct").pack("!BII", HELLO, 0, len(malformed)) + malformed
+    )
+    assert not _authenticate_backhaul(
+        Backhaul(NONCE), server_connection, hello_timeout_seconds=0.1
+    )
+    peer.close()
+    server_connection.close()
+
+
+def test_preauth_timeout_is_bounded_and_legitimate_peer_restores_timeout() -> None:
+    silent_server, silent_peer = socket.socketpair()
+    with pytest.raises(socket.timeout):
+        _authenticate_backhaul(
+            Backhaul(NONCE), silent_server, hello_timeout_seconds=0.02
+        )
+    silent_server.close()
+    silent_peer.close()
+
+    backhaul = Backhaul(NONCE)
+    server_connection, peer = socket.socketpair()
+    server_connection.settimeout(7.5)
+    hello = json.dumps({"nonce": NONCE, "peer_public_ip": "8.8.4.4"}).encode()
+    peer.sendall(__import__("struct").pack("!BII", HELLO, 0, len(hello)) + hello)
+    assert server_connection.gettimeout() == 7.5
+    assert _authenticate_backhaul(
+        backhaul, server_connection, hello_timeout_seconds=0.1
+    )
+    assert server_connection.gettimeout() == 7.5
+    backhaul.revoke()
+    peer.close()
+
+
+def test_revoke_unblocks_a_silent_preauth_socket() -> None:
+    backhaul = Backhaul(NONCE)
+    server_connection, peer = socket.socketpair()
+    outcome: list[type[BaseException] | bool] = []
+
+    def authenticate() -> None:
+        try:
+            outcome.append(_authenticate_backhaul(
+                backhaul, server_connection, hello_timeout_seconds=30.0
+            ))
+        except BaseException as exc:
+            outcome.append(type(exc))
+
+    worker = threading.Thread(target=authenticate)
+    worker.start()
+    for _ in range(100):
+        with backhaul.preauth_lock:
+            if backhaul.preauth_connections:
+                break
+        threading.Event().wait(0.001)
+    backhaul.revoke()
+    worker.join(timeout=1)
+    assert not worker.is_alive()
+    assert outcome and outcome[0] in {OSError, EOFError}
+    peer.close()
+
+
+def test_stale_detach_cannot_clear_replacement_connection_state() -> None:
+    backhaul = Backhaul(NONCE)
+    stale_connection, stale_peer = socket.socketpair()
+    replacement_connection, replacement_peer = socket.socketpair()
+    browser_stream, browser_peer = socket.socketpair()
+    backhaul.connection = replacement_connection
+    backhaul.peer_public_ip = "8.8.4.4"
+    backhaul.streams[7] = browser_stream
+    backhaul.udp_by_address[("198.51.100.10", 41001)] = (11, 1.0)
+    backhaul.udp_by_stream[11] = ("198.51.100.10", 41001)
+
+    backhaul.detach(stale_connection)
+
+    assert backhaul.connection is replacement_connection
+    assert backhaul.peer_public_ip == "8.8.4.4"
+    assert backhaul.streams == {7: browser_stream}
+    assert backhaul.udp_by_stream == {11: ("198.51.100.10", 41001)}
+    browser_peer.sendall(b"still-open")
+    assert browser_stream.recv(10) == b"still-open"
+
+    stale_connection.close()
+    stale_peer.close()
+    replacement_connection.close()
+    replacement_peer.close()
+    browser_stream.close()
+    browser_peer.close()
+
+
+def test_active_backhaul_does_not_block_stale_credential_rejection(
+    monkeypatch,
+) -> None:
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    listen = ("127.0.0.1", int(probe.getsockname()[1]))
+    probe.close()
+    monkeypatch.setattr(agent_relay, "BACKHAUL_LISTEN", listen)
+
+    backhaul = Backhaul(NONCE)
+    stop = threading.Event()
+    server = threading.Thread(
+        target=agent_relay.serve_backhaul,
+        kwargs={
+            "backhaul": backhaul,
+            "stop": stop,
+            "hello_timeout_seconds": 0.2,
+        },
+    )
+    server.start()
+
+    def connect() -> socket.socket:
+        for _attempt in range(100):
+            candidate = socket.socket()
+            try:
+                candidate.connect(listen)
+                return candidate
+            except ConnectionRefusedError:
+                candidate.close()
+                threading.Event().wait(0.005)
+        raise AssertionError("relay listener did not start")
+
+    legitimate = connect()
+    good_hello = json.dumps(
+        {"nonce": NONCE, "peer_public_ip": "8.8.4.4"}
+    ).encode("ascii")
+    legitimate.sendall(
+        __import__("struct").pack("!BII", HELLO, 0, len(good_hello)) + good_hello
+    )
+    for _attempt in range(100):
+        if backhaul.connection is not None:
+            break
+        threading.Event().wait(0.005)
+    assert backhaul.connection is not None
+
+    stale = connect()
+    stale.settimeout(1.0)
+    stale_hello = json.dumps(
+        {"nonce": "b" * 64, "peer_public_ip": "8.8.4.4"}
+    ).encode("ascii")
+    stale.sendall(
+        __import__("struct").pack("!BII", HELLO, 0, len(stale_hello)) + stale_hello
+    )
+    assert stale.recv(1) == b""
+
+    stop.set()
+    server.join(timeout=2.0)
+    assert not server.is_alive()
+    stale.close()
+    legitimate.close()
+
+
 def test_expired_backhaul_revokes_connection_and_rejects_reuse() -> None:
     backhaul = Backhaul(NONCE, expires_epoch=2.0)
     server_connection, peer = socket.socketpair()
@@ -296,10 +487,6 @@ def test_private_client_uses_one_connected_media_socket_per_udp_flow(
         lambda: "10.96.34.76",
     )
     monkeypatch.setattr(
-        "npa.workbench.leisaac.reverse_client._public_ipv4",
-        lambda: "8.8.4.4",
-    )
-    monkeypatch.setattr(
         "npa.workbench.leisaac.reverse_client.threading.Thread", FakeThread
     )
     client = Client({})
@@ -328,23 +515,14 @@ def test_private_client_resolves_only_non_loopback_private_pod_ipv4(
     assert _pod_ipv4() == "10.96.34.76"
 
 
-def test_private_client_resolves_only_global_gpu_egress_ipv4(monkeypatch) -> None:
-    class Response:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args: object) -> None:
-            return None
-
-        def read(self, _size: int) -> bytes:
-            return b"8.8.4.4\n"
-
+def test_private_client_initialization_has_no_public_ip_discovery(monkeypatch) -> None:
     monkeypatch.setattr(
-        "npa.workbench.leisaac.reverse_client.urllib.request.urlopen",
-        lambda *_args, **_kwargs: Response(),
+        "npa.workbench.leisaac.reverse_client._pod_ipv4",
+        lambda: "10.96.34.76",
     )
-
-    assert _public_ipv4() == "8.8.4.4"
+    client = Client({})
+    assert client.media_target == ("10.96.34.76", 3478)
+    assert not hasattr(client, "peer_public_ip")
 
 
 def test_backhaul_rejects_private_peer_address() -> None:

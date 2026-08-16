@@ -6,9 +6,9 @@ direct TCP endpoints must be public, relay TCP endpoints must be exact
 loopback addresses, ports are fixed to the Isaac Sim 5.1 WebRTC contract, and
 the browser sees only the private media peer beside the GPU-local TURN
 allocation plus same-origin, authenticated agent routes. Agent-relayed sessions
-return one derived, ephemeral TURN
-credential from the authenticated no-store status route; the relay nonce and
-agent credentials are never returned.
+return one deterministic session-scoped TURN credential whose validity is
+bounded by the registered session lifetime. The authenticated no-store status
+route never returns the relay nonce or agent credentials.
 """
 
 from __future__ import annotations
@@ -74,7 +74,6 @@ LEISAAC_RELAY_SERVICE_PORT = 48080
 LEISAAC_TURN_PORT = 3478
 LEISAAC_TURN_RELAY_PORT = 47999
 LEISAAC_TURN_RELAY_MAX_PORT = 48015
-LEISAAC_TRANSPORT_LOAD_BALANCER = "public-load-balancer"
 LEISAAC_TRANSPORT_AGENT_RELAY = "agent-relay"
 LEISAAC_TASK = DEFAULT_TASK
 LEISAAC_TELEOP_DEVICE = "keyboard"
@@ -354,37 +353,25 @@ def normalize_manifest(
     if str(data.get("teleop_device") or "") != LEISAAC_TELEOP_DEVICE:
         return None, "LeIsaac session is not keyboard-teleoperation capable"
 
-    transport = str(data.get("transport") or LEISAAC_TRANSPORT_LOAD_BALANCER)
-    if transport not in (
-        LEISAAC_TRANSPORT_LOAD_BALANCER,
-        LEISAAC_TRANSPORT_AGENT_RELAY,
-    ):
-        return None, "LeIsaac session transport is unsupported"
+    transport = str(data.get("transport") or "")
+    if transport != LEISAAC_TRANSPORT_AGENT_RELAY:
+        return None, "LeIsaac session requires the secure agent-relay transport"
     raw_signal_host = str(data.get("signal_host") or "").strip()
-    signal_host = (
-        "127.0.0.1"
-        if transport == LEISAAC_TRANSPORT_AGENT_RELAY and raw_signal_host == "127.0.0.1"
-        else _public_ip(raw_signal_host)
-    )
+    signal_host = "127.0.0.1" if raw_signal_host == "127.0.0.1" else ""
     media_host = _public_ip(data.get("media_host"))
     raw_media_server = data.get("media_server")
-    media_server = (
-        _private_ip(raw_media_server)
-        if transport == LEISAAC_TRANSPORT_AGENT_RELAY
-        else _public_ip(raw_media_server or media_host)
-    )
+    media_server = _private_ip(raw_media_server)
     if (
         not signal_host
         or not media_host
         or not media_server
-        or (transport == LEISAAC_TRANSPORT_LOAD_BALANCER and media_server != media_host)
     ):
         return None, "LeIsaac session endpoints violate the fixed network contract"
     if _integer(data.get("signal_port")) != LEISAAC_SIGNAL_PORT:
         return None, "LeIsaac session has an unsupported signaling port"
     if _integer(data.get("media_port")) != LEISAAC_MEDIA_PORT:
         return None, "LeIsaac session has an unsupported media port"
-    if transport == LEISAAC_TRANSPORT_AGENT_RELAY and (
+    if (
         _integer(data.get("turn_port")) != LEISAAC_TURN_PORT
         or _integer(data.get("turn_relay_port")) != LEISAAC_TURN_RELAY_PORT
         or _integer(data.get("turn_relay_max_port")) != LEISAAC_TURN_RELAY_MAX_PORT
@@ -770,16 +757,8 @@ def status_payload(
         "reason": "",
         **episode_surface,
         "transport": manifest["transport"],
-        "transport_security": (
-            "secure-agent-relay"
-            if manifest["transport"] == LEISAAC_TRANSPORT_AGENT_RELAY
-            else "insecure-public-plaintext-non-production"
-        ),
-        "transport_warning": (
-            ""
-            if manifest["transport"] == LEISAAC_TRANSPORT_AGENT_RELAY
-            else "Non-production transport: session nonce, controls, and frames traverse public plaintext HTTP/WebRTC."
-        ),
+        "transport_security": "secure-agent-relay",
+        "transport_warning": "",
         "media_server": manifest["media_server"],
         "media_port": manifest["media_port"],
         "signaling_server": "same-origin",

@@ -619,8 +619,9 @@ def curate(
     or failed FiftyOne runtime is a hard error so the pipeline cannot report a
     successful curation that never happened.
 
-    ``curator_report_uri`` points at the preceding Cosmos Curator stage's summary.
-    When present it is folded into this report under ``cosmos_curator``, so one
+    ``curator_report_uri`` must point at the preceding real Cosmos Curator
+    stage's completed summary. It is folded into this report under
+    ``cosmos_curator``, so one
     document carries both the curator's clip catalog and the review decisions.
     """
     keys = _list_keys(augment_uri)

@@ -317,15 +317,27 @@ def nginx_agent_site_body(
     proxy_read_timeout 60s;
     proxy_send_timeout 60s;
   }}
-  # Isaac Sim's browser client appends /sign_in to its configured signaling
-  # path.  This narrow authenticated prefix carries only WebSocket upgrades;
-  # the backend independently allowlists the bare path and /sign_in.
-  location ^~ /api/leisaac/signal {{
-    # API calls authenticate in the backend.  Without this explicit override,
-    # the more-specific location inherits server-level Basic Auth even though
-    # the general /api/ location disables it. Browser WebSocket handshakes do
-    # not inherit Cypress/HTTP navigation credentials and otherwise loop on
-    # 401 before the exact-origin backend policy can run.
+  # Server-level Basic auth protects the general /api/ location. Only these two
+  # exact signaling WebSocket routes turn it off: the backend validates their
+  # exact origin plus a short-lived, client-bound signaling session. Isaac Sim
+  # appends /sign_in to the configured bare signaling path.
+  location = /api/leisaac/signal {{
+    auth_basic off;
+    rewrite ^/api/(.*)$ /$1 break;
+    proxy_pass http://127.0.0.1:{backend_port}/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Origin $http_origin;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_connect_timeout 30s;
+    proxy_read_timeout 900s;
+    proxy_send_timeout 900s;
+  }}
+  location = /api/leisaac/signal/sign_in {{
     auth_basic off;
     rewrite ^/api/(.*)$ /$1 break;
     proxy_pass http://127.0.0.1:{backend_port}/;
