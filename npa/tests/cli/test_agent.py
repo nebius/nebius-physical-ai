@@ -1380,6 +1380,13 @@ def test_bootstrap_ui_mcap_cards_bind_exact_provenance_in_page() -> None:
     assert 'button.setAttribute("aria-busy", busy ? "true" : "false")' in source
     assert "window.open" not in embedded_handler
     assert "location.replace" not in embedded_handler
+    assert "window.npaAgentArtifacts = Object.freeze" in source
+    assert "loadExactSource: loadExactArtifactSource" in source
+    exact_source_handler = source.split("async function loadExactArtifactSource", 1)[
+        1
+    ].split("function learningStagesFromContract", 1)[0]
+    assert "deferPreferredViewer: true" in exact_source_handler
+    assert "loadArtifactsForSelectedRun(runRef" in exact_source_handler
     external_handler = source.split("async function openFoxgloveWeb", 1)[1].split(
         "async function captureFoxgloveContext", 1
     )[0]

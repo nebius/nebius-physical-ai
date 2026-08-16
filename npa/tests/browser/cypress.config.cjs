@@ -740,19 +740,23 @@ async function verifyFoxgloveEmbeddedArtifact(config, taskInput) {
     await page.goto(credentials.baseUrl, { waitUntil: "domcontentloaded", timeout: 0 });
     recordProgress("page_loaded");
     await page.locator("#tabRerun").click();
-    // The parent live flow has already selected this exact server-qualified
-    // run. A clean browser restores that active server state; do not trigger a
-    // second tenant-wide search or reload before exercising the artifact card.
     await page.waitForFunction(
-      (expected) => [...(document.querySelector("#runIdSelect")?.options || [])]
-        .some((option) => option.value === expected),
-      runRef,
+      () => typeof window.npaAgentArtifacts?.loadExactSource === "function",
+      null,
       { timeout: 0 },
     );
-    recordProgress("active_run_restored");
-    await page.locator("#runIdSelect").selectOption(runRef);
-    await page.locator("#runIdInput").fill(runId);
-    await page.locator("#artifactLoadRunArtifacts").click();
+    const exactSourceLoaded = await page.evaluate(async (selection) => {
+      return await window.npaAgentArtifacts.loadExactSource(selection);
+    }, {
+      run_id: runId,
+      run_ref: runRef,
+      resource_bucket: expectedResourceBucket,
+      project_id: expectedProjectId,
+      resolved_prefix: expectedResolvedPrefix,
+    });
+    if (exactSourceLoaded !== true) {
+      throw new Error("exact server-qualified artifact source did not render its cards");
+    }
     recordProgress("artifact_list_requested");
     const exactButton = page.locator(
       `button[data-action="open-foxglove-artifact"][data-key=${JSON.stringify(artifactKey)}]`,

@@ -8723,6 +8723,41 @@
         if (artifactListAbortController === localController) artifactListAbortController = null;
         return true;
       }
+      async function loadExactArtifactSource(selection) {
+        const source = selection && typeof selection === "object" ? selection : {};
+        const runId = String(source.run_id || "").trim();
+        const runRef = String(source.run_ref || "").trim();
+        const bucket = String(source.resource_bucket || source.bucket || "").trim();
+        const projectId = String(source.project_id || "").trim();
+        if (
+          !runId || !/^npa1_[A-Za-z0-9_-]+$/.test(runRef) || !bucket || !projectId ||
+          !Object.prototype.hasOwnProperty.call(source, "resolved_prefix")
+        ) {
+          throw new Error(
+            "Exact artifact source requires run, run_ref, project, bucket, and resolved-prefix provenance."
+          );
+        }
+        return loadArtifactsForSelectedRun(runRef, null, {
+          run_id: runId,
+          run_ref: runRef,
+          entry_key: runRef,
+          source_type: "artifact_storage",
+          source_label: "S3 artifacts",
+          bucket,
+          project_id: projectId,
+          resolved_prefix: String(source.resolved_prefix || ""),
+          source_selected: true,
+        }, {
+          pendingSelection: true,
+          // Render the authentic artifact cards first. Viewer loading remains
+          // an explicit card action, so this path never preempts the operator's
+          // exact-source click or duplicates its backend preparation.
+          deferPreferredViewer: true,
+        });
+      }
+      window.npaAgentArtifacts = Object.freeze({
+        loadExactSource: loadExactArtifactSource,
+      });
       function learningStagesFromContract() {
         const contract = activeLearningArtifactContract;
         if (!contract || contract.authoritative !== true || !Array.isArray(contract.stages)) return [];
