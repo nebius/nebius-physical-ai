@@ -465,8 +465,12 @@ def test_npa_workflow_runtime_live_reaches_terminal(
     waves = payload["waves"]
     assert waves, payload
 
-    if case.spec == "physical-ai-data-factory.yaml":
+    if case.spec in {
+        "physical-ai-data-factory.yaml",
+        "paidf-cosmos3.yaml",
+    }:
         _assert_paidf_live_artifacts(
+            spec=case.spec,
             waves=waves,
             bucket=live_bucket(e2e_project),
             run_id=run_id,
@@ -537,36 +541,59 @@ def test_npa_workflow_runtime_live_reaches_terminal(
 
 
 def _assert_paidf_live_artifacts(
-    *, waves: list[dict], bucket: str, run_id: str, e2e_project: str | None
+    *,
+    spec: str,
+    waves: list[dict],
+    bucket: str,
+    run_id: str,
+    e2e_project: str | None,
 ) -> None:
     """Prove real PAIDF waves, decision, component reports, and Rerun output."""
 
     from npa.clients.project_credentials import s3_client_for_project
 
     states = [str(state) for wave in waves for state in wave.get("states", [])]
-    required_states = {
-        "generate-configs",
-        "annotate-original",
-        "augment",
-        "evaluate",
-        "quality-gate",
-        "annotate-augmented",
-        "cosmos-curate",
-        "curate",
-        "visualize",
-        "finalize",
-    }
+    if spec == "paidf-cosmos3.yaml":
+        required_states = {
+            "prepare-input",
+            "generate-configs",
+            "annotate-original",
+            "generate-variants",
+            "evaluate",
+            "quality-gate",
+            "quality-disposition",
+            "annotate-augmented",
+            "cosmos-curate",
+            "curate",
+            "visualize",
+            "finalize",
+        }
+        prefix = f"paidf-cosmos3/{run_id}/"
+    else:
+        required_states = {
+            "generate-configs",
+            "annotate-original",
+            "augment",
+            "evaluate",
+            "quality-gate",
+            "annotate-augmented",
+            "cosmos-curate",
+            "curate",
+            "visualize",
+            "finalize",
+        }
+        prefix = f"physical-ai-data-factory/{run_id}/"
     assert required_states <= set(states), (
         f"PAIDF waves missing {sorted(required_states - set(states))}"
     )
 
     client = s3_client_for_project(e2e_project, allow_host_creds=True)
-    prefix = f"physical-ai-data-factory/{run_id}/"
     required = (
         "configs/manifest.json",
         "cosmos_augmented/manifest.json",
         "grade/cosmos_evaluator.json",
         "grade/decision.json",
+        "grade/quality_disposition.json",
         "curation/cosmos_curator.json",
         "curation/report.json",
         "reports/sim2real.rrd",
@@ -585,17 +612,48 @@ def _assert_paidf_live_artifacts(
     augment = read_json("cosmos_augmented/manifest.json")
     assert int(augment.get("variant_count") or 0) >= 1
     assert augment.get("input_conditioned") is True
+    if spec == "paidf-cosmos3.yaml":
+        assert int(augment.get("video_bytes") or 0) > 0
+        assert augment.get("engine") == "nvidia-cosmos/cosmos-framework"
+        assert augment.get("mode") == "video2video"
+        assert augment.get("input_conditioning") == "source-video"
+        assert augment.get("guardrails") is True
+        assert augment.get("model")
+        assert isinstance(augment.get("variants"), list)
+        for variant in augment["variants"]:
+            relative = str(variant["clip"])
+            for leaf in ("augmented_video.mp4", "metadata.json"):
+                head = client.head_object(
+                    Bucket=bucket,
+                    Key=prefix + f"cosmos_augmented/{relative}/{leaf}",
+                )
+                assert int(head.get("ContentLength") or 0) > 0
+            frames = client.list_objects_v2(
+                Bucket=bucket,
+                Prefix=prefix + f"cosmos_augmented/{relative}/frame-",
+            ).get("Contents", [])
+            assert any(int(item.get("Size") or 0) > 0 for item in frames)
     evaluator = read_json("grade/cosmos_evaluator.json")
     assert evaluator.get("schema") == "npa.cosmos_evaluator.report.v1"
     assert evaluator.get("engines")
     decision = read_json("grade/decision.json")
     assert decision.get("decision") in {"promote_checkpoint", "loop_back"}
-    assert isinstance(decision.get("score"), (int, float))
+    disposition = read_json("grade/quality_disposition.json")
+    assert disposition.get("quality_status") == "accepted"
+    assert isinstance(disposition.get("score"), (int, float))
     curator = read_json("curation/cosmos_curator.json")
     assert curator.get("engine") not in {None, "", "unavailable"}
     curation = read_json("curation/report.json")
     assert curation.get("curation_engine") == "fiftyone-brain"
     final = read_json("reports/final.json")
+    if spec == "paidf-cosmos3.yaml":
+        assert final.get("schema") == "npa.paidf.cosmos3.final.v1"
+        assert final.get("engine") == "nvidia-cosmos/cosmos-framework"
+        assert int(final.get("video_bytes") or 0) > 0
+        assert isinstance(final.get("evaluator_score"), (int, float))
+        assert int(final.get("curated_clip_count") or 0) > 0
+        assert final.get("fiftyone_engine") == "fiftyone-brain"
+        assert final.get("has_rrd") is True
     assert int(final.get("artifact_count") or 0) > 0
 
 

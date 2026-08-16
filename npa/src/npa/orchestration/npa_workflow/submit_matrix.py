@@ -692,6 +692,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             ("workbench.cosmos_evaluator.evaluate", "cosmos-evaluator"),
             ("workbench.cosmos_curate.curate", "cosmos-curate"),
             ("workbench.fiftyone.curate_augmented", "fiftyone"),
+            ("workbench.nurec.visualize", "rerun-viewer"),
         ),
         notes=(
             "Real dynamic PAIDF Cosmos 3 acceptance using only the repository-owned "
