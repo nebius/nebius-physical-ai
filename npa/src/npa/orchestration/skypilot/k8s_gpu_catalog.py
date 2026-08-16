@@ -475,7 +475,9 @@ def discover_kubernetes_gpu_inventory(
             if key in {
                 "nvidia.com/gpu.product",
                 "nebius.com/gpu",
+                "nebius.com/gpu-name",
                 "node.kubernetes.io/instance-type",
+                "skypilot.co/accelerator",
             } or "product" in key.casefold():
                 if value:
                     node_products.add(value)

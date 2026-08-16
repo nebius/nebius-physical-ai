@@ -577,6 +577,64 @@ def test_gang_capacity_matches_nvidia_product_label_to_skypilot_name() -> None:
     assert evidence["selected_nodes"] == ["a", "b"]
 
 
+@pytest.mark.parametrize(
+    ("label", "product"),
+    [
+        ("nebius.com/gpu-name", "RTX6000"),
+        ("skypilot.co/accelerator", "rtxpro6000"),
+    ],
+)
+def test_discovered_provider_or_repaired_labels_support_gang_capacity(
+    label: str, product: str
+) -> None:
+    nodes = {
+        "items": [
+            {
+                "metadata": {
+                    "name": f"gpu-{suffix}",
+                    "labels": {label: product},
+                },
+                "spec": {},
+                "status": {
+                    "conditions": [{"type": "Ready", "status": "True"}],
+                    "capacity": {"nvidia.com/gpu": "1"},
+                    "allocatable": {
+                        "nvidia.com/gpu": "1",
+                        "cpu": "24",
+                        "memory": "218Gi",
+                        "pods": "110",
+                    },
+                },
+            }
+            for suffix in ("a", "b")
+        ]
+    }
+
+    def runner(cmd, **_kwargs):  # noqa: ANN001 - test stub
+        payload = {"items": []} if "pods" in cmd else nodes
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(payload), stderr=""
+        )
+
+    inventory = discover_kubernetes_gpu_inventory(
+        context="exact-context", runner=runner
+    )
+    evidence = preflight_kubernetes_gpu_gang(
+        inventory,
+        accelerator="RTXPRO6000:1",
+        node_count=2,
+        cpus=16,
+        memory="128Gi",
+    )
+
+    assert [node.products for node in inventory.nodes] == [
+        (product,),
+        (product,),
+    ]
+    assert evidence["compatible_free_nodes"] == 2
+    assert evidence["selected_nodes"] == ["gpu-a", "gpu-b"]
+
+
 def test_gang_capacity_subtracts_shared_and_incompatible_capacity() -> None:
     inventory = KubernetesGpuInventory(
         context="exact-context",
