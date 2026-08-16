@@ -1166,16 +1166,17 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
 
   it("bounds Cloud import requests beyond the server deadline without capping local conversion", () => {
     cy.window().then((win) => {
-      expect(win.requestTimeoutMs("/api/foxglove/export", {
+      const requestTimeoutMs = win.__NPA_AGENT_TEST__.requestTimeoutMs;
+      expect(requestTimeoutMs("/api/foxglove/export", {
         body: JSON.stringify({ cloud_import: true }),
       })).to.eq(360000);
-      expect(win.requestTimeoutMs("/api/foxglove/export", {
+      expect(requestTimeoutMs("/api/foxglove/export", {
         body: JSON.stringify({ cloud_import: true }),
       }, { cloud_import_timeout_seconds: 425.5 })).to.eq(485500);
-      expect(win.requestTimeoutMs("/api/foxglove/export", {
+      expect(requestTimeoutMs("/api/foxglove/export", {
         body: JSON.stringify({ run_id: "mock-run" }),
       })).to.eq(0);
-      expect(win.requestTimeoutMs("/api/foxglove/convert-run", {})).to.eq(12000);
+      expect(requestTimeoutMs("/api/foxglove/convert-run", {})).to.eq(12000);
     });
   });
 
