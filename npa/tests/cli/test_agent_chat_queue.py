@@ -64,10 +64,12 @@ def test_viewer_chat_drawer_contract() -> None:
     assert "never pops the drawer out" in ui
     assert 'id="chatDrawerToggle"' in ui
     assert "openFullChatTab" in ui
-    # Bottom-right online-chat widget (collapsible FAB + panel), mobile-safe.
-    assert "Online-chat widget: bottom-right FAB" in ui
+    # Top-right online-chat widget (collapsible FAB + panel), kept clear of
+    # viewer playback controls and mobile-safe.
+    assert "Keep viewer affordances away from bottom playback controls" in ui
     assert "chatDrawerClose" in ui
-    assert "env(safe-area-inset-bottom)" in ui
+    assert "top: max(84px, env(safe-area-inset-top))" in ui
+    assert "top: calc(150px + env(safe-area-inset-top))" in ui
     assert "min(380px, calc(100vw - 28px))" in ui
     assert "@media (max-width: 900px)" in ui
 

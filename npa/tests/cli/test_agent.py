@@ -1355,7 +1355,12 @@ def test_bootstrap_ui_mcap_cards_bind_exact_provenance_in_page() -> None:
     assert "resource_bucket: selected.bucket" in embedded_handler
     assert "project_id: selected.project_id" in embedded_handler
     assert "resolved_prefix: selected.resolved_prefix" in embedded_handler
-    assert "await setFoxgloveDataSource(config, { force: true })" in embedded_handler
+    assert "await setFoxgloveDataSource(config);" in embedded_handler
+    assert "await setFoxgloveDataSource(config, { force: true })" not in embedded_handler
+    assert "const responseConfig = data && data.foxglove" in embedded_handler
+    assert "setFoxgloveSwitching(Boolean(foxgloveHandle" in embedded_handler
+    before_export = embedded_handler.split('apiJson("/api/foxglove/export"', 1)[0]
+    assert "teardownFoxgloveViewer()" not in before_export
     assert "const readinessPromise = selectedHandle.whenReady()" in embedded_handler
     assert "void readinessPromise.then" in embedded_handler
     assert "this pane is not marked ready" in embedded_handler
