@@ -1,0 +1,40 @@
+name: PAIDF Cosmos 3 candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: paidf-cosmos3-20260815T235004Z-71255bb2-fda7cc01
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      SOURCE_SHA: fda7cc0109c3b241e185bef882382cec7e88a8ff
+      IMAGE: ghcr.io/nebius/nebius-physical-ai/npa-cosmos3:paidf-cosmos3-20260815T235004Z-71255bb2-fda7cc01
+    steps:
+      - name: Check out the trusted implementation
+        uses: actions/checkout@v6
+        with:
+          ref: fda7cc0109c3b241e185bef882382cec7e88a8ff
+          persist-credentials: false
+
+      - name: Log in to GHCR with the built-in token
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push the unique candidate
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --build-arg "NPA_SOURCE_SHA=${SOURCE_SHA}" \
+            --file npa/docker/workbench/cosmos3/Dockerfile \
+            --tag "${IMAGE}" \
+            --push \
+            npa
