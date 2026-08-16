@@ -40,7 +40,17 @@ from npa.cluster.gpu_driver import (
     GpuDriverStrategyError,
     resolve_gpu_driver_strategy,
 )
-from npa.cluster.gpu_health import DEFAULT_CUDA_SMOKE_IMAGE, DEFAULT_STABILIZATION_SECONDS
+from npa.cluster.gpu_health import (
+    DEFAULT_CUDA_SMOKE_IMAGE,
+    DEFAULT_STABILIZATION_SECONDS,
+)
+from npa.fleet.mig import (
+    MIG_KUBERNETES_VERSION,
+    RTX_PRO_6000_BOOT_DISK_GIB,
+    MigSpec,
+    MigSpecError,
+    mig_spec_from_mapping,
+)
 
 API_VERSION = "npa.fleet/v0.0.1"
 
@@ -119,6 +129,34 @@ class ClusterSpec:
     gpu_health_timeout_minutes: int = 60
     gpu_cuda_smoke: bool = True
     gpu_cuda_smoke_image: str = DEFAULT_CUDA_SMOKE_IMAGE
+    # Declared last to preserve positional compatibility for SDK callers.
+    # None (or an explicitly disabled block) retains the historical whole-GPU
+    # behavior; enabled MIG is validated against the pinned RTX PRO tuple.
+    mig: MigSpec | None = None
+
+    def resolved_k8s_version(self) -> str:
+        """Pin the tested Kubernetes version whenever hardware MIG is enabled."""
+
+        if self.mig and self.mig.enabled:
+            return self.k8s_version or MIG_KUBERNETES_VERSION
+        return self.k8s_version
+
+    def resolved_gpu_disk_size_gib(self) -> int:
+        """Return the boot-disk size rendered and charged to quota preflight."""
+
+        gpu = self.gpu_nodes
+        if gpu and gpu.disk_size_gib > 0:
+            return gpu.disk_size_gib
+        if self.mig and self.mig.enabled:
+            return RTX_PRO_6000_BOOT_DISK_GIB
+        return self.gpu_disk_size_gib
+
+    def resolved_gpu_driver_mode(self) -> str:
+        """Use the in-cluster pinned driver path required by hardware MIG."""
+
+        if self.mig and self.mig.enabled:
+            return "operator"
+        return self.gpu_driver_mode
 
     def resolved_enable_gpu_cluster(self) -> bool:
         if self.enable_gpu_cluster is not None:
@@ -139,7 +177,8 @@ class ClusterSpec:
             raise FleetSpecError(
                 f"cluster name must be a lowercase DNS-1123 label: {self.name!r}"
             )
-        if self.cpu_count() <= 0 and self.gpu_count() <= 0:
+        mig_enabled = bool(self.mig and self.mig.enabled)
+        if self.cpu_count() <= 0 and self.gpu_count() <= 0 and not mig_enabled:
             raise FleetSpecError(
                 f"cluster {self.name!r}: needs at least one CPU or GPU node"
             )
@@ -170,7 +209,7 @@ class ClusterSpec:
                 raise FleetSpecError(
                     f"cluster {self.name!r}: gpu_nodes.preset must include a positive GPU count"
                 )
-        if gpu and gpu.capacity_block_group:
+        if gpu and gpu.capacity_block_group and not mig_enabled:
             if gpu.count <= 0 or not gpu.is_gpu():
                 raise FleetSpecError(
                     f"cluster {self.name!r}: capacity_block_group requires a GPU node pool"
@@ -217,12 +256,35 @@ class ClusterSpec:
             raise FleetSpecError(
                 f"cluster {self.name!r}: gpu_disk_size_gib must be positive"
             )
+        if self.mig:
+            try:
+                self.mig.validate(
+                    platform=gpu.platform if gpu else "",
+                    preset=gpu.preset if gpu else "",
+                    gpu_nodes=gpu.count if gpu else 0,
+                    capacity_block_group=gpu.capacity_block_group if gpu else "",
+                    disk_size_gib=gpu.disk_size_gib if gpu else 0,
+                    k8s_version=self.k8s_version,
+                )
+            except MigSpecError as exc:
+                raise FleetSpecError(f"cluster {self.name!r}: {exc}") from exc
+            if self.mig.enabled and self.gpu_driver_mode == "managed-image":
+                raise FleetSpecError(
+                    f"cluster {self.name!r}: RTX PRO 6000 MIG requires the pinned "
+                    "GPU Operator driver path; gpu_driver_mode='managed-image' is "
+                    "incompatible"
+                )
+            if self.mig.enabled and not self.gpu_cuda_smoke:
+                raise FleetSpecError(
+                    f"cluster {self.name!r}: RTX PRO 6000 MIG requires "
+                    "gpu_cuda_smoke=true so deploy verifies a real MIG allocation"
+                )
         try:
             resolve_gpu_driver_strategy(
                 gpu_nodes=self.gpu_count(),
                 platform=gpu.platform if gpu else "",
                 preset=gpu.preset if gpu else "",
-                mode=self.gpu_driver_mode,
+                mode=self.resolved_gpu_driver_mode(),
                 managed_driver_preset=self.managed_driver_preset,
                 enable_gpu_cluster=self.resolved_enable_gpu_cluster(),
                 allow_unsafe_nvswitch_operator=self.allow_unsafe_nvswitch_operator,
@@ -329,7 +391,14 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 
     result = copy.deepcopy(base)
     for key, value in (override or {}).items():
-        if isinstance(value, dict) and isinstance(result.get(key), dict):
+        # ``mig`` is an atomic policy block. This allows a cluster to disable an
+        # enabled default with ``mig: {enabled: false}`` without inheriting the
+        # default strategy/config into an invalid hybrid policy.
+        if (
+            key != "mig"
+            and isinstance(value, dict)
+            and isinstance(result.get(key), dict)
+        ):
             result[key] = _deep_merge(result[key], value)
         else:
             result[key] = copy.deepcopy(value)
@@ -352,6 +421,10 @@ def _node_pool_from(
 
 def _cluster_from(data: dict[str, Any]) -> ClusterSpec:
     enable_gpu = data.get("enable_gpu_cluster", None)
+    try:
+        mig = mig_spec_from_mapping(data.get("mig"))
+    except MigSpecError as exc:
+        raise FleetSpecError(str(exc)) from exc
     return ClusterSpec(
         name=_slug(str(data.get("name", "cluster"))) or "cluster",
         k8s_version=str(data.get("k8s_version", "") or ""),
@@ -379,9 +452,7 @@ def _cluster_from(data: dict[str, Any]) -> ClusterSpec:
             data.get("allow_unsafe_nvswitch_operator", False)
         ),
         gpu_health_stabilization_seconds=int(
-            data.get(
-                "gpu_health_stabilization_seconds", DEFAULT_STABILIZATION_SECONDS
-            )
+            data.get("gpu_health_stabilization_seconds", DEFAULT_STABILIZATION_SECONDS)
         ),
         gpu_health_timeout_minutes=int(data.get("gpu_health_timeout_minutes", 60)),
         gpu_cuda_smoke=bool(data.get("gpu_cuda_smoke", True)),
@@ -389,6 +460,7 @@ def _cluster_from(data: dict[str, Any]) -> ClusterSpec:
             data.get("gpu_cuda_smoke_image", DEFAULT_CUDA_SMOKE_IMAGE)
             or DEFAULT_CUDA_SMOKE_IMAGE
         ),
+        mig=mig,
     )
 
 

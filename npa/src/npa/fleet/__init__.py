@@ -14,6 +14,7 @@ the fleet can consume the latest recipe changes. No project/tenant IDs are baked
 in; they resolve from the spec, ``~/.npa`` / ``~/.nebius`` config, or arguments.
 """
 
+from npa.fleet.mig import MigSpec, MigVerificationReport
 from npa.fleet.spec import (
     API_VERSION,
     ClusterSpec,
@@ -32,6 +33,8 @@ __all__ = [
     "FleetSpec",
     "FleetSpecError",
     "NodePoolSpec",
+    "MigSpec",
+    "MigVerificationReport",
     "ProjectSpec",
     "load_spec",
     "spec_from_mapping",

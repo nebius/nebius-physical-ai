@@ -331,11 +331,7 @@ def required_quotas(
             cpu_disk_gib = cpu.disk_size_gib if cpu.disk_size_gib > 0 else _CPU_DISK_GIB
             add("compute.disk.size.network-ssd", cpu.count * cpu_disk_gib * _GIB)
         if gpu and gpu.count > 0:
-            gpu_disk_gib = (
-                gpu.disk_size_gib
-                if gpu.disk_size_gib > 0
-                else cluster.gpu_disk_size_gib
-            )
+            gpu_disk_gib = cluster.resolved_gpu_disk_size_gib()
             add("compute.disk.size.network-ssd", gpu.count * gpu_disk_gib * _GIB)
         if cpu and cpu.count > 0:
             add("compute.instance.non-gpu.vcpu", cpu.count * _preset_vcpus(cpu.preset))
@@ -427,9 +423,9 @@ def _finite_allowance(name: str, item: dict[str, Any]) -> dict[str, Any]:
             available = max(
                 0,
                 int(
-                    (
-                        Decimal(parsed_limit) * (Decimal(1) - fraction)
-                    ).to_integral_value(rounding=ROUND_FLOOR)
+                    (Decimal(parsed_limit) * (Decimal(1) - fraction)).to_integral_value(
+                        rounding=ROUND_FLOOR
+                    )
                 ),
             )
             usage = max(0, parsed_limit - available)
@@ -577,9 +573,7 @@ def parse_allowances(
 
     indexed: dict[str, dict[str, Any]] = {}
     for name in sorted(grouped):
-        selected = _select_allowance(
-            name, grouped[name], container_id=container_id
-        )
+        selected = _select_allowance(name, grouped[name], container_id=container_id)
         if selected is not None:
             indexed[name] = selected
     return indexed

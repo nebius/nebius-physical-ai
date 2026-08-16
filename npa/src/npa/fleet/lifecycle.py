@@ -45,8 +45,14 @@ from npa.cli.cluster.terraform_lifecycle import (
 from npa.cluster.gpu_driver import resolve_gpu_driver_strategy
 from npa.cluster.gpu_health import GpuHealthConfig, validate_gpu_health
 from npa.fleet.quotas import preflight_region, shortfall_message
+from npa.fleet.mig import MigVerificationError, wait_for_mig_ready
 from npa.fleet.spec import ClusterSpec, FleetSpec, NodePoolSpec, ProjectSpec
-from npa.fleet.tfvars import patch_provider_domain, provider_domain, render_tfvars
+from npa.fleet.tfvars import (
+    patch_provider_domain,
+    provider_domain,
+    render_tfvars,
+    validate_recipe_mig_compatibility,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -400,9 +406,7 @@ def _get_project(
 _PROVIDER_FIELD_MISSING = object()
 
 
-def _provider_field(
-    payload: object, *spellings: str
-) -> object:
+def _provider_field(payload: object, *spellings: str) -> object:
     """Read one provider field defensively across wire-format spellings.
 
     Multiple spellings are accepted only when their values agree. Missing or
@@ -974,9 +978,7 @@ def _prepare_install_dir(
         )
 
     (workdir / "terraform.tfvars").write_text(
-        render_tfvars(
-            cluster, ssh_public_key=ssh_public_key, recipe_dir=workdir
-        )
+        render_tfvars(cluster, ssh_public_key=ssh_public_key, recipe_dir=workdir)
     )
     return workdir
 
@@ -1135,7 +1137,9 @@ def _run_to_log(
                 if remaining <= 0:
                     proc.kill()
                     remainder, _ = proc.communicate()
-                    write_redacted(decoder.decode(remainder or b"", final=True), final=True)
+                    write_redacted(
+                        decoder.decode(remainder or b"", final=True), final=True
+                    )
                     raise subprocess.TimeoutExpired(args, timeout)
                 events = selector.select(timeout=min(1.0, remaining))
                 if not events:
@@ -1366,25 +1370,39 @@ def _write_kubeconfig(
     temporary = kubeconfig_path.with_name(f".{kubeconfig_path.name}.{os.getpid()}.tmp")
     temporary.unlink(missing_ok=True)
     try:
-        result = _run_capture(
-            [
-                *_nebius_argv(nebius_bin, profile),
-                "mk8s",
-                "cluster",
-                "get-credentials",
-                "--id",
-                cluster_id,
-                "--external",
-                "--force",
-                "--kubeconfig",
-                str(temporary),
-                "--context-name",
-                context,
-            ],
-            env=env,
-            check=False,
-            timeout=180,
-        )
+        command_env = env.copy()
+        configured_kubectl = os.environ.get("NPA_KUBECTL_BIN", "").strip()
+        with tempfile.TemporaryDirectory(prefix="npa-kube-bin-") as shim_dir:
+            if configured_kubectl and not shutil.which(
+                "kubectl", path=command_env.get("PATH", "")
+            ):
+                resolved_kubectl = (
+                    shutil.which(configured_kubectl) or configured_kubectl
+                )
+                shim = Path(shim_dir) / "kubectl"
+                shim.symlink_to(Path(resolved_kubectl).expanduser().resolve())
+                command_env["PATH"] = os.pathsep.join(
+                    (shim_dir, command_env.get("PATH", ""))
+                )
+            result = _run_capture(
+                [
+                    *_nebius_argv(nebius_bin, profile),
+                    "mk8s",
+                    "cluster",
+                    "get-credentials",
+                    "--id",
+                    cluster_id,
+                    "--external",
+                    "--force",
+                    "--kubeconfig",
+                    str(temporary),
+                    "--context-name",
+                    context,
+                ],
+                env=command_env,
+                check=False,
+                timeout=180,
+            )
         if result.returncode != 0:
             raise RuntimeError(
                 f"credential generation failed (nebius exited {result.returncode})"
@@ -1436,12 +1454,10 @@ def plan_fleet(
                 gpu_nodes=cluster.gpu_count(),
                 platform=gpu.platform if gpu else "",
                 preset=gpu.preset if gpu else "",
-                mode=cluster.gpu_driver_mode,
+                mode=cluster.resolved_gpu_driver_mode(),
                 managed_driver_preset=cluster.managed_driver_preset,
                 enable_gpu_cluster=cluster.resolved_enable_gpu_cluster(),
-                allow_unsafe_nvswitch_operator=(
-                    cluster.allow_unsafe_nvswitch_operator
-                ),
+                allow_unsafe_nvswitch_operator=(cluster.allow_unsafe_nvswitch_operator),
             )
             clusters.append(
                 {
@@ -1465,9 +1481,7 @@ def plan_fleet(
                         if driver.uses_managed_image
                         else None
                     ),
-                    "unsafe_nvswitch_operator": (
-                        driver.unsafe_operator_acknowledged
-                    ),
+                    "unsafe_nvswitch_operator": (driver.unsafe_operator_acknowledged),
                     "gpu_health_stabilization_seconds": (
                         cluster.gpu_health_stabilization_seconds
                     ),
@@ -1476,7 +1490,17 @@ def plan_fleet(
                     "filestore_disk_size_gibibytes": cluster.filestore_disk_size_gibibytes,
                     "filestore_mount_path": cluster.filestore_mount_path,
                     "filestore_mount_tag": cluster.filestore_mount_tag,
-                    "k8s_version": cluster.k8s_version or "backend-default",
+                    "k8s_version": (
+                        cluster.resolved_k8s_version() or "backend-default"
+                    ),
+                    "mig": (
+                        {
+                            "strategy": cluster.mig.strategy,
+                            "config": cluster.mig.config,
+                        }
+                        if cluster.mig and cluster.mig.enabled
+                        else None
+                    ),
                 }
             )
         plan_projects.append(
@@ -1567,6 +1591,15 @@ def deploy_fleet(
         k8s_training_dir, ref=k8s_training_ref, work_root=work_root, on_status=on_status
     )
     _log(on_status, f"k8s-training recipe root: {recipe_root}")
+    for project in spec.projects:
+        if not _project_in_scope(project, only_projects, prefix):
+            continue
+        for cluster in project.clusters:
+            if only_clusters and cluster.name not in only_clusters:
+                continue
+            validate_recipe_mig_compatibility(
+                cluster, recipe_root / _K8S_TRAINING_SUBDIR
+            )
 
     cli_env = _nebius_cli_env()
     results: list[dict[str, Any]] = []
@@ -1892,9 +1925,7 @@ def _is_verified_unchanged_target(
         return False
     cluster_metadata = provider_cluster.get("metadata", {}) or {}
     cluster_status = provider_cluster.get("status", {}) or {}
-    cluster_parent_id = _provider_field(
-        cluster_metadata, "parent_id", "parentId"
-    )
+    cluster_parent_id = _provider_field(cluster_metadata, "parent_id", "parentId")
     if (
         str(cluster_metadata.get("id") or "") != cluster_id
         or str(
@@ -1962,9 +1993,7 @@ def _provider_node_group_matches_pool(
         if reservation_ids_value is _PROVIDER_FIELD_MISSING
         else reservation_ids_value
     )
-    fixed_node_count_value = _provider_field(
-        spec, "fixed_node_count", "fixedNodeCount"
-    )
+    fixed_node_count_value = _provider_field(spec, "fixed_node_count", "fixedNodeCount")
     preemptible = _provider_field(template, "preemptible")
     try:
         fixed_node_count = int(fixed_node_count_value)
@@ -2056,7 +2085,7 @@ def _deploy_one_cluster(
             gpu_nodes=cluster.gpu_count(),
             platform=gpu.platform if gpu else "",
             preset=gpu.preset if gpu else "",
-            mode=cluster.gpu_driver_mode,
+            mode=cluster.resolved_gpu_driver_mode(),
             managed_driver_preset=cluster.managed_driver_preset,
             enable_gpu_cluster=cluster.resolved_enable_gpu_cluster(),
             allow_unsafe_nvswitch_operator=cluster.allow_unsafe_nvswitch_operator,
@@ -2194,8 +2223,54 @@ def _deploy_one_cluster(
                 **log_metadata,
             }
         gpu_health: dict[str, Any] | None = None
+        mig_report = None
         gpu_health_path = install_dir / "gpu-health.json"
-        if cluster.gpu_count() > 0:
+        if cluster.mig and cluster.mig.enabled:
+            kubectl_bin = _require_bin(os.environ.get("NPA_KUBECTL_BIN") or "kubectl")
+            _log(
+                on_status,
+                f"[{label}] waiting for exact two-snapshot MIG convergence",
+            )
+            try:
+                mig_report = wait_for_mig_ready(
+                    kubectl_bin=kubectl_bin,
+                    kubeconfig=kubeconfig_path,
+                    expected_nodes=cluster.gpu_count(),
+                    reconcile=True,
+                    timeout_seconds=cluster.gpu_health_timeout_minutes * 60,
+                    cuda_smoke_image=cluster.gpu_cuda_smoke_image,
+                    on_status=(
+                        (lambda message: _log(on_status, f"[{label}] {message}"))
+                        if on_status
+                        else None
+                    ),
+                )
+            except MigVerificationError as exc:
+                message = f"MIG verification failed: {exc}"
+                _write_env_sidecar(
+                    install_dir,
+                    {
+                        **sidecar,
+                        "cluster_id": cluster_id,
+                        "status": "deployed-mig-not-ready",
+                        "error": message,
+                    },
+                )
+                _log(on_status, f"[{label}] {message}")
+                return {
+                    "project_key": project_key,
+                    "project_id": project_id,
+                    "cluster_name": cluster.name,
+                    "region": region,
+                    "cluster_id": cluster_id,
+                    "kube_context": context,
+                    "kubeconfig": str(kubeconfig_path),
+                    "install_dir": str(install_dir),
+                    "status": "deployed-mig-not-ready",
+                    "error": message,
+                    **log_metadata,
+                }
+        elif cluster.gpu_count() > 0:
             _write_env_sidecar(
                 install_dir,
                 {
@@ -2233,9 +2308,7 @@ def _deploy_one_cluster(
                         cuda_smoke_image=cluster.gpu_cuda_smoke_image,
                     ),
                     evidence_path=gpu_health_path,
-                    on_status=lambda message: _log(
-                        on_status, f"[{label}] {message}"
-                    ),
+                    on_status=lambda message: _log(on_status, f"[{label}] {message}"),
                 )
             except Exception as exc:  # noqa: BLE001 - retain applied state/evidence
                 message = str(exc)
@@ -2296,6 +2369,7 @@ def _deploy_one_cluster(
                 if gpu_health is not None
                 else {}
             ),
+            **({"mig": mig_report.as_dict()} if mig_report is not None else {}),
             **log_metadata,
         }
     except Exception as exc:  # noqa: BLE001 - capture per-cluster failure
@@ -2478,11 +2552,7 @@ def destroy_fleet(
             # Successful destroy removes <install_dir>, so diagnostics live in
             # a sibling private tree that survives authoritative state cleanup.
             log_path = (
-                fleet_root
-                / ".logs"
-                / project.key()
-                / cluster.name
-                / "destroy.log"
+                fleet_root / ".logs" / project.key() / cluster.name / "destroy.log"
             )
         return _destroy_one_cluster(
             spec=spec,
@@ -2838,7 +2908,9 @@ def _reclaim_created_network(
                 timeout=600,
             )
             if result.returncode != 0 and not _is_not_found_result(result):
-                errors.append(f"subnet delete failed (nebius exited {result.returncode})")
+                errors.append(
+                    f"subnet delete failed (nebius exited {result.returncode})"
+                )
         except Exception as exc:  # noqa: BLE001 - report and continue with network cleanup
             errors.append(f"subnet delete failed: {type(exc).__name__}: {exc}")
     _log(on_status, f"[{label}] deleting fleet-created network {network_id}")
