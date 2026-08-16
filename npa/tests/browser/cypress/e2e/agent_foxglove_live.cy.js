@@ -53,8 +53,15 @@ function discoverVerificationRun() {
       /^[A-Za-z0-9][A-Za-z0-9._-]*$/,
     );
     expect(run.run_ref, "source-qualified run reference").to.match(/^npa1_/);
+    const exactParams = new URLSearchParams({
+      limit: "1000",
+      resource_bucket: String(run.bucket || ""),
+      project_id: String(run.project_id || ""),
+      resolved_prefix: String(run.resolved_prefix || ""),
+      source_selected: "1",
+    });
     return liveAgentRequest(
-      `/api/artifacts/run/${encodeURIComponent(String(run.run_ref))}?limit=1000`,
+      `/api/artifacts/run/${encodeURIComponent(String(run.run_ref))}?${exactParams}`,
     ).then((artifactsResponse) => {
       expect(artifactsResponse.status).to.eq(200);
       const artifacts = Array.isArray(artifactsResponse.body.artifacts)

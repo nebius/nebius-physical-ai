@@ -6714,11 +6714,38 @@ def artifacts_for_run(
         else:
             normalized_run = validate_run_id(requested_ref)
         s3, settings = _agent_s3_client()
-        access_report = _agent_access_report()
-        bucket_projects = artifact_bucket_projects(access_report)
-        allowed_buckets, _selected_scope = _agent_artifact_list_scope(
-            access_report, resource_bucket, project_id
+        exact_source_request = bool(
+            requested_ref.startswith("npa1_") and resource_bucket and project_id
         )
+        if exact_source_request:
+            source_bucket, source_project, source_prefix = _authorize_exact_run_ref_source(
+                s3=s3,
+                settings=settings,
+                run_id=normalized_run,
+                run_ref=requested_ref,
+                resource_bucket=resource_bucket,
+                project_id=project_id,
+                resolved_prefix=resolved_prefix,
+            )
+            resource_bucket = source_bucket
+            project_id = source_project
+            resolved_prefix = source_prefix
+            allowed_buckets = [source_bucket]
+            bucket_projects = {{source_bucket: source_project}}
+            access_report = None
+            access_diagnostics = {{
+                "status": "available",
+                "scope": "selected_source",
+                "searched_projects": [{{"id": source_project, "name": source_project}}],
+                "unavailable_projects": [],
+            }}
+        else:
+            access_report = _agent_access_report()
+            bucket_projects = artifact_bucket_projects(access_report)
+            allowed_buckets, _selected_scope = _agent_artifact_list_scope(
+                access_report, resource_bucket, project_id
+            )
+            access_diagnostics = _agent_access_diagnostics(access_report)
         search_buckets = [resource_bucket] if resource_bucket else allowed_buckets
         requested_prefix = _validated_resolved_prefix(resolved_prefix or prefix)
         matches, source_errors, discovery_complete = find_run_sources_across_buckets(
@@ -6743,7 +6770,13 @@ def artifacts_for_run(
         search_complete = bool(
             discovery_complete
             and not source_errors
-            and (resource_bucket or _artifact_search_scope_complete(access_report))
+            and (
+                resource_bucket
+                or (
+                    access_report is not None
+                    and _artifact_search_scope_complete(access_report)
+                )
+            )
         )
         if not matches:
             code = "run_not_discovered" if search_complete else "artifact_search_incomplete"
@@ -6761,7 +6794,7 @@ def artifacts_for_run(
                     "error": {{"code": code, "message": message}},
                     "run_id": normalized_run,
                     "namespace": "npa_workflow_artifact_run",
-                    "access": _agent_access_diagnostics(access_report),
+                    "access": access_diagnostics,
                     "source_errors": [dict(item) for item in source_errors],
                 }},
             )
@@ -6777,7 +6810,7 @@ def artifacts_for_run(
                     }},
                     "run_id": normalized_run,
                     "namespace": "npa_workflow_artifact_run",
-                    "access": _agent_access_diagnostics(access_report),
+                    "access": access_diagnostics,
                     "source_errors": [dict(item) for item in source_errors],
                 }},
             )
@@ -6792,7 +6825,7 @@ def artifacts_for_run(
                     }},
                     "run_id": normalized_run,
                     "sources": [item.to_dict() for item in matches],
-                    "access": _agent_access_diagnostics(access_report),
+                    "access": access_diagnostics,
                 }},
             )
         selected = matches[0]
@@ -6828,7 +6861,7 @@ def artifacts_for_run(
                 "continue_with": ["next_cursor", "resolved_prefix", "resource_bucket", "source_selected"],
             }},
             "preferred": preferred.to_dict() if preferred else None,
-            "access": _agent_access_diagnostics(access_report),
+            "access": access_diagnostics,
             **page.to_dict(),
             "output_artifact_count": role_counts["output"],
             "input_artifact_count": role_counts["input"],

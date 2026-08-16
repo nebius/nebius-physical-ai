@@ -875,6 +875,50 @@ def test_rendered_foxglove_exact_source_avoids_tenant_wide_access_scan(
         assert selected["resolved_prefix"] == "nested/source"
         assert selected["source_fingerprint"]
         assert len(authorization_calls) == 1
+
+        source = module.RunSummary(
+            "run-one",
+            "2026-08-16T00:00:00+00:00",
+            1,
+            True,
+            bucket="selected-bucket",
+            project_id="selected-project",
+            resolved_prefix="nested/source",
+        )
+        monkeypatch.setattr(
+            module,
+            "find_run_sources_across_buckets",
+            lambda buckets, **_kwargs: (
+                [source] if buckets == ["selected-bucket"] else [],
+                (),
+                True,
+            ),
+        )
+        monkeypatch.setattr(
+            module,
+            "list_artifacts_page",
+            lambda *_args, **_kwargs: module.ArtifactListPage(
+                artifacts=[artifact],
+                truncated=False,
+                next_cursor="",
+                page_size=1000,
+            ),
+        )
+        monkeypatch.setattr(
+            module, "_summary_documents_for_run", lambda *_args, **_kwargs: []
+        )
+        details = module.artifacts_for_run(
+            run_ref,
+            resource_bucket="selected-bucket",
+            project_id="selected-project",
+            resolved_prefix="nested/source",
+            source_selected=True,
+        )
+        assert details["run_ref"] == run_ref
+        assert details["bucket"] == "selected-bucket"
+        assert details["project_id"] == "selected-project"
+        assert details["access"]["scope"] == "selected_source"
+        assert len(authorization_calls) == 2
     finally:
         sys.modules.pop(module_name, None)
 

@@ -697,6 +697,15 @@ async function verifyFoxgloveEmbeddedArtifact(config, taskInput) {
   }
   fs.mkdirSync(evidenceDir, { recursive: true, mode: 0o700 });
   fs.chmodSync(evidenceDir, 0o700);
+  const progressPath = path.join(evidenceDir, "live-embedded-progress.json");
+  const recordProgress = (phase) => {
+    fs.writeFileSync(progressPath, `${JSON.stringify({ phase, at: new Date().toISOString() }, null, 2)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+    fs.chmodSync(progressPath, 0o600);
+  };
+  recordProgress("browser_launch");
 
   const browser = await chromium.launch({
     executablePath,
@@ -729,19 +738,22 @@ async function verifyFoxgloveEmbeddedArtifact(config, taskInput) {
       }
     });
     await page.goto(credentials.baseUrl, { waitUntil: "domcontentloaded", timeout: 0 });
+    recordProgress("page_loaded");
     await page.locator("#tabRerun").click();
-    await page.locator("#artifactPrefix").fill(runId);
-    await page.locator("#artifactPrefix").press("Enter");
+    // The parent live flow has already selected this exact server-qualified
+    // run. A clean browser restores that active server state; do not trigger a
+    // second tenant-wide search or reload before exercising the artifact card.
     await page.waitForFunction(
       (expected) => [...(document.querySelector("#runIdSelect")?.options || [])]
         .some((option) => option.value === expected),
       runRef,
       { timeout: 0 },
     );
+    recordProgress("active_run_restored");
+    await page.locator("#runIdSelect").selectOption(runRef);
     await page.locator("#runIdInput").fill(runId);
-    await page.locator("#loadRunData").click();
-    await page.locator('#loadRunData[aria-busy="false"]').waitFor({ state: "visible", timeout: 0 });
     await page.locator("#artifactLoadRunArtifacts").click();
+    recordProgress("artifact_list_requested");
     const exactButton = page.locator(
       `button[data-action="open-foxglove-artifact"][data-key=${JSON.stringify(artifactKey)}]`,
     );
@@ -755,6 +767,7 @@ async function verifyFoxgloveEmbeddedArtifact(config, taskInput) {
       artifactKey,
       { timeout: 0 },
     );
+    recordProgress("artifact_card_ready");
     const artifactCard = exactButton.locator(
       "xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' artifact-card ')][1]",
     );
@@ -778,6 +791,7 @@ async function verifyFoxgloveEmbeddedArtifact(config, taskInput) {
       .waitFor({ state: "visible", timeout: 0 })
       .then(() => Date.now());
     await exactButton.click();
+    recordProgress("artifact_card_clicked");
     await page.waitForFunction(
       () => document.querySelector("#renderModeFoxglove")?.getAttribute("aria-selected") === "true" &&
         document.querySelector("#viewerPaneFoxglove")?.getAttribute("aria-hidden") === "false",
@@ -787,6 +801,7 @@ async function verifyFoxgloveEmbeddedArtifact(config, taskInput) {
     const paneVisibleAt = Date.now();
     const exportResponse = await responsePromise;
     const apiResponseAt = Date.now();
+    recordProgress("export_response_received");
     if (exportResponse.status() !== 200) {
       throw new Error(`live artifact-card export returned HTTP ${exportResponse.status()}`);
     }
@@ -834,6 +849,7 @@ async function verifyFoxgloveEmbeddedArtifact(config, taskInput) {
       { timeout: 0 },
     );
     const dataSourceReadyAt = Date.now();
+    recordProgress("data_source_ready");
     const iframe = page.locator("#viewerPaneFoxglove iframe");
     await iframe.waitFor({ state: "visible", timeout: 0 });
     const iframeVisibleAt = await iframeVisiblePromise;
@@ -1016,6 +1032,7 @@ async function verifyFoxgloveEmbeddedArtifact(config, taskInput) {
       mode: 0o600,
     });
     fs.chmodSync(resultEvidence, 0o600);
+    recordProgress("complete");
     return result;
   } finally {
     await context.close();
