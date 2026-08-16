@@ -30,6 +30,11 @@ conversion, serving, inference, and validation.
    `ensure-ingress`, `register-byovm`, `reload-env`, and `cleanup-partial`
    scoped to setup and recovery flows.
 4. Preserve credential redaction for NGC, Hugging Face, S3, and SSH values.
+5. Before deploy provisions or updates anything, validate actual Hugging Face
+   access to both the selected GR00T checkpoint and its runtime-fetched
+   `nvidia/Cosmos-Reason2-2B` dependency. The operator's HF token and upstream
+   permissions are the only local gate for gated weights; do not add a manual
+   acceptance flag or a model-check bypass.
 
 ## Three-Tier Contract
 
@@ -51,6 +56,10 @@ conversion, serving, inference, and validation.
 
 ## Runtime Isaac bootstrap (the container ships no Isaac Sim)
 
+Before a GR00T Isaac simulation run, load
+`skills/atomic/third-party-eula-preflight/SKILL.md`. Standard inference and
+fine-tuning do not trigger this preflight.
+
 The `npa-groot` image contains **no NVIDIA Isaac Sim or Isaac Lab code**. It used to bake
 Omniverse Kit, which made it non-redistributable; Isaac is now downloaded on first use of
 `/isaac-sim/python.sh` from `https://pypi.nvidia.com`, into a cache volume, under the
@@ -59,10 +68,13 @@ Omniverse Kit, which made it non-redistributable; Isaac is now downloaded on fir
 
 What this changes in practice:
 
-- **Set both variables, or Isaac will not start.** Missing either
-  `OMNI_KIT_ACCEPT_EULA=YES` or `ISAACSIM_ACCEPT_EULA=YES` makes the container exit **78**
-  with a message naming them. That refusal is deliberate and load-bearing — do not "fix"
-  it by baking acceptance into the image; a guard fails the build if anyone does.
+- **Only Isaac simulation defaults acceptance.** NPA defaults
+  `ACCEPT_EULA=Y` on that path. Empty, `N`, `NO`, `0`, `FALSE`, or
+  `--no-accept-eula` exits **78** before download. `Y`, `YES`, `1`, and `TRUE`
+  are accepted case-insensitively; other values are invalid. The launcher derives
+  `OMNI_KIT_ACCEPT_EULA=YES` internally; do not expose duplicate user plumbing.
+  Keep `PRIVACY_CONSENT` and telemetry off. Standard GR00T inference and
+  fine-tuning do not require Isaac acceptance.
 - **Reach Isaac through `/isaac-sim/python.sh`** (the value of `ISAAC_LAB_PYTHON`). That is
   the bootstrap shim, and it is what every SkyPilot template, the sim2real engine and the
   workbench CLI already use. A bare `python3` is the *system* interpreter and will not

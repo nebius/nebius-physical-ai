@@ -20,8 +20,10 @@ Isaac runtime warming and execution additionally require the operator to review
 the [NVIDIA Omniverse terms](https://docs.omniverse.nvidia.com/usd/latest/common/NVIDIA_Omniverse_License_Agreement.html),
 [Isaac Sim additional licenses](https://docs.isaacsim.omniverse.nvidia.com/latest/common/licenses.html),
 and [NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/).
-The repository never supplies consent: the cache warmer and workflow must receive
-both `OMNI_KIT_ACCEPT_EULA=YES` and `ISAACSIM_ACCEPT_EULA=YES` from the operator.
+NPA's non-interactive Isaac policy defaults the public `ACCEPT_EULA` value to
+`Y` and derives Kit's internal value only inside the launcher. Use
+`--no-accept-eula` (or a recognized negative `ACCEPT_EULA` value) to opt out;
+privacy and telemetry consent remain independent and disabled by default.
 
 Create a read token and verify the same token can access every Sim2Real model:
 
@@ -144,7 +146,7 @@ kubectl get pvc npa-isaac-cache -o custom-columns=NAME:.metadata.name,PHASE:.sta
 ```
 
 Expected: the Job completes, its log ends with a successful bootstrap, and the
-PVC is `Bound` with `RWX`. Exit 78 means one of the two EULA values was absent;
+PVC is `Bound` with `RWX`. Exit 78 means acceptance was explicitly disabled;
 image pull failures are handled in the next gate. See
 [runtime-fetch packaging](../container-packaging.md#nvidia-isaac--omniverse-runtime-fetch-images).
 
@@ -221,9 +223,7 @@ npa/.venv/bin/npa workbench workflow plan-spec "${SPEC}" \
   --var reason_image="${REASON_IMAGE}" \
   --var isaac_image="${ISAAC_IMAGE}" \
   --var viewer_image="${VIEWER_IMAGE}" \
-  --var isaac_cache_pvc=npa-isaac-cache \
-  --var omni_kit_accept_eula=YES \
-  --var isaacsim_accept_eula=YES
+  --var isaac_cache_pvc=npa-isaac-cache
 ```
 
 Expected: validation reports valid, and the wave plan shows the 14-stage graph
@@ -245,8 +245,6 @@ npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
   --var isaac_image="${ISAAC_IMAGE}" \
   --var viewer_image="${VIEWER_IMAGE}" \
   --var isaac_cache_pvc=npa-isaac-cache \
-  --var omni_kit_accept_eula=YES \
-  --var isaacsim_accept_eula=YES \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY \
   --secret-env HF_TOKEN

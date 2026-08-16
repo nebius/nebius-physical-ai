@@ -219,7 +219,7 @@ containers:
         /isaac-sim/python.sh the bootstrap downloads the pinned, sha256-verified
         isaacsim/isaaclab wheels (~4.5 GB) plus the BSD-3 Isaac Lab source tree
         into NPA_ISAAC_CACHE_DIR, and REFUSES (exit 78) unless the operator sets
-        both OMNI_KIT_ACCEPT_EULA=YES and ISAACSIM_ACCEPT_EULA=YES. Measured on
+        NVIDIA's documented, run-scoped ACCEPT_EULA=Y. Measured on
         RTX PRO 6000: 111 s cold, 32 ms warm, 10.04 GiB of cache. Pre-warm per
         node/PVC with npa/docker/workbench/common/warm-isaac-cache.yaml. No NGC
         credentials are needed. RT-core/headless routing handled by the workbench.
@@ -467,7 +467,7 @@ containers:
         weights are NVIDIA Open Model License and downloaded at run time with the
         operator's own HF token. The entrypoint picks its interpreter per mode:
         smoke/eval/train/finetune/serve go through the Isaac bootstrap and so
-        require OMNI_KIT_ACCEPT_EULA=YES and ISAACSIM_ACCEPT_EULA=YES, while
+        require NVIDIA's documented, run-scoped ACCEPT_EULA=Y, while
         mujoco-eval and the S3/GPU-proof helpers run on the baked venv and need
         neither. Self-reporting entrypoint modes; smoke mode writes
         sonic_smoke_result.json and GPU/image-pull proofs. GPU routing guardrails
@@ -476,49 +476,6 @@ containers:
       kind: entrypoint-smoke
       command: /entrypoint.sh smoke
       artifact: sonic_smoke_result.json
-      # RT cores required: Isaac Lab / SONIC render paths silently produce wrong
-      # results or fail on H100/H200, which have none. rtx6000 is also the only
-      # RT-core platform the serverless project actually offers (gpu-h100-sxm is
-      # not available there at all -- a job requesting it fails with NotFound).
-      serverless_gpu: rtx6000
-      gpu: required
-      timeout_seconds: 900
-      status: gpu-gated
-
-  sonic-mujoco:
-    image: npa-sonic-mujoco
-    dockerfile: npa/docker/workbench/sonic/Dockerfile.mujoco
-    # A build VARIANT of sonic, not a tool of its own: it is built FROM npa-sonic and
-    # resolves through sonic's image manifest, so it is not a CONTAINER_IMAGE_NAMES key.
-    # It is still separately built and separately published, with a capability its parent
-    # does not exercise, so it gets its own golden eval rather than none at all.
-    variant_of: sonic
-    # Resolves as container_image_for_tool("sonic", image_variant="mujoco"); sonic's image
-    # manifest maps that alias to the sonic-mujoco-h100-mvp entry.
-    image_variant: mujoco
-    physical_ai:
-      useful: true
-      role: >-
-        MuJoCo evaluation of a SONIC whole-body locomotion checkpoint - the
-        cross-simulator check on a policy trained in Isaac Lab, which is where a
-        sim-to-sim gap shows up before a sim-to-real one does.
-    safety:
-      runs_as: ubuntu
-      base_image: npa-sonic (inherits its runtime-fetch Isaac architecture)
-      network: none (entrypoint mode); downloads a checkpoint from S3 when asked
-      external_fetch: [s3]
-      notes: >-
-        Adds MuJoCo to npa-sonic and no Isaac of its own, so it bakes no NVIDIA
-        Isaac Sim or Isaac Lab either. Notably this eval needs NEITHER the Isaac
-        download NOR EULA acceptance: mujoco-eval is one of the entrypoint modes
-        that runs on the baked venv (see the per-mode interpreter selection in
-        sonic/entrypoint.sh), so it is fast and network-free. Its Dockerfile takes
-        an explicit ARG NPA_IMAGE_PYTHON precisely so the BUILD cannot accidentally
-        invoke the bootstrap shim and bake 4.5 GB of Isaac Sim into a layer.
-    golden_eval:
-      kind: entrypoint-smoke
-      command: /entrypoint.sh mujoco-eval
-      artifact: sonic_eval_results.json
       # RT cores required: Isaac Lab / SONIC render paths silently produce wrong
       # results or fail on H100/H200, which have none. rtx6000 is also the only
       # RT-core platform the serverless project actually offers (gpu-h100-sxm is

@@ -473,7 +473,7 @@ def test_openpi_polaris_spec_plans_real_b200_serving() -> None:
     assert "pi05_droid_jointpos_polaris" in rendered
     assert "WebsocketPolicyServer" in rendered
     assert "B200:1" in OPENPI_SPEC.read_text(encoding="utf-8")
-    assert secret_env_hints_for_plan(plan.steps) == ("NPA_OPENPI_ACCEPT_GEMMA_TERMS",)
+    assert secret_env_hints_for_plan(plan.steps) == ()
     profile = resolve_byof_profile_path(str(config["resource_profile_yaml"]))
     profile_text = profile.read_text(encoding="utf-8")
     assert "accelerators: B200:1" in profile_text
@@ -644,12 +644,9 @@ def test_openpi_artifact_wait_keeps_live_gpu_until_object_exists(
     ),
 )
 @pytest.mark.e2e
-def test_openpi_polaris_live_b200_build_terms_and_served_inference(
+def test_openpi_polaris_live_b200_build_and_served_inference(
     e2e_project: str | None,
 ) -> None:
-    assert os.environ.get("NPA_OPENPI_ACCEPT_GEMMA_TERMS") == "YES", (
-        "scoped Gemma terms acceptance must be forwarded for this OpenPI run"
-    )
     assert not os.environ.get("NPA_BYOF_OPENPI_REUSE_IMAGE", "").strip(), (
         "the canonical gate must build and push; use the runner manually for reuse debugging"
     )
@@ -661,7 +658,6 @@ def test_openpi_polaris_live_b200_build_terms_and_served_inference(
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     build_run_id = f"byof-openpi-polaris-build-{stamp}"
-    negative_run_id = f"byof-openpi-polaris-terms-{stamp}"
     positive_run_id = f"byof-openpi-polaris-e2e-{stamp}"
     planned = _planned_args(positive_run_id)
     bucket = live_bucket(e2e_project)
@@ -721,74 +717,8 @@ def test_openpi_polaris_live_b200_build_terms_and_served_inference(
     print(json.dumps({"openpi_build_evidence": build_byte_evidence}, sort_keys=True))
     _refresh_pull_secrets(project=e2e_project, registry=project_registry)
 
-    negative_env = dict(env)
-    negative_env["NPA_OPENPI_ACCEPT_GEMMA_TERMS"] = "NO"
-    negative_proc = _run_byof(
-        _smoke_command(
-            planned=planned,
-            project=e2e_project,
-            image=image,
-            run_id=negative_run_id,
-            output_root=output_root,
-        ),
-        env=negative_env,
-    )
-    _release_split_run(run_id=negative_run_id, env=negative_env)
     s3 = _s3_client(e2e_project)
-    negative_prefix = f"oss-solutions/openpi/{negative_run_id}/"
-    negative_summary = _read_json(s3, bucket, negative_prefix + "npa_byof_summary.json")
-    negative_gate = _read_json(s3, bucket, negative_prefix + "openpi_terms_gate.json")
-    assert negative_proc.returncode != 0
-    assert negative_summary["status"] == "failed"
-    assert negative_summary["smoke_exit_code"] == 64
-    assert negative_summary["image"] == image
-    assert negative_gate == {
-        "schema": "npa.workbench.openpi.terms-gate.v1",
-        "status": "refused",
-        "exit_code": 64,
-        "checkpoint_fetch_started": False,
-        "model_import_started": False,
-    }
-    negative_objects = s3.list_objects_v2(Bucket=bucket, Prefix=negative_prefix).get(
-        "Contents", []
-    )
-    negative_keys = {str(item["Key"]) for item in negative_objects}
-    assert (
-        negative_prefix + "openpi_pi05_droid_jointpos_polaris_inference.json"
-        not in negative_keys
-    )
-    negative_stderr = (
-        s3.get_object(Bucket=bucket, Key=negative_prefix + "solution_smoke_stderr.log")[
-            "Body"
-        ]
-        .read()
-        .decode()
-    )
-    assert "requires scoped Gemma terms acceptance" in negative_stderr
-    negative_gpu = (
-        s3.get_object(Bucket=bucket, Key=negative_prefix + "nvidia_smi_list.txt")[
-            "Body"
-        ]
-        .read()
-        .decode()
-        .strip()
-        .splitlines()
-    )
-    assert len(negative_gpu) == 1 and "B200" in negative_gpu[0].upper()
-    print(
-        json.dumps(
-            {
-                "openpi_negative_gate_evidence": {
-                    **negative_gate,
-                    "gpu_product": "B200",
-                }
-            },
-            sort_keys=True,
-        )
-    )
-
     positive_env = dict(env)
-    positive_env["NPA_OPENPI_ACCEPT_GEMMA_TERMS"] = "YES"
     positive_proc = _run_byof(
         _smoke_command(
             planned=planned,

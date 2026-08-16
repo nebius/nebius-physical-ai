@@ -115,10 +115,6 @@ FORBIDDEN_HISTORY: tuple[tuple[str, re.Pattern[str]], ...] = (
         "runtime_bootstrap_at_build",
         re.compile(r"\bRUN\b.*\bwan-runtime\s+(?:ensure|warm|exec)\b", re.I | re.S),
     ),
-    (
-        "baked_acceptance",
-        re.compile(r"\bNPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS\s*=\s*YES\b", re.I),
-    ),
 )
 
 SECRET_CONTENT = (

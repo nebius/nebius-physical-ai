@@ -231,14 +231,11 @@ Also hard-gated in the same smoke:
 Live acceptance requires the canonical isolated B200 (`sm_100`) gate: build the
 pinned source, execute the declared editable-install and CUDA-compile commands,
 push it to the private project registry, resolve and pull the immutable digest,
-then run a separate invalid-terms workload that exits 64 before checkpoint/model
-loading. Only after that negative gate passes may the accepted workload fetch
-the 27 objects / 12,434,530,837 bytes at runtime and prove finite
+then let the workload fetch the 27 objects / 12,434,530,837 bytes at runtime and prove finite
 `float64[T>=5,8]` direct plus upstream WebSocket inference.
 
-This checkpoint contains Gemma-derived material. Require the exact run-scoped
-`NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES` gate before build or download; forward it
-only through the secret channel and never bake/persist it. The image contains
+This checkpoint contains Gemma-derived material. Keep the upstream terms links
+visible, but do not duplicate them with an NPA acceptance flag. The image contains
 the pinned Apache-2.0 source and CUDA/JAX runtime, not checkpoint bytes. Training
 and evaluation remain unclaimed until a compatible real dataset and a real
 optimization/evaluation step are executed. The served check is same-pod loopback

@@ -13,14 +13,14 @@
 #   are already in the layers. So instead of arguing about the statement, this makes the
 #   statement true. NVIDIA delivers Isaac to the operator's own machine, on first run,
 #   under the operator's OWN EULA acceptance. That is the same pattern the workbench
-#   already uses for gated model weights (Cosmos, GR00T N1, Cosmos-Reason), which is why
+#   already uses for runtime model weights, which is why
 #   those images are already public.
 #
-# THE EULA REFUSAL IS THE LOAD-BEARING PART
-#   Nothing here is baked with acceptance pre-granted. If the operator has not set both
-#   OMNI_KIT_ACCEPT_EULA and ISAACSIM_ACCEPT_EULA, this script refuses and downloads
-#   NOTHING. That refusal is the legal mechanism, not a convenience check - treat it as
-#   a feature and see npa/tests/docker/test_isaac_bootstrap.py, which tests it directly.
+# DEFAULT ACCEPTANCE
+#   NPA defaults NVIDIA's documented ACCEPT_EULA to Y for Isaac-backed workloads so
+#   non-interactive workflows do not stop at the vendor prompt. Operators can explicitly
+#   opt out with an empty value or N/NO/0/FALSE. Legacy affirmative spellings
+#   Y/YES/1/TRUE migrate case-insensitively. Other values are rejected as invalid.
 #   (https://pypi.nvidia.com serves these wheels anonymously, so the credential was
 #   never the gate. Acceptance is.)
 #
@@ -32,8 +32,7 @@
 #   status   report what is cached without installing (no EULA required, no network)
 #
 # ENVIRONMENT
-#   OMNI_KIT_ACCEPT_EULA          required: YES|Y|1|TRUE - operator's own acceptance
-#   ISAACSIM_ACCEPT_EULA          required: YES|Y|1|TRUE - operator's own acceptance
+#   ACCEPT_EULA                   defaults to Y; empty/N/NO/0/FALSE opt out
 #   NPA_ISAAC_CACHE_DIR           cache volume root                (/opt/isaac-cache)
 #   NPA_ISAAC_INDEX_URL           NVIDIA wheel index               (https://pypi.nvidia.com)
 #   NPA_ISAAC_BASE_PYTHON         image python3.11 that has torch  (per image)
@@ -75,6 +74,9 @@ ISAAC_LAB_SRC_COMMIT="${NPA_ISAAC_LAB_SRC_COMMIT:-37ddf626871758333d6ed89cf64ad7
 OFFLINE="${NPA_ISAAC_BOOTSTRAP_OFFLINE:-0}"
 READONLY="${NPA_ISAAC_CACHE_READONLY:-0}"
 LOCK_TIMEOUT="${NPA_ISAAC_BOOTSTRAP_TIMEOUT:-3600}"
+# Default only when the variable is absent. An explicitly empty/negative value remains an
+# opt-out and is rejected by require_eula_acceptance below.
+ACCEPT_EULA="${ACCEPT_EULA-Y}"
 
 log()  { printf 'isaac-bootstrap: %s\n' "$*" >&2; }
 die()  { local code="$1"; shift; printf 'isaac-bootstrap: %s\n' "$*" >&2; exit "$code"; }
@@ -93,36 +95,53 @@ trap cleanup_tmp_tree EXIT
 # ---------------------------------------------------------------------------------
 # EULA acceptance. This is the whole legal mechanism; keep it first and keep it strict.
 # ---------------------------------------------------------------------------------
-_accepted() {
-  case "$(printf '%s' "${1:-}" | tr '[:lower:]' '[:upper:]')" in
-    YES|Y|1|TRUE) return 0 ;;
-    *) return 1 ;;
+_acceptance_state() {
+  case "$(printf '%s' "${1-}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr '[:lower:]' '[:upper:]')" in
+    YES|Y|1|TRUE) printf 'accepted' ;;
+    ''|N|NO|0|FALSE) printf 'opt-out' ;;
+    *) printf 'invalid' ;;
   esac
 }
 
 require_eula_acceptance() {
-  local missing=()
-  _accepted "${OMNI_KIT_ACCEPT_EULA:-}"  || missing+=("OMNI_KIT_ACCEPT_EULA")
-  _accepted "${ISAACSIM_ACCEPT_EULA:-}"  || missing+=("ISAACSIM_ACCEPT_EULA")
-  [ "${#missing[@]}" -eq 0 ] && return 0
+  local state
+  state="$(_acceptance_state "$ACCEPT_EULA")"
+  [ "$state" = accepted ] && {
+    ACCEPT_EULA=Y
+    export ACCEPT_EULA
+    # The Python-wheel launcher uses this vendor variable internally. It is
+    # derived only inside the already-authorized operation, never user-facing
+    # plumbing or a repository default.
+    export OMNI_KIT_ACCEPT_EULA=YES
+    return 0
+  }
+
+  if [ "$state" = invalid ]; then
+    cat >&2 <<EOF
+isaac-bootstrap: invalid ACCEPT_EULA value '${ACCEPT_EULA}'.
+
+  Expected Y, YES, 1, TRUE, N, NO, 0, FALSE, or an empty string
+  (case-insensitive). Nothing has been downloaded.
+EOF
+    exit "$EX_CONFIG"
+  fi
 
   cat >&2 <<EOF
 isaac-bootstrap: refusing to download NVIDIA Isaac Sim / Isaac Lab.
 
   This image deliberately ships NO NVIDIA Isaac Sim or Isaac Lab code. Continuing
-  would download them from NVIDIA (${INDEX_URL}) onto this machine, which requires
-  YOUR acceptance of NVIDIA's licence terms. We do not and cannot accept on your
-  behalf, so acceptance is never baked into the image.
+  would download them from NVIDIA (${INDEX_URL}) onto this machine under NVIDIA's
+  licence terms. NPA normally enables acceptance for Isaac workloads, but this run
+  explicitly disabled it. Acceptance and proprietary Isaac bytes are never baked
+  into the image.
 
-  Not accepted (unset or not YES): ${missing[*]}
+  Acceptance was explicitly disabled (exact accepted value: ACCEPT_EULA=Y).
 
-  To accept and continue, set BOTH:
+  To accept and continue for this operation, set exactly:
 
-      OMNI_KIT_ACCEPT_EULA=YES
-      ISAACSIM_ACCEPT_EULA=YES
+      ACCEPT_EULA=Y
 
-  e.g.  docker run -e OMNI_KIT_ACCEPT_EULA=YES -e ISAACSIM_ACCEPT_EULA=YES ...
-        or as env: entries on the pod/SkyPilot task.
+  e.g.  docker run -e ACCEPT_EULA=Y ...
 
   Terms you are accepting:
     NVIDIA Omniverse Licence Agreement
@@ -336,7 +355,11 @@ ensure() {
     || die "$EX_SOFTWARE" "no python3.11 interpreter found; set NPA_ISAAC_BASE_PYTHON"
   target="${CACHE_DIR}/v/$(cache_stamp "$base_python")"
 
-  # Fast path: no lock, no network, no EULA prompt for an already-warm cache.
+  # Consent is required before first acquisition and every use, including a
+  # warm cache. It must never be manufactured from cache presence.
+  require_eula_acceptance
+
+  # Fast path: no lock or network for an already-warm cache.
   if tree_is_ready "$target"; then
     [ "$(readlink -f "${CACHE_DIR}/current" 2>/dev/null || true)" = "$(readlink -f "$target")" ] \
       || { ln -sfn "$target" "${CACHE_DIR}/.current.tmp.$$" 2>/dev/null \
@@ -352,8 +375,6 @@ ensure() {
   if [ "$READONLY" = "1" ]; then
     die "$EX_UNAVAILABLE" "NPA_ISAAC_CACHE_READONLY=1 but no ready cache at ${target}. Run the warm-cache Job against this volume first."
   fi
-
-  require_eula_acceptance
 
   mkdir -p "${CACHE_DIR}/v" 2>/dev/null || true
   [ -w "${CACHE_DIR}" ] || [ -w "${CACHE_DIR}/v" ] \
@@ -392,7 +413,7 @@ ensure() {
 }
 
 status() {
-  local base_python target
+  local base_python target acceptance_state
   if base_python="$(resolve_base_python)"; then
     target="${CACHE_DIR}/v/$(cache_stamp "$base_python")"
   else
@@ -409,8 +430,10 @@ status() {
   else
     printf 'ready=no\n'
   fi
+  acceptance_state="$(_acceptance_state "$ACCEPT_EULA")"
+  printf 'eula_state=%s\n' "$acceptance_state"
   printf 'eula_accepted=%s\n' \
-    "$(_accepted "${OMNI_KIT_ACCEPT_EULA:-}" && _accepted "${ISAACSIM_ACCEPT_EULA:-}" && echo yes || echo no)"
+    "$([ "$acceptance_state" = accepted ] && echo yes || echo no)"
 }
 
 usage() {

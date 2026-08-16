@@ -47,7 +47,7 @@ Publish to your own registry:
 
 No NGC credentials are needed: this image contains no NVIDIA Isaac bytes. Isaac Sim and
 Isaac Lab are downloaded on first RUN, under your own EULA acceptance
-(OMNI_KIT_ACCEPT_EULA=YES ISAACSIM_ACCEPT_EULA=YES). Expect a ~4.5 GB download and
+(ACCEPT_EULA defaults to Y). Expect a ~4.5 GB download and
 ~10 GiB of cache on the first start; pre-warm it per node/PVC with
 npa/docker/workbench/common/warm-isaac-cache.yaml.
 EOF

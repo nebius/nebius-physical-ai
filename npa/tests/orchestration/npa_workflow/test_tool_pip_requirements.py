@@ -213,6 +213,18 @@ def test_vendor_setup_installs_npa_there_and_records_it() -> None:
     assert "${" not in setup
 
 
+def test_default_setup_records_thin_image_source_for_vendor_interpreter() -> None:
+    """A baked CLI must not hide the source needed by the fetched Isaac interpreter."""
+
+    from npa.orchestration.npa_workflow.skypilot_render import default_npa_setup
+
+    setup = default_npa_setup()
+
+    record = "npa_record_src_root /opt/npa"
+    assert "[ -f /opt/npa/pyproject.toml ] && [ -d /opt/npa/src/npa ]" in setup
+    assert setup.index(record) < setup.index("if ! command -v npa")
+
+
 def test_no_vendor_interpreter_renders_nothing() -> None:
     from npa.orchestration.npa_workflow.skypilot_render import render_vendor_interpreter_setup
 

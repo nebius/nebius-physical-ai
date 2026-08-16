@@ -151,7 +151,9 @@ def has_rt_cores(gpu_name: str) -> bool:
     way so an operator can see what was used.
     """
     lowered = str(gpu_name or "").lower().replace("-", " ")
-    return not any(token in lowered.replace(" ", "") for token in NON_RT_CORE_GPU_TOKENS)
+    return not any(
+        token in lowered.replace(" ", "") for token in NON_RT_CORE_GPU_TOKENS
+    )
 
 
 def _env_bool(value: str, *, default: bool = False) -> bool:
@@ -175,7 +177,9 @@ def _env_float(value: str, default: float) -> float:
         return default
 
 
-def parse_offset(value: Any, default: tuple[float, float, float]) -> tuple[float, float, float]:
+def parse_offset(
+    value: Any, default: tuple[float, float, float]
+) -> tuple[float, float, float]:
     """Parse ``"x,y,z"`` (or a 3-sequence) into the triple ``nre render`` expects.
 
     ``--rig-translation-offset`` / ``--rig-rotation-offset`` are ``FLOAT...``
@@ -271,10 +275,14 @@ class NurecConfig:
         """Resolve config from explicit values first, then ``NPA_NUREC_*`` env."""
         env = environ if environ is not None else os.environ
         resolved_source = (
-            input_frames_source
-            or env.get("NPA_NUREC_INPUT_FRAMES_SOURCE", "")
-            or "gt"
-        ).strip().lower()
+            (
+                input_frames_source
+                or env.get("NPA_NUREC_INPUT_FRAMES_SOURCE", "")
+                or "gt"
+            )
+            .strip()
+            .lower()
+        )
         if resolved_source not in INPUT_FRAME_SOURCES:
             raise NurecError(
                 f"input_frames_source must be one of {INPUT_FRAME_SOURCES}, got {resolved_source!r}"
@@ -282,10 +290,14 @@ class NurecConfig:
         return cls(
             image=image or env.get("NPA_NUREC_IMAGE", "") or DEFAULT_NRE_IMAGE,
             entrypoint=(
-                entrypoint or env.get("NPA_NUREC_ENTRYPOINT", "") or DEFAULT_NRE_ENTRYPOINT
+                entrypoint
+                or env.get("NPA_NUREC_ENTRYPOINT", "")
+                or DEFAULT_NRE_ENTRYPOINT
             ),
             docker_bin=docker_bin or env.get("NPA_NUREC_DOCKER", ""),
-            dataset_id=dataset_id or env.get("NPA_NUREC_DATASET", "") or DEFAULT_DATASET_ID,
+            dataset_id=dataset_id
+            or env.get("NPA_NUREC_DATASET", "")
+            or DEFAULT_DATASET_ID,
             scene=scene or env.get("NPA_NUREC_SCENE", "") or DEFAULT_SCENE,
             variant=(variant or env.get("NPA_NUREC_VARIANT", "") or DEFAULT_VARIANT),
             cache_dir=cache_dir or env.get("NPA_NUREC_CACHE", "") or DEFAULT_CACHE_DIR,
@@ -294,13 +306,16 @@ class NurecConfig:
                 nre_run_id or env.get("NPA_NUREC_NRE_RUN_ID", "") or DEFAULT_NRE_RUN_ID
             ),
             config_name=(
-                config_name or env.get("NPA_NUREC_CONFIG_NAME", "") or DEFAULT_CONFIG_NAME
+                config_name
+                or env.get("NPA_NUREC_CONFIG_NAME", "")
+                or DEFAULT_CONFIG_NAME
             ),
             ffmpeg_exe=ffmpeg_exe or env.get("NPA_NUREC_FFMPEG_EXE", ""),
             poses_component_group=(
                 poses_component_group or env.get("NPA_NUREC_POSES_COMPONENT_GROUP", "")
             ),
-            reference_camera=reference_camera or env.get("NPA_NUREC_REFERENCE_CAMERA", ""),
+            reference_camera=reference_camera
+            or env.get("NPA_NUREC_REFERENCE_CAMERA", ""),
             mode=mode or env.get("NPA_NUREC_MODE", "") or DEFAULT_MODE,
             max_epochs=(
                 max_epochs
@@ -312,15 +327,19 @@ class NurecConfig:
                 if world_size is not None
                 else _env_int(env.get("NPA_NUREC_WORLD_SIZE", ""), DEFAULT_WORLD_SIZE)
             ),
-            precision=precision or env.get("NPA_NUREC_PRECISION", "") or DEFAULT_PRECISION,
+            precision=precision
+            or env.get("NPA_NUREC_PRECISION", "")
+            or DEFAULT_PRECISION,
             logger=logger or env.get("NPA_NUREC_LOGGER", "") or DEFAULT_LOGGER,
             aux_data=(
                 aux_data
                 if aux_data is not None
                 else _env_bool(env.get("NPA_NUREC_AUX_DATA", ""), default=False)
             ),
-            camera_ids=tuple(camera_ids) or _split_csv(env.get("NPA_NUREC_CAMERA_IDS", "")),
-            lidar_ids=tuple(lidar_ids) or _split_csv(env.get("NPA_NUREC_LIDAR_IDS", "")),
+            camera_ids=tuple(camera_ids)
+            or _split_csv(env.get("NPA_NUREC_CAMERA_IDS", "")),
+            lidar_ids=tuple(lidar_ids)
+            or _split_csv(env.get("NPA_NUREC_LIDAR_IDS", "")),
             input_frames_source=resolved_source,
             max_input_frames=(
                 max_input_frames
@@ -331,7 +350,9 @@ class NurecConfig:
             ),
             shm_size=shm_size or env.get("NPA_NUREC_SHM_SIZE", "") or DEFAULT_SHM_SIZE,
             hf_token_env=(
-                hf_token_env or env.get("NPA_NUREC_HF_TOKEN_ENV", "") or DEFAULT_HF_TOKEN_ENV
+                hf_token_env
+                or env.get("NPA_NUREC_HF_TOKEN_ENV", "")
+                or DEFAULT_HF_TOKEN_ENV
             ),
             ngc_api_key_env=(
                 ngc_api_key_env
@@ -497,7 +518,9 @@ def build_nre_render_args(
     if not artifact_path:
         raise NurecError("artifact_path (a trained .usdz) is required to render")
     if not str(artifact_path).endswith(".usdz"):
-        raise NurecError(f"artifact_path must be a .usdz artifact, got: {artifact_path!r}")
+        raise NurecError(
+            f"artifact_path must be a .usdz artifact, got: {artifact_path!r}"
+        )
     if not output_dir:
         raise NurecError("output_dir is required to render")
     translation = parse_offset(rig_translation_offset, DEFAULT_RIG_TRANSLATION_OFFSET)
@@ -532,7 +555,9 @@ def build_nre_render_args(
         args.append("--replicate-training-views")
     else:
         args.append("--no-replicate-training-views")
-        args.extend(["--rig-translation-offset", *(f"{value}" for value in translation)])
+        args.extend(
+            ["--rig-translation-offset", *(f"{value}" for value in translation)]
+        )
         args.extend(["--rig-rotation-offset", *(f"{value}" for value in rotation)])
         if custom_rig_trajectory:
             args.extend(["--custom-rig-trajectory", custom_rig_trajectory])
@@ -626,7 +651,10 @@ def nre_command(
     """Full argv for one NRE invocation, in-container or via ``docker run``."""
     invocation = [*nre_top_level_flags(config), *args]
     if config.docker_bin:
-        return build_docker_wrapper(config, mounts=mounts, env_names=env_names) + invocation
+        return (
+            build_docker_wrapper(config, mounts=mounts, env_names=env_names)
+            + invocation
+        )
     if not config.entrypoint:
         raise NurecError("entrypoint is required to invoke NRE in-container")
     return [config.entrypoint, *invocation]
@@ -848,7 +876,9 @@ def _secret_values(config: NurecConfig, env: Mapping[str, str]) -> list[str]:
     ]
 
 
-def redact(text: str, config: NurecConfig, env: Mapping[str, str], *, limit: int = 2000) -> str:
+def redact(
+    text: str, config: NurecConfig, env: Mapping[str, str], *, limit: int = 2000
+) -> str:
     """Replace every known secret value with ``<redacted>``, then truncate.
 
     The order matters: truncating first can slice through the middle of a secret,
@@ -980,7 +1010,9 @@ def check_nurec_access(
     )
 
 
-def _check_ngc_image(config: NurecConfig, env: Mapping[str, str], timeout: float) -> str:
+def _check_ngc_image(
+    config: NurecConfig, env: Mapping[str, str], timeout: float
+) -> str:
     """Token-exchange + tag listing against the registry (no layer download)."""
     import base64
 
@@ -1016,7 +1048,21 @@ def _check_ngc_image(config: NurecConfig, env: Mapping[str, str], timeout: float
     return "reachable" if 200 <= tags.status_code < 300 else f"tags-{tags.status_code}"
 
 
-def _check_hf_dataset(config: NurecConfig, env: Mapping[str, str], timeout: float) -> str:
+def check_ngc_image_access(
+    api_key: str,
+    *,
+    image: str = DEFAULT_NRE_IMAGE,
+    timeout: float = 30.0,
+) -> str:
+    """Probe token exchange and pull entitlement for one NGC image repository."""
+
+    config = NurecConfig(image=image)
+    return _check_ngc_image(config, {config.ngc_api_key_env: api_key}, timeout)
+
+
+def _check_hf_dataset(
+    config: NurecConfig, env: Mapping[str, str], timeout: float
+) -> str:
     """Probe real *download* authorization, not just metadata visibility.
 
     A gated dataset returns 200 for ``/api/datasets/<id>`` even when the token
@@ -1033,17 +1079,25 @@ def _check_hf_dataset(config: NurecConfig, env: Mapping[str, str], timeout: floa
         f"/resolve/main/{config.ncore_member}"
     )
     try:
-        response = httpx.get(url, headers=headers, timeout=timeout, follow_redirects=True)
+        response = httpx.get(
+            url, headers=headers, timeout=timeout, follow_redirects=True
+        )
     except Exception:  # noqa: BLE001
         return "unreachable"
     if response.status_code in {401, 403}:
         return "gated"
     if response.status_code == 404:
         return "member-not-found"
-    return "reachable" if 200 <= response.status_code < 300 else f"http-{response.status_code}"
+    return (
+        "reachable"
+        if 200 <= response.status_code < 300
+        else f"http-{response.status_code}"
+    )
 
 
-def _check_gpu(env: Mapping[str, str], run: RunCallable, timeout: float) -> tuple[str, str]:
+def _check_gpu(
+    env: Mapping[str, str], run: RunCallable, timeout: float
+) -> tuple[str, str]:
     result = _run(
         ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
         env=env,
@@ -1054,7 +1108,9 @@ def _check_gpu(env: Mapping[str, str], run: RunCallable, timeout: float) -> tupl
         return "missing", "unknown"
     if result.returncode != 0:
         return "unavailable", "unknown"
-    names = [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+    names = [
+        line.strip() for line in (result.stdout or "").splitlines() if line.strip()
+    ]
     if not names:
         return "unavailable", "unknown"
     name = names[0]
@@ -1280,7 +1336,10 @@ def extract_archive(archive: Path | str, destination: Path | str) -> Path:
         with zipfile.ZipFile(source) as bundle:
             for member in bundle.namelist():
                 candidate = (resolved_target / member).resolve()
-                if resolved_target != candidate and resolved_target not in candidate.parents:
+                if (
+                    resolved_target != candidate
+                    and resolved_target not in candidate.parents
+                ):
                     raise NurecError(
                         f"archive member escapes the destination directory: {member!r}"
                     )
@@ -1309,9 +1368,7 @@ def find_ncore_json(scene_dir: Path) -> Path | None:
     NCore names the metadata ``<NAME>.json`` alongside ``<NAME>.zarr.itar``, so
     prefer a JSON whose stem matches a shard; fall back to the shallowest JSON.
     """
-    shard_stems = {
-        path.name.split(".", 1)[0] for path in scene_dir.rglob("*.itar")
-    }
+    shard_stems = {path.name.split(".", 1)[0] for path in scene_dir.rglob("*.itar")}
     candidates = sorted(scene_dir.rglob("*.json"), key=lambda p: (len(p.parts), p.name))
     for candidate in candidates:
         if candidate.name.split(".", 1)[0] in shard_stems:
@@ -1455,7 +1512,9 @@ def reconstruct_scene(
 
     run_dir = resolve_nre_run_dir(out_dir, config.nre_run_id)
     usdz = latest_usdz(run_dir)
-    parsed = _first_existing(run_dir / "config" / "parsed.yaml", *sorted(run_dir.rglob("parsed.yaml")))
+    parsed = _first_existing(
+        run_dir / "config" / "parsed.yaml", *sorted(run_dir.rglob("parsed.yaml"))
+    )
     metrics_path = _first_existing(
         run_dir / "val" / "metrics.yaml", *sorted(run_dir.rglob("metrics.yaml"))
     )
@@ -1475,7 +1534,9 @@ def reconstruct_scene(
             output_dir=str(gt_target),
         )
         gt_result = _run(
-            nre_command(config, gt_args, mounts=mounts, env_names=[config.ngc_api_key_env]),
+            nre_command(
+                config, gt_args, mounts=mounts, env_names=[config.ngc_api_key_env]
+            ),
             env=_nre_env(config, env),
             run=run,
             timeout=timeout,
@@ -1505,14 +1566,18 @@ def _default_mounts(config: NurecConfig, ncore_json: str) -> list[tuple[str, str
     """Bind mounts for the docker-host shape (identity mounts keep paths stable)."""
     if not config.docker_bin:
         return []
-    dataset_root = str(Path(ncore_json).parent) if ncore_json else str(config.resolved_cache_dir)
+    dataset_root = (
+        str(Path(ncore_json).parent) if ncore_json else str(config.resolved_cache_dir)
+    )
     return [
         (dataset_root, dataset_root),
         (str(config.resolved_out_dir), str(config.resolved_out_dir)),
     ]
 
 
-def resolve_nre_run_dir(out_dir: Path | str, preferred: str = DEFAULT_NRE_RUN_ID) -> Path:
+def resolve_nre_run_dir(
+    out_dir: Path | str, preferred: str = DEFAULT_NRE_RUN_ID
+) -> Path:
     """Locate the ``<out_dir>/<RUN-ID>/`` directory NRE actually wrote.
 
     ``logger.run_id`` / ``NRE_ENV_RUN_ID`` normally pin this, but a release that
@@ -1529,7 +1594,11 @@ def resolve_nre_run_dir(out_dir: Path | str, preferred: str = DEFAULT_NRE_RUN_ID
         path
         for path in root.iterdir()
         if path.is_dir()
-        and ((path / "usd-out").is_dir() or (path / "config").is_dir() or (path / "checkpoints").is_dir())
+        and (
+            (path / "usd-out").is_dir()
+            or (path / "config").is_dir()
+            or (path / "checkpoints").is_dir()
+        )
     ]
     if not runs:
         return candidate
@@ -1557,7 +1626,9 @@ def latest_usdz(run_dir: Path | str) -> Path | None:
     # zero-padded consistently, so a lexical comparison ranks "7000.usdz" above
     # "10000.usdz" and would ship an early preview whenever two artifacts share an
     # mtime (common straight after an archive extraction, which sets them equal).
-    return max(candidates, key=lambda path: (path.stat().st_mtime, _usdz_step(path), path.name))
+    return max(
+        candidates, key=lambda path: (path.stat().st_mtime, _usdz_step(path), path.name)
+    )
 
 
 def _usdz_step(path: Path) -> int:
@@ -1688,7 +1759,9 @@ def render_novel_views(
         if config.docker_bin
         else []
     )
-    command = nre_command(config, args, mounts=mounts, env_names=[config.ngc_api_key_env])
+    command = nre_command(
+        config, args, mounts=mounts, env_names=[config.ngc_api_key_env]
+    )
 
     if dry_run:
         return NurecRenderResult(
@@ -1756,7 +1829,9 @@ def count_render_frames(output_dir: Path | str) -> int:
 # --------------------------------------------------------------------------------------
 # status
 # --------------------------------------------------------------------------------------
-def materialize_uri(source_uri: str, destination: Path | str, *, storage_client: Any = None) -> Path:
+def materialize_uri(
+    source_uri: str, destination: Path | str, *, storage_client: Any = None
+) -> Path:
     """Fetch ``source_uri`` (S3 prefix/object or local path) to ``destination``.
 
     Stages of the declarative workflow run in SEPARATE pods, so nothing survives
@@ -1821,8 +1896,13 @@ def publish_ncore_sequence(
             shutil.copy2(resolved, destination / member.name)
             total += resolved.stat().st_size
             uploaded.append(member.name)
-        return {"uri": str(destination), "objects": len(uploaded), "bytes": total,
-                "meta_name": source.name, "members": uploaded}
+        return {
+            "uri": str(destination),
+            "objects": len(uploaded),
+            "bytes": total,
+            "meta_name": source.name,
+            "members": uploaded,
+        }
 
     from npa.clients.storage import StorageClient
 
@@ -1856,7 +1936,9 @@ def nurec_run_status(
 ) -> NurecStatusResult:
     """Summarize a NuRec run prefix (local dir or ``s3://``) stage by stage."""
     if not run_uri:
-        return NurecStatusResult(ok=False, run_uri=run_uri, errors=("run_uri is required",))
+        return NurecStatusResult(
+            ok=False, run_uri=run_uri, errors=("run_uri is required",)
+        )
     try:
         entries = _list_run_entries(run_uri, storage_client=storage_client)
     except Exception as exc:  # noqa: BLE001 - surface transport errors as a result
@@ -1881,7 +1963,9 @@ def nurec_run_status(
     )
 
 
-def _list_run_entries(run_uri: str, *, storage_client: Any = None) -> list[tuple[str, int]]:
+def _list_run_entries(
+    run_uri: str, *, storage_client: Any = None
+) -> list[tuple[str, int]]:
     if not run_uri.startswith("s3://"):
         root = Path(run_uri)
         return [
@@ -1905,5 +1989,5 @@ def _list_run_entries(run_uri: str, *, storage_client: Any = None) -> list[tuple
             key = str(item.get("Key") or "")
             if not key or key.endswith("/"):
                 continue
-            entries.append((key[len(prefix):], int(item.get("Size") or 0)))
+            entries.append((key[len(prefix) :], int(item.get("Size") or 0)))
     return entries

@@ -1193,8 +1193,7 @@ def test_kubernetes_component_env_uses_secret_refs_for_storage_credentials(
     monkeypatch.delenv("HF_HOME", raising=False)
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "orch-key")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "orch-secret")
-    monkeypatch.setenv("OMNI_KIT_ACCEPT_EULA", "YES")
-    monkeypatch.setenv("ISAACSIM_ACCEPT_EULA", "YES")
+    monkeypatch.setenv("ACCEPT_EULA", "Y")
     config = Sim2RealLoopConfig(
         run_id="r",
         s3_endpoint="https://storage.example.test",
@@ -1208,22 +1207,35 @@ def test_kubernetes_component_env_uses_secret_refs_for_storage_credentials(
     assert safe["AWS_ENDPOINT_URL"] == "https://storage.example.test"
     assert safe["HF_HOME"] == "/tmp/hf_home"
     assert safe["NPA_COSMOS_REASON2_CACHE"] == "/tmp/hf_home/cosmos-reason2"
-    assert safe["OMNI_KIT_ACCEPT_EULA"] == "YES"
-    assert safe["ISAACSIM_ACCEPT_EULA"] == "YES"
+    assert "ACCEPT_EULA" not in safe
     package_safe = package_component_env(
         {
             **safe,
             "AWS_ACCESS_KEY_ID": "explicit-key-must-not-be-copied",
             "AWS_SECRET_ACCESS_KEY": "explicit-secret-must-not-be-copied",
-            "OMNI_KIT_ACCEPT_EULA": "YES",
-            "ISAACSIM_ACCEPT_EULA": "YES",
+            "ACCEPT_EULA": "Y",
         },
         config,
+        isaac_backed=True,
     )
     assert "AWS_ACCESS_KEY_ID" not in package_safe
     assert "AWS_SECRET_ACCESS_KEY" not in package_safe
-    assert package_safe["OMNI_KIT_ACCEPT_EULA"] == "YES"
-    assert package_safe["ISAACSIM_ACCEPT_EULA"] == "YES"
+    assert package_safe["ACCEPT_EULA"] == "Y"
+
+    non_isaac_safe = package_component_env(
+        {"ACCEPT_EULA": "Y"}, config, isaac_backed=False
+    )
+    assert "ACCEPT_EULA" not in non_isaac_safe
+
+    opted_out = package_component_env(
+        {"ACCEPT_EULA": "no"}, config, isaac_backed=True
+    )
+    assert opted_out["ACCEPT_EULA"] == ""
+
+    with pytest.raises(ValueError, match="Invalid ACCEPT_EULA"):
+        package_component_env(
+            {"ACCEPT_EULA": "maybe"}, config, isaac_backed=True
+        )
 
 
 def test_compatibility_surface_has_no_legacy_kubectl_controller() -> None:

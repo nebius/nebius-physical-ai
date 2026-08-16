@@ -145,7 +145,6 @@ envs:
   AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
 
   # --- Secrets: supplied at submit time via --var, never committed ----------
-  HF_TOKEN: "${HF_TOKEN}"
   NGC_API_KEY: "${NGC_API_KEY}"
 setup: |
   set -euo pipefail
@@ -219,7 +218,7 @@ run: |
   test -n "${NPA_NUREC_RUN_URI}"
   # Length-only secret checks: never echo a token value.
   test -n "${NGC_API_KEY}" && echo "NGC_API_KEY: set (${#NGC_API_KEY} chars)"
-  test -n "${HF_TOKEN}" && echo "HF_TOKEN: set (${#HF_TOKEN} chars)"
+  if [[ -n "${HF_TOKEN:-}" ]]; then echo "HF_TOKEN: optional override configured"; fi
 
   RUN="${NPA_NUREC_RUN_URI%/}"
 

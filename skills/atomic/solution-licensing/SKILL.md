@@ -1,6 +1,6 @@
 ---
 name: solution-licensing
-description: Use when adding, onboarding, or repackaging any solution, tool, container image, model, or dataset, to determine whether what we ship may be redistributed, and to record that decision where the build enforces it.
+description: Use when adding, onboarding, or repackaging any solution, tool, container image, model, weights, dataset, or runtime cache; classify each artifact separately, keep restricted weights out of images, design safe runtime caching, and record redistribution decisions where guards enforce them.
 ---
 
 # Solution Licensing And Redistribution
@@ -33,18 +33,20 @@ convenient reading.
 Before any provisioning, build, download, or submission that depends on a
 third-party EULA, also load
 `skills/atomic/third-party-eula-preflight/SKILL.md`; licensing classification
-does not itself establish operator consent.
+does not itself establish operator consent or upstream asset access.
 
-## The Three Layers
+## The Five Artifact Boundaries
 
-Classify each layer separately. A permissive answer at one layer says nothing
-about the others, and it is almost always a lower layer that constrains us.
+Classify each boundary separately. A permissive answer at one boundary says
+nothing about the others.
 
-| Layer | What it is | Typical trap |
+| Boundary | What it is | Typical trap |
 | --- | --- | --- |
 | **Source** | The project's own code | Apache/MIT badge on a repo whose *build* pulls proprietary parts |
 | **Baked runtime** | Everything the image carries: base image, wheels, SDKs, binaries, assets, fonts, textures | Free to *use*, not to *redistribute* |
-| **Weights and data** | Model checkpoints, datasets, assets fetched or baked | Gated licenses with field-of-use or non-commercial terms |
+| **Weights** | Model checkpoints, adapters, tokenizers, and auxiliary model files | Treating registry access control as permission to redistribute baked bytes |
+| **Datasets** | Training, evaluation, calibration, and example data | Assuming a model license also covers its data |
+| **Runtime caches** | Downloaded weights, SDKs, compiled kernels, and mutable runtime state | Assuming runtime fetch is durable, or persisting credentials beside cached bytes |
 
 The decisive layer is normally the **baked runtime**, because publishing an image
 distributes every byte in it to whoever pulls it.
@@ -61,8 +63,8 @@ grep -nE 'pip install|apt-get install|curl|wget|COPY --from' npa/docker/workbenc
 ```
 
 List: base image, every SDK/wheel installed from a vendor index (for example
-`pypi.nvidia.com`, `nvcr.io`), anything downloaded at build time, and any baked
-weights or assets.
+`pypi.nvidia.com`, `nvcr.io`), anything downloaded at build time, baked weights,
+datasets, and every cache path populated or mounted at runtime.
 
 ### 2. Find each component's real license
 
@@ -71,7 +73,7 @@ repo badge or a summary. Useful checks:
 
 ```bash
 pip download --no-deps --no-binary :all: <pkg>   # then read the sdist metadata
-python -c "import importlib.metadata as m; print(m.metadata('<pkg>')['License'])"
+npa/.venv/bin/python -c "import importlib.metadata as m; print(m.metadata('<pkg>')['License'])"
 ```
 
 A package whose `License` field literally reads *"NVIDIA Proprietary Software"*
@@ -119,13 +121,18 @@ restricted marker, or is built `FROM` a restricted image, while claiming
 
 ## Patterns That Keep Us Compliant
 
-Two patterns do the real work. Prefer them over asking for an exception.
+Three patterns do the real work. Prefer them over asking for an exception.
 
-**Runtime fetch under the customer's own credentials.** Never bake gated weights.
-The image ships the *code* to download them; the operator supplies their own
-HF/NGC token at run time and accepts the model license directly. We never
-redistribute weights, and the customer's entitlement is theirs. This is how
-Cosmos, GR00T N1, and Cosmos-Reason weights are handled.
+**Runtime fetch under the customer's own credentials.** Never bake gated or
+redistribution-restricted weights merely because a token can gate image access.
+The image ships the downloader; the operator supplies their own HF/NGC
+credential at runtime and fetches an exact immutable revision when the selected
+asset requires authorization. Do not require a token for genuinely public,
+anonymous weights. For Hugging Face, the token and its actual upstream repository
+permission are the only local access gate: probe every required repository before
+provisioning, with no NPA terms boolean or model-check bypass. An HF or NGC token
+proves authorization to fetch; it is not EULA acceptance and does not change
+redistribution rights.
 
 **Build-your-own.** For a runtime we may not redistribute, ship the Dockerfile
 and the build tooling, not the built image. Each operator builds into their own
@@ -136,15 +143,49 @@ each operator under that operator's own acceptance; we ship only instructions.
 **Runtime fetch of the whole SDK.** Build-your-own has a real cost: the customer needs
 vendor credentials, and *we* cannot publish a working image at all. Where the vendor
 serves the runtime from an index the customer can reach directly, the stronger move is to
-ship an image containing none of it and fetch on first run under the customer's own EULA
-acceptance — with a hard refusal when acceptance is absent, since that refusal is the
-mechanism. This is how the Isaac images became publishable; see the worked precedent.
+ship an image containing none of it and fetch on first run on the customer's runtime.
+The absence of proprietary bytes from published layers is the redistribution control;
+EULA acceptance governs runtime use separately. This is how the Isaac images became
+publishable; see the worked precedent.
 Check whether the vendor's index actually requires a credential before assuming
 build-your-own is the only option: `pypi.nvidia.com` serves Isaac Sim anonymously, so the
 credential was never the gate — acceptance was.
 
 All three patterns share one idea: **move the vendor's delivery to the customer**, so we
 are never the redistributor.
+
+## Runtime Weight Cache Policy
+
+EULA simplification changes acceptance UX only. It does not make a runtime
+weight cache durable. Name the cache tier in every workflow design:
+
+| Cache tier | Lifetime and policy |
+| --- | --- |
+| **Image layer** | Immutable and redistributed with the image. Never use it for gated or redistribution-restricted weights, datasets, credentials, or populated runtime caches. |
+| **Node-local ephemeral** | Reuses downloads only on the same surviving node or pod volume. Treat a reschedule, node replacement, or cleanup as a cold cache. |
+| **Shared durable PVC/object storage** | Survives workers only when the workflow explicitly provisions and mounts a PVC or stages objects to configured storage. It is not implied by runtime fetch. |
+
+For a durable cache:
+
+1. Wire the PVC or object-storage location explicitly; do not rely on an image
+   path or an ambient host directory.
+2. Key cache identity by provider, repository/artifact, exact immutable revision
+   or digest, and relevant format/version. Never let mutable `latest` aliases
+   overwrite an existing identity.
+3. Populate safely under concurrency: download to a unique temporary location,
+   verify expected files/checksums, then atomically publish a ready marker or
+   immutable prefix. Use a lock or single-writer warm stage where the backend
+   needs one.
+4. Inject HF/NGC credentials through runtime secret plumbing only. Never write
+   tokens into cache metadata, manifests, logs, object keys, or image layers.
+5. Reuse without redistribution: run an explicit warm/fetch stage with the
+   operator's credential, then mount the immutable cache read-only in consumer
+   stages or pass its durable URI and verified identity. Never `COPY` that cache
+   into a later Docker build context or publish it as a derived image.
+
+Document the selected asset license, immutable revision/digest, cache tier,
+storage wiring, population protocol, and consumer mount/URI in the workflow or
+capability record. If those are absent, describe the cache as ephemeral.
 
 ## Worked Precedent: Isaac Sim / Omniverse Kit
 
@@ -162,7 +203,10 @@ rather than the argument.
   it to them as a service, requires NVIDIA AI Enterprise. Internal R&D is free with no
   seat limit.
 - **Weights and data:** already handled by runtime fetch (Cosmos, GR00T N1,
-  Cosmos-Reason) with the operator's own HF/NGC token.
+  Cosmos-Reason) at runtime. Public Hugging Face assets work anonymously; gated
+  assets use the operator's token and must pass a real upstream access probe before
+  provisioning. There is no second NPA acceptance switch or bypass; NGC credentials
+  apply only to NGC-hosted pulls.
 
 **Wrong answer #1: "the source is Apache-2.0, so the image is fine."** The decisive layer
 is the baked runtime, and publishing an image distributes every byte in it.
@@ -173,7 +217,7 @@ diligence. Read the *package metadata*, not the repo badge:
 
 ```
 $ curl -sL https://pypi.nvidia.com/isaaclab/isaaclab-2.3.2.post1-cp311-none-manylinux_2_35_x86_64.whl -o w.whl
-$ python -c "import zipfile; z=zipfile.ZipFile('w.whl'); print(z.read([n for n in z.namelist() if n.endswith('METADATA')][0]).decode()[:400])"
+$ npa/.venv/bin/python -c "import zipfile; z=zipfile.ZipFile('w.whl'); print(z.read([n for n in z.namelist() if n.endswith('METADATA')][0]).decode()[:400])"
 Name: isaaclab
 License: NVIDIA Proprietary Software
 Classifier: License :: Other/Proprietary License
@@ -192,19 +236,23 @@ form "we keep baking it but add an access control" is answering the wrong questi
 **The answer that worked: move the vendor's delivery to the customer — for the whole
 SDK, not just the weights.** The images were re-architected to contain **no NVIDIA Isaac
 bytes at all**. On first run they download Isaac Sim and Isaac Lab from
-`https://pypi.nvidia.com` into a cache volume, and **refuse to run** unless the operator
-has set both `OMNI_KIT_ACCEPT_EULA=YES` and `ISAACSIM_ACCEPT_EULA=YES`. Nothing is baked
-with acceptance pre-granted. NVIDIA delivers to each operator under that operator's own
-acceptance; we redistribute nothing; the licensing question is moot rather than argued.
-So `isaac-lab`, `sonic`, `sonic-mujoco` and `groot` are now `redistribution: public`.
+`https://pypi.nvidia.com` into a cache volume. NPA defaults NVIDIA's documented
+`ACCEPT_EULA=Y` for these non-interactive workloads and preserves an explicit opt-out.
+NVIDIA still delivers the runtime directly to each operator; we redistribute no Isaac
+bytes, so the redistribution conclusion does not depend on the EULA UX default.
+The clean runtime-fetch `isaac-lab`, `sonic`, and `groot` images may therefore be
+classified `redistribution: public`. Historical SONIC L40S and MuJoCo images remain
+restricted and quarantined because their built layers contain the old payload; a new
+runtime-fetch build must be scanned before it can replace them.
 
 Three things made that verdict defensible rather than merely plausible, and a new
 solution should expect to produce all three:
 
-1. **The refusal is a tested feature, not a comment.** It is the legal mechanism, so it
-   is asserted in a unit test, inside the image build itself, and against the built
-   image. If it can be bypassed by forgetting an environment variable, it is not a
-   mechanism.
+1. **Default acceptance and explicit opt-out are tested features.** Unset acceptance
+   must run non-interactively. Empty, `N`, `NO`, `0`, and `FALSE` must refuse
+   before downloading; `Y`, `YES`, `1`, and `TRUE` normalize to acceptance;
+   unrecognized values fail separately as invalid. The public-image control
+   remains the verified absence of Isaac bytes.
 2. **The absence is verified on the artefact.** `npa/scripts/scan_image_omniverse_payload.py`
    streams the built image's filesystem and layer history and fails on Kit payload
    signatures. Reading the Dockerfile is not evidence — the claim is about bytes in

@@ -5,7 +5,7 @@ Why this exists
 The live-submit matrix proves an ``npa.workflow`` twin by actually running it. The
 SONIC twins (``sonic-export``, ``sonic-eval``, ``sonic-export-eval``) need a
 **loadable torch policy checkpoint** as input, and the repo deliberately does not
-vendor NVIDIA's gated ``nvidia/GEAR-SONIC`` weights. Without a fixture those twins
+vendor NVIDIA's public ``nvidia/GEAR-SONIC`` weights. Without a fixture those twins
 can only ever be covered plan-only, which is not evidence.
 
 ``npa workbench sonic export`` accepts a checkpoint that stores a ``torch.nn.Module``

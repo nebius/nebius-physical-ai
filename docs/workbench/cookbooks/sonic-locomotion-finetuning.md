@@ -7,8 +7,8 @@ The workflow composes three Workbench stages:
 
 1. Retarget source motion artifacts into the SONIC embodiment schema with
    `npa workbench sonic retargeting run`.
-2. Fine-tune or smoke-validate the SONIC locomotion checkpoint on L40S with the
-   baked SONIC image variant.
+2. Fine-tune or smoke-validate the SONIC locomotion checkpoint on RTX PRO 6000
+   Kubernetes with the active host-mounted runtime-fetch image.
 3. Evaluate the resulting checkpoint with MJLab metrics through
    `npa workbench mjlab eval`.
 
@@ -115,8 +115,9 @@ For RTX PRO 6000 Kubernetes targets, use:
 --accelerators RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
 ```
 
-This resolves the SONIC stage to `npa-sonic:0.1.2-k8s-runtime`. L40S resolves to
-`npa-sonic:0.1.2`.
+This resolves the SONIC stage to the active CUDA 13 runtime-fetch tag recorded
+in `sonic_image_manifest.json`. The old baked L40S and inherited MuJoCo images
+are quarantined and rejected; an EULA flag cannot make their baked bytes redistributable.
 
 For Kubernetes targets that pull private images, pass a SkyPilot config with the
 namespace's registry pull secret:
@@ -144,7 +145,7 @@ sonic.submit_workflow(
     run_id="sonic-locomotion-run",
     registry="cr.eu-north1.nebius.cloud/<registry-id>",
     npa_image="cr.eu-north1.nebius.cloud/<registry-id>/npa:<tag>",
-    gpu_target="l40s",
+    gpu_target="gpu-rtx6000",
     s3_endpoint="https://storage.eu-north1.nebius.cloud",
     s3_bucket="<bucket>",
     s3_prefix="sonic-locomotion/sonic-locomotion-run",
@@ -187,18 +188,18 @@ s3://<your-bucket-name>/sonic-locomotion/<run-id>/mjlab/mjlab_eval.json
 
 ## Resources
 
-Retargeting is CPU-only. The first-party SONIC stage requests L40S through
-SkyPilot and uses the baked image variant from the SONIC image manifest. MJLab
-evaluation remains on H100.
+Retargeting is CPU-only. The first-party SONIC stage must use RTX PRO 6000
+Kubernetes with the active host-mounted image from the SONIC image manifest.
+The old L40S baked image and the combined H100/H200 MuJoCo image are quarantined;
+MJLab evaluation remains a separate H100 stage.
 
 ```yaml
 resources:
   cloud: kubernetes
-  accelerators: L40S:1
+  accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
 ```
 
-For RTX PRO 6000 Blackwell Kubernetes targets, switch the accelerator and image
-tag together using `sonic-k8s-host-mounted` from
+Keep the accelerator and image tag together using `sonic-k8s-host-mounted` from
 `docs/workbench/sonic-image-catalog.md`.
 
 ## Dry Validation

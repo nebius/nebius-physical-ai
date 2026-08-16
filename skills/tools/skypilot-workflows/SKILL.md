@@ -56,8 +56,11 @@ into SkyPilot documents:
   interpreters are selected from the toolRef.
 - A self-hosted service that must survive into the task command belongs in the
   run preamble, not in `setup`.
-- Isaac-routed stages carry the operator-controlled NVIDIA EULA gate and fail
-  closed when acceptance is absent.
+- Isaac-routed stages carry `ACCEPT_EULA=Y` by default. An explicit
+  `--no-accept-eula` renders and forwards an empty value, including through
+  Kubernetes Sim2Real paths, and fails before download. Generic BYOF routes are
+  gated only when `config.base_profile` or `config.base_image` selects Isaac;
+  GR00T routes are gated only for Isaac simulation.
 
 ## Live Debugging Traps
 

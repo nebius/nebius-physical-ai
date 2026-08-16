@@ -31,19 +31,11 @@ OpenPI source is Apache-2.0. The CUDA base/runtime retains NVIDIA's upstream
 license terms. This BYOF result is stored in the operator's private project
 registry and is not classified for public redistribution. Checkpoint weights,
 input frames, and robot state are not baked into it. The checkpoint contains
-Gemma-derived material: before any image build or checkpoint fetch, the operator
-must review the
+Gemma-derived material. Operators remain responsible for the upstream
 [Gemma Terms of Use](https://ai.google.dev/gemma/terms) and
-[Gemma Prohibited Use Policy](https://ai.google.dev/gemma/prohibited_use_policy),
-then provide the exact, run-scoped gate:
-
-```bash
-export NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES
-```
-
-NPA forwards that value through SkyPilot's secret channel. It is not a workflow
-default, image environment variable, build argument, or persisted credential.
-No other agreement is inferred from it.
+[Gemma Prohibited Use Policy](https://ai.google.dev/gemma/prohibited_use_policy).
+NPA does not duplicate that upstream obligation with a local acceptance flag;
+the runtime fetch is anonymous and checkpoint bytes are never baked.
 
 ## Request and response contract
 
@@ -83,9 +75,7 @@ alias, run the dedicated live E2E. It reads the checked-in workflow and resource
 profile unchanged, builds the pinned source, runs the declared `uv pip install
 -e .` and `nvcc -arch=sm_100` build steps, pushes the image, resolves its
 registry digest, and inspects the built bytes before any workload is launched.
-It then pulls that digest for two B200 workloads: an invalid-acceptance run that
-must exit 64 before model/checkpoint loading, followed by the accepted direct
-and served inference run.
+It then pulls that digest for the direct and served inference run.
 
 ```bash
 NPA_INTEGRATION_E2E=1 \
@@ -94,16 +84,13 @@ NPA_E2E_PROJECT=<project-alias> \
 NPA_E2E_S3_BUCKET=<existing-project-bucket> \
 NPA_BYOF_S3_ENDPOINT=https://storage.<bucket-region>.nebius.cloud \
 NPA_BYOF_OPENPI_PROJECT_REGISTRY=cr.<region>.nebius.cloud/<project-registry> \
-NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES \
 npa/.venv/bin/python -m pytest -q -s \
   npa/tests/e2e/test_byof_openpi_polaris_live_e2e.py
 ```
 
 `NPA_BYOF_OPENPI_REUSE_IMAGE` is intentionally rejected by this canonical gate.
 A previously built image may still be used for manual diagnosis, but reuse is
-not release evidence. The test forwards `YES` only as a runtime secret; its
-negative workload overrides the value with an invalid sentinel and records a
-separate terms-gate artifact.
+not release evidence.
 
 The current milestone is inference and serving. The pinned upstream config
 still exposes its RLDS training configuration and evaluation-compatible policy
@@ -114,8 +101,7 @@ real dataset and an executed optimization/evaluation step.
 
 The accepted baseline uses one B200 (`sm_100`) on an isolated, reserved-capacity
 MK8s cluster. Its canonical gate includes build, private-registry push, digest
-resolution, built-byte inspection, an exit-64 negative terms workload, and the
-positive inference workload. The positive workload fetches the 27 checkpoint
+resolution, built-byte inspection, and the inference workload. The workload fetches the 27 checkpoint
 objects (12,434,530,837 bytes) at runtime and returns finite
 `float64[15,8]` joint-position trajectories from both direct and upstream
 WebSocket paths. The WebSocket client remains same-pod loopback; cross-pod or

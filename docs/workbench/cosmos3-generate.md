@@ -32,7 +32,7 @@ supplies, under the operator's own license acceptance:
 
 | Credential | When | Effect if missing |
 | --- | --- | --- |
-| `HF_TOKEN` (or the env named by `NPA_COSMOS3_HF_TOKEN_ENV`) | For a named checkpoint such as `Cosmos3-Nano`, **and** whenever guardrails are on | `generate` refuses to start and names the assets whose licenses you must accept |
+| `HF_TOKEN` (or the env named by `NPA_COSMOS3_HF_TOKEN_ENV`) | Optional for public `Cosmos3-Nano`; required when guardrails are on or for a gated/private checkpoint override | `generate` anonymously checks public assets and uses the token only where repository access requires it |
 | `NGC_API_KEY` (or `NPA_COSMOS3_NGC_API_KEY_ENV`) | Only when `NPA_COSMOS3_REQUIRE_NGC=1` | Same fail-fast, naming the NGC key |
 | neither | `--checkpoint` is a staged local/`s3://` path **and** `--no-guardrails` | Runs; the token check is skipped |
 
@@ -158,7 +158,7 @@ npa workbench workflow submit npa/workflows/workbench/npa-workflows/cosmos3-gene
   --secret-env HF_TOKEN --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
-`--secret-env HF_TOKEN` is required: the plan only *hints* the secret, and without
+`--secret-env HF_TOKEN` is required when guardrails are enabled: the plan only *hints* the secret, and without
 it the stage fails fast on the credential preflight. The submit path also refuses
 to run when the task image's registry does not match the Docker credentials in
 `SKYPILOT_DOCKER_SERVER`.

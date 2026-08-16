@@ -10,9 +10,10 @@ Isaac Lab is the RL simulation framework. It requires RT cores: use L40S or RTX 
 Training must invoke headless mode. Verify training commands do not trigger rendering paths.
 
 Before provisioning, building, downloading, or submitting an Isaac workload,
-load `skills/atomic/third-party-eula-preflight/SKILL.md`. Confirm explicit,
-run-scoped operator acceptance of the exact NVIDIA agreements and forward both
-documented variables only from the caller; otherwise fail before expensive work.
+load `skills/atomic/third-party-eula-preflight/SKILL.md`. NPA defaults the
+run-scoped `ACCEPT_EULA=Y` value for non-interactive use and preserves a
+recognized negative value or `--no-accept-eula` opt-out. Legacy affirmative
+spellings normalize case-insensitively; unrecognized values are errors.
 
 ## Runtime Isaac bootstrap (the container ships no Isaac Sim)
 
@@ -24,10 +25,12 @@ Omniverse Kit, which made it non-redistributable; Isaac is now downloaded on fir
 
 What this changes in practice:
 
-- **Set both variables, or Isaac will not start.** Missing either
-  `OMNI_KIT_ACCEPT_EULA=YES` or `ISAACSIM_ACCEPT_EULA=YES` makes the container exit **78**
-  with a message naming them. That refusal is deliberate and load-bearing — do not "fix"
-  it by baking acceptance into the image; a guard fails the build if anyone does.
+- **Unset acceptance succeeds; explicit opt-out refuses.** NPA defaults
+  `ACCEPT_EULA=Y`. Empty, `N`, `NO`, `0`, `FALSE`, or `--no-accept-eula`
+  exit **78** before download. `Y`, `YES`, `1`, and `TRUE` are accepted
+  case-insensitively; other values are invalid. The launcher derives
+  `OMNI_KIT_ACCEPT_EULA=YES` internally; do not expose duplicate user plumbing.
+  Keep `PRIVACY_CONSENT` and telemetry off.
 - **Reach Isaac through `/isaac-sim/python.sh`** (the value of `ISAAC_LAB_PYTHON`). That is
   the bootstrap shim, and it is what every SkyPilot template, the sim2real engine and the
   workbench CLI already use. A bare `python3` is the *system* interpreter and will not

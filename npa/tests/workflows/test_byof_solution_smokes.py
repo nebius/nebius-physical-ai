@@ -195,11 +195,7 @@ def test_openpi_polaris_contract_is_runtime_only_and_position_targeted() -> None
     assert "joint_position_targets_dims_0_6_radians" in smoke
     assert "execute_about_5_targets_at_15_hz_then_requery" in smoke
     assert "deterministic_transport_smoke_only" in smoke
-    assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS" in smoke
-    assert "openpi_terms_gate.json" in smoke
-    assert '"exit_code":64' in smoke
-    assert '"checkpoint_fetch_started":false' in smoke
-    assert '"model_import_started":false' in smoke
+    assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS" not in smoke
     assert "npa_build_metadata.json" in smoke
     assert 'build_metadata.get("build_command_executed") is not True' in smoke
     assert 'actions.dtype != np.dtype("float64")' in smoke

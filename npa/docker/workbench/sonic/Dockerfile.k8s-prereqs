@@ -29,13 +29,14 @@ USER root
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-         python3 python3-pip rsync curl openssh-client sudo netcat-openbsd \
+         python3 python3-pip rsync curl openssh-client openssh-server sudo netcat-openbsd \
     && rm -rf /var/lib/apt/lists/* \
     && (getent group isaac-sim >/dev/null 2>&1 \
         && usermod -aG isaac-sim "${NPA_RUNTIME_USER}" || true) \
     && printf '%s ALL=(ALL) NOPASSWD:ALL\n' "${NPA_RUNTIME_USER}" \
          > /etc/sudoers.d/99-npa-runtime-user \
     && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
+    && install -d -m 0755 /run/sshd \
     && python3 --version
 
 # Kit needs writable data/cache/log directories, and the runtime user does not have them.

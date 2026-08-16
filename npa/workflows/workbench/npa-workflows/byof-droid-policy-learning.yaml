@@ -196,6 +196,7 @@ config:
 resources:
   gpu:
     cloud: kubernetes
+    image: "{{config.base_image}}"
     accelerators: RTXPRO6000:1
 initial: byof-run
 states:

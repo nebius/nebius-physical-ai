@@ -87,6 +87,11 @@ REQUIRED_INGREDIENTS = (
     ("NOPASSWD", "SkyPilot's in-pod setup shells out to sudo without a password"),
 )
 
+SSH_SERVER_INGREDIENT = (
+    "openssh-server",
+    "the Isaac-family image is capability-probed before SkyPilot starts its SSH server",
+)
+
 #: NOT universal, despite being required wherever it applies. An Isaac image's default python3
 #: is a kit interpreter that cannot import its own site-packages outside python.sh, so the
 #: system one has to win. Forcing the same ordering on an image whose OWN python carries npa
@@ -99,7 +104,7 @@ PATH_ORDERING_INGREDIENT = (
 
 def _ingredients_for(tool: str) -> tuple[tuple[str, str], ...]:
     if tool in ISAAC_BASED_IMAGES:
-        return REQUIRED_INGREDIENTS + (PATH_ORDERING_INGREDIENT,)
+        return REQUIRED_INGREDIENTS + (SSH_SERVER_INGREDIENT, PATH_ORDERING_INGREDIENT)
     return REQUIRED_INGREDIENTS
 
 
