@@ -21,7 +21,9 @@ def test_cluster_terraform_defaults_all_gpu_pools_to_managed_driver_image() -> N
     assert "var.gpu_nodes_count > 0" in main_tf
     assert 'tonumber(regex("^([0-9]+)gpu-"' in main_tf
     assert "local.gpus_per_node > 1" in main_tf
-    assert "gpu_nodes_driverfull_image      = local.gpu_nodes_driverfull_image" in main_tf
+    assert (
+        "gpu_nodes_driverfull_image      = local.gpu_nodes_driverfull_image" in main_tf
+    )
     assert "gpu_nodes_driver_preset         = var.managed_driver_preset" in main_tf
     assert "gpu_nodes_driverfull_image      = false" not in main_tf
 
@@ -105,9 +107,7 @@ def test_skypilot_smoke_scopes_check_and_uses_explicit_binary(
         return _completed(output)
 
     monkeypatch.setattr(tf_mod, "_run_stream", stream)
-    monkeypatch.setattr(
-        tf_mod, "_wait_for_sky_down", lambda *_args, **_kwargs: None
-    )
+    monkeypatch.setattr(tf_mod, "_wait_for_sky_down", lambda *_args, **_kwargs: None)
 
     tf_mod._run_skypilot_smoke(
         kubeconfig,
@@ -145,9 +145,7 @@ def test_skypilot_auto_detection_uses_exact_context_config(
 
     def capture(cmd, **_kwargs):  # noqa: ANN001
         seen.append(cmd)
-        return _completed(
-            "RTXPRO-6000-BLACKWELL-SERVER-EDITION  1  1 of 1 free\n"
-        )
+        return _completed("RTXPRO-6000-BLACKWELL-SERVER-EDITION  1  1 of 1 free\n")
 
     monkeypatch.setattr(tf_mod, "_run_capture", capture)
     accelerator = tf_mod._detect_skypilot_gpu(
@@ -300,7 +298,7 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
                                     "conditions": [{"type": "Ready", "status": "True"}],
                                     "allocatable": {"nvidia.com/gpu": "8"},
                                     "nodeInfo": {"bootID": "boot-0"},
-                                }
+                                },
                             },
                             {
                                 "metadata": {
@@ -313,7 +311,7 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
                                     "conditions": [{"type": "Ready", "status": "True"}],
                                     "allocatable": {"nvidia.com/gpu": "8"},
                                     "nodeInfo": {"bootID": "boot-1"},
-                                }
+                                },
                             },
                         ]
                     }
@@ -359,17 +357,20 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
     monkeypatch.setattr(tf_mod, "_run_stream", fake_stream)
     monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
     monkeypatch.setattr(
-        "npa.orchestration.skypilot.k8s_gpu_catalog."
-        "wait_for_kubernetes_accelerators",
-        lambda accelerators, **kwargs: gpu_events.append(
-            ("readiness", (accelerators, kwargs))
-        )
-        or {},
+        "npa.orchestration.skypilot.k8s_gpu_catalog.wait_for_kubernetes_accelerators",
+        lambda accelerators, **kwargs: (
+            gpu_events.append(("readiness", (accelerators, kwargs))) or {}
+        ),
     )
     monkeypatch.setattr(
         tf_mod,
         "_run_skypilot_smoke",
         lambda *args, **kwargs: gpu_events.append(("smoke", (args, kwargs))),
+    )
+    monkeypatch.setattr(
+        tf_mod,
+        "_check_skypilot_kubernetes",
+        lambda *args, **kwargs: gpu_events.append(("check", (args, kwargs))),
     )
     monkeypatch.setattr(
         tf_mod, "save_cluster_state", lambda state, metadata=None: saved.append(state)
@@ -415,13 +416,17 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
     assert [state.last_seen_state for state in saved] == ["VALIDATING", "RUNNING"]
     assert saved[-1].cluster_id == "mk8scluster-a"
     assert "16 allocatable GPUs" in result.output
-    assert [event[0] for event in gpu_events] == ["readiness", "smoke"]
-    readiness_args, readiness_kwargs = gpu_events[0][1]
+    assert [event[0] for event in gpu_events] == ["check", "readiness", "smoke"]
+    check_args, check_kwargs = gpu_events[0][1]
+    assert check_args[1] == "cluster-a"
+    assert check_kwargs["sky_bin"] == "/opt/npa/sky"
+    readiness_args, readiness_kwargs = gpu_events[1][1]
     assert readiness_args == ["RTXPRO6000:1"]
     assert readiness_kwargs["label_known_gpus"] is True
     assert readiness_kwargs["sky_bin"] == "/opt/npa/sky"
-    _smoke_args, smoke_kwargs = gpu_events[1][1]
+    _smoke_args, smoke_kwargs = gpu_events[2][1]
     assert smoke_kwargs["sky_bin"] == "/opt/npa/sky"
+    assert smoke_kwargs["credentials_checked"] is True
 
 
 def test_inherited_topology_overrides_every_effective_terraform_input() -> None:
@@ -653,34 +658,42 @@ def test_validate_cluster_accepts_compute_csi_when_filestore_is_disabled(
 ) -> None:
     responses = {
         ("kubectl", "get", "nodes", "-o", "json"): {
-            "items": [{
-                "metadata": {
-                    "name": "gpu-0",
-                    "labels": {"node.kubernetes.io/instance-type": "gpu-rtx6000"},
-                },
-                "status": {
-                    "conditions": [{"type": "Ready", "status": "True"}],
-                    "allocatable": {"nvidia.com/gpu": "1"},
-                    "nodeInfo": {"bootID": "boot-a"},
+            "items": [
+                {
+                    "metadata": {
+                        "name": "gpu-0",
+                        "labels": {"node.kubernetes.io/instance-type": "gpu-rtx6000"},
+                    },
+                    "status": {
+                        "conditions": [{"type": "Ready", "status": "True"}],
+                        "allocatable": {"nvidia.com/gpu": "1"},
+                        "nodeInfo": {"bootID": "boot-a"},
+                    },
                 }
-            }]
+            ]
         },
         ("kubectl", "get", "pods", "-n", "nvidia-device-plugin", "-o", "json"): {
-            "items": [{
-                "metadata": {"name": "device-plugin"},
-                "status": {
-                    "phase": "Running",
-                    "containerStatuses": [{"ready": True}],
-                },
-            }]
+            "items": [
+                {
+                    "metadata": {"name": "device-plugin"},
+                    "status": {
+                        "phase": "Running",
+                        "containerStatuses": [{"ready": True}],
+                    },
+                }
+            ]
         },
         ("kubectl", "get", "storageclass", "-o", "json"): {
-            "items": [{
-                "metadata": {
-                    "name": "compute-csi-default-sc",
-                    "annotations": {"storageclass.kubernetes.io/is-default-class": "true"},
+            "items": [
+                {
+                    "metadata": {
+                        "name": "compute-csi-default-sc",
+                        "annotations": {
+                            "storageclass.kubernetes.io/is-default-class": "true"
+                        },
+                    }
                 }
-            }]
+            ]
         },
     }
 
@@ -1023,7 +1036,7 @@ def test_up_validation_accepts_block_default_sc_when_filestore_disabled(
                                     "conditions": [{"type": "Ready", "status": "True"}],
                                     "allocatable": {"nvidia.com/gpu": "1"},
                                     "nodeInfo": {"bootID": "boot-0"},
-                                }
+                                },
                             }
                         ]
                     }
@@ -2068,8 +2081,7 @@ def test_up_keeps_an_explicit_ssh_public_key_from_tfvars(
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
     (tf_dir / "terraform.tfvars").write_text(
-        'parent_id = "project-test"\n'
-        'ssh_public_key = { path = "~/.ssh/custom.pub" }\n'
+        'parent_id = "project-test"\nssh_public_key = { path = "~/.ssh/custom.pub" }\n'
     )
     stream_calls: list[list[str]] = []
 

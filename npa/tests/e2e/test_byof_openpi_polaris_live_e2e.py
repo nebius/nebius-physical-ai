@@ -268,6 +268,45 @@ def _assert_controller_rbac_absent(
         assert not result.stdout.strip(), (kind, name, result.stdout)
 
 
+def _kubectl_can_i(
+    kube: list[str],
+    *,
+    verb: str,
+    resource: str,
+    namespace: str,
+    subject: str,
+    env: dict[str, str],
+) -> bool:
+    """Return an exact live authorization answer from ``kubectl auth can-i``."""
+
+    result = subprocess.run(
+        [
+            *kube,
+            "auth",
+            "can-i",
+            verb,
+            resource,
+            "--namespace",
+            namespace,
+            "--as",
+            subject,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    answer = result.stdout.strip().lower()
+    if (result.returncode, answer) == (0, "yes"):
+        return True
+    if (result.returncode, answer) == (1, "no"):
+        return False
+    raise AssertionError(
+        "kubectl auth can-i returned an uncertain result: "
+        f"exit={result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}"
+    )
+
+
 def _assert_controller_rbac_scope(
     *, run_id: str, env: dict[str, str], namespace: str, service_account: str
 ) -> dict[str, object]:
@@ -295,25 +334,14 @@ def _assert_controller_rbac_scope(
     foreign_secret = f"{service_account}-foreign-probe"
 
     def can_i(verb: str, resource: str) -> bool:
-        result = subprocess.run(
-            [
-                *kube,
-                "auth",
-                "can-i",
-                verb,
-                resource,
-                "--namespace",
-                namespace,
-                "--as",
-                subject,
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
+        return _kubectl_can_i(
+            kube,
+            verb=verb,
+            resource=resource,
+            namespace=namespace,
+            subject=subject,
             env=env,
         )
-        assert result.returncode == 0, result.stderr
-        return result.stdout.strip().lower() == "yes"
 
     subprocess.run(
         [
@@ -542,6 +570,55 @@ def _run_four_mode_workflow(
         ),
         stderr="\n".join((apply.stderr, submit.stderr, delete.stderr)),
     )
+
+
+def _failed_managed_job_logs(
+    *, run_id: str, stage_fragment: str, env: dict[str, str]
+) -> str:
+    """Read the exact failed stage log without accepting queue/API uncertainty."""
+
+    sky_bin = resolve_skypilot_bin()
+    assert sky_bin
+    queue = subprocess.run(
+        [sky_bin, "jobs", "queue", "--all", "--output", "json"],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+        env=env,
+    )
+    assert queue.returncode == 0, queue.stderr
+    try:
+        records = json.loads(queue.stdout)
+    except json.JSONDecodeError as exc:
+        raise AssertionError(
+            f"managed-job queue was not JSON: {queue.stdout!r}"
+        ) from exc
+    assert isinstance(records, list)
+    prefix = run_id.lower()
+    matches = [
+        record
+        for record in records
+        if str(record.get("job_name", "")).lower().startswith(prefix)
+        and stage_fragment in str(record.get("job_name", "")).lower()
+    ]
+    assert len(matches) == 1, matches
+    record = matches[0]
+    assert str(record.get("status", "")).upper() == "FAILED", record
+    job_id = str(record.get("job_id", "")).strip()
+    assert job_id, record
+    logs = subprocess.run(
+        [sky_bin, "jobs", "logs", job_id, "--no-follow", "--tail", "200"],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+        env=env,
+    )
+    assert logs.returncode == 0, logs.stderr
+    combined = logs.stdout + "\n" + logs.stderr
+    assert combined.strip(), f"managed job {job_id} returned no failure log"
+    return combined
 
 
 def _requested_gpu_pods(env: dict[str, str]) -> list[dict[str, object]]:
@@ -1015,6 +1092,57 @@ def test_openpi_split_live_env_uses_one_project_storage_identity(
     assert env["AWS_ENDPOINT_URL"] == "https://storage.correct-region"
 
 
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "expected"),
+    [(0, "yes\n", True), (1, "no\n", False)],
+)
+def test_kubectl_can_i_accepts_authoritative_yes_and_no_exit_codes(
+    monkeypatch: pytest.MonkeyPatch,
+    returncode: int,
+    stdout: str,
+    expected: bool,
+) -> None:
+    monkeypatch.setattr(
+        f"{__name__}.subprocess.run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            [], returncode, stdout=stdout, stderr=""
+        ),
+    )
+
+    assert (
+        _kubectl_can_i(
+            ["kubectl"],
+            verb="get",
+            resource="secret/exact",
+            namespace="default",
+            subject="system:serviceaccount:default:controller",
+            env={},
+        )
+        is expected
+    )
+
+
+def test_kubectl_can_i_rejects_uncertain_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        f"{__name__}.subprocess.run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            [], 1, stdout="", stderr="API unavailable"
+        ),
+    )
+
+    with pytest.raises(AssertionError, match="uncertain result"):
+        _kubectl_can_i(
+            ["kubectl"],
+            verb="get",
+            resource="secret/exact",
+            namespace="default",
+            subject="system:serviceaccount:default:controller",
+            env={},
+        )
+
+
 def test_openpi_four_mode_submit_uses_task_isolated_skypilot_state(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1075,6 +1203,57 @@ def test_openpi_four_mode_submit_uses_task_isolated_skypilot_state(
         tmp_path / "sky-config.yaml"
     )
     assert kwargs["cwd"] == str(REPO_ROOT)
+
+
+def test_failed_managed_job_logs_selects_exact_failed_stage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+    queue = [
+        {
+            "job_id": 40,
+            "job_name": "other-run-04-cross_pod_se",
+            "status": "FAILED",
+        },
+        {
+            "job_id": 41,
+            "job_name": "openpi-failure-04-cross_pod_se",
+            "status": "FAILED",
+        },
+    ]
+
+    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        if "queue" in command:
+            return subprocess.CompletedProcess(
+                command, 0, stdout=json.dumps(queue), stderr=""
+            )
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout="server pod is Unschedulable: selector mismatch",
+            stderr="",
+        )
+
+    monkeypatch.setattr(f"{__name__}.resolve_skypilot_bin", lambda: "/opt/sky")
+    monkeypatch.setattr(f"{__name__}.subprocess.run", run)
+
+    logs = _failed_managed_job_logs(
+        run_id="openpi-failure",
+        stage_fragment="cross_pod_se",
+        env={},
+    )
+
+    assert "Unschedulable" in logs
+    assert calls[1] == [
+        "/opt/sky",
+        "jobs",
+        "logs",
+        "41",
+        "--no-follow",
+        "--tail",
+        "200",
+    ]
 
 
 def test_openpi_split_run_waits_for_exact_context_gpu_release(
@@ -1473,7 +1652,12 @@ def test_openpi_polaris_live_b200_all_four_modes(
     )
     failure_combined = failure_proc.stdout + "\n" + failure_proc.stderr
     assert failure_proc.returncode != 0, failure_combined[-30000:]
-    assert "Unschedulable" in failure_combined, failure_combined[-30000:]
+    failure_logs = _failed_managed_job_logs(
+        run_id=failure_run_id,
+        stage_fragment="cross_pod_se",
+        env=four_mode_env,
+    )
+    assert "Unschedulable" in failure_logs, failure_logs[-30000:]
     _assert_controller_rbac_absent(
         run_id=failure_run_id,
         env=four_mode_env,

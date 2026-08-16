@@ -287,7 +287,9 @@ def test_known_rtxpro_label_is_exact_context_scoped() -> None:
 
     def fake_run(cmd, **kwargs):  # noqa: ANN001 - test stub
         seen.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, stdout="node/node-a labelled", stderr="")
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="node/node-a labelled", stderr=""
+        )
 
     assert (
         label_known_kubernetes_gpus_for_skypilot(
@@ -304,6 +306,43 @@ def test_known_rtxpro_label_is_exact_context_scoped() -> None:
             "node",
             "node-a",
             "skypilot.co/accelerator=rtxpro6000",
+        ]
+    ]
+
+
+def test_known_b200_label_is_exact_context_scoped() -> None:
+    inventory = KubernetesGpuInventory(
+        context="ctx",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=("NVIDIA-B200",),
+        node_labels={"node-a": {"nvidia.com/gpu.product": "NVIDIA-B200"}},
+    )
+    seen: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):  # noqa: ANN001 - test stub
+        seen.append(cmd)
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="node/node-a labelled", stderr=""
+        )
+
+    assert (
+        label_known_kubernetes_gpus_for_skypilot(
+            context="ctx", inventory=inventory, runner=fake_run
+        )
+        == 1
+    )
+    assert seen == [
+        [
+            "kubectl",
+            "--context",
+            "ctx",
+            "label",
+            "node",
+            "node-a",
+            "skypilot.co/accelerator=B200",
         ]
     ]
 
@@ -447,8 +486,7 @@ def test_explicit_known_label_repair_precedes_catalog_readiness(
         node_labels={"node-a": {"nebius.com/gpu-name": "RTX6000"}},
     )
     monkeypatch.setattr(
-        "npa.orchestration.skypilot.k8s_gpu_catalog."
-        "discover_kubernetes_gpu_inventory",
+        "npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_inventory",
         lambda **_kwargs: inventory,
     )
     monkeypatch.setattr(
@@ -558,12 +596,8 @@ def test_gang_capacity_matches_nvidia_product_label_to_skypilot_name() -> None:
         products=("NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",),
         node_labels={},
         nodes=(
-            _node(
-                "a", product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
-            ),
-            _node(
-                "b", product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
-            ),
+            _node("a", product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"),
+            _node("b", product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"),
         ),
     )
 
@@ -777,9 +811,7 @@ def test_live_inventory_uses_exact_context_and_subtracts_active_pods() -> None:
             {
                 "metadata": {"name": "competing-gang-rank"},
                 "spec": {
-                    "containers": [
-                        {"resources": {"requests": {"nvidia.com/gpu": "1"}}}
-                    ]
+                    "containers": [{"resources": {"requests": {"nvidia.com/gpu": "1"}}}]
                 },
                 "status": {"phase": "Pending"},
             },
@@ -790,7 +822,9 @@ def test_live_inventory_uses_exact_context_and_subtracts_active_pods() -> None:
     def runner(cmd, **_kwargs):
         seen.append(cmd)
         payload = pods if "pods" in cmd else nodes
-        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(payload), stderr="")
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(payload), stderr=""
+        )
 
     inventory = discover_kubernetes_gpu_inventory(
         context="exact-context", runner=runner
@@ -961,11 +995,7 @@ def test_nvidia_noexecute_taint_is_not_covered_by_skypilot_toleration() -> None:
                     "name": "evicting-gpu",
                     "labels": {"nvidia.com/gpu.product": "RTXPRO6000"},
                 },
-                "spec": {
-                    "taints": [
-                        {"key": "nvidia.com/gpu", "effect": "NoExecute"}
-                    ]
-                },
+                "spec": {"taints": [{"key": "nvidia.com/gpu", "effect": "NoExecute"}]},
                 "status": {
                     "conditions": [{"type": "Ready", "status": "True"}],
                     "capacity": {"nvidia.com/gpu": "1"},
@@ -982,7 +1012,9 @@ def test_nvidia_noexecute_taint_is_not_covered_by_skypilot_toleration() -> None:
 
     def runner(cmd, **_kwargs):
         payload = {"items": []} if "pods" in cmd else nodes
-        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(payload), stderr="")
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(payload), stderr=""
+        )
 
     inventory = discover_kubernetes_gpu_inventory(context="exact", runner=runner)
     assert inventory.nodes[0].schedulable is False

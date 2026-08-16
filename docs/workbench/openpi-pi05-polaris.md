@@ -269,16 +269,16 @@ cluster with one physical B200 and allocated one B200 per GPU stage. Driver
 580.159.04 exposed 183,359 MiB and compute capability 10.0; the runtime executed
 the compiled `sm_100` probe. Direct inference returned finite
 `float64[15,8]`. The private ClusterIP server and distinct CPU client completed
-two finite `float64[15,8]` requests in 38.955 seconds cold and 51.0 milliseconds
+two finite `float64[15,8]` requests in 39.350 seconds cold and 50.2 milliseconds
 warm, then exact Deployment, Service, Job, pod, and Secret cleanup passed.
 
-The one-step upstream pi0.5 LoRA optimizer smoke reported loss 0.107365,
-gradient norm 0.40554, and trainable update L2 0.09227 with different
-before/after hashes. Orbax saved and reloaded step 1; its private 31-file
-checkpoint manifest covered 8,711,875,820 bytes. Evaluation independently
+The one-step upstream pi0.5 LoRA optimizer smoke reported loss 0.145676,
+gradient norm 1.46636, and trainable update L2 0.0957375 with different
+before/after hashes. Orbax saved and reloaded step 1; its private 29-file
+checkpoint manifest covered 9,152,431,613 bytes. Evaluation independently
 reloaded that exact manifest and used two samples excluded from the four-sample
-training split. Mean upstream held-out loss was 0.183236, trajectory MAE was
-0.0109331, and trajectory MSE was 0.000194068; the reloaded policy also emitted
+training split. Mean upstream held-out loss was 0.182892, trajectory MAE was
+0.0111408, and trajectory MSE was 0.000200538; the reloaded policy also emitted
 a finite `float64[15,8]` trajectory. This is an optimizer/checkpoint and offline
 evaluation smoke on tiny deterministic data, not convergence or physical robot
 success.

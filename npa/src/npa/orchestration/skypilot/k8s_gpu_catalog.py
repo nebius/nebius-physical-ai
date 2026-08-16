@@ -224,9 +224,7 @@ def _gpu_quantity(container: object) -> int:
     try:
         return max(0, int(raw or 0))
     except (TypeError, ValueError):
-        raise KubernetesGpuCatalogError(
-            f"invalid pod nvidia.com/gpu request {raw!r}"
-        )
+        raise KubernetesGpuCatalogError(f"invalid pod nvidia.com/gpu request {raw!r}")
 
 
 def _cpu_millis(raw: object) -> int:
@@ -240,7 +238,9 @@ def _cpu_millis(raw: object) -> int:
             return max(0, int(Decimal(value[:-1]) / 1_000_000))
         return max(0, int(Decimal(value) * 1000))
     except (InvalidOperation, ValueError) as exc:
-        raise KubernetesGpuCatalogError(f"invalid Kubernetes CPU quantity {raw!r}") from exc
+        raise KubernetesGpuCatalogError(
+            f"invalid Kubernetes CPU quantity {raw!r}"
+        ) from exc
 
 
 _MEMORY_FACTORS = {
@@ -312,7 +312,9 @@ def _pod_commitment(pod: object) -> tuple[str, int, int, int, int]:
         (_container_request(item, "memory") for item in init_containers), default=0
     )
     overhead = spec.get("overhead") or {}
-    overhead_cpu = _cpu_millis(overhead.get("cpu", 0)) if isinstance(overhead, dict) else 0
+    overhead_cpu = (
+        _cpu_millis(overhead.get("cpu", 0)) if isinstance(overhead, dict) else 0
+    )
     overhead_memory = (
         _memory_bytes(overhead.get("memory", 0)) if isinstance(overhead, dict) else 0
     )
@@ -388,7 +390,13 @@ def discover_kubernetes_gpu_inventory(
         )
         if pod_result.returncode != 0:
             return KubernetesGpuInventory(
-                context, 0, 0, 0, 0, (), {},
+                context,
+                0,
+                0,
+                0,
+                0,
+                (),
+                {},
                 "kubectl pod inventory failed; free shared GPU capacity is unknown",
             )
         pod_payload = json.loads(pod_result.stdout or "{}")
@@ -414,7 +422,13 @@ def discover_kubernetes_gpu_inventory(
                 unbound_pending_gpu_requests += gpu
     except (OSError, ValueError, subprocess.SubprocessError, KubernetesGpuCatalogError):
         return KubernetesGpuInventory(
-            context, 0, 0, 0, 0, (), {},
+            context,
+            0,
+            0,
+            0,
+            0,
+            (),
+            {},
             "kubectl pod inventory unavailable; free shared GPU capacity is unknown",
         )
 
@@ -450,9 +464,7 @@ def discover_kubernetes_gpu_inventory(
         )
         node_capacity = int((status.get("capacity") or {}).get("nvidia.com/gpu", 0))
         node_cpu = _cpu_millis((status.get("allocatable") or {}).get("cpu", 0))
-        node_memory = _memory_bytes(
-            (status.get("allocatable") or {}).get("memory", 0)
-        )
+        node_memory = _memory_bytes((status.get("allocatable") or {}).get("memory", 0))
         try:
             node_pods = max(0, int((status.get("allocatable") or {}).get("pods", 0)))
         except (TypeError, ValueError):
@@ -472,17 +484,21 @@ def discover_kubernetes_gpu_inventory(
         blocked = bool(spec.get("unschedulable")) or disallowed_taint
         node_products: set[str] = set()
         for key, value in raw_labels.items():
-            if key in {
-                "nvidia.com/gpu.product",
-                "nebius.com/gpu",
-                "nebius.com/gpu-name",
-                "node.kubernetes.io/instance-type",
-                "skypilot.co/accelerator",
-            } or "product" in key.casefold():
+            if (
+                key
+                in {
+                    "nvidia.com/gpu.product",
+                    "nebius.com/gpu",
+                    "nebius.com/gpu-name",
+                    "node.kubernetes.io/instance-type",
+                    "skypilot.co/accelerator",
+                }
+                or "product" in key.casefold()
+            ):
                 if value:
                     node_products.add(value)
-        committed, committed_cpu, committed_memory, committed_pods = committed_by_node.get(
-            name, (0, 0, 0, 0)
+        committed, committed_cpu, committed_memory, committed_pods = (
+            committed_by_node.get(name, (0, 0, 0, 0))
         )
         free = max(0, node_allocatable - committed)
         free_cpu = max(0, node_cpu - committed_cpu)
@@ -595,7 +611,9 @@ def _matches_node_selector_requirement(
     return left > right if operator == "Gt" else left < right
 
 
-def _node_matches_pod_spec(node: KubernetesGpuNode, pod_spec: Mapping[str, object]) -> bool:
+def _node_matches_pod_spec(
+    node: KubernetesGpuNode, pod_spec: Mapping[str, object]
+) -> bool:
     labels = dict(node.labels)
     node_name = str(pod_spec.get("nodeName") or "").strip()
     if node_name and node.name != node_name:
@@ -865,6 +883,8 @@ def discover_kubernetes_gpu_catalog(
 
 
 _KNOWN_SKYPILOT_LABELS = {
+    "b200": "B200",
+    "nvidiab200": "B200",
     "rtx6000": "rtxpro6000",
     "rtxpro6000": "rtxpro6000",
     "rtxpro6000blackwellserveredition": "rtxpro6000",
@@ -890,7 +910,8 @@ def label_known_kubernetes_gpus_for_skypilot(
     """Add SkyPilot labels only for exact, reviewed GFD product aliases.
 
     SkyPilot 0.12.2 treats any GFD label as "already labelled", but its GPU name
-    catalog does not yet recognize the RTX PRO 6000 Blackwell product string.
+    catalog does not yet recognize the B200 or RTX PRO 6000 Blackwell product
+    strings exposed by managed Kubernetes.
     Its own ``sky gpus label`` therefore performs no mutation while
     ``sky gpus list`` remains empty.  NPA bridges only explicit equivalences;
     unknown or adjacent products remain untouched and fail closed.
@@ -1053,9 +1074,7 @@ def wait_for_kubernetes_accelerators(
         )
     )
     get_allocatable = allocatable or (
-        lambda: kubernetes_allocatable_gpu_count(
-            context=context, kubeconfig=kubeconfig
-        )
+        lambda: kubernetes_allocatable_gpu_count(context=context, kubeconfig=kubeconfig)
     )
     deadline = monotonic() + timeout
     last_failure = "SkyPilot accelerator catalog has not been queried"
@@ -1068,7 +1087,11 @@ def wait_for_kubernetes_accelerators(
             inventory = discover_kubernetes_gpu_inventory(
                 context=context, kubeconfig=kubeconfig
             )
-        count = inventory.allocatable if inventory is not None and not inventory.error else get_allocatable()
+        count = (
+            inventory.allocatable
+            if inventory is not None and not inventory.error
+            else get_allocatable()
+        )
         if on_status:
             shown = "unknown" if count is None else str(count)
             on_status(
@@ -1085,7 +1108,11 @@ def wait_for_kubernetes_accelerators(
                     f"Kubernetes has {count} eligible allocatable GPU(s), but the "
                     f"request needs at least {required}."
                 )
-            if inventory is not None and inventory.allocatable > 0 and not inventory.products:
+            if (
+                inventory is not None
+                and inventory.allocatable > 0
+                and not inventory.products
+            ):
                 raise UnsatisfiableAcceleratorError(
                     "Kubernetes GPU capacity is Ready and allocatable, but accelerator product "
                     "labels are missing; wait for GPU Feature Discovery/NFD before SkyPilot use."

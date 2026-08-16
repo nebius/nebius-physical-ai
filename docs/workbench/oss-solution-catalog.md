@@ -95,9 +95,9 @@ unique and must be tested with its own upstream-named capabilities.
 | `pi05_droid_jointpos_polaris_checkpoint_download` | accepted (live) | canonical build/push/digest gate; anonymous runtime `download.maybe_download(gs://openpi-assets/checkpoints/polaris/…)`; 27 objects / 12,434,530,837 bytes; weights and the exact scoped terms acceptance are never baked |
 | `pi05_droid_jointpos_polaris_direct_infer` | accepted (live) | digest-pinned B200 `sm_100` `get_config("pi05_droid_jointpos_polaris")` + direct `policy.infer`; finite `float64[15,8]` joint-position targets |
 | `pi05_droid_jointpos_polaris_served_infer` | accepted builder regression (live) | upstream `WebsocketPolicyServer` + same-pod `WebsocketClientPolicy`; served finite `float64[15,8]` |
-| `pi05_droid_jointpos_polaris_cross_pod_serve` | accepted (live) | upstream server Deployment + private ClusterIP + distinct client Job; two finite `float64[15,8]` requests (39.513 s cold, 50.8 ms warm); exact cleanup |
-| `pi05_droid_jointpos_polaris_lora_optimizer_smoke` | accepted (live) | supported upstream pi0.5 LoRA config; one real forward/backward/AdamW update (loss 0.107233, update L2 0.09227), changed trainable state, and reloadable 31-file Orbax checkpoint |
-| `pi05_droid_jointpos_polaris_heldout_evaluate` | accepted (live) | exact trained-checkpoint reload; two disjoint held-out samples; finite mean upstream loss 0.183186, action MAE 0.0109302 and MSE 0.000194054, plus valid `float64[15,8]` trajectory |
+| `pi05_droid_jointpos_polaris_cross_pod_serve` | accepted (live) | upstream server Deployment + private ClusterIP + distinct client Job; two finite `float64[15,8]` requests (39.350 s cold, 50.2 ms warm); exact cleanup |
+| `pi05_droid_jointpos_polaris_lora_optimizer_smoke` | accepted (live) | supported upstream pi0.5 LoRA config; one real forward/backward/AdamW update (loss 0.145676, update L2 0.0957375), changed trainable state, and reloadable 29-file Orbax checkpoint |
+| `pi05_droid_jointpos_polaris_heldout_evaluate` | accepted (live) | exact trained-checkpoint reload; two disjoint held-out samples; finite mean upstream loss 0.182892, action MAE 0.0111408 and MSE 0.000200538, plus valid `float64[15,8]` trajectory |
 
 The Polaris request/response schema, upstream terms, licensing boundary, B200 stack,
 and 15 Hz re-query guidance are documented in
