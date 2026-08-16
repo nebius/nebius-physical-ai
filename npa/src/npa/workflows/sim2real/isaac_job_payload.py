@@ -49,15 +49,14 @@ def decode_compressed_bash_args(args: list[str]) -> str:
     return gzip.decompress(base64.b64decode("".join(args[2:]))).decode("utf-8")
 
 
-def _require_operator_eula_acceptance(env: dict[str, str]) -> None:
-    """Fail before Kit starts unless the operator explicitly accepted the terms."""
+def _require_isaac_route_enabled(env: dict[str, str]) -> None:
+    """Apply the shared default and fail before Kit starts on explicit opt-out."""
 
     from npa.serverless_common.env import resolve_isaac_eula_acceptance
 
     if resolve_isaac_eula_acceptance(env) != "Y":
         raise RuntimeError(
-            "inline Isaac execution requires explicit operator EULA acceptance: "
-            "ACCEPT_EULA=Y"
+            "inline Isaac execution was explicitly opted out through ACCEPT_EULA"
         )
 
 
@@ -97,7 +96,7 @@ def execute_manifest_container_inline(manifest: dict[str, Any]) -> dict[str, Any
         name = str(item.get("name") or "")
         if name and "value" in item:
             env[name] = str(item["value"])
-    _require_operator_eula_acceptance(env)
+    _require_isaac_route_enabled(env)
     subprocess.run([*command, *args], env=env, check=True)
     return {
         "mode": "npa_workflow_skypilot_task",

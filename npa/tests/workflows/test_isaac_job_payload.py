@@ -91,3 +91,52 @@ def test_inline_payload_uses_silent_default_acceptance_when_unset(
     with pytest.raises(subprocess.CalledProcessError) as exc_info:
         execute_manifest_container_inline(manifest)
     assert exc_info.value.returncode == 99
+
+
+@pytest.mark.parametrize("value", ["", "no", "FALSE"])
+def test_inline_payload_refuses_explicit_opt_out_before_execution(
+    monkeypatch: pytest.MonkeyPatch, mocker, value: str
+) -> None:
+    image = "registry.example/npa/isaac@sha256:" + "d" * 64
+    monkeypatch.setenv("NPA_TASK_IMAGE", image)
+    monkeypatch.setenv("ACCEPT_EULA", value)
+    run = mocker.patch("npa.workflows.sim2real.isaac_job_payload.subprocess.run")
+    manifest = {
+        "spec": {
+            "template": {
+                "spec": {
+                    "containers": [
+                        {"image": image, "command": ["bash"], "args": ["-lc", "true"]}
+                    ]
+                }
+            }
+        }
+    }
+
+    with pytest.raises(RuntimeError, match="explicitly opted out"):
+        execute_manifest_container_inline(manifest)
+    run.assert_not_called()
+
+
+def test_inline_payload_rejects_invalid_acceptance_before_execution(
+    monkeypatch: pytest.MonkeyPatch, mocker
+) -> None:
+    image = "registry.example/npa/isaac@sha256:" + "e" * 64
+    monkeypatch.setenv("NPA_TASK_IMAGE", image)
+    monkeypatch.setenv("ACCEPT_EULA", "maybe")
+    run = mocker.patch("npa.workflows.sim2real.isaac_job_payload.subprocess.run")
+    manifest = {
+        "spec": {
+            "template": {
+                "spec": {
+                    "containers": [
+                        {"image": image, "command": ["bash"], "args": ["-lc", "true"]}
+                    ]
+                }
+            }
+        }
+    }
+
+    with pytest.raises(ValueError, match="Invalid ACCEPT_EULA"):
+        execute_manifest_container_inline(manifest)
+    run.assert_not_called()

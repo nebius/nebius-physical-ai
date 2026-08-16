@@ -629,11 +629,18 @@ def test_load_credentials_warns_when_readable_by_other_users(tmp_path: Path) -> 
     ]
 
 
-def test_cosmos_deploy_dry_run_fails_when_hf_token_missing(
+def test_cosmos_deploy_dry_run_probes_upstream_when_hf_token_missing(
     tmp_path: Path, mocker
 ) -> None:
     mocker.patch("npa.cli.workbench.load_credentials", return_value=CredentialsConfig())
     mocker.patch("npa.cli.cosmos.resolve_credentials", return_value=CredentialsConfig())
+    access = mocker.patch(
+        "npa.cli.cosmos.validate_hf_access",
+        return_value=SimpleNamespace(
+            ok=False,
+            error="HF_TOKEN does not have upstream access to the selected model",
+        ),
+    )
     apply = mocker.patch("npa.cli.cosmos.provisioner.apply")
 
     result = CliRunner().invoke(
@@ -659,8 +666,10 @@ def test_cosmos_deploy_dry_run_fails_when_hf_token_missing(
     )
 
     assert result.exit_code == 1
-    assert "Warning: HF_TOKEN not found in ~/.npa/credentials.yaml" in result.output
-    assert "~/.npa/credentials.yaml" in result.output
+    assert "HF_TOKEN does not have upstream access" in result.output
+    access.assert_called_once_with(
+        "", "nvidia/Cosmos-1.0-Diffusion-7B-Text2World"
+    )
     apply.assert_not_called()
 
 
