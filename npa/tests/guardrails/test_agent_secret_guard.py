@@ -7,6 +7,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 GITIGNORE = REPO_ROOT / ".gitignore"
 AGENT_PATH = REPO_ROOT / "npa" / "src" / "npa" / "cli" / "agent.py"
+VM_AUTH_PATH = REPO_ROOT / "npa" / "src" / "npa" / "clients" / "nebius_vm_auth.py"
 
 FORBIDDEN_TRACKED_SUFFIXES = (
     "auth.env",
@@ -75,11 +76,25 @@ def test_agent_bootstrap_does_not_commit_generated_passwords() -> None:
         assert not pattern.search(source), f"literal secret pattern in agent.py: {pattern.pattern}"
 
 
+def test_vm_auth_verification_never_surfaces_iam_token_output() -> None:
+    source = VM_AUTH_PATH.read_text(encoding="utf-8")
+    assert "strip_ambient_token_env" in source
+    assert '"stdout": subprocess.DEVNULL' in source
+    assert "iam_token_minted: bool" in source
+    assert "return token" not in source
+    assert "print(token" not in source
+
+
 def test_agent_tracked_files_have_no_literal_secrets_or_live_ips() -> None:
     tracked = [
         path
         for path in _tracked_files()
-        if path.startswith("npa/") and ("/agent" in path or path.endswith("agent.py"))
+        if path.startswith("npa/")
+        and (
+            "/agent" in path
+            or path.endswith("agent.py")
+            or path.endswith("nebius_vm_auth.py")
+        )
     ]
     violations: list[str] = []
     for rel in tracked:

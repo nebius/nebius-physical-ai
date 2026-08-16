@@ -1,0 +1,4 @@
+interface:
+  display_name: "GPU Allocation Fallback"
+  short_description: "Offer a safe preemptible GPU fallback after placement failures."
+  default_prompt: "Classify GPU placement failures and safely offer a preemptible fallback."

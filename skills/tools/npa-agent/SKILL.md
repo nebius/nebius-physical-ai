@@ -51,6 +51,9 @@ not recreate the instance or copy secrets into Terraform state/user-data.
 
 All `npa agent …` and `nebius` IAM commands run on the **operator/dev VM**.
 The **agent VM** only receives staged `/opt/npa-agent/*.env` files.
+For human no-browser profile setup or recovery on a remote operator/dev VM, load
+`skills/atomic/vm-nebius-auth/SKILL.md`. Do not use that flow to replace the
+agent VM's attached-service-account metadata profile.
 
 ### Credential fallback (when `npa-agent` cannot be created)
 
@@ -99,6 +102,10 @@ Token Factory model selection is configurable via `--llm-model` and `--llm-model
 - Never suggest `localhost`, `127.0.0.1`, or port `8080` — use same-origin `/api/…` paths
 
 ## Chat Maturity Patterns
+
+Typed GPU placement failures and consented preemptible fallback use
+`skills/atomic/gpu-allocation-fallback/SKILL.md` and the grounded
+`/api/agent/gpu-allocation/*` routes.
 
 Intent router in `npa/src/npa/cli/agent_chat.py` (embedded in remote `backend.py` at bootstrap):
 

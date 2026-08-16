@@ -19,6 +19,8 @@ SHIPPED_BACKEND_MODULES = (
     "trace",
     "foxglove",
     "foxglove_routes",
+    "gpu_allocation_fallback",
+    "gpu_allocation_routes",
 )
 
 _HEREDOC_MARKER = "PY"
