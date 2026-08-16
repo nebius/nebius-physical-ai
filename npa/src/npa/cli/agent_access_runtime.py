@@ -67,8 +67,10 @@ if __name__ == "npa.cli.agent_access_runtime":
 # pin that worker indefinitely.
 _AGENT_NEBIUS_TIMEOUT_SECONDS = 15.0
 _AGENT_ACCESS_CACHE_TTL_SECONDS = 30.0
+_AGENT_EXACT_SOURCE_ACCESS_TTL_SECONDS = 30.0
 _MAX_ARTIFACT_MEMBERSHIP_BUCKETS = 32
 _AGENT_ACCESS_CACHE = {"report": None, "expires_at": 0.0, "refreshing": False}
+_AGENT_EXACT_SOURCE_ACCESS_CACHE: dict[tuple[str, ...], float] = {}
 _AGENT_ACCESS_LOCK = threading.Lock()
 _AGENT_ACCESS_CONDITION = threading.Condition(_AGENT_ACCESS_LOCK)
 _AMBIENT_NEBIUS_TOKEN_KEYS = frozenset(
@@ -268,6 +270,8 @@ def _agent_probe_bucket(s3, bucket: str) -> "BucketProbe":
 def _agent_access_report(*, refresh: bool = False) -> "AgentAccessReport":
     now_mono = time.monotonic()
     with _AGENT_ACCESS_CONDITION:
+        if refresh:
+            _AGENT_EXACT_SOURCE_ACCESS_CACHE.clear()
         cached = _AGENT_ACCESS_CACHE.get("report")
         expires_at = float(_AGENT_ACCESS_CACHE.get("expires_at") or 0.0)
         if (
@@ -589,6 +593,24 @@ def _authorize_exact_run_ref_source(
             detail="the selected artifact prefix does not match run_ref",
         )
 
+    cache_key = (
+        str(os.environ.get("NEBIUS_TENANT_ID") or "").strip(),
+        str(os.environ.get("NEBIUS_PROJECT_ID") or "").strip(),
+        requested_project,
+        requested_bucket,
+        requested_prefix,
+        requested_run,
+        str(run_ref or "").strip(),
+    )
+    now_mono = time.monotonic()
+    with _AGENT_ACCESS_LOCK:
+        expires_at = float(_AGENT_EXACT_SOURCE_ACCESS_CACHE.get(cache_key) or 0.0)
+        if expires_at > now_mono:
+            return requested_bucket, requested_project, requested_prefix
+        for stale_key, stale_expiry in list(_AGENT_EXACT_SOURCE_ACCESS_CACHE.items()):
+            if stale_expiry <= now_mono:
+                _AGENT_EXACT_SOURCE_ACCESS_CACHE.pop(stale_key, None)
+
     deployment_project = str(os.environ.get("NEBIUS_PROJECT_ID") or "").strip()
     tenant_id = str(os.environ.get("NEBIUS_TENANT_ID") or "").strip()
     if requested_project != deployment_project:
@@ -651,7 +673,44 @@ def _authorize_exact_run_ref_source(
             ),
             detail="artifact bucket is not currently searchable",
         )
+    _remember_exact_run_ref_source_authorization(
+        run_id=requested_run,
+        run_ref=run_ref,
+        resource_bucket=requested_bucket,
+        project_id=requested_project,
+        resolved_prefix=requested_prefix,
+    )
     return requested_bucket, requested_project, requested_prefix
+
+
+def _remember_exact_run_ref_source_authorization(
+    *,
+    run_id: str,
+    run_ref: str,
+    resource_bucket: str,
+    project_id: str,
+    resolved_prefix: str,
+) -> None:
+    """Keep a just-proven exact scope warm for the immediately following click."""
+    cache_key = (
+        str(os.environ.get("NEBIUS_TENANT_ID") or "").strip(),
+        str(os.environ.get("NEBIUS_PROJECT_ID") or "").strip(),
+        str(project_id or "").strip(),
+        str(resource_bucket or "").strip(),
+        str(resolved_prefix or "").strip(),
+        str(run_id or "").strip(),
+        str(run_ref or "").strip(),
+    )
+    with _AGENT_ACCESS_LOCK:
+        _AGENT_EXACT_SOURCE_ACCESS_CACHE[cache_key] = (
+            time.monotonic() + _AGENT_EXACT_SOURCE_ACCESS_TTL_SECONDS
+        )
+
+
+def _clear_exact_run_ref_source_authorizations() -> None:
+    """Clear exact-source access proofs after explicit access refresh/tests."""
+    with _AGENT_ACCESS_LOCK:
+        _AGENT_EXACT_SOURCE_ACCESS_CACHE.clear()
 
 
 def _resolve_accessible_run_artifact(

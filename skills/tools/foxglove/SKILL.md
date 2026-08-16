@@ -111,8 +111,11 @@ the selected project is tenant-visible, verify only its selected bucket, and
 probe that bucket's current read scope. Do not rebuild the tenant-wide access
 report or probe unrelated buckets on the exact artifact-inventory or playback
 path. Once discovery has issued this exact source tuple, browser verification
-must reuse it instead of repeating tenant-wide run search. The backend then reads
-a strong object-store identity (ETag or version id) and verifies the published
+must reuse it instead of repeating tenant-wide run search. A successfully
+rendered exact artifact card refreshes a 30-second, full-source-keyed access proof
+for its immediate playback click; explicit access refresh clears those proofs.
+The backend then reads a fresh strong object-store identity (ETag or version id)
+and verifies the published
 bytes against the persisted SHA-256 and provenance. An unchanged selection skips
 download, conversion, and publication; a changed object identity or mismatched
 local byte invalidates the cache. A canonical cache miss prepares and applies the

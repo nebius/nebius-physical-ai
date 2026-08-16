@@ -6845,6 +6845,19 @@ def artifacts_for_run(
             page.artifacts,
             _summary_documents_for_run(s3, run_bucket, page.artifacts),
         )
+        if exact_source_request:
+            # The card is rendered immediately before its playback action. Keep
+            # the just-proven narrow authorization warm for the same 30-second
+            # window as the effective-access cache so export need not repeat
+            # project inventory and bucket probing. Export still re-HEADs the
+            # exact object and validates its strong identity/provenance.
+            _remember_exact_run_ref_source_authorization(
+                run_id=normalized_run,
+                run_ref=requested_ref,
+                resource_bucket=run_bucket,
+                project_id=str(bucket_projects.get(run_bucket) or ""),
+                resolved_prefix=artifact_prefix,
+            )
         return {{
             "ok": True,
             "contract": ARTIFACT_DISCOVERY_CONTRACT,

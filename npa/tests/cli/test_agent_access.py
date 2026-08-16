@@ -662,6 +662,7 @@ def test_exact_run_ref_authorization_checks_only_selected_project_and_bucket(
 ) -> None:
     from npa.cli import agent_access_runtime as runtime
 
+    runtime._clear_exact_run_ref_source_authorizations()
     calls: list[tuple[str, str]] = []
     monkeypatch.setenv("NEBIUS_TENANT_ID", "tenant-test")
     monkeypatch.setenv("NEBIUS_PROJECT_ID", "deployment-project")
@@ -709,6 +710,30 @@ def test_exact_run_ref_authorization_checks_only_selected_project_and_bucket(
         ("project", "selected-project"),
         ("probe", "selected-bucket"),
     ]
+    monkeypatch.setattr(
+        runtime,
+        "_agent_list_tenant_projects",
+        lambda _tenant: pytest.fail("fresh exact-source proof must be reused"),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_agent_list_project_buckets",
+        lambda _project: pytest.fail("fresh exact-source proof must be reused"),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_agent_probe_bucket",
+        lambda _s3, _bucket: pytest.fail("fresh exact-source proof must be reused"),
+    )
+    assert runtime._authorize_exact_run_ref_source(
+        s3=object(),
+        settings={"bucket": "deployment-bucket"},
+        run_id="run-one",
+        run_ref=run_ref,
+        resource_bucket="selected-bucket",
+        project_id="selected-project",
+        resolved_prefix="nested/source",
+    ) == ("selected-bucket", "selected-project", "nested/source")
 
 
 @pytest.mark.parametrize(
@@ -724,6 +749,7 @@ def test_exact_run_ref_authorization_rejects_mismatched_provenance_before_cloud_
 ) -> None:
     from npa.cli import agent_access_runtime as runtime
 
+    runtime._clear_exact_run_ref_source_authorizations()
     monkeypatch.setenv("NEBIUS_TENANT_ID", "tenant-test")
     monkeypatch.setenv("NEBIUS_PROJECT_ID", "deployment-project")
     monkeypatch.setattr(
@@ -748,6 +774,7 @@ def test_exact_run_ref_authorization_allows_configured_deployment_bucket_fallbac
 ) -> None:
     from npa.cli import agent_access_runtime as runtime
 
+    runtime._clear_exact_run_ref_source_authorizations()
     monkeypatch.setenv("NEBIUS_PROJECT_ID", "deployment-project")
     monkeypatch.delenv("NEBIUS_TENANT_ID", raising=False)
     monkeypatch.setattr(
@@ -780,6 +807,7 @@ def test_exact_run_ref_authorization_fails_closed_on_wrong_project_bucket(
 ) -> None:
     from npa.cli import agent_access_runtime as runtime
 
+    runtime._clear_exact_run_ref_source_authorizations()
     monkeypatch.setenv("NEBIUS_TENANT_ID", "tenant-test")
     monkeypatch.setenv("NEBIUS_PROJECT_ID", "deployment-project")
     monkeypatch.setattr(
