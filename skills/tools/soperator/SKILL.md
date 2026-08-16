@@ -18,6 +18,12 @@ Three-tier contract:
 - **CLI**: `npa soperator plan|deploy --spec <cluster.yaml>`, `npa soperator status --name <n>`, `npa soperator destroy --name <n>`.
 - **SDK**: `npa.sdk.soperator.plan(spec)` / `deploy(spec)` / `destroy(name)` with `SoperatorSpec` / `WorkerPoolSpec`.
 - **YAML / agent**: `apiVersion: npa.soperator/v0.0.1` spec; workflow `toolRef: infra.soperator.deploy`.
+- **Fleet**: `npa.fleet/v0.0.1` targets may select `backend: soperator` and
+  embed this same spec under `soperator:`. Standalone, SDK, and fleet call the
+  same backend lifecycle; fleet remains responsible for identity, selection,
+  concurrency, inventory, and shared-network ownership.
+  Soperator names are fleet-wide physical/context identities and therefore must
+  be unique even when targets belong to different projects.
 
 ## Spec (npa.soperator/v0.0.1)
 
@@ -170,6 +176,8 @@ node_group_version: "72"
    metadata, reports `degraded-validation`, and exits nonzero.
 9. Verify: `npa soperator status --name <name>` runs `sinfo` on the controller
    and reports each applied worker pool's capacity mode without reservation IDs.
+   Destroy requires the exact persisted cluster ID and treats only provider
+   NotFound as absence; unreadable provider evidence retains local recovery state.
 
 ## Compatibility and migration
 
