@@ -77,8 +77,16 @@ module "k8s_training" {
   gpu_nodes_driver_preset         = var.managed_driver_preset
   enable_gpu_cluster              = var.enable_gpu_cluster
   infiniband_fabric               = var.infiniband_fabric
-  custom_driver                   = false
-  mig_strategy                    = "none"
+  custom_driver                   = var.mig_enabled
+  mig_strategy                    = var.mig_enabled ? var.mig_strategy : "none"
+  mig_parted_config               = var.mig_enabled ? var.mig_parted_config : null
+  gpu_operator_version            = var.gpu_operator_version
+  gpu_driver_version              = var.gpu_driver_version
+  gpu_device_plugin_version       = var.gpu_device_plugin_version
+  gpu_gfd_version                 = var.gpu_gfd_version
+  gpu_mig_manager_version         = var.gpu_mig_manager_version
+  gpu_mig_with_reboot             = var.gpu_mig_with_reboot
+  gpu_operator_rdma_enabled       = var.gpu_operator_rdma_enabled
 
   enable_filestore               = local.enable_filestore
   existing_filestore             = var.existing_filestore

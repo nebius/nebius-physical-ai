@@ -43,7 +43,12 @@ def _base_spec_mapping() -> dict:
         "project_id": "project-x",
         "ssh_public_keys": ["ssh-ed25519 AAAA me"],
         "workers": [
-            {"name": "cpu", "platform": "cpu-d3", "preset": "8vcpu-32gb", "docker_cache": True},
+            {
+                "name": "cpu",
+                "platform": "cpu-d3",
+                "preset": "8vcpu-32gb",
+                "docker_cache": True,
+            },
             {
                 "name": "gpu",
                 "platform": "gpu-b200-sxm",
@@ -118,7 +123,9 @@ def test_docker_cache_gib_must_be_divisible_by_93() -> None:
 
 
 def test_system_min_size_floor() -> None:
-    spec = SoperatorSpec(name="c", system_min_size=1, workers=[WorkerPoolSpec(name="w")])
+    spec = SoperatorSpec(
+        name="c", system_min_size=1, workers=[WorkerPoolSpec(name="w")]
+    )
     with pytest.raises(SoperatorSpecError, match="system_min_size must be >= 3"):
         spec.validate()
 
@@ -195,7 +202,9 @@ def test_explicit_rest_contract_rejects_operator_unsupported_no_accounting() -> 
     data["accounting"] = False
     data["slurm_rest_enabled"] = True
 
-    with pytest.raises(SoperatorSpecError, match="controller skips REST reconciliation"):
+    with pytest.raises(
+        SoperatorSpecError, match="controller skips REST reconciliation"
+    ):
         spec_from_mapping(data).validate()
 
     # The toggles remain independent in the accepted direction: accounting can
@@ -247,7 +256,9 @@ def test_current_sizing_tier_control_plane_defaults() -> None:
         (2000, "XL"),
     ],
 )
-def test_sizing_tier_threshold_boundaries(worker_count: int, expected_tier: str) -> None:
+def test_sizing_tier_threshold_boundaries(
+    worker_count: int, expected_tier: str
+) -> None:
     assert sizing_tier_for_worker_count(worker_count) == expected_tier
 
 
@@ -305,7 +316,9 @@ def test_accounting_preset_boundaries_when_accounting_enabled(
     ).validate()
 
 
-def test_system_max_size_preserves_upstream_autoscaling_and_validates_override() -> None:
+def test_system_max_size_preserves_upstream_autoscaling_and_validates_override() -> (
+    None
+):
     spec = SoperatorSpec(name="c", workers=[WorkerPoolSpec(name="w")])
     assert spec.effective_system_max_size() == 24
     assert "max_size = 24" in render_tfvars(spec)
@@ -380,12 +393,16 @@ def test_root_login_ssh_key_precedence_and_nonstandard_ci_path(tmp_path) -> None
     assert resolved.source == "spec root_login_ssh_public_key"
 
     empty_spec = SoperatorSpec(name="c", workers=[WorkerPoolSpec(name="w")])
-    resolved = _resolve_root_login_ssh_public_key(empty_spec, environ=env, home=tmp_path)
+    resolved = _resolve_root_login_ssh_public_key(
+        empty_spec, environ=env, home=tmp_path
+    )
     assert resolved.value.endswith("env-inline")
     assert resolved.source == "NPA_SOPERATOR_ROOT_LOGIN_SSH_PUBLIC_KEY"
 
     env.pop("NPA_SOPERATOR_ROOT_LOGIN_SSH_PUBLIC_KEY")
-    resolved = _resolve_root_login_ssh_public_key(empty_spec, environ=env, home=tmp_path)
+    resolved = _resolve_root_login_ssh_public_key(
+        empty_spec, environ=env, home=tmp_path
+    )
     assert resolved.value.endswith("env-file")
     assert resolved.source == "NPA_SOPERATOR_ROOT_LOGIN_SSH_PUBLIC_KEY_FILE"
 
@@ -427,10 +444,12 @@ def test_legacy_root_login_key_alias_accepts_one_record_only() -> None:
         spec.validate()
 
 
-def test_tfstr_single_pass_preserves_literals_and_terraform_parses_value(tmp_path) -> None:
+def test_tfstr_single_pass_preserves_literals_and_terraform_parses_value(
+    tmp_path,
+) -> None:
     value = (
         'mixed-$-${live}-$${literal}-%{if true}-%%{literal}-"quoted"-'
-        '\\path-雪-ssh-comment'
+        "\\path-雪-ssh-comment"
     )
     rendered = _tfstr(value)
     assert "$${live}" in rendered
@@ -484,7 +503,9 @@ def test_operator_override_validation_and_verified_userns_contract() -> None:
         spec.validate()
 
     spec.slurm_operator_version = "4.1.7"
-    with pytest.raises(SoperatorSpecError, match="user-namespace override is verified only"):
+    with pytest.raises(
+        SoperatorSpecError, match="user-namespace override is verified only"
+    ):
         spec.validate()
 
     spec.use_default_apparmor_profile = True
@@ -575,7 +596,9 @@ def _legacy_shallow_checkout(tmp_path: Path) -> tuple[Path, str, Path, str]:
     return work_root, pinned, sentinel, digest
 
 
-def test_solutions_library_reconciles_shallow_legacy_and_preserves_state(tmp_path) -> None:
+def test_solutions_library_reconciles_shallow_legacy_and_preserves_state(
+    tmp_path,
+) -> None:
     from npa.soperator.lifecycle import _resolve_solutions_library
 
     work_root, pinned, sentinel, digest = _legacy_shallow_checkout(tmp_path)
@@ -591,13 +614,17 @@ def test_solutions_library_reconciles_shallow_legacy_and_preserves_state(tmp_pat
     assert hashlib.sha256(sentinel.read_bytes()).hexdigest() == digest
 
 
-def test_solutions_library_detaches_attached_shallow_pin_and_preserves_state(tmp_path) -> None:
+def test_solutions_library_detaches_attached_shallow_pin_and_preserves_state(
+    tmp_path,
+) -> None:
     from npa.soperator.lifecycle import _resolve_solutions_library
 
     work_root, _older_pin, sentinel, digest = _legacy_shallow_checkout(tmp_path)
     legacy = work_root / "nebius-solutions-library"
     attached_head = _git(legacy, "rev-parse", "HEAD").stdout.strip()
-    assert _git(legacy, "symbolic-ref", "-q", "HEAD").stdout.strip() == "refs/heads/main"
+    assert (
+        _git(legacy, "symbolic-ref", "-q", "HEAD").stdout.strip() == "refs/heads/main"
+    )
 
     recipe = _resolve_solutions_library(None, work_root, attached_head)
 
@@ -659,7 +686,9 @@ def test_solutions_library_missing_pin_offline_is_actionable_and_preserves_state
     assert _git(legacy, "rev-parse", "HEAD").stdout.strip() != pinned
 
 
-def test_solutions_library_dirty_checkout_fails_without_touching_state(tmp_path) -> None:
+def test_solutions_library_dirty_checkout_fails_without_touching_state(
+    tmp_path,
+) -> None:
     from npa.soperator.lifecycle import (
         SolutionsLibraryReconciliationError,
         _resolve_solutions_library,
@@ -675,7 +704,9 @@ def test_solutions_library_dirty_checkout_fails_without_touching_state(tmp_path)
     assert hashlib.sha256(sentinel.read_bytes()).hexdigest() == digest
 
 
-def test_solutions_library_untracked_checkout_conflict_preserves_state(tmp_path) -> None:
+def test_solutions_library_untracked_checkout_conflict_preserves_state(
+    tmp_path,
+) -> None:
     from npa.soperator.lifecycle import (
         SolutionsLibraryReconciliationError,
         _resolve_solutions_library,
@@ -687,7 +718,9 @@ def test_solutions_library_untracked_checkout_conflict_preserves_state(tmp_path)
     conflict.write_text("operator-owned untracked bytes\n")
     head_before = _git(legacy, "rev-parse", "HEAD").stdout.strip()
 
-    with pytest.raises(SolutionsLibraryReconciliationError, match="untracked file conflicts"):
+    with pytest.raises(
+        SolutionsLibraryReconciliationError, match="untracked file conflicts"
+    ):
         _resolve_solutions_library(None, work_root, pinned)
 
     assert _git(legacy, "rev-parse", "HEAD").stdout.strip() == head_before
@@ -695,7 +728,9 @@ def test_solutions_library_untracked_checkout_conflict_preserves_state(tmp_path)
     assert hashlib.sha256(sentinel.read_bytes()).hexdigest() == digest
 
 
-def test_solutions_library_concurrent_reconciliation_is_serial_and_idempotent(tmp_path) -> None:
+def test_solutions_library_concurrent_reconciliation_is_serial_and_idempotent(
+    tmp_path,
+) -> None:
     from npa.soperator.lifecycle import _resolve_solutions_library
 
     work_root, pinned, sentinel, digest = _legacy_shallow_checkout(tmp_path)
@@ -723,10 +758,14 @@ def test_solutions_library_concurrent_reconciliation_is_serial_and_idempotent(tm
     assert hashlib.sha256(sentinel.read_bytes()).hexdigest() == digest
 
 
-def test_fresh_solutions_library_clone_is_published_atomically(tmp_path, monkeypatch) -> None:
+def test_fresh_solutions_library_clone_is_published_atomically(
+    tmp_path, monkeypatch
+) -> None:
     from npa.soperator import lifecycle
 
-    legacy_root, pinned, _sentinel, _digest = _legacy_shallow_checkout(tmp_path / "source")
+    legacy_root, pinned, _sentinel, _digest = _legacy_shallow_checkout(
+        tmp_path / "source"
+    )
     origin = _git(
         legacy_root / "nebius-solutions-library", "remote", "get-url", "origin"
     ).stdout.strip()
@@ -735,7 +774,9 @@ def test_fresh_solutions_library_clone_is_published_atomically(tmp_path, monkeyp
 
     recipe = lifecycle._resolve_solutions_library(None, fresh_root, pinned)
 
-    assert recipe == fresh_root / f"nebius-solutions-library-{pinned[:12]}" / "soperator"
+    assert (
+        recipe == fresh_root / f"nebius-solutions-library-{pinned[:12]}" / "soperator"
+    )
     assert _git(recipe.parent, "rev-parse", "HEAD").stdout.strip() == pinned
     assert not list(fresh_root.glob(".*.clone-*"))
 
@@ -767,11 +808,15 @@ def test_deploy_path_reconciles_legacy_source_before_provider_mutation(
         "_require_bin",
         lambda name: required_bins.append(name) or name,
     )
-    monkeypatch.setattr(lifecycle, "_assert_solutions_library_contract", assert_contract)
+    monkeypatch.setattr(
+        lifecycle, "_assert_solutions_library_contract", assert_contract
+    )
     monkeypatch.setattr(
         lifecycle,
         "_prepare_installation",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("provider boundary crossed")),
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("provider boundary crossed")
+        ),
     )
     spec = SoperatorSpec(
         name="cluster",
@@ -798,12 +843,18 @@ def test_deploy_path_reconciles_legacy_source_before_provider_mutation(
     assert result["control_plane"]["system_max_size"] == 24
 
 
-def test_destroy_source_preflight_reconciles_without_provider_calls(tmp_path, monkeypatch) -> None:
+def test_destroy_source_preflight_reconciles_without_provider_calls(
+    tmp_path, monkeypatch
+) -> None:
     from npa.soperator import lifecycle
 
     work_root, pinned, sentinel, digest = _legacy_shallow_checkout(tmp_path)
-    install = work_root / "nebius-solutions-library" / "soperator" / "installations" / "live"
-    monkeypatch.setattr(lifecycle, "_assert_solutions_library_contract", lambda *a, **k: None)
+    install = (
+        work_root / "nebius-solutions-library" / "soperator" / "installations" / "live"
+    )
+    monkeypatch.setattr(
+        lifecycle, "_assert_solutions_library_contract", lambda *a, **k: None
+    )
     required_bins: list[str] = []
     monkeypatch.setattr(
         lifecycle,
@@ -904,7 +955,9 @@ def test_existing_deploy_fails_closed_on_invalid_persisted_identity(
     assert sidecar.read_text() == payload
 
 
-def test_env_sidecar_atomic_failure_preserves_previous_bytes(tmp_path, monkeypatch) -> None:
+def test_env_sidecar_atomic_failure_preserves_previous_bytes(
+    tmp_path, monkeypatch
+) -> None:
     from npa.soperator import lifecycle
 
     install = tmp_path / "install"
@@ -939,7 +992,13 @@ def test_terraform_replacement_guard_blocks_plan_and_removes_private_plan(
 
     def fake_capture(command, **kwargs):
         if "plan" in command:
-            plan_path = Path(next(arg.removeprefix("-out=") for arg in command if arg.startswith("-out=")))
+            plan_path = Path(
+                next(
+                    arg.removeprefix("-out=")
+                    for arg in command
+                    if arg.startswith("-out=")
+                )
+            )
             plan_path.write_bytes(b"private plan")
             return _Done(returncode=2)
         if "show" in command:
@@ -982,7 +1041,13 @@ def test_terraform_replacement_guard_yields_exact_owner_only_saved_plan(
     def fake_capture(command, **kwargs):
         calls.append(command)
         if "plan" in command:
-            plan_path = Path(next(arg.removeprefix("-out=") for arg in command if arg.startswith("-out=")))
+            plan_path = Path(
+                next(
+                    arg.removeprefix("-out=")
+                    for arg in command
+                    if arg.startswith("-out=")
+                )
+            )
             plan_path.write_bytes(b"private plan")
             return _Done(returncode=2)
         if "show" in command:
@@ -1036,7 +1101,11 @@ def test_terraform_replacement_guard_allows_only_audited_local_refreshes(
     def fake_capture(command, **kwargs):
         if "plan" in command:
             plan_path = Path(
-                next(arg.removeprefix("-out=") for arg in command if arg.startswith("-out="))
+                next(
+                    arg.removeprefix("-out=")
+                    for arg in command
+                    if arg.startswith("-out=")
+                )
             )
             plan_path.write_bytes(b"private plan")
             return _Done(returncode=2)
@@ -1050,7 +1119,10 @@ def test_terraform_replacement_guard_allows_only_audited_local_refreshes(
         "terraform", cwd=tmp_path, env={}, timeout=30
     ) as guarded_plan:
         assert guarded_plan.safe_local_replacements == tuple(
-            sorted(address for address, _provider in lifecycle._SAFE_LOCAL_RECONCILIATION_REPLACEMENTS)
+            sorted(
+                address
+                for address, _provider in lifecycle._SAFE_LOCAL_RECONCILIATION_REPLACEMENTS
+            )
         )
 
 
@@ -1082,7 +1154,11 @@ def test_terraform_replacement_guard_blocks_wrong_provider_or_delete(
     def fake_capture(command, **kwargs):
         if "plan" in command:
             plan_path = Path(
-                next(arg.removeprefix("-out=") for arg in command if arg.startswith("-out="))
+                next(
+                    arg.removeprefix("-out=")
+                    for arg in command
+                    if arg.startswith("-out=")
+                )
             )
             plan_path.write_bytes(b"private plan")
             return _Done(returncode=2)
@@ -1135,7 +1211,9 @@ def test_replacement_guard_stops_before_sidecar_overwrite_or_apply(
     original = sidecar.read_bytes()
     commands: list[list[str]] = []
     monkeypatch.setattr(lifecycle, "_require_bin", lambda name: name)
-    monkeypatch.setattr(lifecycle, "_assert_solutions_library_contract", lambda *a, **k: None)
+    monkeypatch.setattr(
+        lifecycle, "_assert_solutions_library_contract", lambda *a, **k: None
+    )
     monkeypatch.setattr(lifecycle, "_prepare_installation", lambda *a, **k: install)
     monkeypatch.setattr(lifecycle, "_resolve_subnet", lambda *a, **k: "subnet")
     monkeypatch.setattr(
@@ -1313,10 +1391,13 @@ def test_destroy_reconstructs_tf_var_env_from_sidecar(tmp_path, monkeypatch) -> 
         project_id="project-xyz",
         subnet_id="vpcsubnet-123",
         o11y_profile="npa-mk8s",
+        cluster_id="mk8scluster-exact",
     )
 
     monkeypatch.setattr(lifecycle, "_require_bin", lambda name: name)
-    monkeypatch.setattr(lifecycle, "_assert_solutions_library_contract", lambda *a, **k: None)
+    monkeypatch.setattr(
+        lifecycle, "_assert_solutions_library_contract", lambda *a, **k: None
+    )
     # _soperator_tf_env -> _terraform_env mints a real IAM token via the `nebius`
     # CLI; stub it so the destroy tests never touch real infra (CI has no nebius).
     monkeypatch.setattr(lifecycle, "_terraform_env", lambda nebius_bin, **kwargs: {})
@@ -1335,6 +1416,8 @@ def test_destroy_reconstructs_tf_var_env_from_sidecar(tmp_path, monkeypatch) -> 
         # its env. state pull -> empty (no cluster id); filesystem list -> none.
         if "destroy" in cmd:
             captured["env"] = dict(env or {})
+        if "mk8s" in cmd and "get" in cmd:
+            return _Done(stdout="not found", returncode=1)
         return _Done(stdout="")
 
     monkeypatch.setattr(lifecycle, "_run_stream", fake_stream)
@@ -1378,10 +1461,14 @@ def test_destroy_deletes_orphaned_vpc_allocation(tmp_path, monkeypatch) -> None:
         project_id="project-xyz",
         subnet_id="vpcsubnet-123",
         o11y_profile="npa-mk8s",
+        cluster_id="mk8scluster-exact",
+        owned_allocation_ids=["alloc-orphan"],
     )
 
     monkeypatch.setattr(lifecycle, "_require_bin", lambda name: name)
-    monkeypatch.setattr(lifecycle, "_assert_solutions_library_contract", lambda *a, **k: None)
+    monkeypatch.setattr(
+        lifecycle, "_assert_solutions_library_contract", lambda *a, **k: None
+    )
     # _soperator_tf_env -> _terraform_env mints a real IAM token via the `nebius`
     # CLI; stub it so the destroy tests never touch real infra (CI has no nebius).
     monkeypatch.setattr(lifecycle, "_terraform_env", lambda nebius_bin, **kwargs: {})
@@ -1395,13 +1482,20 @@ def test_destroy_deletes_orphaned_vpc_allocation(tmp_path, monkeypatch) -> None:
     alloc_json = json.dumps(
         {
             "items": [
-                {"metadata": {"id": "alloc-orphan", "name": "soperator-npasop-public-static-ip"}},
+                {
+                    "metadata": {
+                        "id": "alloc-orphan",
+                        "name": "soperator-npasop-public-static-ip",
+                    }
+                },
                 {"metadata": {"id": "alloc-other", "name": "mk8snodegroup-abc-alias"}},
             ]
         }
     )
 
     def fake_capture(cmd, *, cwd=None, env=None, timeout=None, check=True):
+        if "mk8s" in cmd and "get" in cmd:
+            return _Done(stdout="not found", returncode=1)
         if "vpc" in cmd and "list" in cmd:
             return _Done(stdout=alloc_json)
         if "vpc" in cmd and "delete" in cmd:
@@ -1440,10 +1534,14 @@ def test_destroy_deletes_orphaned_filesystems(tmp_path, monkeypatch) -> None:
         project_id="project-xyz",
         subnet_id="vpcsubnet-123",
         o11y_profile="npa-mk8s",
+        cluster_id="mk8scluster-exact",
+        owned_filesystem_ids=["fs-jail", "fs-spool"],
     )
 
     monkeypatch.setattr(lifecycle, "_require_bin", lambda name: name)
-    monkeypatch.setattr(lifecycle, "_assert_solutions_library_contract", lambda *a, **k: None)
+    monkeypatch.setattr(
+        lifecycle, "_assert_solutions_library_contract", lambda *a, **k: None
+    )
     # _soperator_tf_env -> _terraform_env mints a real IAM token via the `nebius`
     # CLI; stub it so the destroy tests never touch real infra (CI has no nebius).
     monkeypatch.setattr(lifecycle, "_terraform_env", lambda nebius_bin, **kwargs: {})
@@ -1458,7 +1556,12 @@ def test_destroy_deletes_orphaned_filesystems(tmp_path, monkeypatch) -> None:
         {
             "items": [
                 {"metadata": {"id": "fs-jail", "name": "soperator-npasop-jail"}},
-                {"metadata": {"id": "fs-spool", "name": "soperator-npasop-controller-spool"}},
+                {
+                    "metadata": {
+                        "id": "fs-spool",
+                        "name": "soperator-npasop-controller-spool",
+                    }
+                },
                 # A same-project filesystem from another cluster must be left alone.
                 {"metadata": {"id": "fs-other", "name": "soperator-npatest-jail"}},
             ]
@@ -1466,6 +1569,8 @@ def test_destroy_deletes_orphaned_filesystems(tmp_path, monkeypatch) -> None:
     )
 
     def fake_capture(cmd, *, cwd=None, env=None, timeout=None, check=True):
+        if "mk8s" in cmd and "get" in cmd:
+            return _Done(stdout="not found", returncode=1)
         if "filesystem" in cmd and "list" in cmd:
             return _Done(stdout=fs_json)
         if "filesystem" in cmd and "delete" in cmd:
@@ -1543,20 +1648,22 @@ def test_kube_credential_refresh_pins_selected_nebius_profile(monkeypatch) -> No
         {"NPA_NEBIUS_PROFILE": "cross-tenant-profile"},
     )
 
-    assert calls == [[
-        "nebius",
-        "--profile",
-        "cross-tenant-profile",
-        "mk8s",
-        "cluster",
-        "get-credentials",
-        "--id",
-        "cluster-id",
-        "--external",
-        "--force",
-        "--context-name",
-        "context",
-    ]]
+    assert calls == [
+        [
+            "nebius",
+            "--profile",
+            "cross-tenant-profile",
+            "mk8s",
+            "cluster",
+            "get-credentials",
+            "--id",
+            "cluster-id",
+            "--external",
+            "--force",
+            "--context-name",
+            "context",
+        ]
+    ]
 
 
 class _Done:
@@ -1602,24 +1709,28 @@ def test_direct_gpu_creation_check_uses_every_worker_and_gpu(monkeypatch) -> Non
         spec, "ctx", "kubectl", timeout_seconds=123
     )
 
-    assert checks == [{
-        "pool": "gpu",
-        "nodes": 2,
-        "gpus_per_node": 8,
-        "tests": [
-            "deviceQuery",
-            "vectorAdd",
-            "simpleMultiGPU",
-            "p2pBandwidthLatencyTest",
-        ],
-        "status": "PASS",
-    }]
+    assert checks == [
+        {
+            "pool": "gpu",
+            "nodes": 2,
+            "gpus_per_node": 8,
+            "tests": [
+                "deviceQuery",
+                "vectorAdd",
+                "simpleMultiGPU",
+                "p2pBandwidthLatencyTest",
+            ],
+            "status": "PASS",
+        }
+    ]
     command = next(call for call in calls if "srun" in call)
     assert "--nodes=2" in command
     assert "--ntasks=2" in command
     assert "--gpus-per-node=8" in command
     assert "--nodelist=gpu-3,gpu-7" in command
-    immediate = int(next(arg.split("=", 1)[1] for arg in command if arg.startswith("--immediate=")))
+    immediate = int(
+        next(arg.split("=", 1)[1] for arg in command if arg.startswith("--immediate="))
+    )
     assert 1 <= immediate <= 123
     assert f"--time={lifecycle._slurm_time_limit(immediate)}" in command
     assert "--kill-on-bad-exit=1" in command
@@ -1655,7 +1766,9 @@ def test_direct_gpu_creation_check_fails_on_missing_worker_pass(monkeypatch) -> 
         ],
     )
 
-    with pytest.raises(lifecycle.GPUCreationCheckError, match="1/2 workers reported PASS") as caught:
+    with pytest.raises(
+        lifecycle.GPUCreationCheckError, match="1/2 workers reported PASS"
+    ) as caught:
         lifecycle._run_gpu_creation_checks(spec, "ctx", "kubectl")
     assert caught.value.cleanup_confirmed is True
 
@@ -1694,7 +1807,9 @@ def test_gpu_creation_check_rejects_invalid_timeout_before_slurm(monkeypatch) ->
     monkeypatch.setattr(
         lifecycle,
         "_run_capture",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unexpected Slurm call")),
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("unexpected Slurm call")
+        ),
     )
     with pytest.raises(ValueError, match="at least 1 second"):
         lifecycle._run_gpu_creation_checks(
@@ -1702,7 +1817,9 @@ def test_gpu_creation_check_rejects_invalid_timeout_before_slurm(monkeypatch) ->
         )
 
 
-def test_deploy_rejects_invalid_gpu_timeout_before_source_or_provider(monkeypatch) -> None:
+def test_deploy_rejects_invalid_gpu_timeout_before_source_or_provider(
+    monkeypatch,
+) -> None:
     from npa.soperator import lifecycle
 
     monkeypatch.setattr(
@@ -1733,7 +1850,9 @@ def test_gpu_creation_check_requires_live_slurm_pool_cardinality(monkeypatch) ->
     assert caught.value.phase == "node-mapping"
 
 
-def test_gpu_creation_check_process_timeout_cancels_and_verifies_queue(monkeypatch) -> None:
+def test_gpu_creation_check_process_timeout_cancels_and_verifies_queue(
+    monkeypatch,
+) -> None:
     from npa.soperator import lifecycle
 
     calls: list[tuple[list[str], dict]] = []
@@ -1804,7 +1923,9 @@ def test_gpu_creation_check_queue_failure_is_nonzero_and_cleaned(monkeypatch) ->
     assert any("scancel" in command for command in calls)
 
 
-def test_gpu_creation_check_success_requires_no_remaining_slurm_job(monkeypatch) -> None:
+def test_gpu_creation_check_success_requires_no_remaining_slurm_job(
+    monkeypatch,
+) -> None:
     from npa.soperator import lifecycle
 
     def fake_capture(cmd, **kwargs):
@@ -1828,7 +1949,9 @@ def test_gpu_creation_check_success_requires_no_remaining_slurm_job(monkeypatch)
     assert checks[0]["status"] == "PASS"
 
 
-def test_gpu_creation_check_success_tolerates_slurm_completion_race(monkeypatch) -> None:
+def test_gpu_creation_check_success_tolerates_slurm_completion_race(
+    monkeypatch,
+) -> None:
     from npa.soperator import lifecycle
 
     squeue_calls = 0
@@ -1886,7 +2009,9 @@ def _degraded_deployment_result(lifecycle) -> dict:
     return error.result
 
 
-def test_sdk_typed_degraded_validation_retains_deploy_metadata(tmp_path, monkeypatch) -> None:
+def test_sdk_typed_degraded_validation_retains_deploy_metadata(
+    tmp_path, monkeypatch
+) -> None:
     from types import SimpleNamespace
 
     from npa.sdk import soperator as sdk
@@ -1905,7 +2030,9 @@ def test_sdk_typed_degraded_validation_retains_deploy_metadata(tmp_path, monkeyp
     )
     monkeypatch.setattr(lifecycle, "_require_bin", lambda name: name)
     monkeypatch.setattr(lifecycle, "_resolve_solutions_library", lambda *a, **k: recipe)
-    monkeypatch.setattr(lifecycle, "_assert_solutions_library_contract", lambda *a, **k: None)
+    monkeypatch.setattr(
+        lifecycle, "_assert_solutions_library_contract", lambda *a, **k: None
+    )
     monkeypatch.setattr(lifecycle, "_prepare_installation", lambda *a, **k: install)
     monkeypatch.setattr(lifecycle, "_resolve_subnet", lambda *a, **k: "subnet")
     monkeypatch.setattr(
@@ -2036,13 +2163,17 @@ def test_cli_degraded_validation_exits_nonzero_with_metadata(
         assert parsed["install_dir"] == "/safe/installations/c"
         assert parsed["validation"]["cleanup_confirmed"] is True
     else:
-        assert "was applied, but mandatory post-apply validation failed" in invoked.output
+        assert (
+            "was applied, but mandatory post-apply validation failed" in invoked.output
+        )
         assert "nebius-c-slurm" in invoked.output
         assert "/safe/installations/c" in invoked.output
         assert "Deployed soperator cluster" not in invoked.output
 
 
-def test_json_mode_terraform_runner_captures_child_output(monkeypatch, tmp_path, capsys) -> None:
+def test_json_mode_terraform_runner_captures_child_output(
+    monkeypatch, tmp_path, capsys
+) -> None:
     from npa.soperator import lifecycle
 
     seen: dict = {}
@@ -2142,8 +2273,10 @@ def test_install_monitoring_crds_strips_token_and_verifies(monkeypatch) -> None:
         if "helmreleases" in cmd:
             return _Done(stdout='{"items": []}')
         if "get" in cmd and "crd" in cmd:
-            return _Done(stdout="customresourcedefinition.apiextensions.k8s.io/"
-                                "servicemonitors.monitoring.coreos.com\n")
+            return _Done(
+                stdout="customresourcedefinition.apiextensions.k8s.io/"
+                "servicemonitors.monitoring.coreos.com\n"
+            )
         return _Done(stdout="serverside-applied")
 
     monkeypatch.setattr(lifecycle, "_run_capture", fake_capture)
@@ -2253,9 +2386,7 @@ def test_monitoring_prerequisites_reset_only_stalled_dashboard_release(
             },
             {
                 "metadata": {"name": "healthy-monitoring-dashboards"},
-                "status": {
-                    "conditions": [{"type": "Ready", "status": "True"}]
-                },
+                "status": {"conditions": [{"type": "Ready", "status": "True"}]},
             },
             {
                 "metadata": {"name": "progressing-monitoring-dashboards"},
@@ -2324,7 +2455,9 @@ def test_monitoring_release_inspection_failure_is_actionable(monkeypatch) -> Non
         lifecycle._install_monitoring_crds("kubectl", "ctx")
 
 
-def test_monitoring_release_inspection_allows_clean_pre_flux_install(monkeypatch) -> None:
+def test_monitoring_release_inspection_allows_clean_pre_flux_install(
+    monkeypatch,
+) -> None:
     from npa.soperator import lifecycle
 
     def fake_capture(cmd, *, cwd=None, env=None, timeout=None, check=True):
@@ -2510,9 +2643,7 @@ def test_patch_active_checks_locals_is_idempotent(tmp_path) -> None:
 
     locals_tf = _write_recipe_locals(
         tmp_path,
-        "      ssh-check = {\n"
-        "        commentPrefix = null\n"
-        "      }\n",
+        "      ssh-check = {\n        commentPrefix = null\n      }\n",
     )
 
     assert lifecycle._patch_active_checks_locals(tmp_path) is True
@@ -2679,9 +2810,13 @@ def test_contract_assertion_stops_before_installation_or_cloud_mutation(
     )
     recipe = tmp_path / "soperator"
     (recipe / "installations" / "example").mkdir(parents=True)
-    monkeypatch.setattr(lifecycle, "resolve_environment", lambda **k: SimpleNamespace(
-        region="us-central1", tenant_id="tenant", project_id="project"
-    ))
+    monkeypatch.setattr(
+        lifecycle,
+        "resolve_environment",
+        lambda **k: SimpleNamespace(
+            region="us-central1", tenant_id="tenant", project_id="project"
+        ),
+    )
     monkeypatch.setattr(lifecycle, "_require_bin", lambda name: name)
     monkeypatch.setattr(lifecycle, "_resolve_solutions_library", lambda *a, **k: recipe)
     monkeypatch.setattr(
@@ -2955,9 +3090,7 @@ def test_reserved_capacity_name_preflight_resolves_and_verifies_without_echoing_
     from npa.soperator import lifecycle
 
     group = _capacity_group(usage=8)
-    monkeypatch.setattr(
-        lifecycle, "_run_capture", _reserved_provider_capture([group])
-    )
+    monkeypatch.setattr(lifecycle, "_run_capture", _reserved_provider_capture([group]))
     worker = _reserved_worker(
         capacity_block_group="", capacity_block_group_name="reserved-b200-test"
     )
@@ -3022,9 +3155,7 @@ def test_reserved_capacity_preflight_rejects_wrong_project_tenant(
     monkeypatch.setattr(
         lifecycle,
         "_run_capture",
-        _reserved_provider_capture(
-            [_capacity_group()], project_tenant="tenant-other"
-        ),
+        _reserved_provider_capture([_capacity_group()], project_tenant="tenant-other"),
     )
     with pytest.raises(ValueError, match="project does not belong"):
         lifecycle._resolve_reserved_worker_capacity(
@@ -3046,9 +3177,7 @@ def test_reserved_capacity_preflight_rejects_wrong_project_region(
     monkeypatch.setattr(
         lifecycle,
         "_run_capture",
-        _reserved_provider_capture(
-            [_capacity_group()], project_region="eu-north1"
-        ),
+        _reserved_provider_capture([_capacity_group()], project_region="eu-north1"),
     )
     with pytest.raises(ValueError, match="project region does not match"):
         lifecycle._resolve_reserved_worker_capacity(
@@ -3130,9 +3259,7 @@ def test_reserved_capacity_name_preflight_rejects_missing_and_ambiguous(
         capacity_block_group="", capacity_block_group_name="reserved-b200-test"
     )
     spec = SoperatorSpec(name="c", workers=[worker])
-    monkeypatch.setattr(
-        lifecycle, "_run_capture", _reserved_provider_capture([])
-    )
+    monkeypatch.setattr(lifecycle, "_run_capture", _reserved_provider_capture([]))
     with pytest.raises(ValueError, match="name was not found"):
         lifecycle._resolve_reserved_worker_capacity(
             spec,
@@ -3180,9 +3307,7 @@ def test_reserved_capacity_preflight_credits_already_applied_strict_workers(
                                     "name": "gpu-0",
                                     "fixed_node_count": 2,
                                     "template": {
-                                        "resources": {
-                                            "preset": "8gpu-160vcpu-1792gb"
-                                        },
+                                        "resources": {"preset": "8gpu-160vcpu-1792gb"},
                                         "reservation_policy": {
                                             "policy": "STRICT",
                                             "reservation_ids": [

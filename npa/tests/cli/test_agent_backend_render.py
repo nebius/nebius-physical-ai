@@ -154,6 +154,64 @@ def test_rendered_backend_compiles(monkeypatch) -> None:
     assert '"deployment": dict(DEPLOYMENT)' in body
 
 
+def test_rendered_mk8s_provision_forwards_shared_backend_desired_state(
+    monkeypatch, tmp_path
+) -> None:
+    """The agent route must not retain divergent GPU/MIG defaults."""
+    import sys
+
+    from npa import provisioning
+
+    module_name = "npa_rendered_mk8s_provision_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    captured = {}
+
+    class Result:
+        def to_dict(self):
+            return {"actions": ["shared-backend"]}
+
+    monkeypatch.setattr(module, "_agent_npa_ready", lambda: (True, ""))
+    monkeypatch.setattr(
+        provisioning,
+        "provision_if_absent",
+        lambda **kwargs: captured.update(kwargs) or Result(),
+    )
+    try:
+        result = module._provision_agent_infra(
+            "project-alias",
+            "mig-target",
+            dry_run=True,
+            desired={
+                "cpu_nodes": 0,
+                "gpu_nodes": 2,
+                "gpu_platform": "gpu-rtx6000",
+                "gpu_preset": "1gpu-24vcpu-218gb",
+                "gpu_health_timeout_minutes": 47,
+                "mig": {
+                    "enabled": True,
+                    "strategy": "mixed",
+                    "config": "all-balanced",
+                },
+                "capacity_block_group": "runtime-reservation",
+            },
+        )
+    finally:
+        sys.modules.pop(module_name, None)
+
+    assert result["ok"] is True
+    assert captured["project"] == "project-alias"
+    assert captured["cluster_name"] == "mig-target"
+    assert captured["cpu_nodes"] == 0
+    assert captured["gpu_nodes"] == 2
+    assert captured["gpu_platform"] == "gpu-rtx6000"
+    assert captured["gpu_preset"] == "1gpu-24vcpu-218gb"
+    assert captured["gpu_health_timeout_minutes"] == 47
+    assert captured["mig_enabled"] is True
+    assert captured["mig_strategy"] == "mixed"
+    assert captured["mig_config"] == "all-balanced"
+    assert captured["capacity_block_group"] == "runtime-reservation"
+
+
 def test_session_owned_status_skips_cross_bucket_artifact_discovery(
     monkeypatch, tmp_path
 ) -> None:

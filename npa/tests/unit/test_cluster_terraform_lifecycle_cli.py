@@ -2261,3 +2261,148 @@ def test_terraform_env_mints_when_no_token_present(monkeypatch) -> None:
     env = tf_mod._terraform_env("nebius")
 
     assert env["TF_VAR_iam_token"] == "minted-token"
+
+
+def test_fresh_shared_up_resolves_subnet_and_uses_id_backed_project(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.cluster_backends.base import MaterializedPlan
+    from npa.fleet import lifecycle
+
+    tf_dir = tmp_path / "deploy" / "cluster"
+    recipe = tf_dir / "vendor" / "nebius-solutions-library" / "k8s-training"
+    recipe.mkdir(parents=True)
+    (recipe / "variables.tf").write_text('variable "cluster_name" { type = string }\n')
+    (recipe.parent / "modules").mkdir()
+    (tf_dir / "terraform.tfvars").write_text(
+        "\n".join(
+            [
+                'tenant_id = "tenant-test"',
+                'parent_id = "project-test"',
+                'region = "region-test"',
+                'cluster_name = "fresh"',
+                "cpu_nodes_count = 1",
+                "gpu_nodes_count = 0",
+            ]
+        )
+    )
+    kubeconfig = tmp_path / "fresh-kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n")
+    applied = {}
+    preflight_requests = []
+    network_calls = []
+    events = []
+
+    class Adapter:
+        def preflight(self, desired, request):
+            events.append("preflight")
+            preflight_requests.append(request)
+            return {"backend": "mk8s"}
+
+        def materialize(self, desired, request):
+            return MaterializedPlan("mk8s", {}, {})
+
+        def apply(self, desired, request):
+            events.append("apply")
+            applied["desired"] = desired
+            applied["request"] = request
+            return {
+                "status": "deployed",
+                "cluster_id": "cluster-test",
+                "kubeconfig": str(kubeconfig),
+            }
+
+    monkeypatch.setattr(tf_mod, "get_backend", lambda _name: Adapter())
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda value: value)
+    monkeypatch.setattr(tf_mod, "_preflight_terraform_version", lambda *_args: None)
+    monkeypatch.setattr(
+        tf_mod,
+        "_terraform_env",
+        lambda _bin: {
+            "TF_VAR_tenant_id": "tenant-test",
+            "TF_VAR_parent_id": "project-test",
+            "TF_VAR_region": "region-test",
+        },
+    )
+
+    def ensure(*_args, **kwargs):
+        events.append("ensure-subnet")
+        network_calls.append(kwargs)
+        return "subnet-created", "network-created"
+
+    monkeypatch.setattr(lifecycle, "ensure_subnet", ensure)
+
+    result = runner.invoke(
+        app,
+        ["up", "--terraform-dir", str(tf_dir), "--skip-sky-smoke"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert applied["desired"].subnet_id == "subnet-created"
+    assert applied["request"].subnet_id == "subnet-created"
+    assert applied["request"].project.name == ""
+    assert applied["request"].project.project_id == "project-test"
+    assert preflight_requests[0].provider_preflight is True
+    assert network_calls[0]["network_state_path"].name == ".npa-fleet-network.json"
+    assert events == ["preflight", "ensure-subnet", "apply"]
+
+
+def test_fresh_shared_up_does_not_create_network_when_capacity_preflight_fails(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.cluster_backends.base import MaterializedPlan
+    from npa.fleet import lifecycle
+
+    tf_dir = tmp_path / "deploy" / "cluster"
+    recipe = tf_dir / "vendor" / "nebius-solutions-library" / "k8s-training"
+    recipe.mkdir(parents=True)
+    (recipe / "variables.tf").write_text('variable "cluster_name" { type = string }\n')
+    (recipe.parent / "modules").mkdir()
+    (tf_dir / "terraform.tfvars").write_text(
+        'tenant_id = "tenant-test"\n'
+        'parent_id = "project-test"\n'
+        'region = "region-test"\n'
+        'cluster_name = "fresh"\n'
+        "cpu_nodes_count = 1\n"
+        "gpu_nodes_count = 0\n"
+    )
+
+    class Adapter:
+        def preflight(self, desired, request):
+            return {"backend": "mk8s"}
+
+        def materialize(self, desired, request):
+            return MaterializedPlan("mk8s", {}, {})
+
+    monkeypatch.setattr(tf_mod, "get_backend", lambda _name: Adapter())
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda value: value)
+    monkeypatch.setattr(tf_mod, "_preflight_terraform_version", lambda *_args: None)
+    monkeypatch.setattr(
+        tf_mod,
+        "_terraform_env",
+        lambda _bin: {
+            "TF_VAR_tenant_id": "tenant-test",
+            "TF_VAR_parent_id": "project-test",
+            "TF_VAR_region": "region-test",
+        },
+    )
+    monkeypatch.setattr(
+        tf_mod,
+        "_preflight_whole_path_capacity",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("quota blocked")),
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "ensure_subnet",
+        lambda *_args, **_kwargs: pytest.fail(
+            "network mutation must follow successful capacity preflight"
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        ["up", "--terraform-dir", str(tf_dir), "--skip-sky-smoke"],
+    )
+
+    assert result.exit_code != 0
+    assert "quota blocked" in result.output

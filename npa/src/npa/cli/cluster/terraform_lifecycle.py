@@ -12,6 +12,7 @@ import signal
 import subprocess
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -38,6 +39,26 @@ from npa.cluster.gpu_health import (
     probe_gpu_health,
     validate_gpu_health,
 )
+from npa.cluster_backends import get_backend
+from npa.cluster_backends.mk8s import (
+    MK8sApplyRequest,
+    MK8sDestroyRequest,
+    MK8sExecutionScope,
+    MK8sProjectIdentity,
+    MK8sStatusRequest,
+)
+from npa.cluster_backends.mig import (
+    GPU_DEVICE_PLUGIN_VERSION,
+    GPU_DRIVER_VERSION,
+    GPU_GFD_VERSION,
+    GPU_MIG_MANAGER_VERSION,
+    GPU_OPERATOR_VERSION,
+    MIG_KUBERNETES_VERSION,
+    MigSpec,
+    wait_for_mig_ready,
+)
+from npa.fleet.spec import ClusterSpec, FleetSpec, NodePoolSpec, ProjectSpec
+from npa.cluster_backends.mk8s_render import validate_recipe_mig_compatibility
 from npa.provisioning_journal import (
     ProvisioningOperation,
     current_operation,
@@ -136,6 +157,7 @@ def _transactional_cluster_up(function):
             try:
                 result = function(*args, **kwargs)
             except BaseException as exc:
+                typer.echo(f"cluster up failed: {type(exc).__name__}: {exc}", err=True)
                 operation.record_failure(exc)
                 for candidate in (
                     tf_dir / "errored.tfstate",
@@ -332,6 +354,19 @@ def up_cmd(
         "--gpu-cuda-smoke-image",
         help="Container image for the post-deploy CUDA vectorAdd smoke.",
     ),
+    mig_enabled: bool = typer.Option(
+        False,
+        "--mig/--no-mig",
+        help="Enable the pinned RTX PRO 6000 hardware-MIG policy and exact readiness gate.",
+    ),
+    mig_strategy: str = typer.Option(
+        "mixed", "--mig-strategy", help="Hardware-MIG strategy (validated: mixed)."
+    ),
+    mig_config: str = typer.Option(
+        "all-balanced",
+        "--mig-config",
+        help="RTX PRO 6000 MIG geometry (validated: all-balanced).",
+    ),
     preemptible: bool | None = typer.Option(
         None,
         "--preemptible/--on-demand",
@@ -420,9 +455,12 @@ def up_cmd(
         _preflight_terraform_version(terraform_bin)
         _apply_project_tf_vars(env, project, tfvars)
         _guard_tfvars_iam_token(tf_dir, tfvars)
-        _preflight_whole_path_capacity(
-            tfvars, env, context=context, project_alias=project
-        )
+        _apply_capacity_block_group_tfvars(tfvars, capacity_block_group)
+        # MIG uses the recipe's deliberately small 128 GiB worker disk. Apply
+        # that resolved desired state before whole-path disk quota accounting.
+        if mig_enabled:
+            tfvars["gpu_disk_size"] = 128
+            tfvars["mig_enabled"] = True
         driver = _resolve_gpu_driver_selection(tfvars, env)
         typer.echo(
             "GPU driver strategy: "
@@ -438,8 +476,266 @@ def up_cmd(
                 "re-enables the unsafe driver/Fabric Manager host-device ordering path.",
                 err=True,
             )
+        resolved_gpu_nodes = int(_tfvar_value(tfvars, env, "gpu_nodes_count", 1) or 0)
+        resolved_cpu_nodes = int(_tfvar_value(tfvars, env, "cpu_nodes_count", 1) or 0)
+        resolved_capacity = capacity_block_group.strip() or str(
+            _tfvar_value(tfvars, env, "capacity_block_group", "") or ""
+        )
+        backend_desired = ClusterSpec(
+            name=context,
+            k8s_version=(
+                MIG_KUBERNETES_VERSION
+                if mig_enabled
+                else str(_tfvar_value(tfvars, env, "k8s_version", "") or "")
+            ),
+            cpu_nodes=(
+                NodePoolSpec(
+                    count=resolved_cpu_nodes,
+                    platform=str(
+                        _tfvar_value(tfvars, env, "cpu_nodes_platform", "cpu-d3")
+                    ),
+                    preset=str(
+                        _tfvar_value(tfvars, env, "cpu_nodes_preset", "8vcpu-32gb")
+                    ),
+                )
+                if resolved_cpu_nodes
+                else None
+            ),
+            gpu_nodes=(
+                NodePoolSpec(
+                    count=resolved_gpu_nodes,
+                    platform=str(
+                        _tfvar_value(tfvars, env, "gpu_nodes_platform", "gpu-rtx6000")
+                        or "gpu-rtx6000"
+                    ),
+                    preset=str(
+                        _tfvar_value(
+                            tfvars, env, "gpu_nodes_preset", "1gpu-24vcpu-218gb"
+                        )
+                        or "1gpu-24vcpu-218gb"
+                    ),
+                    disk_size_gib=(
+                        128
+                        if mig_enabled
+                        else int(_tfvar_value(tfvars, env, "gpu_disk_size", 0) or 0)
+                    ),
+                    capacity_block_group=resolved_capacity,
+                    preemptible=_tfvar_bool(
+                        tfvars, env, "gpu_nodes_preemptible", False
+                    ),
+                )
+                if resolved_gpu_nodes
+                else None
+            ),
+            enable_gpu_cluster=_tfvar_bool(tfvars, env, "enable_gpu_cluster", False),
+            infiniband_fabric=str(
+                _tfvar_value(tfvars, env, "infiniband_fabric", "") or ""
+            ),
+            enable_filestore=(
+                _tfvar_bool(tfvars, env, "enable_filestore", False)
+                or bool(_tfvar_value(tfvars, env, "existing_filestore", ""))
+            ),
+            existing_filestore=str(
+                _tfvar_value(tfvars, env, "existing_filestore", "") or ""
+            ),
+            subnet_id=str(_tfvar_value(tfvars, env, "subnet_id", "") or ""),
+            filestore_disk_size_gibibytes=int(
+                _tfvar_value(tfvars, env, "filestore_disk_size_gibibytes", 1024) or 1024
+            ),
+            gpu_driver_mode=(
+                "operator"
+                if mig_enabled
+                else str(_tfvar_value(tfvars, env, "gpu_driver_mode", "auto") or "auto")
+            ),
+            managed_driver_preset=str(
+                _tfvar_value(
+                    tfvars,
+                    env,
+                    "managed_driver_preset",
+                    DEFAULT_MANAGED_DRIVER_PRESET,
+                )
+                or DEFAULT_MANAGED_DRIVER_PRESET
+            ),
+            allow_unsafe_nvswitch_operator=_tfvar_bool(
+                tfvars, env, "allow_unsafe_nvswitch_operator", False
+            ),
+            gpu_health_stabilization_seconds=gpu_health_stabilization_seconds,
+            gpu_health_timeout_minutes=validation_timeout,
+            gpu_cuda_smoke=gpu_cuda_smoke,
+            gpu_cuda_smoke_image=gpu_cuda_smoke_image,
+            mig=(
+                MigSpec(enabled=True, strategy=mig_strategy, config=mig_config)
+                if mig_enabled
+                else None
+            ),
+            allow_control_plane_only=True,
+        )
+        backend_desired.validate()
+        recipe_dir = tf_dir / "vendor" / "nebius-solutions-library" / "k8s-training"
+        if mig_enabled:
+            validate_recipe_mig_compatibility(backend_desired, recipe_dir)
+        from npa.cluster.state import cluster_dir
+
+        project_id_value = str(_tfvar_value(tfvars, env, "parent_id", "") or "")
+        tenant_id_value = str(_tfvar_value(tfvars, env, "tenant_id", "") or "")
+        region_value = str(_tfvar_value(tfvars, env, "region", "") or "")
+        legacy_state_exists = any(
+            candidate.is_file()
+            for candidate in (tf_dir / "terraform.tfstate", tf_dir / "errored.tfstate")
+        )
+        shared_recipe_available = (recipe_dir / "variables.tf").is_file() and (
+            recipe_dir.parent / "modules"
+        ).is_dir()
+        shared_ssh_public_key = (
+            _resolve_shared_ssh_public_key(tfvars, env)
+            if not legacy_state_exists and shared_recipe_available
+            else str(_tfvar_value(tfvars, env, "ssh_public_key", "") or "")
+        )
+        backend_root = cluster_dir(context) / "backend-state"
+        project_spec = ProjectSpec(
+            # Existing-project identity is ID-backed. Giving it a synthetic
+            # name would make provider reconciliation compare that fake name
+            # with the real cloud project and defeat zero-increment reuse.
+            name="",
+            project_id=project_id_value,
+            region=region_value,
+            clusters=[backend_desired],
+        )
+        one_target = FleetSpec(
+            name="standalone",
+            tenant_id=tenant_id_value,
+            region=region_value,
+            projects=[project_spec],
+        )
+        # Standalone, agent, and fleet consume one canonical desired-state,
+        # capability, and materialization boundary for every mk8s topology.
+        adapter_request = MK8sApplyRequest(
+            recipe_dir=(
+                recipe_dir if (recipe_dir / "variables.tf").is_file() else None
+            ),
+            nebius_bin=nebius_bin,
+            tenant_id=tenant_id_value,
+            region=region_value,
+            provider_env=env,
+            # Every fresh shared-backend apply uses the fleet capacity/quota
+            # preflight, not only MIG targets. In particular, a non-MIG GPU
+            # pool with a capacity block must prove the exact STRICT
+            # reservation before subnet or Terraform mutation. Existing
+            # legacy Terraform state keeps its established reconciliation
+            # checks below instead of being reclassified as fleet state.
+            provider_preflight=(
+                mig_enabled or (not legacy_state_exists and shared_recipe_available)
+            ),
+            scope=MK8sExecutionScope(
+                fleet_name=one_target.name,
+                tenant_id=tenant_id_value,
+                region=region_value,
+                project_prefix=one_target.project_prefix,
+            ),
+            project=MK8sProjectIdentity(
+                project_key=project_spec.key(),
+                project_id=project_id_value,
+                project_name=project_spec.name,
+                expected_provider_name=project_spec.display_name(
+                    one_target.project_prefix
+                ),
+            ),
+            project_id=project_id_value,
+            subnet_id=backend_desired.subnet_id,
+            ssh_public_key=shared_ssh_public_key,
+            fleet_root=backend_root,
+        )
+        get_backend("mk8s").preflight(backend_desired, adapter_request)
+        get_backend("mk8s").materialize(backend_desired, adapter_request)
+        mig_desired = backend_desired if mig_enabled else None
+        _preflight_whole_path_capacity(
+            tfvars, env, context=context, project_alias=project
+        )
+        if not legacy_state_exists and shared_recipe_available:
+            if not (project_id_value and tenant_id_value and region_value):
+                raise typer.BadParameter(
+                    "shared mk8s apply requires resolved project, tenant, and region"
+                )
+            # Subnet creation is a provider mutation. Run it only after both
+            # shared and whole-path capacity checks have succeeded.
+            if not backend_desired.subnet_id:
+                from npa.fleet.lifecycle import ensure_subnet
+
+                resolved_subnet_id, _created_network_id = ensure_subnet(
+                    nebius_bin,
+                    project_id_value,
+                    name_stem=context,
+                    env=env,
+                    network_state_path=(
+                        backend_root / project_spec.key() / ".npa-fleet-network.json"
+                    ),
+                    on_status=lambda message: typer.echo(message, err=True),
+                )
+                backend_desired = replace(backend_desired, subnet_id=resolved_subnet_id)
+                project_spec = replace(project_spec, clusters=[backend_desired])
+                one_target = replace(one_target, projects=[project_spec])
+            result = get_backend("mk8s").apply(
+                backend_desired,
+                MK8sApplyRequest(
+                    scope=MK8sExecutionScope(
+                        fleet_name=one_target.name,
+                        tenant_id=tenant_id_value,
+                        region=region_value,
+                        project_prefix=one_target.project_prefix,
+                    ),
+                    project=MK8sProjectIdentity(
+                        project_key=project_spec.key(),
+                        project_id=project_id_value,
+                        project_name=project_spec.name,
+                        expected_provider_name=project_spec.display_name(
+                            one_target.project_prefix
+                        ),
+                    ),
+                    project_id=project_id_value,
+                    subnet_id=backend_desired.subnet_id,
+                    region=region_value,
+                    tenant_id=tenant_id_value,
+                    ssh_public_key=shared_ssh_public_key,
+                    fleet_root=backend_root,
+                    recipe_root=recipe_dir.parent,
+                    terraform_bin=terraform_bin,
+                    nebius_bin=nebius_bin,
+                    timeout_minutes=timeout,
+                    on_status=lambda message: typer.echo(message, err=True),
+                    standalone_context=context,
+                    standalone_kubeconfig=kubeconfig,
+                ),
+            )
+            if result.get("status") != "deployed":
+                raise RuntimeError(
+                    str(result.get("error") or "shared mk8s backend apply failed")
+                )
+            kubeconfig_path = Path(str(result["kubeconfig"]))
+            typer.echo(f"Cluster ID: {result['cluster_id']}")
+            typer.echo(f"Cluster name: {backend_desired.name}")
+            typer.echo(f"Kubeconfig: {kubeconfig_path}")
+            if sky_smoke and mig_desired is None:
+                from npa.orchestration.skypilot.k8s_gpu_catalog import (
+                    wait_for_kubernetes_accelerators,
+                )
+
+                wait_for_kubernetes_accelerators(
+                    [sky_gpus] if sky_gpus.strip() else [],
+                    context=context,
+                    kubeconfig=kubeconfig_path,
+                    sky_bin=sky_bin or None,
+                    label_known_gpus=True,
+                    on_status=lambda message: typer.echo(message, err=True),
+                )
+                _run_skypilot_smoke(
+                    kubeconfig_path,
+                    context,
+                    backend_desired.name,
+                    sky_gpus,
+                    sky_bin=sky_bin,
+                )
+            return
         _terraform_init(terraform_bin, tf_dir, env)
-        _apply_capacity_block_group_tfvars(tfvars, capacity_block_group)
         _guard_unmanaged_duplicate(nebius_bin, terraform_bin, tf_dir, tfvars, env)
         _preflight_filestore_quota(nebius_bin, tfvars, env)
         _preflight_gpu_capacity(nebius_bin, tfvars, env)
@@ -463,6 +759,38 @@ def up_cmd(
             *_string_var_args("gpu_nodes_preset", gpu_preset),
             *_string_var_args("gpu_driver_mode", gpu_driver_mode),
             *_string_var_args("managed_driver_preset", managed_driver_preset),
+            *(
+                [
+                    "-var",
+                    "mig_enabled=true",
+                    "-var",
+                    f"mig_strategy={mig_strategy}",
+                    "-var",
+                    f"mig_parted_config={mig_config}",
+                    "-var",
+                    "gpu_driver_mode=operator",
+                    "-var",
+                    "gpu_disk_size=128",
+                    "-var",
+                    f"k8s_version={MIG_KUBERNETES_VERSION}",
+                    "-var",
+                    f"gpu_operator_version={GPU_OPERATOR_VERSION}",
+                    "-var",
+                    f"gpu_driver_version={GPU_DRIVER_VERSION}",
+                    "-var",
+                    f"gpu_device_plugin_version={GPU_DEVICE_PLUGIN_VERSION}",
+                    "-var",
+                    f"gpu_gfd_version={GPU_GFD_VERSION}",
+                    "-var",
+                    f"gpu_mig_manager_version={GPU_MIG_MANAGER_VERSION}",
+                    "-var",
+                    "gpu_mig_with_reboot=true",
+                    "-var",
+                    "gpu_operator_rdma_enabled=false",
+                ]
+                if mig_enabled
+                else []
+            ),
             *(
                 [
                     "-var",
@@ -496,12 +824,17 @@ def up_cmd(
             )
         )
         try:
-            _run_stream(
-                apply_args,
-                cwd=tf_dir,
-                env=env,
-                timeout=timeout * 60,
-                cancel=lambda: watcher.fatal_reason,
+            get_backend("mk8s").apply(
+                backend_desired,
+                replace(
+                    adapter_request,
+                    terraform_command=tuple(apply_args),
+                    terraform_cwd=tf_dir,
+                    terraform_env=env,
+                    terraform_timeout_seconds=timeout * 60,
+                    terraform_cancel_reason=lambda: watcher.fatal_reason,
+                    command_runner=_run_stream,
+                ),
             )
         except BaseException as exc:
             watcher.stop()
@@ -621,7 +954,26 @@ def up_cmd(
         typer.echo(f"Cluster name: {cluster_name}")
         typer.echo(f"Kubeconfig: {kubeconfig_path}")
 
-        if validate:
+        if mig_desired is not None:
+            typer.echo("Waiting for exact two-snapshot MIG convergence...")
+            verification = get_backend("mk8s").verify(
+                mig_desired,
+                MK8sStatusRequest(
+                    kubeconfig=kubeconfig_path,
+                    kubectl_bin=kubectl_bin,
+                    on_status=lambda message: typer.echo(message, err=True),
+                    run_capture=_run_capture,
+                    mig_verifier=wait_for_mig_ready,
+                    gpu_health_verifier=validate_gpu_health,
+                ),
+            )
+            typer.echo(
+                "MIG validation: "
+                f"{verification['verified_nodes']} reserved workers with exact "
+                "partition resources"
+            )
+
+        if validate and mig_desired is None:
             validation = _validate_cluster(
                 kubectl_bin,
                 kubeconfig_path,
@@ -638,7 +990,7 @@ def up_cmd(
                 f"{validation['total_gpus']} allocatable GPUs, "
                 f"default StorageClass {validation['default_storage_class']}"
             )
-        if sky_smoke:
+        if sky_smoke and mig_desired is None:
             from npa.orchestration.skypilot.k8s_gpu_catalog import (
                 wait_for_kubernetes_accelerators,
             )
@@ -663,6 +1015,11 @@ def up_cmd(
                 sky_gpus,
                 sky_bin=sky_bin,
                 credentials_checked=True,
+            )
+        elif sky_smoke and mig_desired is not None:
+            typer.echo(
+                "SkyPilot whole-GPU smoke skipped: the mandatory MIG readiness "
+                "gate already ran a representative MIG CUDA allocation."
             )
         _save_terraform_cluster_state(
             tfvars,
@@ -764,6 +1121,14 @@ def down_cmd(
         "context": context_name.strip() or str(tfvars.get("cluster_name") or ""),
     }
     try:
+        saved_cluster = load_cluster_state(str(live["context"] or ""))
+    except Exception:  # noqa: BLE001 - malformed legacy state must not block teardown
+        saved_cluster = None
+    if saved_cluster is not None:
+        live["project_id"] = live["project_id"] or saved_cluster.project_id
+        live["region"] = live["region"] or saved_cluster.region
+        live["cluster_id"] = saved_cluster.cluster_id
+    try:
         cleanup_identity = resolve_cleanup_identity(
             explicit={
                 "project_alias": alias,
@@ -790,6 +1155,122 @@ def down_cmd(
     )
     exact_project_id = str(cleanup_identity.get("project_id") or "")
     exact_cluster_id = str(cleanup_identity.get("cluster_id") or "")
+    from npa.cluster.state import delete_cluster_state, metadata_file
+
+    shared_metadata_path = metadata_file(preview_context)
+    shared_metadata: dict[str, Any] = {}
+    if shared_metadata_path.is_file():
+        try:
+            candidate = json.loads(shared_metadata_path.read_text())
+            if isinstance(candidate, dict):
+                shared_metadata = candidate
+        except (json.JSONDecodeError, OSError):
+            shared_metadata = {}
+    if shared_metadata.get("managed_by") == "npa cluster shared-mk8s-backend":
+        from npa.fleet.lifecycle import _reclaim_unused_project_networks
+
+        recorded_project = str(shared_metadata.get("backend_project_id") or "")
+        recorded_cluster = str(shared_metadata.get("backend_cluster_id") or "")
+        if exact_project_id and exact_project_id != recorded_project:
+            raise typer.BadParameter(
+                "shared mk8s teardown project identity does not match local ownership"
+            )
+        if exact_cluster_id and exact_cluster_id != recorded_cluster:
+            raise typer.BadParameter(
+                "shared mk8s teardown cluster identity does not match local ownership"
+            )
+        backend_root = Path(
+            str(shared_metadata.get("backend_state_root") or "")
+        ).expanduser()
+        expected_root = shared_metadata_path.parent / "backend-state"
+        if (
+            not backend_root.is_absolute()
+            or backend_root.resolve() != expected_root.resolve()
+        ):
+            raise typer.BadParameter(
+                "shared mk8s backend state root is missing or non-canonical"
+            )
+        provider_name = str(shared_metadata.get("backend_cluster_name") or "")
+        project_key = str(shared_metadata.get("backend_project_key") or "")
+        fleet_name = str(shared_metadata.get("backend_fleet_name") or "")
+        if not (provider_name and project_key and fleet_name and recorded_project):
+            raise typer.BadParameter("shared mk8s ownership metadata is incomplete")
+        desired = ClusterSpec(name=provider_name, allow_control_plane_only=True)
+        backend_project = ProjectSpec(
+            name=project_key,
+            project_id=recorded_project,
+            clusters=[desired],
+        )
+        backend_spec = FleetSpec(
+            name=fleet_name,
+            tenant_id=str(shared_metadata.get("backend_tenant_id") or ""),
+            region=str(shared_metadata.get("backend_region") or ""),
+            projects=[backend_project],
+        )
+        if not force and not typer.confirm(
+            f"Destroy shared-backend cluster {preview_context} ({recorded_cluster})?"
+        ):
+            raise typer.Abort()
+        destroyed = get_backend("mk8s").destroy(
+            desired,
+            MK8sDestroyRequest(
+                scope=MK8sExecutionScope(
+                    fleet_name=backend_spec.name,
+                    tenant_id=backend_spec.tenant_id,
+                    region=backend_spec.region,
+                    project_prefix=backend_spec.project_prefix,
+                ),
+                project=MK8sProjectIdentity(
+                    project_key=backend_project.key(),
+                    project_id=backend_project.project_id,
+                    project_name=backend_project.name,
+                    expected_provider_name=backend_project.display_name(
+                        backend_spec.project_prefix
+                    ),
+                ),
+                fleet_root=backend_root,
+                terraform_bin=_require_bin(
+                    os.environ.get("NPA_TERRAFORM_BIN") or "terraform"
+                ),
+                nebius_bin=_require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius"),
+                profile=str(shared_metadata.get("backend_profile") or ""),
+                timeout_minutes=timeout,
+                on_status=lambda message: typer.echo(message, err=True),
+            ),
+        )
+        network_results = _reclaim_unused_project_networks(
+            backend_spec,
+            fleet_root=backend_root,
+            nebius_bin=_require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius"),
+            prefix=backend_spec.project_prefix,
+            only_projects=[backend_project.key()],
+            profile=str(shared_metadata.get("backend_profile") or ""),
+            on_status=lambda message: typer.echo(message, err=True),
+        )
+        network_errors = [
+            str(error)
+            for item in network_results
+            for error in item.get("errors", [])
+            if isinstance(item, dict)
+        ]
+        if network_errors:
+            raise RuntimeError("; ".join(network_errors))
+        if destroyed and destroyed.get("status") == "destroy-incomplete":
+            raise RuntimeError(
+                "; ".join(str(item) for item in destroyed.get("errors") or [])
+            )
+        if not keep_local_state:
+            delete_cluster_state(preview_context)
+        response = {
+            "status": "destroyed",
+            "backend": "mk8s",
+            "cluster_id": recorded_cluster,
+            "context": preview_context,
+        }
+        typer.echo(
+            json.dumps(response) if output_json else f"Destroyed {preview_context}."
+        )
+        return
     if operation_id:
         from npa.provisioning_journal import load_operation
 
@@ -1925,6 +2406,41 @@ def _capacity_block_group_var_args(capacity_block_group: str) -> list[str]:
 _SSH_PUBLIC_KEY_NAMES = ("id_ed25519.pub", "id_rsa.pub", "id_ecdsa.pub")
 
 
+def _resolve_shared_ssh_public_key(tfvars: dict[str, Any], env: dict[str, str]) -> str:
+    """Resolve legacy path-or-key tfvars into the shared recipe's key value."""
+
+    raw = tfvars.get("ssh_public_key")
+    if raw is None:
+        raw = env.get("TF_VAR_ssh_public_key", "")
+    document = str(raw or "").strip()
+    key_match = re.search(r'\bkey\s*=\s*"([^"]+)"', document, re.DOTALL)
+    if key_match:
+        return key_match.group(1).strip()
+    path_match = re.search(r'\bpath\s*=\s*"([^"]+)"', document, re.DOTALL)
+    if path_match:
+        path = Path(path_match.group(1)).expanduser()
+        if not path.is_file():
+            raise typer.BadParameter(f"SSH public key path does not exist: {path}")
+        return path.read_text(encoding="utf-8").strip()
+    if document and document.startswith(("ssh-", "ecdsa-")):
+        return document
+    explicit = os.environ.get("NPA_SSH_PUBLIC_KEY", "").strip()
+    candidates = (
+        [Path(explicit).expanduser()]
+        if explicit
+        else [Path.home() / ".ssh" / name for name in _SSH_PUBLIC_KEY_NAMES]
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.read_text(encoding="utf-8").strip()
+    searched = ", ".join(str(path) for path in candidates)
+    raise typer.BadParameter(
+        f"No SSH public key found for the cluster node groups (looked at {searched}). "
+        "Create one with `ssh-keygen -t ed25519`, point NPA_SSH_PUBLIC_KEY at an "
+        "existing key, or set ssh_public_key in terraform.tfvars."
+    )
+
+
 def _ssh_public_key_var_args(
     tfvars: dict[str, Any], env: dict[str, str], *, allow_placeholder: bool = False
 ) -> list[str]:
@@ -2389,6 +2905,14 @@ def _preflight_gpu_capacity(
 
     gpu_nodes = int(_tfvar_value(tfvars, env, "gpu_nodes_count", 0) or 0)
     if gpu_nodes <= 0:
+        return
+    # MIG's STRICT capacity-block-backed pool consumes the named reservation,
+    # not ordinary on-demand GPU quota. Reservation ownership/region/platform
+    # and remaining capacity are validated by the shared mk8s preflight above.
+    if (
+        _tfvar_bool(tfvars, env, "mig_enabled", False)
+        and str(_tfvar_value(tfvars, env, "capacity_block_group", "") or "").strip()
+    ):
         return
     platform = str(
         _tfvar_value(tfvars, env, "gpu_nodes_platform", "gpu-rtx6000") or ""

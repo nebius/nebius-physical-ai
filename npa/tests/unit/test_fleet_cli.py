@@ -1595,6 +1595,7 @@ def _destroy_one_with_mocked_terraform(tmp_path, monkeypatch, *, destroy_fails: 
             "subnet_id": "sub-9",
             "created_network_id": "net-9",
             "cluster_name": "c",
+            "cluster_id": "cluster-test",
             "status": "deployed",
         },
     )
@@ -3898,8 +3899,8 @@ def test_quota_filesystem_byte_unit_usage_and_drift() -> None:
         parse_allowances(json.dumps({"items": [drift]}), "us-central1")
 
 
-def test_nebius_discovery_fails_closed_and_state_write_logs(
-    tmp_path, monkeypatch, caplog
+def test_nebius_discovery_fails_closed_and_state_write_fails(
+    tmp_path, monkeypatch
 ) -> None:
     from npa.fleet import lifecycle as L
 
@@ -3914,8 +3915,8 @@ def test_nebius_discovery_fails_closed_and_state_write_logs(
         "_write_json_file",
         lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")),
     )
-    L._write_fleet_state(tmp_path, {"name": "f"})
-    assert "could not persist fleet summary" in caplog.text
+    with pytest.raises(OSError, match="disk full"):
+        L._write_fleet_state(tmp_path, {"name": "f"})
 
 
 def test_nebius_config_parse_failure_logs_without_content(

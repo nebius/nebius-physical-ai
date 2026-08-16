@@ -202,6 +202,10 @@ def _write_env_sidecar(
     project_id: str,
     subnet_id: str,
     o11y_profile: str,
+    auth_profile: str = "",
+    cluster_id: str = "",
+    owned_filesystem_ids: list[str] | None = None,
+    owned_allocation_ids: list[str] | None = None,
 ) -> None:
     path = install_dir / _ENV_SIDECAR
     temporary = install_dir / f".{_ENV_SIDECAR}.{uuid.uuid4().hex}.tmp"
@@ -214,6 +218,14 @@ def _write_env_sidecar(
                     "project_id": project_id,
                     "subnet_id": subnet_id,
                     "o11y_profile": o11y_profile,
+                    # Authentication and observability are independent Nebius
+                    # profiles. Never use the telemetry profile to authenticate
+                    # a later status or destroy operation.
+                    "auth_profile": auth_profile,
+                    "backend": "soperator",
+                    "cluster_id": cluster_id,
+                    "owned_filesystem_ids": list(owned_filesystem_ids or []),
+                    "owned_allocation_ids": list(owned_allocation_ids or []),
                 },
                 indent=2,
             )
@@ -239,6 +251,12 @@ def _load_env_sidecar(install_dir: Path) -> dict[str, str] | None:
         raise ValueError(
             f"persisted Soperator installation identity at {path} is not an object; "
             "refusing to fall back to an ambient project"
+        )
+    backend = str(data.get("backend") or "")
+    if backend and backend != "soperator":
+        raise ValueError(
+            f"persisted installation at {path} belongs to backend {backend!r}; "
+            "refusing Soperator lifecycle action"
         )
     return data
 
@@ -377,9 +395,7 @@ def _status_installation_dir(
     candidates = [
         root / "nebius-solutions-library" / "soperator" / "installations" / name,
         *sorted(
-            root.glob(
-                f"nebius-solutions-library-*/soperator/installations/{name}"
-            )
+            root.glob(f"nebius-solutions-library-*/soperator/installations/{name}")
         ),
     ]
     existing = [candidate for candidate in candidates if candidate.is_dir()]
@@ -421,12 +437,17 @@ def worker_capacity_status(
         )
     pools: dict[str, dict[str, Any]] = {}
     for resource in resources:
-        if not isinstance(resource, dict) or resource.get("type") != "nebius_mk8s_v1_node_group":
+        if (
+            not isinstance(resource, dict)
+            or resource.get("type") != "nebius_mk8s_v1_node_group"
+        ):
             continue
         if resource.get("name") != "worker_v2":
             continue
         for instance in resource.get("instances") or []:
-            attributes = instance.get("attributes") if isinstance(instance, dict) else None
+            attributes = (
+                instance.get("attributes") if isinstance(instance, dict) else None
+            )
             if not isinstance(attributes, dict):
                 continue
             node_group_name = str(attributes.get("name") or "")
@@ -464,6 +485,50 @@ def worker_capacity_status(
     return [pools[key] for key in sorted(pools)]
 
 
+def cluster_status(
+    name: str,
+    *,
+    terraform_dir: Path | None = None,
+    work_root: Path | None = None,
+) -> dict[str, Any]:
+    """Query the real Slurm controller and augment it with local capacity state."""
+
+    context = f"nebius-{name}-slurm"
+    kubectl = _require_bin(os.environ.get("NPA_KUBECTL_BIN") or "kubectl")
+    proc = subprocess.run(
+        [
+            kubectl,
+            "--context",
+            context,
+            "exec",
+            "-n",
+            "soperator",
+            "controller-0",
+            "-c",
+            "slurmctld",
+            "--",
+            "sinfo",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).strip()
+        raise RuntimeError(f"Could not query Slurm on {name!r}: {detail}")
+    workers = worker_capacity_status(
+        name, terraform_dir=terraform_dir, work_root=work_root
+    )
+    return {
+        "name": name,
+        "context": context,
+        "sinfo": proc.stdout,
+        "workers": workers,
+        "capacity_status": "applied" if workers else "unknown",
+        "status": "running",
+    }
+
+
 def _provider_json(
     command: list[str],
     *,
@@ -480,7 +545,9 @@ def _provider_json(
             timeout=120,
         )
     except subprocess.TimeoutExpired as exc:
-        raise ValueError(f"{description} timed out; refusing provider mutation") from exc
+        raise ValueError(
+            f"{description} timed out; refusing provider mutation"
+        ) from exc
     if completed.returncode != 0 or not completed.stdout.strip():
         raise ValueError(f"{description} failed; refusing provider mutation")
     try:
@@ -517,12 +584,17 @@ def _current_reserved_gpu_usage(install_dir: Path) -> dict[tuple[str, str], int]
         )
     usage: dict[tuple[str, str], int] = {}
     for resource in resources:
-        if not isinstance(resource, dict) or resource.get("type") != "nebius_mk8s_v1_node_group":
+        if (
+            not isinstance(resource, dict)
+            or resource.get("type") != "nebius_mk8s_v1_node_group"
+        ):
             continue
         if resource.get("name") != "worker_v2":
             continue
         for instance in resource.get("instances") or []:
-            attributes = instance.get("attributes") if isinstance(instance, dict) else None
+            attributes = (
+                instance.get("attributes") if isinstance(instance, dict) else None
+            )
             if not isinstance(attributes, dict):
                 continue
             template = attributes.get("template") or {}
@@ -630,7 +702,7 @@ def _resolve_reserved_worker_capacity(
         raise ValueError(
             "capacity-block inventory omitted a valid items list; refusing provider mutation"
         )
-    from npa.fleet.quotas import parse_capacity_blocks
+    from npa.cluster_backends.quotas import parse_capacity_blocks
 
     blocks = parse_capacity_blocks(json.dumps(inventory))
     advice_inventory = _provider_json(
@@ -695,7 +767,9 @@ def _resolve_reserved_worker_capacity(
                     )
                 except ValueError:
                     foreign = {}
-                foreign_parent = str((foreign.get("metadata") or {}).get("parent_id") or "")
+                foreign_parent = str(
+                    (foreign.get("metadata") or {}).get("parent_id") or ""
+                )
                 reason = (
                     "belongs to another tenant"
                     if foreign_parent and foreign_parent != tenant_id
@@ -740,9 +814,7 @@ def _resolve_reserved_worker_capacity(
                 f"worker pool {pool.name!r} capacity block belongs to another tenant"
             )
         if block["state"] != "STATE_ACTIVE":
-            raise ValueError(
-                f"worker pool {pool.name!r} capacity block is not active"
-            )
+            raise ValueError(f"worker pool {pool.name!r} capacity block is not active")
         if block["region"] != region:
             raise ValueError(
                 f"worker pool {pool.name!r} capacity-block region does not match {region}"
@@ -762,10 +834,20 @@ def _resolve_reserved_worker_capacity(
             item
             for item in advice_items
             if isinstance(item, dict)
-            and str(((item.get("spec") or {}).get("compute_instance") or {}).get("platform") or "")
+            and str(
+                ((item.get("spec") or {}).get("compute_instance") or {}).get("platform")
+                or ""
+            )
             == pool.platform
             and str(
-                ((((item.get("spec") or {}).get("compute_instance") or {}).get("preset") or {}).get("name"))
+                (
+                    (
+                        ((item.get("spec") or {}).get("compute_instance") or {}).get(
+                            "preset"
+                        )
+                        or {}
+                    ).get("name")
+                )
                 or ""
             )
             == pool.preset
@@ -831,9 +913,7 @@ def _resolve_reserved_worker_capacity(
             raise ValueError(
                 "reserved GPU availability is unavailable; refusing provider mutation"
             )
-        already_applied = existing_usage.get(
-            (reservation_id, requirement["preset"]), 0
-        )
+        already_applied = existing_usage.get((reservation_id, requirement["preset"]), 0)
         additional = max(0, requirement["required_gpus"] - already_applied)
         if available < additional:
             pools = ", ".join(sorted(requirement["pools"]))
@@ -845,19 +925,14 @@ def _resolve_reserved_worker_capacity(
             )
         gpus_per_node = _gpu_count_from_preset(requirement["preset"])
         already_applied_nodes = already_applied // gpus_per_node
-        additional_nodes = max(
-            0, requirement["required_nodes"] - already_applied_nodes
-        )
+        additional_nodes = max(0, requirement["required_nodes"] - already_applied_nodes)
         if additional_nodes and requirement["available_nodes"] is None:
             pools = ", ".join(sorted(requirement["pools"]))
             raise ValueError(
                 f"worker pool(s) {pools} reserved preset availability is stale "
                 "or unavailable; refusing provider mutation"
             )
-        if (
-            additional_nodes
-            and requirement["available_nodes"] < additional_nodes
-        ):
+        if additional_nodes and requirement["available_nodes"] < additional_nodes:
             pools = ", ".join(sorted(requirement["pools"]))
             raise ValueError(
                 f"reserved preset capacity is insufficient for worker pool(s) "
@@ -883,7 +958,9 @@ def _log(on_status: Callable[[str], None] | None, message: str) -> None:
 def _api_domain(region: str) -> str:
     """Nebius API domain for a region (the recipe hardcodes the EU domain)."""
 
-    return "api.eu.nebius.cloud:443" if region.startswith("eu") else "api.nebius.cloud:443"
+    return (
+        "api.eu.nebius.cloud:443" if region.startswith("eu") else "api.nebius.cloud:443"
+    )
 
 
 def _root_login_key_fingerprint(value: str) -> str:
@@ -896,7 +973,9 @@ def _read_root_login_key_file(path: Path, *, source: str) -> ResolvedRootLoginSS
     try:
         value = path.expanduser().read_text(encoding="utf-8")
     except OSError as exc:
-        raise ValueError(f"could not read {source} root-login SSH public-key file") from exc
+        raise ValueError(
+            f"could not read {source} root-login SSH public-key file"
+        ) from exc
     normalized = validate_ssh_public_key_record(value)
     return ResolvedRootLoginSSHKey(
         value=normalized,
@@ -959,7 +1038,9 @@ def _resolve_root_login_ssh_public_key(
     for name in ("id_ed25519.pub", "id_rsa.pub", "id_ecdsa.pub"):
         candidate = ssh_dir / name
         if candidate.is_file():
-            return _read_root_login_key_file(candidate, source=f"operator default {name}")
+            return _read_root_login_key_file(
+                candidate, source=f"operator default {name}"
+            )
     raise ValueError(
         "soperator login-node root access requires one SSH public key: set "
         "root_login_ssh_public_key in the spec, pass "
@@ -1137,7 +1218,9 @@ def _clone_solutions_library_atomically(
             )
         present = _git_capture(git, candidate, ["cat-file", "-e", f"{ref}^{{commit}}"])
         if present.returncode != 0:
-            fetched = _git_capture(git, candidate, ["fetch", "--no-tags", "origin", ref])
+            fetched = _git_capture(
+                git, candidate, ["fetch", "--no-tags", "origin", ref]
+            )
             if fetched.returncode != 0:
                 raise SolutionsLibraryReconciliationError(
                     "the fresh clone could not fetch the pinned solutions-library commit"
@@ -1154,7 +1237,9 @@ def _clone_solutions_library_atomically(
         os.replace(candidate, clone_dir)
 
 
-def _resolve_solutions_library(terraform_dir: Path | None, work_root: Path, ref: str) -> Path:
+def _resolve_solutions_library(
+    terraform_dir: Path | None, work_root: Path, ref: str
+) -> Path:
     """Resolve and safely reconcile one immutable solutions-library commit."""
 
     ref = _validate_immutable_solutions_library_ref(ref)
@@ -1203,7 +1288,7 @@ def _resolve_solutions_library(terraform_dir: Path | None, work_root: Path, ref:
         return recipe
 
 
-def _nebius_cli_env() -> dict[str, str]:
+def _nebius_cli_env(profile: str = "") -> dict[str, str]:
     """Environment for direct ``nebius`` CLI calls (pre-flight / cleanup).
 
     A stale ambient ``NEBIUS_IAM_TOKEN`` (e.g. an expired cloud-env token left in
@@ -1215,9 +1300,9 @@ def _nebius_cli_env() -> dict[str, str]:
     """
 
     env = os.environ.copy()
-    if env.get("NPA_NEBIUS_PROFILE", "").strip() and not env.get(
-        "NEBIUS_PROFILE", ""
-    ).strip():
+    if profile.strip():
+        env["NEBIUS_PROFILE"] = profile.strip()
+    elif env.get("NPA_NEBIUS_PROFILE", "").strip():
         env["NEBIUS_PROFILE"] = env["NPA_NEBIUS_PROFILE"].strip()
     reuse = env.get("NPA_REUSE_IAM_TOKEN", "").strip().lower() in {
         "1",
@@ -1232,7 +1317,16 @@ def _nebius_cli_env() -> dict[str, str]:
 
 def _resolve_subnet(nebius_bin: str, project_id: str, env: dict[str, str]) -> str:
     result = _run_capture(
-        [nebius_bin, "vpc", "subnet", "list", "--parent-id", project_id, "--format", "json"],
+        [
+            nebius_bin,
+            "vpc",
+            "subnet",
+            "list",
+            "--parent-id",
+            project_id,
+            "--format",
+            "json",
+        ],
         env=env,
     )
     payload = json.loads(result.stdout or "{}")
@@ -1271,16 +1365,20 @@ _NODECONFIGURATOR_USERNS_VALUES = (
     "                    - -c\n"
     "                    - |-\n"
     "                      sysctl -w kernel.unprivileged_userns_clone=1\n"
-    "                      if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ] && [ \"${apparmor_enabled}\" = \"false\" ]; then\n"
+    '                      if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ] && [ "${apparmor_enabled}" = "false" ]; then\n'
     "                        sysctl -w kernel.apparmor_restrict_unprivileged_userns=0\n"
     "                      fi\n"
     "                      sysctl -w net.core.rmem_max=536870912\n"
     "                      sysctl -w net.core.wmem_max=536870912\n"
-    "                      sysctl -w net.ipv4.tcp_rmem=\"4096 131072 536870912\"\n"
-    "                      sysctl -w net.ipv4.tcp_wmem=\"4096 16384 536870912\"\n"
+    '                      sysctl -w net.ipv4.tcp_rmem="4096 131072 536870912"\n'
+    '                      sysctl -w net.ipv4.tcp_wmem="4096 16384 536870912"\n'
 )
-_STABLE_KUBECTL_CONTEXT_MARKER = "# npa: refresh credentials only when the cluster id changes"
-_STABLE_LOGIN_IP_MARKER = "# npa: regenerate the login script only when its public IP changes"
+_STABLE_KUBECTL_CONTEXT_MARKER = (
+    "# npa: refresh credentials only when the cluster id changes"
+)
+_STABLE_LOGIN_IP_MARKER = (
+    "# npa: regenerate the login script only when its public IP changes"
+)
 
 
 def _patch_kubectl_context_trigger_text(text: str) -> tuple[str, bool]:
@@ -1346,7 +1444,9 @@ def _patch_stable_local_reconciliation_triggers(recipe_dir: Path) -> bool:
     staged: list[tuple[Path, str]] = []
     for path, transform in targets:
         if not path.is_file():
-            raise UpstreamContractError(f"missing pinned local reconciliation target {path}")
+            raise UpstreamContractError(
+                f"missing pinned local reconciliation target {path}"
+            )
         patched, target_changed = transform(path.read_text())
         if target_changed:
             staged.append((path, patched))
@@ -1522,7 +1622,9 @@ def _assert_solutions_library_contract(
         check=False,
     )
     if head.returncode != 0 or head.stdout.strip().lower() != ref:
-        actual = head.stdout.strip()[:12] if head.returncode == 0 else "not-a-git-checkout"
+        actual = (
+            head.stdout.strip()[:12] if head.returncode == 0 else "not-a-git-checkout"
+        )
         raise UpstreamContractError(
             f"solutions-library checkout mismatch: expected {ref[:12]}, got {actual}"
         )
@@ -1558,7 +1660,9 @@ def _assert_solutions_library_contract(
         try:
             current = current_path.read_text(encoding="utf-8")
         except OSError as exc:
-            raise UpstreamContractError(f"missing pinned contract file {relative}") from exc
+            raise UpstreamContractError(
+                f"missing pinned contract file {relative}"
+            ) from exc
         if current != pristine:
             raise UpstreamContractError(
                 f"unexpected local mutation in pinned contract file {relative}"
@@ -1596,7 +1700,9 @@ def _assert_solutions_library_contract(
         try:
             current = current_path.read_text(encoding="utf-8")
         except OSError as exc:
-            raise UpstreamContractError(f"missing pinned patch target {relative}") from exc
+            raise UpstreamContractError(
+                f"missing pinned patch target {relative}"
+            ) from exc
         if current not in (pristine, expected_patched):
             raise UpstreamContractError(
                 f"unexpected local mutation in pinned patch target {relative}"
@@ -1639,8 +1745,9 @@ def _soperator_tf_env(
     tenant_id: str,
     project_id: str,
     subnet_id: str,
+    profile: str = "",
 ) -> dict[str, str]:
-    profile = (
+    profile = profile.strip() or (
         os.environ.get("NPA_NEBIUS_PROFILE", "").strip()
         or os.environ.get("NEBIUS_PROFILE", "").strip()
     )
@@ -1659,7 +1766,9 @@ def _soperator_tf_env(
     return env
 
 
-def _terraform_cluster_id(terraform_bin: str, install_dir: Path, env: dict[str, str]) -> str:
+def _terraform_cluster_id(
+    terraform_bin: str, install_dir: Path, env: dict[str, str]
+) -> str:
     """Return the mk8s cluster id from Terraform state (empty if not found)."""
 
     result = _run_capture(
@@ -1687,7 +1796,16 @@ def _find_cluster_id_by_name(
     """Return the mk8s cluster id matching *cluster_name* (empty if none)."""
 
     result = _run_capture(
-        [nebius_bin, "mk8s", "cluster", "list", "--parent-id", project_id, "--format", "json"],
+        [
+            nebius_bin,
+            "mk8s",
+            "cluster",
+            "list",
+            "--parent-id",
+            project_id,
+            "--format",
+            "json",
+        ],
         env=env,
         check=False,
     )
@@ -1704,6 +1822,11 @@ def _find_cluster_id_by_name(
     return ""
 
 
+def _is_not_found_result(result: Any) -> bool:
+    text = f"{getattr(result, 'stdout', '')} {getattr(result, 'stderr', '')}".casefold()
+    return "not found" in text or "not_found" in text or "does not exist" in text
+
+
 def _refresh_kube_credentials(
     nebius_bin: str, cluster_id: str, context: str, env: dict[str, str]
 ) -> None:
@@ -1718,8 +1841,16 @@ def _refresh_kube_credentials(
         argv.extend(["--profile", profile])
     _run_capture(
         [
-            *argv, "mk8s", "cluster", "get-credentials",
-            "--id", cluster_id, "--external", "--force", "--context-name", context,
+            *argv,
+            "mk8s",
+            "cluster",
+            "get-credentials",
+            "--id",
+            cluster_id,
+            "--external",
+            "--force",
+            "--context-name",
+            context,
         ],
         env=env,
         check=False,
@@ -1745,13 +1876,23 @@ def _install_monitoring_crds(
 
     kube_env = _nebius_cli_env()
     _ensure_monitoring_namespace(kubectl_bin, context, env=kube_env)
-    _log(on_status, "installing prometheus-operator CRDs (ServiceMonitor/PodMonitor/Probe)")
+    _log(
+        on_status,
+        "installing prometheus-operator CRDs (ServiceMonitor/PodMonitor/Probe)",
+    )
     for crd in _PROMETHEUS_CRDS:
         last: subprocess.CompletedProcess[str] | None = None
         for _attempt in range(3):
             last = _run_capture(
-                [kubectl_bin, "--context", context, "apply", "--server-side", "-f",
-                 f"{_PROMETHEUS_CRD_BASE}/{crd}"],
+                [
+                    kubectl_bin,
+                    "--context",
+                    context,
+                    "apply",
+                    "--server-side",
+                    "-f",
+                    f"{_PROMETHEUS_CRD_BASE}/{crd}",
+                ],
                 env=kube_env,
                 check=False,
             )
@@ -1768,8 +1909,16 @@ def _install_monitoring_crds(
     # renders a ServiceMonitor and cannot install without it, so a no-op apply
     # (wrong context / swallowed auth error) must fail loudly here, not later.
     check = _run_capture(
-        [kubectl_bin, "--context", context, "get", "crd",
-         "servicemonitors.monitoring.coreos.com", "-o", "name"],
+        [
+            kubectl_bin,
+            "--context",
+            context,
+            "get",
+            "crd",
+            "servicemonitors.monitoring.coreos.com",
+            "-o",
+            "name",
+        ],
         env=kube_env,
         check=False,
     )
@@ -1898,9 +2047,13 @@ def _reset_stalled_monitoring_releases(
     try:
         payload = json.loads(listed.stdout or "{}")
     except json.JSONDecodeError as exc:
-        raise RuntimeError("failed to inspect monitoring HelmReleases: invalid JSON") from exc
+        raise RuntimeError(
+            "failed to inspect monitoring HelmReleases: invalid JSON"
+        ) from exc
     if not isinstance(payload, dict):
-        raise RuntimeError("failed to inspect monitoring HelmReleases: invalid JSON object")
+        raise RuntimeError(
+            "failed to inspect monitoring HelmReleases: invalid JSON object"
+        )
 
     reset = 0
     for item in payload.get("items") or []:
@@ -2060,19 +2213,35 @@ def _patch_slurmcluster_crd(kubectl_bin: str, context: str) -> bool:
 
     kube_env = _nebius_cli_env()
     got = _run_capture(
-        [kubectl_bin, "--context", context, "get", "crd",
-         "slurmclusters.slurm.nebius.ai", "-o", "name"],
+        [
+            kubectl_bin,
+            "--context",
+            context,
+            "get",
+            "crd",
+            "slurmclusters.slurm.nebius.ai",
+            "-o",
+            "name",
+        ],
         env=kube_env,
         check=False,
     )
     if got.returncode != 0 or not got.stdout.strip():
         return False
     patched = _run_capture(
-        [kubectl_bin, "--context", context, "patch", "crd",
-         "slurmclusters.slurm.nebius.ai", "--type=json", "-p",
-         '[{"op":"add","path":"/spec/versions/0/schema/openAPIV3Schema/'
-         'properties/spec/properties/plugStackConfig/'
-         'x-kubernetes-preserve-unknown-fields","value":true}]'],
+        [
+            kubectl_bin,
+            "--context",
+            context,
+            "patch",
+            "crd",
+            "slurmclusters.slurm.nebius.ai",
+            "--type=json",
+            "-p",
+            '[{"op":"add","path":"/spec/versions/0/schema/openAPIV3Schema/'
+            "properties/spec/properties/plugStackConfig/"
+            'x-kubernetes-preserve-unknown-fields","value":true}]',
+        ],
         env=kube_env,
         check=False,
     )
@@ -2090,15 +2259,36 @@ def _ensure_scripts_configmap(kubectl_bin: str, context: str, namespace: str) ->
     kube_env = _nebius_cli_env()
     target = f"{namespace}-slurm-scripts"
     exists = _run_capture(
-        [kubectl_bin, "--context", context, "get", "cm", target, "-n", namespace, "-o", "name"],
+        [
+            kubectl_bin,
+            "--context",
+            context,
+            "get",
+            "cm",
+            target,
+            "-n",
+            namespace,
+            "-o",
+            "name",
+        ],
         env=kube_env,
         check=False,
     )
     if exists.returncode == 0 and exists.stdout.strip():
         return True
     src = _run_capture(
-        [kubectl_bin, "--context", context, "get", "cm", "slurm-scripts",
-         "-n", namespace, "-o", "json"],
+        [
+            kubectl_bin,
+            "--context",
+            context,
+            "get",
+            "cm",
+            "slurm-scripts",
+            "-n",
+            namespace,
+            "-o",
+            "json",
+        ],
         env=kube_env,
         check=False,
     )
@@ -2144,12 +2334,17 @@ def _mid_apply_fix_loop(
         if not crd_done and _patch_slurmcluster_crd(kubectl_bin, context):
             crd_done = True
             if not logged_crd:
-                _log(on_status, "mid-apply: patched SlurmCluster CRD (ncclInspectorPreConf)")
+                _log(
+                    on_status,
+                    "mid-apply: patched SlurmCluster CRD (ncclInspectorPreConf)",
+                )
                 logged_crd = True
         if not cm_done and _ensure_scripts_configmap(kubectl_bin, context, namespace):
             cm_done = True
             if not logged_cm:
-                _log(on_status, f"mid-apply: ensured {namespace}-slurm-scripts configmap")
+                _log(
+                    on_status, f"mid-apply: ensured {namespace}-slurm-scripts configmap"
+                )
                 logged_cm = True
         if crd_done and cm_done:
             return
@@ -2245,8 +2440,7 @@ def _terraform_plan_without_unsafe_replacements(
             )
             raise RuntimeError(
                 f"Terraform replacement-guard plan failed ({planned.returncode}) "
-                "before provider mutation"
-                + (f": {detail}" if detail else "")
+                "before provider mutation" + (f": {detail}" if detail else "")
             )
         if not plan_path.is_file():
             raise RuntimeError(
@@ -2292,7 +2486,9 @@ def _terraform_plan_without_unsafe_replacements(
         safe_local_replacements: list[str] = []
         unsafe_destructive_actions: list[str] = []
         for change in resource_changes:
-            if not isinstance(change, dict) or not isinstance(change.get("change"), dict):
+            if not isinstance(change, dict) or not isinstance(
+                change.get("change"), dict
+            ):
                 continue
             actions = change["change"].get("actions")
             if not isinstance(actions, list) or "delete" not in actions:
@@ -2300,7 +2496,10 @@ def _terraform_plan_without_unsafe_replacements(
             address = str(change.get("address") or "<unknown-resource>")
             provider = str(change.get("provider_name") or "<unknown-provider>")
             replacement = "create" in actions
-            if replacement and (address, provider) in _SAFE_LOCAL_RECONCILIATION_REPLACEMENTS:
+            if (
+                replacement
+                and (address, provider) in _SAFE_LOCAL_RECONCILIATION_REPLACEMENTS
+            ):
                 safe_local_replacements.append(address)
             else:
                 unsafe_destructive_actions.append(address)
@@ -2331,6 +2530,7 @@ def deploy_cluster(
     source_preflight_only: bool = False,
     stream_terraform_output: bool = True,
     on_status: Callable[[str], None] | None = None,
+    profile: str = "",
 ) -> dict[str, Any]:
     """Deploy or reconcile *spec* after pinned-contract and key preflight."""
 
@@ -2351,7 +2551,9 @@ def deploy_cluster(
         f"source={root_login_key.source}; fingerprint={root_login_key.fingerprint}",
     )
     work_root = (work_root or Path.home() / ".npa" / "soperator").expanduser()
-    recipe_dir = _resolve_solutions_library(terraform_dir, work_root, solutions_library_ref)
+    recipe_dir = _resolve_solutions_library(
+        terraform_dir, work_root, solutions_library_ref
+    )
     _assert_solutions_library_contract(recipe_dir, ref=solutions_library_ref)
     _log(on_status, f"verified solutions-library contract {solutions_library_ref[:12]}")
     region, tenant_id, project_id, persisted_subnet_id, _saved = (
@@ -2364,7 +2566,9 @@ def deploy_cluster(
             "install_dir": str(recipe_dir / "installations" / spec.name),
             "kube_context": f"nebius-{spec.name}-slurm",
             "worker_pools": [pool.name for pool in spec.workers],
-            "docker_cache_pools": [pool.name for pool in spec.workers if pool.docker_cache],
+            "docker_cache_pools": [
+                pool.name for pool in spec.workers if pool.docker_cache
+            ],
             "control_plane": {
                 "system_min_size": spec.system_min_size,
                 "system_max_size": spec.effective_system_max_size(),
@@ -2390,14 +2594,14 @@ def deploy_cluster(
         tenant_id=tenant_id,
         project_id=project_id,
         region=region,
-        env=_nebius_cli_env(),
+        env=_nebius_cli_env(profile),
         on_status=on_status,
     )
     install_dir = _prepare_installation(recipe_dir, spec, region)
     _log(on_status, f"Installation dir: {install_dir}")
 
     subnet_id = persisted_subnet_id or _resolve_subnet(
-        nebius_bin, project_id, _nebius_cli_env()
+        nebius_bin, project_id, _nebius_cli_env(profile)
     )
     env = _soperator_tf_env(
         nebius_bin,
@@ -2405,6 +2609,7 @@ def deploy_cluster(
         tenant_id=tenant_id,
         project_id=project_id,
         subnet_id=subnet_id,
+        profile=profile,
     )
     sidecar_persisted = False
 
@@ -2421,6 +2626,7 @@ def deploy_cluster(
             project_id=project_id,
             subnet_id=subnet_id,
             o11y_profile=env["TF_VAR_o11y_profile"],
+            auth_profile=profile,
         )
         sidecar_persisted = True
 
@@ -2455,9 +2661,7 @@ def deploy_cluster(
             on_status=on_status,
         ) as guarded_plan:
             replacement_plans_checked += 1
-            safe_local_replacements_applied += len(
-                guarded_plan.safe_local_replacements
-            )
+            safe_local_replacements_applied += len(guarded_plan.safe_local_replacements)
             persist_identity_before_apply()
             _run_terraform_command(
                 [terraform_bin, "apply", str(guarded_plan.path)],
@@ -2468,11 +2672,24 @@ def deploy_cluster(
             )
         cluster_id = _terraform_cluster_id(terraform_bin, install_dir, env)
         if cluster_id:
+            _write_env_sidecar(
+                install_dir,
+                region=region,
+                tenant_id=tenant_id,
+                project_id=project_id,
+                subnet_id=subnet_id,
+                o11y_profile=env["TF_VAR_o11y_profile"],
+                auth_profile=profile,
+                cluster_id=cluster_id,
+            )
             _log(on_status, "refreshing kube admin credentials")
             _refresh_kube_credentials(nebius_bin, cluster_id, context, env)
         _log(on_status, "installing monitoring CRDs (before operator reconcile)")
         _install_monitoring_crds(kubectl_bin, context, on_status=on_status)
-        _log(on_status, f"terraform apply (phase 2: operator + Slurm; {len(spec.workers)} worker pool(s))")
+        _log(
+            on_status,
+            f"terraform apply (phase 2: operator + Slurm; {len(spec.workers)} worker pool(s))",
+        )
         # The SlurmCluster CRD is created by the operator *during* phase 2, and the
         # slurm-cluster HelmRelease then blocks on it accepting
         # plugStackConfig.ncclInspectorPreConf (a chart/CRD skew); the nodesets
@@ -2494,9 +2711,7 @@ def deploy_cluster(
             on_status=on_status,
         ) as guarded_plan:
             replacement_plans_checked += 1
-            safe_local_replacements_applied += len(
-                guarded_plan.safe_local_replacements
-            )
+            safe_local_replacements_applied += len(guarded_plan.safe_local_replacements)
             fixer.start()
             try:
                 _run_terraform_command(
@@ -2519,9 +2734,7 @@ def deploy_cluster(
             on_status=on_status,
         ) as guarded_plan:
             replacement_plans_checked += 1
-            safe_local_replacements_applied += len(
-                guarded_plan.safe_local_replacements
-            )
+            safe_local_replacements_applied += len(guarded_plan.safe_local_replacements)
             persist_identity_before_apply()
             _run_terraform_command(
                 [terraform_bin, "apply", str(guarded_plan.path)],
@@ -2613,11 +2826,14 @@ def destroy_cluster(
     timeout_minutes: int = 90,
     source_preflight_only: bool = False,
     on_status: Callable[[str], None] | None = None,
+    profile: str = "",
 ) -> dict[str, Any] | None:
     """Destroy an npa-managed soperator cluster by name."""
 
     work_root = (work_root or Path.home() / ".npa" / "soperator").expanduser()
-    recipe_dir = _resolve_solutions_library(terraform_dir, work_root, solutions_library_ref)
+    recipe_dir = _resolve_solutions_library(
+        terraform_dir, work_root, solutions_library_ref
+    )
     _assert_solutions_library_contract(recipe_dir, ref=solutions_library_ref)
     install_dir = recipe_dir / "installations" / name
     if not install_dir.exists():
@@ -2630,7 +2846,10 @@ def destroy_cluster(
             "solutions_library_ref": solutions_library_ref,
             "provider_mutation": False,
         }
-        _log(on_status, f"destroy source preflight passed: {name}; provider mutation disabled")
+        _log(
+            on_status,
+            f"destroy source preflight passed: {name}; provider mutation disabled",
+        )
         return result
 
     terraform_bin = _require_bin(os.environ.get("NPA_TERRAFORM_BIN") or "terraform")
@@ -2642,13 +2861,24 @@ def destroy_cluster(
     # variable". Prefer the sidecar written at deploy time; fall back to
     # re-resolving from ~/.npa for installs predating the sidecar.
     saved = _load_env_sidecar(install_dir)
-    if saved and saved.get("region") and saved.get("tenant_id") and saved.get("project_id"):
+    if not saved:
+        raise ValueError(
+            f"persisted exact Soperator identity is missing at {install_dir / _ENV_SIDECAR}; "
+            "refusing destroy by name"
+        )
+    if (
+        saved
+        and saved.get("region")
+        and saved.get("tenant_id")
+        and saved.get("project_id")
+    ):
         env = _soperator_tf_env(
             nebius_bin,
             region=str(saved["region"]),
             tenant_id=str(saved["tenant_id"]),
             project_id=str(saved["project_id"]),
             subnet_id=str(saved.get("subnet_id") or ""),
+            profile=str(saved.get("auth_profile") or profile),
         )
         if saved.get("o11y_profile"):
             env["TF_VAR_o11y_profile"] = str(saved["o11y_profile"])
@@ -2663,30 +2893,36 @@ def destroy_cluster(
                 f"{name!r}: no env sidecar at {install_dir / _ENV_SIDECAR} and "
                 "~/.npa config is incomplete (pass --project)"
             )
-        subnet_id = _resolve_subnet(nebius_bin, project_id, _nebius_cli_env())
+        subnet_id = _resolve_subnet(nebius_bin, project_id, _nebius_cli_env(profile))
         env = _soperator_tf_env(
             nebius_bin,
             region=region,
             tenant_id=tenant_id,
             project_id=project_id,
             subnet_id=subnet_id,
+            profile=profile,
         )
     _log(on_status, f"terraform destroy: {name}")
     _run_stream([terraform_bin, "init"], cwd=install_dir, env=env, timeout=900)
-    cluster_id = _terraform_cluster_id(terraform_bin, install_dir, env)
+    terraform_cluster_id = _terraform_cluster_id(terraform_bin, install_dir, env)
+    persisted_cluster_id = str((saved or {}).get("cluster_id") or "")
+    if (
+        terraform_cluster_id
+        and persisted_cluster_id
+        and terraform_cluster_id != persisted_cluster_id
+    ):
+        raise ValueError(
+            "persisted Soperator cluster identity conflicts with Terraform state; refusing destroy"
+        )
+    cluster_id = persisted_cluster_id or terraform_cluster_id
     project_id = str(
-        (saved or {}).get("project_id")
-        or env.get("TF_VAR_iam_project_id")
-        or ""
+        (saved or {}).get("project_id") or env.get("TF_VAR_iam_project_id") or ""
     )
-    # An interrupted deploy can leave the cloud cluster running while local
-    # Terraform state is empty, so cluster_id is blank here. Fall back to finding
-    # the mk8s cluster by its recipe name (soperator-<name>) so destroy can still
-    # tear it down instead of silently no-op'ing.
-    if not cluster_id and project_id:
-        cluster_id = _find_cluster_id_by_name(nebius_bin, project_id, f"soperator-{name}", env)
-        if cluster_id:
-            _log(on_status, f"terraform state empty; found cluster {cluster_id} by name")
+    if not cluster_id:
+        raise ValueError(
+            "persisted Soperator/Terraform state has no exact cluster ID; "
+            "refusing destructive name inference"
+        )
 
     # Reclaim CSI-provisioned PVC disks (NFS + any dynamic volumes) BEFORE the
     # cluster is torn down. Deleting the mk8s cluster does NOT cascade-delete the
@@ -2700,8 +2936,17 @@ def destroy_cluster(
         if kubectl_bin:
             _log(on_status, "reclaiming CSI PVC disks before teardown")
             _run_capture(
-                [kubectl_bin, "--context", context, "delete", "pvc", "--all",
-                 "--all-namespaces", "--wait=false", "--timeout=60s"],
+                [
+                    kubectl_bin,
+                    "--context",
+                    context,
+                    "delete",
+                    "pvc",
+                    "--all",
+                    "--all-namespaces",
+                    "--wait=false",
+                    "--timeout=60s",
+                ],
                 env=env,
                 check=False,
                 timeout=120,
@@ -2720,23 +2965,58 @@ def destroy_cluster(
         check=False,
     )
     if destroy.returncode != 0:
-        _log(on_status, "terraform destroy reported errors; falling back to direct cleanup")
+        _log(
+            on_status,
+            "terraform destroy reported errors; falling back to direct cleanup",
+        )
 
     # Ensure the mk8s cluster is actually gone (cascades node groups + instances).
     if cluster_id:
         still = _run_capture(
-            [nebius_bin, "mk8s", "cluster", "get", "--id", cluster_id, "--format", "json"],
+            [
+                nebius_bin,
+                "mk8s",
+                "cluster",
+                "get",
+                "--id",
+                cluster_id,
+                "--format",
+                "json",
+            ],
             env=env,
             check=False,
         )
+        if still.returncode != 0 and not _is_not_found_result(still):
+            return {
+                "name": name,
+                "status": "destroy-incomplete",
+                "install_dir": str(install_dir),
+                "errors": ["exact Managed Kubernetes identity could not be verified"],
+            }
+        if still.returncode == 0 and not still.stdout.strip():
+            return {
+                "name": name,
+                "status": "destroy-incomplete",
+                "install_dir": str(install_dir),
+                "errors": [
+                    "exact Managed Kubernetes identity returned empty provider evidence"
+                ],
+            }
         if still.returncode == 0 and still.stdout.strip():
             _log(on_status, f"deleting mk8s cluster {cluster_id} directly")
-            _run_capture(
+            deleted = _run_capture(
                 [nebius_bin, "mk8s", "cluster", "delete", "--id", cluster_id],
                 env=env,
                 check=False,
                 timeout=timeout_minutes * 60,
             )
+            if deleted.returncode != 0 and not _is_not_found_result(deleted):
+                return {
+                    "name": name,
+                    "status": "destroy-incomplete",
+                    "install_dir": str(install_dir),
+                    "errors": ["exact Managed Kubernetes delete failed"],
+                }
             # Wait for the cluster to actually disappear before cleaning up VPC
             # allocations below. The delete call can return while the cluster (and
             # its cloud-controller-manager) still exists; if we delete the static-IP
@@ -2744,24 +3024,78 @@ def destroy_cluster(
             # that isn't in terraform state, and the next deploy fails with
             # "Allocation ... already exists" (AlreadyExists). Poll get until gone.
             deadline = time.monotonic() + timeout_minutes * 60
+            confirmed_absent = False
             while time.monotonic() < deadline:
                 gone = _run_capture(
-                    [nebius_bin, "mk8s", "cluster", "get", "--id", cluster_id, "--format", "json"],
+                    [
+                        nebius_bin,
+                        "mk8s",
+                        "cluster",
+                        "get",
+                        "--id",
+                        cluster_id,
+                        "--format",
+                        "json",
+                    ],
                     env=env,
                     check=False,
                 )
-                if gone.returncode != 0 or not gone.stdout.strip():
+                if _is_not_found_result(gone):
+                    confirmed_absent = True
                     break
+                if gone.returncode != 0 or not gone.stdout.strip():
+                    return {
+                        "name": name,
+                        "status": "destroy-incomplete",
+                        "install_dir": str(install_dir),
+                        "errors": [
+                            "exact Managed Kubernetes absence check was unreadable"
+                        ],
+                    }
                 time.sleep(15)
+            if not confirmed_absent:
+                return {
+                    "name": name,
+                    "status": "destroy-incomplete",
+                    "install_dir": str(install_dir),
+                    "errors": ["exact Managed Kubernetes absence was not confirmed"],
+                }
+
+    # A direct exact-ID cluster delete cannot prove that Terraform-owned
+    # filesystems, allocations, node groups, and cache disks were reclaimed.
+    # Retain the complete installation/state whenever Terraform itself failed;
+    # a later retry can reconcile those exact resource IDs. Never replace that
+    # ownership proof with prefix/name sweeps.
+    if destroy.returncode != 0:
+        return {
+            "name": name,
+            "status": "destroy-incomplete",
+            "install_dir": str(install_dir),
+            "errors": [
+                "Terraform teardown failed; exact auxiliary-resource state retained"
+            ],
+        }
 
     # Best-effort delete filesystems this cluster created (jail / controller-spool
     # / accounting are named ``soperator-<name>-*``) so they don't linger against
     # quota. NOTE: the recipe prefixes every filesystem with ``soperator-`` -- the
     # match below must use that full prefix, otherwise orphans survive the destroy
     # and the next deploy fails with "filesystem ... already exists" (AlreadyExists).
-    if project_id:
+    owned_filesystem_ids = {
+        str(value) for value in (saved or {}).get("owned_filesystem_ids", []) if value
+    }
+    if project_id and owned_filesystem_ids:
         fs_list = _run_capture(
-            [nebius_bin, "compute", "filesystem", "list", "--parent-id", project_id, "--format", "json"],
+            [
+                nebius_bin,
+                "compute",
+                "filesystem",
+                "list",
+                "--parent-id",
+                project_id,
+                "--format",
+                "json",
+            ],
             env=env,
             check=False,
         )
@@ -2773,7 +3107,7 @@ def destroy_cluster(
             meta = item.get("metadata", {})
             fs_name = str(meta.get("name") or "")
             fs_id = str(meta.get("id") or "")
-            if fs_id and fs_name.startswith(f"soperator-{name}-"):
+            if fs_id in owned_filesystem_ids:
                 _log(on_status, f"deleting orphaned filesystem {fs_name}")
                 _run_capture(
                     [nebius_bin, "compute", "filesystem", "delete", "--id", fs_id],
@@ -2790,9 +3124,21 @@ def destroy_cluster(
     # "Allocation with name 'soperator-<name>-public-static-ip' already exists".
     # These are safe to remove once the cluster (and its CCM) is gone. Runs after
     # the direct cluster delete above so the CCM can't re-create them again.
-    if project_id:
+    owned_allocation_ids = {
+        str(value) for value in (saved or {}).get("owned_allocation_ids", []) if value
+    }
+    if project_id and owned_allocation_ids:
         alloc_list = _run_capture(
-            [nebius_bin, "vpc", "allocation", "list", "--parent-id", project_id, "--format", "json"],
+            [
+                nebius_bin,
+                "vpc",
+                "allocation",
+                "list",
+                "--parent-id",
+                project_id,
+                "--format",
+                "json",
+            ],
             env=env,
             check=False,
         )
@@ -2804,7 +3150,7 @@ def destroy_cluster(
             meta = item.get("metadata", {})
             alloc_name = str(meta.get("name") or "")
             alloc_id = str(meta.get("id") or "")
-            if alloc_id and alloc_name.startswith(f"soperator-{name}-"):
+            if alloc_id in owned_allocation_ids:
                 _log(on_status, f"deleting orphaned VPC allocation {alloc_name}")
                 _run_capture(
                     [nebius_bin, "vpc", "allocation", "delete", "--id", alloc_id],
@@ -2819,6 +3165,7 @@ def destroy_cluster(
         except OSError:
             pass
     _log(on_status, f"destroy complete: {name}")
+    return {"name": name, "status": "destroyed", "install_dir": str(install_dir)}
 
 
 def apply_post_deploy_fixes(
@@ -2860,7 +3207,9 @@ def apply_post_deploy_fixes(
             "the newer generation can reconcile",
         )
 
-    _log(on_status, "post-deploy: patching SlurmCluster CRD + ensuring scripts configmap")
+    _log(
+        on_status, "post-deploy: patching SlurmCluster CRD + ensuring scripts configmap"
+    )
     deadline = time.monotonic() + timeout_minutes * 60
     crd_done = False
     cm_done = False
@@ -2871,12 +3220,17 @@ def apply_post_deploy_fixes(
             break
         time.sleep(15)
     if not crd_done:
-        _log(on_status, "post-deploy: SlurmCluster CRD not present yet; skipped CRD patch")
+        _log(
+            on_status,
+            "post-deploy: SlurmCluster CRD not present yet; skipped CRD patch",
+        )
     if not cm_done:
         _log(on_status, "post-deploy: slurm-scripts configmap not present yet; skipped")
 
     _register_slurm_workers(kubectl_bin, context, namespace, on_status=on_status)
-    _log(on_status, "post-deploy: fixes applied" + (" with warnings" if warnings else ""))
+    _log(
+        on_status, "post-deploy: fixes applied" + (" with warnings" if warnings else "")
+    )
     return warnings
 
 
@@ -2912,7 +3266,8 @@ def _register_slurm_workers(
         down = [
             line.split()[0]
             for line in info.stdout.splitlines()
-            if line.split() and (line.split()[1].endswith("*") or "down" in line.split()[1].lower())
+            if line.split()
+            and (line.split()[1].endswith("*") or "down" in line.split()[1].lower())
         ]
         if not down:
             _log(on_status, "post-deploy: all Slurm worker nodes are responding")
@@ -2921,7 +3276,10 @@ def _register_slurm_workers(
             fqdn = f"{node}.soperator-nodeset-svc.{namespace}.svc.cluster.local"
             slurmctl(["scontrol", "update", f"NodeName={node}", f"NodeAddr={fqdn}"])
             slurmctl(["scontrol", "update", f"NodeName={node}", "State=RESUME"])
-        _log(on_status, f"post-deploy: registered worker node(s): {', '.join(sorted(set(down)))}")
+        _log(
+            on_status,
+            f"post-deploy: registered worker node(s): {', '.join(sorted(set(down)))}",
+        )
         time.sleep(15)
 
 
@@ -3132,7 +3490,9 @@ def _cancel_and_verify_gpu_check_job(
             return True, "; ".join(diagnostics)
         if queued.returncode != 0:
             detail = _tail_diagnostic(queued.stderr, queued.stdout)
-            diagnostics.append("could not verify Slurm queue" + (f": {detail}" if detail else ""))
+            diagnostics.append(
+                "could not verify Slurm queue" + (f": {detail}" if detail else "")
+            )
             return False, "; ".join(diagnostics)
         if time.monotonic() >= deadline:
             diagnostics.append(f"job {job_name} remains in Slurm after cancellation")
@@ -3392,5 +3752,8 @@ fi
                 "status": "PASS",
             }
         )
-        _log(on_status, f"GPU creation check passed: pool={pool.name}; workers={pool.size}")
+        _log(
+            on_status,
+            f"GPU creation check passed: pool={pool.name}; workers={pool.size}",
+        )
     return checks

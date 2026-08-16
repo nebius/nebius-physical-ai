@@ -573,7 +573,6 @@ def _resolve_deploy_storage_credentials(
     later when no configured candidate works and a caller explicitly supplies
     freshly bootstrapped credentials.
     """
-
     candidate = dict(bootstrap_creds or {})
     from npa.clients.credentials import load_credentials
 
@@ -618,7 +617,6 @@ def _resolve_deploy_storage_credentials(
                 candidate["nebius_api_key"] = project_access_key
                 candidate["nebius_secret_key"] = project_secret_key
                 return candidate
-
     # With no selected project, resolve_project_storage(None) is the canonical
     # shared/default storage view and may combine the configured bucket with the
     # shared credential file. Never use this view for an explicit project: that
@@ -664,7 +662,6 @@ def _resolve_deploy_storage_credentials(
             candidate["nebius_api_key"] = configured_access_key
             candidate["nebius_secret_key"] = configured_secret_key
             return candidate
-
     # Never record a host-level shared bucket as an explicit project's remote
     # backend; keep immutable journal ownership exact.
     if not project_name:
@@ -771,7 +768,6 @@ def _resolve_agent_service_account_id(
 def _persist_agent_service_account_id(
     service_account_id: str, project_id: str = ""
 ) -> None:
-    """Write discovered SA id into ~/.npa/credentials.yaml when missing."""
     _persist_project_agent_service_account_id(project_id, service_account_id)
 
 
@@ -3926,6 +3922,7 @@ def _provision_agent_infra(
     dry_run: bool = False,
     validate: bool = True,
     skip_s3: bool = True,
+    desired: dict | None = None,
 ) -> dict:
     ready, reason = _agent_npa_ready()
     if not ready:
@@ -3933,6 +3930,9 @@ def _provision_agent_infra(
     try:
         from npa.provisioning import provision_if_absent
 
+        requested = desired if isinstance(desired, dict) else {{}}
+        mig_value = requested.get("mig", False)
+        mig_mapping = mig_value if isinstance(mig_value, dict) else {{}}
         result = provision_if_absent(
             project=project or None,
             cluster_name=cluster_name or "npa-cluster",
@@ -3941,6 +3941,20 @@ def _provision_agent_infra(
             validate=validate,
             sky_smoke=False,
             dry_run=dry_run,
+            gpu_nodes=int(requested.get("gpu_nodes", -1)),
+            cpu_nodes=int(requested.get("cpu_nodes", -1)),
+            gpu_platform=str(requested.get("gpu_platform") or ""),
+            gpu_preset=str(requested.get("gpu_preset") or ""),
+            gpu_driver_mode=str(requested.get("gpu_driver_mode") or ""),
+            managed_driver_preset=str(requested.get("managed_driver_preset") or ""),
+            gpu_health_stabilization_seconds=int(requested.get("gpu_health_stabilization_seconds", 120)),
+            gpu_health_timeout_minutes=int(requested.get("gpu_health_timeout_minutes", 60)),
+            gpu_cuda_smoke=bool(requested.get("gpu_cuda_smoke", True)),
+            gpu_cuda_smoke_image=str(requested.get("gpu_cuda_smoke_image") or "nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0-ubuntu22.04"),
+            mig_enabled=(bool(mig_mapping.get("enabled", True)) if mig_mapping else bool(mig_value)),
+            mig_strategy=str(mig_mapping.get("strategy") or requested.get("mig_strategy") or "mixed"),
+            mig_config=str(mig_mapping.get("config") or requested.get("mig_config") or "all-balanced"),
+            capacity_block_group=str(requested.get("capacity_block_group") or ""),
         )
         payload = result.to_dict()
         payload["ok"] = True
@@ -8114,7 +8128,19 @@ def provision_infra(payload: dict | None = None):
     skip_s3 = bool(body.get("skip_s3", True))
     if not dry_run:
         confirm_token = str(body.get("confirm_token") or "").strip()
-        digest = "provision_infra:" + project + ":" + cluster_name
+        desired = {{
+            key: body[key]
+            for key in (
+                "gpu_nodes", "cpu_nodes", "gpu_platform", "gpu_preset",
+                "gpu_driver_mode", "managed_driver_preset",
+                "gpu_health_stabilization_seconds", "gpu_health_timeout_minutes",
+                "gpu_cuda_smoke",
+                "gpu_cuda_smoke_image", "mig", "mig_strategy", "mig_config",
+                "capacity_block_group",
+            )
+            if key in body
+        }}
+        digest = "provision_infra:" + project + ":" + cluster_name + ":" + json.dumps(desired, sort_keys=True)
         if not confirm_token:
             token = _issue_agent_confirm_token(
                 {{"action": "provision_infra", "project": project, "cluster_name": cluster_name}},
@@ -8132,7 +8158,19 @@ def provision_infra(payload: dict | None = None):
         session_token, confirm_digest, _pending = _consume_agent_confirm_token()
         if not session_token or confirm_token != session_token or (confirm_digest and confirm_digest != digest):
             raise HTTPException(status_code=403, detail="invalid or expired confirm_token for provision")
-    result = _provision_agent_infra(project, cluster_name, dry_run=dry_run, validate=validate, skip_s3=skip_s3)
+    desired = {{
+        key: body[key]
+        for key in (
+            "gpu_nodes", "cpu_nodes", "gpu_platform", "gpu_preset",
+            "gpu_driver_mode", "managed_driver_preset",
+            "gpu_health_stabilization_seconds", "gpu_health_timeout_minutes",
+            "gpu_cuda_smoke",
+            "gpu_cuda_smoke_image", "mig", "mig_strategy", "mig_config",
+            "capacity_block_group",
+        )
+        if key in body
+    }}
+    result = _provision_agent_infra(project, cluster_name, dry_run=dry_run, validate=validate, skip_s3=skip_s3, desired=desired)
     status = _agent_k8s_backends(project)
     return {{"ok": bool(result.get("ok")), "project": project, "cluster_name": cluster_name, "result": result, "infra": status, "dry_run": dry_run}}
 
