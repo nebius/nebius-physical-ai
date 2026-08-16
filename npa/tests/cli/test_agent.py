@@ -2103,7 +2103,7 @@ def test_data_factory_recording_note_wired_in_apply_loaded_artifact() -> None:
     # The Sim2Real camera label must NOT be applied to DF recordings.
     assert (
         "_is_sim2real_pipeline_recording(key) and not _is_data_factory_recording(key)"
-        in source
+        in " ".join(source.split())
     )
 
 
