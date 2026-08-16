@@ -482,6 +482,8 @@ def test_render_transfer_forwards_explicit_runtime_tuning(
 ) -> None:
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
     monkeypatch.setenv("NPA_COSMOS_VARIANT_PARALLELISM", "4")
+    monkeypatch.setenv("NPA_COSMOS_VALIDATION_SCOPE", "demo")
+    monkeypatch.setenv("NPA_COSMOS_VALIDATION_DELAY_RANK", "1")
     monkeypatch.setenv("NPA_COSMOS_DISABLE_CONTENT_GUARDRAILS", "1")
     spec = load_spec(
         REPO_ROOT
@@ -500,6 +502,8 @@ def test_render_transfer_forwards_explicit_runtime_tuning(
     docs = [doc for doc in yaml.safe_load_all(rendered) if doc]
     transfer = next(doc for doc in docs if "cosmos2 transfer" in doc.get("run", ""))
     assert transfer["envs"]["NPA_COSMOS_VARIANT_PARALLELISM"] == "4"
+    assert transfer["envs"]["NPA_COSMOS_VALIDATION_SCOPE"] == "demo"
+    assert transfer["envs"]["NPA_COSMOS_VALIDATION_DELAY_RANK"] == "1"
     assert transfer["envs"]["NPA_COSMOS_DISABLE_CONTENT_GUARDRAILS"] == "1"
 
 

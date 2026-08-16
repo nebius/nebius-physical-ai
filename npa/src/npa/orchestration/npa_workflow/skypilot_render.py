@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import shlex
 from dataclasses import dataclass, field
@@ -291,6 +292,16 @@ class SkypilotRenderOptions:
     # When False (``--plan-only``), embed placeholders instead of minting live
     # Nebius registry tokens into rendered YAML that may be printed to stdout.
     materialize_registry_secrets: bool = True
+    # Shared scheduler identity for the current runtime wave attempt.  The
+    # runtime supplies its durable logical launch id; offline renders derive a
+    # deterministic task-local value below.  Cosmos gang workers combine this
+    # with SkyPilot's launch incarnation before accepting shard manifests.
+    execution_attempt_id: str = ""
+    # Durable scheduler-issued ordering fence. Runtime waves monotonically
+    # increase sequence; an explicit retry increases attempt within that wave.
+    # Workload processes may not manufacture or advance these values.
+    execution_fence_sequence: int = 1
+    execution_fence_attempt: int = 1
     # Isaac acceptance defaults on so non-interactive workflows do not stop at the
     # vendor prompt. Callers retain an explicit --no-accept-eula opt-out.
     accept_eula: bool = True
@@ -1351,7 +1362,11 @@ def render_setup_for_tool(
             "fi\n"
             "\"$npa_baked_python\" - <<'PY'\n"
             "import os\n"
-            "import npa\n"
+            # The stage shim imports npa.cli.main, not merely the intentionally
+            # lazy package root.  Probing the same path prevents an immutable
+            # image from passing setup and then failing after scheduling because
+            # a CLI dependency (as seen live with Typer) was omitted.
+            "import npa.cli.main\n"
             "actual = os.environ.get('NPA_IMAGE_SOURCE_SHA', '').strip().lower()\n"
             "expected = os.environ.get('NPA_SIM2REAL_SOURCE_SHA', '').strip().lower()\n"
             "if len(actual) != 40 or actual != expected:\n"
@@ -1610,6 +1625,19 @@ def build_skypilot_task_doc(
         "NPA_WORKFLOW_RUN_ID": run_id,
         "NPA_WORKFLOW_STATE": str(scheduler_task["name"]),
     }
+    attempt_id = str(options.execution_attempt_id or "").strip()
+    if not attempt_id:
+        material = "\0".join(
+            (spec.name, run_id, str(scheduler_task["name"]))
+        ).encode("utf-8")
+        attempt_id = hashlib.sha256(material).hexdigest()
+    envs["NPA_WORKFLOW_ATTEMPT_ID"] = attempt_id
+    if options.execution_fence_sequence < 1 or options.execution_fence_attempt < 1:
+        raise NpaWorkflowRenderError(
+            "workflow execution fence sequence and attempt must be positive"
+        )
+    envs["NPA_WORKFLOW_FENCE_SEQUENCE"] = str(options.execution_fence_sequence)
+    envs["NPA_WORKFLOW_FENCE_ATTEMPT"] = str(options.execution_fence_attempt)
     if options.include_aws_endpoint and options.aws_endpoint_url:
         envs["AWS_ENDPOINT_URL"] = options.aws_endpoint_url
     if image:
@@ -1639,8 +1667,22 @@ def build_skypilot_task_doc(
         "NPA_COSMOS_CONDITION_ON_INPUT",
         "NPA_COSMOS_CONTROL",
         "NPA_COSMOS_CONTROL_WEIGHT",
+        "NPA_COSMOS_CONTROL_ASSET",
+        "NPA_COSMOS_CONTROL_PROMPT",
+        "NPA_COSMOS_MASK_ASSET",
+        "NPA_COSMOS_MASK_PROMPT",
         "NPA_COSMOS_GUIDANCE",
         "NPA_COSMOS_VARIANT_PARALLELISM",
+        "NPA_COSMOS_IDENTITY_TIMEOUT_S",
+        "NPA_COSMOS_SHARD_JOIN_TIMEOUT_S",
+        "NPA_COSMOS_VALIDATION_SCOPE",
+        "NPA_COSMOS_VALIDATION_DELAY_S",
+        "NPA_COSMOS_VALIDATION_DELAY_PHASE",
+        "NPA_COSMOS_VALIDATION_DELAY_RANK",
+        "NPA_COSMOS_VALIDATION_DELAY_GENERATION",
+        "NPA_COSMOS_VALIDATION_FAIL_PHASE",
+        "NPA_COSMOS_VALIDATION_FAIL_RANK",
+        "NPA_COSMOS_VALIDATION_FAIL_GENERATION",
         "NPA_COSMOS_DISABLE_CONTENT_GUARDRAILS",
     ):
         _cond_val = str(_os_cond.environ.get(_cond_var) or "").strip()
@@ -1662,6 +1704,10 @@ def build_skypilot_task_doc(
     # and exports SKYPILOT_NODE_RANK / SKYPILOT_NODE_IPS into each. Emitted only when the
     # profile asks for more than one node, so every existing rendered doc is unchanged.
     num_nodes = int(scheduler_task.get("num_nodes") or 1)
+    if str(scheduler_task.get("tool_ref") or "") == "workbench.cosmos2.transfer_execute":
+        # This renderer/planner value is authoritative.  SkyPilot's runtime
+        # variables are independent evidence and the worker cross-checks them.
+        envs["NPA_COSMOS_NODE_COUNT"] = str(num_nodes)
     if num_nodes > 1:
         doc["num_nodes"] = num_nodes
     task_config = normalize_task_config(scheduler_task.get("resources") or {})

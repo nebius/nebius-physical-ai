@@ -229,13 +229,13 @@ def evaluate_run(
 
     with tempfile.TemporaryDirectory(prefix="npa-cosmos-eval-run-") as tmp:
         workdir = Path(tmp)
-        clip_dirs = _list_clip_dirs(augment_uri, store=store)
-        if not clip_dirs:
+        clip_targets = _list_clip_targets(augment_uri, store=store)
+        if not clip_targets:
             raise CosmosEvaluatorError(
                 f"no augmented variant directories found under {augment_uri}"
             )
         if max_clips and max_clips > 0:
-            clip_dirs = clip_dirs[:max_clips]
+            clip_targets = clip_targets[:max_clips]
 
         source_clips = _resolve_source_clips(
             original_video=original_video,
@@ -247,12 +247,12 @@ def evaluate_run(
 
         evaluations: list[ClipEvaluation] = []
         status = "completed"
-        for clip_id in clip_dirs:
+        for clip_id, clip_uri in clip_targets:
             try:
                 evaluations.append(
                     _evaluate_clip(
                         clip_id=clip_id,
-                        clip_uri=augment_uri.rstrip("/") + f"/{clip_id}/",
+                        clip_uri=clip_uri,
                         workdir=workdir / clip_id,
                         store=store,
                         client=client,
@@ -649,14 +649,18 @@ def _list_keys(uri: str, *, store: Any) -> list[str]:
 
 
 def _list_clip_dirs(augment_uri: str, *, store: Any) -> list[str]:
-    """Variant directory names directly under ``augment_uri``."""
+    """Legacy variant directory names directly under ``augment_uri``."""
 
     prefixed = augment_uri if augment_uri.endswith("/") else augment_uri + "/"
     if not _is_remote(prefixed):
         root = Path(_local_path(prefixed))
         if not root.is_dir():
             return []
-        return sorted(child.name for child in root.iterdir() if child.is_dir())
+        return sorted(
+            child.name
+            for child in root.iterdir()
+            if child.is_dir() and child.name != "_attempts"
+        )
     _, prefix = _split(prefixed)
     names: set[str] = set()
     for key in _list_keys(prefixed, store=store):
@@ -664,9 +668,69 @@ def _list_clip_dirs(augment_uri: str, *, store: Any) -> list[str]:
             continue
         rest = key[len(prefix) :]
         head, _, tail = rest.partition("/")
-        if tail and head:
+        if tail and head and head != "_attempts":
             names.add(head)
     return sorted(names)
+
+
+def _list_clip_targets(augment_uri: str, *, store: Any) -> list[tuple[str, str]]:
+    """Resolve only variants committed by the canonical transfer manifest.
+
+    New multi-node runs keep every recovery generation in ``_attempts/``. Direct
+    prefix enumeration would mix old and current clips, so the executed manifest
+    is the sole authority. Legacy manifests without ``variants`` retain the old
+    direct-directory fallback.
+    """
+
+    manifest_uri = augment_uri.rstrip("/") + "/manifest.json"
+    listed_keys: list[str] = []
+    if _is_remote(manifest_uri):
+        _bucket, manifest_key = _split(manifest_uri)
+        listed_keys = _list_keys(augment_uri, store=store)
+        manifest_present = manifest_key in listed_keys
+        _unused_bucket, prefix = _split(
+            augment_uri if augment_uri.endswith("/") else augment_uri + "/"
+        )
+        has_attempts = any(
+            key.startswith(prefix + "_attempts/") for key in listed_keys
+        )
+    else:
+        manifest_present = Path(_local_path(manifest_uri)).is_file()
+        has_attempts = (Path(_local_path(augment_uri)) / "_attempts").exists()
+    manifest = (
+        _download_json(manifest_uri, store=store) if manifest_present else None
+    )
+    if manifest_present and not isinstance(manifest, dict):
+        raise CosmosEvaluatorError("canonical augment manifest is not an object")
+    if isinstance(manifest, dict):
+        from npa.workbench.cosmos.transfer import validate_committed_run_manifest
+
+        try:
+            variants = validate_committed_run_manifest(manifest, augment_uri)
+        except (TypeError, ValueError) as exc:
+            raise CosmosEvaluatorError(str(exc)) from exc
+        if variants:
+            targets: list[tuple[str, str]] = []
+            for item in variants:
+                if not isinstance(item, dict):
+                    raise CosmosEvaluatorError("augment manifest has an invalid variant")
+                clip = str(item.get("clip") or "").strip()
+                video_uri = str(item.get("augmented_video_uri") or "").strip()
+                if not clip or not video_uri or "/" not in video_uri:
+                    raise CosmosEvaluatorError(
+                        "augment manifest variant is missing its clip or generated video URI"
+                    )
+                targets.append((clip, video_uri.rsplit("/", 1)[0] + "/"))
+            return targets
+    if has_attempts:
+        raise CosmosEvaluatorError(
+            "augment attempt objects exist without a valid canonical manifest; "
+            "refusing to infer a recovery generation"
+        )
+    return [
+        (clip, augment_uri.rstrip("/") + f"/{clip}/")
+        for clip in _list_clip_dirs(augment_uri, store=store)
+    ]
 
 
 def _local_path(uri: str) -> str:

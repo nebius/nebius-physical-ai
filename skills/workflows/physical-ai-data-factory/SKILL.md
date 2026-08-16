@@ -76,6 +76,51 @@ Verified live: a 4-variant run on `RTXPRO6000:4` drove all 4 GPUs to 100%
 (4 distinct compute PIDs) and finished in ~14 min end-to-end; the manifest recorded
 `variant_parallelism: 4`.
 
+**Multi-node fan-out (`--var augment_nodes=N`).** GPUs-per-pod is the first axis;
+nodes are the second, and only the `augment` stage uses it. `resources.gpu` declares
+`num_nodes: "{{config.augment_nodes}}"` (default `1`), so submit chooses the block
+size without editing the blueprint — concurrent renders = `augment_nodes` × GPUs per
+node. Validation requires `augment_nodes <= n_augmentations`, so surplus GPU workers
+fail before provisioning. `num_nodes` accepts a `{{config.*}}` token on any profile,
+resolved against the `--var`-merged config. Existing clusters also receive a read-only
+submit-time snapshot check for enough distinct, Ready, schedulable, product-compatible
+nodes after active pod GPU, CPU, memory, init-container, and pod-overhead requests
+are subtracted. An active unbound GPU pod makes shared placement indeterminate and
+fails this check; task-profile node selectors and required node affinity are applied.
+
+SkyPilot runs the *same* augment command in every pod of the gang, so the stage
+shards: node `k` of `N` renders variants `k, k+N, …` (striding keeps the nodes within
+one variant of each other) with node-local GPU pins and publishes clips plus
+`manifest-rank-<k>.json` under
+`cosmos_augmented/_attempts/<attempt-id>/`. **Rank 0 is the join**: it waits for all N
+current-attempt shards and conditionally commits the usual
+`cosmos_augmented/manifest.json` in sampled
+combo order, adding `node_count` and a per-rank `shards` block; a rank that never
+reports fails the stage by name instead of publishing an understated fan-out. That
+wait has no default deadline — a sibling's remaining work is however long its
+diffusions take. It periodically reports elapsed time and missing/received ranks;
+`NPA_COSMOS_SHARD_JOIN_TIMEOUT_S` opts into a visible deterministic deadline for a
+live-but-hung sibling. The rank-0 identity rendezvous is also unbounded by default;
+`NPA_COSMOS_IDENTITY_TIMEOUT_S` is its separate explicit opt-in bound. SkyPilot
+0.12.2 intentionally preserves its task id across managed recovery and exposes no
+globally ordered recovery epoch to the workload. The durable NPA runtime therefore
+pre-issues an ordered wave-sequence/explicit-attempt fence. Rank 0 may claim only
+that token and shares its fresh attempt id with the exact ordered gang. An inner
+SkyPilot recovery retains the token and cannot supersede an existing same-token
+claim; it may safely become the first claimant if the prior worker died before
+claiming. A configured NPA retry gets a higher token after the prior job is terminal. Final publication is
+compare-and-swap fenced by that claim, so a late old worker stays beneath its old
+attempt prefix and an escaped old leader cannot replace the newer canonical claim.
+Downstream consumers follow only the executed canonical manifest, never enumerate
+`_attempts/`. With `augment_nodes=1` no shard file is written, but the scheduler
+claim, attempt-private clip prefix, and conditional canonical commit still fence a
+late process from a prior loop or recovery.
+
+Cosmos Transfer 2.5 itself also supports `torchrun --nproc_per_node=N` context
+parallelism for *one* clip; NPA does not use it, because one-variant-per-GPU gives a
+better throughput for a multiply fan-out. A single-variant run therefore does not go
+faster on more GPUs.
+
 **Authoring from chat (agent).** The NPA chat agent can WRITE this blueprint. Ask
 it e.g. *"write me a paidf workflow: augment my robot clips and fan out 4 scenarios
 on at least 4 RTX 6000 PRO GPUs"* — the deterministic router classifies
@@ -101,14 +146,66 @@ assembles those frames into a temporary 1280x720, 93-frame clip inside the GPU
 runner. An empty, inaccessible, or image/video-free input fails closed before
 inference. Bundled upstream media was removed for redistribution reasons and is
 not a fallback. The runner builds a controlnet spec with `video_path` = that clip
-and an **`edge`** (or `vis`) control computed on-the-fly, and the sampled appearance
-prompt drives the new look — so the output preserves the input's structure/motion
-with a new appearance. Generic direct CLI callers remain strict: they opt in with
-`--condition-on-input` or `--input-video <path|s3://>` and must supply a video. `edge`/
-`vis` need no precomputed control asset; `depth`/`seg` would need one, so input-only
-conditioning falls back to `edge`. Conditioned runs record `mode:
-cosmos_transfer2.5_gpu` + `input_conditioned: true` + `conditioned_input` in the
-augment `metadata.json` / `manifest.json`, which the agent's provenance panel surfaces.
+and the selected `config.augment_control` signal, and the sampled
+appearance prompt drives the new look — so the output preserves the input's
+structure/motion with a new appearance. Generic direct CLI callers remain strict:
+they opt in with `--condition-on-input` or `--input-video <path|s3://>` and must
+supply a video. Conditioned runs record `mode: cosmos_transfer2.5_gpu` +
+`input_conditioned: true` + `conditioned_input` in the augment `metadata.json` /
+`manifest.json`, which the agent's provenance panel surfaces.
+
+**Segmentation conditioning and region masks (`--var augment_control=seg`).**
+`edge` (Canny), `vis` (bilateral blur), and `seg` (GroundingDINO-base + SAM2) may
+be derived from the staged input. `depth` is deliberately precomputed-only and
+requires `augment_control_asset_uri` produced by an operator-owned permissive,
+weight-free method. NPA does not download, execute, or validate Video Depth Anything
+Large or Small weights. Each modality selects an exact pinned ControlNet checkpoint
+from `nvidia/Cosmos-Transfer2.5-2B`; submit verifies the caller-owned HF token can
+access that exact revision/file before provisioning or GPU work. Token presence is
+not treated as license consent. NPA used to rewrite requests outside `edge`/`vis` silently;
+an unsupported modality now fails closed instead.
+
+- **What seg buys you.** `edge` preserves every texture edge, so a prompt that
+  restyles a surface fights the old material's edge detail. `seg` preserves class
+  boundaries only, which lets the prompt change what a region is *made of* while
+  keeping the region's shape and motion.
+- **`config.augment_control_prompt`** names what to segment (`"robot arm, conveyor,
+  bin"`). Upstream defaults it to the first 128 words of the appearance prompt.
+- **Region masks** restrict any modality to part of the frame: white pixels are
+  where the control applies, black pixels follow the prompt freely.
+  `config.augment_mask_prompt` has SAM2 segment the region from text;
+  `config.augment_mask_asset_uri` supplies a precomputed binary spatiotemporal mask
+  video. They are mutually exclusive — upstream accepts one or the other.
+- **`config.augment_control_weight`** is finite and bounded `0.0`–`1.0`. The
+  shared semantic contract rejects bad weights, mask mutual exclusion, non-seg
+  control prompts, missing depth assets, and nodes exceeding variants during
+  validate/plan/submit, before image, cluster, or GPU work.
+- **`config.augment_control_asset_uri`** substitutes a precomputed control video
+  (e.g. a segmentation map from an earlier pipeline) for the on-the-fly one. A named
+  asset that does not exist fails rather than quietly reverting to on-the-fly.
+- **Published conditioning.** The control map and mask land under
+  `config.augment_control_uri` as `cosmos_control/<clip>/control_<modality>.mp4`,
+  `mask_<modality>.mp4`, and extracted frames beneath each. That prefix is a
+  **sibling** of `cosmos_augmented/`, never a child: `cosmos_evaluator` treats every
+  child directory of the augment prefix as a variant and falls back to the
+  alphabetically first PNG inside one, so a nested `control/` would hand the
+  attribute-verify VLM a segmentation map instead of the frame it must grade. Rerun
+  logs them as `control/<clip>/control_<modality>` next to `augmented/<clip>`, and
+  the augment `manifest.json` records `control`, `control_weight`,
+  `control_prompt`, `mask_prompt`, and `control_uris`.
+
+Example:
+
+```bash
+npa workbench workflow submit physical-ai-data-factory.yaml --run-id <id> \
+  --var augment_control=seg \
+  --var augment_control_prompt="robot arm, conveyor, bin" \
+  --var augment_mask_prompt="robot arm"
+```
+
+`NPA_COSMOS_CONTROL`, `NPA_COSMOS_CONTROL_PROMPT`, `NPA_COSMOS_CONTROL_ASSET`,
+`NPA_COSMOS_MASK_PROMPT`, and `NPA_COSMOS_MASK_ASSET` override the same knobs for a
+submit that cannot change the toolRef argv.
 
 **Cosmos Evaluator grading (`evaluate` stage).** `npa workbench cosmos-evaluator
 evaluate` runs two of upstream's checks per augmented variant and writes
@@ -389,8 +486,10 @@ npa workbench cosmos-curate curate-videos --input-dir ./clips --output-dir ./cur
   `publish_transfer_to_s3` uploads the real Cosmos Transfer 2.5 result in the
   **per-clip** layout the consumers require:
   `cosmos_augmented/<clip>/{augmented_video.mp4, frame-*.png, metadata.json}`
-  plus a run-level `cosmos_augmented/manifest.json`.   `curate` counts clip
-  subdirs (not top-level files) and `build_run_rrd` reads each clip's
+  plus a run-level `cosmos_augmented/manifest.json`. Every scheduler-managed
+  augment puts its clip dirs below `_attempts/<attempt-id>/`; a multi-node augment
+  also puts `manifest-rank-<k>.json` there. Consumers resolve only variants named
+  by the executed canonical manifest. `build_run_rrd` reads each selected clip's
   `metadata.json` for its Rerun label. Producer and consumers share this shape;
 - **Real FiftyOne curation:** the `curate` stage invokes
   `workbench.fiftyone.curate_augmented` in the `npa-fiftyone` image with

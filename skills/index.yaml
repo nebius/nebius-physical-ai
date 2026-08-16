@@ -704,6 +704,9 @@ skills:
       - type: cli_help
         args: ["workbench", "cosmos-curate", "curate-augmented", "--help"]
         contains: "--curated-uri"
+      - type: cli_help
+        args: ["workbench", "cosmos2", "transfer", "--help"]
+        contains: "--mask-prompt"
   - name: solution-licensing
     category: atomic
     when_to_use: "Adding or onboarding a solution, tool, container image, model weights, dataset, or runtime cache: classify each artifact, design compliant runtime fetch/cache reuse, decide public vs restricted redistribution, and record it where guards enforce it."

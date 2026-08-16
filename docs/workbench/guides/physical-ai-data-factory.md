@@ -77,13 +77,19 @@ where NPA substitutes its own endpoint.
 > **Config → augment MULTIPLY.** The `augment` stage receives the Config-Gen
 > manifest via `--configs-uri` and runs **one Cosmos Transfer 2.5 inference per
 > sampled combo**: each combo's prompt drives a distinct appearance, published as
-> its own per-clip dir (`cosmos_augmented/<clip>/`) with its own `metadata.json`
+> its own per-clip dir under the current scheduler-owned
+> `cosmos_augmented/_attempts/<attempt-id>/<clip>/` prefix with its own `metadata.json`
 > `variables` (which drives that clip's Rerun label). So a config with N
 > augmentations produces **N scenario variants**, recorded via `variant_count` /
 > `multiply_mode` in the augment manifest, curation, and finalize reports.
+> Consumers follow only the executed canonical manifest, so artifacts
+> retained from a delayed or recovered prior attempt are never counted.
 > The managed transfer conditions every variant on a supported video under the
 > run's `config.trigger_uri` (`input/`), preserving geometry/motion while changing
-> appearance (edge control is computed on-the-fly).
+> appearance. `config.augment_control` chooses which structure is preserved:
+> `edge` (default), `vis`, or `seg` may be derived from the clip; `depth` requires
+> an operator-owned precomputed weight-free control. Video Depth Anything weights
+> are not downloaded or executed by this workflow.
 
 ### Input conditioning and its evaluation source
 
@@ -95,6 +101,20 @@ frames at 16 fps, and extracts eight caption frames. The catalog always invokes
 `input/conditioning.mp4` over `source.mp4`. Cosmos Evaluator uses that same clip
 for hallucination scoring. Missing or invalid input therefore cannot turn into a
 decorative staged object or a fixed control example.
+
+Edge, visibility-blur, and segmentation controls are derived from the staged clip.
+Depth is precomputed-only and must be supplied as `augment_control_asset_uri`:
+`--var augment_control=seg` conditions on a GroundingDINO+SAM2 segmentation
+(`config.augment_control_prompt` names the classes) instead of Canny edges, which
+lets a prompt change what a region is made of while keeping its shape and motion.
+`config.augment_mask_prompt` (or a precomputed
+`config.augment_mask_asset_uri`) restricts the control to one region so the rest of
+the frame follows the prompt freely. An unsupported modality fails the stage rather
+than silently rendering an edge-conditioned variant. The control map and mask that
+conditioned each variant are published under `config.augment_control_uri`
+(`cosmos_control/`, a sibling of `cosmos_augmented/`) and logged into the Rerun
+recording, so the conditioning signal is reviewable. See
+[section 6c of the deploy guide](physical-ai-data-factory-deploy.md#6c-choose-what-the-augmentation-preserves---var-augment_controlseg).
 
 ### Starter input: authenticity, licensing, and replacement
 
@@ -335,9 +355,13 @@ readiness. Immediately before each Kubernetes controller launch it requires a
 stable series of API `/readyz` observations using the exact selected context and
 SkyPilot environment. A transient refusal is reconciled first: NPA adopts an
 exact job if the request landed, retries only after authoritative absence, and
-blocks as indeterminate when structured queue evidence is unavailable. A
-recovered launch continues inside the same command; `--resume-run` remains the
-crash/restart recovery contract.
+blocks as indeterminate when structured queue evidence is unavailable.
+Scheduler-managed Cosmos publication is stricter for both one-node and gang
+stages: an inner replacement cannot supersede an existing same-token claim (but
+may safely be the first claimant if the prior worker died before claiming). A
+configured NPA runtime retry receives a higher ordered attempt only after the prior
+managed job is terminal. `--resume-run` remains the driver crash/restart recovery
+contract.
 
 Status, logs, artifacts, and cancel share the same precedence: explicit URI,
 owner-only per-project/run submission receipt, exact canonical PAIDF prefix,

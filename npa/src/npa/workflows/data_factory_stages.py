@@ -138,6 +138,45 @@ def _download_json(uri: str) -> dict[str, Any]:
         return json.loads(Path(p).read_text())
 
 
+def _committed_augment_manifest(
+    augment_uri: str, *, listed_keys: list[str] | None = None
+) -> dict[str, Any] | None:
+    """Return an executed canonical augment manifest, or legacy ``None``."""
+
+    uri = augment_uri.rstrip("/") + "/manifest.json"
+    if listed_keys is not None and uri.startswith("s3://"):
+        _bucket, manifest_key = _split(uri)
+        if manifest_key not in listed_keys:
+            _augment_bucket, augment_prefix = _split(
+                augment_uri if augment_uri.endswith("/") else augment_uri + "/"
+            )
+            if any(
+                key.startswith(augment_prefix + "_attempts/") for key in listed_keys
+            ):
+                raise RuntimeError(
+                    "augment attempt objects exist without a canonical manifest; "
+                    "refusing to infer a recovery generation"
+                )
+            return None
+    try:
+        manifest = _download_json(uri)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        if listed_keys is None:
+            return None
+        raise
+    if not isinstance(manifest, dict):
+        raise RuntimeError(f"augment manifest at {uri} is not an object")
+    from npa.workbench.cosmos.transfer import validate_committed_run_manifest
+
+    try:
+        validate_committed_run_manifest(manifest, augment_uri)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(str(exc)) from exc
+    return manifest
+
+
 def _is_truthy(value: Any) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -473,6 +512,43 @@ def curate(
     document carries both the curator's clip catalog and the review decisions.
     """
     keys = _list_keys(augment_uri)
+    committed = _committed_augment_manifest(augment_uri, listed_keys=keys)
+    committed_variants = (
+        committed.get("variants")
+        if isinstance(committed, dict) and isinstance(committed.get("variants"), list)
+        else None
+    )
+    if committed_variants is not None:
+        prefixes: list[str] = []
+        clips = []
+        for item in committed_variants:
+            if not isinstance(item, dict):
+                raise RuntimeError("augment manifest has an invalid variant")
+            clip = str(item.get("clip") or "").strip()
+            video_uri = str(item.get("augmented_video_uri") or "").strip()
+            if not clip or not video_uri:
+                raise RuntimeError(
+                    "augment manifest variant is missing its clip or generated video URI"
+                )
+            _bucket, video_key = _split(video_uri)
+            prefixes.append(video_key.rsplit("/", 1)[0] + "/")
+            clips.append(clip)
+        keys = [key for key in keys if any(key.startswith(prefix) for prefix in prefixes)]
+        clips = sorted(clips)
+    else:
+        # Legacy direct layout. Never treat the recovery-attempt container as a
+        # clip if a partial new publication is encountered.
+        _, aug_prefix = _split(
+            augment_uri if augment_uri.endswith("/") else augment_uri + "/"
+        )
+        rels = [k[len(aug_prefix):] for k in keys if k.startswith(aug_prefix)]
+        clips = sorted(
+            {
+                r.split("/", 1)[0]
+                for r in rels
+                if "/" in r and r.split("/", 1)[0] not in {"", "_attempts"}
+            }
+        )
     videos = [k for k in keys if k.endswith(".mp4")]
     frames = [k for k in keys if k.endswith(".png")]
     # Clip ids are the per-clip subdirectories under the augment prefix itself
@@ -480,9 +556,6 @@ def curate(
     # manifest.json are excluded. Deriving relative to the passed augment_uri
     # (rather than a hardcoded "/cosmos_augmented/") keeps this correct for any
     # prefix, including a bucket root. Matches publish_transfer_to_s3's layout.
-    _, aug_prefix = _split(augment_uri if augment_uri.endswith("/") else augment_uri + "/")
-    rels = [k[len(aug_prefix):] for k in keys if k.startswith(aug_prefix)]
-    clips = sorted({r.split("/", 1)[0] for r in rels if "/" in r and r.split("/", 1)[0]})
     multi = len(clips) > 1
     report = {
         "schema": "npa.fiftyone.curation.v1",
@@ -625,15 +698,21 @@ def finalize(run_root_uri: str, report_uri: str) -> dict[str, Any]:
     # Count augmented scenario variants (per-clip subdirs under cosmos_augmented/,
     # excluding the top-level run manifest) so the final report reflects the real
     # "multiply" fan-out — one Cosmos Transfer 2.5 inference per sampled combo.
-    aug_marker = "cosmos_augmented/"
-    aug_clips: set[str] = set()
-    for k in keys:
-        if aug_marker in k:
-            rest = k.split(aug_marker, 1)[1]
-            seg = rest.split("/", 1)[0] if "/" in rest else ""
-            if seg:
-                aug_clips.add(seg)
-    n_variants = len(aug_clips)
+    committed = _committed_augment_manifest(
+        run_root_uri.rstrip("/") + "/cosmos_augmented/", listed_keys=keys
+    )
+    if committed is not None:
+        n_variants = int(committed.get("variant_count", 0) or 0)
+    else:
+        aug_marker = "cosmos_augmented/"
+        aug_clips: set[str] = set()
+        for k in keys:
+            if aug_marker in k:
+                rest = k.split(aug_marker, 1)[1]
+                seg = rest.split("/", 1)[0] if "/" in rest else ""
+                if seg and seg != "_attempts":
+                    aug_clips.add(seg)
+        n_variants = len(aug_clips)
     report = {
         "schema": "npa.sim2real.e2e_report.v1",
         "status": "completed",

@@ -643,6 +643,7 @@ def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> N
         assert task["envs"]["NPA_SIM2REAL_SOURCE_SHA"] == source_sha
         assert task["envs"]["NPA_TASK_IMAGE"] == image
         assert "immutable baked NPA runtime verified" in task["setup"]
+        assert "import npa.cli.main" in task["setup"]
         assert "NPA_BAKED_PYTHON" in task["setup"]
         assert "/tmp/npa-python" in task["setup"]
         assert "baked NPA interpreter must be an absolute path" in task["setup"]

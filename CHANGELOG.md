@@ -12,6 +12,73 @@ a versioned heading when a release is cut.
   `npa.agent.api_error/v1` (`run_id_required_for_s3_uri`) instead of reading an
   arbitrary object.
 
+### PAIDF can condition augmentation on segmentation, not just edges
+
+Cosmos Transfer 2.5 accepts four control modalities and NPA only ever used two.
+`_spec_for_input_video` rewrote any request outside `edge`/`vis` to `edge` silently,
+on the stated grounds that `depth`/`seg` need a precomputed control file — untrue of
+the pinned revision, where `SegConfig.control_path` and `DepthConfig.control_path`
+are optional and upstream computes the control from the input clip
+(GroundingDINO-base + SAM2 for `seg`, VideoDepthAnything for `depth`). So an
+operator asking for segmentation conditioning got an edge render and no signal.
+
+- **`--var augment_control=seg|depth|vis|edge`** now selects the real modality, and
+  an unsupported one fails before the GPU is held instead of becoming `edge`.
+  `edge` preserves every texture edge, which fights a prompt that restyles a
+  surface; `seg` preserves class boundaries only, so a region keeps its shape and
+  motion while the prompt changes what it is made of.
+- **Region masks**: `augment_mask_prompt` has SAM2 segment a region from text, or
+  `augment_mask_asset_uri` supplies a precomputed binary spatiotemporal mask video,
+  and the control then applies only inside it (mutually exclusive, as upstream).
+  `augment_control_prompt` names what `seg` should segment;
+  `augment_control_asset_uri` substitutes a precomputed control video, failing when
+  the named asset is absent rather than reverting to on-the-fly. An out-of-range
+  `augment_control_weight` also fails at submit: upstream bounds it `0.0`–`1.0` and
+  would otherwise raise the pydantic error after the accelerator is held.
+- **The conditioning is now reviewable**, not discarded with the container: the
+  control map and mask publish to `config.augment_control_uri`
+  (`cosmos_control/<clip>/control_<modality>.mp4`, `mask_<modality>.mp4`, plus
+  extracted frames), Rerun logs them as `control/<clip>/*` beside
+  `augmented/<clip>`, and the augment manifest records `control`,
+  `control_weight`, `control_prompt`, `mask_prompt`, and `control_uris`. That prefix
+  is a **sibling** of `cosmos_augmented/`, never a child: `cosmos_evaluator` counts
+  every child directory of the augment prefix as a variant and falls back to the
+  alphabetically first PNG inside one, so a nested `control/` would hand the
+  attribute-verify VLM a segmentation map instead of the frame it must grade.
+- **Fixes an output-selection bug the mask support exposed**: the generated video
+  was picked as the largest mp4 whose name lacked `control`, so upstream's
+  `<name>_mask_<key>.mp4` was a candidate — and a full-frame binary mask can
+  outweigh a short render.
+- An `edge` run publishes exactly the artifact set it did before.
+
+### PAIDF augment scales across nodes, not just GPUs
+
+The Physical AI Data Factory multiplied scenario variants across the GPUs of **one**
+augment pod, so the fan-out was capped by a single node. The variants are independent
+diffusions, so they now shard across a gang-scheduled block as well.
+
+- **`--var augment_nodes=N`** gang-schedules N augment pods
+  (`resources.gpu.num_nodes: "{{config.augment_nodes}}"`, default `1`). Concurrent
+  renders = `augment_nodes` × GPUs per node.
+- **`num_nodes` accepts a `{{config.*}}` token** on any resource profile, resolved
+  against the `--var`-merged config, so a shipped blueprint's block size is a submit
+  decision instead of a file edit. Bounds and error text are unchanged.
+- **`deployIfAbsent` sizes the cluster to the gang**: a profile asking for more nodes
+  than the cluster has does not fail, it sits `PENDING`, so the provisioner now takes
+  `num_nodes` as the GPU-node floor.
+- **The augment stage shards and rejoins.** SkyPilot runs the same command in every
+  pod, so node `k` of `N` renders variants `k, k+N, …` on node-local GPUs, publishes
+  its clip dirs under global variant indices, and writes
+  `cosmos_augmented/manifest-rank-<k>.json`; rank 0 waits for every shard and merges
+  them into the usual `manifest.json` (ordered by variant index, plus `node_count`
+  and per-rank `shards`). A rank that never reports fails the stage by name rather
+  than publishing an understated fan-out. The join carries no default deadline — a
+  sibling's remaining work is however long its diffusions take, and SkyPilot already
+  fails the task when a node's process dies; `NPA_COSMOS_SHARD_JOIN_TIMEOUT_S` opts
+  into one. Shard manifests are objects at the augment
+  prefix root, because every consumer counts a *subdirectory* there as a variant.
+  With one node nothing is written that was not written before.
+
 ### Retiring the raw SkyPilot task catalog (36 → 0 templates (of the 36; two arrived mid-sweep from #234/#235))
 
 `npa.workflow/v0.0.1` specs are becoming the only workflow authoring surface.

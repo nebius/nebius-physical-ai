@@ -13,6 +13,19 @@ class ToolEntry:
     argv_template: list[str]
     description: str = ""
     stub: bool = False
+    # Multi-node profiles run the same command on every node.  The default is
+    # fail-closed because an ordinary writer would publish duplicate/racing
+    # outputs.  A sharded tool must own an explicit rank-aware contract.
+    multi_node_mode: str = "forbidden"
+    # Named import-light semantic contract evaluated by validate/plan/submit.
+    semantic_contract: str = ""
+    variant_count_config: str = ""
+    # A sharded executable is safe only when its rank-aware path is active and
+    # its join is published through durable shared storage.  These config keys
+    # make that precondition machine-checkable whenever a future workflow
+    # reuses a multi-node resource profile.
+    shard_activation_config: str = ""
+    shard_output_config: str = ""
 
 
 # Public composable entries intentionally available to customer-authored specs,
@@ -386,7 +399,16 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.cosmos2.transfer_execute": ToolEntry(
         name="workbench.cosmos2.transfer_execute",
-        description="Run the REAL Cosmos-Transfer2.5 model (GPU) and upload augmented video + frames to S3.",
+        description=(
+            "Run the REAL Cosmos-Transfer2.5 model (GPU) and upload augmented video "
+            "+ frames to S3, conditioned on the chosen control modality (edge, vis, "
+            "depth, or seg) and optionally restricted to a segmented region."
+        ),
+        multi_node_mode="sharded",
+        semantic_contract="cosmos_transfer_control",
+        variant_count_config="n_augmentations",
+        shard_activation_config="configs_uri",
+        shard_output_config="augment_uri",
         argv_template=[
             "npa",
             "workbench",
@@ -400,6 +422,24 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{run.id}}",
             "--configs-uri",
             "{{config.configs_uri}}",
+            # Conditioning shape. Edge/vis/seg may be computed from the staged
+            # input; depth requires an operator-owned precomputed control. The asset and
+            # prompt flags stay empty unless the spec sets them, and empty means
+            # "unset" in the CLI rather than a control the model must honour.
+            "--control",
+            "{{config.augment_control}}",
+            "--control-weight",
+            "{{config.augment_control_weight}}",
+            "--control-asset",
+            "{{config.augment_control_asset_uri}}",
+            "--control-prompt",
+            "{{config.augment_control_prompt}}",
+            "--mask-asset",
+            "{{config.augment_mask_asset_uri}}",
+            "--mask-prompt",
+            "{{config.augment_mask_prompt}}",
+            "--control-output-uri",
+            "{{config.augment_control_uri}}",
             "--condition-on-input",
             "--execute",
         ],

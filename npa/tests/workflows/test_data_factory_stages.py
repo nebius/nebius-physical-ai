@@ -6,8 +6,47 @@ import json
 from pathlib import Path
 
 import pytest
+import typer
 
 from npa.workflows import data_factory_stages as dfs
+
+
+def _mock_committed_manifest(
+    monkeypatch: pytest.MonkeyPatch, keys: list[str], *, bucket: str = "b"
+) -> None:
+    """Make listed canonical test objects carry the real committed contract."""
+
+    original = dfs._download_json
+    videos = sorted(key for key in keys if key.endswith("/augmented_video.mp4"))
+    variants = [
+        {
+            "clip": key.rsplit("/", 2)[-2],
+            "augmented_video_uri": f"s3://{bucket}/{key}",
+        }
+        for key in videos
+    ]
+
+    def load(uri: str):
+        if uri.rstrip("/").endswith("cosmos_augmented/manifest.json"):
+            return {
+                "schema": "npa.cosmos2.transfer.v1",
+                "mode": "cosmos_transfer2.5_gpu",
+                "status": "executed",
+                "node_count": 1,
+                "variant_count": len(variants),
+                "variants": variants,
+            }
+        return original(uri)
+
+    monkeypatch.setattr(dfs, "_download_json", load)
+
+
+def test_attempt_keys_without_canonical_manifest_fail_closed() -> None:
+    keys = ["run/cosmos_augmented/_attempts/orphan/clip/augmented_video.mp4"]
+    with pytest.raises(RuntimeError, match="without a canonical manifest"):
+        dfs._committed_augment_manifest(
+            "s3://b/run/cosmos_augmented/", listed_keys=keys
+        )
 
 
 def test_generate_configs_writes_real_manifest(tmp_path: Path) -> None:
@@ -387,15 +426,17 @@ def test_curate_merges_the_cosmos_curator_report(tmp_path: Path, monkeypatch) ->
             }
         )
     )
+    keys = [
+        "p/cosmos_augmented/manifest.json",
+        "p/cosmos_augmented/aug-0/augmented_video.mp4",
+        "p/cosmos_augmented/aug-1/augmented_video.mp4",
+    ]
     monkeypatch.setattr(
         dfs,
         "_list_keys",
-        lambda uri: [
-            "p/cosmos_augmented/manifest.json",
-            "p/cosmos_augmented/aug-0/augmented_video.mp4",
-            "p/cosmos_augmented/aug-1/augmented_video.mp4",
-        ],
+        lambda uri: keys,
     )
+    _mock_committed_manifest(monkeypatch, keys)
     monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
     report = dfs.curate(
         "s3://b/p/cosmos_augmented/",
@@ -448,6 +489,7 @@ def test_curate_counts_augmented_set(tmp_path: Path, monkeypatch) -> None:
         "p/cosmos_augmented/aug-run/metadata.json",
     ]
     monkeypatch.setattr(dfs, "_list_keys", lambda uri: keys)
+    _mock_committed_manifest(monkeypatch, keys)
     written = {}
     monkeypatch.setattr(
         dfs,
@@ -546,6 +588,7 @@ def test_publish_transfer_layout_interoperates_with_curate_and_viz(
 
     # (a) curate must parse the produced layout correctly.
     monkeypatch.setattr(dfs, "_list_keys", lambda uri: recorded)
+    _mock_committed_manifest(monkeypatch, recorded, bucket="bkt")
     monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
     report = dfs.curate(
         "s3://bkt/run1/cosmos_augmented/", "s3://bkt/run1/curation/report.json"
@@ -578,6 +621,7 @@ def test_curate_reports_multi_variant_for_multiple_clips(
         "p/cosmos_augmented/aug-run-2/metadata.json",
     ]
     monkeypatch.setattr(dfs, "_list_keys", lambda uri: keys)
+    _mock_committed_manifest(monkeypatch, keys)
     monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
     report = dfs.curate("s3://b/p/cosmos_augmented/", "s3://b/p/curation/report.json")
     assert report["augmented_clips"] == 3
@@ -598,6 +642,7 @@ def test_finalize_reports_multi_variant_from_clip_dirs(
         "physical-ai-data-factory/run1/reports/sim2real.rrd",
     ]
     monkeypatch.setattr(dfs, "_list_keys", lambda uri: keys)
+    _mock_committed_manifest(monkeypatch, keys, bucket="b")
     monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
     report = dfs.finalize(
         "s3://b/physical-ai-data-factory/run1/", "s3://b/.../final.json"
@@ -617,10 +662,14 @@ def test_all_augmentations_reads_every_combo(tmp_path: Path) -> None:
     assert _first_augmentation(configs_uri) == combos[0]
 
 
-def test_all_augmentations_missing_manifest_returns_empty(tmp_path: Path) -> None:
+def test_all_augmentations_missing_manifest_fails_closed(tmp_path: Path) -> None:
     from npa.cli.workbench.cosmos2 import _all_augmentations
 
-    assert _all_augmentations(str(tmp_path / "nope") + "/") == []
+    with pytest.raises(
+        typer.BadParameter,
+        match="configured augmentation manifest could not be read",
+    ):
+        _all_augmentations(str(tmp_path / "nope") + "/")
 
 
 def test_finalize_aggregates_stage_artifacts(tmp_path: Path, monkeypatch) -> None:

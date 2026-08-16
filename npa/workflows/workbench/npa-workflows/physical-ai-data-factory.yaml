@@ -89,6 +89,40 @@ config:
   seed_default_input: "false"
   n_augmentations: "2"            # augmented variants sampled per source video
   augment_subject: "the input robot clips"  # included in sampled Cosmos prompts
+  # Nodes in the augment block. The variants are independent diffusions, so they
+  # shard across a gang-scheduled block: each node renders its stride of the
+  # sampled combos on its own GPUs. Every managed attempt publishes clips below a
+  # private _attempts/<scheduler-attempt-id>/ prefix and conditionally commits
+  # cosmos_augmented/manifest.json; when augment_nodes > 1, each rank also writes
+  # a shard and rank 0 joins all current shards. Total
+  # concurrent renders = augment_nodes x GPUs per node. Validation requires
+  # augment_nodes <= n_augmentations. Raise it at submit time
+  # (`--var augment_nodes=4`) rather than editing this file; deployIfAbsent then
+  # provisions a cluster with that many GPU nodes.
+  augment_nodes: "1"
+  # Control modality the augmentation is conditioned on: edge, vis, depth, or seg.
+  # Cosmos Transfer 2.5 derives edge/vis/seg from the staged input clip. Depth
+  # requires an operator-owned precomputed weight-free control; NPA never downloads
+  # or runs Video Depth Anything weights. `--var augment_control=seg` runs
+  # GroundingDINO-base + SAM2 over the input and conditions on the resulting
+  # segmentation map instead of Canny edges. seg holds class boundaries where edge
+  # holds every texture edge, so it lets a prompt restyle a surface without the
+  # old material's edge detail bleeding through. Each modality is its own
+  # ControlNet checkpoint, so switching downloads different gated weights.
+  augment_control: "edge"
+  augment_control_weight: "1.0"
+  # Objects on-the-fly seg should segment, e.g. "robot arm, conveyor, bin".
+  # Upstream falls back to the first 128 words of the appearance prompt.
+  augment_control_prompt: ""
+  # Region mask: restrict the control to the pixels a mask marks white, leaving
+  # the rest of the frame free for the prompt. augment_mask_prompt segments the
+  # region with SAM2 from text ("robot arm"); augment_mask_asset_uri supplies a
+  # precomputed binary spatiotemporal mask video. They are mutually exclusive.
+  augment_mask_prompt: ""
+  augment_mask_asset_uri: ""
+  # Precomputed control video (e.g. a segmentation map produced upstream of this
+  # run) to condition on instead of computing the modality on-the-fly.
+  augment_control_asset_uri: ""
   refinement_iterations: "2"      # max evaluate/validate passes before reject
   grade_threshold: "0.75"         # min aggregate score to promote (else loop_back)
   # NPA temporal residual is advisory until a deployment calibrates its fixed
@@ -146,6 +180,12 @@ config:
   trigger_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
   augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/"
   augment_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/manifest.json"
+  # The control map (and region mask) each variant was conditioned on, published as
+  # a SIBLING of cosmos_augmented/ rather than inside a variant directory: the
+  # evaluator enumerates clip dirs under cosmos_augmented/ and falls back to the
+  # alphabetically first PNG in one, so a nested control/ would feed the
+  # attribute-verify VLM a segmentation map instead of the frame it must grade.
+  augment_control_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_control/"
   rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/"
   scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/grade/"
   decision_uri: "s3://{{config.bucket}}/{{config.prefix}}/grade/decision.json"
@@ -193,6 +233,12 @@ resources:
     # (auto-detected, or set NPA_COSMOS_VARIANT_PARALLELISM). N variants then run
     # in ~one variant's wall-clock instead of N x. Keep :1 for a single-GPU run.
     accelerators: RTXPRO6000:1
+    # MULTI-NODE FAN-OUT: the second axis. SkyPilot gang-schedules this many
+    # identical pods for the augment task and exports SKYPILOT_NODE_RANK /
+    # SKYPILOT_NUM_NODES into each; the augment stage shards the sampled combos by
+    # rank, so a 4-node x 4-GPU block renders 16 variants concurrently. Only the
+    # augment stage is multi-node -- the CPU/Token-Factory stages stay single pod.
+    num_nodes: "{{config.augment_nodes}}"
     # Host-side model loading/checkpoint materialization scales with the
     # multi-GPU variant fan-out. Keep enough CPU/RAM headroom for a 4-GPU
     # override instead of OOM-killing four concurrent Cosmos workers.
@@ -272,7 +318,14 @@ states:
     description: >
       Stage 2b - Augment & Multiply. Cosmos Transfer 2.5 runs ONE inference per
       sampled appearance combo (config.n_augmentations), so N combos -> N scenario
-      variants, each published as its own cosmos_augmented/<clip>/ dir (GPU tier).
+      variants, each published as its own per-clip dir (GPU tier).
+      The variants fan out over GPUs within a node and over nodes when
+      config.augment_nodes > 1. Every managed attempt publishes below
+      cosmos_augmented/_attempts/<scheduler-attempt-id>/ and conditionally commits
+      the run manifest; a gang first joins every current rank shard. Late prior
+      writes stay private and cannot become the current artifact set. An inner
+      recovery cannot supersede an existing same-token claim; the NPA runtime
+      issues a higher retry fence only after that managed job is terminal.
       Appearance-only: lighting, background, color grade, surface finish -- never scene
       geometry.
       Every managed variant conditions on the prepared 93-frame
@@ -280,6 +333,12 @@ states:
       while changing appearance. The mandatory --condition-on-input catalog flag
       prevents the staged source from being decorative. Missing or inaccessible
       input fails closed; no bundled or geometric fallback is available.
+      config.augment_control picks WHAT is preserved -- Canny edge by default, or
+      seg to condition on a GroundingDINO+SAM2 segmentation of the input instead --
+      and config.augment_mask_prompt restricts the control to one segmented region
+      so the rest of the frame follows the prompt freely. The control map and mask
+      are published under config.augment_control_uri, so a reviewer can see the
+      exact conditioning signal each variant was rendered from.
       This is a member of the `grade`
       refinement loop: on a loop_back decision the loop re-runs augment (re-render),
       re-verify, and re-gate, so a failed batch is actually re-augmented.

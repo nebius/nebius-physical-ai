@@ -1308,6 +1308,15 @@ def _data_factory_spec() -> dict[str, Any]:
                 # Concurrency of the multiply fan-out (one variant per GPU); align
                 # with the gpu resource accelerator count for full utilization.
                 "variant_parallelism": "4",
+                # Conditioning shape: edge (on-the-fly Canny) by default, or seg to
+                # condition on a GroundingDINO+SAM2 segmentation of the same input.
+                # The mask keys restrict the control to one segmented region.
+                "augment_control": "edge",
+                "augment_control_weight": "1.0",
+                "augment_control_prompt": "",
+                "augment_control_asset_uri": "",
+                "augment_mask_prompt": "",
+                "augment_mask_asset_uri": "",
                 "refinement_iterations": "2",
                 "grade_threshold": "0.75",
                 "default_decision": "loop_back",
@@ -1346,6 +1355,9 @@ def _data_factory_spec() -> dict[str, Any]:
                 "trigger_uri": "s3://{{config.bucket}}/{{config.prefix}}/input/",
                 "augment_uri": "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/",
                 "augment_manifest_uri": "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/manifest.json",
+                # Sibling of the augmented clips, never nested inside them: the
+                # evaluator treats every child of cosmos_augmented/ as a variant.
+                "augment_control_uri": "s3://{{config.bucket}}/{{config.prefix}}/cosmos_control/",
                 "rollouts_uri": "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/",
                 "scores_uri": "s3://{{config.bucket}}/{{config.prefix}}/grade/",
                 "decision_uri": "s3://{{config.bucket}}/{{config.prefix}}/grade/decision.json",

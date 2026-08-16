@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
-from npa.workflows.data_factory_viz import DataFactoryVizError, _frame_index, build_run_rrd
+from npa.workflows.data_factory_viz import (
+    DataFactoryVizError,
+    _committed_variant_dirs,
+    _frame_index,
+    build_run_rrd,
+)
 
 
 def _write_png(path: Path, color: tuple[int, int, int]) -> None:
@@ -157,6 +163,65 @@ def test_build_run_rrd_logs_pipeline_docs(tmp_path: Path, monkeypatch) -> None:
     assert "pipeline/3_grade" in logged_entities
 
 
+def test_control_maps_are_logged_beside_the_variants_they_conditioned(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A seg-conditioned run is only reviewable if the segmentation is visible."""
+    pytest.importorskip("rerun")
+
+    run = tmp_path / "run"
+    aug = run / "cosmos_augmented" / "aug-0"
+    _write_png(aug / "frame-00000.png", (11, 22, 33))
+    control = run / "cosmos_control" / "aug-0"
+    _write_png(control / "control_seg" / "frame-00000.png", (0, 255, 0))
+    _write_png(control / "control_seg" / "frame-00001.png", (0, 200, 0))
+    _write_png(control / "mask_seg" / "frame-00000.png", (255, 255, 255))
+
+    import rerun as rr
+
+    logged_entities: list[str] = []
+    real_log = rr.log
+
+    def spy_log(entity, *args, **kwargs):
+        logged_entities.append(entity)
+        return real_log(entity, *args, **kwargs)
+
+    monkeypatch.setattr(rr, "log", spy_log)
+    result = build_run_rrd(str(run), str(tmp_path / "reports" / "sim2real.rrd"))
+
+    assert "control/aug-0/control_seg" in logged_entities
+    assert "control/aug-0/mask_seg" in logged_entities
+    # The three control frames count as logged frames alongside the variant's one.
+    assert result["frames_logged"] == 4
+
+
+def test_the_stage_log_names_what_conditioned_the_augment(tmp_path: Path) -> None:
+    import json
+
+    from npa.workflows.data_factory_viz import _load_stage_docs
+
+    run = tmp_path / "run"
+    (run / "cosmos_augmented").mkdir(parents=True)
+    (run / "cosmos_augmented" / "manifest.json").write_text(
+        json.dumps(
+            {
+                "mode": "cosmos_transfer2.5_gpu",
+                "variant_count": 2,
+                "input_conditioned": True,
+                "control": "seg",
+                "control_prompt": "robot arm, conveyor",
+                "mask_prompt": "robot arm",
+                "clips": ["aug-0", "aug-1"],
+            }
+        )
+    )
+
+    log = _load_stage_docs(run)["pipeline/0_log"]
+    assert "control=seg" in log
+    assert "robot arm, conveyor" in log
+    assert "masked to 'robot arm'" in log
+
+
 def test_captions_carry_self_identifying_header(tmp_path: Path) -> None:
     """Caption docs must announce they are Token Factory captioning (not the VLM
     eval / hallucination gate) so the two are not confused in the Rerun grid."""
@@ -197,3 +262,49 @@ def test_build_run_rrd_errors_when_no_frames(tmp_path: Path) -> None:
     empty.mkdir()
     with pytest.raises(DataFactoryVizError):
         build_run_rrd(str(empty), str(tmp_path / "reports" / "sim2real.rrd"))
+
+
+def test_visualization_follows_only_committed_attempt_directories(tmp_path: Path) -> None:
+    current = tmp_path / "cosmos_augmented" / "_attempts" / "current" / "aug-1"
+    old = tmp_path / "cosmos_augmented" / "_attempts" / "old" / "aug-1"
+    current.mkdir(parents=True)
+    old.mkdir(parents=True)
+    video = current / "augmented_video.mp4"
+    video.write_bytes(b"current")
+    (tmp_path / "cosmos_augmented" / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema": "npa.cosmos2.transfer.v1",
+                "mode": "cosmos_transfer2.5_gpu",
+                "status": "executed",
+                "node_count": 2,
+                "attempt_id": "current",
+                "scheduler_fence_sequence": 2,
+                "scheduler_fence_attempt": 1,
+                "scheduler_launch_id": "job",
+                "publication_generation": 2,
+                "logical_publication": "conditional",
+                "logical_wave_id": "grade-loop-2",
+                "membership_digest": "current-members",
+                "variant_count": 1,
+                "variants": [
+                    {
+                        "clip": "aug-1",
+                        "variant_index": 0,
+                        "augmented_video_uri": (
+                            "s3://bucket/run/cosmos_augmented/_attempts/"
+                            "current/aug-1/augmented_video.mp4"
+                        ),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert _committed_variant_dirs(tmp_path) == [current]
+
+
+def test_visualization_refuses_attempt_layout_without_manifest(tmp_path: Path) -> None:
+    (tmp_path / "cosmos_augmented" / "_attempts" / "orphan").mkdir(parents=True)
+    with pytest.raises(DataFactoryVizError, match="without a valid canonical"):
+        _committed_variant_dirs(tmp_path)

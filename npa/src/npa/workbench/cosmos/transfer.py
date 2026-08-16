@@ -16,23 +16,39 @@ on :func:`cosmos_transfer_available` and fall back to their descriptor path.
 from __future__ import annotations
 
 import glob
+import hashlib
+import logging
 import os
+import re
+import secrets
 import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
+
+from npa.workbench.cosmos.control_contract import (
+    COSMOS_TRANSFER_CHECKPOINTS as CONTROL_MODALITY_MODELS,
+    ControlContractError,
+    validate_control_request,
+)
 
 DEFAULT_REPO = "/opt/cosmos/cosmos-transfer2.5"
 # No upstream media is bundled in the redistributable image. Callers must supply
 # either an input clip (the preferred path) or an explicit operator-owned spec.
 DEFAULT_SPEC = ""
 
-# Control modalities Cosmos Transfer 2.5 computes ON-THE-FLY from the input
-# ``video_path`` (Canny edge / bilateral blur), so conditioning on an arbitrary
-# input clip needs NO precomputed control asset. depth/seg require a precomputed
-# control file, so they are not used for self-contained input-only conditioning.
-INPUT_AUTO_CONTROLS = ("edge", "vis")
+# Control modalities the pinned Cosmos Transfer 2.5 accepts (upstream CONTROL_KEYS).
+# Depth is intentionally precomputed-only: NPA neither downloads nor executes
+# Video Depth Anything weights.
+INPUT_CONTROLS = tuple(CONTROL_MODALITY_MODELS)
+INPUT_AUTO_CONTROLS = ("edge", "vis", "seg")
 DEFAULT_INPUT_CONTROL = "edge"
+# ``seg`` is the only modality whose on-the-fly generator is text-driven: upstream
+# feeds ``control_prompt`` to GroundingDINO to pick the objects SAM2 then tracks,
+# and defaults it to the first 128 words of the appearance prompt when unset.
+CONTROL_PROMPT_MODALITIES = ("seg",)
+# Each modality is a separate ControlNet checkpoint, so a seg/depth run downloads
+# weights an edge run never touches. Named here for the operator-facing error.
 DISABLE_CONTENT_GUARDRAILS_ENV = "NPA_COSMOS_DISABLE_CONTENT_GUARDRAILS"
 # Live job 339 reported SUCCEEDED while the spec promised ``manifest.json`` and
 # the then-reference-only tool wrote ``index.json`` with a different schema.
@@ -44,6 +60,26 @@ TRANSFER_MANIFEST_FILENAME = "manifest.json"
 TRANSFER_MANIFEST_SCHEMA = "npa.cosmos2.transfer.v1"
 TRANSFER_MANIFEST_MODE = "cosmos_transfer2.5_gpu"
 TRANSFER_MANIFEST_STATUS = "executed"
+# Scheduler-managed augment: each wave attempt publishes only below its opaque
+# ``_attempts/<attempt-id>/`` prefix. The leader conditionally replaces the
+# canonical manifest (after joining shards for a gang); consumers follow only it.
+SHARD_MANIFEST_PREFIX = "manifest-rank-"
+SHARD_MANIFEST_SCHEMA = "npa.cosmos2.transfer_shard.v1"
+PUBLICATION_CLAIM_STATUS = "publishing"
+PUBLICATION_GENERATION_FIELD = "publication_generation"
+ATTEMPT_PREFIX = "_attempts"
+SCHEDULER_PUBLICATION_IDENTITY_FIELDS = frozenset(
+    {
+        "attempt_id",
+        PUBLICATION_GENERATION_FIELD,
+        "logical_publication",
+        "logical_wave_id",
+        "membership_digest",
+        "scheduler_fence_sequence",
+        "scheduler_fence_attempt",
+        "scheduler_launch_id",
+    }
+)
 AUGMENTED_FRAMES_INDEX = "index.json"
 AUGMENTED_FRAMES_SCHEMA = "npa.sim2real.augmented_frames.v1"
 REFERENCE_AUGMENT_MODE = "reference_augment"
@@ -59,6 +95,46 @@ class FrameExtractionError(RuntimeError):
     """Raised when the frame-extraction subprocess cannot decode a video."""
 
 
+class ControlModalityError(ValueError):
+    """Raised when a caller asks for a control modality the model does not have."""
+
+
+def resolve_control_modality(control: str) -> str:
+    """Return the validated control modality for ``control``.
+
+    Fails closed on an unknown modality. NPA used to silently rewrite anything
+    outside edge/vis to ``edge``, which meant an operator who asked for ``seg``
+    got an edge-conditioned render and no signal that the request was dropped.
+    """
+
+    try:
+        checkpoint, _weight = validate_control_request(
+            modality=control or DEFAULT_INPUT_CONTROL,
+            weight=1.0,
+            control_asset="precomputed" if str(control or "").strip().lower() == "depth" else "",
+        )
+    except ControlContractError as exc:
+        raise ControlModalityError(str(exc)) from exc
+    return checkpoint.modality
+
+
+def resolve_control_weight(control_weight: float | str) -> float:
+    """Return ``control_weight`` after enforcing upstream's range.
+
+    Upstream types it ``Field(ge=0.0, le=1.0)``, so an out-of-range weight is a
+    pydantic error raised inside the container — after the accelerator is held and
+    the ControlNet weights are loaded. Reject it while that is still cheap.
+    """
+
+    try:
+        _checkpoint, weight = validate_control_request(
+            modality="edge", weight=control_weight
+        )
+    except ControlContractError as exc:
+        raise ControlModalityError(str(exc)) from exc
+    return weight
+
+
 def _spec_for_input_video(
     repo: Path,
     *,
@@ -68,32 +144,116 @@ def _spec_for_input_video(
     control_weight: float,
     guidance: float,
     name: str,
+    control_asset: str = "",
+    control_prompt: str = "",
+    mask_asset: str = "",
+    mask_prompt: str = "",
 ) -> tuple[str, str]:
     """Write a Cosmos Transfer 2.5 controlnet spec that CONDITIONS ON ``input_video``.
 
-    ``video_path`` is the caller's real input clip; the ``edge``/``vis`` control is
-    computed on-the-fly from it (no precomputed control asset), so the output
-    preserves the input's structure/motion while ``prompt`` drives a new
-    appearance -- i.e. a genuine augmentation of the caller's footage. Returns
+    ``video_path`` is the caller's real input clip; edge/vis/seg may be computed
+    from it, while depth requires ``control_asset`` from an operator-owned
+    weight-free method. The output preserves structure/motion while ``prompt``
+    drives a new appearance -- i.e. a genuine augmentation of the caller's footage.
+
+    ``control_prompt`` names the objects on-the-fly ``seg`` should segment.
+    ``mask_asset`` / ``mask_prompt`` write upstream's region mask, a binary
+    spatiotemporal video restricting the control to the white pixels; giving both
+    is rejected because upstream accepts only one. Returns
     ``(spec_path_relative_to_repo, control_modality)``.
     """
     import json as _json
 
-    modality = str(control or DEFAULT_INPUT_CONTROL).strip().lower()
-    if modality not in INPUT_AUTO_CONTROLS:
-        modality = DEFAULT_INPUT_CONTROL
+    try:
+        checkpoint, normalized_weight = validate_control_request(
+            modality=control,
+            weight=control_weight,
+            control_asset=control_asset,
+            control_prompt=control_prompt,
+            mask_asset=mask_asset,
+            mask_prompt=mask_prompt,
+        )
+    except ControlContractError as exc:
+        raise ControlModalityError(str(exc)) from exc
+    modality = checkpoint.modality
+    control_config: dict[str, Any] = {
+        "control_weight": normalized_weight
+    }
+    if control_asset:
+        control_config["control_path"] = str(Path(control_asset).resolve())
+    if control_prompt:
+        control_config["control_prompt"] = control_prompt
+    if mask_asset:
+        control_config["mask_path"] = str(Path(mask_asset).resolve())
+    if mask_prompt:
+        control_config["mask_prompt"] = mask_prompt
     spec = {
         "name": str(name or "npa_input"),
         "prompt": str(prompt or "").strip() or _DEFAULT_INPUT_PROMPT,
         # Absolute path so it resolves regardless of where the spec file lives.
         "video_path": str(Path(input_video).resolve()),
         "guidance": guidance,
-        modality: {"control_weight": float(control_weight)},
+        modality: control_config,
     }
     safe = "".join(c if (c.isalnum() or c in "-_") else "_" for c in str(name or "input"))
     spec_path = repo / f"_npa_input_spec_{safe}.json"
     spec_path.write_text(_json.dumps(spec, indent=2), encoding="utf-8")
     return str(spec_path.relative_to(repo)), modality
+
+
+def _classify_output_videos(
+    out_dir: Path,
+) -> tuple[list[str], dict[str, str], dict[str, str]]:
+    """Split an inference output directory into generated / control / mask videos.
+
+    Upstream writes ``<name>.mp4`` for the generated clip and, per supported
+    modality, ``<name>_control_<key>.mp4`` plus ``<name>_mask_<key>.mp4`` when a
+    region mask was generated from a prompt. Both exact sidecar shapes must be
+    excluded from the generated set: a full-frame binary mask compresses well but
+    not always to less than the render, so picking the largest file could publish
+    a mask as the augmentation. Unknown sidecar keys are also quarantined when
+    their generated sibling exists, which fails closed if upstream adds a modality
+    before NPA learns how to publish its evidence. Ordinary run names may
+    themselves contain words such as ``control`` or ``_mask_`` and remain
+    generated output.
+    """
+
+    import re as _re
+
+    control: dict[str, str] = {}
+    masks: dict[str, str] = {}
+    generated: list[str] = []
+    paths = [
+        Path(path)
+        for path in sorted(glob.glob(str(out_dir / "**" / "*.mp4"), recursive=True))
+    ]
+    path_set = set(paths)
+    sidecar_pattern = _re.compile(
+        r"^(?P<base>.+)_(?P<kind>control|mask)_"
+        r"(?P<key>[a-z0-9][a-z0-9_-]*)\.mp4$"
+    )
+    for candidate in paths:
+        match = sidecar_pattern.match(candidate.name)
+        if match is None:
+            generated.append(str(candidate))
+            continue
+        key = match.group("key")
+        has_generated_sibling = (
+            candidate.with_name(f"{match.group('base')}.mp4") in path_set
+        )
+        if not has_generated_sibling and key not in INPUT_CONTROLS:
+            # A standalone render may legitimately contain these words. Only a
+            # known modality suffix is intrinsically evidence-shaped; an unknown
+            # suffix needs the upstream sibling relationship to disambiguate it.
+            generated.append(str(candidate))
+            continue
+        if has_generated_sibling and key in INPUT_CONTROLS:
+            target = control if match.group("kind") == "control" else masks
+            target.setdefault(key, str(candidate))
+        # Unknown keys with a generated sibling, and known sidecars missing their
+        # sibling, are intentionally omitted until a coherent evidence contract
+        # can be established.
+    return generated, control, masks
 
 
 def cosmos_transfer_repo() -> Path:
@@ -199,6 +359,10 @@ def run_cosmos_transfer(
     input_video: str | None = None,
     control: str = DEFAULT_INPUT_CONTROL,
     control_weight: float = 1.0,
+    control_asset: str = "",
+    control_prompt: str = "",
+    mask_asset: str = "",
+    mask_prompt: str = "",
     guidance: float = 3.0,
     cuda_visible_devices: str | None = None,
     variant_tag: str = "",
@@ -212,10 +376,16 @@ def run_cosmos_transfer(
     prompt so the sampled appearance actually conditions the augmentation.
 
     When ``input_video`` is provided the transfer is CONDITIONED ON THAT CLIP: a
-    controlnet spec is built with ``video_path`` = the input and an ``edge``/``vis``
-    control computed on-the-fly, so the output is a real augmentation of the
+    controlnet spec is built with ``video_path`` = the input and the ``control``
+    selected modality (or precomputed depth control), so the output is a real augmentation of the
     caller's footage (new appearance from ``prompt``, same structure/motion).
+    ``control_asset`` substitutes a precomputed control video, ``control_prompt``
+    names what on-the-fly ``seg`` segments, and ``mask_asset``/``mask_prompt``
+    restrict the control to a region.
     When ``input_video`` is absent, the caller must provide an operator-owned spec.
+
+    The returned ``control_videos`` / ``mask_videos`` map each modality to the
+    control and region-mask videos upstream wrote next to the generated clip.
     """
 
     repo = cosmos_transfer_repo()
@@ -232,6 +402,10 @@ def run_cosmos_transfer(
             control_weight=control_weight,
             guidance=guidance,
             name=tag,
+            control_asset=control_asset,
+            control_prompt=control_prompt,
+            mask_asset=mask_asset,
+            mask_prompt=mask_prompt,
         )
     else:
         spec = spec or os.environ.get("COSMOS_TRANSFER_SPEC", DEFAULT_SPEC)
@@ -291,31 +465,30 @@ def run_cosmos_transfer(
             except OSError:
                 pass
 
-    videos = [
-        f
-        for f in glob.glob(str(out_abs / "**" / "*.mp4"), recursive=True)
-        if "control" not in Path(f).name
-    ]
+    generated, control_videos, mask_videos = _classify_output_videos(out_abs)
     # Upstream already ran its generated-video guardrail before writing this
     # file. Do not reuse the container golden-eval's 100 KiB heuristic here:
     # a short valid transfer can produce a ~9 KiB video (live job 371). S3
     # publication below still fails closed unless PyAV can decode at least one
     # exact frame, which is the artifact contract consumers need.
     produced = sorted(
-        (f for f in videos if os.path.getsize(f) > 0),
+        (f for f in generated if os.path.getsize(f) > 0),
         key=os.path.getsize,
         reverse=True,
     )
     if not produced:
         raise RuntimeError(f"cosmos-transfer2.5 produced no output video in {out_abs}")
-    control_videos = [
-        f for f in glob.glob(str(out_abs / "**" / "*.mp4"), recursive=True)
-        if "control" in Path(f).name
-    ]
     return {
         "video_path": produced[0],
         "video_bytes": os.path.getsize(produced[0]),
-        "control_path": control_videos[0] if control_videos else "",
+        "control_path": next(iter(control_videos.values()), ""),
+        "control_videos": control_videos,
+        "mask_videos": mask_videos,
+        "control_weight": float(control_weight),
+        "control_prompt": control_prompt,
+        "mask_prompt": mask_prompt,
+        "control_asset": control_asset,
+        "mask_asset": mask_asset,
         "out_dir": str(out_abs),
         "spec": spec,
         "spec_json": spec_json,
@@ -377,8 +550,10 @@ def publish_transfer_clip(
     run_id: str = "",
     clip_name: str = "",
     variables: dict[str, Any] | None = None,
+    variant_index: int = 0,
     max_frames: int = 8,
     frames_output_uri: str = "",
+    control_output_uri: str = "",
     require_frames: bool = False,
     storage_client: Any = None,
 ) -> dict[str, Any]:
@@ -392,6 +567,19 @@ def publish_transfer_clip(
         <clip>/frame-00000.png ... (or ``frames_output_uri/frame-*.png``)
         <clip>/metadata.json      (variables + mode, for the Rerun label)
 
+    When ``control_output_uri`` is set, the conditioning signal itself is
+    published too, under a SIBLING prefix rather than inside ``<clip>/``:
+
+        <control>/<clip>/control_<modality>.mp4        (e.g. the seg map)
+        <control>/<clip>/control_<modality>/frame-*.png
+        <control>/<clip>/mask_<modality>.mp4           (region mask, when used)
+        <control>/<clip>/mask_<modality>/frame-*.png
+
+    The sibling prefix is deliberate: the evaluator enumerates clip directories
+    under ``cosmos_augmented/`` and falls back to the alphabetically first PNG in
+    one, so a ``control/`` child would hand the attribute-verify VLM a
+    segmentation map instead of the augmented frame it must grade.
+
     This is the unit of "multiply": the caller runs one inference per sampled
     appearance combo and publishes each as its own clip, then calls
     :func:`write_run_manifest` once to emit the run-level ``manifest.json``.
@@ -400,6 +588,7 @@ def publish_transfer_clip(
     if not output_uri.startswith("s3://"):
         raise ValueError(f"output_uri must be an s3:// prefix, got: {output_uri!r}")
     from npa.clients.storage import StorageClient
+    import tempfile as _tempfile
 
     client = storage_client or StorageClient.from_environment()
     base = output_uri if output_uri.endswith("/") else output_uri + "/"
@@ -411,7 +600,6 @@ def publish_transfer_clip(
     video_uri = f"{clip_base}augmented_video.mp4"
 
     import json as _json
-    import tempfile as _tempfile
 
     # This publish path only runs after the REAL Cosmos Transfer 2.5 model
     # executed on GPU, so record the GPU mode (kept in sync with the provenance
@@ -426,6 +614,11 @@ def publish_transfer_clip(
     )
     conditioning_clip_uri = str(transfer.get("conditioning_clip_uri") or "")
 
+    control_uris: dict[str, str] = {}
+    control_frames: dict[str, list[str]] = {}
+    control_evidence: dict[str, str] = {
+        "status": "pending" if control_output_uri else "not_requested"
+    }
     frame_index: list[dict[str, str]] = []
     with _tempfile.TemporaryDirectory(prefix="npa-cosmos-pub-") as tmp:
         frames = extract_frames(transfer["video_path"], Path(tmp) / "frames", max_frames=max_frames)
@@ -443,10 +636,14 @@ def publish_transfer_clip(
             client.upload_file(str(frame_path), f"{frames_base}{key}")
             frame_index.append({"frame_id": f"frame-{i:05d}", "uri": f"{frames_base}{key}"})
 
-        clip_meta = {
+        clip_meta: dict[str, Any] = {
             "schema": TRANSFER_MANIFEST_SCHEMA,
             "mode": TRANSFER_MANIFEST_MODE,
             "clip": clip,
+            # Position of this variant in the sampled combo order. It is the same
+            # number whichever node rendered the clip, so a merged multi-node
+            # manifest can restore the single-node ordering.
+            "variant_index": int(variant_index),
             "variables": variables or {},
             "prompt": str((variables or {}).get("prompt") or ""),
             "control_spec": transfer.get("spec", ""),
@@ -454,14 +651,65 @@ def publish_transfer_clip(
             "conditioned_input": conditioned_input,
             "conditioning_clip_uri": conditioning_clip_uri,
             "control": conditioned_control,
+            "control_weight": float(transfer.get("control_weight", 0.0) or 0.0),
+            "control_prompt": str(transfer.get("control_prompt") or ""),
+            "mask_prompt": str(transfer.get("mask_prompt") or ""),
+            "control_uris": control_uris,
+            "control_evidence": control_evidence,
             "content_guardrails_enabled": content_guardrails_enabled,
         }
         cm = Path(tmp) / "metadata.json"
-        cm.write_text(_json.dumps(clip_meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        client.upload_file(str(cm), f"{clip_base}metadata.json")
+
+        def _upload_metadata() -> None:
+            cm.write_text(
+                _json.dumps(clip_meta, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            client.upload_file(str(cm), f"{clip_base}metadata.json")
+
+        # Commit the completed render before optional evidence.  If a control
+        # sidecar upload fails, consumers still get a coherent generated video,
+        # frames, and metadata that does not claim the evidence exists.
+        _upload_metadata()
+        if control_output_uri:
+            try:
+                control_uris, control_frames = _publish_control_signal(
+                    transfer,
+                    control_output_uri,
+                    clip=clip,
+                    workdir=Path(tmp) / "control",
+                    max_frames=max_frames,
+                    client=client,
+                )
+            except Exception as exc:  # noqa: BLE001 - evidence is non-fatal
+                control_uris = {}
+                control_frames = {}
+                control_evidence = {
+                    "status": "failed",
+                    # Never persist provider errors: they can contain signed URLs
+                    # or credential-adjacent request details.
+                    "error_type": type(exc).__name__,
+                }
+            else:
+                control_evidence = {
+                    "status": "published" if control_uris else "missing"
+                }
+            clip_meta["control_uris"] = control_uris
+            clip_meta["control_evidence"] = control_evidence
+            try:
+                _upload_metadata()
+            except Exception as exc:  # noqa: BLE001 - core metadata is durable
+                # The first metadata object says `pending`, never that evidence
+                # exists.  A separately retryable evidence/finalization failure
+                # must not discard a completed generated variant.
+                logging.getLogger(__name__).debug(
+                    "control evidence metadata finalization failed: %s",
+                    type(exc).__name__,
+                )
 
     return {
         "clip": clip,
+        "variant_index": int(variant_index),
         "clip_base": clip_base,
         "augmented_video_uri": video_uri,
         "frame_count": len(frame_index),
@@ -473,9 +721,465 @@ def publish_transfer_clip(
         "conditioned_input": conditioned_input,
         "conditioning_clip_uri": conditioning_clip_uri,
         "control": conditioned_control,
+        "control_weight": float(transfer.get("control_weight", 0.0) or 0.0),
+        "control_prompt": str(transfer.get("control_prompt") or ""),
+        "mask_prompt": str(transfer.get("mask_prompt") or ""),
+        "control_uris": control_uris,
+        "control_frames": control_frames,
+        "control_evidence": control_evidence,
         "content_guardrails_enabled": content_guardrails_enabled,
         "variables": variables or {},
     }
+
+
+def _publish_control_signal(
+    transfer: dict[str, Any],
+    control_output_uri: str,
+    *,
+    clip: str,
+    workdir: Path,
+    max_frames: int,
+    client: Any,
+) -> tuple[dict[str, str], dict[str, list[str]]]:
+    """Publish the control map and region mask that conditioned one variant.
+
+    Returns ``({artifact_name: video_uri}, {artifact_name: [frame_uri]})`` where
+    the artifact name is ``control_<modality>`` or ``mask_<modality>``. Frame
+    extraction is best-effort: a control map that will not decode is worth
+    reporting as a missing preview, not worth failing a completed render over.
+    """
+
+    if not control_output_uri.startswith("s3://"):
+        raise ValueError(
+            f"control_output_uri must be an s3:// prefix, got: {control_output_uri!r}"
+        )
+    base = control_output_uri if control_output_uri.endswith("/") else control_output_uri + "/"
+    clip_base = f"{base}{clip}/"
+    signals: list[tuple[str, str]] = [
+        (f"control_{modality}", path)
+        for modality, path in sorted((transfer.get("control_videos") or {}).items())
+    ]
+    signals += [
+        (f"mask_{modality}", path)
+        for modality, path in sorted((transfer.get("mask_videos") or {}).items())
+    ]
+
+    uris: dict[str, str] = {}
+    frames: dict[str, list[str]] = {}
+    for name, path in signals:
+        if not path or not os.path.isfile(path):
+            continue
+        video_uri = f"{clip_base}{name}.mp4"
+        client.upload_file(path, video_uri)
+        uris[name] = video_uri
+        try:
+            extracted = extract_frames(path, workdir / name, max_frames=max_frames)
+        except FrameExtractionError:
+            continue
+        frame_uris: list[str] = []
+        for index, frame_path in enumerate(extracted):
+            frame_uri = f"{clip_base}{name}/frame-{index:05d}.png"
+            client.upload_file(str(frame_path), frame_uri)
+            frame_uris.append(frame_uri)
+        if frame_uris:
+            frames[name] = frame_uris
+    return uris, frames
+
+
+def _upload_json(client: Any, document: dict[str, Any], uri: str) -> str:
+    """Upload ``document`` as pretty-printed JSON to ``uri``."""
+
+    import json as _json
+    import tempfile as _tempfile
+
+    with _tempfile.TemporaryDirectory(prefix="npa-cosmos-man-") as tmp:
+        local = Path(tmp) / Path(uri).name
+        local.write_text(
+            _json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        return client.upload_file(str(local), uri)
+
+
+def _json_bytes(document: dict[str, Any]) -> bytes:
+    import json as _json
+
+    return (_json.dumps(document, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def _validated_attempt_id(attempt_id: str) -> str:
+    normalized = str(attempt_id or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", normalized):
+        raise ValueError(
+            "multi-node attempt_id must contain 1-128 letters, digits, '.', '_', or '-'"
+        )
+    return normalized
+
+
+def attempt_output_uri_for(output_uri: str, attempt_id: str) -> str:
+    """Return the private object prefix for one gang recovery generation."""
+
+    return (
+        f"{output_uri.rstrip('/')}/{ATTEMPT_PREFIX}/"
+        f"{_validated_attempt_id(attempt_id)}"
+    )
+
+
+def validate_committed_run_manifest(
+    document: Any, output_uri: str = ""
+) -> list[dict[str, Any]]:
+    """Validate the canonical consumer contract and return its variants.
+
+    The canonical document is a security/correctness boundary: recovery leaves
+    older generations below ``_attempts/``, so consumers must never infer a
+    generation by listing. Every referenced generated video is constrained to
+    this augment root and, for an attempt publication, its exact opaque prefix.
+    """
+
+    if not isinstance(document, dict):
+        raise ValueError("canonical Cosmos augment manifest is not an object")
+    if not (
+        document.get("schema") == TRANSFER_MANIFEST_SCHEMA
+        and document.get("mode") == TRANSFER_MANIFEST_MODE
+        and document.get("status") == TRANSFER_MANIFEST_STATUS
+    ):
+        raise ValueError(
+            "canonical Cosmos augment manifest has an invalid schema, mode, or status"
+        )
+    variants = document.get("variants")
+    if not isinstance(variants, list) or int(document.get("variant_count", -1)) != len(
+        variants
+    ):
+        raise ValueError("canonical Cosmos augment manifest has inconsistent variants")
+    attempt_id = str(document.get("attempt_id") or "").strip()
+    try:
+        node_count = int(document.get("node_count", 1) or 1)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("canonical Cosmos augment manifest has invalid node_count") from exc
+    if node_count < 1:
+        raise ValueError("canonical Cosmos augment manifest has invalid node_count")
+    scheduler_owned = node_count > 1 or any(
+        field in document for field in SCHEDULER_PUBLICATION_IDENTITY_FIELDS
+    )
+    if scheduler_owned and not attempt_id:
+        raise ValueError(
+            "scheduler-fenced Cosmos augment manifest has incomplete publication identity"
+        )
+    if attempt_id:
+        _validated_attempt_id(attempt_id)
+        try:
+            fence = (
+                int(document.get("scheduler_fence_sequence", 0)),
+                int(document.get("scheduler_fence_attempt", 0)),
+            )
+            publication_generation = int(
+                document.get(PUBLICATION_GENERATION_FIELD, 0)
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "scheduler-fenced Cosmos augment manifest has invalid publication identity"
+            ) from exc
+        required_text = {
+            "logical_wave_id": str(document.get("logical_wave_id") or "").strip(),
+            "membership_digest": str(document.get("membership_digest") or "").strip(),
+            "scheduler_launch_id": str(
+                document.get("scheduler_launch_id") or ""
+            ).strip(),
+        }
+        if (
+            min(fence) < 1
+            or publication_generation < 1
+            or document.get("logical_publication") != "conditional"
+            or not all(required_text.values())
+        ):
+            raise ValueError(
+                "scheduler-fenced Cosmos augment manifest has incomplete publication identity"
+            )
+    root = output_uri.rstrip("/") + "/" if output_uri else ""
+    if not root and variants:
+        first_video = str(variants[0].get("augmented_video_uri") or "")
+        if attempt_id:
+            marker = f"/{ATTEMPT_PREFIX}/{attempt_id}/"
+            if marker in first_video:
+                root = first_video.split(marker, 1)[0] + "/"
+        else:
+            marker = "/cosmos_augmented/"
+            if marker in first_video:
+                root = first_video.split(marker, 1)[0] + marker
+    if not root:
+        raise ValueError("canonical Cosmos augment manifest output root is indeterminate")
+    expected_prefix = (
+        f"{root.rstrip('/')}/{ATTEMPT_PREFIX}/{attempt_id}/"
+        if attempt_id
+        else root
+    )
+    seen_clips: set[str] = set()
+    seen_indices: set[int] = set()
+    for index, variant in enumerate(variants):
+        if not isinstance(variant, dict):
+            raise ValueError("canonical Cosmos augment manifest has an invalid variant")
+        clip = str(variant.get("clip") or "").strip()
+        video_uri = str(variant.get("augmented_video_uri") or "").strip()
+        try:
+            variant_index = int(variant.get("variant_index", index))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "canonical Cosmos augment manifest has an invalid variant index"
+            ) from exc
+        if not clip or clip in seen_clips or not video_uri.startswith(expected_prefix):
+            raise ValueError(
+                "canonical Cosmos augment manifest variant is duplicated or outside "
+                "its declared publication prefix"
+            )
+        if variant_index in seen_indices:
+            raise ValueError("canonical Cosmos augment manifest duplicates a variant index")
+        seen_clips.add(clip)
+        seen_indices.add(variant_index)
+        control_uris = variant.get("control_uris") or {}
+        if not isinstance(control_uris, dict):
+            raise ValueError("canonical Cosmos augment manifest control_uris is invalid")
+        if attempt_id and any(
+            f"/{ATTEMPT_PREFIX}/{attempt_id}/" not in str(uri or "")
+            for uri in control_uris.values()
+        ):
+            raise ValueError(
+                "canonical Cosmos augment manifest references control evidence from "
+                "another attempt"
+            )
+    if seen_indices != set(range(len(variants))):
+        raise ValueError("canonical Cosmos augment manifest has incomplete variant indices")
+    return variants
+
+
+def claim_run_publication(
+    output_uri: str,
+    *,
+    run_id: str,
+    logical_wave_id: str,
+    node_count: int,
+    membership_digest: str,
+    scheduler_fence_sequence: int,
+    scheduler_fence_attempt: int,
+    scheduler_launch_id: str,
+    storage_client: Any = None,
+    nonce_factory: Any = None,
+) -> tuple[str, str, int]:
+    """Atomically claim the canonical manifest for a scheduler wave attempt.
+
+    The durable NPA workflow scheduler supplies the ordered ``(sequence,
+    attempt)`` fence before launch. Workload arrival order is never treated as
+    authority: a lower/equal token cannot supersede the canonical document. A
+    cryptographic nonce keeps the attempt prefix unguessably distinct. The
+    returned ETag is the final-publication fence: only a merge whose claim is
+    still current may replace the ``publishing`` document with ``executed``.
+
+    Stock SkyPilot 0.12.2 does not expose a globally ordered recovery identity to
+    workloads. An inner managed recovery therefore retains the same scheduler
+    token and fails closed here. The NPA runtime may submit an explicit retry
+    with a higher attempt token after the prior managed job is terminal.
+    """
+
+    if not output_uri.startswith("s3://"):
+        raise ValueError(f"output_uri must be an s3:// prefix, got: {output_uri!r}")
+    logical_wave = str(logical_wave_id or "").strip()
+    if not logical_wave:
+        raise ValueError("scheduler publication claim requires a logical wave id")
+    members = str(membership_digest or "").strip()
+    if not members:
+        raise ValueError("scheduler publication claim requires a membership digest")
+    expected_nodes = int(node_count)
+    if expected_nodes < 1:
+        raise ValueError("scheduler publication claim requires at least one node")
+    fence = (int(scheduler_fence_sequence), int(scheduler_fence_attempt))
+    if min(fence) < 1:
+        raise ValueError("publication claim requires a positive scheduler fence")
+    launch_id = str(scheduler_launch_id or "").strip()
+    if not launch_id:
+        raise ValueError("publication claim requires a scheduler launch id")
+
+    from npa.clients.storage import (
+        StorageClient,
+        StorageError,
+        StoragePreconditionFailed,
+    )
+
+    client = storage_client or StorageClient.from_environment()
+    canonical_uri = transfer_manifest_uri_for(output_uri)
+    current = client.read_bytes_with_etag(canonical_uri)
+    prior_generation = 0
+    prior_fence = (0, 0)
+    expected_etag = ""
+    if current is not None:
+        raw, expected_etag = current
+        try:
+            import json as _json
+
+            document = _json.loads(raw.decode("utf-8"))
+            if not isinstance(document, dict):
+                raise TypeError("manifest is not an object")
+            if not (
+                document.get("schema") == TRANSFER_MANIFEST_SCHEMA
+                and document.get("mode") == TRANSFER_MANIFEST_MODE
+                and document.get("status")
+                in {TRANSFER_MANIFEST_STATUS, PUBLICATION_CLAIM_STATUS}
+                and str(document.get("run_id") or "") == str(run_id or "")
+            ):
+                raise ValueError("manifest identity is contradictory")
+            prior_generation = int(document.get(PUBLICATION_GENERATION_FIELD, 0) or 0)
+            prior_node_count = int(document.get("node_count", 1) or 1)
+            scheduler_owned = prior_node_count > 1 or any(
+                field in document
+                for field in SCHEDULER_PUBLICATION_IDENTITY_FIELDS
+            )
+            if scheduler_owned:
+                _validated_attempt_id(str(document.get("attempt_id") or ""))
+                prior_fence = (
+                    int(document.get("scheduler_fence_sequence", 0)),
+                    int(document.get("scheduler_fence_attempt", 0)),
+                )
+                required = (
+                    prior_generation >= 1,
+                    min(prior_fence) >= 1,
+                    bool(str(document.get("logical_wave_id") or "").strip()),
+                    bool(str(document.get("membership_digest") or "").strip()),
+                    bool(str(document.get("scheduler_launch_id") or "").strip()),
+                    document.get("status") != TRANSFER_MANIFEST_STATUS
+                    or document.get("logical_publication") == "conditional",
+                )
+                if not all(required):
+                    raise ValueError(
+                        "prior scheduler publication has incomplete identity"
+                    )
+        except (UnicodeDecodeError, TypeError, ValueError) as exc:
+            raise StorageError(
+                f"canonical transfer manifest is unreadable at {canonical_uri}; "
+                "refusing to replace an unexamined publication fence"
+            ) from exc
+        if prior_generation < 0:
+            raise StorageError(
+                f"canonical transfer manifest has an invalid publication generation "
+                f"at {canonical_uri}"
+            )
+        if fence <= prior_fence:
+            raise RuntimeError(
+                "scheduler publication claim is stale or duplicates an existing "
+                f"scheduler fence (requested={fence}, current={prior_fence}); "
+                "transparent SkyPilot recovery is fenced until the NPA runtime "
+                "issues a higher retry token"
+            )
+    generation = prior_generation + 1
+    make_nonce = nonce_factory or (lambda: secrets.token_hex(32))
+    nonce = str(make_nonce() or "").strip()
+    if len(nonce) < 16:
+        raise ValueError("publication nonce must contain at least 16 characters")
+    attempt_material = (
+        f"{logical_wave}\0{fence[0]}\0{fence[1]}\0{members}\0{launch_id}\0{nonce}"
+    ).encode("utf-8")
+    attempt_id = hashlib.sha256(attempt_material).hexdigest()
+    claim = {
+        "schema": TRANSFER_MANIFEST_SCHEMA,
+        "mode": TRANSFER_MANIFEST_MODE,
+        "status": PUBLICATION_CLAIM_STATUS,
+        "run_id": run_id,
+        "attempt_id": attempt_id,
+        "logical_wave_id": logical_wave,
+        PUBLICATION_GENERATION_FIELD: generation,
+        "node_count": expected_nodes,
+        "membership_digest": members,
+        "scheduler_fence_sequence": fence[0],
+        "scheduler_fence_attempt": fence[1],
+        "scheduler_launch_id": launch_id,
+        "variant_count": 0,
+        "variants": [],
+    }
+    try:
+        claim_etag = client.put_bytes_conditional(
+            _json_bytes(claim),
+            canonical_uri,
+            if_match=expected_etag,
+            if_none_match=not expected_etag,
+            content_type="application/json",
+        )
+    except StoragePreconditionFailed as exc:
+        raise RuntimeError(
+            "scheduler publication claim was superseded before GPU work; "
+            "refusing to race another recovery generation"
+        ) from exc
+    return attempt_id, claim_etag, generation
+
+
+def build_run_manifest(
+    clips: list[dict[str, Any]],
+    *,
+    run_id: str = "",
+    variant_parallelism: int = 1,
+    node_count: int = 1,
+    shards: list[dict[str, Any]] | None = None,
+    attempt_id: str = "",
+) -> dict[str, Any]:
+    """Return the run-level transfer manifest for ``clips`` (no I/O).
+
+    Shared by the single-node publisher (:func:`write_run_manifest`) and the
+    multi-node shard merge (:func:`merge_shard_manifests`) so both emit the same
+    document for the same set of variants.
+    """
+
+    first = clips[0] if clips else {}
+    frames = [f for c in clips for f in c.get("frames", [])]
+    manifest = {
+        "schema": TRANSFER_MANIFEST_SCHEMA,
+        "mode": TRANSFER_MANIFEST_MODE,
+        "status": TRANSFER_MANIFEST_STATUS,
+        "run_id": run_id,
+        "clips": [c.get("clip", "") for c in clips],
+        "variant_count": len(clips),
+        # "multiply": one Cosmos Transfer 2.5 inference per sampled appearance
+        # combo. >1 clips means the run genuinely amplified across scenarios.
+        "multiply_mode": "multi-variant" if len(clips) > 1 else "single-variant",
+        # Concurrent variant renders across the whole augment block: the sum of
+        # each node's GPU fan-out, so it is the pod's GPU count on one node and
+        # the gang's total on many.
+        "variant_parallelism": max(1, int(variant_parallelism or 1)),
+        "node_count": max(1, int(node_count or 1)),
+        "augmented_video_uri": first.get("augmented_video_uri", ""),
+        "augmented_videos": [c.get("augmented_video_uri", "") for c in clips],
+        "frame_count": sum(int(c.get("frame_count", 0) or 0) for c in clips),
+        "frames": frames,
+        "augmented_frames_uri": first.get("frames_uri", ""),
+        "control_spec": first.get("control_spec", ""),
+        "video_bytes": sum(int(c.get("video_bytes", 0) or 0) for c in clips),
+        "input_conditioned": bool(first.get("input_conditioned")),
+        "conditioned_input": first.get("conditioned_input", ""),
+        "conditioning_clip_uri": first.get("conditioning_clip_uri", ""),
+        "control": first.get("control", ""),
+        # What actually conditioned the render, so a consumer can tell a
+        # seg-conditioned batch from an edge-conditioned one without re-reading
+        # the spec: the modality's weight, the text that drove on-the-fly
+        # segmentation, and the region mask that limited where it applied.
+        "control_weight": float(first.get("control_weight", 0.0) or 0.0),
+        "control_prompt": str(first.get("control_prompt") or ""),
+        "mask_prompt": str(first.get("mask_prompt") or ""),
+        "control_uris": first.get("control_uris", {}),
+        "content_guardrails_enabled": bool(
+            first.get("content_guardrails_enabled", True)
+        ),
+        "variants": [
+            {
+                "clip": c.get("clip", ""),
+                "variant_index": int(c.get("variant_index", index) or 0),
+                "variables": c.get("variables", {}),
+                "prompt": str((c.get("variables") or {}).get("prompt") or ""),
+                "frame_count": int(c.get("frame_count", 0) or 0),
+                "augmented_video_uri": c.get("augmented_video_uri", ""),
+                "control_uris": c.get("control_uris", {}),
+            }
+            for index, c in enumerate(clips)
+        ],
+    }
+    if shards is not None:
+        manifest["shards"] = shards
+    if attempt_id:
+        manifest["attempt_id"] = str(attempt_id)
+    return manifest
 
 
 def write_run_manifest(
@@ -485,6 +1189,11 @@ def write_run_manifest(
     run_id: str = "",
     storage_client: Any = None,
     variant_parallelism: int = 1,
+    node_count: int = 1,
+    shards: list[dict[str, Any]] | None = None,
+    attempt_id: str = "",
+    publication_claim_etag: str = "",
+    publication_generation: int = 0,
 ) -> dict[str, Any]:
     """Write the run-level ``cosmos_augmented/manifest.json`` listing every clip
     produced by the (possibly multi-variant) augment stage; return the manifest.
@@ -498,53 +1207,441 @@ def write_run_manifest(
         raise ValueError(f"output_uri must be an s3:// prefix, got: {output_uri!r}")
     from npa.clients.storage import StorageClient
 
-    import json as _json
-    import tempfile as _tempfile
+    expected = max(1, int(node_count or 1))
+    conditional_parts = (
+        bool(publication_claim_etag),
+        int(publication_generation) > 0,
+        bool(str(attempt_id or "").strip()),
+    )
+    if expected > 1 and not all(conditional_parts):
+        raise ValueError(
+            "multi-node shard merge requires the rank-0 publication claim fence"
+        )
+    if any(conditional_parts) and not all(conditional_parts):
+        raise ValueError(
+            "conditional run publication requires attempt_id, claim ETag, and "
+            "positive generation together"
+        )
+    client = storage_client or StorageClient.from_environment()
+    manifest = build_run_manifest(
+        clips,
+        run_id=run_id,
+        variant_parallelism=variant_parallelism,
+        node_count=node_count,
+        shards=shards,
+        attempt_id=attempt_id,
+    )
+    if publication_claim_etag:
+        if not attempt_id or int(publication_generation) < 1:
+            raise ValueError(
+                "conditional run publication requires attempt_id and positive generation"
+            )
+        manifest[PUBLICATION_GENERATION_FIELD] = int(publication_generation)
+        manifest["logical_publication"] = "conditional"
+        from npa.clients.storage import StoragePreconditionFailed
+
+        current = client.read_bytes_with_etag(transfer_manifest_uri_for(output_uri))
+        try:
+            import json as _json
+
+            current_document = (
+                _json.loads(current[0].decode("utf-8")) if current is not None else {}
+            )
+        except (UnicodeDecodeError, TypeError, ValueError) as exc:
+            raise RuntimeError(
+                "multi-node publication fence is unreadable before finalization"
+            ) from exc
+        if not (
+            current is not None
+            and current[1] == publication_claim_etag
+            and isinstance(current_document, dict)
+            and current_document.get("status") == PUBLICATION_CLAIM_STATUS
+            and str(current_document.get("attempt_id") or "") == str(attempt_id)
+            and str(current_document.get("run_id") or "") == str(run_id or "")
+            and int(current_document.get("node_count", 0) or 0)
+            == int(node_count)
+            and int(current_document.get(PUBLICATION_GENERATION_FIELD, 0) or 0)
+            == int(publication_generation)
+        ):
+            raise RuntimeError(
+                "multi-node augment publication fence is absent, contradictory, "
+                "or already superseded"
+            )
+        for field in (
+            "logical_wave_id",
+            "membership_digest",
+            "scheduler_fence_sequence",
+            "scheduler_fence_attempt",
+            "scheduler_launch_id",
+        ):
+            value = current_document.get(field)
+            if value in (None, ""):
+                raise RuntimeError(
+                    f"multi-node publication claim is missing required {field}"
+                )
+            manifest[field] = value
+
+        try:
+            client.put_bytes_conditional(
+                _json_bytes(manifest),
+                transfer_manifest_uri_for(output_uri),
+                if_match=str(publication_claim_etag),
+                content_type="application/json",
+            )
+        except StoragePreconditionFailed as exc:
+            raise RuntimeError(
+                "multi-node augment publication was fenced by a newer recovery "
+                f"attempt; refusing to publish stale attempt {attempt_id}"
+            ) from exc
+    else:
+        _upload_json(client, manifest, transfer_manifest_uri_for(output_uri))
+    return manifest
+
+
+def shard_manifest_uri_for(output_uri: str, rank: int, *, attempt_id: str) -> str:
+    """Return the shard-manifest URI one node of a gang-scheduled augment writes."""
+
+    attempt_uri = attempt_output_uri_for(output_uri, attempt_id)
+    return f"{attempt_uri}/{SHARD_MANIFEST_PREFIX}{int(rank)}.json"
+
+
+def write_shard_manifest(
+    clips: list[dict[str, Any]],
+    output_uri: str,
+    *,
+    run_id: str = "",
+    rank: int,
+    node_count: int,
+    variant_parallelism: int = 1,
+    variant_total: int = 0,
+    attempt_id: str,
+    scheduler_fence_sequence: int,
+    scheduler_fence_attempt: int,
+    scheduler_launch_id: str,
+    logical_wave_id: str,
+    publication_generation: int,
+    storage_client: Any = None,
+) -> dict[str, Any]:
+    """Publish ONE node's share of a multi-node augment as a shard manifest.
+
+    Every node of the gang writes its own file, so the nodes never contend for a
+    single key. ``clips`` carry their global ``variant_index``, which is what lets
+    :func:`merge_shard_manifests` restore the sampled combo order.
+    """
+
+    if not output_uri.startswith("s3://"):
+        raise ValueError(f"output_uri must be an s3:// prefix, got: {output_uri!r}")
+    from npa.clients.storage import StorageClient
 
     client = storage_client or StorageClient.from_environment()
-    first = clips[0] if clips else {}
-    frames = [f for c in clips for f in c.get("frames", [])]
-    manifest = {
-        "schema": TRANSFER_MANIFEST_SCHEMA,
+    normalized_attempt_id = _validated_attempt_id(attempt_id)
+    fence = (int(scheduler_fence_sequence), int(scheduler_fence_attempt))
+    launch_id = str(scheduler_launch_id or "").strip()
+    logical_wave = str(logical_wave_id or "").strip()
+    generation = int(publication_generation)
+    if min(fence) < 1 or not launch_id or not logical_wave or generation < 1:
+        raise ValueError("multi-node shard requires the complete scheduler fence")
+    attempt_prefix = attempt_output_uri_for(output_uri, normalized_attempt_id) + "/"
+    invalid_uris = [
+        str(clip.get("augmented_video_uri") or "")
+        for clip in clips
+        if not str(clip.get("augmented_video_uri") or "").startswith(attempt_prefix)
+    ]
+    if invalid_uris:
+        raise ValueError(
+            "multi-node shard descriptors must point inside their attempt-scoped "
+            "output prefix"
+        )
+    shard = {
+        "schema": SHARD_MANIFEST_SCHEMA,
         "mode": TRANSFER_MANIFEST_MODE,
         "status": TRANSFER_MANIFEST_STATUS,
         "run_id": run_id,
-        "clips": [c.get("clip", "") for c in clips],
-        "variant_count": len(clips),
-        # "multiply": one Cosmos Transfer 2.5 inference per sampled appearance
-        # combo. >1 clips means the run genuinely amplified across scenarios.
-        "multiply_mode": "multi-variant" if len(clips) > 1 else "single-variant",
+        "attempt_id": normalized_attempt_id,
+        "logical_wave_id": logical_wave,
+        PUBLICATION_GENERATION_FIELD: generation,
+        "scheduler_fence_sequence": fence[0],
+        "scheduler_fence_attempt": fence[1],
+        "scheduler_launch_id": launch_id,
+        "rank": int(rank),
+        "node_count": max(1, int(node_count or 1)),
         "variant_parallelism": max(1, int(variant_parallelism or 1)),
-        "augmented_video_uri": first.get("augmented_video_uri", ""),
-        "augmented_videos": [c.get("augmented_video_uri", "") for c in clips],
-        "frame_count": sum(int(c.get("frame_count", 0) or 0) for c in clips),
-        "frames": frames,
-        "augmented_frames_uri": first.get("frames_uri", ""),
-        "control_spec": first.get("control_spec", ""),
-        "video_bytes": sum(int(c.get("video_bytes", 0) or 0) for c in clips),
-        "input_conditioned": bool(first.get("input_conditioned")),
-        "conditioned_input": first.get("conditioned_input", ""),
-        "conditioning_clip_uri": first.get("conditioning_clip_uri", ""),
-        "control": first.get("control", ""),
-        "content_guardrails_enabled": bool(
-            first.get("content_guardrails_enabled", True)
-        ),
-        "variants": [
-            {
-                "clip": c.get("clip", ""),
-                "variables": c.get("variables", {}),
-                "prompt": str((c.get("variables") or {}).get("prompt") or ""),
-                "frame_count": int(c.get("frame_count", 0) or 0),
-                "augmented_video_uri": c.get("augmented_video_uri", ""),
-            }
-            for c in clips
-        ],
+        "variant_total": max(0, int(variant_total or 0)),
+        "variant_count": len(clips),
+        "clips": [c.get("clip", "") for c in clips],
+        "clip_descriptors": clips,
     }
-    with _tempfile.TemporaryDirectory(prefix="npa-cosmos-man-") as tmp:
-        mp = Path(tmp) / TRANSFER_MANIFEST_FILENAME
-        mp.write_text(_json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        client.upload_file(str(mp), transfer_manifest_uri_for(output_uri))
-    return manifest
+    _upload_json(
+        client,
+        shard,
+        shard_manifest_uri_for(output_uri, rank, attempt_id=normalized_attempt_id),
+    )
+    return shard
+
+
+def merge_shard_manifests(
+    output_uri: str,
+    *,
+    run_id: str = "",
+    node_count: int,
+    attempt_id: str,
+    storage_client: Any = None,
+    timeout_s: float | None = None,
+    poll_interval_s: float = 15.0,
+    progress_interval_s: float = 60.0,
+    sleep: Any = None,
+    monotonic: Any = None,
+    progress: Any = None,
+    publication_claim_etag: str = "",
+    publication_generation: int = 0,
+) -> dict[str, Any]:
+    """Wait for every node's shard manifest, then write the run manifest.
+
+    Called by rank 0 only. The gang's nodes run the same augment command
+    concurrently, so this is the join: it fetches ``manifest-rank-<k>.json`` for
+    every expected rank from the attempt-private prefix, orders the clips by their global variant index, and
+    writes the same ``manifest.json`` a single-node run would have produced. A
+    rank that never reports must not become a manifest that silently omits its
+    variants.
+
+    The wait is unbounded by default, because there is no defensible duration to
+    cap it at: a sibling's remaining work is however long its diffusions take, and
+    a deadline short enough to be useful would fail runs that were about to
+    succeed. Missing ranks and elapsed time are emitted periodically. Set
+    ``NPA_COSMOS_SHARD_JOIN_TIMEOUT_S`` (or pass ``timeout_s``) when an operator
+    does want a deadline, and the failure then names the missing ranks.
+    """
+
+    import json as _json
+    import math as _math
+    import time as _time
+    import sys as _sys
+
+    if not output_uri.startswith("s3://"):
+        raise ValueError(f"output_uri must be an s3:// prefix, got: {output_uri!r}")
+    from npa.clients.storage import StorageClient
+
+    expected = max(1, int(node_count or 1))
+    normalized_attempt_id = _validated_attempt_id(attempt_id)
+    if not publication_claim_etag or int(publication_generation) < 1:
+        raise ValueError(
+            "multi-node shard merge requires the rank-0 publication claim fence"
+        )
+    client = storage_client or StorageClient.from_environment()
+
+    def _read_authoritative_claim() -> dict[str, Any]:
+        """Read and validate the canonical fence for every join iteration."""
+
+        claim_current = client.read_bytes_with_etag(
+            transfer_manifest_uri_for(output_uri)
+        )
+        try:
+            claim_document = (
+                _json.loads(claim_current[0].decode("utf-8"))
+                if claim_current is not None
+                else {}
+            )
+        except (UnicodeDecodeError, TypeError, ValueError) as exc:
+            raise RuntimeError("multi-node shard-join fence is unreadable") from exc
+        if not (
+            claim_current is not None
+            and claim_current[1] == publication_claim_etag
+            and isinstance(claim_document, dict)
+            and claim_document.get("schema") == TRANSFER_MANIFEST_SCHEMA
+            and claim_document.get("mode") == TRANSFER_MANIFEST_MODE
+            and claim_document.get("status") == PUBLICATION_CLAIM_STATUS
+            and str(claim_document.get("run_id") or "") == str(run_id or "")
+            and str(claim_document.get("attempt_id") or "")
+            == normalized_attempt_id
+            and int(claim_document.get("node_count", 0) or 0) == expected
+            and int(claim_document.get(PUBLICATION_GENERATION_FIELD, 0) or 0)
+            == int(publication_generation)
+        ):
+            raise RuntimeError(
+                "multi-node shard join publication fence was superseded or is no "
+                "longer authoritative"
+            )
+        return claim_document
+
+    claim_document = _read_authoritative_claim()
+    expected_shard_identity = {
+        "logical_wave_id": str(claim_document.get("logical_wave_id") or ""),
+        PUBLICATION_GENERATION_FIELD: int(publication_generation),
+        "scheduler_fence_sequence": int(
+            claim_document.get("scheduler_fence_sequence", 0) or 0
+        ),
+        "scheduler_fence_attempt": int(
+            claim_document.get("scheduler_fence_attempt", 0) or 0
+        ),
+        "scheduler_launch_id": str(claim_document.get("scheduler_launch_id") or ""),
+    }
+    if (
+        not expected_shard_identity["logical_wave_id"]
+        or not expected_shard_identity["scheduler_launch_id"]
+        or int(expected_shard_identity["scheduler_fence_sequence"]) < 1
+        or int(expected_shard_identity["scheduler_fence_attempt"]) < 1
+    ):
+        raise RuntimeError("multi-node publication claim has an incomplete scheduler fence")
+    waiter = sleep or _time.sleep
+    clock = monotonic or _time.monotonic
+    reporter = progress or (
+        lambda message: print(message, file=_sys.stderr, flush=True)
+    )
+    limit = timeout_s
+    if limit is None:
+        env_limit = str(os.environ.get("NPA_COSMOS_SHARD_JOIN_TIMEOUT_S", "")).strip()
+        try:
+            limit = float(env_limit) if env_limit else None
+        except ValueError as exc:
+            raise ValueError(
+                "NPA_COSMOS_SHARD_JOIN_TIMEOUT_S must be a non-negative number"
+            ) from exc
+    if limit is not None and (
+        not _math.isfinite(float(limit)) or float(limit) < 0
+    ):
+        raise ValueError("shard join timeout must be finite and non-negative")
+    started = clock()
+    deadline = None if limit is None else started + float(limit)
+    last_progress: float | None = None
+    shards: dict[int, dict[str, Any]] = {}
+
+    def _is_current_shard(document: Any, rank: int) -> bool:
+        """Reject stale/partial objects until the current rank overwrites them."""
+
+        if not isinstance(document, dict):
+            return False
+        descriptors = document.get("clip_descriptors")
+        attempt_prefix = (
+            attempt_output_uri_for(output_uri, normalized_attempt_id) + "/"
+        )
+        return bool(
+            document.get("schema") == SHARD_MANIFEST_SCHEMA
+            and document.get("mode") == TRANSFER_MANIFEST_MODE
+            and document.get("status") == TRANSFER_MANIFEST_STATUS
+            and str(document.get("run_id") or "") == str(run_id or "")
+            and str(document.get("attempt_id") or "") == normalized_attempt_id
+            and int(document.get("rank", -1)) == rank
+            and int(document.get("node_count", 0)) == expected
+            and all(
+                document.get(field) == value
+                for field, value in expected_shard_identity.items()
+            )
+            and isinstance(descriptors, list)
+            and int(document.get("variant_count", -1)) == len(descriptors)
+            and all(
+                isinstance(item, dict)
+                and str(item.get("augmented_video_uri") or "").startswith(
+                    attempt_prefix
+                )
+                for item in descriptors
+            )
+        )
+
+    while True:
+        # A scheduler-authorized recovery may supersede this attempt while an old
+        # leader is waiting for a missing sibling. Re-read the canonical claim on
+        # every poll so the old process exits even when the default join has no
+        # deadline and can never reach the final compare-and-swap publication.
+        current_claim = _read_authoritative_claim()
+        if any(
+            current_claim.get(field) != value
+            for field, value in expected_shard_identity.items()
+        ):
+            raise RuntimeError(
+                "multi-node shard join publication fence is inconsistent with its "
+                "scheduler attempt identity"
+            )
+        for rank in range(expected):
+            if rank in shards:
+                continue
+            # Fetch the exact key rather than listing the prefix: a bucket listing
+            # can lag behind a sibling upload. ``None`` is the only missing-rank
+            # signal; credentials, endpoint, and permission errors propagate with
+            # their provider evidence instead of becoming an unbounded wait.
+            current = client.read_bytes_with_etag(
+                shard_manifest_uri_for(
+                    output_uri, rank, attempt_id=normalized_attempt_id
+                )
+            )
+            if current is None:
+                continue
+            try:
+                candidate = _json.loads(current[0].decode("utf-8"))
+                if _is_current_shard(candidate, rank):
+                    shards[rank] = candidate
+            except (UnicodeDecodeError, TypeError, ValueError):
+                # A partial or malformed object is never accepted; retry the same
+                # exact key in case a compatible store exposed an in-flight write.
+                pass
+        if len(shards) == expected:
+            break
+        now = clock()
+        missing = [r for r in range(expected) if r not in shards]
+        if (
+            last_progress is None
+            or now - last_progress >= max(0.0, float(progress_interval_s))
+        ):
+            reporter(
+                "multi-node augment shard join waiting: "
+                f"attempt={normalized_attempt_id} missing_ranks={missing} "
+                f"received_ranks={sorted(shards)} "
+                f"elapsed={max(0.0, now - started):.1f}s "
+                f"timeout={'disabled' if limit is None else f'{float(limit):g}s'}"
+            )
+            last_progress = now
+        if deadline is not None and now >= deadline:
+            raise RuntimeError(
+                "multi-node augment: no shard manifest from rank(s) "
+                f"{missing} for attempt {normalized_attempt_id} after "
+                f"{float(limit or 0):.0f}s at {output_uri}. Those "
+                "nodes did not finish publishing their variants, so the run "
+                "manifest would understate the fan-out."
+            )
+        waiter(max(0.1, float(poll_interval_s)))
+
+    totals = {int(shard.get("variant_total", -1)) for shard in shards.values()}
+    if len(totals) != 1 or next(iter(totals), -1) < 1:
+        raise RuntimeError(
+            "multi-node augment: shard manifests disagree on the total variant "
+            f"count for run {run_id!r}: {sorted(totals)}"
+        )
+    variant_total = next(iter(totals))
+    ordered = sorted(
+        (clip for shard in shards.values() for clip in shard.get("clip_descriptors", [])),
+        key=lambda c: int(c.get("variant_index", 0) or 0),
+    )
+    indices = [int(clip.get("variant_index", -1)) for clip in ordered]
+    if indices != list(range(variant_total)):
+        raise RuntimeError(
+            "multi-node augment: shard manifests do not cover every variant exactly "
+            f"once for run {run_id!r}; expected 0..{variant_total - 1}, got {indices}"
+        )
+    return write_run_manifest(
+        ordered,
+        output_uri,
+        run_id=run_id,
+        storage_client=client,
+        variant_parallelism=sum(
+            max(1, int(shard.get("variant_parallelism", 1) or 1))
+            for shard in shards.values()
+            if int(shard.get("variant_count", 0) or 0) > 0
+        )
+        or 1,
+        node_count=expected,
+        shards=[
+            {
+                "rank": int(shard.get("rank", rank) or 0),
+                "variant_count": int(shard.get("variant_count", 0) or 0),
+                "variant_parallelism": max(1, int(shard.get("variant_parallelism", 1) or 1)),
+                "clips": list(shard.get("clips", [])),
+                "attempt_id": str(shard.get("attempt_id") or ""),
+            }
+            for rank, shard in sorted(shards.items())
+        ],
+        attempt_id=normalized_attempt_id,
+        publication_claim_etag=publication_claim_etag,
+        publication_generation=publication_generation,
+    )
 
 
 def publish_transfer_to_s3(
@@ -556,6 +1653,7 @@ def publish_transfer_to_s3(
     clip_name: str = "",
     max_frames: int = 8,
     frames_output_uri: str = "",
+    control_output_uri: str = "",
     require_frames: bool = False,
     storage_client: Any = None,
 ) -> dict[str, Any]:
@@ -574,6 +1672,7 @@ def publish_transfer_to_s3(
         variables=variables,
         max_frames=max_frames,
         frames_output_uri=frames_output_uri,
+        control_output_uri=control_output_uri,
         require_frames=require_frames,
         storage_client=storage_client,
     )
@@ -750,24 +1849,42 @@ def reference_augment_frames(
 
 
 __all__ = [
+    "ATTEMPT_PREFIX",
     "AUGMENTED_FRAMES_INDEX",
     "AUGMENTED_FRAMES_SCHEMA",
+    "CONTROL_MODALITY_MODELS",
+    "CONTROL_PROMPT_MODALITIES",
+    "ControlModalityError",
     "FrameExtractionError",
+    "INPUT_AUTO_CONTROLS",
+    "INPUT_CONTROLS",
     "REFERENCE_AUGMENT_MODE",
     "REFERENCE_AUGMENT_STATUS",
+    "PUBLICATION_CLAIM_STATUS",
+    "PUBLICATION_GENERATION_FIELD",
+    "SHARD_MANIFEST_PREFIX",
+    "SHARD_MANIFEST_SCHEMA",
     "TRANSFER_MANIFEST_FILENAME",
     "TRANSFER_MANIFEST_MODE",
     "TRANSFER_MANIFEST_SCHEMA",
     "TRANSFER_MANIFEST_STATUS",
     "augmented_frames_index_uri_for",
+    "attempt_output_uri_for",
+    "build_run_manifest",
+    "claim_run_publication",
     "cosmos_transfer_available",
     "cosmos_transfer_repo",
     "ensure_env",
     "extract_frames",
+    "merge_shard_manifests",
     "publish_transfer_clip",
     "publish_transfer_to_s3",
     "reference_augment_frames",
+    "resolve_control_modality",
+    "resolve_control_weight",
     "run_cosmos_transfer",
+    "shard_manifest_uri_for",
     "transfer_manifest_uri_for",
     "write_run_manifest",
+    "write_shard_manifest",
 ]

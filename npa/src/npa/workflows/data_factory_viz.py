@@ -28,12 +28,14 @@ APPLICATION_ID = "physical-ai-data-factory"
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
 #: Run sub-directories materialized from S3 before building a recording. Covers
-#: both producers: the data-factory blueprint (input/cosmos_augmented/labeled_*/
-#: configs/grade/curation) and the NuRec neural-reconstruction workflow
-#: (ncore/reconstruction/novel_views). Missing subtrees are skipped.
+#: both producers: the data-factory blueprint (input/cosmos_augmented/
+#: cosmos_control/labeled_*/configs/grade/curation) and the NuRec
+#: neural-reconstruction workflow (ncore/reconstruction/novel_views). Missing
+#: subtrees are skipped.
 RUN_SUBDIRS = (
     "input",
     "cosmos_augmented",
+    "cosmos_control",
     "labeled_original",
     "labeled_augmented",
     "configs",
@@ -203,7 +205,7 @@ def build_run_rrd(
 
         aug_root = local / "cosmos_augmented"
         if aug_root.is_dir():
-            for d in sorted(p for p in aug_root.iterdir() if p.is_dir()):
+            for d in _committed_variant_dirs(local):
                 label = _augmentation_label(d)
                 entity = f"augmented/{d.name}"
                 for png in _subsample(sorted(d.glob("*.png")), RRD_MAX_FRAMES_PER_ENTITY):
@@ -212,6 +214,13 @@ def build_run_rrd(
                     logged += 1
                 if label:
                     rr.log(entity, rr.TextDocument(f"{d.name}: {label}"), static=True, recording=rec)
+
+        # The conditioning signal each variant was rendered from, as its own
+        # entity tree. A segmentation-conditioned run is only reviewable if the
+        # reviewer can see the segmentation next to the render, and these frames
+        # live outside cosmos_augmented/ precisely so no consumer mistakes a
+        # control map for an augmented frame.
+        logged += _log_control_entities(rr, rec, local)
 
         # Neural-reconstruction runs contribute their own entities: the novel views
         # rendered from the trained Gaussians and NRE's validation renders. Both are
@@ -322,6 +331,103 @@ def _log_nurec_entities(rr: Any, rec: Any, local: Path) -> int:
     return logged
 
 
+def _log_control_entities(rr: Any, rec: Any, local: Path) -> int:
+    """Log the control maps and region masks under ``cosmos_control/``.
+
+    The augment stage publishes ``<clip>/control_<modality>/frame-*.png`` and, when
+    a region mask was used, ``<clip>/mask_<modality>/frame-*.png``. Each becomes
+    ``control/<clip>/<signal>`` so the segmentation that conditioned a variant sits
+    beside ``augmented/<clip>`` on the same frame timeline.
+    """
+
+    logged = 0
+    manifest_path = local / "cosmos_augmented" / "manifest.json"
+    committed = _read_json(manifest_path)
+    selected: list[tuple[str, Path]] = []
+    if isinstance(committed, dict):
+        for variant in _validated_viz_manifest(committed):
+            clip = str(variant.get("clip") or "")
+            for uri in (variant.get("control_uris") or {}).values():
+                value = str(uri or "")
+                marker = "/cosmos_control/"
+                if marker not in value:
+                    continue
+                relative = value.split(marker, 1)[1]
+                signal_dir = (
+                    local / "cosmos_control" / Path(relative).parent / Path(value).stem
+                )
+                selected.append((clip, signal_dir))
+    else:
+        if manifest_path.exists():
+            raise DataFactoryVizError("canonical augment manifest is unreadable")
+        if (local / "cosmos_augmented" / "_attempts").exists():
+            raise DataFactoryVizError(
+                "augment attempts exist without a valid canonical manifest"
+            )
+        root = local / "cosmos_control"
+        if root.is_dir():
+            selected = [
+                (clip_dir.name, signal_dir)
+                for clip_dir in sorted(p for p in root.iterdir() if p.is_dir())
+                if clip_dir.name != "_attempts"
+                for signal_dir in sorted(p for p in clip_dir.iterdir() if p.is_dir())
+            ]
+    for clip, signal_dir in selected:
+        if signal_dir.is_dir():
+            frames = _subsample(
+                sorted(_image_files(signal_dir)), RRD_MAX_FRAMES_PER_ENTITY
+            )
+            entity = f"control/{clip}/{signal_dir.name}"
+            for frame in frames:
+                _set_frame(rr, rec, _frame_index(frame.stem))
+                _log_frame(rr, rec, entity, _load_rgb(frame))
+                logged += 1
+    return logged
+
+
+def _committed_variant_dirs(local: Path) -> list[Path]:
+    """Map canonical manifest variants onto the downloaded attempt tree."""
+
+    root = local / "cosmos_augmented"
+    manifest_path = root / "manifest.json"
+    manifest = _read_json(manifest_path)
+    if isinstance(manifest, dict):
+        selected: list[Path] = []
+        for variant in _validated_viz_manifest(manifest):
+            uri = str(variant.get("augmented_video_uri") or "")
+            marker = "/cosmos_augmented/"
+            if marker not in uri:
+                raise DataFactoryVizError(
+                    "canonical augment manifest variant has an invalid generated video URI"
+                )
+            selected.append(root / Path(uri.split(marker, 1)[1]).parent)
+        if any(not path.is_dir() for path in selected):
+            raise DataFactoryVizError(
+                "canonical augment manifest references an absent variant directory"
+            )
+        return sorted(selected)
+    if not root.is_dir():
+        return []
+    if manifest_path.exists():
+        raise DataFactoryVizError("canonical augment manifest is unreadable")
+    if (root / "_attempts").exists():
+        raise DataFactoryVizError(
+            "augment attempts exist without a valid canonical manifest"
+        )
+    return sorted(
+        path for path in root.iterdir() if path.is_dir() and path.name != "_attempts"
+    )
+
+
+def _validated_viz_manifest(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    from npa.workbench.cosmos.transfer import validate_committed_run_manifest
+
+    try:
+        return validate_committed_run_manifest(manifest)
+    except (TypeError, ValueError) as exc:
+        raise DataFactoryVizError(str(exc)) from exc
+
+
 def _augmentation_label(clip_dir: Path) -> str:
     meta_path = clip_dir / "metadata.json"
     if not meta_path.is_file():
@@ -390,9 +496,15 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
     if isinstance(aug, dict):
         variants = aug.get("variants") or aug.get("clips") or []
         docs["pipeline/2_augment"] = _json_block("Augment — Cosmos Transfer 2.5 (multiply)", aug)
+        conditioning = f"control={aug.get('control') or 'n/a'}"
+        if aug.get("control_prompt"):
+            conditioning += f" on '{aug['control_prompt']}'"
+        if aug.get("mask_prompt"):
+            conditioning += f", masked to '{aug['mask_prompt']}'"
         stage_log.append(
             f"augment: {aug.get('variant_count', len(variants))} variant(s), "
-            f"mode={aug.get('mode', 'n/a')}, input_conditioned={aug.get('input_conditioned')}"
+            f"mode={aug.get('mode', 'n/a')}, input_conditioned={aug.get('input_conditioned')}, "
+            f"{conditioning}"
         )
 
     # Evaluate & Validate — the hallucination / attribute-verification grade.
