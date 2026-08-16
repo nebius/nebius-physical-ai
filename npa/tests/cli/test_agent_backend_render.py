@@ -800,6 +800,85 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
         sys.modules.pop("npa_rendered_backend", None)
 
 
+def test_rendered_foxglove_exact_source_avoids_tenant_wide_access_scan(
+    monkeypatch, tmp_path
+) -> None:
+    import sys
+
+    module_name = "npa_rendered_foxglove_exact_source_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+
+    class S3:
+        def head_object(self, *, Bucket, Key):  # noqa: N803
+            assert Bucket == "selected-bucket"
+            assert Key == "nested/source/run-one/reports/sim2real.mcap"
+            return {
+                "ContentLength": 4096,
+                "LastModified": "2026-08-16T00:00:00+00:00",
+                "ETag": '"strong-etag"',
+            }
+
+    s3 = S3()
+    run_ref = module.encode_run_ref("selected-bucket", "nested/source", "run-one")
+    key = "nested/source/run-one/reports/sim2real.mcap"
+    artifact = module.Artifact(
+        "run-one",
+        key,
+        f"s3://selected-bucket/{key}",
+        4096,
+        "2026-08-16T00:00:00+00:00",
+        "mcap",
+        True,
+    )
+    monkeypatch.setattr(
+        module,
+        "_agent_s3_client",
+        lambda: (s3, {"bucket": "deployment-bucket", "prefix": ""}),
+    )
+    monkeypatch.setattr(
+        module,
+        "_agent_access_report",
+        lambda **_kwargs: pytest.fail("exact source must not rebuild tenant access"),
+    )
+    authorization_calls = []
+    monkeypatch.setattr(
+        module,
+        "_authorize_exact_run_ref_source",
+        lambda **kwargs: (
+            authorization_calls.append(kwargs)
+            or ("selected-bucket", "selected-project", "nested/source")
+        ),
+    )
+
+    def resolve(buckets, **kwargs):
+        assert buckets == ["selected-bucket"]
+        assert kwargs["run_ref_or_id"] == run_ref
+        return module.RunResolution(
+            "run-one", "selected-bucket", "nested/source", [artifact]
+        )
+
+    monkeypatch.setattr(module, "resolve_run_artifacts", resolve)
+    try:
+        selected = module._foxglove_resolve_artifact(
+            {
+                "run_id": "run-one",
+                "run_ref": run_ref,
+                "key": key,
+                "resource_bucket": "selected-bucket",
+                "project_id": "selected-project",
+                "resolved_prefix": "nested/source",
+                "s3_uri": f"s3://selected-bucket/{key}",
+            }
+        )
+        assert selected["resource_bucket"] == "selected-bucket"
+        assert selected["project_id"] == "selected-project"
+        assert selected["resolved_prefix"] == "nested/source"
+        assert selected["source_fingerprint"]
+        assert len(authorization_calls) == 1
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 def test_source_qualified_rrd_loads_keep_independent_history(
     monkeypatch, tmp_path
 ) -> None:

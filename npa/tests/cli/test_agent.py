@@ -1361,6 +1361,9 @@ def test_bootstrap_ui_mcap_cards_bind_exact_provenance_in_page() -> None:
     )
     assert "const responseConfig = data && data.foxglove" in embedded_handler
     assert "setFoxgloveSwitching(Boolean(foxgloveHandle" in embedded_handler
+    assert embedded_handler.index(
+        "const pinnedBeforeSelection"
+    ) < embedded_handler.index("foxglovePinnedArtifactSelection = { ...selected")
     before_export = embedded_handler.split('apiJson("/api/foxglove/export"', 1)[0]
     assert "teardownFoxgloveViewer()" not in before_export
     assert "const readinessPromise = selectedHandle.whenReady()" in embedded_handler

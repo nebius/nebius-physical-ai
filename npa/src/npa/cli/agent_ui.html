@@ -6443,6 +6443,7 @@
         };
         foxgloveArtifactOperation = operation;
         foxgloveArtifactRetrySelection = { ...selected, button: null };
+        const pinnedBeforeSelection = foxglovePinnedArtifactSelection || {};
         foxglovePinnedArtifactSelection = { ...selected, button: null };
         foxglovePinnedConfig = null;
         artifactLoadRequestId += 1;
@@ -6451,7 +6452,6 @@
         // Keep an already-usable SDK iframe and its handshake alive. Hide its
         // prior source while the exact selection is authorized so stale bytes
         // are never shown and the visible pane does not wait on a remount.
-        const pinnedBeforeSelection = foxglovePinnedArtifactSelection || {};
         const sameVisibleSelection = Boolean(
           foxgloveHandle && foxgloveLastSourceKey &&
           String(pinnedBeforeSelection.run_id || "") === selected.run_id &&

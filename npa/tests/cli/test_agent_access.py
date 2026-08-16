@@ -19,6 +19,7 @@ from npa.cli.agent_access import (
     discover_agent_access,
     scoped_artifact_buckets,
 )
+from npa.workflows.artifacts import encode_run_ref
 
 
 NOW = "2026-08-06T23:30:00+00:00"
@@ -66,7 +67,10 @@ def test_full_tenant_access_is_explicit_and_project_owned() -> None:
     assert payload["status"] == "available"
     assert payload["scope"] == "tenant"
     assert payload["refreshed_at"] == NOW
-    assert [project["id"] for project in payload["projects"]] == ["project-a", "project-b"]
+    assert [project["id"] for project in payload["projects"]] == [
+        "project-a",
+        "project-b",
+    ]
     assert payload["projects"][0]["deployment_project"] is True
     assert accessible_artifact_buckets(report) == ["bucket-a", "bucket-b"]
     assert artifact_bucket_projects(report) == {
@@ -112,7 +116,10 @@ def test_partial_access_keeps_accessible_project_and_reports_denied_project() ->
     assert payload["scope"] == "partial_tenant"
     assert by_id["project-a"]["status"] == "available"
     assert by_id["project-b"]["status"] == "denied"
-    assert by_id["project-b"]["capabilities"]["storage_resource_discovery"]["status"] == "denied"
+    assert (
+        by_id["project-b"]["capabilities"]["storage_resource_discovery"]["status"]
+        == "denied"
+    )
     assert accessible_artifact_buckets(report) == ["bucket-a"]
     assert any(error["code"] == "permission_denied" for error in payload["errors"])
 
@@ -134,7 +141,9 @@ def test_denied_access_has_no_searchable_storage() -> None:
     assert accessible_artifact_buckets(report) == []
 
 
-def test_no_tenant_project_listing_permission_never_claims_single_project_success() -> None:
+def test_no_tenant_project_listing_permission_never_claims_single_project_success() -> (
+    None
+):
     def deny_projects(_tenant: str):
         raise AccessProbeError("denied", "list tenant projects")
 
@@ -184,9 +193,9 @@ def test_empty_bucket_read_probe_does_not_shrink_complete_tenant_scope() -> None
     assert len(report.projects) == 2
     assert accessible_artifact_buckets(report) == ["bucket-a", "bucket-b"]
     assert (
-        report.to_dict()["projects"][0]["resources"][0]["capabilities"]["artifact_read"][
-            "status"
-        ]
+        report.to_dict()["projects"][0]["resources"][0]["capabilities"][
+            "artifact_read"
+        ]["status"]
         == "unverified"
     )
 
@@ -214,8 +223,14 @@ def test_cross_project_mutations_remain_unavailable() -> None:
     payload = _discover().to_dict()
     by_id = {item["id"]: item for item in payload["projects"]}
 
-    assert by_id["project-a"]["capabilities"]["workflow_submission"]["status"] == "available"
-    assert by_id["project-b"]["capabilities"]["workflow_submission"]["status"] == "unavailable"
+    assert (
+        by_id["project-a"]["capabilities"]["workflow_submission"]["status"]
+        == "available"
+    )
+    assert (
+        by_id["project-b"]["capabilities"]["workflow_submission"]["status"]
+        == "unavailable"
+    )
     for resource in by_id["project-b"]["resources"]:
         assert resource["capabilities"]["artifact_write"]["status"] == "unavailable"
         assert resource["capabilities"]["artifact_delete"]["status"] == "unavailable"
@@ -244,13 +259,18 @@ def test_access_model_is_embedded_with_api_ui_and_read_boundary() -> None:
     embedded = agent._embedded_agent_access_source()
     runtime = agent._embedded_agent_access_runtime_source()
     backend_source = Path(agent.__file__).read_text(encoding="utf-8")
-    ui_source = Path(agent.__file__).with_name("agent_ui.html").read_text(encoding="utf-8")
+    ui_source = (
+        Path(agent.__file__).with_name("agent_ui.html").read_text(encoding="utf-8")
+    )
 
     assert "def discover_agent_access(" in embedded
     assert '@app.get("/access")' in backend_source
     assert "accessible_artifact_buckets(_agent_access_report())" in runtime
     assert "def _resolve_accessible_run_artifact(" in runtime
-    assert "cross-project s3_uri requires a run_id and exact discovered artifact" in runtime
+    assert (
+        "cross-project s3_uri requires a run_id and exact discovered artifact"
+        in runtime
+    )
     assert 'id="agentAccessPanel"' in ui_source
     assert 'id="agentAccessProjectSelect"' in ui_source
     assert 'for="agentAccessProjectSelect"' in ui_source
@@ -267,7 +287,10 @@ def test_access_model_is_embedded_with_api_ui_and_read_boundary() -> None:
     assert 'if (status === "partial") return "Limited"' in ui_source
     assert "picker.replaceChildren()" in ui_source
     assert 'class="access-project access-project-detail"' in ui_source
-    assert "window.sessionStorage.setItem(ACCESS_PROJECT_STORAGE_KEY, projectId)" in ui_source
+    assert (
+        "window.sessionStorage.setItem(ACCESS_PROJECT_STORAGE_KEY, projectId)"
+        in ui_source
+    )
     assert "const nextSelection = retained || deployment" in ui_source
     assert "No searchable artifact bucket." in ui_source
 
@@ -285,14 +308,21 @@ def test_cross_project_object_read_requires_exact_run_membership(monkeypatch) ->
 
     s3 = FakeS3()
     monkeypatch.setattr(runtime, "validate_run_id", lambda value: value, raising=False)
-    monkeypatch.setattr(runtime, "_safe_artifact_key", lambda value: value, raising=False)
+    monkeypatch.setattr(
+        runtime, "_safe_artifact_key", lambda value: value, raising=False
+    )
+
     def find_sources(buckets, *, run_id, **_kwargs):
         assert buckets == ["accessible-bucket"]
         if run_id == "run-a":
-            return [
-                SimpleNamespace(resolved_prefix="category"),
-                SimpleNamespace(resolved_prefix="nested"),
-            ], (), True
+            return (
+                [
+                    SimpleNamespace(resolved_prefix="category"),
+                    SimpleNamespace(resolved_prefix="nested"),
+                ],
+                (),
+                True,
+            )
         return [], (), True
 
     monkeypatch.setattr(runtime, "find_run_sources_across_buckets", find_sources)
@@ -369,7 +399,9 @@ def test_selected_run_source_requires_complete_discovery_when_unqualified(
     monkeypatch.setattr(runtime, "HTTPException", HTTPException, raising=False)
     monkeypatch.setattr(runtime, "validate_run_id", lambda value: value, raising=False)
     monkeypatch.setattr(runtime, "_validated_resolved_prefix", lambda value: value)
-    monkeypatch.setattr(runtime, "_agent_access_report", lambda: object(), raising=False)
+    monkeypatch.setattr(
+        runtime, "_agent_access_report", lambda: object(), raising=False
+    )
     monkeypatch.setattr(
         runtime,
         "_agent_artifact_list_scope",
@@ -427,7 +459,9 @@ def test_cross_project_membership_discovery_has_a_bucket_cap(monkeypatch) -> Non
     buckets = [f"accessible-{index:03d}" for index in range(100)]
 
     monkeypatch.setattr(runtime, "validate_run_id", lambda value: value, raising=False)
-    monkeypatch.setattr(runtime, "_safe_artifact_key", lambda value: value, raising=False)
+    monkeypatch.setattr(
+        runtime, "_safe_artifact_key", lambda value: value, raising=False
+    )
     monkeypatch.setattr(runtime, "_agent_s3_buckets", lambda _s3, _settings: buckets)
 
     def no_run(bucket, **_kwargs):
@@ -447,7 +481,9 @@ def test_cross_project_membership_discovery_has_a_bucket_cap(monkeypatch) -> Non
     assert attempted == buckets[: runtime._MAX_ARTIFACT_MEMBERSHIP_BUCKETS]
 
 
-def test_access_discovery_probes_projects_and_buckets_with_bounded_concurrency() -> None:
+def test_access_discovery_probes_projects_and_buckets_with_bounded_concurrency() -> (
+    None
+):
     active = 0
     maximum = 0
     lock = threading.Lock()
@@ -570,7 +606,13 @@ def test_agent_nebius_inventory_scrubs_tokens_and_pins_profile_config(
     ) == {"items": []}
     command = seen["command"]
     env = seen["env"]
-    assert command[:5] == ["/bin/true", "--config", str(config), "--profile", "cursor-sa"]
+    assert command[:5] == [
+        "/bin/true",
+        "--config",
+        str(config),
+        "--profile",
+        "cursor-sa",
+    ]
     assert env["NEBIUS_PROFILE"] == "cursor-sa"
     assert env["HOME"] == str(tmp_path)
     assert not (runtime._AMBIENT_NEBIUS_TOKEN_KEYS & set(env))
@@ -593,7 +635,9 @@ def test_access_cache_refresh_is_singleflight_after_expiry(monkeypatch) -> None:
         assert release.wait(timeout=2)
         return report
 
-    monkeypatch.setattr(runtime, "_agent_s3_client_optional", lambda: (object(), {"bucket": ""}))
+    monkeypatch.setattr(
+        runtime, "_agent_s3_client_optional", lambda: (object(), {"bucket": ""})
+    )
     monkeypatch.setattr(runtime, "discover_agent_access", discover)
     monkeypatch.setattr(runtime, "NPA_PROJECT_ALIAS", "test")
     with runtime._AGENT_ACCESS_CONDITION:
@@ -611,3 +655,156 @@ def test_access_cache_refresh_is_singleflight_after_expiry(monkeypatch) -> None:
 
     assert calls == 1
     assert all(result is report for result in results)
+
+
+def test_exact_run_ref_authorization_checks_only_selected_project_and_bucket(
+    monkeypatch,
+) -> None:
+    from npa.cli import agent_access_runtime as runtime
+
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setenv("NEBIUS_TENANT_ID", "tenant-test")
+    monkeypatch.setenv("NEBIUS_PROJECT_ID", "deployment-project")
+    monkeypatch.setattr(
+        runtime,
+        "_agent_list_tenant_projects",
+        lambda tenant: (
+            calls.append(("tenant", tenant))
+            or [_project("selected-project", "Selected")]
+        ),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_agent_list_project_buckets",
+        lambda project: (
+            calls.append(("project", project))
+            or [_bucket("resource-selected", "selected-bucket")]
+        ),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_agent_probe_bucket",
+        lambda _s3, bucket: (
+            calls.append(("probe", bucket)) or BucketProbe("available", "available")
+        ),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_agent_access_report",
+        lambda **_kwargs: pytest.fail("exact authorization must not scan all projects"),
+    )
+
+    run_ref = encode_run_ref("selected-bucket", "nested/source", "run-one")
+    assert runtime._authorize_exact_run_ref_source(
+        s3=object(),
+        settings={"bucket": "deployment-bucket"},
+        run_id="run-one",
+        run_ref=run_ref,
+        resource_bucket="selected-bucket",
+        project_id="selected-project",
+        resolved_prefix="nested/source",
+    ) == ("selected-bucket", "selected-project", "nested/source")
+    assert calls == [
+        ("tenant", "tenant-test"),
+        ("project", "selected-project"),
+        ("probe", "selected-bucket"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("run_id", "run-two", "run_ref does not identify run_id"),
+        ("resource_bucket", "other-bucket", "bucket does not match run_ref"),
+        ("resolved_prefix", "other/source", "prefix does not match run_ref"),
+    ],
+)
+def test_exact_run_ref_authorization_rejects_mismatched_provenance_before_cloud_calls(
+    monkeypatch, field, value, message
+) -> None:
+    from npa.cli import agent_access_runtime as runtime
+
+    monkeypatch.setenv("NEBIUS_TENANT_ID", "tenant-test")
+    monkeypatch.setenv("NEBIUS_PROJECT_ID", "deployment-project")
+    monkeypatch.setattr(
+        runtime,
+        "_agent_list_tenant_projects",
+        lambda _tenant: pytest.fail("mismatched provenance must fail before inventory"),
+    )
+    values = {
+        "run_id": "run-one",
+        "run_ref": encode_run_ref("selected-bucket", "nested/source", "run-one"),
+        "resource_bucket": "selected-bucket",
+        "project_id": "selected-project",
+        "resolved_prefix": "nested/source",
+    }
+    values[field] = value
+    with pytest.raises(HTTPException, match=message):
+        runtime._authorize_exact_run_ref_source(s3=object(), settings={}, **values)
+
+
+def test_exact_run_ref_authorization_allows_configured_deployment_bucket_fallback(
+    monkeypatch,
+) -> None:
+    from npa.cli import agent_access_runtime as runtime
+
+    monkeypatch.setenv("NEBIUS_PROJECT_ID", "deployment-project")
+    monkeypatch.delenv("NEBIUS_TENANT_ID", raising=False)
+    monkeypatch.setattr(
+        runtime,
+        "_agent_list_project_buckets",
+        lambda _project: (_ for _ in ()).throw(
+            AccessProbeError("unavailable", "list project buckets")
+        ),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_agent_probe_bucket",
+        lambda _s3, _bucket: BucketProbe("available", "available"),
+    )
+
+    run_ref = encode_run_ref("deployment-bucket", "", "run-one")
+    assert runtime._authorize_exact_run_ref_source(
+        s3=object(),
+        settings={"bucket": "deployment-bucket"},
+        run_id="run-one",
+        run_ref=run_ref,
+        resource_bucket="deployment-bucket",
+        project_id="deployment-project",
+        resolved_prefix="",
+    ) == ("deployment-bucket", "deployment-project", "")
+
+
+def test_exact_run_ref_authorization_fails_closed_on_wrong_project_bucket(
+    monkeypatch,
+) -> None:
+    from npa.cli import agent_access_runtime as runtime
+
+    monkeypatch.setenv("NEBIUS_TENANT_ID", "tenant-test")
+    monkeypatch.setenv("NEBIUS_PROJECT_ID", "deployment-project")
+    monkeypatch.setattr(
+        runtime,
+        "_agent_list_tenant_projects",
+        lambda _tenant: [_project("selected-project", "Selected")],
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_agent_list_project_buckets",
+        lambda _project: [_bucket("resource-other", "other-bucket")],
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_agent_probe_bucket",
+        lambda _s3, _bucket: pytest.fail("unowned bucket must not be probed"),
+    )
+
+    with pytest.raises(HTTPException, match="does not belong"):
+        runtime._authorize_exact_run_ref_source(
+            s3=object(),
+            settings={},
+            run_id="run-one",
+            run_ref=encode_run_ref("selected-bucket", "nested/source", "run-one"),
+            resource_bucket="selected-bucket",
+            project_id="selected-project",
+            resolved_prefix="nested/source",
+        )

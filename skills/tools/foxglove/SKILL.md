@@ -106,13 +106,17 @@ canonical bytes and report the same SHA-256.
 The artifact card's ordinary **View in Foxglove** action opens the embedded SDK
 pane and binds the exact selected MCAP as a `remote-file` source. Before any
 no-download reuse, the backend authorizes the immutable run reference and exact
-key, reads a strong object-store identity (ETag or version id), and verifies the
-published bytes against the persisted SHA-256 and provenance. An unchanged
-selection skips download, conversion, and publication; a changed object identity
-or mismatched local byte invalidates the cache. A canonical cache miss prepares
-and applies the local result once rather than downloading it again. The export
-response includes the matching viewer config, `cache_reused`, and phase timings
-so the UI does not need a redundant config request.
+key. Exact artifact cards use a narrow fail-closed authorization check: verify
+the selected project is tenant-visible, verify only its selected bucket, and
+probe that bucket's current read scope. Do not rebuild the tenant-wide access
+report or probe unrelated buckets on the playback path. The backend then reads a
+strong object-store identity (ETag or version id) and verifies the published
+bytes against the persisted SHA-256 and provenance. An unchanged selection skips
+download, conversion, and publication; a changed object identity or mismatched
+local byte invalidates the cache. A canonical cache miss prepares and applies the
+local result once rather than downloading it again. The export response includes
+the matching viewer config, `cache_reused`, and phase timings so the UI does not
+need a redundant config request.
 
 The SDK iframe mounts before backend preparation finishes and remains mounted
 across exact-card selections. The UI sends `setDataSource` and `selectLayout`

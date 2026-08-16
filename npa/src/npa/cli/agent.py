@@ -7388,8 +7388,29 @@ def _foxglove_resolve_artifact(payload: dict) -> dict:
     if not run_id or not key:
         raise HTTPException(status_code=400, detail="run_id and key are required")
     s3, settings = _agent_s3_client()
+    requested_bucket = str(body.get("resource_bucket") or body.get("bucket") or "").strip()
+    requested_project = str(body.get("project_id") or "").strip()
+    exact_source_request = bool(
+        run_ref
+        and requested_bucket
+        and requested_project
+        and "resolved_prefix" in body
+    )
+    if exact_source_request:
+        source_bucket, source_project, source_prefix = _authorize_exact_run_ref_source(
+            s3=s3,
+            settings=settings,
+            run_id=run_id,
+            run_ref=run_ref,
+            resource_bucket=requested_bucket,
+            project_id=requested_project,
+            resolved_prefix=str(body.get("resolved_prefix") or ""),
+        )
+        resolution_buckets = [source_bucket]
+    else:
+        resolution_buckets = _agent_s3_buckets(s3, settings)
     resolution = resolve_run_artifacts(
-        _agent_s3_buckets(s3, settings),
+        resolution_buckets,
         base_prefix=settings.get("prefix", ""),
         run_ref_or_id=run_ref or run_id,
         s3=s3,
@@ -7399,9 +7420,10 @@ def _foxglove_resolve_artifact(payload: dict) -> dict:
     artifact = next((item for item in resolution.artifacts if item.key == key), None)
     if artifact is None:
         raise HTTPException(status_code=400, detail="artifact key is outside the selected run")
-    source_bucket, source_project, source_prefix = _artifact_source_metadata(
-        _agent_access_report(), resolution.bucket, key, resolution.run_id
-    )
+    if not exact_source_request:
+        source_bucket, source_project, source_prefix = _artifact_source_metadata(
+            _agent_access_report(), resolution.bucket, key, resolution.run_id
+        )
     selected = {{
         "run_id": resolution.run_id,
         "run_ref": resolution.run_ref,

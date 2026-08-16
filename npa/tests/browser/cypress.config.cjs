@@ -585,7 +585,7 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
     }
     const response = officialResponses.find((item) => item.url === expectedWebUrl) ||
       officialResponses[0] || { status: 0 };
-    return {
+    const result = {
       runId,
       artifactKey,
       labels: expectedLabels,
@@ -620,6 +620,7 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
         artifactCardMobile: mobileCardEvidence,
       },
     };
+    return result;
   } finally {
     await context.close();
     await browser.close();
@@ -944,7 +945,7 @@ async function verifyFoxgloveEmbeddedArtifact(config, taskInput) {
     const sdkReady = await page.locator("#foxgloveHost").getAttribute("data-sdk-ready");
     const signInRequired = sdkReady !== "true" &&
       /queued in the official Foxglove SDK/i.test(statusText);
-    return {
+    const result = {
       runId,
       runRef,
       artifactKey,
@@ -1009,6 +1010,13 @@ async function verifyFoxgloveEmbeddedArtifact(config, taskInput) {
         artifactCardMobile: mobileCardEvidence,
       },
     };
+    const resultEvidence = path.join(evidenceDir, "live-embedded-result.json");
+    fs.writeFileSync(resultEvidence, `${JSON.stringify(result, null, 2)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+    fs.chmodSync(resultEvidence, 0o600);
+    return result;
   } finally {
     await context.close();
     await browser.close();
