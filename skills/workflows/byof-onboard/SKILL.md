@@ -63,10 +63,19 @@ Two consequences worth knowing when your BYOF solution runs on the `isaac-lab` b
 - Anything that imports `isaaclab`/`isaacsim` must run through `/isaac-sim/python.sh`
   (the value of `ISAAC_LAB_PYTHON`), which bootstraps Isaac on first use. Using a bare
   `python3` will not find Isaac.
-- Your task must set `OMNI_KIT_ACCEPT_EULA=YES` and `ISAACSIM_ACCEPT_EULA=YES`, or the
-  container exits 78 with an explanatory message. First start downloads ~4.5 GB and
+- An unset value follows NPA's product default and becomes NVIDIA's documented
+  `ACCEPT_EULA=Y`; Isaac BYOF profiles state `Y` explicitly. Use
+  `--no-accept-eula` for an explicit opt-out, which exits 78 before download.
+  First start downloads ~4.5 GB and
   materialises ~10 GiB of cache; pre-warm it with
   `npa/docker/workbench/common/warm-isaac-cache.yaml` if you are iterating.
+
+Every checked-in `byof*.yaml` declares `resources.*.image` from its own
+`config.base_image`. This preserves each solution's intended CUDA, Ubuntu, or
+tool image after removal of generic BYOF-to-Isaac image routing. For a generic
+Isaac run, set both `base_profile=isaac-lab` and `base_image=tool://isaac-lab`;
+generic non-Isaac runs default to `ubuntu:22.04` and do not receive Isaac EULA
+environment variables.
 
 ## Operator Entrypoint
 

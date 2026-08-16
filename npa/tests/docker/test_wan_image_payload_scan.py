@@ -188,7 +188,6 @@ def test_forbidden_path_mutations_fail(tmp_path: Path, name: str, kind: str) -> 
         "RUN pip install nvidia-cublas-cu12==12.8.3.14",
         "RUN wan-runtime ensure",
         "FROM nvidia/cuda:12.8.1-runtime",
-        "ENV NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS=YES",
     ],
 )
 def test_forbidden_history_mutations_fail(tmp_path: Path, created_by: str) -> None:

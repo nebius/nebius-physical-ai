@@ -15,7 +15,7 @@
 # provisioning fails with:
 #     KubernetesError: Failed to get ssh user for pod ...: container not found ("ray-node")
 #
-#   1. a system python3 (+ rsync/curl/ssh client);
+#   1. a system python3 (+ rsync/curl/SSH client and server);
 #   2. read access to /isaac-sim for the runtime user. Historically that mattered because
 #      NVIDIA's base shipped /isaac-sim as mode 750 isaac-sim:isaac-sim, unreadable by
 #      `ubuntu`. Since Isaac is now fetched at run time, /isaac-sim holds only our own
@@ -31,15 +31,18 @@
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
+COPY --chmod=0755 docker/workbench/isaac-lab/npa_cli.sh /usr/local/bin/npa
+
 USER root
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-         python3 python3-venv python3-pip rsync curl openssh-client sudo netcat-openbsd \
+         python3 python3-venv python3-pip rsync curl openssh-client openssh-server sudo netcat-openbsd \
     && rm -rf /var/lib/apt/lists/* \
     && (getent group isaac-sim >/dev/null 2>&1 && usermod -aG isaac-sim ubuntu || true) \
     && printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/99-npa-runtime-user \
     && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
+    && install -d -m 0755 /run/sshd \
     && python3 --version
 
 # SkyPilot's bootstrap must find the SYSTEM interpreter, not the Isaac venv's python3.11.

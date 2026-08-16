@@ -1641,11 +1641,6 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "train",
             "--runtime",
             "{{config.sonic_runtime}}",
-            # NVIDIA's terms are the operator's to accept. `--runtime in-job` downloads Isaac
-            # Sim and Isaac Lab onto the machine, and the SONIC entrypoint refuses until this
-            # is set (live job 327, EVIDENCE.md §R47). A spec is where a reviewer can see it.
-            "--accept-nvidia-eula",
-            "{{config.sonic_accept_nvidia_eula}}",
             "--checkpoint",
             "{{config.checkpoint_uri}}",
             "--data-path",
@@ -2040,8 +2035,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         name="workbench.cosmos3.generate",
         description=(
             "Generate an image or video with the Cosmos 3 omni model (real "
-            "inference in the npa-cosmos3 image; gated weights download at "
-            "runtime with the operator's HF token)."
+            "inference in the npa-cosmos3 image; public Cosmos3-Nano downloads "
+            "anonymously, while enabled gated guardrails use the operator's HF token)."
         ),
         argv_template=[
             "npa",

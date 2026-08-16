@@ -19,11 +19,12 @@ opinion or substitute for counsel.
    NVIDIA SDK, checkpoint, tokenizer, credential, or cache is shipped.
 3. **Runtime-fetched software, weights, and data.** CUDA-enabled PyTorch 2.13.0
    and its CUDA 13.0 NVIDIA dependencies are delivered into the operator's writable
-   volume only after `NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS=YES`; current terms:
+   volume from their upstream package indexes under the current terms:
    <https://docs.nvidia.com/cuda/eula/index.html> and
    <https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/>.
    Wan TI2V-5B (`921dbaf…`) and UMT5 (`66cb9e7…`) are separately downloaded at
    runtime under their upstream terms and the operator's credentials/network.
+   NPA does not invent an additional per-run consent variable for package use.
    User inputs and generated artifacts are never image inputs.
 
 Release qualification requires scanning the pushed digest with

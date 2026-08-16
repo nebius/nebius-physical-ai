@@ -189,7 +189,7 @@ skills:
         contains: "Nebius Physical AI"
   - name: third-party-eula-preflight
     category: atomic
-    when_to_use: "Before provisioning, building, downloading, or submitting workloads whose images, software, models, or data require third-party EULAs: identify exact agreements and acceptance mechanisms, verify scoped operator consent, and fail fast when it is absent."
+    when_to_use: "Before provisioning, building, downloading, or submitting workloads whose images, software, models, or data require third-party terms: apply the Isaac default-accept/explicit-opt-out policy, verify real upstream credential access for gated runtime fetches, and keep privacy and redistribution controls separate."
     path: skills/atomic/third-party-eula-preflight/SKILL.md
     smoke:
       - type: file_exists
@@ -706,7 +706,7 @@ skills:
         contains: "--curated-uri"
   - name: solution-licensing
     category: atomic
-    when_to_use: "Adding or onboarding a solution, tool, container image, model, or dataset: decide whether what we ship may be redistributed (public vs restricted), and record it where the build enforces it."
+    when_to_use: "Adding or onboarding a solution, tool, container image, model weights, dataset, or runtime cache: classify each artifact, design compliant runtime fetch/cache reuse, decide public vs restricted redistribution, and record it where guards enforce it."
     path: skills/atomic/solution-licensing/SKILL.md
     smoke:
       - type: file_exists
@@ -715,6 +715,8 @@ skills:
         path: npa/tests/docker/test_packaging_contract.py
       - type: file_exists
         path: docs/workbench/container-packaging.md
+      - type: file_exists
+        path: npa/tests/guardrails/test_solution_licensing_skill.py
   - name: real-components
     category: atomic
     when_to_use: "Ensure every advertised workbench pipeline stage invokes the real component (Cosmos Transfer, Cosmos Evaluator, Cosmos Curator, FiftyOne, VLM eval), not an echo/manifest stub masquerading as real work."

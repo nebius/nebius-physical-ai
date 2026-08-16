@@ -41,7 +41,10 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.retargeting": "retargeting",
     "workbench.sim2real": "lerobot-vlm-rl",
     "workbench.sim2real_envgen": "envgen",
-    "workbench.byof": "isaac-lab",
+    # BYOF selects its actual workload image from config.base_image inside the
+    # BYOF runner.  It is not globally an Isaac workload: public Ubuntu/CUDA
+    # profiles such as Wan 2.2 must use the staged NPA runner anonymously and
+    # must not inherit Isaac image routing or consent requirements.
     "workbench.genesis": "genesis",
     "workbench.groot": "groot",
 }
@@ -51,20 +54,19 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     "workbench.vlm_eval": (),
     # Attribute verification generates and answers its questions on Token Factory.
     "workbench.cosmos_evaluator": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    # This entry explicitly disables the parent Cosmos3 hint: the public Nano
+    # checkpoint is downloaded anonymously and this toolRef passes --no-guardrails.
+    "workbench.cosmos3.text_to_image": (),
     "workbench.cosmos3": ("HF_TOKEN",),
     # Cosmos-Transfer2.5 downloads its guardrail checkpoints from a gated Hugging Face repo
     # before it will generate anything. Live job 286 got all the way into examples/inference.py
     # and died on `hf download nvidia/Cosmos-Guardrail1` with no token.
     "workbench.cosmos2": ("HF_TOKEN",),
-    # No NGC_API_KEY: `--runtime local` trains in the stage and pulls nothing from NGC, and
-    # hinting a secret the cases do not carry skips the twins instead of running them (#238).
-    "workbench.sonic": ("HF_TOKEN",),
-    # The pinned N1.7 base model is fetched from Hugging Face. The redistributable
-    # GR00T image contains no NGC payload and finetuning does not use NGC.
-    "workbench.groot": ("HF_TOKEN",),
+    # The default GEAR-SONIC and GR00T-N1.7 assets are public. Callers may still
+    # pass HF_TOKEN for rate limits or private overrides, but it is not a preflight.
+    "workbench.sonic": (),
+    "workbench.groot": (),
 }
-
-OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
 
 # Optional dependency groups a toolRef's stage needs, declared as npa extras in
 # npa/pyproject.toml. A workbench image bakes these already, but a stage running on
@@ -289,6 +291,9 @@ class SkypilotRenderOptions:
     # When False (``--plan-only``), embed placeholders instead of minting live
     # Nebius registry tokens into rendered YAML that may be printed to stdout.
     materialize_registry_secrets: bool = True
+    # Isaac acceptance defaults on so non-interactive workflows do not stop at the
+    # vendor prompt. Callers retain an explicit --no-accept-eula opt-out.
+    accept_eula: bool = True
 
 
 def normalize_resources(
@@ -565,6 +570,16 @@ def resolve_task_image(
                     if options.image_variant:
                         kwargs["image_variant"] = options.image_variant
                 resolved = container_image_for_tool(tool, **kwargs)
+    if resolved.startswith("tool://"):
+        image_tool = resolved.removeprefix("tool://").strip()
+        if not image_tool:
+            raise NpaWorkflowError("tool:// image reference must name a workbench tool")
+        from npa.deploy.images import container_image_for_tool
+
+        resolved = container_image_for_tool(
+            image_tool,
+            registry=options.registry or None,
+        )
     return str(options.image_digest_pins.get(resolved, resolved)).strip()
 
 
@@ -906,36 +921,83 @@ def self_hosted_vlm_model(config: Mapping[str, Any]) -> str:
     return str(raw).split(",")[0].strip()
 
 
-#: NVIDIA's gate on the Isaac workbench images. They ship no Isaac Sim / Isaac Lab and fetch it
-#: on first run, refusing with exit 78 unless BOTH are YES.
-ISAAC_EULA_VARS = ("OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA")
+#: NVIDIA's documented, run-scoped gate on Isaac acquisition/use.
+ISAAC_EULA_ENV = "ACCEPT_EULA"
 #: Image keys in TOOL_REF_IMAGE_TOOL that resolve to an Isaac-based image.
 ISAAC_IMAGE_TOOLS = frozenset({"isaac-lab", "sonic"})
 
 
-def routes_at_an_isaac_image(tool_ref: str) -> bool:
-    """Whether the renderer sends this toolRef's stage to an Isaac-based image."""
+def routes_at_an_isaac_image(
+    tool_ref: str,
+    resources: Mapping[str, Any] | None = None,
+    config: Mapping[str, Any] | None = None,
+    *,
+    resolved_image: str = "",
+) -> bool:
+    """Whether the renderer sends this stage to an Isaac-based runtime.
 
-    return tool_image_key(tool_ref) in ISAAC_IMAGE_TOOLS
+    ``resolved_image`` adds the actual image selected through a global/tool
+    override, registry resolution, or a ``tool://`` reference. The declared
+    scheduler resources alone are insufficient for raw-shell states; semantic
+    tool routes remain Isaac-backed even when a custom image name is opaque.
+    """
+
+    if tool_image_key(tool_ref) in ISAAC_IMAGE_TOOLS:
+        return True
+    workflow_config = config or {}
+    if tool_ref == "workbench.byof.repo":
+        base_profile = str(workflow_config.get("base_profile") or "").strip().lower()
+        base_image = str(workflow_config.get("base_image") or "").strip().lower()
+        if base_profile == "isaac-lab" or "isaac-lab" in base_image:
+            return True
+    if tool_ref.startswith("workbench.groot"):
+        if tool_ref.startswith("workbench.groot.isaac"):
+            return True
+        for key in ("sim_backend", "simulation_backend", "groot_runtime"):
+            if str(workflow_config.get(key) or "").strip().lower() in {
+                "isaac",
+                "isaac-lab",
+                "isaac_sim",
+            }:
+                return True
+        if workflow_config.get("sim") is True:
+            return True
+    raw = resources or {}
+    image = str(resolved_image or raw.get("image") or raw.get("image_id") or "").lower()
+    image = image.removeprefix("docker:")
+    if "isaac-lab" in image or "npa-sonic" in image:
+        return True
+    pod = ((raw.get("kubernetes") or {}).get("pod_config") or {}).get("spec") or {}
+    for container in pod.get("containers") or []:
+        names = {str(item.get("name") or "") for item in container.get("env") or []}
+        if "NPA_ISAAC_CACHE_DIR" in names or "NPA_SIM2REAL_ISAAC_CACHE_PVC" in names:
+            return True
+    return False
 
 
-def isaac_eula_envs(tool_ref: str) -> dict[str, str]:
-    """Declare NVIDIA's acceptance gate for an Isaac stage, EMPTY unless the operator set it.
+def isaac_eula_envs(
+    tool_ref: str,
+    *,
+    resources: Mapping[str, Any] | None = None,
+    config: Mapping[str, Any] | None = None,
+    resolved_image: str = "",
+    accepted: bool = True,
+) -> dict[str, str]:
+    """Declare NVIDIA's acceptance value for an Isaac stage.
 
-    Declared rather than omitted so the task documents what it needs and **fails closed** with
-    the actionable message instead of an unexplained exit 78. Never defaulted to YES: accepting
-    NVIDIA's terms is the operator's act, not the repo's.
+    Acceptance defaults on for non-interactive workflows. ``accepted=False`` renders an empty
+    value, preserving an explicit opt-out that the runtime bootstrap rejects before download.
 
     This lives in the renderer rather than in each spec because a spec reaches an Isaac image
     through its ``toolRef``, not by naming an image — so a spec author cannot reasonably be
     expected to know the routing, and a new Isaac toolRef is covered the moment it is added.
     """
 
-    if not routes_at_an_isaac_image(tool_ref):
+    if not routes_at_an_isaac_image(
+        tool_ref, resources, config, resolved_image=resolved_image
+    ):
         return {}
-    import os as _os
-
-    return {var: str(_os.environ.get(var) or "").strip() for var in ISAAC_EULA_VARS}
+    return {ISAAC_EULA_ENV: "Y" if accepted else ""}
 
 
 def default_npa_setup() -> str:
@@ -954,6 +1016,14 @@ def default_npa_setup() -> str:
         # Record where npa was installed from so a per-tool extra (see
         # TOOL_REF_PIP_EXTRAS) can be layered on top of the SAME source tree.
         "npa_record_src_root() { printf '%s' \"$1\" > /tmp/npa-src-root; }\n"
+        # Thin workbench images keep the installable project at /opt/npa rather than the
+        # legacy /opt/nebius-physical-ai/npa path.  Record it even when the baked `npa`
+        # launcher is already on PATH: vendor-interpreter setup still needs the source root
+        # to install NPA into the runtime-fetched Isaac environment.  Live Isaac job 4
+        # otherwise retained NPA_BAKED_PYTHON and failed on `No module named isaaclab`.
+        "if [ -f /opt/npa/pyproject.toml ] && [ -d /opt/npa/src/npa ]; then\n"
+        "  npa_record_src_root /opt/npa\n"
+        "fi\n"
         # Debian/Ubuntu >= 24.04 mark the system interpreter externally managed
         # (PEP 668), so a plain `pip install` fails with
         # "error: externally-managed-environment". A task container is disposable, so
@@ -1102,18 +1172,20 @@ def default_npa_setup() -> str:
         # Record a python COMMAND that can import npa, so stage bodies can be pointed
         # at it. Three candidates are tried in order, because each of them is the right
         # answer on some real image:
-        #   1. sys.executable - correct on normal images;
-        #   2. the alias target - the Isaac Lab image aliases python3 to
+        #   1. NPA_BAKED_PYTHON - the image's declared, dependency-complete runtime;
+        #   2. sys.executable - correct on normal images;
+        #   3. the alias target - the Isaac Lab image aliases python3 to
         #      /workspace/isaaclab/_isaac_sim/python.sh, and its embedded kit python
         #      cannot import its own site-packages unless launched through that
         #      wrapper (live run: "could not record a usable npa interpreter");
-        #   3. `type -P python3` - the PATH binary, ignoring any alias.
+        #   4. `type -P python3` - the PATH binary, ignoring any alias.
         "python3 -c 'import npa' >/dev/null 2>&1 || "
         "{ echo 'npa is not importable after setup' >&2; exit 1; }\n"
         'npa_python=""\n'
         'alias_target="$(alias python3 2>/dev/null | sed -e "s/^alias python3=//" '
         '-e "s/^\'//" -e "s/\'$//")"\n'
-        "for candidate in \"$(python3 -c 'import sys; print(sys.executable)' "
+        'for candidate in "${NPA_BAKED_PYTHON:-}" '
+        "\"$(python3 -c 'import sys; print(sys.executable)' "
         '2>/dev/null || true)" "$alias_target" "$(type -P python3 2>/dev/null '
         '|| true)"; do\n'
         '  if [ -n "$candidate" ] && [ -x "$candidate" ] && '
@@ -1359,19 +1431,16 @@ def secret_env_hints_for_plan(steps: Sequence[PlanStep]) -> tuple[str, ...]:
     seen: set[str] = set()
     for step in steps:
         tool_ref = step.tool_ref or ""
-        if tool_ref == "workbench.byof.repo" and any(
-            value == "openpi" or "pi05_droid_jointpos_polaris" in value
-            for value in step.argv
-        ):
-            if OPENPI_TERMS_ENV not in seen:
-                seen.add(OPENPI_TERMS_ENV)
-                hints.append(OPENPI_TERMS_ENV)
-        for prefix, names in SECRET_ENV_HINTS.items():
-            if tool_ref == prefix or tool_ref.startswith(prefix + "."):
-                for name in names:
-                    if name not in seen:
-                        seen.add(name)
-                        hints.append(name)
+        matches = [
+            (prefix, names)
+            for prefix, names in SECRET_ENV_HINTS.items()
+            if tool_ref == prefix or tool_ref.startswith(prefix + ".")
+        ]
+        names = max(matches, key=lambda item: len(item[0]))[1] if matches else ()
+        for name in names:
+            if name not in seen:
+                seen.add(name)
+                hints.append(name)
     return tuple(hints)
 
 
@@ -1460,6 +1529,8 @@ def plan_image_pull_secrets(
             for item in raw_names
             if isinstance(item, dict) and str(item.get("name") or "").strip()
         )
+        if _is_nebius_registry_image(image):
+            names = tuple(dict.fromkeys((*names, "npa-nebius-registry")))
         paths.setdefault(image, []).append(names)
     return {
         image: ()
@@ -1551,7 +1622,15 @@ def build_skypilot_task_doc(
                 "config.source_sha must be an exact 40-character hexadecimal SHA"
             )
         envs["NPA_SIM2REAL_SOURCE_SHA"] = expected_source_sha
-    envs.update(isaac_eula_envs(str(scheduler_task.get("tool_ref") or "")))
+    envs.update(
+        isaac_eula_envs(
+            str(scheduler_task.get("tool_ref") or ""),
+            resources=scheduler_task.get("resources") or {},
+            config=spec.config,
+            resolved_image=image,
+            accepted=options.accept_eula,
+        )
+    )
     # Optional tuning passthrough. The first-class transfer_execute toolRef always
     # conditions on the workflow input; these variables can tune that real path.
     import os as _os_cond

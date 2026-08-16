@@ -20,11 +20,10 @@ future composition workflow.
 - `serverless`: short Isaac Lab training or smoke jobs using Nebius Serverless
   Jobs.
 
-The SONIC container is self-contained. It installs SONIC from
-`NVlabs/GR00T-WholeBodyControl` and bundles Isaac Lab as a library dependency
-inside the SONIC image. It does not depend on the Workbench Isaac Lab tool image.
-The image targets `linux/amd64` for Nebius L40S and normalizes the Isaac Lab
-Python package to `isaaclab==2.3.2.post1` during build.
+The SONIC container installs SONIC from `NVlabs/GR00T-WholeBodyControl`, but the
+public image does not bake Isaac Lab or Isaac Sim. The Isaac stack is fetched at
+runtime after EULA preflight. It does not depend on the Workbench Isaac Lab tool
+image.
 
 The default image build is focused on training and smoke validation. It includes
 the SONIC C++ deploy source and build tools, but leaves `gear_sonic_deploy`
@@ -38,23 +37,25 @@ export NPA_REGISTRY=cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}
 npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push
 ```
 
-SONIC publishes two first-party image variants. The compatibility source of
+SONIC publishes one active first-party runtime-fetch image. The compatibility source of
 truth is `npa/src/npa/deploy/sonic_image_manifest.json`, with the human catalog
-in `docs/workbench/sonic-image-catalog.md`. The default L40S VM image is
-`${NPA_REGISTRY}/npa-sonic:0.1.2`; the Kubernetes GPU-operator image for
-RTX PRO 6000 Blackwell is `${NPA_REGISTRY}/npa-sonic:0.1.2-k8s-runtime`.
+in `docs/workbench/sonic-image-catalog.md`. Use the exact active tag there for
+RTX PRO 6000 Blackwell Kubernetes. Legacy L40S and MuJoCo variants are quarantined.
 
 Verify the pushed image before launch with:
 
 ```bash
-docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2"
-docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2-k8s-runtime"
+docker manifest inspect "${NPA_REGISTRY}/npa-sonic:<active-runtime-fetch-tag>"
 ```
 
-The default embodiment is Unitree G1:
+The default embodiment is Unitree G1. The serverless command also needs an
+independently validated compute-only image because the old L40S/H100/H200 images
+are quarantined; the active first-party image is supported only on RTX PRO 6000
+Kubernetes with GPU Operator driver mounts:
 
 ```bash
-npa workbench sonic train --runtime serverless --embodiment unitree-g1
+npa workbench sonic train --runtime serverless --embodiment unitree-g1 \
+  --image <validated-compute-only-image>
 ```
 
 Internally this maps to the SONIC embodiment tag `UNITREE_G1_SONIC`.

@@ -6,8 +6,9 @@ metadata:
   description: >
     BYOF registry-candidate workflow for Alibaba Wan 2.2 TI2V-5B. The image
     contains pinned official source and OSS CPU dependencies, but no NVIDIA
-    CUDA Python packages or model weights. After explicit operator acceptance,
-    it fetches the pinned CUDA/PyTorch runtime into a writable volume, then the immutable Wan-AI model and
+    CUDA Python packages or model weights. At run time it fetches the pinned
+    CUDA/PyTorch runtime into a writable volume under the upstream package
+    terms, then the immutable public Wan-AI model and
     tokenizer revisions, calls the real upstream WanTI2V generator on one RTX
     PRO 6000 Blackwell,
     writes an MP4, decodes every frame, rejects corrupt or uniform output, and
@@ -44,9 +45,11 @@ config:
     # Python consumers decode it without evaluating it as shell syntax.
     export WAN22_PROMPT_B64="{{config.prompt|base64}}"
     export WAN22_CONTEXT_IMAGE_URI_B64="{{config.context_image_uri|base64}}"
-    export WAN22_CACHE_DIR="${WAN22_CACHE_DIR:-/workspace/model-cache/wan2.2}"
+    if ! printenv WAN22_CACHE_DIR >/dev/null; then
+      export WAN22_CACHE_DIR=/workspace/model-cache/wan2.2
+    fi
     # Validate the config-facing input/capability/artifact contract before the
-    # accepted CUDA runtime fetch can create a cache or contact a package index.
+    # pinned CUDA runtime fetch can create a cache or contact a package index.
     /opt/wan-base/bin/python - <<'PY'
     import base64
     import os
@@ -205,8 +208,13 @@ config:
                 "license_classifiers": license_classifiers,
             }
         )
+    # Build dpkg's field syntax at runtime so the workflow renderer does not
+    # confuse those literal fields with unresolved workflow placeholders.
+    dpkg_format = (
+        "$" + "{Package}\t" + "$" + "{Version}\t" + "$" + "{Architecture}\n"
+    )
     dpkg = subprocess.run(
-        ["dpkg-query", "-W", "-f=${Package}\t${Version}\t${Architecture}\n"],
+        ["dpkg-query", "-W", "-f=" + dpkg_format],
         check=False,
         capture_output=True,
         text=True,
@@ -510,6 +518,7 @@ config:
 resources:
   gpu:
     cloud: kubernetes
+    image: "{{config.base_image}}"
     accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
     cpus: 16
     memory: 128Gi
@@ -520,7 +529,7 @@ initial: generate
 states:
   generate:
     description: >
-      Resolve the immutable accepted Wan 2.2 image, fetch pinned TI2V-5B weights
+      Resolve the immutable validated Wan 2.2 image, fetch pinned public TI2V-5B weights
       at run time, execute real upstream generation on RTX PRO 6000 Blackwell,
       validate the decoded MP4, and upload all evidence through the BYOF S3
       runner.

@@ -19,12 +19,13 @@ Wan as an action-conditioned robotics simulator or an action-prediction model.
 The canonical `npa-wan2-2` image ships the pinned source, its Apache license,
 and an OSS CPU dependency base. CUDA-enabled PyTorch and every `nvidia-*`
 distribution are deliberately absent from all image layers. `wan-runtime`
-refuses before download unless the operator sets
-`NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS=YES`; accepted installation is atomic and
+installs the pinned runtime atomically from the upstream package indexes and
 lands only in `/workspace/.cache/npa/wan2-2/runtime`.
 Offline reuse succeeds only for a complete cache whose requirements/Python-ABI
 stamp matches exactly; empty or deliberately stale caches fail closed with exit
-69, while missing operator acceptance fails before download with exit 78.
+69. Installation and use remain governed by the upstream package/container terms;
+NPA adds no per-run consent variable. `HF_TOKEN` is optional for the public model
+and may be forwarded through `--secret-env HF_TOKEN` for rate limits or overrides.
 The image build validates the dependency union from two independent sources:
 the metadata of every distribution actually installed in `/opt/wan-base`, and
 PEP 658 core-metadata sidecars selected by the exact wheel hashes in
@@ -39,10 +40,7 @@ executes the input-contract and EasyDict compatibility modules, verifies Wan
 package discovery and compiled source bytecode, confirms Torch is absent, and
 rechecks the closure report. This proves the strongest honest pre-overlay
 boundary; the real single- and multi-GPU workflows prove the full import and
-inference path only after operator-accepted runtime provisioning.
-Workflow submissions must forward the acceptance gate and Hugging Face token
-through the secret channel with `--secret-env NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS`
-and `--secret-env HF_TOKEN`; neither value belongs in a spec or rendered YAML.
+inference path only after runtime provisioning.
 
 The hard gate generates 17 frames at the official TI2V-5B 1280×704 spatial
 size and 24 fps with eight sampling steps. The shorter duration and sampling

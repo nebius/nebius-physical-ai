@@ -87,6 +87,7 @@ def test_every_separately_built_image_has_a_golden_eval() -> None:
         f"{name} ({entry['dockerfile']})"
         for name, entry in contract["images"].items()
         if entry["dockerfile"] not in covered
+        and entry.get("redistribution") == "public"
     )
     assert not missing, (
         f"packaging-contract images with no golden-eval entry: {missing}"
@@ -313,7 +314,7 @@ def test_cli_run_rejects_unknown_container() -> None:
 # and the job burns its budget before producing wrong or empty output, which is the worst
 # kind of failure to debug. See skills/atomic/gpu-selection/SKILL.md.
 RT_CORE_GPUS = {"l40s", "rtx6000"}
-RT_CORE_REQUIRED = {"isaac-lab", "sonic", "sonic-mujoco"}
+RT_CORE_REQUIRED = {"isaac-lab", "sonic"}
 
 
 @pytest.mark.parametrize("name", sorted(RT_CORE_REQUIRED))

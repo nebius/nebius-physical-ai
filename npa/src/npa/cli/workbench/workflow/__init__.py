@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import typer
+import yaml
 from rich.console import Console
 
 from npa.cli.workbench.trigger import app as trigger_app
@@ -265,6 +266,14 @@ def submit_cmd(
         help=(
             "For npa.workflow specs: render the SkyPilot YAML and print it, "
             "but do not submit."
+        ),
+    ),
+    accept_eula: bool = typer.Option(
+        True,
+        "--accept-eula/--no-accept-eula",
+        help=(
+            "Run-scoped Isaac EULA routing. Resolved Isaac stages receive "
+            "ACCEPT_EULA=Y by default; use --no-accept-eula to opt out."
         ),
     ),
     details: bool = typer.Option(
@@ -671,6 +680,48 @@ def submit_cmd(
     except Exception as exc:
         _fail(str(exc))
         return
+    routes_at_isaac = False
+    if not plan_only and not accept_eula:
+        routes_at_isaac = (
+            _plan_routes_at_isaac(
+                yaml_path,
+                run_id=resolved_run_id,
+                assume_decision=assume_decision,
+                config_overrides=substitutions,
+                options=SkypilotRenderOptions(
+                    registry=_resolve_submit_registry(registry, project),
+                    image_overrides={
+                        **(
+                            {"*": image}
+                            if str(image or "").strip().lower()
+                            not in {"", "none", "default", "-"}
+                            else {"*": ""}
+                            if str(image or "").strip().lower()
+                            in {"none", "default", "-"}
+                            else {}
+                        ),
+                        **specific_image_overrides,
+                    },
+                    gpu_target=gpu_target,
+                    image_variant=image_variant,
+                    materialize_registry_secrets=False,
+                    accept_eula=accept_eula,
+                ),
+            )
+            if is_npa_spec
+            else _sky_yaml_routes_at_isaac(yaml_path)
+        )
+    if routes_at_isaac:
+        _fail(
+            "Refusing before provisioning: --no-accept-eula explicitly opted this "
+            "Isaac-routed workflow out of NVIDIA's documented ACCEPT_EULA setting. "
+            "The applicable NVIDIA Omniverse Licence Agreement and Isaac Sim "
+            "Additional Software and Materials Licence are listed at "
+            "https://docs.isaacsim.omniverse.nvidia.com/latest/common/licenses.html. "
+            "PRIVACY_CONSENT is optional and is not enabled by NPA. No expensive "
+            "action has begun. Resume by omitting --no-accept-eula."
+        )
+        return
     from npa.orchestration.npa_workflow.submit_credentials import (
         resolve_submit_credentials,
     )
@@ -787,6 +838,7 @@ def submit_cmd(
                     gpu_target=gpu_target,
                     image_variant=image_variant,
                     materialize_registry_secrets=False,
+                    accept_eula=accept_eula,
                 ),
             )
         except Exception as exc:
@@ -1222,6 +1274,7 @@ def submit_cmd(
             image_variant=image_variant,
             # Never mint/print live registry tokens for --plan-only.
             materialize_registry_secrets=not plan_only,
+            accept_eula=accept_eula,
             gpu_accelerator_overrides=_resolve_submit_accelerators(
                 yaml_path,
                 infra=infra,
@@ -1477,6 +1530,7 @@ def submit_cmd(
                     use_spot=use_spot,
                     aws_profile=aws_profile,
                     env_overrides=substitutions,
+                    accept_eula=accept_eula,
                 )
             except ValueError as exc:
                 _fail(str(exc))
@@ -2127,7 +2181,7 @@ def _plan_requires_npa_source(
     run_id: str,
     assume_decision: str,
     config_overrides: Mapping[str, str] | None = None,
-    options,
+    options: SkypilotRenderOptions,
 ) -> bool:
     """Return whether any fully configured planned step lacks a container image."""
 
@@ -2153,6 +2207,62 @@ def _plan_requires_npa_source(
         ):
             return True
     return False
+
+
+def _plan_routes_at_isaac(
+    yaml_path: Path,
+    *,
+    run_id: str,
+    assume_decision: str,
+    config_overrides: Mapping[str, str] | None = None,
+    options,
+) -> bool:
+    """Return whether the selected plan acquires or runs an Isaac image."""
+
+    from npa.orchestration.npa_workflow import build_plan, load_spec
+    from npa.orchestration.npa_workflow.scheduler import build_scheduler_task
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        resolve_task_image,
+        routes_at_an_isaac_image,
+    )
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
+
+    spec = merge_config_overrides(load_spec(yaml_path), config_overrides)
+    plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
+    for step in plan.steps:
+        task = build_scheduler_task(spec, step, run_id=run_id)
+        resources = task.get("resources") or {}
+        tool_ref = str(task.get("tool_ref") or "")
+        resolved_image = resolve_task_image(tool_ref, resources, options=options)
+        if routes_at_an_isaac_image(
+            tool_ref,
+            resources,
+            spec.config,
+            resolved_image=resolved_image,
+        ):
+            return True
+    return False
+
+
+def _sky_yaml_routes_at_isaac(yaml_path: Path) -> bool:
+    """Return whether a raw SkyPilot YAML routes any task through Isaac."""
+
+    from npa.orchestration.npa_workflow.skypilot_render import routes_at_an_isaac_image
+
+    try:
+        documents = yaml.safe_load_all(yaml_path.read_text(encoding="utf-8"))
+        for document in documents:
+            if not isinstance(document, dict):
+                continue
+            resources = dict(document.get("resources") or {})
+            resources.setdefault("image", resources.get("image_id", ""))
+            envs = document.get("envs") or {}
+            policy_image = str(envs.get("POLICY_IMAGE") or "").lower()
+            if routes_at_an_isaac_image("", resources) or "npa-sonic" in policy_image:
+                return True
+        return False
+    except (OSError, yaml.YAMLError):
+        return False
 
 
 def _emit_compact_submit_plan(plan, *, infrastructure: Mapping[str, object]) -> None:
@@ -2285,6 +2395,7 @@ def _preflight_submit_images(
         images=images,
         pull_checks=checks,
         context=context_from_infra(infra),
+        pull_secrets_by_image=pull_secrets_by_image,
     )
     typer.echo(
         f"image-preflight: {len(checks)} image(s) pullable and bootstrap-compatible",
@@ -2301,6 +2412,7 @@ def _preflight_image_bootstrap_contracts(
     images: list[str],
     pull_checks: Sequence[object],
     context: str,
+    pull_secrets_by_image: Mapping[str, tuple[str, ...]] | None = None,
 ) -> list[dict[str, object]]:
     """Verify each selected digest, never a mutable tag, against one contract."""
 
@@ -2373,6 +2485,9 @@ def _preflight_image_bootstrap_contracts(
                         digest=digest,
                         context=context,
                         kubeconfig=str(os.environ.get("KUBECONFIG") or ""),
+                        image_pull_secrets=tuple(
+                            (pull_secrets_by_image or {}).get(image, ())
+                        ),
                     )
                 store_cached_evidence(cache_path, evidence)
         except (ImageBootstrapContractError, RuntimeError, OSError, ValueError) as exc:
@@ -6008,6 +6123,7 @@ def preflight_images_cmd(
             images=images,
             pull_checks=checks,
             context=context_from_infra(infra),
+            pull_secrets_by_image=pull_secrets_by_image,
         )
     if json_output:
         typer.echo(

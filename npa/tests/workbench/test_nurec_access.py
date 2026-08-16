@@ -28,7 +28,12 @@ WORKFLOW = (
     / "nurec-reconstruct.yaml"
 )
 SPEC = (
-    REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "nurec-reconstruct.yaml"
+    REPO_ROOT
+    / "npa"
+    / "workflows"
+    / "workbench"
+    / "npa-workflows"
+    / "nurec-reconstruct.yaml"
 )
 
 #: GPUs with no RT cores. Reconstruction and rasterization are RT-core work, so a
@@ -37,7 +42,9 @@ NON_RT_CORE_GPUS = ("H100", "H200", "A100", "B200", "GH200")
 
 
 def _workflow() -> dict:
-    documents = [doc for doc in yaml.safe_load_all(WORKFLOW.read_text(encoding="utf-8")) if doc]
+    documents = [
+        doc for doc in yaml.safe_load_all(WORKFLOW.read_text(encoding="utf-8")) if doc
+    ]
     assert len(documents) == 1, "the NuRec workflow is a single SkyPilot task"
     return documents[0]
 
@@ -132,7 +139,9 @@ def test_routing_table_marks_unimplemented_capabilities_as_upstream() -> None:
     against elsewhere.
     """
     text = SKILL_PATH.read_text(encoding="utf-8")
-    table = text.split("## Which Capability Answers This?", 1)[1].split("## Easy Mix-Ups", 1)[0]
+    table = text.split("## Which Capability Answers This?", 1)[1].split(
+        "## Easy Mix-Ups", 1
+    )[0]
 
     for unimplemented in ("serve-grpc", "asset-harvester", "render-grpc"):
         row = next(ln for ln in table.splitlines() if unimplemented in ln)
@@ -145,12 +154,16 @@ def test_routing_table_marks_unimplemented_capabilities_as_upstream() -> None:
 
 def test_skill_smoke_entries_point_at_files_that_exist() -> None:
     index = yaml.safe_load(SKILL_INDEX.read_text())
-    entry = next(item for item in index["skills"] if item["name"] == "neural-reconstruction")
+    entry = next(
+        item for item in index["skills"] if item["name"] == "neural-reconstruction"
+    )
 
     kinds = {smoke["type"] for smoke in entry["smoke"]}
     assert {"file_exists", "cli_help", "workflow_yaml", "npa_workflow_yaml"} <= kinds
     for smoke in entry["smoke"]:
-        for relative in smoke.get("paths", []) or ([smoke["path"]] if "path" in smoke else []):
+        for relative in smoke.get("paths", []) or (
+            [smoke["path"]] if "path" in smoke else []
+        ):
             assert (REPO_ROOT / relative).exists(), relative
 
 
@@ -300,10 +313,10 @@ def test_workflow_env_placeholders_are_substitutable_not_shadowed() -> None:
         "AWS_ENDPOINT_URL",
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
-        "HF_TOKEN",
         "NGC_API_KEY",
     ):
         assert envs[key] == f"${{{key}}}", key
+    assert "HF_TOKEN" not in envs
 
 
 def test_workflow_contains_no_committed_secret_or_bucket() -> None:
@@ -325,7 +338,9 @@ def test_declarative_spec_is_an_npa_workflow_with_real_toolrefs() -> None:
 
     assert spec["apiVersion"] == "npa.workflow/v0.0.1"
     assert spec["metadata"]["name"] == SPEC.stem
-    tool_refs = [state["toolRef"] for state in spec["states"].values() if state.get("toolRef")]
+    tool_refs = [
+        state["toolRef"] for state in spec["states"].values() if state.get("toolRef")
+    ]
     assert tool_refs, "every NuRec stage runs a real tool"
     for tool_ref in tool_refs:
         assert tool_ref.startswith("workbench.nurec."), tool_ref
@@ -386,7 +401,9 @@ def test_catalog_entries_call_the_real_cli_flags() -> None:
             options.update(getattr(param, "secondary_opts", []) or [])
         for token in argv[4:]:
             if token.startswith("--"):
-                assert token in options, f"{name}: {token} is not a real option of {verb}"
+                assert token in options, (
+                    f"{name}: {token} is not a real option of {verb}"
+                )
         checked += 1
     assert checked >= 6, "expected every nurec verb to be catalogued"
 
@@ -399,7 +416,8 @@ def test_nurec_case_is_registered_in_the_live_submit_matrix() -> None:
     from npa.orchestration.npa_workflow.submit_matrix import SUBMIT_LIVE_MATRIX
 
     case = next(
-        (item for item in SUBMIT_LIVE_MATRIX if item.spec == "nurec-reconstruct.yaml"), None
+        (item for item in SUBMIT_LIVE_MATRIX if item.spec == "nurec-reconstruct.yaml"),
+        None,
     )
     assert case is not None, "nurec-reconstruct.yaml is missing from SUBMIT_LIVE_MATRIX"
     assert case.tier == "gpu"
@@ -410,9 +428,7 @@ def test_nurec_case_is_registered_in_the_live_submit_matrix() -> None:
 
 
 def test_live_e2e_test_exists_and_asserts_the_definition_of_done() -> None:
-    live = (
-        REPO_ROOT / "npa" / "tests" / "e2e" / "test_nurec_reconstruct_live_e2e.py"
-    )
+    live = REPO_ROOT / "npa" / "tests" / "e2e" / "test_nurec_reconstruct_live_e2e.py"
     assert live.is_file()
     text = live.read_text(encoding="utf-8")
 
@@ -646,7 +662,9 @@ def test_spec_cpu_stages_do_not_request_a_gpu(monkeypatch) -> None:
             .get("pod_config", {})
             .get("spec", {})
         )
-        assert "initContainers" not in pod_spec, f"{name} should not carry GPU pod_config"
+        assert "initContainers" not in pod_spec, (
+            f"{name} should not carry GPU pod_config"
+        )
 
 
 def test_renderer_installs_the_nurec_runtime_deps_the_vendor_image_lacks() -> None:
@@ -689,9 +707,7 @@ def test_renderer_nurec_rerun_pin_matches_the_packaged_extra() -> None:
 
     pyproject = (REPO_ROOT / "npa" / "pyproject.toml").read_text(encoding="utf-8")
     # The `viz` extra is folded into the base install, so the pin is declared there.
-    pin_line = next(
-        line for line in pyproject.splitlines() if "rerun-sdk==" in line
-    )
+    pin_line = next(line for line in pyproject.splitlines() if "rerun-sdk==" in line)
 
     assert NUREC_RERUN_PIN in pin_line, f"{NUREC_RERUN_PIN} not in: {pin_line}"
 
@@ -753,7 +769,7 @@ def test_staging_the_source_is_inert_for_an_image_that_already_bakes_npa() -> No
     )
 
     setup = default_npa_setup()
-    assert 'if ! command -v npa >/dev/null 2>&1; then' in setup
+    assert "if ! command -v npa >/dev/null 2>&1; then" in setup
     # The baked-image path is tried before any S3 sync.
     assert setup.index("/opt/nebius-physical-ai/npa") < setup.index("NPA_SRC_S3_URI")
 
@@ -788,7 +804,9 @@ GUIDE = REPO_ROOT / "docs" / "workbench" / "guides" / "neural-reconstruction.md"
 def test_guide_exists_and_is_indexed() -> None:
     assert GUIDE.exists()
     index = (GUIDE.parent / "README.md").read_text(encoding="utf-8")
-    assert "neural-reconstruction.md" in index, "guide must be listed in the guides index"
+    assert "neural-reconstruction.md" in index, (
+        "guide must be listed in the guides index"
+    )
 
 
 def test_guide_only_documents_commands_that_exist() -> None:
@@ -836,7 +854,9 @@ def test_guide_only_documents_commands_that_exist() -> None:
                 parts.append(token)
             if not parts:
                 continue
-            assert resolve(parts), f"{label}: `npa {' '.join(parts)}` is not a real command"
+            assert resolve(parts), (
+                f"{label}: `npa {' '.join(parts)}` is not a real command"
+            )
             checked += 1
     assert checked > 5, f"expected several npa commands, found {checked}"
 

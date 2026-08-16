@@ -14,7 +14,9 @@ from typing import Any
 # IAM token, which are never committed. Operators can override it with NPA_REGISTRY
 # or `container_registry` in ~/.npa/config.yaml.
 DEFAULT_CONTAINER_REGISTRY_ID = "e00cm0vc6t09m0z5gw"
-DEFAULT_CONTAINER_REGISTRY = f"cr.eu-north1.nebius.cloud/{DEFAULT_CONTAINER_REGISTRY_ID}"
+DEFAULT_CONTAINER_REGISTRY = (
+    f"cr.eu-north1.nebius.cloud/{DEFAULT_CONTAINER_REGISTRY_ID}"
+)
 # Mirror registry (us-central1) used for region-agnostic failover: every tool
 # image is mirrored to both this and the primary (eu-north1) registry, so a pull
 # succeeds regardless of the caller's region — e.g. an in-cluster us-central1 pull
@@ -126,7 +128,7 @@ OMNIVERSE_RESTRICTED_TOOLS: frozenset[str] = frozenset({"cosmos3-serving"})
 # output can name every excluded image without hardcoding it at the call site.
 # Empty for the same reason as above: ``sonic-mujoco`` inherits sonic's runtime-fetch
 # architecture and adds no Isaac and no Omniverse assets of its own.
-OMNIVERSE_RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
+OMNIVERSE_RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset({"sonic-mujoco"})
 
 # Public mirror registry for the OSS-redistributable image subset. Nebius CR does
 # NOT support anonymous/public pulls and has no cross-tenant / all-authenticated
@@ -198,8 +200,10 @@ SUPPORTED_TOOL_VERSIONS = {
 def sonic_image_manifest() -> dict[str, Any]:
     """Return the packaged SONIC image compatibility manifest."""
 
-    text = resources.files(__package__).joinpath(SONIC_IMAGE_MANIFEST_RESOURCE).read_text(
-        encoding="utf-8"
+    text = (
+        resources.files(__package__)
+        .joinpath(SONIC_IMAGE_MANIFEST_RESOURCE)
+        .read_text(encoding="utf-8")
     )
     payload = json.loads(text)
     if payload.get("format") != "npa_sonic_image_manifest_v1":
@@ -259,17 +263,17 @@ def supported_tool_version(tool: str) -> str:
     try:
         return SUPPORTED_TOOL_VERSIONS[tool]
     except KeyError as exc:
-        raise RuntimeError(f"Could not find supported version for tool: {tool}") from exc
+        raise RuntimeError(
+            f"Could not find supported version for tool: {tool}"
+        ) from exc
 
 
 def public_mirror_tag_for_tool(tool: str) -> str:
     """Return the exact repository pin that the public mirror must carry.
 
-    SONIC's normal resolver selects a hardware variant and defaults to the L40S
-    ``0.1.2`` image. The public inventory contract instead pins the validated
-    cross-architecture Kubernetes runtime from ``SUPPORTED_TOOL_VERSIONS``. A
-    publisher that called ``supported_tool_version('sonic')`` would silently
-    mirror only the default variant and leave the repository pin unavailable.
+    SONIC's runtime resolver accepts only the active host-mounted Kubernetes
+    variant. The public inventory contract pins that validated cross-architecture
+    runtime from ``SUPPORTED_TOOL_VERSIONS`` rather than either quarantined tag.
     """
     if tool == "sonic":
         return SUPPORTED_TOOL_VERSIONS[tool]
@@ -279,7 +283,9 @@ def public_mirror_tag_for_tool(tool: str) -> str:
 def supported_lerobot_versions() -> tuple[str, ...]:
     """Return LeRobot versions supported by the workbench (default first)."""
 
-    from npa.workbench.lerobot.version_compat import supported_lerobot_versions as _versions
+    from npa.workbench.lerobot.version_compat import (
+        supported_lerobot_versions as _versions,
+    )
 
     return _versions()
 
@@ -294,10 +300,10 @@ def resolve_lerobot_image_tag(version: str | None = None) -> str:
 
 
 def sonic_image_variant_for_gpu(gpu_target: str | None = None) -> str:
-    """Return the SONIC image variant id for a GPU or provider target."""
+    """Return an active SONIC variant or reject unsupported GPU/runtime pairs."""
 
     manifest = sonic_image_manifest()
-    default = str(manifest.get("default_variant", "sonic-l40s-baked"))
+    default = str(manifest.get("default_variant", "sonic-k8s-host-mounted"))
     normalized = _normalize_gpu_target(gpu_target)
     if not normalized:
         return default
@@ -308,7 +314,13 @@ def sonic_image_variant_for_gpu(gpu_target: str | None = None) -> str:
         for match in rule.get("matches", []):
             if str(match).lower() in normalized:
                 return variant
-    return default
+    raise ValueError(
+        f"Unsupported SONIC GPU target {gpu_target!r}. The only published active "
+        "variant is sonic-k8s-host-mounted on RTX PRO 6000 Blackwell Kubernetes "
+        "nodes with NVIDIA GPU Operator driver mounts. L40S/H100/H200 compute-only "
+        "variants are retired and quarantined; supply a separately validated custom "
+        "image explicitly or choose gpu-rtx6000 on Kubernetes."
+    )
 
 
 def sonic_image_entry(
@@ -324,10 +336,20 @@ def sonic_image_entry(
     else:
         resolved = sonic_image_variant_for_gpu(gpu_target)
     try:
-        return variants[resolved]
+        entry = variants[resolved]
     except KeyError as exc:
         choices = ", ".join(sorted(variants))
-        raise ValueError(f"Unknown SONIC image variant {resolved!r}; choose one of: {choices}") from exc
+        raise ValueError(
+            f"Unknown SONIC image variant {resolved!r}; choose one of: {choices}"
+        ) from exc
+    if str(entry.get("status") or "active") != "active":
+        reason = str(entry.get("quarantine_reason") or "restricted image bytes")
+        raise ValueError(
+            f"SONIC image variant {resolved!r} is quarantined and cannot be resolved: "
+            f"{reason} Use sonic-k8s-host-mounted or build a newly scanned, "
+            "license-compatible replacement."
+        )
+    return entry
 
 
 def container_image_for_tool(
@@ -345,7 +367,9 @@ def container_image_for_tool(
         resolved_tag = tag or str(entry["tag"])
     else:
         if image_variant:
-            raise ValueError(f"Image variants are only defined for SONIC, got tool={tool!r}")
+            raise ValueError(
+                f"Image variants are only defined for SONIC, got tool={tool!r}"
+            )
         image_name = CONTAINER_IMAGE_NAMES[tool]
         resolved_tag = tag or supported_tool_version(tool)
     resolved_registry = registry or _primary_registry()
@@ -447,7 +471,9 @@ _primary_registry = primary_container_registry
 
 def backup_container_registry() -> str:
     """Resolve the backup registry override, or the committed default."""
-    return os.environ.get("NPA_BACKUP_REGISTRY", "").strip() or BACKUP_CONTAINER_REGISTRY
+    return (
+        os.environ.get("NPA_BACKUP_REGISTRY", "").strip() or BACKUP_CONTAINER_REGISTRY
+    )
 
 
 def container_image_candidates(
@@ -469,13 +495,21 @@ def container_image_candidates(
     is tried first, avoiding a guaranteed-denied cross-region attempt.
     """
     primary = container_image_for_tool(
-        tool, registry=registry, tag=tag, gpu_target=gpu_target, image_variant=image_variant
+        tool,
+        registry=registry,
+        tag=tag,
+        gpu_target=gpu_target,
+        image_variant=image_variant,
     )
     candidates = [primary]
     backup_registry = backup_container_registry()
     if backup_registry:
         backup = container_image_for_tool(
-            tool, registry=backup_registry, tag=tag, gpu_target=gpu_target, image_variant=image_variant
+            tool,
+            registry=backup_registry,
+            tag=tag,
+            gpu_target=gpu_target,
+            image_variant=image_variant,
         )
         if backup != primary:
             candidates.append(backup)
@@ -537,7 +571,9 @@ def publicly_publishable_tools() -> list[str]:
     acceptance, so every entry in ``CONTAINER_IMAGE_NAMES`` remains publishable;
     the separately contracted Cosmos3 serving image stays build-your-own.
     """
-    return sorted(tool for tool in CONTAINER_IMAGE_NAMES if is_publicly_redistributable(tool))
+    return sorted(
+        tool for tool in CONTAINER_IMAGE_NAMES if is_publicly_redistributable(tool)
+    )
 
 
 def default_vlm_image(*, registry: str | None = None) -> str:
@@ -559,14 +595,18 @@ def default_workbench_image(*, registry: str | None = None) -> str:
 
 
 def _default_sonic_image() -> dict[str, Any]:
-    return sonic_image_entry(image_variant=str(sonic_image_manifest().get("default_variant", "")))
+    return sonic_image_entry(
+        image_variant=str(sonic_image_manifest().get("default_variant", ""))
+    )
 
 
 def _normalize_gpu_target(gpu_target: str | None) -> str:
     return (gpu_target or "").strip().lower().replace("_", "-")
 
 
-def _normalize_sonic_variant(image_variant: str, variants: dict[str, dict[str, Any]]) -> str:
+def _normalize_sonic_variant(
+    image_variant: str, variants: dict[str, dict[str, Any]]
+) -> str:
     normalized = image_variant.strip().lower().replace("_", "-")
     aliases = {
         "baked": "sonic-l40s-baked",
@@ -589,5 +629,7 @@ def _normalize_sonic_variant(image_variant: str, variants: dict[str, dict[str, A
     resolved = aliases.get(normalized, normalized)
     if resolved not in variants:
         choices = ", ".join(sorted(variants))
-        raise ValueError(f"Unknown SONIC image variant {image_variant!r}; choose one of: {choices}")
+        raise ValueError(
+            f"Unknown SONIC image variant {image_variant!r}; choose one of: {choices}"
+        )
     return resolved

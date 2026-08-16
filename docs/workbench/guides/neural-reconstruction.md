@@ -21,7 +21,7 @@ photographed:
 | **Engine** | `nvcr.io/nvidia/nre/nre-ga:26.04` from NGC (pulled, never rebuilt) |
 | **GPU** | One RTX PRO 6000 Blackwell (or L40S). **Must have RT cores** |
 | **Time** | ~45 minutes end to end |
-| **Credentials** | `NGC_API_KEY`, `HF_TOKEN`, and S3 keys |
+| **Credentials** | `NGC_API_KEY` and S3 keys; `HF_TOKEN` only for gated/private dataset overrides |
 
 > **Why RT cores?** Gaussian rasterization and ray tracing are RT-core work.
 > H100 and H200 are faster chips with **no RT cores** and are the wrong choice
@@ -60,7 +60,7 @@ npa workbench workflow plan-spec \
 Then the cheap real preflight (seconds, no image pull):
 
 ```bash
-export NGC_API_KEY=...  HF_TOKEN=...
+export NGC_API_KEY=...
 npa workbench nurec check --json
 ```
 
@@ -92,7 +92,7 @@ npa workbench workflow submit \
   --var bucket=<your-bucket> \
   --var prefix="checkpoints/neural-reconstruction/$RUN_ID" \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY \
-  --secret-env HF_TOKEN --secret-env NGC_API_KEY
+  --secret-env NGC_API_KEY
 ```
 
 Watch it:

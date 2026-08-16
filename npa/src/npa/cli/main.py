@@ -379,7 +379,7 @@ user-level tokens, object storage, and BYOVM SSH defaults:
 tokens:
   # Hugging Face access token (for model + dataset downloads, incl. gated repos).
   # Get one at https://huggingface.co/settings/tokens -> "Create new token"
-  # (a "Read" token is enough). For gated models (e.g. Llama, some GR00T assets),
+  # (a "Read" token is enough). Public defaults work anonymously; for gated models,
   # also click "Agree and access repository" on each model page while signed in.
   # Step-by-step guide: docs/workbench/huggingface-token.md
   HF_TOKEN: hf_REPLACE_ME
@@ -389,7 +389,7 @@ tokens:
   # Step-by-step guide: docs/workbench/token-factory-key.md
   NEBIUS_TOKEN_FACTORY_KEY: <paste-your-token-factory-api-key>  # e.g. v1.XXXXXXXX...
 ngc:
-  # NVIDIA NGC API key (for GR00T / Cosmos NVIDIA container + model pulls).
+  # NVIDIA NGC API key (only for entitlement-controlled NGC artifact pulls).
   # Get one at https://org.ngc.nvidia.com/setup/api-key -> "Generate API Key"
   # (sign in / create a free NGC account first). The key starts with "nvapi-".
   # Step-by-step guide: docs/workbench/ngc-api-key.md
@@ -933,7 +933,7 @@ def _prompt_setup_tokens(
         ngc_api_key = existing_credentials.ngc_api_key
     else:
         typer.echo(
-            "\nNVIDIA NGC API key (for GR00T / Cosmos NVIDIA assets): create one at "
+            "\nNVIDIA NGC API key (for entitlement-controlled NGC artifact pulls): create one at "
             "https://org.ngc.nvidia.com/setup/api-key (sign in or make a free NGC "
             "account first). The key starts with 'nvapi-'. "
             "Guide: docs/workbench/ngc-api-key.md."
@@ -1892,7 +1892,7 @@ def _model_access_note(hf_token: str, ngc_key: str) -> str:
                 huggingface.validate_hf_access, hf_token, gated_hf_repos()
             )
 
-        def _validator(token: str, repo: str):
+        def _validator(token: str, repo: str, repo_type: str = "model"):
             return cache.get(repo) or HFAccessResult(
                 repo=repo, ok=False, error="not verified (timed out)"
             )
@@ -2571,9 +2571,7 @@ def _transactional_configure(function):
                 region = str(environment.region or "")
         requested_name = alias or project_id or "interactive"
         resume = (
-            f"npa configure --forget-project {forget}"
-            if forget
-            else "npa configure"
+            f"npa configure --forget-project {forget}" if forget else "npa configure"
         )
         if not forget and all((tenant_id, project_id, region, alias)):
             resume += (

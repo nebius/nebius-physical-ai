@@ -13,36 +13,56 @@ INDEX = REPO_ROOT / "skills/index.yaml"
 LINKED_SKILLS = (
     REPO_ROOT / "skills/workflows/sim2real-operate/SKILL.md",
     REPO_ROOT / "skills/tools/isaac-lab/SKILL.md",
+    REPO_ROOT / "skills/tools/sonic/SKILL.md",
+    REPO_ROOT / "skills/tools/groot/SKILL.md",
     REPO_ROOT / "skills/atomic/solution-licensing/SKILL.md",
 )
-EULA_VARS = ("OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA")
+EULA_VALUE = "ACCEPT_EULA=Y"
 
 
 def test_eula_preflight_is_canonical_and_discoverable() -> None:
     index = yaml.safe_load(INDEX.read_text(encoding="utf-8"))
-    entry = next(item for item in index["skills"] if item["name"] == "third-party-eula-preflight")
+    entry = next(
+        item for item in index["skills"] if item["name"] == "third-party-eula-preflight"
+    )
 
     assert REPO_ROOT / entry["path"] == SKILL
     assert entry["category"] == "atomic"
     assert "before provisioning" in entry["when_to_use"].lower()
 
 
-def test_eula_preflight_requires_scoped_explicit_consent_and_early_refusal() -> None:
+def test_eula_preflight_documents_scoped_default_and_explicit_opt_out() -> None:
     text = SKILL.read_text(encoding="utf-8")
+    normalized = " ".join(text.split()).lower()
     required = (
-        "explicit operator",
         "official terms links",
+        "defaults vendor acceptance on",
+        "explicit opt-out",
         "fail before provisioning",
-        "exact resume command",
-        "Never precheck a box",
-        "Do not reuse it",
+        "Do not reuse this",
+        "Never default optional",
+        "PRIVACY_CONSENT",
+        "npa-isaac-lab",
+        "Isaac-backed SONIC modes",
+        "GR00T Isaac simulation",
+        "absent variable succeeds",
+        "--no-accept-eula",
+        "OMNI_KIT_ACCEPT_EULA=YES",
+        "do not add duplicate",
+        "telemetry off by default",
+        "built layers contain no proprietary Isaac or Kit bytes",
         "Do not store",
         "secret values or unnecessary personal data",
+        "token and its actual upstream permissions are the only local gate",
+        "probe every required repository before provisioning",
+        "do not provide `--skip-model-check`",
+        "do not add an NPA EULA/terms boolean",
     )
     for phrase in required:
-        assert phrase.lower() in text.lower(), phrase
-    for variable in EULA_VARS:
-        assert f"{variable}=YES" in text
+        assert phrase.lower() in normalized, phrase
+    assert EULA_VALUE in text
+    assert "${ACCEPT_EULA-Y}" in text
+    assert "${ACCEPT_EULA:-Y}" in text
 
 
 def test_operational_skills_link_the_preflight() -> None:
@@ -50,3 +70,44 @@ def test_operational_skills_link_the_preflight() -> None:
         assert "skills/atomic/third-party-eula-preflight/SKILL.md" in path.read_text(
             encoding="utf-8"
         ), path
+
+
+def test_isaac_tool_skills_preserve_default_opt_out_and_internal_plumbing() -> None:
+    for tool in ("isaac-lab", "sonic", "groot"):
+        path = REPO_ROOT / f"skills/tools/{tool}/SKILL.md"
+        text = " ".join(path.read_text(encoding="utf-8").split())
+        for phrase in (
+            "defaults `ACCEPT_EULA=Y`",
+            "`N`, `NO`, `0`, `FALSE`",
+            "`Y`, `YES`, `1`, and `TRUE`",
+            "other values are invalid",
+            "before download",
+            "derives `OMNI_KIT_ACCEPT_EULA=YES` internally",
+            "Keep `PRIVACY_CONSENT` and telemetry off",
+        ):
+            assert phrase in text, f"{path}: {phrase}"
+
+
+def test_retired_manual_gate_surfaces_do_not_return() -> None:
+    roots = (
+        REPO_ROOT / "npa/src",
+        REPO_ROOT / "npa/scripts",
+        REPO_ROOT / "npa/workflows",
+    )
+    retired = (
+        "--accept-nvidia-eula",
+        "--skip-model-check",
+        "NPA_OPENPI_ACCEPT_GEMMA_TERMS",
+        "omni_kit_accept_eula",
+        "isaacsim_accept_eula",
+    )
+    for root in roots:
+        for path in root.rglob("*"):
+            if not path.is_file():
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            for marker in retired:
+                assert marker not in text, f"retired manual gate {marker!r} in {path}"
