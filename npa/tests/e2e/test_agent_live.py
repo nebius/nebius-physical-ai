@@ -314,9 +314,9 @@ def test_agent_soperator_validate_and_dry_run_deploy(ctx: AgentLiveContext) -> N
         "name": "agentdryrun",
         "region": "us-central1",
         "control_plane": {
-            "system": {"min_size": 3, "preset": "8vcpu-32gb"},
-            "controller": {"preset": "4vcpu-16gb"},
-            "login": {"preset": "16vcpu-64gb"},
+            "system": {"min_size": 3},
+            "controller": {},
+            "login": {},
         },
         "workers": [
             {
@@ -592,7 +592,9 @@ def test_agent_chat_generates_grounded_parameterized_workflow_yaml(
     assert expected_template in str(spec["metadata"]["name"])
     for key, value in expected_config.items():
         assert spec["config"][key] == value
-    validate = ctx.post("/api/workflows/validate", json={"yaml": workflow_yaml}, timeout=30.0)
+    validate = ctx.post(
+        "/api/workflows/validate", json={"yaml": workflow_yaml}, timeout=30.0
+    )
     validate.raise_for_status()
     assert validate.json().get("runnable") is True
 
