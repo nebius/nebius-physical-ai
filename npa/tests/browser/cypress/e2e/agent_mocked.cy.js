@@ -2220,7 +2220,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@qualifiedRuns");
     cy.get("#artifactRefreshRuns").should("be.enabled").and("have.attr", "aria-busy", "false");
-    cy.get("#runIdSelect option").then(($opts) => {
+    cy.get("#runIdSelect option").should(($opts) => {
       const values = [...$opts].map((option) => option.value).filter(Boolean);
       expect(values).to.include(REF_A);
       expect(values).to.include(REF_B);
