@@ -41,6 +41,7 @@ from npa.cli.workbench.leisaac import (
     _LIFECYCLE_LOCK_IO_TIMEOUT_SECONDS,
     _LIFECYCLE_LOCK_RENEW_SECONDS,
     _LIFECYCLE_LOCK_STALE_SECONDS,
+    _TransientRelayStatusError,
     _agent_artifact_storage,
     _agent_relay_context,
     _apply,
@@ -69,6 +70,8 @@ from npa.workbench.leisaac.reverse_client import (
 
 
 _READ_LIMIT = 4 * 1024 * 1024 + 512
+_WEBSOCKET_OPERATION_TIMEOUT_SECONDS = 20.0
+_SAFETY_RELEASE_TIMEOUT_SECONDS = 30.0
 
 
 def _fail(message: str) -> NoReturn:
@@ -108,13 +111,28 @@ class _WebSocket:
         origin: str | None,
         timeout: float = 20.0,
     ) -> _WebSocket:
+        if timeout <= 0:
+            raise TimeoutError("WebSocket connection deadline expired")
+        deadline = time.monotonic() + timeout
+
+        def remaining() -> float:
+            value = deadline - time.monotonic()
+            if value <= 0:
+                raise TimeoutError("WebSocket connection deadline expired")
+            return value
+
         context = ssl.create_default_context()
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
-        raw = socket.create_connection((host, 443), timeout=timeout)
-        connection = context.wrap_socket(raw, server_hostname=host)
+        raw = socket.create_connection((host, 443), timeout=remaining())
+        try:
+            raw.settimeout(remaining())
+            connection = context.wrap_socket(raw, server_hostname=host)
+        except BaseException:
+            raw.close()
+            raise
         _verify_certificate(connection, certificate_sha256)
-        connection.settimeout(timeout)
+        connection.settimeout(remaining())
         key = base64.b64encode(os.urandom(16)).decode("ascii")
         headers = [
             f"GET {path} HTTP/1.1",
@@ -133,6 +151,7 @@ class _WebSocket:
         connection.sendall(("\r\n".join(headers) + "\r\n\r\n").encode("ascii"))
         response = bytearray()
         while b"\r\n\r\n" not in response and len(response) < 16_384:
+            connection.settimeout(remaining())
             chunk = connection.recv(4096)
             if not chunk:
                 connection.close()
@@ -154,10 +173,21 @@ class _WebSocket:
             connection.close()
             status = raw_headers.split(b"\r\n", 1)[0].decode("ascii", "replace")
             raise ConnectionError(f"WebSocket upgrade rejected: {status}")
+        remaining()
+        # The aggregate deadline governs only connection setup. Established
+        # control/video/backhaul sockets use the normal bounded operational
+        # timeout so a successful setup near its deadline does not poison the
+        # first frame or protocol response with a tiny leftover timeout.
+        connection.settimeout(_WEBSOCKET_OPERATION_TIMEOUT_SECONDS)
         return cls(connection, remainder)
 
-    def _read(self, size: int) -> bytes:
+    def _read(self, size: int, *, deadline: float | None = None) -> bytes:
         while len(self.buffer) < size:
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("WebSocket operation deadline expired")
+                self.connection.settimeout(remaining)
             chunk = self.connection.recv(max(4096, size - len(self.buffer)))
             if not chunk:
                 raise EOFError("WebSocket closed")
@@ -188,22 +218,22 @@ class _WebSocket:
         masked = bytes(value ^ mask[index % 4] for index, value in enumerate(content))
         self.connection.sendall(header + mask + masked)
 
-    def receive(self) -> tuple[int, bytes]:
+    def receive(self, *, deadline: float | None = None) -> tuple[int, bytes]:
         fragments = bytearray()
         initial_opcode = 0
         while True:
-            first, second = self._read(2)
+            first, second = self._read(2, deadline=deadline)
             final = bool(first & 0x80)
             opcode = first & 0x0F
             size = second & 0x7F
             if size == 126:
-                size = struct.unpack("!H", self._read(2))[0]
+                size = struct.unpack("!H", self._read(2, deadline=deadline))[0]
             elif size == 127:
-                size = struct.unpack("!Q", self._read(8))[0]
+                size = struct.unpack("!Q", self._read(8, deadline=deadline))[0]
             if size > _READ_LIMIT:
                 raise ValueError("WebSocket message exceeded the live proof bound")
-            mask = self._read(4) if second & 0x80 else b""
-            payload = self._read(size)
+            mask = self._read(4, deadline=deadline) if second & 0x80 else b""
+            payload = self._read(size, deadline=deadline)
             if mask:
                 payload = bytes(
                     value ^ mask[index % 4] for index, value in enumerate(payload)
@@ -225,8 +255,8 @@ class _WebSocket:
             if final:
                 return initial_opcode, bytes(fragments)
 
-    def receive_json(self) -> dict[str, Any]:
-        opcode, payload = self.receive()
+    def receive_json(self, *, deadline: float | None = None) -> dict[str, Any]:
+        opcode, payload = self.receive(deadline=deadline)
         if opcode != 1:
             raise ValueError("expected a text WebSocket message")
         value = json.loads(payload)
@@ -269,15 +299,29 @@ def _pinned_https_request(
     password: str,
     certificate_sha256: str,
     headers: dict[str, str] | None = None,
+    timeout: float = 30.0,
 ) -> tuple[int, list[tuple[str, str]], bytes]:
+    if timeout <= 0:
+        raise TimeoutError("agent HTTPS request deadline expired")
+    deadline = time.monotonic() + timeout
+
+    def remaining() -> float:
+        value = deadline - time.monotonic()
+        if value <= 0:
+            raise TimeoutError("agent HTTPS request deadline expired")
+        return value
+
     context = ssl.create_default_context()
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE
-    connection = http.client.HTTPSConnection(host, 443, context=context, timeout=30.0)
+    connection = http.client.HTTPSConnection(
+        host, 443, context=context, timeout=remaining()
+    )
     try:
         connection.connect()
         if connection.sock is None:
             _fail("agent TLS connection did not expose a peer certificate")
+        connection.sock.settimeout(remaining())
         _verify_certificate(connection.sock, certificate_sha256)
         request_headers = {
             "Authorization": f"Basic {_basic_authorization(user, password)}",
@@ -289,11 +333,27 @@ def _pinned_https_request(
             body=b"" if method == "POST" else None,
             headers=request_headers,
         )
+        if connection.sock is not None:
+            connection.sock.settimeout(remaining())
         response = connection.getresponse()
-        body = response.read(131_073)
+        response_socket = connection.sock
+        if response_socket is None:
+            response_socket = getattr(
+                getattr(getattr(response, "fp", None), "raw", None), "_sock", None
+            )
+        if response_socket is None:
+            _fail("agent HTTPS response did not expose a bounded socket")
+        body = bytearray()
+        while len(body) <= 131_072:
+            response_socket.settimeout(remaining())
+            chunk = response.read1(131_073 - len(body))
+            if not chunk:
+                break
+            body.extend(chunk)
+        remaining()
         if len(body) > 131_072:
             _fail("agent HTTPS response exceeded the live-proof read bound")
-        return int(response.status), response.getheaders(), body
+        return int(response.status), response.getheaders(), bytes(body)
     finally:
         connection.close()
 
@@ -305,7 +365,18 @@ def _browser_sockets(
     user: str,
     password: str,
     certificate_sha256: str,
+    timeout: float = 30.0,
 ) -> tuple[_WebSocket, _WebSocket, dict[str, Any]]:
+    if timeout <= 0:
+        raise TimeoutError("browser transport deadline expired")
+    deadline = time.monotonic() + timeout
+
+    def remaining() -> float:
+        value = deadline - time.monotonic()
+        if value <= 0:
+            raise TimeoutError("browser transport deadline expired")
+        return value
+
     origin = f"https://{host}"
     query = urlencode({"run_id": run_id})
     auth_status, auth_headers, _auth_body = _pinned_https_request(
@@ -316,6 +387,7 @@ def _browser_sockets(
         password=password,
         certificate_sha256=certificate_sha256,
         headers={"Origin": origin, "X-NPA-LeIsaac-Control": "1"},
+        timeout=remaining(),
     )
     if auth_status != 204:
         _fail(f"browser transport authorization returned HTTP {auth_status}")
@@ -331,6 +403,7 @@ def _browser_sockets(
         user=user,
         password=password,
         certificate_sha256=certificate_sha256,
+        timeout=remaining(),
     )
     if status_http != 200:
         _fail(f"LeIsaac status returned HTTP {status_http}")
@@ -346,6 +419,7 @@ def _browser_sockets(
         certificate_sha256=certificate_sha256,
         cookie=cookie,
         origin=origin,
+        timeout=remaining(),
     )
     try:
         video = _WebSocket.connect(
@@ -356,11 +430,61 @@ def _browser_sockets(
             certificate_sha256=certificate_sha256,
             cookie=cookie,
             origin=origin,
+            timeout=remaining(),
         )
     except Exception:
         control.close()
         raise
     return control, video, status
+
+
+def _browser_status(
+    *,
+    host: str,
+    run_id: str,
+    user: str,
+    password: str,
+    certificate_sha256: str,
+    timeout: float,
+) -> dict[str, Any]:
+    """Read runtime status without acquiring or changing controller ownership."""
+
+    query = urlencode({"run_id": run_id})
+    status_http, _status_headers, status_body = _pinned_https_request(
+        host=host,
+        path=f"/api/leisaac/status?{query}",
+        method="GET",
+        user=user,
+        password=password,
+        certificate_sha256=certificate_sha256,
+        timeout=timeout,
+    )
+    if status_http != 200:
+        _fail(f"LeIsaac status returned HTTP {status_http}")
+    status = json.loads(status_body)
+    if not isinstance(status, dict):
+        _fail("LeIsaac status returned a non-object document")
+    return status
+
+
+def _input_event_count(status: dict[str, Any], *, phase: str) -> int:
+    try:
+        value = int(str(status.get("input_events")))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"{phase} status has no valid input-event count") from exc
+    if value < 0:
+        _fail(f"{phase} status has no valid input-event count")
+    return value
+
+
+def _applied_input_count(status: dict[str, Any], *, phase: str) -> int:
+    try:
+        value = int(str(status.get("applied_inputs")))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"{phase} status has no valid applied-input count") from exc
+    if value < 0:
+        _fail(f"{phase} status has no valid applied-input count")
+    return value
 
 
 def _wait_browser_sockets(
@@ -381,20 +505,152 @@ def _wait_browser_sockets(
         if progress_check is not None:
             progress_check()
         try:
-            return _browser_sockets(
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("browser transport deadline expired")
+            result = _browser_sockets(
                 host=host,
                 run_id=run_id,
                 user=user,
                 password=password,
                 certificate_sha256=certificate_sha256,
+                timeout=remaining,
             )
+            if time.monotonic() > deadline:
+                result[0].close()
+                result[1].close()
+                raise TimeoutError("browser transport deadline expired")
+            return result
         except Exception as exc:  # noqa: BLE001 - bounded readiness retry
             if time.monotonic() >= deadline:
                 raise RuntimeError(
                     f"browser transport did not recover within {timeout:g}s; "
                     f"last error: {type(exc).__name__}: {exc}"
                 ) from exc
-        time.sleep(poll_interval)
+        time.sleep(min(poll_interval, max(0.0, deadline - time.monotonic())))
+
+
+def _wait_controller_release(
+    *,
+    host: str,
+    run_id: str,
+    user: str,
+    password: str,
+    certificate_sha256: str,
+    after_input_events: int,
+    timeout: float = 30.0,
+    poll_interval: float = 0.25,
+    progress_check: Callable[[], None] | None = None,
+) -> float:
+    """Observe the durable held-key release without claiming controller ownership."""
+
+    started = time.monotonic()
+    deadline = started + timeout
+    last_error = "release input was not observed"
+    while True:
+        if progress_check is not None:
+            progress_check()
+        try:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("controller release deadline expired")
+            status = _browser_status(
+                host=host,
+                run_id=run_id,
+                user=user,
+                password=password,
+                certificate_sha256=certificate_sha256,
+                timeout=remaining,
+            )
+            observed = _input_event_count(status, phase="controller release")
+            applied = _applied_input_count(status, phase="controller release")
+            now = time.monotonic()
+            if (
+                observed > after_input_events
+                and applied >= observed
+                and now <= deadline
+            ):
+                return now - started
+            last_error = (
+                f"input/applied counts were {observed}/{applied}; expected more "
+                f"than {after_input_events} queued and every queued input applied"
+            )
+        except Exception as exc:  # noqa: BLE001 - bounded readiness retry
+            last_error = f"{type(exc).__name__}: {exc}"
+        if time.monotonic() >= deadline:
+            _fail(
+                f"controller safety release did not settle within {timeout:g}s; "
+                f"last error: {last_error}"
+            )
+        time.sleep(min(poll_interval, max(0.0, deadline - time.monotonic())))
+
+
+def _wait_resumed_browser_sockets(
+    *,
+    host: str,
+    run_id: str,
+    user: str,
+    password: str,
+    certificate_sha256: str,
+    client_id: str,
+    last_acked_seq: int,
+    lease_id: str,
+    timeout: float = 30.0,
+    poll_interval: float = 0.25,
+    progress_check: Callable[[], None] | None = None,
+) -> tuple[_WebSocket, _WebSocket, dict[str, Any], dict[str, Any]]:
+    """Resume the original controller lease within one end-to-end deadline."""
+
+    deadline = time.monotonic() + timeout
+    last_error = "controller remained busy"
+    while True:
+        if progress_check is not None:
+            progress_check()
+        control: _WebSocket | None = None
+        video: _WebSocket | None = None
+        try:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("controller lease deadline expired")
+            control, video, status = _browser_sockets(
+                host=host,
+                run_id=run_id,
+                user=user,
+                password=password,
+                certificate_sha256=certificate_sha256,
+                timeout=remaining,
+            )
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("controller lease deadline expired")
+            control.connection.settimeout(remaining)
+            resumed = _resume(
+                control,
+                run_id=run_id,
+                client_id=client_id,
+                last_acked_seq=last_acked_seq,
+                lease_id=lease_id,
+                deadline=deadline,
+            )
+            if time.monotonic() > deadline:
+                raise TimeoutError("controller lease deadline expired")
+            control.connection.settimeout(_WEBSOCKET_OPERATION_TIMEOUT_SECONDS)
+            video.connection.settimeout(_WEBSOCKET_OPERATION_TIMEOUT_SECONDS)
+            return control, video, status, resumed
+        except Exception as exc:  # noqa: BLE001 - bounded ownership retry
+            last_error = f"{type(exc).__name__}: {exc}"
+            for connection in (control, video):
+                if connection is not None:
+                    try:
+                        connection.close()
+                    except Exception:  # noqa: BLE001 - next retry remains safe
+                        pass
+        if time.monotonic() >= deadline:
+            _fail(
+                f"controller lease did not resume within {timeout:g}s; "
+                f"last error: {last_error}"
+            )
+        time.sleep(min(poll_interval, max(0.0, deadline - time.monotonic())))
 
 
 def _resume(
@@ -404,7 +660,13 @@ def _resume(
     client_id: str,
     last_acked_seq: int,
     lease_id: str = "",
+    deadline: float | None = None,
 ) -> dict[str, Any]:
+    operation_deadline = (
+        deadline
+        if deadline is not None
+        else time.monotonic() + _WEBSOCKET_OPERATION_TIMEOUT_SECONDS
+    )
     now = time.time_ns()
     control.send(
         json.dumps(
@@ -422,7 +684,7 @@ def _resume(
             separators=(",", ":"),
         )
     )
-    response = control.receive_json()
+    response = control.receive_json(deadline=operation_deadline)
     if response.get("type") != "resumed":
         _fail(
             f"control resume failed with {response.get('code') or 'invalid response'}"
@@ -433,6 +695,7 @@ def _resume(
 def _press(
     control: _WebSocket, *, run_id: str, client_id: str, sequence: int
 ) -> dict[str, Any]:
+    deadline = time.monotonic() + _WEBSOCKET_OPERATION_TIMEOUT_SECONDS
     control.send(
         json.dumps(
             {
@@ -449,11 +712,11 @@ def _press(
             separators=(",", ":"),
         )
     )
-    accepted = control.receive_json()
+    accepted = control.receive_json(deadline=deadline)
     if accepted.get("phase") != "accepted" or accepted.get("seq") != sequence:
         _fail("runtime did not accept the live safety-proof control")
     while True:
-        applied = control.receive_json()
+        applied = control.receive_json(deadline=deadline)
         if applied.get("phase") == "applied" and applied.get("seq") == sequence:
             return applied
         if applied.get("type") == "error":
@@ -461,7 +724,8 @@ def _press(
 
 
 def _frame(video: _WebSocket, run_id: str) -> int:
-    opcode, payload = video.receive()
+    deadline = time.monotonic() + _WEBSOCKET_OPERATION_TIMEOUT_SECONDS
+    opcode, payload = video.receive(deadline=deadline)
     if opcode != 2:
         _fail("browser video path did not return a binary frame")
     envelope, jpeg = unpack_frame(payload)
@@ -531,6 +795,19 @@ def _forced_release_count(
     return next_sequence - pressed_sequence - 1
 
 
+def _require_rotated_lease(
+    resume: dict[str, Any], *, prior_lease_id: str, phase: str
+) -> str:
+    lease_id = str(resume.get("lease_id") or "")
+    if (
+        len(lease_id) != 64
+        or any(character not in "0123456789abcdef" for character in lease_id)
+        or hmac.compare_digest(lease_id, prior_lease_id)
+    ):
+        _fail(f"{phase} did not rotate the original controller lease")
+    return lease_id
+
+
 def _wait_closed(
     connection: _WebSocket,
     *,
@@ -538,15 +815,22 @@ def _wait_closed(
     progress_check: Callable[[], None] | None = None,
 ) -> float:
     started = time.monotonic()
-    connection.connection.settimeout(1.0)
-    while time.monotonic() - started < timeout:
+    deadline = started + timeout
+    while time.monotonic() < deadline:
         if progress_check is not None:
             progress_check()
         try:
-            connection.receive()
+            # Heartbeats or a silent peer must not suppress lifecycle-lock
+            # health checks until the much longer aggregate disconnect deadline.
+            poll_deadline = min(deadline, time.monotonic() + 1.0)
+            connection.receive(deadline=poll_deadline)
         except socket.timeout:
             continue
+        except TimeoutError:
+            continue
         except (EOFError, OSError, ssl.SSLError):
+            if progress_check is not None:
+                progress_check()
             return time.monotonic() - started
     _fail(f"WebSocket remained open for more than {timeout:g}s after relay revoke")
 
@@ -560,19 +844,105 @@ def _wait_relay_ready(
 ) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
     last_error = "not observed"
-    while time.monotonic() < deadline:
+    while True:
         if progress_check is not None:
             progress_check()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
         try:
-            status = _relay_status(ssh, session_nonce=nonce)
-        except Exception as exc:  # noqa: BLE001 - bounded live readiness loop
+            status = _relay_status(
+                ssh,
+                session_nonce=nonce,
+                timeout_seconds=min(10.0, remaining),
+            )
+        except _TransientRelayStatusError as exc:
             last_error = type(exc).__name__
         else:
+            now = time.monotonic()
+            if now >= deadline:
+                last_error = f"{status.get('state') or 'invalid status'} after deadline"
+                break
             if status.get("state") == "ready":
                 return status
             last_error = str(status.get("state") or "invalid status")
-        time.sleep(2)
+        time.sleep(min(2.0, max(0.0, deadline - time.monotonic())))
     _fail(f"relay did not recover within {timeout:g}s; last state: {last_error}")
+
+
+def _release_deadline_remaining(deadline: float, *, phase: str) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        _fail(
+            f"{phase} safety release was not proven within "
+            f"{_SAFETY_RELEASE_TIMEOUT_SECONDS:g}s of disconnect"
+        )
+    return remaining
+
+
+def _wait_relay_and_release(
+    ssh: Any,
+    nonce: str,
+    *,
+    release_deadline: float,
+    host: str,
+    run_id: str,
+    user: str,
+    password: str,
+    certificate_sha256: str,
+    after_input_events: int,
+    phase: str,
+    progress_check: Callable[[], None] | None = None,
+) -> None:
+    """Share one post-disconnect deadline across recovery and release proof."""
+
+    _wait_relay_ready(
+        ssh,
+        nonce,
+        timeout=_release_deadline_remaining(release_deadline, phase=phase),
+        progress_check=progress_check,
+    )
+    _release_deadline_remaining(release_deadline, phase=phase)
+    _wait_controller_release(
+        host=host,
+        run_id=run_id,
+        user=user,
+        password=password,
+        certificate_sha256=certificate_sha256,
+        after_input_events=after_input_events,
+        timeout=_release_deadline_remaining(release_deadline, phase=phase),
+        progress_check=progress_check,
+    )
+    _release_deadline_remaining(release_deadline, phase=phase)
+
+
+def _restart_relay_for_release_proof(
+    ssh: Any,
+    control: _WebSocket,
+    *,
+    run_id: str,
+    session_nonce: str,
+    manifest_uri: str,
+    progress_check: Callable[[], None] | None = None,
+) -> tuple[float, float, float]:
+    """Start the safety deadline before the restart that causes disconnect."""
+
+    started = time.monotonic()
+    deadline = started + _SAFETY_RELEASE_TIMEOUT_SECONDS
+    _install_agent_relay(
+        ssh,
+        run_id=run_id,
+        session_nonce=session_nonce,
+        expires_at="",
+        manifest_uri=manifest_uri,
+    )
+    disconnected = _wait_closed(
+        control,
+        timeout=_release_deadline_remaining(deadline, phase="relay restart"),
+        progress_check=progress_check,
+    )
+    _release_deadline_remaining(deadline, phase="relay restart")
+    return disconnected, started, deadline
 
 
 def _relay_metadata(ssh: Any) -> dict[str, str]:
@@ -919,7 +1289,13 @@ def _scale_deployment(
 
 
 def _http_status(
-    *, host: str, user: str, password: str, path: str, certificate_sha256: str
+    *,
+    host: str,
+    user: str,
+    password: str,
+    path: str,
+    certificate_sha256: str,
+    timeout: float = 30.0,
 ) -> tuple[int, dict[str, Any]]:
     status, _headers, body = _pinned_https_request(
         host=host,
@@ -928,6 +1304,7 @@ def _http_status(
         user=user,
         password=password,
         certificate_sha256=certificate_sha256,
+        timeout=timeout,
     )
     try:
         payload = json.loads(body)
@@ -1470,6 +1847,10 @@ def main() -> int:
             last_acked_seq=0,
         )
         lease_id = str(resume.get("lease_id") or "")
+        if len(lease_id) != 64 or any(
+            character not in "0123456789abcdef" for character in lease_id
+        ):
+            _fail("runtime did not issue a valid controller lease")
         sequence = int(resume.get("next_seq") or 1)
         # Treat the browser control connection as mutating before its first send:
         # a transport failure can occur after the runtime accepted the key but
@@ -1482,47 +1863,68 @@ def main() -> int:
             client_id=client_id,
             sequence=sequence,
         )
+        restart_input_events = _input_event_count(
+            _browser_status(
+                host=host,
+                run_id=run_id,
+                user=auth_user,
+                password=auth_password,
+                certificate_sha256=certificate_sha256,
+                timeout=30.0,
+            ),
+            phase="relay restart baseline",
+        )
         lock_heartbeat.assert_healthy()
 
-        _install_agent_relay(
+        (
+            restart_disconnect,
+            restart_started,
+            restart_release_deadline,
+        ) = _restart_relay_for_release_proof(
             ssh,
+            control,
             run_id=run_id,
             session_nonce=original_nonce,
-            expires_at="",
             manifest_uri=manifest_uri,
-        )
-        restart_disconnect = _wait_closed(
-            control,
             progress_check=lock_heartbeat.assert_healthy,
         )
         video.close()
-        restart_started = time.monotonic()
-        _wait_relay_ready(
+        _wait_relay_and_release(
             ssh,
             original_nonce,
-            progress_check=lock_heartbeat.assert_healthy,
-        )
-        control, video, recovered_status = _browser_sockets(
+            release_deadline=restart_release_deadline,
             host=host,
             run_id=run_id,
             user=auth_user,
             password=auth_password,
             certificate_sha256=certificate_sha256,
+            after_input_events=restart_input_events,
+            phase="relay restart",
+            progress_check=lock_heartbeat.assert_healthy,
         )
-        browser_connections.extend((control, video))
-        resume = _resume(
-            control,
+        restart_release_seconds = time.monotonic() - restart_started
+        control, video, recovered_status, resume = _wait_resumed_browser_sockets(
+            host=host,
             run_id=run_id,
+            user=auth_user,
+            password=auth_password,
+            certificate_sha256=certificate_sha256,
             client_id=client_id,
             last_acked_seq=sequence,
             lease_id=lease_id,
+            progress_check=lock_heartbeat.assert_healthy,
         )
+        browser_connections.extend((control, video))
         restart_forced_releases = _forced_release_count(
             resume, pressed_sequence=sequence, phase="relay restart"
+        )
+        lease_id = _require_rotated_lease(
+            resume, prior_lease_id=lease_id, phase="relay restart"
         )
         restart_frame_bytes = _frame(video, run_id)
         evidence["restart"] = {
             "disconnect_ms": round(restart_disconnect * 1000, 3),
+            "release_settle_seconds": round(restart_release_seconds, 3),
             "recovery_seconds": round(time.monotonic() - restart_started, 3),
             "forced_release_count": restart_forced_releases,
             "frame_bytes_after_reconnect": restart_frame_bytes,
@@ -1573,12 +1975,31 @@ def main() -> int:
             client_id=client_id,
             sequence=expiry_sequence,
         )
+        # _expiry_status was fetched before the credential lifetime was armed
+        # with any mutable input. The acknowledged press appends exactly one
+        # input, so derive its baseline locally: another HTTPS request here
+        # could consume the intentionally short expiry window being tested.
+        expiry_input_events = (
+            _input_event_count(_expiry_status, phase="credential expiry baseline")
+            + 1
+        )
         expiry_disconnect = _wait_closed(
             control,
             timeout=float(args.expiry_delay_seconds) + 20.0,
             progress_check=lock_heartbeat.assert_healthy,
         )
+        expiry_release_started = time.monotonic()
+        expiry_release_deadline = (
+            expiry_release_started + _SAFETY_RELEASE_TIMEOUT_SECONDS
+        )
         video.close()
+        if (
+            _release_deadline_remaining(
+                expiry_release_deadline, phase="credential expiry"
+            )
+            < 6.0
+        ):
+            _fail("credential expiry safety-release observation window was exhausted")
         time.sleep(6.0)
         expired_http, expired_status = _http_status(
             host=host,
@@ -1586,6 +2007,9 @@ def main() -> int:
             password=auth_password,
             path=f"/api/leisaac/status?run_id={run_id}",
             certificate_sha256=certificate_sha256,
+            timeout=_release_deadline_remaining(
+                expiry_release_deadline, phase="credential expiry"
+            ),
         )
         if expired_http != 200 or expired_status.get("available") is not False:
             _fail("expired capability remained available through the agent")
@@ -1595,6 +2019,7 @@ def main() -> int:
         # synthesized the held-key release before any pod restart can clear the
         # in-memory ledger.  The credential is rotated immediately afterwards,
         # and the old value is then tested as stale in isolation.
+        lock_heartbeat.assert_healthy()
         _install_agent_relay(
             ssh,
             run_id=run_id,
@@ -1602,30 +2027,45 @@ def main() -> int:
             expires_at="",
             manifest_uri=manifest_uri,
         )
-        _wait_relay_ready(
+        _wait_relay_and_release(
             ssh,
             original_nonce,
-            progress_check=lock_heartbeat.assert_healthy,
-        )
-        expiry_control, expiry_video, _restored_expiry_status = _wait_browser_sockets(
+            release_deadline=expiry_release_deadline,
             host=host,
             run_id=run_id,
             user=auth_user,
             password=auth_password,
             certificate_sha256=certificate_sha256,
+            after_input_events=expiry_input_events,
+            phase="credential expiry",
             progress_check=lock_heartbeat.assert_healthy,
         )
-        browser_connections.extend((expiry_control, expiry_video))
-        expiry_resume = _resume(
+        expiry_release_seconds = time.monotonic() - expiry_release_started
+        (
             expiry_control,
+            expiry_video,
+            _restored_expiry_status,
+            expiry_resume,
+        ) = _wait_resumed_browser_sockets(
+            host=host,
             run_id=run_id,
+            user=auth_user,
+            password=auth_password,
+            certificate_sha256=certificate_sha256,
             client_id=client_id,
             last_acked_seq=expiry_sequence,
             lease_id=str(resume.get("lease_id") or lease_id),
+            progress_check=lock_heartbeat.assert_healthy,
         )
+        browser_connections.extend((expiry_control, expiry_video))
         expiry_forced_releases = _forced_release_count(
             expiry_resume,
             pressed_sequence=expiry_sequence,
+            phase="credential expiry",
+        )
+        _require_rotated_lease(
+            expiry_resume,
+            prior_lease_id=str(resume.get("lease_id") or lease_id),
             phase="credential expiry",
         )
         _frame(expiry_video, run_id)
@@ -1754,6 +2194,7 @@ def main() -> int:
             },
             expiry={
                 "disconnect_ms": round(expiry_disconnect * 1000, 3),
+                "release_settle_seconds": round(expiry_release_seconds, 3),
                 "frame_bytes_before_expiry": expiry_frame_bytes,
                 "expired_status_http": expired_http,
                 "expired_capability_available": bool(expired_status.get("available")),

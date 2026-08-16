@@ -327,7 +327,11 @@ def test_revoke_unblocks_a_silent_preauth_socket() -> None:
     backhaul.revoke()
     worker.join(timeout=1)
     assert not worker.is_alive()
-    assert outcome and outcome[0] in {OSError, EOFError}
+    # revoke() may win either immediately before attach() checks the revoked
+    # state (a clean False denial) or while recv() is blocked (an EOF/socket
+    # error). Both outcomes prove that the credential is denied and the worker
+    # is unblocked; the scheduler must not make this assertion flaky.
+    assert outcome == [False] or (outcome and outcome[0] in {OSError, EOFError})
     peer.close()
 
 

@@ -9,7 +9,9 @@ from types import SimpleNamespace
 import pytest
 from typer.testing import CliRunner
 
+from npa.clients.ssh import SSHTimeoutError
 from npa.cli.workbench.leisaac import (
+    _TransientRelayStatusError,
     _agent_artifact_storage,
     _delete_resources,
     _external_ip,
@@ -17,12 +19,14 @@ from npa.cli.workbench.leisaac import (
     _kubectl,
     _put_manifest,
     _relay_media_server,
+    _relay_status,
     _require_lifecycle_lock_permissions,
     _release_lifecycle_lock,
     _remove_agent_relay,
     _select_agent_leisaac_run,
     _wait_timeout,
     _wait_ready,
+    _wait_relay_status,
     app,
 )
 from npa.agent_backend.leisaac_registry import DEFAULT_TASK, REGISTRY_FINGERPRINT
@@ -566,6 +570,26 @@ def test_external_ip_timeout_reports_last_provider_observation(monkeypatch) -> N
     assert "Service leisaac/leisaac-live" in str(failure.value)
 
 
+def test_external_ip_rejects_address_observed_after_deadline(monkeypatch) -> None:
+    times = iter((0.0, 0.0, 2.0))
+    monkeypatch.setattr("npa.cli.workbench.leisaac.time.monotonic", lambda: next(times))
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._kubectl",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0, stdout="203.0.113.10\n", stderr=""
+        ),
+    )
+
+    with pytest.raises(TimeoutError, match="external IPv4 was assigned"):
+        _external_ip(
+            "cluster",
+            "leisaac",
+            "leisaac-live",
+            timeout_seconds=1.0,
+            poll_interval_seconds=0.0,
+        )
+
+
 def test_wait_timeout_accepts_operator_deadline_beyond_one_day(monkeypatch) -> None:
     monkeypatch.setenv("NPA_LEISAAC_TEST_TIMEOUT_SECONDS", "172800")
 
@@ -602,6 +626,39 @@ def test_wait_ready_timeout_reports_rollout_counters(monkeypatch) -> None:
             poll_interval_seconds=0.0,
         )
     assert "unavailable=1" in str(failure.value)
+
+
+def test_wait_ready_rejects_readiness_observed_after_deadline(monkeypatch) -> None:
+    times = iter((0.0, 0.0, 2.0))
+    monkeypatch.setattr("npa.cli.workbench.leisaac.time.monotonic", lambda: next(times))
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._kubectl",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "metadata": {"generation": 1},
+                    "spec": {"replicas": 1},
+                    "status": {
+                        "observedGeneration": 1,
+                        "updatedReplicas": 1,
+                        "readyReplicas": 1,
+                        "availableReplicas": 1,
+                    },
+                }
+            ),
+            stderr="",
+        ),
+    )
+
+    with pytest.raises(TimeoutError, match="ready deployment observed"):
+        _wait_ready(
+            "cluster",
+            "leisaac",
+            "leisaac-live",
+            timeout_seconds=1.0,
+            poll_interval_seconds=0.0,
+        )
 
 
 def test_wait_progress_uses_stderr_without_polluting_json_output(monkeypatch) -> None:
@@ -663,7 +720,7 @@ def test_wait_progress_uses_stderr_without_polluting_json_output(monkeypatch) ->
 
 def test_readiness_poll_timeout_is_bounded_by_remaining_deadline(monkeypatch) -> None:
     calls = []
-    monotonic = iter((10.0, 11.0))
+    monotonic = iter((10.0, 11.0, 11.0))
     monkeypatch.setattr(
         "npa.cli.workbench.leisaac.time.monotonic", lambda: next(monotonic)
     )
@@ -763,6 +820,153 @@ def test_remove_relay_restores_only_its_recorded_baseline_coturn() -> None:
     assert "leisaac-relay.restore-coturn" in ssh.command
     assert 'if [ "$existing" != live-relay ]; then exit 0; fi' in ssh.command
     assert "systemctl start coturn.service" in ssh.command
+
+
+def test_relay_status_bounds_each_remote_health_probe() -> None:
+    class CaptureSSH:
+        command = ""
+        kwargs = {}
+
+        def run(self, command, **kwargs):
+            self.command = command
+            self.kwargs = kwargs
+            return 0, '{"state":"ready"}\nNPA_HTTP_STATUS:200\n', ""
+
+    ssh = CaptureSSH()
+
+    assert _relay_status(ssh, session_nonce="a" * 64) == {"state": "ready"}
+    assert "--connect-timeout 5" in ssh.command
+    assert "--max-time 10" in ssh.command
+    assert "--fail" not in ssh.command
+    assert ssh.kwargs == {"timeout": 10.0}
+
+
+def test_wait_relay_status_retries_an_ssh_watchdog_timeout(monkeypatch) -> None:
+    attempts = 0
+
+    class TimeoutThenReadySSH:
+        def run(self, _command, **_kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise SSHTimeoutError("SSH command timed out after 10s")
+            return 0, '{"state":"ready"}\nNPA_HTTP_STATUS:200\n', ""
+
+    monkeypatch.setattr("npa.cli.workbench.leisaac.time.sleep", lambda _value: None)
+
+    status = _wait_relay_status(
+        TimeoutThenReadySSH(),
+        session_nonce="a" * 64,
+        timeout_seconds=60.0,
+    )
+
+    assert status == {"state": "ready"}
+    assert attempts == 2
+
+
+def test_wait_relay_status_retries_a_bounded_startup_probe(monkeypatch) -> None:
+    attempts = []
+
+    def relay_status(_ssh, *, session_nonce, timeout_seconds):
+        attempts.append((session_nonce, timeout_seconds))
+        if len(attempts) == 1:
+            raise _TransientRelayStatusError("new backhaul has not answered")
+        return {"state": "ready", "task": DEFAULT_TASK}
+
+    monkeypatch.setattr("npa.cli.workbench.leisaac._relay_status", relay_status)
+    monkeypatch.setattr("npa.cli.workbench.leisaac.time.sleep", lambda _value: None)
+
+    status = _wait_relay_status(
+        object(),
+        session_nonce="a" * 64,
+        timeout_seconds=60.0,
+    )
+
+    assert status["state"] == "ready"
+    assert len(attempts) == 2
+    assert all(0 < timeout <= 10 for _nonce, timeout in attempts)
+
+
+def test_wait_relay_status_reports_last_failure_at_deadline(monkeypatch) -> None:
+    moments = iter((10.0, 10.0, 10.0, 10.6, 10.6))
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac.time.monotonic", lambda: next(moments)
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._relay_status",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            _TransientRelayStatusError("half-open status stream")
+        ),
+    )
+
+    with pytest.raises(TimeoutError, match="half-open status stream"):
+        _wait_relay_status(
+            object(),
+            session_nonce="a" * 64,
+            timeout_seconds=0.5,
+            poll_interval_seconds=0.0,
+        )
+
+
+def test_wait_relay_status_rejects_ready_observed_after_deadline(monkeypatch) -> None:
+    moments = iter((10.0, 10.0, 10.6))
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac.time.monotonic", lambda: next(moments)
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._relay_status",
+        lambda *_args, **_kwargs: {"state": "ready"},
+    )
+
+    with pytest.raises(TimeoutError, match="last observation: state=ready"):
+        _wait_relay_status(
+            object(),
+            session_nonce="a" * 64,
+            timeout_seconds=0.5,
+            poll_interval_seconds=0.0,
+        )
+
+
+def test_wait_relay_status_propagates_terminal_failure_without_retry(
+    monkeypatch,
+) -> None:
+    attempts = []
+
+    def terminal(*_args, **_kwargs):
+        attempts.append(True)
+        raise RuntimeError("LeIsaac relay status returned HTTP 403")
+
+    monkeypatch.setattr("npa.cli.workbench.leisaac._relay_status", terminal)
+
+    with pytest.raises(RuntimeError, match="HTTP 403"):
+        _wait_relay_status(
+            object(),
+            session_nonce="a" * 64,
+            timeout_seconds=14_400.0,
+        )
+
+    assert attempts == [True]
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "http_status", "body", "error_type"),
+    (
+        (28, "000", "", _TransientRelayStatusError),
+        (0, "503", '{"state":"starting"}', _TransientRelayStatusError),
+        (0, "503", '{"state":"failed"}', RuntimeError),
+        (0, "403", '{"detail":"forbidden"}', RuntimeError),
+        (0, "200", "not-json", RuntimeError),
+    ),
+)
+def test_relay_status_classifies_transient_and_terminal_failures(
+    exit_code, http_status, body, error_type
+) -> None:
+    class CaptureSSH:
+        def run(self, _command, **_kwargs):
+            return exit_code, f"{body}\nNPA_HTTP_STATUS:{http_status}\n", ""
+
+    with pytest.raises(error_type):
+        _relay_status(CaptureSSH(), session_nonce="a" * 64)
 
 
 def test_relay_media_server_is_the_stable_private_service_host(monkeypatch) -> None:

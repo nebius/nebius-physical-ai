@@ -39,7 +39,7 @@ from npa.clients.network import (
     remove_exact_npa_ingress_for_instance,
     resolve_instance_network_context,
 )
-from npa.clients.ssh import SSHClient
+from npa.clients.ssh import SSHClient, SSHTimeoutError
 from npa.workbench.leisaac import (
     GPU_PRODUCT,
     SOURCE_COMMIT,
@@ -541,13 +541,15 @@ def _external_ip(
             timeout=min(30.0, remaining),
         )
         value = result.stdout.strip()
-        if result.returncode == 0 and value:
-            return value
-        last_diagnostic = (
-            "service has no assigned address"
-            if result.returncode == 0
-            else _kubectl_wait_diagnostic(result)
-        )
+        assigned = result.returncode == 0 and bool(value)
+        if assigned:
+            last_diagnostic = "external IPv4 was assigned"
+        else:
+            last_diagnostic = (
+                "service has no assigned address"
+                if result.returncode == 0
+                else _kubectl_wait_diagnostic(result)
+            )
         now = time.monotonic()
         if now >= deadline:
             raise TimeoutError(
@@ -555,6 +557,8 @@ def _external_ip(
                 f"{namespace}/{service} external IPv4; last observation: "
                 f"{last_diagnostic}"
             )
+        if assigned:
+            return value
         if now >= next_progress:
             typer.echo(
                 f"Waiting for Service {namespace}/{service} external IPv4; "
@@ -609,7 +613,7 @@ def _wait_ready(
             spec = data.get("spec", {}) or {}
             status = data.get("status", {}) or {}
             generation = int(metadata.get("generation") or 0)
-            if (
+            ready = (
                 generation > 0
                 and int(status.get("observedGeneration") or 0) == generation
                 and int(spec.get("replicas") or 0) == 1
@@ -617,18 +621,22 @@ def _wait_ready(
                 and int(status.get("readyReplicas") or 0) == 1
                 and int(status.get("availableReplicas") or 0) == 1
                 and int(status.get("unavailableReplicas") or 0) == 0
-            ):
-                return
+            )
             last_diagnostic = (
-                f"generation={generation}, "
-                f"observed={int(status.get('observedGeneration') or 0)}, "
-                f"desired={int(spec.get('replicas') or 0)}, "
-                f"updated={int(status.get('updatedReplicas') or 0)}, "
-                f"ready={int(status.get('readyReplicas') or 0)}, "
-                f"available={int(status.get('availableReplicas') or 0)}, "
-                f"unavailable={int(status.get('unavailableReplicas') or 0)}"
+                "ready deployment observed"
+                if ready
+                else (
+                    f"generation={generation}, "
+                    f"observed={int(status.get('observedGeneration') or 0)}, "
+                    f"desired={int(spec.get('replicas') or 0)}, "
+                    f"updated={int(status.get('updatedReplicas') or 0)}, "
+                    f"ready={int(status.get('readyReplicas') or 0)}, "
+                    f"available={int(status.get('availableReplicas') or 0)}, "
+                    f"unavailable={int(status.get('unavailableReplicas') or 0)}"
+                )
             )
         else:
+            ready = False
             last_diagnostic = _kubectl_wait_diagnostic(result)
         if progress_check is not None:
             progress_check()
@@ -639,6 +647,8 @@ def _wait_ready(
                 f"{namespace}/{deployment} readiness; last observation: "
                 f"{last_diagnostic}"
             )
+        if ready:
+            return
         if now >= next_progress:
             typer.echo(
                 f"Waiting for Deployment {namespace}/{deployment}; {last_diagnostic}.",
@@ -1045,17 +1055,131 @@ fi
     ssh.run_or_raise(command, label="remove LeIsaac agent relay")
 
 
-def _relay_status(ssh: SSHClient, *, session_nonce: str) -> dict[str, Any]:
-    _code, stdout, _stderr = ssh.run_or_raise(
-        "curl --fail --silent --show-error "
-        f"-H {shlex.quote('X-NPA-LeIsaac-Nonce: ' + session_nonce)} "
-        f"http://127.0.0.1:{RELAY_SERVICE_PORT}/status",
-        label="attest LeIsaac through the agent relay",
-    )
-    payload = json.loads(stdout)
+class _TransientRelayStatusError(RuntimeError):
+    """A bounded relay probe failure that can resolve during normal startup."""
+
+
+def _relay_status(
+    ssh: SSHClient,
+    *,
+    session_nonce: str,
+    timeout_seconds: float = 10.0,
+) -> dict[str, Any]:
+    if timeout_seconds <= 0:
+        raise TimeoutError("LeIsaac relay status probe deadline expired")
+    connect_timeout = min(5.0, timeout_seconds)
+    try:
+        code, stdout, _stderr = ssh.run(
+            # A newly attached backhaul can accept the loopback stream before the
+            # runtime has completed its own status response. Bound every probe so
+            # _wait_relay_status retains control of its overall deadline and cleanup
+            # can never wedge behind one half-open stream.
+            "curl --silent --show-error "
+            f"--connect-timeout {connect_timeout:g} --max-time {timeout_seconds:g} "
+            "--write-out '\nNPA_HTTP_STATUS:%{http_code}\n' "
+            f"-H {shlex.quote('X-NPA-LeIsaac-Nonce: ' + session_nonce)} "
+            f"http://127.0.0.1:{RELAY_SERVICE_PORT}/status",
+            timeout=timeout_seconds,
+        )
+    except SSHTimeoutError as exc:
+        # The aggregate SSH watchdog starts before connection setup, so it can
+        # expire before remote curl has a chance to report exit 28. This is the
+        # same bounded transient observation and must remain inside the caller's
+        # readiness retry loop.
+        raise _TransientRelayStatusError(
+            "LeIsaac relay status transport timed out"
+        ) from exc
+    if code:
+        if code in {5, 6, 7, 18, 28, 52, 55, 56}:
+            raise _TransientRelayStatusError(
+                f"LeIsaac relay status transport failed with curl exit {code}"
+            )
+        raise RuntimeError(f"LeIsaac relay status probe failed with curl exit {code}")
+    body, marker, raw_status = stdout.rpartition("\nNPA_HTTP_STATUS:")
+    if not marker or not raw_status.strip().isdigit():
+        raise RuntimeError("LeIsaac relay status probe returned no HTTP status")
+    http_status = int(raw_status.strip())
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError as exc:
+        if http_status in {429, 500, 502, 503, 504}:
+            raise _TransientRelayStatusError(
+                f"LeIsaac relay status returned transient HTTP {http_status}"
+            ) from exc
+        raise RuntimeError("LeIsaac relay returned invalid JSON") from exc
     if not isinstance(payload, dict):
         raise RuntimeError("LeIsaac relay returned a non-object health document")
+    if http_status != 200:
+        if payload.get("state") == "failed":
+            raise RuntimeError("LeIsaac runtime reported terminal state failed")
+        if http_status in {429, 500, 502, 503, 504}:
+            raise _TransientRelayStatusError(
+                f"LeIsaac relay status returned transient HTTP {http_status}"
+            )
+        raise RuntimeError(f"LeIsaac relay status returned HTTP {http_status}")
     return payload
+
+
+def _wait_relay_status(
+    ssh: SSHClient,
+    *,
+    session_nonce: str,
+    timeout_seconds: float,
+    poll_interval_seconds: float = 2.0,
+    progress_check: Callable[[], None] | None = None,
+) -> dict[str, Any]:
+    """Wait for a ready relay attestation within the launch deadline."""
+
+    started = time.monotonic()
+    deadline = started + timeout_seconds
+    next_progress = started
+    last_diagnostic = "relay status has not been observed"
+    while True:
+        if progress_check is not None:
+            progress_check()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(
+                f"Timed out after {timeout_seconds:g}s waiting for LeIsaac relay "
+                f"readiness; last observation: {last_diagnostic}"
+            )
+        try:
+            status = _relay_status(
+                ssh,
+                session_nonce=session_nonce,
+                timeout_seconds=min(10.0, remaining),
+            )
+        except _TransientRelayStatusError as exc:
+            last_diagnostic = f"{type(exc).__name__}: {exc}"
+        else:
+            state = str(status.get("state") or "")
+            now = time.monotonic()
+            last_diagnostic = f"state={state or 'missing'}"
+            if now >= deadline:
+                raise TimeoutError(
+                    f"Timed out after {timeout_seconds:g}s waiting for LeIsaac relay "
+                    f"readiness; last observation: {last_diagnostic}"
+                )
+            if state == "ready":
+                return status
+            if state not in {"starting", "restarting"}:
+                raise RuntimeError(
+                    f"LeIsaac relay returned terminal or invalid state "
+                    f"{state or 'missing'}"
+                )
+        now = time.monotonic()
+        if now >= deadline:
+            raise TimeoutError(
+                f"Timed out after {timeout_seconds:g}s waiting for LeIsaac relay "
+                f"readiness; last observation: {last_diagnostic}"
+            )
+        if now >= next_progress:
+            typer.echo(
+                f"Waiting for LeIsaac relay readiness; {last_diagnostic}.",
+                err=True,
+            )
+            next_progress = now + 60.0
+        time.sleep(min(poll_interval_seconds, max(0.0, deadline - now)))
 
 
 def _turn_peer_source(value: str) -> str:
@@ -1504,7 +1628,12 @@ def launch_cmd(
                 tool=_TURN_MEDIA_TOOL,
                 protocol="UDP",
             )
-        health = _relay_status(ssh, session_nonce=nonce)
+        health = _wait_relay_status(
+            ssh,
+            session_nonce=nonce,
+            timeout_seconds=max(0.0, launch_deadline - time.monotonic()),
+            progress_check=lifecycle_lease.assert_healthy,
+        )
         if (
             health.get("state") != "ready"
             or health.get("task") != task

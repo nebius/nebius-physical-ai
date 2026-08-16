@@ -12,7 +12,7 @@ from npa.clients.config import SSHConfig
 from npa.clients.http import HTTPClient, ServerError
 from npa.clients import nebius
 from npa.clients.nebius import NebiusError
-from npa.clients.ssh import SSHClient, SSHError, format_remote_failure
+from npa.clients.ssh import SSHClient, SSHError, SSHTimeoutError, format_remote_failure
 from npa.clients.storage import StorageClient, StorageError, _parse_bucket_uri
 
 
@@ -278,6 +278,45 @@ def test_ssh_run_reads_stdout_stderr_and_closes(mocker) -> None:
     assert result == (0, "hello\n", "warn\n")
     channel.exec_command.assert_called_once_with("echo hello")
     paramiko_client.close.assert_called_once()
+
+
+def test_ssh_run_timeout_watchdog_bounds_connection_and_command(
+    monkeypatch, mocker
+) -> None:
+    callbacks = []
+
+    class ImmediateTimer:
+        daemon = False
+
+        def __init__(self, interval, callback) -> None:
+            assert interval == 2.0
+            callbacks.append(callback)
+
+        def start(self) -> None:
+            callbacks[0]()
+
+        def cancel(self) -> None:
+            return None
+
+    paramiko_client = mocker.MagicMock()
+    mocker.patch("paramiko.SSHClient", return_value=paramiko_client)
+    monkeypatch.setattr("npa.clients.ssh.threading.Timer", ImmediateTimer)
+    client = SSHClient(SSHConfig(host="host", user="ubuntu", key_path="key"))
+
+    with pytest.raises(SSHTimeoutError, match="timed out after 2s"):
+        client.run("command-containing-secret", timeout=2.0)
+
+    paramiko_client.connect.assert_called_once_with(
+        hostname="host",
+        username="ubuntu",
+        key_filename="key",
+        timeout=2.0,
+        look_for_keys=False,
+        banner_timeout=2.0,
+        auth_timeout=2.0,
+        channel_timeout=2.0,
+    )
+    assert paramiko_client.close.call_count >= 1
 
 
 def test_ssh_run_or_raise_maps_nonzero(mocker) -> None:

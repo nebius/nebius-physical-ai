@@ -152,15 +152,11 @@ def test_wait_closed_does_not_misreport_a_read_timeout_as_disconnect() -> None:
     module = _load_module()
     receives = iter((socket.timeout(), EOFError("closed")))
 
-    class FakeSocket:
-        def settimeout(self, timeout: float) -> None:
-            assert timeout == 1.0
-
     class FakeWebSocket:
-        connection = FakeSocket()
         calls = 0
 
-        def receive(self):
+        def receive(self, *, deadline):
+            assert deadline > 0
             self.calls += 1
             raise next(receives)
 
@@ -168,6 +164,37 @@ def test_wait_closed_does_not_misreport_a_read_timeout_as_disconnect() -> None:
 
     assert module._wait_closed(connection, timeout=1.0) >= 0
     assert connection.calls == 2
+
+
+def test_wait_closed_polls_lock_health_during_a_silent_connection(monkeypatch) -> None:
+    module = _load_module()
+    checks = 0
+
+    class FakeWebSocket:
+        calls = 0
+
+        def receive(self, *, deadline):
+            self.calls += 1
+            raise TimeoutError(f"silent until {deadline}")
+
+    def check_lock() -> None:
+        nonlocal checks
+        checks += 1
+        if checks == 2:
+            raise RuntimeError("lifecycle lock renewal failed")
+
+    connection = FakeWebSocket()
+    monkeypatch.setattr(module.time, "monotonic", lambda: 10.0)
+
+    with pytest.raises(RuntimeError, match="lock renewal failed"):
+        module._wait_closed(
+            connection,
+            timeout=140.0,
+            progress_check=check_lock,
+        )
+
+    assert connection.calls == 1
+    assert checks == 2
 
 
 def test_baseline_video_failure_closes_control_for_safety_release(monkeypatch) -> None:
@@ -316,6 +343,7 @@ def test_live_transport_requires_the_pinned_agent_certificate() -> None:
             self.closed = True
 
     connection = FakeTLS()
+
     expected = hashlib.sha256(b"agent-certificate").hexdigest()
     module._verify_certificate(connection, expected)
     assert connection.closed is False
@@ -323,6 +351,69 @@ def test_live_transport_requires_the_pinned_agent_certificate() -> None:
     with pytest.raises(RuntimeError, match="fingerprint changed"):
         module._verify_certificate(connection, "0" * 64)
     assert connection.closed is True
+
+
+def test_pinned_https_body_read_recomputes_absolute_deadline(monkeypatch) -> None:
+    module = _load_module()
+    moments = iter((10.0, 10.0, 10.0, 10.0, 10.4, 10.6))
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(moments))
+
+    class FakeSocket:
+        def __init__(self) -> None:
+            self.timeouts = []
+
+        def settimeout(self, timeout: float) -> None:
+            self.timeouts.append(timeout)
+
+        def getpeercert(self, *, binary_form: bool):
+            assert binary_form is True
+            return b"agent-certificate"
+
+    class FakeResponse:
+        status = 200
+
+        def __init__(self) -> None:
+            self.reads = 0
+
+        def read1(self, _size: int) -> bytes:
+            self.reads += 1
+            return b"chunk"
+
+        def getheaders(self):
+            return []
+
+    response = FakeResponse()
+
+    class FakeHTTPSConnection:
+        def __init__(self, *_args, **_kwargs) -> None:
+            self.sock = FakeSocket()
+
+        def connect(self) -> None:
+            return None
+
+        def request(self, *_args, **_kwargs) -> None:
+            return None
+
+        def getresponse(self):
+            return response
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    with pytest.raises(TimeoutError, match="request deadline expired"):
+        module._pinned_https_request(
+            host="203.0.113.10",
+            path="/api/health",
+            method="GET",
+            user="agent",
+            password="password",
+            certificate_sha256=hashlib.sha256(b"agent-certificate").hexdigest(),
+            timeout=0.5,
+        )
+
+    assert response.reads == 1
 
 
 def test_websocket_upgrade_eof_fails_without_spinning(monkeypatch) -> None:
@@ -350,6 +441,13 @@ def test_websocket_upgrade_eof_fails_without_spinning(monkeypatch) -> None:
 
     connection = FakeTLS()
 
+    class FakeRaw:
+        def settimeout(self, _timeout: float) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
     class FakeContext:
         check_hostname = True
         verify_mode = None
@@ -362,7 +460,7 @@ def test_websocket_upgrade_eof_fails_without_spinning(monkeypatch) -> None:
     monkeypatch.setattr(
         module.socket,
         "create_connection",
-        lambda *_args, **_kwargs: object(),
+        lambda *_args, **_kwargs: FakeRaw(),
     )
 
     with pytest.raises(EOFError, match="HTTP upgrade"):
@@ -375,6 +473,35 @@ def test_websocket_upgrade_eof_fails_without_spinning(monkeypatch) -> None:
             origin="https://203.0.113.10",
         )
     assert connection.closed is True
+
+
+def test_websocket_absolute_deadline_is_not_extended_by_heartbeats(monkeypatch) -> None:
+    module = _load_module()
+    moments = iter((10.0, 10.6))
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(moments))
+
+    class FakeTLS:
+        def __init__(self) -> None:
+            self.timeouts = []
+            self.sent = []
+
+        def settimeout(self, timeout: float) -> None:
+            self.timeouts.append(timeout)
+
+        def recv(self, _size: int) -> bytes:
+            return b"\x89\x00"  # unmasked server ping
+
+        def sendall(self, payload: bytes) -> None:
+            self.sent.append(payload)
+
+    connection = FakeTLS()
+    websocket = module._WebSocket(connection)
+
+    with pytest.raises(TimeoutError, match="operation deadline expired"):
+        websocket.receive(deadline=10.5)
+
+    assert connection.timeouts == [pytest.approx(0.5)]
+    assert connection.sent  # the first ping was answered before the deadline
 
 
 def test_scale_to_zero_waits_until_no_deployment_replica_is_active(monkeypatch) -> None:
@@ -960,7 +1087,7 @@ def test_browser_socket_wait_retries_through_negative_manifest_cache(
 
 def test_browser_socket_wait_preserves_last_error_on_timeout(monkeypatch) -> None:
     module = _load_module()
-    observed = iter((10.0, 10.6))
+    observed = iter((10.0, 10.0, 10.6))
     monkeypatch.setattr(module.time, "monotonic", lambda: next(observed))
     monkeypatch.setattr(
         module,
@@ -1026,3 +1153,330 @@ def test_forced_release_requires_empty_keys_and_an_advanced_sequence() -> None:
             pressed_sequence=10,
             phase="credential expiry",
         )
+
+
+def test_disconnect_release_wait_observes_status_without_claiming_owner(monkeypatch) -> None:
+    module = _load_module()
+    statuses = iter(
+        (
+            {"input_events": 10, "applied_inputs": 10},
+            {"input_events": 11, "applied_inputs": 10},
+            {"input_events": 11, "applied_inputs": 11},
+        )
+    )
+    calls = []
+
+    def browser_status(**kwargs):
+        calls.append(kwargs)
+        return next(statuses)
+
+    monkeypatch.setattr(module, "_browser_status", browser_status)
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+
+    elapsed = module._wait_controller_release(
+        host="203.0.113.10",
+        run_id="existing-run",
+        user="agent",
+        password="password",
+        certificate_sha256="a" * 64,
+        after_input_events=10,
+    )
+
+    assert elapsed >= 0
+    assert len(calls) == 3
+    assert all(call["timeout"] > 0 for call in calls)
+
+
+def test_disconnect_release_wait_rejects_a_late_status_success(monkeypatch) -> None:
+    module = _load_module()
+    observed = iter((10.0, 10.0, 10.6, 10.6))
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(observed))
+    monkeypatch.setattr(
+        module,
+        "_browser_status",
+        lambda **_kwargs: {"input_events": 11, "applied_inputs": 11},
+    )
+
+    with pytest.raises(RuntimeError, match="did not settle within 0.5s"):
+        module._wait_controller_release(
+            host="203.0.113.10",
+            run_id="existing-run",
+            user="agent",
+            password="password",
+            certificate_sha256="a" * 64,
+            after_input_events=10,
+            timeout=0.5,
+            poll_interval=0.0,
+        )
+
+
+def test_relay_recovery_and_release_share_the_disconnect_deadline(monkeypatch) -> None:
+    module = _load_module()
+    moments = iter((10.0, 12.0, 15.0, 20.0))
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(moments))
+    calls = []
+    monkeypatch.setattr(
+        module,
+        "_wait_relay_ready",
+        lambda *_args, **kwargs: calls.append(("relay", kwargs["timeout"])),
+    )
+    monkeypatch.setattr(
+        module,
+        "_wait_controller_release",
+        lambda **kwargs: calls.append(("release", kwargs["timeout"])),
+    )
+
+    module._wait_relay_and_release(
+        object(),
+        "a" * 64,
+        release_deadline=40.0,
+        host="203.0.113.10",
+        run_id="existing-run",
+        user="agent",
+        password="password",
+        certificate_sha256="b" * 64,
+        after_input_events=10,
+        phase="relay restart",
+    )
+
+    assert calls == [("relay", 30.0), ("release", 25.0)]
+
+
+def test_relay_and_release_rejects_success_after_original_deadline(monkeypatch) -> None:
+    module = _load_module()
+    moments = iter((10.0, 12.0, 15.0, 41.0))
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(moments))
+    monkeypatch.setattr(module, "_wait_relay_ready", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        module, "_wait_controller_release", lambda **_kwargs: None
+    )
+
+    with pytest.raises(RuntimeError, match="within 30s of disconnect"):
+        module._wait_relay_and_release(
+            object(),
+            "a" * 64,
+            release_deadline=40.0,
+            host="203.0.113.10",
+            run_id="existing-run",
+            user="agent",
+            password="password",
+            certificate_sha256="b" * 64,
+            after_input_events=10,
+            phase="relay restart",
+        )
+
+
+def test_restart_safety_deadline_starts_before_relay_mutation(monkeypatch) -> None:
+    module = _load_module()
+    moments = iter((10.0, 25.0, 26.0))
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(moments))
+    calls = []
+    monkeypatch.setattr(
+        module,
+        "_install_agent_relay",
+        lambda *_args, **_kwargs: calls.append("restart"),
+    )
+    monkeypatch.setattr(
+        module,
+        "_wait_closed",
+        lambda *_args, **kwargs: calls.append(("disconnect", kwargs["timeout"]))
+        or 0.25,
+    )
+
+    disconnected, started, deadline = module._restart_relay_for_release_proof(
+        object(),
+        object(),
+        run_id="existing-run",
+        session_nonce="a" * 64,
+        manifest_uri="s3://bucket/run/reports/leisaac-session.json",
+    )
+
+    assert calls == ["restart", ("disconnect", 15.0)]
+    assert (disconnected, started, deadline) == (0.25, 10.0, 40.0)
+
+
+def test_restart_safety_deadline_rejects_a_stalled_restart(monkeypatch) -> None:
+    module = _load_module()
+    moments = iter((10.0, 41.0))
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(moments))
+    waited = []
+    monkeypatch.setattr(module, "_install_agent_relay", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        module, "_wait_closed", lambda *_args, **_kwargs: waited.append(True)
+    )
+
+    with pytest.raises(RuntimeError, match="within 30s of disconnect"):
+        module._restart_relay_for_release_proof(
+            object(),
+            object(),
+            run_id="existing-run",
+            session_nonce="a" * 64,
+            manifest_uri="s3://bucket/run/reports/leisaac-session.json",
+        )
+
+    assert waited == []
+
+
+def test_wait_relay_ready_rejects_ready_observed_after_deadline(monkeypatch) -> None:
+    module = _load_module()
+    moments = iter((10.0, 10.0, 10.6))
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(moments))
+    monkeypatch.setattr(
+        module,
+        "_relay_status",
+        lambda *_args, **_kwargs: {"state": "ready"},
+    )
+
+    with pytest.raises(RuntimeError, match="ready after deadline"):
+        module._wait_relay_ready(object(), "a" * 64, timeout=0.5)
+
+
+def test_release_deadline_fails_before_another_recovery_attempt(monkeypatch) -> None:
+    module = _load_module()
+    monkeypatch.setattr(module.time, "monotonic", lambda: 40.1)
+    called = []
+    monkeypatch.setattr(
+        module,
+        "_wait_relay_ready",
+        lambda *_args, **_kwargs: called.append(True),
+    )
+
+    with pytest.raises(RuntimeError, match="within 30s of disconnect"):
+        module._wait_relay_and_release(
+            object(),
+            "a" * 64,
+            release_deadline=40.0,
+            host="203.0.113.10",
+            run_id="existing-run",
+            user="agent",
+            password="password",
+            certificate_sha256="b" * 64,
+            after_input_events=10,
+            phase="relay restart",
+        )
+
+    assert called == []
+
+
+def test_resume_wait_closes_busy_attempt_before_returning_live_pair(monkeypatch) -> None:
+    module = _load_module()
+    responses = iter(
+        (
+            {"type": "error", "code": "controller_busy"},
+            {"type": "resumed", "lease_id": "new", "next_seq": 3},
+        )
+    )
+    pairs = []
+
+    class FakeSocket:
+        def __init__(self, response=None) -> None:
+            self.response = response
+            self.closed = False
+            self.connection = self
+            self.timeouts = []
+
+        def settimeout(self, timeout) -> None:
+            self.timeouts.append(timeout)
+
+        def send(self, _payload) -> None:
+            return None
+
+        def receive_json(self, **_kwargs):
+            return self.response
+
+        def close(self) -> None:
+            self.closed = True
+
+    def browser_sockets(**_kwargs):
+        pair = (FakeSocket(next(responses)), FakeSocket())
+        pairs.append(pair)
+        return *pair, {"available": True}
+
+    monkeypatch.setattr(module, "_browser_sockets", browser_sockets)
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+
+    control, video, status, resumed = module._wait_resumed_browser_sockets(
+        host="203.0.113.10",
+        run_id="existing-run",
+        user="agent",
+        password="password",
+        certificate_sha256="a" * 64,
+        client_id="browser",
+        last_acked_seq=1,
+        lease_id="old",
+    )
+
+    assert pairs[0][0].closed and pairs[0][1].closed
+    assert control is pairs[1][0] and video is pairs[1][1]
+    assert control.closed is False and video.closed is False
+    assert control.timeouts[-1] == module._WEBSOCKET_OPERATION_TIMEOUT_SECONDS
+    assert video.timeouts[-1] == module._WEBSOCKET_OPERATION_TIMEOUT_SECONDS
+    assert status == {"available": True}
+    assert resumed["next_seq"] == 3
+
+
+def test_resume_wait_rejects_late_success_and_closes_pair(monkeypatch) -> None:
+    module = _load_module()
+    observed = iter((10.0, 10.0, 10.0, 10.6, 10.6))
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(observed))
+
+    class FakeConnection:
+        def settimeout(self, _timeout) -> None:
+            return None
+
+    class FakeSocket:
+        def __init__(self) -> None:
+            self.connection = FakeConnection()
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    control = FakeSocket()
+    video = FakeSocket()
+    monkeypatch.setattr(
+        module,
+        "_browser_sockets",
+        lambda **_kwargs: (control, video, {"available": True}),
+    )
+    monkeypatch.setattr(
+        module,
+        "_resume",
+        lambda *_args, **_kwargs: {"type": "resumed", "lease_id": "b" * 64},
+    )
+
+    with pytest.raises(RuntimeError, match="did not resume within 0.5s"):
+        module._wait_resumed_browser_sockets(
+            host="203.0.113.10",
+            run_id="existing-run",
+            user="agent",
+            password="password",
+            certificate_sha256="a" * 64,
+            client_id="browser",
+            last_acked_seq=1,
+            lease_id="a" * 64,
+            timeout=0.5,
+            poll_interval=0.0,
+        )
+
+    assert control.closed and video.closed
+
+
+def test_rotated_lease_rejects_reused_or_invalid_capability() -> None:
+    module = _load_module()
+    old = "a" * 64
+    new = "b" * 64
+
+    assert (
+        module._require_rotated_lease(
+            {"lease_id": new}, prior_lease_id=old, phase="relay restart"
+        )
+        == new
+    )
+    for candidate in (old, "not-a-lease", ""):
+        with pytest.raises(RuntimeError, match="did not rotate"):
+            module._require_rotated_lease(
+                {"lease_id": candidate},
+                prior_lease_id=old,
+                phase="relay restart",
+            )
