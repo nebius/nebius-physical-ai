@@ -440,6 +440,7 @@ class MetricsInput:
     name: str = "metrics"
     topic: str | None = None
     timestamp_ns: int | None = None
+    source: str = ""
 
 
 @dataclass
@@ -790,7 +791,7 @@ def collect_run_inputs(
             parent = path.parent.name if path.parent != root else "camera"
             frames.append(FrameInput(path=path, camera=parent or "camera"))
         elif suffix in _METRIC_SUFFIXES:
-            metrics.append(MetricsInput(path=path, name=path.stem))
+            metrics.append(MetricsInput(path=path, name=path.stem, source=relative))
         elif suffix in _LOG_SUFFIXES:
             logs.append(LogInput(path=path, name=path.stem))
         else:
@@ -1196,7 +1197,7 @@ def write_run_mcap(
                     last_ns = max(last_ns, stamp)
                     rich_action_sequence += 1
 
-                rich_rollout_sources.append(metric.path.name)
+                rich_rollout_sources.append(str(metric.source or metric.path.name))
 
                 metadata_payload.update(
                     {

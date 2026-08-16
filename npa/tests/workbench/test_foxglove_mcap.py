@@ -86,6 +86,7 @@ def test_collect_run_inputs_classifies_artifacts(tmp_path: Path) -> None:
     assert {frame.camera for frame in frames} == {"front", "wrist"}
     assert len(frames) == 6
     assert [metric.name for metric in metrics] == ["metrics"]
+    assert [metric.source for metric in metrics] == ["reports/metrics.json"]
     assert [entry.name for entry in logs] == ["run"]
     assert skipped == ["reports/opaque.bin"]
 
@@ -749,7 +750,8 @@ def test_multiple_action_rollouts_share_channels_and_one_monotonic_schedule(
     rollout_paths: list[Path] = []
     expected_steps: list[int] = []
     for rollout_index, action_count in enumerate((2, 3), start=1):
-        path = tmp_path / f"0{rollout_index}-action-rollout.json"
+        path = tmp_path / f"rollout-{rollout_index}" / "action-rollout.json"
+        path.parent.mkdir()
         actions = []
         for local_index in range(action_count):
             step = (rollout_index - 1) * 100 + local_index
@@ -790,7 +792,14 @@ def test_multiple_action_rollouts_share_channels_and_one_monotonic_schedule(
         )
         rollout_paths.append(path)
 
-    metrics = [MetricsInput(path=path, name=path.stem) for path in rollout_paths]
+    metrics = [
+        MetricsInput(
+            path=path,
+            name=path.stem,
+            source=path.relative_to(tmp_path).as_posix(),
+        )
+        for path in rollout_paths
+    ]
     outputs = [tmp_path / "multi-a.mcap", tmp_path / "multi-b.mcap"]
     summaries = [
         write_run_mcap(
@@ -873,7 +882,7 @@ def test_multiple_action_rollouts_share_channels_and_one_monotonic_schedule(
     )
     assert metadata["action_rollout_count"] == "2"
     assert json.loads(metadata["action_rollout_sources"]) == [
-        path.name for path in rollout_paths
+        path.relative_to(tmp_path).as_posix() for path in rollout_paths
     ]
     assert metadata["action_rollout_schedule"] == (
         "metric-input-order-global-synthetic-fps"
