@@ -495,7 +495,7 @@ def test_workbench_workflow_submit_honors_explicit_eula_opt_out(mocker) -> None:
     )
 
     assert result.exit_code == 1
-    assert "--accept-eula" in result.output
+    assert "omitting --no-accept-eula" in result.output.lower()
     assert "No expensive action has begun" in result.output
     submit.assert_not_called()
 
@@ -517,6 +517,32 @@ def test_workbench_workflow_submit_rejects_isaac_byof_opt_out(mocker) -> None:
             "base_profile=isaac-lab",
             "--var",
             "base_image=tool://isaac-lab",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Isaac" in result.output
+    assert "No expensive action has begun" in result.output
+    submit.assert_not_called()
+
+
+def test_workbench_workflow_submit_rejects_resolved_isaac_sweep_opt_out(
+    mocker,
+) -> None:
+    submit = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(NPA_SPECS / "isaac-lab-rl-sweep.yaml"),
+            "--run-id",
+            "resolved-isaac-no-consent",
+            "--image",
+            "registry.example/npa-isaac-lab:runtime",
+            "--no-accept-eula",
         ],
     )
 

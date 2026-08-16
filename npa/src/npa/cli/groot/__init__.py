@@ -232,7 +232,10 @@ SUPPORTED_EMBODIMENT_TAGS = (
 
 
 def _groot_deploy_models(model: str = DEFAULT_MODEL) -> list[str]:
-    return [model or DEFAULT_MODEL]
+    # The deployed service runtime-fetches both the policy checkpoint and the
+    # Cosmos-Reason critic.  Probe every asset before provisioning; a later 403
+    # inside a GPU workload is both expensive and needlessly hard to diagnose.
+    return list(dict.fromkeys((model or DEFAULT_MODEL, COSMOS_REASON_MODEL)))
 
 
 def _require_groot_isaac_consent(context: str) -> str:
@@ -246,16 +249,9 @@ def _model_check_or_fail(
     *,
     credentials: Any,
     model: str,
-    skip_model_check: bool,
     dry_run: bool,
     no_shared_creds: bool,
 ) -> None:
-    if skip_model_check:
-        for repo in _groot_deploy_models(model):
-            console.print(f"  HF access check skipped for {repo}")
-        if dry_run:
-            console.print("  [dry-run] HF model validation skipped")
-        return
     token = "" if no_shared_creds else credentials.hf_token
     for repo in _groot_deploy_models(model):
         result = validate_hf_access(token, repo)
@@ -2357,11 +2353,6 @@ def deploy_cmd(
         "--no-shared-creds",
         help="Do not inject ~/.npa/credentials.yaml shared credentials into the service env.",
     ),
-    skip_model_check: bool = typer.Option(
-        False,
-        "--skip-model-check",
-        help="Skip Hugging Face gated-model access validation.",
-    ),
     health_check_mode: HealthCheckMode = typer.Option(
         HealthCheckMode.auto,
         "--health-check-mode",
@@ -2444,6 +2435,15 @@ def deploy_cmd(
     if not proj_alias:
         proj_alias = env_region or ("byovm" if byovm else "default")
 
+    credentials = resolve_credentials()
+    if not destroy and not skip_app:
+        _model_check_or_fail(
+            credentials=credentials,
+            model=model,
+            dry_run=dry_run,
+            no_shared_creds=no_shared_creds,
+        )
+
     existing_managed_alias = alias_has_terraform_state(proj_alias, wb_name)
     existing_byovm_alias = workbench_is_byovm(proj_alias, wb_name)
     if not destroy and (existing_managed_alias or existing_byovm_alias):
@@ -2472,16 +2472,6 @@ def deploy_cmd(
             _confirm_or_exit(
                 f"--replace will provision replacement infrastructure for '{proj_alias}/{wb_name}'. Continue?"
             )
-
-    credentials = resolve_credentials()
-    if not destroy and not skip_app:
-        _model_check_or_fail(
-            credentials=credentials,
-            model=model,
-            skip_model_check=skip_model_check,
-            dry_run=dry_run,
-            no_shared_creds=no_shared_creds,
-        )
 
     nebius_creds: dict[str, str] = {}
     if use_remote_state and not skip_infra:
@@ -3705,7 +3695,7 @@ def eval_cmd(
     ),
     accept_eula: bool = typer.Option(
         True, "--accept-eula/--no-accept-eula",
-        help="Isaac EULA acceptance for --sim; use --no-accept-eula to opt out.",
+        help="Isaac EULA routing for --sim; defaults on, with --no-accept-eula as opt-out.",
     ),
     isaac_lab_workbench: str = typer.Option(
         "",
@@ -3748,7 +3738,8 @@ def eval_cmd(
         if not accept_eula:
             _fail(
                 "Refusing GR00T Isaac simulation after --no-accept-eula; offline "
-                "evaluation needs no acceptance. Use --accept-eula or omit --sim."
+                "evaluation needs no Isaac EULA route. Omit --no-accept-eula or "
+                "omit --sim."
             )
         if not isaac_lab_workbench:
             _fail("--isaac-lab-workbench is required with --sim")

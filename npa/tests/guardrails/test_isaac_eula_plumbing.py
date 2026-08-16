@@ -199,11 +199,20 @@ def test_child_isaac_jobs_inherit_authorized_operation(
 
 
 @pytest.mark.parametrize(("module_name", "builder"), SIM2REAL_ISAAC_BUILDERS)
-def test_child_isaac_jobs_do_not_invent_acceptance(
+def test_child_isaac_jobs_apply_default_acceptance(
     monkeypatch, module_name, builder
 ) -> None:
     monkeypatch.delenv(EULA_ENV, raising=False)
-    assert EULA_ENV not in _job_env(module_name, builder)
+    assert _job_env(module_name, builder)[EULA_ENV] == "Y"
+
+
+@pytest.mark.parametrize(("module_name", "builder"), SIM2REAL_ISAAC_BUILDERS)
+@pytest.mark.parametrize("value", ["yes", "TRUE", "1"])
+def test_child_isaac_jobs_normalize_affirmative_values(
+    monkeypatch, module_name, builder, value
+) -> None:
+    monkeypatch.setenv(EULA_ENV, value)
+    assert _job_env(module_name, builder)[EULA_ENV] == "Y"
 
 
 @pytest.mark.parametrize(("module_name", "builder"), SIM2REAL_ISAAC_BUILDERS)
@@ -212,6 +221,17 @@ def test_child_isaac_jobs_preserve_explicit_empty_opt_out(
 ) -> None:
     monkeypatch.setenv(EULA_ENV, "")
     assert _job_env(module_name, builder)[EULA_ENV] == ""
+
+
+@pytest.mark.parametrize(("module_name", "builder"), SIM2REAL_ISAAC_BUILDERS)
+def test_child_isaac_jobs_reject_invalid_value_before_manifest(
+    monkeypatch, module_name, builder
+) -> None:
+    from npa.serverless_common.env import InvalidIsaacEulaValueError
+
+    monkeypatch.setenv(EULA_ENV, "maybe")
+    with pytest.raises(InvalidIsaacEulaValueError, match="Invalid ACCEPT_EULA"):
+        _job_env(module_name, builder)
 
 
 def test_no_user_facing_legacy_consent_or_privacy_defaults() -> None:

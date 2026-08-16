@@ -21,12 +21,9 @@ resources:
   memory: 64
 envs:
   # NVIDIA licence acceptance for the runtime-fetched Isaac Sim / Isaac Lab.
-  # Empty on purpose: these images ship no Isaac and REFUSE to fetch it (exit 78) unless
-  # the operator has accepted NVIDIA's terms, and hardcoding "YES" here would be us
-  # accepting on their behalf. Supply it at launch, e.g.
-  #   sky launch ... --env ACCEPT_EULA=Y
+  # Product default; submit --no-accept-eula renders an explicit empty opt-out.
   # See npa/docker/workbench/common/isaac_bootstrap.sh.
-  ACCEPT_EULA: ""
+  ACCEPT_EULA: "Y"
   POLICY_IMAGE: "example.invalid/npa-sonic:cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
   SONIC_PAYLOAD_MODE: "direct"
   SONIC_GPU_TYPE: "gpu-rtx6000"

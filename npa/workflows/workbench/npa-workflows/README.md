@@ -98,7 +98,7 @@ below (see `npa/src/npa/orchestration/npa_workflow/blueprints.py`). Deploy guide
 | `byof-maniskill.yaml` | OSS registry: ManiSkill pinned image + PickCube smoke |
 | `byof-mujoco-playground.yaml` | OSS registry: MuJoCo Playground pinned image + Cartpole smoke |
 | `byof-robocasa.yaml` | OSS registry: RoboCasa pinned image + headless kitchen-task smoke |
-| `byof-openpi.yaml` | OSS registry: OpenPI pi0.5 Polaris direct + WebSocket-served Franka joint-position inference on `B200:1`; runtime-only checkpoint and scoped Gemma gate ([guide](../../../../docs/workbench/openpi-pi05-polaris.md)) |
+| `byof-openpi.yaml` | OSS registry: OpenPI pi0.5 Polaris direct + WebSocket-served Franka joint-position inference on `B200:1`; runtime-only checkpoint with upstream terms and no duplicate local gate ([guide](../../../../docs/workbench/openpi-pi05-polaris.md)) |
 | `byof-droid-policy-learning.yaml` | OSS registry: DROID policy learning pinned image + RLDS config smoke |
 | `rl-policy-training-sim-success.yaml` | Isaac Lab RL train (partial) |
 | `sim2real-two-step.yaml` / `sim2real-two-step-agent.yaml` | **DEMO ONLY** two-state DSL fixtures |

@@ -288,8 +288,41 @@ def test_status_reports_default_acceptance_and_uses_no_network(tmp_path: Path) -
 
     assert result.returncode == 0, result.stderr
     assert "eula_accepted=yes" in result.stdout
+    assert "eula_state=accepted" in result.stdout
     assert "ready=no" in result.stdout
     assert "isaacsim=" in result.stdout and "isaaclab=" in result.stdout
+    assert not harness.downloaded_anything()
+
+
+@pytest.mark.parametrize("value", ["Y", "YES", "yes", "1", "TRUE", "true"])
+def test_status_uses_ensure_parser_for_affirmative_values(
+    tmp_path: Path, value: str
+) -> None:
+    result = Harness(tmp_path).run("status", ACCEPT_EULA=value)
+
+    assert result.returncode == 0, result.stderr
+    assert "eula_state=accepted" in result.stdout
+    assert "eula_accepted=yes" in result.stdout
+
+
+@pytest.mark.parametrize("value", ["", "N", "no", "0", "FALSE", "false"])
+def test_status_uses_ensure_parser_for_opt_out_values(
+    tmp_path: Path, value: str
+) -> None:
+    result = Harness(tmp_path).run("status", ACCEPT_EULA=value)
+
+    assert result.returncode == 0, result.stderr
+    assert "eula_state=opt-out" in result.stdout
+    assert "eula_accepted=no" in result.stdout
+
+
+def test_status_reports_invalid_acceptance_without_network(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    result = harness.run("status", ACCEPT_EULA="maybe")
+
+    assert result.returncode == 0, result.stderr
+    assert "eula_state=invalid" in result.stdout
+    assert "eula_accepted=no" in result.stdout
     assert not harness.downloaded_anything()
 
 

@@ -20,8 +20,6 @@ def _config(**overrides):
         "isaac_image": digest,
         "viewer_image": digest,
         "isaac_cache_pvc": "npa-isaac-cache",
-        "omni_kit_accept_eula": "YES",
-        "isaacsim_accept_eula": "YES",
         "reason2_model": "nvidia/Cosmos-Reason2-8B",
         "reason3_model": "nvidia/Cosmos-Reason2-2B",
         "gpu_queue": "sim2real-gpu",
@@ -56,9 +54,9 @@ def test_static_preflight_checks_all_three_gated_models_and_secret_forwarding():
     assert "AWS_SECRET_ACCESS_KEY" in rendered
 
 
-def test_static_preflight_rejects_mutable_images_and_missing_eula_before_launch():
+def test_static_preflight_rejects_mutable_images_without_manual_eula_inputs():
     issues = static_prerequisites(
-        _config(controller_image="registry/image:latest", omni_kit_accept_eula=""),
+        _config(controller_image="registry/image:latest"),
         requested_secret_envs=[
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
@@ -70,7 +68,7 @@ def test_static_preflight_rejects_mutable_images_and_missing_eula_before_launch(
 
     rendered = "\n".join(item for item, _ in issues)
     assert "controller_image" in rendered
-    assert "omni_kit_accept_eula" in rendered
+    assert "accept_eula" not in rendered.lower()
 
 
 def _nodes(*, cpu="10", memory="40Gi", gpu="0", taints=None):

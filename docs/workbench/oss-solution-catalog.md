@@ -38,7 +38,7 @@ unique and must be tested with its own upstream-named capabilities.
 | RoboCasa | `download_kitchen_assets_lw` | **accepted** | `defcap17-robocasa-20260709-060243` (IIFAN fixtures+objects; restored git accessories) |
 | RoboCasa | `kitchen_egl_env_reset` | **accepted** | `defcap17-robocasa-20260709-060243` (post-download subprocess; 58 lightwheel cats; obs dict) |
 | RoboCasa | `kitchen_random_rollout` | **accepted** | `defcap20-robocasa-20260710-032142` (`run_random_rollouts` + mp4 `22150` bytes; `gymnasium==0.29.1` + `env.sim` bind) |
-| OpenPI | `pi05_droid_jointpos_polaris_checkpoint_download` | **accepted** | Canonical isolated B200 gate: image build/push/digest verification, exit-64 negative terms workload, then 12,434,530,837 runtime-only GCS bytes with 27-object generation-manifest provenance |
+| OpenPI | `pi05_droid_jointpos_polaris_checkpoint_download` | **accepted** | Canonical isolated B200 gate: image build/push/digest verification, then 12,434,530,837 runtime-only GCS bytes with 27-object generation-manifest provenance; no duplicate local terms flag |
 | OpenPI | `pi05_droid_jointpos_polaris_direct_infer` | **accepted** | Same digest-pinned B200 `sm_100` gate; deterministic Franka input produced finite `float64[15,8]` joint-position targets |
 | OpenPI | `pi05_droid_jointpos_polaris_served_infer` | **accepted hard gate** | Same gate; upstream WebSocket health + same-pod client round trip produced finite `float64[15,8]` |
 | DROID | `rlds_config_generator_contract` | **accepted** | `defcap8-droid-policy-learning-20260709-024455` (+ prior) |
@@ -89,11 +89,11 @@ unique and must be tested with its own upstream-named capabilities.
 
 | Capability | Status | Upstream basis |
 | --- | --- | --- |
-| `pi05_droid_jointpos_polaris_checkpoint_download` | accepted (live) | canonical build/push/digest gate plus a separate exit-64 negative terms workload; anonymous runtime `download.maybe_download(gs://openpi-assets/checkpoints/polaris/…)`; 27 objects / 12,434,530,837 bytes; weights never baked |
+| `pi05_droid_jointpos_polaris_checkpoint_download` | accepted (live) | canonical build/push/digest gate; anonymous runtime `download.maybe_download(gs://openpi-assets/checkpoints/polaris/…)`; 27 objects / 12,434,530,837 bytes; weights never baked and no local acceptance boolean |
 | `pi05_droid_jointpos_polaris_direct_infer` | accepted (live) | digest-pinned B200 `sm_100` `get_config("pi05_droid_jointpos_polaris")` + direct `policy.infer`; finite `float64[15,8]` joint-position targets |
 | `pi05_droid_jointpos_polaris_served_infer` | accepted hard gate (live) | upstream `WebsocketPolicyServer` + same-pod `WebsocketClientPolicy`; served finite `float64[15,8]` |
 
-The Polaris request/response schema, terms gate, licensing boundary, B200 stack,
+The Polaris request/response schema, upstream terms, licensing boundary, B200 stack,
 and 15 Hz re-query guidance are documented in
 [`openpi-pi05-polaris.md`](openpi-pi05-polaris.md). Historical validation of
 the older generic `pi05_droid` checkpoint is not treated as Polaris/B200 proof.

@@ -102,12 +102,12 @@ def require_isaac_eula_acceptance(*, context: str, resume_command: str) -> str:
     resume = f"ACCEPT_EULA=Y {resume_command.strip()}"
     raise MissingIsaacEulaAcceptanceError(
         f"Refusing to provision {context}: NVIDIA EULA acceptance was explicitly disabled "
-        "for ACCEPT_EULA=Y. The required agreements are the NVIDIA "
+        "through ACCEPT_EULA. The applicable agreements are the NVIDIA "
         "Omniverse Licence Agreement, NVIDIA Isaac Sim Additional Software and "
         "Materials Licence, and NVIDIA Software Licence Agreement; official links "
         "are listed at https://docs.isaacsim.omniverse.nvidia.com/latest/common/licenses.html. "
-        "No expensive action has begun. Accept only those named agreements, then "
-        f"resume exactly with: {resume}"
+        "No expensive action has begun. Remove the opt-out or resume exactly with: "
+        f"{resume}"
     )
 
 
@@ -120,6 +120,19 @@ def isaac_eula_env(
     if ISAAC_EULA_ENV not in source:
         return {}
     return {ISAAC_EULA_ENV: resolve_isaac_eula_acceptance(source)}
+
+
+def resolved_isaac_eula_env(
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Return the canonical environment for a route known to require Isaac.
+
+    Unlike :func:`isaac_eula_env`, this includes the product default when the
+    public variable is absent.  Every value passes through the shared parser,
+    so callers never forward an unvalidated spelling to a remote runtime.
+    """
+
+    return {ISAAC_EULA_ENV: resolve_isaac_eula_acceptance(environ)}
 
 
 def build_serverless_job_env(

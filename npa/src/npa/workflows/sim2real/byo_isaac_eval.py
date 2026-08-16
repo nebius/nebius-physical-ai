@@ -951,17 +951,13 @@ os._exit(0)
 
 
 def _isaac_eula_env_entries() -> list[dict[str, str]]:
-    """Kubernetes ``env`` entries carrying the operator's NVIDIA licence acceptance.
+    """Canonical Kubernetes env for this known Isaac route."""
 
-    Forward an explicit submitting-process value when present. When absent, the runtime
-    image applies its default acceptance; an explicitly present value, including empty,
-    opt-out and fails before download.
-    """
+    from npa.serverless_common.env import resolved_isaac_eula_env
 
     return [
-        {"name": name, "value": os.environ[name]}
-        for name in ("ACCEPT_EULA",)
-        if name in os.environ
+        {"name": name, "value": value}
+        for name, value in resolved_isaac_eula_env().items()
     ]
 
 

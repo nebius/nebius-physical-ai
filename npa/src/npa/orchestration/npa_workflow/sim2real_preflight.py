@@ -18,7 +18,6 @@ from npa.orchestration.skypilot.controller import (
 
 
 Issue = tuple[str, str]
-_ACCEPTED_EULA_VALUES = frozenset({"1", "TRUE", "Y", "YES"})
 _IMAGE_KEYS = (
     "controller_image",
     "transfer_image",
@@ -77,21 +76,6 @@ def static_prerequisites(
                 "create and warm the shared Isaac cache from "
                 "npa/docker/workbench/common/warm-isaac-cache.yaml, then pass "
                 "--var isaac_cache_pvc=<bound-rwx-pvc>",
-            )
-        )
-
-    invalid_eulas = [
-        key
-        for key in ("omni_kit_accept_eula", "isaacsim_accept_eula")
-        if str(config.get(key) or "").strip().upper() not in _ACCEPTED_EULA_VALUES
-    ]
-    if invalid_eulas:
-        issues.append(
-            (
-                "explicit NVIDIA Isaac/Omniverse acceptance is missing: "
-                + ", ".join(invalid_eulas),
-                "after reviewing the linked NVIDIA terms, pass "
-                "--var omni_kit_accept_eula=YES --var isaacsim_accept_eula=YES",
             )
         )
 

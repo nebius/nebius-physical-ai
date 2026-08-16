@@ -1,5 +1,5 @@
 # OpenPI pi0.5 Polaris inference on one datacenter Blackwell GPU. The checkpoint
-# and scoped terms acceptance enter only at run time; neither is rendered here.
+# and checkpoint bytes enter only at run time; neither is rendered here.
 name: byof-solution-smoke-openpi-b200-gpu
 execution: serial
 ---

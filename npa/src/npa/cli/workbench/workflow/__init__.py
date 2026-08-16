@@ -272,9 +272,8 @@ def submit_cmd(
         True,
         "--accept-eula/--no-accept-eula",
         help=(
-            "Run-scoped acceptance of NVIDIA's Isaac Sim/Omniverse licence terms. "
-            "Applied only when the selected workflow routes a stage through Isaac; "
-            "enabled by default. Use --no-accept-eula to opt out."
+            "Run-scoped Isaac EULA routing. Resolved Isaac stages receive "
+            "ACCEPT_EULA=Y by default; use --no-accept-eula to opt out."
         ),
     ),
     details: bool = typer.Option(
@@ -689,20 +688,38 @@ def submit_cmd(
                 run_id=resolved_run_id,
                 assume_decision=assume_decision,
                 config_overrides=substitutions,
+                options=SkypilotRenderOptions(
+                    registry=_resolve_submit_registry(registry, project),
+                    image_overrides={
+                        **(
+                            {"*": image}
+                            if str(image or "").strip().lower()
+                            not in {"", "none", "default", "-"}
+                            else {"*": ""}
+                            if str(image or "").strip().lower()
+                            in {"none", "default", "-"}
+                            else {}
+                        ),
+                        **specific_image_overrides,
+                    },
+                    gpu_target=gpu_target,
+                    image_variant=image_variant,
+                    materialize_registry_secrets=False,
+                    accept_eula=accept_eula,
+                ),
             )
             if is_npa_spec
             else _sky_yaml_routes_at_isaac(yaml_path)
         )
     if routes_at_isaac:
         _fail(
-            "Refusing before provisioning: this workflow acquires or uses NVIDIA "
-            "Isaac Sim and requires the operator's explicit --accept-eula action "
-            "(internally forwarded as NVIDIA's documented ACCEPT_EULA=Y). This "
-            "accepts the NVIDIA Omniverse Licence Agreement and Isaac Sim "
-            "Additional Software and Materials Licence listed at "
+            "Refusing before provisioning: --no-accept-eula explicitly opted this "
+            "Isaac-routed workflow out of NVIDIA's documented ACCEPT_EULA setting. "
+            "The applicable NVIDIA Omniverse Licence Agreement and Isaac Sim "
+            "Additional Software and Materials Licence are listed at "
             "https://docs.isaacsim.omniverse.nvidia.com/latest/common/licenses.html. "
             "PRIVACY_CONSENT is optional and is not enabled by NPA. No expensive "
-            "action has begun. Resume with the same command plus --accept-eula."
+            "action has begun. Resume by omitting --no-accept-eula."
         )
         return
     from npa.orchestration.npa_workflow.submit_credentials import (
@@ -2164,7 +2181,7 @@ def _plan_requires_npa_source(
     run_id: str,
     assume_decision: str,
     config_overrides: Mapping[str, str] | None = None,
-    options,
+    options: SkypilotRenderOptions,
 ) -> bool:
     """Return whether any fully configured planned step lacks a container image."""
 
@@ -2198,26 +2215,33 @@ def _plan_routes_at_isaac(
     run_id: str,
     assume_decision: str,
     config_overrides: Mapping[str, str] | None = None,
+    options,
 ) -> bool:
     """Return whether the selected plan acquires or runs an Isaac image."""
 
     from npa.orchestration.npa_workflow import build_plan, load_spec
     from npa.orchestration.npa_workflow.scheduler import build_scheduler_task
     from npa.orchestration.npa_workflow.skypilot_render import (
+        resolve_task_image,
         routes_at_an_isaac_image,
     )
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
     spec = merge_config_overrides(load_spec(yaml_path), config_overrides)
     plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
-    return any(
-        routes_at_an_isaac_image(
-            str(step.tool_ref or ""),
-            build_scheduler_task(spec, step, run_id=run_id).get("resources") or {},
+    for step in plan.steps:
+        task = build_scheduler_task(spec, step, run_id=run_id)
+        resources = task.get("resources") or {}
+        tool_ref = str(task.get("tool_ref") or "")
+        resolved_image = resolve_task_image(tool_ref, resources, options=options)
+        if routes_at_an_isaac_image(
+            tool_ref,
+            resources,
             spec.config,
-        )
-        for step in plan.steps
-    )
+            resolved_image=resolved_image,
+        ):
+            return True
+    return False
 
 
 def _sky_yaml_routes_at_isaac(yaml_path: Path) -> bool:

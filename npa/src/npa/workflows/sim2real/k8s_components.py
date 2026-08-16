@@ -83,7 +83,11 @@ def _component_job_manifest(
     gpu_product: str | None = None,
 ) -> dict[str, Any]:
     selected_gpu_product = gpu_product or config.k8s_gpu_product
-    env_values = _kubernetes_component_env(env, config)
+    env_values = _kubernetes_component_env(
+        env,
+        config,
+        isaac_backed=(component == "heldout_eval" and config.sim_backend == SIM_BACKEND_ISAAC),
+    )
     # Each sibling attests its own immutable image, not the controller image.
     env_values["NPA_SIM2REAL_RUNTIME_IMAGE"] = image.removeprefix("docker:")
     pull_secrets = [
@@ -108,7 +112,7 @@ def _component_job_manifest(
                 "env": [
                     {"name": key, "value": value}
                     for key, value in sorted(env_values.items())
-                    if value != ""
+                    if value != "" or key == "ACCEPT_EULA"
                 ],
                 "envFrom": env_from,
                 "resources": {
@@ -259,7 +263,10 @@ exec {exec_cmd}
 
 
 def _kubernetes_component_env(
-    env: dict[str, str], config: Sim2RealLoopConfig
+    env: dict[str, str],
+    config: Sim2RealLoopConfig,
+    *,
+    isaac_backed: bool = False,
 ) -> dict[str, str]:
     safe: dict[str, str] = {}
     for key, value in env.items():
@@ -272,7 +279,6 @@ def _kubernetes_component_env(
                 "HF_XET_CACHE",
                 "UV_CACHE_DIR",
                 "XDG_CACHE_HOME",
-                "ACCEPT_EULA",
             }
         ):
             safe[key] = value
@@ -284,11 +290,14 @@ def _kubernetes_component_env(
     safe["AWS_ENDPOINT_URL"] = endpoint
     safe["S3_ENDPOINT_URL"] = endpoint
     apply_cosmos_reason_kubernetes_env(safe)
-    for key in ("ACCEPT_EULA",):
-        if key in env:
-            safe[key] = str(env[key])
-        elif key in os.environ:
-            safe[key] = os.environ[key]
+    safe.pop("ACCEPT_EULA", None)
+    if isaac_backed:
+        from npa.serverless_common.env import resolved_isaac_eula_env
+
+        source = dict(os.environ)
+        if "ACCEPT_EULA" in env:
+            source["ACCEPT_EULA"] = str(env["ACCEPT_EULA"])
+        safe.update(resolved_isaac_eula_env(source))
     safe["NPA_SIM2REAL_SOURCE_SHA"] = str(
         env.get("NPA_SIM2REAL_SOURCE_SHA")
         or os.environ.get("NPA_SIM2REAL_SOURCE_SHA")

@@ -53,6 +53,10 @@ def test_eula_preflight_documents_scoped_default_and_explicit_opt_out() -> None:
         "built layers contain no proprietary Isaac or Kit bytes",
         "Do not store",
         "secret values or unnecessary personal data",
+        "token and its actual upstream permissions are the only local gate",
+        "probe every required repository before provisioning",
+        "do not provide `--skip-model-check`",
+        "do not add an NPA EULA/terms boolean",
     )
     for phrase in required:
         assert phrase.lower() in normalized, phrase
@@ -82,3 +86,28 @@ def test_isaac_tool_skills_preserve_default_opt_out_and_internal_plumbing() -> N
             "Keep `PRIVACY_CONSENT` and telemetry off",
         ):
             assert phrase in text, f"{path}: {phrase}"
+
+
+def test_retired_manual_gate_surfaces_do_not_return() -> None:
+    roots = (
+        REPO_ROOT / "npa/src",
+        REPO_ROOT / "npa/scripts",
+        REPO_ROOT / "npa/workflows",
+    )
+    retired = (
+        "--accept-nvidia-eula",
+        "--skip-model-check",
+        "NPA_OPENPI_ACCEPT_GEMMA_TERMS",
+        "omni_kit_accept_eula",
+        "isaacsim_accept_eula",
+    )
+    for root in roots:
+        for path in root.rglob("*"):
+            if not path.is_file():
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            for marker in retired:
+                assert marker not in text, f"retired manual gate {marker!r} in {path}"

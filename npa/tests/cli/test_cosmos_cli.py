@@ -62,6 +62,10 @@ TERRAFORM_PLAN_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "te
 @pytest.fixture(autouse=True)
 def _terraform_plan_allows_apply(mocker):
     mocker.patch(
+        "npa.cli.cosmos.validate_hf_access",
+        return_value=SimpleNamespace(ok=True, error=""),
+    )
+    mocker.patch(
         "npa.cli.cosmos.provisioner.plan",
         return_value=(TERRAFORM_PLAN_FIXTURES / "fresh_create.txt").read_text(),
     )
@@ -1214,7 +1218,9 @@ def test_cosmos_deploy_serverless_creates_endpoint_and_persists_config(mocker) -
     assert spec.volumes == ["s3://bucket:/data:rw"]
     update_serverless.assert_called_once()
     write_config.assert_called_once()
-    model_check.assert_not_called()
+    model_check.assert_called_once_with(
+        "", "nvidia/Cosmos-1.0-Diffusion-7B-Text2World"
+    )
     provisioner_apply.assert_not_called()
 
 
@@ -2241,7 +2247,6 @@ def test_cosmos_byovm_deploy_fallback_then_status_uses_ssh_strategy(
             "8gpu-160vcpu-1792gb",
             "--server-port",
             "8081",
-            "--skip-model-check",
             "--no-auto-serve",
         ],
     )
@@ -2301,7 +2306,6 @@ def test_cosmos_deploy_auto_serve_loads_model(tmp_path: Path, monkeypatch, mocke
             "--gpu-type", "gpu-h200-sxm",
             "--gpu-preset", "8gpu-160vcpu-1792gb",
             "--server-port", "8081",
-            "--skip-model-check",
         ],
     )
 

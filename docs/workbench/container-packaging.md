@@ -118,6 +118,28 @@ image (`public` | `restricted`), enforced by
   `sonic-mujoco` and `groot` used to be restricted, and the re-architecture that made
   those four public is described below.
 
+## Manual gate audit (2026-08-16)
+
+The image, model, and configuration surfaces below were audited for local
+`ACCEPT_*` booleans, terms flags, confirmation prompts, empty acceptance
+placeholders, and duplicated model-entitlement switches. The resulting contract
+has two independent mechanisms: Isaac routes use the one public `ACCEPT_EULA`
+variable with unset meaning `Y` and a reliable explicit opt-out; runtime-fetched
+gated assets use a real upstream access probe with the operator's credential.
+Neither mechanism grants redistribution rights or enables privacy/telemetry.
+
+| Audited surface | Assets/images covered | Outcome |
+| --- | --- | --- |
+| Isaac runtime images and routes | `isaac-lab`, `sonic`, `groot`, Isaac-backed `sim2real` builders and raw-shell sweep states | No Isaac/Kit bytes are baked. Resolved-image routing injects canonical `ACCEPT_EULA=Y` by default; empty/negative values opt out, affirmative legacy values normalize, and invalid values fail before pull/provision/scheduling. No second public EULA variable exists. |
+| GR00T deployment | `nvidia/GR00T-N1.7-3B`, `nvidia/Cosmos-Reason2-2B` | Both runtime dependencies are probed before every deploy/update path. Gated access is determined only by the operator's HF token and actual upstream permission; there is no skip or NPA terms flag. |
+| Cosmos and Physical AI Data Factory | `nvidia/Cosmos-Transfer2.5-2B`, `nvidia/Cosmos-Reason2-2B`, `nvidia/Cosmos-Reason2-8B`, `nvidia/Cosmos-Reason1-7B`, `nvidia/Cosmos3-Nano`, `nvidia/Cosmos-Guardrail1`, `nvidia/Cosmos-1.0-Guardrail`, `nvidia/Cosmos-1.0-Diffusion-7B-Text2World` | Weights stay out of image layers. Public repositories may be fetched anonymously; gated repositories require a successful upstream HF probe with the operator's token. Deploy has no bypass or duplicate consent flag. |
+| Other runtime-fetched NVIDIA assets | `nvidia/GEAR-SONIC`, `nvidia/PhysicalAI-NuRec-PPISP`; NuRec NRE runtime | Public HF assets remain anonymous. NuRec's NGC-hosted NRE runtime requires a real `NGC_API_KEY` repository probe; no local EULA boolean substitutes for vendor access. |
+| Non-NVIDIA comparison surfaces | `Wan-AI/Wan2.2-TI2V-5B`, OpenPI/Gemma, LeRobot, Qwen, self-hosted Llama | No local terms boolean or interactive confirmation duplicates upstream entitlement. OpenPI's obsolete Gemma acceptance environment switch was removed; external vendor terms still apply at the source. |
+| Separate controls retained | privacy/telemetry, image redistribution classification, third-party dataset delivery | Privacy and telemetry remain independently off by default. Packaging contracts and built-image scans still control redistribution. The public PAIDF starter asset remains `acceptance_required: false`; its generic third-party dataset-license mechanism is separate from NVIDIA image/model access. |
+
+Empty `ACCEPT_EULA` remains meaningful only as the explicit Isaac opt-out. Raw
+Isaac examples now state `Y`; non-Isaac tasks do not receive the variable.
+
 ## Runtime-fetched Isaac Sim (why the Isaac images are publishable)
 
 The four Isaac images used to bake **NVIDIA Omniverse Kit (Isaac Sim)**. The Isaac Sim
@@ -139,10 +161,10 @@ Kit was already in the layers. So the images were changed to make the statement 
    validates the value before download. `Y`, `YES`, `1`, and `TRUE` normalize to
    acceptance case-insensitively. Empty, `N`, `NO`, `0`, and `FALSE` are explicit
    opt-outs and exit 78; any other value is reported separately as invalid.
-   Nothing
-   is baked with acceptance pre-granted — **this refusal is the legal mechanism**, and
-   `npa/tests/docker/test_packaging_contract.py` fails the build if any image
-   reintroduces a baked `*_ACCEPT_EULA`.
+   The run-scoped default is not baked into image layers. The bootstrap parser
+   enforces the default and explicit opt-out before downloading, while
+   `npa/tests/docker/test_packaging_contract.py` fails the build if an image
+   reintroduces a baked `*_ACCEPT_EULA` marker.
 2. Installs the pinned `isaacsim`/`isaaclab` wheels from `https://pypi.nvidia.com` into
    a **cache volume**, not the image layers. Every wheel is pinned to a committed
    `sha256` and installed with `--no-deps --require-hashes` against `--index-url` (not
@@ -242,9 +264,10 @@ the obvious next lever.
 
 Model weights are a separate axis and are never baked into any image: Cosmos,
 GR00T N1, and Cosmos-Reason weights (and VLMs) are downloaded at **runtime**
-using the customer's own HF/NGC token, so the customer accepts each model
-license (e.g. the NVIDIA Open Model License) directly. We never redistribute
-weights.
+using the customer's own HF/NGC token when the upstream repository is gated.
+Every required gated repository is probed before provisioning; there is no NPA
+manual terms flag or access-check bypass. Public repositories work anonymously.
+The upstream license still applies, and we never redistribute weights.
 
 Access model today (both regions): each workbench registry
 (`cr.eu-north1.nebius.cloud/…` primary, `cr.us-central1.nebius.cloud/…` mirror)

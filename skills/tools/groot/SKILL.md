@@ -30,6 +30,11 @@ conversion, serving, inference, and validation.
    `ensure-ingress`, `register-byovm`, `reload-env`, and `cleanup-partial`
    scoped to setup and recovery flows.
 4. Preserve credential redaction for NGC, Hugging Face, S3, and SSH values.
+5. Before deploy provisions or updates anything, validate actual Hugging Face
+   access to both the selected GR00T checkpoint and its runtime-fetched
+   `nvidia/Cosmos-Reason2-2B` dependency. The operator's HF token and upstream
+   permissions are the only local gate for gated weights; do not add a manual
+   acceptance flag or a model-check bypass.
 
 ## Three-Tier Contract
 

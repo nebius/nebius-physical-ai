@@ -33,7 +33,7 @@ convenient reading.
 Before any provisioning, build, download, or submission that depends on a
 third-party EULA, also load
 `skills/atomic/third-party-eula-preflight/SKILL.md`; licensing classification
-does not itself establish operator consent.
+does not itself establish operator consent or upstream asset access.
 
 ## The Five Artifact Boundaries
 
@@ -128,8 +128,11 @@ redistribution-restricted weights merely because a token can gate image access.
 The image ships the downloader; the operator supplies their own HF/NGC
 credential at runtime and fetches an exact immutable revision when the selected
 asset requires authorization. Do not require a token for genuinely public,
-anonymous weights. An HF or NGC token proves authorization to fetch; it is not
-EULA acceptance and does not change redistribution rights.
+anonymous weights. For Hugging Face, the token and its actual upstream repository
+permission are the only local access gate: probe every required repository before
+provisioning, with no NPA terms boolean or model-check bypass. An HF or NGC token
+proves authorization to fetch; it is not EULA acceptance and does not change
+redistribution rights.
 
 **Build-your-own.** For a runtime we may not redistribute, ship the Dockerfile
 and the build tooling, not the built image. Each operator builds into their own
@@ -201,7 +204,9 @@ rather than the argument.
   seat limit.
 - **Weights and data:** already handled by runtime fetch (Cosmos, GR00T N1,
   Cosmos-Reason) at runtime. Public Hugging Face assets work anonymously; gated
-  assets use the operator's token, and NGC credentials apply only to NGC-hosted pulls.
+  assets use the operator's token and must pass a real upstream access probe before
+  provisioning. There is no second NPA acceptance switch or bypass; NGC credentials
+  apply only to NGC-hosted pulls.
 
 **Wrong answer #1: "the source is Apache-2.0, so the image is fine."** The decisive layer
 is the baked runtime, and publishing an image distributes every byte in it.

@@ -29,10 +29,20 @@ if [ "${#ARGS[@]}" -ne 4 ]; then
   exit 2
 fi
 
-if [ "${ACCEPT_EULA:-}" != "Y" ]; then
-  echo "Refusing before provisioning: set NVIDIA's documented ACCEPT_EULA=Y for this Isaac operation." >&2
-  exit 78
-fi
+ACCEPT_EULA_VALUE="${ACCEPT_EULA-Y}"
+case "$(printf '%s' "$ACCEPT_EULA_VALUE" | tr '[:lower:]' '[:upper:]')" in
+  Y|YES|1|TRUE)
+    export ACCEPT_EULA=Y
+    ;;
+  ''|N|NO|0|FALSE)
+    echo "Refusing before provisioning: ACCEPT_EULA explicitly opts out of this Isaac operation." >&2
+    exit 78
+    ;;
+  *)
+    echo "Refusing before provisioning: invalid ACCEPT_EULA value; use Y/YES/1/TRUE or N/NO/0/FALSE." >&2
+    exit 64
+    ;;
+esac
 
 PROJECT="${ARGS[0]}"
 NAME="${ARGS[1]}"

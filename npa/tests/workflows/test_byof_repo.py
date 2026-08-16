@@ -32,51 +32,13 @@ def _accepted_wan_base_args(module) -> list[str]:
     ]
 
 
-def test_openpi_terms_fail_before_registry_or_build(monkeypatch, capsys) -> None:
-    module = _load_module()
-    monkeypatch.delenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", raising=False)
-    monkeypatch.setattr(
-        module,
-        "resolve_container_registry",
-        lambda *_args, **_kwargs: pytest.fail("registry resolved before terms gate"),
+def test_openpi_has_no_duplicate_local_terms_gate() -> None:
+    from npa.workflows.byof import openpi
+
+    assert not hasattr(openpi, "require_openpi_terms")
+    assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS" not in SCRIPT_PATH.read_text(
+        encoding="utf-8"
     )
-    monkeypatch.setattr(
-        module,
-        "_run",
-        lambda *_args, **_kwargs: pytest.fail("command ran before terms gate"),
-    )
-
-    rc = module.main(
-        [
-            "--repo-url",
-            "https://github.com/Physical-Intelligence/openpi.git",
-            "--solution-name",
-            "openpi",
-            "--skip-run",
-        ]
-    )
-
-    assert rc == 1
-    output = json.loads(capsys.readouterr().out)
-    assert output["status"] == "failed"
-    assert "Gemma Terms of Use" in output["error"]
-    assert "Gemma Prohibited Use Policy" in output["error"]
-
-
-@pytest.mark.parametrize("value", ["yes", "TRUE", "1", "YES "])
-def test_openpi_terms_gate_requires_exact_yes(monkeypatch, value) -> None:
-    from npa.workflows.byof.openpi import require_openpi_terms
-
-    monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", value)
-    with pytest.raises(ValueError, match="OpenPI pi0.5 requires scoped"):
-        require_openpi_terms()
-
-
-def test_openpi_terms_gate_accepts_scoped_yes(monkeypatch) -> None:
-    from npa.workflows.byof.openpi import require_openpi_terms
-
-    monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", "YES")
-    require_openpi_terms()
 
 
 def test_run_sanitizes_stale_nebius_tokens(monkeypatch) -> None:

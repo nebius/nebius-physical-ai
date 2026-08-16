@@ -64,5 +64,5 @@ baked consent. Isaac dependencies are acquired at runtime only after the
 operator supplies NVIDIA's documented, run-scoped `ACCEPT_EULA=Y`.
 
 The current CLI defaults Isaac acceptance for non-interactive execution and
-supports `--no-accept-eula`. The former `--accept-nvidia-eula VALUE` spelling is
-retained as a deprecated migration alias; use the boolean pair for new scripts.
+supports `--no-accept-eula`. The former `--accept-nvidia-eula VALUE` manual gate
+is retired.

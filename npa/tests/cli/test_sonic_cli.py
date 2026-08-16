@@ -410,7 +410,7 @@ def test_sonic_train_serverless_default_rejects_quarantined_compute_image() -> N
     assert "L40S/H100/H200" in result.output
 
 
-def test_sonic_train_documents_deprecated_eula_alias() -> None:
+def test_sonic_train_retires_duplicate_manual_eula_alias() -> None:
     result = runner.invoke(
         app,
         ["workbench", "sonic", "train", "--help"],
@@ -418,12 +418,17 @@ def test_sonic_train_documents_deprecated_eula_alias() -> None:
     )
 
     assert result.exit_code == 0
-    assert "--accept-nvidia-eula" in result.output
-    assert "Deprecated compatibility alias" in result.output
+    assert "--accept-nvidia-eula" not in result.output
 
 
-def test_sonic_deprecated_eula_alias_preserves_opt_out(mocker) -> None:
-    client = _mock_sonic_serverless(mocker)
+def test_sonic_train_retires_ignored_serverless_image_variant() -> None:
+    help_result = runner.invoke(
+        app,
+        ["workbench", "sonic", "train", "--help"],
+        env={"COLUMNS": "240"},
+    )
+    assert help_result.exit_code == 0
+    assert "--image-variant" not in help_result.output
 
     result = runner.invoke(
         app,
@@ -433,22 +438,30 @@ def test_sonic_deprecated_eula_alias_preserves_opt_out(mocker) -> None:
             "train",
             "--runtime",
             "serverless",
-            "--project-id",
-            "project-1",
-            "--output-path",
-            "s3://bucket/sonic/",
-            "--image",
-            "registry.example/custom-sonic-compute:validated",
+            "--image-variant",
+            "sonic-k8s-host-mounted",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "No such option" in result.output
+
+
+def test_sonic_duplicate_manual_eula_alias_is_rejected() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "train",
+            "--runtime",
+            "serverless",
             "--accept-nvidia-eula",
             "no",
-            "--submit-only",
         ],
     )
 
-    assert result.exit_code == 1
-    assert "deprecated" in result.output.lower()
-    assert "No expensive action has begun" in result.output
-    client.create_job.assert_not_called()
+    assert result.exit_code != 0
+    assert "No such option" in result.output
 
 
 def test_sonic_train_default_embodiment_is_unitree_g1(mocker) -> None:

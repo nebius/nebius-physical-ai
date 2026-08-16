@@ -677,8 +677,8 @@ chmod 600 ~/.npa/credentials.yaml
 `Warning: HF_TOKEN not found in ~/.npa/credentials.yaml`
 
 Add `tokens.HF_TOKEN` to `~/.npa/credentials.yaml` or export `HF_TOKEN` for the
-current shell. Cosmos and GR00T deploy dry-runs fail fast without it unless you
-pass `--skip-model-check`.
+current shell. Cosmos and GR00T deploy dry-runs fail fast unless that token has
+actual upstream access to every gated runtime-fetched asset.
 
 `Error: HF_TOKEN does not have access to <repo>` or `401/403 from Hugging Face`
 

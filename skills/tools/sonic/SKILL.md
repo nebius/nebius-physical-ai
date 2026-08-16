@@ -74,9 +74,7 @@ What this changes in practice:
 - **Isaac-backed modes default acceptance; explicit opt-out refuses.** NPA
   defaults `ACCEPT_EULA=Y`. Empty, `N`, `NO`, `0`, `FALSE`, or
   `--no-accept-eula` exits **78** before download. `Y`, `YES`, `1`, and `TRUE`
-  are accepted case-insensitively; other values are invalid. The deprecated
-  `--accept-nvidia-eula VALUE` alias remains for migration and uses the same
-  parser. The launcher derives
+  are accepted case-insensitively; other values are invalid. The launcher derives
   `OMNI_KIT_ACCEPT_EULA=YES` internally; do not expose duplicate user plumbing.
   Keep `PRIVACY_CONSENT` and telemetry off.
 - **Reach Isaac through `/isaac-sim/python.sh`** (the value of `ISAAC_LAB_PYTHON`). That is

@@ -15,10 +15,9 @@ documents a default.
 1. Inspect the selected image, runtime-fetch/bootstrap path, model and data
    sources, workflow renderer, and vendor documentation. Name every agreement
    that governs the exact components the workload will obtain or execute.
-2. Record the vendor's official terms links and documented acceptance mechanism
-   (for example, exact environment variables and accepted values). Do not infer
-   acceptance from credentials, registry access, prior use, or acceptance of a
-   different agreement.
+2. Record the vendor's official terms links and documented acceptance mechanism.
+   Do not infer redistribution permission from credentials, registry access,
+   prior use, or acceptance of a different agreement.
 3. Apply the documented product policy. NPA defaults `ACCEPT_EULA=Y` only for
    `npa-isaac-lab`, Isaac-backed SONIC modes, and GR00T Isaac simulation. An
    absent variable succeeds non-interactively. The affirmative legacy spellings
@@ -28,9 +27,12 @@ documents a default.
    not be described as an opt-out.
    Do not reuse this default for unrelated vendor, model, data, privacy,
    telemetry, or preview terms.
-4. When a product remains opt-in, ask clearly before provisioning, building,
-   downloading, or submitting. Show the exact agreements, official links,
-   mechanism, and the expensive action that is blocked.
+4. For runtime-fetched Hugging Face weights, do not add an NPA EULA/terms
+   boolean, confirmation flag, empty placeholder, or model-check bypass. The
+   operator's token and its actual upstream permissions are the only local gate
+   for a gated repository. Probe every required repository before provisioning;
+   public repositories may pass anonymously. A token authenticates a fetch and
+   does not change the artifact's redistribution classification.
 5. For non-interactive Isaac execution, forward the default only to Isaac-backed
    tasks. If the operator opted out, fail before provisioning and print the exact
    resume command needed to re-enable acceptance.
@@ -46,6 +48,16 @@ documents a default.
 9. Preserve a redacted run record containing agreement names, official links,
    the operator-stated scope, preflight result, and resume command. Do not store
    secret values or unnecessary personal data.
+
+## Runtime-Fetched Model Reference
+
+NPA must validate actual upstream access before provisioning for every gated
+model that a deployment will fetch. For example, GR00T deploy validates both
+the selected GR00T checkpoint and `nvidia/Cosmos-Reason2-2B`; Cosmos deploy
+validates its selected checkpoint. Do not provide `--skip-model-check`, an
+`ACCEPT_*` model variable, or a duplicate terms flag. A missing or unauthorized
+Hugging Face token is an access failure from Hugging Face, not an NPA consent
+workflow. Keep restricted weights out of image layers regardless of access.
 
 ## Isaac Reference
 
@@ -78,6 +90,8 @@ that would turn an explicit empty opt-out back into acceptance.
 ## Guardrails
 
 - Keep explicit opt-out refusal strict and early.
+- For gated runtime weights, test every required upstream access probe before
+  provisioning and test that no bypass or duplicate consent flag exists.
 - Test both paths: unset acceptance defaults to `Y`, and explicit opt-out refuses
   before download/provision.
 - Run `npa/tests/guardrails/test_third_party_eula_preflight_skill.py`,

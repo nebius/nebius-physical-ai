@@ -109,6 +109,48 @@ def test_isaac_byof_config_routes_image_and_preserves_cli_opt_out() -> None:
     assert task["envs"]["ACCEPT_EULA"] == ""
 
 
+def test_resolved_isaac_image_routes_all_five_raw_shell_sweep_states() -> None:
+    spec = load_spec(NPA_SPECS / "isaac-lab-rl-sweep.yaml")
+    plan = build_plan(spec, run_id="resolved-isaac-sweep")
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="resolved-isaac-sweep",
+        options=SkypilotRenderOptions(
+            image_overrides={"*": "registry.example/npa-isaac-lab:runtime"},
+            materialize_registry_secrets=False,
+            accept_eula=False,
+        ),
+    )
+    tasks = [doc for doc in yaml.safe_load_all(rendered) if doc and doc.get("resources")]
+
+    assert {task["name"] for task in tasks} == {
+        "variant-lr-1e-3",
+        "variant-lr-3e-4",
+        "variant-entropy-0",
+        "variant-entropy-0-01",
+        "select-best",
+    }
+    assert all(task["envs"]["ACCEPT_EULA"] == "" for task in tasks)
+
+
+def test_resolved_non_isaac_image_does_not_create_false_gate() -> None:
+    spec = load_spec(NPA_SPECS / "isaac-lab-rl-sweep.yaml")
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="resolved-ubuntu-control"),
+        run_id="resolved-ubuntu-control",
+        options=SkypilotRenderOptions(
+            image_overrides={"*": "ubuntu:22.04"},
+            materialize_registry_secrets=False,
+        ),
+    )
+    tasks = [doc for doc in yaml.safe_load_all(rendered) if doc and doc.get("resources")]
+
+    assert len(tasks) == 5
+    assert all("ACCEPT_EULA" not in task["envs"] for task in tasks)
+
+
 def test_sonic_stage_setup_installs_torch_stack(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -142,7 +184,7 @@ def test_setup_prefers_the_dependency_complete_baked_npa_interpreter() -> None:
     setup = [doc for doc in yaml.safe_load_all(rendered) if doc][1]["setup"]
 
     candidate_loop = setup.split("for candidate in ", 1)[1].split("; do", 1)[0]
-    assert candidate_loop.index('"$NPA_BAKED_PYTHON"') < candidate_loop.index(
+    assert candidate_loop.index('"${NPA_BAKED_PYTHON:-}"') < candidate_loop.index(
         "sys.executable"
     )
 

@@ -93,7 +93,6 @@ SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
         "headless": "boolean",
         "image": "infra",
         "gpu_type": "infra",
-        "image_variant": "infra",
         "embodiment": "knob",
         "num_envs": "knob",
     },
@@ -154,7 +153,6 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
             "headless",
             "image",
             "gpu_type",
-            "image_variant",
         ),
         params=(
             _p("checkpoint", "checkpoint", "--checkpoint"),
@@ -167,7 +165,6 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
             _p("output_path", "output_path", "--output-path"),
             _p("image", "image", "--image"),
             _p("gpu_type", "gpu_type", "--gpu-type"),
-            _p("image_variant", "image_variant", "--image-variant"),
         ),
     ),
     CapabilityContract(

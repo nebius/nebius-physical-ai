@@ -68,8 +68,6 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     "workbench.groot": (),
 }
 
-OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
-
 # Optional dependency groups a toolRef's stage needs, declared as npa extras in
 # npa/pyproject.toml. A workbench image bakes these already, but a stage running on
 # SkyPilot's default image (no `--image`, npa installed from NPA_SRC_S3_URI) gets only
@@ -933,8 +931,16 @@ def routes_at_an_isaac_image(
     tool_ref: str,
     resources: Mapping[str, Any] | None = None,
     config: Mapping[str, Any] | None = None,
+    *,
+    resolved_image: str = "",
 ) -> bool:
-    """Whether the renderer sends this stage to an Isaac-based runtime."""
+    """Whether the renderer sends this stage to an Isaac-based runtime.
+
+    ``resolved_image`` adds the actual image selected through a global/tool
+    override, registry resolution, or a ``tool://`` reference. The declared
+    scheduler resources alone are insufficient for raw-shell states; semantic
+    tool routes remain Isaac-backed even when a custom image name is opaque.
+    """
 
     if tool_image_key(tool_ref) in ISAAC_IMAGE_TOOLS:
         return True
@@ -957,7 +963,8 @@ def routes_at_an_isaac_image(
         if workflow_config.get("sim") is True:
             return True
     raw = resources or {}
-    image = str(raw.get("image") or "").lower()
+    image = str(resolved_image or raw.get("image") or raw.get("image_id") or "").lower()
+    image = image.removeprefix("docker:")
     if "isaac-lab" in image or "npa-sonic" in image:
         return True
     pod = ((raw.get("kubernetes") or {}).get("pod_config") or {}).get("spec") or {}
@@ -973,6 +980,7 @@ def isaac_eula_envs(
     *,
     resources: Mapping[str, Any] | None = None,
     config: Mapping[str, Any] | None = None,
+    resolved_image: str = "",
     accepted: bool = True,
 ) -> dict[str, str]:
     """Declare NVIDIA's acceptance value for an Isaac stage.
@@ -985,7 +993,9 @@ def isaac_eula_envs(
     expected to know the routing, and a new Isaac toolRef is covered the moment it is added.
     """
 
-    if not routes_at_an_isaac_image(tool_ref, resources, config):
+    if not routes_at_an_isaac_image(
+        tool_ref, resources, config, resolved_image=resolved_image
+    ):
         return {}
     return {ISAAC_EULA_ENV: "Y" if accepted else ""}
 
@@ -1174,7 +1184,7 @@ def default_npa_setup() -> str:
         'npa_python=""\n'
         'alias_target="$(alias python3 2>/dev/null | sed -e "s/^alias python3=//" '
         '-e "s/^\'//" -e "s/\'$//")"\n'
-        'for candidate in "$NPA_BAKED_PYTHON" '
+        'for candidate in "${NPA_BAKED_PYTHON:-}" '
         "\"$(python3 -c 'import sys; print(sys.executable)' "
         '2>/dev/null || true)" "$alias_target" "$(type -P python3 2>/dev/null '
         '|| true)"; do\n'
@@ -1421,13 +1431,6 @@ def secret_env_hints_for_plan(steps: Sequence[PlanStep]) -> tuple[str, ...]:
     seen: set[str] = set()
     for step in steps:
         tool_ref = step.tool_ref or ""
-        if tool_ref == "workbench.byof.repo" and any(
-            value == "openpi" or "pi05_droid_jointpos_polaris" in value
-            for value in step.argv
-        ):
-            if OPENPI_TERMS_ENV not in seen:
-                seen.add(OPENPI_TERMS_ENV)
-                hints.append(OPENPI_TERMS_ENV)
         matches = [
             (prefix, names)
             for prefix, names in SECRET_ENV_HINTS.items()
@@ -1624,6 +1627,7 @@ def build_skypilot_task_doc(
             str(scheduler_task.get("tool_ref") or ""),
             resources=scheduler_task.get("resources") or {},
             config=spec.config,
+            resolved_image=image,
             accepted=options.accept_eula,
         )
     )

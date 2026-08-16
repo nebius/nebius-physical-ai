@@ -15,10 +15,9 @@
 #   at all - the bootstrap downloads and executes code, so shrinking its write surface in
 #   steady state is worth doing.
 #
-# EULA ACCEPTANCE IS YOURS TO GIVE
-#   This Job is where you, the operator, accept NVIDIA's terms. The images never bake
-#   acceptance; without the two variables below the Job exits 78 and downloads nothing.
-#   See the links in the bootstrap's refusal message.
+# EULA POLICY
+#   NPA defaults acceptance on for non-interactive Isaac workflows. The image never
+#   bakes this runtime state; set an empty or recognized negative value to opt out.
 #
 # USAGE
 #   1. Pick a volume (see the two options below) and set NPA_ISAAC_CACHE_DIR to its mount.

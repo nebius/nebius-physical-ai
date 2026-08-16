@@ -413,7 +413,7 @@ ensure() {
 }
 
 status() {
-  local base_python target
+  local base_python target acceptance_state
   if base_python="$(resolve_base_python)"; then
     target="${CACHE_DIR}/v/$(cache_stamp "$base_python")"
   else
@@ -430,8 +430,10 @@ status() {
   else
     printf 'ready=no\n'
   fi
+  acceptance_state="$(_acceptance_state "$ACCEPT_EULA")"
+  printf 'eula_state=%s\n' "$acceptance_state"
   printf 'eula_accepted=%s\n' \
-    "$([ "${ACCEPT_EULA:-}" = Y ] && echo yes || echo no)"
+    "$([ "$acceptance_state" = accepted ] && echo yes || echo no)"
 }
 
 usage() {

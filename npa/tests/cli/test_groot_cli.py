@@ -12,6 +12,7 @@ import pytest
 from typer.testing import CliRunner
 
 from npa.cli.groot import (
+    COSMOS_REASON_MODEL,
     COSMOS_REASON_REVISION,
     DEFAULT_MODEL,
     GROOT_CONTAINER_ENV_FILE,
@@ -191,7 +192,50 @@ def test_groot_deploy_dry_run_defaults_to_l40s(mocker) -> None:
     assert "http://<pending>:8080" in result.output
     assert [call.args for call in validate_hf_access.call_args_list] == [
         ("hf-test", DEFAULT_MODEL),
+        ("hf-test", COSMOS_REASON_MODEL),
     ]
+    init.assert_not_called()
+    apply.assert_not_called()
+
+
+def test_groot_deploy_checks_cosmos_reason_access_before_provisioning(mocker) -> None:
+    mocker.patch("npa.cli.groot.resolve_environment", return_value=None)
+    mocker.patch(
+        "npa.cli.groot.resolve_credentials",
+        return_value=CredentialsConfig(tokens={"HF_TOKEN": "hf-test"}),
+    )
+
+    def validate(_token, repo):
+        if repo == COSMOS_REASON_MODEL:
+            return SimpleNamespace(ok=False, error="HF token lacks Cosmos-Reason access")
+        return SimpleNamespace(ok=True, error="")
+
+    mocker.patch("npa.cli.groot.validate_hf_access", side_effect=validate)
+    mocker.patch("npa.cli.groot.list_projects", return_value={})
+    init = mocker.patch("npa.cli.groot.provisioner.init")
+    apply = mocker.patch("npa.cli.groot.provisioner.apply")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "-p",
+            "proj",
+            "-n",
+            "groot",
+            "deploy",
+            "--project-id",
+            "project",
+            "--tenant-id",
+            "tenant",
+            "--region",
+            "eu-north1",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Cosmos-Reason access" in result.output
     init.assert_not_called()
     apply.assert_not_called()
 
@@ -669,7 +713,6 @@ def test_groot_byovm_deploy_injects_s3_credentials_into_env(mocker) -> None:
             "nebius_api_key=key",
             "--tf-var",
             "nebius_secret_key=secret",
-            "--skip-model-check",
             "--verify-env",
             "--no-auto-serve",
         ],
@@ -747,7 +790,6 @@ def test_groot_deploy_auto_serve_loads_model(mocker) -> None:
             "eu-north1",
             "--server-port",
             "8081",
-            "--skip-model-check",
             "--robot-embodiment",
             "REAL_G1",
         ],
@@ -807,7 +849,6 @@ def test_groot_deploy_auto_serve_skips_without_real_embodiment(mocker) -> None:
             "eu-north1",
             "--server-port",
             "8081",
-            "--skip-model-check",
         ],
     )
 
@@ -871,7 +912,6 @@ def test_groot_byovm_deploy_injects_ngc_credentials_into_env(mocker) -> None:
             "~/.ssh/byovm",
             "--region",
             "eu-north1",
-            "--skip-model-check",
             "--verify-env",
             "--no-auto-serve",
         ],
@@ -1191,7 +1231,6 @@ def test_groot_byovm_deploy_calls_apply_storage_env_vars(mocker) -> None:
             "~/.ssh/byovm",
             "--region",
             "eu-north1",
-            "--skip-model-check",
             "--no-auto-serve",
         ],
     )

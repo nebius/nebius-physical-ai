@@ -92,9 +92,17 @@ def _patch_successful_deploy(mocker, case: DeployIngressCase, *, instance_id: st
 
     if case.tool == "cosmos":
         mocker.patch(f"{module}.resolve_credentials", return_value=SimpleNamespace(hf_token="", tokens={}))
+        mocker.patch(
+            f"{module}.validate_hf_access",
+            return_value=SimpleNamespace(ok=True, error=""),
+        )
         mocker.patch(f"{module}.health_check_auto", return_value=(True, ""))
     elif case.tool == "groot":
         mocker.patch(f"{module}.resolve_credentials", return_value=CredentialsConfig(tokens={}))
+        mocker.patch(
+            f"{module}.validate_hf_access",
+            return_value=SimpleNamespace(ok=True, error=""),
+        )
         mocker.patch(f"{module}.health_check_auto", return_value=(True, ""))
         mocker.patch(f"{module}.write_remote_docker_env_file")
     else:
@@ -129,10 +137,7 @@ def _deploy_args(case: DeployIngressCase, tmp_path: Path) -> list[str]:
             "gpu-h100-sxm",
             "--gpu-preset",
             "1gpu-16vcpu-200gb",
-            "--skip-model-check",
         ])
-    elif case.tool == "groot":
-        args.append("--skip-model-check")
     return args
 
 

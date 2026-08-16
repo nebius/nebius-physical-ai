@@ -27,7 +27,6 @@ from npa.serverless_common import (
     SubnetResolutionError,
     build_serverless_output_upload_cmd,
     resolve_gpu_platform,
-    resolve_isaac_eula_acceptance,
     resolve_subnet,
     split_serverless_env,
     validate_output_path,
@@ -101,7 +100,6 @@ def _run_serverless_train(
     output_path: str,
     project_id: str,
     image: str,
-    image_variant: str,
     gpu_type: str,
     gpu_count: int,
     gpu_preset: str,
@@ -119,8 +117,8 @@ def _run_serverless_train(
     if not accept_eula:
         fail(
             "Refusing SONIC serverless Isaac training because EULA acceptance "
-            "was explicitly disabled. No expensive action has begun. Use "
-            "--accept-eula after accepting the named NVIDIA terms."
+            "was explicitly disabled. No expensive action has begun. Omit "
+            "--no-accept-eula to use the default ACCEPT_EULA=Y policy."
         )
     try:
         validate_output_path(output_path)
@@ -154,7 +152,6 @@ def _run_serverless_train(
             ctx.project,
             image,
             gpu_target=platform,
-            image_variant=image_variant,
         )
     except ValueError as exc:
         fail(str(exc))
@@ -339,16 +336,8 @@ def train_cmd(
         True,
         "--accept-eula/--no-accept-eula",
         help=(
-            "Acceptance of NVIDIA's Omniverse / Isaac Sim licence terms. "
-            "Enabled by default; use --no-accept-eula to opt out."
-        ),
-    ),
-    accept_nvidia_eula: str | None = typer.Option(
-        None,
-        "--accept-nvidia-eula",
-        help=(
-            "Deprecated compatibility alias. Use --accept-eula or "
-            "--no-accept-eula; legacy Y/YES/1/TRUE and negative spellings are accepted."
+            "Isaac EULA routing policy. ACCEPT_EULA=Y is the default; use "
+            "--no-accept-eula to opt out."
         ),
     ),
     seed: int = typer.Option(
@@ -370,11 +359,6 @@ def train_cmd(
     ),
     image: str = typer.Option(
         "", "--image", help="Container image for the serverless Job."
-    ),
-    image_variant: str = typer.Option(
-        "",
-        "--image-variant",
-        help="SONIC image manifest variant. Defaults from --gpu-type.",
     ),
     gpu_type: str = typer.Option(
         "l40s", "--gpu-type", help="GPU type for serverless Jobs."
@@ -405,28 +389,6 @@ def train_cmd(
     ),
 ) -> None:
     """Run SONIC Isaac Lab training or smoke validation."""
-
-    if accept_nvidia_eula is not None:
-        typer.echo(
-            "Warning: --accept-nvidia-eula is deprecated; use --accept-eula or "
-            "--no-accept-eula.",
-            err=True,
-        )
-        try:
-            legacy_accepts = (
-                resolve_isaac_eula_acceptance(
-                    {"ACCEPT_EULA": accept_nvidia_eula}
-                )
-                == "Y"
-            )
-        except ValueError as exc:
-            fail(str(exc))
-        if not accept_eula and legacy_accepts:
-            fail(
-                "Conflicting EULA options: --no-accept-eula cannot be combined "
-                "with an affirmative --accept-nvidia-eula value."
-            )
-        accept_eula = accept_eula and legacy_accepts
 
     try:
         training_config = build_training_config(
@@ -480,7 +442,6 @@ def train_cmd(
             output_path=checkpoint_output_path,
             project_id=project_id,
             image=image,
-            image_variant=image_variant,
             gpu_type=gpu_type,
             gpu_count=gpu_count,
             gpu_preset=gpu_preset,

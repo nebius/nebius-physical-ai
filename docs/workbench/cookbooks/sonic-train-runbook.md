@@ -10,8 +10,9 @@ runtime-fetch SONIC image. The job validates that Isaac Lab and SONIC are
 available in the same container, writes `sonic_smoke_result.json`, and uploads
 artifacts to the requested S3 prefix.
 
-The image contains no Isaac or NVIDIA driver userspace. It acquires pinned Isaac
-dependencies only for an operation authorized with `--accept-eula`, then uses
+The image contains no Isaac or NVIDIA driver userspace. It defaults the run-scoped
+Isaac route to `ACCEPT_EULA=Y` (with `--no-accept-eula` as an explicit opt-out),
+then acquires pinned Isaac dependencies and uses
 `gear_sonic` from `NVlabs/GR00T-WholeBodyControl`. The default build
 skips optional C++ deploy compilation; use `BUILD_SONIC_DEPLOY=1` only when
 validating the TensorRT/ONNX Runtime deploy path.

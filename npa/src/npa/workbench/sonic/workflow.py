@@ -224,8 +224,8 @@ def submit_sonic_workflow(
 
     if not accept_eula:
         raise ValueError(
-            "SONIC uses Isaac Sim and requires explicit run-scoped acceptance; "
-            "pass accept_eula=True only after accepting NVIDIA's documented terms."
+            "SONIC uses Isaac Sim and the caller explicitly opted out; omit the "
+            "opt-out to use NPA's default ACCEPT_EULA=Y policy."
         )
 
     plan = materialize_sonic_workflow(
