@@ -46,6 +46,12 @@ from npa.fleet.lifecycle import (
     fleet_status as status,
     plan_fleet as plan,
 )
+from npa.fleet.mig import (
+    MigSpec,
+    MigVerificationReport,
+    verify_mig_cluster,
+    wait_for_mig_ready,
+)
 from npa.fleet.spec import (
     ClusterSpec,
     FleetSpec,
@@ -64,6 +70,10 @@ __all__ = [
     "ProjectSpec",
     "ClusterSpec",
     "NodePoolSpec",
+    "MigSpec",
+    "MigVerificationReport",
+    "verify_mig_cluster",
+    "wait_for_mig_ready",
     "load_spec",
     "spec_from_mapping",
 ]

@@ -14,6 +14,7 @@ plan  Show the resolved deployment plan without touching infrastructure.
 deploy  Deploy the fleet: resolve/create projects and apply each cluster.
 destroy  Destroy the fleet's spec-declared clusters (best-effort, per-target).
 status  Show the last-known deployment state for the fleet.
+verify-mig  Verify exact RTX PRO 6000 MIG labels, operands, and kubelet resources.
 ```
 
 ## Options
@@ -30,6 +31,7 @@ status  Show the last-known deployment state for the fleet.
 | `deploy` | Deploy the fleet: resolve/create projects and apply each cluster. |
 | `destroy` | Destroy the fleet's spec-declared clusters (best-effort, per-target). |
 | `status` | Show the last-known deployment state for the fleet. |
+| `verify-mig` | Verify exact RTX PRO 6000 MIG labels, operands, and kubelet resources. |
 
 ## Examples
 

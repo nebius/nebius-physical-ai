@@ -177,15 +177,13 @@ def inspect_recipe_gpu_driver_capabilities(
 ) -> RecipeGpuDriverCapabilities:
     """Inspect a materialized k8s-training root without executing Terraform."""
 
-    variables_path = recipe_dir / "variables.tf"
     main_path = recipe_dir / "main.tf"
     helm_path = recipe_dir / "helm.tf"
     locals_path = recipe_dir / "locals.tf"
-    variables = variables_path.read_text() if variables_path.is_file() else ""
     main = main_path.read_text() if main_path.is_file() else ""
     helm = helm_path.read_text() if helm_path.is_file() else ""
     locals_tf = locals_path.read_text() if locals_path.is_file() else ""
-    declared = set(_VARIABLE_RE.findall(variables))
+    declared = inspect_recipe_declared_variables(recipe_dir)
     fixed = _FIXED_PRESET_RE.search(locals_tf)
     return RecipeGpuDriverCapabilities(
         driverfull_flag="gpu_nodes_driverfull_image" in declared,
@@ -199,6 +197,19 @@ def inspect_recipe_gpu_driver_capabilities(
         ),
         fixed_managed_preset=fixed.group(1) if fixed else "",
     )
+
+
+def inspect_recipe_declared_variables(recipe_dir: Path) -> frozenset[str]:
+    """Return Terraform variables declared by a materialized recipe root.
+
+    Keeping this parser shared with GPU-driver capability detection prevents
+    Fleet's additive feature checks from drifting onto a second, subtly
+    different interpretation of ``variables.tf``.
+    """
+
+    variables_path = recipe_dir / "variables.tf"
+    variables = variables_path.read_text() if variables_path.is_file() else ""
+    return frozenset(_VARIABLE_RE.findall(variables))
 
 
 def validate_recipe_gpu_driver_compatibility(
