@@ -17,11 +17,11 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-import tempfile
 import time
 from typing import Any, Mapping, Sequence
 from urllib.parse import urlencode, urlparse
 import urllib.request
+import uuid
 import zipfile
 
 from npa.workflows.byof.openpi import (
@@ -140,6 +140,24 @@ def _read_json_uri(uri: str) -> dict[str, Any]:
     return value
 
 
+def _uri_exists(uri: str) -> bool:
+    parsed = urlparse(uri)
+    if parsed.scheme == "s3":
+        bucket, key = _parse_s3_uri(uri)
+        try:
+            _s3_client().head_object(Bucket=bucket, Key=key)
+        except Exception as exc:
+            response = getattr(exc, "response", {}) or {}
+            code = str((response.get("Error") or {}).get("Code") or "")
+            status = (response.get("ResponseMetadata") or {}).get("HTTPStatusCode")
+            if code in {"404", "NoSuchKey", "NotFound"} or status == 404:
+                return False
+            raise
+        return True
+    path = Path(parsed.path if parsed.scheme == "file" else uri)
+    return path.exists()
+
+
 def _terms_refusal() -> dict[str, object]:
     return {
         "schema": "npa.workbench.openpi.terms-gate.v1",
@@ -153,14 +171,72 @@ def _terms_refusal() -> dict[str, object]:
     }
 
 
-def _gate_or_exit(output_uri: str) -> None:
+def _terms_diagnostic_uri(
+    output_uri: str,
+    *,
+    diagnostic_root_uri: str,
+    stage: str,
+    attempt_id: str,
+) -> str:
+    """Return a sibling, attempt-scoped URI that can never poison success output."""
+
+    safe_stage = re.sub(r"[^a-z0-9-]+", "-", stage.strip().lower()).strip("-")
+    if not safe_stage:
+        safe_stage = "unknown-stage"
+    filename = f"{safe_stage}-{attempt_id}.json"
+    root = diagnostic_root_uri.strip()
+    if root:
+        return f"{root.rstrip('/')}/{filename}"
+    parsed = urlparse(output_uri)
+    if parsed.scheme == "s3":
+        bucket, key = _parse_s3_uri(output_uri)
+        parent = key.rsplit("/", 1)[0] if "/" in key else ""
+        prefix = f"{parent}/terms-refusals" if parent else "terms-refusals"
+        return f"s3://{bucket}/{prefix}/{filename}"
+    path = Path(parsed.path if parsed.scheme == "file" else output_uri)
+    diagnostic = path.parent / "terms-refusals" / filename
+    return f"file://{diagnostic}" if parsed.scheme == "file" else str(diagnostic)
+
+
+def _write_terms_refusal_diagnostic(
+    output_uri: str,
+    *,
+    diagnostic_root_uri: str = "",
+    stage: str,
+    attempt_id: str | None = None,
+) -> tuple[str, dict[str, object]]:
+    """Publish refusal evidence separately while preserving write-once success."""
+
+    resolved_attempt = attempt_id or uuid.uuid4().hex
+    diagnostic_uri = _terms_diagnostic_uri(
+        output_uri,
+        diagnostic_root_uri=diagnostic_root_uri,
+        stage=stage,
+        attempt_id=resolved_attempt,
+    )
+    refusal = {
+        **_terms_refusal(),
+        "attempt_id": resolved_attempt,
+        "stage": stage,
+        "declared_success_output_uri": output_uri,
+        "diagnostic_uri": diagnostic_uri,
+    }
+    _write_json_uri(diagnostic_uri, refusal)
+    return diagnostic_uri, refusal
+
+
+def _gate_or_exit(
+    output_uri: str, *, diagnostic_root_uri: str = "", stage: str
+) -> None:
     """Exit 64 before any OpenPI/JAX import or checkpoint access."""
 
     if os.environ.get(OPENPI_TERMS_ENV) == OPENPI_TERMS_ACCEPTED_VALUE:
         return
-    refusal = _terms_refusal()
-    if output_uri:
-        _write_json_uri(output_uri, refusal)
+    _diagnostic_uri, refusal = _write_terms_refusal_diagnostic(
+        output_uri,
+        diagnostic_root_uri=diagnostic_root_uri,
+        stage=stage,
+    )
     print(json.dumps(refusal, sort_keys=True), flush=True)
     raise SystemExit(64)
 
@@ -404,6 +480,7 @@ def _validate_dataset_arrays(
     if not isinstance(splits, Mapping):
         raise OpenPIPipelineError("dataset manifest has no split map")
     verified_hashes: dict[str, set[str]] = {}
+    verified_ids: dict[str, set[str]] = {}
     for split in ("train", "heldout"):
         split_manifest = splits.get(split)
         if not isinstance(split_manifest, Mapping):
@@ -416,8 +493,17 @@ def _validate_dataset_arrays(
             "gripper_position": ((count, 1), np.dtype("float32")),
             "actions": ((count, ACTION_HORIZON, ACTION_DIM), np.dtype("float32")),
         }
+        required: dict[str, Any] = {}
+        for key in (*expected, "sample_ids", "prompts"):
+            array_key = f"{split}_{key}"
+            if array_key not in arrays:
+                raise OpenPIPipelineError(
+                    "miniature dataset archive schema is missing required array "
+                    f"{array_key!r} for the {split!r} split"
+                )
+            required[key] = arrays[array_key]
         for key, (shape, dtype) in expected.items():
-            value = np.asarray(arrays[f"{split}_{key}"])
+            value = np.asarray(required[key])
             if (
                 value.shape != shape
                 or value.dtype != dtype
@@ -426,7 +512,7 @@ def _validate_dataset_arrays(
                 raise OpenPIPipelineError(
                     f"{split}_{key} violates schema: {value.shape} {value.dtype}"
                 )
-        ids = [str(value) for value in np.asarray(arrays[f"{split}_sample_ids"])]
+        ids = [str(value) for value in np.asarray(required["sample_ids"])]
         if ids != list(split_manifest.get("sample_ids", [])):
             raise OpenPIPipelineError(f"{split} sample IDs do not match manifest")
         if len(set(ids)) != len(ids):
@@ -434,12 +520,12 @@ def _validate_dataset_arrays(
         hashes = [
             _sample_hash(
                 {
-                    "exterior_image": arrays[f"{split}_exterior_image"][index],
-                    "wrist_image": arrays[f"{split}_wrist_image"][index],
-                    "joint_position": arrays[f"{split}_joint_position"][index],
-                    "gripper_position": arrays[f"{split}_gripper_position"][index],
-                    "actions": arrays[f"{split}_actions"][index],
-                    "prompt": str(arrays[f"{split}_prompts"][index]),
+                    "exterior_image": required["exterior_image"][index],
+                    "wrist_image": required["wrist_image"][index],
+                    "joint_position": required["joint_position"][index],
+                    "gripper_position": required["gripper_position"][index],
+                    "actions": required["actions"][index],
+                    "prompt": str(required["prompts"][index]),
                 }
             )
             for index in range(count)
@@ -449,8 +535,9 @@ def _validate_dataset_arrays(
                 f"{split} sample content hashes do not match manifest"
             )
         verified_hashes[split] = set(hashes)
-    train_ids = set(str(value) for value in np.asarray(arrays["train_sample_ids"]))
-    heldout_ids = set(str(value) for value in np.asarray(arrays["heldout_sample_ids"]))
+        verified_ids[split] = set(ids)
+    train_ids = verified_ids["train"]
+    heldout_ids = verified_ids["heldout"]
     id_intersection = sorted(train_ids & heldout_ids)
     hash_intersection = sorted(verified_hashes["train"] & verified_hashes["heldout"])
     if id_intersection:
@@ -700,7 +787,11 @@ def _hardware_evidence(
 
 
 def _direct(args: argparse.Namespace) -> int:
-    _gate_or_exit(args.output_uri)
+    _gate_or_exit(
+        args.output_uri,
+        diagnostic_root_uri=args.terms_diagnostic_root_uri,
+        stage="direct",
+    )
     _validate_runtime_image(args.runtime_image)
     _set_runtime_cache(args.work_dir, "direct")
     repo_root = Path(args.repo_root)
@@ -1038,6 +1129,12 @@ def _tree_update_l2(before: object, after: object) -> float:
     return float(total**0.5)
 
 
+def _optimizer_step_rng(random_module: Any, train_rng: Any, step: int) -> Any:
+    """Derive a deterministic, distinct noise key for each optimizer step."""
+
+    return random_module.fold_in(train_rng, step)
+
+
 def _memory_stats(device: Any) -> dict[str, object]:
     getter = getattr(device, "memory_stats", None)
     if not callable(getter):
@@ -1113,7 +1210,11 @@ def _download_checkpoint(output_uri: str, local_root: Path) -> dict[str, object]
 
 
 def _train(args: argparse.Namespace) -> int:
-    _gate_or_exit(args.output_uri)
+    _gate_or_exit(
+        args.output_uri,
+        diagnostic_root_uri=args.terms_diagnostic_root_uri,
+        stage="train",
+    )
     _validate_runtime_image(args.runtime_image)
     _set_runtime_cache(args.work_dir, "train")
     repo_root = Path(args.repo_root)
@@ -1215,7 +1316,8 @@ def _train(args: argparse.Namespace) -> int:
     optimize_started = time.perf_counter()
     with openpi_sharding.set_mesh(mesh):
         for step in range(args.train_steps):
-            state, info = train_step(train_rng, state, batch)
+            step_rng = _optimizer_step_rng(jax.random, train_rng, step)
+            state, info = train_step(step_rng, state, batch)
             jax.block_until_ready(state)
             row = {
                 key: float(np.asarray(jax.device_get(value)))
@@ -1332,7 +1434,11 @@ def _train(args: argparse.Namespace) -> int:
 
 
 def _evaluate(args: argparse.Namespace) -> int:
-    _gate_or_exit(args.output_uri)
+    _gate_or_exit(
+        args.output_uri,
+        diagnostic_root_uri=args.terms_diagnostic_root_uri,
+        stage="evaluate",
+    )
     _validate_runtime_image(args.runtime_image)
     _set_runtime_cache(args.work_dir, "evaluate")
     repo_root = Path(args.repo_root)
@@ -1549,34 +1655,50 @@ def _negative_gate(args: argparse.Namespace) -> int:
 
     _require_parent_acceptance()
     _validate_runtime_image(args.runtime_image)
-    with tempfile.TemporaryDirectory(prefix="npa-openpi-negative-") as directory:
-        refusal_path = Path(directory) / "refusal.json"
-        child_env = dict(os.environ)
-        child_env.pop(OPENPI_TERMS_ENV, None)
-        command = [
-            sys.executable,
-            "-m",
-            "npa.workflows.byof.openpi_pipeline",
-            "direct",
-            "--output-uri",
-            str(refusal_path),
-            "--runtime-image",
-            args.runtime_image,
-            "--repo-root",
-            args.repo_root,
-        ]
-        completed = subprocess.run(
-            command, env=child_env, check=False, capture_output=True, text=True
+    child_env = dict(os.environ)
+    child_env.pop(OPENPI_TERMS_ENV, None)
+    command = [
+        sys.executable,
+        "-m",
+        "npa.workflows.byof.openpi_pipeline",
+        "direct",
+        "--output-uri",
+        args.output_uri,
+        "--terms-diagnostic-root-uri",
+        args.terms_diagnostic_root_uri,
+        "--runtime-image",
+        args.runtime_image,
+        "--repo-root",
+        args.repo_root,
+    ]
+    completed = subprocess.run(
+        command, env=child_env, check=False, capture_output=True, text=True
+    )
+    try:
+        refusal = json.loads(completed.stdout.strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError) as exc:
+        raise OpenPIPipelineError(
+            "negative terms child emitted no valid refusal evidence: "
+            f"rc={completed.returncode}; stderr={completed.stderr[-2000:]}"
+        ) from exc
+    diagnostic_uri = str(refusal.get("diagnostic_uri", ""))
+    if completed.returncode != 64 or not diagnostic_uri:
+        raise OpenPIPipelineError(
+            f"negative terms child did not fail closed: rc={completed.returncode}"
         )
-        if completed.returncode != 64 or not refusal_path.is_file():
-            raise OpenPIPipelineError(
-                f"negative terms child did not fail closed: rc={completed.returncode}"
-            )
-        refusal = json.loads(refusal_path.read_text(encoding="utf-8"))
-    if refusal != _terms_refusal():
+    persisted_refusal = _read_json_uri(diagnostic_uri)
+    if persisted_refusal != refusal:
+        raise OpenPIPipelineError(
+            "negative terms child diagnostic readback differs from emitted evidence"
+        )
+    if _uri_exists(args.output_uri):
+        raise OpenPIPipelineError(
+            "negative terms child poisoned its declared success output URI"
+        )
+    if any(refusal.get(key) != value for key, value in _terms_refusal().items()):
         raise OpenPIPipelineError(f"unexpected negative terms artifact: {refusal}")
     result: dict[str, object] = {
-        **refusal,
+        **_terms_refusal(),
         "schema": "npa.workbench.openpi.live-negative-terms-gate.v1",
         "status": "passed",
         "tested_child_status": "refused",
@@ -1584,6 +1706,14 @@ def _negative_gate(args: argparse.Namespace) -> int:
         "execution_scope": "live_kubernetes_workload",
         "runtime_image": args.runtime_image,
         "accepted_checkpoint_fetch_started_after_probe": False,
+        "accepted_retry_same_logical_output_uri": True,
+        # Preserve attribution in the accepted parent while the complete refusal
+        # remains independently durable at its attempt-scoped diagnostic URI.
+        "tested_child_refusal": {
+            **refusal,
+            "diagnostic_persistence": "separate_attempt_scoped_uri",
+            "declared_success_output_uri_untouched": True,
+        },
     }
     _write_json_uri(args.output_uri, result)
     print(json.dumps(result, sort_keys=True), flush=True)
@@ -1604,12 +1734,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     negative = commands.add_parser("negative-gate")
     negative.add_argument("--output-uri", required=True)
+    negative.add_argument("--terms-diagnostic-root-uri", default="")
     negative.add_argument("--runtime-image", required=True)
     negative.add_argument("--repo-root", default="/opt/byof")
     negative.set_defaults(func=_negative_gate)
 
     def add_runtime_args(command: argparse.ArgumentParser) -> None:
         command.add_argument("--output-uri", required=True)
+        command.add_argument("--terms-diagnostic-root-uri", default="")
         command.add_argument("--runtime-image", required=True)
         command.add_argument("--repo-root", default="/opt/byof")
         command.add_argument("--expected-gpu-type", default="")

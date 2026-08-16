@@ -10,6 +10,7 @@ import pytest
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 from npa.orchestration.npa_workflow.skypilot_render import secret_env_hints_for_plan
+from npa.orchestration.npa_workflow.submit import load_spec_for_submit
 from npa.workflows.byof import openpi_pipeline as pipeline
 from npa.workflows.byof import openpi_service as service
 from npa.workflows.byof import openpi_service_rbac as service_rbac
@@ -31,7 +32,8 @@ def test_terms_gate_exits_before_openpi_import_or_checkpoint_fetch(
 ) -> None:
     import sys
 
-    output = tmp_path / "refusal.json"
+    output = tmp_path / "success.json"
+    diagnostics = tmp_path / "attempt-diagnostics"
     monkeypatch.delenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", raising=False)
     before = {
         name for name in sys.modules if name == "openpi" or name.startswith("openpi.")
@@ -43,17 +45,98 @@ def test_terms_gate_exits_before_openpi_import_or_checkpoint_fetch(
                 "direct",
                 "--output-uri",
                 str(output),
+                "--terms-diagnostic-root-uri",
+                str(diagnostics),
                 "--runtime-image",
                 DIGEST_IMAGE,
             ]
         )
 
     assert raised.value.code == 64
-    assert json.loads(output.read_text(encoding="utf-8")) == pipeline._terms_refusal()
+    assert not output.exists()
+    refusal_paths = list(diagnostics.glob("*.json"))
+    assert len(refusal_paths) == 1
+    refusal = json.loads(refusal_paths[0].read_text(encoding="utf-8"))
+    assert all(
+        refusal[key] == value for key, value in pipeline._terms_refusal().items()
+    )
+    assert refusal["declared_success_output_uri"] == str(output)
+    assert refusal["stage"] == "direct"
     after = {
         name for name in sys.modules if name == "openpi" or name.startswith("openpi.")
     }
     assert after == before
+
+    # An accepted retry under the same logical output prefix is not poisoned by
+    # the refusal. Its declared success object remains independently writable.
+    monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", "YES")
+    pipeline._gate_or_exit(
+        str(output), diagnostic_root_uri=str(diagnostics), stage="direct"
+    )
+    success = {"schema": "test.success.v1", "status": "passed"}
+    pipeline._write_json_uri(str(output), success)
+    assert json.loads(output.read_text(encoding="utf-8")) == success
+    assert json.loads(refusal_paths[0].read_text(encoding="utf-8")) == refusal
+
+
+def test_service_terms_refusal_writes_only_attempt_diagnostic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    success = tmp_path / "service-success.json"
+    diagnostic_root = tmp_path / "service-diagnostics"
+    monkeypatch.delenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", raising=False)
+
+    assert (
+        service._run(
+            SimpleNamespace(
+                output_uri=str(success),
+                terms_diagnostic_root_uri=str(diagnostic_root),
+            )
+        )
+        == 64
+    )
+
+    assert not success.exists()
+    diagnostics = list(diagnostic_root.glob("serve-*.json"))
+    assert len(diagnostics) == 1
+    refusal = json.loads(diagnostics[0].read_text(encoding="utf-8"))
+    assert refusal["declared_success_output_uri"] == str(success)
+    assert refusal["stage"] == "serve"
+
+
+def test_negative_gate_persists_refusal_then_writes_accepted_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    success = tmp_path / "reports" / "negative-gate.json"
+    diagnostics = tmp_path / "diagnostics" / "terms-refusals"
+    monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", "YES")
+
+    assert (
+        pipeline.main(
+            [
+                "negative-gate",
+                "--output-uri",
+                str(success),
+                "--terms-diagnostic-root-uri",
+                str(diagnostics),
+                "--runtime-image",
+                DIGEST_IMAGE,
+            ]
+        )
+        == 0
+    )
+
+    result = json.loads(success.read_text(encoding="utf-8"))
+    refusal = result["tested_child_refusal"]
+    assert result["accepted_retry_same_logical_output_uri"] is True
+    assert refusal["declared_success_output_uri"] == str(success)
+    assert refusal["declared_success_output_uri_untouched"] is True
+    assert refusal["diagnostic_persistence"] == "separate_attempt_scoped_uri"
+    diagnostic = Path(refusal["diagnostic_uri"])
+    assert diagnostic.parent == diagnostics
+    persisted = json.loads(diagnostic.read_text(encoding="utf-8"))
+    assert persisted["attempt_id"] == refusal["attempt_id"]
+    assert persisted["status"] == "refused"
 
 
 def test_mini_dataset_is_byte_reproducible_and_split_disjoint(tmp_path: Path) -> None:
@@ -86,6 +169,43 @@ def test_mini_dataset_is_byte_reproducible_and_split_disjoint(tmp_path: Path) ->
     loaded["heldout_joint_position"][0, 0] += np.float32(0.25)
     with pytest.raises(pipeline.OpenPIPipelineError, match="content hashes"):
         pipeline._validate_dataset_arrays(loaded, loaded_manifest)
+
+
+def test_dataset_missing_array_has_schema_context() -> None:
+    arrays, manifest = pipeline.build_mini_dataset(
+        train_samples=2, heldout_samples=1, seed=20260815
+    )
+    del arrays["heldout_actions"]
+
+    with pytest.raises(
+        pipeline.OpenPIPipelineError,
+        match="missing required array 'heldout_actions'.*'heldout' split",
+    ):
+        pipeline._validate_dataset_arrays(arrays, manifest)
+
+
+def test_optimizer_rng_is_folded_by_step_and_deterministic() -> None:
+    class FakeRandom:
+        @staticmethod
+        def fold_in(key: str, step: int) -> tuple[str, int]:
+            return key, step
+
+    first = [
+        pipeline._optimizer_step_rng(FakeRandom, "base-key", step) for step in range(3)
+    ]
+    second = [
+        pipeline._optimizer_step_rng(FakeRandom, "base-key", step) for step in range(3)
+    ]
+    assert (
+        first
+        == second
+        == [
+            ("base-key", 0),
+            ("base-key", 1),
+            ("base-key", 2),
+        ]
+    )
+    assert len(set(first)) == 3
 
 
 def test_action_contract_requires_finite_float64_t_by_eight() -> None:
@@ -155,12 +275,15 @@ def test_service_is_clusterip_digest_pinned_probed_and_cross_pod() -> None:
     assert "nvidia.com/gpu" not in client_container["resources"]["requests"]
     assert server_container["readinessProbe"]["httpGet"]["path"] == "/healthz"
     assert server_container["livenessProbe"]["httpGet"]["path"] == "/healthz"
+    assert deployment["spec"]["progressDeadlineSeconds"] == 1200
+    assert client["spec"]["activeDeadlineSeconds"] == 600
+    assert client["spec"]["backoffLimit"] == 0
     assert deployment["spec"]["template"]["spec"]["nodeSelector"] == {
         "nebius.com/gpu-name": "B200"
     }
     assert client_container["command"][0] == "/opt/venv/bin/python"
     assert "range(2)" in client_container["command"][2]
-    assert "NPA_OPENPI_CLIENT_RESULT=" in client_container["command"][2]
+    assert "/dev/termination-log" in client_container["command"][2]
     assert "NPA_OPENPI_SERVER_HARDWARE=" in server_container["command"][2]
     assert server_container["command"][2].startswith("set -euo pipefail;")
     assert "from npa." not in server_container["command"][2]
@@ -179,6 +302,9 @@ def test_service_is_clusterip_digest_pinned_probed_and_cross_pod() -> None:
     secret_ref = server_container["env"][0]["valueFrom"]["secretKeyRef"]
     assert secret_ref["key"] == "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
     assert "value" not in server_container["env"][0]
+    assert service.service_resource_names("openpi-four-mode-contract") == {
+        key: manifest["metadata"]["name"] for key, manifest in manifests.items()
+    }
 
 
 def test_service_server_hardware_log_is_machine_readable() -> None:
@@ -204,13 +330,25 @@ def test_service_client_job_is_created_only_after_server_phase() -> None:
         def create_namespaced_service(self, _namespace: str, _body: dict) -> None:
             calls.append("service")
 
+        def read_namespaced_secret(self, _name: str, _namespace: str) -> None:
+            raise _Gone()
+
+        def read_namespaced_service(self, _name: str, _namespace: str) -> None:
+            raise _Gone()
+
     class Apps:
         def create_namespaced_deployment(self, _namespace: str, _body: dict) -> None:
             calls.append("deployment")
 
+        def read_namespaced_deployment(self, _name: str, _namespace: str) -> None:
+            raise _Gone()
+
     class Batch:
         def create_namespaced_job(self, _namespace: str, _body: dict) -> None:
             calls.append("client_job")
+
+        def read_namespaced_job(self, _name: str, _namespace: str) -> None:
+            raise _Gone()
 
     manifests = _service_manifests()
     service._create_server_objects(Core(), Apps(), manifests)
@@ -219,7 +357,7 @@ def test_service_client_job_is_created_only_after_server_phase() -> None:
     assert calls == ["secret", "deployment", "service", "client_job"]
 
 
-def test_service_controller_rbac_is_run_owned_and_least_privilege() -> None:
+def test_service_controller_rbac_is_name_scoped_with_qualified_residuals() -> None:
     run_id = "openpi-four-mode-contract"
     service_account = service.controller_service_account_name(run_id)
     manifests = service.build_controller_rbac_manifests(
@@ -246,7 +384,6 @@ def test_service_controller_rbac_is_run_owned_and_least_privilege() -> None:
         "deployments",
         "jobs",
         "pods",
-        "pods/log",
         "secrets",
         "services",
     }
@@ -257,6 +394,26 @@ def test_service_controller_rbac_is_run_owned_and_least_privilege() -> None:
         "list",
     }
     assert "update" not in {verb for rule in rules for verb in rule["verbs"]}
+    assert all("pods/log" not in rule["resources"] for rule in rules)
+    assert all(
+        "delete" not in rule["verbs"] for rule in rules if "pods" in rule["resources"]
+    )
+    exact = {
+        resource: rule["resourceNames"]
+        for rule in rules
+        for resource in rule["resources"]
+        if "resourceNames" in rule
+    }
+    base = service._safe_name(run_id)
+    assert exact == {
+        "services": [f"{base}-policy"],
+        "secrets": [f"{base}-terms"],
+        "deployments": [base],
+        "jobs": [f"{base}-client"],
+    }
+    create_rules = [rule for rule in rules if rule["verbs"] == ["create"]]
+    assert create_rules
+    assert all("resourceNames" not in rule for rule in create_rules)
 
 
 @pytest.mark.parametrize("name", ["Agent-SA", "bad_name", "-leading"])
@@ -286,6 +443,7 @@ def _api_object(manifest: dict) -> SimpleNamespace:
             SimpleNamespace(
                 api_groups=rule["apiGroups"],
                 resources=rule["resources"],
+                resource_names=rule.get("resourceNames", []),
                 verbs=rule["verbs"],
             )
             for rule in manifest["rules"]
@@ -359,6 +517,11 @@ def test_service_controller_rbac_apply_reuse_delete_is_exact() -> None:
 
     applied = service_rbac.apply_controller_rbac(core, rbac, **args)
     assert applied["created"] == ["service_account", "role", "role_binding"]
+    scope = applied["permission_scope"]
+    assert scope["classification"] == "name_scoped_with_kubernetes_residuals"
+    assert scope["foreign_secret_contents_readable"] is False
+    assert scope["pod_logs_readable"] is False
+    assert "least_privilege" not in applied
     reused = service_rbac.apply_controller_rbac(core, rbac, **args)
     assert reused["created"] == []
     assert reused["reused_exact_owned"] == [
@@ -389,6 +552,44 @@ def test_service_controller_rbac_refuses_foreign_preexisting_identity() -> None:
             run_id=run_id,
             namespace="openpi",
             service_account=name,
+        )
+
+
+def test_service_controller_rbac_delete_timeout_has_finalizer_diagnostics() -> None:
+    run_id = "openpi-four-mode-contract"
+    name = service.controller_service_account_name(run_id)
+    desired = service.build_controller_rbac_manifests(
+        run_id=run_id, namespace="openpi", service_account=name
+    )["service_account"]
+
+    class StuckCore(_FakeCoreRbac):
+        def __init__(self) -> None:
+            super().__init__()
+            obj = _api_object(desired)
+            obj.metadata.deletion_timestamp = "2026-08-16T00:00:00Z"
+            obj.metadata.finalizers = ["foreign.example/finalizer"]
+            self.service_accounts[name] = obj
+
+        def delete_namespaced_service_account(
+            self, _name: str, _namespace: str
+        ) -> None:
+            return None
+
+    clock = _FakeClock()
+    with pytest.raises(
+        service.OpenPIServiceError, match="RBAC cleanup incomplete.*finalizer"
+    ):
+        service_rbac._delete_controller_rbac(
+            StuckCore(),
+            _FakeRbacApi(),
+            run_id=run_id,
+            namespace="openpi",
+            service_account=name,
+            only={"service_account"},
+            timeout=2,
+            poll_interval=1,
+            clock=clock,
+            sleep=clock.sleep,
         )
 
 
@@ -468,7 +669,286 @@ def test_service_cleanup_uses_only_exact_names_and_verifies_absence() -> None:
     ]
 
 
-def test_service_cleanup_explicitly_removes_exact_orphan_pod() -> None:
+class _FakeClock:
+    def __init__(self) -> None:
+        self.value = 0.0
+
+    def __call__(self) -> float:
+        return self.value
+
+    def sleep(self, seconds: float) -> None:
+        self.value += seconds
+
+
+def _condition(
+    condition_type: str, status: str, *, reason: str = "", message: str = ""
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        type=condition_type,
+        status=status,
+        reason=reason,
+        message=message,
+    )
+
+
+def _pod(
+    *,
+    name: str = "pod-1",
+    phase: str = "Pending",
+    ready: bool = False,
+    waiting_reason: str = "",
+) -> SimpleNamespace:
+    waiting = (
+        SimpleNamespace(reason=waiting_reason, message="container cannot start")
+        if waiting_reason
+        else None
+    )
+    state = SimpleNamespace(waiting=waiting, terminated=None)
+    return SimpleNamespace(
+        metadata=SimpleNamespace(name=name, uid=f"uid-{name}", labels={}),
+        status=SimpleNamespace(
+            phase=phase,
+            conditions=[_condition("Ready", "True" if ready else "False")],
+            container_statuses=[
+                SimpleNamespace(
+                    name="openpi-server",
+                    ready=ready,
+                    restart_count=0,
+                    state=state,
+                )
+            ],
+        ),
+    )
+
+
+class _WaitCore:
+    def __init__(self, pods: list[object]) -> None:
+        self.pods = pods
+
+    def list_namespaced_pod(self, _namespace: str, label_selector: str = ""):
+        return SimpleNamespace(items=self.pods)
+
+
+class _WaitApps:
+    def __init__(self, deployment: object) -> None:
+        self.deployment = deployment
+
+    def read_namespaced_deployment(self, _name: str, _namespace: str) -> object:
+        return self.deployment
+
+
+def _deployment(*, available: int = 0) -> SimpleNamespace:
+    return SimpleNamespace(
+        status=SimpleNamespace(
+            available_replicas=available,
+            ready_replicas=available,
+            unavailable_replicas=0 if available else 1,
+            conditions=[],
+        )
+    )
+
+
+def test_service_server_wait_success() -> None:
+    pod = _pod(phase="Running", ready=True)
+    assert (
+        service._wait_server_ready(
+            _WaitCore([pod]), _WaitApps(_deployment(available=1)), "default", "server"
+        )
+        is pod
+    )
+
+
+@pytest.mark.parametrize("reason", ["ImagePullBackOff", "ErrImagePull"])
+def test_service_server_wait_terminal_container_failure(reason: str) -> None:
+    with pytest.raises(service.OpenPIServiceError, match=reason):
+        service._wait_server_ready(
+            _WaitCore([_pod(waiting_reason=reason)]),
+            _WaitApps(_deployment()),
+            "default",
+            "server",
+        )
+
+
+def test_service_server_wait_fails_on_unschedulable_missing_gpu_label() -> None:
+    pod = _pod()
+    pod.status.conditions.append(
+        _condition(
+            "PodScheduled",
+            "False",
+            reason="Unschedulable",
+            message="node(s) didn't match nebius.com/gpu-name=B200",
+        )
+    )
+    with pytest.raises(service.OpenPIServiceError, match="Unschedulable.*gpu-name"):
+        service._wait_server_ready(
+            _WaitCore([pod]), _WaitApps(_deployment()), "default", "server"
+        )
+
+
+def test_service_server_wait_fails_on_health_probe_progress_deadline() -> None:
+    deployment = _deployment()
+    deployment.status.conditions = [
+        _condition(
+            "Progressing",
+            "False",
+            reason="ProgressDeadlineExceeded",
+            message="readiness probe never passed",
+        )
+    ]
+    with pytest.raises(
+        service.OpenPIServiceError, match="progress deadline.*readiness probe"
+    ):
+        service._wait_server_ready(
+            _WaitCore([_pod()]), _WaitApps(deployment), "default", "server"
+        )
+
+
+def test_service_server_wait_timeout_has_last_state_without_real_sleep() -> None:
+    clock = _FakeClock()
+    with pytest.raises(service.OpenPIServiceError, match="timed out.*Pending"):
+        service._wait_server_ready(
+            _WaitCore([_pod()]),
+            _WaitApps(_deployment()),
+            "default",
+            "server",
+            timeout=2,
+            poll_interval=1,
+            clock=clock,
+            sleep=clock.sleep,
+        )
+
+
+def test_service_wait_api_uncertainty_fails_closed() -> None:
+    class UncertainApps:
+        def read_namespaced_deployment(self, _name: str, _namespace: str) -> object:
+            raise RuntimeError("API response uncertain")
+
+    with pytest.raises(RuntimeError, match="uncertain"):
+        service._wait_server_ready(_WaitCore([]), UncertainApps(), "default", "server")
+
+
+def test_service_api_uncertainty_after_creation_triggers_exact_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kubernetes import client, config
+
+    monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", "YES")
+    monkeypatch.setattr(config, "load_incluster_config", lambda: None)
+    monkeypatch.setattr(client, "CoreV1Api", object)
+    monkeypatch.setattr(client, "AppsV1Api", object)
+    monkeypatch.setattr(client, "BatchV1Api", object)
+    monkeypatch.setattr(
+        service, "_assert_targets_absent", lambda *_args, **_kwargs: None
+    )
+
+    def create_server(
+        _api: object,
+        _apps: object,
+        _manifests: object,
+        *,
+        created: set[str],
+        **_kwargs: object,
+    ) -> None:
+        created.update({"secret", "deployment", "service"})
+
+    monkeypatch.setattr(service, "_create_server_objects", create_server)
+    monkeypatch.setattr(
+        service,
+        "_wait_server_ready",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("Kubernetes API response uncertain")
+        ),
+    )
+    cleanup_calls: list[set[str]] = []
+
+    def cleanup(
+        *_args: object, created: set[str], **_kwargs: object
+    ) -> dict[str, bool]:
+        cleanup_calls.append(set(created))
+        return {
+            "secret": True,
+            "deployment": True,
+            "service": True,
+            "client_job": True,
+            "pods": True,
+        }
+
+    monkeypatch.setattr(service, "_delete_and_verify", cleanup)
+    args = service.build_parser().parse_args(
+        [
+            "--run-id",
+            "api-uncertain",
+            "--output-uri",
+            "file:///tmp/api-uncertain-service.json",
+            "--cleanup-output-uri",
+            "file:///tmp/api-uncertain-cleanup.json",
+            "--runtime-image",
+            DIGEST_IMAGE,
+            "--checkpoint-uri",
+            "file:///tmp/runtime-only-checkpoint",
+            "--expected-gpu-type",
+            "B200",
+            "--expected-compute-capability",
+            "10.0",
+            "--controller-service-account",
+            service.controller_service_account_name("api-uncertain"),
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="API response uncertain"):
+        service._run(args)
+
+    assert cleanup_calls == [{"secret", "deployment", "service"}]
+
+
+class _WaitBatch:
+    def __init__(self, *, succeeded: int = 0, failed: int = 0) -> None:
+        self.job = SimpleNamespace(
+            status=SimpleNamespace(
+                active=0 if succeeded or failed else 1,
+                succeeded=succeeded,
+                failed=failed,
+                conditions=[],
+            )
+        )
+
+    def read_namespaced_job(self, _name: str, _namespace: str) -> object:
+        return self.job
+
+
+def test_service_client_wait_success_and_terminal_failure() -> None:
+    pod = _pod(name="client", phase="Succeeded")
+    assert (
+        service._wait_client(
+            _WaitCore([pod]), _WaitBatch(succeeded=1), "default", "client"
+        )
+        is pod
+    )
+    with pytest.raises(service.OpenPIServiceError, match="client job failed"):
+        service._wait_client(
+            _WaitCore([_pod(name="client", phase="Failed")]),
+            _WaitBatch(failed=1),
+            "default",
+            "client",
+        )
+
+
+def test_service_client_wait_timeout_has_last_state_without_real_sleep() -> None:
+    clock = _FakeClock()
+    with pytest.raises(service.OpenPIServiceError, match="timed out.*active"):
+        service._wait_client(
+            _WaitCore([_pod(name="client")]),
+            _WaitBatch(),
+            "default",
+            "client",
+            timeout=2,
+            poll_interval=1,
+            clock=clock,
+            sleep=clock.sleep,
+        )
+
+
+def test_service_cleanup_times_out_on_stuck_orphan_pod_without_pod_delete() -> None:
     names = {
         key: value["metadata"]["name"] for key, value in _service_manifests().items()
     }
@@ -489,13 +969,21 @@ def test_service_cleanup_explicitly_removes_exact_orphan_pod() -> None:
     apps = _FakeApps(api.deleted)
     batch = _FakeBatch(api.deleted)
 
-    verified = service._delete_and_verify(
-        api, apps, batch, namespace="default", names=names
-    )
+    clock = _FakeClock()
+    with pytest.raises(service.OpenPIServiceError, match="pod deletion timed out"):
+        service._delete_and_verify(
+            api,
+            apps,
+            batch,
+            namespace="default",
+            names=names,
+            timeout=2,
+            poll_interval=1,
+            clock=clock,
+            sleep=clock.sleep,
+        )
 
-    assert verified["pods"] is True
-    assert api.deleted[-1] == ("pod", "exact-client-pod")
-    assert not api.pods
+    assert all(kind != "pod" for kind, _name in api.deleted)
 
 
 def test_service_preflight_refuses_preexisting_exact_name_without_cleanup() -> None:
@@ -519,7 +1007,7 @@ def test_service_preflight_refuses_preexisting_exact_name_without_cleanup() -> N
     assert api.deleted == []
 
 
-def test_service_partial_create_tracks_only_successful_objects() -> None:
+def test_service_partial_create_tracks_uncertain_identity_for_cleanup() -> None:
     manifests = _service_manifests()
     created: set[str] = set()
 
@@ -530,13 +1018,40 @@ def test_service_partial_create_tracks_only_successful_objects() -> None:
         def create_namespaced_service(self, _namespace: str, _body: dict) -> None:
             raise AssertionError("service must not be reached")
 
+        def read_namespaced_secret(self, _name: str, _namespace: str) -> None:
+            raise _Gone()
+
+        def read_namespaced_service(self, _name: str, _namespace: str) -> None:
+            raise _Gone()
+
     class Apps:
         def create_namespaced_deployment(self, _namespace: str, _body: dict) -> None:
             raise RuntimeError("deployment create failed")
 
+        def read_namespaced_deployment(self, _name: str, _namespace: str) -> None:
+            raise _Gone()
+
     with pytest.raises(RuntimeError, match="deployment create failed"):
         service._create_server_objects(Core(), Apps(), manifests, created=created)
-    assert created == {"secret"}
+    # Deployment identity is deliberately tracked before its create request:
+    # the API response may be lost after a successful server-side create.
+    assert created == {"secret", "deployment"}
+    names = {key: value["metadata"]["name"] for key, value in manifests.items()}
+    cleanup_api = _FakeApi()
+    verified = service._delete_and_verify(
+        cleanup_api,
+        _FakeApps(cleanup_api.deleted),
+        _FakeBatch(cleanup_api.deleted),
+        namespace="default",
+        names=names,
+        created=created,
+        manifests=manifests,
+    )
+    assert all(verified.values())
+    assert cleanup_api.deleted == [
+        ("deployment", names["deployment"]),
+        ("secret", names["secret"]),
+    ]
 
 
 def test_service_cleanup_refuses_foreign_pod_before_deleting_anything() -> None:
@@ -604,9 +1119,36 @@ def test_four_mode_spec_plans_complete_lineage_and_configurable_resources() -> N
         "gpu_scratch_size",
         "gpu_num_nodes",
         "service_namespace",
+        "service_server_ready_timeout_seconds",
+        "service_cleanup_timeout_seconds",
+        "serve_artifact_root_uri",
+        "terms_diagnostic_root_uri",
         "trained_checkpoint_uri",
     ):
         assert f"{configurable}:" in spec_text
+
+
+def test_openpi_serving_output_root_override_keeps_declared_outputs_in_sync() -> None:
+    shared_root = "s3://example-bucket/custom-serving-attempt"
+    spec = load_spec_for_submit(
+        SPEC,
+        config_overrides={"serve_artifact_root_uri": shared_root},
+    )
+    plan = build_plan(spec, run_id="openpi-output-override")
+    serve = next(
+        step for step in plan.steps if step.tool_ref == "workbench.openpi.serve"
+    )
+    assert [item["uri"] for item in serve.outputs] == [
+        f"{shared_root}/service.json",
+        f"{shared_root}/cleanup.json",
+    ]
+    argv = list(serve.argv)
+    assert argv[argv.index("--output-uri") + 1] == f"{shared_root}/service.json"
+    assert argv[argv.index("--cleanup-output-uri") + 1] == (
+        f"{shared_root}/cleanup.json"
+    )
+    assert argv[argv.index("--server-ready-timeout-seconds") + 1] == "1200"
+    assert argv[argv.index("--client-timeout-seconds") + 1] == "600"
 
 
 def test_openpi_gpu_stages_use_pinned_vendor_python_only() -> None:

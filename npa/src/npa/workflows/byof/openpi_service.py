@@ -6,11 +6,12 @@ import argparse
 import base64
 import hashlib
 import json
+import math
 import os
 import re
 import shlex
 import time
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 import urllib.request
 
 from npa.workflows.byof.openpi import (
@@ -26,11 +27,30 @@ from npa.workflows.byof.openpi_pipeline import (
     SOURCE_REF,
     _checkpoint_provenance,
     _redistribution_evidence,
+    _write_terms_refusal_diagnostic,
     _write_json_uri,
 )
 
 MANAGED_BY = "npa-openpi-four-mode"
 SERVER_PORT = 8000
+SERVER_DIAGNOSTICS_PORT = 8001
+DEFAULT_SERVER_READY_TIMEOUT_SECONDS = 1_200.0
+DEFAULT_CLIENT_TIMEOUT_SECONDS = 600.0
+DEFAULT_CLEANUP_TIMEOUT_SECONDS = 180.0
+DEFAULT_POLL_INTERVAL_SECONDS = 5.0
+DEFAULT_API_TIMEOUT_SECONDS = 30.0
+DEFAULT_HTTP_TIMEOUT_SECONDS = 30.0
+_TERMINAL_WAITING_REASONS = frozenset(
+    {
+        "CrashLoopBackOff",
+        "CreateContainerConfigError",
+        "CreateContainerError",
+        "ErrImagePull",
+        "ImagePullBackOff",
+        "InvalidImageName",
+        "RunContainerError",
+    }
+)
 LABELS = {
     "app.kubernetes.io/managed-by": "npa",
     "app.kubernetes.io/part-of": "openpi-four-mode",
@@ -53,10 +73,22 @@ def controller_service_account_name(run_id: str) -> str:
     return f"{_safe_name(run_id)}-ctl"
 
 
+def service_resource_names(run_id: str) -> dict[str, str]:
+    """Return every deterministic Kubernetes identity owned by one service run."""
+
+    base_name = _safe_name(run_id)
+    return {
+        "secret": f"{base_name}-terms",
+        "service": f"{base_name}-policy",
+        "deployment": base_name,
+        "client_job": f"{base_name}-client",
+    }
+
+
 def build_controller_rbac_manifests(
     *, run_id: str, namespace: str, service_account: str
 ) -> dict[str, dict[str, Any]]:
-    """Build least-privilege, exact-identity RBAC for the service control task."""
+    """Build name-scoped RBAC with only unavoidable Kubernetes residual scope."""
 
     if not re.fullmatch(r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?", service_account):
         raise OpenPIServiceError(
@@ -84,27 +116,55 @@ def build_controller_rbac_manifests(
             "annotations": dict(metadata["annotations"]),
         }
 
+    resource_names = service_resource_names(run_id)
     role_rules = [
         {
             "apiGroups": [""],
             "resources": ["pods"],
-            "verbs": ["get", "list", "delete"],
+            # Deployment/Job pod names are controller-generated, and Kubernetes
+            # RBAC cannot constrain list by label selector. This is the only
+            # residual namespace-wide read; pod logs and pod deletion are not
+            # granted.
+            "verbs": ["list"],
         },
-        {"apiGroups": [""], "resources": ["pods/log"], "verbs": ["get"]},
         {
             "apiGroups": [""],
             "resources": ["services", "secrets"],
-            "verbs": ["create", "get", "delete"],
+            "verbs": ["create"],
+        },
+        {
+            "apiGroups": [""],
+            "resources": ["services"],
+            "resourceNames": [resource_names["service"]],
+            "verbs": ["get", "delete"],
+        },
+        {
+            "apiGroups": [""],
+            "resources": ["secrets"],
+            "resourceNames": [resource_names["secret"]],
+            "verbs": ["get", "delete"],
         },
         {
             "apiGroups": ["apps"],
             "resources": ["deployments"],
-            "verbs": ["create", "get", "delete"],
+            "verbs": ["create"],
+        },
+        {
+            "apiGroups": ["apps"],
+            "resources": ["deployments"],
+            "resourceNames": [resource_names["deployment"]],
+            "verbs": ["get", "delete"],
         },
         {
             "apiGroups": ["batch"],
             "resources": ["jobs"],
-            "verbs": ["create", "get", "delete"],
+            "verbs": ["create"],
+        },
+        {
+            "apiGroups": ["batch"],
+            "resources": ["jobs"],
+            "resourceNames": [resource_names["client_job"]],
+            "verbs": ["get", "delete"],
         },
     ]
     return {
@@ -195,15 +255,23 @@ for index in range(2):
         "finite": True,
         "round_trip_ms": round((time.perf_counter() - started) * 1000, 3),
         "server_infer_ms": round(float(response["server_timing"]["infer_ms"]), 3),
-        "first_five_targets": actions[:5].tolist(),
+        "first_five_targets_sha256": __import__("hashlib").sha256(
+            actions[:5].tobytes(order="C")
+        ).hexdigest(),
     })
-print("NPA_OPENPI_CLIENT_RESULT=" + json.dumps({
+result = {
     "schema": "npa.workbench.openpi.cross-pod-client.v1",
     "status": "passed",
     "healthz": health,
     "request_count": len(requests),
     "requests": requests,
-}, sort_keys=True), flush=True)
+}
+encoded = json.dumps(result, sort_keys=True, separators=(",", ":"))
+if len(encoded.encode("utf-8")) > 3900:
+    raise RuntimeError("client evidence exceeds Kubernetes termination-message limit")
+with open("/dev/termination-log", "w", encoding="utf-8") as stream:
+    stream.write(encoded)
+print("NPA_OPENPI_CLIENT_RESULT=" + encoded, flush=True)
 """.strip()
 
 
@@ -289,7 +357,10 @@ result = {
     "xla_platform_version": str(jax_backend.get_backend().platform_version),
     "sm100_probe": sm100_probe,
 }
-print("NPA_OPENPI_SERVER_HARDWARE=" + json.dumps(result, sort_keys=True), flush=True)
+encoded = json.dumps(result, sort_keys=True, separators=(",", ":"))
+with open("/tmp/npa-openpi-server-hardware.json", "w", encoding="utf-8") as stream:
+    stream.write(encoded)
+print("NPA_OPENPI_SERVER_HARDWARE=" + encoded, flush=True)
 """.strip()
 
 
@@ -312,6 +383,8 @@ def build_manifests(
     gpu_node_selector_key: str,
     gpu_node_selector_value: str,
     cache_size: str,
+    server_ready_timeout_seconds: float = DEFAULT_SERVER_READY_TIMEOUT_SECONDS,
+    client_timeout_seconds: float = DEFAULT_CLIENT_TIMEOUT_SECONDS,
 ) -> dict[str, dict[str, Any]]:
     """Build the exact Secret/Deployment/ClusterIP/Job objects as testable data."""
 
@@ -319,13 +392,20 @@ def build_manifests(
         raise OpenPIServiceError("service runtime image must be digest-pinned")
     if gpu_count < 1:
         raise OpenPIServiceError("OpenPI policy server requires at least one GPU")
-    name = _safe_name(run_id)
+    server_ready_timeout_seconds = _validated_positive_seconds(
+        server_ready_timeout_seconds, "server ready timeout"
+    )
+    client_timeout_seconds = _validated_positive_seconds(
+        client_timeout_seconds, "client timeout"
+    )
+    names = service_resource_names(run_id)
+    name = names["deployment"]
     labels = _run_labels(run_id, name)
     selector = {"npa.nebius.ai/cleanup-owner": name, "app": name}
     pod_labels = {**labels, **selector}
-    secret_name = f"{name}-terms"
-    service_name = f"{name}-policy"
-    client_name = f"{name}-client"
+    secret_name = names["secret"]
+    service_name = names["service"]
+    client_name = names["client_job"]
     pull_secrets = [{"name": pull_secret}] if pull_secret else []
     hardware_probe = "/opt/venv/bin/python -c " + shlex.quote(
         _server_hardware_program()
@@ -333,6 +413,8 @@ def build_manifests(
     server_shell = (
         'set -euo pipefail; test "$NPA_OPENPI_ACCEPT_GEMMA_TERMS" = "YES" || exit 64; '
         f"{hardware_probe}; "
+        f"/opt/venv/bin/python -m http.server {SERVER_DIAGNOSTICS_PORT} "
+        "--bind 0.0.0.0 --directory /tmp >/tmp/npa-openpi-diagnostics.log 2>&1 & "
         "checkpoint_dir=$(/opt/venv/bin/python -c 'import os; "
         "from openpi.shared import download; "
         'print(download.maybe_download(os.environ["OPENPI_CHECKPOINT_URI"], token="anon"))\'); '
@@ -357,6 +439,7 @@ def build_manifests(
         "metadata": {"name": name, "namespace": namespace, "labels": labels},
         "spec": {
             "replicas": 1,
+            "progressDeadlineSeconds": max(1, math.ceil(server_ready_timeout_seconds)),
             "selector": {"matchLabels": selector},
             "template": {
                 "metadata": {"labels": pod_labels},
@@ -375,7 +458,11 @@ def build_manifests(
                             "imagePullPolicy": "IfNotPresent",
                             "command": ["/bin/bash", "-lc", server_shell],
                             "ports": [
-                                {"name": "websocket", "containerPort": SERVER_PORT}
+                                {"name": "websocket", "containerPort": SERVER_PORT},
+                                {
+                                    "name": "diagnostics",
+                                    "containerPort": SERVER_DIAGNOSTICS_PORT,
+                                },
                             ],
                             "env": [
                                 {
@@ -453,7 +540,12 @@ def build_manifests(
             "type": "ClusterIP",
             "selector": selector,
             "ports": [
-                {"name": "websocket", "port": SERVER_PORT, "targetPort": SERVER_PORT}
+                {"name": "websocket", "port": SERVER_PORT, "targetPort": SERVER_PORT},
+                {
+                    "name": "diagnostics",
+                    "port": SERVER_DIAGNOSTICS_PORT,
+                    "targetPort": SERVER_DIAGNOSTICS_PORT,
+                },
             ],
         },
     }
@@ -463,6 +555,7 @@ def build_manifests(
         "metadata": {"name": client_name, "namespace": namespace, "labels": labels},
         "spec": {
             "backoffLimit": 0,
+            "activeDeadlineSeconds": max(1, math.ceil(client_timeout_seconds)),
             "template": {
                 "metadata": {"labels": {**labels, "app": client_name}},
                 "spec": {
@@ -509,21 +602,135 @@ def _api_exception_status(exc: Exception) -> int | None:
     return getattr(exc, "status", None)
 
 
+def _validated_positive_seconds(value: float, label: str) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise OpenPIServiceError(f"{label} must be a positive number") from exc
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise OpenPIServiceError(f"{label} must be positive, got {value!r}")
+    return parsed
+
+
+def _api_call(
+    function: Callable[..., Any],
+    *args: object,
+    request_timeout: float,
+    **kwargs: object,
+) -> Any:
+    """Bound Kubernetes API calls; tolerate minimal unit-test doubles."""
+
+    try:
+        return function(
+            *args,
+            **kwargs,
+            _request_timeout=_validated_positive_seconds(
+                request_timeout, "Kubernetes API timeout"
+            ),
+        )
+    except TypeError as exc:
+        if "_request_timeout" not in str(exc):
+            raise
+        return function(*args, **kwargs)
+
+
+def _assert_created_object_owned(
+    obj: object, manifest: Mapping[str, Any], *, kind: str
+) -> None:
+    metadata = getattr(obj, "metadata", None)
+    actual_labels = getattr(metadata, "labels", None) or {}
+    expected_labels = manifest["metadata"].get("labels", {})
+    mismatches = {
+        key: {"expected": value, "actual": actual_labels.get(key)}
+        for key, value in expected_labels.items()
+        if actual_labels.get(key) != value
+    }
+    if mismatches:
+        name = manifest["metadata"]["name"]
+        raise OpenPIServiceError(
+            f"refusing to adopt uncertain {kind} creation for {name!r}: "
+            f"ownership labels differ: {mismatches}"
+        )
+
+
+def _create_exact_object(
+    creator: Callable[..., Any],
+    reader: Callable[..., Any],
+    *,
+    namespace: str,
+    manifest: Mapping[str, Any],
+    kind: str,
+    tracker: set[str],
+    request_timeout: float,
+) -> None:
+    name = str(manifest["metadata"]["name"])
+    try:
+        _api_call(
+            creator,
+            namespace,
+            manifest,
+            request_timeout=request_timeout,
+        )
+    except Exception as create_exc:
+        # The request may have reached the API server even when its response was
+        # lost. Mark the deterministic identity for ownership-checked cleanup.
+        tracker.add(kind)
+        try:
+            existing = _api_call(
+                reader,
+                name,
+                namespace,
+                request_timeout=request_timeout,
+            )
+        except Exception as read_exc:
+            if _api_exception_status(read_exc) == 404:
+                raise create_exc
+            raise OpenPIServiceError(
+                f"{kind} {name!r} creation is uncertain and exact identity "
+                f"could not be read for cleanup: {read_exc}"
+            ) from create_exc
+        _assert_created_object_owned(existing, manifest, kind=kind)
+        raise create_exc
+    tracker.add(kind)
+
+
 def _create_server_objects(
     api: Any,
     apps: Any,
     manifests: Mapping[str, dict[str, Any]],
     *,
     created: set[str] | None = None,
+    request_timeout: float = DEFAULT_API_TIMEOUT_SECONDS,
 ) -> None:
     tracker = created if created is not None else set()
     namespace = manifests["secret"]["metadata"]["namespace"]
-    api.create_namespaced_secret(namespace, manifests["secret"])
-    tracker.add("secret")
-    apps.create_namespaced_deployment(namespace, manifests["deployment"])
-    tracker.add("deployment")
-    api.create_namespaced_service(namespace, manifests["service"])
-    tracker.add("service")
+    _create_exact_object(
+        api.create_namespaced_secret,
+        api.read_namespaced_secret,
+        namespace=namespace,
+        manifest=manifests["secret"],
+        kind="secret",
+        tracker=tracker,
+        request_timeout=request_timeout,
+    )
+    _create_exact_object(
+        apps.create_namespaced_deployment,
+        apps.read_namespaced_deployment,
+        namespace=namespace,
+        manifest=manifests["deployment"],
+        kind="deployment",
+        tracker=tracker,
+        request_timeout=request_timeout,
+    )
+    _create_exact_object(
+        api.create_namespaced_service,
+        api.read_namespaced_service,
+        namespace=namespace,
+        manifest=manifests["service"],
+        kind="service",
+        tracker=tracker,
+        request_timeout=request_timeout,
+    )
 
 
 def _create_client_job(
@@ -531,11 +738,19 @@ def _create_client_job(
     manifests: Mapping[str, dict[str, Any]],
     *,
     created: set[str] | None = None,
+    request_timeout: float = DEFAULT_API_TIMEOUT_SECONDS,
 ) -> None:
     tracker = created if created is not None else set()
     namespace = manifests["client_job"]["metadata"]["namespace"]
-    batch.create_namespaced_job(namespace, manifests["client_job"])
-    tracker.add("client_job")
+    _create_exact_object(
+        batch.create_namespaced_job,
+        batch.read_namespaced_job,
+        namespace=namespace,
+        manifest=manifests["client_job"],
+        kind="client_job",
+        tracker=tracker,
+        request_timeout=request_timeout,
+    )
 
 
 def _assert_targets_absent(
@@ -545,6 +760,7 @@ def _assert_targets_absent(
     *,
     namespace: str,
     names: Mapping[str, str],
+    request_timeout: float = DEFAULT_API_TIMEOUT_SECONDS,
 ) -> None:
     """Fail closed before create if any deterministic target name already exists."""
 
@@ -556,7 +772,12 @@ def _assert_targets_absent(
     )
     for key, reader in readers:
         try:
-            reader(names[key], namespace)
+            _api_call(
+                reader,
+                names[key],
+                namespace,
+                request_timeout=request_timeout,
+            )
         except Exception as exc:
             if _api_exception_status(exc) == 404:
                 continue
@@ -566,7 +787,12 @@ def _assert_targets_absent(
             "run ownership is not proven"
         )
     pod_selector = f"npa.nebius.ai/cleanup-owner={names['deployment']}"
-    pods = api.list_namespaced_pod(namespace, label_selector=pod_selector).items
+    pods = _api_call(
+        api.list_namespaced_pod,
+        namespace,
+        label_selector=pod_selector,
+        request_timeout=request_timeout,
+    ).items
     if pods:
         raise OpenPIServiceError(
             "refusing to create or clean pre-existing pods with the deterministic "
@@ -574,24 +800,122 @@ def _assert_targets_absent(
         )
 
 
-def _pod_failure_message(api: Any, namespace: str, pod: Any) -> str:
-    name = pod.metadata.name
-    try:
-        logs = api.read_namespaced_pod_log(name, namespace, tail_lines=200)
-    except Exception as exc:  # pragma: no cover - diagnostic fallback
-        logs = f"logs unavailable: {exc}"
-    statuses = []
-    for status in pod.status.container_statuses or []:
-        statuses.append(str(status.state))
-    return f"pod {name} failed: statuses={statuses}; logs={logs[-8000:]}"
+def _pod_state(pod: Any) -> dict[str, object]:
+    metadata = getattr(pod, "metadata", None)
+    status = getattr(pod, "status", None)
+    conditions = []
+    for condition in getattr(status, "conditions", None) or []:
+        conditions.append(
+            {
+                "type": str(getattr(condition, "type", "")),
+                "status": str(getattr(condition, "status", "")),
+                "reason": str(getattr(condition, "reason", "") or ""),
+                "message": str(getattr(condition, "message", "") or "")[-2000:],
+            }
+        )
+    containers = []
+    for container in getattr(status, "container_statuses", None) or []:
+        state = getattr(container, "state", None)
+        waiting = getattr(state, "waiting", None)
+        terminated = getattr(state, "terminated", None)
+        containers.append(
+            {
+                "name": str(getattr(container, "name", "")),
+                "ready": bool(getattr(container, "ready", False)),
+                "restart_count": int(getattr(container, "restart_count", 0) or 0),
+                "waiting_reason": str(getattr(waiting, "reason", "") or ""),
+                "waiting_message": str(getattr(waiting, "message", "") or "")[-2000:],
+                "terminated_reason": str(getattr(terminated, "reason", "") or ""),
+                "terminated_message": str(getattr(terminated, "message", "") or "")[
+                    -2000:
+                ],
+                "exit_code": getattr(terminated, "exit_code", None),
+            }
+        )
+    return {
+        "name": str(getattr(metadata, "name", "")),
+        "phase": str(getattr(status, "phase", "") or ""),
+        "conditions": conditions,
+        "containers": containers,
+    }
 
 
-def _wait_server_ready(api: Any, apps: Any, namespace: str, name: str) -> Any:
+def _terminal_pod_problem(pod: Any) -> str:
+    state = _pod_state(pod)
+    if state["phase"] == "Failed":
+        return f"pod entered Failed: {json.dumps(state, sort_keys=True)}"
+    for condition in state["conditions"]:  # type: ignore[union-attr]
+        if (
+            condition["type"] == "PodScheduled"
+            and condition["status"] == "False"
+            and condition["reason"] == "Unschedulable"
+        ):
+            return f"pod is Unschedulable: {json.dumps(state, sort_keys=True)}"
+    for container in state["containers"]:  # type: ignore[union-attr]
+        if container["waiting_reason"] in _TERMINAL_WAITING_REASONS:
+            return (
+                f"pod container is {container['waiting_reason']}: "
+                f"{json.dumps(state, sort_keys=True)}"
+            )
+        exit_code = container["exit_code"]
+        if exit_code not in (None, 0):
+            return (
+                f"pod container exited {exit_code}: {json.dumps(state, sort_keys=True)}"
+            )
+    return ""
+
+
+def _deployment_state(deployment: Any, pods: Sequence[Any]) -> dict[str, object]:
+    status = getattr(deployment, "status", None)
+    return {
+        "available_replicas": int(getattr(status, "available_replicas", 0) or 0),
+        "ready_replicas": int(getattr(status, "ready_replicas", 0) or 0),
+        "unavailable_replicas": int(getattr(status, "unavailable_replicas", 0) or 0),
+        "conditions": [
+            {
+                "type": str(getattr(condition, "type", "")),
+                "status": str(getattr(condition, "status", "")),
+                "reason": str(getattr(condition, "reason", "") or ""),
+                "message": str(getattr(condition, "message", "") or "")[-2000:],
+            }
+            for condition in getattr(status, "conditions", None) or []
+        ],
+        "pods": [_pod_state(pod) for pod in pods],
+    }
+
+
+def _wait_server_ready(
+    api: Any,
+    apps: Any,
+    namespace: str,
+    name: str,
+    *,
+    timeout: float = DEFAULT_SERVER_READY_TIMEOUT_SECONDS,
+    poll_interval: float = DEFAULT_POLL_INTERVAL_SECONDS,
+    request_timeout: float = DEFAULT_API_TIMEOUT_SECONDS,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> Any:
+    timeout = _validated_positive_seconds(timeout, "server ready timeout")
+    poll_interval = _validated_positive_seconds(poll_interval, "poll interval")
+    deadline = clock() + timeout
     selector = f"npa.nebius.ai/cleanup-owner={name},app={name}"
-    while True:
-        deployment = apps.read_namespaced_deployment(name, namespace)
+    last_state: dict[str, object] = {}
+    while clock() < deadline:
+        deployment = _api_call(
+            apps.read_namespaced_deployment,
+            name,
+            namespace,
+            request_timeout=request_timeout,
+        )
+        pods = _api_call(
+            api.list_namespaced_pod,
+            namespace,
+            label_selector=selector,
+            request_timeout=request_timeout,
+        ).items
+        last_state = _deployment_state(deployment, pods)
         if int(deployment.status.available_replicas or 0) >= 1:
-            pods = api.list_namespaced_pod(namespace, label_selector=selector).items
             ready = [
                 pod
                 for pod in pods
@@ -603,26 +927,112 @@ def _wait_server_ready(api: Any, apps: Any, namespace: str, name: str) -> Any:
             ]
             if len(ready) == 1:
                 return ready[0]
-        pods = api.list_namespaced_pod(namespace, label_selector=selector).items
+            if len(ready) > 1:
+                raise OpenPIServiceError(
+                    f"server Deployment has multiple ready pods: {last_state}"
+                )
+        for condition in last_state.get("conditions", []):
+            if (
+                condition.get("reason") == "ProgressDeadlineExceeded"
+                and condition.get("status") == "False"
+            ):
+                raise OpenPIServiceError(
+                    "server Deployment exceeded its progress deadline: "
+                    f"{json.dumps(last_state, sort_keys=True)}"
+                )
         for pod in pods:
-            if pod.status.phase == "Failed":
-                raise OpenPIServiceError(_pod_failure_message(api, namespace, pod))
-        time.sleep(5)
+            problem = _terminal_pod_problem(pod)
+            if problem:
+                raise OpenPIServiceError(f"server {problem}")
+        sleep(min(poll_interval, max(0.0, deadline - clock())))
+    raise OpenPIServiceError(
+        f"server readiness timed out after {timeout:g}s; last_state="
+        f"{json.dumps(last_state, sort_keys=True)}"
+    )
 
 
-def _wait_client(api: Any, batch: Any, namespace: str, name: str) -> Any:
-    while True:
-        job = batch.read_namespaced_job(name, namespace)
-        pods = api.list_namespaced_pod(
-            namespace, label_selector=f"job-name={name}"
+def _wait_client(
+    api: Any,
+    batch: Any,
+    namespace: str,
+    name: str,
+    *,
+    timeout: float = DEFAULT_CLIENT_TIMEOUT_SECONDS,
+    poll_interval: float = DEFAULT_POLL_INTERVAL_SECONDS,
+    request_timeout: float = DEFAULT_API_TIMEOUT_SECONDS,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> Any:
+    timeout = _validated_positive_seconds(timeout, "client timeout")
+    poll_interval = _validated_positive_seconds(poll_interval, "poll interval")
+    deadline = clock() + timeout
+    last_state: dict[str, object] = {}
+    while clock() < deadline:
+        job = _api_call(
+            batch.read_namespaced_job,
+            name,
+            namespace,
+            request_timeout=request_timeout,
+        )
+        pods = _api_call(
+            api.list_namespaced_pod,
+            namespace,
+            label_selector=f"job-name={name}",
+            request_timeout=request_timeout,
         ).items
+        status = getattr(job, "status", None)
+        last_state = {
+            "active": int(getattr(status, "active", 0) or 0),
+            "succeeded": int(getattr(status, "succeeded", 0) or 0),
+            "failed": int(getattr(status, "failed", 0) or 0),
+            "conditions": [
+                {
+                    "type": str(getattr(condition, "type", "")),
+                    "status": str(getattr(condition, "status", "")),
+                    "reason": str(getattr(condition, "reason", "") or ""),
+                    "message": str(getattr(condition, "message", "") or "")[-2000:],
+                }
+                for condition in getattr(status, "conditions", None) or []
+            ],
+            "pods": [_pod_state(pod) for pod in pods],
+        }
         if int(job.status.succeeded or 0) == 1 and len(pods) == 1:
             return pods[0]
         if int(job.status.failed or 0) > 0:
             if pods:
-                raise OpenPIServiceError(_pod_failure_message(api, namespace, pods[0]))
+                raise OpenPIServiceError(
+                    f"client job failed: {json.dumps(last_state, sort_keys=True)}"
+                )
             raise OpenPIServiceError(f"client job {name} failed without a pod")
-        time.sleep(3)
+        for pod in pods:
+            problem = _terminal_pod_problem(pod)
+            if problem:
+                raise OpenPIServiceError(f"client {problem}")
+        sleep(min(poll_interval, max(0.0, deadline - clock())))
+    raise OpenPIServiceError(
+        f"client completion timed out after {timeout:g}s; last_state="
+        f"{json.dumps(last_state, sort_keys=True)}"
+    )
+
+
+def _client_result_from_termination(pod: Any) -> dict[str, object]:
+    status = getattr(pod, "status", None)
+    for container in getattr(status, "container_statuses", None) or []:
+        if str(getattr(container, "name", "")) != "openpi-client":
+            continue
+        terminated = getattr(getattr(container, "state", None), "terminated", None)
+        message = str(getattr(terminated, "message", "") or "")
+        if not message:
+            break
+        try:
+            value = json.loads(message)
+        except json.JSONDecodeError as exc:
+            raise OpenPIServiceError(
+                f"client termination evidence is invalid JSON: {message[-2000:]}"
+            ) from exc
+        if isinstance(value, dict):
+            return value
+    raise OpenPIServiceError("client pod has no termination-message evidence")
 
 
 def _prefixed_json(text: str, prefix: str) -> dict[str, object]:
@@ -649,11 +1059,25 @@ def _delete_and_verify(
     namespace: str,
     names: Mapping[str, str],
     created: set[str] | None = None,
+    manifests: Mapping[str, Mapping[str, Any]] | None = None,
+    timeout: float = DEFAULT_CLEANUP_TIMEOUT_SECONDS,
+    poll_interval: float = DEFAULT_POLL_INTERVAL_SECONDS,
+    request_timeout: float = DEFAULT_API_TIMEOUT_SECONDS,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, bool]:
+    timeout = _validated_positive_seconds(timeout, "cleanup timeout")
+    poll_interval = _validated_positive_seconds(poll_interval, "poll interval")
+    deadline = clock() + timeout
     created_keys = set(names) if created is None else set(created)
     pod_selector = f"npa.nebius.ai/cleanup-owner={names['deployment']}"
-    owned_pod_names: list[str] = []
-    for pod in api.list_namespaced_pod(namespace, label_selector=pod_selector).items:
+    initial_pods = _api_call(
+        api.list_namespaced_pod,
+        namespace,
+        label_selector=pod_selector,
+        request_timeout=request_timeout,
+    ).items
+    for pod in initial_pods:
         labels = pod.metadata.labels or {}
         if (
             labels.get("app.kubernetes.io/managed-by") != "npa"
@@ -680,7 +1104,6 @@ def _delete_and_verify(
                 f"refusing cleanup because pod {pod.metadata.name!r} has an "
                 f"unexpected app identity {pod_app!r}"
             )
-        owned_pod_names.append(str(pod.metadata.name))
     delete_options = {
         "apiVersion": "v1",
         "kind": "DeleteOptions",
@@ -692,16 +1115,50 @@ def _delete_and_verify(
         ("service", api.delete_namespaced_service, names["service"]),
         ("secret", api.delete_namespaced_secret, names["secret"]),
     )
+    issues: list[str] = []
+    readers_by_key = {
+        "client_job": batch.read_namespaced_job,
+        "deployment": apps.read_namespaced_deployment,
+        "service": api.read_namespaced_service,
+        "secret": api.read_namespaced_secret,
+    }
+    deletable_keys = set(created_keys)
+    if manifests is not None:
+        for key in created_keys:
+            if key not in readers_by_key or key not in manifests:
+                continue
+            try:
+                obj = _api_call(
+                    readers_by_key[key],
+                    names[key],
+                    namespace,
+                    request_timeout=request_timeout,
+                )
+            except Exception as exc:
+                if _api_exception_status(exc) == 404:
+                    continue
+                issues.append(f"{key} ownership verification is uncertain: {exc}")
+                deletable_keys.discard(key)
+                continue
+            try:
+                _assert_created_object_owned(obj, manifests[key], kind=key)
+            except OpenPIServiceError as exc:
+                issues.append(str(exc))
+                deletable_keys.discard(key)
     for key, function, name in operations:
-        if key not in created_keys:
+        if key not in deletable_keys:
             continue
         try:
-            function(name, namespace, body=delete_options)
-        except TypeError:
-            function(name, namespace, propagation_policy="Foreground")
+            _api_call(
+                function,
+                name,
+                namespace,
+                body=delete_options,
+                request_timeout=request_timeout,
+            )
         except Exception as exc:
             if _api_exception_status(exc) != 404:
-                raise
+                issues.append(f"{key} delete request failed: {exc}")
     readers = (
         ("client_job", batch.read_namespaced_job),
         ("deployment", apps.read_namespaced_deployment),
@@ -712,59 +1169,127 @@ def _delete_and_verify(
     for key, reader in readers:
         if key not in created_keys:
             try:
-                reader(names[key], namespace)
+                _api_call(
+                    reader,
+                    names[key],
+                    namespace,
+                    request_timeout=request_timeout,
+                )
             except Exception as exc:
                 if _api_exception_status(exc) == 404:
                     verified[key] = True
                     continue
-                raise
-            raise OpenPIServiceError(
-                f"unowned {key} {names[key]!r} appeared during cleanup"
-            )
-        while True:
+                issues.append(f"{key} absence is uncertain: {exc}")
+                continue
+            issues.append(f"unowned {key} {names[key]!r} appeared during cleanup")
+            continue
+        last_state: dict[str, object] = {}
+        while clock() < deadline:
             try:
-                reader(names[key], namespace)
+                obj = _api_call(
+                    reader,
+                    names[key],
+                    namespace,
+                    request_timeout=request_timeout,
+                )
             except Exception as exc:
                 if _api_exception_status(exc) == 404:
                     verified[key] = True
                     break
-                raise
-            time.sleep(2)
-    for pod_name in owned_pod_names:
+                issues.append(f"{key} absence is uncertain: {exc}")
+                break
+            metadata = getattr(obj, "metadata", None)
+            last_state = {
+                "deletion_timestamp": str(
+                    getattr(metadata, "deletion_timestamp", "") or ""
+                ),
+                "finalizers": list(getattr(metadata, "finalizers", None) or []),
+            }
+            sleep(min(poll_interval, max(0.0, deadline - clock())))
+        if key not in verified and not any(
+            issue.startswith(f"{key} absence is uncertain") for issue in issues
+        ):
+            issues.append(
+                f"{key} deletion timed out after {timeout:g}s; "
+                f"last_state={json.dumps(last_state, sort_keys=True)}"
+            )
+
+    pods: Sequence[Any] = []
+    while clock() < deadline:
         try:
-            api.delete_namespaced_pod(pod_name, namespace)
+            pods = _api_call(
+                api.list_namespaced_pod,
+                namespace,
+                label_selector=pod_selector,
+                request_timeout=request_timeout,
+            ).items
         except Exception as exc:
-            if _api_exception_status(exc) != 404:
-                raise
-    while True:
-        pods = api.list_namespaced_pod(namespace, label_selector=pod_selector).items
+            issues.append(f"pod absence is uncertain: {exc}")
+            break
         if not pods:
             verified["pods"] = True
             break
-        # Parents are absent and every pre-existing exact pod was explicitly
-        # deleted. A new matching pod here would mean the cleanup identity changed
-        # concurrently, so fail closed instead of broadening the deletion set.
-        raise OpenPIServiceError(
-            f"new pods appeared during exact cleanup: "
-            f"{[pod.metadata.name for pod in pods]}"
+        for pod in pods:
+            labels = pod.metadata.labels or {}
+            if (
+                labels.get("app.kubernetes.io/managed-by") != "npa"
+                or labels.get("app.kubernetes.io/part-of") != "openpi-four-mode"
+                or labels.get("npa.nebius.ai/cleanup-owner") != names["deployment"]
+                or labels.get("app") not in {names["deployment"], names["client_job"]}
+            ):
+                issues.append(
+                    f"foreign pod {pod.metadata.name!r} matched the cleanup selector"
+                )
+                break
+        if issues and issues[-1].startswith("foreign pod"):
+            break
+        sleep(min(poll_interval, max(0.0, deadline - clock())))
+    if "pods" not in verified and not any(
+        issue.startswith("pod absence is uncertain") or issue.startswith("foreign pod")
+        for issue in issues
+    ):
+        issues.append(
+            f"pod deletion timed out after {timeout:g}s; last_state="
+            f"{json.dumps([_pod_state(pod) for pod in pods], sort_keys=True)}"
         )
+    if issues:
+        raise OpenPIServiceError("exact cleanup incomplete: " + "; ".join(issues))
     return verified
 
 
 def _run(args: argparse.Namespace) -> int:
     if os.environ.get(OPENPI_TERMS_ENV) != OPENPI_TERMS_ACCEPTED_VALUE:
-        refusal = {
-            "schema": "npa.workbench.openpi.terms-gate.v1",
-            "status": "refused",
-            "exit_code": 64,
-            "checkpoint_fetch_started": False,
-            "model_import_started": False,
-        }
-        _write_json_uri(args.output_uri, refusal)
+        _diagnostic_uri, refusal = _write_terms_refusal_diagnostic(
+            args.output_uri,
+            diagnostic_root_uri=args.terms_diagnostic_root_uri,
+            stage="serve",
+        )
         print(json.dumps(refusal, sort_keys=True), flush=True)
         return 64
     if not RUNTIME_IMAGE_RE.fullmatch(args.runtime_image):
         raise OpenPIServiceError("service runtime image must be digest-pinned")
+    if args.cleanup_output_uri == args.output_uri:
+        raise OpenPIServiceError(
+            "service success and cleanup evidence must use distinct output URIs"
+        )
+    server_ready_timeout = _validated_positive_seconds(
+        args.server_ready_timeout_seconds, "server ready timeout"
+    )
+    client_timeout = _validated_positive_seconds(
+        args.client_timeout_seconds, "client timeout"
+    )
+    cleanup_timeout = _validated_positive_seconds(
+        args.cleanup_timeout_seconds, "cleanup timeout"
+    )
+    poll_interval = _validated_positive_seconds(
+        args.poll_interval_seconds, "poll interval"
+    )
+    api_timeout = _validated_positive_seconds(
+        args.api_timeout_seconds, "Kubernetes API timeout"
+    )
+    http_timeout = _validated_positive_seconds(
+        args.http_timeout_seconds, "HTTP timeout"
+    )
 
     from kubernetes import client, config
 
@@ -790,6 +1315,8 @@ def _run(args: argparse.Namespace) -> int:
         gpu_node_selector_key=args.gpu_node_selector_key,
         gpu_node_selector_value=args.gpu_node_selector_value,
         cache_size=args.service_cache_size,
+        server_ready_timeout_seconds=server_ready_timeout,
+        client_timeout_seconds=client_timeout,
     )
     checkpoint_provenance = _checkpoint_provenance(args.checkpoint_uri)
     names = {key: str(value["metadata"]["name"]) for key, value in manifests.items()}
@@ -798,6 +1325,7 @@ def _run(args: argparse.Namespace) -> int:
     preflight_passed = False
     result: dict[str, object] | None = None
     started = time.perf_counter()
+    run_error: Exception | None = None
     try:
         _assert_targets_absent(
             api,
@@ -805,33 +1333,63 @@ def _run(args: argparse.Namespace) -> int:
             batch,
             namespace=args.namespace,
             names=names,
+            request_timeout=api_timeout,
         )
         preflight_passed = True
-        _create_server_objects(api, apps, manifests, created=created)
-        server_pod = _wait_server_ready(api, apps, args.namespace, names["deployment"])
+        _create_server_objects(
+            api,
+            apps,
+            manifests,
+            created=created,
+            request_timeout=api_timeout,
+        )
+        server_pod = _wait_server_ready(
+            api,
+            apps,
+            args.namespace,
+            names["deployment"],
+            timeout=server_ready_timeout,
+            poll_interval=poll_interval,
+            request_timeout=api_timeout,
+        )
         service_dns = f"{names['service']}.{args.namespace}.svc.cluster.local"
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        with opener.open(f"http://{service_dns}:{SERVER_PORT}/healthz") as response:
+        with opener.open(
+            f"http://{service_dns}:{SERVER_PORT}/healthz", timeout=http_timeout
+        ) as response:
             health = response.read().decode("utf-8").strip()
         if health != "OK":
             raise OpenPIServiceError(f"unexpected service health response {health!r}")
-        server_logs = api.read_namespaced_pod_log(
-            server_pod.metadata.name, args.namespace
-        )
-        server_hardware = _prefixed_json(server_logs, "NPA_OPENPI_SERVER_HARDWARE=")
+        with opener.open(
+            (
+                f"http://{service_dns}:{SERVER_DIAGNOSTICS_PORT}/"
+                "npa-openpi-server-hardware.json"
+            ),
+            timeout=http_timeout,
+        ) as response:
+            server_hardware = json.loads(response.read().decode("utf-8"))
+        if not isinstance(server_hardware, dict):
+            raise OpenPIServiceError("server hardware endpoint returned a non-object")
         # A Kubernetes Job starts as soon as it is created. Create the independent
         # client only after readiness and an in-cluster ClusterIP health request,
         # otherwise a clean cold-start can consume backoffLimit=0 before the
         # 12 GB checkpoint has loaded.
-        _create_client_job(batch, manifests, created=created)
-        client_pod = _wait_client(api, batch, args.namespace, names["client_job"])
-        client_logs = api.read_namespaced_pod_log(
-            client_pod.metadata.name, args.namespace
+        _create_client_job(
+            batch,
+            manifests,
+            created=created,
+            request_timeout=api_timeout,
         )
-        # Prefixing prevents a Kubernetes client/content-type layer from
-        # interpreting a log body that consists solely of JSON and returning
-        # its Python mapping representation instead of the original bytes.
-        client_result = _prefixed_json(client_logs, "NPA_OPENPI_CLIENT_RESULT=")
+        client_pod = _wait_client(
+            api,
+            batch,
+            args.namespace,
+            names["client_job"],
+            timeout=client_timeout,
+            poll_interval=poll_interval,
+            request_timeout=api_timeout,
+        )
+        client_result = _client_result_from_termination(client_pod)
         if (
             client_result.get("status") != "passed"
             or client_result.get("request_count") != 2
@@ -887,12 +1445,22 @@ def _run(args: argparse.Namespace) -> int:
                 "separate_pods": True,
                 "server_gpu_request": args.gpu_count,
                 "client_gpu_request": 0,
+                "client_created_after_clusterip_health": True,
                 "controller_service_account": args.controller_service_account,
             },
             "probes": {
                 "readiness": {"path": "/healthz", "passed": True},
                 "liveness": {"path": "/healthz", "configured": True},
                 "clusterip_health": health,
+            },
+            "failure_recovery_deadlines_seconds": {
+                "server_ready": server_ready_timeout,
+                "client": client_timeout,
+                "client_job_active_deadline": math.ceil(client_timeout),
+                "cleanup": cleanup_timeout,
+                "kubernetes_api_request": api_timeout,
+                "http_request": http_timeout,
+                "poll_interval": poll_interval,
             },
             "client": client_result,
             "request_count": 2,
@@ -914,16 +1482,32 @@ def _run(args: argparse.Namespace) -> int:
                 "no_physical_franka_task_success_claim",
             ],
         }
+    except Exception as exc:
+        run_error = exc
     finally:
         if preflight_passed:
-            cleanup_verified = _delete_and_verify(
-                api,
-                apps,
-                batch,
-                namespace=args.namespace,
-                names=names,
-                created=created,
-            )
+            try:
+                cleanup_verified = _delete_and_verify(
+                    api,
+                    apps,
+                    batch,
+                    namespace=args.namespace,
+                    names=names,
+                    created=created,
+                    manifests=manifests,
+                    timeout=cleanup_timeout,
+                    poll_interval=poll_interval,
+                    request_timeout=api_timeout,
+                )
+            except Exception as cleanup_exc:
+                if run_error is not None:
+                    raise OpenPIServiceError(
+                        f"service failed ({run_error}); cleanup also failed "
+                        f"({cleanup_exc})"
+                    ) from run_error
+                raise
+    if run_error is not None:
+        raise run_error
     if result is None:
         raise OpenPIServiceError("service run did not produce evidence")
     if not cleanup_verified or not all(cleanup_verified.values()):
@@ -934,12 +1518,8 @@ def _run(args: argparse.Namespace) -> int:
         "all_exact_resources_absent": True,
         "verified": cleanup_verified,
     }
-    # Replace the pre-cleanup artifact atomically by writing a separate final URI is
-    # undesirable for lineage. S3 does not support If-Match through put_object in all
-    # compatible providers, so publish cleanup as its own sibling proof.
-    cleanup_uri = args.output_uri.removesuffix(".json") + ".cleanup.json"
     _write_json_uri(
-        cleanup_uri,
+        args.cleanup_output_uri,
         {
             "schema": "npa.workbench.openpi.service-cleanup.v1",
             "service_artifact_uri": args.output_uri,
@@ -947,7 +1527,7 @@ def _run(args: argparse.Namespace) -> int:
             "verified": cleanup_verified,
         },
     )
-    result["cleanup_artifact_uri"] = cleanup_uri
+    result["cleanup_artifact_uri"] = args.cleanup_output_uri
     _write_json_uri(args.output_uri, result)
     print(json.dumps(result, sort_keys=True), flush=True)
     return 0
@@ -957,6 +1537,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--output-uri", required=True)
+    parser.add_argument("--cleanup-output-uri", required=True)
+    parser.add_argument("--terms-diagnostic-root-uri", default="")
     parser.add_argument("--runtime-image", required=True)
     parser.add_argument("--namespace", default="default")
     parser.add_argument("--checkpoint-uri", default=DEFAULT_CHECKPOINT_URI)
@@ -974,6 +1556,30 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gpu-node-selector-value", default="B200")
     parser.add_argument("--service-cache-size", default="40Gi")
     parser.add_argument("--controller-service-account", required=True)
+    parser.add_argument(
+        "--server-ready-timeout-seconds",
+        type=float,
+        default=DEFAULT_SERVER_READY_TIMEOUT_SECONDS,
+    )
+    parser.add_argument(
+        "--client-timeout-seconds", type=float, default=DEFAULT_CLIENT_TIMEOUT_SECONDS
+    )
+    parser.add_argument(
+        "--cleanup-timeout-seconds",
+        type=float,
+        default=DEFAULT_CLEANUP_TIMEOUT_SECONDS,
+    )
+    parser.add_argument(
+        "--poll-interval-seconds",
+        type=float,
+        default=DEFAULT_POLL_INTERVAL_SECONDS,
+    )
+    parser.add_argument(
+        "--api-timeout-seconds", type=float, default=DEFAULT_API_TIMEOUT_SECONDS
+    )
+    parser.add_argument(
+        "--http-timeout-seconds", type=float, default=DEFAULT_HTTP_TIMEOUT_SECONDS
+    )
     return parser
 
 

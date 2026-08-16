@@ -9,10 +9,17 @@ from typing import Any, Callable, Mapping, Sequence
 
 from npa.workflows.byof.openpi_service import (
     CONTROLLER_MANAGED_BY,
+    DEFAULT_API_TIMEOUT_SECONDS,
+    DEFAULT_POLL_INTERVAL_SECONDS,
     OpenPIServiceError,
+    _api_call,
+    _validated_positive_seconds,
     build_controller_rbac_manifests,
     controller_service_account_name,
+    service_resource_names,
 )
+
+DEFAULT_RBAC_DELETE_TIMEOUT_SECONDS = 120.0
 
 
 def _status(exc: Exception) -> int | None:
@@ -41,15 +48,18 @@ def _normalized_rules(rules: Sequence[object] | None) -> list[dict[str, list[str
         if isinstance(rule, Mapping):
             api_groups = rule.get("apiGroups", [])
             resources = rule.get("resources", [])
+            resource_names = rule.get("resourceNames", [])
             verbs = rule.get("verbs", [])
         else:
             api_groups = getattr(rule, "api_groups", None) or []
             resources = getattr(rule, "resources", None) or []
+            resource_names = getattr(rule, "resource_names", None) or []
             verbs = getattr(rule, "verbs", None) or []
         normalized.append(
             {
                 "apiGroups": sorted(str(value) for value in api_groups),
                 "resources": sorted(str(value) for value in resources),
+                "resourceNames": sorted(str(value) for value in resource_names),
                 "verbs": sorted(str(value) for value in verbs),
             }
         )
@@ -62,7 +72,7 @@ def _assert_role_contract(role: object, desired: Mapping[str, Any], name: str) -
     ):
         raise OpenPIServiceError(
             f"refusing to reuse Role {name!r}: permissions differ from the "
-            "least-privilege OpenPI controller contract"
+            "name-scoped OpenPI controller contract"
         )
 
 
@@ -91,10 +101,19 @@ def _assert_binding_contract(
 
 
 def _read_or_none(
-    reader: Callable[[str, str], Any], name: str, namespace: str
+    reader: Callable[[str, str], Any],
+    name: str,
+    namespace: str,
+    *,
+    request_timeout: float,
 ) -> object | None:
     try:
-        return reader(name, namespace)
+        return _api_call(
+            reader,
+            name,
+            namespace,
+            request_timeout=request_timeout,
+        )
     except Exception as exc:
         if _status(exc) == 404:
             return None
@@ -108,6 +127,9 @@ def apply_controller_rbac(
     run_id: str,
     namespace: str,
     service_account: str,
+    request_timeout: float = DEFAULT_API_TIMEOUT_SECONDS,
+    delete_timeout: float = DEFAULT_RBAC_DELETE_TIMEOUT_SECONDS,
+    poll_interval: float = DEFAULT_POLL_INTERVAL_SECONDS,
 ) -> dict[str, object]:
     """Create missing controller RBAC and fail closed on any foreign identity."""
 
@@ -122,7 +144,12 @@ def apply_controller_rbac(
         "role_binding": rbac.read_namespaced_role_binding,
     }
     existing = {
-        key: _read_or_none(reader, service_account, namespace)
+        key: _read_or_none(
+            reader,
+            service_account,
+            namespace,
+            request_timeout=request_timeout,
+        )
         for key, reader in readers.items()
     }
     for key, obj in existing.items():
@@ -144,8 +171,16 @@ def apply_controller_rbac(
     try:
         for key in ("service_account", "role", "role_binding"):
             if existing[key] is None:
-                creators[key](namespace, manifests[key])
+                # The API response can be lost after the object is created. Track
+                # the deterministic identity before the request so the exception
+                # path performs an ownership-checked absence verification.
                 created.append(key)
+                _api_call(
+                    creators[key],
+                    namespace,
+                    manifests[key],
+                    request_timeout=request_timeout,
+                )
     except Exception:
         _delete_controller_rbac(
             core,
@@ -154,6 +189,9 @@ def apply_controller_rbac(
             namespace=namespace,
             service_account=service_account,
             only=set(created),
+            timeout=delete_timeout,
+            poll_interval=poll_interval,
+            request_timeout=request_timeout,
         )
         raise
     return {
@@ -165,7 +203,27 @@ def apply_controller_rbac(
         "service_account": service_account,
         "created": created,
         "reused_exact_owned": [key for key, obj in existing.items() if obj is not None],
-        "least_privilege": True,
+        "permission_scope": {
+            "classification": "name_scoped_with_kubernetes_residuals",
+            "foreign_secret_contents_readable": False,
+            "pod_logs_readable": False,
+            "exact_resource_names": service_resource_names(run_id),
+            "residual_namespace_scope": [
+                {
+                    "resources": ["services", "secrets", "deployments", "jobs"],
+                    "verbs": ["create"],
+                    "reason": "Kubernetes RBAC cannot resourceName-scope create",
+                },
+                {
+                    "resources": ["pods"],
+                    "verbs": ["list"],
+                    "reason": (
+                        "Deployment and Job pod names are controller-generated; "
+                        "the controller applies a run selector and validates ownership"
+                    ),
+                },
+            ],
+        },
     }
 
 
@@ -177,14 +235,30 @@ def _delete_controller_rbac(
     namespace: str,
     service_account: str,
     only: set[str] | None = None,
+    timeout: float = DEFAULT_RBAC_DELETE_TIMEOUT_SECONDS,
+    poll_interval: float = DEFAULT_POLL_INTERVAL_SECONDS,
+    request_timeout: float = DEFAULT_API_TIMEOUT_SECONDS,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, bool]:
+    timeout = _validated_positive_seconds(timeout, "RBAC deletion timeout")
+    poll_interval = _validated_positive_seconds(poll_interval, "poll interval")
+    request_timeout = _validated_positive_seconds(
+        request_timeout, "Kubernetes API timeout"
+    )
+    deadline = clock() + timeout
     readers = {
         "service_account": core.read_namespaced_service_account,
         "role": rbac.read_namespaced_role,
         "role_binding": rbac.read_namespaced_role_binding,
     }
     existing = {
-        key: _read_or_none(reader, service_account, namespace)
+        key: _read_or_none(
+            reader,
+            service_account,
+            namespace,
+            request_timeout=request_timeout,
+        )
         for key, reader in readers.items()
     }
     for key, obj in existing.items():
@@ -196,22 +270,57 @@ def _delete_controller_rbac(
         "role": rbac.delete_namespaced_role,
         "service_account": core.delete_namespaced_service_account,
     }
+    issues: list[str] = []
     for key in ("role_binding", "role", "service_account"):
         if existing[key] is None or (only is not None and key not in only):
             continue
         try:
-            deleters[key](service_account, namespace)
+            _api_call(
+                deleters[key],
+                service_account,
+                namespace,
+                request_timeout=request_timeout,
+            )
         except Exception as exc:
             if _status(exc) != 404:
-                raise
+                issues.append(f"{key} delete request failed: {exc}")
 
     verified: dict[str, bool] = {}
     for key, reader in readers.items():
         if only is not None and key not in only:
             continue
-        while _read_or_none(reader, service_account, namespace) is not None:
-            time.sleep(1)
-        verified[key] = True
+        last_state: dict[str, object] = {}
+        while clock() < deadline:
+            try:
+                obj = _read_or_none(
+                    reader,
+                    service_account,
+                    namespace,
+                    request_timeout=request_timeout,
+                )
+            except Exception as exc:
+                issues.append(f"{key} absence is uncertain: {exc}")
+                break
+            if obj is None:
+                verified[key] = True
+                break
+            metadata = getattr(obj, "metadata", None)
+            last_state = {
+                "deletion_timestamp": str(
+                    getattr(metadata, "deletion_timestamp", "") or ""
+                ),
+                "finalizers": list(getattr(metadata, "finalizers", None) or []),
+            }
+            sleep(min(poll_interval, max(0.0, deadline - clock())))
+        if key not in verified and not any(
+            issue.startswith(f"{key} absence is uncertain") for issue in issues
+        ):
+            issues.append(
+                f"{key} deletion timed out after {timeout:g}s; "
+                f"last_state={json.dumps(last_state, sort_keys=True)}"
+            )
+    if issues:
+        raise OpenPIServiceError("exact RBAC cleanup incomplete: " + "; ".join(issues))
     return verified
 
 
@@ -222,6 +331,9 @@ def delete_controller_rbac(
     run_id: str,
     namespace: str,
     service_account: str,
+    timeout: float = DEFAULT_RBAC_DELETE_TIMEOUT_SECONDS,
+    poll_interval: float = DEFAULT_POLL_INTERVAL_SECONDS,
+    request_timeout: float = DEFAULT_API_TIMEOUT_SECONDS,
 ) -> dict[str, object]:
     """Remove only the exact run-owned controller identity and verify absence."""
 
@@ -231,6 +343,9 @@ def delete_controller_rbac(
         run_id=run_id,
         namespace=namespace,
         service_account=service_account,
+        timeout=timeout,
+        poll_interval=poll_interval,
+        request_timeout=request_timeout,
     )
     return {
         "schema": "npa.workbench.openpi.service-controller-rbac.v1",
@@ -252,6 +367,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--service-account")
     parser.add_argument("--kubeconfig")
     parser.add_argument("--context")
+    parser.add_argument(
+        "--delete-timeout-seconds",
+        type=float,
+        default=DEFAULT_RBAC_DELETE_TIMEOUT_SECONDS,
+    )
+    parser.add_argument(
+        "--poll-interval-seconds",
+        type=float,
+        default=DEFAULT_POLL_INTERVAL_SECONDS,
+    )
+    parser.add_argument(
+        "--api-timeout-seconds", type=float, default=DEFAULT_API_TIMEOUT_SECONDS
+    )
     return parser
 
 
@@ -272,6 +400,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             run_id=args.run_id,
             namespace=args.namespace,
             service_account=service_account,
+            request_timeout=args.api_timeout_seconds,
+            delete_timeout=args.delete_timeout_seconds,
+            poll_interval=args.poll_interval_seconds,
         )
     else:
         result = delete_controller_rbac(
@@ -280,6 +411,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             run_id=args.run_id,
             namespace=args.namespace,
             service_account=service_account,
+            timeout=args.delete_timeout_seconds,
+            poll_interval=args.poll_interval_seconds,
+            request_timeout=args.api_timeout_seconds,
         )
     print(json.dumps(result, sort_keys=True), flush=True)
     return 0

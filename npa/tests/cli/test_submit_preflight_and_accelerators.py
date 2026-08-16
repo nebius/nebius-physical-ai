@@ -12,6 +12,7 @@ import yaml
 
 from npa.cli.main import app
 from npa.cli.workbench import workflow as workflow_cli
+from npa.orchestration.npa_workflow.submit import load_spec_for_submit
 from npa.orchestration.skypilot.image_bootstrap_contract import (
     ATTESTATION_LABEL,
     CONTRACT_VERSION,
@@ -24,6 +25,15 @@ from npa.orchestration.skypilot.workflow import SkyPilotSubmitError
 
 
 runner = CliRunner()
+REPO_ROOT = Path(__file__).resolve().parents[3]
+OPENPI_FOUR_MODE_SPEC = (
+    REPO_ROOT
+    / "npa"
+    / "workflows"
+    / "workbench"
+    / "npa-workflows"
+    / "openpi-pi05-four-mode.yaml"
+)
 
 SPEC = {
     "apiVersion": "npa.workflow/v0.0.1",
@@ -146,16 +156,68 @@ def test_submit_accelerator_readiness_uses_resolved_config_overrides(
     path = tmp_path / "templated-accelerator.yaml"
     path.write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
     _stub_catalog(monkeypatch, CATALOG_OUTPUT)
+    merged_spec = load_spec_for_submit(path, config_overrides={"gpu_count": "1"})
 
     overrides = workflow_cli._resolve_submit_accelerators(
         path,
+        spec=merged_spec,
         infra="k8s/npa-cluster",
         sky_bin=sky_bin,
-        config_overrides={"gpu_count": "1"},
         enabled=True,
     )
 
     assert overrides == {"RTXPRO6000:1": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"}
+
+
+@pytest.mark.parametrize(
+    ("config_overrides", "expected"),
+    [({}, "B200:1"), ({"gpu_type": "H200", "gpu_count": "2"}, "H200:2")],
+)
+def test_openpi_readiness_uses_fully_resolved_planned_profiles(
+    monkeypatch: pytest.MonkeyPatch,
+    sky_bin: str,
+    config_overrides: dict[str, str],
+    expected: str,
+) -> None:
+    from npa.orchestration.skypilot import k8s_gpu_catalog
+
+    monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
+    seen: list[list[str]] = []
+
+    def wait(requested, **_kwargs):  # noqa: ANN001
+        seen.append(list(requested))
+        return {
+            value: k8s_gpu_catalog.AcceleratorResolution(
+                requested=value,
+                resolved=value,
+                remapped=False,
+                catalog=k8s_gpu_catalog.KubernetesGpuCatalog(
+                    quantities_by_accelerator={
+                        value.rsplit(":", 1)[0]: frozenset(
+                            {int(value.rsplit(":", 1)[1])}
+                        )
+                    }
+                ),
+            )
+            for value in requested
+        }
+
+    monkeypatch.setattr(k8s_gpu_catalog, "wait_for_kubernetes_accelerators", wait)
+    merged = load_spec_for_submit(
+        OPENPI_FOUR_MODE_SPEC, config_overrides=config_overrides
+    )
+
+    overrides = workflow_cli._resolve_submit_accelerators(
+        OPENPI_FOUR_MODE_SPEC,
+        spec=merged,
+        infra="k8s/npa-cluster",
+        sky_bin=sky_bin,
+        enabled=True,
+    )
+
+    assert seen == [[expected]]
+    assert overrides == {}
+    assert "{{config." not in seen[0][0]
 
 
 def test_submit_refuses_two_gpus_per_task_on_single_gpu_nodes(
@@ -419,9 +481,11 @@ def test_image_preflight_plans_with_submit_config_overrides(
     assert (
         workflow_cli._preflight_submit_images(
             spec_path,
+            spec=load_spec_for_submit(
+                spec_path, config_overrides={"runtime_image": digest}
+            ),
             options=object(),
             assume_decision="",
-            config_overrides={"runtime_image": digest},
             enabled=True,
         )
         == {}

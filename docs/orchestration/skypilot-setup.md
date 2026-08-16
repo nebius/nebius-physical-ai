@@ -103,6 +103,15 @@ Do not set `disk_size` for this controller mode. SkyPilot 0.12.2's Kubernetes
 backend does not apply custom controller disk sizing; it uses the cluster's
 pod storage behavior.
 
+For declarative Kubernetes `npa.workflow` resource profiles, `disk_size` has one
+explicit contract: the NPA renderer translates it to SkyPilot
+`ephemeral_storage`. This requests pod `ephemeral-storage` capacity instead of
+silently emitting the Kubernetes-ignored boot-disk field. Non-Kubernetes
+profiles preserve the renderer's prior behavior and do not forward this field.
+Raw SkyPilot YAMLs, including the controller configuration above, are not
+translated and should use `ephemeral_storage` directly when they need a
+Kubernetes storage request.
+
 The Kubernetes controller requires an MK8s node that can fit a 4 vCPU, 16 GiB
 pod. The validated `npa-workbench-eu-north1` pattern uses a dedicated CPU node
 group such as `cpu-e2/8vcpu-32gb` so the controller does not compete with GPU

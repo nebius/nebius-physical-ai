@@ -73,6 +73,23 @@ client Job connects through the Service DNS name; server and client pod UIDs
 must differ. There is no Ingress or public load balancer. The older builder
 smoke remains explicitly labeled same-pod loopback.
 
+All service waits are bounded by monotonic, configurable failure-recovery
+deadlines. The Deployment progress deadline matches server readiness, and the
+client Job has `activeDeadlineSeconds` in addition to `backoffLimit: 0`.
+Pending/Unschedulable placement, image-pull failures, failed probes, uncertain
+API responses, and stuck deletion/finalizers fail closed into exact-identity
+cleanup. These are service recovery controls, not workflow, job-count, cost, or
+operator runtime caps.
+
+The controller Role name-scopes Secret, Service, Deployment, and Job
+`get`/`delete` permissions. It cannot read a foreign Secret, read pod logs, or
+delete pods. Kubernetes cannot name-scope `create`, and Deployment/Job pod names
+are controller-generated, so `create` on the four resource kinds and pod
+`list` remain namespace-wide residuals. The controller always applies a run
+label selector and verifies immutable ownership before acting. Client evidence
+comes from the Job termination message, and server hardware evidence comes
+from a private in-cluster diagnostic endpoint—not pod-log access.
+
 A robot consumer should execute about five position targets at 15 Hz, observe
 again, and re-query the policy.
 
@@ -149,16 +166,19 @@ export OPENPI_SERVICE_ACCOUNT
 OPENPI_SERVICE_ACCOUNT="$(npa/.venv/bin/python -c \
   'import os; from npa.workflows.byof.openpi_service import controller_service_account_name; print(controller_service_account_name(os.environ["OPENPI_RUN_ID"]))')"
 
-# Fail closed if this exact name is foreign. The generated Role is namespace
-# scoped and can only create/get/delete the four service object kinds, read
-# pods/logs for readiness and evidence, and delete exact run-labeled pods during
-# independently verified cleanup.
+# Fail closed if this exact name is foreign. Name-scoped get/delete rules cover
+# the exact Secret, Service, Deployment, and Job. Namespace-wide scope is limited
+# to Kubernetes' unavoidable create rules and pod list; pod logs and pod delete
+# are not granted.
 npa/.venv/bin/python -m npa.workflows.byof.openpi_service_rbac apply \
   --run-id "$OPENPI_RUN_ID" \
   --namespace "$OPENPI_NAMESPACE" \
   --service-account "$OPENPI_SERVICE_ACCOUNT" \
   --kubeconfig "$OPENPI_KUBECONFIG" \
-  --context "$OPENPI_CONTEXT"
+  --context "$OPENPI_CONTEXT" \
+  --delete-timeout-seconds 120 \
+  --poll-interval-seconds 5 \
+  --api-timeout-seconds 30
 
 npa/.venv/bin/npa workbench workflow submit \
   npa/workflows/workbench/npa-workflows/openpi-pi05-four-mode.yaml \
@@ -181,6 +201,11 @@ npa/.venv/bin/npa workbench workflow submit \
   --var "service_namespace=${OPENPI_NAMESPACE}" \
   --var "service_account=${OPENPI_SERVICE_ACCOUNT}" \
   --var 'service_gpu_node_selector_value=B200' \
+  --var 'service_server_ready_timeout_seconds=1200' \
+  --var 'service_client_timeout_seconds=600' \
+  --var 'service_cleanup_timeout_seconds=180' \
+  --var 'service_api_timeout_seconds=30' \
+  --var 'service_http_timeout_seconds=30' \
   --secret-env NPA_OPENPI_ACCEPT_GEMMA_TERMS \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY
@@ -192,19 +217,34 @@ npa/.venv/bin/python -m npa.workflows.byof.openpi_service_rbac delete \
   --namespace "$OPENPI_NAMESPACE" \
   --service-account "$OPENPI_SERVICE_ACCOUNT" \
   --kubeconfig "$OPENPI_KUBECONFIG" \
-  --context "$OPENPI_CONTEXT"
+  --context "$OPENPI_CONTEXT" \
+  --delete-timeout-seconds 120 \
+  --poll-interval-seconds 5 \
+  --api-timeout-seconds 30
 ```
 
 The canonical live E2E wraps submission with those exact apply/delete calls and
 fails if controller RBAC is foreign, broader than the declared contract, or not
 independently absent afterward. The workflow itself also deletes and verifies
 the Deployment, ClusterIP Service, client Job, and ephemeral terms Secret.
+The live wrapper also proves that the controller ServiceAccount can read only
+the deterministic terms Secret name and is forbidden from reading an otherwise
+valid foreign Secret.
 
 All resource, dataset, checkpoint, service, and output values are configurable.
 When retargeting, change accelerator/count, expected hardware checks, service
 node selector, CPU/memory/scratch values, dataset counts/location, checkpoint,
 namespace, and output prefix together. No live cluster, project, registry, or
 bucket identity is committed.
+
+Terms refusal evidence uses an attempt-scoped key under
+`diagnostics/terms-refusals`; it is never written to a state's declared success
+URI. The live negative gate retains that diagnostic at its separate durable key
+and references it from the accepted retry written to that same logical success
+URI. Serving declares a single `serve_artifact_root_uri`; both `service.json`
+and `cleanup.json` derive
+from that root, so an output override cannot desynchronize code from the
+workflow's declared artifacts.
 
 `NPA_BYOF_OPENPI_REUSE_IMAGE` is rejected by the canonical release gate. A
 previous image may be used for diagnosis, but does not replace fresh build and

@@ -218,7 +218,7 @@ def test_workflow_never_references_a_gpu_without_rt_cores() -> None:
         assert gpu not in body, f"{gpu} has no RT cores; NuRec must not be routed at it"
 
 
-def test_workflow_rejects_a_disk_size_kubernetes_will_not_accept() -> None:
+def test_raw_skypilot_workflow_omits_ignored_kubernetes_boot_disk_size() -> None:
     assert "disk_size" not in _workflow()["resources"]
 
 

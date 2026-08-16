@@ -34,7 +34,11 @@ from npa.workflows.byof.live import (
     resolve_skypilot_bin,
     skypilot_config_for_project,
 )
-from npa.workflows.byof.openpi_service import controller_service_account_name
+from npa.workflows.byof.openpi_service import (
+    build_controller_rbac_manifests,
+    controller_service_account_name,
+    service_resource_names,
+)
 from npa.workflows.sim2real.registry_auth import ensure_nebius_registry_pull_secret
 
 from .npa_workflow_live_helpers import live_bucket
@@ -216,6 +220,25 @@ def _assert_service_objects_absent(
     assert not pods.stdout.strip(), (pod_selector, pods.stdout)
 
 
+def _assert_service_run_objects_absent(
+    *, run_id: str, env: dict[str, str], namespace: str
+) -> None:
+    """Verify exact service identities are absent even when no success artifact exists."""
+
+    names = service_resource_names(run_id)
+    identity = {
+        "cleanup_identity": {
+            "exact_names": names,
+            "pod_selector": (f"npa.nebius.ai/cleanup-owner={names['deployment']}"),
+        }
+    }
+    _assert_service_objects_absent(
+        artifact=identity,
+        env=env,
+        namespace=namespace,
+    )
+
+
 def _assert_controller_rbac_absent(
     *, run_id: str, env: dict[str, str], namespace: str
 ) -> None:
@@ -245,6 +268,126 @@ def _assert_controller_rbac_absent(
         assert not result.stdout.strip(), (kind, name, result.stdout)
 
 
+def _assert_controller_rbac_scope(
+    *, run_id: str, env: dict[str, str], namespace: str, service_account: str
+) -> dict[str, object]:
+    """Exercise the live ServiceAccount boundary, including a foreign Secret."""
+
+    kube = [
+        "kubectl",
+        "--kubeconfig",
+        env["NPA_BYOF_KUBECONFIG"],
+        "--context",
+        env["NPA_BYOF_K8S_CONTEXT"],
+    ]
+    subject = f"system:serviceaccount:{namespace}:{service_account}"
+    manifests = build_controller_rbac_manifests(
+        run_id=run_id,
+        namespace=namespace,
+        service_account=service_account,
+    )
+    secret_rule = next(
+        rule
+        for rule in manifests["role"]["rules"]
+        if rule["resources"] == ["secrets"] and "get" in rule["verbs"]
+    )
+    exact_secret = secret_rule["resourceNames"][0]
+    foreign_secret = f"{service_account}-foreign-probe"
+
+    def can_i(verb: str, resource: str) -> bool:
+        result = subprocess.run(
+            [
+                *kube,
+                "auth",
+                "can-i",
+                verb,
+                resource,
+                "--namespace",
+                namespace,
+                "--as",
+                subject,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout.strip().lower() == "yes"
+
+    subprocess.run(
+        [
+            *kube,
+            "create",
+            "secret",
+            "generic",
+            foreign_secret,
+            "--namespace",
+            namespace,
+            "--from-literal=scope-probe=not-readable",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    try:
+        foreign_read = subprocess.run(
+            [
+                *kube,
+                "get",
+                "secret",
+                foreign_secret,
+                "--namespace",
+                namespace,
+                "--as",
+                subject,
+                "-o",
+                "name",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        evidence = {
+            "schema": "npa.workbench.openpi.service-controller-rbac-scope.v1",
+            "exact_secret_get_allowed": can_i("get", f"secret/{exact_secret}"),
+            "foreign_secret_get_allowed": can_i("get", f"secret/{foreign_secret}"),
+            "foreign_secret_read_refused": foreign_read.returncode != 0,
+            "pod_list_allowed": can_i("list", "pods"),
+            "pod_log_get_allowed": can_i("get", "pods/log"),
+            "pod_delete_allowed": can_i("delete", "pods"),
+        }
+        assert evidence == {
+            "schema": "npa.workbench.openpi.service-controller-rbac-scope.v1",
+            "exact_secret_get_allowed": True,
+            "foreign_secret_get_allowed": False,
+            "foreign_secret_read_refused": True,
+            "pod_list_allowed": True,
+            "pod_log_get_allowed": False,
+            "pod_delete_allowed": False,
+        }
+        return evidence
+    finally:
+        subprocess.run(
+            [
+                *kube,
+                "delete",
+                "secret",
+                foreign_secret,
+                "--namespace",
+                namespace,
+                "--ignore-not-found",
+                "--wait=true",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+
 def _run_four_mode_workflow(
     *,
     run_id: str,
@@ -253,6 +396,7 @@ def _run_four_mode_workflow(
     project: str | None,
     registry: str,
     env: dict[str, str],
+    config_overrides: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     target = resolve_byof_kubernetes_target(project)
     assert target.context and target.kubeconfig
@@ -272,6 +416,7 @@ def _run_four_mode_workflow(
     assert Path(task_config_path).is_absolute()
     namespace = target.namespace or "default"
     service_account = controller_service_account_name(run_id)
+    workflow_config = load_spec(FOUR_MODE_SPEC).config
     prefix = f"oss-solutions/openpi/{run_id}"
     command = [
         str(REPO_ROOT / "npa" / ".venv" / "bin" / "npa"),
@@ -320,6 +465,8 @@ def _run_four_mode_workflow(
     ]
     if project:
         command.extend(["--project", project])
+    for key, value in sorted((config_overrides or {}).items()):
+        command.extend(["--var", f"{key}={value}"])
     command.extend(["--config-path", task_config_path])
     rbac_base = [
         sys.executable,
@@ -335,6 +482,12 @@ def _run_four_mode_workflow(
         target.kubeconfig,
         "--context",
         target.context,
+        "--delete-timeout-seconds",
+        str(workflow_config["service_rbac_delete_timeout_seconds"]),
+        "--poll-interval-seconds",
+        str(workflow_config["service_poll_interval_seconds"]),
+        "--api-timeout-seconds",
+        str(workflow_config["service_api_timeout_seconds"]),
     ]
     apply = subprocess.run(
         [*rbac_base[:3], "apply", *rbac_base[3:]],
@@ -346,7 +499,14 @@ def _run_four_mode_workflow(
     )
     if apply.returncode != 0:
         return apply
+    rbac_scope: dict[str, object] = {}
     try:
+        rbac_scope = _assert_controller_rbac_scope(
+            run_id=run_id,
+            env=env,
+            namespace=namespace,
+            service_account=service_account,
+        )
         submit = subprocess.run(
             command,
             check=False,
@@ -372,6 +532,7 @@ def _run_four_mode_workflow(
         "controller_rbac_apply_passed": apply.returncode == 0,
         "controller_rbac_delete_passed": delete.returncode == 0,
         "controller_service_account": service_account,
+        "controller_rbac_scope": rbac_scope,
     }
     return subprocess.CompletedProcess(
         args=command,
@@ -869,6 +1030,10 @@ def test_openpi_four_mode_submit_uses_task_isolated_skypilot_state(
     )
     monkeypatch.setattr(f"{__name__}.resolve_skypilot_bin", lambda: "/opt/sky")
     monkeypatch.setattr(f"{__name__}.skypilot_config_for_project", lambda _: "")
+    monkeypatch.setattr(
+        f"{__name__}._assert_controller_rbac_scope",
+        lambda **_kwargs: {"foreign_secret_read_refused": True},
+    )
 
     def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         calls.append((command, kwargs))
@@ -896,6 +1061,8 @@ def test_openpi_four_mode_submit_uses_task_isolated_skypilot_state(
     delete_command, _ = calls[2]
     assert apply_command[3] == "apply"
     assert delete_command[3] == "delete"
+    assert "--delete-timeout-seconds" in apply_command
+    assert "--api-timeout-seconds" in delete_command
     expected_service_account = controller_service_account_name("openpi-live")
     assert apply_command[apply_command.index("--service-account") + 1] == (
         expected_service_account
@@ -1087,7 +1254,7 @@ def test_openpi_polaris_live_b200_all_four_modes(
     _refresh_pull_secrets(project=e2e_project, registry=project_registry)
 
     negative_env = dict(env)
-    negative_env["NPA_OPENPI_ACCEPT_GEMMA_TERMS"] = "NO"
+    negative_env.pop("NPA_OPENPI_ACCEPT_GEMMA_TERMS", None)
     negative_proc = _run_byof(
         _smoke_command(
             planned=planned,
@@ -1198,9 +1365,11 @@ def test_openpi_polaris_live_b200_all_four_modes(
     negative = _read_json(s3, bucket, four_prefix + "reports/negative-terms-gate.json")
     dataset_manifest = _read_json(s3, bucket, four_prefix + "data/manifest.json")
     direct = _read_json(s3, bucket, four_prefix + "reports/direct-inference.json")
-    serve = _read_json(s3, bucket, four_prefix + "reports/cross-pod-service.json")
+    serve = _read_json(
+        s3, bucket, four_prefix + "reports/cross-pod-service/service.json"
+    )
     serve_cleanup = _read_json(
-        s3, bucket, four_prefix + "reports/cross-pod-service.cleanup.json"
+        s3, bucket, four_prefix + "reports/cross-pod-service/cleanup.json"
     )
     training = _read_json(s3, bucket, four_prefix + "reports/training.json")
     checkpoint_manifest = _read_json(
@@ -1208,21 +1377,23 @@ def test_openpi_polaris_live_b200_all_four_modes(
     )
     evaluation = _read_json(s3, bucket, four_prefix + "reports/heldout-evaluation.json")
 
-    assert negative == {
-        "schema": "npa.workbench.openpi.live-negative-terms-gate.v1",
-        "status": "passed",
-        "exit_code": 64,
-        "checkpoint_fetch_started": False,
-        "model_import_started": False,
-        "required_env": "NPA_OPENPI_ACCEPT_GEMMA_TERMS",
-        "accepted_value": "YES",
-        "acceptance_persisted": False,
-        "tested_child_status": "refused",
-        "tested_child_exit_code": 64,
-        "execution_scope": "live_kubernetes_workload",
-        "runtime_image": image,
-        "accepted_checkpoint_fetch_started_after_probe": False,
-    }
+    assert negative["schema"] == "npa.workbench.openpi.live-negative-terms-gate.v1"
+    assert negative["status"] == "passed"
+    assert negative["tested_child_status"] == "refused"
+    assert negative["tested_child_exit_code"] == 64
+    assert negative["runtime_image"] == image
+    child_refusal = negative["tested_child_refusal"]
+    assert child_refusal["schema"] == "npa.workbench.openpi.terms-gate.v1"
+    assert child_refusal["status"] == "refused"
+    assert child_refusal["declared_success_output_uri_untouched"] is True
+    assert child_refusal["diagnostic_persistence"] == ("separate_attempt_scoped_uri")
+    diagnostic_prefix = f"s3://{bucket}/{four_prefix}diagnostics/terms-refusals/"
+    assert child_refusal["diagnostic_uri"].startswith(diagnostic_prefix)
+    diagnostic_key = child_refusal["diagnostic_uri"].split(f"s3://{bucket}/", 1)[1]
+    persisted_refusal = _read_json(s3, bucket, diagnostic_key)
+    assert persisted_refusal["attempt_id"] == child_refusal["attempt_id"]
+    assert child_refusal["checkpoint_fetch_started"] is False
+    assert child_refusal["model_import_started"] is False
     assert dataset_manifest["schema"] == ("npa.workbench.openpi.mini-franka-dataset.v1")
     assert dataset_manifest["split_isolation"] == {
         "sample_id_intersection": [],
@@ -1260,6 +1431,7 @@ def test_openpi_polaris_live_b200_all_four_modes(
     assert serve["topology"]["server_pod_uid"] != serve["topology"]["client_pod_uid"]
     assert serve["topology"]["server_gpu_request"] == 1
     assert serve["topology"]["client_gpu_request"] == 0
+    assert serve["topology"]["client_created_after_clusterip_health"] is True
     assert serve["probes"]["readiness"]["passed"] is True
     assert serve["probes"]["liveness"]["configured"] is True
     assert serve["probes"]["clusterip_health"] == "OK"
@@ -1271,7 +1443,11 @@ def test_openpi_polaris_live_b200_all_four_modes(
     assert serve_hardware["compute_capabilities"] == ["10.0"]
     assert serve_hardware["sm100_probe"]["passed"] is True
     for request in serve["client"]["requests"]:
-        _assert_float64_trajectory(request)
+        assert request["dtype"] == "float64"
+        assert request["finite"] is True
+        assert list(request["shape"])[0] >= 5
+        assert list(request["shape"])[1:] == [8]
+        assert re.fullmatch(r"[0-9a-f]{64}", request["first_five_targets_sha256"])
     assert serve_cleanup["schema"] == "npa.workbench.openpi.service-cleanup.v1"
     assert serve_cleanup["all_exact_resources_absent"] is True
     assert all(serve_cleanup["verified"].values())
@@ -1280,6 +1456,55 @@ def test_openpi_polaris_live_b200_all_four_modes(
         artifact=serve,
         env=four_mode_env,
         namespace=target.namespace or "default",
+    )
+
+    failure_run_id = f"openpi-pi05-service-failure-{stamp}"
+    failure_proc = _run_four_mode_workflow(
+        run_id=failure_run_id,
+        image=image,
+        bucket=bucket,
+        project=e2e_project,
+        registry=project_registry,
+        env=four_mode_env,
+        config_overrides={
+            "service_gpu_node_selector_value": "NO-SUCH-B200-LABEL",
+            "service_server_ready_timeout_seconds": "60",
+        },
+    )
+    failure_combined = failure_proc.stdout + "\n" + failure_proc.stderr
+    assert failure_proc.returncode != 0, failure_combined[-30000:]
+    assert "Unschedulable" in failure_combined, failure_combined[-30000:]
+    _assert_controller_rbac_absent(
+        run_id=failure_run_id,
+        env=four_mode_env,
+        namespace=target.namespace or "default",
+    )
+    _assert_service_run_objects_absent(
+        run_id=failure_run_id,
+        env=four_mode_env,
+        namespace=target.namespace or "default",
+    )
+    failure_prefix = f"oss-solutions/openpi/{failure_run_id}/"
+    failure_objects = s3.list_objects_v2(Bucket=bucket, Prefix=failure_prefix).get(
+        "Contents", []
+    )
+    failure_keys = {str(item["Key"]) for item in failure_objects}
+    assert failure_prefix + "reports/direct-inference.json" in failure_keys
+    assert failure_prefix + "reports/cross-pod-service/service.json" not in failure_keys
+    assert failure_prefix + "reports/cross-pod-service/cleanup.json" not in failure_keys
+    print(
+        json.dumps(
+            {
+                "openpi_service_failure_cleanup_evidence": {
+                    "failure": "unschedulable_missing_gpu_label",
+                    "service_success_artifact_absent": True,
+                    "service_cleanup_artifact_absent": True,
+                    "all_exact_resources_absent": True,
+                    "controller_rbac_absent": True,
+                }
+            },
+            sort_keys=True,
+        )
     )
 
     assert training["schema"] == "npa.workbench.openpi.pi05-training.v1"

@@ -378,12 +378,23 @@ def normalize_resources(
 
     cloud = str(out.get("cloud") or "").strip().lower()
     if cloud in {"kubernetes", "k8s"}:
+        # SkyPilot 0.12.x accepts ``disk_size`` on Kubernetes but explicitly
+        # ignores it because pods have no cloud boot disk. Preserve the profile's
+        # capacity intent using SkyPilot's supported Kubernetes resource request,
+        # which renders as ``ephemeral-storage`` on the pod.
+        if "disk_size" in out:
+            out["ephemeral_storage"] = out.pop("disk_size")
         for key in ("cpus", "memory"):
             if key not in out:
                 continue
             raw = str(out[key]).strip()
             if raw and not raw.endswith("+"):
                 out[key] = f"{raw}+"
+    else:
+        # Preserve the renderer's historical behavior outside Kubernetes. This
+        # review deliberately settles only the affected Kubernetes profiles and
+        # does not introduce a new VM-cloud boot-disk contract.
+        out.pop("disk_size", None)
     return out
 
 
@@ -1650,9 +1661,9 @@ def build_skypilot_task_doc(
     }
     attempt_id = str(options.execution_attempt_id or "").strip()
     if not attempt_id:
-        material = "\0".join(
-            (spec.name, run_id, str(scheduler_task["name"]))
-        ).encode("utf-8")
+        material = "\0".join((spec.name, run_id, str(scheduler_task["name"]))).encode(
+            "utf-8"
+        )
         attempt_id = hashlib.sha256(material).hexdigest()
     envs["NPA_WORKFLOW_ATTEMPT_ID"] = attempt_id
     if options.execution_fence_sequence < 1 or options.execution_fence_attempt < 1:
@@ -1727,7 +1738,10 @@ def build_skypilot_task_doc(
     # and exports SKYPILOT_NODE_RANK / SKYPILOT_NODE_IPS into each. Emitted only when the
     # profile asks for more than one node, so every existing rendered doc is unchanged.
     num_nodes = int(scheduler_task.get("num_nodes") or 1)
-    if str(scheduler_task.get("tool_ref") or "") == "workbench.cosmos2.transfer_execute":
+    if (
+        str(scheduler_task.get("tool_ref") or "")
+        == "workbench.cosmos2.transfer_execute"
+    ):
         # This renderer/planner value is authoritative.  SkyPilot's runtime
         # variables are independent evidence and the worker cross-checks them.
         envs["NPA_COSMOS_NODE_COUNT"] = str(num_nodes)

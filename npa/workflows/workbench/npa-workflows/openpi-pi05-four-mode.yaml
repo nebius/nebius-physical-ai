@@ -57,8 +57,9 @@ config:
   # count as the workflow and is pinned to the provider's discovered GPU-name
   # label; both selector fields are overrideable for another cluster catalog.
   service_namespace: default
-  # Create this least-privilege identity before submit (the live gate uses a
-  # run-scoped name) and remove it after the controller reaches terminal state.
+  # Create this run-scoped, name-constrained identity before submit and remove
+  # it after the controller reaches terminal state. Kubernetes leaves only the
+  # documented create and controller-generated pod-list residuals namespace-wide.
   service_account: npa-openpi-controller
   service_image_pull_secret: npa-nebius-registry
   service_gpu_node_selector_key: nebius.com/gpu-name
@@ -69,14 +70,27 @@ config:
   service_client_memory: 8Gi
   service_cache_size: 40Gi
   service_liveness_initial_delay_seconds: "600"
+  # Product failure-recovery deadlines. These bound only service readiness,
+  # client completion, API/health calls, and exact cleanup; they are not job,
+  # cost, or workflow caps.
+  service_server_ready_timeout_seconds: "1200"
+  service_client_timeout_seconds: "600"
+  service_cleanup_timeout_seconds: "180"
+  service_poll_interval_seconds: "5"
+  service_api_timeout_seconds: "30"
+  service_http_timeout_seconds: "30"
+  service_rbac_delete_timeout_seconds: "120"
 
   run_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  terms_diagnostic_root_uri: "{{config.run_root_uri}}diagnostics/terms-refusals"
   negative_gate_uri: "{{config.run_root_uri}}reports/negative-terms-gate.json"
   dataset_uri: "{{config.run_root_uri}}data/mini-franka-two-camera.npz"
   dataset_manifest_uri: "{{config.run_root_uri}}data/manifest.json"
   direct_uri: "{{config.run_root_uri}}reports/direct-inference.json"
-  serve_uri: "{{config.run_root_uri}}reports/cross-pod-service.json"
-  serve_cleanup_uri: "{{config.run_root_uri}}reports/cross-pod-service.cleanup.json"
+  # A single override root keeps declared serving and cleanup outputs coupled.
+  serve_artifact_root_uri: "{{config.run_root_uri}}reports/cross-pod-service"
+  serve_uri: "{{config.serve_artifact_root_uri}}/service.json"
+  serve_cleanup_uri: "{{config.serve_artifact_root_uri}}/cleanup.json"
   trained_checkpoint_uri: "{{config.run_root_uri}}checkpoints/trained"
   trained_checkpoint_manifest_uri: "{{config.trained_checkpoint_uri}}/manifest.json"
   training_uri: "{{config.run_root_uri}}reports/training.json"

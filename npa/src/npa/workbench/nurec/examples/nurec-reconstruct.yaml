@@ -41,8 +41,10 @@ resources:
   # The NRE container is the runtime; it is Ubuntu 24.04 and runs as root, which
   # is what SkyPilot's Kubernetes bootstrap requires.
   image_id: "docker:${NPA_NUREC_IMAGE}"
-  # No disk_size: SkyPilot rejects it on Kubernetes. The pod uses node ephemeral
-  # storage (the RT-core nodes expose ~1 TB, and the image alone is ~30 GB).
+  # No disk_size is needed here: raw SkyPilot ignores that boot-disk field on
+  # Kubernetes. The pod uses node ephemeral storage (the RT-core nodes expose
+  # ~1 TB, and the image alone is ~30 GB). Declarative npa.workflow profiles
+  # translate disk_size to SkyPilot's supported ephemeral_storage request.
 config:
   kubernetes:
     # A ~14 GB compressed image pull dominates first-schedule latency on a node

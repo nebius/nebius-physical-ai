@@ -74,6 +74,23 @@ def test_non_isaac_byof_specs_render_their_declared_runtime_image(
     assert "ACCEPT_EULA" not in task["envs"]
 
 
+def test_kubernetes_profile_disk_size_renders_as_ephemeral_storage() -> None:
+    spec = load_spec(NPA_SPECS / "byof-wan2.2.yaml")
+    plan = build_plan(spec, run_id="disk-contract")
+    assert plan.steps[0].resources_profile["disk_size"] == 200
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="disk-contract",
+        options=SkypilotRenderOptions(
+            registry="registry.example", materialize_registry_secrets=False
+        ),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
+    assert task["resources"]["ephemeral_storage"] == 200
+    assert "disk_size" not in task["resources"]
+
+
 def test_every_byof_spec_declares_its_outer_runtime_image() -> None:
     paths = sorted(NPA_SPECS.glob("byof*.yaml"))
 
@@ -122,7 +139,9 @@ def test_resolved_isaac_image_routes_all_five_raw_shell_sweep_states() -> None:
             accept_eula=False,
         ),
     )
-    tasks = [doc for doc in yaml.safe_load_all(rendered) if doc and doc.get("resources")]
+    tasks = [
+        doc for doc in yaml.safe_load_all(rendered) if doc and doc.get("resources")
+    ]
 
     assert {task["name"] for task in tasks} == {
         "variant-lr-1e-3",
@@ -145,7 +164,9 @@ def test_resolved_non_isaac_image_does_not_create_false_gate() -> None:
             materialize_registry_secrets=False,
         ),
     )
-    tasks = [doc for doc in yaml.safe_load_all(rendered) if doc and doc.get("resources")]
+    tasks = [
+        doc for doc in yaml.safe_load_all(rendered) if doc and doc.get("resources")
+    ]
 
     assert len(tasks) == 5
     assert all("ACCEPT_EULA" not in task["envs"] for task in tasks)
@@ -286,6 +307,22 @@ def test_normalize_resources_leaves_exact_nebius_shapes() -> None:
         "cloud": "nebius",
         "cpus": 4,
         "memory": "16",
+    }
+
+
+def test_normalize_resources_translates_kubernetes_disk_capacity() -> None:
+    assert normalize_resources(
+        {"cloud": "kubernetes", "disk_size": 200, "cpus": 4}
+    ) == {
+        "cloud": "kubernetes",
+        "cpus": "4+",
+        "ephemeral_storage": 200,
+    }
+
+
+def test_normalize_resources_preserves_non_kubernetes_renderer_behavior() -> None:
+    assert normalize_resources({"cloud": "nebius", "disk_size": 200}) == {
+        "cloud": "nebius",
     }
 
 
@@ -552,7 +589,9 @@ resources:
 """
     assert_no_unresolved_placeholders(rendered)
 
-    unresolved_env = rendered.replace("MATERIALIZED: ready", 'MATERIALIZED: "${MISSING}"')
+    unresolved_env = rendered.replace(
+        "MATERIALIZED: ready", 'MATERIALIZED: "${MISSING}"'
+    )
     with pytest.raises(NpaWorkflowRenderError, match=r"\$\{MISSING\}"):
         assert_no_unresolved_placeholders(unresolved_env)
 
