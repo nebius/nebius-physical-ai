@@ -74,7 +74,7 @@ Published names are random (`<token>-<stem>.mcap`) and pruned to the newest few.
 | `GET /api/foxglove/status` | Readiness + active recording (also grounds the `foxglove_viewer` chat intent) |
 | `POST /api/foxglove/load-artifact` | Load a discovered `.mcap`/`.bag`/`.db3`/`.ulg`/`.ulog` artifact (`run_id` + `s3_uri`, or `run_id` + `key`) |
 | `POST /api/foxglove/convert-run` | Convert the active run's local artifacts to MCAP and load it |
-| `POST /api/foxglove/export` | Prepare/reuse the rich canonical MCAP; download it, open its official remote-file link, or explicitly upload/index it |
+| `POST /api/foxglove/export` | Authorize and prepare/reuse the exact selected MCAP; return the viewer config plus phase timings, download it, open its official remote-file link, or explicitly upload/index it |
 | `POST /api/foxglove/live` | Point the viewer at a public `ws://`/`wss://` Foxglove or ROS-bridge URL |
 
 Configuration (no secrets): `NPA_FOXGLOVE_EMBED_SRC`, `NPA_FOXGLOVE_ORG_SLUG`,
@@ -103,12 +103,29 @@ Agent export persists exactly one canonical run artifact at
 otherwise real S3 run artifacts are converted and the run-list cache is
 invalidated. Lichtblick, the download transport, and Cloud import use identical
 canonical bytes and report the same SHA-256.
-The agent's ordinary **View in Foxglove** action prepares the canonical MCAP
-and opens Foxglove's documented `ds=remote-file&ds.url=<public HTTPS MCAP>`
-link. The recording URL is encoded exactly once, contains no credentials, and
-is the same CORS + byte-range transport used by the official embed SDK. The
-button synchronously reserves a popup during the user gesture and reports
-blocked or failed navigation honestly.
+The artifact card's ordinary **View in Foxglove** action opens the embedded SDK
+pane and binds the exact selected MCAP as a `remote-file` source. Before any
+no-download reuse, the backend authorizes the immutable run reference and exact
+key, reads a strong object-store identity (ETag or version id), and verifies the
+published bytes against the persisted SHA-256 and provenance. An unchanged
+selection skips download, conversion, and publication; a changed object identity
+or mismatched local byte invalidates the cache. A canonical cache miss prepares
+and applies the local result once rather than downloading it again. The export
+response includes the matching viewer config, `cache_reused`, and phase timings
+so the UI does not need a redundant config request.
+
+The SDK iframe mounts before backend preparation finishes and remains mounted
+across exact-card selections. The UI sends `setDataSource` and `selectLayout`
+only when their identities change. Status, artifact actions, and visualization
+summary participate in normal layout above the viewer canvas; they must never be
+absolutely or fixed-positioned over playback controls. Success text stays compact
+while its full accessible value remains available through the status element.
+
+The separate **Open in Foxglove** action uses Foxglove's documented
+`ds=remote-file&ds.url=<public HTTPS MCAP>` link. The recording URL is encoded
+exactly once, contains no credentials, and is the same CORS + byte-range
+transport used by the official embed SDK. The button synchronously reserves a
+popup during the user gesture and reports blocked or failed navigation honestly.
 
 For recordings that advertise `npa.foxglove.robot-motion.v3`, the server
 idempotently creates the versioned `NPA Physical AI robot motion v3` organization

@@ -24,6 +24,7 @@ from npa.cli.agent_foxglove import (
     FOXGLOVE_SDK_FILES,
     FOXGLOVE_SDK_URL,
     MCAP_MAGIC,
+    artifact_source_fingerprint,
     data_source_for_state,
     describe_foxglove_context,
     foxglove_data_source_link,
@@ -49,6 +50,24 @@ from npa.agent_backend.foxglove_cloud import (
     MAX_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS as CLOUD_TIMEOUT_MAX,
 )
 from npa.workbench import foxglove as foxglove_pkg
+
+
+def test_artifact_source_fingerprint_requires_and_tracks_strong_identity() -> None:
+    common = {
+        "bucket": "resource-bucket",
+        "key": "run/reports/sim2real.mcap",
+        "size": 42,
+        "last_modified": "2026-08-16T00:00:00+00:00",
+    }
+
+    assert artifact_source_fingerprint(**common) == ""
+    first = artifact_source_fingerprint(**common, etag='"etag-v1"')
+    assert len(first) == 64
+    assert first == artifact_source_fingerprint(**common, etag="etag-v1")
+    assert first != artifact_source_fingerprint(**common, etag="etag-v2")
+    assert first != artifact_source_fingerprint(
+        **{**common, "key": "other/reports/sim2real.mcap"}, etag="etag-v1"
+    )
 
 
 def _install_assets(tmp_path: Path, *, manifest: bool = True) -> Path:

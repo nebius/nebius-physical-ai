@@ -22,6 +22,7 @@ Python and stays safe to inline into the backend template.
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 import math
@@ -96,6 +97,37 @@ def looks_like_mcap(data: bytes | None) -> bool:
     if not data:
         return False
     return bytes(data[: len(MCAP_MAGIC)]) == MCAP_MAGIC
+
+
+def artifact_source_fingerprint(
+    *,
+    bucket: str,
+    key: str,
+    size: int,
+    last_modified: str,
+    etag: str = "",
+    version_id: str = "",
+) -> str:
+    """Return an opaque identity for one authoritative object-store version.
+
+    Size and list timestamps remain useful diagnostics, but the no-download
+    fast path requires the object store to supply an ETag or version id.
+    """
+
+    normalized_etag = str(etag or "").strip().strip('"')
+    normalized_version = str(version_id or "").strip()
+    if not normalized_etag and not normalized_version:
+        return ""
+    payload = {
+        "bucket": str(bucket or "").strip(),
+        "etag": normalized_etag,
+        "key": str(key or "").strip(),
+        "last_modified": str(last_modified or "").strip(),
+        "size": max(0, int(size or 0)),
+        "version_id": normalized_version,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def published_data_name(key: str, *, token: str = "") -> str:
@@ -1019,6 +1051,7 @@ __all__ = [
     "FOXGLOVE_SDK_MANIFEST",
     "FOXGLOVE_SDK_URL",
     "MCAP_MAGIC",
+    "artifact_source_fingerprint",
     "convert_run_request",
     "converted_recording_update",
     "data_source_for_state",

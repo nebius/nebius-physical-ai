@@ -673,6 +673,289 @@ def test_export_uses_one_canonical_s3_contract_for_viewers_download_and_cloud(
     assert repaired.json()["export"]["sha256"] == digest
 
 
+def test_exact_canonical_fast_path_reuses_version_and_invalidates_change(
+    tmp_path: Path,
+) -> None:
+    assets = tmp_path / "sdk"
+    assets.mkdir()
+    for name in FOXGLOVE_SDK_FILES:
+        (assets / name).write_text("export {};", encoding="utf-8")
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    canonical = tmp_path / "canonical.mcap"
+    transport = data_dir / "transport.mcap"
+    key = "runs/run-1/reports/sim2real.mcap"
+    uri = f"s3://bucket/{key}"
+    request = {
+        "run_id": "run-1",
+        "run_ref": "npa1_exact",
+        "key": key,
+        "resource_bucket": "bucket",
+        "project_id": "project-1",
+        "resolved_prefix": "runs",
+        "s3_uri": uri,
+    }
+    source = {
+        "fingerprint": "a" * 64,
+        "bytes": b"\x89MCAP0\r\nfirst-version",
+    }
+    state = {"sim_viz": {"run_id": "run-1"}}
+    calls = {"resolve": 0, "load": 0, "prepare": 0, "apply": 0}
+
+    def save_state(new: dict) -> None:
+        snapshot = dict(new)
+        state.clear()
+        state.update(snapshot)
+
+    def resolve(_body: dict) -> dict:
+        calls["resolve"] += 1
+        return {
+            "run_id": "run-1",
+            "run_ref": "npa1_exact",
+            "key": key,
+            "s3_uri": uri,
+            "bucket": "bucket",
+            "resource_bucket": "bucket",
+            "project_id": "project-1",
+            "resolved_prefix": "runs",
+            "source_fingerprint": source["fingerprint"],
+            "source_size_bytes": len(source["bytes"]),
+            "source_last_modified": "2026-08-16T00:00:00+00:00",
+        }
+
+    def load_artifact(_body: dict) -> dict:
+        calls["load"] += 1
+        raise AssertionError("canonical exact selection must not pre-download")
+
+    def prepare(**_kwargs) -> dict:
+        calls["prepare"] += 1
+        canonical.write_bytes(source["bytes"])
+        digest = hashlib.sha256(source["bytes"]).hexdigest()
+        provenance = {
+            "schema": "npa.canonical-mcap.v2",
+            "canonical_s3_uri": uri,
+            "sha256": digest,
+            "source": "native-reused",
+        }
+        return {
+            "artifact_key": key,
+            "s3_uri": uri,
+            "local_path": str(canonical),
+            "sha256": digest,
+            "size_bytes": canonical.stat().st_size,
+            "source": "native-reused",
+            "created": False,
+            "provenance": provenance,
+            "summary": {"message_count": 1},
+        }
+
+    def apply_prepared(*, canonical: dict, run_id: str, run_ref: str) -> dict:
+        calls["apply"] += 1
+        transport.write_bytes(Path(canonical["local_path"]).read_bytes())
+        state["sim_viz"].update(
+            {
+                "run_id": run_id,
+                "artifact_run_ref": run_ref,
+                "artifact_key": key,
+                "artifact_uri": uri,
+                "artifact_render": "mcap",
+                "bucket": "bucket",
+                "project_id": "project-1",
+                "resolved_prefix": "runs",
+                "artifact_source_fingerprint": source["fingerprint"],
+                "foxglove_url": "/foxglove/data/transport.mcap",
+                "foxglove_ready": True,
+            }
+        )
+        return {"ok": True, "render": "mcap", "sim_viz": state["sim_viz"]}
+
+    def config(current: dict | None = None) -> dict:
+        return resolve_foxglove_config(
+            {"NPA_FOXGLOVE_EMBED_SRC": "https://embed.foxglove.dev/"},
+            assets_dir=assets,
+            origin="https://agent.example",
+            sim_viz=(current or state)["sim_viz"],
+        )
+
+    app = FastAPI()
+    register_foxglove_routes(
+        app,
+        FoxgloveDeps(
+            load_state=lambda: state,
+            save_state=save_state,
+            record_run=lambda _state, _viz: None,
+            foxglove_config=config,
+            load_artifact=load_artifact,
+            convert_run=lambda **_kwargs: None,
+            now_iso=lambda: "2026-08-16T00:00:00+00:00",
+            validate_run_id=lambda value: value,
+            data_dir=data_dir,
+            runs_dir=tmp_path / "runs",
+            prepare_canonical_mcap=prepare,
+            resolve_artifact=resolve,
+            apply_prepared_canonical=apply_prepared,
+        ),
+        HTTPException,
+    )
+    client = TestClient(app)
+
+    first = client.post("/foxglove/export", json=request)
+    second = client.post("/foxglove/export", json=request)
+
+    assert first.status_code == second.status_code == 200
+    assert first.json()["cache_reused"] is False
+    assert second.json()["cache_reused"] is True
+    assert second.json()["sim_viz"]["transport_state"] == "published-selected-cache"
+    assert calls == {"resolve": 2, "load": 0, "prepare": 1, "apply": 1}
+
+    source.update(
+        {
+            "fingerprint": "b" * 64,
+            "bytes": b"\x89MCAP0\r\nchanged-version",
+        }
+    )
+    changed = client.post("/foxglove/export", json=request)
+
+    assert changed.status_code == 200
+    assert changed.json()["cache_reused"] is False
+    assert changed.json()["selected_artifact"]["source_fingerprint"] == "b" * 64
+    assert changed.json()["export"]["sha256"] != first.json()["export"]["sha256"]
+    assert calls == {"resolve": 3, "load": 0, "prepare": 2, "apply": 2}
+
+
+def test_exact_native_cache_rechecks_object_identity_and_retries_race(
+    tmp_path: Path,
+) -> None:
+    assets = tmp_path / "sdk"
+    assets.mkdir()
+    for name in FOXGLOVE_SDK_FILES:
+        (assets / name).write_text("export {};", encoding="utf-8")
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    transport = data_dir / "native.mcap"
+    key = "runs/run-1/recordings/native.mcap"
+    uri = f"s3://bucket/{key}"
+    request = {
+        "run_id": "run-1",
+        "run_ref": "npa1_exact",
+        "key": key,
+        "resource_bucket": "bucket",
+        "project_id": "project-1",
+        "resolved_prefix": "runs",
+        "s3_uri": uri,
+    }
+    source = {
+        "fingerprint": "a" * 64,
+        "bytes": b"\x89MCAP0\r\nnative-v1",
+        "race_to": None,
+    }
+    state = {"sim_viz": {"run_id": "run-1"}}
+    calls = {"resolve": 0, "load": 0}
+
+    def save_state(new: dict) -> None:
+        snapshot = dict(new)
+        state.clear()
+        state.update(snapshot)
+
+    def resolve(_body: dict) -> dict:
+        calls["resolve"] += 1
+        return {
+            "run_id": "run-1",
+            "run_ref": "npa1_exact",
+            "key": key,
+            "s3_uri": uri,
+            "bucket": "bucket",
+            "resource_bucket": "bucket",
+            "project_id": "project-1",
+            "resolved_prefix": "runs",
+            "source_fingerprint": source["fingerprint"],
+            "source_size_bytes": len(source["bytes"]),
+            "source_last_modified": "2026-08-16T00:00:00+00:00",
+        }
+
+    def load_artifact(_body: dict) -> dict:
+        calls["load"] += 1
+        transport.write_bytes(source["bytes"])
+        state["sim_viz"].update(
+            {
+                "run_id": "run-1",
+                "artifact_run_ref": "npa1_exact",
+                "artifact_key": key,
+                "artifact_uri": uri,
+                "artifact_render": "mcap",
+                "bucket": "bucket",
+                "project_id": "project-1",
+                "resolved_prefix": "runs",
+                "foxglove_url": "/foxglove/data/native.mcap",
+                "foxglove_ready": True,
+            }
+        )
+        raced = source.pop("race_to", None)
+        if raced is not None:
+            source.update(raced)
+        return {"ok": True, "sim_viz": state["sim_viz"]}
+
+    def config(current: dict | None = None) -> dict:
+        return resolve_foxglove_config(
+            {"NPA_FOXGLOVE_EMBED_SRC": "https://embed.foxglove.dev/"},
+            assets_dir=assets,
+            origin="https://agent.example",
+            sim_viz=(current or state)["sim_viz"],
+        )
+
+    app = FastAPI()
+    register_foxglove_routes(
+        app,
+        FoxgloveDeps(
+            load_state=lambda: state,
+            save_state=save_state,
+            record_run=lambda _state, _viz: None,
+            foxglove_config=config,
+            load_artifact=load_artifact,
+            convert_run=lambda **_kwargs: None,
+            now_iso=lambda: "2026-08-16T00:00:00+00:00",
+            validate_run_id=lambda value: value,
+            data_dir=data_dir,
+            runs_dir=tmp_path / "runs",
+            resolve_artifact=resolve,
+        ),
+        HTTPException,
+    )
+    client = TestClient(app)
+
+    first = client.post("/foxglove/export", json=request)
+    reused = client.post("/foxglove/export", json=request)
+    assert first.status_code == reused.status_code == 200
+    assert first.json()["cache_reused"] is False
+    assert reused.json()["cache_reused"] is True
+    assert calls == {"resolve": 3, "load": 1}
+
+    source.update({"fingerprint": "b" * 64, "bytes": b"\x89MCAP0\r\nnative-v2"})
+    changed = client.post("/foxglove/export", json=request)
+    assert changed.status_code == 200
+    assert changed.json()["cache_reused"] is False
+    assert changed.json()["export"]["sha256"] != first.json()["export"]["sha256"]
+    assert calls == {"resolve": 5, "load": 2}
+
+    source.update(
+        {
+            "fingerprint": "c" * 64,
+            "bytes": b"\x89MCAP0\r\nnative-racing",
+            "race_to": {
+                "fingerprint": "d" * 64,
+                "bytes": b"\x89MCAP0\r\nnative-after-race",
+            },
+        }
+    )
+    raced = client.post("/foxglove/export", json=request)
+    assert raced.status_code == 409
+    assert "identity changed" in raced.json()["detail"]
+    retried = client.post("/foxglove/export", json=request)
+    assert retried.status_code == 200
+    assert retried.json()["selected_artifact"]["source_fingerprint"] == "d" * 64
+    assert calls == {"resolve": 9, "load": 4}
+
+
 def test_canonical_s3_failure_is_not_concealed(tmp_path: Path) -> None:
     app = FastAPI()
 

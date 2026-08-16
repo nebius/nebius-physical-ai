@@ -690,29 +690,48 @@
         min-height: 560px;
         height: 100%;
       }
-      .foxglove-host {
-        height: 100%;
+      .foxglove-shell {
+        display: flex;
+        flex-direction: column;
         min-height: 560px;
+        height: 100%;
         background: #0b1020;
       }
+      .foxglove-canvas {
+        position: relative;
+        flex: 1 1 auto;
+        min-height: 440px;
+        background: #0b1020;
+      }
+      .foxglove-host {
+        position: absolute;
+        inset: 0;
+        min-height: 0;
+        background: #0b1020;
+      }
+      .foxglove-host.is-switching { visibility: hidden; }
       .foxglove-host iframe { width: 100%; height: 100%; border: 0; }
       .foxglove-pane-actions {
-        position: absolute;
-        z-index: 4;
-        top: 10px;
-        right: 10px;
+        position: static;
+        flex: 0 0 auto;
         display: flex;
         align-items: center;
         justify-content: flex-end;
         flex-wrap: wrap;
         gap: 8px;
-        max-width: min(720px, calc(100% - 20px));
-        padding: 6px;
-        border-radius: 10px;
-        background: rgba(11, 16, 32, 0.9);
+        width: 100%;
+        padding: 8px 10px;
+        border-bottom: 1px solid #26324a;
+        background: #111a2e;
         color: #cbd5e1;
       }
-      .foxglove-pane-actions .hint { margin: 0; font-size: 11px; }
+      .foxglove-pane-actions .hint {
+        flex: 1 1 280px;
+        min-width: 0;
+        margin: 0;
+        font-size: 11px;
+        overflow-wrap: anywhere;
+      }
       .foxglove-message {
         position: absolute;
         inset: 0;
@@ -730,19 +749,30 @@
         border-radius: 4px;
       }
       .foxglove-status {
-        position: absolute;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        padding: 6px 12px;
-        background: rgba(11, 16, 32, 0.88);
+        position: static;
+        flex: 0 0 auto;
+        min-width: 0;
+        padding: 6px 10px;
+        border-bottom: 1px solid #26324a;
+        background: #0f172a;
         color: #94a3b8;
         font-size: 12px;
-        pointer-events: none;
+        line-height: 1.35;
+        overflow-wrap: anywhere;
       }
       .foxglove-status.is-ready { color: #4ade80; }
       .foxglove-status.is-warning { color: #fbbf24; }
       .foxglove-status.is-error { color: #f87171; }
+      #foxgloveVisualizationSummary {
+        flex: 0 0 auto;
+        margin: 0;
+        padding: 6px 10px;
+        border-bottom: 1px solid #26324a;
+        background: #111a2e;
+        color: #cbd5e1;
+        font-size: 11px;
+        overflow-wrap: anywhere;
+      }
       .media-preview-host {
         height: 100%;
         min-height: 560px;
@@ -1071,12 +1101,13 @@
         0%, 80%, 100% { opacity: 0.45; }
         40% { opacity: 1; }
       }
-      /* Online-chat widget: bottom-right FAB + collapsible panel over Viewer. */
+      /* Keep viewer affordances away from bottom playback controls. */
       #chatDrawerToggle {
         display: none;
         position: fixed;
         right: max(14px, env(safe-area-inset-right));
-        bottom: max(16px, env(safe-area-inset-bottom));
+        top: max(84px, env(safe-area-inset-top));
+        bottom: auto;
         z-index: 70;
         min-width: 56px;
         height: 56px;
@@ -1100,8 +1131,8 @@
         pointer-events: none;
         position: fixed;
         right: max(14px, env(safe-area-inset-right));
-        bottom: calc(76px + env(safe-area-inset-bottom));
-        top: auto;
+        top: calc(150px + env(safe-area-inset-top));
+        bottom: auto;
         left: auto;
         width: min(380px, calc(100vw - 28px));
         height: min(560px, calc(100vh - 110px));
@@ -1524,11 +1555,7 @@
       .quick-pill:hover { background: var(--brand); }
       .hint { font-size: 13px; color: var(--muted); }
       .status-bar {
-        position: fixed;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        z-index: 900;
+        position: static;
         padding: 8px 14px;
         font-size: 12px;
         color: #ffffff;
@@ -2197,17 +2224,21 @@
                 </div>
               </div>
               <div id="viewerPaneFoxglove" class="viewer-pane is-inactive-viewer" role="tabpanel" aria-labelledby="renderModeFoxglove" aria-hidden="true">
-                <div id="foxgloveHost" class="foxglove-host"></div>
-                <div class="foxglove-pane-actions">
-                  <span id="foxgloveExportNote" class="hint" role="status" aria-live="polite">Load a run to open its canonical MCAP externally.</span>
-                  <button id="foxgloveOpenWeb" class="btn" type="button"
-                    data-testid="open-foxglove-web" aria-describedby="foxgloveExportNote"
-                    aria-busy="false" disabled
-                    title="Open this public MCAP as a remote-file data source in Foxglove Web">Open in Foxglove</button>
+                <div class="foxglove-shell">
+                  <div class="foxglove-pane-actions">
+                    <span id="foxgloveExportNote" class="hint" role="status" aria-live="polite">Load a run to open its canonical MCAP externally.</span>
+                    <button id="foxgloveOpenWeb" class="btn" type="button"
+                      data-testid="open-foxglove-web" aria-describedby="foxgloveExportNote"
+                      aria-busy="false" disabled
+                      title="Open this public MCAP as a remote-file data source in Foxglove Web">Open in Foxglove</button>
+                  </div>
+                  <div id="foxgloveStatus" class="foxglove-status" role="status" aria-live="polite">Foxglove viewer idle.</div>
+                  <p id="foxgloveVisualizationSummary" class="hint" role="status" aria-live="polite">Select a real MCAP to inspect its robot-motion visualization contract.</p>
+                  <div class="foxglove-canvas">
+                    <div id="foxgloveHost" class="foxglove-host"></div>
+                    <div id="foxgloveMessage" class="foxglove-message" hidden></div>
+                  </div>
                 </div>
-                <div id="foxgloveMessage" class="foxglove-message" hidden></div>
-                <div id="foxgloveStatus" class="foxglove-status" role="status" aria-live="polite">Foxglove viewer idle.</div>
-                <p id="foxgloveVisualizationSummary" class="hint" role="status" aria-live="polite">Select a real MCAP to inspect its robot-motion visualization contract.</p>
               </div>
               <div id="viewerPaneMedia" class="viewer-pane is-inactive-viewer" role="tabpanel" aria-hidden="true">
                 <div id="artifactPreviewHost" class="media-preview-host" hidden></div>
@@ -5854,11 +5885,19 @@
       function setFoxgloveStatus(text, kind) {
         const el = document.getElementById("foxgloveStatus");
         if (!el) return;
-        el.textContent = String(text || "");
+        const message = String(text || "");
+        el.textContent = message;
+        el.title = message;
         el.classList.toggle("is-ready", kind === "ready");
         el.classList.toggle("is-warning", kind === "warning");
         el.classList.toggle("is-error", kind === "error");
         el.dataset.state = String(kind || "idle");
+      }
+      function setFoxgloveSwitching(switching) {
+        const host = document.getElementById("foxgloveHost");
+        if (!host) return;
+        host.classList.toggle("is-switching", Boolean(switching));
+        host.setAttribute("aria-busy", switching ? "true" : "false");
       }
       function updateFoxgloveVisualizationSummary(config) {
         const el = document.getElementById("foxgloveVisualizationSummary");
@@ -6160,6 +6199,7 @@
           delete host.dataset.dataSourceType;
           delete host.dataset.dataSourceUrl;
           delete host.dataset.layoutStorageKey;
+          delete host.dataset.layoutSelectCount;
           delete host.dataset.sdkReady;
         }
         foxgloveHandle = null;
@@ -6408,9 +6448,21 @@
         artifactLoadRequestId += 1;
         operatorMediaPreviewActive = false;
         activeArtifactRender = "foxglove";
-        // Remove a prior iframe/source before revealing the pane; an old MCAP
-        // must never remain visible while the exact selected one is prepared.
-        teardownFoxgloveViewer();
+        // Keep an already-usable SDK iframe and its handshake alive. Hide its
+        // prior source while the exact selection is authorized so stale bytes
+        // are never shown and the visible pane does not wait on a remount.
+        const pinnedBeforeSelection = foxglovePinnedArtifactSelection || {};
+        const sameVisibleSelection = Boolean(
+          foxgloveHandle && foxgloveLastSourceKey &&
+          String(pinnedBeforeSelection.run_id || "") === selected.run_id &&
+          String(pinnedBeforeSelection.run_ref || "") === selected.run_ref &&
+          String(pinnedBeforeSelection.key || "") === selected.key
+        );
+        // A new empty SDK surface and an already-bound identical selection can
+        // stay visible. Conceal only a different old source while authorization
+        // runs so the pane is immediate without presenting stale provenance.
+        setFoxgloveSwitching(Boolean(foxgloveHandle && !sameVisibleSelection));
+        hideFoxgloveMessage();
         foxgloveConfig = foxgloveConfigForSelection(foxgloveConfig, selected);
         updateFoxgloveVisualizationSummary(foxgloveConfig);
         syncArtifactFoxgloveActions();
@@ -6456,7 +6508,10 @@
           if (!/^[a-f0-9]{64}$/i.test(String(exported.sha256 || ""))) {
             throw new Error("the selected MCAP response did not provide its SHA-256 identity");
           }
-          const config = await apiJson("/api/foxglove/config", { signal: controller.signal });
+          const responseConfig = data && data.foxglove;
+          const config = responseConfig && typeof responseConfig === "object"
+            ? responseConfig
+            : await apiJson("/api/foxglove/config", { signal: controller.signal });
           if (operation.stale || foxgloveArtifactOperation !== operation) return false;
           const configMatch = foxgloveArtifactIdentityMatches(
             (config && config.selected_artifact) || config,
@@ -6495,24 +6550,32 @@
               : "Queuing the exact MCAP in the official SDK while Foxglove awaits sign-in/handshake…",
             readyBeforeSource ? "loading" : "warning"
           );
-          const sourceApplied = await setFoxgloveDataSource(config, { force: true });
+          const sourceApplied = await setFoxgloveDataSource(config);
           if (!sourceApplied) throw new Error("the exact remote-file source could not be applied");
           if (config.layout && config.layout.version === 1 && config.layout.content) {
-            foxgloveHandle.selectLayout(config.layout_storage_key, config.layout, false);
             const host = document.getElementById("foxgloveHost");
-            if (host) host.dataset.layoutStorageKey = String(config.layout_storage_key || "");
+            const layoutKey = String(config.layout_storage_key || "");
+            if (!host || String(host.dataset.layoutStorageKey || "") !== layoutKey) {
+              foxgloveHandle.selectLayout(layoutKey, config.layout, false);
+              if (host) {
+                host.dataset.layoutStorageKey = layoutKey;
+                host.dataset.layoutSelectCount = String(
+                  Number(host.dataset.layoutSelectCount || "0") + 1
+                );
+              }
+            }
           }
           setFoxgloveActiveArtifactState(selected, config, exported.sha256);
           hideFoxgloveMessage();
+          setFoxgloveSwitching(false);
           const viewerReady = Boolean(
             selectedHandle.isReady && selectedHandle.isReady()
           );
           setFoxgloveStatus(
             viewerReady
-              ? "Foxglove SDK ready — exact selected MCAP sent: " + selected.key +
-                ". Sign in inside Foxglove if its hosted surface requests it."
-              : "Exact selected MCAP queued in the official Foxglove SDK: " + selected.key +
-                ". Sign in inside Foxglove to complete its hosted handshake; this pane is not marked ready.",
+              ? "Foxglove ready — exact selected MCAP sent."
+              : "Exact selected MCAP queued in the official Foxglove SDK. " +
+                "Sign in inside Foxglove to complete its hosted handshake; this pane is not marked ready.",
             viewerReady ? "ready" : "warning"
           );
           setFoxgloveWebNote(
@@ -6537,7 +6600,7 @@
                 String(pinned.key || "") !== selected.key
               ) return;
               setFoxgloveStatus(
-                "Foxglove SDK ready — exact selected MCAP sent: " + selected.key,
+                "Foxglove ready — exact selected MCAP sent.",
                 "ready"
               );
               setFoxgloveWebNote(
@@ -6569,6 +6632,7 @@
           // Invalidate an SDK import/mount that may still be completing. It must
           // not hide this exact-artifact error after the failed request returns.
           teardownFoxgloveViewer();
+          setFoxgloveSwitching(false);
           setFoxgloveStatus("Could not load the selected MCAP: " + message, "error");
           showFoxgloveArtifactFailure(selected, message);
           showToast("Embedded Foxglove load failed: " + message, "error");

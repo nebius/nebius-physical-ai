@@ -1,5 +1,9 @@
 import { currentLiveAgentConfig } from "../support/e2e";
 
+// Measured on the pre-fix deployed warm-repeat path. The regression gate uses
+// server phase timings, not click-to-ready internet latency.
+const PRE_FIX_WARM_EXPORT_MS = 31750.8;
+
 function liveEnabled() {
   return String(Cypress.env("NPA_AGENT_CYPRESS_LIVE") || "") === "1";
 }
@@ -345,7 +349,10 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
             paneAriaHidden: "false",
             iframeOrigin: "https://embed.foxglove.dev",
             setDataSourceCount: 1,
+            layoutSelectCount: 1,
             layoutStorageKey: "npa-agent-foxglove-robot-motion-v3",
+            iframeReused: true,
+            controlsUnobstructed: true,
           });
           expect(
             result.embedded.sdkReady === "true" || result.embedded.signInRequired === true,
@@ -360,6 +367,24 @@ describe("NPA agent official Foxglove embed against live infrastructure", () => 
             expect(geometry.height).to.be.greaterThan(0);
           }
           expect(result.embedded.sdkRequestCount).to.be.greaterThan(0);
+          expect(result.embedded.desktopClearance.unobstructed).to.eq(true);
+          expect(result.embedded.mobileClearance.unobstructed).to.eq(true);
+          expect(result.validation).to.deep.eq({
+            multipleAnglesVerified: true,
+            diagnosticSceneVerified: true,
+          });
+          expect(result.performance.cacheReused).to.eq(true);
+          expect(result.performance.repeatCacheReused).to.eq(true);
+          expect(result.performance.clickToPaneMs).to.be.at.most(
+            result.performance.clickToApiMs,
+          );
+          expect(result.performance.clickToReadySeconds).to.be.greaterThan(0);
+          expect(result.performance.serverTimingsMs.total).to.be.lessThan(
+            PRE_FIX_WARM_EXPORT_MS * 0.5,
+          );
+          expect(result.performance.repeatServerTimingsMs.total).to.be.lessThan(
+            PRE_FIX_WARM_EXPORT_MS * 0.5,
+          );
           expect(result.embedded.statusText).to.match(
             /exact selected MCAP sent|queued in the official Foxglove SDK/,
           );

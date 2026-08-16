@@ -626,6 +626,51 @@ async function verifyFoxgloveHostedNavigation(config, taskInput) {
   }
 }
 
+async function foxgloveControlClearance(page) {
+  return await page.evaluate(() => {
+    const frame = document.querySelector("#viewerPaneFoxglove iframe");
+    if (!frame) throw new Error("Foxglove iframe is missing for control-clearance proof");
+    const iframe = frame.getBoundingClientRect();
+    const controls = {
+      left: iframe.left,
+      right: iframe.right,
+      top: iframe.bottom - Math.min(80, iframe.height),
+      bottom: iframe.bottom,
+    };
+    const overlaps = (rect) =>
+      Math.max(rect.left, controls.left) < Math.min(rect.right, controls.right) &&
+      Math.max(rect.top, controls.top) < Math.min(rect.bottom, controls.bottom);
+    const elements = {};
+    for (const selector of ["#foxgloveStatus", "#statusBar", "#chatDrawerToggle"]) {
+      const element = document.querySelector(selector);
+      if (!element) throw new Error(`${selector} is missing for control-clearance proof`);
+      const style = getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      const visible = style.display !== "none" && style.visibility !== "hidden";
+      elements[selector] = {
+        position: style.position,
+        visible,
+        overlapsControls: visible && overlaps(rect),
+      };
+    }
+    if (elements["#foxgloveStatus"].position !== "static" ||
+        elements["#statusBar"].position !== "static") {
+      throw new Error("Foxglove status surfaces do not participate in normal layout");
+    }
+    if (Object.values(elements).some((item) => item.overlapsControls)) {
+      throw new Error("an Agent UI element overlaps the Foxglove playback-control region");
+    }
+    return {
+      controls: {
+        width: Math.round(controls.right - controls.left),
+        height: Math.round(controls.bottom - controls.top),
+      },
+      elements,
+      unobstructed: true,
+    };
+  });
+}
+
 async function verifyFoxgloveEmbeddedArtifact(config, taskInput) {
   const credentials = liveCredentials(config);
   const executablePath = String(process.env.NPA_PLAYWRIGHT_CHROMIUM_EXECUTABLE || "").trim();
@@ -665,7 +710,11 @@ async function verifyFoxgloveEmbeddedArtifact(config, taskInput) {
   });
   const networkRequests = [];
   context.on("request", (request) => {
-    networkRequests.push({ url: request.url(), method: request.method() });
+    networkRequests.push({
+      url: request.url(),
+      method: request.method(),
+      range: String(request.headers().range || ""),
+    });
   });
   try {
     const page = await context.newPage();
@@ -723,6 +772,10 @@ async function verifyFoxgloveEmbeddedArtifact(config, taskInput) {
         response.request().method() === "POST",
       { timeout: 0 },
     );
+    const clickStarted = Date.now();
+    const iframeVisiblePromise = page.locator("#viewerPaneFoxglove iframe")
+      .waitFor({ state: "visible", timeout: 0 })
+      .then(() => Date.now());
     await exactButton.click();
     await page.waitForFunction(
       () => document.querySelector("#renderModeFoxglove")?.getAttribute("aria-selected") === "true" &&
@@ -730,7 +783,9 @@ async function verifyFoxgloveEmbeddedArtifact(config, taskInput) {
       null,
       { timeout: 0 },
     );
+    const paneVisibleAt = Date.now();
     const exportResponse = await responsePromise;
+    const apiResponseAt = Date.now();
     if (exportResponse.status() !== 200) {
       throw new Error(`live artifact-card export returned HTTP ${exportResponse.status()}`);
     }
@@ -777,8 +832,10 @@ async function verifyFoxgloveEmbeddedArtifact(config, taskInput) {
       { key: artifactKey, sha: sha256, source: recordingUrl },
       { timeout: 0 },
     );
+    const dataSourceReadyAt = Date.now();
     const iframe = page.locator("#viewerPaneFoxglove iframe");
     await iframe.waitFor({ state: "visible", timeout: 0 });
+    const iframeVisibleAt = await iframeVisiblePromise;
     const paneBox = await page.locator("#viewerPaneFoxglove").boundingBox();
     const iframeBox = await iframe.boundingBox();
     if (!paneBox || paneBox.width <= 0 || paneBox.height <= 0 ||
@@ -804,6 +861,15 @@ async function verifyFoxgloveEmbeddedArtifact(config, taskInput) {
         throw new Error("live Foxglove config/status lost exact selected artifact provenance");
       }
     }
+    const topics = state.config.visualization?.topics || {};
+    const expectedCameraTopics = ["/camera", "/camera/side", "/camera/workspace"];
+    if (!expectedCameraTopics.every((topic) => topics[topic] === "foxglove.CompressedImage")) {
+      throw new Error("live Foxglove config lost one or more camera angles");
+    }
+    if (topics["/robot/diagnostic_scene"] !== "foxglove.SceneUpdate") {
+      throw new Error("live Foxglove config lost the diagnostic scene");
+    }
+    const desktopClearance = await foxgloveControlClearance(page);
     const desktopEvidence = path.join(evidenceDir, "live-agent-desktop-after.png");
     await page.screenshot({ path: desktopEvidence, fullPage: false });
     fs.chmodSync(desktopEvidence, 0o600);
@@ -821,6 +887,45 @@ async function verifyFoxgloveEmbeddedArtifact(config, taskInput) {
     if (!mobilePaneBox || mobilePaneBox.width <= 0 || mobilePaneBox.height <= 0) {
       throw new Error("mobile embedded Foxglove pane has zero geometry");
     }
+    const mobileClearance = await foxgloveControlClearance(page);
+
+    // Click the identical exact card again. The backend must prove its cached
+    // object version while the browser retains the same iframe/source/layout.
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.evaluate(() => {
+      const frame = document.querySelector("#viewerPaneFoxglove iframe");
+      if (frame) {
+        frame.dataset.npaReuseProbe = "same-frame";
+        window.__npaFoxgloveReuseFrame = frame;
+      }
+    });
+    const repeatResponsePromise = page.waitForResponse(
+      (response) => response.url().includes("/api/foxglove/export") &&
+        response.request().method() === "POST",
+      { timeout: 0 },
+    );
+    const repeatStarted = Date.now();
+    await exactButton.click();
+    const repeatResponse = await repeatResponsePromise;
+    const repeatPayload = await repeatResponse.json();
+    if (repeatResponse.status() !== 200 || repeatPayload.cache_reused !== true) {
+      throw new Error("repeat exact MCAP click did not use the verified backend cache");
+    }
+    await page.waitForFunction(
+      ({ source }) => {
+        const host = document.querySelector("#foxgloveHost");
+        const frame = document.querySelector("#viewerPaneFoxglove iframe");
+        return frame && frame === window.__npaFoxgloveReuseFrame &&
+          frame.dataset.npaReuseProbe === "same-frame" &&
+          host?.dataset.dataSourceUrl === source &&
+          Number(host?.dataset.setDataSourceCount || 0) === 1 &&
+          Number(host?.dataset.layoutSelectCount || 0) === 1 &&
+          !host.classList.contains("is-switching");
+      },
+      { source: recordingUrl },
+      { timeout: 0 },
+    );
+    const repeatReadyAt = Date.now();
     const externalLabel = String(await page.locator("#foxgloveOpenWeb").textContent() || "").trim();
     const statusText = String(await page.locator("#foxgloveStatus").textContent() || "").trim();
     const sdkRequestCount = networkRequests.filter(({ url }) => {
@@ -833,6 +938,9 @@ async function verifyFoxgloveEmbeddedArtifact(config, taskInput) {
       }
     }).length;
     const recordingRequestCount = networkRequests.filter(({ url }) => url === recordingUrl).length;
+    const recordingRangeRequestCount = networkRequests.filter(
+      ({ url, range }) => url === recordingUrl && Boolean(range),
+    ).length;
     const sdkReady = await page.locator("#foxgloveHost").getAttribute("data-sdk-ready");
     const signInRequired = sdkReady !== "true" &&
       /queued in the official Foxglove SDK/i.test(statusText);
@@ -864,12 +972,34 @@ async function verifyFoxgloveEmbeddedArtifact(config, taskInput) {
         iframe: { width: Math.round(iframeBox.width), height: Math.round(iframeBox.height) },
         iframeOrigin: new URL(String(await iframe.getAttribute("src"))).origin,
         setDataSourceCount: Number(await page.locator("#foxgloveHost").getAttribute("data-set-data-source-count") || 0),
+        layoutSelectCount: Number(await page.locator("#foxgloveHost").getAttribute("data-layout-select-count") || 0),
         sdkReady,
         signInRequired,
         layoutStorageKey: String(await page.locator("#foxgloveHost").getAttribute("data-layout-storage-key") || ""),
         statusText,
         sdkRequestCount,
         recordingRequestCount,
+        recordingRangeRequestCount,
+        iframeReused: true,
+        controlsUnobstructed: true,
+        desktopClearance,
+        mobileClearance,
+      },
+      validation: {
+        multipleAnglesVerified: true,
+        diagnosticSceneVerified: true,
+      },
+      performance: {
+        cacheReused: exportPayload.cache_reused === true,
+        serverTimingsMs: exportPayload.timings_ms || {},
+        clickToPaneMs: paneVisibleAt - clickStarted,
+        clickToApiMs: apiResponseAt - clickStarted,
+        clickToIframeMs: iframeVisibleAt - clickStarted,
+        clickToDataSourceReadyMs: dataSourceReadyAt - clickStarted,
+        clickToReadySeconds: Number(((dataSourceReadyAt - clickStarted) / 1000).toFixed(3)),
+        repeatCacheReused: true,
+        repeatServerTimingsMs: repeatPayload.timings_ms || {},
+        repeatClickToReadyMs: repeatReadyAt - repeatStarted,
       },
       actions: { artifact: labels, mobileArtifact: mobileLabels, external: externalLabel },
       evidence: {

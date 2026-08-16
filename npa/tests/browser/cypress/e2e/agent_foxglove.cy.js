@@ -188,6 +188,32 @@ function expectMockAppState(state) {
   });
 }
 
+function assertFoxgloveControlsUnobstructed() {
+  cy.get("#viewerPaneFoxglove iframe").then(($frame) => {
+    const iframe = $frame[0].getBoundingClientRect();
+    const controls = {
+      left: iframe.left,
+      right: iframe.right,
+      top: iframe.bottom - Math.min(80, iframe.height),
+      bottom: iframe.bottom,
+    };
+    const overlaps = (rect) =>
+      Math.max(rect.left, controls.left) < Math.min(rect.right, controls.right) &&
+      Math.max(rect.top, controls.top) < Math.min(rect.bottom, controls.bottom);
+    for (const selector of ["#foxgloveStatus", "#statusBar", "#chatDrawerToggle"]) {
+      const element = Cypress.$(selector)[0];
+      expect(element, `${selector} exists for geometry proof`).to.exist;
+      const style = getComputedStyle(element);
+      if (style.display !== "none" && style.visibility !== "hidden") {
+        expect(overlaps(element.getBoundingClientRect()), `${selector} clears playback controls`)
+          .to.eq(false);
+      }
+    }
+    expect(getComputedStyle(Cypress.$("#foxgloveStatus")[0]).position).to.eq("static");
+    expect(getComputedStyle(Cypress.$("#statusBar")[0]).position).to.eq("static");
+  });
+}
+
 function assertSingleFoxgloveWebAction(options = {}) {
   const enabled = options.enabled !== false;
   const visible = options.visible !== false;
@@ -439,8 +465,6 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
           s3_uri: s3Uri,
         });
         applyExactArtifactConfig(config, exported);
-        // Keep preparation observably in-flight across slower narrow-viewport
-        // rendering before the SDK-ready state can replace the progress text.
         request.reply({ delay: 3000, statusCode: 200, body: exported });
       }).as("exactArtifactExport");
       cy.window().then((win) => {
@@ -482,6 +506,15 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
           expect(rect.width, "embedded Foxglove pane width").to.be.greaterThan(0);
           expect(rect.height, "embedded Foxglove pane height").to.be.greaterThan(0);
         });
+      // The SDK iframe mounts and is visible while the deliberately delayed
+      // backend request is still in flight; playback binding happens later.
+      mockAppFrame()
+        .should("be.visible")
+        .and("have.attr", "src")
+        .and("include", MOCK_EMBED_SRC);
+      cy.get(`button[data-action="open-foxglove-artifact"][data-key="${key}"]`)
+        .should("have.attr", "aria-busy", "true")
+        .and("be.disabled");
       cy.wait("@exactArtifactExport");
       expectMockAppState("ready");
       mockAppFrame().should(($frame) => {
@@ -530,6 +563,7 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
       cy.get("#foxgloveOpenWeb")
         .should("have.text", "Open in Foxglove")
         .and("be.visible");
+      assertFoxgloveControlsUnobstructed();
       cy.get(`button[data-action="open-foxglove-artifact"][data-key="${key}"]`)
         .should("have.attr", "aria-busy", "false")
         .and("be.enabled");
@@ -538,6 +572,57 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
         [],
       );
     });
+  });
+
+  it("reuses the SDK iframe, data source, and layout for an unchanged exact MCAP", () => {
+    const config = stubFoxgloveApis();
+    const runRef = "npa1_mock_non_stock";
+    const key = `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`;
+    const s3Uri = `s3://mock/${key}`;
+    const exported = exactArtifactExportResponse(NON_STOCK_RUN_ID, runRef, key, s3Uri);
+    let exports = 0;
+    cy.intercept("POST", "/api/foxglove/export", (request) => {
+      exports += 1;
+      applyExactArtifactConfig(config, exported);
+      exported.cache_reused = exports > 1;
+      exported.foxglove = config;
+      request.reply({ statusCode: 200, body: exported });
+    }).as("reusedArtifactExport");
+
+    cy.get("#tabRerun").click();
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@artifactRuns");
+    cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
+    cy.wait("@nonStockArtifactList");
+
+    let firstFrame;
+    const clickExactArtifact = () => {
+      cy.get(`button[data-action="open-foxglove-artifact"][data-key="${key}"]`)
+        .scrollIntoView()
+        .should("be.enabled")
+        .click();
+      cy.wait("@reusedArtifactExport");
+      expectMockAppState("ready");
+    };
+    clickExactArtifact();
+    mockAppFrame().then(($frame) => {
+      firstFrame = $frame[0];
+    });
+    cy.get("#foxgloveHost")
+      .should("have.attr", "data-set-data-source-count", "1")
+      .and("have.attr", "data-layout-storage-key", "npa-agent-foxglove-robot-motion-v3")
+      .and("have.attr", "data-layout-select-count", "1");
+
+    clickExactArtifact();
+    mockAppFrame().should(($frame) => {
+      expect($frame[0], "same official SDK iframe").to.equal(firstFrame);
+    });
+    cy.get("#foxgloveHost")
+      .should("have.attr", "data-set-data-source-count", "1")
+      .and("have.attr", "data-layout-select-count", "1")
+      .and("not.have.class", "is-switching");
+    cy.then(() => expect(exports, "one request per deliberate click").to.eq(2));
+    assertFoxgloveControlsUnobstructed();
   });
 
   it("keeps the exact selected MCAP open when its card rerenders during preparation", () => {

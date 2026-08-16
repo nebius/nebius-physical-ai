@@ -1309,6 +1309,7 @@ from agent_backend.canonical_mcap import clear_cross_run_mcap_state
 from agent_backend.canonical_mcap import has_rich_visualization_contract
 from agent_backend.canonical_mcap import prepare_canonical_mcap
 from agent_backend.foxglove import (
+    artifact_source_fingerprint,
     convert_run_request,
     describe_foxglove_context,
     foxglove_status_payload,
@@ -7353,6 +7354,95 @@ def _foxglove_convert_run(**kwargs):
     return convert_run(**kwargs)
 
 
+def _foxglove_artifact_fingerprint(s3, bucket: str, artifact) -> tuple[str, int, str]:
+    key = str(artifact.key)
+    try:
+        head = s3.head_object(Bucket=bucket, Key=key)
+    except Exception:
+        logging.getLogger("npa.agent.foxglove").exception(
+            "Could not read authoritative MCAP object identity"
+        )
+        return "", int(getattr(artifact, "size", 0) or 0), str(
+            getattr(artifact, "last_modified", "") or ""
+        )
+    modified = head.get("LastModified") or getattr(artifact, "last_modified", "")
+    if hasattr(modified, "isoformat"):
+        modified = modified.isoformat()
+    size = int(head.get("ContentLength") or getattr(artifact, "size", 0) or 0)
+    fingerprint = artifact_source_fingerprint(
+        bucket=bucket,
+        key=key,
+        size=size,
+        last_modified=str(modified or ""),
+        etag=str(head.get("ETag") or ""),
+        version_id=str(head.get("VersionId") or ""),
+    )
+    return fingerprint, size, str(modified or "")
+
+
+def _foxglove_resolve_artifact(payload: dict) -> dict:
+    body = payload if isinstance(payload, dict) else {{}}
+    run_id = str(body.get("run_id") or "").strip()
+    run_ref = str(body.get("run_ref") or "").strip()
+    key = _safe_artifact_key(str(body.get("key") or ""))
+    if not run_id or not key:
+        raise HTTPException(status_code=400, detail="run_id and key are required")
+    s3, settings = _agent_s3_client()
+    resolution = resolve_run_artifacts(
+        _agent_s3_buckets(s3, settings),
+        base_prefix=settings.get("prefix", ""),
+        run_ref_or_id=run_ref or run_id,
+        s3=s3,
+    )
+    if resolution is None:
+        raise HTTPException(status_code=404, detail="run_id not found")
+    artifact = next((item for item in resolution.artifacts if item.key == key), None)
+    if artifact is None:
+        raise HTTPException(status_code=400, detail="artifact key is outside the selected run")
+    source_bucket, source_project, source_prefix = _artifact_source_metadata(
+        _agent_access_report(), resolution.bucket, key, resolution.run_id
+    )
+    selected = {{
+        "run_id": resolution.run_id,
+        "run_ref": resolution.run_ref,
+        "key": key,
+        "s3_uri": str(artifact.s3_uri),
+        "bucket": source_bucket or resolution.bucket,
+        "resource_bucket": source_bucket or resolution.bucket,
+        "project_id": source_project,
+        "resolved_prefix": source_prefix,
+    }}
+    for requested_field, actual_field in (
+        ("bucket", "bucket"),
+        ("project_id", "project_id"),
+        ("resolved_prefix", "resolved_prefix"),
+        ("s3_uri", "s3_uri"),
+    ):
+        request_key = (
+            "resource_bucket"
+            if requested_field == "bucket" and "resource_bucket" in body
+            else requested_field
+        )
+        if request_key in body and str(body.get(request_key) or "") != str(
+            selected.get(actual_field) or ""
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=f"the selected Foxglove artifact {{requested_field}} does not match discovery",
+            )
+    fingerprint, size, last_modified = _foxglove_artifact_fingerprint(
+        s3, resolution.bucket, artifact
+    )
+    selected.update(
+        {{
+            "source_fingerprint": fingerprint,
+            "source_size_bytes": size,
+            "source_last_modified": last_modified,
+        }}
+    )
+    return selected
+
+
 def _foxglove_prepare_canonical_mcap(
     *, run_id: str, run_ref: str = "", fps: float, max_frames: int
 ):
@@ -7391,6 +7481,54 @@ def _foxglove_prepare_canonical_mcap(
     )
 
 
+def _foxglove_apply_prepared_canonical(
+    *, canonical: dict, run_id: str, run_ref: str = ""
+) -> dict:
+    key = _safe_artifact_key(str(canonical.get("artifact_key") or ""))
+    s3_uri = str(canonical.get("s3_uri") or "").strip()
+    local_path = Path(str(canonical.get("local_path") or ""))
+    if not key or not s3_uri or not local_path.is_file():
+        raise HTTPException(
+            status_code=502,
+            detail="canonical MCAP persistence returned an incomplete local transport",
+        )
+    s3, _settings = _agent_s3_client()
+    bucket, resolved_key = parse_s3_uri(s3_uri)
+    if resolved_key != key:
+        raise HTTPException(status_code=409, detail="canonical MCAP key changed before publication")
+    head = s3.head_object(Bucket=bucket, Key=key)
+    modified = head.get("LastModified") or ""
+    if hasattr(modified, "isoformat"):
+        modified = modified.isoformat()
+    size = int(head.get("ContentLength") or local_path.stat().st_size)
+    fingerprint = artifact_source_fingerprint(
+        bucket=bucket,
+        key=key,
+        size=size,
+        last_modified=str(modified or ""),
+        etag=str(head.get("ETag") or ""),
+        version_id=str(head.get("VersionId") or ""),
+    )
+    source_bucket, source_project, source_prefix = _artifact_source_metadata(
+        _agent_access_report(), bucket, key, run_id
+    )
+    state = _load_state()
+    sim_viz = _apply_loaded_artifact(
+        state=state,
+        run_id=run_id,
+        key=key,
+        s3_uri=s3_uri,
+        render="mcap",
+        local_path=local_path,
+        source_identity=(source_bucket, source_project, source_prefix),
+        run_ref=run_ref,
+        source_fingerprint=fingerprint,
+        source_size_bytes=size,
+        source_last_modified=str(modified or ""),
+    )
+    return {{"ok": True, "render": "mcap", "sim_viz": sim_viz, "run_ref": run_ref}}
+
+
 def _foxglove_ensure_cloud_recording(
     local_path: Path, run_id: str, *, provenance: dict
 ):
@@ -7426,6 +7564,8 @@ register_foxglove_routes(
         ensure_cloud_recording=_foxglove_ensure_cloud_recording,
         ensure_cloud_layout=_foxglove_ensure_cloud_layout,
         prepare_canonical_mcap=_foxglove_prepare_canonical_mcap,
+        resolve_artifact=_foxglove_resolve_artifact,
+        apply_prepared_canonical=_foxglove_apply_prepared_canonical,
     ),
     HTTPException,
 )

@@ -255,6 +255,9 @@ def _apply_loaded_artifact(
     run_ref: str = "",
     requested_camera: str = "",
     artifact_contract: dict | None = None,
+    source_fingerprint: str = "",
+    source_size_bytes: int = 0,
+    source_last_modified: str = "",
 ) -> dict:
     now = _now_iso()
     sim_viz = dict(DEFAULT_SIM_VIZ)
@@ -325,6 +328,9 @@ def _apply_loaded_artifact(
             "bucket": str(resource_bucket or "").strip(),
             "project_id": str(project_id or "").strip(),
             "resolved_prefix": str(resolved_prefix or "").strip(),
+            "artifact_source_fingerprint": str(source_fingerprint or "").strip(),
+            "artifact_source_size_bytes": max(0, int(source_size_bytes or 0)),
+            "artifact_source_last_modified": str(source_last_modified or "").strip(),
         }
     )
     if render == "rerun":
