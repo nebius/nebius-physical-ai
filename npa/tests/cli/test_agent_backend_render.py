@@ -830,6 +830,15 @@ def test_rendered_foxglove_exact_source_avoids_tenant_wide_access_scan(
         "mcap",
         True,
     )
+    source = module.RunSummary(
+        "run-one",
+        "2026-08-16T00:00:00+00:00",
+        1,
+        True,
+        bucket="selected-bucket",
+        project_id="selected-project",
+        resolved_prefix="nested/source",
+    )
     monkeypatch.setattr(
         module,
         "_agent_s3_client",
@@ -850,14 +859,23 @@ def test_rendered_foxglove_exact_source_avoids_tenant_wide_access_scan(
         ),
     )
 
-    def resolve(buckets, **kwargs):
-        assert buckets == ["selected-bucket"]
-        assert kwargs["run_ref_or_id"] == run_ref
-        return module.RunResolution(
-            "run-one", "selected-bucket", "nested/source", [artifact]
-        )
-
-    monkeypatch.setattr(module, "resolve_run_artifacts", resolve)
+    monkeypatch.setattr(
+        module,
+        "find_run_sources_across_buckets",
+        lambda buckets, **_kwargs: (
+            [source] if buckets == ["selected-bucket"] else [],
+            (),
+            True,
+        ),
+    )
+    monkeypatch.setattr(module, "list_artifacts", lambda *_args, **_kwargs: [artifact])
+    monkeypatch.setattr(
+        module,
+        "resolve_run_artifacts",
+        lambda *_args, **_kwargs: pytest.fail(
+            "exact source must not rebuild the full run index"
+        ),
+    )
     try:
         selected = module._foxglove_resolve_artifact(
             {
@@ -876,24 +894,6 @@ def test_rendered_foxglove_exact_source_avoids_tenant_wide_access_scan(
         assert selected["source_fingerprint"]
         assert len(authorization_calls) == 1
 
-        source = module.RunSummary(
-            "run-one",
-            "2026-08-16T00:00:00+00:00",
-            1,
-            True,
-            bucket="selected-bucket",
-            project_id="selected-project",
-            resolved_prefix="nested/source",
-        )
-        monkeypatch.setattr(
-            module,
-            "find_run_sources_across_buckets",
-            lambda buckets, **_kwargs: (
-                [source] if buckets == ["selected-bucket"] else [],
-                (),
-                True,
-            ),
-        )
         monkeypatch.setattr(
             module,
             "list_artifacts_page",
@@ -919,13 +919,6 @@ def test_rendered_foxglove_exact_source_avoids_tenant_wide_access_scan(
         assert details["project_id"] == "selected-project"
         assert details["access"]["scope"] == "selected_source"
         assert len(authorization_calls) == 2
-        monkeypatch.setattr(
-            module,
-            "resolve_run_artifacts",
-            lambda *_args, **_kwargs: pytest.fail(
-                "fresh exact card inventory must be reused for playback"
-            ),
-        )
         cached_selected = module._foxglove_resolve_artifact(
             {
                 "run_id": "run-one",
@@ -940,6 +933,22 @@ def test_rendered_foxglove_exact_source_avoids_tenant_wide_access_scan(
         assert cached_selected["key"] == key
         assert cached_selected["source_fingerprint"]
         assert len(authorization_calls) == 3
+        with module._FOXGLOVE_EXACT_INVENTORY_LOCK:
+            module._FOXGLOVE_EXACT_INVENTORY_CACHE.clear()
+        fallback_selected = module._foxglove_resolve_artifact(
+            {
+                "run_id": "run-one",
+                "run_ref": run_ref,
+                "key": key,
+                "resource_bucket": "selected-bucket",
+                "project_id": "selected-project",
+                "resolved_prefix": "nested/source",
+                "s3_uri": f"s3://selected-bucket/{key}",
+            }
+        )
+        assert fallback_selected["key"] == key
+        assert fallback_selected["source_fingerprint"]
+        assert len(authorization_calls) == 4
     finally:
         sys.modules.pop(module_name, None)
 

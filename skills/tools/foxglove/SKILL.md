@@ -117,6 +117,9 @@ and exact inventory for its immediate playback click; explicit access refresh
 clears access proofs. Rendering the cards and binding their actions precedes
 slower run-detail enrichment, so playback never waits behind that optional UI
 work.
+After the 30-second inventory window expires, exact playback must re-probe only
+the authorized `prefix/run-id/` scope and list that exact run. It must never fall
+back to rebuilding the bucket-wide run index for a source-qualified card.
 The backend then reads a fresh strong object-store identity (ETag or version id)
 and verifies the published
 bytes against the persisted SHA-256 and provenance. An unchanged selection skips

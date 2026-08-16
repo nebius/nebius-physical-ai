@@ -7535,6 +7535,51 @@ def _foxglove_resolve_artifact(payload: dict) -> dict:
             project_id=source_project,
             resolved_prefix=source_prefix,
         )
+        if resolution is None:
+            matches, source_errors, discovery_complete = find_run_sources_across_buckets(
+                [source_bucket],
+                base_prefix=settings.get("prefix", ""),
+                run_id=run_id,
+                exact_prefix=source_prefix,
+                exclude=_discovery_exclude_roots(),
+                bucket_projects={{source_bucket: source_project}},
+                s3=s3,
+            )
+            exact_matches = [
+                item
+                for item in matches
+                if item.bucket == source_bucket
+                and item.project_id == source_project
+                and item.resolved_prefix == source_prefix
+            ]
+            if source_errors or not discovery_complete:
+                raise HTTPException(
+                    status_code=503,
+                    detail="the selected Foxglove artifact source could not be verified",
+                )
+            if not exact_matches:
+                raise HTTPException(status_code=404, detail="run_id not found")
+            if len(exact_matches) > 1:
+                raise HTTPException(
+                    status_code=409,
+                    detail="the selected Foxglove artifact source is ambiguous",
+                )
+            namespaces = exact_matches[0].namespaces or (source_prefix,)
+            resolution = RunResolution(
+                run_id,
+                source_bucket,
+                source_prefix,
+                [
+                    artifact
+                    for namespace in namespaces
+                    for artifact in list_artifacts(
+                        source_bucket,
+                        run_id,
+                        prefix=namespace,
+                        s3=s3,
+                    )
+                ],
+            )
     else:
         resolution_buckets = _agent_s3_buckets(s3, settings)
         resolution = None
