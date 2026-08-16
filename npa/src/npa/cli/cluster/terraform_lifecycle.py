@@ -1122,8 +1122,11 @@ def down_cmd(
     }
     try:
         saved_cluster = load_cluster_state(str(live["context"] or ""))
-    except Exception:  # noqa: BLE001 - malformed legacy state must not block teardown
-        saved_cluster = None
+    except Exception as exc:  # noqa: BLE001 - ownership evidence must fail closed
+        raise typer.BadParameter(
+            f"Local cluster ownership state is unreadable: {exc}. "
+            "Nothing was deleted; repair or restore the state before retrying."
+        ) from exc
     if saved_cluster is not None:
         live["project_id"] = live["project_id"] or saved_cluster.project_id
         live["region"] = live["region"] or saved_cluster.region
@@ -1159,13 +1162,33 @@ def down_cmd(
 
     shared_metadata_path = metadata_file(preview_context)
     shared_metadata: dict[str, Any] = {}
-    if shared_metadata_path.is_file():
+    metadata_present = (
+        shared_metadata_path.exists() or shared_metadata_path.is_symlink()
+    )
+    if metadata_present:
+        if shared_metadata_path.is_symlink() or not shared_metadata_path.is_file():
+            raise typer.BadParameter(
+                "Local cluster ownership metadata is not a regular file; "
+                "nothing was deleted."
+            )
         try:
             candidate = json.loads(shared_metadata_path.read_text())
-            if isinstance(candidate, dict):
-                shared_metadata = candidate
-        except (json.JSONDecodeError, OSError):
-            shared_metadata = {}
+        except (json.JSONDecodeError, OSError) as exc:
+            raise typer.BadParameter(
+                f"Local cluster ownership metadata is unreadable: {exc}. "
+                "Nothing was deleted; repair or restore the metadata before retrying."
+            ) from exc
+        if not isinstance(candidate, dict):
+            raise typer.BadParameter(
+                "Local cluster ownership metadata must be a JSON object; "
+                "nothing was deleted."
+            )
+        shared_metadata = candidate
+    if saved_cluster is not None and not metadata_present:
+        raise typer.BadParameter(
+            "Local cluster state exists without its ownership metadata; nothing was "
+            "deleted. Restore metadata before retrying."
+        )
     if shared_metadata.get("managed_by") == "npa cluster shared-mk8s-backend":
         from npa.fleet.lifecycle import _reclaim_unused_project_networks
 
@@ -1271,6 +1294,14 @@ def down_cmd(
             json.dumps(response) if output_json else f"Destroyed {preview_context}."
         )
         return
+    if (
+        metadata_present
+        and shared_metadata.get("managed_by") != "npa cluster terraform"
+    ):
+        raise typer.BadParameter(
+            "Local cluster ownership metadata does not authorize legacy Terraform "
+            "destroy; nothing was deleted."
+        )
     if operation_id:
         from npa.provisioning_journal import load_operation
 
@@ -1628,6 +1659,20 @@ def down_cmd(
         if preview_state_issue is not None:
             preview_inventory = None
         _terraform_init(terraform_bin, tf_dir, env)
+        if saved_cluster is not None or exact_cluster_id:
+            if not exact_cluster_id:
+                raise typer.BadParameter(
+                    "Legacy Terraform destroy requires an exact persisted cluster ID; "
+                    "nothing was deleted."
+                )
+            managed_cluster_ids = _terraform_state_cluster_ids(
+                terraform_bin, tf_dir, env
+            )
+            if managed_cluster_ids != {exact_cluster_id}:
+                raise typer.BadParameter(
+                    "Legacy Terraform state does not own exactly the persisted cluster "
+                    f"ID {exact_cluster_id}; nothing was deleted."
+                )
         # `Still destroying...` every 10s with no detail made a ~6-minute node-group
         # drain look like a hang. Report node-group state while it happens.
         watcher = _NodeGroupWatcher(nebius_bin, tfvars, env)

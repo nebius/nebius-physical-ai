@@ -843,6 +843,165 @@ def test_deploy_path_reconciles_legacy_source_before_provider_mutation(
     assert result["control_plane"]["system_max_size"] == 24
 
 
+def test_deploy_persists_exact_auxiliary_ids_before_reporting_success(
+    tmp_path, monkeypatch
+) -> None:
+    from npa.soperator import lifecycle
+
+    recipe = tmp_path / "soperator"
+    install = recipe / "installations" / "owned"
+    install.mkdir(parents=True)
+    spec = SoperatorSpec(
+        name="owned",
+        region="us-central1",
+        tenant_id="tenant-test",
+        project_id="project-test",
+        subnet_id="subnet-test",
+        root_login_ssh_public_key="ssh-ed25519 AAAA operator",
+        workers=[WorkerPoolSpec(name="cpu")],
+    )
+    monkeypatch.setattr(lifecycle, "_resolve_solutions_library", lambda *a, **k: recipe)
+    monkeypatch.setattr(
+        lifecycle, "_assert_solutions_library_contract", lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "_resolve_deploy_environment",
+        lambda *a, **k: (
+            "us-central1",
+            "tenant-test",
+            "project-test",
+            "subnet-test",
+            None,
+        ),
+    )
+    monkeypatch.setattr(lifecycle, "_require_bin", lambda name: name)
+    monkeypatch.setattr(
+        lifecycle,
+        "_resolve_reserved_worker_capacity",
+        lambda desired, **kwargs: (desired, []),
+    )
+    monkeypatch.setattr(lifecycle, "_prepare_installation", lambda *a, **k: install)
+    monkeypatch.setattr(
+        lifecycle,
+        "_soperator_tf_env",
+        lambda *a, **k: {"TF_VAR_o11y_profile": "default"},
+    )
+    monkeypatch.setattr(lifecycle, "_run_terraform_command", lambda *a, **k: None)
+
+    @contextmanager
+    def safe_plan(*args, **kwargs):
+        yield lifecycle.GuardedTerraformPlan(path=tmp_path / "plan")
+
+    monkeypatch.setattr(
+        lifecycle, "_terraform_plan_without_unsafe_replacements", safe_plan
+    )
+    monkeypatch.setattr(
+        lifecycle, "_terraform_cluster_id", lambda *a, **k: "mk8scluster-owned"
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "_terraform_owned_auxiliary_ids",
+        lambda *a, **k: (["fs-jail", "fs-spool"], ["alloc-login"]),
+    )
+
+    result = lifecycle.deploy_cluster(spec, terraform_dir=recipe, apply_fixes=False)
+
+    assert result["status"] == "ready"
+    sidecar = lifecycle._load_env_sidecar(install)
+    assert sidecar is not None
+    assert sidecar["cluster_id"] == "mk8scluster-owned"
+    assert sidecar["owned_filesystem_ids"] == ["fs-jail", "fs-spool"]
+    assert sidecar["owned_allocation_ids"] == ["alloc-login"]
+
+
+def test_terraform_auxiliary_ownership_uses_only_exact_managed_ids(
+    tmp_path, monkeypatch
+) -> None:
+    import subprocess
+
+    from npa.soperator import lifecycle
+
+    state = {
+        "resources": [
+            {
+                "mode": "managed",
+                "type": "nebius_compute_v1_filesystem",
+                "instances": [{"attributes": {"id": "fs-exact"}}],
+            },
+            {
+                "mode": "managed",
+                "type": "nebius_vpc_v1_allocation",
+                "instances": [{"attributes": {"id": "alloc-exact"}}],
+            },
+            {
+                "mode": "data",
+                "type": "nebius_compute_v1_filesystem",
+                "instances": [{"attributes": {"id": "fs-foreign"}}],
+            },
+        ]
+    }
+    monkeypatch.setattr(
+        lifecycle,
+        "_run_capture",
+        lambda *a, **k: subprocess.CompletedProcess(a[0], 0, json.dumps(state), ""),
+    )
+
+    assert lifecycle._terraform_owned_auxiliary_ids("terraform", tmp_path, {}) == (
+        ["fs-exact"],
+        ["alloc-exact"],
+    )
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        {"resources": "invalid"},
+        {
+            "resources": [
+                {
+                    "type": "nebius_compute_v1_filesystem",
+                    "instances": [{"attributes": {"id": ""}}],
+                }
+            ]
+        },
+    ],
+)
+def test_terraform_auxiliary_ownership_rejects_malformed_state_or_missing_ids(
+    tmp_path, monkeypatch, state
+) -> None:
+    import subprocess
+
+    from npa.soperator import lifecycle
+
+    monkeypatch.setattr(
+        lifecycle,
+        "_run_capture",
+        lambda *a, **k: subprocess.CompletedProcess(a[0], 0, json.dumps(state), ""),
+    )
+
+    with pytest.raises(RuntimeError, match="exact auxiliary ownership|exact ownership"):
+        lifecycle._terraform_owned_auxiliary_ids("terraform", tmp_path, {})
+
+
+def test_soperator_lifecycle_has_no_cluster_cli_private_dependency() -> None:
+    from npa.soperator import lifecycle
+
+    source = Path(lifecycle.__file__).read_text()
+    assert "npa.cli.cluster.terraform_lifecycle" not in source
+    assert lifecycle._run_capture.__module__ == "npa.cluster_backends.process"
+
+
+def test_success_ownership_promotion_requires_exact_cluster_id(
+    tmp_path, monkeypatch
+) -> None:
+    from npa.soperator import lifecycle
+
+    monkeypatch.setattr(lifecycle, "_terraform_cluster_id", lambda *a, **k: "")
+    with pytest.raises(RuntimeError, match="no exact Managed Kubernetes cluster ID"):
+        lifecycle._require_applied_cluster_id("terraform", tmp_path, {})
+
+
 def test_destroy_source_preflight_reconciles_without_provider_calls(
     tmp_path, monkeypatch
 ) -> None:
@@ -1500,6 +1659,9 @@ def test_destroy_deletes_orphaned_vpc_allocation(tmp_path, monkeypatch) -> None:
             return _Done(stdout=alloc_json)
         if "vpc" in cmd and "delete" in cmd:
             deleted.append(cmd[cmd.index("--id") + 1])
+            return _Done()
+        if "vpc" in cmd and "get" in cmd:
+            return _Done(stdout="not found", returncode=1)
         return _Done(stdout="")
 
     monkeypatch.setattr(lifecycle, "_run_stream", lambda *a, **k: None)
@@ -1575,6 +1737,9 @@ def test_destroy_deletes_orphaned_filesystems(tmp_path, monkeypatch) -> None:
             return _Done(stdout=fs_json)
         if "filesystem" in cmd and "delete" in cmd:
             deleted.append(cmd[cmd.index("--id") + 1])
+            return _Done()
+        if "filesystem" in cmd and "get" in cmd:
+            return _Done(stdout="not found", returncode=1)
         return _Done(stdout="")
 
     monkeypatch.setattr(lifecycle, "_run_stream", lambda *a, **k: None)
@@ -1585,6 +1750,76 @@ def test_destroy_deletes_orphaned_filesystems(tmp_path, monkeypatch) -> None:
 
     # Only the soperator-npasop-* filesystems are swept; other clusters untouched.
     assert sorted(deleted) == ["fs-jail", "fs-spool"]
+
+
+@pytest.mark.parametrize("failure", ["invalid-list", "delete-failed", "still-present"])
+def test_destroy_retains_state_when_exact_auxiliary_cleanup_is_uncertain(
+    tmp_path, monkeypatch, failure: str
+) -> None:
+    from npa.soperator import lifecycle
+
+    recipe = tmp_path / "soperator"
+    (recipe / "installations" / "example").mkdir(parents=True)
+    install = recipe / "installations" / "npasafe"
+    install.mkdir(parents=True)
+    state_path = install / "terraform.tfstate"
+    state_path.write_text("durable-state")
+    lifecycle._write_env_sidecar(
+        install,
+        region="us-central1",
+        tenant_id="tenant-abc",
+        project_id="project-xyz",
+        subnet_id="vpcsubnet-123",
+        o11y_profile="default",
+        cluster_id="mk8scluster-exact",
+        owned_filesystem_ids=["fs-exact"],
+    )
+    monkeypatch.setattr(lifecycle, "_require_bin", lambda name: name)
+    monkeypatch.setattr(
+        lifecycle, "_assert_solutions_library_contract", lambda *a, **k: None
+    )
+    monkeypatch.setattr(lifecycle, "_terraform_env", lambda *a, **k: {})
+    monkeypatch.setattr(lifecycle, "_run_stream", lambda *a, **k: None)
+    monkeypatch.setenv("NPA_KUBECTL_BIN", "missing-kubectl-for-test")
+
+    class Done:
+        def __init__(self, stdout: str = "", returncode: int = 0) -> None:
+            self.stdout = stdout
+            self.stderr = ""
+            self.returncode = returncode
+
+    inventory = json.dumps(
+        {"items": [{"metadata": {"id": "fs-exact", "name": "irrelevant"}}]}
+    )
+
+    def capture(command, **kwargs):
+        if "state" in command and "pull" in command:
+            return Done(json.dumps({"resources": []}))
+        if "destroy" in command:
+            return Done()
+        if "mk8s" in command and "get" in command:
+            return Done("not found", 1)
+        if "filesystem" in command and "list" in command:
+            return Done("not-json" if failure == "invalid-list" else inventory)
+        if "filesystem" in command and "delete" in command:
+            return (
+                Done("permission denied", 2) if failure == "delete-failed" else Done()
+            )
+        if "filesystem" in command and "get" in command:
+            return (
+                Done(json.dumps({"metadata": {"id": "fs-exact"}}))
+                if failure == "still-present"
+                else Done("not found", 1)
+            )
+        return Done()
+
+    monkeypatch.setattr(lifecycle, "_run_capture", capture)
+
+    result = lifecycle.destroy_cluster("npasafe", terraform_dir=recipe)
+
+    assert result and result["status"] == "destroy-incomplete"
+    assert state_path.read_text() == "durable-state"
+    assert (install / ".npa-soperator-env.json").is_file()
 
 
 def test_nebius_cli_env_strips_stale_iam_token(monkeypatch) -> None:
@@ -2052,6 +2287,12 @@ def test_sdk_typed_degraded_validation_retains_deploy_metadata(
         lambda *a, **k: nullcontext(
             lifecycle.GuardedTerraformPlan(install / "guarded.tfplan")
         ),
+    )
+    monkeypatch.setattr(
+        lifecycle, "_terraform_cluster_id", lambda *a, **k: "mk8scluster-c"
+    )
+    monkeypatch.setattr(
+        lifecycle, "_terraform_owned_auxiliary_ids", lambda *a, **k: ([], [])
     )
     monkeypatch.setattr(
         lifecycle,

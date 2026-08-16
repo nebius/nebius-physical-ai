@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 from pathlib import Path
 from typing import Any, Callable
 
@@ -85,21 +86,27 @@ _terraform_outputs = _mk8s_execution._terraform_outputs
 _write_env_sidecar = _mk8s_execution._write_env_sidecar
 validate_gpu_health = _mk8s_execution.validate_gpu_health
 wait_for_mig_ready = _mk8s_execution.wait_for_mig_ready
+_LEGACY_EXECUTION_LOCK = threading.RLock()
 
 
 def _write_kubeconfig(*args: Any, **kwargs: Any) -> None:
-    saved = _mk8s_execution._run_capture
-    try:
-        _mk8s_execution._run_capture = _run_capture
-        _mk8s_execution._write_kubeconfig(*args, **kwargs)
-    finally:
-        _mk8s_execution._run_capture = saved
+    # This compatibility seam temporarily forwards a formerly fleet-private
+    # helper into the backend module. Keep the swap atomic: parallel fleet tests
+    # and legacy embedders may patch different helpers at the same time.
+    with _LEGACY_EXECUTION_LOCK:
+        saved = _mk8s_execution._run_capture
+        try:
+            _mk8s_execution._run_capture = _run_capture
+            _mk8s_execution._write_kubeconfig(*args, **kwargs)
+        finally:
+            _mk8s_execution._run_capture = saved
 
 
 _LEGACY_HELPER_DEFAULTS = {
     name: globals()[name]
     for name in (
         "_cluster_tf_env",
+        "_require_bin",
         "_terraform_env",
         "_prepare_install_dir",
         "_run_stream",
@@ -120,6 +127,7 @@ def _call_legacy_execution(function: Callable[..., dict[str, Any]], **kwargs: An
 
     names = (
         "_cluster_tf_env",
+        "_require_bin",
         "_terraform_env",
         "_prepare_install_dir",
         "_run_stream",
@@ -132,15 +140,16 @@ def _call_legacy_execution(function: Callable[..., dict[str, Any]], **kwargs: An
         "validate_gpu_health",
         "wait_for_mig_ready",
     )
-    saved = {name: getattr(_mk8s_execution, name) for name in names}
-    try:
-        for name in names:
-            if globals()[name] is not _LEGACY_HELPER_DEFAULTS[name]:
-                setattr(_mk8s_execution, name, globals()[name])
-        return function(**kwargs)
-    finally:
-        for name, value in saved.items():
-            setattr(_mk8s_execution, name, value)
+    with _LEGACY_EXECUTION_LOCK:
+        saved = {name: getattr(_mk8s_execution, name) for name in names}
+        try:
+            for name in names:
+                if globals()[name] is not _LEGACY_HELPER_DEFAULTS[name]:
+                    setattr(_mk8s_execution, name, globals()[name])
+            return function(**kwargs)
+        finally:
+            for name, value in saved.items():
+                setattr(_mk8s_execution, name, value)
 
 
 def _deploy_one_cluster(**kwargs: Any) -> dict[str, Any]:

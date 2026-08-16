@@ -1234,6 +1234,103 @@ def test_down_runs_terraform_destroy(monkeypatch, tmp_path: Path) -> None:
     assert _find_call(stream_calls, "terraform", "destroy", "-auto-approve")
 
 
+def _save_legacy_cluster_ownership(
+    monkeypatch, tmp_path: Path, *, metadata: object
+) -> None:
+    from npa.cluster import state as state_module
+
+    monkeypatch.setattr(state_module, "CLUSTERS_DIR", tmp_path / "clusters")
+    state_module.save_cluster_state(
+        state_module.ClusterState(
+            name="selected-cluster",
+            cluster_id="cluster-a",
+            project_id="project-a",
+            region="us-central1",
+            node_count=1,
+            node_platform="cpu-d3",
+            node_preset="8vcpu-32gb",
+            k8s_version="1.34",
+            subnet_id="subnet-a",
+            created_at="2026-01-01T00:00:00Z",
+        )
+    )
+    state_module.metadata_file("selected-cluster").write_text(json.dumps(metadata))
+
+
+def test_down_fails_closed_on_unreadable_present_ownership_metadata(
+    monkeypatch, tmp_path: Path
+) -> None:
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfstate").write_text("{}")
+    (tf_dir / "terraform.tfvars").write_text(
+        'parent_id = "project-a"\ncluster_name = "selected-cluster"\n'
+    )
+    _save_legacy_cluster_ownership(monkeypatch, tmp_path, metadata={})
+    from npa.cluster import state as state_module
+
+    state_module.metadata_file("selected-cluster").write_text("not-json")
+    monkeypatch.setattr(
+        tf_mod,
+        "_run_stream",
+        lambda *_args, **_kwargs: pytest.fail("Terraform must not run"),
+    )
+
+    result = runner.invoke(app, ["down", "--terraform-dir", str(tf_dir), "--force"])
+
+    assert result.exit_code != 0
+    assert "ownership metadata is unreadable" in result.output
+
+
+def test_down_requires_legacy_terraform_state_to_match_exact_cluster_id(
+    monkeypatch, tmp_path: Path
+) -> None:
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfstate").write_text("{}")
+    (tf_dir / "terraform.tfvars").write_text(
+        'parent_id = "project-a"\ncluster_name = "selected-cluster"\n'
+    )
+    _save_legacy_cluster_ownership(
+        monkeypatch,
+        tmp_path,
+        metadata={"managed_by": "npa cluster terraform"},
+    )
+    stream_calls: list[list[str]] = []
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(tf_mod, "_preflight_terraform_version", lambda *_args: None)
+    monkeypatch.setattr(tf_mod, "_terraform_env", lambda _binary: {})
+
+    def fake_capture(args, **_kwargs):
+        if args[:3] == ["terraform", "state", "pull"]:
+            return _completed(
+                json.dumps(
+                    {"outputs": {"kube_cluster": {"value": {"id": "cluster-b"}}}}
+                )
+            )
+        return _completed()
+
+    def fake_stream(args, **_kwargs):
+        stream_calls.append(args)
+        if args[:2] == ["terraform", "destroy"]:
+            pytest.fail("mismatched Terraform state must not be destroyed")
+        return _completed()
+
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
+    monkeypatch.setattr(tf_mod, "_run_stream", fake_stream)
+
+    result = runner.invoke(
+        app,
+        ["down", "--terraform-dir", str(tf_dir), "--force"],
+        terminal_width=200,
+    )
+
+    assert result.exit_code != 0
+    output = " ".join(result.output.replace("│", " ").split())
+    assert "does not own exactly the persisted cluster ID" in output
+    assert not _find_call(stream_calls, "terraform", "destroy")
+
+
 def test_down_preview_uses_the_selected_npa_cluster_kubeconfig(
     monkeypatch, tmp_path: Path
 ) -> None:

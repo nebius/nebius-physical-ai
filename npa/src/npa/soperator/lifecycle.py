@@ -8,7 +8,7 @@ and direct creation-time CUDA checks needed by that contract. REST is explicit
 at the NPA surface, while runtime validation accounts for the pinned operator's
 remaining REST/accounting limitation.
 
-Reuses the terraform subprocess helpers from ``npa.cli.cluster.terraform_lifecycle``.
+Uses backend-neutral subprocess helpers shared by cluster lifecycle implementations.
 """
 
 from __future__ import annotations
@@ -30,11 +30,11 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-from npa.cli.cluster.terraform_lifecycle import (
-    _require_bin,
-    _run_capture,
-    _run_stream,
-    _terraform_env,
+from npa.cluster_backends.process import (
+    require_bin as _require_bin,
+    run_capture as _run_capture,
+    run_stream as _run_stream,
+    terraform_env as _terraform_env,
 )
 from npa.clients.config import resolve_environment
 from npa.soperator.spec import (
@@ -236,7 +236,7 @@ def _write_env_sidecar(
         temporary.unlink(missing_ok=True)
 
 
-def _load_env_sidecar(install_dir: Path) -> dict[str, str] | None:
+def _load_env_sidecar(install_dir: Path) -> dict[str, Any] | None:
     path = install_dir / _ENV_SIDECAR
     if not path.exists():
         return None
@@ -1790,6 +1790,87 @@ def _terraform_cluster_id(
     return ""
 
 
+_OWNED_AUXILIARY_RESOURCE_TYPES = {
+    "nebius_compute_v1_filesystem": "filesystem",
+    "nebius_vpc_v1_allocation": "allocation",
+}
+
+
+def _terraform_owned_auxiliary_ids(
+    terraform_bin: str, install_dir: Path, env: dict[str, str]
+) -> tuple[list[str], list[str]]:
+    """Snapshot exact managed auxiliary IDs from the applied Terraform state.
+
+    An unreadable or structurally ambiguous state is not durable ownership
+    evidence. Refuse to report a successful deployment rather than writing an
+    empty ownership set that would make later cleanup unverifiable.
+    """
+
+    result = _run_capture(
+        [terraform_bin, "state", "pull"], cwd=install_dir, env=env, check=False
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        raise RuntimeError(
+            "applied Terraform state could not be read; exact auxiliary ownership "
+            "was not persisted"
+        )
+    try:
+        state = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            "applied Terraform state returned invalid JSON; exact auxiliary "
+            "ownership was not persisted"
+        ) from exc
+    resources = state.get("resources") if isinstance(state, dict) else None
+    if not isinstance(resources, list):
+        raise RuntimeError(
+            "applied Terraform state has no valid resource inventory; exact "
+            "auxiliary ownership was not persisted"
+        )
+    owned: dict[str, set[str]] = {"filesystem": set(), "allocation": set()}
+    for resource in resources:
+        if (
+            not isinstance(resource, dict)
+            or resource.get("mode", "managed") != "managed"
+        ):
+            continue
+        kind = _OWNED_AUXILIARY_RESOURCE_TYPES.get(str(resource.get("type") or ""))
+        if kind is None:
+            continue
+        instances = resource.get("instances")
+        if not isinstance(instances, list):
+            raise RuntimeError(
+                f"applied Terraform {kind} state is malformed; exact ownership "
+                "was not persisted"
+            )
+        for instance in instances:
+            attributes = (
+                instance.get("attributes") if isinstance(instance, dict) else None
+            )
+            resource_id = (
+                str(attributes.get("id") or "") if isinstance(attributes, dict) else ""
+            )
+            if not resource_id:
+                raise RuntimeError(
+                    f"applied Terraform {kind} state is missing an exact ID; "
+                    "exact ownership was not persisted"
+                )
+            owned[kind].add(resource_id)
+    return sorted(owned["filesystem"]), sorted(owned["allocation"])
+
+
+def _require_applied_cluster_id(
+    terraform_bin: str, install_dir: Path, env: dict[str, str]
+) -> str:
+    cluster_id = _terraform_cluster_id(terraform_bin, install_dir, env)
+    if not cluster_id:
+        raise RuntimeError(
+            "applied Terraform state has no exact Managed Kubernetes cluster ID; "
+            "refusing to overwrite durable ownership or report success"
+        )
+    return cluster_id
+
+
 def _find_cluster_id_by_name(
     nebius_bin: str, project_id: str, cluster_name: str, env: dict[str, str]
 ) -> str:
@@ -1825,6 +1906,147 @@ def _find_cluster_id_by_name(
 def _is_not_found_result(result: Any) -> bool:
     text = f"{getattr(result, 'stdout', '')} {getattr(result, 'stderr', '')}".casefold()
     return "not found" in text or "not_found" in text or "does not exist" in text
+
+
+def _provider_inventory_ids(
+    command: list[str], *, env: dict[str, str], description: str
+) -> set[str]:
+    """Read a provider list response without treating ambiguity as absence."""
+
+    listed = _run_capture(command, env=env, check=False, timeout=120)
+    if listed.returncode != 0 or not listed.stdout.strip():
+        raise RuntimeError(f"{description} inventory could not be read")
+    try:
+        payload = json.loads(listed.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"{description} inventory returned invalid JSON") from exc
+    items = payload.get("items") if isinstance(payload, dict) else None
+    if not isinstance(items, list):
+        raise RuntimeError(f"{description} inventory has no valid items list")
+    ids: set[str] = set()
+    for item in items:
+        metadata = item.get("metadata") if isinstance(item, dict) else None
+        resource_id = (
+            str(metadata.get("id") or "") if isinstance(metadata, dict) else ""
+        )
+        if not resource_id:
+            raise RuntimeError(
+                f"{description} inventory contains an item without an ID"
+            )
+        ids.add(resource_id)
+    return ids
+
+
+def _cleanup_owned_provider_ids(
+    *,
+    nebius_bin: str,
+    project_id: str,
+    env: dict[str, str],
+    owned_ids: set[str],
+    service: tuple[str, ...],
+    description: str,
+    on_status: Callable[[str], None] | None,
+) -> list[str]:
+    """Delete only persisted exact IDs and prove each one is absent."""
+
+    if not owned_ids:
+        return []
+    list_command = [
+        nebius_bin,
+        *service,
+        "list",
+        "--parent-id",
+        project_id,
+        "--format",
+        "json",
+    ]
+    try:
+        inventory_ids = _provider_inventory_ids(
+            list_command, env=env, description=description
+        )
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+        return [str(exc)]
+
+    errors: list[str] = []
+    for resource_id in sorted(owned_ids):
+        present = resource_id in inventory_ids
+        if not present:
+            try:
+                initial = _run_capture(
+                    [
+                        nebius_bin,
+                        *service,
+                        "get",
+                        "--id",
+                        resource_id,
+                        "--format",
+                        "json",
+                    ],
+                    env=env,
+                    check=False,
+                    timeout=120,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                errors.append(
+                    f"owned {description} {resource_id} presence check failed: "
+                    f"{type(exc).__name__}"
+                )
+                continue
+            if _is_not_found_result(initial):
+                continue
+            if initial.returncode != 0 or not initial.stdout.strip():
+                errors.append(
+                    f"owned {description} {resource_id} presence check was unreadable"
+                )
+                continue
+            present = True
+        if present:
+            _log(on_status, f"deleting owned {description} {resource_id}")
+            try:
+                deleted = _run_capture(
+                    [nebius_bin, *service, "delete", "--id", resource_id],
+                    env=env,
+                    check=False,
+                    timeout=120,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                errors.append(
+                    f"owned {description} {resource_id} delete failed: "
+                    f"{type(exc).__name__}"
+                )
+                continue
+            if deleted.returncode != 0 and not _is_not_found_result(deleted):
+                errors.append(f"owned {description} {resource_id} delete failed")
+                continue
+        try:
+            verified = _run_capture(
+                [
+                    nebius_bin,
+                    *service,
+                    "get",
+                    "--id",
+                    resource_id,
+                    "--format",
+                    "json",
+                ],
+                env=env,
+                check=False,
+                timeout=120,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            errors.append(
+                f"owned {description} {resource_id} absence check failed: "
+                f"{type(exc).__name__}"
+            )
+            continue
+        if not _is_not_found_result(verified):
+            if verified.returncode != 0:
+                errors.append(
+                    f"owned {description} {resource_id} absence check was unreadable"
+                )
+            else:
+                errors.append(f"owned {description} {resource_id} is still present")
+    return errors
 
 
 def _refresh_kube_credentials(
@@ -2627,6 +2849,9 @@ def deploy_cluster(
             subnet_id=subnet_id,
             o11y_profile=env["TF_VAR_o11y_profile"],
             auth_profile=profile,
+            cluster_id=str((_saved or {}).get("cluster_id") or ""),
+            owned_filesystem_ids=list((_saved or {}).get("owned_filesystem_ids") or []),
+            owned_allocation_ids=list((_saved or {}).get("owned_allocation_ids") or []),
         )
         sidecar_persisted = True
 
@@ -2681,6 +2906,12 @@ def deploy_cluster(
                 o11y_profile=env["TF_VAR_o11y_profile"],
                 auth_profile=profile,
                 cluster_id=cluster_id,
+                owned_filesystem_ids=list(
+                    (_saved or {}).get("owned_filesystem_ids") or []
+                ),
+                owned_allocation_ids=list(
+                    (_saved or {}).get("owned_allocation_ids") or []
+                ),
             )
             _log(on_status, "refreshing kube admin credentials")
             _refresh_kube_credentials(nebius_bin, cluster_id, context, env)
@@ -2743,6 +2974,26 @@ def deploy_cluster(
                 timeout=timeout_minutes * 60,
                 stream_output=stream_terraform_output,
             )
+
+    # The applied Terraform state is the ownership authority. Snapshot every
+    # exact auxiliary ID and atomically promote the sidecar before any success
+    # result or post-deploy validation can be returned.
+    cluster_id = _require_applied_cluster_id(terraform_bin, install_dir, env)
+    owned_filesystem_ids, owned_allocation_ids = _terraform_owned_auxiliary_ids(
+        terraform_bin, install_dir, env
+    )
+    _write_env_sidecar(
+        install_dir,
+        region=region,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        subnet_id=subnet_id,
+        o11y_profile=env["TF_VAR_o11y_profile"],
+        auth_profile=profile,
+        cluster_id=cluster_id,
+        owned_filesystem_ids=owned_filesystem_ids,
+        owned_allocation_ids=owned_allocation_ids,
+    )
 
     result: dict[str, Any] = {
         "name": spec.name,
@@ -3076,87 +3327,50 @@ def destroy_cluster(
             ],
         }
 
-    # Best-effort delete filesystems this cluster created (jail / controller-spool
-    # / accounting are named ``soperator-<name>-*``) so they don't linger against
-    # quota. NOTE: the recipe prefixes every filesystem with ``soperator-`` -- the
-    # match below must use that full prefix, otherwise orphans survive the destroy
-    # and the next deploy fails with "filesystem ... already exists" (AlreadyExists).
+    # Clean up only exact IDs captured from the applied Terraform state. Provider
+    # inventory, delete, and post-delete absence evidence are all mandatory;
+    # ambiguity retains the sidecar and Terraform state for a safe retry.
     owned_filesystem_ids = {
         str(value) for value in (saved or {}).get("owned_filesystem_ids", []) if value
     }
-    if project_id and owned_filesystem_ids:
-        fs_list = _run_capture(
-            [
-                nebius_bin,
-                "compute",
-                "filesystem",
-                "list",
-                "--parent-id",
-                project_id,
-                "--format",
-                "json",
-            ],
-            env=env,
-            check=False,
-        )
-        try:
-            items = json.loads(fs_list.stdout or "{}").get("items", [])
-        except json.JSONDecodeError:
-            items = []
-        for item in items:
-            meta = item.get("metadata", {})
-            fs_name = str(meta.get("name") or "")
-            fs_id = str(meta.get("id") or "")
-            if fs_id in owned_filesystem_ids:
-                _log(on_status, f"deleting orphaned filesystem {fs_name}")
-                _run_capture(
-                    [nebius_bin, "compute", "filesystem", "delete", "--id", fs_id],
-                    env=env,
-                    check=False,
-                )
-
-    # Best-effort delete orphaned VPC allocations this cluster created. The recipe
-    # provisions a static public IP named ``soperator-<name>-public-static-ip``
-    # for the login LoadBalancer. The Nebius cloud-controller-manager can also
-    # *re-create* a same-named allocation mid-teardown (a LoadBalancer-service
-    # race) after terraform has already deleted the in-state copy, leaving an
-    # orphan that isn't in state -- so a later ``terraform apply`` fails with
-    # "Allocation with name 'soperator-<name>-public-static-ip' already exists".
-    # These are safe to remove once the cluster (and its CCM) is gone. Runs after
-    # the direct cluster delete above so the CCM can't re-create them again.
     owned_allocation_ids = {
         str(value) for value in (saved or {}).get("owned_allocation_ids", []) if value
     }
-    if project_id and owned_allocation_ids:
-        alloc_list = _run_capture(
-            [
-                nebius_bin,
-                "vpc",
-                "allocation",
-                "list",
-                "--parent-id",
-                project_id,
-                "--format",
-                "json",
-            ],
-            env=env,
-            check=False,
+    auxiliary_errors: list[str] = []
+    if not project_id and (owned_filesystem_ids or owned_allocation_ids):
+        auxiliary_errors.append(
+            "persisted project identity is missing; exact auxiliary absence cannot be verified"
         )
-        try:
-            items = json.loads(alloc_list.stdout or "{}").get("items", [])
-        except json.JSONDecodeError:
-            items = []
-        for item in items:
-            meta = item.get("metadata", {})
-            alloc_name = str(meta.get("name") or "")
-            alloc_id = str(meta.get("id") or "")
-            if alloc_id in owned_allocation_ids:
-                _log(on_status, f"deleting orphaned VPC allocation {alloc_name}")
-                _run_capture(
-                    [nebius_bin, "vpc", "allocation", "delete", "--id", alloc_id],
-                    env=env,
-                    check=False,
-                )
+    elif project_id:
+        auxiliary_errors.extend(
+            _cleanup_owned_provider_ids(
+                nebius_bin=nebius_bin,
+                project_id=project_id,
+                env=env,
+                owned_ids=owned_filesystem_ids,
+                service=("compute", "filesystem"),
+                description="filesystem",
+                on_status=on_status,
+            )
+        )
+        auxiliary_errors.extend(
+            _cleanup_owned_provider_ids(
+                nebius_bin=nebius_bin,
+                project_id=project_id,
+                env=env,
+                owned_ids=owned_allocation_ids,
+                service=("vpc", "allocation"),
+                description="VPC allocation",
+                on_status=on_status,
+            )
+        )
+    if auxiliary_errors:
+        return {
+            "name": name,
+            "status": "destroy-incomplete",
+            "install_dir": str(install_dir),
+            "errors": auxiliary_errors,
+        }
 
     # Reset local terraform state so the install dir is clean for a redeploy.
     for stale in install_dir.glob("terraform.tfstate*"):
