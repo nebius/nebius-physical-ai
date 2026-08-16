@@ -28,8 +28,18 @@ from urllib.parse import urlparse
 # Appearance-only variables that remain coherent for a replaceable physical
 # scene. The input video is authoritative for geometry, objects, camera, and motion.
 APPEARANCE_VARIABLES = {
-    "lighting": ["bright daylight", "warm lamp light", "dim evening light", "cool overhead light"],
-    "background": ["plain wall", "cluttered shelves", "sunlit window", "hanging curtain"],
+    "lighting": [
+        "bright daylight",
+        "warm lamp light",
+        "dim evening light",
+        "cool overhead light",
+    ],
+    "background": [
+        "plain wall",
+        "cluttered shelves",
+        "sunlit window",
+        "hanging curtain",
+    ],
     "color_grade": ["neutral", "warm", "cool", "high contrast"],
     "surface_finish": ["matte", "satin", "lightly reflective", "weathered"],
 }
@@ -94,10 +104,14 @@ def _upload_json(payload: dict[str, Any], uri: str) -> str:
     if uri.startswith("s3://"):
         with tempfile.TemporaryDirectory(prefix="npa-df-stage-") as tmp:
             p = Path(tmp) / "out.json"
-            p.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            p.write_text(
+                json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
             return _storage().upload_file(str(p), uri)
     Path(uri).parent.mkdir(parents=True, exist_ok=True)
-    Path(uri).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    Path(uri).write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return uri
 
 
@@ -157,7 +171,8 @@ def _seed_fixture_frames(
     if not input_uri:
         return 0
     existing = [
-        k for k in _list_keys(input_uri)
+        k
+        for k in _list_keys(input_uri)
         if k.lower().endswith((".png", ".jpg", ".jpeg", ".mp4"))
     ]
     if existing:
@@ -179,7 +194,9 @@ def _seed_fixture_frames(
             draw.rectangle([600, 120, 680, 320], fill=(200, 200, 200))
             local = Path(tmp) / f"frame_{i:04d}.png"
             img.save(local)
-            _storage().upload_file(str(local), input_uri.rstrip("/") + f"/frame_{i:04d}.png")
+            _storage().upload_file(
+                str(local), input_uri.rstrip("/") + f"/frame_{i:04d}.png"
+            )
             written += 1
     return written
 
@@ -236,7 +253,9 @@ def generate_configs(
     existing_provenance = None
     if input_uri:
         try:
-            existing_provenance = _download_json(input_uri.rstrip("/") + "/provenance.json")
+            existing_provenance = _download_json(
+                input_uri.rstrip("/") + "/provenance.json"
+            )
         except Exception:  # noqa: BLE001 - absent until a fixture is generated
             existing_provenance = None
     seeded = 0
@@ -291,7 +310,11 @@ def generate_configs(
             "description": "Pre-staged operator input; authenticity and license were not inferred.",
         }
     manifest["input_source"] = provenance
-    uri = configs_uri.rstrip("/") + "/manifest.json" if not configs_uri.endswith(".json") else configs_uri
+    uri = (
+        configs_uri.rstrip("/") + "/manifest.json"
+        if not configs_uri.endswith(".json")
+        else configs_uri
+    )
     manifest["written_uri"] = _upload_json(manifest, uri)
     print(json.dumps(manifest))
     return manifest
@@ -315,7 +338,9 @@ def grade_gate(scores_uri: str, decision_uri: str, threshold: float | str = 0.5)
     the whole refinement loop down with it.
     """
     from npa.orchestration.npa_workflow.decisions import write_decision
-    from npa.workbench.cosmos_evaluator import RESULT_FILENAME as COSMOS_EVALUATOR_RESULT
+    from npa.workbench.cosmos_evaluator import (
+        RESULT_FILENAME as COSMOS_EVALUATOR_RESULT,
+    )
     from npa.workbench.vlm_eval import RESULT_FILENAME as VLM_EVAL_RESULT
 
     try:
@@ -360,7 +385,14 @@ def grade_gate(scores_uri: str, decision_uri: str, threshold: float | str = 0.5)
         source = candidate
         break
     if not source:
-        print(json.dumps({"stage": "grade_gate", "warn": f"could not read a score ({'; '.join(problems)})"[:300]}))
+        print(
+            json.dumps(
+                {
+                    "stage": "grade_gate",
+                    "warn": f"could not read a score ({'; '.join(problems)})"[:300],
+                }
+            )
+        )
     graded = status == "completed"
     decision = (
         "promote_checkpoint"
@@ -449,7 +481,76 @@ def enforce_quality_disposition(
     payload["written_uri"] = _upload_json(payload, disposition_uri)
     print(json.dumps(payload))
     if not accepted:
-        raise RuntimeError("quality rejected after refinement; see quality disposition artifact")
+        raise RuntimeError(
+            "quality rejected after refinement; see quality disposition artifact"
+        )
+    return payload
+
+
+def write_quality_disposition(
+    scores_uri: str,
+    disposition_uri: str,
+    decision_uri: str,
+    threshold: float | str = 0.75,
+) -> dict[str, Any]:
+    """Persist the final quality result and route without weakening rejection.
+
+    Dynamic workflows need one state that can branch accepted runs into labeling
+    and rejected runs into evidence-only visualization.  Reuse the same strict
+    evaluator contract as :func:`enforce_quality_disposition`, but defer the
+    terminal exception until after the rejected visualization state.
+    """
+
+    from npa.orchestration.npa_workflow.decisions import write_decision
+    from npa.workbench.cosmos_evaluator import RESULT_FILENAME
+
+    try:
+        numeric_threshold = float(threshold)
+    except (TypeError, ValueError):
+        numeric_threshold = 0.75
+    report_uri = (
+        scores_uri
+        if scores_uri.endswith(".json")
+        else f"{scores_uri.rstrip('/')}/{RESULT_FILENAME}"
+    )
+    reasons: list[str] = []
+    report: dict[str, Any] = {}
+    try:
+        downloaded = _download_json(report_uri)
+        if not isinstance(downloaded, dict):
+            raise TypeError(f"expected a JSON object, got {type(downloaded).__name__}")
+        report = downloaded
+    except Exception as exc:  # noqa: BLE001 - the rejection artifact is mandatory
+        reasons.append(f"evaluator report unavailable or malformed: {exc}"[:300])
+    try:
+        score = float(report.get("score", 0.0))
+    except (TypeError, ValueError):
+        score = 0.0
+        reasons.append("evaluator score is not numeric")
+    evaluator_status = str(report.get("status", "missing"))
+    hard_checks_passed = report.get("passed") is True
+    if evaluator_status != "completed":
+        reasons.append(f"evaluator status is {evaluator_status}")
+    if score < numeric_threshold:
+        reasons.append("aggregate score is below threshold")
+    if not hard_checks_passed:
+        reasons.append("one or more required checks did not pass")
+    accepted = not reasons
+    decision = "promote_checkpoint" if accepted else "loop_back"
+    payload = {
+        "schema": "npa.data_factory.quality_disposition.v1",
+        "quality_status": "accepted" if accepted else "rejected",
+        "evaluator_status": evaluator_status,
+        "score": score,
+        "threshold": numeric_threshold,
+        "hard_checks_passed": hard_checks_passed,
+        "evaluator_report_uri": report_uri,
+        "reasons": reasons,
+        "decision": decision,
+    }
+    payload["written_uri"] = _upload_json(payload, disposition_uri)
+    write_decision(decision_uri, decision)
+    print(json.dumps(payload))
     return payload
 
 
@@ -480,9 +581,13 @@ def curate(
     # manifest.json are excluded. Deriving relative to the passed augment_uri
     # (rather than a hardcoded "/cosmos_augmented/") keeps this correct for any
     # prefix, including a bucket root. Matches publish_transfer_to_s3's layout.
-    _, aug_prefix = _split(augment_uri if augment_uri.endswith("/") else augment_uri + "/")
-    rels = [k[len(aug_prefix):] for k in keys if k.startswith(aug_prefix)]
-    clips = sorted({r.split("/", 1)[0] for r in rels if "/" in r and r.split("/", 1)[0]})
+    _, aug_prefix = _split(
+        augment_uri if augment_uri.endswith("/") else augment_uri + "/"
+    )
+    rels = [k[len(aug_prefix) :] for k in keys if k.startswith(aug_prefix)]
+    clips = sorted(
+        {r.split("/", 1)[0] for r in rels if "/" in r and r.split("/", 1)[0]}
+    )
     multi = len(clips) > 1
     report = {
         "schema": "npa.fiftyone.curation.v1",
@@ -537,7 +642,9 @@ def curate(
     return report
 
 
-def _merge_curator_report(report: dict[str, Any], curator_report_uri: str) -> dict[str, Any]:
+def _merge_curator_report(
+    report: dict[str, Any], curator_report_uri: str
+) -> dict[str, Any]:
     """Fold the Cosmos Curator stage's summary into the curation report.
 
     Only the run-level fields are copied; the per-clip catalog stays in the
@@ -551,7 +658,10 @@ def _merge_curator_report(report: dict[str, Any], curator_report_uri: str) -> di
         report["cosmos_curator"] = {"status": "unavailable", "warn": f"{exc}"[:200]}
         return report
     if not isinstance(curator, dict):
-        report["cosmos_curator"] = {"status": "unavailable", "warn": "curator report is not an object"}
+        report["cosmos_curator"] = {
+            "status": "unavailable",
+            "warn": "curator report is not an object",
+        }
         return report
     report["cosmos_curator"] = {
         "status": str(curator.get("status") or ""),
@@ -586,7 +696,9 @@ def _enrich_with_fiftyone_curation(
     except (TypeError, ValueError):
         thresh = dfc.DEFAULT_DEDUP_THRESHOLD
 
-    bucket, aug_prefix = _split(augment_uri if augment_uri.endswith("/") else augment_uri + "/")
+    bucket, aug_prefix = _split(
+        augment_uri if augment_uri.endswith("/") else augment_uri + "/"
+    )
     try:
         with tempfile.TemporaryDirectory(prefix="npa-df-curate-") as tmp:
             return dfc.run_curation(
@@ -646,7 +758,9 @@ def finalize(run_root_uri: str, report_uri: str) -> dict[str, Any]:
         "variant_count": n_variants,
     }
     try:
-        input_source = _download_json(run_root_uri.rstrip("/") + "/input/provenance.json")
+        input_source = _download_json(
+            run_root_uri.rstrip("/") + "/input/provenance.json"
+        )
     except Exception:  # noqa: BLE001 - legacy runs predate provenance
         input_source = {}
     if isinstance(input_source, dict) and input_source:

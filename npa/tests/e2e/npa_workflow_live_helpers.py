@@ -146,6 +146,7 @@ DYNAMIC_SPECS = frozenset(
         "tokenfactory-cosmos-gate.yaml",
         "rl-policy-training-sim-success.yaml",
         "physical-ai-data-factory.yaml",
+        "paidf-cosmos3.yaml",
         "token-factory-gate-loop.yaml",
     }
 )
@@ -219,6 +220,18 @@ def seed_live_workflow_inputs(
 
     marker = f"npa-workflow-e2e/{run_id}/{spec_name.replace('.yaml', '')}"
     client = s3_client_for_project(e2e_project, allow_host_creds=True)
+
+    if spec_name == "paidf-cosmos3.yaml":
+        body = base64.b64decode(_CONDITIONED_COSMOS_MP4_B64, validate=True)
+        if len(body) < 12 or body[4:8] != b"ftyp":
+            pytest.fail("PAIDF Cosmos 3 fixture is not a valid MP4 container")
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{marker}/fixture/source.mp4",
+            Body=body,
+            ContentType="video/mp4",
+        )
+        return
 
     if spec_name == "token-factory-caption.yaml":
         try:

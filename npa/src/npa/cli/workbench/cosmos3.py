@@ -31,6 +31,98 @@ app = typer.Typer(
 )
 
 
+@app.command("prepare-video-input")
+def prepare_video_input_cmd(
+    input_kind: str = typer.Option(..., "--input-kind", help="video or lerobot."),
+    input_video_uri: str = typer.Option("", "--input-video-uri"),
+    lerobot_dataset_uri: str = typer.Option("", "--lerobot-dataset-uri"),
+    episode: int = typer.Option(0, "--episode"),
+    camera: str = typer.Option("", "--camera"),
+    input_uri: str = typer.Option(..., "--output-uri"),
+    provenance_uri: str = typer.Option(..., "--provenance-uri"),
+    run_id: str = typer.Option("", "--run-id"),
+) -> None:
+    """Select a direct video or one LeRobot v2/v3 episode/camera for conditioning."""
+
+    from npa.workflows.paidf_cosmos3 import PaidfCosmos3Error, prepare_input
+
+    try:
+        payload = prepare_input(
+            input_kind,
+            input_video_uri,
+            lerobot_dataset_uri,
+            episode,
+            camera,
+            input_uri,
+            provenance_uri,
+            run_id,
+        )
+    except PaidfCosmos3Error as exc:
+        typer.echo(f"cosmos3 prepare-video-input failed: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+
+
+@app.command("generate-variants")
+def generate_variants_cmd(
+    input_path: str = typer.Option(..., "--input-path"),
+    input_provenance_uri: str = typer.Option(..., "--input-provenance-uri"),
+    captions_uri: str = typer.Option(..., "--captions-uri"),
+    configs_uri: str = typer.Option(..., "--configs-uri"),
+    output_uri: str = typer.Option(..., "--output-uri"),
+    scores_uri: str = typer.Option(..., "--scores-uri"),
+    attempt_uri: str = typer.Option(..., "--attempt-uri"),
+    mode: str = typer.Option("video2video", "--mode"),
+    checkpoint: str = typer.Option("Cosmos3-Nano", "--checkpoint"),
+    prompt: str = typer.Option(..., "--prompt"),
+    negative_prompt: str = typer.Option("", "--negative-prompt"),
+    seed: int = typer.Option(0, "--seed"),
+    guidance: float = typer.Option(0.0, "--guidance"),
+    steps: int = typer.Option(0, "--steps"),
+    variant_count: int = typer.Option(1, "--variant-count"),
+    variant_parallelism: int = typer.Option(1, "--variant-parallelism"),
+    retry_seed_stride: int = typer.Option(1, "--retry-seed-stride"),
+    retry_guidance_delta: float = typer.Option(0.0, "--retry-guidance-delta"),
+    retry_steps_delta: int = typer.Option(0, "--retry-steps-delta"),
+    parallelism_preset: str = typer.Option("latency", "--parallelism-preset"),
+    guardrails: bool = typer.Option(True, "--guardrails/--no-guardrails"),
+    run_id: str = typer.Option("", "--run-id"),
+) -> None:
+    """Generate and publish real source-video-conditioned Cosmos 3 variants."""
+
+    from npa.workflows.paidf_cosmos3 import PaidfCosmos3Error, generate_variants
+
+    try:
+        payload = generate_variants(
+            input_path,
+            input_provenance_uri,
+            captions_uri,
+            configs_uri,
+            output_uri,
+            scores_uri,
+            attempt_uri,
+            mode,
+            checkpoint,
+            prompt,
+            negative_prompt,
+            seed,
+            guidance,
+            steps,
+            variant_count,
+            variant_parallelism,
+            retry_seed_stride,
+            retry_guidance_delta,
+            retry_steps_delta,
+            parallelism_preset,
+            guardrails,
+            run_id,
+        )
+    except (PaidfCosmos3Error, Cosmos3GenerateError) as exc:
+        typer.echo(f"cosmos3 generate-variants failed: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+
+
 @app.command("checkpoint-eval")
 def checkpoint_eval_cmd(
     campaign_config: str = typer.Option(
@@ -58,7 +150,9 @@ def checkpoint_eval_cmd(
         "--work-dir",
         help="Ephemeral local output and Hugging Face cache root.",
     ),
-    run_id: str = typer.Option("", "--run-id", help="Workflow run id carried into evidence."),
+    run_id: str = typer.Option(
+        "", "--run-id", help="Workflow run id carried into evidence."
+    ),
     runtime_image: str = typer.Option(
         "",
         "--runtime-image",
@@ -123,11 +217,19 @@ def generate_cmd(
         "Named checkpoints download at runtime with the operator's HF token; a "
         "staged path still needs one unless --no-guardrails is also passed.",
     ),
-    name: str = typer.Option(DEFAULT_NAME, "--name", help="Sample name / output subdirectory."),
-    negative_prompt: str = typer.Option("", "--negative-prompt", help="Optional negative prompt."),
+    name: str = typer.Option(
+        DEFAULT_NAME, "--name", help="Sample name / output subdirectory."
+    ),
+    negative_prompt: str = typer.Option(
+        "", "--negative-prompt", help="Optional negative prompt."
+    ),
     seed: int = typer.Option(0, "--seed", help="Sampling seed for reproducible runs."),
-    num_steps: int = typer.Option(0, "--num-steps", help="Override the mode's sampling steps."),
-    guidance: float = typer.Option(0.0, "--guidance", help="Override classifier-free guidance."),
+    num_steps: int = typer.Option(
+        0, "--num-steps", help="Override the mode's sampling steps."
+    ),
+    guidance: float = typer.Option(
+        0.0, "--guidance", help="Override classifier-free guidance."
+    ),
     no_guardrails: bool = typer.Option(
         False,
         "--no-guardrails",
@@ -138,7 +240,9 @@ def generate_cmd(
         "--parallelism-preset",
         help="Upstream parallelism preset: latency or throughput.",
     ),
-    run_id: str = typer.Option("", "--run-id", help="Run id carried into the manifest."),
+    run_id: str = typer.Option(
+        "", "--run-id", help="Run id carried into the manifest."
+    ),
     output_json: Optional[Path] = typer.Option(
         None, "--output-json", help="Write the result manifest JSON locally."
     ),
@@ -183,13 +287,23 @@ def generate_cmd(
 
 @app.command("reason")
 def reason_cmd(
-    input_uri: str = typer.Option(..., "--input-uri", help="Input rollout or frame URI."),
-    output_uri: str = typer.Option(..., "--output-uri", help="Output prefix for reasoning JSON."),
-    model: str = typer.Option("nvidia/Cosmos-Reason1-7B", "--model", help="Reasoning model id."),
+    input_uri: str = typer.Option(
+        ..., "--input-uri", help="Input rollout or frame URI."
+    ),
+    output_uri: str = typer.Option(
+        ..., "--output-uri", help="Output prefix for reasoning JSON."
+    ),
+    model: str = typer.Option(
+        "nvidia/Cosmos-Reason1-7B", "--model", help="Reasoning model id."
+    ),
     image: str = typer.Option("", "--image", help="BYO Cosmos3 reason image."),
     prompt: str = typer.Option("", "--prompt", help="Optional reasoning prompt."),
-    run_id: str = typer.Option("", "--run-id", help="Run id carried into the manifest."),
-    output_json: Optional[Path] = typer.Option(None, "--output-json", help="Write manifest JSON locally."),
+    run_id: str = typer.Option(
+        "", "--run-id", help="Run id carried into the manifest."
+    ),
+    output_json: Optional[Path] = typer.Option(
+        None, "--output-json", help="Write manifest JSON locally."
+    ),
 ) -> None:
     """Build the Cosmos3 reason stage manifest."""
 
@@ -210,7 +324,9 @@ def reason_cmd(
 
 @app.command("text-to-image")
 def text_to_image_cmd(
-    prompt: str = typer.Option(..., "--prompt", help="Text prompt to generate an image from."),
+    prompt: str = typer.Option(
+        ..., "--prompt", help="Text prompt to generate an image from."
+    ),
     output_uri: str = typer.Option(
         "", "--output-uri", help="S3 prefix to publish the image and its manifest to."
     ),
@@ -219,7 +335,9 @@ def text_to_image_cmd(
         "--output-dir",
         help="Local working directory for inference outputs.",
     ),
-    model_id: str = typer.Option("", "--model-id", help="HF model repo id for the checkpoint."),
+    model_id: str = typer.Option(
+        "", "--model-id", help="HF model repo id for the checkpoint."
+    ),
     checkpoint_name: str = typer.Option(
         "Cosmos3-Nano",
         "--checkpoint-name",
@@ -232,7 +350,9 @@ def text_to_image_cmd(
         None, "--cache-dir", help="Ephemeral runtime cache for source and checkpoint."
     ),
     uv_group: str = typer.Option(
-        DEFAULT_UV_GROUP, "--uv-group", help="uv dependency group to sync in the framework repo."
+        DEFAULT_UV_GROUP,
+        "--uv-group",
+        help="uv dependency group to sync in the framework repo.",
     ),
     seed: int = typer.Option(0, "--seed", help="Inference seed."),
     guardrails: bool = typer.Option(
@@ -241,10 +361,14 @@ def text_to_image_cmd(
         help="Run the framework's content guardrails (they download extra gated weights).",
     ),
     hf_token_env: str = typer.Option(
-        "HF_TOKEN", "--hf-token-env", help="Environment variable holding the Hugging Face token."
+        "HF_TOKEN",
+        "--hf-token-env",
+        help="Environment variable holding the Hugging Face token.",
     ),
     github_token_env: str = typer.Option(
-        "GITHUB_TOKEN", "--github-token-env", help="Environment variable holding a GitHub token."
+        "GITHUB_TOKEN",
+        "--github-token-env",
+        help="Environment variable holding a GitHub token.",
     ),
 ) -> None:
     """Generate an image from a prompt with the Cosmos3 framework, and publish it.

@@ -26,6 +26,8 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     # Generation runs in the Cosmos 3 framework image; the reason stage runs in the
     # (differently built) Cosmos-Reason VLM image. Exact match wins over the prefix.
     "workbench.cosmos3.generate": "cosmos3",
+    "workbench.cosmos3.generate_variants": "cosmos3",
+    "workbench.cosmos3.prepare_video_input": "cosmos3",
     "workbench.cosmos3.checkpoint_eval": "cosmos3",
     "workbench.cosmos3": "cosmos3-reason",
     "workbench.cosmos_curate": "cosmos-curate",
@@ -1938,11 +1940,13 @@ def assert_no_unresolved_placeholders(yaml_text: str) -> None:
         raise NpaWorkflowRenderError(
             f"rendered SkyPilot YAML is invalid while checking placeholders: {exc}"
         ) from exc
-    unresolved = sorted({
-        name
-        for document in documents
-        for name in _document_declarative_placeholder_names(document)
-    })
+    unresolved = sorted(
+        {
+            name
+            for document in documents
+            for name in _document_declarative_placeholder_names(document)
+        }
+    )
     if unresolved:
         joined = ", ".join(f"${{{name}}}" for name in unresolved)
         raise NpaWorkflowRenderError(

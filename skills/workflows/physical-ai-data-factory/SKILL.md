@@ -32,6 +32,11 @@ is pure composition of existing toolRefs; only add real tools with tests.
 
 ## What It Is
 
+The independent `paidf-cosmos3.yaml` variant is documented at
+`docs/workbench/guides/paidf-cosmos3.md`. It uses real source-video-conditioned
+Cosmos 3 `video2video` generation and does not replace or silently change this
+skill's Cosmos Transfer 2.5 blueprint.
+
 `npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml` — one
 `npa.workflow/v0.0.1` spec. Blueprint → NPA stage mapping:
 

@@ -267,6 +267,57 @@ def test_quality_disposition_rejects_a_degraded_report(tmp_path: Path) -> None:
     assert "evaluator status is degraded" in payload["reasons"]
 
 
+@pytest.mark.parametrize(
+    ("report", "expected_status", "expected_decision"),
+    [
+        (
+            {"score": 0.9, "status": "completed", "passed": True},
+            "accepted",
+            "promote_checkpoint",
+        ),
+        (
+            {"score": 0.9, "status": "incomplete", "passed": True},
+            "rejected",
+            "loop_back",
+        ),
+        (
+            {"score": 0.9, "status": "completed", "passed": False},
+            "rejected",
+            "loop_back",
+        ),
+    ],
+)
+def test_dynamic_quality_disposition_persists_strict_route(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    report: dict,
+    expected_status: str,
+    expected_decision: str,
+) -> None:
+    scores = tmp_path / "cosmos_evaluator.json"
+    disposition = tmp_path / "quality_disposition.json"
+    scores.write_text(json.dumps(report), encoding="utf-8")
+    decisions: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.decisions.write_decision",
+        lambda uri, decision: decisions.append((uri, decision)),
+    )
+
+    result = dfs.write_quality_disposition(
+        str(scores),
+        str(disposition),
+        "s3://example-bucket/run/decision.json",
+        threshold=0.75,
+    )
+
+    assert result["quality_status"] == expected_status
+    assert result["decision"] == expected_decision
+    assert decisions == [
+        ("s3://example-bucket/run/decision.json", expected_decision)
+    ]
+    assert json.loads(disposition.read_text())["quality_status"] == expected_status
+
+
 def test_grade_gate_falls_through_a_malformed_report_to_the_older_contract(
     tmp_path: Path, monkeypatch
 ) -> None:
