@@ -214,7 +214,7 @@ reading the Dockerfile:
 
 ```bash
 npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
-    cr.<region>.nebius.cloud/<registry-id>/npa-isaac-lab:2.3.2.post1
+    <your-registry>/<namespace>/npa-isaac-lab:2.3.2.post1
 ```
 
 The scanner streams the image's flattened filesystem and its layer history, matching Kit
@@ -231,9 +231,9 @@ bootstrap, the pinned manifests, two smoke scripts and two empty mount points �
 is nothing credentialed left to pull:
 
 ```bash
-npa/docker/workbench/isaac-lab/build.sh --registry cr.<region>.nebius.cloud/<id> --push
-npa/docker/workbench/sonic/build.sh    --registry cr.<region>.nebius.cloud/<id> --push --variant baked
-npa/docker/workbench/groot/build.sh    --registry cr.<region>.nebius.cloud/<id> --push
+npa/docker/workbench/isaac-lab/build.sh --registry <your-registry>/<namespace> --push
+npa/docker/workbench/sonic/build.sh    --registry <your-registry>/<namespace> --push --variant baked
+npa/docker/workbench/groot/build.sh    --registry <your-registry>/<namespace> --push
 ```
 
 ### Promoting the canonical tags — mind the order
@@ -244,23 +244,11 @@ promoting them onto the canonical tags is not a neutral swap. Four layers had to
 to forward that acceptance: the Isaac/GR00T/SONIC command builders, the SkyPilot
 renderer, and the canonical Sim2Real standard-workflow Isaac resource profile.
 
-**Promote only after that plumbing is on the default branch.** Anyone running from a branch
-without it who pulls a canonical tag gets an image their code cannot consent to, and the job
-exits 78.
-
-```bash
-./npa/scripts/promote_isaac_rtfetch_tags.sh --dry-run           # default; prints only
-./npa/scripts/promote_isaac_rtfetch_tags.sh --i-have-sign-off   # both registries
-./npa/scripts/promote_isaac_rtfetch_tags.sh --rollback --i-have-sign-off
-```
-
-The script pins the validated digests and the pre-re-architecture digests, checks each
-source exists before touching either registry, and re-reads every tag afterwards to confirm
-parity. Rollback is always safe: the old images bake Isaac and need no acceptance plumbing.
-
-Only after promotion should `npa.deploy.publish_public` be run with `dry_run=false` — it
-resolves **canonical** tags, so publishing beforehand would push the old Omniverse-baked
-images to a public registry, the exact outcome this architecture exists to prevent.
+**Publish only after that plumbing is on the default branch.** Build the exact
+commit into the private GHCR namespace as `dev-<full-git-sha>`, validate and scan
+that digest, then run `npa.deploy.publish_public --candidate-sha <full-git-sha>`.
+The publisher promotes the validated candidate digest to the supported release
+tag; it never reads a moving canonical source tag.
 
 **The honest trade.** `npa-isaac-lab` went from 8.41 GB to 10.66 GB compressed (+27%).
 Removing Isaac Sim saved less than adding a standalone PyTorch cu128 wheel set cost — its
@@ -275,32 +263,22 @@ Every required gated repository is probed before provisioning; there is no NPA
 manual terms flag or access-check bypass. Public repositories work anonymously.
 The upstream license still applies, and we never redistribute weights.
 
-Access model today (both regions): each workbench registry
-(`cr.eu-north1.nebius.cloud/…` primary, `cr.us-central1.nebius.cloud/…` mirror)
-is **already readable org/tenant-wide** — the tenant `viewers`/`editors` groups
-hold `viewer`/`editor`, which cascades to image pull — so developers inside the
-owning org can pull every image, including the `restricted` ones (internal R&D
-use).
+Official publication has two physically separate GHCR namespaces because GHCR
+visibility is package-level:
 
-**Pulling from any Nebius tenant / publicly.** Nebius Container Registry cannot
-express "any Nebius tenant can pull": it has **no anonymous/public mode** and
-**no `allAuthenticatedUsers` / cross-tenant grant**. Every pull needs an
-authenticated identity, tenants are strictly isolated, and the only way to admit
-an out-of-tenant identity is to invite that specific account into the owning
-tenant and add it to a group — which does not scale to "anyone from any tenant."
-The only way to make the images pullable by every Nebius tenant (which is also
-pullable by anyone) is therefore to **mirror to a public-capable registry** —
-GHCR (`ghcr.io`, the default), Docker Hub, or Quay.
+- private candidates: `ghcr.io/nebius/nebius-physical-ai-private`, tagged only
+  with immutable `dev-<full-git-sha>` identifiers;
+- public releases: `ghcr.io/nebius/nebius-physical-ai`, tagged with the validated
+  supported-tool version and copied by digest from the candidate.
 
-Only the `public`-classified subset may be mirrored. Use the license-guarded
-publisher, which copies exactly `publicly_publishable_tools()` (every workbench
-image, now that the Isaac images fetch Isaac at run time) and hard-refuses
-anything still classified `restricted`:
+Only the `public`-classified subset may enter either official channel. Use the
+license-guarded publisher, which copies exactly `publicly_publishable_tools()`
+and hard-refuses anything classified `restricted`:
 
 ```bash
-# defaults to $NPA_PUBLIC_REGISTRY, else ghcr.io/nebius/nebius-physical-ai
-python -m npa.deploy.publish_public --dry-run
-python -m npa.deploy.publish_public --target ghcr.io/<org>/<repo>
+# source defaults to $NPA_PRIVATE_REGISTRY; target defaults to $NPA_PUBLIC_REGISTRY
+python -m npa.deploy.publish_public --candidate-sha <full-git-sha> --dry-run
+python -m npa.deploy.publish_public --candidate-sha <full-git-sha>
 ```
 
 The copy path is bracketed by checks it runs itself. Before writing anything it
@@ -312,7 +290,7 @@ reference unchanged. The GitHub workflow serializes publishers for a target and
 does not cancel an in-progress publication because registries provide no atomic
 compare-and-swap for tags.
 
-It also reads every **source** manifest, because `crane auth login` writes a config file and
+It also reads every **candidate** manifest, because `crane auth login` writes a config file and
 exits 0 for any string without ever contacting the registry — so a stale credential
 would otherwise surface partway through the copy loop with some packages already
 created. Run it alone with `--preflight`. The registry's own error code says which
@@ -320,75 +298,36 @@ of three unrelated problems you have:
 
 | Code | Meaning | Fix |
 | --- | --- | --- |
-| `UNAUTHORIZED` on **every** image | the credential resolved to no identity | replace the credential (below) |
-| `UNAUTHORIZED` on **some** images | the identity lacks `viewer` on those repositories | fix the role, not the token |
+| `UNAUTHORIZED` on **every** image | the GHCR credential resolved to no identity | replace the scoped credential |
+| `UNAUTHORIZED` on **some** images | the identity lacks package read access | fix package access, not the tag |
 | `NAME_UNKNOWN` | no such repository — the image was never built and pushed | build and push it, or `--skip-missing` |
 | `MANIFEST_UNKNOWN` | the repository exists but not this tag — the pin points at an unpushed build | correct the pin, or `--skip-missing` |
 
-Locally, mint a fresh source token with:
+Locally, log in with a scoped GHCR token that can read the private candidate packages:
 
 ```bash
-nebius iam get-access-token | crane auth login cr.eu-north1.nebius.cloud -u iam --password-stdin
+printf '%s' "$GHCR_TOKEN" | crane auth login ghcr.io -u "$GHCR_USER" --password-stdin
 ```
 
-### The CI credential must not be an access token
+### CI credentials are GHCR-scoped
 
-**Do not put the output of `nebius iam get-access-token` in a CI secret.** An access
-token lives **12 hours**, and `Publish public images` is dispatched by hand — so a
-stored one is dead long before the next run. That is precisely how the workflow's first
-run failed: all 23 source reads returned `UNAUTHORIZED: authentication required: failed
-to get profile`, which is Nebius CR's way of saying the bearer token resolved to no
-identity. The preflight caught it before anything was written, so nothing was published
-and no package was created.
+`NPA_PRIVATE_GHCR_TOKEN` must have package read/write access to the private
+candidate packages. The workflow may use `GITHUB_TOKEN` when repository/package
+permissions permit. Neither credential is a Nebius IAM token, and NPA never
+mints cloud-provider tokens for registry access.
 
-Use one of the two durable credentials instead (GHCR push always uses the built-in
-`GITHUB_TOKEN`):
-
-| Secret | What it is | Lifetime |
-| --- | --- | --- |
-| `NEBIUS_SA_CREDENTIALS_JSON` | authorized-key credentials JSON for a service account with `viewer` on the source registry; the job mints a fresh token per run | no expiry to manage |
-| `NEBIUS_CR_TOKEN` | a static key issued for the registry service | 6 months by default, up to 3 years |
-
-The workflow prefers `NEBIUS_SA_CREDENTIALS_JSON` and falls back to `NEBIUS_CR_TOKEN`; both
-are resolved by `npa/scripts/ci_source_registry_login.sh`, shared by the publish and health
-workflows so the credential path cannot drift between them. Issue a static key with:
-
-```bash
-nebius iam static-key issue \
-  --account-service-account-id=<service-account-id> \
-  --service=CONTAINER_REGISTRY
-```
-
-> **A static key expires and nothing in this repo can see it coming.** Its lifetime is set at
-> issue time (6 months by default) and is *not* readable from the token, unlike an access
-> token's `exp`. So record the expiry date wherever you keep operational reminders — not in
-> the repo, which must not carry tenant identifiers — and rely on the **Public mirror health**
-> workflow for the early warning: it runs the same read-only preflight weekly and goes red on
-> a dead credential, months before anyone next needs to publish. Verify the service account
-> holds `viewer` on the source registry; without it every read is denied.
-
-Either way the credential is checked offline before the two-minute manifest sweep, so an
-expired token is named as such in seconds rather than arriving as a wall of identical
-`UNAUTHORIZED` lines:
-
-```bash
-printf '%s' "$TOKEN" | python -m npa.deploy.publish_public --describe-credential
-```
-
-That check is a fast diagnostic, not proof the credential *works* — an opaque static key has
-no expiry to read, so it always passes. Prove a credential by reading a real manifest with it,
-and point `DOCKER_CONFIG` at an empty directory first so the read cannot succeed on an ambient
-login you already had:
+Prove the credential by reading a real candidate manifest. Point `DOCKER_CONFIG`
+at an empty directory first so the read cannot succeed on an ambient login:
 
 ```bash
 export DOCKER_CONFIG="$(mktemp -d)"
-printf '%s' "$TOKEN" | crane auth login cr.eu-north1.nebius.cloud -u iam --password-stdin
-crane manifest cr.eu-north1.nebius.cloud/<registry-id>/npa-lerobot:<tag> >/dev/null && echo ok
+printf '%s' "$GHCR_TOKEN" | crane auth login ghcr.io -u "$GHCR_USER" --password-stdin
+crane manifest ghcr.io/nebius/nebius-physical-ai-private/npa-lerobot:dev-<full-git-sha> >/dev/null && echo ok
 ```
 
 You do not have to guess whether a real run would work: the `Publish public images`
 workflow's default **dry run is a full rehearsal** — it resolves the plan, logs in to
-the source registry, preflights every pinned tag, and runs the Isaac gate, skipping
+the private candidate channel, preflights every pinned tag, and runs the Isaac gate, skipping
 only the copy and the public verification. A green dry run means the real run will get
 as far as writing.
 
@@ -430,7 +369,7 @@ visibility flips likewise skips all matching copies and only re-verifies anonymo
 
 or the `Publish public images` GitHub Actions workflow (manual dispatch,
 dry-run by default). **Consumers in any tenant** then pull the OSS images by
-pointing the resolver at the public mirror:
+pointing the resolver at the public release channel:
 
 ```bash
 export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai   # OSS images, any tenant
@@ -452,9 +391,7 @@ push, and the same check runs standalone:
 python -m npa.deploy.publish_public --verify-public
 ```
 
-As of writing every image reports `NOT PUBLIC` because nothing has ever been pushed to
-the mirror — `ghcr.io/nebius/nebius-physical-ai` does not exist yet. GHCR creates a
-package on first push; there is no registry to provision in advance.
+GHCR creates each package on first push; there is no registry service to provision.
 
 To make a package public, someone with admin on it opens that package's settings and
 uses **Danger Zone → Change visibility → Public**. `--verify-public --checklist` prints
@@ -485,9 +422,10 @@ transfers manifests unchanged, so it cannot add an `org.opencontainers.image.sou
 label; linking every package to the repo automatically would mean rebuilding every
 image, which is deliberately not done here.
 
-Never add a `restricted` image to a public target. Nothing is currently classified
-that way, and `publish_public` refuses anything that is, as defence in depth around the
-selector.
+Never add a `restricted` image to either official GHCR channel.
+`cosmos3-serving` is currently restricted/build-your-own, and
+`publish_public` plus `candidate_image_for_tool` both refuse it as defence in
+depth around the selector.
 
 > **Publishing is a business decision.** The engineering makes publication defensible —
 > the images contain no NVIDIA-proprietary bytes, and NVIDIA delivers Isaac to each

@@ -21,7 +21,7 @@ RUN_ID="run-$(date -u +%Y%m%dT%H%M%SZ)"
 LOG_ROOT="${STATE_DIR}/${RUN_ID}"
 SESSION="${PIPELINE_E2E_TMUX_SESSION:-pipeline-images-e2e}"
 BRANCH="${PIPELINE_E2E_SOURCE_REF:-$(git -C "${ROOT}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)}"
-REGISTRY="${REGISTRY:-cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw}"
+REGISTRY="${REGISTRY:-ghcr.io/nebius/nebius-physical-ai}"
 NEBIUS_REGISTRY_PROFILE="${NEBIUS_REGISTRY_PROFILE:-agent-sa}"
 NPA_E2E_PIPELINE_GPU="${NPA_E2E_PIPELINE_GPU:-h200}"
 

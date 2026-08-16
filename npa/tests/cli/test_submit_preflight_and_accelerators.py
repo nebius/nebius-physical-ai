@@ -398,7 +398,7 @@ def _stub_pull(monkeypatch: pytest.MonkeyPatch, checks: list[ImagePullCheck]) ->
     )
 
 
-NEBIUS_IMAGE = "cr.us-central1.nebius.cloud/u000/npa-cosmos2-transfer:2.5.1"
+NEBIUS_IMAGE = "registry-us.example/u000/npa-cosmos2-transfer:2.5.1"
 
 
 def test_a_forbidden_nebius_image_blocks_submit(
@@ -582,7 +582,7 @@ def test_first_party_image_without_attestation_fails_instead_of_probing(
 ) -> None:
     digest = "sha256:" + "a" * 64
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("NPA_REGISTRY", "cr.us-central1.nebius.cloud/u000")
+    monkeypatch.setenv("NPA_REGISTRY", "registry-us.example/u000")
     monkeypatch.setattr(
         "npa.orchestration.skypilot.registry_preflight.resolve_registry_credentials",
         lambda *_args, **_kwargs: ("iam", "opaque"),
@@ -623,10 +623,10 @@ def test_groot_label_and_label_backed_cache_cannot_bypass_runtime_probe(
     """Canonical and repaired GR00T use one repo, so only selected bytes are evidence."""
 
     digest = "sha256:" + "b" * 64
-    image = "cr.us-central1.nebius.cloud/u000/npa-groot:0.1.0-sky1"
+    image = "registry-us.example/u000/npa-groot:0.1.0-sky1"
     immutable = image.rsplit(":", 1)[0] + "@" + digest
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("NPA_REGISTRY", "cr.us-central1.nebius.cloud/u000")
+    monkeypatch.setenv("NPA_REGISTRY", "registry-us.example/u000")
     monkeypatch.setattr(
         "npa.orchestration.skypilot.registry_preflight.resolve_registry_credentials",
         lambda *_args, **_kwargs: ("iam", "opaque"),
@@ -781,7 +781,7 @@ def test_a_missing_workbench_image_carries_its_build_command(
             )
 
     check = check_image_pull(
-        "cr.eu-north1.nebius.cloud/e000/npa-cosmos-curate:some-old-tag",
+        "registry.example/e000/npa-cosmos-curate:some-old-tag",
         password="token",
         fetcher=Missing(),
     )
@@ -805,19 +805,19 @@ def test_submit_checks_the_project_registry_not_the_first_party_default(
 
     monkeypatch.setattr(
         "npa.clients.config.resolve_container_registry",
-        lambda project=None: "cr.us-central1.nebius.cloud/u00proj",
+        lambda project=None: "registry-us.example/u00proj",
     )
 
     assert (
         workflow_cli._resolve_submit_registry("", "test-rtx")
-        == "cr.us-central1.nebius.cloud/u00proj"
+        == "registry-us.example/u00proj"
     )
 
 
 def test_an_explicit_registry_still_wins(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "npa.clients.config.resolve_container_registry",
-        lambda project=None: "cr.us-central1.nebius.cloud/u00proj",
+        lambda project=None: "registry-us.example/u00proj",
     )
 
     assert (
@@ -831,7 +831,7 @@ def test_npa_registry_env_wins_over_project_config(
     monkeypatch.setenv("NPA_REGISTRY", "ghcr.io/nebius/nebius-physical-ai")
     monkeypatch.setattr(
         "npa.clients.config.resolve_container_registry",
-        lambda project=None: "cr.us-central1.nebius.cloud/u00proj",
+        lambda project=None: "registry-us.example/u00proj",
     )
 
     assert (

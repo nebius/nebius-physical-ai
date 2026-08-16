@@ -950,13 +950,13 @@ docker pull "${NPA_REGISTRY}/npa-retargeting:0.1.1"
 
 | Reference | What it tells you |
 | --- | --- |
-| [Public Workbench image catalog](docs/workbench/container-image-catalog.md) | Exact GHCR image names, published tags, pull command, build dates, and intentional exclusions |
-| [Image ↔ GPU compatibility matrix](docs/workbench/image-gpu-compatibility-matrix.md) | Every image against every Nebius GPU platform, and which cells are verified on real hardware |
-| [Container packaging contract](docs/workbench/container-packaging.md) | Tiers, non-root users, ports, and redistribution classes each image must satisfy |
-| [Container golden evals](docs/security/container-golden-evals.md) | The real capability test each image must pass — not an import probe |
-| [Blackwell datacenter compatibility](docs/workbench/blackwell-datacenter-image-compatibility.md) | B200 / B300 build, tag, and validation runbook |
-| [SONIC image catalog](docs/workbench/sonic-image-catalog.md) | Manifest-driven SONIC variant routing per GPU |
-| [Image reproducibility](docs/security/image-reproducibility.md) | The two-tag strategy (`cuda12`, `cuda13-b300`) and how tags are pinned |
+| Nebius CLI version is rejected | Install tested version `0.12.254`; `0.12.227` is also accepted with a warning. |
+| Unsure whether credentials are ready | Run `npa workbench health preflight`. Add `--offline` to check presence only or `--json` for structured output. |
+| Choosing a GPU | Check the [image/GPU compatibility matrix](docs/workbench/image-gpu-compatibility-matrix.md). Isaac Lab requires an RT-core GPU such as L40S or RTX Pro 6000. |
+| `401` while pulling a private image | Refresh the explicit exact-host GHCR credential or operator-managed pull secret. Public GHCR releases need neither; see the [image catalog](docs/workbench/container-image-catalog.md). |
+| Token Factory authentication fails | Use `NEBIUS_TOKEN_FACTORY_KEY`; Token Factory keys start with `v1.` and are not Nebius IAM tokens. |
+| `status` reaches a stale endpoint | Pass `-p PROJECT -n NAME` to the tool's `status` command. |
+| Submitting a multi-stage job | Use `npa workbench workflow submit`; avoid hand-editing scheduler YAML. |
 
 Every image declares a `redistribution` class in the packaging contract, which
 decides whether it may leave the owning org. Public images may be mirrored to

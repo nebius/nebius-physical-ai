@@ -1061,10 +1061,8 @@ server {{
         os.environ.get("NPA_AGENT_LICHTBLICK_IMAGE", "").strip()
         or "npa-lichtblick:1.26.0"
     )
-    # Region-agnostic image acquisition: the Lichtblick image is mirrored to both
-    # the eu-north1 and us-central1 registries, so a fresh VM in any region pulls
-    # from whichever registry is reachable instead of depending on a locally-built
-    # image. Candidates = primary + mirror registry (see deploy.images).
+    # Region-agnostic image acquisition: NPA-owned releases are globally
+    # available from public GHCR, independent of the VM's compute region.
     lichtblick_pull_candidates = " ".join(
         shlex.quote(ref)
         for ref in container_image_candidates("lichtblick", preferred_region=region)
@@ -3051,12 +3049,12 @@ def _agent_system_prompt() -> str:
         [
             "",
             "Before Sim2Real submit, confirm scene/robot/camera selection.",
-            "Always use real registry-qualified images from your Nebius container registry",
+            "Always use real registry-qualified images from public GHCR releases",
             "(or `NPA_REGISTRY` / `container_registry` in ~/.npa/config.yaml); never keep",
-            "`<your-registry-id>` placeholders in runnable workflows.",
+            "registry placeholders in runnable workflows.",
             "For BYOF solution onboarding, use `npa workbench byof run`",
             "(or `npa/scripts/run_byof_repo.py`) to containerize an OSS repo,",
-            "push to the configured Nebius registry, then launch a real Isaac-Lab run",
+            "push to an authorized operator registry, then launch a real Isaac-Lab run",
             "with `--image` override on RT-core GPUs (L40S / RTX PRO 6000).",
             "See docs/architecture/oss-onboarding-ladder.md for Tier 0→2 promotion.",
             "For live infra runs, verify GPU compatibility first (`sky check`, `sky gpus list`)",

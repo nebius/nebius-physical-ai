@@ -28,8 +28,11 @@ template is retired).
   in `sonic_image_manifest.json`, for RTX PRO 6000 Blackwell Kubernetes targets:
 
   ```bash
-  export NPA_REGISTRY=cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}
-  npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push --variant k8s --tag <new-additive-runtime-fetch-tag>
+  export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
+  npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push --variant baked
+  npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push --variant k8s --tag 0.1.2-k8s-runtime
+  docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2"
+  docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2-k8s-runtime"
   ```
 
   See `docs/workbench/sonic-image-catalog.md` for the compatibility matrix.
@@ -107,7 +110,7 @@ Switch to a config-driven evaluator without changing the workflow code:
 
 ```yaml
 EVAL_BACKEND: container
-CONTAINER_IMAGE: cr.eu-north1.nebius.cloud/<your-registry-id>/<eval-image>:<tag>
+CONTAINER_IMAGE: <your-registry>/<namespace>/<eval-image>:<tag>
 CONTAINER_POLICY_PATH: /npa/eval/input/policy.onnx
 CONTAINER_METADATA_PATH: /npa/eval/input/metadata.json
 CONTAINER_OUTPUT_PATH: /npa/eval/output/sonic_eval_results.json

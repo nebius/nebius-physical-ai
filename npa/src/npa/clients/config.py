@@ -518,10 +518,8 @@ def resolve_container_registry(project: str | None = None) -> str:
     if isinstance(proj, dict):
         value = str(proj.get("container_registry", "") or "")
     if not value:
-        # Honor both NPA_REGISTRY and NPA_REGISTRY_ID here, matching
-        # deploy.images.primary_container_registry, so exporting only
-        # NPA_REGISTRY_ID does not silently fall back to the default registry
-        # on tool-deploy paths (lerobot/fiftyone/sonic/detection-training/sim2real).
+        # Official publication channels are configured separately and never
+        # inferred from a cloud-provider registry ID.
         from npa.deploy.images import registry_from_env
 
         value = registry_from_env()

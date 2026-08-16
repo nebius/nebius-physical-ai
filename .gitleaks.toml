@@ -23,7 +23,7 @@ tags = ["nebius", "location"]
 
 [[rules]]
 id = "nebius-private-registry-location"
-description = "Task-specific private Nebius registry location"
+description = "Legacy task-specific Nebius registry location"
 regex = '''(?i)\bcr\.[a-z0-9-]+\.nebius\.cloud/[a-z0-9][a-z0-9._-]*-(?:[0-9a-f]{8,}|(?:19|20)[0-9]{6})(?:[/:\s`'"]|$)'''
 tags = ["nebius", "location"]
 

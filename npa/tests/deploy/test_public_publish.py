@@ -1,23 +1,21 @@
-"""License-guarded public-registry publishing.
+"""License-guarded private-candidate to public-release GHCR publishing.
 
-Nebius CR has no anonymous/public mode, so public exposure means mirroring the
-OSS-redistributable image subset to a public registry. These tests lock the license
+These tests lock the license
 boundary: whatever is classified non-redistributable must never be selected for a public
 registry, and the selector must stay in sync with the packaging contract's
 ``redistribution:`` fields.
 
-The four Isaac images are no longer restricted — they were
+The Isaac images are no longer restricted — they were
 re-architected to fetch Isaac Sim / Isaac Lab at first run under the operator's own EULA
-acceptance instead of baking it, so every workbench tool is now publishable. That makes
+acceptance instead of baking it. Cosmos3 serving remains build-your-own. That makes
 the boundary tests the delicate ones: asserting "nothing is restricted" would pass just
 as well against a guard that had been deleted. So the tests that exercise the refusal
-monkeypatch a synthetic restricted tool in, proving the mechanism still bites while its
-membership is empty.
+monkeypatch a synthetic restricted catalog tool in, proving the mechanism still bites;
+the real restricted Cosmos3 serving image is build-your-own and outside the candidate inventory.
 """
 
 from __future__ import annotations
 
-import base64
 import json
 import re
 import subprocess
@@ -321,31 +319,33 @@ def test_publish_plan_requires_a_target() -> None:
         build_publish_plan(target_registry="")
 
 
-def test_publish_plan_copies_the_pinned_tag_unchanged() -> None:
-    """A mirror must serve the same ``name:tag`` the primary registry serves, or
-    every pin in the repo (and every customer's) breaks against the mirror."""
+def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
+    sha = "1" * 40
     plan = build_publish_plan(
         target_registry="ghcr.io/example/workbench",
-        source_registry="cr.eu-north1.nebius.cloud/example",
+        source_registry="ghcr.io/example/private",
+        candidate_git_sha=sha,
     )
     assert plan
     for item in plan:
         source_image = item.source_ref.rsplit("/", 1)[-1]
         target_image = item.target_ref.rsplit("/", 1)[-1]
-        assert source_image == target_image, item
+        assert source_image.split(":", 1)[0] == target_image.split(":", 1)[0], item
+        assert source_image.endswith(f":dev-{sha}"), item
+        assert not target_image.endswith(f":dev-{sha}"), item
 
 
 def test_publish_plan_uses_the_public_sonic_pin_not_the_default_variant() -> None:
     plan = build_publish_plan(
         target_registry="ghcr.io/example/workbench",
-        source_registry="cr.eu-north1.nebius.cloud/example",
+        source_registry="ghcr.io/example/private",
     )
     sonic = next(item for item in plan if item.tool == "sonic")
     expected = (
         "npa-sonic:cuda13-b300-0.1.2-k8s-runtime-"
         "sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
     )
-    assert sonic.source_ref.endswith(expected)
+    assert sonic.source_ref.endswith(f"npa-sonic:dev-{'0' * 40}") is False
     assert sonic.target_ref.endswith(expected)
 
 
@@ -356,8 +356,21 @@ def test_public_registry_defaults_to_ghcr(monkeypatch) -> None:
 
 
 def test_public_registry_honors_env_override(monkeypatch) -> None:
-    monkeypatch.setenv("NPA_PUBLIC_REGISTRY", "docker.io/nebius/workbench")
-    assert public_container_registry() == "docker.io/nebius/workbench"
+    monkeypatch.setenv("NPA_PUBLIC_REGISTRY", "ghcr.io/example/workbench")
+    assert public_container_registry() == "ghcr.io/example/workbench"
+
+
+def test_official_channel_overrides_must_remain_on_ghcr(monkeypatch) -> None:
+    monkeypatch.setenv("NPA_PUBLIC_REGISTRY", "registry.example/workbench/releases")
+    with pytest.raises(ValueError, match="public release registry must be a GHCR"):
+        public_container_registry()
+
+    with pytest.raises(ValueError, match="private candidate registry must be a GHCR"):
+        images.candidate_image_for_tool(
+            "genesis",
+            git_sha="c" * 40,
+            registry="registry.example/workbench/candidates",
+        )
 
 
 def test_publish_plan_targets_public_registry_by_default() -> None:
@@ -471,7 +484,7 @@ def test_selector_matches_packaging_contract_classification() -> None:
 
 # --- Resolution guard: a restricted tool must never resolve from a public registry ----
 #
-# The docs tell external consumers to point NPA_REGISTRY at the public mirror. Asking
+# The docs tell external consumers to point NPA_REGISTRY at the public release channel. Asking
 # for a restricted tool in that state used to silently produce a public image reference
 # for something we must never publish. Private registries are unaffected —
 # build-your-own is the licensed path, whichever registry that is.
@@ -481,6 +494,7 @@ def test_selector_matches_packaging_contract_classification() -> None:
     "registry",
     [
         "ghcr.io/nebius/nebius-physical-ai",
+        "ghcr.io/nebius/nebius-physical-ai-private",
         "docker.io/nebius/workbench",
         "quay.io/nebius/workbench",
         "public.ecr.aws/nebius/workbench",
@@ -499,26 +513,25 @@ def test_restricted_tools_still_resolve_from_an_operators_own_registry(
 ) -> None:
     """Build-your-own into a private registry is the licensed path; do not block it."""
     monkeypatch.setattr(images, "OMNIVERSE_RESTRICTED_TOOLS", frozenset({"genesis"}))
-    ref = container_image_for_tool(
-        "genesis", registry="cr.eu-north1.nebius.cloud/example"
-    )
-    assert ref.startswith("cr.eu-north1.nebius.cloud/example/npa-genesis:")
+    ref = container_image_for_tool("genesis", registry="registry.example/example")
+    assert ref.startswith("registry.example/example/npa-genesis:")
 
 
 def test_public_registry_detection() -> None:
     assert is_public_registry("ghcr.io/nebius/nebius-physical-ai")
-    assert is_public_registry("GHCR.IO/Nebius/Workbench")
-    assert not is_public_registry("cr.eu-north1.nebius.cloud/e00example")
+    assert not is_public_registry("GHCR.IO/Operator/Private-Package")
+    assert not is_public_registry("registry.example/e00example")
     assert not is_public_registry("")
 
 
-def test_public_mirror_override_is_treated_as_public(monkeypatch) -> None:
-    """Whatever is configured as the mirror is public, even on a private-looking host."""
-    monkeypatch.setenv("NPA_PUBLIC_REGISTRY", "mirror.example.com/workbench")
-    assert is_public_registry("mirror.example.com/workbench")
+def test_public_release_override_is_treated_as_public(monkeypatch) -> None:
+    """The configured GHCR release namespace is public; other GHCR packages are not."""
+    monkeypatch.setenv("NPA_PUBLIC_REGISTRY", "ghcr.io/example/workbench")
+    assert is_public_registry("ghcr.io/example/workbench")
+    assert not is_public_registry("ghcr.io/example/private")
 
 
-def test_oss_tools_resolve_from_the_public_mirror_normally() -> None:
+def test_oss_tools_resolve_from_the_public_release_normally() -> None:
     """The guard must not get in the way of the images that ARE publishable."""
     ref = container_image_for_tool(
         "lerobot", registry=DEFAULT_PUBLIC_CONTAINER_REGISTRY
@@ -546,8 +559,8 @@ def test_registry_host_is_split_off_correctly() -> None:
         _registry_host("ghcr.io/nebius/nebius-physical-ai/npa-lerobot:0.5.1")
         == "ghcr.io"
     )
-    assert _registry_host("cr.eu-north1.nebius.cloud/abc/npa-lerobot:0.5.1") == (
-        "cr.eu-north1.nebius.cloud"
+    assert _registry_host("registry.example/abc/npa-lerobot:0.5.1") == (
+        "registry.example"
     )
 
 
@@ -727,12 +740,12 @@ def test_anonymous_check_sends_no_credentials_for_a_private_registry(
 
     monkeypatch.setattr(publish_public.urllib.request, "urlopen", fake_urlopen)
     ok, detail = publish_public.anonymous_pull_ok(
-        "cr.eu-north1.nebius.cloud/abc/npa-lerobot:0.5.1"
+        "registry.example/abc/npa-lerobot:0.5.1"
     )
 
     assert ok, detail
     assert seen["url"].startswith(
-        "https://cr.eu-north1.nebius.cloud/v2/abc/npa-lerobot/manifests/"
+        "https://registry.example/v2/abc/npa-lerobot/manifests/"
     )
     assert seen.get("auth") is None, (
         "no Authorization header may be sent for a non-GHCR host"
@@ -1478,9 +1491,7 @@ def test_settings_url_is_none_for_a_registry_with_a_different_visibility_model()
 ):
     from npa.deploy.publish_public import package_settings_url
 
-    assert (
-        package_settings_url("cr.eu-north1.nebius.cloud/abc/npa-lerobot:0.5.1") is None
-    )
+    assert package_settings_url("registry.example/abc/npa-lerobot:0.5.1") is None
 
 
 def test_the_checklist_covers_exactly_the_packages_still_private() -> None:
@@ -1503,7 +1514,7 @@ def test_the_checklist_labels_a_package_the_way_its_settings_page_does() -> None
 
     item = PublishItem(
         tool="lerobot",
-        source_ref="cr.eu-north1.nebius.cloud/abc/npa-lerobot:0.5.1",
+        source_ref="registry.example/abc/npa-lerobot:0.5.1",
         target_ref="ghcr.io/nebius/nebius-physical-ai/npa-lerobot:0.5.1",
     )
 
@@ -1514,152 +1525,10 @@ def test_the_checklist_labels_a_package_the_way_its_settings_page_does() -> None
     )
 
 
-# --------------------------------------------------------------------------------------
-# Source credential expiry
-#
-# The workflow's first real dispatch failed with 23 identical
-# "UNAUTHORIZED ... failed to get profile" reads, because the stored NEBIUS_CR_TOKEN was a
-# `nebius iam get-access-token` value and those live 12 hours. Nothing was published (the
-# preflight held), but the diagnosis cost a two-minute sweep and reads like a registry or
-# permissions problem rather than "the secret is a kind of credential that cannot work
-# here". These pin the offline verdict that replaces that.
-# --------------------------------------------------------------------------------------
-
-
-def _jwt(exp: int | None) -> str:
-    """A JWT-shaped token, unsigned — describe_credential must never verify signatures."""
-
-    def segment(payload: dict[str, object]) -> str:
-        raw = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
-        return raw.rstrip("=")  # real JWTs are unpadded base64url
-
-    claims: dict[str, object] = {"sub": "serviceaccount-abc"}
-    if exp is not None:
-        claims["exp"] = exp
-    return f"{segment({'alg': 'RS256'})}.{segment(claims)}.c2lnbmF0dXJl"
-
-
-def test_an_expired_access_token_is_reported_as_expired_not_as_a_registry_problem() -> (
-    None
-):
-    from npa.deploy.publish_public import describe_credential
-
-    now = 1_800_000_000.0
-    usable, verdict = describe_credential(_jwt(int(now) - 6 * 86400), now=now)
-
-    assert not usable
-    assert "EXPIRED" in verdict
-    assert "6d ago" in verdict
-    # The remedy has to be the credential that does not expire again next week, or the fix
-    # is to paste another 12-hour token and rediscover this in a month.
-    assert "static-key issue" in verdict
-    assert "--service=CONTAINER_REGISTRY" in verdict
-
-
-def test_a_valid_access_token_is_usable_but_still_flagged_as_too_short_lived() -> None:
-    """It works right now, which is the trap: it will not survive to the next dispatch."""
-    from npa.deploy.publish_public import describe_credential
-
-    now = 1_800_000_000.0
-    usable, verdict = describe_credential(_jwt(int(now) + 4 * 3600), now=now)
-
-    assert usable
-    assert "4h left" in verdict
-    assert "next dispatch" in verdict
-
-
-def test_an_opaque_static_key_is_usable_and_is_not_called_a_problem() -> None:
-    """A static key is not a JWT, so having no readable expiry is the GOOD outcome.
-
-    Treating "unreadable" as suspect would turn this diagnostic into a gate that refuses
-    the one credential CI is supposed to use.
-    """
-    from npa.deploy.publish_public import describe_credential
-
-    usable, verdict = describe_credential("nbstatic-opaque-key-value")
-
-    assert usable
-    assert "static key" in verdict
-    assert "EXPIRED" not in verdict
-
-
-def test_a_malformed_credential_is_never_guessed_to_be_expired() -> None:
-    """Three dots and garbage inside must fall back to "no readable expiry", not a verdict."""
-    from npa.deploy.publish_public import describe_credential
-
-    usable, verdict = describe_credential("not-base64.$$$not-json$$$.sig")
-
-    assert usable
-    assert "no readable expiry" in verdict
-
-
-def test_an_empty_credential_is_refused() -> None:
-    from npa.deploy.publish_public import describe_credential
-
-    usable, verdict = describe_credential("   \n")
-
-    assert not usable
-    assert "empty" in verdict
-
-
-def test_describe_credential_never_echoes_the_secret() -> None:
-    """This runs in CI logs, so the verdict must carry the expiry and nothing else."""
-    from npa.deploy.publish_public import describe_credential
-
-    for token in (_jwt(1), _jwt(4_000_000_000), "nbstatic-super-secret", _jwt(None)):
-        _, verdict = describe_credential(token)
-        assert token not in verdict
-        for part in token.split("."):
-            assert len(part) < 8 or part not in verdict
-
-
-def test_the_credential_check_exits_non_zero_on_an_expired_token(
-    monkeypatch, capsys
-) -> None:
-    """The workflow relies on the exit code to stop before the manifest sweep."""
-    import io
-
-    from npa.deploy import publish_public
-
-    monkeypatch.setattr("sys.stdin", io.StringIO(_jwt(1)))
-    rc = publish_public.main(["--describe-credential"])
-
-    assert rc == 1
-    assert "EXPIRED" in capsys.readouterr().err
-
-
-def test_the_credential_check_needs_no_target_registry(monkeypatch) -> None:
-    """It contacts nothing, so requiring a --target it cannot use would be a papercut that
-    makes the check awkward to run by hand."""
-    import io
-
-    from npa.deploy import publish_public
-
-    monkeypatch.delenv("NPA_PUBLIC_REGISTRY", raising=False)
-    monkeypatch.setattr("sys.stdin", io.StringIO("nbstatic-opaque-key-value"))
-
-    assert publish_public.main(["--target", "", "--describe-credential"]) == 0
-
-
-def test_the_credential_check_copies_nothing(monkeypatch) -> None:
-    import io
-
-    from npa.deploy import publish_public
-
-    def explode(item) -> None:  # pragma: no cover - must not run
-        raise AssertionError("--describe-credential must not copy anything")
-
-    monkeypatch.setattr(publish_public, "_crane_copy", explode)
-    monkeypatch.setattr("sys.stdin", io.StringIO("nbstatic-opaque-key-value"))
-
-    assert publish_public.main(["--describe-credential"]) == 0
-
-
 def test_a_wholesale_unauthorized_preflight_blames_the_credential(
     monkeypatch, capsys
 ) -> None:
-    """All reads failing is a different diagnosis from some failing, and the old message
-    conflated them — it recommended re-minting a 12-hour token, which is what caused it."""
+    """All reads failing points to the GHCR package credential, not one package grant."""
     from npa.deploy import publish_public
 
     monkeypatch.setattr(
@@ -1676,7 +1545,8 @@ def test_a_wholesale_unauthorized_preflight_blames_the_credential(
 
     assert rc == 1
     assert "Every read was denied" in err
-    assert "static-key issue" in err
+    assert "NPA_PRIVATE_GHCR_TOKEN" in err
+    assert "crane auth login ghcr.io" in err
     assert "lacks\nviewer" not in err, "a per-repository role hint would misdirect here"
 
 
@@ -1722,7 +1592,7 @@ def test_a_partial_preflight_failure_blames_the_role_or_the_tag(
 # skipping it would quietly shrink the published set while reporting success.
 # --------------------------------------------------------------------------------------
 
-# The literal strings Nebius CR returned, so the classifier is pinned against real output.
+# Historical provider error strings keep the classifier pinned against real output.
 _NAME_UNKNOWN = (
     "NAME_UNKNOWN: repository name not known to registry: Entity Folder not found for "
     "registry e00example"

@@ -20,7 +20,7 @@ additive npa-sonic-mujoco:<tag> image from an existing SONIC base image.
 When --tag is provided, it overrides the final image tag.
 When --base-image is provided, it overrides the variant default base image.
 When --registry is provided, also tags REGISTRY/<image-name>:<tag>.
-Use --registry cr.eu-north1.nebius.cloud/<your-registry-id> --push to publish.
+Use --registry <your-registry>/<namespace> --push to publish.
 EOF
 }
 

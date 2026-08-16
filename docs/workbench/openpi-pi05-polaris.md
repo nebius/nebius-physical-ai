@@ -146,7 +146,7 @@ NPA_BYOF_OPENPI_LIVE_B200=1 \
 NPA_E2E_PROJECT=<project-alias> \
 NPA_E2E_S3_BUCKET=<existing-project-bucket> \
 NPA_BYOF_S3_ENDPOINT=https://storage.<bucket-region>.nebius.cloud \
-NPA_BYOF_OPENPI_PROJECT_REGISTRY=cr.<region>.nebius.cloud/<project-registry> \
+NPA_BYOF_OPENPI_PROJECT_REGISTRY=<your-registry>/<namespace> \
 NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES \
 npa/.venv/bin/python -m pytest -q -s \
   npa/tests/e2e/test_byof_openpi_polaris_live_e2e.py

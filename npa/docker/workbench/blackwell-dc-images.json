@@ -2,7 +2,7 @@
   "format": "npa_blackwell_dc_image_manifest_v1",
   "as_of": "2026-08-08T00:00:00Z",
   "registry_ref": "${NPA_REGISTRY}",
-  "registry_note": "Resolve the registry through npa.deploy.images / npa configure. Additive tags are pushed to both the primary (eu-north1) and mirror (us-central1) registries; never hardcode a registry id here.",
+  "registry_note": "Resolve official private candidates and public releases through npa.deploy.images. Candidate tags are immutable dev SHAs and release provenance is digest-bound.",
   "target": {
     "family": "Blackwell datacenter",
     "gpus": [
@@ -68,8 +68,8 @@
       "published_tag": "cuda13-b300-sm80-sm90-sm100-sm103-sm120-20260803T032705Z",
       "published_digest": "sha256:6a493973bf8a92a9a33ad0c301a1b3c9ef1d4ba9e7e8364318d041e1b10285f1",
       "published_registries": [
-        "primary",
-        "mirror"
+        "private-candidate",
+        "public-release"
       ],
       "observed_wheel_arch_list": [
         "sm_75",
@@ -125,8 +125,8 @@
       "published_tag": "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:14a2e0dfe61fb2c46c6e4b8d75f1a06f2f68f9cfa4a6428a175411afaf93749e",
       "published_registries": [
-        "primary",
-        "mirror"
+        "private-candidate",
+        "public-release"
       ]
     },
     {
@@ -161,8 +161,8 @@
       "published_tag": "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z",
       "published_digest": "sha256:a303b53d0769e612101d468ba957656997838f4b8e6a03430f2b5a2c89e3f8b5",
       "published_registries": [
-        "primary",
-        "mirror"
+        "private-candidate",
+        "public-release"
       ],
       "measured_torch": "2.12.1+cu130",
       "measured_arch_list": [
@@ -251,8 +251,8 @@
       "published_tag": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:e708aa32b9247eaedf1a7a5b0d82adbe65b95a9af50721b9d09fddbfd508bbc9",
       "published_registries": [
-        "primary",
-        "mirror"
+        "private-candidate",
+        "public-release"
       ]
     },
     {
@@ -285,8 +285,8 @@
       "published_tag": "cu128-torch27-sm100-1.0.9-20260803T002017Z",
       "published_digest": "sha256:a7d2ba85ea4ad2d2036f6f8575b4e7a801d3f98ff202f6eb575329f1af9a41dd",
       "published_registries": [
-        "primary",
-        "mirror"
+        "private-candidate",
+        "public-release"
       ],
       "measured_torch": "2.7.0+cu128",
       "measured_arch_list": [
@@ -325,8 +325,8 @@
       "published_tag": "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:80cd1c4c7f7a5466533de29ee5cad1213202f348545346fea9ed6746fa03b1ca",
       "published_registries": [
-        "primary",
-        "mirror"
+        "private-candidate",
+        "public-release"
       ]
     },
     {
@@ -356,10 +356,7 @@
       ],
       "published_tag": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:8e0ea40c064a15409233efdd036a369b36e1c04e713bcf81440d9d4372cae376",
-      "published_registries": [
-        "primary",
-        "mirror"
-      ]
+      "published_registries": ["private-candidate", "public-release"]
     },
     {
       "name": "npa-reference-policy",
@@ -380,10 +377,7 @@
       ],
       "published_tag": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:58eb0d714f9d57fbae7fc8dfc56caf7f98f84699146c820dce18f2aaa2313cb6",
-      "published_registries": [
-        "primary",
-        "mirror"
-      ]
+      "published_registries": ["private-candidate", "public-release"]
     },
     {
       "name": "npa-loop-eval",
@@ -404,10 +398,7 @@
       ],
       "published_tag": "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:9cb111c56d9c1db8357b04f43e46790f6853213ff1a78fd0b2dae5ad337eb75a",
-      "published_registries": [
-        "primary",
-        "mirror"
-      ]
+      "published_registries": ["private-candidate", "public-release"]
     },
     {
       "name": "npa-lerobot-vlm-rl",
@@ -428,10 +419,7 @@
       ],
       "published_tag": "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:7bd5b21d487f3ab6614197b8a8af81fe3ed001247b4501740615540cb55998e5",
-      "published_registries": [
-        "primary",
-        "mirror"
-      ]
+      "published_registries": ["private-candidate", "public-release"]
     },
     {
       "name": "npa-isaac-lab",
@@ -475,10 +463,7 @@
       ],
       "published_tag": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb",
-      "published_registries": [
-        "primary",
-        "mirror"
-      ]
+      "published_registries": ["private-candidate", "public-release"]
     },
     {
       "name": "npa-sonic-mujoco",
@@ -569,7 +554,7 @@
       "torch": "CUDA 13 / vLLM-Omni runtime with TORCH_CUDA_ARCH_LIST covering 10.0",
       "source_compiled_extensions": [],
       "smoke": "8-GPU Cosmos3-Super server readiness plus a real /v1/videos generation and full H.264 decode",
-      "notes": "Build-your-own restricted image, never a public mirror candidate. The pinned amd64 base declares CUDA 13.0 and TORCH_CUDA_ARCH_LIST including 10.0. The serving stack passed a real guardrails-on generation on 8xH200, but has not run on B200 or B300."
+      "notes": "Build-your-own restricted image, never a public release channel candidate. The pinned amd64 base declares CUDA 13.0 and TORCH_CUDA_ARCH_LIST including 10.0. The serving stack passed a real guardrails-on generation on 8xH200, but has not run on B200 or B300."
     },
     {
       "name": "npa-cosmos-curate",
@@ -602,8 +587,8 @@
         "compute_120"
       ],
       "pushed_to": [
-        "primary",
-        "mirror"
+        "private-candidate",
+        "public-release"
       ],
       "hardware_run": "Validated the corrected published 20260803T032705Z image on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03 with npa/scripts/blackwell-gpu-validation-job.yaml. B200 reported capability (10,0) and native sm_100 SASS; B300 reported capability (10,3) with same-major sm_100 SASS coverage; H100 reported native sm_90; RTX reported native sm_120. Every run passed bf16 matmul and torch SDPA, intentionally rejected a different CUDA major, and ended ALL_GPU_VALIDATION_PASSED. flash-attn-4 matched SDPA at max error 0.00206 on B200/B300 and 0.00186 on H100; RTX recorded only the known non-TMA gap with --allow-no-tma. Datacenter runs never used that exception. The earlier rebuilt image's kernels ran on B300 but its baked validator was stale; it is superseded and is not the current alias target.",
       "validated_gpus": {

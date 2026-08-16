@@ -78,6 +78,10 @@ def _successful_storage_probe(monkeypatch):
             "default_storage_class": "compute-csi-default-sc",
         },
     )
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle._require_bin",
+        lambda binary: binary,
+    )
 
 
 def _write_runtime(tmp_path: Path, monkeypatch) -> None:
@@ -90,7 +94,6 @@ def _write_runtime(tmp_path: Path, monkeypatch) -> None:
         "NPA_TENANT_ID",
         "NPA_REGION",
         "NPA_REGISTRY",
-        "NPA_REGISTRY_ID",
         "NPA_S3_BUCKET",
         "NPA_CHECKPOINT_BUCKET",
         "NEBIUS_S3_BUCKET",
@@ -111,7 +114,6 @@ def _write_runtime(tmp_path: Path, monkeypatch) -> None:
                         "project_id": "project-1",
                         "tenant_id": "tenant-1",
                         "region": "eu-north1",
-                        "registry_id": "registry-1",
                         "storage": {
                             "checkpoint_bucket": "s3://bucket/checkpoints/",
                             "endpoint_url": "https://storage.example",

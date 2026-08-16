@@ -411,11 +411,6 @@ def _patch_kubectl(monkeypatch) -> list[dict]:
         lambda **kwargs: FakeClient(),
     )
     monkeypatch.setattr(engine_module, "run_gpu_job_with_fallback", fake_run_gpu)
-    monkeypatch.setattr(
-        engine_module,
-        "_refresh_registry_pull_secret_for_sibling_job",
-        lambda *args, **kwargs: None,
-    )
     return calls
 
 
@@ -477,8 +472,8 @@ def test_image_vlm_eval_launches_sibling_job_and_parses_output(
     assert convert_vlm_eval_to_rl_signal(evaluation)["score"] == 0.512345
     assert storage.uploaded_directories
     assert manifest["spec"]["template"]["spec"]["serviceAccountName"] == "agent-sa"
-    assert {"name": "agent-sa"} in manifest["spec"]["template"]["spec"][
-        "imagePullSecrets"
+    assert manifest["spec"]["template"]["spec"]["imagePullSecrets"] == [
+        {"name": "ngc-nvcr-imagepullsecret"}
     ]
     assert {"secretRef": {"name": "hf-ngc-tokens"}} in container["envFrom"]
     assert {"secretRef": {"name": "npa-storage-credentials"}} in container["envFrom"]

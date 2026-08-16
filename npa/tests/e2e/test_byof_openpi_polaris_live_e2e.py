@@ -34,12 +34,6 @@ from npa.workflows.byof.live import (
     resolve_skypilot_bin,
     skypilot_config_for_project,
 )
-from npa.workflows.byof.openpi_service import (
-    build_controller_rbac_manifests,
-    controller_service_account_name,
-    service_resource_names,
-)
-from npa.workflows.sim2real.registry_auth import ensure_nebius_registry_pull_secret
 
 from .npa_workflow_live_helpers import live_bucket
 
@@ -714,23 +708,6 @@ def _live_env(project: str | None, registry: str) -> dict[str, str]:
     return env
 
 
-def _refresh_pull_secrets(*, project: str | None, registry: str) -> None:
-    """Materialize private-registry auth before the split negative/positive runs."""
-
-    server = registry.removeprefix("docker:").split("/", 1)[0].strip()
-    assert server.startswith("cr.") and ".nebius.cloud" in server
-    target = resolve_byof_kubernetes_target(project)
-    for namespace in sorted({target.namespace or "default", "default"}):
-        for secret_name in ("agent-sa", "npa-nebius-registry"):
-            ensure_nebius_registry_pull_secret(
-                registry_server=server,
-                secret_name=secret_name,
-                namespace=namespace,
-                kubeconfig=target.kubeconfig,
-                k8s_context=target.context,
-            )
-
-
 def _release_split_run(*, run_id: str, env: dict[str, str]) -> None:
     """Release the exact split-run pod and verify that its B200 is free.
 
@@ -1027,40 +1004,6 @@ def test_openpi_polaris_spec_plans_real_b200_serving() -> None:
     assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS" not in profile_text
 
 
-def test_openpi_split_live_runs_refresh_pull_secrets_for_selected_target(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[dict[str, str]] = []
-    monkeypatch.setattr(
-        f"{__name__}.resolve_byof_kubernetes_target",
-        lambda _project: SimpleNamespace(
-            namespace="openpi",
-            kubeconfig="/tmp/task-kubeconfig",
-            context="task-context",
-        ),
-    )
-    monkeypatch.setattr(
-        f"{__name__}.ensure_nebius_registry_pull_secret",
-        lambda **kwargs: calls.append(kwargs),
-    )
-
-    _refresh_pull_secrets(
-        project="project", registry="cr.us-central1.nebius.cloud/registry"
-    )
-
-    assert calls == [
-        {
-            "registry_server": "cr.us-central1.nebius.cloud",
-            "secret_name": secret_name,
-            "namespace": namespace,
-            "kubeconfig": "/tmp/task-kubeconfig",
-            "k8s_context": "task-context",
-        }
-        for namespace in ("default", "openpi")
-        for secret_name in ("agent-sa", "npa-nebius-registry")
-    ]
-
-
 def test_openpi_split_live_env_uses_one_project_storage_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1085,7 +1028,7 @@ def test_openpi_split_live_env_uses_one_project_storage_identity(
     )
     monkeypatch.setattr(f"{__name__}.resolve_skypilot_bin", lambda: "")
 
-    env = _live_env("project", "cr.us-central1.nebius.cloud/registry")
+    env = _live_env("project", "registry-us.example/registry")
 
     assert env["AWS_ACCESS_KEY_ID"] == "project-key"
     assert env["AWS_SECRET_ACCESS_KEY"] == "project-secret"
@@ -1430,7 +1373,6 @@ def test_openpi_polaris_live_b200_all_four_modes(
         image_tag, build_command=str(build["build_command"])
     )
     print(json.dumps({"openpi_build_evidence": build_byte_evidence}, sort_keys=True))
-    _refresh_pull_secrets(project=e2e_project, registry=project_registry)
 
     negative_env = dict(env)
     negative_env.pop("NPA_OPENPI_ACCEPT_GEMMA_TERMS", None)

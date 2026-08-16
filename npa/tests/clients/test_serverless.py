@@ -775,14 +775,15 @@ def test_create_job_builds_args_and_masks_extra_env(caplog) -> None:
     assert "HF_TOKEN=<redacted>" in caplog.text
 
 
-def test_create_job_adds_nebius_registry_auth(monkeypatch, caplog) -> None:
+def test_create_job_adds_explicit_registry_auth(monkeypatch, caplog) -> None:
     calls: list[list[str]] = []
 
     def fake_runner(args, **kwargs):
         calls.append(args)
         return _result(args, 0, _job_json())
 
-    monkeypatch.setenv("NPA_REGISTRY_USERNAME", "iam")
+    monkeypatch.setenv("NPA_REGISTRY_SERVER", "registry.example")
+    monkeypatch.setenv("NPA_REGISTRY_USERNAME", "operator")
     monkeypatch.setenv("NPA_REGISTRY_PASSWORD", "registry-token-secret")
     # Stale SkyPilot token from another SA must not win over NPA_REGISTRY_PASSWORD.
     monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "stale-skypilot-token")
@@ -792,37 +793,39 @@ def test_create_job_adds_nebius_registry_auth(monkeypatch, caplog) -> None:
 
     _create_job(
         client,
-        image="cr.eu-north1.nebius.cloud/e00example/npa-cosmos:1.0.0",
+        image="registry.example/example/npa-cosmos:1.0.0",
     )
 
     args = calls[0]
-    assert args[args.index("--registry-username") + 1] == "iam"
+    assert args[args.index("--registry-username") + 1] == "operator"
     assert args[args.index("--registry-password") + 1] == "registry-token-secret"
     assert "stale-skypilot-token" not in args
     assert "registry-token-secret" not in caplog.text
     assert "--registry-password" in args
 
 
-def test_create_endpoint_adds_nebius_registry_auth(monkeypatch) -> None:
+def test_create_endpoint_adds_explicit_registry_auth(monkeypatch) -> None:
     calls: list[list[str]] = []
 
     def fake_runner(args, **kwargs):
         calls.append(args)
         return _result(args, 0, _endpoint_json())
 
+    monkeypatch.setenv("NPA_REGISTRY_SERVER", "registry-us.example")
+    monkeypatch.setenv("NPA_REGISTRY_USERNAME", "operator")
     monkeypatch.setenv("NPA_REGISTRY_PASSWORD", "endpoint-registry-token")
     monkeypatch.delenv("NPA_SERVERLESS_SKIP_REGISTRY_AUTH", raising=False)
     client = ServerlessClient(nebius_bin="nebius", subprocess_runner=fake_runner)
     spec = EndpointSpec(
         name="cosmos",
         project_id="project-1",
-        image="cr.us-central1.nebius.cloud/e00example/npa-cosmos:1.0.0",
+        image="registry-us.example/example/npa-cosmos:1.0.0",
         platform="gpu-h200-sxm",
         preset="1gpu-16vcpu-200gb",
     )
     client.create_endpoint(spec)
     args = calls[0]
-    assert args[args.index("--registry-username") + 1] == "iam"
+    assert args[args.index("--registry-username") + 1] == "operator"
     assert args[args.index("--registry-password") + 1] == "endpoint-registry-token"
 
 

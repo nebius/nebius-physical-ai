@@ -33,7 +33,7 @@ discovery are platform-sensitive.
 Build and publish the required first-party image from the repo root:
 
 ```bash
-export NPA_REGISTRY=cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}
+export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
 npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push
 ```
 

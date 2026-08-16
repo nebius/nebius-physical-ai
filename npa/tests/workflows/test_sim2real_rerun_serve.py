@@ -292,7 +292,7 @@ def test_manifest_uses_direct_rerun_for_prebuilt_image(mocker) -> None:
         run_id="sim2real-staged-20260615t180818z",
         aws_access_key_id="ak",
         aws_secret_access_key="sk",
-        rerun_image="cr.eu-north1.nebius.cloud/demo/npa-rerun-viewer:0.31.4",
+        rerun_image="registry.example/demo/npa-rerun-viewer:0.31.4",
     )
     manifest = build_rerun_serve_manifest(config)
     deployment = next(

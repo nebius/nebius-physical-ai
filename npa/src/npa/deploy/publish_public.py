@@ -1,8 +1,4 @@
-"""Mirror the OSS-redistributable workbench images to a public registry.
-
-Nebius Container Registry does not support anonymous/public pulls, so "public
-exposure" of the workbench means mirroring the publicly-redistributable image
-subset to a public-capable registry (e.g. GHCR ``ghcr.io/<org>/<repo>``).
+"""Promote validated private GHCR candidates to public GHCR releases.
 
 This tool is license-guarded: it only ever copies tools reported by
 ``images.publicly_publishable_tools()`` and hard-refuses anything in
@@ -18,7 +14,7 @@ Example (dry run first, then execute):
     python -m npa.deploy.publish_public --target ghcr.io/nebius/nebius-physical-ai --dry-run
     python -m npa.deploy.publish_public --target ghcr.io/nebius/nebius-physical-ai
 
-The copy path preflights the source registry first, skips targets whose manifest digest
+The copy path preflights the private candidate channel first, skips targets whose manifest digest
 already matches the source, and verifies the result after. A stale credential therefore
 fails before anything is written, unchanged images are not recopied, and a copy cannot
 report success while nothing is publicly pullable. Making the packages public is the one
@@ -30,11 +26,6 @@ preflight and then requires every target tag to resolve to the exact same OCI di
 is deliberately stronger than ``--verify-public``, because an anonymously pullable tag can
 still serve stale bytes.
 
-``--describe-credential`` reads a source-registry credential on stdin and reports its
-expiry offline, because the credential is what actually breaks: a Nebius access token
-lives 12 hours, so anything stored in CI must be a static key issued for
-CONTAINER_REGISTRY instead (see ``describe_credential``).
-
 ``--skip-missing`` publishes the images that exist when some pin refers to an image nobody
 has built yet. The plan comes from the packaging contract (what the repo BUILDS) while the
 registry holds what was pushed, so that gap is routine for a young tool; a denial is never
@@ -44,15 +35,12 @@ skipped (see ``classify_preflight_failure``).
 from __future__ import annotations
 
 import argparse
-import base64
-import binascii
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -62,10 +50,10 @@ from typing import Any
 
 from npa.deploy import images
 from npa.deploy.images import (
-    container_image_for_tool,
+    CONTAINER_IMAGE_NAMES,
     is_publicly_redistributable,
     omniverse_restricted_image_names,
-    primary_container_registry,
+    private_candidate_container_registry,
     public_container_registry,
     publicly_publishable_tools,
 )
@@ -97,6 +85,7 @@ def build_publish_plan(
     *,
     target_registry: str,
     source_registry: str | None = None,
+    candidate_git_sha: str | None = None,
 ) -> list[PublishItem]:
     """Return the (source -> target) copy plan for the public image subset.
 
@@ -105,8 +94,19 @@ def build_publish_plan(
     """
     if not target_registry.strip():
         raise ValueError("target_registry is required")
-    source_registry = source_registry or primary_container_registry()
+    target_registry = images._ghcr_namespace(
+        target_registry, channel="public release"
+    )
+    source_registry = images._ghcr_namespace(
+        source_registry or private_candidate_container_registry(),
+        channel="private candidate",
+    )
+    source_sha = _candidate_git_sha(candidate_git_sha)
     target = target_registry.rstrip("/")
+    if source_registry.rstrip("/").lower() == target.lower():
+        raise ValueError(
+            "private candidate and public release registries must be separate namespaces"
+        )
 
     plan: list[PublishItem] = []
     for tool in publicly_publishable_tools():
@@ -129,26 +129,41 @@ def build_publish_plan(
             raise ValueError(
                 f"refusing to publish restricted (Omniverse Kit) tool {tool!r} to a public registry"
             )
-        source_ref = container_image_for_tool(
-            tool,
-            registry=source_registry,
-            tag=images.public_mirror_tag_for_tool(tool),
+        source_ref = images.candidate_image_for_tool(
+            tool, registry=source_registry, git_sha=source_sha
         )
-        image = source_ref.rsplit("/", 1)[-1]  # npa-<tool>:<tag>
+        image_name = CONTAINER_IMAGE_NAMES[tool]
+        release_tag = images.public_release_tag_for_tool(tool)
         plan.append(
             PublishItem(
-                tool=tool, source_ref=source_ref, target_ref=f"{target}/{image}"
+                tool=tool,
+                source_ref=source_ref,
+                target_ref=f"{target}/{image_name}:{release_tag}",
             )
         )
     return plan
+
+
+def _candidate_git_sha(explicit: str | None = None) -> str:
+    """Resolve the exact source commit used for every private candidate tag."""
+    value = str(explicit or os.environ.get("NPA_CANDIDATE_SHA") or "").strip()
+    if not value:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False
+        )
+        if completed.returncode == 0:
+            value = completed.stdout.strip()
+    # development_tag performs strict full-SHA validation.
+    images.development_tag(value)
+    return value.lower()
 
 
 # --------------------------------------------------------------------------------------
 # Source preflight
 #
 # `crane auth login` writes a config file and exits 0 for ANY token -- it never contacts
-# the registry -- so a stale NEBIUS_CR_TOKEN looks like a successful login and only
-# surfaces as a failed copy. And `crane copy` is a per-image subprocess with no
+# the registry -- so a stale GHCR token looks like a successful login and only surfaces
+# as a failed copy. And `crane copy` is a per-image subprocess with no
 # transaction around the set, so the Nth image failing leaves N-1 packages already
 # created. Reading every source manifest first turns both of those into one fast,
 # read-only failure before anything is written.
@@ -538,7 +553,9 @@ def verify_bootstrap_publication_source(item: PublishItem) -> tuple[bool, str]:
             labels=labels,
         )
         if not evidence.ok or evidence.digest != digest:
-            raise RuntimeError(evidence.detail or "bootstrap attestation is incompatible")
+            raise RuntimeError(
+                evidence.detail or "bootstrap attestation is incompatible"
+            )
         return True, f"{CONTRACT_VERSION} bound to {digest}"
     except (KeyError, TypeError, ValueError, RuntimeError) as exc:
         return False, str(exc)
@@ -625,87 +642,6 @@ def classify_preflight_failure(detail: str) -> str:
     if any(marker in upper for marker in _MISSING_MARKERS):
         return "missing"
     return "other"
-
-
-# --------------------------------------------------------------------------------------
-# Source credential inspection
-#
-# The source registry credential is the one thing about a publish that expires on its own,
-# and the two credentials Nebius accepts for `docker login -u iam` are wildly different in
-# that respect: an access token from `nebius iam get-access-token` lives 12 HOURS, while a
-# static key issued for CONTAINER_REGISTRY lives 6 months by default. A manual-dispatch
-# workflow holding a stored access token is therefore expired essentially always -- which is
-# exactly how run #1 failed, with 23 identical UNAUTHORIZED lines after a two-minute sweep.
-#
-# An access token is a JWT, so its expiry is readable offline. Checking it before the sweep
-# turns that into an immediate, unambiguous verdict, and -- more importantly -- names the
-# remedy that does not expire again next week.
-# --------------------------------------------------------------------------------------
-
-
-def _decode_jwt_expiry(token: str) -> int | None:
-    """The ``exp`` claim of a JWT-shaped bearer token, or ``None``.
-
-    Best-effort and deliberately non-verifying: the goal is to read the expiry the issuer
-    already put in the token, not to validate it. A static key is an opaque string rather
-    than a JWT, so returning ``None`` is the normal answer for the credential we actually
-    want in CI, and must never be reported as a problem.
-    """
-    parts = token.strip().split(".")
-    if len(parts) != 3:
-        return None
-    payload = parts[1]
-    payload += "=" * (-len(payload) % 4)  # base64url in a JWT is unpadded
-    try:
-        claims = json.loads(base64.urlsafe_b64decode(payload))
-    except (binascii.Error, ValueError, UnicodeDecodeError):
-        return None
-    expiry = claims.get("exp") if isinstance(claims, dict) else None
-    return expiry if isinstance(expiry, int) else None
-
-
-def describe_credential(token: str, *, now: float | None = None) -> tuple[bool, str]:
-    """Whether ``token`` is usable, and a one-line verdict that never echoes the secret.
-
-    ``False`` is returned only when the credential is *provably* dead — a JWT whose ``exp``
-    has passed. Anything unreadable is reported as usable, because this check exists to
-    convert one specific recurring failure into a fast, precise message, not to become a
-    second gate that can wrongly refuse a working credential.
-    """
-    now = time.time() if now is None else now
-    token = token.strip()
-    if not token:
-        return False, "the credential is empty"
-
-    expiry = _decode_jwt_expiry(token)
-    if expiry is None:
-        return True, (
-            "the credential has no readable expiry, which is expected for a static key "
-            "(`nebius iam static-key issue --service=CONTAINER_REGISTRY`)"
-        )
-    remaining = expiry - now
-    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(expiry))
-    if remaining <= 0:
-        return False, (
-            f"the credential EXPIRED at {stamp} ({_approx_duration(-remaining)} ago). A "
-            "Nebius access token lives 12 hours, so a stored one is dead by the next "
-            "dispatch; issue a long-lived static key instead:\n"
-            "  nebius iam static-key issue --account-service-account-id=<sa-id> "
-            "--service=CONTAINER_REGISTRY"
-        )
-    return True, (
-        f"the credential is an access token valid until {stamp} "
-        f"({_approx_duration(remaining)} left). It will not survive to the next dispatch — "
-        "a static key issued for CONTAINER_REGISTRY lasts 6 months."
-    )
-
-
-def _approx_duration(seconds: float) -> str:
-    seconds = max(0.0, seconds)
-    for unit, size in (("d", 86400.0), ("h", 3600.0), ("m", 60.0)):
-        if seconds >= size:
-            return f"{seconds / size:.0f}{unit}"
-    return f"{seconds:.0f}s"
 
 
 # --------------------------------------------------------------------------------------
@@ -825,8 +761,7 @@ def verify_parity(plan: list[PublishItem]) -> list[tuple[PublishItem, str]]:
                 detail = f"target digest unreadable — {target_detail}"
             elif target_detail != source_detail:
                 detail = (
-                    "digest mismatch — "
-                    f"source {source_detail}; target {target_detail}"
+                    f"digest mismatch — source {source_detail}; target {target_detail}"
                 )
             else:
                 print(f"  {item.target_ref}  current ({source_detail})")
@@ -965,7 +900,9 @@ def _pin_publication_sources(
         if re.fullmatch(r"sha256:[0-9a-f]{64}", detail) is None:
             failures.append((item, f"registry returned invalid digest {detail!r}"))
             continue
-        pinned.append(replace(item, source_ref=f"{_repository(item.source_ref)}@{detail}"))
+        pinned.append(
+            replace(item, source_ref=f"{_repository(item.source_ref)}@{detail}")
+        )
     return pinned, failures
 
 
@@ -1035,7 +972,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--source-registry",
         default=None,
-        help="Source registry to copy from (defaults to the primary Nebius registry).",
+        help="Private candidate namespace (defaults to $NPA_PRIVATE_REGISTRY).",
+    )
+    parser.add_argument(
+        "--candidate-sha",
+        default=None,
+        help=(
+            "Full Git SHA whose immutable dev-<sha> candidate is promoted. "
+            "Defaults to $NPA_CANDIDATE_SHA, then the checked-out HEAD."
+        ),
     )
     parser.add_argument(
         "--dry-run", action="store_true", help="Print the plan without copying."
@@ -1071,21 +1016,10 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
-        "--describe-credential",
-        action="store_true",
-        help=(
-            "Read a source-registry credential on stdin and report whether it is usable, "
-            "without contacting any registry and without echoing the secret. Exits non-zero "
-            "only when the credential is provably expired. Runs before the preflight so an "
-            "expired 12-hour access token fails in a second with the reason, instead of as "
-            "a wall of UNAUTHORIZED lines."
-        ),
-    )
-    parser.add_argument(
         "--skip-missing",
         action="store_true",
         help=(
-            "Operate on the images that exist, skipping any the source registry does not have "
+            "Operate on the images that exist, skipping any the private candidate channel does not have "
             "yet (NAME_UNKNOWN / MANIFEST_UNKNOWN), and report exactly which were skipped. "
             "The plan comes from the packaging contract, which records what this repo BUILDS, "
             "so a tool that landed before its image was built otherwise blocks every ready "
@@ -1102,21 +1036,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    # Before the plan: this mode inspects a credential and touches neither registry, so it
-    # must not require a target registry it has no use for.
-    if args.describe_credential:
-        usable, verdict = describe_credential(sys.stdin.read())
-        print(
-            f"Source registry credential: {verdict}",
-            file=sys.stdout if usable else sys.stderr,
-        )
-        return 0 if usable else 1
-
     if not (args.target or "").strip():
         parser.error("no target registry; pass --target or set NPA_PUBLIC_REGISTRY")
 
     plan = build_publish_plan(
-        target_registry=args.target, source_registry=args.source_registry
+        target_registry=args.target,
+        source_registry=args.source_registry,
+        candidate_git_sha=args.candidate_sha,
     )
     restricted = omniverse_restricted_image_names()
     print(f"Publishing {len(plan)} OSS image(s) to {args.target.rstrip('/')}")
@@ -1266,13 +1192,10 @@ def _preflight_or_explain(
         lines.append(
             "Every read was denied, so this is the credential rather than any single tag or\n"
             "grant — the token did not resolve to an identity.\n"
-            "In CI, prefer a credential that does not expire between dispatches. An access\n"
-            "token from `nebius iam get-access-token` lives 12 HOURS, so a stored one is dead\n"
-            "by the next manual run; a static key issued for the registry lasts 6 months:\n"
-            "  nebius iam static-key issue --account-service-account-id=<sa-id> "
-            "--service=CONTAINER_REGISTRY\n"
-            "Locally, re-mint and log in again:\n"
-            "  nebius iam get-access-token | crane auth login <registry-host> -u iam "
+            "In CI, configure NPA_PRIVATE_GHCR_TOKEN with read access to the private\n"
+            "candidate packages (or grant the workflow GITHUB_TOKEN package access).\n"
+            "Locally, log in with a GHCR package token and retry:\n"
+            "  printf '%s' \"$GHCR_TOKEN\" | crane auth login ghcr.io -u \"$GHCR_USER\" "
             "--password-stdin"
         )
     else:
@@ -1288,7 +1211,7 @@ def _preflight_or_explain(
             )
         if missing:
             lines.append(
-                f"{len(missing)} image(s) are simply not in the source registry:"
+                f"{len(missing)} image(s) are simply not in the private candidate channel:"
             )
             lines.extend(
                 f"  {item.source_ref}  ({_missing_reason(detail)})"

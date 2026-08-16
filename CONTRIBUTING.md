@@ -212,13 +212,13 @@ needs a new family, update `npa/docker/workbench/tags.yaml`,
 `npa/docker/workbench/check_tag_consistency.py`, and `docs/security/image-reproducibility.md`
 in a separate design change.
 
-Use a Nebius registry prefix supplied by configuration. Current code uses
-`NPA_REGISTRY` as a full prefix and resolves images through
+NPA-owned releases resolve from the public GHCR namespace. `NPA_REGISTRY`
+remains a full-prefix operator override and resolves images through
 `npa/src/npa/deploy/images.py` and `npa/src/npa/clients/config.py`. The registry
 shape is:
 
 ```text
-cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}/npa-tool:${TAG}
+ghcr.io/nebius/nebius-physical-ai/npa-tool:${TAG}
 ```
 
 Build scripts should follow the `--registry` and `--push` shape used by:
@@ -424,7 +424,8 @@ Use environment variables and placeholders:
 - `NEBIUS_PROJECT_ID`
 - `NEBIUS_TENANT_ID`
 - `NPA_REGISTRY`
-- `NPA_REGISTRY_ID`
+- `NPA_PRIVATE_REGISTRY`
+- `NPA_PUBLIC_REGISTRY`
 - `NPA_S3_BUCKET`
 - `NPA_STORAGE_ENDPOINT`
 - `AWS_ENDPOINT_URL`
@@ -436,7 +437,7 @@ Committed examples should use placeholders such as:
 ```text
 <your-project-id>
 <your-tenant-id>
-<your-registry-id>
+<your-registry>/<namespace>
 <your-bucket>
 ```
 
@@ -702,15 +703,12 @@ Most named tools expose `system-info`. LanceDB's modular CLI registration in
 registration in `npa/src/npa/cli/workbench/sonic/cli.py` does not include it.
 
 New tools should include `system-info`.
-### Registry variable naming is split
-The infra skill uses `${NPA_REGISTRY_ID}` to describe the registry ID. Current
-code uses `NPA_REGISTRY` as the full registry prefix in
-`npa/src/npa/deploy/images.py` and `npa/src/npa/clients/config.py`.
-
-Committed BYO examples may use either a full `NPA_REGISTRY` prefix or a
-`<your-registry-id>` placeholder. Resolver-owned first-party defaults may use
-the `npa-workbench` registry ID `e00cm0vc6t09m0z5gw`; avoid concrete registry
-IDs in customer-specific examples.
+### Registry channels are explicit
+`NPA_PRIVATE_REGISTRY` selects the private GHCR candidate namespace used by
+maintainer publication, `NPA_PUBLIC_REGISTRY` selects the public release
+namespace, and `NPA_REGISTRY` is the operator execution override. Candidate
+tags are immutable `dev-<full-git-sha>` values. Restricted images use only an
+operator-controlled registry and cannot enter either official channel.
 ### Detection training is a service, not one of the 8 named tools
 `npa/src/npa/workbench/detection_training/` exists and is a strong service
 reference. It is not in the 8-tool architecture list in

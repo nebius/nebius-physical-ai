@@ -135,14 +135,14 @@ build-time credential statement, and known risks.
 
 After review, the Nebius Physical AI team will:
 
-1. rebuild the exact trusted commit and push the approved additive tag to the
-   private source registry;
+1. rebuild the exact trusted commit and push `dev-<full-git-sha>` to the private
+   GHCR candidate namespace;
 2. scan the pushed bytes for secrets, vulnerabilities, restricted payloads,
    weights, caches, and non-root/runtime-contract violations;
 3. pull that digest through the real NPA path and repeat the required CPU/GPU
    capability tests; and
-4. after explicit authorization, mirror only a `public` image to GHCR and
-   verify anonymous pulls.
+4. after explicit authorization, promote only a `public` candidate digest to
+   the separate public GHCR release namespace and verify anonymous pulls.
 
 Fork CI never publishes official images. New GHCR packages need one manual
 administrator visibility change; later unchanged images are skipped by the

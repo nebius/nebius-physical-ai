@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+import re
 import warnings
 
 from npa.guardrails.skypilot import (
@@ -161,16 +162,8 @@ def _mentions_local_cuda(node: ast.AST, source: str) -> bool:
     return "cuda.is_available" in segment or "torch.cuda" in segment
 
 
-def test_shipped_examples_use_registry_placeholder_not_first_party_id() -> None:
-    """Shipped BYO examples must not bake in the first-party registry ID.
-
-    Resolver-owned defaults (npa.deploy.images, the image manifests, and ops
-    scripts) may reference the concrete `npa-workbench` registry; committed
-    example YAMLs and cookbooks must use the `<your-registry-id>` placeholder
-    so external users never pull against a registry they cannot access.
-    """
-    from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY_ID
-
+def test_shipped_examples_do_not_depend_on_nebius_container_registry() -> None:
+    """Runnable examples use GHCR releases or generic operator registries."""
     example_roots = [
         REPO_ROOT / "npa" / "workflows",
         REPO_ROOT / "docs" / "workbench" / "cookbooks",
@@ -182,11 +175,43 @@ def test_shipped_examples_use_registry_placeholder_not_first_party_id() -> None:
             if path.suffix not in {".yaml", ".yml", ".md", ".json"}:
                 continue
             text = path.read_text(encoding="utf-8", errors="replace")
-            if DEFAULT_CONTAINER_REGISTRY_ID in text:
+            if re.search(r"cr\.[a-z0-9-]+\.nebius\.cloud", text, re.IGNORECASE):
                 offenders.append(str(path.relative_to(REPO_ROOT)))
     assert not offenders, (
-        "Concrete first-party registry ID found in shipped examples; "
-        "use the <your-registry-id> placeholder instead: " + ", ".join(offenders)
+        "legacy Nebius registry reference found in shipped examples: "
+        + ", ".join(offenders)
+    )
+
+
+def test_legacy_registry_hosts_are_only_vendor_dependencies_or_history() -> None:
+    """NPA-owned runtime/publication paths must never regain a provider registry."""
+    allowed_prefixes = (
+        "EVIDENCE.md",
+        "CHANGELOG.md",
+        "SECURITY.md",
+        "deploy/cluster/vendor/nebius-solutions-library/",
+    )
+    host = re.compile(r"cr\.[a-z0-9-]+\.nebius\.cloud", re.IGNORECASE)
+    offenders: list[str] = []
+    for path in REPO_ROOT.rglob("*"):
+        if not path.is_file() or {
+            ".git",
+            ".venv",
+            ".pytest_cache",
+            "__pycache__",
+        }.intersection(path.parts):
+            continue
+        relative = str(path.relative_to(REPO_ROOT))
+        if relative.startswith(allowed_prefixes):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if host.search(text):
+            offenders.append(relative)
+    assert not offenders, "operative legacy registry hosts found: " + ", ".join(
+        sorted(offenders)
     )
 
 

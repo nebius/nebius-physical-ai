@@ -1825,7 +1825,7 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "npa workbench byof run" in source or "run_byof_repo.py" in source
     assert "For BYOF solution onboarding" in source
     assert "Always use real registry-qualified images" in source
-    assert "`<your-registry-id>` placeholders" in source
+    assert "registry placeholders" in source
     assert "sky gpus list" in source
     bootstrap_split = '        const lines = String(text || "").split(/\\r?\\n/);'
     assert "\r" not in bootstrap_split

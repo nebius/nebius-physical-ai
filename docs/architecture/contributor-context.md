@@ -107,7 +107,7 @@ Expected passing baseline before any PR: **1242+ passed, 0 failures** (excluding
 ## Credentials and secrets policy
 
 - Never hardcode credentials, project IDs, tenant IDs, bucket names, or registry paths in source
-- Use `${NPA_S3_BUCKET}`, `${NPA_REGISTRY_ID}`, `${NEBIUS_PROJECT_ID}` as documented placeholders
+- Use `${NPA_S3_BUCKET}`, `${NPA_REGISTRY}`, `${NEBIUS_PROJECT_ID}` as documented placeholders
 - See `SECURITY.md` for the full policy and how to report issues
 - The repo runs `gitleaks` / secret scanning — commits with hardcoded values will be rejected
 

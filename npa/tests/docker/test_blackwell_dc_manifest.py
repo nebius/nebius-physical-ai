@@ -26,8 +26,8 @@ MANIFEST_PATH = WORKBENCH_DOCKER / "blackwell-dc-images.json"
 CONTRACT_PATH = WORKBENCH_DOCKER / "packaging-contract.yaml"
 
 EXPECTED_FORMAT = "npa_blackwell_dc_image_manifest_v1"
-# A concrete Nebius registry id must never be baked into the manifest; callers
-# resolve it through npa.deploy.images / npa configure.
+# A legacy provider-registry location must never be baked into the manifest;
+# callers resolve public GHCR or an explicit operator registry through NPA.
 REGISTRY_ID_RE = re.compile(r"cr\.[a-z0-9-]+\.nebius\.cloud/[a-z0-9]+")
 
 
@@ -54,7 +54,7 @@ def test_manifest_format_and_target(manifest: dict) -> None:
     assert target["rt_cores"] is False
 
 
-def test_manifest_does_not_hardcode_a_registry_id(manifest: dict) -> None:
+def test_manifest_does_not_hardcode_a_live_nebius_identifier(manifest: dict) -> None:
     raw = MANIFEST_PATH.read_text(encoding="utf-8")
     found = REGISTRY_ID_RE.findall(raw)
     assert not found, f"manifest hardcodes registry ids {found}; use ${{NPA_REGISTRY}}"
@@ -194,8 +194,8 @@ def test_published_tags_are_additive_and_arch_labelled(entries: list[dict]) -> N
         assert re.fullmatch(r"sha256:[0-9a-f]{64}", entry["published_digest"]), (
             f"{name} has a malformed digest"
         )
-        assert set(entry["published_registries"]) == {"primary", "mirror"}, (
-            f"{name} must be pushed to both registries"
+        assert set(entry["published_registries"]) == {"private-candidate", "public-release"}, (
+            f"{name} must preserve candidate and release provenance"
         )
 
 

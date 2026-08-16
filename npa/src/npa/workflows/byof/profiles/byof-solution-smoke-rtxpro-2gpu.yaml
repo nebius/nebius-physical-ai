@@ -12,7 +12,7 @@ resources:
   accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:2
   cpus: 8+
   memory: 48+
-  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-byof:<your-run-id>"
+  image_id: "docker:<your-registry>/<namespace>/npa-byof:<your-run-id>"
 envs:
   NPA_BYOF_RUN_ID: "<your-run-id>"
   BYOF_REPO_ROOT: "/opt/byof"

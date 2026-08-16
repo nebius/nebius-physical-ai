@@ -1,8 +1,8 @@
 # sm_120 Image Catalog
 
 This catalog records the first-party images used for RTX PRO 6000 Blackwell
-(`sm_120`) validation. The registry IDs can be replaced with a customer registry
-when rebuilding the same Dockerfiles.
+(`sm_120`) validation. Published redistributable releases use the public GHCR
+channel; rebuilds may target an operator-controlled registry via `NPA_REGISTRY`.
 
 Manifest source: `npa/docker/workbench/sm120-images.json`.
 

@@ -38,13 +38,15 @@ Public images are pinned by sha256 digest and do not need an image pull secret. 
 python:3.11-slim@sha256:9a7765b36773a37061455b332f18e265e7f58f6fea9c419a550d2a8b0e9db834
 ```
 
-Nebius registry images use:
+Private operator registry images use:
 
 ```text
-cr.eu-north1.nebius.cloud/<your-registry-id>/<tool>:<version>
+<your-registry>/<namespace>/<tool>:<version>
 ```
 
-Those private images rely on the `cr-credentials` pull secret installed on the `argo-workflow` service account. Real tool steps land in `W8-tool-pod-runtime`; this bootstrap uses placeholders only.
+Those private images require an explicitly configured, operator-managed Docker
+config secret. Public NPA GHCR releases require none. Real tool steps land in
+`W8-tool-pod-runtime`; this bootstrap uses placeholders only.
 
 ## Resources
 

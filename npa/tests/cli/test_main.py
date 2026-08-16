@@ -139,7 +139,7 @@ def test_configure_show_includes_storage_and_registry() -> None:
 
 
 def _stub_nebius_defaults(
-    monkeypatch, *, project="", tenant="", registry="", project_name=""
+    monkeypatch, *, project="", tenant="", project_name=""
 ) -> list[tuple[str, str]]:
     """Stop configure from touching real Nebius infra for profile-derived defaults.
 
@@ -150,9 +150,6 @@ def _stub_nebius_defaults(
 
     monkeypatch.setattr(nebius_module, "current_project_id", lambda: project)
     monkeypatch.setattr(nebius_module, "current_tenant_id", lambda: tenant)
-    monkeypatch.setattr(
-        nebius_module, "discover_container_registry", lambda project_id: registry
-    )
     monkeypatch.setattr(
         nebius_module, "get_project_tenant_id", lambda project_id: tenant
     )
@@ -185,9 +182,7 @@ def test_configure_discovers_and_writes_multiple_projects(
     monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
     monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
     monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
-    _stub_nebius_defaults(
-        monkeypatch, project="project-prod", tenant="tenant-a", registry=""
-    )
+    _stub_nebius_defaults(monkeypatch, project="project-prod", tenant="tenant-a")
     monkeypatch.setattr(
         nebius_module,
         "list_projects_in_tenant",
@@ -232,15 +227,10 @@ def test_configure_discovers_and_writes_multiple_projects(
     assert "Physical AI Data Factory" in result.output
 
 
-def test_configure_discovery_prefers_eu_north1_registry(monkeypatch, tmp_path) -> None:
-    """Discovery must not pin a project-local non-eu-north1 registry.
-
-    Regression: `_select_discovered_projects` saved whatever registry the
-    project happened to have, so a us-central1-only project got a project-local
-    registry that does NOT hold the npa-* workbench images — breaking later
-    workbench deploys with image-not-found. It must fall back to the eu-north1
-    first-party default just like the manual-entry path does.
-    """
+def test_configure_discovery_uses_public_ghcr_release_registry(
+    monkeypatch, tmp_path
+) -> None:
+    """Project discovery is independent of the NPA image release channel."""
     import yaml
 
     from npa.clients import config as config_module
@@ -256,7 +246,6 @@ def test_configure_discovery_prefers_eu_north1_registry(monkeypatch, tmp_path) -
         monkeypatch,
         project="project-1",
         tenant="tenant-1",
-        registry="cr.us-central1.nebius.cloud/u00xyz",
     )
     monkeypatch.setattr(
         nebius_module,
@@ -283,12 +272,10 @@ def test_configure_discovery_prefers_eu_north1_registry(monkeypatch, tmp_path) -
     assert result.exit_code == 0, result.output
     cfg = yaml.safe_load(config_path.read_text())
     stanza = cfg["projects"]["solo"]
-    # The project's region is preserved (placement follows the project), but the
-    # registry falls back to the eu-north1 first-party default, not the
-    # project-local us-central1 registry.
+    # Placement follows the project, while NPA-owned releases are always read
+    # from the public GHCR package namespace.
     assert stanza["region"] == "us-central1"
-    assert stanza["container_registry"].startswith("cr.eu-north1.nebius.cloud/")
-    assert "us-central1" not in stanza["container_registry"]
+    assert stanza["container_registry"] == "ghcr.io/nebius/nebius-physical-ai"
 
 
 def test_configure_rerun_updates_the_existing_alias_for_a_project(
@@ -439,7 +426,7 @@ def test_configure_show_prints_the_saved_configuration(monkeypatch, tmp_path) ->
                         "project_id": "project-1",
                         "tenant_id": "tenant-1",
                         "region": "us-central1",
-                        "container_registry": "cr.eu-north1.nebius.cloud/registry",
+                        "container_registry": "registry.example/registry",
                     },
                     "other": {"project_id": "project-2"},
                 },
@@ -471,7 +458,7 @@ def test_configure_show_prints_the_saved_configuration(monkeypatch, tmp_path) ->
     assert "project-1" in result.output
     assert "tenant-1" in result.output
     assert "us-central1" in result.output
-    assert "cr.eu-north1.nebius.cloud/registry" in result.output
+    assert "registry.example/registry" in result.output
     assert "s3://npa-bucket-test/" in result.output
     assert "other" in result.output  # the non-default alias is listed too
     # Secrets are reported as present, never echoed.
@@ -499,7 +486,7 @@ def test_configure_show_env_emits_shell_assignments(monkeypatch, tmp_path) -> No
                         "project_id": "project-1",
                         "tenant_id": "tenant-1",
                         "region": "us-central1",
-                        "container_registry": "cr.eu-north1.nebius.cloud/registry",
+                        "container_registry": "registry.example/registry",
                     }
                 },
             }
@@ -1254,7 +1241,7 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
     assert cfg["default_project"] == "eu-north1"
     assert project["project_id"] == "project-12345"
     assert project["tenant_id"] == "tenant-abcde"
-    assert project["container_registry"].startswith("cr.eu-north1.nebius.cloud/")
+    assert project["container_registry"] == "ghcr.io/nebius/nebius-physical-ai"
     assert oct(creds_path.stat().st_mode)[-3:] == "600"
 
 
@@ -1451,7 +1438,7 @@ def _prepopulate_config(monkeypatch, tmp_path):
                         "project_id": "project-existing",
                         "tenant_id": "tenant-existing",
                         "region": "eu-north1",
-                        "container_registry": "cr.eu-north1.nebius.cloud/registry-existing",
+                        "container_registry": "registry.example/registry-existing",
                     }
                 },
             }
@@ -1517,7 +1504,7 @@ def test_configure_rerun_all_defaults_is_idempotent(monkeypatch, tmp_path) -> No
     assert prod["project_id"] == "project-existing"
     assert prod["tenant_id"] == "tenant-existing"
     assert prod["region"] == "eu-north1"
-    assert prod["container_registry"] == "cr.eu-north1.nebius.cloud/registry-existing"
+    assert prod["container_registry"] == "registry.example/registry-existing"
 
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["tokens"]["HF_TOKEN"] == "hf_existing"
@@ -1823,7 +1810,7 @@ def test_configure_allows_region_differing_from_registry_region(
                 "tenant-1",
                 "project-1",
                 "us-central1",
-                "cr.eu-north1.nebius.cloud/e00abc",
+                "registry.example/e00abc",
                 "my-bucket",
                 "",  # hf
                 "",  # ai
@@ -2372,7 +2359,6 @@ def test_configure_existing_profile_writes_config_with_explicit_ids(
         monkeypatch,
         project="project-from-profile",
         tenant="tenant-from-profile",
-        registry="cr.eu-north1.nebius.cloud/reg-abc",
     )
     monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
     monkeypatch.setattr(
@@ -2391,8 +2377,8 @@ def test_configure_existing_profile_writes_config_with_explicit_ids(
             [
                 "tenant-from-profile",  # tenant id (entered explicitly)
                 "project-from-profile",  # project id (entered explicitly)
-                "",  # region (accept eu-north1 from registry)
-                "",  # registry (accept discovered)
+                "",  # region (accept default)
+                "",  # registry (accept public GHCR releases)
                 "",  # bucket name (Enter = default)
                 "hf_from_profile",  # HF token
                 "",  # Token Factory API key (skip)
@@ -2410,16 +2396,13 @@ def test_configure_existing_profile_writes_config_with_explicit_ids(
     assert config["projects"]["eu-north1"]["project_id"] == "project-from-profile"
     assert config["projects"]["eu-north1"]["tenant_id"] == "tenant-from-profile"
     assert config["projects"]["eu-north1"]["region"] == "eu-north1"
-    assert (
-        config["projects"]["eu-north1"]["container_registry"]
-        == "cr.eu-north1.nebius.cloud/reg-abc"
+    assert config["projects"]["eu-north1"]["container_registry"] == (
+        "ghcr.io/nebius/nebius-physical-ai"
     )
 
 
-def test_configure_defaults_to_eu_north1_registry_over_other_region(
-    monkeypatch, tmp_path
-) -> None:
-    """A discovered non-eu-north1 registry is not auto-selected; default stays eu-north1."""
+def test_configure_defaults_to_public_ghcr_registry(monkeypatch, tmp_path) -> None:
+    """The default NPA image channel is independent of the cloud project."""
     import yaml
 
     from npa.clients import config as config_module
@@ -2436,13 +2419,11 @@ def test_configure_defaults_to_eu_north1_registry_over_other_region(
         monkeypatch,
         project="project-1",
         tenant="tenant-1",
-        registry="cr.us-central1.nebius.cloud/u00xyz",
     )
     monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
     monkeypatch.setattr(nebius_module, "bootstrap_environment", _bootstrap_capture([]))
 
-    # Accept all defaults (Enter). The registry default must be eu-north1, not
-    # the discovered us-central1 registry.
+    # Accept all defaults (Enter).
     answers = (
         "\n".join(["tenant-1", "project-1", "", "", "", "", "", "", "", ""]) + "\n"
     )
@@ -2451,7 +2432,7 @@ def test_configure_defaults_to_eu_north1_registry_over_other_region(
     assert result.exit_code == 0, result.output
     config = yaml.safe_load(config_path.read_text())
     stanza = next(iter(config["projects"].values()))
-    assert stanza["container_registry"].startswith("cr.eu-north1.nebius.cloud/")
+    assert stanza["container_registry"] == "ghcr.io/nebius/nebius-physical-ai"
     assert stanza["region"] == "eu-north1"
 
 
@@ -2499,19 +2480,6 @@ def test_list_nebius_profiles_parses_profile_names(monkeypatch) -> None:
         "agent-sa",
         "agent-service",
     ]
-
-
-@pytest.mark.parametrize(
-    ("registry", "expected"),
-    [
-        ("cr.eu-north1.nebius.cloud/reg-1", "eu-north1"),
-        ("cr.eu-west1.nebius.cloud/reg-1", "eu-west1"),
-        ("", ""),
-        ("cr.invalid", ""),
-    ],
-)
-def test_region_from_registry_host(registry: str, expected: str) -> None:
-    assert cli_main._region_from_registry_host(registry) == expected
 
 
 def test_configure_user_declines_profile_creation(monkeypatch, tmp_path) -> None:

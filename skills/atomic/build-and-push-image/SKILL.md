@@ -1,6 +1,6 @@
 ---
 name: build-and-push-image
-description: Use when building, tagging, validating, or pushing NPA workbench container images for Nebius registry-backed workflows.
+description: Use when building, tagging, validating, or publishing NPA workbench container images through private-candidate and public-release GHCR channels.
 ---
 
 # Build And Push Image
@@ -14,16 +14,16 @@ or workflow image references for NPA workbench tools.
 
 For SkyPilot workflow images, build/test the versioned bootstrap contract and
 record it in OCI config. Preflight consumes the selected digest, not its tag.
-Keep live-validation tags unique, scan built bytes for restricted payloads, and
-push only to the authorized project registry unless shared publication is
-explicitly requested.
+Keep live-validation tags immutable, scan built bytes for restricted payloads,
+and preserve the private-candidate to public-release digest chain.
 
-1. Resolve runtime registry settings with `npa configure` or
-   `npa.clients.config.resolve_container_registry` or `npa configure`.
+1. Resolve execution overrides with `npa configure` or
+   `npa.clients.config.resolve_container_registry`. Official publication uses
+   `NPA_PRIVATE_REGISTRY` and `NPA_PUBLIC_REGISTRY` independently.
 2. Build from the checked-in Dockerfile for the tool; do not invent a detached
    image source outside the repo.
-3. Tag images with the configured registry prefix and a version that matches the
-   tool manifest or release plan.
+3. Tag private candidates as `dev-<full-git-sha>`. Promote their immutable
+   digest to the supported release tag only after validation.
 4. Inspect the image or manifest before pushing.
 5. Update image manifests, workflow YAML, and skill guidance together when a
    command starts depending on the new image.
@@ -53,7 +53,8 @@ Every image in the packaging contract also declares
 `redistribution: public | restricted`, which decides whether it may leave the
 owning org:
 
-- `public` — OSS-redistributable, may be mirrored to a public registry. Every
+- `public` — OSS-redistributable, may enter the official private candidate and
+  public release channels. Every
   canonical image in `CONTAINER_IMAGE_NAMES` is currently `public`.
 - `restricted` — bakes a runtime we may not redistribute. The four
   Isaac images (`isaac-lab`, `sonic`, `sonic-mujoco`, `groot`) used to be restricted
@@ -66,7 +67,11 @@ owning org:
 When adding an image, set its class. `npa/tests/docker/test_packaging_contract.py` fails
 the build if a Dockerfile **bakes** Omniverse Kit (or is built `FROM` a restricted image)
 while claiming `public`. Keep `images.OMNIVERSE_RESTRICTED_TOOLS` in sync; it is what
-`npa.deploy.publish_public` uses to decide what may be mirrored publicly.
+`npa.deploy.publish_public` uses to decide what may be released publicly.
+
+`restricted` images, including `cosmos3-serving`, may enter neither official
+GHCR channel. Build them only into a generic operator-controlled registry; a
+private package or development tag does not change redistribution rights.
 
 Note the distinction the guard encodes: **baked at build time** vs. **fetched at run
 time**. Mentioning `isaacsim` in bootstrap plumbing is fine; installing it in a `RUN`
@@ -81,8 +86,8 @@ need a build-time interpreter in an Isaac image, use the image's own venv python
 No NGC credentials are needed — nothing credentialed is left to pull:
 
 ```bash
-npa/docker/workbench/isaac-lab/build.sh --registry cr.<region>.nebius.cloud/<id> --push
-npa/docker/workbench/sonic/build.sh --registry cr.<region>.nebius.cloud/<id> --push --variant baked
+npa/docker/workbench/isaac-lab/build.sh --registry <your-registry>/<namespace> --push
+npa/docker/workbench/sonic/build.sh --registry <your-registry>/<namespace> --push --variant baked
 ```
 
 Two practical notes from doing this on the dev VM: an Isaac image build can peak at ~90 GB
@@ -148,8 +153,8 @@ physical GPU execution.
 
 - Do not commit concrete registry IDs or private image digests from a live
   account unless the repo already treats that value as public.
-- Nebius registry auth expires; a push or pull failure may require a refreshed
-  token rather than an image change.
+- Private GHCR auth is explicit and exact-host; a push or pull failure may be a
+  package-permission problem rather than an image change.
 - For GPU-specific images, verify the target GPU family before changing defaults.
 
 ## Verify

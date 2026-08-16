@@ -299,8 +299,8 @@ class SkypilotRenderOptions:
     # Accelerator specs resolved against the live cluster at submit time, keyed by
     # the spec's own accelerator string. NPA_WORKFLOW_GPU_ACCELERATOR still wins.
     gpu_accelerator_overrides: Mapping[str, str] = field(default_factory=dict)
-    # When False (``--plan-only``), embed placeholders instead of minting live
-    # Nebius registry tokens into rendered YAML that may be printed to stdout.
+    # When False (``--plan-only``), embed placeholders instead of explicit live
+    # private-registry credentials in YAML that may be printed to stdout.
     materialize_registry_secrets: bool = True
     # Shared scheduler identity for the current runtime wave attempt.  The
     # runtime supplies its durable logical launch id; offline renders derive a
@@ -1820,31 +1820,23 @@ def build_skypilot_task_doc(
         ):
             envs["NPA_SRC_OVERLAY"] = "1"
             doc["envs"] = envs
-    _inject_nebius_registry_docker_secrets(
+    _inject_private_registry_docker_secrets(
         doc,
         materialize=options.materialize_registry_secrets,
     )
     return doc
 
 
-def _is_nebius_registry_image(image_id: str) -> bool:
-    value = image_id.removeprefix("docker:").strip()
-    host = value.split("/", 1)[0] if "/" in value else ""
-    return host.startswith("cr.") and host.endswith(".nebius.cloud")
-
-
-def _inject_nebius_registry_docker_secrets(
+def _inject_private_registry_docker_secrets(
     doc: dict[str, Any],
     *,
     materialize: bool = True,
 ) -> None:
-    """Embed SkyPilot Docker login secrets for private Nebius registry images.
+    """Embed exact-host credentials for private registry images when configured.
 
-    Matches the burst submit path: ``resources.image_id`` is pulled before YAML
-    ``setup`` runs, so registry auth must live in task ``secrets``.
-
-    When ``materialize`` is False (plan-only), embed a placeholder password so
-    rendered YAML can be printed without minting or leaking live IAM tokens.
+    Public GHCR releases remain anonymous. The official private candidate
+    namespace fails closed unless explicit GHCR credentials are available;
+    NPA never mints provider IAM tokens or manages Kubernetes pull secrets.
     """
 
     import os
@@ -1854,47 +1846,34 @@ def _inject_nebius_registry_docker_secrets(
         return
     cloud = str(resources.get("cloud") or "").strip().lower()
     image_id = str(resources.get("image_id") or "").strip()
-    # Nebius VMs need SKYPILOT_DOCKER_* for private pulls; k8s uses imagePullSecrets
-    # but still benefits from secrets when the controller falls back to docker login.
-    if cloud not in {"nebius", "kubernetes", "k8s"} or not _is_nebius_registry_image(
-        image_id
-    ):
+    if cloud not in {"nebius", "kubernetes", "k8s"} or not image_id:
         return
 
     server = image_id.removeprefix("docker:").split("/", 1)[0]
-    # Registry/credentials consistency guard (applies to EVERY stage image, not
-    # just Cosmos): SkyPilot logs into the image's registry host using
-    # SKYPILOT_DOCKER_PASSWORD. If that password authenticates to a DIFFERENT
-    # registry (SKYPILOT_DOCKER_SERVER), the pull is a 403 ErrImagePull that stalls
-    # provisioning. Fail fast with an actionable message at submit time. Only
-    # enforced when actually materializing creds (real submit), never plan-only.
-    if materialize:
-        creds_server = str(os.environ.get("SKYPILOT_DOCKER_SERVER") or "").strip()
-        if creds_server and creds_server != server:
-            raise NpaWorkflowRenderError(
-                f"registry mismatch: task image is in {server!r} but the Docker "
-                f"credentials (SKYPILOT_DOCKER_SERVER) authenticate to {creds_server!r}. "
-                "Pinning images from a registry your credentials cannot pull causes a "
-                "403 ErrImagePull for every image. Pass --registry pointing at the "
-                f"credentials' registry {creds_server!r} (e.g. the primary workbench "
-                f"registry), or set SKYPILOT_DOCKER_* for {server!r}."
-            )
+    creds_server = str(os.environ.get("SKYPILOT_DOCKER_SERVER") or "").strip()
+    from npa.deploy.images import private_candidate_container_registry
+
+    candidate_prefix = private_candidate_container_registry().rstrip("/") + "/"
+    normalized_image = image_id.removeprefix("docker:").strip()
+    official_private = normalized_image.startswith(candidate_prefix)
+    if creds_server != server and not official_private:
+        return
+
     from npa.orchestration.skypilot.registry_preflight import (
         resolve_registry_credentials,
     )
 
-    username, password = resolve_registry_credentials(server, mint=False)
-    if materialize:
-        if not password:
-            try:
-                username, password = resolve_registry_credentials(server, mint=True)
-            except Exception as exc:  # noqa: BLE001
-                raise NpaWorkflowRenderError(
-                    "Nebius registry image requires SKYPILOT_DOCKER_PASSWORD "
-                    f"(or mintable IAM token); failed to mint: {exc}"
-                ) from exc
-    else:
+    username, password = resolve_registry_credentials(server)
+    if not materialize:
         password = "<SKYPILOT_DOCKER_PASSWORD>"
+    elif not password:
+        if official_private:
+            raise NpaWorkflowRenderError(
+                "private GHCR candidate image requires explicit exact-host "
+                "SKYPILOT_DOCKER_SERVER, SKYPILOT_DOCKER_USERNAME, and "
+                "SKYPILOT_DOCKER_PASSWORD credentials"
+            )
+        return
 
     secrets = doc.setdefault("secrets", {})
     if not isinstance(secrets, dict):
@@ -1902,20 +1881,6 @@ def _inject_nebius_registry_docker_secrets(
     secrets.setdefault("SKYPILOT_DOCKER_SERVER", server)
     secrets.setdefault("SKYPILOT_DOCKER_USERNAME", username)
     secrets.setdefault("SKYPILOT_DOCKER_PASSWORD", password)
-    if cloud in {"kubernetes", "k8s"}:
-        config = doc.setdefault("config", {})
-        if not isinstance(config, dict):
-            raise NpaWorkflowRenderError("SkyPilot task config must be a mapping")
-        kubernetes = config.setdefault("kubernetes", {})
-        if not isinstance(kubernetes, dict):
-            raise NpaWorkflowRenderError("SkyPilot kubernetes config must be a mapping")
-        pod_config = kubernetes.setdefault("pod_config", {})
-        spec = pod_config.setdefault("spec", {})
-        pull_secrets = spec.setdefault("imagePullSecrets", [])
-        if not isinstance(pull_secrets, list):
-            raise NpaWorkflowRenderError("pod imagePullSecrets must be a list")
-        if {"name": "npa-nebius-registry"} not in pull_secrets:
-            pull_secrets.append({"name": "npa-nebius-registry"})
 
 
 def render_skypilot_yaml(

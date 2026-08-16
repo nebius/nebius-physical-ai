@@ -108,17 +108,16 @@ Open the fork PR against `main`. Include:
 
 After review, build from the exact trusted commit. Prefer the checked-in
 `build.sh`; otherwise use `docker buildx build --push` so a large image streams
-to the configured private source registry rather than unpacking into the local
-daemon. Resolve the registry from NPA configuration and pass it as an argument;
-do not commit its concrete identifier.
+to the private GHCR candidate namespace rather than unpacking into the local
+daemon. Tag it with `dev-<full-git-sha>` and do not commit credentials.
 
 ```bash
 npa/docker/workbench/<tool>/build.sh \
-  --registry "$NPA_REGISTRY" \
-  --tag <new-tag> \
+  --registry "$NPA_PRIVATE_REGISTRY" \
+  --tag "dev-$(git rev-parse HEAD)" \
   --push
 
-crane manifest "$NPA_REGISTRY/npa-<tool>:<new-tag>" >/dev/null
+crane manifest "$NPA_PRIVATE_REGISTRY/npa-<tool>:dev-$(git rev-parse HEAD)" >/dev/null
 ```
 
 If the checked-in script has different flags, use its help rather than
@@ -135,8 +134,9 @@ Inspect the registry artifact, not only the Dockerfile or local daemon:
 - run the real capability test on the intended CPU/GPU architecture; and
 - record the immutable manifest digest and exact source commit.
 
-Never publish a `restricted` image. A successful build is not evidence that
-redistribution is permitted.
+Never push a `restricted` image to either official GHCR channel. Use only an
+operator-controlled registry; a private package or dev tag is not a license
+boundary.
 
 ## Verify Source And Public State
 
@@ -147,14 +147,15 @@ Set `NPA_PUBLIC_REGISTRY` to the intended public target before either check.
 The explicit `--target` arguments below avoid silently validating a different
 configured registry.
 
-Check every pinned source tag with the configured read credential:
+Check every immutable candidate tag with the configured GHCR credential:
 
 ```bash
 : "${NPA_PUBLIC_REGISTRY:?set NPA_PUBLIC_REGISTRY to the intended public registry}"
-unset NEBIUS_IAM_TOKEN NPA_NEBIUS_IAM_TOKEN
-npa/scripts/nebius_registry_docker_login.sh
+: "${NPA_PRIVATE_REGISTRY:?set NPA_PRIVATE_REGISTRY to the private candidate namespace}"
+printf '%s' "$NPA_PRIVATE_GHCR_TOKEN" | crane auth login ghcr.io -u "$GHCR_USER" --password-stdin
 npa/.venv/bin/python -m npa.deploy.publish_public \
-  --target "$NPA_PUBLIC_REGISTRY" --preflight
+  --source-registry "$NPA_PRIVATE_REGISTRY" \
+  --target "$NPA_PUBLIC_REGISTRY" --candidate-sha <full-git-sha> --preflight
 ```
 
 Check every exact target tag through the anonymous path:
@@ -167,7 +168,7 @@ npa/.venv/bin/python -m npa.deploy.publish_public \
 Interpret the results precisely:
 
 - source missing: build/push the pinned tag or correct the pin;
-- source present and target HTTP 404: the tag still needs mirroring;
+- candidate present and target HTTP 404: the release still needs publication;
 - both present with equal `crane digest` output: current and complete;
 - both present with different digests: stop and investigate tag reuse or an
   unintended rebuild before copying anything; and
@@ -187,7 +188,7 @@ exact plan.
 4. Confirm the summary says every planned image is anonymously pullable.
 
 The publisher compares manifest digests and skips unchanged images. It does not
-republish the entire mirror. A new tag in an existing package inherits that
+republish every release. A new tag in an existing package inherits that
 package's public visibility. A completely new package is private after its
 first push and needs one manual **Danger Zone -> Change visibility -> Public**
 operation by an administrator, followed by verification. Treat that change as

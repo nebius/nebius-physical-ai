@@ -138,7 +138,7 @@ template is the authoritative PVC/security/bootstrap contract:
 
 ```bash
 export NPA_ISAAC_IMAGE='<registry>/npa-isaac-lab@sha256:<64-hex>'
-sed "s|image: cr.us-central1.nebius.cloud/<your-registry-id>/npa-isaac-lab@sha256:<64-hex-digest>|image: ${NPA_ISAAC_IMAGE}|" \
+sed "s|image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:<64-hex-digest>|image: ${NPA_ISAAC_IMAGE}|" \
   npa/docker/workbench/common/warm-isaac-cache.yaml | kubectl apply -f -
 kubectl wait --for=condition=complete job/npa-warm-isaac-cache --timeout=-1s
 kubectl logs job/npa-warm-isaac-cache
@@ -197,11 +197,11 @@ npa/.venv/bin/npa workbench workflow preflight-images "${SPEC}" \
 ```
 
 Expected: every image is pullable and bootstrap-compatible. `not_found` means
-build/push the printed image; `forbidden` means fix registry IAM. A real submit
-also refreshes `default/npa-nebius-registry` with a fresh short-lived Nebius IAM
-credential and refuses to launch if that Kubernetes pull-secret update fails.
-Do not hand-create a long-lived registry token. See
-[registry troubleshooting](../troubleshooting/known-footguns.md#registry-pull-secret-expires-silently).
+build/push the printed image; `forbidden` means fix the exact-host registry
+credential. Public GHCR releases need no credential. Private images require an
+explicit credential or operator-managed Kubernetes Docker config secret; NPA
+does not mint or refresh either. See
+[registry troubleshooting](../troubleshooting/known-footguns.md#private-registry-credentials-expire).
 
 ## 6. Validate, plan, and submit
 

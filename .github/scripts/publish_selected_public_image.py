@@ -41,6 +41,7 @@ def main() -> int:
         ),
     )
     parser.add_argument("--source-registry", default=None)
+    parser.add_argument("--candidate-sha", default=None)
     parser.add_argument("--target", required=True)
     parser.add_argument(
         "--mode",
@@ -59,6 +60,7 @@ def main() -> int:
     complete = build_publish_plan(
         target_registry=args.target,
         source_registry=args.source_registry or None,
+        candidate_git_sha=args.candidate_sha or None,
     )
     by_tool = {item.tool: item for item in complete}
     unknown = [tool for tool in requested_tools if tool not in by_tool]

@@ -11,7 +11,7 @@ from npa.orchestration.npa_workflow.sim2real_preflight import (
 
 
 def _config(**overrides):
-    digest = f"cr.eu-north1.nebius.cloud/registry/image@sha256:{'a' * 64}"
+    digest = f"registry.example/registry/image@sha256:{'a' * 64}"
     config = {
         "controller_image": digest,
         "transfer_image": digest,
@@ -97,9 +97,12 @@ def test_cpu_node_parser_requires_the_real_schedulable_profile():
     assert _ready_schedulable_cpu_nodes(_nodes(gpu="8")) == ["cpu-0"]
     assert _ready_schedulable_cpu_nodes(_nodes(cpu="9500m")) == []
     assert _ready_schedulable_cpu_nodes(_nodes(memory="39Gi")) == []
-    assert _ready_schedulable_cpu_nodes(
-        _nodes(taints=[{"key": "dedicated", "effect": "NoSchedule"}])
-    ) == []
+    assert (
+        _ready_schedulable_cpu_nodes(
+            _nodes(taints=[{"key": "dedicated", "effect": "NoSchedule"}])
+        )
+        == []
+    )
 
 
 def test_kubernetes_preflight_parses_nodes_pvc_queue_and_priority_class():

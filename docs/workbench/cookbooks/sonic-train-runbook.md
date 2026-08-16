@@ -54,13 +54,13 @@ editable defaults because SkyPilot 0.12.2 does not interpolate `${VAR}` inside
 For a zero-NPA raw SkyPilot run, copy the YAML, replace these literals, and
 launch it directly:
 
-| YAML field | Active RTX PRO 6000 Kubernetes value |
-| --- | --- |
-| `resources.image_id` and `POLICY_IMAGE` | exact active tag from `sonic_image_manifest.json` |
-| `SONIC_GPU_TYPE` | `gpu-rtx6000` |
-| `SONIC_IMAGE_VARIANT` | `sonic-k8s-host-mounted` |
-| `S3_ENDPOINT_URL` | your S3-compatible endpoint |
-| `S3_BUCKET` / `SONIC_OUTPUT_PREFIX` | your artifact destination |
+| YAML field | L40S value | RTX PRO 6000 Kubernetes value |
+| --- | --- | --- |
+| `resources.image_id` and `POLICY_IMAGE` | `<your-registry>/<namespace>/npa-sonic:0.1.2` | `<your-registry>/<namespace>/npa-sonic:0.1.2-k8s-runtime` |
+| `SONIC_GPU_TYPE` | `l40s` | `gpu-rtx6000` |
+| `SONIC_IMAGE_VARIANT` | `sonic-l40s-baked` | `sonic-k8s-host-mounted` |
+| `S3_ENDPOINT_URL` | your S3-compatible endpoint | your S3-compatible endpoint |
+| `S3_BUCKET` / `SONIC_OUTPUT_PREFIX` | your artifact destination | your artifact destination |
 
 ```bash
 cp npa/workflows/workbench/npa-workflows/sonic-train.yaml /tmp/sonic-train.yaml
@@ -124,7 +124,7 @@ from npa.sdk.workbench import sonic
 sonic.submit_workflow(
     Path("npa/workflows/workbench/npa-workflows/sonic-train.yaml"),
     run_id="sonic-train-smoke",
-    registry="cr.eu-north1.nebius.cloud/<registry-id>",
+    registry="<your-registry>/<namespace>",
     gpu_target="l40s",
     s3_endpoint="https://storage.eu-north1.nebius.cloud",
     s3_bucket="<bucket>",
@@ -133,8 +133,17 @@ sonic.submit_workflow(
 )
 ```
 
-Build and push only a newly scanned host-mounted runtime-fetch variant for RTX
-PRO 6000 Blackwell Kubernetes with the NVIDIA GPU Operator:
+Build and push the required first-party image from the repo root. Use the L40S
+baked variant for compute-only VM hosts:
+
+```bash
+export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
+npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push --variant baked
+docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2"
+```
+
+For RTX PRO 6000 Blackwell on Kubernetes with the NVIDIA GPU Operator, use the
+host-mounted variant:
 
 ```bash
 npa/docker/workbench/sonic/build.sh \

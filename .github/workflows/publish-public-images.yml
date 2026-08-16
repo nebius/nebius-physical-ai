@@ -1,9 +1,4 @@
-# Mirror the publicly-redistributable workbench images to a PUBLIC registry.
-#
-# Nebius Container Registry has no anonymous/public mode, so "public exposure"
-# means mirroring to a public-capable registry (GHCR by default). This workflow
-# runs `python -m npa.deploy.publish_public`, which copies exactly
-# `images.publicly_publishable_tools()`.
+# Promote immutable private GHCR candidates to separate PUBLIC GHCR packages.
 #
 # THE ISAAC IMAGES ARE NOW IN THAT SET. This comment previously said the opposite
 # -- that the workflow "HARD-refuses" isaac-lab/sonic/sonic-mujoco/groot as
@@ -19,27 +14,11 @@
 #
 # Manual dispatch only (never auto-publishes). Defaults to dry-run, and the dry run is a
 # real rehearsal: it resolves the plan, proves the source credential, reads every pinned
-# source tag, and runs the gate. Only the copy and the public verification are skipped.
+# candidate dev-SHA tag, and runs the gate. Only the copy and public verification are skipped.
 #
-# SOURCE REGISTRY CREDENTIAL. Nebius CR authenticates `docker login` as user "iam" with
-# either kind of secret below. They differ only in how long they survive, which is the
-# whole game for a workflow that is dispatched by hand months apart:
-#
-#   NEBIUS_SA_CREDENTIALS_JSON — preferred. An authorized-key credentials JSON for a
-#                     service account holding viewer on the source registry. The job
-#                     mints a fresh access token during the run, so nothing expires
-#                     between dispatches and no one has to re-paste anything. Opt-in:
-#                     the job falls back to NEBIUS_CR_TOKEN when this is unset.
-#   NEBIUS_CR_TOKEN — a pre-issued token. This MUST be a long-lived static key
-#                     (`nebius iam static-key issue --service=CONTAINER_REGISTRY`,
-#                     6 months by default), NOT the output of `nebius iam
-#                     get-access-token`: an access token lives 12 hours, so a stored
-#                     one is already dead by the next manual dispatch. That is exactly
-#                     how the first run of this workflow failed — 23 identical
-#                     UNAUTHORIZED reads, nothing published.
-#
-# GHCR push uses the built-in GITHUB_TOKEN. A dry run with neither source secret still
-# prints the plan, but says it could not check the source registry.
+# Candidate tags are always dev-<full-git-sha>. Candidate and release package paths
+# remain separate because GHCR visibility is package-level; a dev tag in a public
+# package would be public. Restricted/build-your-own images never enter either path.
 
 name: Publish public images
 
@@ -56,14 +35,18 @@ on:
         default: true
       skip_missing:
         description: >-
-          Publish what exists, skipping images the source registry does not have yet.
+          Publish what exists, skipping images the private candidate channel does not have yet.
           The plan comes from the packaging contract (what the repo BUILDS), so a tool
           that landed before its image was built otherwise blocks every ready image.
           A denial is never skipped.
         type: boolean
         default: false
       source_registry:
-        description: "Optional source registry override (host/path, without image name)"
+        description: "Optional private GHCR candidate namespace override"
+        required: false
+        default: ""
+      candidate_sha:
+        description: "Full Git SHA for the dev-<sha> candidate (defaults to dispatched ref)"
         required: false
         default: ""
       tool:
@@ -121,8 +104,9 @@ jobs:
           # one-off variables after the run; explicit inputs always win once available.
           SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
           SELECTED_TOOLS: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha || github.sha }}
         run: |
-          args=(--target "${{ steps.target.outputs.value }}")
+          args=(--target "${{ steps.target.outputs.value }}" --candidate-sha "$CANDIDATE_SHA")
           if [ -n "$SOURCE_REGISTRY" ]; then
             args+=(--source-registry "$SOURCE_REGISTRY")
           fi
@@ -133,51 +117,23 @@ jobs:
             python -m npa.deploy.publish_public "${args[@]}" --dry-run
           fi
 
-      - name: Login to GHCR
-        if: ${{ inputs.dry_run == false }}
+      - name: Login to GHCR candidate and release channels
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.NPA_PRIVATE_GHCR_TOKEN || secrets.GITHUB_TOKEN }}
         run: printf '%s' "$GH_TOKEN" | crane auth login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      # Runs in dry-run too, so the safe rehearsal actually rehearses the credential. A dry
-      # run that skipped this could only ever tell you the plan was well-formed, which was
-      # never the thing that broke.
-      #
-      # Secrets arrive through `env:` rather than `${{ }}` interpolation, which would splice
-      # them into the script text where a quote or newline changes what runs.
-      - name: Authenticate to the Nebius source registry
-        id: source-login
-        env:
-          NEBIUS_SA_CREDENTIALS_JSON: ${{ secrets.NEBIUS_SA_CREDENTIALS_JSON }}
-          NEBIUS_CR_TOKEN: ${{ secrets.NEBIUS_CR_TOKEN }}
-          # A maintainer may install this temporary secret for a one-off source-registry
-          # override whose project is not visible to the normal mirror service account.
-          # It is deliberately separate so a release never overwrites the standing CI
-          # credential, and must be removed immediately after the dispatch.
-          NEBIUS_OVERRIDE_CR_TOKEN: ${{ secrets.NEBIUS_OVERRIDE_CR_TOKEN }}
-          SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
-          # A dry run without secrets still reports the plan and says what it could not check.
-          REQUIRE_CREDENTIAL: ${{ inputs.dry_run == false }}
-        run: |
-          if [ -n "$SOURCE_REGISTRY" ] && [ -n "$NEBIUS_OVERRIDE_CR_TOKEN" ]; then
-            export NEBIUS_SA_CREDENTIALS_JSON=""
-            export NEBIUS_CR_TOKEN="$NEBIUS_OVERRIDE_CR_TOKEN"
-          fi
-          unset NEBIUS_OVERRIDE_CR_TOKEN
-          ./npa/scripts/ci_source_registry_login.sh
-
       # `crane auth login` writes a config file and exits 0 for any string -- it never
-      # contacts the registry -- so the step above proves nothing about NEBIUS_CR_TOKEN.
+      # contacts the registry -- so the step above alone proves no package permission.
       # This reads every source manifest, which fails in seconds on an expired token or a
       # pin that was never pushed, rather than partway through the copy loop with some
       # packages already created. It writes nothing, so it is safe in dry-run.
-      - name: Preflight the source registry credential and every pinned tag
-        if: ${{ steps.source-login.outputs.available == 'true' }}
+      - name: Preflight the private candidate credential and every pinned tag
         env:
           SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
           SELECTED_TOOLS: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha || github.sha }}
         run: |
-          args=(--target "${{ steps.target.outputs.value }}")
+          args=(--target "${{ steps.target.outputs.value }}" --candidate-sha "$CANDIDATE_SHA")
           if [ -n "$SOURCE_REGISTRY" ]; then
             args+=(--source-registry "$SOURCE_REGISTRY")
           fi
@@ -202,17 +158,19 @@ jobs:
       # Also runs in dry-run (it only reads), so the rehearsal exercises the whole safety
       # chain rather than leaving the gate to fire for the first time on the real run.
       - name: Gate — the Isaac canonical tags must not be Omniverse-baked
-        if: ${{ steps.source-login.outputs.available == 'true' && (inputs.tool || vars.NPA_PUBLISH_TOOL) == '' }}
+        if: ${{ (inputs.tool || vars.NPA_PUBLISH_TOOL) == '' }}
+        env:
+          SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY || 'ghcr.io/nebius/nebius-physical-ai-private' }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha || github.sha }}
         run: |
           set -euo pipefail
-          source_registry="cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw"
+          source_registry="${SOURCE_REGISTRY%/}"
+          candidate_tag="dev-${CANDIDATE_SHA,,}"
           failed=0
           for ref in \
-            "npa-isaac-lab:2.3.2.post1" \
-            "npa-sonic:0.1.2" \
-            "npa-sonic:0.1.2-k8s-runtime" \
-            "npa-sonic-mujoco:0.1.3-mvp" \
-            "npa-groot:0.1.0"; do
+            "npa-isaac-lab:${candidate_tag}" \
+            "npa-sonic:${candidate_tag}" \
+            "npa-groot:${candidate_tag}"; do
             echo "::group::$ref"
             if ! python npa/scripts/scan_image_omniverse_payload.py --history-only \
                  "${source_registry}/${ref}"; then
@@ -223,8 +181,7 @@ jobs:
           done
           if [ "$failed" -ne 0 ]; then
             echo "Refusing to publish. A canonical tag resolves to an Omniverse-baked image."
-            echo "Promote the runtime-fetch builds first:"
-            echo "  ./npa/scripts/promote_isaac_rtfetch_tags.sh --i-have-sign-off"
+            echo "Rebuild the exact private GHCR candidate before promotion."
             exit 1
           fi
 
@@ -243,8 +200,9 @@ jobs:
         env:
           SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
           SELECTED_TOOLS: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha || github.sha }}
         run: |
-          args=(--target "${{ steps.target.outputs.value }}")
+          args=(--target "${{ steps.target.outputs.value }}" --candidate-sha "$CANDIDATE_SHA")
           if [ -n "$SOURCE_REGISTRY" ]; then
             args+=(--source-registry "$SOURCE_REGISTRY")
           fi

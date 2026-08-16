@@ -80,11 +80,11 @@ and `~/.npa/clusters/<cluster>/kubeconfig` — not from any operator VM hostname
 
 For real BYOF container build/push/inspect, set `NPA_BYOF_LIVE_CONTAINER=1` and run
 `bash npa/scripts/verify_byof_onboarding_live.sh` on a host with Docker and
-`nebius` (`NPA_NEBIUS_PROFILE=agent-sa` for registry write). Default validation
+explicit credentials for the operator-controlled registry. Default validation
 repo is LeIsaac; override with `NPA_BYOF_REPO_URL` / `NPA_BYOF_REPO_REF`.
 
 For full BYOF GPU smoke (SkyPilot submit), also set `NPA_BYOF_LIVE_GPU=1` and run
-the same script on a host with Docker, `nebius`, `sky`, and registry pull
+the same script on a host with Docker, `nebius`, `sky`, and any required explicit registry pull
 access. GPU train YAML and SkyPilot config resolve from the project `kubernetes`
 block (`gpu_profile: rtxpro`, `byof_train_yaml`, `skypilot_config`).
 

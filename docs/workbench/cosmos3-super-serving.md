@@ -22,7 +22,7 @@ and adds a preflight entrypoint and a build gate.
 ## Packaging and deployment surface
 
 The image is recorded in the packaging contract as a `restricted` service and
-is intentionally excluded from `CONTAINER_IMAGE_NAMES` and the public mirror.
+is intentionally excluded from `CONTAINER_IMAGE_NAMES` and the public release channel.
 Operators may build `npa-cosmos3-serving:0.1.0` into their own registry with the
 checked-in build script.
 

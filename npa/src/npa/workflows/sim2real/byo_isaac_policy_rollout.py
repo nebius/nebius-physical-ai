@@ -756,9 +756,7 @@ def build_isaac_rollout_job_manifest(
                         "seccompProfile": {"type": "RuntimeDefault"},
                     },
                     "imagePullSecrets": [
-                        {"name": "agent-sa"},
                         {"name": "ngc-nvcr-imagepullsecret"},
-                        {"name": "npa-nebius-registry"},
                     ],
                     "containers": [
                         {

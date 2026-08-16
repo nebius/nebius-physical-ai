@@ -369,7 +369,7 @@ containers:
       network: OpenAI-compatible service on :8000 (/v1/models, /v1/videos)
       external_fetch: [huggingface-runtime]
       notes: >-
-        Restricted and excluded from the public mirror because of the pinned
+        Restricted and excluded from both official GHCR channels because of the pinned
         vendor base's distribution terms. No model or guardrail weights are
         baked; the operator supplies its own Hugging Face token at runtime. The
         build gate checks the serving stack, pin-specific Xet workaround, real

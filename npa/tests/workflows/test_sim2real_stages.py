@@ -79,9 +79,9 @@ def test_preamble_executes_augment_and_envgen_locally(tmp_path: Path) -> None:
 
 def test_k8s_image_ready_rejects_bare_tags_and_placeholders() -> None:
     assert not k8s_image_ready("npa-cosmos2-transfer:2.5.0")
-    assert not k8s_image_ready("cr.eu-north1.nebius.cloud/<your-registry-id>/npa:tag")
+    assert not k8s_image_ready("<your-registry>/npa:tag")
     assert k8s_image_ready(
-        "cr.eu-north1.nebius.cloud/example-registry-id/npa-cosmos2-transfer:2.5.0"
+        "registry.example/operator/npa-cosmos2-transfer:2.5.0"
     )
 
 
@@ -158,7 +158,7 @@ def test_augment_stage_mirrors_k8s_frame_descriptors(
         s3_bucket="bucket",
         s3_endpoint="https://storage.example.test",
         trigger_dataset_uri="s3://bucket/triggers/pusht/",
-        augment_image="cr.eu-north1.nebius.cloud/example-registry-id/npa-cosmos2-transfer:2.5.0",
+        augment_image="registry.example/operator/npa-cosmos2-transfer:2.5.0",
     )
 
     result = run_augment_stage(config, tmp_path)
@@ -203,7 +203,7 @@ def test_augment_stage_keeps_working_when_frame_mirror_lags(
         s3_bucket="bucket",
         s3_endpoint="https://storage.example.test",
         trigger_dataset_uri="s3://bucket/triggers/pusht/",
-        augment_image="cr.eu-north1.nebius.cloud/example-registry-id/npa-cosmos2-transfer:2.5.0",
+        augment_image="registry.example/operator/npa-cosmos2-transfer:2.5.0",
     )
 
     result = run_augment_stage(config, tmp_path)
@@ -239,7 +239,7 @@ def test_augment_stage_rejects_descriptor_stub_from_qualified_image(
         s3_bucket="bucket",
         trigger_dataset_uri="s3://bucket/triggers/pusht/",
         augment_image=(
-            "cr.eu-north1.nebius.cloud/example-registry-id/npa-cosmos2-transfer:2.5.0"
+            "registry.example/operator/npa-cosmos2-transfer:2.5.0"
         ),
     )
 
@@ -308,7 +308,7 @@ def test_envgen_split_stage_launches_indexed_shards_when_image_ready(
         env_count=10,
         train_fraction=0.8,
         envgen_shard_count=4,
-        envgen_image="cr.eu-north1.nebius.cloud/example-registry-id/npa-envgen:0.1.1",
+        envgen_image="registry.example/operator/npa-envgen:0.1.1",
     )
     result = run_envgen_split_stage(
         config,

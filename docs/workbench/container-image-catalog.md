@@ -59,7 +59,7 @@ Rows are ordered by **Built** date, then by friendly name.
 
 ## Intentionally not published as separate images
 
-- **`npa-sim2real-control`** is an internal workflow artifact, not a public-mirror
+- **`npa-sim2real-control`** is an internal workflow artifact, not a public-release
   tool. Its packaging contract permits redistribution, but it has no entry in
   `CONTAINER_IMAGE_NAMES` and is therefore outside `publicly_publishable_tools()`;
   anonymous resolution of `npa-sim2real-control:0.1.2` was denied during the

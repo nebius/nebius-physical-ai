@@ -9,7 +9,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NPA_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-REGISTRY="${REGISTRY:-cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw}"
+REGISTRY="${REGISTRY:-}"
 BASE_IMAGE="${COSMOS3_SERVING_BASE_IMAGE:-}"
 TAG="${COSMOS3_SERVING_TAG:-0.1.0}"
 PUSH=0
@@ -29,8 +29,22 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ "${PUSH}" == "1" && -z "${REGISTRY}" ]]; then
+  echo "ERROR: --push requires an operator-controlled --registry" >&2
+  exit 2
+fi
+case "${REGISTRY%/}" in
+  ghcr.io/nebius/nebius-physical-ai|ghcr.io/nebius/nebius-physical-ai-private)
+    echo "ERROR: npa-cosmos3-serving is restricted and cannot publish to an official NPA GHCR channel" >&2
+    exit 2
+    ;;
+esac
+
 LOCAL_REF="npa-cosmos3-serving:${TAG}"
-REMOTE_REF="${REGISTRY}/npa-cosmos3-serving:${TAG}"
+REMOTE_REF=""
+if [[ -n "${REGISTRY}" ]]; then
+  REMOTE_REF="${REGISTRY%/}/npa-cosmos3-serving:${TAG}"
+fi
 
 BUILD_ARGS=()
 if [[ -n "${BASE_IMAGE}" ]]; then
@@ -42,12 +56,15 @@ docker build --platform linux/amd64 \
   -f "${SCRIPT_DIR}/Dockerfile" \
   "${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"}" \
   -t "${LOCAL_REF}" \
-  -t "${REMOTE_REF}" \
   "${NPA_ROOT}"
+
+if [[ -n "${REMOTE_REF}" ]]; then
+  docker tag "${LOCAL_REF}" "${REMOTE_REF}"
+fi
 
 if [[ "${PUSH}" == "1" ]]; then
   echo "=== push ${REMOTE_REF} ==="
   docker push "${REMOTE_REF}"
 fi
 
-echo "Done: ${REMOTE_REF} push=${PUSH}"
+echo "Done: ${REMOTE_REF:-$LOCAL_REF} push=${PUSH}"

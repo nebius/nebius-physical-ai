@@ -19,7 +19,7 @@ npa workbench workflow run-spec npa/workflows/workbench/npa-workflows/vlm-eval-s
 
 # Submit an npa.workflow spec
 npa workbench workflow submit npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml \
-  --run-id demo --registry cr.eu-north1.nebius.cloud/<your-registry-id>
+  --run-id demo --registry <your-registry>/<namespace>
 
 # Plan only (no submit) — inspect planned steps
 # Token Factory (and other no-image tools) need NPA_SRC_S3_URI or --image

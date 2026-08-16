@@ -62,7 +62,7 @@ def test_confidentiality_matcher_can_ignore_case() -> None:
         "network: network-" + "u00" + "j" * 16,
         "object: s3://campaign-bucket-" + "a1b2c3d4" + "/evidence.json",
         (
-            "image: cr.eu-north1.nebius.cloud/validation-registry-"
+            "image: registry.example/validation-registry-"
             + "20260815"
             + "/npa-tool@sha256:"
             + "1" * 64
@@ -84,7 +84,7 @@ def test_builtin_nebius_infra_guard_allows_placeholders_and_hashes() -> None:
             "Nebius project and tenant identifiers are configured externally.",
             "project: project-test",
             "cluster: mk8scluster-a",
-            "image: cr.eu-north1.nebius.cloud/<your-registry-id>/npa-tool:tag",
+            "image: <your-registry>/npa-tool:tag",
             "object: s3://example-bucket/runs/example/",
             "object: s3://${NPA_ARTIFACT_BUCKET}/runs/example/",
             f"framework revision: {sha40}",
@@ -119,11 +119,14 @@ def test_builtin_nebius_infra_diff_scan_ignores_removed_values() -> None:
         ]
     )
 
-    assert scan_diff_text(
-        diff,
-        compile_builtin_nebius_infra(),
-        source="staged-diff",
-    ) == []
+    assert (
+        scan_diff_text(
+            diff,
+            compile_builtin_nebius_infra(),
+            source="staged-diff",
+        )
+        == []
+    )
 
     added = diff + f"\n+{private_value}\n"
     hits = scan_diff_text(
@@ -150,7 +153,9 @@ def test_builtin_nebius_infra_guard_is_wired_into_existing_gitleaks_ci() -> None
 
 def test_tree_scan_skips_binary_files_but_keeps_text_hits(tmp_path) -> None:
     subprocess.run(["git", "init"], cwd=tmp_path, check=True, stdout=subprocess.PIPE)
-    (tmp_path / "public.txt").write_text("contains synthetic-secret\n", encoding="utf-8")
+    (tmp_path / "public.txt").write_text(
+        "contains synthetic-secret\n", encoding="utf-8"
+    )
     (tmp_path / "image.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00synthetic-secret\n")
     subprocess.run(["git", "add", "public.txt", "image.png"], cwd=tmp_path, check=True)
 
@@ -208,7 +213,9 @@ def test_denylist_loader_reads_explicit_pattern_file(tmp_path) -> None:
     pattern_file = tmp_path / "customer.regex"
     pattern_file.write_text("explicit-file-pattern\n", encoding="utf-8")
 
-    loaded = load_denylist_pattern("CUSTOMER_DENYLIST", pattern_file=pattern_file, environ={})
+    loaded = load_denylist_pattern(
+        "CUSTOMER_DENYLIST", pattern_file=pattern_file, environ={}
+    )
 
     assert loaded.pattern == "explicit-file-pattern\n"
     assert loaded.source == f"--pattern-file:{pattern_file}"
@@ -218,13 +225,17 @@ def test_denylist_loader_fails_closed_when_source_missing(tmp_path) -> None:
     missing_file = tmp_path / "missing.regex"
 
     with pytest.raises(ValueError, match="CUSTOMER_DENYLIST is empty"):
-        load_denylist_pattern("CUSTOMER_DENYLIST", pattern_file=missing_file, environ={})
+        load_denylist_pattern(
+            "CUSTOMER_DENYLIST", pattern_file=missing_file, environ={}
+        )
 
 
 def test_confidentiality_scan_cli_fails_closed_when_source_missing(tmp_path) -> None:
     missing_file = tmp_path / "missing.regex"
 
-    assert main(["--repo-root", str(tmp_path), "--pattern-file", str(missing_file)]) == 2
+    assert (
+        main(["--repo-root", str(tmp_path), "--pattern-file", str(missing_file)]) == 2
+    )
 
 
 def test_should_skip_unconfigured_fork_pull_request(tmp_path) -> None:

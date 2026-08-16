@@ -5,7 +5,7 @@
 # Isaac Sim at all, which is why `/entrypoint.sh mujoco-eval` runs on the baked venv and
 # requires neither the ~4.5 GB download nor EULA acceptance. That is a deliberate property
 # of the entrypoint's per-mode interpreter selection, not an accident.
-ARG BASE_IMAGE=cr.eu-north1.nebius.cloud/your-registry-id/npa-sonic:0.1.2
+ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-sonic:cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z
 FROM ${BASE_IMAGE}
 
 ARG NPA_RUNTIME_USER=ubuntu

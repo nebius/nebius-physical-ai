@@ -9,20 +9,27 @@ import os
 from pathlib import Path
 from typing import Any
 
-# Primary public Workbench registry (eu-north1). A registry path is a public
-# locator, not a credential: pulls are still gated by the registry pull secret /
-# IAM token, which are never committed. Operators can override it with NPA_REGISTRY
-# or `container_registry` in ~/.npa/config.yaml.
-DEFAULT_CONTAINER_REGISTRY_ID = "e00cm0vc6t09m0z5gw"
-DEFAULT_CONTAINER_REGISTRY = (
-    f"cr.eu-north1.nebius.cloud/{DEFAULT_CONTAINER_REGISTRY_ID}"
+# Official NPA images use two separate GHCR package namespaces. GHCR visibility is
+# package-level, so development tags must never share the public release packages:
+#
+# * maintainers push immutable ``dev-<git-sha>`` candidates to the private namespace;
+# * the guarded publisher copies a validated candidate digest to the public namespace
+#   under the supported release tag.
+#
+# ``NPA_REGISTRY`` remains the generic operator override for execution. It does not
+# change either official publication channel. Restricted/build-your-own images must use
+# an operator-controlled registry and are refused from both official GHCR namespaces.
+PRIVATE_CANDIDATE_CONTAINER_REGISTRY_ENV = "NPA_PRIVATE_REGISTRY"
+PUBLIC_CONTAINER_REGISTRY_ENV = "NPA_PUBLIC_REGISTRY"
+DEFAULT_PRIVATE_CANDIDATE_CONTAINER_REGISTRY = (
+    "ghcr.io/nebius/nebius-physical-ai-private"
 )
-# Mirror registry (us-central1) used for region-agnostic failover: every tool
-# image is mirrored to both this and the primary (eu-north1) registry, so a pull
-# succeeds regardless of the caller's region — e.g. an in-cluster us-central1 pull
-# cannot reach the cross-region eu-north1 registry, and vice versa. A registry
-# path is a public locator, not a credential. Override with NPA_BACKUP_REGISTRY.
-BACKUP_CONTAINER_REGISTRY = "cr.us-central1.nebius.cloud/u00j7q4jjkahvsx0jy"
+DEFAULT_PUBLIC_CONTAINER_REGISTRY = "ghcr.io/nebius/nebius-physical-ai"
+
+# Compatibility name for callers that mean "the normal execution registry". The
+# default is the public release channel; it no longer points at Nebius Container
+# Registry and carries no registry ID or regional failover behavior.
+DEFAULT_CONTAINER_REGISTRY = DEFAULT_PUBLIC_CONTAINER_REGISTRY
 DEFAULT_VLM_IMAGE_ENV = "NPA_VLM_IMAGE"
 DEFAULT_WORKBENCH_IMAGE_ENV = "NPA_WORKBENCH_IMAGE"
 SONIC_IMAGE_MANIFEST_RESOURCE = "sonic_image_manifest.json"
@@ -147,17 +154,6 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset({"sonic-mujoco"}
 # digest and its payload-scan/GPU evidence — not before.
 UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"ltx2"})
 
-# Public mirror registry for the OSS-redistributable image subset. Nebius CR does
-# NOT support anonymous/public pulls and has no cross-tenant / all-authenticated
-# grant, so making images pullable by any Nebius tenant (or anyone) means
-# mirroring the publicly_publishable_tools() set to a public-capable registry.
-# GHCR is the default (public, anonymous pull, native to the GitHub org). A
-# registry path is a public locator, not a credential. Override with
-# NPA_PUBLIC_REGISTRY; consumers in any tenant pull the OSS images by setting
-# NPA_REGISTRY to this value.
-PUBLIC_CONTAINER_REGISTRY_ENV = "NPA_PUBLIC_REGISTRY"
-DEFAULT_PUBLIC_CONTAINER_REGISTRY = "ghcr.io/nebius/nebius-physical-ai"
-
 # Registry hosts that serve anonymous/public pulls. Resolving a restricted image
 # against one of these is always wrong: either it is not there (we never publish
 # it) or someone has published a non-redistributable runtime to third parties.
@@ -165,7 +161,6 @@ DEFAULT_PUBLIC_CONTAINER_REGISTRY = "ghcr.io/nebius/nebius-physical-ai"
 # into their OWN registry is the licensed path, whichever registry that is.
 PUBLIC_REGISTRY_HOSTS = frozenset(
     {
-        "ghcr.io",
         "docker.io",
         "index.docker.io",
         "registry-1.docker.io",
@@ -294,8 +289,8 @@ def supported_tool_version(tool: str) -> str:
         ) from exc
 
 
-def public_mirror_tag_for_tool(tool: str) -> str:
-    """Return the exact repository pin that the public mirror must carry.
+def public_release_tag_for_tool(tool: str) -> str:
+    """Return the exact repository pin that the public release channel must carry.
 
     SONIC's runtime resolver accepts only the active host-mounted Kubernetes
     variant. The public inventory contract pins that validated cross-architecture
@@ -368,14 +363,6 @@ def sonic_image_entry(
         raise ValueError(
             f"Unknown SONIC image variant {resolved!r}; choose one of: {choices}"
         ) from exc
-    if str(entry.get("status") or "active") != "active":
-        reason = str(entry.get("quarantine_reason") or "restricted image bytes")
-        raise ValueError(
-            f"SONIC image variant {resolved!r} is quarantined and cannot be resolved: "
-            f"{reason} Use sonic-k8s-host-mounted or build a newly scanned, "
-            "license-compatible replacement."
-        )
-    return entry
 
 
 def container_image_for_tool(
@@ -398,8 +385,11 @@ def container_image_for_tool(
             )
         image_name = CONTAINER_IMAGE_NAMES[tool]
         resolved_tag = tag or supported_tool_version(tool)
-    resolved_registry = registry or _primary_registry()
-    if not is_publicly_redistributable(tool) and is_public_registry(resolved_registry):
+    resolved_registry = registry or execution_container_registry()
+    if not is_publicly_redistributable(tool) and (
+        is_public_registry(resolved_registry)
+        or is_official_container_registry(resolved_registry)
+    ):
         raise ValueError(
             f"{tool!r} is not publicly redistributable and is never distributed from a "
             f"public registry, so {resolved_registry!r} cannot serve it. Build it into "
@@ -467,39 +457,14 @@ def _workbench_dockerfile(tool: str) -> str:
     return relative if (repo_root / relative).is_file() else ""
 
 
-def registry_from_id(registry_id: str) -> str:
-    """Build a full registry locator from a bare Nebius registry id.
-
-    A bare id (``NPA_REGISTRY_ID``) is expanded against the primary region so it
-    resolves the same way on every registry path (see ``resolve_container_registry``).
-    """
-    return f"cr.eu-north1.nebius.cloud/{registry_id.strip()}"
-
-
 def registry_from_env() -> str:
-    """Return the registry from NPA_REGISTRY, then NPA_REGISTRY_ID, else ""."""
-    explicit = os.environ.get("NPA_REGISTRY", "").strip()
-    if explicit:
-        return explicit
-    registry_id = os.environ.get("NPA_REGISTRY_ID", "").strip()
-    if registry_id:
-        return registry_from_id(registry_id)
-    return ""
+    """Return the generic operator execution-registry override, if set."""
+    return os.environ.get("NPA_REGISTRY", "").strip()
 
 
-def primary_container_registry() -> str:
-    """Resolve the primary registry: NPA_REGISTRY, then NPA_REGISTRY_ID, then default."""
+def execution_container_registry() -> str:
+    """Resolve an operator override, otherwise the public GHCR release channel."""
     return registry_from_env() or DEFAULT_CONTAINER_REGISTRY
-
-
-_primary_registry = primary_container_registry
-
-
-def backup_container_registry() -> str:
-    """Resolve the backup registry override, or the committed default."""
-    return (
-        os.environ.get("NPA_BACKUP_REGISTRY", "").strip() or BACKUP_CONTAINER_REGISTRY
-    )
 
 
 def container_image_candidates(
@@ -511,58 +476,104 @@ def container_image_candidates(
     image_variant: str | None = None,
     preferred_region: str | None = None,
 ) -> list[str]:
-    """Return image refs to try in order across both mirror registries.
+    """Return the single selected image reference.
 
-    Callers that support pull failover should iterate these so a pull works
-    region-agnostically: every image is mirrored to both registries, and a caller
-    that cannot reach one region (cross-region 403, or an identity without read on
-    the other project's registry) falls through to the other. ``preferred_region``
-    reorders so the caller's local-region registry (``cr.<region>.nebius.cloud``)
-    is tried first, avoiding a guaranteed-denied cross-region attempt.
+    The historical regional mirror/failover behavior was specific to Nebius
+    Container Registry and is intentionally gone. ``preferred_region`` remains an
+    ignored compatibility argument so older SDK callers do not break.
     """
-    primary = container_image_for_tool(
-        tool,
-        registry=registry,
-        tag=tag,
-        gpu_target=gpu_target,
-        image_variant=image_variant,
-    )
-    candidates = [primary]
-    backup_registry = backup_container_registry()
-    if backup_registry:
-        backup = container_image_for_tool(
+    del preferred_region
+    return [
+        container_image_for_tool(
             tool,
-            registry=backup_registry,
+            registry=registry,
             tag=tag,
             gpu_target=gpu_target,
             image_variant=image_variant,
         )
-        if backup != primary:
-            candidates.append(backup)
-    region = (preferred_region or "").strip().lower()
-    if region:
-        host_prefix = f"cr.{region}.nebius.cloud/"
-        local = [ref for ref in candidates if ref.startswith(host_prefix)]
-        other = [ref for ref in candidates if not ref.startswith(host_prefix)]
-        candidates = local + other
-    return candidates
+    ]
+
+
+def private_candidate_container_registry() -> str:
+    """Return the official private GHCR candidate namespace."""
+    value = (
+        os.environ.get(PRIVATE_CANDIDATE_CONTAINER_REGISTRY_ENV, "").strip()
+        or DEFAULT_PRIVATE_CANDIDATE_CONTAINER_REGISTRY
+    )
+    return _ghcr_namespace(value, channel="private candidate")
 
 
 def public_container_registry() -> str:
-    """Return the public mirror registry: ``NPA_PUBLIC_REGISTRY`` or the default."""
-    return (
+    """Return the official public GHCR release namespace."""
+    value = (
         os.environ.get(PUBLIC_CONTAINER_REGISTRY_ENV, "").strip()
         or DEFAULT_PUBLIC_CONTAINER_REGISTRY
+    )
+    return _ghcr_namespace(value, channel="public release")
+
+
+def _ghcr_namespace(value: str, *, channel: str) -> str:
+    """Validate an official channel override as ``ghcr.io/<owner>/<namespace>``."""
+    normalized = str(value or "").strip().rstrip("/")
+    parts = normalized.split("/")
+    if len(parts) < 3 or parts[0].lower() != "ghcr.io" or not all(parts[1:]):
+        raise ValueError(
+            f"{channel} registry must be a GHCR package namespace such as "
+            "ghcr.io/<owner>/<namespace>"
+        )
+    return normalized
+
+
+def development_tag(git_sha: str) -> str:
+    """Return the immutable candidate tag for a full Git commit SHA."""
+    normalized = str(git_sha or "").strip().lower()
+    if len(normalized) != 40 or any(
+        char not in "0123456789abcdef" for char in normalized
+    ):
+        raise ValueError("candidate source SHA must be a full 40-character Git SHA")
+    return f"dev-{normalized}"
+
+
+def candidate_image_for_tool(
+    tool: str,
+    *,
+    git_sha: str,
+    registry: str | None = None,
+    gpu_target: str | None = None,
+    image_variant: str | None = None,
+) -> str:
+    """Return an official private-candidate reference for redistributable bytes."""
+    if not is_publicly_redistributable(tool):
+        raise ValueError(
+            f"{tool!r} is restricted/build-your-own and cannot be pushed to either "
+            "official GHCR channel; use an operator-controlled registry"
+        )
+    resolved_registry = registry or private_candidate_container_registry()
+    resolved_registry = _ghcr_namespace(
+        resolved_registry, channel="private candidate"
+    )
+    if (
+        resolved_registry.rstrip("/").lower()
+        == public_container_registry().rstrip("/").lower()
+    ):
+        raise ValueError(
+            "private candidate registry must be separate from the public GHCR release namespace"
+        )
+    return container_image_for_tool(
+        tool,
+        registry=resolved_registry,
+        tag=development_tag(git_sha),
+        gpu_target=gpu_target,
+        image_variant=image_variant,
     )
 
 
 def is_public_registry(registry: str) -> bool:
     """Whether a registry serves anonymous/public pulls.
 
-    True for the well-known public hosts and for whatever registry is configured
-    as our public mirror. A Nebius (or other private) registry is not public: an
-    operator's own registry is exactly where a restricted image is supposed to
-    live.
+    True for conservative public-only hosts and the configured public release
+    namespace. GHCR is package-scoped, so an arbitrary operator GHCR namespace
+    is not assumed public.
     """
     candidate = registry.strip().rstrip("/")
     if not candidate:
@@ -572,6 +583,15 @@ def is_public_registry(registry: str) -> bool:
         return True
     mirror = public_container_registry().strip().rstrip("/")
     return bool(mirror) and candidate.lower() == mirror.lower()
+
+
+def is_official_container_registry(registry: str) -> bool:
+    """Whether ``registry`` is either official NPA GHCR publication channel."""
+    candidate = str(registry or "").strip().rstrip("/").lower()
+    return candidate in {
+        private_candidate_container_registry().rstrip("/").lower(),
+        public_container_registry().rstrip("/").lower(),
+    }
 
 
 def is_publicly_redistributable(tool: str) -> bool:
