@@ -74,7 +74,9 @@ def test_cosmos_reason_runtime_env_prefers_the_durable_cache(monkeypatch) -> Non
         "NPA_COSMOS_REASON3_CACHE",
     ):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("NPA_MODEL_CACHE_PVC", "npa-model-cache")
+    # The renderer exports the resolved root into the container; a claim name is
+    # meaningless to code that cannot mount anything itself.
+    monkeypatch.setenv("NPA_MODEL_CACHE_DIR", "/opt/npa-model-cache")
 
     runtime = cosmos_reason_runtime_env()
 

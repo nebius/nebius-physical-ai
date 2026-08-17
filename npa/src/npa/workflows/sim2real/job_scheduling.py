@@ -8,6 +8,7 @@ import re
 from typing import Any
 
 from npa.workbench.model_cache import (
+    RUNTIME_KUBERNETES,
     model_cache_host_path,
     model_cache_pvc,
     pod_config_with_model_cache,
@@ -160,7 +161,7 @@ def _configure_model_weight_cache(manifest: dict[str, Any]) -> dict[str, str]:
     writable and simply accumulates.
     """
 
-    root = resolve_model_cache_root()
+    root = resolve_model_cache_root(runtime=RUNTIME_KUBERNETES)
     pvc = model_cache_pvc()
     host_path = model_cache_host_path()
     if not root or not (pvc or host_path):

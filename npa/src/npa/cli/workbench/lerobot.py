@@ -595,7 +595,11 @@ def _lerobot_serverless_job_env(
     *,
     s3_endpoint: str = "",
 ) -> dict[str, str]:
-    from npa.workbench.model_cache import model_cache_env, resolve_model_cache_root
+    from npa.workbench.model_cache import (
+        RUNTIME_PREMOUNTED,
+        model_cache_env,
+        resolve_model_cache_root,
+    )
 
     env = {
         "NPA_OUTPUT_PATH": output_path,
@@ -605,7 +609,7 @@ def _lerobot_serverless_job_env(
     }
     # Durable weight/dataset cache when the operator configured one; otherwise the
     # ephemeral defaults above, unchanged.
-    env.update(model_cache_env(resolve_model_cache_root()))
+    env.update(model_cache_env(resolve_model_cache_root(runtime=RUNTIME_PREMOUNTED)))
     if hf_token:
         env["HF_TOKEN"] = hf_token
         env["HUGGING_FACE_HUB_TOKEN"] = hf_token

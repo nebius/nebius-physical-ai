@@ -926,12 +926,44 @@ def test_deploy_workbench_container_binds_and_exports_the_durable_cache(
     )
 
     commands = [call.args[0] for call in ssh.run_or_raise.call_args_list]
-    assert any("mkdir -p /mnt/weights" in command for command in commands)
+    # The cache root is created but never recursively chowned: it is a growing tree
+    # of downloaded weights, walking it on every deploy is wasted work, and on a
+    # root-squashed network mount a failing chown would abort the whole deploy.
+    assert any("install -d -o ubuntu -g ubuntu -m 0775 /mnt/weights" in c for c in commands)
+    assert not any("chown -R" in c and "/mnt/weights" in c for c in commands)
     run_cmd = commands[-1]
     assert "-v /mnt/weights:/opt/npa-model-cache" in run_cmd
     # `-e` wins over `--env-file`, so a shared cache supersedes the per-tool path
     # the image bakes into its own environment.
     assert "-e HF_HOME=/opt/npa-model-cache/huggingface" in run_cmd
+
+
+def test_deploy_workbench_container_ignores_a_claim_it_cannot_bind(
+    mocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A PVC names storage inside a cluster; this deploy runs `docker` on a host.
+
+    Exporting the cache env anyway would set HF_HOME to a path with nothing mounted
+    there, and `/opt` is root-owned in every workbench image while the container
+    runs as ubuntu -- so the tool's first mkdir fails and the deploy is worse than
+    if the operator had configured nothing.
+    """
+
+    monkeypatch.delenv("NPA_MODEL_CACHE_HOST_PATH", raising=False)
+    monkeypatch.delenv("NPA_MODEL_CACHE_DIR", raising=False)
+    monkeypatch.setenv("NPA_MODEL_CACHE_PVC", "npa-model-cache")
+    mocker.patch("npa.deploy.configurator.install_container_runtime")
+    ssh = mocker.MagicMock()
+
+    configurator.deploy_workbench_container(
+        ssh,
+        image_ref="registry.example/npa-cosmos:1",
+        container_name="npa-cosmos",
+    )
+
+    run_cmd = [call.args[0] for call in ssh.run_or_raise.call_args_list][-1]
+    assert "/opt/npa-model-cache" not in run_cmd
+    assert "HF_HOME" not in run_cmd
 
 
 def test_deploy_workbench_container_without_a_cache_is_unchanged(

@@ -17,6 +17,7 @@ from jinja2 import Environment, FileSystemLoader
 from npa.clients.env import render_docker_env_file, render_shell_env_file
 from npa.clients.ssh import SSHClient
 from npa.workbench.model_cache import (
+    RUNTIME_DOCKER,
     docker_model_cache_volumes,
     model_cache_env,
     resolve_model_cache_root,
@@ -214,18 +215,29 @@ def deploy_workbench_container(
     # Weights a workbench image is not allowed to bake must survive `docker rm`,
     # which this deploy runs every time. A host-backed cache turns the second
     # deploy of an image into a local read instead of another gated download.
-    cache_root = resolve_model_cache_root()
+    cache_root = resolve_model_cache_root(runtime=RUNTIME_DOCKER)
     cache_volumes = docker_model_cache_volumes(root=cache_root)
     cache_env = model_cache_env(cache_root)
     volumes = (*volumes, *cache_volumes)
     cache_host_dirs = tuple(volume.split(":", 1)[0] for volume in cache_volumes)
-    work_dirs = (*work_dirs, *cache_host_dirs)
 
     if work_dirs:
         dirs = " ".join(shlex.quote(path) for path in work_dirs)
         ssh.run_or_raise(
             f"sudo mkdir -p {dirs} && sudo chown -R "
             f"{shlex.quote(ssh_user)}:{shlex.quote(ssh_user)} {dirs}"
+        )
+    if cache_host_dirs:
+        # Deliberately not part of work_dirs, which are recursively chowned on every
+        # deploy: this tree is a growing cache of downloaded weights, and walking it
+        # is wasted work at best. On a root-squashed network mount `chown` also
+        # returns non-zero, which would abort the deploy over a directory that is
+        # already owned correctly. Own the root only, and let the container's own
+        # user create what it needs beneath it.
+        dirs = " ".join(shlex.quote(path) for path in cache_host_dirs)
+        ssh.run_or_raise(
+            f"sudo install -d -o {shlex.quote(ssh_user)} -g {shlex.quote(ssh_user)} "
+            f"-m 0775 {dirs}"
         )
 
     registry = image_ref.split("/", 1)[0]

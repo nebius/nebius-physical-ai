@@ -25,8 +25,21 @@ a data disk on a VM. Until one is configured, :func:`resolve_model_cache_root`
 returns ``""`` and every caller keeps the ephemeral default it has always used,
 so nothing changes implicitly. Once ``NPA_MODEL_CACHE_PVC`` (Kubernetes),
 ``NPA_MODEL_CACHE_HOST_PATH`` (VM/Docker), or an explicit
-``NPA_MODEL_CACHE_DIR`` is set, every runtime redirects *all* of its weight
-caches into that one tree and the second run of an image is a cache hit.
+``NPA_MODEL_CACHE_DIR`` is set, every runtime that can reach that storage
+redirects *all* of its weight caches into one tree and the second run of an image
+is a cache hit.
+
+Which runtime is asking matters, and callers must say. The variables name storage
+in three different worlds -- a claim exists only inside a cluster, a host path
+only on the machine holding it -- so a runtime that cannot mount the thing the
+operator configured must not export the environment either. Exporting
+``HF_HOME=/opt/npa-model-cache/huggingface`` at a runtime with nothing mounted
+there does not produce a slow run, it produces a broken one: ``/opt`` is
+root-owned in every workbench image and they all run unprivileged, so the first
+``mkdir`` fails. That is how one operator exporting ``NPA_MODEL_CACHE_PVC`` for
+their Kubernetes workflows would have broken their working Serverless Jobs. Hence
+:data:`RUNTIME_KUBERNETES`, :data:`RUNTIME_DOCKER`, and
+:data:`RUNTIME_PREMOUNTED`, and no default for the ``runtime`` argument.
 
 Object storage is intentionally not an option here. The Hugging Face hub cache is
 a blobs/snapshots tree held together by symlinks, which S3-backed FUSE mounts do
@@ -58,6 +71,26 @@ DEFAULT_MODEL_CACHE_MOUNT = "/opt/npa-model-cache"
 MODEL_CACHE_VOLUME_NAME = "npa-model-cache"
 #: SkyPilot names the application container in the pods it provisions.
 DEFAULT_POD_CONTAINER_NAME = "ray-node"
+
+#: A caller that provisions Kubernetes pods: it can mount a claim, and it can mount
+#: a node directory (node-local rather than durable, and refused under a
+#: ``restricted`` PodSecurity policy -- the operator's call, not ours).
+RUNTIME_KUBERNETES = "kubernetes"
+#: A caller that runs ``docker`` on a host: it can bind-mount a host directory.
+RUNTIME_DOCKER = "docker"
+#: A caller that mounts nothing, and so can only use a cache that already exists at
+#: a path someone else mounted. Workbench Serverless Jobs (no volume concept) and
+#: in-container code reading its own environment are both this.
+RUNTIME_PREMOUNTED = "premounted"
+
+#: Which configured signal each runtime is allowed to act on. ``NPA_MODEL_CACHE_DIR``
+#: is absent because every runtime honors it: it is the operator asserting the path
+#: is already there, which is a claim only they can make.
+_RUNTIME_BACKING: dict[str, tuple[str, ...]] = {
+    RUNTIME_KUBERNETES: (MODEL_CACHE_PVC_ENV, MODEL_CACHE_HOST_PATH_ENV),
+    RUNTIME_DOCKER: (MODEL_CACHE_HOST_PATH_ENV,),
+    RUNTIME_PREMOUNTED: (),
+}
 
 _DNS_SUBDOMAIN_RE = re.compile(r"^[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?$")
 
@@ -164,22 +197,37 @@ def model_cache_host_path(environ: Mapping[str, str] | None = None) -> str:
     )
 
 
-def resolve_model_cache_root(environ: Mapping[str, str] | None = None) -> str:
-    """Return the in-container cache root, or ``""`` when none is configured.
+def resolve_model_cache_root(
+    environ: Mapping[str, str] | None = None, *, runtime: str
+) -> str:
+    """Return the cache root ``runtime`` can use, or ``""`` when it has none.
 
-    An empty result is the "no durable storage was supplied" answer, and callers
-    must treat it as "keep your existing ephemeral default". It is never a path,
-    because guessing one would put multi-gigabyte downloads somewhere the operator
-    did not agree to and still lose them at the end of the run.
+    An empty result is the "no durable storage this caller can reach" answer, and
+    callers must treat it as "keep your existing ephemeral default". It is never a
+    path, because guessing one would put multi-gigabyte downloads somewhere the
+    operator did not agree to and still lose them at the end of the run.
+
+    ``runtime`` is required, and answers "what can you actually mount". A caller
+    that mounts nothing (:data:`RUNTIME_PREMOUNTED`) sees only an explicit
+    ``NPA_MODEL_CACHE_DIR``, so a claim configured for Kubernetes cannot send it to
+    a path it has no storage for.
     """
 
+    backing = _RUNTIME_BACKING.get(runtime)
+    if backing is None:
+        raise ModelCacheError(
+            f"unknown model cache runtime {runtime!r}; expected one of "
+            f"{sorted(_RUNTIME_BACKING)}"
+        )
     source = _source(environ)
     explicit = _require_absolute(
         str(source.get(MODEL_CACHE_DIR_ENV, "") or ""), name=MODEL_CACHE_DIR_ENV
     )
     if explicit:
         return explicit
-    if model_cache_pvc(source) or model_cache_host_path(source):
+    if MODEL_CACHE_PVC_ENV in backing and model_cache_pvc(source):
+        return DEFAULT_MODEL_CACHE_MOUNT
+    if MODEL_CACHE_HOST_PATH_ENV in backing and model_cache_host_path(source):
         return DEFAULT_MODEL_CACHE_MOUNT
     return ""
 
@@ -215,12 +263,18 @@ def model_cache_dirs(root: str) -> tuple[str, ...]:
     )
 
 
-def render_model_cache_shell(root: str) -> str:
-    """Return shell that materializes the cache tree and reports its durability.
+def render_model_cache_shell(root: str, *, mounted: bool) -> str:
+    """Return shell that materializes the cache tree and reports what it is.
 
     The log line matters: a re-download that should have been a cache hit is
     otherwise invisible, because "downloading 40 GB again" looks exactly like
     "downloading 40 GB the first time" in a stage log.
+
+    ``mounted`` says whether this caller attached the volume itself. It must not
+    claim persistence it cannot vouch for: with an explicit
+    ``NPA_MODEL_CACHE_DIR`` the operator asserted the path is already a durable
+    mount, and if they were wrong the honest log is the one that says who mounted
+    what rather than the one that promises the weights survive.
     """
 
     dirs = model_cache_dirs(root)
@@ -229,10 +283,12 @@ def render_model_cache_shell(root: str) -> str:
     import shlex
 
     quoted = " ".join(shlex.quote(path) for path in dirs)
-    return (
-        f"mkdir -p {quoted}\n"
-        f"echo 'npa model cache: {root} (weights persist across runs)' >&2\n"
+    note = (
+        "mounted here, weights persist across runs"
+        if mounted
+        else "not mounted by npa; persists only if this path already does"
     )
+    return f"mkdir -p {quoted}\necho 'npa model cache: {root} ({note})' >&2\n"
 
 
 def pod_config_with_model_cache(
@@ -330,7 +386,8 @@ def docker_model_cache_volumes(
         name=MODEL_CACHE_HOST_PATH_ENV,
     )
     mount_root = _require_absolute(
-        str(root or "") or resolve_model_cache_root(source), name=MODEL_CACHE_DIR_ENV
+        str(root or "") or resolve_model_cache_root(source, runtime=RUNTIME_DOCKER),
+        name=MODEL_CACHE_DIR_ENV,
     )
     if not host or not mount_root:
         return ()
@@ -346,6 +403,9 @@ __all__ = [
     "MODEL_CACHE_LAYOUT",
     "MODEL_CACHE_PVC_ENV",
     "MODEL_CACHE_VOLUME_NAME",
+    "RUNTIME_DOCKER",
+    "RUNTIME_KUBERNETES",
+    "RUNTIME_PREMOUNTED",
     "ModelCacheError",
     "docker_model_cache_volumes",
     "model_cache_dirs",

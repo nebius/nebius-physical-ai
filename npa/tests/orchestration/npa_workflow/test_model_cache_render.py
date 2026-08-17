@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -26,9 +27,60 @@ OPTIONS = SkypilotRenderOptions(
     registry="registry.example", materialize_registry_secrets=False
 )
 
+# Every shipped spec targets Kubernetes, so the other branch needs its own spec.
+VM_CLOUD_SPEC = textwrap.dedent(
+    """
+    apiVersion: npa.workflow/v0.0.1
+    kind: Workflow
+
+    metadata:
+      name: vm-cloud-demo
+
+    config:
+      bucket: example-bucket
+      prefix: "vm/{{run.id}}"
+      images_uri: "s3://{{config.bucket}}/{{config.prefix}}/images/"
+      captions_uri: "s3://{{config.bucket}}/{{config.prefix}}/captions/"
+      caption_model: model-a
+      max_images: "4"
+      max_tokens: "64"
+
+    resources:
+      vm:
+        cloud: aws
+        cpus: 4
+        memory: 16Gi
+
+    initial: caption
+
+    states:
+      caption:
+        description: One captioning stage on a virtual machine.
+        toolRef: workbench.token_factory.caption
+        resources: vm
+        params:
+          input-path: "{{config.images_uri}}"
+          output-path: "{{config.captions_uri}}"
+          model: "{{config.caption_model}}"
+          max-images: "{{config.max_images}}"
+          max-tokens: "{{config.max_tokens}}"
+        terminal: true
+    """
+)
+
 
 def _last_task(name: str) -> dict:
     spec = load_spec(NPA_SPECS / name)
+    rendered = render_skypilot_yaml(
+        spec, build_plan(spec, run_id="cache"), run_id="cache", options=OPTIONS
+    )
+    return [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
+
+
+def _last_task_from_text(text: str, tmp_path: Path) -> dict:
+    path = tmp_path / "spec.yaml"
+    path.write_text(text, encoding="utf-8")
+    spec = load_spec(path)
     rendered = render_skypilot_yaml(
         spec, build_plan(spec, run_id="cache"), run_id="cache", options=OPTIONS
     )
@@ -122,3 +174,44 @@ def test_an_explicit_root_without_backing_storage_sets_env_but_mounts_nothing(
     assert task["envs"]["HF_HOME"] == "/mnt/shared/weights/huggingface"
     volumes = task["config"]["kubernetes"]["pod_config"]["spec"]["volumes"]
     assert [item["name"] for item in volumes] == ["cosmos2-model-cache"]
+    # ...and it must not claim the weights persist, because it did not mount the
+    # thing that would make that true.
+    assert "weights persist across runs" not in task["run"]
+    assert "not mounted by npa" in task["run"]
+
+
+def test_a_claim_does_not_follow_a_stage_onto_a_cloud_with_no_cluster(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A PVC is mountable only where there is a cluster to mount it in.
+
+    On any other cloud SkyPilot hands the stage a fresh VM. Exporting the cache
+    family anyway would point HF_HOME at `/opt/npa-model-cache` with nothing there,
+    and `/opt` is root-owned in the workbench images while they run unprivileged --
+    so the stage would fail where it used to work.
+    """
+
+    monkeypatch.setenv(MODEL_CACHE_PVC_ENV, "npa-model-cache")
+    # This stage pins no workbench image, so the renderer wants a source location
+    # for the npa package: irrelevant to the cache, required to render.
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/prefix/npa")
+
+    task = _last_task_from_text(VM_CLOUD_SPEC, tmp_path)
+
+    assert task["resources"]["cloud"] == "aws"
+    assert "NPA_MODEL_CACHE_DIR" not in task["envs"]
+    assert "HF_HOME" not in task["envs"]
+    assert "npa model cache" not in task["run"]
+
+
+def test_a_vm_stage_still_honors_a_root_the_operator_says_is_mounted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The escape hatch has to keep working off Kubernetes: a SkyPilot VM stage can
+    # have a data disk mounted by the cluster's own setup.
+    monkeypatch.setenv("NPA_MODEL_CACHE_DIR", "/mnt/data/weights")
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/prefix/npa")
+
+    task = _last_task_from_text(VM_CLOUD_SPEC, tmp_path)
+
+    assert task["envs"]["HF_HOME"] == "/mnt/data/weights/huggingface"

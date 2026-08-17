@@ -48,9 +48,13 @@ def _resolve_cache_dir(
     explicit = str(cache_dir or "").strip()
     if explicit and explicit != ".":
         return cache_dir  # type: ignore[return-value]
-    from npa.workbench.model_cache import model_cache_env, resolve_model_cache_root
+    from npa.workbench.model_cache import (
+        RUNTIME_PREMOUNTED,
+        model_cache_env,
+        resolve_model_cache_root,
+    )
 
-    durable = model_cache_env(resolve_model_cache_root(env))
+    durable = model_cache_env(resolve_model_cache_root(env, runtime=RUNTIME_PREMOUNTED))
     return (
         env.get(DEFAULT_CACHE_ENV, "")
         or durable.get(DEFAULT_CACHE_ENV, "")

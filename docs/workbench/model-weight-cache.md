@@ -73,6 +73,34 @@ above. Use it when the durable filesystem is already mounted by something else (
 shared NFS mount, a node-local data disk mounted by a DaemonSet). It sets the
 environment only — supplying the volume is then yours.
 
+### Which variable reaches which runtime
+
+The three variables name storage in three different worlds, so each runtime acts
+only on the one it can actually mount. This matters because exporting the cache
+environment without the storage behind it is *worse* than exporting nothing:
+`/opt` is root-owned in every workbench image and they all run unprivileged, so the
+first `mkdir` fails and the stage dies where it used to work.
+
+| Runtime | `NPA_MODEL_CACHE_DIR` | `NPA_MODEL_CACHE_PVC` | `NPA_MODEL_CACHE_HOST_PATH` |
+| --- | --- | --- | --- |
+| SkyPilot stage on Kubernetes | yes | yes | yes (node-local; see below) |
+| SkyPilot stage on any other cloud | yes | ignored | ignored |
+| sim2real sibling GPU Job | yes | yes | yes |
+| `npa deploy` container on a VM | yes | ignored | yes |
+| Workbench Serverless Job | yes | ignored | ignored |
+
+So an operator can export `NPA_MODEL_CACHE_PVC` for their Kubernetes workflows
+without changing anything about their VM deploys or Serverless Jobs, which have no
+way to reach a claim. Serverless Jobs mount nothing at all, so `NPA_MODEL_CACHE_DIR`
+is the only way to give them a durable cache — and only if the path is already
+mounted in that runtime.
+
+`NPA_MODEL_CACHE_HOST_PATH` on Kubernetes produces a `hostPath` volume on the
+*cluster nodes*, which is node-local rather than shared: a stage that lands on
+another node sees an empty cache, and a namespace with `restricted` PodSecurity
+admission rejects the pod outright. Prefer a claim, and reach for the host path only
+on a single-node cluster you control.
+
 **Object storage is not an option.** The Hugging Face hub cache is a
 `blobs/`+`snapshots/` tree held together by symlinks, which S3-backed FUSE mounts do
 not implement. A bucket mount would corrupt exactly the cache it was meant to
@@ -112,10 +140,13 @@ narrower names directly and a single unset name is enough to leak a download.
 Each stage logs the root it resolved before it downloads anything:
 
 ```
-npa model cache: /opt/npa-model-cache (weights persist across runs)
+npa model cache: /opt/npa-model-cache (mounted here, weights persist across runs)
 ```
 
-Absence of that line means the stage is on ephemeral storage. The line matters
+Absence of that line means the stage is on ephemeral storage. A stage that resolved
+its root from `NPA_MODEL_CACHE_DIR` says `not mounted by npa; persists only if this
+path already does` instead, because NPA attached nothing and cannot vouch for what
+is behind the path. The line matters
 because a re-download that should have been a cache hit is otherwise invisible:
 "downloading 40 GB again" looks exactly like "downloading 40 GB the first time" in a
 stage log.

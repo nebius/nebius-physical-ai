@@ -48,8 +48,11 @@ def _runner(returncode: int = 0):
 def test_cosmos3_cache_dir_falls_back_to_the_durable_model_cache() -> None:
     from pathlib import Path as _Path
 
+    # This runs inside the stage container, where the renderer has already exported
+    # the resolved root. The claim name never gets that far, and acting on it here
+    # would name a path this process cannot mount.
     cfg = Cosmos3AccessConfig.from_env(
-        environ={"NPA_MODEL_CACHE_PVC": "npa-model-cache"}
+        environ={"NPA_MODEL_CACHE_DIR": "/opt/npa-model-cache"}
     )
 
     assert cfg.resolved_cache_dir == _Path("/opt/npa-model-cache/cosmos3")

@@ -73,9 +73,13 @@ def cosmos_reason_runtime_env() -> dict[str, str]:
     exactly as before.
     """
 
-    from npa.workbench.model_cache import model_cache_env, resolve_model_cache_root
+    from npa.workbench.model_cache import (
+        RUNTIME_PREMOUNTED,
+        model_cache_env,
+        resolve_model_cache_root,
+    )
 
-    durable = model_cache_env(resolve_model_cache_root())
+    durable = model_cache_env(resolve_model_cache_root(runtime=RUNTIME_PREMOUNTED))
 
     def resolved(name: str, fallback: str) -> str:
         return os.environ.get(name) or durable.get(name) or fallback

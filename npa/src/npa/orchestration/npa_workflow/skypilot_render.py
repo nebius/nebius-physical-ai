@@ -15,6 +15,8 @@ from npa.orchestration.npa_workflow.interpreter import ExecutionPlan, PlanStep  
 from npa.orchestration.npa_workflow.scheduler import build_scheduler_task
 from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec
 from npa.workbench.model_cache import (
+    RUNTIME_KUBERNETES,
+    RUNTIME_PREMOUNTED,
     model_cache_env,
     model_cache_host_path,
     model_cache_pvc,
@@ -1734,7 +1736,20 @@ def build_skypilot_task_doc(
     # Weights this stage has to download (the images bake none) belong in the
     # operator's durable cache when one exists, so the next run of the same image
     # is a cache hit instead of another multi-gigabyte pull onto a paid GPU.
-    cache_root = resolve_model_cache_root()
+    #
+    # A claim is only mountable where there is a cluster to mount it in. On any
+    # other cloud SkyPilot hands us a fresh VM, so only an explicit
+    # NPA_MODEL_CACHE_DIR -- the operator saying the path is already there --
+    # can be honored, and the env must not name a path nothing backs.
+    cache_on_kubernetes = (
+        str(resources.get("cloud") or "").strip().lower() in {"kubernetes", "k8s"}
+    )
+    cache_root = resolve_model_cache_root(
+        runtime=RUNTIME_KUBERNETES if cache_on_kubernetes else RUNTIME_PREMOUNTED
+    )
+    cache_claim = model_cache_pvc() if cache_on_kubernetes else ""
+    cache_host_path = model_cache_host_path() if cache_on_kubernetes else ""
+    cache_mounted = bool(cache_root and (cache_claim or cache_host_path))
     envs.update(model_cache_env(cache_root))
 
     doc: dict[str, Any] = {
@@ -1743,7 +1758,7 @@ def build_skypilot_task_doc(
         "envs": envs,
         "run": render_task_run_script(
             command,
-            preamble=render_model_cache_shell(cache_root)
+            preamble=render_model_cache_shell(cache_root, mounted=cache_mounted)
             + render_run_preamble_for_tool(
                 str(scheduler_task.get("tool_ref") or ""), config=spec.config
             ),
@@ -1777,14 +1792,7 @@ def build_skypilot_task_doc(
     # only survives the run if it points at a volume that outlives the pod. Mount
     # the operator's claim; a profile that already mounts something at the cache
     # root keeps its own volume (pod_config_with_model_cache leaves it alone).
-    cache_claim = model_cache_pvc()
-    cache_host_path = model_cache_host_path()
-    if (
-        cache_root
-        and (cache_claim or cache_host_path)
-        and str(resources.get("cloud") or "").strip().lower()
-        in {"kubernetes", "k8s"}
-    ):
+    if cache_mounted:
         task_config.setdefault("kubernetes", {})["pod_config"] = (
             pod_config_with_model_cache(
                 task_config.get("kubernetes", {}).get("pod_config"),
@@ -1805,7 +1813,7 @@ def build_skypilot_task_doc(
         # downloads its model here so the eval's readiness window is not spent on
         # it), and SkyPilot runs it in a different shell than run -- so the cache
         # tree has to exist in both.
-        doc["setup"] = render_model_cache_shell(cache_root) + setup
+        doc["setup"] = render_model_cache_shell(cache_root, mounted=cache_mounted) + setup
     # When no workbench image is pinned, point setup at an existing S3 copy of
     # the npa package (SkyPilot local file_mounts create new buckets and fail
     # on Nebius). Operators set NPA_SRC_S3_URI=s3://bucket/prefix/npa, or persist
