@@ -1,11 +1,20 @@
 # Nebius Physical AI - developer workflow shortcuts.
 #
-# Activate your virtualenv first (see docs/quickstart.md), or override PYTHON:
+# Works out of the box with the npa/.venv that CONTRIBUTING prescribes, activated
+# or not. Override the interpreter for a venv kept elsewhere:
 #   make test PYTHON=~/.venvs/npa/bin/python
 #
 # Targets run pytest from the npa/ package where the pytest config lives.
 
-PYTHON ?= python
+# Default to the repo venv, then to python3. Defaulting to a bare `python` meant
+# every target failed with "python: not found" in the prescribed setup, because
+# that venv is usually not activated and many systems ship only `python3`.
+# The path must be absolute: recipes cd into npa/ before running $(PYTHON).
+DEFAULT_PYTHON := $(shell \
+	if [ -x "$(CURDIR)/npa/.venv/bin/python" ]; then echo "$(CURDIR)/npa/.venv/bin/python"; \
+	elif command -v python3 >/dev/null 2>&1; then echo python3; \
+	else echo python; fi)
+PYTHON ?= $(DEFAULT_PYTHON)
 PYTEST := cd npa && $(PYTHON) -m pytest
 
 # Live/GPU/e2e markers. Deselecting by marker is more robust than ignoring a
@@ -38,7 +47,8 @@ help:
 	@echo "  docs             Regenerate the CLI reference under docs/cli/"
 	@echo "  docs-check       Fail if docs/cli/ has drifted from 'npa --help'"
 	@echo "  check            Everything the PR gates block on: lint, docs-check, test"
-	@echo "Override the interpreter with: make test PYTHON=/path/to/venv/bin/python"
+	@echo "Interpreter: $(PYTHON)"
+	@echo "Override it with: make test PYTHON=/path/to/venv/bin/python"
 
 install-dev:
 	$(PYTHON) -m pip install -e "npa[dev]"

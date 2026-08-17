@@ -58,6 +58,10 @@ dist/
 build/
 .venv/
 venv/
+# Also match a venv symlinked in from elsewhere: a trailing slash matches only
+# directories, so `npa/.venv -> /path/to/venv` would otherwise be committable.
+.venv
+venv
 .coverage
 htmlcov/
 .pytest_cache/
