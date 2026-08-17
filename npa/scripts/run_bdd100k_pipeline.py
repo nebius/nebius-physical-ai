@@ -313,6 +313,9 @@ def _mock_stage_env() -> dict[str, str]:
     ``<venv>/bin/python -m pytest`` does. Put the running interpreter's scripts
     directory first so the stage runs the same ``npa`` that imported this module.
 
+    Handing this to ``subprocess`` is sufficient: it resolves a bare program name
+    against the ``PATH`` in the mapping it is given, not the parent's.
+
     ``sysconfig`` is the lookup that stays correct for a venv whose ``python`` is a
     symlink to the system interpreter: resolving ``sys.executable`` there would
     escape the venv and land in ``/usr/bin``.
