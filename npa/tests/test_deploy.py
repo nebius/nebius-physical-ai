@@ -7,6 +7,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+import yaml
 
 from npa.clients.config import SSHConfig
 from npa.clients.ssh import SSHClient
@@ -211,7 +212,7 @@ def test_agent_cloud_init_renders_without_s3_secrets(tmp_path: Path) -> None:
         f'''locals {{
   rendered = templatefile({json.dumps(str(template))}, {{
     ssh_user = "ubuntu"
-    ssh_public_key = "ssh-ed25519 fixture"
+    ssh_public_key = "ssh-ed25519 AAAA operator: recovery # fixture"
     workbench_type = "agent"
     server_port = 8088
     lerobot_version = "0.6.0"
@@ -242,6 +243,18 @@ output "rendered" {{
     assert "NPA_PR218_ACCESS_SENTINEL_DO_NOT_PERSIST" not in rendered.stdout
     assert "NPA_PR218_SECRET_SENTINEL_DO_NOT_PERSIST" not in rendered.stdout
     assert "write_files:" not in rendered.stdout
+
+    raw = subprocess.run(
+        [terraform, "output", "-raw", "rendered"],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout
+    cloud_init = yaml.safe_load(raw)
+    assert cloud_init["users"][0]["ssh_authorized_keys"] == [
+        "ssh-ed25519 AAAA operator: recovery # fixture"
+    ]
 
 
 def test_terraform_outputs_use_compute_and_cpu_names_with_legacy_aliases() -> None:

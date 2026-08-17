@@ -1444,10 +1444,15 @@ def _existing_relay_contract(
         for item in containers
         if isinstance(item, dict) and item.get("name") == "leisaac"
     )
+    environment_items = [
+        item
+        for item in (main_container.get("env") or [])
+        if isinstance(item, dict)
+    ]
     environment = {
         str(item.get("name") or ""): str(item.get("value") or "")
-        for item in (main_container.get("env") or [])
-        if isinstance(item, dict) and "value" in item
+        for item in environment_items
+        if "value" in item
     }
     if environment.get("NPA_LEISAAC_RUN_ID") != run_id:
         raise LeIsaacConfigError("existing LeIsaac Deployment run identity changed")
@@ -1455,8 +1460,27 @@ def _existing_relay_contract(
         raise LeIsaacConfigError(
             "existing LeIsaac Deployment does not retain its exact run-scoped EULA values"
         )
-    nonce = environment.get("NPA_LEISAAC_SESSION_NONCE", "")
-    if not re.fullmatch(r"[a-f0-9]{64}", nonce):
+    nonce_items = [
+        item
+        for item in environment_items
+        if item.get("name") == "NPA_LEISAAC_SESSION_NONCE"
+    ]
+    if len(nonce_items) != 1:
+        raise LeIsaacConfigError(
+            "existing LeIsaac Deployment has no valid relay credential"
+        )
+    nonce_item = nonce_items[0]
+    nonce = str(nonce_item.get("value") or "")
+    value_from = nonce_item.get("valueFrom") or {}
+    nonce_reference = (
+        value_from.get("secretKeyRef") or {} if isinstance(value_from, dict) else {}
+    )
+    valid_literal = bool(re.fullmatch(r"[a-f0-9]{64}", nonce))
+    valid_reference = nonce_reference == {
+        "name": f"{name}-relay-client",
+        "key": "NPA_LEISAAC_SESSION_NONCE",
+    }
+    if not (valid_literal or valid_reference):
         raise LeIsaacConfigError(
             "existing LeIsaac Deployment has no valid relay credential"
         )
@@ -2028,15 +2052,49 @@ def reconnect_agent_cmd(
         )
         _apply(context, namespace, [relay_secret])
         lifecycle_lease.assert_healthy()
+        # Reference the rotated Secret instead of putting the nonce in argv,
+        # shell history, or the operator host's process table. The non-secret
+        # annotation always changes so a second reconnect restarts the pod even
+        # when the valueFrom contract is already installed.
+        rotation_patch = {
+            "spec": {
+                "template": {
+                    "metadata": {
+                        "annotations": {
+                            "npa.nebius.com/relay-rotation": str(time.time_ns())
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "name": "leisaac",
+                                "env": [
+                                    {
+                                        "name": "NPA_LEISAAC_SESSION_NONCE",
+                                        "value": None,
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "name": f"{name}-relay-client",
+                                                "key": "NPA_LEISAAC_SESSION_NONCE",
+                                            }
+                                        },
+                                    }
+                                ],
+                            }
+                        ]
+                    },
+                }
+            }
+        }
         rotated = _kubectl(
             context,
             namespace,
             [
-                "set",
-                "env",
+                "patch",
                 f"deployment/{name}",
-                "--containers=leisaac",
-                f"NPA_LEISAAC_SESSION_NONCE={nonce}",
+                "--type=strategic",
+                "--patch",
+                json.dumps(rotation_patch, separators=(",", ":")),
             ],
         )
         if rotated.returncode:

@@ -1316,6 +1316,88 @@ def test_existing_relay_contract_refuses_public_service(monkeypatch) -> None:
         )
 
 
+def test_existing_relay_contract_accepts_secret_referenced_nonce(monkeypatch) -> None:
+    labels = {
+        "app.kubernetes.io/name": "leisaac",
+        "app.kubernetes.io/instance": "leisaac-live-relay",
+        "app.kubernetes.io/managed-by": "npa",
+    }
+    service = {
+        "metadata": {
+            "name": "leisaac-live-relay-relay",
+            "namespace": "leisaac",
+            "labels": labels,
+            "annotations": {
+                "npa.nebius.com/agent-project": "rtxpro",
+                "npa.nebius.com/agent-name": "agent",
+                "npa.nebius.com/source-ranges": "8.8.8.8/32",
+            },
+        },
+        "spec": {"type": "ClusterIP", "clusterIP": "10.96.34.22"},
+    }
+    deployment = {
+        "metadata": {
+            "name": "leisaac-live-relay",
+            "namespace": "leisaac",
+            "labels": labels,
+        },
+        "spec": {
+            "replicas": 1,
+            "template": {
+                "spec": {
+                    "containers": [
+                        {
+                            "name": "leisaac",
+                            "env": [
+                                {"name": "NPA_LEISAAC_RUN_ID", "value": "live-relay"},
+                                {"name": "OMNI_KIT_ACCEPT_EULA", "value": "YES"},
+                                {"name": "ISAACSIM_ACCEPT_EULA", "value": "YES"},
+                                {
+                                    "name": "NPA_LEISAAC_SESSION_NONCE",
+                                    "valueFrom": {
+                                        "secretKeyRef": {
+                                            "name": "leisaac-live-relay-relay-client",
+                                            "key": "NPA_LEISAAC_SESSION_NONCE",
+                                        }
+                                    },
+                                },
+                            ],
+                        },
+                        {"name": "agent-relay-client"},
+                        {"name": "turn"},
+                    ],
+                    "volumes": [
+                        {
+                            "name": "relay-client",
+                            "secret": {
+                                "secretName": "leisaac-live-relay-relay-client"
+                            },
+                        }
+                    ],
+                }
+            },
+        },
+    }
+    responses = iter((service, deployment))
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._kubectl",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0, stdout=json.dumps(next(responses)), stderr=""
+        ),
+    )
+
+    media_server, source_ranges = _existing_relay_contract(
+        "cluster",
+        "leisaac",
+        run_id="live-relay",
+        agent_project="rtxpro",
+        agent_name="agent",
+    )
+
+    assert media_server == "10.96.34.22"
+    assert source_ranges == ["8.8.8.8/32"]
+
+
 def test_list_tasks_json_is_machine_readable_and_parallel_launch_is_rejected(
     monkeypatch,
 ) -> None:
@@ -1584,14 +1666,27 @@ def test_reconnect_agent_rotates_only_existing_relay_contract(monkeypatch) -> No
             "cluster",
             "leisaac",
             [
-                "set",
-                "env",
+                "patch",
                 "deployment/leisaac-live-relay",
-                "--containers=leisaac",
-                "NPA_LEISAAC_SESSION_NONCE=" + "a" * 64,
+                "--type=strategic",
+                "--patch",
+                kubectl_calls[0][2][-1],
             ],
         )
     ]
+    rotation_patch = json.loads(kubectl_calls[0][2][-1])
+    nonce_env = rotation_patch["spec"]["template"]["spec"]["containers"][0]["env"][0]
+    assert nonce_env == {
+        "name": "NPA_LEISAAC_SESSION_NONCE",
+        "value": None,
+        "valueFrom": {
+            "secretKeyRef": {
+                "name": "leisaac-live-relay-relay-client",
+                "key": "NPA_LEISAAC_SESSION_NONCE",
+            }
+        },
+    }
+    assert "a" * 64 not in kubectl_calls[0][2][-1]
     assert {item["protocol"] for item in ingress} == {"UDP", "TCP"}
     assert installs[0][0] == (ssh,)
     assert installs[0][1]["manifest_uri"] == uri

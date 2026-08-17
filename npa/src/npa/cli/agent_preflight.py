@@ -8,12 +8,15 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 import os
 import shutil
+import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import typer
+import yaml
 
 if TYPE_CHECKING:  # pragma: no cover - type-checker visibility only
     from npa.workflows.sim2real_health import CheckResult
@@ -25,6 +28,74 @@ _OPENSSH_PUBLIC_KEY_PREFIXES = (
     "sk-ssh-",
     "sk-ecdsa-",
 )
+_AGENT_CLOUD_INIT_BRANCH = '%{ if workbench_type != "agent" ~}'
+
+
+def _openssh_public_key_line(path: Path) -> str:
+    """Read and normalize exactly one bounded OpenSSH public-key record."""
+
+    raw = path.read_text(encoding="utf-8")
+    if len(raw.encode("utf-8")) > 16 * 1024:
+        raise ValueError("SSH public key exceeds 16 KiB")
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    if len(lines) != 1:
+        raise ValueError("SSH public key must contain exactly one non-empty line")
+    fields = lines[0].split()
+    if len(fields) < 2 or not fields[0].startswith(_OPENSSH_PUBLIC_KEY_PREFIXES):
+        raise ValueError("SSH public key does not use a supported OpenSSH key type")
+    try:
+        decoded = base64.b64decode(fields[1], validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("SSH public key payload is not valid base64") from exc
+    if not decoded:
+        raise ValueError("SSH public key payload is empty")
+    ssh_keygen = shutil.which("ssh-keygen")
+    if not ssh_keygen:
+        raise ValueError("ssh-keygen is required to validate the OpenSSH public key")
+    inspected = subprocess.run(
+        [ssh_keygen, "-lf", str(path)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if inspected.returncode != 0:
+        raise ValueError("SSH public key is not accepted by ssh-keygen")
+    return lines[0]
+
+
+def _render_agent_cloud_init(ssh_user: str, public_key: str) -> str:
+    """Render and parse the exact Terraform-template branch used by agent VMs.
+
+    Agent VMs intentionally use only the credential-free ``users`` prefix of
+    ``cloud_init.yaml.tpl``. Rendering that prefix here makes malformed user data
+    a local preflight failure, before Terraform can call the provider.
+    """
+
+    template = (
+        Path(__file__).resolve().parents[1]
+        / "deploy"
+        / "terraform"
+        / "cloud_init.yaml.tpl"
+    ).read_text(encoding="utf-8")
+    if template.count(_AGENT_CLOUD_INIT_BRANCH) != 1:
+        raise ValueError("agent cloud-init template boundary is missing or ambiguous")
+    rendered = template.split(_AGENT_CLOUD_INIT_BRANCH, 1)[0]
+    rendered = rendered.replace("${jsonencode(ssh_user)}", json.dumps(ssh_user))
+    rendered = rendered.replace(
+        "${jsonencode(ssh_public_key)}", json.dumps(public_key)
+    )
+    if "${" in rendered or "%{" in rendered:
+        raise ValueError("agent cloud-init template contains unresolved interpolation")
+    parsed = yaml.safe_load(rendered)
+    users = parsed.get("users") if isinstance(parsed, dict) else None
+    if not isinstance(users, list) or len(users) != 1:
+        raise ValueError("agent cloud-init must contain exactly one user")
+    user = users[0]
+    keys = user.get("ssh_authorized_keys") if isinstance(user, dict) else None
+    if user.get("name") != ssh_user or keys != [public_key]:
+        raise ValueError("agent cloud-init changed the requested SSH identity")
+    return rendered
 
 
 def _is_openssh_public_key(path: Path) -> bool:
@@ -36,22 +107,10 @@ def _is_openssh_public_key(path: Path) -> bool:
     """
 
     try:
-        raw = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
+        _openssh_public_key_line(path)
+    except (OSError, UnicodeError, ValueError):
         return False
-    if len(raw.encode("utf-8")) > 16 * 1024:
-        return False
-    lines = [line.strip() for line in raw.splitlines() if line.strip()]
-    if len(lines) != 1:
-        return False
-    fields = lines[0].split()
-    if len(fields) < 2 or not fields[0].startswith(_OPENSSH_PUBLIC_KEY_PREFIXES):
-        return False
-    try:
-        decoded = base64.b64decode(fields[1], validate=True)
-    except (binascii.Error, ValueError):
-        return False
-    return bool(decoded)
+    return True
 
 
 def _terraform_binary() -> str:
@@ -118,7 +177,13 @@ def agent_hard_prereq_results(
         if str(public_path).endswith(".pub")
         else str(public_path)
     )
-    if public_path.is_file() and _is_openssh_public_key(public_path):
+    public_key = ""
+    if public_path.is_file():
+        try:
+            public_key = _openssh_public_key_line(public_path)
+        except (OSError, UnicodeError, ValueError):
+            public_key = ""
+    if public_key:
         results.append(
             CheckResult(
                 name="ssh_public_key",
@@ -142,6 +207,39 @@ def agent_hard_prereq_results(
                     "or pass --ssh-public-key-path to the public `.pub` file; never "
                     "pass a private key."
                 ),
+            )
+        )
+
+    if public_key:
+        try:
+            _render_agent_cloud_init("ubuntu", public_key)
+        except (OSError, UnicodeError, ValueError, yaml.YAMLError) as exc:
+            results.append(
+                CheckResult(
+                    name="cloud_init_yaml",
+                    status=FAIL,
+                    summary="Rendered agent cloud-init YAML failed local validation.",
+                    remedy=str(exc),
+                )
+            )
+        else:
+            results.append(
+                CheckResult(
+                    name="cloud_init_yaml",
+                    status=PASS,
+                    summary=(
+                        "Rendered agent cloud-init YAML is valid and contains exactly "
+                        "one OpenSSH public-key record."
+                    ),
+                )
+            )
+    else:
+        results.append(
+            CheckResult(
+                name="cloud_init_yaml",
+                status=FAIL,
+                summary="Agent cloud-init was not rendered with an invalid public key.",
+                remedy="Pass exactly one valid OpenSSH public-key line in the `.pub` file.",
             )
         )
 

@@ -331,6 +331,7 @@ log-file=stdout
         },
         "type": "Opaque",
         "stringData": {
+            "NPA_LEISAAC_SESSION_NONCE": session_nonce,
             "reverse_client.py": client_source,
             "config.json": json.dumps(
                 {

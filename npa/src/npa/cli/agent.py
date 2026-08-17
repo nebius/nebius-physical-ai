@@ -54,6 +54,7 @@ from npa.cli.agent_preflight import (
     _agent_nebius_auth_result,
     _agent_storage_result,
     _agent_token_factory_result,
+    _render_agent_cloud_init,  # noqa: F401 - compatibility re-export for tests
     _render_agent_checks,
 )
 from npa.cli.agent_records import (  # noqa: F401 - compatibility re-exports
