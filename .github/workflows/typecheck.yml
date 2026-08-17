@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
   mypy:
@@ -27,3 +28,41 @@ jobs:
       - name: Mypy (advisory)
         continue-on-error: true
         run: cd npa && mypy src/npa --ignore-missing-imports --no-error-summary
+
+  # Temporary operator bridge for a private-GHCR live validation. The runner is
+  # registered ephemerally and this job is unreachable unless all three one-off
+  # repository variables are installed. It deliberately uses the existing checkout:
+  # no second branch, clone, worktree, credential artifact, or persistent secret.
+  private-ghcr-handoff:
+    if: ${{ vars.NPA_GPU_VALIDATION_ENABLED == 'true' }}
+    runs-on:
+      - self-hosted
+      - linux
+      - ${{ vars.NPA_GPU_VALIDATION_RUNNER_LABEL }}
+    steps:
+      - name: Hand off job-scoped GHCR authentication to the exact local checkout
+        env:
+          CHECKOUT: ${{ vars.NPA_GPU_VALIDATION_CHECKOUT }}
+          HANDOFF: ${{ vars.NPA_GPU_VALIDATION_HANDOFF }}
+          EXPECTED_SHA: ${{ github.sha }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "${CHECKOUT#/}" != "$CHECKOUT"
+          test "${HANDOFF#/}" != "$HANDOFF"
+          test -d "$CHECKOUT/.git"
+          test "$(git -C "$CHECKOUT" rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git -C "$CHECKOUT" status --short)"
+          test -d "$HANDOFF"
+          test "$(stat -c '%a' "$HANDOFF")" = 700
+          cleanup() {
+            rm -f "$HANDOFF/config.json" "$HANDOFF/ready" "$HANDOFF/done"
+          }
+          trap cleanup EXIT INT TERM
+          printf '%s' "$GHCR_TOKEN" \
+            | docker --config "$HANDOFF" login ghcr.io -u "${{ github.actor }}" --password-stdin
+          chmod 600 "$HANDOFF/config.json"
+          touch "$HANDOFF/ready"
+          while [ ! -f "$HANDOFF/done" ]; do
+            read -r -t 30 _ || true
+          done
