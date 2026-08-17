@@ -120,8 +120,8 @@ def _env_truthy(value: str) -> bool:
 def _is_local_checkpoint(checkpoint: str) -> bool:
     """True when the checkpoint is a path/URI the operator already staged.
 
-    Named checkpoints (``Cosmos3-Nano``) resolve to gated Hugging Face repos, so
-    they need a token; a local directory or ``s3://`` URI does not.
+    Local paths and ``s3://`` URIs never require a Hugging Face request. Public
+    named checkpoints such as ``Cosmos3-Nano`` are anonymously downloadable.
     """
 
     value = str(checkpoint or "").strip()
@@ -136,18 +136,16 @@ def require_model_access(
     guardrails: bool = True,
     environ: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
-    """Verify the operator supplied credentials for the gated weights.
+    """Verify access inputs only for artifacts that are actually gated.
 
-    The image ships no weights, so a run must fetch them under the operator's own
-    Hugging Face license acceptance. A run pulls from Hugging Face for more than
-    the checkpoint: with guardrails on (the default) it also fetches the gated
-    ``nvidia/Cosmos-Guardrail1``. Staging a checkpoint therefore only removes the
-    token requirement when guardrails are off as well — otherwise the preflight
-    would pass and the run would still die mid-inference fetching the guardrail
-    models, which is exactly the failure this check exists to prevent.
+    ``nvidia/Cosmos3-Nano`` is public and works anonymously. With guardrails on
+    (the default), inference also fetches gated ``nvidia/Cosmos-Guardrail1`` and
+    therefore needs a token whose owner already has repository access. A token
+    proves access; it is not an additional NPA license-acceptance mechanism.
 
-    Raises :class:`Cosmos3GenerateError` when the token is missing, or when NGC
-    access is demanded (``NPA_COSMOS3_REQUIRE_NGC=1``) without an NGC key.
+    Raises :class:`Cosmos3GenerateError` when a gated selection lacks a token,
+    or when NGC access is explicitly demanded (``NPA_COSMOS3_REQUIRE_NGC=1``)
+    without an NGC key. Public Cosmos3-Nano works anonymously.
     """
 
     env = environ if environ is not None else os.environ
@@ -157,8 +155,6 @@ def require_model_access(
     )
 
     needs: list[str] = []
-    if not _is_local_checkpoint(checkpoint):
-        needs.append(f"the {checkpoint} checkpoint")
     if guardrails:
         needs.append(f"the gated guardrail models ({GUARDRAIL_MODEL_ID})")
 
@@ -166,11 +162,11 @@ def require_model_access(
     if needs:
         if not resolve_hf_token(env):
             raise Cosmos3GenerateError(
-                "Cosmos 3 weights are not baked into this image and this run must "
+                "Cosmos 3 guardrails are not baked into this image and this run must "
                 f"download {' and '.join(needs)} from Hugging Face. Set HF_TOKEN "
-                f"(or {HF_TOKEN_ENV_OVERRIDE}) to a token that has accepted those "
-                "licenses. A staged local/s3 --checkpoint only removes this "
-                "requirement when --no-guardrails is also passed. With no token "
+                f"(or {HF_TOKEN_ENV_OVERRIDE}) to a token whose owner has access. "
+                "The public Cosmos3-Nano checkpoint itself works anonymously; "
+                "--no-guardrails removes this gated-repository requirement. With no token "
                 "set, the download is anonymous and cannot diagnose token "
                 "validity. Probe the gated file with authentication: 401 means "
                 "the supplied token is missing, invalid, or revoked; 403 means "
@@ -346,9 +342,10 @@ def _resolve_output_dir(
     output_dir: str | Path | None, environ: Mapping[str, str] | None = None
 ) -> Path:
     env = environ if environ is not None else os.environ
-    value = str(output_dir or "").strip() or str(
-        env.get(DEFAULT_OUTPUT_DIR_ENV, "") or ""
-    ).strip()
+    value = (
+        str(output_dir or "").strip()
+        or str(env.get(DEFAULT_OUTPUT_DIR_ENV, "") or "").strip()
+    )
     return Path(value or DEFAULT_OUTPUT_DIR)
 
 
@@ -415,7 +412,9 @@ def generate_plan(
     }
 
 
-def _artifact_for(sample_dir: Path, *, expected_kind: str = "") -> tuple[Path | None, str]:
+def _artifact_for(
+    sample_dir: Path, *, expected_kind: str = ""
+) -> tuple[Path | None, str]:
     """Return the generated media file in ``sample_dir`` and its kind.
 
     The framework writes the sample under ``<output_dir>/<name>/`` and copies any
@@ -446,7 +445,9 @@ def _artifact_for(sample_dir: Path, *, expected_kind: str = "") -> tuple[Path | 
 
     if not candidates:
         return None, ""
-    preferred = [c for c in candidates if c[2] == expected_kind] if expected_kind else []
+    preferred = (
+        [c for c in candidates if c[2] == expected_kind] if expected_kind else []
+    )
     size, best, kind = max(preferred or candidates, key=lambda item: item[0])
     del size
     return best, kind
@@ -474,7 +475,7 @@ def run_cosmos3_generate(
 
     Guardrails stay on unless ``no_guardrails`` is explicitly requested. Raises
     :class:`Cosmos3GenerateError` when the runtime is absent, the operator's
-    Hugging Face credentials are missing, inference fails, or no media artifact
+    required Hugging Face credentials are missing, inference fails, or no media artifact
     was produced. ``version_probe_runner`` overrides only the xet pin check's
     subprocess seam, so a test can drive that check without also mocking the
     inference call or the check itself; production leaves it ``None``.

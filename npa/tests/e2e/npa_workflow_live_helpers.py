@@ -188,10 +188,15 @@ def assume_decision_for(name: str, *, mode: str = "promote") -> str:
 
 
 def live_bucket(e2e_project: str | None) -> str:
-    storage = resolve_project_storage(e2e_project)
-    raw = storage.checkpoint_bucket or ""
+    raw = os.environ.get("NPA_E2E_S3_BUCKET", "").strip()
     if not raw:
-        pytest.fail("checkpoint_bucket is not configured for live npa.workflow tests")
+        storage = resolve_project_storage(e2e_project)
+        raw = storage.checkpoint_bucket or ""
+    if not raw:
+        pytest.fail(
+            "NPA_E2E_S3_BUCKET or checkpoint_bucket is required for live "
+            "npa.workflow tests"
+        )
     parsed = urlparse(raw if "://" in raw else f"s3://{raw}")
     bucket = parsed.netloc if parsed.scheme == "s3" else raw.split("/")[0]
     if not bucket:
@@ -889,15 +894,6 @@ def materialize_live_spec(
         text = re.sub(
             r'(synthetic_rows:\s*")[^"]*(")',
             lambda m: f"{m.group(1)}{bdd_synth}{m.group(2)}",
-            text,
-        )
-    # Accepting NVIDIA's terms for a live SONIC run is the OPERATOR's act, so the harness reads
-    # it from the environment rather than shipping an accepted spec (EVIDENCE.md §R47).
-    sonic_eula = os.environ.get("NPA_E2E_SONIC_ACCEPT_NVIDIA_EULA", "").strip()
-    if sonic_eula:
-        text = re.sub(
-            r'(sonic_accept_nvidia_eula:\s*")[^"]*(")',
-            lambda m: f"{m.group(1)}{sonic_eula}{m.group(2)}",
             text,
         )
     bdd_epochs = os.environ.get("NPA_E2E_BDD100K_EPOCHS", "").strip()

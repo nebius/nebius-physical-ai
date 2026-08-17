@@ -169,6 +169,7 @@ def _flatten_receipt_identity(
     values.setdefault("project_alias", str(receipt.get("project_alias") or ""))
     values.setdefault("project_id", str(receipt.get("project_id") or ""))
     events = [item for item in receipt.get("events") or [] if isinstance(item, Mapping)]
+    selected_instance_id = str((selectors or {}).get("instance_id") or "").strip()
     selected_cluster_id = str((selectors or {}).get("cluster_id") or "").strip()
 
     def event_matches(item: Mapping[str, Any]) -> bool:
@@ -176,6 +177,15 @@ def _flatten_receipt_identity(
             return False
         if resource and str(item.get("resource") or "") != resource:
             return False
+        if selected_instance_id:
+            event_identity = item.get("identity")
+            event_instance_id = str(
+                event_identity.get("instance_id")
+                if isinstance(event_identity, Mapping)
+                else ""
+            ).strip()
+            if event_instance_id and event_instance_id != selected_instance_id:
+                return False
         if selected_cluster_id:
             event_identity = item.get("identity")
             event_cluster_id = str(
@@ -205,7 +215,12 @@ def _flatten_receipt_identity(
                     values[key] = precheck[key]
 
     if phase == "agent" and resource:
-        item = _matching_item(values.get("agents"), key="agent_name", value=resource)
+        exact_instance_id = str((selectors or {}).get("instance_id") or "").strip()
+        item = _matching_item(
+            values.get("agents"),
+            key="instance_id" if exact_instance_id else "agent_name",
+            value=exact_instance_id or resource,
+        )
         values.update(_clean(item))
         operation = _matching_item(
             values.get("operations"), key="requested_name", value=resource

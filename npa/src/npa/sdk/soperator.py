@@ -12,7 +12,8 @@ Example::
     spec = SoperatorSpec(
         name="npa-soperator",
         region="us-central1",
-        ssh_public_keys=["ssh-ed25519 AAAA... me"],
+        # Explicitly grants root SSH access to the public login node.
+        root_login_ssh_public_key="ssh-ed25519 AAAA... operator",
         workers=[
             WorkerPoolSpec(name="cpu", platform="cpu-d3", preset="8vcpu-32gb", docker_cache=True),
             WorkerPoolSpec(name="gpu", platform="gpu-b200-sxm", preset="8gpu-160vcpu-1792gb",
@@ -25,16 +26,22 @@ Example::
 from __future__ import annotations
 
 from npa.soperator.lifecycle import (
+    DeploymentValidationFailure,
+    SoperatorDeploymentValidationError,
     apply_post_deploy_fixes,
     deploy_cluster as deploy,
     destroy_cluster as destroy,
+    plan_cluster as plan,
 )
 from npa.soperator.spec import SoperatorSpec, WorkerPoolSpec, load_spec, spec_from_mapping
 
 __all__ = [
     "deploy",
     "destroy",
+    "plan",
     "apply_post_deploy_fixes",
+    "DeploymentValidationFailure",
+    "SoperatorDeploymentValidationError",
     "SoperatorSpec",
     "WorkerPoolSpec",
     "load_spec",

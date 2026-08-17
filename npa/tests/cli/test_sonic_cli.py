@@ -388,6 +388,82 @@ def test_sonic_train_serverless_requires_project_id(mocker) -> None:
     assert "requires --project-id" in result.output
 
 
+def test_sonic_train_serverless_default_rejects_quarantined_compute_image() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "train",
+            "--runtime",
+            "serverless",
+            "--project-id",
+            "project-1",
+            "--output-path",
+            "s3://bucket/sonic/",
+            "--submit-only",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "published compatible" in result.output
+    assert "L40S/H100/H200" in result.output
+
+
+def test_sonic_train_retires_duplicate_manual_eula_alias() -> None:
+    result = runner.invoke(
+        app,
+        ["workbench", "sonic", "train", "--help"],
+        env={"COLUMNS": "240"},
+    )
+
+    assert result.exit_code == 0
+    assert "--accept-nvidia-eula" not in result.output
+
+
+def test_sonic_train_retires_ignored_serverless_image_variant() -> None:
+    help_result = runner.invoke(
+        app,
+        ["workbench", "sonic", "train", "--help"],
+        env={"COLUMNS": "240"},
+    )
+    assert help_result.exit_code == 0
+    assert "--image-variant" not in help_result.output
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "train",
+            "--runtime",
+            "serverless",
+            "--image-variant",
+            "sonic-k8s-host-mounted",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "No such option" in result.output
+
+
+def test_sonic_duplicate_manual_eula_alias_is_rejected() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "train",
+            "--runtime",
+            "serverless",
+            "--accept-nvidia-eula",
+            "no",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "No such option" in result.output
+
+
 def test_sonic_train_default_embodiment_is_unitree_g1(mocker) -> None:
     client = _mock_sonic_serverless(mocker)
 
@@ -410,6 +486,8 @@ def test_sonic_train_default_embodiment_is_unitree_g1(mocker) -> None:
             "--submit-only",
             "--job-name",
             "sonic-job",
+            "--image",
+            "registry.example/custom-sonic-compute:validated",
             "--output-format",
             "json",
         ],
@@ -452,6 +530,8 @@ def test_sonic_train_explicit_h100_has_no_availability_warning(mocker) -> None:
             "--submit-only",
             "--gpu-type",
             "h100",
+            "--image",
+            "registry.example/custom-sonic-compute:validated",
         ],
     )
 
@@ -483,6 +563,8 @@ def test_sonic_train_explicit_l40s_uses_l40s_manifest_default(mocker) -> None:
             "--submit-only",
             "--gpu-type",
             "l40s",
+            "--image",
+            "registry.example/custom-sonic-compute:validated",
         ],
     )
 

@@ -17,7 +17,9 @@ import pytest
 from typer.testing import CliRunner
 
 from npa.cli.main import app
-from npa.fleet import spec_from_mapping
+from npa.cluster.gpu_driver import GpuDriverStrategyError
+from npa.fleet import MigSpec, spec_from_mapping
+from npa.fleet.mig import MigVerificationError
 from npa.fleet.spec import (
     ClusterSpec,
     FleetSpec,
@@ -26,7 +28,12 @@ from npa.fleet.spec import (
     ProjectSpec,
     load_spec,
 )
-from npa.fleet.tfvars import patch_provider_domain, provider_domain, render_tfvars
+from npa.fleet.tfvars import (
+    MIG_RECIPE_VARIABLES,
+    patch_provider_domain,
+    provider_domain,
+    render_tfvars,
+)
 
 runner = CliRunner()
 
@@ -288,7 +295,7 @@ def test_vendored_filestore_contract_matches_official_guide() -> None:
     assert main_tf.count("mount_tag   = local.filestore.mount_tag") == 2
     assert main_tf.count("filestore_mount_tag  = local.filestore.mount_tag") == 2
     assert 'filestore_mount_tag  = "data"' in egress_tf
-    assert 'grep -Fq \\' in mount_validation
+    assert "grep -Fq \\" in mount_validation
     # kubectl 1.36 suppresses attached output and the created pod name under
     # --quiet, defeating both evidence checking and debugger-pod cleanup.
     assert "--quiet" not in mount_validation
@@ -373,9 +380,7 @@ def test_render_tfvars_gpu_defaults_managed_and_operator_is_explicit() -> None:
     assert "gpu_nodes_driverfull_image   = false" in operator
     assert "gpu_nodes_driver_preset" not in operator
 
-    cpu_only = render_tfvars(
-        ClusterSpec(name="cpu", cpu_nodes=NodePoolSpec(count=1))
-    )
+    cpu_only = render_tfvars(ClusterSpec(name="cpu", cpu_nodes=NodePoolSpec(count=1)))
     assert "gpu_nodes_driverfull_image" not in cpu_only
 
 
@@ -526,14 +531,80 @@ def test_resolve_project_id_reuses_existing_by_name(monkeypatch) -> None:
             {"metadata": {"name": "fleet1-test-a", "id": "project-found"}}
         ],
     )
+    monkeypatch.setattr(
+        lifecycle,
+        "_get_project",
+        lambda *a, **k: {
+            "metadata": {
+                "name": "fleet1-test-a",
+                "id": "project-found",
+                "parentId": "tenant-x",
+            },
+            "spec": {"region": "us-central1"},
+        },
+    )
     project = ProjectSpec(
         name="a", clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))]
     )
     pid, created = lifecycle.resolve_project_id(
-        "nebius", "tenant-x", project, prefix="fleet1-test-", create=False, env={}
+        "nebius",
+        "tenant-x",
+        project,
+        prefix="fleet1-test-",
+        create=False,
+        env={},
+        region="us-central1",
     )
     assert pid == "project-found"
     assert created is False
+
+
+def test_resolve_project_id_rejects_same_name_in_wrong_region(monkeypatch) -> None:
+    from npa.fleet import lifecycle
+
+    monkeypatch.setattr(
+        lifecycle,
+        "_list_projects",
+        lambda *a, **k: [
+            {"metadata": {"name": "fleet1-test-a", "id": "project-found"}}
+        ],
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "_get_project",
+        lambda *a, **k: {
+            "metadata": {
+                "name": "fleet1-test-a",
+                "id": "project-found",
+                "parent_id": "tenant-x",
+            },
+            "status": {"region": "eu-north1"},
+        },
+    )
+    project = ProjectSpec(
+        name="a", clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))]
+    )
+    with pytest.raises(ValueError, match="region.*does not match"):
+        lifecycle.resolve_project_id(
+            "nebius",
+            "tenant-x",
+            project,
+            prefix="fleet1-test-",
+            create=False,
+            env={},
+            region="us-central1",
+        )
+
+
+def test_find_project_id_rejects_ambiguous_same_name() -> None:
+    from npa.fleet import lifecycle
+
+    projects = [
+        {"metadata": {"name": "same", "id": "project-a"}},
+        {"metadata": {"name": "same", "id": "project-b"}},
+    ]
+    with pytest.raises(ValueError, match="ambiguous"):
+        lifecycle._find_project_id(projects, "same")
 
 
 def test_resolve_project_id_errors_when_absent_and_no_create(monkeypatch) -> None:
@@ -765,6 +836,106 @@ def _fake_recipe(tmp_path, provider_body: str):
     return root
 
 
+def _mig_cluster() -> ClusterSpec:
+    return ClusterSpec(
+        name="mig",
+        gpu_nodes=NodePoolSpec(
+            count=2,
+            platform="gpu-rtx6000",
+            preset="1gpu-24vcpu-218gb",
+            disk_size_gib=128,
+            capacity_block_group="capacityblockgroup-test",
+        ),
+        mig=MigSpec(),
+    )
+
+
+def _declare_mig_recipe_variables(recipe_root: Path) -> None:
+    names = (
+        "gpu_operator_version",
+        "gpu_driver_version",
+        "gpu_device_plugin_version",
+        "gpu_gfd_version",
+        "gpu_mig_manager_version",
+        "gpu_mig_with_reboot",
+        "gpu_operator_rdma_enabled",
+    )
+    recipe = recipe_root / "k8s-training"
+    (recipe / "variables.tf").write_text(
+        "".join(f'variable "{name}" {{}}\n' for name in names)
+    )
+    (recipe / "helm.tf").write_text('module "gpu-operator" {}\n')
+
+
+def test_mig_recipe_variable_preflight_accepts_supported_root(tmp_path) -> None:
+    root = _fake_recipe(tmp_path, 'provider "nebius" {}\n')
+    _declare_mig_recipe_variables(root)
+
+    tfvars = render_tfvars(_mig_cluster(), recipe_dir=root / "k8s-training")
+
+    assert 'gpu_operator_version         = "v26.3.3"' in tfvars
+
+
+@pytest.mark.parametrize("missing_variable", sorted(MIG_RECIPE_VARIABLES))
+def test_mig_recipe_variable_preflight_rejects_unsupported_root(
+    tmp_path, missing_variable: str
+) -> None:
+    root = _fake_recipe(tmp_path, 'provider "nebius" {}\n')
+    _declare_mig_recipe_variables(root)
+    variables = root / "k8s-training" / "variables.tf"
+    variables.write_text(
+        variables.read_text().replace(f'variable "{missing_variable}" {{}}\n', "")
+    )
+
+    with pytest.raises(
+        GpuDriverStrategyError,
+        match=rf"missing required Terraform variable.*{missing_variable}",
+    ):
+        render_tfvars(_mig_cluster(), recipe_dir=root / "k8s-training")
+
+
+def test_non_mig_recipe_keeps_backward_compatibility(tmp_path) -> None:
+    root = _fake_recipe(tmp_path, 'provider "nebius" {}\n')
+
+    tfvars = render_tfvars(
+        ClusterSpec(name="cpu", cpu_nodes=NodePoolSpec(count=1)),
+        recipe_dir=root / "k8s-training",
+    )
+
+    assert 'mig_strategy                 = "none"' in tfvars
+
+
+def test_deploy_rejects_incompatible_mig_recipe_before_project_mutation(
+    tmp_path, monkeypatch
+) -> None:
+    from npa.fleet import lifecycle as L
+
+    root = _fake_recipe(tmp_path, 'provider "nebius" {}\n')
+    spec = FleetSpec(
+        name="mig",
+        tenant_id="tenant-test",
+        region="us-central1",
+        ssh_public_key="ssh-test",
+        projects=[ProjectSpec(project_id="project-test", clusters=[_mig_cluster()])],
+    )
+    resolved: list[str] = []
+    monkeypatch.setattr(L, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(L, "_assert_terraform_version", lambda _binary: "1.12.0")
+    monkeypatch.setattr(L, "_resolve_recipe_root", lambda *_args, **_kwargs: root)
+    monkeypatch.setattr(
+        L,
+        "resolve_project_id",
+        lambda *_args, **_kwargs: (resolved.append("project"), ("project-test", False))[
+            1
+        ],
+    )
+
+    with pytest.raises(GpuDriverStrategyError, match="cannot honor RTX PRO 6000 MIG"):
+        L.deploy_fleet(spec, work_root=tmp_path / "work", preflight=False)
+
+    assert resolved == []
+
+
 def test_prepare_install_dir_patches_eu_domain(tmp_path) -> None:
     from npa.fleet import lifecycle as L
 
@@ -841,9 +1012,7 @@ def test_prepare_install_dir_patches_external_recipe_debug_quiet(tmp_path) -> No
         ssh_public_key="k",
     )
     installed = (
-        workdir
-        / "filesystem-csi-validation"
-        / "01-verify-node-filesystem-mounts.sh"
+        workdir / "filesystem-csi-validation" / "01-verify-node-filesystem-mounts.sh"
     )
     assert "--quiet" in source.read_text()
     assert "--quiet" not in installed.read_text()
@@ -873,11 +1042,14 @@ def test_prepare_install_dir_patches_fetched_recipe_debug_quiet(
         cluster=ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1)),
         ssh_public_key="k",
     )
-    assert "--quiet" not in (
-        workdir
-        / "filesystem-csi-validation"
-        / "01-verify-node-filesystem-mounts.sh"
-    ).read_text()
+    assert (
+        "--quiet"
+        not in (
+            workdir
+            / "filesystem-csi-validation"
+            / "01-verify-node-filesystem-mounts.sh"
+        ).read_text()
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -905,6 +1077,7 @@ def _mock_deploy_boundary(monkeypatch, *, apply_fails: bool = False):
         lambda *a, **k: {"kube_cluster": {"value": {"id": "mk8s-1"}}},
     )
     monkeypatch.setattr(L, "_write_kubeconfig", lambda *a, **k: None)
+    monkeypatch.setattr(L, "_persist_npa_cluster_identity", lambda **k: None)
     return L
 
 
@@ -934,6 +1107,10 @@ def _run_one_cluster(L, tmp_path, *, profile: str = "", cluster=None):
 
 def test_deploy_one_cluster_success_promotes_sidecar(tmp_path, monkeypatch) -> None:
     L = _mock_deploy_boundary(monkeypatch)
+    recorded = []
+    monkeypatch.setattr(
+        L, "_persist_npa_cluster_identity", lambda **kwargs: recorded.append(kwargs)
+    )
     res = _run_one_cluster(L, tmp_path)
     assert res["status"] == "deployed"
     assert res["cluster_id"] == "mk8s-1"
@@ -941,6 +1118,245 @@ def test_deploy_one_cluster_success_promotes_sidecar(tmp_path, monkeypatch) -> N
     assert sidecar["status"] == "deployed"
     assert sidecar["subnet_id"] == "subnet-1"
     assert sidecar["cluster_id"] == "mk8s-1"
+    assert len(recorded) == 1
+    assert recorded[0]["context"] == "fleet-f-a-c"
+    assert recorded[0]["cluster_id"] == "mk8s-1"
+    assert recorded[0]["project_id"] == "p1"
+
+
+def test_fleet_cluster_identity_roundtrip_and_collision_guard(tmp_path) -> None:
+    from npa.cluster.state import kubeconfig_file, load_cluster_state
+    from npa.fleet import lifecycle as L
+
+    kubeconfig = tmp_path / "source-kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n")
+    cluster = ClusterSpec(
+        name="gpu",
+        cpu_nodes=NodePoolSpec(count=1, platform="cpu-d3", preset="8vcpu-32gb"),
+        gpu_nodes=NodePoolSpec(
+            count=1, platform="gpu-rtx6000", preset="1gpu-24vcpu-218gb"
+        ),
+    )
+    kwargs = {
+        "context": "fleet-f-a-gpu",
+        "cluster_id": "cluster-1",
+        "project_id": "project-1",
+        "region": "us-central1",
+        "cluster": cluster,
+        "subnet_id": "subnet-1",
+        "kubeconfig_path": kubeconfig,
+        "fleet_name": "f",
+        "project_key": "a",
+        "base_dir": tmp_path / "clusters",
+    }
+    L._persist_npa_cluster_identity(**kwargs)
+    state = load_cluster_state("fleet-f-a-gpu", base_dir=tmp_path / "clusters")
+    assert state is not None
+    assert state.cluster_id == "cluster-1"
+    assert state.project_id == "project-1"
+    assert state.node_count == 2
+    assert state.node_platform == "gpu-rtx6000"
+    installed_kubeconfig = kubeconfig_file(
+        "fleet-f-a-gpu", base_dir=tmp_path / "clusters"
+    )
+    assert installed_kubeconfig.read_text() == "apiVersion: v1\n"
+    assert installed_kubeconfig.stat().st_mode & 0o777 == 0o600
+    assert state.kubeconfig_path == str(installed_kubeconfig)
+    assert state.provider_name == "gpu"
+
+    with pytest.raises(RuntimeError, match="different immutable"):
+        L._persist_npa_cluster_identity(**{**kwargs, "cluster_id": "cluster-2"})
+
+    L._remove_npa_cluster_identity(
+        context="fleet-f-a-gpu",
+        cluster_id="cluster-1",
+        project_id="project-1",
+        base_dir=tmp_path / "clusters",
+    )
+    assert load_cluster_state("fleet-f-a-gpu", base_dir=tmp_path / "clusters") is None
+
+
+def test_unchanged_provider_verified_target_has_zero_incremental_demand(
+    tmp_path, monkeypatch
+) -> None:
+    from npa.fleet import lifecycle as L
+
+    fleet_root = tmp_path / "f"
+    install = fleet_root / "a" / "gpu"
+    workdir = install / L._K8S_TRAINING_SUBDIR
+    workdir.mkdir(parents=True)
+    project = ProjectSpec(
+        name="a",
+        clusters=[],
+    )
+    cluster = ClusterSpec(
+        name="gpu",
+        cpu_nodes=NodePoolSpec(count=1, platform="cpu-d3", preset="8vcpu-32gb"),
+        gpu_nodes=NodePoolSpec(
+            count=1,
+            platform="gpu-rtx6000",
+            preset="1gpu-24vcpu-218gb",
+            capacity_block_group="capacityblockgroup-exact",
+        ),
+    )
+    L._write_env_sidecar(
+        install,
+        {
+            "tenant_id": "tenant-x",
+            "project_id": "project-x",
+            "region": "us-central1",
+            "cluster_name": "gpu",
+            "cluster_id": "cluster-x",
+            "status": "deployed",
+        },
+    )
+    ssh_key = "ssh-ed25519 test"
+    (workdir / "terraform.tfvars").write_text(
+        render_tfvars(cluster, ssh_public_key=ssh_key)
+    )
+    monkeypatch.setattr(
+        L,
+        "_get_project",
+        lambda *a, **k: {
+            "metadata": {
+                "id": "project-x",
+                "name": "a",
+                "parentId": "tenant-x",
+            },
+            "spec": {"region": "us-central1"},
+        },
+    )
+
+    def provider(cmd, **kwargs):
+        if "node-group" in cmd:
+            return _Cap(
+                json.dumps(
+                    {
+                        "items": [
+                            {
+                                "spec": {
+                                    "fixedNodeCount": 1,
+                                    "template": {
+                                        "resources": {
+                                            "platform": "cpu-d3",
+                                            "preset": "8vcpu-32gb",
+                                        },
+                                        "preemptible": False,
+                                    },
+                                },
+                                "status": {"state": "RUNNING"},
+                            },
+                            {
+                                "spec": {
+                                    "fixedNodeCount": 1,
+                                    "template": {
+                                        "resources": {
+                                            "platform": "gpu-rtx6000",
+                                            "preset": "1gpu-24vcpu-218gb",
+                                        },
+                                        "preemptible": False,
+                                        "reservationPolicy": {
+                                            "policy": "STRICT",
+                                            "reservationIds": [
+                                                "capacityblockgroup-exact"
+                                            ],
+                                        },
+                                    },
+                                },
+                                "status": {"state": "RUNNING"},
+                            },
+                        ]
+                    }
+                ),
+                0,
+            )
+        return _Cap(
+            json.dumps(
+                {
+                    "metadata": {
+                        "id": "cluster-x",
+                        "name": "gpu",
+                        "parentId": "project-x",
+                    },
+                    "status": {"state": "RUNNING"},
+                }
+            ),
+            0,
+        )
+
+    monkeypatch.setattr(L, "_run_capture", provider)
+    kwargs = {
+        "project": project,
+        "cluster": cluster,
+        "prefix": "",
+        "tenant_id": "tenant-x",
+        "region": "us-central1",
+        "ssh_public_key": ssh_key,
+        "fleet_root": fleet_root,
+        "nebius_bin": "nebius",
+        "profile": "profile-x",
+        "env": {},
+    }
+    assert L._is_verified_unchanged_target(**kwargs) is True
+
+    changed = ClusterSpec(
+        name="gpu",
+        cpu_nodes=cluster.cpu_nodes,
+        gpu_nodes=NodePoolSpec(
+            count=1,
+            platform="gpu-rtx6000",
+            preset="1gpu-24vcpu-218gb",
+            disk_size_gib=2048,
+            capacity_block_group="capacityblockgroup-exact",
+        ),
+    )
+    assert L._is_verified_unchanged_target(**{**kwargs, "cluster": changed}) is False
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        {"resources": {"platform": "cpu-d3", "preset": "8vcpu-32gb"}},
+        {
+            "resources": {"platform": "cpu-d3", "preset": "8vcpu-32gb"},
+            "preemptible": "false",
+        },
+        {
+            "resources": {"platform": "cpu-d3", "preset": "8vcpu-32gb"},
+            "preemptible": None,
+        },
+    ],
+)
+def test_node_group_match_fails_closed_without_explicit_false_preemptibility(
+    template: dict,
+) -> None:
+    from npa.fleet import lifecycle as L
+
+    payload = {
+        "spec": {"fixedNodeCount": 1, "template": template},
+        "status": {"state": "RUNNING"},
+    }
+    pool = NodePoolSpec(count=1, platform="cpu-d3", preset="8vcpu-32gb")
+
+    assert L._provider_node_group_matches_pool(payload, pool) is False
+
+
+def test_node_group_match_accepts_camel_case_with_explicit_on_demand_evidence() -> None:
+    from npa.fleet import lifecycle as L
+
+    payload = {
+        "spec": {
+            "fixedNodeCount": 1,
+            "template": {
+                "resources": {"platform": "cpu-d3", "preset": "8vcpu-32gb"},
+                "preemptible": False,
+            },
+        },
+        "status": {"state": "RUNNING"},
+    }
+    pool = NodePoolSpec(count=1, platform="cpu-d3", preset="8vcpu-32gb")
+
+    assert L._provider_node_group_matches_pool(payload, pool) is True
 
 
 def test_deploy_one_cluster_failure_leaves_sidecar_provisioning(
@@ -991,9 +1407,7 @@ def test_deploy_gpu_promotes_only_after_health_success(tmp_path, monkeypatch) ->
     observed_status: list[str] = []
 
     def healthy(*_args, **kwargs):
-        sidecar = json.loads(
-            (tmp_path / "a" / "c" / L._ENV_SIDECAR).read_text()
-        )
+        sidecar = json.loads((tmp_path / "a" / "c" / L._ENV_SIDECAR).read_text())
         observed_status.append(sidecar["status"])
         assert kwargs["config"].expected_gpus == 3
         return {"status": "healthy", "final_snapshot": {}, "cuda_smokes": []}
@@ -1014,6 +1428,59 @@ def test_deploy_gpu_promotes_only_after_health_success(tmp_path, monkeypatch) ->
     assert result["status"] == "deployed"
     sidecar = json.loads((tmp_path / "a" / "c" / L._ENV_SIDECAR).read_text())
     assert sidecar["status"] == "deployed"
+
+
+def test_deploy_one_mig_cluster_retains_applied_state_when_readiness_fails(
+    tmp_path, monkeypatch
+) -> None:
+    L = _mock_deploy_boundary(monkeypatch)
+    cluster = ClusterSpec(
+        name="mig",
+        gpu_nodes=NodePoolSpec(
+            count=2,
+            platform="gpu-rtx6000",
+            preset="1gpu-24vcpu-218gb",
+            disk_size_gib=128,
+            capacity_block_group="capacityblockgroup-test",
+        ),
+        mig=MigSpec(),
+        gpu_health_timeout_minutes=7,
+        gpu_cuda_smoke_image="cuda-vectoradd:review",
+    )
+    monkeypatch.setattr(L, "_require_bin", lambda binary: binary)
+    observed: dict = {}
+
+    def fail_mig(**kwargs):  # noqa: ANN003, ANN202
+        observed.update(kwargs)
+        raise MigVerificationError("stale whole-GPU capacity")
+
+    monkeypatch.setattr(L, "wait_for_mig_ready", fail_mig)
+    result = L._deploy_one_cluster(
+        spec=FleetSpec(name="f"),
+        project=ProjectSpec(name="a"),
+        cluster=cluster,
+        project_id="p1",
+        project_created=False,
+        subnet_id="subnet-1",
+        region="us-central1",
+        tenant_id="t",
+        ssh_public_key="k",
+        fleet_root=tmp_path,
+        recipe_root=tmp_path,
+        terraform_bin="terraform",
+        nebius_bin="nebius",
+        profile="",
+        timeout_minutes=1,
+        on_status=None,
+    )
+    assert result["status"] == "deployed-mig-not-ready"
+    assert result["cluster_id"] == "mk8s-1"
+    assert "stale whole-GPU capacity" in result["error"]
+    assert observed["timeout_seconds"] == 420
+    assert observed["cuda_smoke_image"] == "cuda-vectoradd:review"
+    sidecar = json.loads((tmp_path / "a" / "mig" / L._ENV_SIDECAR).read_text())
+    assert sidecar["status"] == "deployed-mig-not-ready"
+    assert sidecar["cluster_id"] == "mk8s-1"
 
 
 # --------------------------------------------------------------------------- #
@@ -1526,9 +1993,7 @@ def test_deploy_fleet_cli_profile_overrides_spec(tmp_path, monkeypatch) -> None:
     assert seen == ["from-spec"]
     assert res["profile"] == "from-spec"
     seen.clear()
-    res = L.deploy_fleet(
-        spec, work_root=tmp_path, profile="from-cli", preflight=False
-    )
+    res = L.deploy_fleet(spec, work_root=tmp_path, profile="from-cli", preflight=False)
     assert seen == ["from-cli"]
     assert res["profile"] == "from-cli"
 
@@ -1672,7 +2137,9 @@ def _patch_infra_free_subprocess_boundaries(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(L, "_resolve_ssh_public_key", lambda *a, **k: "ssh-test")
     monkeypatch.setattr(L, "_resolve_recipe_root", lambda *a, **k: recipe)
     monkeypatch.setattr(L, "_nebius_cli_env", lambda: {})
-    monkeypatch.setattr(L, "resolve_project_id", lambda *a, **k: ("project-test", False))
+    monkeypatch.setattr(
+        L, "resolve_project_id", lambda *a, **k: ("project-test", False)
+    )
     monkeypatch.setattr(L, "ensure_subnet", lambda *a, **k: ("subnet-test", ""))
     monkeypatch.setattr(L, "_find_cluster_id_by_name", lambda *a, **k: "")
 
@@ -1681,9 +2148,7 @@ def _patch_infra_free_subprocess_boundaries(tmp_path: Path, monkeypatch):
             "PATH": os.environ["PATH"],
             "TF_VAR_iam_token": _FAKE_IAM_TOKEN,
             "NEBIUS_IAM_TOKEN": _FAKE_IAM_TOKEN,
-            "NPA_FAKE_TF_FAIL_ACTION": os.environ.get(
-                "NPA_FAKE_TF_FAIL_ACTION", ""
-            ),
+            "NPA_FAKE_TF_FAIL_ACTION": os.environ.get("NPA_FAKE_TF_FAIL_ACTION", ""),
         }
 
     def fake_kubeconfig(_bin, _cluster_id, path, _context, _env, _profile=""):
@@ -2139,9 +2604,7 @@ def test_required_quotas_excludes_managed_control_plane_compute_resources() -> N
         [
             ClusterSpec(
                 name="c",
-                cpu_nodes=NodePoolSpec(
-                    count=1, platform="cpu-d3", preset="4vcpu-16gb"
-                ),
+                cpu_nodes=NodePoolSpec(count=1, platform="cpu-d3", preset="4vcpu-16gb"),
             )
         ]
     )
@@ -2242,6 +2705,44 @@ def test_reservation_capacity_parser_and_validation_match_region_platform_fabric
     assert "fabric" in shortfalls[0].reason
 
 
+def test_single_gpu_strict_reservation_accepts_provider_scoped_fabric() -> None:
+    """The block ID supplies placement when the node group is not GPU-clustered."""
+
+    from npa.fleet.quotas import (
+        find_reservation_shortfalls,
+        parse_capacity_blocks,
+        required_reservations,
+    )
+
+    cluster = ClusterSpec(
+        name="b200-single",
+        gpu_nodes=NodePoolSpec(
+            count=1,
+            platform="gpu-b200-sxm",
+            preset="1gpu-20vcpu-224gb",
+            capacity_block_group="capacityblockgroup-test",
+        ),
+        enable_gpu_cluster=False,
+    )
+    requirements = required_reservations([cluster], "us-central1")
+    blocks = parse_capacity_blocks(
+        json.dumps(
+            {
+                "items": [
+                    _capacity_block(
+                        platform="gpu-b200-sxm",
+                        fabric="us-central1-b",
+                        limit="40",
+                    )
+                ]
+            }
+        )
+    )
+
+    assert requirements["capacityblockgroup-test"].fabric == ""
+    assert find_reservation_shortfalls(requirements, blocks, "t") == []
+
+
 def test_reservation_capacity_parser_treats_live_usage_percentage_as_fraction() -> None:
     from npa.fleet.quotas import parse_capacity_blocks
 
@@ -2317,11 +2818,7 @@ def test_parse_allowances_tenant_finite_cannot_be_shadowed_by_project_unlimited(
 
     assert parsed["compute.disk.count"]["unlimited"] is False
     assert parsed["compute.disk.count"]["limit"] == 3
-    assert len(
-        find_shortfalls(
-            {"compute.disk.count": 4}, parsed, "us-central1"
-        )
-    ) == 1
+    assert len(find_shortfalls({"compute.disk.count": 4}, parsed, "us-central1")) == 1
 
 
 @pytest.mark.parametrize("unlimited_first", [True, False])
@@ -2539,9 +3036,7 @@ def test_parse_allowances_rejects_incomplete_paginated_response() -> None:
         parse_allowances(
             json.dumps(
                 {
-                    "items": [
-                        _allowance("compute.instance.count", "us-central1", 10)
-                    ],
+                    "items": [_allowance("compute.instance.count", "us-central1", 10)],
                     "next_page_token": "still-more",
                 }
             ),
@@ -2772,9 +3267,7 @@ def test_deploy_preflight_missing_required_allowance_fails_closed(
             json.dumps(
                 {
                     "items": [
-                        _allowance(
-                            "compute.instance.gpu.rtx6000", "us-central1", 100
-                        )
+                        _allowance("compute.instance.gpu.rtx6000", "us-central1", 100)
                     ]
                 }
             ),
@@ -2785,9 +3278,7 @@ def test_deploy_preflight_missing_required_allowance_fails_closed(
         L.deploy_fleet(_rtx_cluster_spec(), work_root=tmp_path)
 
 
-def test_preflight_allows_only_explicit_optional_unadvertised_topology_quotas() -> (
-    None
-):
+def test_preflight_allows_only_explicit_optional_unadvertised_topology_quotas() -> None:
     from npa.fleet.quotas import preflight_region, required_quotas
 
     cluster = ClusterSpec(
@@ -2828,9 +3319,7 @@ def test_preflight_allows_only_explicit_optional_unadvertised_topology_quotas() 
     assert sum("unadvertised optional quota" in message for message in messages) == 5
 
     missing_core = [
-        item
-        for item in items
-        if item["metadata"]["name"] != "compute.instance.count"
+        item for item in items if item["metadata"]["name"] != "compute.instance.count"
     ]
     with pytest.raises(ValueError, match="omitted required allowances"):
         preflight_region(
@@ -2840,9 +3329,7 @@ def test_preflight_allows_only_explicit_optional_unadvertised_topology_quotas() 
             clusters=[cluster],
             env={},
             new_projects=1,
-            run_capture=lambda *a, **k: _Cap(
-                json.dumps({"items": missing_core})
-            ),
+            run_capture=lambda *a, **k: _Cap(json.dumps({"items": missing_core})),
             nebius_argv=lambda binary, profile: [binary],
         )
 
@@ -2925,9 +3412,7 @@ def test_preflight_project_accounting_existing_named_and_genuinely_new(
     tmp_path, monkeypatch
 ) -> None:
     existing_spec = _rtx_cluster_spec()
-    existing_name = existing_spec.projects[0].display_name(
-        existing_spec.project_prefix
-    )
+    existing_name = existing_spec.projects[0].display_name(existing_spec.project_prefix)
     L, list_calls, preflight_calls, resolve_calls, deployed = (
         _project_quota_accounting_boundary(
             monkeypatch,
@@ -3273,6 +3758,30 @@ def test_write_kubeconfig_fails_on_command_error_or_missing_file(
     assert not (tmp_path / "kube").exists()
 
 
+def test_write_kubeconfig_exposes_configured_kubectl_to_nebius(
+    tmp_path, monkeypatch
+) -> None:
+    from npa.fleet import lifecycle as L
+
+    kubectl = tmp_path / "custom-kubectl"
+    kubectl.write_text("#!/bin/sh\nexit 0\n")
+    kubectl.chmod(0o755)
+    monkeypatch.setenv("NPA_KUBECTL_BIN", str(kubectl))
+
+    def fake_run(args, **kwargs):
+        command_env = kwargs["env"]
+        shim = Path(command_env["PATH"].split(os.pathsep)[0]) / "kubectl"
+        assert shim.resolve() == kubectl.resolve()
+        output = Path(args[args.index("--kubeconfig") + 1])
+        output.write_text("apiVersion: v1\n")
+        return _Cap("", 0)
+
+    monkeypatch.setattr(L, "_run_capture", fake_run)
+    destination = tmp_path / "kube"
+    L._write_kubeconfig("nebius", "cluster-test", destination, "ctx", {"PATH": ""})
+    assert destination.read_text() == "apiVersion: v1\n"
+
+
 def test_deploy_kubeconfig_failure_is_partial_and_retains_state(
     tmp_path, monkeypatch
 ) -> None:
@@ -3409,7 +3918,9 @@ def test_nebius_discovery_fails_closed_and_state_write_logs(
     assert "could not persist fleet summary" in caplog.text
 
 
-def test_nebius_config_parse_failure_logs_without_content(tmp_path, monkeypatch, caplog) -> None:
+def test_nebius_config_parse_failure_logs_without_content(
+    tmp_path, monkeypatch, caplog
+) -> None:
     from npa.fleet import lifecycle as L
 
     config_dir = tmp_path / ".nebius"

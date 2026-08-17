@@ -70,6 +70,7 @@ class MK8sClient:
         self,
         *,
         nebius_bin: str | None = None,
+        profile: str | None = None,
         subprocess_runner: SubprocessRunner | None = None,
         timeout: int = 900,
         retries: int = 3,
@@ -77,6 +78,7 @@ class MK8sClient:
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._nebius_bin = nebius_bin or shutil.which("nebius") or "nebius"
+        self._profile = profile
         self._runner = subprocess_runner or subprocess.run
         self._timeout = timeout
         self._retries = max(1, retries)
@@ -631,8 +633,15 @@ class MK8sClient:
         timeout: int | None = None,
     ) -> subprocess.CompletedProcess[str]:
         from npa.clients.nebius import nebius_cli_env
+        from npa.clients.nebius_auth import nebius_profile
 
-        full_args = [self._nebius_bin, *args]
+        profile = str(
+            self._profile if self._profile is not None else nebius_profile()
+        ).strip()
+        full_args = [self._nebius_bin]
+        if profile:
+            full_args.extend(["--profile", profile])
+        full_args.extend(args)
         last_result: subprocess.CompletedProcess[str] | None = None
         for attempt in range(1, self._retries + 1):
             try:

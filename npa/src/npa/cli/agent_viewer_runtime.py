@@ -28,6 +28,7 @@ if __name__ == "npa.cli.agent_viewer_runtime":
         RRD_PATH,
         _ARTIFACT_LOAD_LOCK,
         _copy_artifact_preview,
+        clear_cross_run_mcap_state,
         _is_data_factory_recording,
         _is_sim2real_pipeline_recording,
         _lichtblick_iframe_url,
@@ -46,7 +47,7 @@ if __name__ == "npa.cli.agent_viewer_runtime":
         _wait_rerun_web_viewer_healthy,
         is_groot_training_recording,
         is_neural_reconstruction_recording,
-    ) = (None,) * 29
+    ) = (None,) * 30
 # NPA_EMBED_STANDALONE_END
 
 
@@ -137,7 +138,10 @@ def _stage_label(stage_key: str) -> str:
     key = str(stage_key or "").strip()
     if key in _STAGE_LABELS:
         return _STAGE_LABELS[key]
-    cleaned = key.replace("_", " ").replace("/", " / ").replace("-", " ").strip() or "Artifacts"
+    cleaned = (
+        key.replace("_", " ").replace("/", " / ").replace("-", " ").strip()
+        or "Artifacts"
+    )
     return cleaned[:1].upper() + cleaned[1:]
 
 
@@ -170,6 +174,28 @@ def _load_session_run_if_known(
     runs = state.get("sim_viz_runs")
     runs = runs if isinstance(runs, dict) else {}
     selected = runs.get(run_id)
+    current = state.get("sim_viz")
+    if (
+        isinstance(current, dict)
+        and str(current.get("run_id") or "").strip() == run_id
+        and (
+            str(current.get("source_type") or "").strip() == "artifact_storage"
+            or any(
+                str(current.get(key) or "").strip()
+                for key in (
+                    "artifact_run_ref",
+                    "bucket",
+                    "resolved_prefix",
+                    "canonical_mcap_s3_uri",
+                )
+            )
+        )
+    ):
+        # Rerun self-heal also keeps a basename history alias so its local RRD
+        # can be recovered. That alias is not a session-owned replacement for
+        # an active source-qualified run. Let normal artifact resolution handle
+        # the unqualified request so it preserves the run's canonical MCAP.
+        return None
     sim2real_runs = state.get("sim2real_runs")
     sim2real_runs = sim2real_runs if isinstance(sim2real_runs, dict) else {}
     if isinstance(selected, dict):
@@ -232,6 +258,9 @@ def _apply_loaded_artifact(
     run_ref: str = "",
     requested_camera: str = "",
     artifact_contract: dict | None = None,
+    source_fingerprint: str = "",
+    source_size_bytes: int = 0,
+    source_last_modified: str = "",
 ) -> dict:
     now = _now_iso()
     sim_viz = dict(DEFAULT_SIM_VIZ)
@@ -240,9 +269,12 @@ def _apply_loaded_artifact(
         sim_viz.update(current)
     # Never let a previous RRD's binding survive a later media load.
     sim_viz.pop("served_recording_sha256", None)
+    clear_cross_run_mcap_state(sim_viz, run_id)
     camera = str(sim_viz.get("camera") or "workspace")
     contract = artifact_contract if isinstance(artifact_contract, dict) else {}
-    contract_matches = contract.get("matches") if isinstance(contract.get("matches"), dict) else {}
+    contract_matches = (
+        contract.get("matches") if isinstance(contract.get("matches"), dict) else {}
+    )
     learning_paths = {
         str(path)
         for semantic in ("rrd", "mcap")
@@ -256,7 +288,8 @@ def _apply_loaded_artifact(
     # guards that exact expression as source text.
     if (
         render == "rerun"
-        and _is_sim2real_pipeline_recording(key) and not _is_data_factory_recording(key)
+        and _is_sim2real_pipeline_recording(key)
+        and not _is_data_factory_recording(key)
         and not is_neural_reconstruction_recording(key)
     ):
         camera = _sim2real_pipeline_camera_label(camera)
@@ -274,7 +307,9 @@ def _apply_loaded_artifact(
             camera = _sim2real_pipeline_camera_label(requested_camera)
         elif is_learning:
             if requested_camera != contract_camera:
-                raise ValueError("requested camera differs from validated GR00T provenance")
+                raise ValueError(
+                    "requested camera differs from validated GR00T provenance"
+                )
             camera = contract_camera
         elif is_groot_training_recording(key):
             camera = GROOT_TRAINING_CAMERA_LABEL
@@ -296,11 +331,16 @@ def _apply_loaded_artifact(
             "camera": camera,
             "artifact_contract": contract if is_learning else {},
             "artifact_contract_authoritative": bool(is_learning),
-            "evaluation_kind": str(contract.get("evaluation_kind") or "") if is_learning else "",
+            "evaluation_kind": str(contract.get("evaluation_kind") or "")
+            if is_learning
+            else "",
             "closed_loop": bool(contract.get("closed_loop")) if is_learning else False,
             "bucket": str(resource_bucket or "").strip(),
             "project_id": str(project_id or "").strip(),
             "resolved_prefix": str(resolved_prefix or "").strip(),
+            "artifact_source_fingerprint": str(source_fingerprint or "").strip(),
+            "artifact_source_size_bytes": max(0, int(source_size_bytes or 0)),
+            "artifact_source_last_modified": str(source_last_modified or "").strip(),
         }
     )
     if render == "rerun":
@@ -311,7 +351,9 @@ def _apply_loaded_artifact(
             rrd_tmp = RRD_PATH.with_suffix(".rrd.tmp")
             shutil.copy2(local_path, rrd_tmp)
             rrd_tmp.replace(RRD_PATH)
-        sim_viz["served_recording_sha256"] = hashlib.sha256(RECORDING_PATH.read_bytes()).hexdigest()
+        sim_viz["served_recording_sha256"] = hashlib.sha256(
+            RECORDING_PATH.read_bytes()
+        ).hexdigest()
         restarted = _restart_rerun_serve(force=True)
         rerun_ready = _wait_rerun_web_viewer_healthy() if restarted else False
         sim_viz["rrd_uri"] = f"file://{RECORDING_PATH}"
@@ -372,6 +414,18 @@ def _apply_loaded_artifact(
         if is_mcap:
             _publish_mcap_recording(local_path)
             mcap_url = _lichtblick_recording_url()
+            start_time_ns = 0
+            end_time_ns = 0
+            try:
+                from npa.workbench.foxglove.inspect import summarize_mcap
+
+                mcap_info = summarize_mcap(local_path)
+                start_time_ns = int(mcap_info.start_time_ns)
+                end_time_ns = int(mcap_info.end_time_ns)
+            except (ImportError, OSError, RuntimeError, ValueError):
+                # Timing is an initial-seek optimization; the validated download
+                # and embedded viewer remain available when inspection fails.
+                pass
             sim_viz["mcap_uri"] = f"file://{MCAP_RECORDING_PATH}"
             sim_viz["artifact_preview_url"] = LICHTBLICK_RECORDING_HTTP_PATH
             sim_viz["artifact_download_url"] = LICHTBLICK_RECORDING_HTTP_PATH
@@ -379,6 +433,8 @@ def _apply_loaded_artifact(
                 mcap_url=mcap_url,
                 mcap_size=MCAP_RECORDING_PATH.stat().st_size,
                 primary_camera=camera if is_learning else "",
+                start_time_ns=start_time_ns,
+                end_time_ns=end_time_ns,
             )
             sim_viz["lichtblick_ready"] = MCAP_RECORDING_PATH.is_file()
             if is_learning:
@@ -405,7 +461,9 @@ def _apply_loaded_artifact(
                 )
         else:
             sim_viz["lichtblick_ready"] = False
-            sim_viz["artifact_preview_url"] = published or _copy_artifact_preview(local_path, key)
+            sim_viz["artifact_preview_url"] = published or _copy_artifact_preview(
+                local_path, key
+            )
             sim_viz["artifact_download_url"] = sim_viz["artifact_preview_url"]
             sim_viz["visualization_note"] = (
                 f"Recording loaded ({Path(key).suffix.lower() or 'unknown'}). Foxglove-family "

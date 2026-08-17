@@ -148,9 +148,9 @@ historical baseline.
 
 ### SONIC Image Routing Reconciled
 
-SONIC image selection is now manifest-driven. The baked `npa-sonic:0.1.2`
-variant is used for L40S VM targets, while the host-mounted
-`npa-sonic:0.1.2-k8s-runtime` variant is used for RTX PRO 6000 Blackwell Kubernetes
+SONIC image selection is manifest-driven. The old baked `npa-sonic:0.1.2` and
+inherited MuJoCo variants are quarantined as restricted; only the scanned,
+host-mounted runtime-fetch variant is active for RTX PRO 6000 Blackwell Kubernetes
 targets with NVIDIA GPU Operator mounted drivers. The source of truth is
 `npa/src/npa/deploy/sonic_image_manifest.json`.
 

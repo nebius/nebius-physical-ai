@@ -35,7 +35,11 @@ RUNNER = REPO_ROOT / "npa" / "scripts" / "run_byof_container_verify.py"
 #: Bootstraps that refuse with EX_CONFIG until the operator has accepted a
 #: vendor's terms. A smoke that calls one of these needs its acceptance
 #: forwarded, or it fails inside the pod.
-GATED_RUNTIMES = ("wan-runtime", "ltx-runtime")
+#: Only ltx-runtime still refuses on an acceptance variable. Wan's own NVIDIA
+#: gate was removed upstream, so requiring an entry for it would assert a control
+#: that no longer exists. `test_the_gated_runtime_list_matches_the_shipped_scripts`
+#: keeps this list honest as those gates come and go.
+GATED_RUNTIMES = ("ltx-runtime",)
 
 
 def _runner_module():
@@ -72,8 +76,31 @@ def test_the_scan_finds_the_specs_it_is_supposed_to_guard() -> None:
     gated = _specs_invoking_a_gated_runtime()
 
     assert gated, "no spec appears to invoke a gated runtime; has the shape changed?"
-    assert "wan2.2-multigpu" in gated, (
-        "the distributed Wan spec is the case this guardrail exists for"
+    assert "ltx2.5" in gated, "ltx2.5 runs a gated runtime and must be covered"
+
+
+def test_the_gated_runtime_list_matches_the_shipped_scripts() -> None:
+    """Derive the list from reality, so a new or removed gate cannot go unnoticed.
+
+    This guardrail exists because `wan2.2-multigpu` silently lost its acceptance
+    channel. The same class of miss applies to the list itself: a runtime that
+    starts refusing on an acceptance variable, or stops, must be reflected here.
+    """
+
+    docker = REPO_ROOT / "npa" / "docker" / "workbench"
+    refusing = set()
+    for script in docker.glob("*/*runtime*.sh"):
+        # `install-*` scripts run during the build, not from a spec's smoke, so
+        # their gates are not something the secret channel could deliver to.
+        if script.stem.startswith("install"):
+            continue
+        text = script.read_text(encoding="utf-8")
+        if re.search(r"[A-Z_]*_ACCEPT_[A-Z_]+", text) and "EX_CONFIG" in text:
+            refusing.add(script.stem.replace("_", "-"))
+
+    assert refusing == set(GATED_RUNTIMES), (
+        f"shipped runtimes that refuse on an acceptance variable are {sorted(refusing)}, "
+        f"but GATED_RUNTIMES says {sorted(GATED_RUNTIMES)}"
     )
 
 

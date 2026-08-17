@@ -22,6 +22,67 @@ import pytest
 from npa.cli.agent_embed import embedded_python_source
 
 
+def test_artifact_route_uses_source_qualified_run_ref() -> None:
+    from fastapi import FastAPI, HTTPException
+    from fastapi.responses import JSONResponse
+    from fastapi.testclient import TestClient
+
+    from npa.agent_backend.artifact_routes import (
+        ArtifactRouteDeps,
+        register_artifact_routes,
+    )
+
+    class _Artifact:
+        key = "nested/root/category/run-one/reports/run.mcap"
+
+        def to_dict(self):
+            return {"key": self.key, "render": "mcap"}
+
+    artifact = _Artifact()
+    resolution = SimpleNamespace(
+        run_id="run-one",
+        run_ref="npa1_canonical",
+        bucket="configured-bucket",
+        artifacts=[artifact],
+    )
+    seen: dict[str, str] = {}
+
+    def _resolve(_buckets, **kwargs):
+        seen["run_ref"] = kwargs["run_ref_or_id"]
+        return resolution
+
+    app = FastAPI()
+    register_artifact_routes(
+        app,
+        ArtifactRouteDeps(
+            s3_client=lambda: (
+                object(),
+                {"bucket": "configured-bucket", "prefix": "nested/root"},
+            ),
+            discovery_prefix=lambda _settings, prefix: prefix,
+            list_runs_cached=lambda *_args, **_kwargs: None,
+            list_runs_cached_multi=lambda *_args, **_kwargs: None,
+            list_buckets=lambda _s3, _settings: ["configured-bucket"],
+            validate_run_id=lambda value: value,
+            find_artifacts=lambda *_args, **_kwargs: ("", []),
+            resolve_run=_resolve,
+            summarize_run=lambda *_args, **_kwargs: None,
+            discovery_excludes=lambda: set(),
+            list_artifacts=lambda *_args, **_kwargs: [],
+            select_preferred=lambda items: items[0] if items else None,
+            http_exception=HTTPException,
+            json_response=JSONResponse,
+        ),
+    )
+    response = TestClient(app).get(
+        "/artifacts/run/run-one", params={"run_ref": "npa1_exact"}
+    )
+    assert response.status_code == 200
+    assert seen == {"run_ref": "npa1_exact"}
+    assert response.json()["run_ref"] == "npa1_canonical"
+    assert response.json()["artifacts"] == [{"key": artifact.key, "render": "mcap"}]
+
+
 def _render_backend_body(monkeypatch) -> str:
     from npa.cli import agent as agent_module
 
@@ -486,7 +547,13 @@ def test_shipped_agent_backend_memory_module_compiles(monkeypatch) -> None:
     assert "class RunMemory" in body
 
 
-def _capture_setup_script(monkeypatch, *, preload_stock_demo: bool = True) -> str:
+def _capture_setup_script(
+    monkeypatch,
+    *,
+    preload_stock_demo: bool = True,
+    foxglove_embed_src: str = "",
+    foxglove_viewer_backend: str = "",
+) -> str:
     from npa.cli import agent as agent_module
 
     captured: dict[str, str] = {}
@@ -533,9 +600,43 @@ def _capture_setup_script(monkeypatch, *, preload_stock_demo: bool = True) -> st
         tf_api_key="",
         nebius_ai_key="",
         public_https=True,
+        foxglove_embed_src=foxglove_embed_src,
+        foxglove_viewer_backend=foxglove_viewer_backend,
         preload_stock_demo=preload_stock_demo,
     )
     return captured["setup_script"]
+
+
+def test_bootstrap_stages_explicit_official_foxglove_backend(monkeypatch) -> None:
+    setup_script = _capture_setup_script(
+        monkeypatch,
+        foxglove_embed_src="https://embed.foxglove.dev/",
+        foxglove_viewer_backend="foxglove-sdk",
+    )
+    foxglove_env = setup_script.split(
+        "cat <<'ENV' | sudo tee /opt/npa-agent/foxglove.env >/dev/null\n", 1
+    )[1].split("\nENV", 1)[0]
+
+    assert "NPA_FOXGLOVE_EMBED_SRC=https://embed.foxglove.dev/" in foxglove_env
+    assert "NPA_FOXGLOVE_VIEWER_BACKEND=foxglove-sdk" in foxglove_env
+    assert "NPA_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS=300" in foxglove_env
+
+
+def test_bootstrap_rejects_unknown_foxglove_backend(monkeypatch) -> None:
+    with pytest.raises(ValueError, match="foxglove viewer backend"):
+        _capture_setup_script(
+            monkeypatch,
+            foxglove_embed_src="https://embed.foxglove.dev/",
+            foxglove_viewer_backend="not-a-viewer",
+        )
+
+
+def test_bootstrap_rejects_official_backend_without_embed_source(monkeypatch) -> None:
+    with pytest.raises(ValueError, match="foxglove-sdk requires"):
+        _capture_setup_script(
+            monkeypatch,
+            foxglove_viewer_backend="foxglove-sdk",
+        )
 
 
 def test_no_stock_bootstrap_has_no_default_recording_or_rrd_response(
@@ -590,7 +691,10 @@ def _import_rendered_backend(monkeypatch, tmp_path, *, module_name: str):
         "retrieval",
         "trace",
         "foxglove",
+        "canonical_mcap",
+        "foxglove_cloud",
         "foxglove_routes",
+        "artifact_routes",
     ):
         (package / f"{name}.py").write_text(
             _extract(f"/opt/npa-agent/agent_backend/{name}.py"), encoding="utf-8"
@@ -614,6 +718,9 @@ def _import_rendered_backend(monkeypatch, tmp_path, *, module_name: str):
         ("sim2real_loop", "def drive_sim2real_loop"),
         ("retrieval", "def build_lance_store"),
         ("trace", "def analyze_traces"),
+        ("artifact_routes", "def register_artifact_routes"),
+        ("canonical_mcap", "def prepare_canonical_mcap"),
+        ("foxglove_cloud", "class FoxgloveCloudClient"),
     ],
 )
 def test_shipped_agent_backend_modules_compile(monkeypatch, module, marker) -> None:
@@ -671,7 +778,10 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
         "retrieval",
         "trace",
         "foxglove",
+        "canonical_mcap",
+        "foxglove_cloud",
         "foxglove_routes",
+        "artifact_routes",
     ):
         (package / f"{name}.py").write_text(
             _extract(f"/opt/npa-agent/agent_backend/{name}.py"), encoding="utf-8"
@@ -688,6 +798,159 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
         spec.loader.exec_module(module)
     finally:
         sys.modules.pop("npa_rendered_backend", None)
+
+
+def test_rendered_foxglove_exact_source_avoids_tenant_wide_access_scan(
+    monkeypatch, tmp_path
+) -> None:
+    import sys
+
+    module_name = "npa_rendered_foxglove_exact_source_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+
+    class S3:
+        def head_object(self, *, Bucket, Key):  # noqa: N803
+            assert Bucket == "selected-bucket"
+            assert Key == "nested/source/run-one/reports/sim2real.mcap"
+            return {
+                "ContentLength": 4096,
+                "LastModified": "2026-08-16T00:00:00+00:00",
+                "ETag": '"strong-etag"',
+            }
+
+    s3 = S3()
+    run_ref = module.encode_run_ref("selected-bucket", "nested/source", "run-one")
+    key = "nested/source/run-one/reports/sim2real.mcap"
+    artifact = module.Artifact(
+        "run-one",
+        key,
+        f"s3://selected-bucket/{key}",
+        4096,
+        "2026-08-16T00:00:00+00:00",
+        "mcap",
+        True,
+    )
+    source = module.RunSummary(
+        "run-one",
+        "2026-08-16T00:00:00+00:00",
+        1,
+        True,
+        bucket="selected-bucket",
+        project_id="selected-project",
+        resolved_prefix="nested/source",
+    )
+    monkeypatch.setattr(
+        module,
+        "_agent_s3_client",
+        lambda: (s3, {"bucket": "deployment-bucket", "prefix": ""}),
+    )
+    monkeypatch.setattr(
+        module,
+        "_agent_access_report",
+        lambda **_kwargs: pytest.fail("exact source must not rebuild tenant access"),
+    )
+    authorization_calls = []
+    monkeypatch.setattr(
+        module,
+        "_authorize_exact_run_ref_source",
+        lambda **kwargs: (
+            authorization_calls.append(kwargs)
+            or ("selected-bucket", "selected-project", "nested/source")
+        ),
+    )
+
+    monkeypatch.setattr(
+        module,
+        "find_run_sources_across_buckets",
+        lambda buckets, **_kwargs: (
+            [source] if buckets == ["selected-bucket"] else [],
+            (),
+            True,
+        ),
+    )
+    monkeypatch.setattr(module, "list_artifacts", lambda *_args, **_kwargs: [artifact])
+    monkeypatch.setattr(
+        module,
+        "resolve_run_artifacts",
+        lambda *_args, **_kwargs: pytest.fail(
+            "exact source must not rebuild the full run index"
+        ),
+    )
+    try:
+        selected = module._foxglove_resolve_artifact(
+            {
+                "run_id": "run-one",
+                "run_ref": run_ref,
+                "key": key,
+                "resource_bucket": "selected-bucket",
+                "project_id": "selected-project",
+                "resolved_prefix": "nested/source",
+                "s3_uri": f"s3://selected-bucket/{key}",
+            }
+        )
+        assert selected["resource_bucket"] == "selected-bucket"
+        assert selected["project_id"] == "selected-project"
+        assert selected["resolved_prefix"] == "nested/source"
+        assert selected["source_fingerprint"]
+        assert len(authorization_calls) == 1
+
+        monkeypatch.setattr(
+            module,
+            "list_artifacts_page",
+            lambda *_args, **_kwargs: module.ArtifactListPage(
+                artifacts=[artifact],
+                truncated=False,
+                next_cursor="",
+                page_size=1000,
+            ),
+        )
+        monkeypatch.setattr(
+            module, "_summary_documents_for_run", lambda *_args, **_kwargs: []
+        )
+        details = module.artifacts_for_run(
+            run_ref,
+            resource_bucket="selected-bucket",
+            project_id="selected-project",
+            resolved_prefix="nested/source",
+            source_selected=True,
+        )
+        assert details["run_ref"] == run_ref
+        assert details["bucket"] == "selected-bucket"
+        assert details["project_id"] == "selected-project"
+        assert details["access"]["scope"] == "selected_source"
+        assert len(authorization_calls) == 2
+        cached_selected = module._foxglove_resolve_artifact(
+            {
+                "run_id": "run-one",
+                "run_ref": run_ref,
+                "key": key,
+                "resource_bucket": "selected-bucket",
+                "project_id": "selected-project",
+                "resolved_prefix": "nested/source",
+                "s3_uri": f"s3://selected-bucket/{key}",
+            }
+        )
+        assert cached_selected["key"] == key
+        assert cached_selected["source_fingerprint"]
+        assert len(authorization_calls) == 3
+        with module._FOXGLOVE_EXACT_INVENTORY_LOCK:
+            module._FOXGLOVE_EXACT_INVENTORY_CACHE.clear()
+        fallback_selected = module._foxglove_resolve_artifact(
+            {
+                "run_id": "run-one",
+                "run_ref": run_ref,
+                "key": key,
+                "resource_bucket": "selected-bucket",
+                "project_id": "selected-project",
+                "resolved_prefix": "nested/source",
+                "s3_uri": f"s3://selected-bucket/{key}",
+            }
+        )
+        assert fallback_selected["key"] == key
+        assert fallback_selected["source_fingerprint"]
+        assert len(authorization_calls) == 4
+    finally:
+        sys.modules.pop(module_name, None)
 
 
 def test_source_qualified_rrd_loads_keep_independent_history(
@@ -855,6 +1118,199 @@ def test_source_qualified_rrd_loads_keep_independent_history(
             != responses[0]["sim_viz"]["artifact_preview_url"]
         )
         assert selected_one["rerun_ready"] is True
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_rerun_self_heal_preserves_same_run_canonical_mcap(
+    monkeypatch, tmp_path
+) -> None:
+    """Repairing Rerun must not discard the selected run's Foxglove source."""
+    import shutil
+    import sys
+
+    module_name = "npa_rendered_same_run_self_heal_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    recordings = tmp_path / "recordings"
+    recordings.mkdir()
+    run_id = "run-with-canonical-mcap"
+    module.RECORDINGS_DIR = recordings
+    module.RECORDING_PATH = recordings / "active.rrd"
+    module.RRD_PATH = tmp_path / "sim2real.rrd"
+    run_recording = recordings / module.run_recording_basename(run_id)
+    run_recording.write_bytes(b"run-specific RRD")
+
+    def _publish(source):
+        shutil.copy2(source, module.RECORDING_PATH)
+        return "/rerun/recordings/cap-" + "a" * 43 + ".rrd"
+
+    monkeypatch.setattr(module, "recording_has_run_entities", lambda _data: True)
+    monkeypatch.setattr(module, "_publish_rrd_recording", _publish)
+    monkeypatch.setattr(module, "_restart_rerun_serve", lambda **_kwargs: True)
+    monkeypatch.setattr(module, "_save_state", lambda _state: None)
+    current = {
+        "run_id": run_id,
+        "artifact_run_ref": "npa1_same_run",
+        "bucket": "artifact-bucket",
+        "resolved_prefix": "nested/root",
+        "canonical_mcap_s3_uri": "s3://artifact-bucket/nested/root/reports/sim2real.mcap",
+        "canonical_mcap_key": "nested/root/reports/sim2real.mcap",
+        "canonical_mcap_sha256": "a" * 64,
+        "canonical_mcap_size_bytes": 4096,
+        "canonical_mcap_source": "native-reused",
+        "canonical_mcap_provenance": {
+            "visualization_contract": "npa.foxglove.robot-motion.v3"
+        },
+        "transport_state": "published-local-cache",
+        "foxglove_cloud_layout": {"layout_id": "lay_a9618be1fa915fb8"},
+        "mcap_uri": "file:///opt/npa-agent/recordings/sim2real.mcap",
+        "foxglove_ready": True,
+        "foxglove_url": "/foxglove/data/npa-rich.mcap",
+    }
+    state = {
+        "sim_viz": current,
+        "latest_submit": {"run_id": run_id},
+        "sim_viz_runs": {},
+    }
+    try:
+        repaired = module._wire_active_sim2real_recording(state)
+        assert repaired is not None
+        assert repaired["run_id"] == run_id
+        assert repaired["canonical_mcap_s3_uri"] == current["canonical_mcap_s3_uri"]
+        assert repaired["canonical_mcap_sha256"] == "a" * 64
+        assert (
+            repaired["canonical_mcap_provenance"]
+            == current["canonical_mcap_provenance"]
+        )
+        assert repaired["foxglove_cloud_layout"] == current["foxglove_cloud_layout"]
+        assert repaired["foxglove_url"] == current["foxglove_url"]
+        assert state["sim_viz"] == repaired
+        assert state["sim_viz_runs"][run_id]["canonical_mcap_sha256"] == "a" * 64
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_same_run_without_preferred_rrd_preserves_canonical_mcap(
+    monkeypatch, tmp_path
+) -> None:
+    """A same-run View load must not erase the prepared Foxglove contract."""
+    import sys
+
+    module_name = "npa_rendered_same_run_no_rrd_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    run_id = "run-with-canonical-only"
+    canonical = {
+        "run_id": run_id,
+        "canonical_mcap_s3_uri": (
+            "s3://artifact-bucket/nested/root/run-with-canonical-only/"
+            "reports/sim2real.mcap"
+        ),
+        "canonical_mcap_key": (
+            "nested/root/run-with-canonical-only/reports/sim2real.mcap"
+        ),
+        "canonical_mcap_sha256": "a" * 64,
+        "canonical_mcap_size_bytes": 4096,
+        "canonical_mcap_source": "generated-rich-diagnostic",
+        "canonical_mcap_provenance": {
+            "visualization_contract": "npa.foxglove.robot-motion.v3"
+        },
+        "transport_state": "published-local-cache",
+        "foxglove_cloud_layout": {"layout_id": "lay_a9618be1fa915fb8"},
+        "mcap_uri": "file:///opt/npa-agent/recordings/sim2real.mcap",
+        "mcap_updated_at": "2026-08-14T00:00:00+00:00",
+        "lichtblick_ready": True,
+        "lichtblick_iframe_url": "/lichtblick/?ds=mcap",
+        "foxglove_ready": True,
+        "foxglove_url": "/foxglove/data/npa-rich.mcap",
+    }
+    state = {"sim_viz": dict(canonical), "sim_viz_runs": {}}
+    artifact = module.Artifact(
+        run_id=run_id,
+        key=f"nested/root/{run_id}/metrics/final.json",
+        s3_uri=f"s3://artifact-bucket/nested/root/{run_id}/metrics/final.json",
+        size=128,
+        last_modified="2026-08-14T00:00:00Z",
+        render="json",
+        inline=True,
+    )
+    resolution = module.RunResolution(
+        run_id,
+        "artifact-bucket",
+        "nested/root",
+        [artifact],
+    )
+    try:
+        monkeypatch.setattr(module, "_load_state", lambda: state)
+        monkeypatch.setattr(module, "_save_state", lambda _state: None)
+        monkeypatch.setattr(module, "_record_sim_viz_run", lambda *_args: None)
+        monkeypatch.setattr(
+            module,
+            "_agent_s3_client",
+            lambda: (object(), {"bucket": "artifact-bucket", "prefix": ""}),
+        )
+        monkeypatch.setattr(
+            module, "_agent_s3_buckets", lambda *_args, **_kwargs: ["artifact-bucket"]
+        )
+        monkeypatch.setattr(
+            module, "resolve_run_artifacts", lambda *_args, **_kwargs: resolution
+        )
+        monkeypatch.setattr(module, "_agent_access_report", lambda: {})
+
+        loaded = module.sim_viz_load_run({"run_id": run_id})
+
+        assert loaded["artifacts_available"] is True
+        assert loaded["sim_viz"]["preview_status"] == "no_previewable_recording"
+        for key in (
+            "canonical_mcap_s3_uri",
+            "canonical_mcap_key",
+            "canonical_mcap_sha256",
+            "canonical_mcap_provenance",
+            "foxglove_cloud_layout",
+            "foxglove_url",
+            "lichtblick_iframe_url",
+        ):
+            assert loaded["sim_viz"][key] == canonical[key]
+            assert state["sim_viz"][key] == canonical[key]
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_same_run_artifact_state_ignores_stale_session_history_alias(
+    monkeypatch, tmp_path
+) -> None:
+    """An unqualified reload must resolve the active source-qualified run."""
+    import sys
+
+    module_name = "npa_rendered_same_run_history_alias_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    run_id = "run-with-source-history"
+    current = {
+        "run_id": run_id,
+        "source_type": "artifact_storage",
+        "artifact_run_ref": "npa1_exact_source",
+        "bucket": "artifact-bucket",
+        "resolved_prefix": "nested/root",
+        "canonical_mcap_s3_uri": (
+            f"s3://artifact-bucket/nested/root/{run_id}/reports/sim2real.mcap"
+        ),
+    }
+    state = {
+        "sim_viz": current,
+        "sim_viz_runs": {
+            run_id: {
+                "run_id": run_id,
+                "source_type": "workflow_history",
+                "rrd_uri": "file:///opt/npa-agent/runs/local.rrd",
+            },
+            "npa1_exact_source": dict(current),
+        },
+        "sim2real_runs": {run_id: {"run_id": run_id}},
+    }
+    try:
+        monkeypatch.setattr(module, "_load_state", lambda: state)
+        result = module._load_session_run_if_known(body={}, run_id=run_id)
+        assert result is None
+        assert state["sim_viz"] == current
     finally:
         sys.modules.pop(module_name, None)
 
@@ -1031,12 +1487,15 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
         sys.modules.pop(module_name, None)
 
     paths = {getattr(route, "path", "") for route in module.app.routes}
+    assert callable(module.artifacts_runs)
+    assert callable(module.artifacts_for_run)
     for expected in (
         "/access",
         "/foxglove/config",
         "/foxglove/status",
         "/foxglove/load-artifact",
         "/foxglove/convert-run",
+        "/foxglove/export",
         "/foxglove/live",
         "/resources",
         "/tenant-resources",
@@ -1812,7 +2271,10 @@ def test_rendered_backend_loads_real_skill_excerpts(monkeypatch, tmp_path):
         "retrieval",
         "trace",
         "foxglove",
+        "canonical_mcap",
+        "foxglove_cloud",
         "foxglove_routes",
+        "artifact_routes",
     ):
         (package / f"{name}.py").write_text(
             _extract(f"/opt/npa-agent/agent_backend/{name}.py"), encoding="utf-8"

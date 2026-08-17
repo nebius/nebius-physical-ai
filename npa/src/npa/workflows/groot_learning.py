@@ -1772,7 +1772,9 @@ def posttrain_eval(
         or checkpoint_step <= 0
         or int(training.get("optimizer_steps") or 0) != checkpoint_step
     ):
-        raise GrootVisualizationError("resolved checkpoint reference is internally inconsistent")
+        raise GrootVisualizationError(
+            "resolved checkpoint reference is internally inconsistent"
+        )
     return evaluate(
         split_manifest_uri,
         checkpoint_uri,
@@ -2471,7 +2473,9 @@ def compare_learning(
             raise GrootVisualizationError(f"training evidence requires {key}=true")
     expected_world_size = int(split.get("training_plan", {}).get("gpu_count") or 0)
     expected_ranks = list(range(expected_world_size))
-    observed_ranks = sorted(int(value) for value in training.get("observed_ranks") or [])
+    observed_ranks = sorted(
+        int(value) for value in training.get("observed_ranks") or []
+    )
     training_observed_ranks = sorted(
         int(value) for value in training.get("training_observed_ranks") or []
     )
@@ -2779,9 +2783,13 @@ def _validate_learning_mcap(
     if metadata.get("training_loss_clock") != "optimizer_step-as-seconds":
         raise GrootVisualizationError("learning MCAP training clock is missing")
     if metadata.get("is_robot_capture_time") != "false":
-        raise GrootVisualizationError("learning MCAP capture-time semantics are invalid")
+        raise GrootVisualizationError(
+            "learning MCAP capture-time semantics are invalid"
+        )
     if metadata.get("primary_camera") != camera_name:
-        raise GrootVisualizationError("learning MCAP primary-camera provenance mismatch")
+        raise GrootVisualizationError(
+            "learning MCAP primary-camera provenance mismatch"
+        )
     if not str(metadata.get("timebase_id") or "").startswith("sha256:"):
         raise GrootVisualizationError("learning MCAP timebase identity is missing")
     try:
@@ -2810,7 +2818,9 @@ def _validate_learning_mcap(
         "/expert/action",
         "/metrics/action_error",
     )
-    if any(info.channels.get(topic) != dataset_sample_count for topic in aligned_topics):
+    if any(
+        info.channels.get(topic) != dataset_sample_count for topic in aligned_topics
+    ):
         raise GrootVisualizationError(
             "learning MCAP aligned channel counts differ from the dataset timebase"
         )
@@ -2876,6 +2886,11 @@ def emit_learning_mcap(
                 FrameInput(
                     path=path,
                     camera=primary_camera,
+                    # GR00T's published replay contract names the physical
+                    # camera explicitly. The generic MCAP writer also supports
+                    # a conventional /camera primary alias, but that must not
+                    # replace this stable learning topic.
+                    topic=f"/camera/{primary_camera}",
                     timestamp_ns=timeline_origin_ns
                     + round(float(time_entry["time_seconds"]) * 1_000_000_000),
                 )
@@ -3318,7 +3333,9 @@ def publish_learning(
     provenance = report.get("provenance")
     dataset = report.get("dataset")
     visualizations = report.get("visualizations")
-    if not all(isinstance(value, Mapping) for value in (provenance, dataset, visualizations)):
+    if not all(
+        isinstance(value, Mapping) for value in (provenance, dataset, visualizations)
+    ):
         raise GrootVisualizationError("learning report lacks modality provenance")
     primary_camera = str(provenance.get("primary_camera") or "").strip()
     camera_names = [str(value) for value in dataset.get("camera_names") or []]
@@ -3369,7 +3386,10 @@ def publish_learning(
             or ""
         )
         match = re.fullmatch(r"([1-9][0-9]*)x([1-9][0-9]*)", expected_resolution)
-        if match is None or images[0].size != (int(match.group(1)), int(match.group(2))):
+        if match is None or images[0].size != (
+            int(match.group(1)),
+            int(match.group(2)),
+        ):
             raise GrootVisualizationError(
                 "comparison video resolution does not match report provenance"
             )
@@ -3448,15 +3468,22 @@ def verify_agent_ui_handoff(
         raise GrootVisualizationError("agent_url must be an HTTP(S) origin")
     credentials = os.environ.get("NPA_AGENT_BASIC_AUTH", "").strip()
     if not credentials or ":" not in credentials:
-        raise GrootVisualizationError("NPA_AGENT_BASIC_AUTH is required for UI verification")
+        raise GrootVisualizationError(
+            "NPA_AGENT_BASIC_AUTH is required for UI verification"
+        )
     authorization = "Basic " + base64.b64encode(credentials.encode()).decode()
     context = None
-    if origin.startswith("https://") and os.environ.get("NPA_AGENT_TLS_VERIFY", "1") == "0":
+    if (
+        origin.startswith("https://")
+        and os.environ.get("NPA_AGENT_TLS_VERIFY", "1") == "0"
+    ):
         import ssl
 
         context = ssl._create_unverified_context()  # noqa: S323 - explicit operator setting
 
-    def request_json(path: str, *, body: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    def request_json(
+        path: str, *, body: Mapping[str, Any] | None = None
+    ) -> dict[str, Any]:
         payload = None if body is None else _json_bytes(body)
         request = urllib.request.Request(
             origin + path,
@@ -3468,10 +3495,14 @@ def verify_agent_ui_handoff(
             method="POST" if payload is not None else "GET",
         )
         try:
-            with urllib.request.urlopen(request, timeout=60, context=context) as response:
+            with urllib.request.urlopen(
+                request, timeout=60, context=context
+            ) as response:
                 parsed = json.loads(response.read().decode())
         except (OSError, ValueError, urllib.error.URLError) as exc:
-            raise GrootVisualizationError(f"agent API request failed for {path.split('?', 1)[0]}") from exc
+            raise GrootVisualizationError(
+                f"agent API request failed for {path.split('?', 1)[0]}"
+            ) from exc
         if not isinstance(parsed, dict):
             raise GrootVisualizationError("agent API returned a non-object response")
         return parsed
@@ -3482,7 +3513,9 @@ def verify_agent_ui_handoff(
             headers={"Authorization": authorization, "Range": "bytes=0-63"},
         )
         try:
-            with urllib.request.urlopen(request, timeout=60, context=context) as response:
+            with urllib.request.urlopen(
+                request, timeout=60, context=context
+            ) as response:
                 body = response.read()
                 return response.status in {200, 206} and 0 < len(body) <= 64
         except (OSError, urllib.error.URLError):
@@ -3493,7 +3526,9 @@ def verify_agent_ui_handoff(
     inventory = request_json(f"/api/artifacts/run/{selector}")
     if str(inventory.get("run_id") or "") != run_id:
         raise GrootVisualizationError("agent loaded a different run identity")
-    artifacts = [item for item in inventory.get("artifacts") or [] if isinstance(item, dict)]
+    artifacts = [
+        item for item in inventory.get("artifacts") or [] if isinstance(item, dict)
+    ]
     required = {
         "report": report_uri,
         "rrd": rrd_uri,
@@ -3503,7 +3538,9 @@ def verify_agent_ui_handoff(
     for label, uri in required.items():
         matches = [item for item in artifacts if str(item.get("s3_uri") or "") == uri]
         if len(matches) != 1:
-            raise GrootVisualizationError(f"agent inventory lacks unique {label} artifact")
+            raise GrootVisualizationError(
+                f"agent inventory lacks unique {label} artifact"
+            )
         selected[label] = matches[0]
 
     loads: dict[str, dict[str, Any]] = {}

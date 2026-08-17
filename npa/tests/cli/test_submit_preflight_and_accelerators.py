@@ -12,6 +12,7 @@ import yaml
 
 from npa.cli.main import app
 from npa.cli.workbench import workflow as workflow_cli
+from npa.orchestration.npa_workflow.submit import load_spec_for_submit
 from npa.orchestration.skypilot.image_bootstrap_contract import (
     ATTESTATION_LABEL,
     CONTRACT_VERSION,
@@ -20,9 +21,19 @@ from npa.orchestration.skypilot.image_bootstrap_contract import (
 )
 from npa.orchestration.skypilot.k8s_gpu_catalog import KubernetesGpuCatalog
 from npa.orchestration.skypilot.registry_preflight import ImagePullCheck
+from npa.orchestration.skypilot.workflow import SkyPilotSubmitError
 
 
 runner = CliRunner()
+REPO_ROOT = Path(__file__).resolve().parents[3]
+OPENPI_FOUR_MODE_SPEC = (
+    REPO_ROOT
+    / "npa"
+    / "workflows"
+    / "workbench"
+    / "npa-workflows"
+    / "openpi-pi05-four-mode.yaml"
+)
 
 SPEC = {
     "apiVersion": "npa.workflow/v0.0.1",
@@ -47,6 +58,49 @@ SPEC = {
         "done": {"terminal": True},
     },
 }
+
+
+class _RecordingOperation:
+    def __init__(self) -> None:
+        self.rollback: dict[str, object] | None = None
+        self.transitions: list[tuple[str, dict[str, object]]] = []
+
+    def record_rollback(self, **kwargs) -> None:  # noqa: ANN003
+        self.rollback = kwargs
+
+    def transition(self, phase: str, **kwargs) -> None:  # noqa: ANN003
+        self.transitions.append((phase, kwargs))
+
+
+def test_prelaunch_reconciliation_failure_does_not_leave_recovery_blocker() -> None:
+    operation = _RecordingOperation()
+    transaction = type("Transaction", (), {"launch_sequence": 0})()
+    error = SkyPilotSubmitError("controller identity mismatch", transaction=transaction)
+
+    workflow_cli._record_workflow_submit_failure(operation, error)
+
+    assert operation.rollback == {
+        "attempted": False,
+        "completed": True,
+        "removed": [],
+        "preserved": [],
+        "outcomes": [],
+    }
+    assert operation.transitions[0][0] == "rolled-back"
+    assert operation.transitions[0][1]["details"]["launch_attempted"] is False
+
+
+def test_postlaunch_failure_preserves_recovery_blocker() -> None:
+    operation = _RecordingOperation()
+    transaction = type("Transaction", (), {"launch_sequence": 1})()
+    error = SkyPilotSubmitError("launch indeterminate", transaction=transaction)
+
+    workflow_cli._record_workflow_submit_failure(operation, error)
+
+    assert operation.rollback is None
+    assert operation.transitions == [
+        ("recovery-required", {"error": "launch indeterminate"})
+    ]
 
 
 @pytest.fixture()
@@ -88,6 +142,82 @@ def test_submit_remaps_the_spec_accelerator_onto_the_cluster_name(
     )
 
     assert overrides == {"RTXPRO6000:1": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"}
+
+
+def test_submit_accelerator_readiness_uses_resolved_config_overrides(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str
+) -> None:
+    monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
+    spec = yaml.safe_load(yaml.safe_dump(SPEC))
+    spec["config"].update({"gpu_type": "RTXPRO6000", "gpu_count": "8"})
+    spec["resources"]["gpu"]["accelerators"] = (
+        "{{config.gpu_type}}:{{config.gpu_count}}"
+    )
+    path = tmp_path / "templated-accelerator.yaml"
+    path.write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
+    _stub_catalog(monkeypatch, CATALOG_OUTPUT)
+    merged_spec = load_spec_for_submit(path, config_overrides={"gpu_count": "1"})
+
+    overrides = workflow_cli._resolve_submit_accelerators(
+        path,
+        spec=merged_spec,
+        infra="k8s/npa-cluster",
+        sky_bin=sky_bin,
+        enabled=True,
+    )
+
+    assert overrides == {"RTXPRO6000:1": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"}
+
+
+@pytest.mark.parametrize(
+    ("config_overrides", "expected"),
+    [({}, "B200:1"), ({"gpu_type": "H200", "gpu_count": "2"}, "H200:2")],
+)
+def test_openpi_readiness_uses_fully_resolved_planned_profiles(
+    monkeypatch: pytest.MonkeyPatch,
+    sky_bin: str,
+    config_overrides: dict[str, str],
+    expected: str,
+) -> None:
+    from npa.orchestration.skypilot import k8s_gpu_catalog
+
+    monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
+    seen: list[list[str]] = []
+
+    def wait(requested, **_kwargs):  # noqa: ANN001
+        seen.append(list(requested))
+        return {
+            value: k8s_gpu_catalog.AcceleratorResolution(
+                requested=value,
+                resolved=value,
+                remapped=False,
+                catalog=k8s_gpu_catalog.KubernetesGpuCatalog(
+                    quantities_by_accelerator={
+                        value.rsplit(":", 1)[0]: frozenset(
+                            {int(value.rsplit(":", 1)[1])}
+                        )
+                    }
+                ),
+            )
+            for value in requested
+        }
+
+    monkeypatch.setattr(k8s_gpu_catalog, "wait_for_kubernetes_accelerators", wait)
+    merged = load_spec_for_submit(
+        OPENPI_FOUR_MODE_SPEC, config_overrides=config_overrides
+    )
+
+    overrides = workflow_cli._resolve_submit_accelerators(
+        OPENPI_FOUR_MODE_SPEC,
+        spec=merged,
+        infra="k8s/npa-cluster",
+        sky_bin=sky_bin,
+        enabled=True,
+    )
+
+    assert seen == [[expected]]
+    assert overrides == {}
+    assert "{{config." not in seen[0][0]
 
 
 def test_submit_refuses_two_gpus_per_task_on_single_gpu_nodes(
@@ -330,6 +460,40 @@ def test_pullable_images_pass(
     assert "1 image(s) pullable" in capsys.readouterr().err
 
 
+def test_image_preflight_plans_with_submit_config_overrides(
+    monkeypatch: pytest.MonkeyPatch, spec_path: Path
+) -> None:
+    observed: dict[str, str] = {}
+
+    def plan_images(spec, *_args, **_kwargs):
+        observed["runtime_image"] = str(spec.config["runtime_image"])
+        return []
+
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.skypilot_render.plan_images", plan_images
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.skypilot_render.plan_image_pull_secrets",
+        lambda *_args, **_kwargs: {},
+    )
+    digest = "cr.example/openpi@sha256:" + "b" * 64
+
+    assert (
+        workflow_cli._preflight_submit_images(
+            spec_path,
+            spec=load_spec_for_submit(
+                spec_path, config_overrides={"runtime_image": digest}
+            ),
+            options=object(),
+            assume_decision="",
+            enabled=True,
+        )
+        == {}
+    )
+
+    assert observed == {"runtime_image": digest}
+
+
 def test_first_party_image_without_attestation_fails_instead_of_probing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -346,7 +510,9 @@ def test_first_party_image_without_attestation_fails_instead_of_probing(
     )
 
     def probe_forbidden(**_kwargs):
-        raise AssertionError("first-party missing evidence must not use a runtime probe")
+        raise AssertionError(
+            "first-party missing evidence must not use a runtime probe"
+        )
 
     monkeypatch.setattr(
         "npa.orchestration.skypilot.image_bootstrap_contract.probe_image_capabilities",

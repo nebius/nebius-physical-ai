@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -144,6 +145,44 @@ def test_provision_if_absent_dry_run_reports_actions(
     assert result.storage_bucket == "s3://bucket/checkpoints/"
 
 
+def test_provisioning_normalizes_uri_bucket_for_probe_and_runtime_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_runtime(tmp_path, monkeypatch)
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    seen: dict[str, str] = {}
+
+    from npa.clients.storage_validation import StorageProbeResult
+
+    def probe(**kwargs):  # noqa: ANN003, ANN202
+        seen["probe_bucket"] = kwargs["bucket"]
+        return StorageProbeResult(
+            True,
+            "ok",
+            "Writable S3 verified with a cleaned write/delete probe.",
+            cleanup_attempted=True,
+            cleanup_succeeded=True,
+        )
+
+    monkeypatch.setattr("npa.clients.storage_validation.probe_storage_write", probe)
+
+    alias, environment, storage, registry = provisioning._resolve_project_runtime(
+        "proj"
+    )
+    with provisioning._runtime_env(alias, environment, storage, registry):
+        seen["runtime_bucket"] = os.environ["NPA_S3_BUCKET"]
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        cluster_name="npa-cluster",
+        kubeconfig=kubeconfig,
+    )
+
+    assert result.status == "ok"
+    assert seen == {"runtime_bucket": "bucket", "probe_bucket": "bucket"}
+
+
 def test_quota_blocker_reaches_no_storage_or_cluster_mutation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -206,6 +245,120 @@ def test_provision_if_absent_reuses_kubeconfig_and_ensures_bucket(
     assert "k8s:validated stable GPU health and CUDA vectorAdd" in result.actions
 
 
+def test_reused_cluster_runs_requested_skypilot_smoke(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_runtime(tmp_path, monkeypatch)
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    seen: list[tuple[object, ...]] = []
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle._run_skypilot_smoke",
+        lambda *args, **kwargs: seen.append(("smoke", *args, kwargs)),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog."
+        "wait_for_kubernetes_accelerators",
+        lambda *args, **kwargs: seen.append(("readiness", *args, kwargs)) or {},
+    )
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        cluster_name="npa-cluster",
+        kubeconfig=kubeconfig,
+        sky_smoke=True,
+        accelerator="RTXPRO6000:1",
+        sky_bin="/opt/npa/sky",
+    )
+
+    assert result.status == "ok"
+    assert "sky-smoke:passed" in result.actions
+    assert [item[0] for item in seen] == ["readiness", "smoke"]
+    readiness = seen[0]
+    assert readiness[1] == ["RTXPRO6000:1"]
+    assert readiness[-1]["kubeconfig"] == kubeconfig
+    assert readiness[-1]["sky_bin"] == "/opt/npa/sky"
+    assert readiness[-1]["label_known_gpus"] is True
+    assert seen[1] == (
+        "smoke",
+        kubeconfig,
+        "npa-cluster",
+        "npa-cluster",
+        "RTXPRO6000:1",
+        {"sky_bin": "/opt/npa/sky"},
+    )
+
+
+def test_fresh_cluster_uses_the_same_readiness_then_smoke_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_runtime(tmp_path, monkeypatch)
+    kubeconfig = tmp_path / "fresh-kubeconfig"
+    seen: list[tuple[str, object]] = []
+
+    def up(**kwargs):  # noqa: ANN003, ANN202
+        seen.append(("up", kwargs))
+
+    monkeypatch.setattr("npa.cli.cluster.terraform_lifecycle.up_cmd", up)
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog."
+        "wait_for_kubernetes_accelerators",
+        lambda *_args, **kwargs: seen.append(("readiness", kwargs)) or {},
+    )
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle._run_skypilot_smoke",
+        lambda *_args, **kwargs: seen.append(("smoke", kwargs)),
+    )
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        cluster_name="npa-cluster",
+        kubeconfig=kubeconfig,
+        sky_smoke=True,
+        accelerator="RTXPRO6000:1",
+        sky_bin="/opt/npa/sky",
+    )
+
+    assert result.status == "ok"
+    assert [item[0] for item in seen] == ["up", "readiness", "smoke"]
+    up_kwargs = seen[0][1]
+    assert up_kwargs["sky_smoke"] is False
+    assert up_kwargs["sky_bin"] == "/opt/npa/sky"
+    assert seen[1][1]["label_known_gpus"] is True
+    assert seen[1][1]["sky_bin"] == "/opt/npa/sky"
+    assert seen[2][1]["sky_bin"] == "/opt/npa/sky"
+
+
+def test_cached_smoke_without_accelerator_keeps_auto_detection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_runtime(tmp_path, monkeypatch)
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    seen: list[tuple[str, object]] = []
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog."
+        "wait_for_kubernetes_accelerators",
+        lambda accelerators, **_kwargs: seen.append(("readiness", accelerators))
+        or {},
+    )
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle._run_skypilot_smoke",
+        lambda *_args, **_kwargs: seen.append(("smoke", _args[3])),
+    )
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        cluster_name="npa-cluster",
+        kubeconfig=kubeconfig,
+        sky_smoke=True,
+        sky_bin="/opt/npa/sky",
+    )
+
+    assert result.status == "ok"
+    assert seen == [("readiness", []), ("smoke", "")]
+
+
 def test_reused_cluster_still_waits_for_skypilot_gpu_readiness(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -219,7 +372,8 @@ def test_reused_cluster_still_waits_for_skypilot_gpu_readiness(
     def wait(accelerators, **kwargs):  # noqa: ANN001, ANN202
         seen["accelerators"] = accelerators
         seen["context"] = kwargs["context"]
-        seen["kubeconfig"] = __import__("os").environ["KUBECONFIG"]
+        seen["kubeconfig"] = str(kwargs["kubeconfig"])
+        seen["label_known_gpus"] = kwargs["label_known_gpus"]
         kwargs["on_status"]("Kubernetes allocatable=1; SkyPilot discovery=ready")
         return {}
 
@@ -240,6 +394,7 @@ def test_reused_cluster_still_waits_for_skypilot_gpu_readiness(
         "accelerators": ["RTXPRO6000:1"],
         "context": "npa-cluster",
         "kubeconfig": str(kubeconfig),
+        "label_known_gpus": True,
     }
     assert any("SkyPilot discovery=ready" in action for action in result.actions)
 
@@ -283,7 +438,7 @@ def test_green_preflight_rolls_back_only_new_cluster_on_readiness_failure(
     )
 
     assert result.status == "partial"
-    assert result.gpu_readiness == "timeout"
+    assert result.gpu_readiness == "failed"
     down.assert_called_once()
     assert down.call_args.kwargs["cluster_id"] == "cluster-created-by-test-operation"
     assert any("rollback:removed only cluster resources" in a for a in result.actions)

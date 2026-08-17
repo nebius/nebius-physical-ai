@@ -225,6 +225,38 @@ def _plan_differences(
     return differences
 
 
+_TOPOLOGY_PROGRESS_KEYS = frozenset(
+    {
+        "agent_exists",
+        "existing_cpu_nodes",
+        "existing_gpu_nodes",
+        "new_agent_instances",
+        "new_cpu_nodes",
+        "new_gpu_nodes",
+        "required_instances",
+        "required_disks",
+        "required_network_ssd_bytes",
+        "required_network_ssd_gib",
+        "required_public_ips",
+        "required_gpus",
+    }
+)
+
+
+def _immutable_plan_identity(plan: Mapping[str, Any]) -> dict[str, Any]:
+    """Return requested topology identity without provider-derived progress."""
+
+    identity = dict(plan)
+    topology = identity.get("topology")
+    if isinstance(topology, Mapping):
+        identity["topology"] = {
+            key: value
+            for key, value in topology.items()
+            if key not in _TOPOLOGY_PROGRESS_KEYS
+        }
+    return identity
+
+
 def _pid_is_alive(pid: int) -> bool:
     if pid <= 0:
         return False
@@ -1249,7 +1281,11 @@ class ProvisioningOperation:
                 "input_action",
             )
             differences = (
-                _plan_differences(existing, candidate, immutable_keys=immutable_keys)
+                _plan_differences(
+                    _immutable_plan_identity(existing),
+                    _immutable_plan_identity(candidate),
+                    immutable_keys=immutable_keys,
+                )
                 if isinstance(existing, dict)
                 else []
             )

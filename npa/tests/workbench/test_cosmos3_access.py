@@ -102,9 +102,11 @@ def test_cosmos3_check_is_redacted_and_uses_env_auth(mocker, tmp_path: Path) -> 
     assert "hf-secret" not in rendered
 
 
-def test_cosmos3_check_uses_public_defaults_and_reports_missing_hf_auth(
+def test_cosmos3_check_uses_public_defaults_anonymously(
+    mocker,
     tmp_path: Path,
 ) -> None:
+    mocker.patch("httpx.head", return_value=httpx.Response(200))
     calls: list[tuple[list[str], dict]] = []
 
     def run(args, **kwargs):
@@ -119,10 +121,11 @@ def test_cosmos3_check_uses_public_defaults_and_reports_missing_hf_auth(
         runner=run,
     )
 
-    assert result.ok is False
+    assert result.ok is True
     assert result.github_auth == "missing"
     assert result.source_repo == "reachable"
-    assert "Hugging Face auth missing: set HF_TOKEN" in result.errors
+    assert result.hf_auth == "anonymous"
+    assert result.hf_model == "reachable"
     assert calls[0][0] == ["gh", "auth", "status"]
     assert calls[1][0] == [
         "git",
@@ -191,7 +194,9 @@ def test_cosmos3_fetch_can_clone_source_without_checkpoint(
     assert [call[0][0] for call in calls] == ["git", "git"]
 
 
-def test_cosmos3_text_to_image_spec_defaults_to_the_public_framework_and_model() -> None:
+def test_cosmos3_text_to_image_spec_defaults_to_the_public_framework_and_model() -> (
+    None
+):
     """The template's `envs:` were its contract; the spec's `config:` is.
 
     Live proof that the spec runs: job 320 generated a 960x960 image from the default prompt

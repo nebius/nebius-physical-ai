@@ -19,7 +19,7 @@ unique and must be tested with its own upstream-named capabilities.
 | ManiSkill | `mani-skill/ManiSkill` `v3.0.1` | `gymnasium_pickcube_registration` | `maniskill_pickcube_step.json` | `byof-maniskill.yaml` |
 | MuJoCo Playground | `google-deepmind/mujoco_playground` `v0.2.0` | `mjx_cartpole_step` (+ CheetahRun) | `mujoco_playground_cartpole_step.json` | `byof-mujoco-playground.yaml` |
 | RoboCasa | `robocasa/robocasa` `v1.0` | `kitchen_task_registration` | `robocasa_kitchen_env_reset.json` | `byof-robocasa.yaml` |
-| OpenPI | `Physical-Intelligence/openpi` `15a9616a…` | `policy_config_materialization` | `openpi_pi05_droid_config.json` | `byof-openpi.yaml` |
+| OpenPI | `Physical-Intelligence/openpi` `15a9616a…` | connected direct / cross-pod serve / LoRA optimizer / held-out evaluation gate | builder `openpi_pi05_droid_jointpos_polaris_inference.json`, then four mode-specific JSON reports plus exact checkpoint manifest | `byof-openpi.yaml` → `openpi-pi05-four-mode.yaml` |
 | DROID policy learning | `droid-dataset/droid_policy_learning` `9a29c832…` | `rlds_config_generator_contract` | `droid_rlds_config_generator.json` | `byof-droid-policy-learning.yaml` |
 | Open Dreamer (world model, **2-GPU min**) | `next-state/open-dreamer` `2b10640` | `dreamer4_tokenizer_train_two_gpu` | `open_dreamer_world_model_2gpu.json` | `byof-open-dreamer.yaml` |
 | Alibaba Wan 2.2 TI2V-5B | `Wan-Video/Wan2.2` `42bf4cf…` | `wan2.2_ti2v_5b_text_to_video` | capability JSON + runtime inventory + MP4 | `byof-wan2.2.yaml` |
@@ -39,9 +39,12 @@ unique and must be tested with its own upstream-named capabilities.
 | RoboCasa | `download_kitchen_assets_lw` | **accepted** | `defcap17-robocasa-20260709-060243` (IIFAN fixtures+objects; restored git accessories) |
 | RoboCasa | `kitchen_egl_env_reset` | **accepted** | `defcap17-robocasa-20260709-060243` (post-download subprocess; 58 lightwheel cats; obs dict) |
 | RoboCasa | `kitchen_random_rollout` | **accepted** | `defcap20-robocasa-20260710-032142` (`run_random_rollouts` + mp4 `22150` bytes; `gymnasium==0.29.1` + `env.sim` bind) |
-| OpenPI | `policy_config_materialization` | **accepted** | `defcap9-openpi-20260709-034059` (+ prior) |
-| OpenPI | `pi05_droid_checkpoint_download` | **accepted** | `defcap9-openpi-20260709-034059` via `maybe_download` |
-| OpenPI | `pi05_droid_checkpoint_infer` | **accepted** | `defcap9-openpi-20260709-034059` (`make_droid_example`, actions `[15,8]`) |
+| OpenPI | `pi05_droid_jointpos_polaris_checkpoint_download` | **accepted** | Canonical isolated B200 gate: image build/push/digest verification, then 12,434,530,837 runtime-only GCS bytes with 27-object generation-manifest provenance; exact scoped `NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES` is runtime-only |
+| OpenPI | `pi05_droid_jointpos_polaris_direct_infer` | **accepted** | Same digest-pinned B200 `sm_100` gate; deterministic Franka input produced finite `float64[15,8]` joint-position targets |
+| OpenPI | `pi05_droid_jointpos_polaris_served_infer` | **accepted builder regression** | Same gate; upstream WebSocket health + same-pod client round trip produced finite `float64[15,8]` |
+| OpenPI | `pi05_droid_jointpos_polaris_cross_pod_serve` | **accepted** | Isolated single-B200 connected gate: private ClusterIP, ready digest-pinned server Deployment, and a distinct CPU client pod completed two finite `float64[15,8]` requests; exact service cleanup passed |
+| OpenPI | `pi05_droid_jointpos_polaris_lora_optimizer_smoke` | **accepted** | Same connected gate: upstream pi0.5 LoRA forward/backward/AdamW step, finite loss, changed trainable-state hash, and independently reloadable private Orbax checkpoint |
+| OpenPI | `pi05_droid_jointpos_polaris_heldout_evaluate` | **accepted** | Same connected gate: exact trained-checkpoint reload, two samples excluded from the four-sample training split, finite upstream loss and action MAE/MSE, and finite `float64[15,8]` trajectory |
 | DROID | `rlds_config_generator_contract` | **accepted** | `defcap8-droid-policy-learning-20260709-024455` (+ prior) |
 | DROID | `droid_100_download` | **accepted** | Same run (`https_meta` `dataset_info.json`) |
 | DROID | `droid_100_config_gen` | **accepted** | Same run (`EXP_NAMES` droid_100 wiring) |
@@ -90,9 +93,21 @@ unique and must be tested with its own upstream-named capabilities.
 
 | Capability | Status | Upstream basis |
 | --- | --- | --- |
-| `policy_config_materialization` | accepted hard gate (live) | `get_config("pi05_droid")` |
-| `pi05_droid_checkpoint_download` | accepted (live) | `download.maybe_download(gs://openpi-assets/…)` |
-| `pi05_droid_checkpoint_infer` | accepted (live) | `make_droid_example()` + `policy.infer` |
+| `pi05_droid_jointpos_polaris_checkpoint_download` | accepted (live) | canonical build/push/digest gate; anonymous runtime `download.maybe_download(gs://openpi-assets/checkpoints/polaris/…)`; 27 objects / 12,434,530,837 bytes; weights and the exact scoped terms acceptance are never baked |
+| `pi05_droid_jointpos_polaris_direct_infer` | accepted (live) | digest-pinned B200 `sm_100` `get_config("pi05_droid_jointpos_polaris")` + direct `policy.infer`; finite `float64[15,8]` joint-position targets |
+| `pi05_droid_jointpos_polaris_served_infer` | accepted builder regression (live) | upstream `WebsocketPolicyServer` + same-pod `WebsocketClientPolicy`; served finite `float64[15,8]` |
+| `pi05_droid_jointpos_polaris_cross_pod_serve` | accepted (live) | upstream server Deployment + private ClusterIP + distinct client Job; two finite `float64[15,8]` requests (39.350 s cold, 50.2 ms warm); exact cleanup |
+| `pi05_droid_jointpos_polaris_lora_optimizer_smoke` | accepted (live) | supported upstream pi0.5 LoRA config; one real forward/backward/AdamW update (loss 0.145676, update L2 0.0957375), changed trainable state, and reloadable 29-file Orbax checkpoint |
+| `pi05_droid_jointpos_polaris_heldout_evaluate` | accepted (live) | exact trained-checkpoint reload; two disjoint held-out samples; finite mean upstream loss 0.182892, action MAE 0.0111408 and MSE 0.000200538, plus valid `float64[15,8]` trajectory |
+
+The Polaris request/response schema, upstream terms, licensing boundary, B200 stack,
+and 15 Hz re-query guidance are documented in
+[`openpi-pi05-polaris.md`](openpi-pi05-polaris.md). Historical validation of
+the older generic `pi05_droid` checkpoint is not treated as Polaris/B200 proof.
+The connected four-mode gate is the only surface that may establish cross-pod
+ClusterIP serving and live optimizer/evaluation acceptance. It does not claim
+physical Franka success, external Ingress, convergence, or robot success from
+offline evaluation.
 
 ### DROID policy learning
 

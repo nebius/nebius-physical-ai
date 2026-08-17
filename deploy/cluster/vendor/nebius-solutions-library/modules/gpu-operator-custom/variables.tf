@@ -16,6 +16,30 @@ variable "driver_version" {
   default     = "580.95.05"
 }
 
+variable "device_plugin_version" {
+  description = "NVIDIA Kubernetes device plugin version."
+  type        = string
+  default     = "v0.18.0"
+}
+
+variable "gfd_version" {
+  description = "NVIDIA GPU Feature Discovery version."
+  type        = string
+  default     = "v0.18.0"
+}
+
+variable "mig_manager_version" {
+  description = "NVIDIA MIG Manager version."
+  type        = string
+  default     = "v0.13.0"
+}
+
+variable "mig_with_reboot" {
+  description = "Allow MIG Manager to perform the reboot required by the selected CSP GPU lifecycle."
+  type        = bool
+  default     = false
+}
+
 variable "nfd_enabled" {
   description = "Enable Node Feature Discovery."
   type        = bool

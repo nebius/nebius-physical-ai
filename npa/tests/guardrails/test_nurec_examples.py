@@ -39,7 +39,12 @@ def test_example_set_is_pinned() -> None:
 def test_the_directory_documents_the_boundary() -> None:
     readme = " ".join((EXAMPLES / "README.md").read_text(encoding="utf-8").split())
 
-    for token in ("single-pod", "not a workflow authoring catalog", "#234", "npa.workflow"):
+    for token in (
+        "single-pod",
+        "not a workflow authoring catalog",
+        "#234",
+        "npa.workflow",
+    ):
         assert token in readme, f"NuRec examples README should mention {token!r}"
     assert "One task per file" in readme
 
@@ -48,10 +53,14 @@ def test_the_directory_documents_the_boundary() -> None:
 def test_example_is_a_single_skypilot_task(name: str) -> None:
     docs = _documents(EXAMPLES / name)
 
-    assert len(docs) == 1, f"{name} has {len(docs)} documents; this example submits one task"
+    assert len(docs) == 1, (
+        f"{name} has {len(docs)} documents; this example submits one task"
+    )
     task = docs[0]
     assert "run" in task, f"{name} must be an executable SkyPilot task"
-    assert "execution" not in task, f"{name} looks like a pipeline, not a single-pod task"
+    assert "execution" not in task, (
+        f"{name} looks like a pipeline, not a single-pod task"
+    )
 
 
 @pytest.mark.parametrize("name", sorted(PINNED_EXAMPLES))
@@ -64,7 +73,6 @@ def test_example_keeps_substitution_placeholders(name: str) -> None:
         "${NPA_SRC_S3_URI}",
         "${AWS_ACCESS_KEY_ID}",
         "${AWS_SECRET_ACCESS_KEY}",
-        "${HF_TOKEN}",
         "${NGC_API_KEY}",
     ):
         assert placeholder in text, f"{name} lost placeholder {placeholder}"
@@ -72,4 +80,6 @@ def test_example_keeps_substitution_placeholders(name: str) -> None:
 
 def test_example_is_not_in_the_retiring_workflow_catalog() -> None:
     for name in PINNED_EXAMPLES:
-        assert not (RETIRED_CATALOG / name).exists(), f"{name} came back to the retiring catalog"
+        assert not (RETIRED_CATALOG / name).exists(), (
+            f"{name} came back to the retiring catalog"
+        )

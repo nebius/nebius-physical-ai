@@ -7,9 +7,9 @@ kind: Workflow
 # QUICKSTART - copy, paste, run. Walkthrough:
 # docs/workbench/guides/neural-reconstruction.md
 #
-#   # 0. Credentials. NGC_API_KEY pulls the NRE container; HF_TOKEN downloads the
-#   #    capture. Never echo them (see the SKILL's secret-handling section).
-#   export NGC_API_KEY=...  HF_TOKEN=...
+#   # 0. Credentials. NGC_API_KEY pulls the NRE container. The default PPISP
+#   #    capture is public and needs no HF token.
+#   export NGC_API_KEY=...
 #   export AWS_ACCESS_KEY_ID=...  AWS_SECRET_ACCESS_KEY=...  AWS_ENDPOINT_URL=...
 #
 #   # 1. Cheap preflight: entitlement, real HF download authorization, RT cores.
@@ -28,7 +28,7 @@ kind: Workflow
 #     --var bucket=<your-bucket> \
 #     --var prefix="checkpoints/neural-reconstruction/$RUN_ID" \
 #     --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY \
-#     --secret-env HF_TOKEN --secret-env NGC_API_KEY
+#     --secret-env NGC_API_KEY
 #
 #   # 4. Watch, then open the run in the NPA agent (it auto-selects the .rrd).
 #   sky jobs queue

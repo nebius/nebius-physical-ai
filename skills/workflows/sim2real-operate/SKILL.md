@@ -29,10 +29,9 @@ with an actionable migration to this canonical spec.
 ## Submit and resume
 
 Before provisioning or submitting an Isaac state, load
-`skills/atomic/third-party-eula-preflight/SKILL.md` and require explicit
-operator acceptance of the named NVIDIA Omniverse Kit and Isaac Sim terms.
-Detached runs without that acceptance fail before work is created and report
-the exact resume command; the workflow never infers or bakes acceptance.
+`skills/atomic/third-party-eula-preflight/SKILL.md`. Isaac acceptance defaults on
+for non-interactive submissions; pass `--no-accept-eula` to opt out. An opted-out
+run fails before work is created. Optional privacy and telemetry remain disabled.
 
 Submit with `--runtime --resume`. Pass tenant-specific data only through
 `--var`, isolated config, and secret envs. For a no-deadline run pass

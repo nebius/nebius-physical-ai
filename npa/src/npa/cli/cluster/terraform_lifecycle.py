@@ -207,6 +207,7 @@ def _rollback_fresh_cluster_apply(
             tenant_id=str(operation.read().get("tenant_id") or ""),
             region=str(operation.read().get("region") or ""),
             cluster_id="",
+            operation_id="",
             context_name=context,
             keep_local_state=False,
             force=True,
@@ -257,6 +258,11 @@ def up_cmd(
         "",
         "--sky-gpus",
         help="SkyPilot GPU demand for the smoke task. Defaults to auto-detecting the first Kubernetes GPU.",
+    ),
+    sky_bin: str = typer.Option(
+        "",
+        "--sky-bin",
+        help="Pinned NPA SkyPilot executable override for GPU readiness and smoke.",
     ),
     capacity_block_group: str = typer.Option(
         "",
@@ -401,9 +407,7 @@ def up_cmd(
     if preemptible is not None:
         tfvars["gpu_nodes_preemptible"] = bool(preemptible)
     if allow_unsafe_nvswitch_operator is not None:
-        tfvars["allow_unsafe_nvswitch_operator"] = bool(
-            allow_unsafe_nvswitch_operator
-        )
+        tfvars["allow_unsafe_nvswitch_operator"] = bool(allow_unsafe_nvswitch_operator)
     context = explicit_context or str(tfvars.get("cluster_name") or "npa-cluster")
 
     with isolated_terraform_data_dir(tf_dir, context) as terraform_data:
@@ -554,7 +558,9 @@ def up_cmd(
                     (outputs.get("created_subnet_id") or {}).get("value") or ""
                 ),
                 "service_account": str(
-                    (outputs.get("k8s_node_group_service_account_id") or {}).get("value")
+                    (outputs.get("k8s_node_group_service_account_id") or {}).get(
+                        "value"
+                    )
                     or ""
                 ),
             }
@@ -633,7 +639,31 @@ def up_cmd(
                 f"default StorageClass {validation['default_storage_class']}"
             )
         if sky_smoke:
-            _run_skypilot_smoke(kubeconfig_path, context, cluster_name, sky_gpus)
+            from npa.orchestration.skypilot.k8s_gpu_catalog import (
+                wait_for_kubernetes_accelerators,
+            )
+
+            _check_skypilot_kubernetes(
+                kubeconfig_path,
+                context,
+                sky_bin=sky_bin,
+            )
+            wait_for_kubernetes_accelerators(
+                [sky_gpus] if sky_gpus.strip() else [],
+                context=context,
+                kubeconfig=kubeconfig_path,
+                sky_bin=sky_bin or None,
+                label_known_gpus=True,
+                on_status=lambda message: typer.echo(message, err=True),
+            )
+            _run_skypilot_smoke(
+                kubeconfig_path,
+                context,
+                cluster_name,
+                sky_gpus,
+                sky_bin=sky_bin,
+                credentials_checked=True,
+            )
         _save_terraform_cluster_state(
             tfvars,
             cluster,
@@ -779,8 +809,7 @@ def down_cmd(
                 isinstance(item, dict)
                 and item.get("resource_type") == "managed_kubernetes_cluster"
                 and str(item.get("provider_id") or "") == exact_cluster_id
-                and str(item.get("project_id") or exact_project_id)
-                == exact_project_id
+                and str(item.get("project_id") or exact_project_id) == exact_project_id
                 for item in candidate.read().get("resources") or []
             )
         ]
@@ -839,7 +868,12 @@ def down_cmd(
                 str(item.get("resource_type") or "")
                 for item in resources
                 if str(item.get("resource_type") or "")
-                in {"managed_kubernetes_cluster", "network", "subnet", "service_account"}
+                in {
+                    "managed_kubernetes_cluster",
+                    "network",
+                    "subnet",
+                    "service_account",
+                }
             }
             unresolved = sorted(
                 str(item.get("resource_type") or "")
@@ -890,9 +924,13 @@ def down_cmd(
                 except ClusterNotFoundError:
                     pass
                 cluster_removed = True
-                removed.append({"type": "managed_kubernetes_cluster", "id": target_cluster})
+                removed.append(
+                    {"type": "managed_kubernetes_cluster", "id": target_cluster}
+                )
             except Exception as exc:  # noqa: BLE001 - retain independent phase evidence
-                errors.append(f"managed_kubernetes_cluster: {type(exc).__name__}: {exc}")
+                errors.append(
+                    f"managed_kubernetes_cluster: {type(exc).__name__}: {exc}"
+                )
             if cluster_removed:
                 for kind, delete_fn in (
                     ("service_account", delete_service_account),
@@ -922,9 +960,15 @@ def down_cmd(
                 project_id=exact_project_id,
                 context=preview_context,
                 identity=cleanup_identity.values,
-                precheck={"identity_source": cleanup_identity.source, "state_source": "operation_inventory"},
+                precheck={
+                    "identity_source": cleanup_identity.source,
+                    "state_source": "operation_inventory",
+                },
                 action={"kind": "delete_exact_operation_inventory", "removed": removed},
-                verification={"state_consumers_absent": cluster_removed, "errors": errors},
+                verification={
+                    "state_consumers_absent": cluster_removed,
+                    "errors": errors,
+                },
                 errors=errors,
             )
             result_payload = {
@@ -939,7 +983,9 @@ def down_cmd(
                 typer.echo(json.dumps(result_payload, indent=2, sort_keys=True))
             else:
                 typer.echo(f"identity_source: {cleanup_identity.source}")
-                typer.echo(f"Removed {len(removed)} exact operation-owned provider resources.")
+                typer.echo(
+                    f"Removed {len(removed)} exact operation-owned provider resources."
+                )
                 for error in errors:
                     typer.echo(f"Warning: {error}", err=True)
             if errors:
@@ -1546,27 +1592,71 @@ def _run_stream(
     a graceful shutdown that still persists state) and the reason is raised.
     """
     if cancel is None:
-        result = subprocess.run(
-            args,
-            cwd=cwd,
-            env=env,
-            text=True,
-            timeout=timeout,
-            check=False,
-            stdout=subprocess.PIPE if capture_output else None,
-            stderr=subprocess.PIPE if capture_output else None,
-        )
-        safe_stdout = result.stdout or ""
-        safe_stderr = result.stderr or ""
         if capture_output:
             from npa.clients.nebius import redact_nebius_output
 
-            safe_stdout = redact_nebius_output(safe_stdout)
-            safe_stderr = redact_nebius_output(safe_stderr)
-        if capture_output and safe_stdout:
-            typer.echo(safe_stdout, nl=not safe_stdout.endswith("\n"))
-        if capture_output and safe_stderr:
-            typer.echo(safe_stderr, err=True, nl=not safe_stderr.endswith("\n"))
+            process = subprocess.Popen(
+                args,
+                cwd=cwd,
+                env=env,
+                text=True,
+                bufsize=1,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            captured_stdout: list[str] = []
+            captured_stderr: list[str] = []
+
+            def drain(pipe: Any, captured: list[str], *, stderr: bool) -> None:
+                if pipe is None:
+                    return
+                for line in iter(pipe.readline, ""):
+                    safe_line = redact_nebius_output(line)
+                    captured.append(safe_line)
+                    typer.echo(safe_line, err=stderr, nl=False)
+                pipe.close()
+
+            readers = [
+                threading.Thread(
+                    target=drain,
+                    args=(process.stdout, captured_stdout),
+                    kwargs={"stderr": False},
+                    daemon=True,
+                ),
+                threading.Thread(
+                    target=drain,
+                    args=(process.stderr, captured_stderr),
+                    kwargs={"stderr": True},
+                    daemon=True,
+                ),
+            ]
+            for reader in readers:
+                reader.start()
+            try:
+                returncode = process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                _stop_process(process)
+                raise
+            finally:
+                for reader in readers:
+                    reader.join(timeout=5)
+            result = subprocess.CompletedProcess(
+                args=args,
+                returncode=returncode,
+                stdout="".join(captured_stdout),
+                stderr="".join(captured_stderr),
+            )
+        else:
+            result = subprocess.run(
+                args,
+                cwd=cwd,
+                env=env,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        safe_stdout = result.stdout or ""
+        safe_stderr = result.stderr or ""
         if result.returncode != 0:
             detail = ""
             if capture_output:
@@ -2672,16 +2762,10 @@ def _resolve_gpu_driver_selection(
         return resolve_gpu_driver_strategy(
             gpu_nodes=int(_tfvar_value(tfvars, env, "gpu_nodes_count", 1) or 0),
             platform=str(
-                _tfvar_value(
-                    tfvars, env, "gpu_nodes_platform", "gpu-rtx6000"
-                )
-                or ""
+                _tfvar_value(tfvars, env, "gpu_nodes_platform", "gpu-rtx6000") or ""
             ),
             preset=str(
-                _tfvar_value(
-                    tfvars, env, "gpu_nodes_preset", "1gpu-24vcpu-218gb"
-                )
-                or ""
+                _tfvar_value(tfvars, env, "gpu_nodes_preset", "1gpu-24vcpu-218gb") or ""
             ),
             mode=str(_tfvar_value(tfvars, env, "gpu_driver_mode", "auto") or "auto"),
             managed_driver_preset=str(
@@ -2693,9 +2777,7 @@ def _resolve_gpu_driver_selection(
                 )
                 or DEFAULT_MANAGED_DRIVER_PRESET
             ),
-            enable_gpu_cluster=_tfvar_bool(
-                tfvars, env, "enable_gpu_cluster", False
-            ),
+            enable_gpu_cluster=_tfvar_bool(tfvars, env, "enable_gpu_cluster", False),
             allow_unsafe_nvswitch_operator=_tfvar_bool(
                 tfvars, env, "allow_unsafe_nvswitch_operator", False
             ),
@@ -2961,7 +3043,11 @@ def _validate_cluster(
                 env=resolved_env,
                 skip_gpu_probe=expected_gpu_nodes > 0,
             )
-            return {**once, **result, "default_storage_class": once["default_storage_class"]}
+            return {
+                **once,
+                **result,
+                "default_storage_class": once["default_storage_class"],
+            }
         except typer.BadParameter as exc:
             last_error = str(exc)
             typer.echo(f"Validation pending: {last_error}")
@@ -3053,8 +3139,7 @@ def _validate_cluster_once(
             1
             for node in nodes
             if any(
-                condition.get("type") == "Ready"
-                and condition.get("status") == "True"
+                condition.get("type") == "Ready" and condition.get("status") == "True"
                 for condition in (node.get("status") or {}).get("conditions", [])
             )
         )
@@ -3084,7 +3169,10 @@ def _validate_cluster_once(
     expected_default_sc = (
         "csi-mounted-fs-path-sc"
         if filestore_enabled
-        else str(tfvars.get("previous_default_storage_class_name") or "compute-csi-default-sc")
+        else str(
+            tfvars.get("previous_default_storage_class_name")
+            or "compute-csi-default-sc"
+        )
     )
     if default_sc != expected_default_sc:
         raise typer.BadParameter(
@@ -3103,22 +3191,91 @@ def _gpus_per_node(preset: str) -> int:
     return int(match.group(1)) if match else 0
 
 
-def _run_skypilot_smoke(
-    kubeconfig_path: Path, context: str, cluster_name: str, sky_gpus: str
-) -> None:
-    sky_bin = os.environ.get("NPA_SKYPILOT_BIN") or str(_DEFAULT_SKYPILOT_BIN)
-    sky = _require_bin(sky_bin)
+def _skypilot_context(
+    kubeconfig_path: Path,
+    context: str,
+    *,
+    sky_bin: str = "",
+) -> tuple[str, dict[str, str], str]:
+    executable = (
+        sky_bin or os.environ.get("NPA_SKYPILOT_BIN") or str(_DEFAULT_SKYPILOT_BIN)
+    )
+    sky = _require_bin(executable)
     env = os.environ.copy()
     env["KUBECONFIG"] = str(kubeconfig_path)
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        exact_kubernetes_context_config,
+    )
+
+    config_override = exact_kubernetes_context_config(context)
+    return sky, env, config_override
+
+
+def _check_skypilot_kubernetes(
+    kubeconfig_path: Path,
+    context: str,
+    *,
+    sky_bin: str = "",
+) -> tuple[str, dict[str, str], str]:
+    """Enable and verify SkyPilot against the exact Kubernetes context."""
+
+    sky, env, config_override = _skypilot_context(
+        kubeconfig_path, context, sky_bin=sky_bin
+    )
+    check_result = _run_stream(
+        [
+            sky,
+            "check",
+            "--config",
+            config_override,
+            "kubernetes",
+        ],
+        env=env,
+        timeout=300,
+        capture_output=True,
+    )
+    plain_check = re.sub(
+        r"\x1b\[[0-?]*[ -/]*[@-~]",
+        "",
+        "\n".join((check_result.stdout or "", check_result.stderr or "")),
+    )
+    if not re.search(r"\bKubernetes:\s+enabled\b", plain_check, flags=re.IGNORECASE):
+        raise RuntimeError(
+            "SkyPilot returned success without enabling the exact Kubernetes context"
+        )
+    typer.echo(f"SkyPilot Kubernetes credentials verified for context {context!r}.")
+    return sky, env, config_override
+
+
+def _run_skypilot_smoke(
+    kubeconfig_path: Path,
+    context: str,
+    cluster_name: str,
+    sky_gpus: str,
+    *,
+    sky_bin: str = "",
+    credentials_checked: bool = False,
+) -> None:
+    if credentials_checked:
+        sky, env, config_override = _skypilot_context(
+            kubeconfig_path, context, sky_bin=sky_bin
+        )
+    else:
+        sky, env, config_override = _check_skypilot_kubernetes(
+            kubeconfig_path, context, sky_bin=sky_bin
+        )
     infra = f"k8s/{context}"
-    _run_stream([sky, "check", "kubernetes"], env=env, timeout=300)
-    accelerator = sky_gpus.strip() or _detect_skypilot_gpu(sky, infra, env)
+    accelerator = sky_gpus.strip() or _detect_skypilot_gpu(
+        sky, infra, env, config_override=config_override
+    )
     smoke_name = _sky_cluster_name(cluster_name)
     try:
         _run_stream(
             [
                 sky,
                 "launch",
+                "--config",
+                config_override,
                 "-c",
                 smoke_name,
                 "--infra",
@@ -3132,15 +3289,26 @@ def _run_skypilot_smoke(
             timeout=1800,
         )
     finally:
-        _run_stream([sky, "down", "--yes", smoke_name], env=env, timeout=600)
-        _wait_for_sky_down(sky, smoke_name, env)
+        _run_stream(
+            [sky, "down", "--config", config_override, "--yes", smoke_name],
+            env=env,
+            timeout=600,
+        )
+        _wait_for_sky_down(sky, smoke_name, env, config_override=config_override)
     typer.echo(f"SkyPilot smoke passed and {smoke_name} was removed.")
 
 
-def _detect_skypilot_gpu(sky: str, infra: str, env: dict[str, str]) -> str:
-    result = _run_capture(
-        [sky, "show-gpus", "--infra", infra, "--all"], env=env, timeout=300
-    )
+def _detect_skypilot_gpu(
+    sky: str,
+    infra: str,
+    env: dict[str, str],
+    *,
+    config_override: str = "",
+) -> str:
+    cmd = [sky, "show-gpus", "--infra", infra, "--all"]
+    if config_override:
+        cmd[2:2] = ["--config", config_override]
+    result = _run_capture(cmd, env=env, timeout=300)
     for line in result.stdout.splitlines():
         if "RTX" not in line.upper() or "6000" not in line:
             continue
@@ -3157,11 +3325,18 @@ def _sky_cluster_name(cluster_name: str) -> str:
     return f"{normalized[:40]}-sky-smoke"
 
 
-def _wait_for_sky_down(sky: str, cluster_name: str, env: dict[str, str]) -> None:
+def _wait_for_sky_down(
+    sky: str,
+    cluster_name: str,
+    env: dict[str, str],
+    *,
+    config_override: str = "",
+) -> None:
     for _ in range(30):
-        result = _run_capture(
-            [sky, "status", "--refresh"], env=env, timeout=120, check=False
-        )
+        cmd = [sky, "status", "--refresh"]
+        if config_override:
+            cmd[2:2] = ["--config", config_override]
+        result = _run_capture(cmd, env=env, timeout=120, check=False)
         if cluster_name not in result.stdout:
             return
         time.sleep(10)

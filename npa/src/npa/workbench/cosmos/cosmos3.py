@@ -135,8 +135,13 @@ def build_cosmos3_inference_args(
     seed: int = 0,
     no_guardrails: bool = False,
     parallelism_preset: str = "latency",
+    benchmark: bool = False,
 ) -> list[str]:
-    """Build Cosmos3 inference script arguments with guardrails on by default."""
+    """Build Cosmos3 inference arguments with guardrails on by default.
+
+    ``benchmark`` is an additive evidence option used by checkpoint evaluation;
+    it does not alter the shared guardrail posture.
+    """
 
     args = [
         "--parallelism-preset",
@@ -151,6 +156,8 @@ def build_cosmos3_inference_args(
     if no_guardrails:
         args.append("--no-guardrails")
     args.append(f"--seed={seed}")
+    if benchmark:
+        args.append("--benchmark")
     return args
 
 
@@ -241,15 +248,15 @@ def check_cosmos3_access(
                 )
             errors.append(detail)
 
-    hf_auth = "configured" if env.get(config.hf_token_env, "") else "missing"
-    if hf_auth == "missing":
-        errors.append(f"Hugging Face auth missing: set {config.hf_token_env}")
+    hf_auth = "configured" if env.get(config.hf_token_env, "") else "anonymous"
 
     hf_model = "skipped"
-    if config.model_id and hf_auth == "configured":
+    if config.model_id:
         hf_model = _check_hf_model(config, env, timeout)
         if hf_model != "reachable":
-            errors.append("HF model metadata is not reachable with current auth")
+            errors.append(
+                "HF model metadata is not reachable anonymously or with the configured token"
+            )
 
     ngc_auth = "skipped"
     if config.require_ngc:
@@ -459,7 +466,8 @@ def _check_hf_model(
     env: Mapping[str, str],
     timeout: float,
 ) -> str:
-    headers = {"Authorization": f"Bearer {env[config.hf_token_env]}"}
+    token = str(env.get(config.hf_token_env, "") or "").strip()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
     url = f"https://huggingface.co/api/models/{config.model_id}"
     try:
         response = httpx.head(

@@ -1,0 +1,242 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: openpi-pi05-four-mode
+  description: >
+    Consume the immutable OpenPI BYOF image built by byof-openpi.yaml, prove the
+    missing-terms gate before checkpoint access, run direct Polaris inference,
+    validate an upstream WebSocket server through a ClusterIP Service and
+    separate client pod, perform real pi0.5 LoRA optimizer work, and evaluate
+    the exact reloaded checkpoint on a disjoint held-out split.
+
+config:
+  bucket: example-bucket
+  prefix: "openpi/pi05-four-mode/{{run.id}}"
+
+  # Build this with the connected byof-openpi.yaml workflow, resolve the pushed
+  # index to a digest, then override this value at submit time. Tags are refused.
+  runtime_image: "registry.example.invalid/openpi@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  source_ref: "15a9616a00943ada6c20a0f158e3adb39df2ccac"
+  base_config_name: pi05_droid_jointpos_polaris
+  base_checkpoint_uri: "gs://openpi-assets/checkpoints/polaris/pi05_droid_jointpos_polaris"
+
+  # Acceptance hardware is one reserved B200/SM100. Operators can retarget the
+  # profile and checks together without editing the graph.
+  gpu_type: B200
+  gpu_count: "1"
+  expected_gpu_type: B200
+  expected_compute_capability: "10.0"
+  gpu_cpus: "16"
+  gpu_memory: 96Gi
+  gpu_disk_size: "100"
+  gpu_scratch_size: 100Gi
+  gpu_num_nodes: "1"
+  cpu_cpus: "4"
+  cpu_memory: 16Gi
+  cpu_disk_size: "20"
+  cpu_num_nodes: "1"
+  service_controller_cpus: "2"
+  service_controller_memory: 8Gi
+  service_controller_disk_size: "20"
+  service_controller_num_nodes: "1"
+
+  # Deterministic, tiny, contract-compatible optimizer/evaluation data. These
+  # counts are deliberately configurable; the default is an operational smoke.
+  train_samples: "4"
+  heldout_samples: "2"
+  dataset_seed: "20260815"
+  train_seed: "20260815"
+  evaluation_seed: "20260816"
+  train_steps: "1"
+  train_batch_size: "1"
+  train_fsdp_devices: "1"
+  evaluation_batch_size: "1"
+
+  # The Service remains private. Its server Deployment requests the same GPU
+  # count as the workflow and is pinned to the provider's discovered GPU-name
+  # label; both selector fields are overrideable for another cluster catalog.
+  service_namespace: default
+  # Create this run-scoped, name-constrained identity before submit and remove
+  # it after the controller reaches terminal state. Kubernetes leaves only the
+  # documented create and controller-generated pod-list residuals namespace-wide.
+  service_account: npa-openpi-controller
+  service_image_pull_secret: npa-nebius-registry
+  service_gpu_node_selector_key: nebius.com/gpu-name
+  service_gpu_node_selector_value: B200
+  service_server_cpus: "16"
+  service_server_memory: 96Gi
+  service_client_cpus: "2"
+  service_client_memory: 8Gi
+  service_cache_size: 40Gi
+  service_liveness_initial_delay_seconds: "600"
+  # Product failure-recovery deadlines. These bound only service readiness,
+  # client completion, API/health calls, and exact cleanup; they are not job,
+  # cost, or workflow caps.
+  service_server_ready_timeout_seconds: "1200"
+  service_client_timeout_seconds: "600"
+  service_cleanup_timeout_seconds: "180"
+  service_poll_interval_seconds: "5"
+  service_api_timeout_seconds: "30"
+  service_http_timeout_seconds: "30"
+  service_rbac_delete_timeout_seconds: "120"
+
+  run_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  terms_diagnostic_root_uri: "{{config.run_root_uri}}diagnostics/terms-refusals"
+  negative_gate_uri: "{{config.run_root_uri}}reports/negative-terms-gate.json"
+  dataset_uri: "{{config.run_root_uri}}data/mini-franka-two-camera.npz"
+  dataset_manifest_uri: "{{config.run_root_uri}}data/manifest.json"
+  direct_uri: "{{config.run_root_uri}}reports/direct-inference.json"
+  # A single override root keeps declared serving and cleanup outputs coupled.
+  serve_artifact_root_uri: "{{config.run_root_uri}}reports/cross-pod-service"
+  serve_uri: "{{config.serve_artifact_root_uri}}/service.json"
+  serve_cleanup_uri: "{{config.serve_artifact_root_uri}}/cleanup.json"
+  trained_checkpoint_uri: "{{config.run_root_uri}}checkpoints/trained"
+  trained_checkpoint_manifest_uri: "{{config.trained_checkpoint_uri}}/manifest.json"
+  training_uri: "{{config.run_root_uri}}reports/training.json"
+  evaluation_uri: "{{config.run_root_uri}}reports/heldout-evaluation.json"
+
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: "{{config.gpu_type}}:{{config.gpu_count}}"
+    cpus: "{{config.gpu_cpus}}"
+    memory: "{{config.gpu_memory}}"
+    disk_size: "{{config.gpu_disk_size}}"
+    num_nodes: "{{config.gpu_num_nodes}}"
+    image: "{{config.runtime_image}}"
+    kubernetes:
+      pod_config:
+        spec:
+          imagePullSecrets:
+            - name: "{{config.service_image_pull_secret}}"
+          containers:
+            - name: ray-node
+              volumeMounts:
+                - name: openpi-scratch
+                  mountPath: /workspace/openpi-four-mode
+          volumes:
+            - name: openpi-scratch
+              emptyDir:
+                sizeLimit: "{{config.gpu_scratch_size}}"
+  cpu:
+    cloud: kubernetes
+    cpus: "{{config.cpu_cpus}}"
+    memory: "{{config.cpu_memory}}"
+    disk_size: "{{config.cpu_disk_size}}"
+    num_nodes: "{{config.cpu_num_nodes}}"
+  service-control:
+    cloud: kubernetes
+    cpus: "{{config.service_controller_cpus}}"
+    memory: "{{config.service_controller_memory}}"
+    disk_size: "{{config.service_controller_disk_size}}"
+    num_nodes: "{{config.service_controller_num_nodes}}"
+    kubernetes:
+      pod_config:
+        spec:
+          serviceAccountName: "{{config.service_account}}"
+
+initial: negative_terms_gate
+
+states:
+  negative_terms_gate:
+    description: >
+      In the live digest-pinned image, remove acceptance from a child process
+      and require exit 64 plus proof that model import/checkpoint fetch never
+      started. The accepted parent proceeds only after that probe passes.
+    toolRef: workbench.openpi.negative_terms_gate
+    resources: gpu
+    outputs:
+      - uri: "{{config.negative_gate_uri}}"
+        schema: npa.workbench.openpi.live-negative-terms-gate.v1
+    next: prepare_data
+
+  prepare_data:
+    description: >
+      Generate a deterministic miniature Franka dataset with two uint8 cameras,
+      seven arm joints, one gripper dimension, absolute 15x8 targets, and
+      machine-verifiable disjoint train/held-out sample IDs and hashes.
+    needs: [negative_terms_gate]
+    toolRef: workbench.openpi.prepare_data
+    resources: cpu
+    outputs:
+      - uri: "{{config.dataset_uri}}"
+        schema: numpy.npz
+      - uri: "{{config.dataset_manifest_uri}}"
+        schema: npa.workbench.openpi.mini-franka-dataset.v1
+    next: direct_inference
+
+  direct_inference:
+    description: >
+      Load the Polaris checkpoint with upstream OpenPI and produce a finite
+      float64[T,8] Franka joint-position target trajectory with T >= 5.
+    needs: [prepare_data]
+    toolRef: workbench.openpi.direct
+    resources: gpu
+    inputs:
+      - uri: "{{config.dataset_manifest_uri}}"
+        schema: npa.workbench.openpi.mini-franka-dataset.v1
+    outputs:
+      - uri: "{{config.direct_uri}}"
+        schema: npa.workbench.openpi.pi05-direct-inference.v2
+    next: cross_pod_serve
+
+  cross_pod_serve:
+    description: >
+      Create a digest-pinned upstream OpenPI Deployment with readiness/liveness,
+      expose only a ClusterIP Service, and require a separate CPU client Job to
+      complete two valid WebSocket requests before exact-identity cleanup.
+    needs: [direct_inference]
+    toolRef: workbench.openpi.serve
+    resources: service-control
+    inputs:
+      - uri: "{{config.direct_uri}}"
+        schema: npa.workbench.openpi.pi05-direct-inference.v2
+    outputs:
+      - uri: "{{config.serve_uri}}"
+        schema: npa.workbench.openpi.pi05-cross-pod-service.v1
+      - uri: "{{config.serve_cleanup_uri}}"
+        schema: npa.workbench.openpi.service-cleanup.v1
+    next: train
+
+  train:
+    description: >
+      Use the supported upstream pi0.5 LoRA configuration and Polaris weights to
+      perform genuine forward, backward, AdamW update, changed-state proof, and
+      Orbax checkpoint save/reload on the train split only.
+    needs: [cross_pod_serve]
+    toolRef: workbench.openpi.train
+    resources: gpu
+    inputs:
+      - uri: "{{config.dataset_uri}}"
+        schema: numpy.npz
+      - uri: "{{config.dataset_manifest_uri}}"
+        schema: npa.workbench.openpi.mini-franka-dataset.v1
+    outputs:
+      - uri: "{{config.trained_checkpoint_manifest_uri}}"
+        schema: npa.workbench.openpi.checkpoint-manifest.v1
+      - uri: "{{config.training_uri}}"
+        schema: npa.workbench.openpi.pi05-training.v1
+    next: evaluate
+
+  evaluate:
+    description: >
+      Reload the exact training checkpoint, run upstream compute_loss(train=False)
+      and action-target MAE/MSE over held-out-only samples, then prove the
+      reloaded policy still emits a valid finite float64 trajectory.
+    needs: [train]
+    toolRef: workbench.openpi.evaluate
+    resources: gpu
+    inputs:
+      - uri: "{{config.dataset_uri}}"
+        schema: numpy.npz
+      - uri: "{{config.dataset_manifest_uri}}"
+        schema: npa.workbench.openpi.mini-franka-dataset.v1
+      - uri: "{{config.trained_checkpoint_manifest_uri}}"
+        schema: npa.workbench.openpi.checkpoint-manifest.v1
+      - uri: "{{config.training_uri}}"
+        schema: npa.workbench.openpi.pi05-training.v1
+    outputs:
+      - uri: "{{config.evaluation_uri}}"
+        schema: npa.workbench.openpi.pi05-heldout-evaluation.v1
+    terminal: true

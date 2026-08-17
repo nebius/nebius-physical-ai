@@ -10,7 +10,10 @@ artifacts into a genuine MCAP file using Foxglove's well-known JSON schemas:
 
 Honesty rules baked in:
 
-- Nothing is synthesized. Only artifacts that exist on disk become messages.
+- Only artifacts that exist on disk become messages. A preserved
+  ``npa.sim2real.action_rollout.v1`` may additionally be visualized as an
+  explicitly labelled action-space diagnostic robot derived from recorded
+  actuator commands; it is never described as measured kinematics.
 - NPA run artifacts usually carry no per-frame capture time, so frame timestamps
   are generated from an explicit ``--fps`` clock. That is recorded both in the
   MCAP ``metadata`` record and in the returned summary
@@ -103,11 +106,307 @@ LOG_SCHEMA: dict[str, Any] = {
         "message": {"type": "string", "description": "Log message"},
         "name": {"type": "string", "description": "Process or node name"},
         "file": {"type": "string", "description": "Filename"},
-        "line": {"type": "integer", "minimum": 0, "description": "Line number in the file"},
+        "line": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Line number in the file",
+        },
     },
 }
 
 LOG_LEVELS = {"unknown": 0, "debug": 1, "info": 2, "warning": 3, "error": 4, "fatal": 5}
+
+VISUALIZATION_CONTRACT = "npa.foxglove.robot-motion.v3"
+SCENE_UPDATE_SCHEMA_SOURCE = "@foxglove/schemas@2.1.0"
+DIAGNOSTIC_FRAME_ID = "npa_action_space"
+DIAGNOSTIC_FIDELITY = (
+    "Action-derived diagnostic schematic; not calibrated robot/world kinematics. "
+    "Camera images and simulator-ground-truth fields retain source fidelity."
+)
+
+
+def _object_schema(
+    title: str,
+    properties: dict[str, Any],
+    *,
+    required: list[str] | None = None,
+) -> dict[str, Any]:
+    schema = {"title": title, "type": "object", "properties": properties}
+    if required:
+        schema["required"] = required
+    return schema
+
+
+_VECTOR3_SCHEMA = _object_schema(
+    "foxglove.Vector3",
+    {axis: {"type": "number"} for axis in ("x", "y", "z")},
+    required=["x", "y", "z"],
+)
+_QUATERNION_SCHEMA = _object_schema(
+    "foxglove.Quaternion",
+    {axis: {"type": "number"} for axis in ("x", "y", "z", "w")},
+    required=["x", "y", "z", "w"],
+)
+_POSE_SCHEMA = _object_schema(
+    "foxglove.Pose",
+    {"position": _VECTOR3_SCHEMA, "orientation": _QUATERNION_SCHEMA},
+    required=["position", "orientation"],
+)
+_COLOR_SCHEMA = _object_schema(
+    "foxglove.Color",
+    {axis: {"type": "number"} for axis in ("r", "g", "b", "a")},
+    required=["r", "g", "b", "a"],
+)
+
+POSE_IN_FRAME_SCHEMA = _object_schema(
+    "foxglove.PoseInFrame",
+    {"timestamp": _TIME_SCHEMA, "frame_id": {"type": "string"}, "pose": _POSE_SCHEMA},
+    required=["timestamp", "frame_id", "pose"],
+)
+POSES_IN_FRAME_SCHEMA = _object_schema(
+    "foxglove.PosesInFrame",
+    {
+        "timestamp": _TIME_SCHEMA,
+        "frame_id": {"type": "string"},
+        "poses": {"type": "array", "items": _POSE_SCHEMA},
+    },
+    required=["timestamp", "frame_id", "poses"],
+)
+JOINT_STATES_SCHEMA = _object_schema(
+    "foxglove.JointStates",
+    {
+        "timestamp": _TIME_SCHEMA,
+        "joints": {
+            "type": "array",
+            "items": _object_schema(
+                "foxglove.JointState",
+                {
+                    "name": {"type": "string"},
+                    "position": {"type": "number"},
+                    "velocity": {"type": "number"},
+                    "acceleration": {"type": "number"},
+                    "effort": {"type": "number"},
+                },
+                required=["name"],
+            ),
+        },
+    },
+    required=["timestamp", "joints"],
+)
+RUN_STATE_SCHEMA = _object_schema(
+    "npa.RunState",
+    {
+        "timestamp": _TIME_SCHEMA,
+        "step": {"type": "integer"},
+        "sim_step": {"type": "integer"},
+        "progress": {"type": "number"},
+        "phase": {"type": "string"},
+        "contact": {"type": "boolean"},
+        "stable_grasp": {"type": "boolean"},
+        "gripper_closed": {"type": "boolean"},
+        "placement_stable": {"type": "boolean"},
+        "success": {"type": "boolean"},
+        "termination_reason": {"type": "string"},
+    },
+)
+ACTUATOR_COMMANDS_SCHEMA = _object_schema(
+    "npa.ActuatorCommands",
+    {
+        "timestamp": _TIME_SCHEMA,
+        "step": {"type": "integer"},
+        "command_norm": {"type": "number"},
+        **{f"command_{index}": {"type": "number"} for index in range(8)},
+    },
+)
+
+
+def _scene_update_schema() -> dict[str, Any]:
+    """Return the official-schema-compatible ``foxglove.SceneUpdate`` shape.
+
+    Foxglove traverses every primitive array in the channel schema, including
+    arrays that happen to be empty in a particular message.  Keep an explicit
+    ``items`` schema on every array to match ``@foxglove/schemas`` 2.1.0; an
+    untyped empty array is not a harmless relaxation for the Foxglove parser.
+    """
+    primitive_common = {"pose": _POSE_SCHEMA, "color": _COLOR_SCHEMA}
+    key_value = _object_schema(
+        "foxglove.KeyValuePair",
+        {"key": {"type": "string"}, "value": {"type": "string"}},
+        required=["key", "value"],
+    )
+    deletion = _object_schema(
+        "foxglove.SceneEntityDeletion",
+        {
+            "timestamp": _TIME_SCHEMA,
+            "type": {
+                "title": "foxglove.SceneEntityDeletionType",
+                "oneOf": [
+                    {"title": "MATCHING_ID", "const": 0},
+                    {"title": "ALL", "const": 1},
+                ],
+            },
+            "id": {"type": "string"},
+        },
+        required=["timestamp", "type", "id"],
+    )
+    arrow = _object_schema(
+        "foxglove.ArrowPrimitive",
+        {
+            "pose": _POSE_SCHEMA,
+            "shaft_length": {"type": "number"},
+            "shaft_diameter": {"type": "number"},
+            "head_length": {"type": "number"},
+            "head_diameter": {"type": "number"},
+            "color": _COLOR_SCHEMA,
+        },
+        required=[
+            "pose",
+            "shaft_length",
+            "shaft_diameter",
+            "head_length",
+            "head_diameter",
+            "color",
+        ],
+    )
+    cube = _object_schema(
+        "foxglove.CubePrimitive",
+        {**primitive_common, "size": _VECTOR3_SCHEMA},
+        required=["pose", "size", "color"],
+    )
+    cylinder = _object_schema(
+        "foxglove.CylinderPrimitive",
+        {
+            **primitive_common,
+            "size": _VECTOR3_SCHEMA,
+            "bottom_scale": {"type": "number"},
+            "top_scale": {"type": "number"},
+        },
+        required=["pose", "size", "bottom_scale", "top_scale", "color"],
+    )
+    line = _object_schema(
+        "foxglove.LinePrimitive",
+        {
+            "type": {"type": "integer"},
+            "pose": _POSE_SCHEMA,
+            "thickness": {"type": "number"},
+            "scale_invariant": {"type": "boolean"},
+            "points": {"type": "array", "items": _VECTOR3_SCHEMA},
+            "color": _COLOR_SCHEMA,
+            "colors": {"type": "array", "items": _COLOR_SCHEMA},
+            "indices": {"type": "array", "items": {"type": "integer"}},
+        },
+        required=[
+            "type",
+            "pose",
+            "thickness",
+            "scale_invariant",
+            "points",
+            "color",
+            "colors",
+            "indices",
+        ],
+    )
+    sphere = _object_schema(
+        "foxglove.SpherePrimitive",
+        {**primitive_common, "size": _VECTOR3_SCHEMA},
+        required=["pose", "size", "color"],
+    )
+    triangle = _object_schema(
+        "foxglove.TriangleListPrimitive",
+        {
+            "pose": _POSE_SCHEMA,
+            "points": {"type": "array", "items": _VECTOR3_SCHEMA},
+            "color": _COLOR_SCHEMA,
+            "colors": {"type": "array", "items": _COLOR_SCHEMA},
+            "indices": {"type": "array", "items": {"type": "integer"}},
+        },
+        required=["pose", "points", "color", "colors", "indices"],
+    )
+    text = _object_schema(
+        "foxglove.TextPrimitive",
+        {
+            **primitive_common,
+            "billboard": {"type": "boolean"},
+            "font_size": {"type": "number"},
+            "scale_invariant": {"type": "boolean"},
+            "text": {"type": "string"},
+        },
+        required=[
+            "pose",
+            "billboard",
+            "font_size",
+            "scale_invariant",
+            "color",
+            "text",
+        ],
+    )
+    model = _object_schema(
+        "foxglove.ModelPrimitive",
+        {
+            "pose": _POSE_SCHEMA,
+            "scale": _VECTOR3_SCHEMA,
+            "color": _COLOR_SCHEMA,
+            "override_color": {"type": "boolean"},
+            "url": {"type": "string"},
+            "media_type": {"type": "string"},
+            "data": {"type": "string", "contentEncoding": "base64"},
+        },
+        required=[
+            "pose",
+            "scale",
+            "color",
+            "override_color",
+            "url",
+            "media_type",
+            "data",
+        ],
+    )
+    entity = _object_schema(
+        "foxglove.SceneEntity",
+        {
+            "timestamp": _TIME_SCHEMA,
+            "frame_id": {"type": "string"},
+            "id": {"type": "string"},
+            "lifetime": _TIME_SCHEMA,
+            "frame_locked": {"type": "boolean"},
+            "metadata": {"type": "array", "items": key_value},
+            "arrows": {"type": "array", "items": arrow},
+            "cubes": {"type": "array", "items": cube},
+            "spheres": {"type": "array", "items": sphere},
+            "cylinders": {"type": "array", "items": cylinder},
+            "lines": {"type": "array", "items": line},
+            "triangles": {"type": "array", "items": triangle},
+            "texts": {"type": "array", "items": text},
+            "models": {"type": "array", "items": model},
+        },
+        required=[
+            "timestamp",
+            "frame_id",
+            "id",
+            "lifetime",
+            "frame_locked",
+            "metadata",
+            "arrows",
+            "cubes",
+            "spheres",
+            "cylinders",
+            "lines",
+            "triangles",
+            "texts",
+            "models",
+        ],
+    )
+    return _object_schema(
+        "foxglove.SceneUpdate",
+        {
+            "deletions": {"type": "array", "items": deletion},
+            "entities": {"type": "array", "items": entity},
+        },
+        required=["deletions", "entities"],
+    )
+
+
+SCENE_UPDATE_SCHEMA = _scene_update_schema()
 
 
 class McapWriteError(RuntimeError):
@@ -141,6 +440,7 @@ class MetricsInput:
     name: str = "metrics"
     topic: str | None = None
     timestamp_ns: int | None = None
+    source: str = ""
 
 
 @dataclass
@@ -154,6 +454,13 @@ class McapSummary:
     frames: int = 0
     logs: int = 0
     metrics: int = 0
+    pointclouds: int = 0
+    transforms: int = 0
+    scenes: int = 0
+    poses: int = 0
+    joint_states: int = 0
+    actuator_states: int = 0
+    run_states: int = 0
     skipped: list[str] = field(default_factory=list)
     start_time_ns: int = 0
     end_time_ns: int = 0
@@ -169,6 +476,13 @@ class McapSummary:
             "frames": self.frames,
             "logs": self.logs,
             "metrics": self.metrics,
+            "pointclouds": self.pointclouds,
+            "transforms": self.transforms,
+            "scenes": self.scenes,
+            "poses": self.poses,
+            "joint_states": self.joint_states,
+            "actuator_states": self.actuator_states,
+            "run_states": self.run_states,
             "skipped": list(self.skipped),
             "start_time_ns": self.start_time_ns,
             "end_time_ns": self.end_time_ns,
@@ -208,7 +522,9 @@ def _validated_timestamp_ns(value: int | float) -> int:
     try:
         timestamp = int(value)
     except (TypeError, ValueError, OverflowError) as exc:
-        raise McapWriteError("MCAP timestamp must be an integer nanosecond value") from exc
+        raise McapWriteError(
+            "MCAP timestamp must be an integer nanosecond value"
+        ) from exc
     if not 0 <= timestamp <= MAX_SIGNED_TIMESTAMP_NS:
         raise McapWriteError("MCAP timestamp is outside the nonnegative int64 domain")
     return timestamp
@@ -296,6 +612,157 @@ def _flatten_metric_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return flat
 
 
+def _identity_pose(position: tuple[float, float, float]) -> dict[str, Any]:
+    return {
+        "position": {"x": position[0], "y": position[1], "z": position[2]},
+        "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
+    }
+
+
+def _diagnostic_chain(
+    commands: list[float],
+) -> tuple[list[float], list[dict[str, float]]]:
+    """Map recorded commands into a stable, explicitly diagnostic robot chain."""
+    angles = [math.tanh(float(value) / 20.0) * 0.85 for value in commands[:7]]
+    while len(angles) < 7:
+        angles.append(0.0)
+    lengths = (0.24, 0.21, 0.19, 0.16, 0.13, 0.11, 0.09)
+    points: list[dict[str, float]] = [{"x": 0.0, "y": 0.0, "z": 0.08}]
+    heading = 0.0
+    for index, (angle, length) in enumerate(zip(angles, lengths, strict=True)):
+        heading += angle
+        previous = points[-1]
+        points.append(
+            {
+                "x": previous["x"] + length * math.cos(heading),
+                "y": previous["y"] + 0.035 * math.sin(angle + index * 0.6),
+                "z": previous["z"] + length * math.sin(heading) * 0.55 + 0.025,
+            }
+        )
+    return angles, points
+
+
+def _run_phase(ground_truth: Mapping[str, Any], progress: float) -> str:
+    reason = str(ground_truth.get("termination_reason") or "").strip().lower()
+    if bool(ground_truth.get("placement_stable")) or reason in {"success", "complete"}:
+        return "complete"
+    if bool(ground_truth.get("stable_grasp")):
+        return "lift"
+    if bool(ground_truth.get("gripper_closed")):
+        return "grasp"
+    if bool(ground_truth.get("contact")):
+        return "contact"
+    return "tracking" if progress < 1.0 else "finished"
+
+
+def _diagnostic_scene_message(
+    *, timestamp_ns: int, points: list[dict[str, float]], phase: str
+) -> dict[str, Any]:
+    pose = _identity_pose((0.0, 0.0, 0.0))
+    cyan = {"r": 0.09, "g": 0.72, "b": 1.0, "a": 1.0}
+    spheres = [
+        {
+            "pose": {
+                "position": point,
+                "orientation": pose["orientation"],
+            },
+            "size": {"x": 0.055, "y": 0.055, "z": 0.055},
+            "color": (
+                {"r": 1.0, "g": 0.63, "b": 0.12, "a": 1.0}
+                if index == len(points) - 1
+                else cyan
+            ),
+        }
+        for index, point in enumerate(points)
+    ]
+    entity = {
+        "timestamp": _time_fields(timestamp_ns),
+        "frame_id": DIAGNOSTIC_FRAME_ID,
+        "id": "npa-action-derived-robot",
+        "lifetime": {"sec": 0, "nsec": 0},
+        "frame_locked": True,
+        "metadata": [
+            {"key": "fidelity", "value": DIAGNOSTIC_FIDELITY},
+            {"key": "phase", "value": phase},
+        ],
+        "arrows": [],
+        "cubes": [],
+        "spheres": spheres,
+        "cylinders": [],
+        "lines": [
+            {
+                "type": 0,
+                "pose": pose,
+                "thickness": 0.035,
+                "scale_invariant": False,
+                "points": points,
+                "color": cyan,
+                "colors": [],
+                "indices": [],
+            }
+        ],
+        "triangles": [],
+        "texts": [
+            {
+                "pose": _identity_pose((0.0, 0.0, 0.78)),
+                "billboard": True,
+                "font_size": 18.0,
+                "scale_invariant": True,
+                "color": {"r": 1.0, "g": 0.86, "b": 0.24, "a": 1.0},
+                "text": (
+                    "DIAGNOSTIC action-space schematic — not calibrated "
+                    f"robot/world kinematics · phase: {phase}"
+                ),
+            }
+        ],
+        "models": [],
+    }
+    return {"deletions": [], "entities": [entity]}
+
+
+def _camera_transforms(raw: Mapping[str, Any]) -> list[dict[str, Any]]:
+    cameras = raw.get("camera_metadata")
+    if not isinstance(cameras, list):
+        return []
+    frame_names = {"primary": "camera", "side": "side", "overhead": "workspace"}
+    result: list[dict[str, Any]] = []
+    for camera in cameras:
+        if not isinstance(camera, dict):
+            continue
+        position = camera.get("position")
+        rotation = camera.get("rotation")
+        if not (
+            isinstance(position, list)
+            and len(position) == 3
+            and isinstance(rotation, list)
+            and len(rotation) == 4
+        ):
+            continue
+        if str(camera.get("quaternion_order") or "wxyz") != "wxyz":
+            continue
+        name = str(camera.get("name") or "camera")
+        result.append(
+            {
+                "parent_frame_id": str(camera.get("pose_frame") or "isaac_world"),
+                "child_frame_id": frame_names.get(
+                    name, safe_topic(name, prefix="").strip("/")
+                ),
+                "translation": {
+                    "x": float(position[0]),
+                    "y": float(position[1]),
+                    "z": float(position[2]),
+                },
+                "rotation": {
+                    "x": float(rotation[1]),
+                    "y": float(rotation[2]),
+                    "z": float(rotation[3]),
+                    "w": float(rotation[0]),
+                },
+            }
+        )
+    return result
+
+
 def collect_run_inputs(
     input_path: str | Path,
     *,
@@ -324,12 +791,32 @@ def collect_run_inputs(
             parent = path.parent.name if path.parent != root else "camera"
             frames.append(FrameInput(path=path, camera=parent or "camera"))
         elif suffix in _METRIC_SUFFIXES:
-            metrics.append(MetricsInput(path=path, name=path.stem))
+            metrics.append(MetricsInput(path=path, name=path.stem, source=relative))
         elif suffix in _LOG_SUFFIXES:
             logs.append(LogInput(path=path, name=path.stem))
         else:
             skipped.append(relative)
 
+    # Directory conversion chooses a stable primary camera for the default
+    # Foxglove layout while retaining the physical camera name in each message.
+    # Direct FrameInput callers remain free to publish `/camera/<name>` or an
+    # explicit topic, which is required by contracts such as GR00T learning.
+    camera_names = sorted({frame.camera for frame in frames})
+    primary_camera = (
+        "camera"
+        if "camera" in camera_names
+        else (camera_names[0] if camera_names else "")
+    )
+    if primary_camera:
+        frames = [
+            FrameInput(
+                path=frame.path,
+                camera=frame.camera,
+                timestamp_ns=frame.timestamp_ns,
+                topic="/camera" if frame.camera == primary_camera else frame.topic,
+            )
+            for frame in frames
+        ]
     if max_frames and len(frames) > max_frames:
         frames = frames[: int(max_frames)]
     return frames, metrics, logs, skipped
@@ -374,6 +861,14 @@ def write_run_mcap(
         )
     )
 
+    explicit_frame_times = sum(frame.timestamp_ns is not None for frame in frame_list)
+    if explicit_frame_times == len(frame_list) and not metric_list and not log_list:
+        timestamp_mode = "source"
+    elif explicit_frame_times:
+        timestamp_mode = "source-and-synthetic-fps"
+    else:
+        timestamp_mode = "synthetic-fps"
+
     metadata_payload = {
         str(key): str(value)
         for key, value in dict(metadata or {}).items()
@@ -386,11 +881,10 @@ def write_run_mcap(
     metadata_payload.update(
         {
             "run_id": str(run_id or ""),
-            "timestamps": metadata_payload.get("timestamps", "synthetic-fps"),
             "fps": str(rate),
         }
     )
-
+    metadata_payload.setdefault("timestamps", timestamp_mode)
     summary = McapSummary(
         output=str(output),
         timestamps=metadata_payload["timestamps"],
@@ -412,7 +906,14 @@ def write_run_mcap(
         log_schema_id: int | None = None
         camera_channels: dict[str, int] = {}
         metric_channels: dict[str, int] = {}
+        pointcloud_schema_id: int | None = None
+        pointcloud_channel_id: int | None = None
+        transform_schema_id: int | None = None
+        transform_channel_id: int | None = None
         log_channel_id: int | None = None
+        rich_channels: dict[str, int] = {}
+        rich_action_sequence = 0
+        rich_rollout_sources: list[str] = []
         first_ns = 0
         last_ns = 0
         previous_by_topic: dict[str, int] = {}
@@ -427,7 +928,46 @@ def write_run_mcap(
             previous_by_topic[topic] = timestamp
             return timestamp
 
-        for index, frame in enumerate(frame_list):
+        # Streams from different camera folders are concurrent views.  Their
+        # synthetic clocks therefore share one epoch and advance independently;
+        # a global append counter would make only the final camera current at the
+        # end of playback.  A real stream named ``camera`` owns the conventional
+        # ``/camera`` topic used by the default viewer layout; other streams keep
+        # their descriptive names under ``/camera/<name>``.
+        camera_names = sorted({str(frame.camera or "camera") for frame in frame_list})
+        primary_camera = "camera" if "camera" in camera_names else ""
+        canonical_camera_topic = (
+            str(camera_topic_prefix or "/camera").rstrip("/") or "/camera"
+        )
+        has_canonical_camera_topic = bool(primary_camera) or any(
+            frame.topic and safe_topic(frame.topic, prefix="") == canonical_camera_topic
+            for frame in frame_list
+        )
+        camera_indices: dict[str, int] = {}
+        frame_schedule: list[tuple[int, str, int, FrameInput]] = []
+        for frame in frame_list:
+            camera_name = str(frame.camera or "camera")
+            if frame.topic:
+                topic = safe_topic(frame.topic, prefix="")
+            elif camera_name == primary_camera:
+                topic = str(camera_topic_prefix or "/camera").rstrip("/") or "/camera"
+            else:
+                topic = safe_topic(camera_name, prefix=camera_topic_prefix)
+            topic_index = camera_indices.get(topic, 0)
+            timestamp_ns = _validated_timestamp_ns(
+                int(frame.timestamp_ns)
+                if frame.timestamp_ns is not None
+                else base_ns + topic_index * step_ns
+            )
+            camera_indices[topic] = topic_index + 1
+            frame_schedule.append((timestamp_ns, topic, topic_index, frame))
+        # MCAP order stays deterministic and chronological even though each
+        # topic owns its own frame counter.
+        frame_schedule.sort(
+            key=lambda item: (item[0], item[1], item[2], item[3].path.as_posix())
+        )
+
+        for timestamp_ns, topic, topic_index, frame in frame_schedule:
             try:
                 loaded = _read_image(frame.path)
             except OSError as exc:
@@ -437,20 +977,11 @@ def write_run_mcap(
                 summary.skipped.append(f"{frame.path.name}: unsupported image format")
                 continue
             payload, image_format = loaded
-            topic = (
-                safe_topic(frame.topic, prefix="")
-                if frame.topic
-                else safe_topic(frame.camera, prefix=camera_topic_prefix)
-            )
             if topic not in camera_channels:
                 camera_channels[topic] = writer.register_channel(
                     topic=topic, message_encoding="json", schema_id=image_schema_id
                 )
-            timestamp_ns = validate_channel_timestamp(topic, (
-                frame.timestamp_ns
-                if frame.timestamp_ns is not None
-                else base_ns + index * step_ns
-            ))
+            timestamp_ns = validate_channel_timestamp(topic, timestamp_ns)
             # Shared message builder: identical wire shape to the Lichtblick writer.
             message: dict[str, Any] = compressed_image_message(
                 payload, fmt=image_format, stamp_ns=timestamp_ns, frame_id=frame.camera
@@ -460,7 +991,7 @@ def write_run_mcap(
                 log_time=timestamp_ns,
                 data=json.dumps(message).encode("utf-8"),
                 publish_time=timestamp_ns,
-                sequence=index,
+                sequence=topic_index,
             )
             summary.frames += 1
             summary.channels[topic] = summary.channels.get(topic, 0) + 1
@@ -472,6 +1003,308 @@ def write_run_mcap(
                 raw = json.loads(metric.path.read_text(encoding="utf-8"))
             except (OSError, ValueError) as exc:
                 summary.skipped.append(f"{metric.path.name}: {exc}")
+                continue
+            if (
+                isinstance(raw, dict)
+                and raw.get("schema") == "npa.sim2real.action_rollout.v1"
+            ):
+                actions = raw.get("actions")
+                if not isinstance(actions, list) or not actions:
+                    summary.skipped.append(f"{metric.path.name}: empty action rollout")
+                    continue
+                from npa.workbench.lichtblick import (  # noqa: PLC0415
+                    _FRAME_TRANSFORM_SCHEMA,
+                    frame_transform_message,
+                )
+
+                if not rich_channels:
+                    schema_specs = {
+                        "/robot/diagnostic_scene": (
+                            "foxglove.SceneUpdate",
+                            SCENE_UPDATE_SCHEMA,
+                        ),
+                        "/robot/diagnostic_pose": (
+                            "foxglove.PoseInFrame",
+                            POSE_IN_FRAME_SCHEMA,
+                        ),
+                        "/robot/diagnostic_trajectory": (
+                            "foxglove.PosesInFrame",
+                            POSES_IN_FRAME_SCHEMA,
+                        ),
+                        "/robot/diagnostic_joint_states": (
+                            "foxglove.JointStates",
+                            JOINT_STATES_SCHEMA,
+                        ),
+                        "/actuators/commands": (
+                            "npa.ActuatorCommands",
+                            ACTUATOR_COMMANDS_SCHEMA,
+                        ),
+                        "/run/state": ("npa.RunState", RUN_STATE_SCHEMA),
+                    }
+                    for topic, (schema_name, schema) in schema_specs.items():
+                        schema_id = writer.register_schema(
+                            name=schema_name,
+                            encoding="jsonschema",
+                            data=json.dumps(schema).encode("utf-8"),
+                        )
+                        rich_channels[topic] = writer.register_channel(
+                            topic=topic, message_encoding="json", schema_id=schema_id
+                        )
+
+                if transform_schema_id is None:
+                    transform_schema_id = writer.register_schema(
+                        name="foxglove.FrameTransform",
+                        encoding="jsonschema",
+                        data=json.dumps(_FRAME_TRANSFORM_SCHEMA).encode("utf-8"),
+                    )
+                transform_channel_id = transform_channel_id or writer.register_channel(
+                    topic="/tf", message_encoding="json", schema_id=transform_schema_id
+                )
+                transform_epoch = base_ns + rich_action_sequence * step_ns
+                for camera in _camera_transforms(raw):
+                    transform_stamp = validate_channel_timestamp("/tf", transform_epoch)
+                    transform = frame_transform_message(
+                        parent_frame_id=str(camera["parent_frame_id"]),
+                        child_frame_id=str(camera["child_frame_id"]),
+                        stamp_ns=transform_stamp,
+                        translation=(
+                            float(camera["translation"]["x"]),
+                            float(camera["translation"]["y"]),
+                            float(camera["translation"]["z"]),
+                        ),
+                        rotation=(
+                            float(camera["rotation"]["x"]),
+                            float(camera["rotation"]["y"]),
+                            float(camera["rotation"]["z"]),
+                            float(camera["rotation"]["w"]),
+                        ),
+                    )
+                    writer.add_message(
+                        channel_id=transform_channel_id,
+                        log_time=transform_stamp,
+                        publish_time=transform_stamp,
+                        data=json.dumps(transform).encode("utf-8"),
+                    )
+                    summary.transforms += 1
+                    summary.channels["/tf"] = summary.channels.get("/tf", 0) + 1
+                    first_ns = (
+                        transform_stamp
+                        if not first_ns
+                        else min(first_ns, transform_stamp)
+                    )
+                    last_ns = max(last_ns, transform_stamp)
+
+                trajectory: list[dict[str, Any]] = []
+                previous_angles = [0.0] * 7
+                for offset, record in enumerate(actions):
+                    if not isinstance(record, dict):
+                        continue
+                    commands_raw = record.get("action")
+                    if not isinstance(commands_raw, list):
+                        continue
+                    try:
+                        commands = [float(value) for value in commands_raw[:8]]
+                    except (TypeError, ValueError):
+                        continue
+                    while len(commands) < 8:
+                        commands.append(0.0)
+                    stamp = base_ns + rich_action_sequence * step_ns
+                    ground_truth = record.get("simulator_ground_truth")
+                    ground_truth = (
+                        ground_truth if isinstance(ground_truth, dict) else {}
+                    )
+                    progress = offset / max(1, len(actions) - 1)
+                    phase = _run_phase(ground_truth, progress)
+                    angles, points = _diagnostic_chain(commands)
+                    end_effector_pose = {
+                        "position": dict(points[-1]),
+                        "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
+                    }
+                    trajectory.append(end_effector_pose)
+                    messages = {
+                        "/robot/diagnostic_scene": _diagnostic_scene_message(
+                            timestamp_ns=stamp, points=points, phase=phase
+                        ),
+                        "/robot/diagnostic_pose": {
+                            "timestamp": _time_fields(stamp),
+                            "frame_id": DIAGNOSTIC_FRAME_ID,
+                            "pose": end_effector_pose,
+                        },
+                        "/robot/diagnostic_trajectory": {
+                            "timestamp": _time_fields(stamp),
+                            "frame_id": DIAGNOSTIC_FRAME_ID,
+                            "poses": list(trajectory),
+                        },
+                        "/robot/diagnostic_joint_states": {
+                            "timestamp": _time_fields(stamp),
+                            "joints": [
+                                {
+                                    "name": f"diagnostic_joint_{joint + 1}",
+                                    "position": angle,
+                                    "velocity": (angle - previous_angles[joint])
+                                    / (step_ns / NS_PER_S),
+                                    "effort": commands[joint],
+                                }
+                                for joint, angle in enumerate(angles)
+                            ],
+                        },
+                        "/actuators/commands": {
+                            "timestamp": _time_fields(stamp),
+                            "step": int(record.get("step") or offset),
+                            "command_norm": math.sqrt(
+                                sum(value * value for value in commands)
+                            ),
+                            **{
+                                f"command_{item}": value
+                                for item, value in enumerate(commands)
+                            },
+                        },
+                        "/run/state": {
+                            "timestamp": _time_fields(stamp),
+                            "step": int(record.get("step") or offset),
+                            "sim_step": int(record.get("sim_step") or 0),
+                            "progress": progress,
+                            "phase": phase,
+                            "contact": bool(ground_truth.get("contact")),
+                            "stable_grasp": bool(ground_truth.get("stable_grasp")),
+                            "gripper_closed": bool(ground_truth.get("gripper_closed")),
+                            "placement_stable": bool(
+                                ground_truth.get("placement_stable")
+                            ),
+                            "success": bool(ground_truth.get("placement_stable")),
+                            "termination_reason": str(
+                                ground_truth.get("termination_reason") or "running"
+                            ),
+                        },
+                    }
+                    for topic, message in messages.items():
+                        channel_stamp = validate_channel_timestamp(topic, stamp)
+                        writer.add_message(
+                            channel_id=rich_channels[topic],
+                            log_time=channel_stamp,
+                            publish_time=channel_stamp,
+                            sequence=rich_action_sequence,
+                            data=json.dumps(message).encode("utf-8"),
+                        )
+                        summary.channels[topic] = summary.channels.get(topic, 0) + 1
+                    summary.scenes += 1
+                    summary.poses += 2
+                    summary.joint_states += 1
+                    summary.actuator_states += 1
+                    summary.run_states += 1
+                    previous_angles = angles
+                    first_ns = stamp if not first_ns else min(first_ns, stamp)
+                    last_ns = max(last_ns, stamp)
+                    rich_action_sequence += 1
+
+                rich_rollout_sources.append(str(metric.source or metric.path.name))
+
+                metadata_payload.update(
+                    {
+                        "visualization_contract": VISUALIZATION_CONTRACT,
+                        "scene_update_schema_source": SCENE_UPDATE_SCHEMA_SOURCE,
+                        "visualization_fixed_frame": DIAGNOSTIC_FRAME_ID,
+                        "robot_representation": "diagnostic-action-derived",
+                        "visualization_fidelity": DIAGNOSTIC_FIDELITY,
+                    }
+                )
+                continue
+            if (
+                isinstance(raw, dict)
+                and raw.get("schema") == "npa.foxglove.pointcloud-series.v1"
+            ):
+                from npa.workbench.lichtblick import (
+                    _FRAME_TRANSFORM_SCHEMA,
+                    _POINTCLOUD_SCHEMA,
+                    frame_transform_message,
+                    pointcloud_message,
+                )
+
+                samples = raw.get("samples")
+                frame_id = str(raw.get("frame_id") or "state_space")
+                if not isinstance(samples, list) or not samples:
+                    summary.skipped.append(
+                        f"{metric.path.name}: empty point-cloud series"
+                    )
+                    continue
+                if pointcloud_schema_id is None:
+                    pointcloud_schema_id = writer.register_schema(
+                        name="foxglove.PointCloud",
+                        encoding="jsonschema",
+                        data=json.dumps(_POINTCLOUD_SCHEMA).encode("utf-8"),
+                    )
+                if transform_schema_id is None:
+                    transform_schema_id = writer.register_schema(
+                        name="foxglove.FrameTransform",
+                        encoding="jsonschema",
+                        data=json.dumps(_FRAME_TRANSFORM_SCHEMA).encode("utf-8"),
+                    )
+                pointcloud_channel_id = (
+                    pointcloud_channel_id
+                    or writer.register_channel(
+                        topic="/trajectory",
+                        message_encoding="json",
+                        schema_id=pointcloud_schema_id,
+                    )
+                )
+                transform_channel_id = transform_channel_id or writer.register_channel(
+                    topic="/tf", message_encoding="json", schema_id=transform_schema_id
+                )
+                # Run artifacts normally carry source-relative sample time.  Keep
+                # every converted topic on the common MCAP clock unless the
+                # producer explicitly declares absolute source timestamps.
+                absolute_timestamps = raw.get("timestamps") == "absolute_ns"
+                first_sample = samples[0] if isinstance(samples[0], dict) else {}
+                transform_stamp = (
+                    int(first_sample.get("timestamp_ns") or base_ns)
+                    if absolute_timestamps
+                    else base_ns
+                )
+                transform_stamp = validate_channel_timestamp("/tf", transform_stamp)
+                transform = frame_transform_message(
+                    parent_frame_id="world",
+                    child_frame_id=frame_id,
+                    stamp_ns=transform_stamp,
+                )
+                writer.add_message(
+                    channel_id=transform_channel_id,
+                    log_time=transform_stamp,
+                    publish_time=transform_stamp,
+                    data=json.dumps(transform).encode("utf-8"),
+                )
+                summary.transforms += 1
+                summary.channels["/tf"] = summary.channels.get("/tf", 0) + 1
+                first_ns = (
+                    transform_stamp if not first_ns else min(first_ns, transform_stamp)
+                )
+                last_ns = max(last_ns, transform_stamp)
+                for offset, sample in enumerate(samples):
+                    if not isinstance(sample, dict):
+                        continue
+                    stamp = (
+                        int(sample.get("timestamp_ns") or (base_ns + offset * step_ns))
+                        if absolute_timestamps
+                        else base_ns + offset * step_ns
+                    )
+                    stamp = validate_channel_timestamp("/trajectory", stamp)
+                    points = sample.get("points") or []
+                    colors = sample.get("colors") or [[36, 184, 255] for _ in points]
+                    message = pointcloud_message(
+                        points, colors, stamp_ns=stamp, frame_id=frame_id
+                    )
+                    writer.add_message(
+                        channel_id=pointcloud_channel_id,
+                        log_time=stamp,
+                        publish_time=stamp,
+                        sequence=offset,
+                        data=json.dumps(message).encode("utf-8"),
+                    )
+                    summary.pointclouds += 1
+                    summary.channels["/trajectory"] = (
+                        summary.channels.get("/trajectory", 0) + 1
+                    )
+                    first_ns = stamp if not first_ns else min(first_ns, stamp)
+                    last_ns = max(last_ns, stamp)
                 continue
             # A JSON object is a single sample; a JSON array of objects is a real
             # time series (reward per episode, score per step, ...) and becomes one
@@ -502,7 +1335,8 @@ def write_run_mcap(
                     timestamp_candidate = (
                         metric.timestamp_ns + offset * step_ns
                         if metric.timestamp_ns is not None
-                        else base_ns + (index if len(records) == 1 else offset) * step_ns
+                        else base_ns
+                        + (index if len(records) == 1 else offset) * step_ns
                     )
                 timestamp_ns = validate_channel_timestamp(topic, timestamp_candidate)
                 if topic not in metric_channels:
@@ -576,23 +1410,76 @@ def write_run_mcap(
                 last_ns = max(last_ns, timestamp_ns)
                 log_sequence += 1
 
+        if len(rich_rollout_sources) > 1:
+            metadata_payload.update(
+                {
+                    "action_rollout_count": str(len(rich_rollout_sources)),
+                    "action_rollout_sources": json.dumps(
+                        rich_rollout_sources, separators=(",", ":")
+                    ),
+                    "action_rollout_schedule": (
+                        "metric-input-order-global-synthetic-fps"
+                    ),
+                }
+            )
+
         metadata_payload.update(
             {
                 "frames": str(summary.frames),
                 "metrics": str(summary.metrics),
                 "logs": str(summary.logs),
-            }
+                "pointclouds": str(summary.pointclouds),
+                "transforms": str(summary.transforms),
+                "scenes": str(summary.scenes),
+                "poses": str(summary.poses),
+                "joint_states": str(summary.joint_states),
+                "actuator_states": str(summary.actuator_states),
+                "run_states": str(summary.run_states),
+                "synthetic_timeline": "shared-epoch-per-topic-frame-index",
+                "primary_image_topic": (
+                    canonical_camera_topic
+                    if has_canonical_camera_topic
+                    else (
+                        safe_topic(camera_names[0], prefix=camera_topic_prefix)
+                        if camera_names
+                        else ""
+                    )
+                ),
+            },
         )
         writer.add_metadata(name="npa", data=metadata_payload)
         writer.finish()
 
-    if summary.frames + summary.metrics + summary.logs == 0:
+    if (
+        summary.frames
+        + summary.metrics
+        + summary.logs
+        + summary.pointclouds
+        + summary.transforms
+        + summary.scenes
+        + summary.poses
+        + summary.joint_states
+        + summary.actuator_states
+        + summary.run_states
+        == 0
+    ):
         target.unlink(missing_ok=True)
         raise McapWriteError(
             "no artifacts could be converted (all inputs were unreadable or unsupported)"
         )
 
-    summary.message_count = summary.frames + summary.metrics + summary.logs
+    summary.message_count = (
+        summary.frames
+        + summary.metrics
+        + summary.logs
+        + summary.pointclouds
+        + summary.transforms
+        + summary.scenes
+        + summary.poses
+        + summary.joint_states
+        + summary.actuator_states
+        + summary.run_states
+    )
     summary.size_bytes = target.stat().st_size
     summary.start_time_ns = first_ns
     summary.end_time_ns = last_ns
@@ -626,7 +1513,9 @@ def convert_run_directory(
     run_id: str = "",
 ) -> McapSummary:
     """Discover a run directory's artifacts and write them as one MCAP file."""
-    frames, metrics, logs, skipped = collect_run_inputs(input_path, max_frames=max_frames)
+    frames, metrics, logs, skipped = collect_run_inputs(
+        input_path, max_frames=max_frames
+    )
     summary = write_run_mcap(
         output=output,
         frames=frames,

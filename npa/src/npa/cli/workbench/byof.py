@@ -24,19 +24,25 @@ _LADDER_DOC = "docs/architecture/oss-onboarding-ladder.md"
 _SKILL_PATH = "skills/workflows/byof-onboard/SKILL.md"
 
 
-def _repo_root() -> Path:
-    override = os.environ.get("NPA_REPO_ROOT")
-    if override:
-        return Path(override)
-    here = Path(__file__).resolve()
-    for parent in here.parents:
-        if (parent / "npa" / "scripts" / "run_byof_repo.py").is_file():
-            return parent
-    return Path.cwd()
-
-
 def _script_path() -> Path:
-    return _repo_root() / "npa" / "scripts" / "run_byof_repo.py"
+    """Locate the BYOF runner in a checkout or staged NPA source package."""
+
+    override = os.environ.get("NPA_REPO_ROOT", "").strip()
+    roots = (
+        [Path(override)]
+        if override
+        else [*Path(__file__).resolve().parents, Path.cwd()]
+    )
+    for root in roots:
+        for relative in (
+            Path("npa/scripts/run_byof_repo.py"),
+            Path("scripts/run_byof_repo.py"),
+        ):
+            candidate = root / relative
+            if candidate.is_file():
+                return candidate
+    preferred = roots[0] if roots else Path.cwd()
+    return preferred / "npa" / "scripts" / "run_byof_repo.py"
 
 
 class BaseProfile(str, Enum):

@@ -145,6 +145,36 @@ def test_health_transport_failure_remains_indeterminate(monkeypatch) -> None:
     assert result["error_category"] == "ReadTimeout"
 
 
+def test_identity_refusal_is_never_reconciled_as_transport_success() -> None:
+    class IdentityRefusal(ValueError):
+        pass
+
+    reconciled = False
+
+    def reconcile(**_kwargs):
+        nonlocal reconciled
+        reconciled = True
+        return {"state": "healthy"}
+
+    with pytest.raises(IdentityRefusal, match="wrong deployment owner"):
+        agent_setup_convergence.converge_remote_agent_setup(
+            operation=None,
+            resuming=False,
+            bootstrap=lambda **_kwargs: (_ for _ in ()).throw(
+                IdentityRefusal("wrong deployment owner")
+            ),
+            reconcile=reconcile,
+            bootstrap_kwargs={},
+            reconcile_kwargs={},
+            persist_pending=lambda _state: None,
+            status=lambda _message: None,
+            progress=lambda _payload: None,
+            fatal_errors=(IdentityRefusal,),
+            transport_errors=(ValueError,),
+        )
+    assert reconciled is False
+
+
 def test_blocking_calls_emit_structured_secret_free_heartbeats(
     monkeypatch, tmp_path
 ) -> None:

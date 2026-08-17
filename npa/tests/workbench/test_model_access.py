@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import pytest
 
 from npa.workbench.model_access import (
+    HF_GATING_LAST_VERIFIED,
     WORKBENCH_ASSETS,
     access_note,
     all_capabilities,
@@ -34,13 +35,18 @@ def _public_asset():
     return next(a for a in WORKBENCH_ASSETS if not a.gated)
 
 
-def test_catalog_has_known_gated_nvidia_models() -> None:
+def test_catalog_matches_current_nvidia_hf_gating() -> None:
+    assert HF_GATING_LAST_VERIFIED == "2026-08-14"
     repos = {a.repo for a in WORKBENCH_ASSETS}
     assert "nvidia/GR00T-N1.7-3B" in repos
     assert "nvidia/Cosmos-Reason2-8B" in repos
-    # GR00T + Cosmos NVIDIA repos are gated.
     gated = {a.repo for a in WORKBENCH_ASSETS if a.gated}
-    assert "nvidia/GR00T-N1.7-3B" in gated
+    assert "nvidia/GR00T-N1.7-3B" not in gated
+    assert "nvidia/Cosmos-Reason1-7B" not in gated
+    assert "nvidia/Cosmos3-Nano" not in gated
+    assert "nvidia/PhysicalAI-NuRec-PPISP" not in gated
+    assert "nvidia/Cosmos-Reason2-8B" in gated
+    assert "nvidia/Cosmos-Guardrail1" in gated
 
 
 def test_hf_model_url() -> None:
@@ -52,7 +58,7 @@ def test_hf_model_url() -> None:
 
 def test_all_capabilities_includes_core_tools() -> None:
     caps = all_capabilities()
-    for expected in ("groot", "cosmos", "sim2real", "vlm_eval"):
+    for expected in ("groot", "cosmos", "paidf", "sim2real", "vlm_eval"):
         assert expected in caps
 
 
@@ -63,6 +69,12 @@ def test_assets_for_filters_by_capability() -> None:
     # 'all' / None returns the full catalog.
     assert assets_for(None) == WORKBENCH_ASSETS
     assert assets_for([]) == WORKBENCH_ASSETS
+
+
+def test_paidf_access_is_scoped_to_the_gated_transfer_model() -> None:
+    assets = assets_for(["paidf"])
+    assert [asset.repo for asset in assets] == ["nvidia/Cosmos-Transfer2.5-2B"]
+    assert all(asset.gated for asset in assets)
 
 
 def test_hf_gated_warns_without_token() -> None:
@@ -79,7 +91,7 @@ def test_hf_present_unverified_offline() -> None:
 
 def test_hf_pass_when_validator_ok() -> None:
     result = check_hf_asset(
-        _gated_asset(), "hf_x", hf_validator=lambda t, r: _HFResult(ok=True)
+        _gated_asset(), "hf_x", hf_validator=lambda t, r, k: _HFResult(ok=True)
     )
     assert result.status == PASS
     assert "access ok" in result.summary.lower()
@@ -90,7 +102,7 @@ def test_hf_gated_fail_points_at_acceptance_url() -> None:
     result = check_hf_asset(
         asset,
         "hf_x",
-        hf_validator=lambda t, r: _HFResult(
+        hf_validator=lambda t, r, k: _HFResult(
             ok=False, status_code=403, error="no access"
         ),
     )
@@ -103,7 +115,7 @@ def test_hf_public_401_is_token_problem_not_gating() -> None:
     result = check_hf_asset(
         _public_asset(),
         "hf_bad",
-        hf_validator=lambda t, r: _HFResult(ok=False, status_code=401, error="bad"),
+        hf_validator=lambda t, r, k: _HFResult(ok=False, status_code=401, error="bad"),
     )
     assert result.status == FAIL
     assert "settings/tokens" in result.remedy
@@ -113,7 +125,7 @@ def test_hf_transient_error_warns() -> None:
     result = check_hf_asset(
         _gated_asset(),
         "hf_x",
-        hf_validator=lambda t, r: _HFResult(
+        hf_validator=lambda t, r, k: _HFResult(
             ok=False, status_code=None, error="timeout"
         ),
     )
@@ -131,8 +143,32 @@ def test_ngc_skipped_when_not_needed() -> None:
 
 
 def test_ngc_pass_with_valid_prefix() -> None:
-    assert check_ngc_key("nvapi-abc", needed=True).status == PASS
-    assert check_ngc_key("nvapi_abc", needed=True).status == PASS
+    def validator(key: str) -> str:
+        return "reachable"
+
+    assert (
+        check_ngc_key("nvapi-abc", needed=True, ngc_validator=validator).status == PASS
+    )
+    assert (
+        check_ngc_key("nvapi_abc", needed=True, ngc_validator=validator).status == PASS
+    )
+
+
+def test_ngc_well_formed_key_is_unverified_offline() -> None:
+    result = check_ngc_key("nvapi-abc", needed=True)
+
+    assert result.status == WARN
+    assert "not probed in offline mode" in result.summary
+
+
+def test_ngc_credential_does_not_masquerade_as_entitlement() -> None:
+    result = check_ngc_key(
+        "nvapi-abc",
+        needed=True,
+        ngc_validator=lambda key: "entitlement-required",
+    )
+    assert result.status == FAIL
+    assert "entitlement" in result.summary
 
 
 def test_ngc_warns_on_bad_prefix() -> None:
@@ -164,7 +200,9 @@ def test_check_workbench_access_flags_failure_on_gated_denial() -> None:
     results = check_workbench_access(
         hf_token="hf_x",
         ngc_key="nvapi-x",
-        hf_validator=lambda t, r: _HFResult(ok=False, status_code=403, error="denied"),
+        hf_validator=lambda t, r, k: _HFResult(
+            ok=False, status_code=403, error="denied"
+        ),
         capabilities=["groot"],
     )
     assert has_failure(results) is True
@@ -172,12 +210,14 @@ def test_check_workbench_access_flags_failure_on_gated_denial() -> None:
 
 def test_gated_hf_repos_returns_only_gated_hf() -> None:
     repos = gated_hf_repos()
-    assert "nvidia/GR00T-N1.7-3B" in repos
+    assert "nvidia/GR00T-N1.7-3B" not in repos
+    assert "nvidia/Cosmos-Reason2-2B" in repos
     public = {a.repo for a in WORKBENCH_ASSETS if not a.gated}
     assert set(repos).isdisjoint(public)
     # Scoped to a capability, only that capability's gated repos come back.
     groot = gated_hf_repos(["groot"])
-    assert "nvidia/GR00T-N1.7-3B" in groot
+    assert "nvidia/GR00T-N1.7-3B" not in groot
+    assert "nvidia/Cosmos-Reason2-2B" in groot
     assert all("groot" in a.capabilities for a in WORKBENCH_ASSETS if a.repo in groot)
 
 
@@ -188,14 +228,16 @@ def test_check_workbench_access_gated_only_skips_public() -> None:
     repos = {r.name for r in results if r.name != "ngc"}
     public = {a.repo for a in WORKBENCH_ASSETS if not a.gated}
     assert repos.isdisjoint(public)
-    assert "nvidia/GR00T-N1.7-3B" in repos
+    assert "nvidia/GR00T-N1.7-3B" not in repos
+    assert "nvidia/Cosmos-Reason2-2B" in repos
 
 
 def test_access_note_all_ok_is_one_positive_line() -> None:
     results = check_workbench_access(
         hf_token="hf_x",
         ngc_key="nvapi-x",
-        hf_validator=lambda t, r: _HFResult(ok=True),
+        hf_validator=lambda t, r, k: _HFResult(ok=True),
+        ngc_validator=lambda key: "reachable",
         gated_only=True,
     )
     note = access_note(results)
@@ -205,9 +247,9 @@ def test_access_note_all_ok_is_one_positive_line() -> None:
 
 
 def test_access_note_lists_hf_failures_on_one_line() -> None:
-    denied = {"nvidia/GR00T-N1.7-3B"}
+    denied = {"nvidia/Cosmos-Reason2-2B"}
 
-    def _validator(token, repo):
+    def _validator(token, repo, repo_type):
         return _HFResult(
             ok=repo not in denied, status_code=403 if repo in denied else 200
         )
@@ -218,7 +260,7 @@ def test_access_note_lists_hf_failures_on_one_line() -> None:
     note = access_note(results)
     assert "\n" not in note
     assert "HF has no access to:" in note
-    assert "nvidia/GR00T-N1.7-3B" in note
+    assert "nvidia/Cosmos-Reason2-2B" in note
     assert "huggingface.co" in note
 
 
@@ -226,12 +268,12 @@ def test_access_note_ngc_missing_names_capabilities() -> None:
     results = check_workbench_access(
         hf_token="hf_x",
         ngc_key="",
-        hf_validator=lambda t, r: _HFResult(ok=True),
+        hf_validator=lambda t, r, k: _HFResult(ok=True),
         gated_only=True,
     )
     note = access_note(results)
     assert "NGC not configured" in note
-    assert "groot" in note and "cosmos" in note
+    assert "nurec" in note
     # NGC line must not conflate HF repo IDs with NGC container access.
     assert "nvidia/" not in note
 
@@ -286,10 +328,13 @@ def test_catalog_covers_vlm_eval_default_model() -> None:
     assert vlm_eval.DEFAULT_MODEL in _catalog_repos()
 
 
-def test_gated_nvidia_defaults_are_marked_gated() -> None:
-    # nvidia/* and meta-llama/* defaults are license-gated; make sure the catalog
-    # marks them so, otherwise the access check would skip their live probe.
+def test_known_public_nvidia_defaults_are_not_marked_gated() -> None:
     gated = {a.repo for a in WORKBENCH_ASSETS if a.gated}
-    for repo in _catalog_repos():
-        if repo.startswith(("nvidia/", "meta-llama/")):
-            assert repo in gated, f"{repo} should be marked gated=True"
+    for repo in {
+        "nvidia/GR00T-N1.7-3B",
+        "nvidia/GEAR-SONIC",
+        "nvidia/Cosmos-Reason1-7B",
+        "nvidia/Cosmos3-Nano",
+        "nvidia/PhysicalAI-NuRec-PPISP",
+    }:
+        assert repo not in gated, f"{repo} should be marked gated=False"

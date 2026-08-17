@@ -7,9 +7,11 @@ when it is absent; the graceful-degradation path is asserted unconditionally.
 from __future__ import annotations
 
 import base64
+import copy
 import json
 from pathlib import Path
 
+import jsonschema
 import pytest
 
 from npa.workbench.foxglove import (
@@ -27,6 +29,8 @@ from npa.workbench.foxglove.inspect import (
 from npa.workbench.foxglove.mcap_writer import (
     COMPRESSED_IMAGE_SCHEMA,
     LOG_SCHEMA,
+    SCENE_UPDATE_SCHEMA,
+    SCENE_UPDATE_SCHEMA_SOURCE,
     FrameInput,
     LogInput,
     McapWriteError,
@@ -56,10 +60,14 @@ def _run_fixture(tmp_path: Path, *, frames: int = 3) -> Path:
             root / "camera" / "wrist" / f"{index:04d}.ppm"
         )
     (root / "reports" / "metrics.json").write_text(
-        json.dumps({"success_rate": 0.82, "episodes": 12, "gate": "promote", "extra": {"a": 1}}),
+        json.dumps(
+            {"success_rate": 0.82, "episodes": 12, "gate": "promote", "extra": {"a": 1}}
+        ),
         encoding="utf-8",
     )
-    (root / "reports" / "run.log").write_text("stage 1 ok\nstage 2 ok\n\nstage 3 warn\n", encoding="utf-8")
+    (root / "reports" / "run.log").write_text(
+        "stage 1 ok\nstage 2 ok\n\nstage 3 warn\n", encoding="utf-8"
+    )
     (root / "reports" / "opaque.bin").write_bytes(b"\x00\x01\x02")
     return root
 
@@ -78,6 +86,7 @@ def test_collect_run_inputs_classifies_artifacts(tmp_path: Path) -> None:
     assert {frame.camera for frame in frames} == {"front", "wrist"}
     assert len(frames) == 6
     assert [metric.name for metric in metrics] == ["metrics"]
+    assert [metric.source for metric in metrics] == ["reports/metrics.json"]
     assert [entry.name for entry in logs] == ["run"]
     assert skipped == ["reports/opaque.bin"]
 
@@ -130,12 +139,12 @@ def test_convert_run_directory_round_trip(tmp_path: Path) -> None:
     assert summary.timestamps == "synthetic-fps"
     assert summary.fps == 5.0
     assert "reports/opaque.bin" in summary.skipped
-    assert summary.channels["/camera/front"] == 3
+    assert summary.channels["/camera"] == 3
 
     # Read it back the way Foxglove would.
     info = summarize_mcap(output)
     assert info.message_count == 10
-    assert info.schemas["/camera/front"] == "foxglove.CompressedImage"
+    assert info.schemas["/camera"] == "foxglove.CompressedImage"
     assert info.schemas["/camera/wrist"] == "foxglove.CompressedImage"
     assert info.schemas["/log"] == "foxglove.Log"
     assert info.schemas["/metrics/metrics"].startswith("npa.RunMetrics")
@@ -143,6 +152,9 @@ def test_convert_run_directory_round_trip(tmp_path: Path) -> None:
     # Timestamp provenance must be recorded, not implied.
     assert info.metadata["npa"]["timestamps"] == "synthetic-fps"
     assert info.duration_s > 0
+    assert (
+        info.channel_time_ranges["/camera"] == info.channel_time_ranges["/camera/wrist"]
+    )
     assert "foxglove.CompressedImage" in format_mcap_info(info)
 
     # Message payloads must be real, decodable images / values.
@@ -154,7 +166,7 @@ def test_convert_run_directory_round_trip(tmp_path: Path) -> None:
             seen.setdefault(channel.topic, []).append(json.loads(message.data))
             timestamps.append(message.log_time)
 
-    front = seen["/camera/front"][0]
+    front = seen["/camera"][0]
     assert front["format"] == "png"
     assert front["frame_id"] == "front"
     assert base64.b64decode(front["data"])[:8] == b"\x89PNG\r\n\x1a\n"
@@ -216,7 +228,9 @@ def test_mcap_accepts_long_relative_timelines_and_large_optimizer_steps(
 
     write_run_mcap(
         output=output,
-        metrics=[MetricsInput(path=metrics, name="train_loss", topic="/metrics/train_loss")],
+        metrics=[
+            MetricsInput(path=metrics, name="train_loss", topic="/metrics/train_loss")
+        ],
         start_time_ns=1,
         run_id="long-run",
         metadata={
@@ -286,6 +300,59 @@ def test_write_run_mcap_preserves_explicit_producer(tmp_path: Path) -> None:
     )
 
 
+def test_camera_topics_share_synthetic_epoch_and_primary_camera_topic(
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("mcap")
+    from PIL import Image
+
+    root = tmp_path / "images"
+    root.mkdir()
+    inputs: list[FrameInput] = []
+    for camera, count in (("camera", 1), ("front", 3), ("wrist", 2)):
+        for index in range(count):
+            path = root / f"{camera}-{index}.png"
+            Image.new("RGB", (4, 4), (index * 20, 40, 80)).save(path)
+            inputs.append(FrameInput(path=path, camera=camera))
+
+    output = tmp_path / "overlap.mcap"
+    summary = write_run_mcap(output=output, frames=inputs, fps=2, start_time_ns=10_000)
+    info = summarize_mcap(output)
+
+    assert summary.channels == {"/camera": 1, "/camera/front": 3, "/camera/wrist": 2}
+    assert info.channel_time_ranges["/camera"]["start_time_ns"] == 10_000
+    assert info.channel_time_ranges["/camera/front"]["start_time_ns"] == 10_000
+    assert info.channel_time_ranges["/camera/wrist"]["start_time_ns"] == 10_000
+    assert info.channel_time_ranges["/camera/front"]["end_time_ns"] == 1_000_010_000
+    assert info.channel_time_ranges["/camera/wrist"]["end_time_ns"] == 500_010_000
+    assert info.metadata["npa"]["synthetic_timeline"] == (
+        "shared-epoch-per-topic-frame-index"
+    )
+    assert info.metadata["npa"]["primary_image_topic"] == "/camera"
+
+
+def test_source_frame_timestamps_are_preserved(tmp_path: Path) -> None:
+    pytest.importorskip("mcap")
+    from PIL import Image
+
+    image = tmp_path / "frame.png"
+    Image.new("RGB", (4, 4), (1, 2, 3)).save(image)
+    output = tmp_path / "source-time.mcap"
+    summary = write_run_mcap(
+        output=output,
+        frames=[FrameInput(path=image, camera="camera", timestamp_ns=123_456_789)],
+        fps=30,
+    )
+    info = summarize_mcap(output)
+
+    assert summary.timestamps == "source"
+    assert info.channel_time_ranges["/camera"] == {
+        "start_time_ns": 123_456_789,
+        "end_time_ns": 123_456_789,
+    }
+    assert info.metadata["npa"]["timestamps"] == "source"
+
+
 def test_write_run_mcap_reports_unreadable_inputs(tmp_path: Path) -> None:
     pytest.importorskip("mcap")
     root = _run_fixture(tmp_path, frames=1)
@@ -304,7 +371,9 @@ def test_write_run_mcap_reports_unreadable_inputs(tmp_path: Path) -> None:
     # The good frame is written; the bad inputs are reported, never faked.
     assert summary.frames == 1
     assert any("broken.json" in item for item in summary.skipped)
-    assert any("broken.png" in item and "unsupported" in item for item in summary.skipped)
+    assert any(
+        "broken.png" in item and "unsupported" in item for item in summary.skipped
+    )
 
 
 def test_inspect_rejects_non_mcap(tmp_path: Path) -> None:
@@ -317,7 +386,9 @@ def test_inspect_rejects_non_mcap(tmp_path: Path) -> None:
         summarize_mcap(tmp_path / "missing.mcap")
 
 
-def test_missing_mcap_dependency_degrades_with_guidance(tmp_path: Path, monkeypatch) -> None:
+def test_missing_mcap_dependency_degrades_with_guidance(
+    tmp_path: Path, monkeypatch
+) -> None:
     import builtins
 
     real_import = builtins.__import__
@@ -341,7 +412,9 @@ def test_image_encoding_is_shared_with_the_lichtblick_writer(tmp_path: Path) -> 
 
     from npa.workbench.foxglove import mcap_writer
 
-    source = Path(inspect_module_source := mcap_writer.__file__).read_text(encoding="utf-8")
+    source = Path(inspect_module_source := mcap_writer.__file__).read_text(
+        encoding="utf-8"
+    )
     assert "encode_frame_to_compressed_bytes" in source, inspect_module_source
     assert "compressed_image_message" in source
 
@@ -369,7 +442,10 @@ def test_metric_field_named_timestamp_is_preserved(tmp_path: Path) -> None:
             json.loads(msg.data) for _s, _c, msg in make_reader(handle).iter_messages()
         )
     # The time struct owns "timestamp"; the payload field keeps its value.
-    assert message["timestamp"] == {"sec": message["timestamp"]["sec"], "nsec": message["timestamp"]["nsec"]}
+    assert message["timestamp"] == {
+        "sec": message["timestamp"]["sec"],
+        "nsec": message["timestamp"]["nsec"],
+    }
     assert message["timestamp_value"] == 12.5
     assert message["success_rate"] == 0.9
 
@@ -387,7 +463,8 @@ def test_metric_series_becomes_a_plottable_curve(tmp_path: Path) -> None:
 
     series = tmp_path / "reward_curve.json"
     series.write_text(
-        json.dumps([{"episode": i, "reward": i * 0.5} for i in range(5)]), encoding="utf-8"
+        json.dumps([{"episode": i, "reward": i * 0.5} for i in range(5)]),
+        encoding="utf-8",
     )
     output = tmp_path / "series.mcap"
 
@@ -398,15 +475,85 @@ def test_metric_series_becomes_a_plottable_curve(tmp_path: Path) -> None:
     assert summary.metrics == 5
     assert summary.channels["/metrics/reward_curve"] == 5
     with output.open("rb") as handle:
-        messages = [json.loads(m.data) for _s, _c, m in make_reader(handle).iter_messages()]
+        messages = [
+            json.loads(m.data) for _s, _c, m in make_reader(handle).iter_messages()
+        ]
     assert [m["episode"] for m in messages] == [0, 1, 2, 3, 4]
     assert [m["reward"] for m in messages] == [0.0, 0.5, 1.0, 1.5, 2.0]
     # Each sample carries its own timestamp so the Plot panel can draw a curve.
-    stamps = [m["timestamp"]["sec"] * 1_000_000_000 + m["timestamp"]["nsec"] for m in messages]
+    stamps = [
+        m["timestamp"]["sec"] * 1_000_000_000 + m["timestamp"]["nsec"] for m in messages
+    ]
     assert stamps == sorted(stamps) and len(set(stamps)) == 5
 
 
-def test_metric_document_that_is_neither_object_nor_records_is_reported(tmp_path: Path) -> None:
+def test_real_state_series_emits_synchronized_pointcloud_and_transform(
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("mcap")
+    from mcap.reader import make_reader
+
+    trajectory = tmp_path / "trajectory.json"
+    trajectory.write_text(
+        json.dumps(
+            {
+                "schema": "npa.foxglove.pointcloud-series.v1",
+                "frame_id": "isaac_observation_state",
+                "coordinate_semantics": "state vector grouped into XYZ triples",
+                "samples": [
+                    {
+                        # Must not split this topic from the converter's common
+                        # clock unless the producer declares absolute_ns.
+                        "timestamp_ns": 123,
+                        "points": [[0, 0, 0], [1, 2, 3]],
+                        "colors": [[36, 184, 255], [255, 120, 36]],
+                    },
+                    {
+                        "timestamp_ns": 456,
+                        "points": [[0.1, 0.2, 0.3], [1.1, 2.1, 3.1]],
+                        "colors": [[36, 184, 255], [255, 120, 36]],
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "trajectory.mcap"
+    base_ns = 1_786_363_200_000_000_000
+
+    summary = write_run_mcap(
+        output=output,
+        metrics=[MetricsInput(path=trajectory, name="trajectory")],
+        fps=4,
+        start_time_ns=base_ns,
+    )
+
+    assert summary.pointclouds == 2
+    assert summary.transforms == 1
+    assert summary.channels == {"/tf": 1, "/trajectory": 2}
+    info = summarize_mcap(output)
+    assert info.schemas["/trajectory"] == "foxglove.PointCloud"
+    assert info.schemas["/tf"] == "foxglove.FrameTransform"
+    assert info.channel_time_ranges["/trajectory"] == {
+        "start_time_ns": base_ns,
+        "end_time_ns": base_ns + 250_000_000,
+    }
+    with output.open("rb") as handle:
+        messages = [
+            (channel.topic, json.loads(message.data))
+            for _schema, channel, message in make_reader(handle).iter_messages()
+        ]
+    cloud = next(payload for topic, payload in messages if topic == "/trajectory")
+    assert cloud["frame_id"] == "isaac_observation_state"
+    assert cloud["pose"]["orientation"]["w"] == 1
+    transform = next(payload for topic, payload in messages if topic == "/tf")
+    assert transform["parent_frame_id"] == "world"
+    assert transform["child_frame_id"] == "isaac_observation_state"
+
+
+def test_metric_document_that_is_neither_object_nor_records_is_reported(
+    tmp_path: Path,
+) -> None:
     pytest.importorskip("mcap")
     bad = tmp_path / "weird.json"
     bad.write_text("[1, 2, 3]", encoding="utf-8")
@@ -415,8 +562,331 @@ def test_metric_document_that_is_neither_object_nor_records_is_reported(tmp_path
 
     summary = write_run_mcap(
         output=tmp_path / "x.mcap",
-        metrics=[MetricsInput(path=bad, name="weird"), MetricsInput(path=good, name="ok")],
+        metrics=[
+            MetricsInput(path=bad, name="weird"),
+            MetricsInput(path=good, name="ok"),
+        ],
     )
 
     assert summary.metrics == 1
     assert any("weird.json" in item for item in summary.skipped)
+
+
+def test_action_rollout_emits_meaningful_robot_motion_contract(tmp_path: Path) -> None:
+    pytest.importorskip("mcap")
+    from mcap.reader import make_reader
+
+    root = _run_fixture(tmp_path, frames=3)
+    actions = [
+        {
+            "step": index,
+            "sim_step": index * 9,
+            "action": [index + joint * 0.5 for joint in range(8)],
+            "simulator_ground_truth": {
+                "contact": index >= 1,
+                "stable_grasp": index >= 2,
+                "gripper_closed": index >= 1,
+                "placement_stable": False,
+                "termination_reason": "running",
+            },
+        }
+        for index in range(3)
+    ]
+    (root / "reports" / "source-actions-manifest.json").write_text(
+        json.dumps(
+            {
+                "schema": "npa.sim2real.action_rollout.v1",
+                "actions": actions,
+                "camera_metadata": [
+                    {
+                        "name": "primary",
+                        "pose_frame": "isaac_world",
+                        "position": [-2.0, 0.0, 1.0],
+                        "rotation": [1.0, 0.0, 0.0, 0.0],
+                        "quaternion_order": "wxyz",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "rich.mcap"
+
+    summary = convert_run_directory(
+        input_path=root,
+        output=output,
+        fps=4.0,
+        run_id="real-source-diagnostic-visualization",
+    )
+    info = summarize_mcap(output)
+
+    expected = {
+        "/robot/diagnostic_scene": "foxglove.SceneUpdate",
+        "/robot/diagnostic_pose": "foxglove.PoseInFrame",
+        "/robot/diagnostic_trajectory": "foxglove.PosesInFrame",
+        "/robot/diagnostic_joint_states": "foxglove.JointStates",
+        "/actuators/commands": "npa.ActuatorCommands",
+        "/run/state": "npa.RunState",
+    }
+    assert {topic: info.schemas[topic] for topic in expected} == expected
+    assert summary.scenes == 3
+    assert summary.poses == 6
+    assert summary.joint_states == summary.actuator_states == summary.run_states == 3
+    assert (
+        info.metadata["npa"]["visualization_contract"] == "npa.foxglove.robot-motion.v3"
+    )
+    assert info.metadata["npa"]["scene_update_schema_source"] == (
+        SCENE_UPDATE_SCHEMA_SOURCE
+    )
+    assert info.metadata["npa"]["visualization_fixed_frame"] == "npa_action_space"
+    assert "not calibrated" in info.metadata["npa"]["visualization_fidelity"]
+    assert info.channels_monotonic is True
+    assert all(
+        value["start_time_ns"] <= value["end_time_ns"]
+        for value in info.channel_time_ranges.values()
+    )
+
+    messages: dict[str, list[dict]] = {}
+    message_times: dict[str, list[int]] = {}
+    wire_schemas: dict[str, dict] = {}
+    with output.open("rb") as handle:
+        for schema, channel, message in make_reader(handle).iter_messages():
+            messages.setdefault(channel.topic, []).append(json.loads(message.data))
+            message_times.setdefault(channel.topic, []).append(message.log_time)
+            wire_schemas.setdefault(channel.topic, json.loads(schema.data))
+    scene = messages["/robot/diagnostic_scene"][0]
+    label = scene["entities"][0]["texts"][0]["text"]
+    assert "DIAGNOSTIC action-space schematic" in label
+    assert "not calibrated robot/world kinematics" in label
+    assert len(scene["entities"][0]["lines"][0]["points"]) == 8
+    assert [
+        len(item["poses"]) for item in messages["/robot/diagnostic_trajectory"]
+    ] == [1, 2, 3]
+    assert messages["/run/state"][-1]["phase"] == "lift"
+    assert messages["/run/state"][-1]["progress"] == 1.0
+    assert messages["/actuators/commands"][1]["command_7"] == actions[1]["action"][7]
+    joint_message = messages["/robot/diagnostic_joint_states"][1]
+    assert "states" not in joint_message
+    assert "frame_id" not in joint_message
+    assert [joint["name"] for joint in joint_message["joints"]] == [
+        f"diagnostic_joint_{index}" for index in range(1, 8)
+    ]
+    joint_schema = wire_schemas["/robot/diagnostic_joint_states"]
+    assert joint_schema["required"] == ["timestamp", "joints"]
+    assert set(joint_schema["properties"]) == {"timestamp", "joints"}
+    assert joint_schema["properties"]["joints"]["items"]["required"] == ["name"]
+    assert wire_schemas["/robot/diagnostic_scene"]["required"] == [
+        "deletions",
+        "entities",
+    ]
+    # Validate every emitted SceneUpdate through jsonschema, independently of
+    # the MCAP writer/reader.  The explicit item-title table mirrors the current
+    # official @foxglove/schemas 2.1.0 contract and catches the former channel
+    # schema whose empty primitive arrays had no `items` shape.
+    official_array_items = {
+        "metadata": "foxglove.KeyValuePair",
+        "arrows": "foxglove.ArrowPrimitive",
+        "cubes": "foxglove.CubePrimitive",
+        "spheres": "foxglove.SpherePrimitive",
+        "cylinders": "foxglove.CylinderPrimitive",
+        "lines": "foxglove.LinePrimitive",
+        "triangles": "foxglove.TriangleListPrimitive",
+        "texts": "foxglove.TextPrimitive",
+        "models": "foxglove.ModelPrimitive",
+    }
+    scene_schema = wire_schemas["/robot/diagnostic_scene"]
+    jsonschema.Draft7Validator.check_schema(scene_schema)
+    validator = jsonschema.Draft7Validator(scene_schema)
+    scene_messages = messages["/robot/diagnostic_scene"]
+    assert len(scene_messages) == 3
+    assert [list(validator.iter_errors(message)) for message in scene_messages] == [
+        [],
+        [],
+        [],
+    ]
+    assert scene_schema == SCENE_UPDATE_SCHEMA
+    assert scene_schema["properties"]["deletions"]["items"]["title"] == (
+        "foxglove.SceneEntityDeletion"
+    )
+    entity_properties = scene_schema["properties"]["entities"]["items"]["properties"]
+    assert {
+        name: entity_properties[name]["items"]["title"] for name in official_array_items
+    } == official_array_items
+
+    def arrays_without_items(node, path="$"):
+        if not isinstance(node, dict):
+            return []
+        missing = [path] if node.get("type") == "array" and "items" not in node else []
+        for key, value in node.items():
+            missing.extend(arrays_without_items(value, f"{path}.{key}"))
+        return missing
+
+    assert arrays_without_items(scene_schema) == []
+    malformed = copy.deepcopy(scene_schema)
+    del malformed["properties"]["entities"]["items"]["properties"]["models"]["items"]
+    assert arrays_without_items(malformed) == [
+        "$.properties.entities.items.properties.models"
+    ]
+    for topic in (
+        "/robot/diagnostic_scene",
+        "/robot/diagnostic_pose",
+        "/robot/diagnostic_trajectory",
+        "/robot/diagnostic_joint_states",
+        "/actuators/commands",
+        "/run/state",
+    ):
+        assert message_times[topic] == message_times["/camera"]
+    assert messages["/tf"][0]["parent_frame_id"] == "isaac_world"
+
+
+def test_multiple_action_rollouts_share_channels_and_one_monotonic_schedule(
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("mcap")
+    from collections import Counter
+
+    from mcap.reader import make_reader
+
+    rollout_paths: list[Path] = []
+    expected_steps: list[int] = []
+    for rollout_index, action_count in enumerate((2, 3), start=1):
+        path = tmp_path / f"rollout-{rollout_index}" / "action-rollout.json"
+        path.parent.mkdir()
+        actions = []
+        for local_index in range(action_count):
+            step = (rollout_index - 1) * 100 + local_index
+            expected_steps.append(step)
+            actions.append(
+                {
+                    "step": step,
+                    "sim_step": step * 4,
+                    "action": [
+                        rollout_index * 10 + local_index + joint / 10
+                        for joint in range(8)
+                    ],
+                    "simulator_ground_truth": {
+                        "contact": local_index > 0,
+                        "stable_grasp": rollout_index == 2 and local_index > 0,
+                        "termination_reason": "running",
+                    },
+                }
+            )
+        path.write_text(
+            json.dumps(
+                {
+                    "schema": "npa.sim2real.action_rollout.v1",
+                    "actions": actions,
+                    "camera_metadata": [
+                        {
+                            "name": f"rollout_{rollout_index}_camera",
+                            "pose_frame": "isaac_world",
+                            "position": [float(rollout_index), 0.0, 1.0],
+                            "rotation": [1.0, 0.0, 0.0, 0.0],
+                            "quaternion_order": "wxyz",
+                        }
+                    ],
+                },
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        rollout_paths.append(path)
+
+    metrics = [
+        MetricsInput(
+            path=path,
+            name=path.stem,
+            source=path.relative_to(tmp_path).as_posix(),
+        )
+        for path in rollout_paths
+    ]
+    outputs = [tmp_path / "multi-a.mcap", tmp_path / "multi-b.mcap"]
+    summaries = [
+        write_run_mcap(
+            output=output,
+            metrics=metrics,
+            fps=5.0,
+            start_time_ns=1_000_000_000,
+            run_id="multi-rollout",
+        )
+        for output in outputs
+    ]
+
+    assert outputs[0].read_bytes() == outputs[1].read_bytes()
+    assert summaries[0].message_count == summaries[1].message_count == 32
+    assert summaries[0].scenes == 5
+    assert summaries[0].poses == 10
+    assert summaries[0].joint_states == 5
+    assert summaries[0].actuator_states == summaries[0].run_states == 5
+    assert summaries[0].transforms == 2
+
+    messages: dict[str, list[tuple[int, int, dict]]] = {}
+    with outputs[0].open("rb") as handle:
+        reader = make_reader(handle)
+        mcap_summary = reader.get_summary()
+        assert mcap_summary is not None
+        channels_per_topic = Counter(
+            channel.topic for channel in mcap_summary.channels.values()
+        )
+        for topic in (
+            "/robot/diagnostic_scene",
+            "/robot/diagnostic_pose",
+            "/robot/diagnostic_trajectory",
+            "/robot/diagnostic_joint_states",
+            "/actuators/commands",
+            "/run/state",
+            "/tf",
+        ):
+            assert channels_per_topic[topic] == 1
+        schema_names = Counter(schema.name for schema in mcap_summary.schemas.values())
+        assert schema_names["foxglove.SceneUpdate"] == 1
+        assert schema_names["foxglove.FrameTransform"] == 1
+
+        handle.seek(0)
+        for schema, channel, message in make_reader(handle).iter_messages():
+            messages.setdefault(channel.topic, []).append(
+                (message.log_time, message.sequence, json.loads(message.data))
+            )
+            if channel.topic == "/robot/diagnostic_scene":
+                assert schema is not None
+                wire_schema = json.loads(schema.data)
+                assert wire_schema == SCENE_UPDATE_SCHEMA
+                jsonschema.validate(json.loads(message.data), wire_schema)
+
+        handle.seek(0)
+        metadata = {
+            record.name: dict(record.metadata)
+            for record in make_reader(handle).iter_metadata()
+        }["npa"]
+
+    rich_topics = (
+        "/robot/diagnostic_scene",
+        "/robot/diagnostic_pose",
+        "/robot/diagnostic_trajectory",
+        "/robot/diagnostic_joint_states",
+        "/actuators/commands",
+        "/run/state",
+    )
+    expected_times = [1_000_000_000 + index * 200_000_000 for index in range(5)]
+    for topic in rich_topics:
+        times = [timestamp for timestamp, _sequence, _payload in messages[topic]]
+        sequences = [sequence for _timestamp, sequence, _payload in messages[topic]]
+        assert times == expected_times
+        assert all(later > earlier for earlier, later in zip(times, times[1:]))
+        assert sequences == list(range(5))
+    tf_times = [timestamp for timestamp, _sequence, _payload in messages["/tf"]]
+    assert tf_times == [1_000_000_000, 1_400_000_000]
+    assert all(later >= earlier for earlier, later in zip(tf_times, tf_times[1:]))
+    assert [payload["step"] for _time, _seq, payload in messages["/run/state"]] == (
+        expected_steps
+    )
+    assert metadata["action_rollout_count"] == "2"
+    assert json.loads(metadata["action_rollout_sources"]) == [
+        path.relative_to(tmp_path).as_posix() for path in rollout_paths
+    ]
+    assert metadata["action_rollout_schedule"] == (
+        "metric-input-order-global-synthetic-fps"
+    )
+    independently_inspected = summarize_mcap(outputs[0])
+    assert independently_inspected.channels_monotonic is True
+    assert independently_inspected.message_count == 32

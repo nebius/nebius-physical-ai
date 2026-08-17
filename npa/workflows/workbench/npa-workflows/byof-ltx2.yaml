@@ -189,12 +189,16 @@ config:
 resources:
   gpu:
     cloud: kubernetes
+    # The outer runtime image every BYOF profile runs in, so the pod that hosts
+    # the stage is the same zero-payload image the smoke exercises.
+    image: "{{config.base_image}}"
     accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
     cpus: 16
     memory: 192Gi
     disk_size: 500
   cpu:
     cloud: kubernetes
+    image: "{{config.base_image}}"
     cpus: 4
     memory: 16Gi
 

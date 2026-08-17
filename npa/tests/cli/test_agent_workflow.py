@@ -922,6 +922,15 @@ def test_bootstrap_embeds_workflow_endpoints() -> None:
     assert "pip install -e" in source
     assert "deploy/cluster" in source
     assert "_soperator_deploy_from_payload" in source
+    assert "DEFAULT_SOLUTIONS_LIBRARY_REF" in source
+    assert "_validate_immutable_solutions_library_ref" in source
+    assert "SoperatorDeploymentValidationError" in source
+    assert '"status": "degraded-validation"' in source
+    assert "gpu_creation_check_timeout_seconds" in source
+    assert "_validate_gpu_creation_check_timeout" in source
+    assert '"system_max_size": spec.effective_system_max_size()' in source
+    assert '"capacity_mode": pool.capacity_mode()' in source
+    assert '"reservation_selector": pool.reservation_selector_kind() or None' in source
     assert '@app.get("/workflows/draft")' in source
     assert "workflowYaml" in bundled
     assert "validateWorkflowYaml" in bundled
@@ -1211,6 +1220,26 @@ def test_generate_workflow_yaml_dispatcher() -> None:
     assert "rl-policy-training-sim-success" in rl_policy
     default = generate_workflow_yaml("unknown-template")
     assert "sim2real-two-step" in default
+
+
+def test_vlm_rl_draft_keeps_canonical_resource_profiles_without_live_infra() -> None:
+    draft = generate_workflow_draft(
+        template="vlm-rl-loop",
+        user_text=(
+            "create a VLM/RL outer loop with an RTX PRO 6000 accelerator and 1 GPU"
+        ),
+        bucket="run-bucket",
+        infrastructure={"has_infra": False},
+    )
+
+    assert draft["runnable"] is True
+    spec = yaml.safe_load(draft["yaml"])
+    # Current main intentionally loads the one compositional Sim2Real graph;
+    # chat does not rewrite its named lane profiles into the retired single
+    # generic `gpu` resource. Runtime backend selection is carried separately.
+    assert "gpu" not in spec["resources"]
+    assert spec["resources"]["transfer-gpu"]["accelerators"] == "RTXPRO6000:1"
+    assert spec["resources"]["isaac-gpu"]["accelerators"] == "RTXPRO6000:1"
 
 
 def test_choose_workflow_template_by_intent_and_text() -> None:

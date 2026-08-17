@@ -65,10 +65,7 @@ config:
   isaac_image: ""
   viewer_image: ""
   isaac_cache_pvc: ""
-  # Operator-supplied NVIDIA acceptance. Empty defaults are deliberate: the
-  # image and workflow fail closed rather than accepting terms on the user's behalf.
-  omni_kit_accept_eula: ""
-  isaacsim_accept_eula: ""
+  # Isaac EULA acceptance is injected by the renderer (default on, explicit CLI opt-out).
   gpu_queue: sim2real-gpu
   gpu_priority_class: sim2real-production
 
@@ -144,10 +141,6 @@ resources:
                   value: "1"
                 - name: NPA_BAKED_PYTHON
                   value: /opt/npa/sim/venv/bin/python
-                - name: OMNI_KIT_ACCEPT_EULA
-                  value: "{{config.omni_kit_accept_eula}}"
-                - name: ISAACSIM_ACCEPT_EULA
-                  value: "{{config.isaacsim_accept_eula}}"
               volumeMounts:
                 - name: npa-isaac-runtime-cache
                   mountPath: /opt/isaac-cache

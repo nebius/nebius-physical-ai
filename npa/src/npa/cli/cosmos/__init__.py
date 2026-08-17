@@ -59,7 +59,6 @@ from npa.clients.credentials import (
     apply_shared_credential_env,
     load_credentials,
     shared_credential_env,
-    warn_if_hf_token_missing,
 )
 from npa.clients.env import (
     merge_env_file_content,
@@ -216,24 +215,10 @@ def _model_check_or_fail(
     *,
     credentials: Any,
     model: str,
-    skip_model_check: bool,
     dry_run: bool,
     no_shared_creds: bool,
 ) -> None:
-    if skip_model_check:
-        for repo in _cosmos_gated_models(model):
-            console.print(f"  HF access check skipped for {repo}")
-        if dry_run:
-            console.print("  [dry-run] HF gated-model validation skipped")
-        return
     token = "" if no_shared_creds else credentials.hf_token
-    if not token:
-        warn_if_hf_token_missing(credentials, warn=console.print)
-        for repo in _cosmos_gated_models(model):
-            console.print(f"  HF access check skipped for {repo}")
-        if dry_run:
-            raise typer.Exit(1)
-        return
     for repo in _cosmos_gated_models(model):
         result = validate_hf_access(token, repo)
         if not result.ok:
@@ -2076,11 +2061,6 @@ def deploy_cmd(
         "--no-shared-creds",
         help="Do not inject ~/.npa/credentials.yaml shared credentials into the service env.",
     ),
-    skip_model_check: bool = typer.Option(
-        False,
-        "--skip-model-check",
-        help="Skip Hugging Face gated-model access validation.",
-    ),
     no_guardrails: bool = typer.Option(
         False,
         "--no-guardrails",
@@ -2189,6 +2169,15 @@ def deploy_cmd(
     if not proj_alias:
         proj_alias = env_region or ("serverless" if serverless else ("byovm" if byovm else "default"))
 
+    credentials = resolve_credentials()
+    if not destroy and not skip_app:
+        _model_check_or_fail(
+            credentials=credentials,
+            model=model,
+            dry_run=dry_run,
+            no_shared_creds=no_shared_creds,
+        )
+
     if serverless:
         if destroy:
             try:
@@ -2249,16 +2238,6 @@ def deploy_cmd(
             )
             skip_infra = True
             use_remote_state = False
-
-    credentials = resolve_credentials()
-    if not destroy and not skip_app:
-        _model_check_or_fail(
-            credentials=credentials,
-            model=model,
-            skip_model_check=skip_model_check,
-            dry_run=dry_run,
-            no_shared_creds=no_shared_creds,
-        )
 
     nebius_creds: dict[str, str] = {}
     if use_remote_state and not skip_infra:

@@ -21,7 +21,14 @@ from typing import Any, Iterator, Literal, Mapping
 
 
 SCHEMA_VERSION = "npa.workflow.submission.v1"
-_SECRET_KEY = re.compile(r"(secret|password|credential|token|access_key)", re.IGNORECASE)
+_SECRET_KEY = re.compile(
+    r"(secret|password|credential|token|access_key)", re.IGNORECASE
+)
+# Kubernetes imagePullSecrets contains only names of separately stored Secret
+# objects. Keeping that placement reference in a resource profile is necessary
+# for an exact receipt and does not persist credential material. Child values
+# remain recursively scanned, so malformed embedded credentials still fail.
+_SAFE_REFERENCE_KEYS = frozenset({"imagePullSecrets", "secret_safe"})
 
 
 @dataclass(frozen=True)
@@ -43,7 +50,12 @@ class ProjectSubmissionAudit:
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def _safe_component(value: str, fallback: str) -> str:
@@ -140,14 +152,18 @@ def audit_project_submissions(project: str) -> ProjectSubmissionAudit:
         run_id = str(payload.get("run_id") or "")
         if not run_id or submission_state_path(expected_project, run_id) != path:
             return ProjectSubmissionAudit(
-                "unavailable", len(ledgers) + 1, f"run identity mismatch in ledger {path}"
+                "unavailable",
+                len(ledgers) + 1,
+                f"run identity mismatch in ledger {path}",
             )
         ledgers.append((path, payload))
 
     if not ledgers:
         return ProjectSubmissionAudit("absent")
     if all(
-        submission_proves_never_launched(payload, project=expected_project, run_id=str(payload["run_id"]))
+        submission_proves_never_launched(
+            payload, project=expected_project, run_id=str(payload["run_id"])
+        )
         for _, payload in ledgers
     ):
         return ProjectSubmissionAudit("not_submitted", len(ledgers))
@@ -158,7 +174,7 @@ def _contains_secret(value: object, *, parent: str = "") -> bool:
     if isinstance(value, Mapping):
         for key, child in value.items():
             name = str(key)
-            if _SECRET_KEY.search(name) and name not in {"secret_safe"}:
+            if _SECRET_KEY.search(name) and name not in _SAFE_REFERENCE_KEYS:
                 return True
             if _contains_secret(child, parent=name):
                 return True
@@ -204,15 +220,21 @@ def inspect_submission_state(project: str, run_id: str) -> SubmissionStateRead:
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
-        return SubmissionStateRead("unavailable", {}, f"invalid receipt JSON at {path}: {exc}")
+        return SubmissionStateRead(
+            "unavailable", {}, f"invalid receipt JSON at {path}: {exc}"
+        )
     if not isinstance(payload, dict):
-        return SubmissionStateRead("unavailable", {}, f"invalid receipt object at {path}")
+        return SubmissionStateRead(
+            "unavailable", {}, f"invalid receipt object at {path}"
+        )
     if payload.get("schema_version") != SCHEMA_VERSION:
         return SubmissionStateRead(
             "unavailable", {}, f"unsupported receipt schema at {path}"
         )
     if str(payload.get("run_id") or "") != run_id:
-        return SubmissionStateRead("unavailable", {}, f"receipt run id does not match {run_id!r}")
+        return SubmissionStateRead(
+            "unavailable", {}, f"receipt run id does not match {run_id!r}"
+        )
     expected_project = project or "default"
     if str(payload.get("project") or "") != expected_project:
         return SubmissionStateRead(
@@ -269,7 +291,9 @@ def update_submission_state(
     """Atomically merge non-secret submission metadata into the local ledger."""
 
     if _contains_secret(updates):
-        raise ValueError("workflow submission state must not contain credentials or secrets")
+        raise ValueError(
+            "workflow submission state must not contain credentials or secrets"
+        )
 
     def _update(path: Path) -> dict[str, Any]:
         payload = _read(path)

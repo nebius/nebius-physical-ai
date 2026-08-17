@@ -351,6 +351,51 @@ def test_immutable_plan_conflict_names_sanitized_nested_fields(
         )
 
 
+def test_preflight_resume_allows_provider_progress_for_the_same_requested_shape(
+    journal_root: Path,
+) -> None:
+    operation = _prepare()
+    original = {
+        "project_alias": "prod",
+        "project_id": "project-a",
+        "tenant_id": "tenant-a",
+        "region": "us-central1",
+        "topology": {
+            "cluster_name": "gpu",
+            "gpu_nodes": 1,
+            "gpu_platform": "gpu-rtx6000",
+            "gpu_preset": "1gpu-24vcpu-218gb",
+            "gpu_disk_gib": 256,
+            "existing_gpu_nodes": 0,
+            "new_gpu_nodes": 1,
+            "required_instances": 1,
+            "required_disks": 1,
+            "required_network_ssd_bytes": 256 * 1024**3,
+            "required_network_ssd_gib": "256",
+            "required_gpus": 1,
+        },
+    }
+    operation.record_preflight_plan(original)
+
+    converged = {
+        **original,
+        "topology": {
+            **original["topology"],
+            "existing_gpu_nodes": 1,
+            "new_gpu_nodes": 0,
+            "required_instances": 0,
+            "required_disks": 0,
+            "required_network_ssd_bytes": 0,
+            "required_network_ssd_gib": "0",
+            "required_gpus": 0,
+        },
+    }
+    operation.record_preflight_plan(converged)
+
+    assert operation.read()["preflight_plan"] == converged
+    assert len(operation.read()["preflight_evaluations"]) == 2
+
+
 def test_authoritative_region_can_be_corrected_only_before_resource_creation(
     journal_root: Path,
 ) -> None:

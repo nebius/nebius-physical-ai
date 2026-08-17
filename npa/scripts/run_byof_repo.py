@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -18,6 +19,7 @@ from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import storage_env_for_project
 from npa.deploy.images import container_image_for_tool, wan_accepted_image_manifest
 from npa.workflows.byof.live import resolve_byof_kubernetes_target
+from npa.workflows.byof.openpi import is_openpi_request, require_openpi_terms
 from npa.workflows.byof.postprocess import (
     PostprocessContext,
     has_registered_postprocess,
@@ -170,6 +172,32 @@ def _registry_server(image_ref: str) -> str:
     return ref.split("/", 1)[0]
 
 
+def _repository_without_tag(image_ref: str) -> str:
+    ref = image_ref.removeprefix("docker:").split("@", 1)[0]
+    slash = ref.rfind("/")
+    colon = ref.rfind(":")
+    return ref[:colon] if colon > slash else ref
+
+
+def _resolve_pushed_image_digest(
+    image_ref: str, *, env: dict[str, str] | None = None
+) -> str:
+    """Resolve a just-pushed tag and return the immutable pull reference."""
+
+    inspected = _run(
+        ["docker", "buildx", "imagetools", "inspect", image_ref],
+        env=env,
+        capture=True,
+    )
+    combined = "\n".join((inspected.stdout or "", inspected.stderr or ""))
+    match = re.search(r"(?im)^\s*Digest:\s*(sha256:[0-9a-f]{64})\s*$", combined)
+    if match is None:
+        raise RuntimeError(
+            "pushed BYOF image did not resolve to an immutable sha256 digest"
+        )
+    return f"{_repository_without_tag(image_ref)}@{match.group(1)}"
+
+
 def _bare_s3_bucket(value: str) -> str:
     text = (value or "").strip()
     if not text:
@@ -190,7 +218,13 @@ def _live_runner_env(project: str) -> dict[str, str]:
     if target.namespace:
         env["NPA_BYOF_K8S_NAMESPACE"] = target.namespace
     try:
-        env.update(storage_env_for_project(project or None, allow_host_creds=True))
+        env.update(
+            storage_env_for_project(
+                project or None,
+                allow_host_creds=True,
+                endpoint_url=os.environ.get("NPA_BYOF_S3_ENDPOINT", ""),
+            )
+        )
     except Exception as exc:
         print(f"WARN: skipped BYOF storage env resolution: {exc}", file=sys.stderr)
     # Project configs often store checkpoint_bucket as s3://bucket/prefix. BYOF
@@ -261,10 +295,14 @@ def _registry_path(image_ref: str) -> str:
 
 
 def _docker_login_nebius(server: str, *, env: dict[str, str] | None = None) -> None:
-    # Prefer an explicit write-capable profile when operators set one (e.g. agent-sa).
+    # Keep registry write authority separate from the profile used by kubeconfig
+    # exec plugins.  A registry-only service account may intentionally have no
+    # Kubernetes RBAC, so reusing NPA_NEBIUS_PROFILE for both operations can make
+    # an otherwise valid build fail when pull secrets are refreshed.
     merged = {**os.environ, **(env or {})}
     profile = (
-        merged.get("NPA_NEBIUS_PROFILE", "").strip()
+        merged.get("NEBIUS_REGISTRY_PROFILE", "").strip()
+        or merged.get("NPA_NEBIUS_PROFILE", "").strip()
         or merged.get("NEBIUS_PROFILE", "").strip()
     )
     token_cmd = ["nebius"]
@@ -291,10 +329,18 @@ def _dockerfile_text() -> str:
         "ARG BYOF_BUILD_COMMAND\n"
         "USER root\n"
         "RUN apt-get update && apt-get install -y --no-install-recommends \\\n"
-        "      git ca-certificates python3 python3-pip sudo \\\n"
+        "      git ca-certificates python3 python3-pip sudo rsync \\\n"
+        "      openssh-client openssh-server netcat-openbsd \\\n"
         "  && rm -rf /var/lib/apt/lists/*\n"
         "RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu\n"
-        "RUN echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu \\\n"
+        "RUN install -d -m 0755 /run/sshd \\\n"
+        "  && (grep -q 'ssh-keygen -A' /etc/init.d/ssh \\\n"
+        "    || sed -i '/^  start)$/a\\    ssh-keygen -A' /etc/init.d/ssh) \\\n"
+        "  && grep -q 'ssh-keygen -A' /etc/init.d/ssh \\\n"
+        "  && rm -f /etc/ssh/ssh_host_* \\\n"
+        "  && printf '%s\\n' 'PasswordAuthentication no' 'PermitRootLogin no' \\\n"
+        "    > /etc/ssh/sshd_config.d/99-npa-container.conf \\\n"
+        "  && echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu \\\n"
         "  && chmod 440 /etc/sudoers.d/ubuntu\n"
         "RUN mkdir -p /workspace && chown ubuntu:ubuntu /workspace\n"
         f'RUN git clone --depth 1 --branch "${{OSS_REPO_REF}}" "${{OSS_REPO_URL}}" {BYOF_REPO_MOUNT} \\\n'
@@ -305,13 +351,21 @@ def _dockerfile_text() -> str:
         f"  && chown -R ubuntu:ubuntu {BYOF_REPO_MOUNT}\n"
         f"WORKDIR {BYOF_REPO_MOUNT}\n"
         'RUN if [ -n "${BYOF_BUILD_COMMAND}" ]; then /bin/sh -lc "${BYOF_BUILD_COMMAND}"; fi\n'
+        "RUN build_command_sha256=\"$(printf '%s' \"${BYOF_BUILD_COMMAND}\" | sha256sum | cut -d' ' -f1)\" \\\n"
+        '  && if [ -n "${BYOF_BUILD_COMMAND}" ]; then build_command_executed=true; else build_command_executed=false; fi \\\n'
+        f'  && printf \'{{"schema":"npa.byof.build.v1","build_command_executed":%s,"build_command_sha256":"%s"}}\\n\' \\\n'
+        f'    "$build_command_executed" "$build_command_sha256" > {BYOF_REPO_MOUNT}/npa_build_metadata.json\n'
         f'RUN printf \'{{\\n  "source": "oss-byof",\\n  "repo": "%s",\\n  "ref": "%s"\\n}}\\n\' \\\n'
         f'  "${{OSS_REPO_URL}}" "${{OSS_REPO_REF}}" > {BYOF_REPO_MOUNT}/npa_source_metadata.json \\\n'
-        f"  && chown ubuntu:ubuntu {BYOF_REPO_MOUNT}/npa_source_metadata.json\n"
+        f"  && chown ubuntu:ubuntu {BYOF_REPO_MOUNT}/npa_source_metadata.json {BYOF_REPO_MOUNT}/npa_build_metadata.json\n"
         'LABEL npa.byof.repo="${OSS_REPO_URL}" npa.byof.ref="${OSS_REPO_REF}" '
-        'npa.packaging.tier="interactive"\n'
+        'npa.packaging.tier="interactive" '
+        'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"\n'
         "USER ubuntu\n"
+        "ENV HOME=/home/ubuntu\n"
         f"WORKDIR {BYOF_REPO_MOUNT}\n"
+        'ENTRYPOINT ["/bin/sh", "-c", "if [ \\"$#\\" -gt 0 ]; then exec \\"$@\\"; fi; exec /bin/bash", "npa-byof-entrypoint"]\n'
+        'CMD ["/bin/bash"]\n'
     )
 
 
@@ -377,9 +431,7 @@ def _base_image_candidates(
             colon = resolved.rfind(":")
             repository = resolved[:colon] if colon > slash else resolved
             resolved = (
-                repository
-                + "@"
-                + str(wan_accepted_image_manifest()["oci_digest"])
+                repository + "@" + str(wan_accepted_image_manifest()["oci_digest"])
             )
         return [resolved]
     if explicit_base:
@@ -483,6 +535,25 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    if is_openpi_request(
+        solution_name=args.solution_name,
+        repo_url=args.repo_url,
+        smoke_command=args.smoke_command,
+    ):
+        try:
+            require_openpi_terms()
+        except ValueError as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "failed",
+                        "solution_name": args.solution_name or "openpi",
+                        "error": str(exc),
+                    },
+                    indent=2,
+                )
+            )
+            return 1
     explicit_base = _normalize_optional(args.base_image)
     base_profile = _normalize_optional(args.base_profile) or "ubuntu"
     registry = args.registry.strip() or resolve_container_registry(args.project or None)
@@ -603,14 +674,20 @@ def main(argv: list[str] | None = None) -> int:
                     sys.stdout.write(push_proc.stdout)
                 if push_proc.stderr:
                     sys.stderr.write(push_proc.stderr)
-                try:
-                    _run(
-                        ["docker", "buildx", "imagetools", "inspect", image],
-                        env=docker_env or None,
-                    )
-                except Exception:
-                    pass
-            summary["build"] = {"ok": True, "pushed": not skip_push}
+                tagged_image = image
+                image = _resolve_pushed_image_digest(
+                    tagged_image, env=docker_env or None
+                )
+                summary["image_tag"] = tagged_image
+                summary["image"] = image
+                summary["build"] = {
+                    "ok": True,
+                    "pushed": True,
+                    "runtime_image": image,
+                    "digest": image.rsplit("@", 1)[1],
+                }
+            else:
+                summary["build"] = {"ok": True, "pushed": False}
         else:
             summary["build"] = {"ok": True, "skipped": True}
 

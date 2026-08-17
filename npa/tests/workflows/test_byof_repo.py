@@ -32,6 +32,53 @@ def _accepted_wan_base_args(module) -> list[str]:
     ]
 
 
+def test_openpi_terms_fail_before_registry_or_build(monkeypatch, capsys) -> None:
+    module = _load_module()
+    monkeypatch.delenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", raising=False)
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: pytest.fail("registry resolved before terms gate"),
+    )
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("command ran before terms gate"),
+    )
+
+    rc = module.main(
+        [
+            "--repo-url",
+            "https://github.com/Physical-Intelligence/openpi.git",
+            "--solution-name",
+            "openpi",
+            "--skip-run",
+        ]
+    )
+
+    assert rc == 1
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "failed"
+    assert "Gemma Terms of Use" in output["error"]
+    assert "Gemma Prohibited Use Policy" in output["error"]
+
+
+@pytest.mark.parametrize("value", ["yes", "TRUE", "1", "YES "])
+def test_openpi_terms_gate_requires_exact_yes(monkeypatch, value) -> None:
+    from npa.workflows.byof.openpi import require_openpi_terms
+
+    monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", value)
+    with pytest.raises(ValueError, match="OpenPI pi0.5 requires scoped"):
+        require_openpi_terms()
+
+
+def test_openpi_terms_gate_accepts_scoped_yes(monkeypatch) -> None:
+    from npa.workflows.byof.openpi import require_openpi_terms
+
+    monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", "YES")
+    require_openpi_terms()
+
+
 def test_run_sanitizes_stale_nebius_tokens(monkeypatch) -> None:
     module = _load_module()
     captured_env: dict[str, str] = {}
@@ -105,6 +152,37 @@ def test_docker_login_honors_nebius_profile_env(monkeypatch) -> None:
         "get-access-token",
     ]
     assert seen["stdin"] == "agent-token"
+
+
+def test_docker_login_prefers_registry_only_profile(monkeypatch) -> None:
+    module = _load_module()
+    seen: dict[str, object] = {}
+
+    def fake_run(cmd, *, stdin=None, capture=False, env=None):
+        if cmd[:1] == ["nebius"] and cmd[-2:] == ["iam", "get-access-token"]:
+            seen["token_cmd"] = list(cmd)
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="registry-token\n", stderr=""
+            )
+        if cmd[:4] == ["docker", "login", "-u", "iam"]:
+            seen["stdin"] = stdin
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setenv("NEBIUS_REGISTRY_PROFILE", "registry-writer")
+    monkeypatch.setenv("NPA_NEBIUS_PROFILE", "cluster-admin")
+    monkeypatch.setattr(module, "_run", fake_run)
+
+    module._docker_login_nebius("cr.example.nebius.cloud")
+
+    assert seen["token_cmd"] == [
+        "nebius",
+        "--profile",
+        "registry-writer",
+        "iam",
+        "get-access-token",
+    ]
+    assert seen["stdin"] == "registry-token"
 
 
 def test_main_reports_403_base_image_hint(monkeypatch, capsys) -> None:
@@ -260,6 +338,13 @@ def test_main_retries_build_with_fallback_base_image(monkeypatch, capsys) -> Non
             build_args.append(base)
             if base.endswith(":stable") or base.endswith(":default"):
                 raise RuntimeError("403 Forbidden while pulling BYOF_BASE_IMAGE")
+        if cmd[:4] == ["docker", "buildx", "imagetools", "inspect"]:
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout="Digest: sha256:" + "a" * 64 + "\n",
+                stderr="",
+            )
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(
@@ -899,6 +984,13 @@ def test_main_ubuntu_profile_uses_byof_base_image_build_arg(
             )
         if cmd[:2] == ["docker", "build"]:
             build_args.extend(cmd)
+        if cmd[:4] == ["docker", "buildx", "imagetools", "inspect"]:
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout="Digest: sha256:" + "b" * 64 + "\n",
+                stderr="",
+            )
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(module, "_run", fake_run)
@@ -927,6 +1019,29 @@ def test_main_ubuntu_profile_uses_byof_base_image_build_arg(
     assert output["base_profile"] == "ubuntu"
     assert output["base_image"] == "ubuntu:22.04"
     assert output["build_command"] == "python3 -m pip install -e ."
+    assert output["build"] == {
+        "digest": "sha256:" + "b" * 64,
+        "ok": True,
+        "pushed": True,
+        "runtime_image": (
+            "cr.eu-north1.nebius.cloud/example/project/npa-byof@sha256:" + "b" * 64
+        ),
+    }
+    assert output["image"] == output["build"]["runtime_image"]
+
+
+def test_resolve_pushed_image_digest_fails_closed_without_digest(monkeypatch) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            [], 0, stdout="Name: registry/image:tag\n", stderr=""
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="immutable sha256 digest"):
+        module._resolve_pushed_image_digest("registry.example:5000/team/image:tag")
 
 
 def test_dockerfile_writes_metadata_without_python_dependency() -> None:
@@ -934,6 +1049,11 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     text = module._dockerfile_text()
     assert "BYOF_BASE_IMAGE" in text
     assert "BYOF_BUILD_COMMAND" in text
+    assert "npa.byof.build.v1" in text
+    assert "build_command_executed" in text
+    assert "build_command_sha256" in text
+    assert "sha256sum" in text
+    assert "npa_build_metadata.json" in text
     assert "npa_source_metadata.json" in text
     assert "printf" in text
     assert "/opt/byof" in text
@@ -944,6 +1064,14 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     assert "NOPASSWD:ALL" in text
     assert "sudo" in text
     assert "mkdir -p /workspace" in text
+    assert "openssh-server" in text
+    assert "rsync" in text
+    assert "netcat-openbsd" in text
+    assert "ssh-keygen -A" in text
+    assert "rm -f /etc/ssh/ssh_host_*" in text
+    assert "ENV HOME=/home/ubuntu" in text
+    assert 'exec \\"$@\\"' in text
+    assert 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in text
 
 
 def test_compat_shim_delegates_to_run_byof_repo() -> None:

@@ -26,9 +26,16 @@ module "gpu-operator-custom" {
   depends_on = [
     module.network-operator
   ]
-  source       = "../modules/gpu-operator-custom"
-  mig_strategy = var.mig_strategy != null ? var.mig_strategy : "none"
-  cdi_enabled  = local.gpu_operator_cdi_enabled
+  source                = "../modules/gpu-operator-custom"
+  helm_version          = var.gpu_operator_version
+  driver_version        = var.gpu_driver_version
+  device_plugin_version = var.gpu_device_plugin_version
+  gfd_version           = var.gpu_gfd_version
+  mig_manager_version   = var.gpu_mig_manager_version
+  mig_with_reboot       = var.gpu_mig_with_reboot
+  rdma_enabled          = var.gpu_operator_rdma_enabled
+  mig_strategy          = var.mig_strategy != null ? var.mig_strategy : "none"
+  cdi_enabled           = local.gpu_operator_cdi_enabled
 }
 
 

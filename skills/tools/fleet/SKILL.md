@@ -24,6 +24,14 @@ Three-tier contract:
 - **YAML / agent**: `apiVersion: npa.fleet/v0.0.1` spec; workflow
   `toolRef: infra.fleet.deploy` (config key `fleet_spec`).
 
+RTX PRO 6000 hardware MIG is an additive cluster policy. Use `mig: {enabled:
+true, strategy: mixed, config: all-balanced}` only with two strict
+reserved-capacity `gpu-rtx6000` / `1gpu-24vcpu-218gb` workers and 128 GiB boot
+disks. NPA pins and live-verifies GPU Operator `v26.3.3`, driver `580.173.02`,
+device plugin/GFD `v0.19.3`, MIG Manager `v0.14.2`, exact per-node resources,
+and zero whole-GPU capacity/allocatable. See
+`docs/fleet-rtx-pro-6000-mig.md` and `npa/examples/fleet/rtxpro-mig.yaml`.
+
 ## Spec (npa.fleet/v0.0.1)
 
 A `defaults` cluster profile is deep-merged under every cluster, so **identical**
@@ -203,7 +211,10 @@ depends on it.
    pass `--yes`/`-y` for non-interactive runs. Missing projects are created via
    the `nebius` CLI unless `--no-create-projects`. Deploy runs per cluster and
    continues past a failing target (`--fail-fast` to stop); a JSON summary lists
-   deployed vs failed clusters with kube contexts.
+   deployed vs failed clusters with kube contexts. A successful kubeconfig
+   write also registers the fleet target under `~/.npa/clusters/<context>` so
+   project-scoped workflow, controller, and `provision-if-absent` commands can
+   consume it without a second manual cluster registration step.
 7. **Consume the latest recipe**: `--k8s-training-ref main` clones
    `nebius-solutions-library` and uses its `k8s-training` (or `--k8s-training-dir`
    for a local checkout). Omit both to use the repo-vendored, tested copy. NPA
@@ -214,9 +225,27 @@ depends on it.
    For GPU clusters it also inspects the materialized recipe's variables and
    `gpu_settings` wiring. If the selected managed-driver mode/preset cannot be
    represented, deployment fails with an actionable compatibility error rather
-   than silently reverting to the operator driver.
+   than silently reverting to the operator driver. MIG-enabled targets also
+   require all seven pinned Operator/lifecycle variables in the resolved recipe;
+   this check runs before quota, project, subnet, or Terraform mutation.
 8. **Status / teardown**: `npa fleet status --spec fleet.yaml`; `npa fleet
    destroy --spec fleet.yaml` (prompts; `--yes`/`-y` or `--force` to skip).
+9. **MIG readiness is part of deploy.** A MIG-enabled cluster is not marked
+   deployed until two consecutive exact snapshots agree. `npa fleet verify-mig
+   --spec fleet.yaml --output json` is the read-only diagnostic; add `--wait
+   --reconcile` to perform the single ordered GFD/device-plugin stale-resource
+   repair. It removes only the exact obsolete
+   `nvidia.com/gpu=mig-not-ready:NoSchedule` taint from a successful replacement
+   worker, preserving unrelated taints. It also reconciles a stale `OnDelete`
+   driver pod template one worker
+   at a time, but only after failing closed on every active application pod that
+   requests an `nvidia.com/*` resource; operators must delete those workloads
+   explicitly. Nonzero `nvidia.com/gpu` in either capacity or allocatable,
+   cordoned/NotReady nodes, or stale Operator/DaemonSet generations are always
+   failures. Readiness, driver replacement, and a mandatory representative
+   `mig-1g.24gb` CUDA vectorAdd/MIG-identity smoke share
+   `gpu_health_timeout_minutes`; timeout or smoke cleanup failure leaves the
+   cluster in validation-failed state instead of reporting deployment success.
 
 ## Add / remove clusters and projects
 
@@ -252,6 +281,12 @@ Both `deploy` and `destroy` confirm before acting (bypass with `--yes`/`-y`;
   `deployed-validation-failed`; credential failures report
   `deployed-credentials-failed`. Both retain Terraform/cloud state, kubeconfig,
   and local evidence for diagnosis and an idempotent retry.
+- **Idempotent preflight is live-verified**: a repeat deploy counts an existing
+  target as zero incremental quota only when its saved tfvars still match and
+  the exact provider project, cluster, and node groups are all running with the
+  requested shapes. Reserved pools must still report non-preemptible nodes and
+  the exact `STRICT` reservation binding; stale or incomplete evidence falls
+  back to the ordinary conservative quota preflight.
 - **Region domain**: the recipe's `provider.tf` domain is patched to
   `api.nebius.cloud` for non-EU regions automatically (EU uses
   `api.eu.nebius.cloud`). If the upstream recipe drifts (renames `provider.tf`,
@@ -329,5 +364,6 @@ Both `deploy` and `destroy` confirm before acting (bypass with `--yes`/`-y`;
 ```bash
 npa fleet plan --help
 npa fleet deploy --help
+npa fleet verify-mig --help
 npa/.venv/bin/python -m pytest npa/tests/unit/test_fleet_cli.py -q
 ```

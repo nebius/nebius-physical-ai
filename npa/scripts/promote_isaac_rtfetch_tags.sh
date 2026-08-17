@@ -13,8 +13,8 @@
 # ---------------------------------------------------
 # Do NOT promote before the branch that carries the EULA plumbing has merged.
 #
-# The runtime-fetch images refuse to run (exit 78) unless the caller sets
-# OMNI_KIT_ACCEPT_EULA and ISAACSIM_ACCEPT_EULA. Four separate layers had to be taught to
+# The runtime-fetch images default NVIDIA's documented ACCEPT_EULA to Y and refuse
+# (exit 78) only when the caller explicitly opts out. Four separate layers forward
 # forward that acceptance: the golden-eval runner, the shared serverless job-env builder,
 # the SkyPilot templates, and the K8s sim2real Isaac sibling jobs.
 #

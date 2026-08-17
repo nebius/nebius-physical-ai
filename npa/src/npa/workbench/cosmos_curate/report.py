@@ -370,11 +370,71 @@ def _stage_variants(
     prefixed = augment_uri if augment_uri.endswith("/") else augment_uri + "/"
     variants: dict[str, str] = {}
 
+    manifest = _read_augment_manifest(prefixed, store=store)
+    if isinstance(manifest, dict):
+        from npa.workbench.cosmos.transfer import validate_committed_run_manifest
+
+        try:
+            descriptors = validate_committed_run_manifest(manifest, prefixed)
+        except (TypeError, ValueError) as exc:
+            raise CosmosCurateError(str(exc)) from exc
+        if descriptors:
+            for descriptor in descriptors:
+                if not isinstance(descriptor, dict):
+                    raise CosmosCurateError("augment manifest has an invalid variant")
+                variant = str(descriptor.get("clip") or "").strip()
+                video_uri = str(descriptor.get("augmented_video_uri") or "").strip()
+                if not variant or not video_uri:
+                    raise CosmosCurateError(
+                        "augment manifest variant is missing its clip or generated video URI"
+                    )
+                target = staged / f"{_safe_stem(variant, taken=variants)}.mp4"
+                try:
+                    if _is_remote(video_uri):
+                        local = store.download_path(video_uri, str(target))
+                        path = Path(local)
+                        if path.is_dir():
+                            found = sorted(path.rglob("*.mp4"))
+                            if not found:
+                                raise CosmosCurateError(
+                                    f"variant {variant} download produced no mp4"
+                                )
+                            found[0].replace(target)
+                        elif path != target:
+                            path.replace(target)
+                    else:
+                        source = Path(_local_path(video_uri))
+                        if not source.is_file():
+                            raise CosmosCurateError(
+                                f"variant {variant} generated video is absent"
+                            )
+                        target.write_bytes(source.read_bytes())
+                except CosmosCurateError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - normalize provider errors
+                    raise CosmosCurateError(
+                        f"could not download committed variant {variant}"
+                    ) from exc
+                variants[target.stem] = variant
+                if max_variants and len(variants) >= max_variants:
+                    break
+            return variants
+
+    if _has_attempt_layout(prefixed, store=store):
+        raise CosmosCurateError(
+            "augment attempt objects exist without a valid canonical manifest; "
+            "refusing to infer a recovery generation"
+        )
+
     if not _is_remote(prefixed):
         root = Path(_local_path(prefixed))
         if not root.is_dir():
             return {}
-        for child in sorted(child for child in root.iterdir() if child.is_dir()):
+        for child in sorted(
+            child
+            for child in root.iterdir()
+            if child.is_dir() and child.name != "_attempts"
+        ):
             video = child / VARIANT_VIDEO_NAME
             if not video.is_file():
                 candidates = sorted(child.glob("*.mp4"))
@@ -422,6 +482,71 @@ def _stage_variants(
         if max_variants and len(variants) >= max_variants:
             break
     return variants
+
+
+def _has_attempt_layout(augment_uri: str, *, store: Any) -> bool:
+    if not _is_remote(augment_uri):
+        return (Path(_local_path(augment_uri)) / "_attempts").exists()
+    _bucket, prefix = _split(augment_uri if augment_uri.endswith("/") else augment_uri + "/")
+    marker = prefix + "_attempts/"
+    return any(key.startswith(marker) for key in _list_keys(augment_uri, store=store))
+
+
+def _read_augment_manifest(augment_uri: str, *, store: Any) -> dict[str, Any] | None:
+    uri = augment_uri.rstrip("/") + "/manifest.json"
+    if not _is_remote(uri):
+        path = Path(_local_path(uri))
+        if not path.is_file():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise CosmosCurateError("augment manifest is unreadable") from exc
+        if not isinstance(payload, dict):
+            raise CosmosCurateError("augment manifest is not an object")
+        return payload
+    with tempfile.TemporaryDirectory(prefix="npa-cosmos-curate-manifest-") as tmp:
+        target = Path(tmp) / "manifest.json"
+        exact_reader = getattr(store, "read_bytes_with_etag", None)
+        if callable(exact_reader):
+            try:
+                current = exact_reader(uri)
+            except Exception as exc:
+                raise CosmosCurateError(
+                    "could not read the canonical augment manifest"
+                ) from exc
+            if current is None:
+                return None
+            try:
+                payload = json.loads(current[0].decode("utf-8"))
+            except (UnicodeDecodeError, ValueError) as exc:
+                raise CosmosCurateError("augment manifest is unreadable") from exc
+            if not isinstance(payload, dict):
+                raise CosmosCurateError("augment manifest is not an object")
+            return payload
+        _bucket, manifest_key = _split(uri)
+        if manifest_key not in _list_keys(augment_uri, store=store):
+            return None
+        try:
+            downloaded = Path(store.download_path(uri, str(target)))
+        except Exception as exc:
+            raise CosmosCurateError(
+                "could not read the listed canonical augment manifest"
+            ) from exc
+        if downloaded.is_dir():
+            matches = sorted(downloaded.rglob("manifest.json"))
+            if not matches:
+                raise CosmosCurateError("listed augment manifest was not downloaded")
+            downloaded = matches[0]
+        if not downloaded.is_file():
+            raise CosmosCurateError("listed augment manifest was not downloaded")
+        try:
+            payload = json.loads(downloaded.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise CosmosCurateError("augment manifest is unreadable") from exc
+        if not isinstance(payload, dict):
+            raise CosmosCurateError("augment manifest is not an object")
+        return payload
 
 
 def _safe_stem(variant: str, *, taken: Container[str] = frozenset()) -> str:

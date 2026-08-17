@@ -40,10 +40,13 @@ except Exception:  # pragma: no cover - embedded backend fallback
         segments = value.split("/")
         for segment in segments:
             if segment in {"", ".", ".."}:
-                raise ArtifactDiscoveryError("run-id traversal segments are not allowed")
+                raise ArtifactDiscoveryError(
+                    "run-id traversal segments are not allowed"
+                )
             if not _SAFE_SEGMENT_RE.fullmatch(segment):
                 raise ArtifactDiscoveryError("run-id contains unsupported characters")
         return value
+
 
 _RERUN_EXTENSIONS = {".rrd"}
 # Recording formats the embedded MCAP viewers open directly. MCAP is the
@@ -63,6 +66,8 @@ _IMAGE_EXTENSIONS = _WEB_IMAGE_EXTENSIONS | _NON_WEB_IMAGE_EXTENSIONS
 def needs_image_transcode(name: str) -> bool:
     """True when ``name`` is an image a browser cannot render natively (→ PNG)."""
     return Path(str(name or "")).suffix.lower() in _NON_WEB_IMAGE_EXTENSIONS
+
+
 # 3D scene/asset artifacts. Deliberately DOWNLOAD-ONLY: no browser renders USDZ
 # or PLY, and the agent ships no 3D-asset viewer, so offering them as an inline
 # preview would produce a broken pane. Stating the set explicitly (rather than
@@ -185,7 +190,9 @@ GROOT_ARTIFACT_STAGES: tuple[dict[str, Any], ...] = (
 # Bucket roots owned by infrastructure tooling are never user workflow runs.
 # Keep this list deliberately narrow and structural: these are canonical state
 # roots, not customer-selected bucket/run names or a deployment allowlist.
-_INFRASTRUCTURE_ROOTS = frozenset({".terraform", "terraform", "terraform-state", "tfstate"})
+_INFRASTRUCTURE_ROOTS = frozenset(
+    {".terraform", "terraform", "terraform-state", "tfstate"}
+)
 # Structural storage trees which contain platform state or source snapshots, not
 # workflow/artifact runs. These are data contracts rather than customer names:
 # ignoring them prevents a tenant/category root (notably ``tenants``) or a source
@@ -345,7 +352,9 @@ class RunSummary:
 
 
 def _canonical_root(value: str) -> str:
-    return str(value or "").strip().strip("/").split("/", 1)[0].lower().replace("_", "-")
+    return (
+        str(value or "").strip().strip("/").split("/", 1)[0].lower().replace("_", "-")
+    )
 
 
 def _normalized_discovery_exclusions(exclude: "set[str] | None") -> set[str]:
@@ -519,10 +528,7 @@ def _merge_staging_summaries(runs: list[RunSummary]) -> list[RunSummary]:
             for run in same_id
             if run.output_artifact_count == 0 and run.input_artifact_count > 0
         ]
-        if (
-            len(authoritative) != 1
-            or len(authoritative) + len(staging) != len(same_id)
-        ):
+        if len(authoritative) != 1 or len(authoritative) + len(staging) != len(same_id):
             merged.extend(same_id)
             continue
         primary = authoritative[0]
@@ -539,17 +545,13 @@ def _merge_staging_summaries(runs: list[RunSummary]) -> list[RunSummary]:
                 ),
                 artifact_count=sum(run.artifact_count for run in same_id),
                 has_viewable=any(run.has_viewable for run in same_id),
-                input_artifact_count=sum(
-                    run.input_artifact_count for run in same_id
-                ),
+                input_artifact_count=sum(run.input_artifact_count for run in same_id),
                 metadata_artifact_count=sum(
                     run.metadata_artifact_count for run in same_id
                 ),
                 namespaces=tuple(
                     dict.fromkeys(
-                        namespace
-                        for run in same_id
-                        for namespace in run.namespaces
+                        namespace for run in same_id for namespace in run.namespaces
                     )
                 ),
                 canonical_score=sum(run.canonical_score for run in same_id),
@@ -588,7 +590,11 @@ def encode_run_ref(bucket: str, source_prefix: str, run_id: str) -> str:
     safe_bucket = str(bucket or "").strip()
     if not _SAFE_BUCKET_RE.fullmatch(safe_bucket):
         raise ArtifactDiscoveryError("invalid S3 bucket in run reference")
-    payload = [safe_bucket, _validate_source_prefix(source_prefix), _validate_run_basename(run_id)]
+    payload = [
+        safe_bucket,
+        _validate_source_prefix(source_prefix),
+        _validate_run_basename(run_id),
+    ]
     raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
     return _RUN_REF_PREFIX + base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
@@ -606,14 +612,20 @@ def decode_run_ref(run_ref: str) -> tuple[str, str, str]:
         payload = json.loads(raw.decode("utf-8"))
     except Exception as exc:
         raise ArtifactDiscoveryError("invalid run_ref") from exc
-    if not isinstance(payload, list) or len(payload) != 3 or not all(
-        isinstance(item, str) for item in payload
+    if (
+        not isinstance(payload, list)
+        or len(payload) != 3
+        or not all(isinstance(item, str) for item in payload)
     ):
         raise ArtifactDiscoveryError("invalid run_ref")
     bucket, source_prefix, run_id = payload
     if not _SAFE_BUCKET_RE.fullmatch(bucket):
         raise ArtifactDiscoveryError("invalid S3 bucket in run_ref")
-    return bucket, _validate_source_prefix(source_prefix), _validate_run_basename(run_id)
+    return (
+        bucket,
+        _validate_source_prefix(source_prefix),
+        _validate_run_basename(run_id),
+    )
 
 
 def parse_s3_uri(uri: str) -> tuple[str, str]:
@@ -721,7 +733,9 @@ def artifact_role_for_relative_key(relative_key: str) -> str:
     return "input" if first in _INPUT_ARTIFACT_ROOTS else "output"
 
 
-def artifact_category_for_relative_key(relative_key: str, *, role: str = "output") -> str:
+def artifact_category_for_relative_key(
+    relative_key: str, *, role: str = "output"
+) -> str:
     """Return a user-facing artifact category without inspecting object bytes."""
     relative = str(relative_key or "").strip().lstrip("/")
     lowered = relative.lower()
@@ -740,7 +754,11 @@ def artifact_category_for_relative_key(relative_key: str, *, role: str = "output
         return "checkpoint"
     if suffix == ".log" or first in {"log", "logs", "evidence"}:
         return "log"
-    if suffix in {".yaml", ".yml"} or "config" in leaf or first in {"config", "configs"}:
+    if (
+        suffix in {".yaml", ".yml"}
+        or "config" in leaf
+        or first in {"config", "configs"}
+    ):
         return "config"
     normalized_role = str(role or "output").lower()
     if normalized_role == "input":
@@ -874,7 +892,9 @@ def redact_artifact_text(text: str) -> tuple[str, bool]:
     value = _PEM_PRIVATE_KEY_RE.sub("[REDACTED PRIVATE KEY]", value)
     value = _BEARER_RE.sub("Bearer [REDACTED]", value)
     value = _AWS_ACCESS_KEY_RE.sub("[REDACTED ACCESS KEY]", value)
-    value = _SECRET_LINE_RE.sub(lambda match: match.group("prefix") + "[REDACTED]", value)
+    value = _SECRET_LINE_RE.sub(
+        lambda match: match.group("prefix") + "[REDACTED]", value
+    )
     return value, value != original
 
 
@@ -955,7 +975,7 @@ def safe_artifact_filename(key: str) -> str:
     """Return a conservative ASCII download filename for Content-Disposition."""
     leaf = Path(str(key or "").replace("\\", "/")).name or "artifact.bin"
     clean = re.sub(r"[^A-Za-z0-9._-]+", "_", leaf).strip("._")
-    return (clean[:180] or "artifact.bin")
+    return clean[:180] or "artifact.bin"
 
 
 def safe_content_disposition(key: str, *, attachment: bool) -> str:
@@ -998,9 +1018,7 @@ def groot_artifact_contract(
     inventory = {_relative_artifact_key(item): item for item in artifacts}
     matches: dict[str, list[str]] = {}
     for semantic, aliases in GROOT_ARTIFACT_PATHS.items():
-        matches[semantic] = [
-            alias for alias in aliases if alias.lower() in inventory
-        ]
+        matches[semantic] = [alias for alias in aliases if alias.lower() in inventory]
 
     dataset_value = report.get("dataset")
     dataset: dict[str, Any] = dataset_value if isinstance(dataset_value, dict) else {}
@@ -1049,7 +1067,9 @@ def _finite_loss_history(
     for raw in value:
         if not isinstance(raw, dict):
             return None
-        step_value = next((raw.get(key) for key in step_keys if raw.get(key) is not None), None)
+        step_value = next(
+            (raw.get(key) for key in step_keys if raw.get(key) is not None), None
+        )
         try:
             step = int(str(step_value))
             loss = float(str(raw.get("loss")))
@@ -1098,38 +1118,38 @@ def build_run_summary(
     if learning_doc.get("schema") == "npa.groot.learning.v1":
         learning_dataset_value = learning_doc.get("dataset")
         learning_dataset: dict[str, Any] = (
-            learning_dataset_value
-            if isinstance(learning_dataset_value, dict)
-            else {}
+            learning_dataset_value if isinstance(learning_dataset_value, dict) else {}
         )
         learning_training_value = learning_doc.get("training")
         learning_training: dict[str, Any] = (
-            learning_training_value
-            if isinstance(learning_training_value, dict)
-            else {}
+            learning_training_value if isinstance(learning_training_value, dict) else {}
         )
         learning_eval_value = learning_doc.get("evaluation")
         learning_eval: dict[str, Any] = (
-            learning_eval_value
-            if isinstance(learning_eval_value, dict)
-            else {}
+            learning_eval_value if isinstance(learning_eval_value, dict) else {}
         )
         learning_viz_value = learning_doc.get("visualizations")
         learning_viz: dict[str, Any] = (
-            learning_viz_value
-            if isinstance(learning_viz_value, dict)
-            else {}
+            learning_viz_value if isinstance(learning_viz_value, dict) else {}
         )
         learning = {
-            "badge": str(learning_doc.get("badge") or "Offline held-out policy evaluation"),
+            "badge": str(
+                learning_doc.get("badge") or "Offline held-out policy evaluation"
+            ),
             "pipeline_status": str(learning_doc.get("pipeline_status") or "unknown"),
-            "learning_outcome": str(learning_doc.get("learning_outcome") or "inconclusive"),
+            "learning_outcome": str(
+                learning_doc.get("learning_outcome") or "inconclusive"
+            ),
             "candidate_promoted": learning_doc.get("candidate_promoted") is True,
             "evaluation_kind": str(learning_doc.get("evaluation_kind") or ""),
             "closed_loop": learning_doc.get("closed_loop") is True,
             "embodiment": str(learning_dataset.get("embodiment") or ""),
-            "camera_names": [str(value) for value in learning_dataset.get("camera_names") or []],
-            "source_resolution": str(learning_dataset.get("source_resolution") or "unknown"),
+            "camera_names": [
+                str(value) for value in learning_dataset.get("camera_names") or []
+            ],
+            "source_resolution": str(
+                learning_dataset.get("source_resolution") or "unknown"
+            ),
             "train_episodes": int(learning_dataset.get("train_episodes") or 0),
             "heldout_episodes": int(learning_dataset.get("heldout_episodes") or 0),
             "heldout_samples": int(learning_dataset.get("heldout_samples") or 0),
@@ -1143,7 +1163,9 @@ def build_run_summary(
             "metric_name": str(learning_eval.get("metric_name") or "action_mse"),
             "baseline_value": float(learning_eval.get("baseline_value") or 0.0),
             "posttrain_value": float(learning_eval.get("posttrain_value") or 0.0),
-            "absolute_improvement": float(learning_eval.get("absolute_improvement") or 0.0),
+            "absolute_improvement": float(
+                learning_eval.get("absolute_improvement") or 0.0
+            ),
             "relative_improvement_percent": float(
                 learning_eval.get("relative_improvement_percent") or 0.0
             ),
@@ -1175,13 +1197,15 @@ def build_run_summary(
                 or (learning_viz.get("comparison_video") or {}).get("uri")
                 or ""
             ),
-            "native_resolution_preserved": learning_viz.get("native_resolution_preserved")
+            "native_resolution_preserved": learning_viz.get(
+                "native_resolution_preserved"
+            )
             is True,
-            "semantic_phases": [str(value) for value in learning_doc.get("semantic_phases") or []],
+            "semantic_phases": [
+                str(value) for value in learning_doc.get("semantic_phases") or []
+            ],
         }
-        learning["artifact_contract"] = groot_artifact_contract(
-            artifacts, learning_doc
-        )
+        learning["artifact_contract"] = groot_artifact_contract(artifacts, learning_doc)
     workflow = str(
         root_manifest.get("workflow_name")
         or workflow_manifest.get("workflow")
@@ -1264,7 +1288,9 @@ def build_run_summary(
             parsed_history
             and candidate_loss is not None
             and math.isfinite(candidate_loss)
-            and math.isclose(candidate_loss, parsed_history[-1]["loss"], rel_tol=1e-9, abs_tol=1e-12)
+            and math.isclose(
+                candidate_loss, parsed_history[-1]["loss"], rel_tol=1e-9, abs_tol=1e-12
+            )
         ):
             loss = candidate_loss
             loss_history = parsed_history
@@ -1361,16 +1387,23 @@ def list_runs(
                 # A run is a directory (``<run_id>/<stage>/...``). Skip bare files
                 # sitting directly under the prefix (e.g. ``<cat>/records.json``),
                 # which are not runs — this keeps generic root-level discovery clean.
-                remainder = key[len(normalized_prefix):] if normalized_prefix else key
+                remainder = key[len(normalized_prefix) :] if normalized_prefix else key
                 if "/" not in remainder.lstrip("/"):
                     continue
                 render = render_hint_for_object(key=key)
                 current = summary.setdefault(
                     run_id,
-                    {"artifact_count": 0, "last_modified": "", "earliest": "", "has_viewable": False},
+                    {
+                        "artifact_count": 0,
+                        "last_modified": "",
+                        "earliest": "",
+                        "has_viewable": False,
+                    },
                 )
                 current["artifact_count"] = int(current["artifact_count"]) + 1
-                current["has_viewable"] = bool(current["has_viewable"] or render != "download")
+                current["has_viewable"] = bool(
+                    current["has_viewable"] or render != "download"
+                )
                 ts = _to_iso8601(item.get("LastModified"))
                 if ts:
                     if ts > str(current["last_modified"]):
@@ -1378,7 +1411,9 @@ def list_runs(
                     if not current["earliest"] or ts < str(current["earliest"]):
                         current["earliest"] = ts
     except (ClientError, BotoCoreError) as exc:
-        raise ArtifactDiscoveryError(f"failed to list runs from s3://{bucket}/{normalized_prefix}: {exc}") from exc
+        raise ArtifactDiscoveryError(
+            f"failed to list runs from s3://{bucket}/{normalized_prefix}: {exc}"
+        ) from exc
 
     runs = [
         RunSummary(
@@ -1433,7 +1468,9 @@ def list_run_categories(
                 pfx = str(common.get("Prefix") or "").rstrip("/")
                 if pfx:
                     categories.append(pfx)
-                    if max_results is not None and len(categories) >= max(0, max_results):
+                    if max_results is not None and len(categories) >= max(
+                        0, max_results
+                    ):
                         return categories
     except (ClientError, BotoCoreError) as exc:
         raise ArtifactDiscoveryError(
@@ -1509,7 +1546,9 @@ def discovery_categories(
     ):
         # The base root's children are categories (handled above), not runs.
         normalized_category = category.strip("/")
-        if base and (normalized_category == base or base.startswith(normalized_category + "/")):
+        if base and (
+            normalized_category == base or base.startswith(normalized_category + "/")
+        ):
             continue
         _add(category)
     return ordered
@@ -1553,7 +1592,9 @@ def _run_identity_for_object_key(
         if _looks_like_flat_run_prefix(segment):
             return "/".join(directories[:index]), segment
 
-    base_parts = [part for part in str(base_prefix or "").strip().strip("/").split("/") if part]
+    base_parts = [
+        part for part in str(base_prefix or "").strip().strip("/").split("/") if part
+    ]
     if base_parts and directories[: len(base_parts)] == base_parts:
         run_index = len(base_parts) + 1
     else:
@@ -1606,7 +1647,15 @@ def _list_artifact_run_index(
                 )
                 if identity is None:
                     continue
-                parent, run_id = identity
+                parent, untrusted_run_id = identity
+                try:
+                    run_id = _validate_run_basename(untrusted_run_id)
+                except ArtifactDiscoveryError:
+                    # Buckets can contain abandoned template output such as a
+                    # literal ``${RUN_ID}`` directory. It is not an NPA run and
+                    # must not poison discovery for every valid sibling.
+                    continue
+                identity = (parent, run_id)
                 discovered_path = "/".join(part for part in (parent, run_id) if part)
                 if _is_excluded_prefix(discovered_path, excluded):
                     continue
@@ -1624,23 +1673,36 @@ def _list_artifact_run_index(
                 )
                 current["artifact_count"] = int(current["artifact_count"]) + 1
                 scope = "/".join(part for part in (parent, run_id) if part)
-                relative_key = key[len(scope) :].lstrip("/") if key.startswith(scope) else key
+                relative_key = (
+                    key[len(scope) :].lstrip("/") if key.startswith(scope) else key
+                )
                 role = artifact_role_for_relative_key(relative_key)
-                count_key = "input_artifact_count" if role == "input" else "output_artifact_count"
+                count_key = (
+                    "input_artifact_count"
+                    if role == "input"
+                    else "output_artifact_count"
+                )
                 current[count_key] = int(current[count_key]) + 1
-                current["canonical_score"] = int(current["canonical_score"]) + _artifact_output_signal_score(relative_key)
+                current["canonical_score"] = int(
+                    current["canonical_score"]
+                ) + _artifact_output_signal_score(relative_key)
                 current["has_viewable"] = bool(
-                    current["has_viewable"] or render_hint_for_object(key=key) != "download"
+                    current["has_viewable"]
+                    or render_hint_for_object(key=key) != "download"
                 )
                 timestamp = _to_iso8601(item.get("LastModified"))
                 if timestamp:
-                    current["last_modified"] = max(str(current["last_modified"]), timestamp)
+                    current["last_modified"] = max(
+                        str(current["last_modified"]), timestamp
+                    )
                     if not current["earliest"] or timestamp < str(current["earliest"]):
                         current["earliest"] = timestamp
             if not discovery_complete:
                 break
     except (ClientError, BotoCoreError) as exc:
-        raise ArtifactDiscoveryError(f"failed to build run index for s3://{bucket}: {exc}") from exc
+        raise ArtifactDiscoveryError(
+            f"failed to build run index for s3://{bucket}: {exc}"
+        ) from exc
 
     needle = str(contains or "").strip().lower()
     runs = [
@@ -1700,6 +1762,7 @@ def list_all_runs(
         contains=contains,
         s3=s3,
     )
+
 
 def list_run_prefixes(
     bucket: str,
@@ -1890,12 +1953,19 @@ def list_all_runs_across_buckets(
                 s3=s3,
             )
         except (ArtifactDiscoveryError, ClientError, BotoCoreError):
-            return bucket, [], 0, False, True, {
-                "bucket": bucket,
-                "project_id": str((bucket_projects or {}).get(bucket) or ""),
-                "code": "artifact_discovery_unavailable",
-                "message": "Run discovery is unavailable for this object storage resource.",
-            }
+            return (
+                bucket,
+                [],
+                0,
+                False,
+                True,
+                {
+                    "bucket": bucket,
+                    "project_id": str((bucket_projects or {}).get(bucket) or ""),
+                    "code": "artifact_discovery_unavailable",
+                    "message": "Run discovery is unavailable for this object storage resource.",
+                },
+            )
         tagged = [
             dataclass_replace(
                 run,
@@ -1990,14 +2060,22 @@ def list_runs_at_prefix_across_buckets(
     ) -> "tuple[list[RunSummary], int, bool, bool, dict[str, str] | None]":
         try:
             discover = list_run_prefixes if lightweight else list_runs
-            page = discover(bucket, prefix=prefix, limit=limit, contains=contains, s3=s3)
+            page = discover(
+                bucket, prefix=prefix, limit=limit, contains=contains, s3=s3
+            )
         except (ArtifactDiscoveryError, ClientError, BotoCoreError):
-            return [], 0, True, False, {
-                "bucket": bucket,
-                "project_id": str((bucket_projects or {}).get(bucket) or ""),
-                "code": "artifact_discovery_unavailable",
-                "message": "Run discovery is unavailable for this object storage resource.",
-            }
+            return (
+                [],
+                0,
+                True,
+                False,
+                {
+                    "bucket": bucket,
+                    "project_id": str((bucket_projects or {}).get(bucket) or ""),
+                    "code": "artifact_discovery_unavailable",
+                    "message": "Run discovery is unavailable for this object storage resource.",
+                },
+            )
         tagged = [
             dataclass_replace(
                 run,
@@ -2032,7 +2110,9 @@ def list_runs_at_prefix_across_buckets(
         for run in runs:
             merged[(run.bucket, run.resolved_prefix, run.run_id)] = run
     ordered = sorted(
-        merged.values(), key=lambda item: (item.last_modified, item.run_id), reverse=True
+        merged.values(),
+        key=lambda item: (item.last_modified, item.run_id),
+        reverse=True,
     )
     truncated = any_bucket_truncated or len(ordered) > limit or not discovery_complete
     return RunListPage(
@@ -2159,7 +2239,9 @@ def find_run_artifacts_across_buckets(
             continue
         try:
             matches.extend(
-                find_run_artifact_matches(name, base_prefix=base_prefix, run_id=run_id, s3=s3)
+                find_run_artifact_matches(
+                    name, base_prefix=base_prefix, run_id=run_id, s3=s3
+                )
             )
         except (ArtifactDiscoveryError, ClientError, BotoCoreError):
             discovery_incomplete = True
@@ -2266,7 +2348,12 @@ def list_runs_cached(
     def _compute() -> RunListPage:
         if all_categories:
             return list_all_runs(
-                bucket, base_prefix=base_prefix, limit=limit, exclude=exclude, contains=contains, s3=s3
+                bucket,
+                base_prefix=base_prefix,
+                limit=limit,
+                exclude=exclude,
+                contains=contains,
+                s3=s3,
             )
         return list_runs(bucket, prefix=prefix, limit=limit, contains=contains, s3=s3)
 
@@ -2289,8 +2376,46 @@ def list_runs_cached(
     return page
 
 
+def _cached_server_discovered_run_summary(
+    *,
+    bucket: str,
+    source_prefix: str,
+    run_id: str,
+    s3,
+) -> RunSummary | None:
+    """Return an exact tuple previously emitted by this credential-scoped server.
+
+    A run reference is not itself an authorization capability. The run-list
+    cache, however, contains tuples the server positively observed through its
+    bounded discovery path. Reusing that observation avoids repeating a full
+    bucket walk for every idempotent export while absent/caller-invented tuples
+    continue through the fail-closed discovery path below.
+    """
+    identity = _s3_cache_identity(s3)
+    with _RUN_LIST_LOCK:
+        pages = [
+            page
+            for key, (_timestamp, page) in _RUN_LIST_CACHE.items()
+            if len(key) > 1 and key[1] == identity
+        ]
+    for page in pages:
+        for item in page.runs:
+            if (
+                item.bucket == bucket
+                and item.resolved_prefix == source_prefix
+                and item.run_id == run_id
+            ):
+                return item
+    return None
+
+
 def find_run_artifact_matches(
-    bucket: str, *, base_prefix: str, run_id: str, s3=None
+    bucket: str,
+    *,
+    base_prefix: str,
+    run_id: str,
+    exact_source_prefix: "str | None" = None,
+    s3=None,
 ) -> list[RunResolution]:
     """Return every exact source match for a run basename in one bucket."""
     if s3 is None:
@@ -2303,7 +2428,20 @@ def find_run_artifact_matches(
         contains=normalized_run,
         s3=s3,
     )
-    if index.truncated or not index.discovery_complete:
+    candidates = [
+        item
+        for item in index.runs
+        if item.run_id == normalized_run
+        and (exact_source_prefix is None or item.resolved_prefix == exact_source_prefix)
+    ]
+    # An incomplete bounded scan cannot prove that an absent source does not
+    # exist or that a plain run basename is unique. A positive exact-prefix
+    # match is different: the server itself observed that tuple in its bounded
+    # index, so it is safe to resolve without letting an unrelated high-volume
+    # source disable the source-qualified selector.
+    if (index.truncated or not index.discovery_complete) and (
+        exact_source_prefix is None or not candidates
+    ):
         raise ArtifactDiscoveryError(
             "run source discovery was incomplete; select an exact source"
         )
@@ -2323,8 +2461,7 @@ def find_run_artifact_matches(
                 )
             ],
         )
-        for item in index.runs
-        if item.run_id == normalized_run
+        for item in candidates
     ]
 
 
@@ -2343,19 +2480,45 @@ def resolve_run_artifacts(
     if requested.startswith(_RUN_REF_PREFIX):
         bucket, source_prefix, run_id = decode_run_ref(requested)
         if bucket not in configured:
-            raise ArtifactDiscoveryError("run_ref bucket is not configured for this agent")
+            raise ArtifactDiscoveryError(
+                "run_ref bucket is not configured for this agent"
+            )
+        observed = _cached_server_discovered_run_summary(
+            bucket=bucket,
+            source_prefix=source_prefix,
+            run_id=run_id,
+            s3=s3,
+        )
+        if observed is not None:
+            return RunResolution(
+                run_id=run_id,
+                bucket=bucket,
+                source_prefix=source_prefix,
+                artifacts=[
+                    artifact
+                    for namespace in (observed.namespaces or (source_prefix,))
+                    for artifact in list_artifacts(
+                        bucket,
+                        run_id,
+                        prefix=namespace,
+                        s3=s3,
+                    )
+                ],
+            )
         # A run_ref is a stable selector, not an authorization capability. Prove
         # that its exact bucket/prefix tuple is present in the server-discovered
         # bounded run index before listing objects beneath a caller-supplied path.
         exact_source_matches = _merge_staging_resolutions(
             find_run_artifact_matches(
-                bucket, base_prefix=base_prefix, run_id=run_id, s3=s3
+                bucket,
+                base_prefix=base_prefix,
+                run_id=run_id,
+                exact_source_prefix=source_prefix,
+                s3=s3,
             )
         )
         exact = [
-            item
-            for item in exact_source_matches
-            if item.source_prefix == source_prefix
+            item for item in exact_source_matches if item.source_prefix == source_prefix
         ]
         if not exact:
             return None
@@ -2369,7 +2532,9 @@ def resolve_run_artifacts(
     for bucket in configured:
         try:
             matches.extend(
-                find_run_artifact_matches(bucket, base_prefix=base_prefix, run_id=run_id, s3=s3)
+                find_run_artifact_matches(
+                    bucket, base_prefix=base_prefix, run_id=run_id, s3=s3
+                )
             )
         except (ArtifactDiscoveryError, ClientError, BotoCoreError):
             failures += 1
@@ -2386,7 +2551,9 @@ def resolve_run_artifacts(
     return matches[0]
 
 
-def find_run_artifacts(bucket: str, *, base_prefix: str, run_id: str, s3=None) -> "list[Artifact]":
+def find_run_artifacts(
+    bucket: str, *, base_prefix: str, run_id: str, s3=None
+) -> "list[Artifact]":
     """Locate a run's artifacts anywhere in the bucket without a hardcoded path.
 
     Probes every candidate parent prefix and returns the unique match. Duplicate
@@ -2428,7 +2595,7 @@ def list_artifacts(
                 if not key:
                     continue
                 render = render_hint_for_object(key=key)
-                relative_key = key[len(scope):] if key.startswith(scope) else key
+                relative_key = key[len(scope) :] if key.startswith(scope) else key
                 relative_key = relative_key.lstrip("/")
                 artifacts.append(
                     Artifact(
@@ -2445,7 +2612,9 @@ def list_artifacts(
                     )
                 )
     except (ClientError, BotoCoreError) as exc:
-        raise ArtifactDiscoveryError(f"failed to list artifacts under s3://{bucket}/{scope}: {exc}") from exc
+        raise ArtifactDiscoveryError(
+            f"failed to list artifacts under s3://{bucket}/{scope}: {exc}"
+        ) from exc
     artifacts.sort(key=lambda item: (item.last_modified, item.key), reverse=True)
     return artifacts
 
@@ -2482,7 +2651,7 @@ def list_artifacts_page(
         if not key:
             continue
         render = render_hint_for_object(key=key)
-        relative_key = key[len(scope):] if key.startswith(scope) else key
+        relative_key = key[len(scope) :] if key.startswith(scope) else key
         relative_key = relative_key.lstrip("/")
         artifacts.append(
             Artifact(
@@ -2580,14 +2749,18 @@ def find_run_sources_across_buckets(
         try:
             response = s3.list_objects_v2(Bucket=bucket, Prefix=scope, MaxKeys=1)
         except (ArtifactDiscoveryError, ClientError, BotoCoreError):
-            return [], (
-                {
-                    "bucket": bucket,
-                    "project_id": str((bucket_projects or {}).get(bucket) or ""),
-                    "code": "artifact_discovery_unavailable",
-                    "message": "Run discovery is unavailable for this object storage resource.",
-                },
-            ), False
+            return (
+                [],
+                (
+                    {
+                        "bucket": bucket,
+                        "project_id": str((bucket_projects or {}).get(bucket) or ""),
+                        "code": "artifact_discovery_unavailable",
+                        "message": "Run discovery is unavailable for this object storage resource.",
+                    },
+                ),
+                False,
+            )
         objects = [
             item
             for item in response.get("Contents", []) or []
@@ -2660,6 +2833,7 @@ def find_run_artifact_page_across_buckets(
 def select_preferred_artifact(artifacts: list[Artifact]) -> Artifact | None:
     if not artifacts:
         return None
+
     def _score(item: Artifact) -> tuple[int, int, int, str, str]:
         key = item.key.lower()
         if key.endswith("/reports/sim2real.rrd"):
@@ -2674,8 +2848,17 @@ def select_preferred_artifact(artifacts: list[Artifact]) -> Artifact | None:
             specificity = 20
         else:
             specificity = 10
-        role_rank = {"output": 0, "metadata": 1, "input": 2}.get(str(item.role or ""), 3)
-        return (role_rank, _RENDER_ORDER.get(item.render, 99), specificity, item.last_modified, item.key)
+        role_rank = {"output": 0, "metadata": 1, "input": 2}.get(
+            str(item.role or ""), 3
+        )
+        return (
+            role_rank,
+            _RENDER_ORDER.get(item.render, 99),
+            specificity,
+            item.last_modified,
+            item.key,
+        )
+
     return sorted(
         artifacts,
         key=_score,
@@ -2692,7 +2875,9 @@ def download_object(*, bucket: str, key: str, destination: Path, s3) -> Path:
     try:
         s3.download_file(bucket, key, str(destination))
     except (ClientError, BotoCoreError) as exc:
-        raise ArtifactDiscoveryError(f"failed to download s3://{bucket}/{key}: {exc}") from exc
+        raise ArtifactDiscoveryError(
+            f"failed to download s3://{bucket}/{key}: {exc}"
+        ) from exc
     return destination
 
 
@@ -2738,7 +2923,11 @@ def _parse_run_id_timestamps(run_id: str, *, year_hint: int | None = None) -> li
     for match in _RUN_ID_TS_RE.finditer(str(run_id or "")):
         date_part, time_part = match.group(1), match.group(2)
         try:
-            hour, minute, second = int(time_part[0:2]), int(time_part[2:4]), int(time_part[4:6])
+            hour, minute, second = (
+                int(time_part[0:2]),
+                int(time_part[2:4]),
+                int(time_part[4:6]),
+            )
             if len(date_part) == 8:
                 candidate_years = [int(date_part[0:4])]
                 month, day = int(date_part[4:6]), int(date_part[6:8])
@@ -2750,7 +2939,9 @@ def _parse_run_id_timestamps(run_id: str, *, year_hint: int | None = None) -> li
             continue
         for year in candidate_years:
             try:
-                dt = datetime(year, month, day, hour, minute, second, tzinfo=timezone.utc)
+                dt = datetime(
+                    year, month, day, hour, minute, second, tzinfo=timezone.utc
+                )
             except ValueError:
                 continue
             out.append(dt.isoformat())
@@ -2782,7 +2973,9 @@ def _run_started_at(run_id: str, earliest_iso: str) -> str:
         if candidate > earliest:
             continue
         try:
-            gap = (datetime.fromisoformat(earliest) - datetime.fromisoformat(candidate)).total_seconds()
+            gap = (
+                datetime.fromisoformat(earliest) - datetime.fromisoformat(candidate)
+            ).total_seconds()
         except ValueError:
             gap = 0.0
         if gap <= window_seconds and candidate > best:
@@ -2884,7 +3077,9 @@ def artifact_data_role(key: str, run_id: str = "") -> dict[str, str]:
     stage, _, leaf = rel.partition("/")
     lower_leaf = leaf.lower()
     if stage == "input":
-        if lower_leaf.endswith("conditioning.mp4") or lower_leaf.startswith("conditioning-frame-"):
+        if lower_leaf.endswith("conditioning.mp4") or lower_leaf.startswith(
+            "conditioning-frame-"
+        ):
             return {
                 "role": "derived_conditioning",
                 "label": "Derived conditioning clip/frame",
@@ -2951,7 +3146,9 @@ def build_fiftyone_dataset(
             if len(parts) >= 3:
                 clip = parts[1]
                 fname = parts[-1]
-                entry = by_clip.setdefault(clip, {"frames": [], "video": "", "meta": ""})
+                entry = by_clip.setdefault(
+                    clip, {"frames": [], "video": "", "meta": ""}
+                )
                 if low.endswith(".png"):
                     entry["frames"].append(key)
                 elif low.endswith(".mp4"):
@@ -2984,7 +3181,9 @@ def build_fiftyone_dataset(
     # Captions of the SOURCE frames from the annotate-original stage, so input
     # cards carry their VLM label too (not just the augmented variants).
     orig_caps = read_json(json_rel.get("labeled_original/captions.json", "")) or {}
-    orig_cap_items = orig_caps.get("captions", []) if isinstance(orig_caps, dict) else []
+    orig_cap_items = (
+        orig_caps.get("captions", []) if isinstance(orig_caps, dict) else []
+    )
 
     def _orig_caption_for(name: str, idx: int) -> str:
         for item in orig_cap_items:
@@ -3075,7 +3274,9 @@ def build_fiftyone_dataset(
         for tk in tags:
             tag_keys.add(tk)
         thumbnail = sorted(entry["frames"])[0] if entry["frames"] else ""
-        fo_sample = fo_samples.get(clip, {}) if isinstance(fo_samples.get(clip), dict) else {}
+        fo_sample = (
+            fo_samples.get(clip, {}) if isinstance(fo_samples.get(clip), dict) else {}
+        )
         curation_flags = []
         if fo_sample.get("redundant"):
             curation_flags.append("redundant")
@@ -3091,7 +3292,9 @@ def build_fiftyone_dataset(
                 "lineage": {
                     "source_sha256": input_source.get("sha256"),
                     "conditioning_uri": (
-                        (input_source.get("cosmos_conditioning") or {}).get("staged_uri")
+                        (input_source.get("cosmos_conditioning") or {}).get(
+                            "staged_uri"
+                        )
                         if isinstance(input_source.get("cosmos_conditioning"), dict)
                         else ""
                     ),
@@ -3172,9 +3375,7 @@ def build_fiftyone_dataset(
     if not isinstance(multiply, dict):
         multiply = {}
     variant_count = (
-        multiply.get("variant_count")
-        or curation.get("variant_count")
-        or len(by_clip)
+        multiply.get("variant_count") or curation.get("variant_count") or len(by_clip)
     )
     fo_brain = (
         fo_curation.get("brain", {})
@@ -3187,9 +3388,7 @@ def build_fiftyone_dataset(
         else {}
     )
     curation_engine = (
-        str(curation.get("curation_engine") or "")
-        if isinstance(curation, dict)
-        else ""
+        str(curation.get("curation_engine") or "") if isinstance(curation, dict) else ""
     )
     review = {
         "engine": curation_engine,
@@ -3221,7 +3420,9 @@ def build_fiftyone_dataset(
             if sample.get("data_role") == "derived_conditioning"
         ),
         "fixture_count": sum(
-            1 for sample in source_samples if sample.get("data_role") == "synthetic_fixture"
+            1
+            for sample in source_samples
+            if sample.get("data_role") == "synthetic_fixture"
         ),
         "synthetic_augmented_count": len(augmented_samples),
         "variant_count": int(variant_count or 0),
@@ -3229,12 +3430,18 @@ def build_fiftyone_dataset(
             multiply.get("mode") or curation.get("multiply_mode") or ""
         ),
         "grade_score": grade.get("score") if isinstance(grade, dict) else None,
-        "grade_decision": str(decision.get("decision") or "") if isinstance(decision, dict) else "",
+        "grade_decision": str(decision.get("decision") or "")
+        if isinstance(decision, dict)
+        else "",
         # Real FiftyOne curation surface (empty when the curate stage ran
         # report-only, i.e. outside the npa-fiftyone image).
         "curation_engine": curation_engine,
-        "curated_kept": curation.get("curated_kept") if isinstance(curation, dict) else None,
-        "curated_dropped": curation.get("curated_dropped") if isinstance(curation, dict) else None,
+        "curated_kept": curation.get("curated_kept")
+        if isinstance(curation, dict)
+        else None,
+        "curated_dropped": curation.get("curated_dropped")
+        if isinstance(curation, dict)
+        else None,
         "near_duplicate_count": (
             fo_brain.get("near_duplicate_count")
             if fo_brain.get("near_duplicate_count") is not None

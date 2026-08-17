@@ -118,6 +118,7 @@ dev = [
     "pytest-mock>=3.14",
     "pytest-cov>=5.0",
     "pytest-timeout>=2.3",
+    "jsonschema>=4.23,<5",
     # The suite is parallel-safe; `-n auto` takes it from ~6 min to ~2 min on 8
     # cores, which is the difference between running it every iteration and not.
     "pytest-xdist>=3.5",
@@ -131,6 +132,7 @@ dev = [
     "pytest-mock>=3.14",
     "pytest-cov>=5.0",
     "pytest-timeout>=2.3",
+    "jsonschema>=4.23,<5",
     # The suite is parallel-safe; `-n auto` takes it from ~6 min to ~2 min on 8
     # cores, which is the difference between running it every iteration and not.
     "pytest-xdist>=3.5",

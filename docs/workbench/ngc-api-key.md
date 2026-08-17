@@ -1,16 +1,17 @@
 # Set up an NVIDIA NGC API key
 
-NVIDIA distributes several workbench assets — GR00T and Cosmos container images
-and models — through [NGC](https://ngc.nvidia.com) (and the NGC-backed container
-registry `nvcr.io`). An NGC API key lets `npa` pull them. This guide creates the
-key and wires it into `npa`.
+NVIDIA distributes some workbench assets through [NGC](https://ngc.nvidia.com)
+and `nvcr.io`. An NGC API key authenticates the pull; the owning account must
+also have repository entitlement. NPA does not add an independent manual EULA
+flag for NGC pulls.
 
 > **TL;DR:** create a key at <https://org.ngc.nvidia.com/setup/api-key>, run
 > `npa configure`, and paste it at the `NGC_API_KEY` prompt. The key starts with
 > `nvapi-`.
 
-You only need this for the **GR00T** and **Cosmos** capabilities. Token Factory,
-vlm-eval, LeRobot, Genesis, and Isaac Lab do not require it.
+You need this only for a selected path that actually references an NGC-hosted
+artifact. The current NuRec NRE image is one such path. Current default GR00T
+and Cosmos Hugging Face paths do not globally require NGC.
 
 ## 1. Create the API key
 
@@ -61,9 +62,9 @@ npa workbench health access          # checks NGC key presence/format + HF acces
 npa workbench health preflight --offline
 ```
 
-A well-formed key (starting with `nvapi-`) reports as configured; GR00T and
-Cosmos deploys additionally confirm gated Hugging Face access for their NVIDIA
-models (see [Hugging Face token](huggingface-token.md)).
+A well-formed key (starting with `nvapi-`) reports as configured. A real image
+pull is the authoritative entitlement check; credentials alone do not grant
+rights or make restricted image bytes redistributable.
 
 ## Troubleshooting
 
@@ -77,6 +78,6 @@ models (see [Hugging Face token](huggingface-token.md)).
 
 ## See also
 
-- [Hugging Face token](huggingface-token.md) — GR00T / Cosmos also need HF access.
+- [Hugging Face token](huggingface-token.md) — public defaults work anonymously; gated overrides need account access.
 - [Nebius Token Factory key](token-factory-key.md) — zero-GPU hosted inference.
 - [Quickstart § credentials](../quickstart.md#4-configure-credentials)

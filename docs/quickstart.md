@@ -41,11 +41,13 @@ are required.
   bundled Terraform defaults to `~/.ssh/id_ed25519.pub`; pass
   `--tf-var ssh_public_key_path=<path>.pub` in deploy commands if you use a
   different key.
-- Optional: a Hugging Face token for gated Cosmos and GR00T models, LeRobot
-  datasets, and selected model weights:
+- Optional: a Hugging Face token for gated/private Cosmos models, private datasets,
+  or higher rate limits. Public GR00T N1.7, GEAR-SONIC, Cosmos Reason1/Nano, and
+  NuRec PPISP assets work anonymously:
   <https://huggingface.co/settings/tokens>. Use a read-only token unless a
   workflow explicitly needs write access.
-- Optional: an NVIDIA NGC API key for GR00T NGC model paths:
+- Optional: an NVIDIA NGC API key for paths that actually pull NGC artifacts
+  (currently including the NuRec NRE image):
   <https://ngc.nvidia.com/setup/api-key>.
 
 Quick checks:
@@ -263,7 +265,7 @@ Use these canonical keys in `~/.npa/credentials.yaml`.
 |---|---|---|---|
 | Hugging Face token | `tokens.HF_TOKEN` | `HF_TOKEN` | Downloading gated Hugging Face models, datasets, or weights |
 | Nebius Token Factory key | `tokens.NEBIUS_TOKEN_FACTORY_KEY` | `NEBIUS_TOKEN_FACTORY_KEY` | Zero-GPU hosted inference (Token Factory / OpenAI-compatible) paths |
-| NGC API key | `ngc.api_key` | `NGC_API_KEY` | Using NGC-backed GR00T model references |
+| NGC API key | `ngc.api_key` | `NGC_API_KEY` | Pulling an entitlement-controlled NGC image or model, including NuRec NRE |
 | NGC organization | `ngc.org` | `NGC_ORG` | Your NGC key is organization-scoped |
 | NGC team | `ngc.team` | `NGC_TEAM` | Your NGC key is team-scoped |
 | BYOVM SSH host | `ssh.host` | `NPA_BYOVM_HOST`, `NPA_SSH_HOST` | BYOVM commands need a default host |
@@ -359,14 +361,13 @@ npa demo stage --source-project project-a --target-project project-b \
 
 ### 4e. Accept and verify gated model access
 
-Several workbench capabilities (GR00T, Cosmos, sim2real) pull **gated** models
-from Hugging Face and NVIDIA NGC. Hugging Face gated models require you to accept
-the license once per model — click **"Agree and access repository"** on each
-model page while signed in. There is no API that accepts these licenses for you.
+Some capability selections pull **gated** Hugging Face models or entitlement-controlled
+NGC artifacts. Complete access upstream on the owning account. NPA does not invent a
+second acceptance flag: the account token plus a successful repository probe is the
+automated access preflight, while the artifact's upstream licence still governs use.
 
-Once your `HF_TOKEN` and `NGC_API_KEY` are set, verify access to every gated
-model the workbench needs (the command prints the exact page to accept for any
-model you have not yet unlocked):
+When the selected capability needs them, set `HF_TOKEN` or `NGC_API_KEY` and verify
+the exact assets it will use. Public Hugging Face assets are checked anonymously:
 
 ```bash
 npa workbench health access
@@ -676,8 +677,8 @@ chmod 600 ~/.npa/credentials.yaml
 `Warning: HF_TOKEN not found in ~/.npa/credentials.yaml`
 
 Add `tokens.HF_TOKEN` to `~/.npa/credentials.yaml` or export `HF_TOKEN` for the
-current shell. Cosmos and GR00T deploy dry-runs fail fast without it unless you
-pass `--skip-model-check`.
+current shell. Cosmos and GR00T deploy dry-runs fail fast unless that token has
+actual upstream access to every gated runtime-fetched asset.
 
 `Error: HF_TOKEN does not have access to <repo>` or `401/403 from Hugging Face`
 

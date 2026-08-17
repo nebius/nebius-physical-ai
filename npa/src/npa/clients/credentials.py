@@ -20,6 +20,7 @@ NPA_CONFIG_DIR = Path(
 CREDENTIALS_PATH = NPA_CONFIG_DIR / "credentials.yaml"
 NGC_ENV_KEYS = ("NGC_API_KEY", "NGC_ORG", "NGC_TEAM")
 TOKEN_FACTORY_ENV_KEY = "NEBIUS_TOKEN_FACTORY_KEY"
+FOXGLOVE_API_TOKEN_KEY = "FOXGLOVE_API_TOKEN"
 KNOWN_TOKEN_KEYS = (
     "HF_TOKEN",
     TOKEN_FACTORY_ENV_KEY,
@@ -27,6 +28,7 @@ KNOWN_TOKEN_KEYS = (
 )
 SUPPORTED_ENV_CREDENTIALS = (
     "NEBIUS_TOKEN_FACTORY_KEY",
+    FOXGLOVE_API_TOKEN_KEY,
     "HF_TOKEN",
     "NGC_API_KEY",
     "NGC_ORG",
@@ -77,6 +79,7 @@ class CredentialsConfig:
     s3_bucket: str = ""
     s3_project_id: str = ""
     s3_ownership: str = ""
+    foxglove_api_token: str = field(default="", repr=False)
 
     @property
     def hf_token(self) -> str:
@@ -342,6 +345,7 @@ def load_credentials(
     file_tokens: dict[str, str] = {}
     file_ssh: dict[str, str] = {}
     file_storage: dict[str, str] = {}
+    foxglove_api_token = ""
 
     if credentials_path.exists():
         # Validate once up front so a present-but-corrupt store can never look
@@ -351,6 +355,7 @@ def load_credentials(
         if _is_readable_by_other_users(credentials_path):
             warnings.append(PERMISSIONS_WARNING)
         file_tokens = _read_file_tokens(credentials_path)
+        foxglove_api_token = file_tokens.pop(FOXGLOVE_API_TOKEN_KEY, "")
         file_ssh = _read_file_ssh(credentials_path)
         file_storage = _read_file_storage(credentials_path)
 
@@ -361,6 +366,12 @@ def load_credentials(
         value = env_value if env_value else file_tokens.get(key, "")
         if value:
             tokens[key] = value
+
+    # Foxglove Cloud credentials are backend-only. Keep the token out of the
+    # generic token map so it cannot be exported into every workbench process.
+    foxglove_api_token = str(
+        env.get(FOXGLOVE_API_TOKEN_KEY) or foxglove_api_token or ""
+    )
 
     for message in warnings:
         if warn is not None:
@@ -397,6 +408,7 @@ def load_credentials(
         or file_storage.get("bucket", ""),
         s3_project_id=file_storage.get("project_id", ""),
         s3_ownership=file_storage.get("ownership", ""),
+        foxglove_api_token=foxglove_api_token,
     )
 
 
@@ -530,7 +542,7 @@ def persist_supported_env_credentials(
     payload: dict[str, Any] = {}
     tokens = {
         name: str(env[name])
-        for name in ("HF_TOKEN", TOKEN_FACTORY_ENV_KEY)
+        for name in ("HF_TOKEN", TOKEN_FACTORY_ENV_KEY, FOXGLOVE_API_TOKEN_KEY)
         if str(env.get(name) or "")
     }
     if tokens:

@@ -471,7 +471,130 @@ def status_cmd(
         )
 
 
+def verify_mig_cmd(
+    spec_path: Path = typer.Option(
+        ..., "--spec", "-f", help="Path to the npa.fleet/v0.0.1 MIG spec YAML."
+    ),
+    kubeconfig: Path | None = typer.Option(
+        None,
+        "--kubeconfig",
+        help="Kubeconfig to verify. Defaults to the selected fleet cluster state.",
+    ),
+    project: str = typer.Option(
+        "",
+        "--project",
+        help="Project key when the spec contains multiple MIG clusters.",
+    ),
+    cluster_name: str = typer.Option(
+        "",
+        "--cluster",
+        help="Cluster name when the spec contains multiple MIG clusters.",
+    ),
+    wait: bool = typer.Option(
+        False,
+        "--wait/--no-wait",
+        help="Wait for two exact consecutive snapshots instead of checking once.",
+    ),
+    reconcile: bool = typer.Option(
+        False,
+        "--reconcile/--no-reconcile",
+        help=(
+            "With --wait, reconcile known stale kubelet resources, replacement-node "
+            "MIG taints, or an OnDelete driver rollout."
+        ),
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text,
+        "--output",
+        metavar="<fmt>",
+        help="Output format: text or json.",
+    ),
+) -> None:
+    """Verify exact RTX PRO 6000 MIG labels, operands, and kubelet resources."""
+
+    import os
+    import shutil
+
+    from npa.fleet.mig import (
+        MigVerificationError,
+        verify_mig_cluster,
+        wait_for_mig_ready,
+    )
+
+    spec = _load(spec_path)
+    targets = [
+        (candidate_project, candidate_cluster)
+        for candidate_project in spec.projects
+        for candidate_cluster in candidate_project.clusters
+        if candidate_cluster.mig
+        and candidate_cluster.mig.enabled
+        and (not project or candidate_project.key() == project)
+        and (not cluster_name or candidate_cluster.name == cluster_name)
+    ]
+    if len(targets) != 1:
+        raise typer.BadParameter(
+            "select exactly one MIG cluster with --project/--cluster "
+            f"(matched {len(targets)})"
+        )
+    selected_project, selected_cluster = targets[0]
+    resolved_kubeconfig = kubeconfig or (
+        Path.home()
+        / ".npa"
+        / "fleet"
+        / spec.name
+        / selected_project.key()
+        / selected_cluster.name
+        / "kubeconfig"
+    )
+    kubectl_bin = os.environ.get("NPA_KUBECTL_BIN") or shutil.which("kubectl")
+    if not kubectl_bin:
+        raise typer.BadParameter(
+            "kubectl is required; install it or set NPA_KUBECTL_BIN"
+        )
+    try:
+        if wait:
+            report = wait_for_mig_ready(
+                kubectl_bin=kubectl_bin,
+                kubeconfig=resolved_kubeconfig,
+                expected_nodes=selected_cluster.gpu_count(),
+                reconcile=reconcile,
+                timeout_seconds=selected_cluster.gpu_health_timeout_minutes * 60,
+                on_status=(
+                    (lambda message: typer.echo(f"  - {message}", err=True))
+                    if output == OutputFormat.json
+                    else (lambda message: typer.echo(f"  - {message}"))
+                ),
+            )
+        else:
+            report = verify_mig_cluster(
+                kubectl_bin=kubectl_bin,
+                kubeconfig=resolved_kubeconfig,
+                expected_nodes=selected_cluster.gpu_count(),
+            )
+    except MigVerificationError as exc:
+        typer.echo(f"MIG verification failed: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    payload = report.as_dict()
+    if output == OutputFormat.json:
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        typer.echo(
+            f"MIG {'ready' if report.ready else 'NOT ready'}: "
+            f"{len(report.nodes)} node(s), Operator {report.operator_version}"
+        )
+        for node in report.nodes:
+            typer.echo(
+                f"  {node.name}: {node.config}/{node.config_state} "
+                f"capacity={node.capacity} allocatable={node.allocatable}"
+            )
+        for error in report.errors:
+            typer.echo(f"  [FAIL] {error}")
+    if not report.ready:
+        raise typer.Exit(1)
+
+
 app.command("plan")(plan_cmd)
 app.command("deploy")(deploy_cmd)
 app.command("destroy")(destroy_cmd)
 app.command("status")(status_cmd)
+app.command("verify-mig")(verify_mig_cmd)

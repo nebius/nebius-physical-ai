@@ -5,8 +5,9 @@ metadata:
   name: cosmos3-generate
   description: >-
     Generate a Physical AI image with the Cosmos 3 omni model in the npa-cosmos3
-    container. The image ships the framework but no weights, so the run needs an
-    HF_TOKEN secret to fetch the checkpoint at runtime.
+    container. Cosmos3-Nano is public and supports anonymous download; the default
+    guardrails additionally fetch gated weights and therefore need an HF_TOKEN whose
+    owner already has access.
 
 config:
   bucket: example-bucket
