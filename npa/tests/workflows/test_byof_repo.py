@@ -899,6 +899,29 @@ def test_registered_wan_refuses_a_nonaccepted_base_digest(monkeypatch, capsys) -
     assert "exact GPU-accepted prebuilt image digest" in capsys.readouterr().out
 
 
+def test_registered_wan_allows_only_the_explicit_live_candidate(monkeypatch) -> None:
+    module = _load_module()
+    candidate = (
+        "ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:" + "a" * 64
+    )
+    monkeypatch.setenv("NPA_INTEGRATION_E2E", "1")
+    monkeypatch.setenv("NPA_BYOF_WAN22_LIVE_GPU", "1")
+    monkeypatch.setenv("NPA_BYOF_WAN22_REUSE_IMAGE", candidate)
+    args = module.argparse.Namespace(
+        workload="solution-smoke",
+        solution_name="wan2.2",
+        capability_name="wan2.2_ti2v_5b_text_to_video",
+        smoke_artifact_name="wan2_2_ti2v_5b_text_to_video.json",
+    )
+
+    assert (
+        module._required_postprocess_key(
+            args, base_image=candidate, base_profile="prebuilt"
+        )
+        == "wan2.2"
+    )
+
+
 def test_closed_postprocess_registry_ignores_unregistered_solution() -> None:
     from npa.workflows.byof.postprocess import (
         PostprocessContext,

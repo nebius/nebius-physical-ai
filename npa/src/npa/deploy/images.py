@@ -7,6 +7,7 @@ from importlib import resources
 import json
 import os
 from pathlib import Path
+import re
 from typing import Any
 
 # Official NPA images use one public GHCR namespace. Immutable
@@ -26,6 +27,28 @@ DEFAULT_VLM_IMAGE_ENV = "NPA_VLM_IMAGE"
 DEFAULT_WORKBENCH_IMAGE_ENV = "NPA_WORKBENCH_IMAGE"
 SONIC_IMAGE_MANIFEST_RESOURCE = "sonic_image_manifest.json"
 WAN_IMAGE_MANIFEST_RESOURCE = "wan2_2_image_manifest.json"
+
+
+def is_wan_live_acceptance_candidate(reference: str) -> bool:
+    """Allow one explicit digest only inside the gated Wan live acceptance run.
+
+    Normal execution remains bound to the accepted-image manifest. A new image
+    cannot enter that manifest until it has run, so the operator-only E2E path
+    needs a narrow bootstrap: both live gates, the exact reuse reference, the
+    official Wan repository, and an immutable digest must all agree.
+    """
+
+    candidate = os.environ.get("NPA_BYOF_WAN22_REUSE_IMAGE", "").strip()
+    return (
+        os.environ.get("NPA_INTEGRATION_E2E") == "1"
+        and os.environ.get("NPA_BYOF_WAN22_LIVE_GPU") == "1"
+        and reference == candidate
+        and re.fullmatch(
+            r"ghcr\.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:[0-9a-f]{64}",
+            reference,
+        )
+        is not None
+    )
 
 CONTAINER_IMAGE_NAMES = {
     "lerobot": "npa-lerobot",

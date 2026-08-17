@@ -23,7 +23,10 @@ from urllib.parse import urlparse
 import numpy as np
 
 from npa.clients.project_credentials import s3_client_for_project
-from npa.deploy.images import wan_accepted_image_manifest
+from npa.deploy.images import (
+    is_wan_live_acceptance_candidate,
+    wan_accepted_image_manifest,
+)
 
 APPLICATION_ID = "npa_wan2_2"
 ENTITY_ROOT = "wan2_2"
@@ -182,14 +185,17 @@ def _validate_container_image(summary: dict[str, Any]) -> dict[str, str]:
         bool(re.fullmatch(r"sha256:[0-9a-f]{64}", accepted_digest)),
         "accepted Wan image digest is invalid",
     )
+    live_candidate = is_wan_live_acceptance_candidate(reference)
     _require(
-        match.group(2) == accepted_digest, "BYOF summary image digest is not accepted"
+        match.group(2) == accepted_digest or live_candidate,
+        "BYOF summary image digest is not accepted",
     )
     _require(bool(accepted_tag), "accepted Wan image tag is invalid")
     return {
         "reference": reference,
-        "oci_digest": accepted_digest,
-        "accepted_tag": accepted_tag,
+        "oci_digest": match.group(2),
+        "accepted_tag": accepted_tag if not live_candidate else "",
+        "validation_state": "candidate" if live_candidate else "accepted",
     }
 
 

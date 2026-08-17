@@ -17,7 +17,11 @@ from typing import Any
 
 from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import storage_env_for_project
-from npa.deploy.images import container_image_for_tool, wan_accepted_image_manifest
+from npa.deploy.images import (
+    container_image_for_tool,
+    is_wan_live_acceptance_candidate,
+    wan_accepted_image_manifest,
+)
 from npa.workflows.byof.live import resolve_byof_kubernetes_target
 from npa.workflows.byof.openpi import is_openpi_request, require_openpi_terms
 from npa.workflows.byof.postprocess import (
@@ -110,11 +114,15 @@ def _required_postprocess_key(
     if (
         not base_is_wan
         or base_profile != "prebuilt"
-        or not base_image.endswith(f"@{accepted_digest}")
+        or (
+            not base_image.endswith(f"@{accepted_digest}")
+            and not is_wan_live_acceptance_candidate(base_image)
+        )
     ):
         raise ValueError(
-            "Wan solution-smoke requires the exact GPU-accepted prebuilt image digest "
-            f"{accepted_digest}"
+            "Wan solution-smoke requires the exact GPU-accepted prebuilt image "
+            f"digest {accepted_digest}, or the explicitly digest-pinned candidate "
+            "inside the gated live acceptance path"
         )
     contract = WAN_POSTPROCESS_CONTRACTS.get(capability)
     if contract is None:
