@@ -182,10 +182,10 @@ images:
       Agreement above $10M revenue) and Attachment A(18) (no training other
       models on Outputs for commercial use) govern the operator's own conduct and
       artifacts, and are their responsibility rather than something this image
-      certifies. Byte/layer scanning
-      with scripts/scan_image_ltx_payload.py is mandatory before publication.
-      Built and scanned in development, but not yet validated by a real GPU
-      generation; it remains release-blocked in UNVALIDATED_PUBLICATION_TOOLS.
+      certifies. Byte/layer scanning with scripts/scan_image_ltx_payload.py is
+      mandatory before publication. The supported release must resolve to the
+      exact zero-payload digest in ltx2_image_manifest.json, whose operator-only
+      runtime fetch and real GPU generation evidence are bound to the same bytes.
   sonic:
     dockerfile: sonic/Dockerfile
     isaac_runtime_fetch: true

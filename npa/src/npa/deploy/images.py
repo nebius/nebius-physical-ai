@@ -27,6 +27,7 @@ DEFAULT_VLM_IMAGE_ENV = "NPA_VLM_IMAGE"
 DEFAULT_WORKBENCH_IMAGE_ENV = "NPA_WORKBENCH_IMAGE"
 SONIC_IMAGE_MANIFEST_RESOURCE = "sonic_image_manifest.json"
 WAN_IMAGE_MANIFEST_RESOURCE = "wan2_2_image_manifest.json"
+LTX2_IMAGE_MANIFEST_RESOURCE = "ltx2_image_manifest.json"
 
 
 def is_wan_live_acceptance_candidate(reference: str) -> bool:
@@ -154,9 +155,8 @@ OMNIVERSE_RESTRICTED_TOOLS: frozenset[str] = frozenset({"cosmos3-serving"})
 # architecture and adds no Isaac and no Omniverse assets of its own.
 OMNIVERSE_RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset({"sonic-mujoco"})
 
-# Tools that are licence-eligible for public redistribution but have no built,
-# GPU result yet. For ltx2 the image has been built and byte-scanned; what is
-# missing is a run on real hardware, and publication claims both.
+# Tools that are licence-eligible for public redistribution but have no accepted
+# built/GPU-validated artifact yet.
 #
 # This is a different question from `OMNIVERSE_RESTRICTED_TOOLS`, and conflating
 # them would be wrong in both directions: these are not restricted (the licensing
@@ -167,7 +167,7 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset({"sonic-mujoco"}
 #
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
-UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"ltx2"})
+UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset()
 
 # Registry hosts that serve anonymous/public pulls. Resolving a restricted image
 # against one of these is always wrong: either it is not there (we never publish
@@ -218,14 +218,9 @@ SUPPORTED_TOOL_VERSIONS = {
     "detection-training": "bdd100k-golden-eval-smoke-20260614T210000Z",
     # Public-eligible Wan source/CPU base; CUDA torch is operator-gated runtime fetch.
     "wan2-2": "2.2-ti2v5b-rtfetch-cu128-20260809T011658Z-r7",
-    # LTX-2.5. The tag names the design, not a built artifact: this image has not
-    # been built or GPU-validated yet, and publish_public refuses it until an
-    # accepted-image manifest exists. Everything LTX (source AND weights) is a
-    # runtime fetch under the operator's own Hugging Face entitlement.
-    # The suffix predates the build and is now half-wrong: the image exists and
-    # has been scanned. It stays until the GPU run, because renaming it would
-    # imply the whole claim is earned, and re-tagging is part of that change.
-    "ltx2": "2.5-rtfetch-unbuilt",
+    # LTX source and weights remain operator-entitled runtime fetches. This tag
+    # resolves only to the zero-payload digest recorded in ltx2_image_manifest.json.
+    "ltx2": "2.5-rtfetch-20260817",
     "nebius-cli": "0.12.254",
     "terraform": "~> 0.5.201",
     "terraform-cli": "1.13.3",
@@ -264,6 +259,27 @@ def wan_accepted_image_manifest() -> dict[str, Any]:
     if payload.get("tag") != SUPPORTED_TOOL_VERSIONS["wan2-2"]:
         raise RuntimeError(
             "Wan accepted image manifest tag drifted from the supported tag"
+        )
+    return payload
+
+
+@lru_cache(maxsize=1)
+def ltx2_accepted_image_manifest() -> dict[str, Any]:
+    """Return the exact zero-payload image and GPU proof allowed for publication."""
+
+    text = (
+        resources.files(__package__)
+        .joinpath(LTX2_IMAGE_MANIFEST_RESOURCE)
+        .read_text(encoding="utf-8")
+    )
+    payload = json.loads(text)
+    if not isinstance(payload, dict):
+        raise RuntimeError("LTX accepted image manifest must be a JSON object")
+    if payload.get("format") != "npa_ltx2_accepted_image_manifest_v1":
+        raise RuntimeError("Unsupported LTX accepted image manifest format")
+    if payload.get("tag") != SUPPORTED_TOOL_VERSIONS["ltx2"]:
+        raise RuntimeError(
+            "LTX accepted image manifest tag drifted from the supported tag"
         )
     return payload
 

@@ -670,10 +670,7 @@ containers:
       command: bash /opt/npa/ltx2/smoke.sh
       gpu: none
       timeout_seconds: 120
-      # The image has not been built or pushed yet, so there is nothing to run
-      # this against. Flipping to `ready` is part of the dev-VM build runbook in
-      # docs/workbench/ltx2.md, not something to assume here.
-      status: needs-image-update
+      status: ready
 
   sim2real-control:
     image: npa-sim2real-control

@@ -64,7 +64,7 @@ The old `npa-cosmos:1.0.9` cu126 image stopped at Hopper. Its additive cu128/tor
 | `npa-cosmos3` | supported | supported | **verified** [59] | supported | supported |
 | `npa-cosmos3-serving` (build-your-own) | blocked (8-GPU memory floor) | **verified** (8xH200) | supported (8 GPUs) | supported (8 GPUs) | supported (8 GPUs) |
 | `npa-wan2-2` | supported | supported | **historical evidence** [60] | **historical evidence** [61] | supported |
-| `npa-ltx2` | built, no GPU result | built, no GPU result | built, no GPU result | built, no GPU result | built, no GPU result |
+| `npa-ltx2` | runtime not validated | runtime not validated | **verified** [62] | runtime not validated | runtime not validated |
 | `npa-cosmos3-reason` | supported | **verified** [38] | **verified** [43] | **verified** [36] | **verified** [37] |
 | `npa-cosmos2-transfer` | supported | supported | supported | **verified** [9] | blocked (cu128 NVRTC cannot JIT `sm_103`) |
 | `npa-cosmos` | blocked (Predict2 allowlist) | **verified** [33] | blocked (Predict2 allowlist) | **verified** [32] | blocked (Predict2 allowlist) |
@@ -168,6 +168,7 @@ Managed-Kubernetes nodes were placed successfully for both B200 in us-central1 a
 | 59 | 2026-08-08 | `npa-cosmos3:1.2.2-cu130-r2` (index `sha256:c65712832f6a…`, amd64 `sha256:19dc6be7d2f9…`) | NVIDIA RTX PRO 6000 Blackwell Server Edition (`sm_120`) | exact release bytes, non-root UID 1000, native `sm_120` SASS, public Cosmos3-Nano text-to-image generation with Xet enabled (`huggingface_hub 0.36.2`, `hf-xet 1.3.2`, `HF_HUB_DISABLE_XET` unset) | PASS; 960×960 JPEG, 260,808 bytes, SHA-256 `e4f017a75266b937b7479a0a5090bf644ef442da6972cae59988d1d5b5daa861`; guardrail discovery still failed open as tracked in [#270](https://github.com/nebius/nebius-physical-ai/issues/270) |
 | 60 | 2026-08-09 | historical digest-pinned `npa-wan2-2` runtime-fetch candidate (Torch 2.7.1/CUDA 12.8) | RTX PRO 6000 Blackwell Server Edition (`sm_120`) | official Wan TI2V-5B generation with native PyTorch SDPA, full MP4 decode/variation validation, and verified Rerun postprocessing | HISTORICAL PASS; private validation record, 17 H.264 frames at 1280×704 and 24 fps; current Torch 2.13.0/CUDA 13.0 closure is not yet live-qualified |
 | 61 | 2026-08-09 | same historical candidate (NCCL 2.27.7) | 4× NVIDIA B200 (`sm_100`) | official four-rank Wan path through the instrumented wrapper: NCCL, T5/DiT FULL_SHARD FSDP, Ulysses distributed attention/all-to-all, process-group teardown, MP4 validation, and verified Rerun postprocessing | HISTORICAL PASS; private validation record, world size 4 with ranks 0–3 on four unique devices; current NCCL 2.29.7 closure is not yet live-qualified |
+| 62 | 2026-08-17 | exact accepted zero-payload `npa-ltx2` digest | NVIDIA RTX PRO 6000 Blackwell Server Edition (`sm_120`) | operator-entitled runtime source/weight fetch, text-to-video generation, in-pod decode/variation gate, entitlement-refusal proof, and independent operator-side decode | PASS; 1536×1024 H.264, 121 frames, 1,994,625 bytes; exact hashes and revisions are recorded in `npa/src/npa/deploy/ltx2_image_manifest.json`; no B200/B300 claim |
 
 ## Measured failures and negative controls
 

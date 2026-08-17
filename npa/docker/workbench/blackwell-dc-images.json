@@ -221,13 +221,15 @@
       "name": "npa-ltx2",
       "dockerfile": "ltx2/Dockerfile",
       "build_script": "ltx2/build.sh",
-      "verdict": "unknown",
-      "validation": "pending-gpu",
+      "verdict": "not-applicable",
+      "validation": "not-required",
       "redistribution": "public",
       "torch": "not baked; the operator-owned runtime volume resolves upstream LTX-2's own cu132 torch pin (packages/ltx-core/pyproject.toml) under the operator's own HF_TOKEN and NVIDIA runtime-terms acceptance",
       "source_compiled_extensions": [],
       "smoke": "bash /opt/npa/ltx2/smoke.sh proves health, that the source and weight fetches each refuse without the operator's own HF_TOKEN (and names which gate refused), and the absence of any LTX or CUDA payload. Generation itself is the BYOF workflow, not a CLI subcommand.",
-      "notes": "The image itself is CPU-only and carries zero Lightricks bytes, so nothing about datacenter Blackwell has been measured. Built and byte-scanned: payload scan clean over 16 archives at the digest recorded in docs/workbench/ltx2.md. What is missing is a GPU run - one attempt reached real weight downloads and died on node ephemeral storage - so the verdict stays unknown until that produces a result."
+      "notes": "The published image itself is CPU-only and carries zero Lightricks bytes, so an in-image datacenter-Blackwell architecture verdict does not apply. Its operator-fetched runtime passed the real text-to-video and decoded-MP4 gates on one RTX PRO 6000 at the exact digest in the accepted manifest; that result does not claim B200/B300 compatibility.",
+      "validation_run": "operator-single-gpu-validation-record",
+      "accepted_image_manifest": "npa/src/npa/deploy/ltx2_image_manifest.json"
     },
     {
       "name": "npa-cosmos3-reason",

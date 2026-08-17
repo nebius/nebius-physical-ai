@@ -33,6 +33,7 @@ skipped (see ``classify_preflight_failure``).
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import re
@@ -205,6 +206,88 @@ def _crane_blob_json(repository: str, digest: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise RuntimeError(f"attestation blob {digest} is not a JSON object")
     return payload
+
+
+def _github_attestation_predicates(
+    *, repository: str, digest: str
+) -> set[str]:
+    """Return structurally valid GitHub attestations bound to one OCI digest.
+
+    Build-time actions create Sigstore bundles in GitHub's attestation store and
+    GHCR referrers while leaving the subject as an ordinary single-platform
+    manifest. The publication gate checks the bundle envelope, transparency-log
+    material, exact subject, and predicate payload instead of assuming the image
+    itself was rewritten into an attestation-bearing OCI index.
+    """
+
+    match = re.fullmatch(r"sha256:([0-9a-f]{64})", digest)
+    if match is None:
+        raise RuntimeError("attestation subject digest is invalid")
+    if repository not in {
+        "ghcr.io/nebius/nebius-physical-ai/npa-ltx2",
+        "ghcr.io/nebius/nebius-physical-ai/npa-wan2-2",
+    }:
+        raise RuntimeError("attestation lookup is limited to official image repositories")
+    url = (
+        "https://api.github.com/repos/nebius/nebius-physical-ai/attestations/"
+        + digest
+    )
+    request = urllib.request.Request(  # noqa: S310 - fixed GitHub API origin
+        url,
+        headers={"Accept": "application/vnd.github+json"},
+    )
+    try:
+        with urllib.request.urlopen(  # noqa: S310 - fixed GitHub API origin
+            request, timeout=_PREFLIGHT_TIMEOUT_SECONDS
+        ) as response:
+            payload = json.load(response)
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"cannot read exact-digest GitHub attestations: {exc}") from exc
+    attestations = payload.get("attestations") if isinstance(payload, dict) else None
+    if not isinstance(attestations, list) or not attestations:
+        raise RuntimeError("exact digest has no GitHub attestations")
+    predicates: set[str] = set()
+    for record in attestations:
+        bundle = record.get("bundle") if isinstance(record, dict) else None
+        envelope = bundle.get("dsseEnvelope") if isinstance(bundle, dict) else None
+        material = bundle.get("verificationMaterial") if isinstance(bundle, dict) else None
+        signatures = envelope.get("signatures") if isinstance(envelope, dict) else None
+        certificate = material.get("certificate") if isinstance(material, dict) else None
+        tlog_entries = material.get("tlogEntries") if isinstance(material, dict) else None
+        if (
+            not isinstance(signatures, list)
+            or not signatures
+            or not all(isinstance(item, dict) and item.get("sig") for item in signatures)
+            or not isinstance(certificate, dict)
+            or not certificate.get("rawBytes")
+            or not isinstance(tlog_entries, list)
+            or not tlog_entries
+            or envelope.get("payloadType") != "application/vnd.in-toto+json"
+        ):
+            raise RuntimeError("GitHub attestation bundle lacks signed transparency material")
+        encoded = str(envelope.get("payload") or "")
+        try:
+            statement = json.loads(base64.b64decode(encoded, validate=True))
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("GitHub attestation carries an invalid DSSE payload") from exc
+        subjects = statement.get("subject") if isinstance(statement, dict) else None
+        if not isinstance(subjects, list) or not any(
+            isinstance(subject, dict)
+            and subject.get("name") == repository
+            and (subject.get("digest") or {}).get("sha256") == match.group(1)
+            for subject in subjects
+        ):
+            raise RuntimeError("GitHub attestation is not bound to the exact image digest")
+        predicate_type = str(statement.get("predicateType") or "")
+        predicate = statement.get("predicate")
+        if predicate_type == "https://spdx.dev/Document/v2.3":
+            if not isinstance(predicate, dict) or not predicate.get("packages"):
+                raise RuntimeError("SPDX attestation contains no package inventory")
+        elif predicate_type == "https://slsa.dev/provenance/v1":
+            if not isinstance(predicate, dict) or not predicate.get("buildDefinition"):
+                raise RuntimeError("SLSA attestation contains no build definition")
+        predicates.add(predicate_type)
+    return predicates
 
 
 def _trivy_command() -> list[str]:
@@ -515,6 +598,90 @@ def verify_wan_publication_source(item: PublishItem) -> tuple[bool, str]:
         return False, str(exc)
 
 
+def verify_ltx_publication_source(item: PublishItem) -> tuple[bool, str]:
+    """Bind LTX publication to exact zero-payload bytes and real GPU evidence."""
+
+    if item.tool != "ltx2":
+        return True, "not applicable"
+    try:
+        digest_ok, digest = _crane_digest(item.source_ref)
+        if not digest_ok:
+            raise RuntimeError(digest)
+        accepted = images.ltx2_accepted_image_manifest()
+        accepted_digest = str(accepted.get("oci_digest") or "")
+        if digest != accepted_digest:
+            raise RuntimeError(
+                "LTX source digest is not the immutable GPU-accepted digest "
+                f"{accepted_digest}"
+            )
+        proof = accepted.get("gpu_proof")
+        if not isinstance(proof, dict):
+            raise RuntimeError("LTX accepted manifest has no GPU proof")
+        if proof.get("gpu_count") != 1 or proof.get("observed_image_digest") != digest:
+            raise RuntimeError("LTX GPU proof is not bound to the accepted digest")
+        required_capabilities = {
+            "ltx2_5_text_to_video",
+            "ltx2_5_decoded_mp4_validation",
+        }
+        if set(proof.get("capabilities_exercised") or ()) != required_capabilities:
+            raise RuntimeError("LTX GPU proof does not cover the release capabilities")
+        if proof.get("deferred") != [] or proof.get("source_baked") is not False or proof.get("weights_baked") is not False:
+            raise RuntimeError("LTX GPU proof weakens the zero-payload capability claim")
+        for key in ("artifact_sha256", "refusal_sha256"):
+            if re.fullmatch(r"[0-9a-f]{64}", str(proof.get(key) or "")) is None:
+                raise RuntimeError(f"LTX GPU proof has no valid {key}")
+        video = proof.get("video")
+        if (
+            not isinstance(video, dict)
+            or re.fullmatch(r"[0-9a-f]{64}", str(video.get("sha256") or "")) is None
+            or int(video.get("width") or 0) <= 0
+            or int(video.get("height") or 0) <= 0
+            or int(video.get("frame_count") or 0) < 24
+            or int(video.get("size_bytes") or 0) < 4096
+        ):
+            raise RuntimeError("LTX GPU video proof is invalid")
+        for identity_name, revision_key in (("source", "revision"), ("weights", "resolved_revision")):
+            identity = accepted.get(identity_name)
+            if (
+                not isinstance(identity, dict)
+                or re.fullmatch(r"[0-9a-f]{40}", str(identity.get(revision_key) or "")) is None
+                or identity.get("delivery") != "operator-entitled-runtime-fetch"
+            ):
+                raise RuntimeError(f"LTX accepted {identity_name} identity is invalid")
+        repository = _repository(item.source_ref)
+        required_predicates = set((accepted.get("attestations") or {}).get("required_predicates") or ())
+        observed_predicates = _github_attestation_predicates(
+            repository=repository, digest=digest
+        )
+        if not required_predicates or not required_predicates.issubset(observed_predicates):
+            raise RuntimeError("LTX exact digest lacks required SPDX/SLSA attestations")
+        config = _crane_json(["config", f"{repository}@{digest}"])
+        if config.get("architecture") != "amd64" or config.get("os") != "linux":
+            raise RuntimeError("LTX accepted image is not a single linux/amd64 image")
+        scan_script = Path(__file__).resolve().parents[3] / "scripts" / "scan_image_ltx_payload.py"
+        scan = subprocess.run(
+            [sys.executable, str(scan_script), f"{repository}@{digest}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if scan.returncode:
+            detail = (scan.stderr or scan.stdout or "").strip()
+            raise RuntimeError(detail or "LTX exact-digest payload scan failed")
+        scan_result = json.loads(scan.stdout)
+        if scan_result.get("status") != "pass" or scan_result.get("findings"):
+            raise RuntimeError("LTX exact-digest payload scan did not pass cleanly")
+        trivy = _scan_wan_trivy_exact_digest(f"{repository}@{digest}")
+        return (
+            True,
+            f"exact accepted digest {digest}; zero-payload and live Trivy clean; "
+            f"SPDX+SLSA bound; residual unfixed CRITICAL findings disclosed: "
+            f"{trivy['critical_total']}",
+        )
+    except (KeyError, TypeError, ValueError, RuntimeError) as exc:
+        return False, str(exc)
+
+
 def verify_bootstrap_publication_source(item: PublishItem) -> tuple[bool, str]:
     """Require a digest-bound SkyPilot attestation before any public tag write."""
 
@@ -593,6 +760,9 @@ def preflight_sources(plan: list[PublishItem]) -> list[tuple[PublishItem, str]]:
         if ok and item.tool == "wan2-2":
             ok, detail = verify_wan_publication_source(item)
             detail = f"WAN GATE — {detail}"
+        if ok and item.tool == "ltx2":
+            ok, detail = verify_ltx_publication_source(item)
+            detail = f"LTX GATE — {detail}"
         print(f"  {item.source_ref}  {'ok' if ok else f'UNREADABLE — {detail}'}")
         if not ok:
             failures.append((item, detail))

@@ -44,6 +44,7 @@ from npa.deploy.publish_public import (
     _pin_wan_publication_sources as REAL_WAN_SOURCE_PIN,
     build_publish_plan,
     verify_bootstrap_publication_source as REAL_BOOTSTRAP_PUBLICATION_GATE,
+    verify_ltx_publication_source as REAL_LTX_PUBLICATION_GATE,
     verify_wan_publication_source as REAL_WAN_PUBLICATION_GATE,
 )
 
@@ -60,6 +61,11 @@ def _avoid_registry_attestation_reads_in_unrelated_publish_tests(monkeypatch) ->
         publish_public,
         "verify_wan_publication_source",
         lambda item: (True, "test fixture: Wan gate verified"),
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "verify_ltx_publication_source",
+        lambda item: (True, "test fixture: LTX gate verified"),
     )
     monkeypatch.setattr(
         publish_public,
@@ -1117,6 +1123,74 @@ def test_wan_publication_gate_refuses_digest_not_bound_to_gpu_proofs(
 
     assert not ok
     assert accepted_digest in detail
+
+
+def test_ltx_publication_gate_binds_zero_payload_gpu_and_attestation_proofs(
+    monkeypatch,
+) -> None:
+    from npa.deploy import publish_public
+
+    accepted = images.ltx2_accepted_image_manifest()
+    digest = accepted["oci_digest"]
+    repository = "ghcr.io/nebius/nebius-physical-ai/npa-ltx2"
+    monkeypatch.setattr(
+        publish_public, "_crane_digest", lambda ref, **_: (True, digest)
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "_github_attestation_predicates",
+        lambda **_: set(accepted["attestations"]["required_predicates"]),
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "_crane_json",
+        lambda args: {"architecture": "amd64", "os": "linux"},
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "_scan_wan_trivy_exact_digest",
+        lambda ref: {"critical_total": 0, "critical_with_fix": 0, "secrets": 0},
+    )
+    monkeypatch.setattr(
+        publish_public.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 0, stdout=json.dumps({"status": "pass", "findings": []}), stderr=""
+        ),
+    )
+
+    ok, detail = REAL_LTX_PUBLICATION_GATE(
+        PublishItem(
+            tool="ltx2",
+            source_ref=f"{repository}@{digest}",
+            target_ref=f"{repository}:2.5-rtfetch-20260817",
+        )
+    )
+
+    assert ok, detail
+    assert digest in detail
+    assert "SPDX+SLSA" in detail
+
+
+def test_ltx_publication_gate_refuses_a_nonaccepted_digest(monkeypatch) -> None:
+    from npa.deploy import publish_public
+
+    observed = "sha256:" + "a" * 64
+    accepted = images.ltx2_accepted_image_manifest()["oci_digest"]
+    monkeypatch.setattr(
+        publish_public, "_crane_digest", lambda ref, **_: (True, observed)
+    )
+
+    ok, detail = REAL_LTX_PUBLICATION_GATE(
+        PublishItem(
+            tool="ltx2",
+            source_ref="ghcr.io/nebius/nebius-physical-ai/npa-ltx2:retagged",
+            target_ref="ghcr.io/nebius/nebius-physical-ai/npa-ltx2:release",
+        )
+    )
+
+    assert not ok
+    assert accepted in detail
 
 
 def test_wan_publication_gate_refuses_an_extra_unscanned_platform(monkeypatch) -> None:

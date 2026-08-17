@@ -333,6 +333,38 @@ def test_wan_validation_is_bound_to_an_immutable_accepted_tuple(
     assert accepted["vulnerability_scan"]["secrets"] == 0
 
 
+def test_ltx_validation_is_bound_to_zero_payload_bytes_and_gpu_evidence(
+    entries: list[dict],
+) -> None:
+    ltx = next(entry for entry in entries if entry["name"] == "npa-ltx2")
+    accepted = json.loads(
+        (ROOT / ltx["accepted_image_manifest"]).read_text(encoding="utf-8")
+    )
+
+    assert accepted["format"] == "npa_ltx2_accepted_image_manifest_v1"
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", accepted["oci_digest"])
+    assert re.fullmatch(r"[0-9a-f]{40}", accepted["development_sha"])
+    assert accepted["payload_scan"] == {
+        "scanner": "npa/scripts/scan_image_ltx_payload.py",
+        "findings": 0,
+        "source_baked": False,
+        "weights_baked": False,
+        "credentials_baked": False,
+    }
+    assert re.fullmatch(r"[0-9a-f]{40}", accepted["source"]["revision"])
+    assert re.fullmatch(r"[0-9a-f]{40}", accepted["weights"]["resolved_revision"])
+    proof = accepted["gpu_proof"]
+    assert proof["observed_image_digest"] == accepted["oci_digest"]
+    assert proof["gpu_count"] == 1
+    assert proof["deferred"] == []
+    assert proof["source_baked"] is False
+    assert proof["weights_baked"] is False
+    for key in ("artifact_sha256", "refusal_sha256"):
+        assert re.fullmatch(r"[0-9a-f]{64}", proof[key])
+    assert re.fullmatch(r"[0-9a-f]{64}", proof["video"]["sha256"])
+    assert proof["video"]["frame_count"] >= 24
+
+
 def test_base_image_covers_both_blackwell_majors(entries: list[dict]) -> None:
     """npa-base gates the tree, so its arch list must span sm_100 and sm_120."""
 
