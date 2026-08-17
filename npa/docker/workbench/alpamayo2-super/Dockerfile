@@ -77,7 +77,7 @@ COPY --chmod=0444 docker/workbench/alpamayo2-super/THIRD_PARTY_NOTICES.md /usr/s
 
 RUN install -d -m 0755 -o ubuntu -g ubuntu /workspace /workspace/.cache \
       /workspace/.cache/huggingface /workspace/.cache/matplotlib \
-    && chown -R ubuntu:ubuntu /opt/alpamayo2 /workspace \
+    && chown -R ubuntu:ubuntu /workspace \
     && /opt/npa-venv/bin/npa workbench alpamayo2-super infer \
       --output-path /tmp/alpamayo2-plan --dry-run >/dev/null
 

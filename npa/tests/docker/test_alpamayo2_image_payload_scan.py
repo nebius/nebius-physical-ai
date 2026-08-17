@@ -30,6 +30,7 @@ def test_dockerfile_parses_torch_arch_flags_as_tokens() -> None:
     assert "{'sm_90', 'sm_100', 'sm_120'} <= flags" in dockerfile
     assert "npa-workflows/sim2real.yaml" in dockerfile
     assert "npa-workflows/physical-ai-data-factory.yaml" in dockerfile
+    assert "chown -R ubuntu:ubuntu /opt/alpamayo2" not in dockerfile
 
 
 def _tar(path: Path, members: dict[str, bytes]) -> Path:
