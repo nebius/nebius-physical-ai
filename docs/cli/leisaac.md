@@ -14,6 +14,7 @@ list-tasks  List the pinned SO101 tasks that support browser keyboard control.
 export-paidf  Export one finalized episode directly from S3 into a PAIDF run input.
 materialize-paidf  Create an immutable derived dataset after strict PAIDF video alignment.
 launch  Launch a supported SO101 task and publish its secure collector capability.
+reconnect-agent  Reconnect one existing private LeIsaac run to a replacement agent.
 status  Report the live Kubernetes objects for a LeIsaac run.
 destroy  Delete this run's transient GPU deployment and LBs, preserving S3 evidence.
 ```
@@ -32,6 +33,7 @@ destroy  Delete this run's transient GPU deployment and LBs, preserving S3 evide
 | `export-paidf` | Export one finalized episode directly from S3 into a PAIDF run input. |
 | `materialize-paidf` | Create an immutable derived dataset after strict PAIDF video alignment. |
 | `launch` | Launch a supported SO101 task and publish its secure collector capability. |
+| `reconnect-agent` | Reconnect one existing private LeIsaac run to a replacement agent. |
 | `status` | Report the live Kubernetes objects for a LeIsaac run. |
 | `destroy` | Delete this run's transient GPU deployment and LBs, preserving S3 evidence. |
 

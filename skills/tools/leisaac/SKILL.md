@@ -166,6 +166,14 @@ values without committing or logging secrets. Keep the session available when
 the operator requested continuing access; otherwise use the scoped `destroy`
 command and record cleanup status.
 
+When replacing only the agent for an explicitly selected existing run, retain
+the exact `.../reports/leisaac-session.json` URI before agent teardown and use
+`npa workbench leisaac reconnect-agent` after the fresh agent is healthy. This
+command must preserve the existing Deployment, image, task, dataset, and
+run-scoped EULA values; it may rotate only the relay Secret/nonce, exact agent
+ingress, and that exact manifest. Never substitute `launch`, create another
+workload, or use broad bucket discovery for this recovery.
+
 When an operator explicitly requests relay restart and expiry proof against an
 existing run, use
 `npa/scripts/verify_leisaac_relay_lifecycle_live.py`. It is a mutating,

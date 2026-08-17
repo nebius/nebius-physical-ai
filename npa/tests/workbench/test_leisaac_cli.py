@@ -14,9 +14,11 @@ from npa.cli.workbench.leisaac import (
     _TransientRelayStatusError,
     _agent_artifact_storage,
     _delete_resources,
+    _existing_relay_contract,
     _external_ip,
     _install_agent_relay,
     _kubectl,
+    _load_manifest,
     _put_manifest,
     _relay_media_server,
     _relay_status,
@@ -68,7 +70,9 @@ def test_kubectl_preserves_unbounded_mutation_contract(monkeypatch) -> None:
     ]
 
 
-def test_lifecycle_lock_permissions_are_preflighted_before_mutation(monkeypatch) -> None:
+def test_lifecycle_lock_permissions_are_preflighted_before_mutation(
+    monkeypatch,
+) -> None:
     calls = []
 
     def kubectl(_context, _namespace, args, **_kwargs):
@@ -1223,6 +1227,95 @@ def test_put_manifest_treats_an_explicit_manifest_leaf_as_a_leaf(monkeypatch) ->
     assert calls[0]["Key"] == "checkpoints/live/reports/leisaac-session.json"
 
 
+def test_load_manifest_is_exact_bounded_and_agent_storage_scoped(monkeypatch) -> None:
+    payload = {
+        "schema": "npa.leisaac.session.v2",
+        "run_id": "live-relay",
+        "transport": "agent-relay",
+        "signal_host": "127.0.0.1",
+    }
+    calls = []
+
+    class Body:
+        def read(self, limit):
+            assert limit == 1_048_577
+            return json.dumps(payload).encode()
+
+    class S3:
+        def get_object(self, **kwargs):
+            calls.append(kwargs)
+            return {"ContentLength": 128, "Body": Body()}
+
+    monkeypatch.setattr("boto3.client", lambda *_args, **_kwargs: S3())
+    storage = {
+        "bucket": "bucket",
+        "prefix": "checkpoints",
+        "endpoint": "https://agent-region.example",
+        "access_key": "agent-access",
+        "secret_key": "agent-secret",
+        "region": "agent-region",
+    }
+    uri = "s3://bucket/checkpoints/live-relay/reports/leisaac-session.json"
+
+    assert _load_manifest(uri, run_id="live-relay", storage=storage) == payload
+    assert calls == [
+        {
+            "Bucket": "bucket",
+            "Key": "checkpoints/live-relay/reports/leisaac-session.json",
+        }
+    ]
+    with pytest.raises(Exception, match="selected agent's bucket"):
+        _load_manifest(
+            "s3://other/checkpoints/live-relay/reports/leisaac-session.json",
+            run_id="live-relay",
+            storage=storage,
+        )
+
+
+def test_existing_relay_contract_refuses_public_service(monkeypatch) -> None:
+    labels = {
+        "app.kubernetes.io/name": "leisaac",
+        "app.kubernetes.io/instance": "leisaac-live-relay",
+        "app.kubernetes.io/managed-by": "npa",
+    }
+    service = {
+        "metadata": {
+            "name": "leisaac-live-relay-relay",
+            "namespace": "leisaac",
+            "labels": labels,
+            "annotations": {
+                "npa.nebius.com/agent-project": "rtxpro",
+                "npa.nebius.com/agent-name": "agent",
+                "npa.nebius.com/source-ranges": "8.8.8.8/32",
+            },
+        },
+        "spec": {"type": "LoadBalancer", "clusterIP": "10.96.34.22"},
+    }
+    deployment = {
+        "metadata": {
+            "name": "leisaac-live-relay",
+            "namespace": "leisaac",
+            "labels": labels,
+        }
+    }
+    responses = iter((service, deployment))
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._kubectl",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0, stdout=json.dumps(next(responses)), stderr=""
+        ),
+    )
+
+    with pytest.raises(Exception, match="not private"):
+        _existing_relay_contract(
+            "cluster",
+            "leisaac",
+            run_id="live-relay",
+            agent_project="rtxpro",
+            agent_name="agent",
+        )
+
+
 def test_list_tasks_json_is_machine_readable_and_parallel_launch_is_rejected(
     monkeypatch,
 ) -> None:
@@ -1358,6 +1451,156 @@ def test_launch_agent_relay_wires_private_cluster_public_agent_and_manifest(
         "run_id": "live-relay",
         "certificate_sha256": "f" * 64,
     }
+
+
+def test_reconnect_agent_rotates_only_existing_relay_contract(monkeypatch) -> None:
+    monkeypatch.delenv("OMNI_KIT_ACCEPT_EULA", raising=False)
+    monkeypatch.delenv("ISAACSIM_ACCEPT_EULA", raising=False)
+    lease_events: list[str] = []
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._acquire_run_lifecycle_lease",
+        lambda *_args: _FakeLifecycleLease(lease_events),
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._existing_relay_contract",
+        lambda *_args, **_kwargs: ("10.96.34.22", ["8.8.8.8/32"]),
+    )
+    storage = {
+        "bucket": "bucket",
+        "prefix": "checkpoints",
+        "endpoint": "https://storage.example",
+        "access_key": "access",
+        "secret_key": "secret",
+        "region": "region",
+    }
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._agent_artifact_storage",
+        lambda *_args: storage,
+    )
+    manifest = {
+        "schema": "npa.leisaac.session.v2",
+        "run_id": "live-relay",
+        "transport": "agent-relay",
+        "signal_host": "127.0.0.1",
+        "media_host": "8.8.8.8",
+        "media_server": "10.96.34.22",
+        "task": DEFAULT_TASK,
+        "source_commit": "source-commit",
+        "task_registry_fingerprint": REGISTRY_FINGERPRINT,
+        "dataset": {"output_path": "s3://bucket/checkpoints/dataset"},
+        "image": IMAGE,
+    }
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._load_manifest",
+        lambda *_args, **_kwargs: manifest,
+    )
+    ssh = object()
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._agent_relay_context",
+        lambda *_args: ("replacement-vm", "8.8.4.4", ssh, "npa", "password"),
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._agent_certificate_sha256", lambda _ip: "f" * 64
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac.secrets.token_hex", lambda _size: "a" * 64
+    )
+    ingress = []
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac.ensure_ingress",
+        lambda **kwargs: ingress.append(kwargs) or SimpleNamespace(changed=True),
+    )
+    installs = []
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._install_agent_relay",
+        lambda *args, **kwargs: installs.append((args, kwargs)),
+    )
+    applied = []
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._apply",
+        lambda _context, _namespace, documents: applied.extend(documents),
+    )
+    kubectl_calls = []
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._kubectl",
+        lambda *args, **_kwargs: (
+            kubectl_calls.append(args)
+            or SimpleNamespace(returncode=0, stdout="", stderr="")
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._wait_ready", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._wait_relay_status",
+        lambda *_args, **_kwargs: {
+            "state": "ready",
+            "task": DEFAULT_TASK,
+            "source_commit": "source-commit",
+            "task_registry_fingerprint": REGISTRY_FINGERPRINT,
+            "session_attestation": hashlib.sha256(
+                ("npa-leisaac-session:" + "a" * 64).encode()
+            ).hexdigest(),
+        },
+    )
+    published = []
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._put_manifest",
+        lambda *args, **kwargs: published.append((args, kwargs)) or args[0],
+    )
+    selections = []
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._select_agent_leisaac_run",
+        lambda *args, **kwargs: selections.append((args, kwargs)),
+    )
+    uri = "s3://bucket/checkpoints/live-relay/reports/leisaac-session.json"
+
+    result = runner.invoke(
+        app,
+        [
+            "reconnect-agent",
+            "--run-id",
+            "live-relay",
+            "--manifest-uri",
+            uri,
+            "--agent-project",
+            "rtxpro",
+            "--agent-name",
+            "agent",
+            "--context",
+            "cluster",
+            "--namespace",
+            "leisaac",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "status: reconnected" in result.output
+    assert len(applied) == 1
+    assert applied[0]["kind"] == "Secret"
+    assert not any(item.get("kind") == "Deployment" for item in applied)
+    assert kubectl_calls == [
+        (
+            "cluster",
+            "leisaac",
+            [
+                "set",
+                "env",
+                "deployment/leisaac-live-relay",
+                "--containers=leisaac",
+                "NPA_LEISAAC_SESSION_NONCE=" + "a" * 64,
+            ],
+        )
+    ]
+    assert {item["protocol"] for item in ingress} == {"UDP", "TCP"}
+    assert installs[0][0] == (ssh,)
+    assert installs[0][1]["manifest_uri"] == uri
+    rotated_manifest = published[0][0][1]
+    assert rotated_manifest["media_host"] == "8.8.4.4"
+    assert rotated_manifest["dataset"] == manifest["dataset"]
+    assert rotated_manifest["image"] == IMAGE
+    assert len(selections) == 1
+    assert lease_events[-1] == "closed"
 
 
 def test_successful_launch_warns_when_only_lifecycle_release_fails(monkeypatch) -> None:

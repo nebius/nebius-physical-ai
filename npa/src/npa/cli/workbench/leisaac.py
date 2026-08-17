@@ -10,6 +10,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import secrets
 import shlex
 import socket
@@ -42,6 +43,7 @@ from npa.clients.network import (
 from npa.clients.ssh import SSHClient, SSHTimeoutError
 from npa.workbench.leisaac import (
     GPU_PRODUCT,
+    SESSION_SCHEMA,
     SOURCE_COMMIT,
     LeIsaacConfigError,
     MEDIA_PORT,
@@ -1265,6 +1267,67 @@ def _put_manifest(
     return manifest_uri
 
 
+def _load_manifest(
+    uri: str,
+    *,
+    run_id: str,
+    storage: dict[str, str],
+) -> dict[str, Any]:
+    """Load one exact agent-owned session manifest without broad discovery."""
+
+    import boto3
+
+    bucket, key = split_s3_uri(uri)
+    configured_bucket = str(storage.get("bucket") or "").strip()
+    configured_prefix = str(storage.get("prefix") or "").strip().strip("/")
+    if bucket != configured_bucket:
+        raise LeIsaacConfigError(
+            "agent-relay manifest URI bucket must match the selected agent's bucket"
+        )
+    if configured_prefix and not (
+        key == configured_prefix or key.startswith(configured_prefix + "/")
+    ):
+        raise LeIsaacConfigError(
+            "agent-relay manifest URI must be inside the selected agent's artifact prefix"
+        )
+    if _manifest_object_uri(uri, run_id) != uri:
+        raise LeIsaacConfigError(
+            "agent-relay reconnect requires the exact reports/leisaac-session.json URI"
+        )
+    client_kwargs: dict[str, Any] = {
+        "endpoint_url": storage["endpoint"],
+        "aws_access_key_id": storage["access_key"],
+        "region_name": storage.get("region") or None,
+    }
+    client_kwargs["aws" + "_secret_access_key"] = storage["secret_key"]
+    response = boto3.client("s3", **client_kwargs).get_object(Bucket=bucket, Key=key)
+    if int(response.get("ContentLength") or 0) > 1_048_576:
+        raise LeIsaacConfigError("agent-relay session manifest exceeds 1 MiB")
+    body = response["Body"].read(1_048_577)
+    if len(body) > 1_048_576:
+        raise LeIsaacConfigError("agent-relay session manifest exceeds 1 MiB")
+    try:
+        manifest = json.loads(body)
+    except (TypeError, UnicodeDecodeError, ValueError) as exc:
+        raise LeIsaacConfigError(
+            "agent-relay session manifest is invalid JSON"
+        ) from exc
+    if not isinstance(manifest, dict):
+        raise LeIsaacConfigError("agent-relay session manifest is not an object")
+    if manifest.get("schema") != SESSION_SCHEMA or manifest.get("run_id") != run_id:
+        raise LeIsaacConfigError(
+            "agent-relay session manifest does not match the selected live run"
+        )
+    if (
+        manifest.get("transport") != TRANSPORT_AGENT_RELAY
+        or manifest.get("signal_host") != "127.0.0.1"
+    ):
+        raise LeIsaacConfigError(
+            "agent-relay session manifest does not use the secure private transport"
+        )
+    return manifest
+
+
 def _manifest_object_uri(prefix_uri: str, run_id: str) -> str:
     """Return the exact immutable manifest object for one validated run."""
 
@@ -1289,6 +1352,127 @@ def _emit(payload: dict[str, Any], output: OutputFormat) -> None:
         return
     for key, value in payload.items():
         typer.echo(f"{key}: {value}")
+
+
+def _existing_relay_contract(
+    context: str,
+    namespace: str,
+    *,
+    run_id: str,
+    agent_project: str,
+    agent_name: str,
+) -> tuple[str, list[str]]:
+    """Validate one live, NPA-owned relay workload before credential rotation."""
+
+    name = resource_name(validate_run_id(run_id))
+
+    def resource(kind: str, resource_name: str) -> dict[str, Any]:
+        result = _kubectl(
+            context,
+            namespace,
+            ["get", kind, resource_name, "-o", "json"],
+        )
+        if result.returncode:
+            raise LeIsaacConfigError(
+                f"existing LeIsaac {kind}/{resource_name} is unavailable"
+            )
+        try:
+            payload = json.loads(result.stdout)
+        except ValueError as exc:
+            raise LeIsaacConfigError(
+                f"existing LeIsaac {kind}/{resource_name} returned invalid JSON"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise LeIsaacConfigError(
+                f"existing LeIsaac {kind}/{resource_name} is invalid"
+            )
+        metadata = payload.get("metadata") or {}
+        labels = metadata.get("labels") or {}
+        if (
+            metadata.get("name") != resource_name
+            or metadata.get("namespace") != namespace
+            or labels.get("app.kubernetes.io/name") != "leisaac"
+            or labels.get("app.kubernetes.io/instance") != name
+            or labels.get("app.kubernetes.io/managed-by") != "npa"
+        ):
+            raise LeIsaacConfigError(
+                f"existing {kind}/{resource_name} is not owned by the selected LeIsaac run"
+            )
+        return payload
+
+    service = resource("service", f"{name}-relay")
+    deployment = resource("deployment", name)
+    annotations = (service.get("metadata") or {}).get("annotations") or {}
+    if (
+        annotations.get("npa.nebius.com/agent-project") != agent_project
+        or annotations.get("npa.nebius.com/agent-name") != agent_name
+    ):
+        raise LeIsaacConfigError(
+            "existing LeIsaac relay belongs to a different agent identity"
+        )
+    source_ranges = validate_source_ranges(
+        str(annotations.get("npa.nebius.com/source-ranges") or "").split(",")
+    )
+    if not source_ranges:
+        raise LeIsaacConfigError("existing LeIsaac relay has no operator source range")
+    service_spec = service.get("spec") or {}
+    if service_spec.get("type") != "ClusterIP":
+        raise LeIsaacConfigError(
+            "existing LeIsaac relay is not private; refusing credential rotation"
+        )
+    media_server = validate_private_ip(
+        str(service_spec.get("clusterIP") or ""),
+        "LeIsaac private media Service address",
+    )
+
+    deployment_spec = deployment.get("spec") or {}
+    pod_spec = (deployment_spec.get("template") or {}).get("spec") or {}
+    containers = pod_spec.get("containers") or []
+    container_names = {
+        str(item.get("name") or "") for item in containers if isinstance(item, dict)
+    }
+    if int(deployment_spec.get("replicas") or 0) != 1 or not {
+        "leisaac",
+        "agent-relay-client",
+        "turn",
+    }.issubset(container_names):
+        raise LeIsaacConfigError(
+            "existing LeIsaac Deployment does not match the secure single-run topology"
+        )
+    main_container = next(
+        item
+        for item in containers
+        if isinstance(item, dict) and item.get("name") == "leisaac"
+    )
+    environment = {
+        str(item.get("name") or ""): str(item.get("value") or "")
+        for item in (main_container.get("env") or [])
+        if isinstance(item, dict) and "value" in item
+    }
+    if environment.get("NPA_LEISAAC_RUN_ID") != run_id:
+        raise LeIsaacConfigError("existing LeIsaac Deployment run identity changed")
+    if any(environment.get(key) != value for key, value in _LEISAAC_EULA_ENV.items()):
+        raise LeIsaacConfigError(
+            "existing LeIsaac Deployment does not retain its exact run-scoped EULA values"
+        )
+    nonce = environment.get("NPA_LEISAAC_SESSION_NONCE", "")
+    if not re.fullmatch(r"[a-f0-9]{64}", nonce):
+        raise LeIsaacConfigError(
+            "existing LeIsaac Deployment has no valid relay credential"
+        )
+    relay_volume = next(
+        (
+            item
+            for item in (pod_spec.get("volumes") or [])
+            if isinstance(item, dict) and item.get("name") == "relay-client"
+        ),
+        {},
+    )
+    if ((relay_volume.get("secret") or {}).get("secretName")) != f"{name}-relay-client":
+        raise LeIsaacConfigError(
+            "existing LeIsaac Deployment does not mount its run-scoped relay Secret"
+        )
+    return media_server, source_ranges
 
 
 @app.command("list-tasks")
@@ -1750,6 +1934,173 @@ def launch_cmd(
         "artifact": manifest_uri,
         "public_agent_url": f"https://{media_host}/",
         "expires_at": expires_at or "none (service lifecycle)",
+    }
+    if lifecycle_warning:
+        result["warning"] = lifecycle_warning
+    _emit(result, output)
+
+
+@app.command("reconnect-agent")
+def reconnect_agent_cmd(
+    run_id: str = typer.Option(..., "--run-id"),
+    manifest_uri: str = typer.Option(
+        ...,
+        "--manifest-uri",
+        help="Exact existing .../reports/leisaac-session.json object for this run.",
+    ),
+    agent_project: str = typer.Option(
+        ..., "--agent-project", help="Saved replacement NPA agent project alias."
+    ),
+    agent_name: str = typer.Option(
+        ..., "--agent-name", help="Saved replacement NPA agent deployment name."
+    ),
+    context: str = typer.Option("", "--context"),
+    namespace: str = typer.Option("default", "--namespace"),
+    output: OutputFormat = typer.Option(OutputFormat.text, "--output"),
+) -> None:
+    """Reconnect one existing private LeIsaac run to a replacement agent.
+
+    This rotates only the run-scoped relay credential and Deployment nonce. It
+    never creates a new LeIsaac Deployment, changes the task/dataset/image, or
+    records a new EULA acceptance.
+    """
+
+    lifecycle_lease: _RunLifecycleLease | None = None
+    failure_message = ""
+    lifecycle_warning = ""
+    try:
+        run_id = validate_run_id(run_id)
+        split_s3_uri(manifest_uri)
+        reconnect_timeout = _wait_timeout(
+            _READY_TIMEOUT_ENV, _DEFAULT_READY_TIMEOUT_SECONDS
+        )
+        name = resource_name(run_id)
+        lifecycle_lease = _acquire_run_lifecycle_lease(context, namespace, name)
+        media_server, source_ranges = _existing_relay_contract(
+            context,
+            namespace,
+            run_id=run_id,
+            agent_project=agent_project,
+            agent_name=agent_name,
+        )
+        lifecycle_lease.assert_healthy()
+        storage = _agent_artifact_storage(agent_project, agent_name)
+        manifest = _load_manifest(
+            manifest_uri,
+            run_id=run_id,
+            storage=storage,
+        )
+        if manifest.get("media_server") != media_server:
+            raise LeIsaacConfigError(
+                "session manifest does not match the existing private relay Service"
+            )
+        instance_id, public_ip, ssh, auth_user, auth_password = _agent_relay_context(
+            agent_project, agent_name
+        )
+        certificate_sha256 = _agent_certificate_sha256(public_ip)
+        nonce = secrets.token_hex(32)
+        for source in source_ranges:
+            for protocol in ("UDP", "TCP"):
+                ensure_ingress(
+                    vm_id=instance_id,
+                    ports=(TURN_PORT,),
+                    source=source,
+                    tool=(_TURN_CONTROL_TOOL if protocol == "UDP" else _TURN_TCP_TOOL),
+                    protocol=protocol,
+                )
+        lifecycle_lease.assert_healthy()
+        _install_agent_relay(
+            ssh,
+            run_id=run_id,
+            session_nonce=nonce,
+            expires_at=str(manifest.get("expires_at") or ""),
+            manifest_uri=manifest_uri,
+        )
+        relay_secret = relay_client_secret_manifest(
+            run_id=run_id,
+            namespace=namespace,
+            agent_host=public_ip,
+            session_nonce=nonce,
+            certificate_sha256=certificate_sha256,
+            auth_user=auth_user,
+            auth_password=auth_password,
+            client_source=_relay_source("reverse_client.py").decode("utf-8"),
+        )
+        _apply(context, namespace, [relay_secret])
+        lifecycle_lease.assert_healthy()
+        rotated = _kubectl(
+            context,
+            namespace,
+            [
+                "set",
+                "env",
+                f"deployment/{name}",
+                "--containers=leisaac",
+                f"NPA_LEISAAC_SESSION_NONCE={nonce}",
+            ],
+        )
+        if rotated.returncode:
+            raise RuntimeError("failed to rotate the existing LeIsaac relay credential")
+        reconnect_deadline = time.monotonic() + reconnect_timeout
+        _wait_ready(
+            context,
+            namespace,
+            name,
+            timeout_seconds=reconnect_timeout,
+            progress_check=lifecycle_lease.assert_healthy,
+        )
+        health = _wait_relay_status(
+            ssh,
+            session_nonce=nonce,
+            timeout_seconds=max(0.0, reconnect_deadline - time.monotonic()),
+            progress_check=lifecycle_lease.assert_healthy,
+        )
+        if (
+            health.get("state") != "ready"
+            or health.get("task") != manifest.get("task")
+            or health.get("source_commit") != manifest.get("source_commit")
+            or health.get("task_registry_fingerprint")
+            != manifest.get("task_registry_fingerprint")
+            or health.get("session_attestation") != session_attestation(nonce)
+        ):
+            raise RuntimeError(
+                "reconnected LeIsaac relay attestation does not match the run"
+            )
+        updated_manifest = dict(manifest)
+        updated_manifest["media_host"] = public_ip
+        updated_manifest["session_nonce"] = nonce
+        updated_manifest["session_attestation"] = session_attestation(nonce)
+        _put_manifest(manifest_uri, updated_manifest, storage=storage)
+        _select_agent_leisaac_run(
+            public_ip,
+            auth_user=auth_user,
+            auth_password=auth_password,
+            run_id=run_id,
+            certificate_sha256=certificate_sha256,
+            timeout_seconds=max(0.0, reconnect_deadline - time.monotonic()),
+            progress_check=lifecycle_lease.assert_healthy,
+        )
+        lifecycle_lease.assert_healthy()
+    except (Exception, KeyboardInterrupt) as exc:  # noqa: BLE001 - CLI boundary
+        failure_message = str(exc) or "LeIsaac agent reconnect interrupted"
+    finally:
+        if lifecycle_lease is not None:
+            try:
+                lifecycle_lease.close()
+            except Exception as cleanup_exc:  # noqa: BLE001 - preserve primary failure
+                lock_error = f"lifecycle lock cleanup failed: {cleanup_exc}"
+                if failure_message:
+                    failure_message = f"{failure_message}; {lock_error}"
+                else:
+                    lifecycle_warning = lock_error
+    if failure_message:
+        _fail(failure_message)
+    result = {
+        "status": "reconnected",
+        "run_id": run_id,
+        "transport": TRANSPORT_AGENT_RELAY,
+        "deployment": resource_name(run_id),
+        "public_agent_url": f"https://{public_ip}/",
     }
     if lifecycle_warning:
         result["warning"] = lifecycle_warning

@@ -339,6 +339,27 @@ is the same resource kind used by LeIsaac relay and recorder credentials, but a
 cleanup-only custom role may need those verbs added; a failed preflight names
 the missing verbs and leaves all LeIsaac resources unchanged.
 
+Replacing the NPA agent does not require launching a second simulator. Preserve
+the exact session-manifest URI before destroying the old agent, deploy the
+replacement under the same saved agent identity, then reconnect the one
+existing workload:
+
+```bash
+npa workbench leisaac reconnect-agent \
+  --run-id EXISTING_RUN_ID \
+  --manifest-uri s3://BUCKET/PREFIX/EXISTING_RUN_ID/reports/leisaac-session.json \
+  --agent-project PROJECT_ALIAS --agent-name AGENT_NAME \
+  --context KUBECTL_CONTEXT --namespace EXISTING_NAMESPACE
+```
+
+`reconnect-agent` verifies the private, single-replica, NPA-owned topology and
+the exact existing run-scoped EULA values before mutation. It rotates only the
+relay Secret and Deployment nonce, updates exact agent ingress and the existing
+session manifest, and waits for authenticated relay attestation. It does not
+create a Deployment, change the image/task/dataset, or record a new EULA
+acceptance. The exact manifest URI is intentionally required so replacement
+does not broaden discovery across the agent bucket.
+
 `agent-relay` resolves the agent IP from live provider state and refuses a
 stale saved address, missing SSH key or agent auth, unrestricted source range,
 TLS certificate mismatch, invalid session nonce, or a second active relay
