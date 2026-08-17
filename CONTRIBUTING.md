@@ -465,8 +465,14 @@ a lot of untested code:
 make test PYTEST_ADDOPTS="--cov=npa --cov-fail-under=60"
 ```
 
+The two also report different counts, so do not compare them directly: `make test`
+deselects the live/GPU markers described below, while `test.yml` runs the whole
+tree and lets those tests self-skip. A green CI run reports roughly
+`10597 passed, 352 skipped` against the local `10385 passed, 37 skipped`.
+
 `test.yml` runs a Python matrix of 3.10, 3.12, and 3.14 on `main` and 3.12 alone on
 a pull request; `requires-python` is `>=3.10`.
+
 ## Testing Requirements
 
 Create the virtualenv at `npa/.venv` and install the dev tooling once (this pulls
