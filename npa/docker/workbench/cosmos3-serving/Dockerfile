@@ -44,7 +44,7 @@ RUN sed -ri \
     && printf 'Acquire::Check-Valid-Until "false";\n' >/etc/apt/apt.conf.d/99snapshot \
     && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-       ca-certificates curl ffmpeg libgl1 libglib2.0-0 libgnutls30 libssl3 openssl \
+       ca-certificates curl ffmpeg gcc g++ libgl1 libglib2.0-0 libgnutls30 libssl3 openssl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --chmod=0644 docker/workbench/cosmos3-serving/requirements.lock /opt/npa-cosmos3-serving/requirements.lock
