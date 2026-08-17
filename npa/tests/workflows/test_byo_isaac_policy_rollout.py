@@ -174,7 +174,9 @@ def test_build_isaac_rollout_job_manifest_shape():
         pr.ISAAC_ROLLOUT_SCRIPT
     )
     assert "get_inference_policy(device=SIM_DEVICE)" in pr.ISAAC_ROLLOUT_SCRIPT
-    assert 'device="cuda:0"' not in pr.ISAAC_ROLLOUT_SCRIPT
+    assert 'OnPolicyRunner(env, acfg, log_dir=None, device="cuda:0")' not in (
+        pr.ISAAC_ROLLOUT_SCRIPT
+    )
     assert 'CameraType = CameraCfg if SIM_DEVICE == "cpu" else TiledCameraCfg' in (
         pr.ISAAC_ROLLOUT_SCRIPT
     )
@@ -184,6 +186,18 @@ def test_build_isaac_rollout_job_manifest_shape():
     )
     assert "def _write_rgb_png(path, rgb):" in pr.ISAAC_ROLLOUT_SCRIPT
     assert "from PIL import" not in pr.ISAAC_ROLLOUT_SCRIPT
+    assert '"/rtx/dataWindowNDC/2", 1.0' in pr.ISAAC_ROLLOUT_SCRIPT
+    assert '"/rtx/dataWindow/fitOutputToDataWindow", False' in (
+        pr.ISAAC_ROLLOUT_SCRIPT
+    )
+    assert "if arr.ndim == 3:" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert "arr = arr[None, ...]" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert 'get_annotator("rgb", device="cuda:0")' in pr.ISAAC_ROLLOUT_SCRIPT
+    assert "annotator.attach(sensor.render_product_paths)" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert "arr = arr.view(np.uint8)" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert pr.ISAAC_ROLLOUT_SCRIPT.index("obs, _, dones, extras = env.step(actions)") < (
+        pr.ISAAC_ROLLOUT_SCRIPT.index("capture(_step)")
+    )
     assert "_write_rgb_png(os.path.join(d, name), arr[i])" in (
         pr.ISAAC_ROLLOUT_SCRIPT
     )

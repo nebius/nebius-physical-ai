@@ -324,6 +324,17 @@ try:
             "NPA_ISAAC_KIT_ARGS", "--portable-root /tmp/npa-isaac-kit"
         ),
     ).app
+    # Isaac Sim 5.1 may leave the RTX data-window settings unset under a
+    # portable root. Replicator treats those ``None`` values as overscan and
+    # then subtracts them while reading RGB. Initialize the standard full-frame
+    # window so Replicator preserves exact WxH output without fake overscan.
+    import carb
+    rtx_settings = carb.settings.get_settings()
+    rtx_settings.set_float("/rtx/dataWindowNDC/0", 0.0)
+    rtx_settings.set_float("/rtx/dataWindowNDC/1", 0.0)
+    rtx_settings.set_float("/rtx/dataWindowNDC/2", 1.0)
+    rtx_settings.set_float("/rtx/dataWindowNDC/3", 1.0)
+    rtx_settings.set_bool("/rtx/dataWindow/fitOutputToDataWindow", False)
     import gymnasium as gym, torch
     import isaaclab_tasks  # noqa: F401
     _scenarios = None
@@ -384,6 +395,19 @@ try:
         )
     print("ROLLOUT_CAMERA_VIEWS", [view["name"] for view in CAMERA_VIEWS], flush=True)
     env = gym.make(TASK, cfg=env_cfg)
+    capture_annotators = {}
+    if SIM_DEVICE == "cpu":
+        # Physics remains on CPU for the compatibility route, but rendering is
+        # backed by the reserved RTX device. A CUDA annotator avoids Isaac
+        # Replicator's empty CPU render buffers while leaving simulation state
+        # and policy inference on the explicitly selected device.
+        import omni.replicator.core as rep
+        for view in CAMERA_VIEWS:
+            view_name = view["name"]
+            sensor = env.unwrapped.scene[_camera_key(view_name)]
+            annotator = rep.AnnotatorRegistry.get_annotator("rgb", device="cuda:0")
+            annotator.attach(sensor.render_product_paths)
+            capture_annotators[view_name] = annotator
     if OBJECT_USD:
         got_object_usd = getattr(env.unwrapped.scene["object"].cfg.spawn, "usd_path", None)
         if got_object_usd != OBJECT_USD:
@@ -451,7 +475,10 @@ try:
         import binascii, struct, zlib
         pixels = np.asarray(rgb, dtype=np.uint8)
         if pixels.ndim != 3 or pixels.shape[2] < 3:
-            raise RuntimeError("camera rgb output must be HxWxC")
+            raise RuntimeError(
+                "camera rgb output must be HxWxC with at least three channels; "
+                "got shape=%r dtype=%s" % (pixels.shape, pixels.dtype)
+            )
         pixels = np.ascontiguousarray(pixels[:, :, :3])
         height, width = pixels.shape[:2]
         raw = b"".join(b"\x00" + row.tobytes() for row in pixels)
@@ -497,8 +524,34 @@ try:
         for view in CAMERA_VIEWS:
             view_name = view["name"]
             try:
-                rgb = env.unwrapped.scene[_camera_key(view_name)].data.output["rgb"]
-                arr = rgb.detach().cpu().numpy()
+                sensor = env.unwrapped.scene[_camera_key(view_name)]
+                if SIM_DEVICE == "cpu":
+                    output = capture_annotators[view_name].get_data()
+                    raw = output["data"] if isinstance(output, dict) else output
+                    if hasattr(raw, "detach"):
+                        arr = raw.detach().cpu().numpy()
+                    elif isinstance(raw, np.ndarray):
+                        arr = raw
+                    else:
+                        import warp as wp
+                        arr = wp.to_torch(raw).cpu().numpy()
+                    pixels = CAPTURE_HEIGHT * CAPTURE_WIDTH
+                    if arr.size == pixels and arr.dtype.itemsize >= 4:
+                        # Replicator may expose packed RGBA pixels as uint32.
+                        arr = arr.view(np.uint8)
+                    if arr.size % pixels:
+                        raise RuntimeError("camera rgb buffer size is not image-shaped")
+                    arr = arr.reshape(1, CAPTURE_HEIGHT, CAPTURE_WIDTH, arr.size // pixels)
+                else:
+                    rgb = sensor.data.output["rgb"]
+                    arr = rgb.detach().cpu().numpy()
+                # A single non-tiled Camera returns HxWxC, while TiledCamera
+                # returns NxHxWxC. Normalize both sensor contracts before the
+                # per-environment writer loop.
+                if arr.ndim == 3:
+                    arr = arr[None, ...]
+                if arr.ndim != 4:
+                    raise RuntimeError("camera rgb output must be HxWxC or NxHxWxC")
                 for i in range(min(N, arr.shape[0])):
                     d = os.path.join(FRAMES_DIR, rollout_ids[i]); os.makedirs(d, exist_ok=True)
                     index = len(frame_names[i][view_name])
@@ -530,10 +583,13 @@ try:
             print("STEP0 act_shape", tuple(getattr(actions, "shape", ())), flush=True)
         if hasattr(actions, "ndim") and actions.ndim == 1:
             actions = actions.reshape(N, -1)
-        if _step in SAMPLE_INDEX:
-            capture(_step)
         a_np = actions.detach().cpu().numpy()
         obs, _, dones, extras = env.step(actions)
+        # TiledCamera annotators need the first rendered simulation step before
+        # their initial read. Capture the post-action state, which also aligns
+        # each image with the simulator ground truth recorded below.
+        if _step in SAMPLE_INDEX:
+            capture(_step)
         done_np = dones.detach().cpu().numpy().astype(bool)
         obj = uenv.scene["object"].data.root_pos_w[:, :3]
         cmd = uenv.command_manager.get_command("object_pose")
