@@ -119,6 +119,13 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "machine-readable runtime health/version contract",
         "pinned CUDA runtime fetch into an atomic writable cache",
     ],
+    "ltx2": [
+        "machine-readable runtime health/version contract",
+        "source and weight fetch both refuse without the operator's own "
+        "entitlement on the gated Lightricks/LTX-2.5 repository",
+        "CUDA runtime fetch refuses before NVIDIA terms acceptance",
+        "no LTX source, weights, or CUDA distribution present in the image",
+    ],
     "sim2real-control": [
         "canonical compositional stage-adapter module imports",
         "stage CLI exposes the complete 1-through-14 contract",

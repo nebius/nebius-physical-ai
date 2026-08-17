@@ -35,7 +35,7 @@ third-party EULA, also load
 `skills/atomic/third-party-eula-preflight/SKILL.md`; licensing classification
 does not itself establish operator consent or upstream asset access.
 
-## The Five Artifact Boundaries
+## The Six Artifact Boundaries
 
 Classify each boundary separately. A permissive answer at one boundary says
 nothing about the others.
@@ -47,9 +47,16 @@ nothing about the others.
 | **Weights** | Model checkpoints, adapters, tokenizers, and auxiliary model files | Treating registry access control as permission to redistribute baked bytes |
 | **Datasets** | Training, evaluation, calibration, and example data | Assuming a model license also covers its data |
 | **Runtime caches** | Downloaded weights, SDKs, compiled kernels, and mutable runtime state | Assuming runtime fetch is durable, or persisting credentials beside cached bytes |
+| **Outputs** | What the model generates when an operator runs it | Terms that restrict what the *generated artifacts* may be used for, and that therefore bind pipeline stages downstream of the model |
 
 The decisive layer is normally the **baked runtime**, because publishing an image
 distributes every byte in it to whoever pulls it.
+
+**Outputs** is the boundary people forget, because it is the one that is not
+about redistribution at all. Ship an image containing none of the vendor's bytes
+and every other boundary goes quiet — while a term like "you may not use the
+Outputs to train another model" stays fully in force and lands squarely on the
+next stage of the workflow. See the LTX-2.5 precedent below.
 
 ## Procedure
 
@@ -91,6 +98,12 @@ permission for another:
    bits change hands.
 4. Are there **field-of-use limits** (non-commercial, research-only, no
    competing service, evaluation-only)?
+5. What may the operator do with the **Outputs**? Restrictions here survive
+   every packaging trick, because they attach to artifacts we never touch.
+6. Do any obligations depend on **facts about the operator** — revenue,
+   headcount, entity type, whether this particular use is commercial? If so,
+   nobody upstream of the operator can answer them, which changes what the
+   image must ask for at run time (see below).
 
 ### 4. Resolve conflicting vendor sources
 
@@ -112,8 +125,18 @@ A conclusion in a PR description is not a control. Encode it:
   currently contains the build-your-own `cosmos3-serving` image. The name is retained
   for compatibility with the original Omniverse guard; membership covers any vendor
   runtime whose public redistribution conditions are not satisfied.
+- `npa/src/npa/deploy/images.py` — add tools that are licence-eligible but have
+  no built, byte-scanned artifact yet to `UNVALIDATED_PUBLICATION_TOOLS`.
+  "Restricted" and "unproven" are different answers to different questions, and
+  conflating them is wrong in both directions: a tool here is not restricted,
+  it simply has no evidence yet, and it leaves the set in the same change that
+  records its accepted digest and scan.
 - For a solution's weights/datasets, record the license and the runtime-fetch
   requirement in the capability table from the onboarding skill.
+- For an **output-layer** restriction, the record has to travel with the
+  artifacts: stamp a provenance manifest next to them and put a fail-closed gate
+  in front of every downstream stage the restriction reaches. A note in the docs
+  cannot stop a workflow; a gate can.
 
 The packaging-contract guards then fail the build if a Dockerfile bakes a
 restricted marker, or is built `FROM` a restricted image, while claiming
@@ -288,6 +311,92 @@ runtime injects the host driver and the Vulkan ICD given
 ships, enumerate *all* of it; the component you were sent to look at is rarely the only
 one with terms attached.
 
+## Worked Precedent: LTX-2.5 — When The Licence Restricts The Output
+
+Isaac showed how to make a redistribution question moot. LTX-2.5 is the case
+where doing that correctly still leaves you with a live problem, so it is the
+better template for any model whose licence is a bespoke community agreement
+rather than an OSI licence.
+
+**The layers.** Lightricks markets LTX as open source; the LTX-2.x Community
+License Agreement is not an OSI licence. Section 1.9 folds "inference-enabling
+code, training-enabling code … accompanying source code" into the licensed
+material, so unlike Wan — Apache source, gated weights — there is no clean split
+where we bake the code and runtime-fetch only the weights. **The code is the
+licensed material too.** Section 3 then makes a distributor responsible for
+imposing the use restrictions by contract (3.1), delivering the full agreement
+(3.2), and not transferring to a Commercial Entity at all until it holds a paid
+licence (3.5). An anonymous `docker pull` establishes none of those, which is an
+independent reason not to bake even the source. So `npa-ltx2` contains no LTX
+bytes at all and fetches both source and weights at run time — the Isaac answer,
+reached by a different route.
+
+**Prefer verifiable vendor-side consent to customer self-certification.** This is
+the transferable lesson, and it is the opposite of what this integration first
+shipped. An earlier version asked the operator for three declarations —
+`NPA_LTX_ACCEPT_COMMUNITY_LICENSE=YES`, an entity class, and a use class —
+because LTX's obligations turn on facts only the operator knows: whether the
+entity's revenue crosses Section 2.1's $10M threshold across all affiliates
+under common Control, and whether *this* use is commercial. All three were
+removed, for two reasons worth carrying forward:
+
+- **The agreement binds by conduct, so a local variable never formed it.** Its
+  opening line is "By downloading, using, accessing or distributing any portion
+  or element of LTX-2.x, you agree that you have read and accepted to be bound
+  by this Agreement." Whoever runs it is bound whether or not they typed `YES`
+  to us. Read the acceptance clause before building an acceptance gate: if the
+  licence forms on use, an `ACCEPT=YES` collects nothing and only looks like a
+  control.
+- **The vendor's own gate is checkable; a typed answer is not.**
+  `Lightricks/LTX-2.5` is a gated Hugging Face repository, and Lightricks grants
+  access only after a human accepts its terms there. Verified empirically: an
+  anonymous `HEAD` on a weight file returns `401`, and the same request with an
+  entitled token returns `302`. A token that can read the repository is
+  therefore *evidence* of acceptance, obtained from the party whose terms they
+  are — strictly stronger than a self-typed variable, which is unfalsifiable.
+  `npa-ltx2` now requires `HF_TOKEN` for the source fetch as well as the weight
+  fetch, because Section 1.9 makes the source licensed material too.
+
+An infrastructure provider that ships zero vendor bytes is not a distributor of
+them, and should not ask a customer to self-certify their revenue to it. Look
+for an entitlement the vendor already issues — gated repo, licence key, signed
+URL, registry credential — and require that. Ask the customer to declare only
+what no vendor-side entitlement can stand in for, and prefer stating an
+obligation plainly over pretending to have checked it.
+
+**The restriction that packaging cannot reach.** Attachment A(18) prohibits
+using the Outputs "to train, improve, or fine-tune any other machine learning
+model" for commercial use. In a physical-AI workbench that is not an edge case —
+generating synthetic video to train a robot policy is the *reason* to want the
+model, and a robot policy is another machine learning model. No amount of
+careful packaging touches this, because it governs artifacts sitting in the
+customer's own bucket. Which is also why no gate of ours can decide it: whether
+A(18) applies turns on the operator's own commercial position. `byof-ltx2.yaml`
+therefore stops at curation, which inspects Outputs without training on them,
+and leaves training to the operator under their own reading of the clause; the
+docs name the obligation instead of computing a disposition for it. Do not build
+a control that must guess a fact you cannot observe — a gate keyed to a guess
+reads as compliance while enforcing nothing.
+
+**The trap in proving it: gates that mask each other.** `npa-ltx2` has
+independent refusals — the operator's own Hugging Face entitlement and NVIDIA's
+CUDA terms — that all fail closed with exit 78. The build-time proof originally
+checked only that `ensure` exited 78, which meant a gate rewritten to accept
+everything still passed, on the strength of another gate refusing downstream of
+it. A refusal proof must assert **which** gate refused, and must be
+mutation-tested by breaking each gate in turn
+(`npa/tests/docker/test_ltx_runtime_bootstrap.py` runs the shipped script for
+real and does exactly that, including dropping the token check from the source
+fetch alone while the weight path stays guarded). Any time several controls
+share an exit code, assume they are hiding each other until a mutant proves
+otherwise.
+
+**Do not publish on the strength of the classification alone.** The licence work
+concluded `redistribution: public`, and the pushed image has since been scanned
+by digest, but no GPU has run it — so `ltx2` sits in
+`UNVALIDATED_PUBLICATION_TOOLS` and `publish_public` refuses it by name.
+Eligible and proven are different claims.
+
 ## Red Flags
 
 Any of these means stop and classify carefully rather than assuming OSS:
@@ -304,6 +413,15 @@ Any of these means stop and classify carefully rather than assuming OSS:
 - Weights or assets are downloaded during `docker build` rather than at run time
 - The license names an entity type we might be (cloud provider, service
   provider, competitor) in a carve-out
+- The license names an entity type the **operator** might be, or turns on a
+  revenue/headcount threshold — we cannot answer that and neither can a variable
+  they type, so state the obligation and require the vendor's own entitlement
+- The license says anything about the model's *outputs*: how they may be used,
+  that they must be disclosed as machine-generated, that provenance markers may
+  not be stripped, or that they may not train another model
+- The project is described as open source but ships a bespoke "community
+  license" instead of an OSI licence; read it for restrictions on the code, not
+  just the weights
 
 ## Verify
 
@@ -314,6 +432,7 @@ npa/.venv/bin/python -m npa.deploy.publish_public --dry-run
 
 # For an image that runtime-fetches a vendor runtime, also prove the artefact is clean:
 npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py <registry>/<image>:<tag>
+npa/.venv/bin/python npa/scripts/scan_image_ltx_payload.py <registry>/npa-ltx2:<tag>
 ```
 
 The publish dry run is the end-to-end check: whatever it lists is what we would
@@ -332,6 +451,13 @@ hand to the public, so a restricted image appearing there is a hard stop.
   blessing, that is still redistribution.
 - Deleting a public tag does not undo publication. Treat a mistaken publish as
   an incident, not a revert.
+- An output restriction cannot be packaged away. Shipping zero vendor bytes is
+  the answer to "may we redistribute this?" and no answer at all to "what may
+  the customer do with what it generates?" — check whether the pipeline's next
+  stage is the thing the licence forbids.
+- Several gates that all fail closed with the same exit code will mask each
+  other. A refusal test that only checks the code is worth less than it looks;
+  assert which gate refused, and mutate each one to prove it.
 - Record the license decision at onboarding time. Reconstructing why an image
   was classified two years later, after the vendor's page has changed, is far
   harder than writing one paragraph now.

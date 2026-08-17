@@ -719,6 +719,8 @@ skills:
       - type: file_exists
         path: docs/workbench/container-packaging.md
       - type: file_exists
+        path: npa/tests/docker/test_ltx_runtime_bootstrap.py
+      - type: file_exists
         path: npa/tests/guardrails/test_solution_licensing_skill.py
   - name: real-components
     category: atomic

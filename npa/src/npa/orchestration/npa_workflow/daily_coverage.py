@@ -49,13 +49,18 @@ WORKFLOW_IMAGE_TOOLS: frozenset[str] = frozenset(TOOL_REF_IMAGE_TOOL.values())
 #:   lerobot / genesis : component/tool images with no comprehensive workflow
 #:                       toolRef chain yet (covered by their own tool + serverless
 #:                       E2Es and by the daily registry-reachability check).
+#:
+#: ``groot`` left this set with the GR00T 1.7 multi-GPU training workflow.
+#: ``lerobot`` briefly left it too, when byof-ltx2.yaml ended in a policy-training
+#: state — but that state trained on a hub dataset and consumed no LTX output, so
+#: it was removed rather than left standing as coverage it did not provide.
 EXEMPT_IMAGE_TOOLS: frozenset[str] = frozenset(
     {
         "sonic",
         "retargeting",
         "cosmos3-reason",
-        "lerobot",
         "genesis",
+        "lerobot",
     }
 )
 

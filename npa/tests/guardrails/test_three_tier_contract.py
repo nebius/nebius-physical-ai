@@ -541,6 +541,10 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         "lerobot",
         # Static web viewer (caddy static server; no skypilot three-tier YAML).
         "lichtblick",
+        # LTX-2.5 licensing surface only: `terms` prints what governs the model.
+        # Generation runs through the BYOF tier (`base_image: tool://ltx2`), so
+        # this verb has no service or YAML env tier to stay coherent with.
+        "ltx2",
         "mjlab",
         # NuRec verbs take repeatable options (--camera-id, --override) and Hydra
         # passthrough, so the inspect-based CapabilityContract cannot express them.

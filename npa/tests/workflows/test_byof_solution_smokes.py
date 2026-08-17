@@ -98,6 +98,15 @@ SOLUTION_CAPABILITY_CONTRACTS = {
             "world_model_rerun_visualization",  # 3-stream Rerun .rrd artifact
         ],
     },
+    "ltx2.5": {
+        "capability_name": "ltx2_5_text_to_video",
+        "smoke_artifact_name": "ltx2_5_text_to_video.json",
+        "spec": "byof-ltx2.yaml",
+        "must_exercise": [
+            "ltx2_5_text_to_video",
+            "ltx2_5_decoded_mp4_validation",
+        ],
+    },
     "wan2.2": {
         "capability_name": "wan2.2_ti2v_5b_text_to_video",
         "smoke_artifact_name": "wan2_2_ti2v_5b_text_to_video.json",
@@ -281,6 +290,86 @@ def test_oss_catalog_lists_solution_specific_capabilities() -> None:
     for solution, expected in SOLUTION_CAPABILITY_CONTRACTS.items():
         assert expected["capability_name"] in text, solution
         assert expected["smoke_artifact_name"] in text, solution
+
+
+def test_ltx2_spec_fetches_nothing_before_the_refusal_is_proved() -> None:
+    """The LTX spec's ordering is what keeps the zero-payload claim honest.
+
+    `assert-refusal` has to run *before* the fetches: it also asserts both caches
+    are empty, so running it afterwards would let a "refusal" that merely reused
+    an already-populated cache pass for a refusal.
+    """
+
+    path = WORKFLOW_DIR / "byof-ltx2.yaml"
+    config = _load_config(path)
+    smoke = str(config["smoke_command"])
+
+    assert config["base_profile"] == "prebuilt"
+    assert config["base_image"] == "tool://ltx2"
+    assert config["build_command"] == ""
+    assert config["repo_ref"] == "fd4ded7f2d88d3da713abcdd4ad41ecc4a9314ca"
+    assert config["resource_profile_yaml"] == "byof-solution-smoke-ltx2-rtxpro-gpu"
+
+    # Nothing about LTX may be pulled at image build time; it is all runtime.
+    assert "hf download" not in str(config["build_command"])
+    assert '"weights_baked": False' in smoke
+    assert '"source_baked": False' in smoke
+
+    order = [
+        smoke.index("ltx-runtime assert-refusal"),
+        smoke.index("ltx-runtime ensure"),
+        smoke.index("ltx-runtime fetch-weights"),
+    ]
+    assert order == sorted(order), "the refusal proof must precede both fetches"
+
+    # Real upstream entrypoint, not a wrapper we invented.
+    assert "ltx_pipelines.distilled" in smoke
+    assert "--transformer-path" in smoke and "--text-encoder-path" in smoke
+    # Real decode validation through the module the repo's unit tests exercise.
+    assert "import video_check" in smoke
+    assert "video_check.validate_video(" in smoke
+
+
+def test_ltx2_stops_at_curation_and_trains_nothing() -> None:
+    """No state here may train on LTX Outputs, and none may pretend to.
+
+    Attachment A(18) restricts training other models on the Outputs for
+    commercial use, and whether that applies is the operator's own call — it
+    turns on facts about them. What this spec must not do is make that call look
+    handled. An earlier version ended in a LeRobot training state, which read the
+    `lerobot/pusht` hub dataset: no LTX Output ever reached it, so a trainer
+    appeared in the pipeline while nothing about the restriction was actually
+    demonstrated.
+
+    LTX-2.5 text-to-video output is not a LeRobot dataset — no actions, no
+    meta/info.json — so the honest shape is to stop at curation, which inspects
+    Outputs without training on them, and leave training to the operator.
+    """
+
+    from npa.orchestration.npa_workflow import load_spec
+
+    spec = load_spec(WORKFLOW_DIR / "byof-ltx2.yaml")
+    states = spec.states
+
+    assert set(states) == {"generate", "curate"}
+    assert states["generate"].next == "curate"
+    assert states["curate"].tool_ref == "workbench.fiftyone.curate_augmented"
+    assert states["curate"].terminal, "curation is where this spec stops"
+
+    training_tools = {"workbench.lerobot.policy_train", "workbench.groot.finetune"}
+    trainers = {
+        name for name, state in states.items() if state.tool_ref in training_tools
+    }
+    assert trainers == set(), (
+        f"{sorted(trainers)} would train inside this spec. A trainer fed from "
+        "elsewhere demonstrates nothing about LTX Outputs, and one fed from here "
+        "makes a licensing judgement that is the operator's to make."
+    )
+
+    # Curation consumes what generation actually produced, by config key rather
+    # than by two URIs that happen to look alike today.
+    assert "{{config.video_uri}}" in [item.uri for item in states["generate"].outputs]
+    assert [item.uri for item in states["curate"].inputs] == ["{{config.augment_uri}}"]
 
 
 def test_wan22_package_keeps_weights_runtime_only_and_claims_t2v_only() -> None:

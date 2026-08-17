@@ -792,6 +792,28 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "byof-ltx2.yaml",
+        "multi",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+            "NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS",
+        ),
+        plan_only=True,
+        plan_only_justification=(
+            "the npa-ltx2 image has not been built, so no live submit can run yet"
+        ),
+        notes=(
+            "BYOF LTX-2.5 candidate. Plan-only for a reason the other entries do "
+            "not share: the image does not exist yet. It also cannot be submitted "
+            "on an operator's behalf at all — both fetches refuse without that "
+            "operator's own entitlement on the gated Lightricks/LTX-2.5 "
+            "repository. test_ltx2_live_e2e.py owns the gated live path once an "
+            "image exists."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-wan2.2.yaml",
         "multi",
         secret_envs=(
