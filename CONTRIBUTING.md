@@ -564,7 +564,7 @@ The current expected `make test` baseline from
 `skills/atomic/testing-conventions/SKILL.md` is:
 
 ```text
-10368+ passed, 38 skipped, 12 deselected, 1 xpassed, 0 failures
+10371+ passed, 38 skipped, 12 deselected, 1 xpassed, 0 failures
 ```
 
 The default suite is hermetic. It needs no `kubectl`, no cluster, and no venv at a
