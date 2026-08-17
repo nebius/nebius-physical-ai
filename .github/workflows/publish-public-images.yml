@@ -136,7 +136,7 @@ jobs:
           PY
 
       - name: Refuse a public candidate package before build
-        if: ${{ steps.candidate.outcome == 'success' }}
+        if: ${{ steps.candidate.outcome == 'success' && vars.NPA_RETIRE_CANDIDATE_REF == '' }}
         env:
           GH_TOKEN: ${{ secrets.NPA_PRIVATE_GHCR_TOKEN || secrets.GITHUB_TOKEN }}
           OWNER: ${{ steps.candidate.outputs.owner }}
@@ -163,11 +163,11 @@ jobs:
           fi
 
       - name: Set up Buildx for candidate build
-        if: ${{ steps.candidate.outcome == 'success' }}
+        if: ${{ steps.candidate.outcome == 'success' && vars.NPA_RETIRE_CANDIDATE_REF == '' }}
         uses: docker/setup-buildx-action@v3
 
       - name: Login to private GHCR candidate channel for build
-        if: ${{ steps.candidate.outcome == 'success' }}
+        if: ${{ steps.candidate.outcome == 'success' && vars.NPA_RETIRE_CANDIDATE_REF == '' }}
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -227,7 +227,7 @@ jobs:
           fi
 
       - name: Build and push immutable private candidate
-        if: ${{ steps.candidate.outcome == 'success' }}
+        if: ${{ steps.candidate.outcome == 'success' && vars.NPA_RETIRE_CANDIDATE_REF == '' }}
         id: candidate-build
         uses: docker/build-push-action@v6
         with:
