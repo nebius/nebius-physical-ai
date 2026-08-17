@@ -574,12 +574,13 @@ The current expected `make test` baseline from
 `skills/atomic/testing-conventions/SKILL.md` is:
 
 ```text
-10385+ passed, 37 skipped, 12 deselected, 1 xpassed, 0 failures
+10385 passed, 37 skipped, 12 deselected, 1 xpassed, 0 failures
 ```
 
-The skip count moves by one or two with locally installed tooling, since a few
-smokes self-skip without `tmux` or `docker`; the pass count and the zero failures
-are the parts to hold to.
+A few tests self-skip without `node`, `tmux`, or `docker`, which moves them from
+passed to skipped without changing the total: the same tree reports
+`10383 passed, 39 skipped` where `node` is absent. Hold to `passed + skipped =
+10422` and zero failures rather than to the split.
 
 The default suite is hermetic. It needs no `kubectl`, no cluster, and no venv at a
 particular path, so a failure naming a missing executable or an unimportable `npa`
