@@ -114,6 +114,8 @@ states:
     outputs:
       - uri: "{{config.input_provenance_uri}}"
         schema: npa.paidf.cosmos3.input.v1
+      - uri: "{{config.images_uri}}"
+        schema: npa.data_factory.frames.v1
     next: generate-configs
 
   generate-configs:
@@ -165,6 +167,9 @@ states:
       - generate-variants
       - evaluate
       - quality-gate
+    outputs:
+      - uri: "{{config.augment_manifest_uri}}"
+        schema: npa.paidf.cosmos3.augment.v1
     next: quality-disposition
 
   generate-variants:
