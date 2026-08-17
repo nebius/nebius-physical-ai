@@ -12,6 +12,19 @@ making architecture, review, or domain judgments.
   expectations.
 - `skills/atomic/architecture/SKILL.md`: platform architecture and validation
  state.
+- `skills/workflows/first-run-setup/SKILL.md`: zero to a first verified result on
+ a fresh machine or new project — an ordered, gated path (install → configure →
+ credential preflight → cheapest-proof workload → validate spec → provision →
+ image pullability → submit), with a stop condition at every step.
+- `skills/atomic/health-preflight/SKILL.md`: there is no `npa doctor` — prove
+ HF/NGC/S3/Token Factory credentials and gated-model access with
+ `npa workbench health preflight` / `access` before spending GPU time.
+- `skills/atomic/debug-failed-run/SKILL.md`: triage a run that failed, hung, or
+ produced no artifacts — status and pod-level reason, stage logs, S3 evidence,
+ image pullability, scheduling, and the resume-vs-cancel decision.
+- `skills/atomic/teardown-and-cost/SKILL.md`: stop spend safely — the mandatory
+ cancel-before-destroy ordering, cloud versus local state, and the orphan audit
+ for leaked clusters, agent VMs, controllers, buckets, and cross-project fleets.
 - `skills/atomic/agent-development/SKILL.md`: build, enhance, or test the NPA
  chat agent backend (grounded-first routing, cost-aware Token Factory model
  selection, embedded-backend mechanism, cheap-token test tiers).
@@ -37,6 +50,24 @@ making architecture, review, or domain judgments.
  (k8s-training) clusters across one or many projects in a tenant from an
  `npa.fleet/v0.0.1` spec — identical and/or custom clusters, create-on-demand
  projects, and a k8s-training source that can consume the latest upstream recipe.
+- `skills/tools/token-factory/SKILL.md`: zero-GPU hosted inference (captioning,
+ batch generation, Cosmos physical-AI reasoning) — the cheapest tier that
+ produces a real artifact, with no cluster and no provisioning.
+- `skills/tools/vlm-eval/SKILL.md`: score rollouts with a VLM and turn the score
+ into a gate — `run` vs `loop`, rubric/threshold benchmark sweeps, backend
+ selection, and judging against a plan an earlier stage wrote.
+- `skills/tools/golden-eval/SKILL.md`: prove a container image actually works —
+ per-container hello-world manifest, dry-run/local/serverless tiers, batch runs,
+ and the offline manifest validation that gates CI.
+- `skills/tools/burst/SKILL.md`: one gang-scheduled multi-node GPU job with
+ torchrun rendezvous, deliberately not a workflow surface.
+- `skills/tools/gpu-cluster-provisioning/SKILL.md`: managed-image vs GPU-Operator
+ driver strategy (operator mode is unsafe on NVSwitch), the post-apply health
+ gates, accelerator-name discovery, and triage for nodes whose GPUs do not work.
+- `skills/tools/detection-training/SKILL.md`: Faster R-CNN detectors trained from
+ LanceDB materialized views (BDD100K failure-mode slices).
+- `skills/tools/artifact-viz-share/SKILL.md`: sim demos → LeRobotDataset →
+ `.rrd`/MP4, and time-boxed presigned Rerun share links.
 - `skills/tools/mjlab/SKILL.md`: MJLab locomotion evaluation and SONIC checkpoint
  scoring.
 - `skills/tools/retargeting/SKILL.md`: motion retargeting in SONIC locomotion
