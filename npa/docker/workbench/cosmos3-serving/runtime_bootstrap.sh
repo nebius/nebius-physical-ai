@@ -40,6 +40,9 @@ rm -rf "${VENV}"
 python -m venv "${VENV}"
 "${VENV}/bin/python" -m pip install --no-cache-dir --require-hashes --only-binary=:all: \
   --no-binary=antlr4-python3-runtime,openai-whisper -r "${LOCK}"
+site_packages="$("${VENV}/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+cp /opt/npa-cosmos3-serving/hf_snapshot_pin.py "${site_packages}/sitecustomize.py"
+"${VENV}/bin/python" /opt/npa-cosmos3-serving/prepare_guardrail_runtime.py
 curl -fL --retry 3 --proto '=https' --tlsv1.2 \
   -o "${work}/vllm-omni.tar.gz" \
   "https://github.com/vllm-project/vllm-omni/archive/${REVISION}.tar.gz"

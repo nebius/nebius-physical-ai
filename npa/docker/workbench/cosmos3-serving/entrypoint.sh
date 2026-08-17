@@ -11,6 +11,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 MODEL="${NPA_COSMOS3_SERVE_MODEL:-nvidia/Cosmos3-Super}"
+MODEL_REVISION="${NPA_COSMOS3_SERVE_MODEL_REVISION:-e0262be9d8f7586bc24c069a2aed2b665bdff266}"
 HOST="${NPA_COSMOS3_SERVE_HOST:-0.0.0.0}"
 PORT="${NPA_COSMOS3_SERVE_PORT:-8000}"
 GUARDRAILS="${NPA_COSMOS3_SERVE_GUARDRAILS:-on}"
@@ -77,6 +78,7 @@ fi
 # part of this surface.
 argv=(
   vllm serve "${MODEL}"
+  --revision "${MODEL_REVISION}"
   --omni
   --host "${HOST}"
   --port "${PORT}"

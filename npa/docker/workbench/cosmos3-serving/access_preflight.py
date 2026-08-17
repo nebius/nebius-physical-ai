@@ -32,15 +32,24 @@ def main() -> int:
         )
         return 2
 
-    repositories = [os.environ.get("NPA_COSMOS3_SERVE_MODEL", "nvidia/Cosmos3-Super")]
+    repositories = [
+        (
+            os.environ.get("NPA_COSMOS3_SERVE_MODEL", "nvidia/Cosmos3-Super"),
+            os.environ.get("NPA_COSMOS3_SERVE_MODEL_REVISION"),
+        )
+    ]
     if os.environ.get("NPA_COSMOS3_SERVE_GUARDRAILS", "on") == "on":
         repositories.append(
-            os.environ.get(
-                "NPA_COSMOS3_SERVE_GUARDRAIL_MODEL", "nvidia/Cosmos-1.0-Guardrail"
+            (
+                os.environ.get(
+                    "NPA_COSMOS3_SERVE_GUARDRAIL_MODEL",
+                    "nvidia/Cosmos-1.0-Guardrail",
+                ),
+                os.environ.get("NPA_COSMOS3_SERVE_GUARDRAIL_REVISION"),
             )
         )
 
-    for repository in repositories:
+    for repository, expected_revision in repositories:
         try:
             info = _model_info(repository, token)
         except urllib.error.HTTPError as exc:
@@ -58,9 +67,18 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 4
+        actual_revision = str(info.get("sha") or "")
+        if expected_revision and actual_revision != expected_revision:
+            print(
+                f"[npa-cosmos3-serving] ERROR: {repository} resolved to "
+                f"{actual_revision or 'unknown'}, expected pinned revision "
+                f"{expected_revision}.",
+                file=sys.stderr,
+            )
+            return 5
         print(
             f"[npa-cosmos3-serving] access confirmed: "
-            f"{repository}@{info.get('sha') or 'unknown'}"
+            f"{repository}@{actual_revision or 'unknown'}"
         )
     return 0
 

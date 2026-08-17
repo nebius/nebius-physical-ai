@@ -23,6 +23,8 @@ ACCESS_PREFLIGHT = IMAGE_DIR / "access_preflight.py"
 LOCK = IMAGE_DIR / "requirements.lock"
 RUNTIME_BOOTSTRAP = IMAGE_DIR / "runtime_bootstrap.sh"
 SERVING_SMOKE = IMAGE_DIR / "smoke_serving.sh"
+GUARDRAIL_PREP = IMAGE_DIR / "prepare_guardrail_runtime.py"
+HF_SNAPSHOT_PIN = IMAGE_DIR / "hf_snapshot_pin.py"
 CONTRACT = NPA_ROOT / "docker/workbench/packaging-contract.yaml"
 SOURCE_REVISION = "a4ea67a21b20054dacc6e83952f9bd407e8ee4e7"
 SOURCE_SHA256 = "2a4ca4d3d83417a88717767fcdfdc5cb214200c6957d26d70625f17f58954800"
@@ -57,11 +59,15 @@ def test_source_base_and_dependency_closure_are_immutable() -> None:
     assert "snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}" in text
     assert SOURCE_REVISION in text
     assert SOURCE_SHA256 in text
+    assert "e0262be9d8f7586bc24c069a2aed2b665bdff266" in text
+    assert "cf03c0395fac8c4de386c0bdab12cc4fc8d66362" in text
     bootstrap = RUNTIME_BOOTSTRAP.read_text(encoding="utf-8")
     assert "sha256sum -c" in bootstrap
     assert "--require-hashes" in bootstrap
     assert 'python -m venv "${VENV}"' in bootstrap
     assert 'mv "${work}/venv" "${VENV}"' not in bootstrap
+    assert "prepare_guardrail_runtime.py" in bootstrap
+    assert "sitecustomize.py" in bootstrap
     assert "vllm/vllm-omni" not in text
     assert "nvcr.io" not in text
     assert "vllm==0.26.0" in LOCK.read_text(encoding="utf-8")
@@ -171,6 +177,31 @@ def test_access_preflight_preserves_repository_path_separator(monkeypatch) -> No
     assert requested == ["https://huggingface.co/api/models/nvidia/Cosmos3-Super"]
 
 
+def test_access_preflight_refuses_pinned_revision_drift(monkeypatch) -> None:
+    module = _module("cosmos3_access_preflight_revision", ACCESS_PREFLIGHT)
+    monkeypatch.setenv("HF_TOKEN", "test-only-placeholder")
+    monkeypatch.setenv("NPA_COSMOS3_SERVE_MODEL_REVISION", "expected-model")
+    monkeypatch.setattr(module, "_model_info", lambda *_: {"sha": "other-model"})
+    assert module.main() == 5
+
+
+def test_guardrail_runtime_materializes_snapshot_symlinks(tmp_path: Path) -> None:
+    module = _module("cosmos3_guardrail_prep", GUARDRAIL_PREP)
+    blob = tmp_path / "blob"
+    blob.write_text("runtime-only data", encoding="utf-8")
+    blocklist = tmp_path / "blocklist"
+    blocklist.mkdir()
+    link = blocklist / "data.txt"
+    link.symlink_to(blob)
+
+    assert module.materialize_symlinks(blocklist) == 1
+    assert not link.is_symlink()
+    assert link.read_text(encoding="utf-8") == "runtime-only data"
+    pin = HF_SNAPSHOT_PIN.read_text(encoding="utf-8")
+    assert "NPA_COSMOS3_SERVE_GUARDRAIL_REVISION" in pin
+    assert "refusing unpinned guardrail revision" in pin
+
+
 @pytest.fixture
 def harness(tmp_path: Path):
     bin_dir = tmp_path / "bin"
@@ -209,7 +240,8 @@ def harness(tmp_path: Path):
 def test_entrypoint_enforces_eight_gpus_and_guardrails_on(harness) -> None:
     result, command = harness(8)
     assert result.returncode == 0, result.stderr
-    assert command.startswith("serve nvidia/Cosmos3-Super --omni")
+    assert command.startswith("serve nvidia/Cosmos3-Super --revision ")
+    assert " --omni " in command
     assert "--cfg-parallel-size 2" in command
     assert "--ulysses-degree 4" in command
     assert "--hsdp-shard-size 8" in command
