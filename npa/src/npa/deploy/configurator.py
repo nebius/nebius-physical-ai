@@ -16,6 +16,11 @@ from jinja2 import Environment, FileSystemLoader
 
 from npa.clients.env import render_docker_env_file, render_shell_env_file
 from npa.clients.ssh import SSHClient
+from npa.workbench.model_cache import (
+    docker_model_cache_volumes,
+    model_cache_env,
+    resolve_model_cache_root,
+)
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _DEPLOY_DIR = Path(__file__).parent.parent.parent.parent / "deploy"
@@ -206,6 +211,16 @@ def deploy_workbench_container(
     """Install Docker and run a Workbench image as a long-lived container."""
     install_container_runtime(ssh, ssh_user=ssh_user, gpu=gpu)
 
+    # Weights a workbench image is not allowed to bake must survive `docker rm`,
+    # which this deploy runs every time. A host-backed cache turns the second
+    # deploy of an image into a local read instead of another gated download.
+    cache_root = resolve_model_cache_root()
+    cache_volumes = docker_model_cache_volumes(root=cache_root)
+    cache_env = model_cache_env(cache_root)
+    volumes = (*volumes, *cache_volumes)
+    cache_host_dirs = tuple(volume.split(":", 1)[0] for volume in cache_volumes)
+    work_dirs = (*work_dirs, *cache_host_dirs)
+
     if work_dirs:
         dirs = " ".join(shlex.quote(path) for path in work_dirs)
         ssh.run_or_raise(
@@ -243,11 +258,17 @@ def deploy_workbench_container(
     device_flags = " ".join(f"--device {shlex.quote(device)}" for device in devices)
     device_flags = f"{device_flags} " if device_flags else ""
     volume_flags = " ".join(f"-v {shlex.quote(volume)}" for volume in volumes)
+    # `-e` wins over `--env-file`, so a configured shared cache supersedes the
+    # per-tool cache path an image bakes into its own env file.
+    cache_env_flags = " ".join(
+        f"-e {shlex.quote(f'{key}={value}')}" for key, value in sorted(cache_env.items())
+    )
+    cache_env_flags = f"{cache_env_flags} " if cache_env_flags else ""
     run_cmd = (
         f"sudo docker rm -f {shlex.quote(container_name)} >/dev/null 2>&1 || true\n"
         f"sudo docker run -d {gpu_flag}--ipc=host --network host "
         f"--name {shlex.quote(container_name)} --restart unless-stopped "
-        f"{group_flags}{device_flags}{env_flag}{volume_flags} "
+        f"{group_flags}{device_flags}{env_flag}{cache_env_flags}{volume_flags} "
         f"{shlex.quote(image_ref)} {command}"
     )
     ssh.run_or_raise(run_cmd)
@@ -356,6 +377,7 @@ def deploy_lerobot_container(
     registry_token: str = "",
 ) -> None:
     """Install Docker/NVIDIA runtime and run the LeRobot server container."""
+    hf_cache_dir = str(server_config.get("hf_cache_dir") or "/opt/lerobot/hf_cache")
     install_cmd = f"""
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -366,6 +388,7 @@ sudo install -d -m 0755 -o {shlex.quote(ssh_user)} -g {shlex.quote(ssh_user)} \
   /opt/lerobot/job_status \
   /opt/lerobot/dataset_cache \
   /opt/lerobot/checkpoint_cache \
+  {shlex.quote(hf_cache_dir)} \
   /opt/lerobot/benchmarks \
   /var/log/npa-lerobot
 sudo touch /opt/lerobot/.env
@@ -427,7 +450,7 @@ sudo usermod -aG docker {shlex.quote(ssh_user)} || true
         "NPA_JOB_STATUS_DIR": server_config.get("job_status_dir", "/opt/lerobot/job_status"),
         "NPA_LOG_DIR": server_config.get("log_dir", "/var/log/npa-lerobot"),
         "AWS_ENDPOINT_URL": server_config.get("storage_endpoint", ""),
-        "HF_LEROBOT_HOME": server_config.get("hf_cache_dir", "/opt/lerobot/hf_cache"),
+        "HF_LEROBOT_HOME": hf_cache_dir,
         "MUJOCO_GL": "egl",
         "PYOPENGL_PLATFORM": "egl",
         "PYTHONUNBUFFERED": "1",
@@ -450,6 +473,11 @@ sudo usermod -aG docker {shlex.quote(ssh_user)} || true
             "-v /opt/lerobot/job_status:/opt/lerobot/job_status",
             "-v /opt/lerobot/dataset_cache:/opt/lerobot/dataset_cache",
             "-v /opt/lerobot/checkpoint_cache:/opt/lerobot/checkpoint_cache",
+            # HF_LEROBOT_HOME points here, and this deploy recreates the container
+            # on every run: without the bind mount the datasets and policy weights
+            # LeRobot pulls from Hugging Face are discarded with the old container
+            # and downloaded again.
+            f"-v {shlex.quote(hf_cache_dir)}:{shlex.quote(hf_cache_dir)}",
             "-v /opt/lerobot/benchmarks:/opt/lerobot/benchmarks",
             "-v /var/log/npa-lerobot:/var/log/npa-lerobot",
         ]

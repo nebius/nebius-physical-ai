@@ -45,6 +45,37 @@ def _runner(returncode: int = 0):
     return run, calls
 
 
+def test_cosmos3_cache_dir_falls_back_to_the_durable_model_cache() -> None:
+    from pathlib import Path as _Path
+
+    cfg = Cosmos3AccessConfig.from_env(
+        environ={"NPA_MODEL_CACHE_PVC": "npa-model-cache"}
+    )
+
+    assert cfg.resolved_cache_dir == _Path("/opt/npa-model-cache/cosmos3")
+
+
+def test_cosmos3_blank_cache_dir_means_use_the_configured_cache() -> None:
+    from pathlib import Path as _Path
+
+    # A workflow spec that leaves `cosmos_cache_dir` empty renders `--cache-dir ''`,
+    # which Typer hands over as Path("."). That must not cache a multi-gigabyte
+    # checkpoint into the stage's working directory.
+    cfg = Cosmos3AccessConfig.from_env(
+        cache_dir=_Path(""), environ={"NPA_COSMOS3_CACHE": "/cache/cosmos3"}
+    )
+
+    assert cfg.resolved_cache_dir == _Path("/cache/cosmos3")
+
+
+def test_cosmos3_cache_dir_defaults_to_writable_tmp_without_configured_storage() -> None:
+    from pathlib import Path as _Path
+
+    cfg = Cosmos3AccessConfig.from_env(environ={})
+
+    assert cfg.resolved_cache_dir == _Path("/tmp/npa-cosmos3-cache")
+
+
 def test_cosmos3_from_env_resolves_runtime_knobs(tmp_path: Path) -> None:
     cfg = Cosmos3AccessConfig.from_env(
         environ={

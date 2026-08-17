@@ -412,7 +412,7 @@ def test_lerobot_train_container_command_does_not_pre_create_output_dir() -> Non
     )
 
     assert "mkdir -p /tmp/lerobot_output" not in command
-    assert "mkdir -p /tmp/hf_home" in command
+    assert 'mkdir -p "${HF_HOME:-/tmp/hf_home}"' in command
     assert "--eval_freq=1000000" in command
 
 

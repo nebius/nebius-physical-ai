@@ -25,7 +25,9 @@ config:
 
   cosmos_source_repo: https://github.com/NVIDIA/cosmos-framework.git
   cosmos_model_id: nvidia/Cosmos3-Nano
-  cosmos_cache_dir: /tmp/npa-cosmos3-cache
+  # Empty means "use the cache the runtime resolved" (NPA_COSMOS3_CACHE, which the
+  # renderer points at the durable model cache when the operator configured one).
+  cosmos_cache_dir: ""
 
   t2i_prompt: "a small robot arm sorting colored blocks on a workbench"
   t2i_checkpoint_name: Cosmos3-Nano

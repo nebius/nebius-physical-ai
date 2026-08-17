@@ -2779,6 +2779,21 @@ def test_engine_kubernetes_component_env_forwards_writable_model_caches() -> Non
     assert {key: safe[key] for key in cache_env} == cache_env
 
 
+def test_engine_kubernetes_component_env_forwards_the_durable_model_cache() -> None:
+    import npa.workflows.sim2real.engine as engine_module
+    from npa.workbench.model_cache import model_cache_env
+
+    durable = model_cache_env("/opt/npa-model-cache")
+
+    safe = engine_module._kubernetes_component_env(
+        durable, Sim2RealLoopConfig(run_id="cache-env")
+    )
+
+    # A single dropped variable sends that tool's download back to the pod's own
+    # filesystem while the rest of the stage reads the shared cache.
+    assert {key: safe[key] for key in durable} == durable
+
+
 def test_byo_policy_rollout_passes_component(monkeypatch, tmp_path) -> None:
     """Regression: the --byo-policy-command path must pass component= to
     _run_component_command (it was omitted, raising TypeError mid-run)."""

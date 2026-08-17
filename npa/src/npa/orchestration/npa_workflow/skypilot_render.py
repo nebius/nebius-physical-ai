@@ -14,6 +14,14 @@ from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.interpreter import ExecutionPlan, PlanStep  # noqa: F401
 from npa.orchestration.npa_workflow.scheduler import build_scheduler_task
 from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec
+from npa.workbench.model_cache import (
+    model_cache_env,
+    model_cache_host_path,
+    model_cache_pvc,
+    pod_config_with_model_cache,
+    render_model_cache_shell,
+    resolve_model_cache_root,
+)
 
 # Map toolRef prefixes / exact names onto CONTAINER_IMAGE_NAMES keys.
 # Token Factory is a hosted HTTP API client. Do not pin the heavy cosmos image:
@@ -1723,13 +1731,20 @@ def build_skypilot_task_doc(
         if _cond_val:
             envs[_cond_var] = _cond_val
 
+    # Weights this stage has to download (the images bake none) belong in the
+    # operator's durable cache when one exists, so the next run of the same image
+    # is a cache hit instead of another multi-gigabyte pull onto a paid GPU.
+    cache_root = resolve_model_cache_root()
+    envs.update(model_cache_env(cache_root))
+
     doc: dict[str, Any] = {
         "name": scheduler_task["name"],
         "resources": resources,
         "envs": envs,
         "run": render_task_run_script(
             command,
-            preamble=render_run_preamble_for_tool(
+            preamble=render_model_cache_shell(cache_root)
+            + render_run_preamble_for_tool(
                 str(scheduler_task.get("tool_ref") or ""), config=spec.config
             ),
         ),
@@ -1758,6 +1773,26 @@ def build_skypilot_task_doc(
                 "first-party workflow images must satisfy the SkyPilot bootstrap "
                 "contract as their declared image user; runAsUser: 0 overrides are forbidden"
             )
+    # A pod is discarded when the stage ends, so on Kubernetes the cache env above
+    # only survives the run if it points at a volume that outlives the pod. Mount
+    # the operator's claim; a profile that already mounts something at the cache
+    # root keeps its own volume (pod_config_with_model_cache leaves it alone).
+    cache_claim = model_cache_pvc()
+    cache_host_path = model_cache_host_path()
+    if (
+        cache_root
+        and (cache_claim or cache_host_path)
+        and str(resources.get("cloud") or "").strip().lower()
+        in {"kubernetes", "k8s"}
+    ):
+        task_config.setdefault("kubernetes", {})["pod_config"] = (
+            pod_config_with_model_cache(
+                task_config.get("kubernetes", {}).get("pod_config"),
+                root=cache_root,
+                pvc=cache_claim,
+                host_path=cache_host_path,
+            )
+        )
     if task_config:
         doc["config"] = task_config
     setup = render_setup_for_tool(
@@ -1766,7 +1801,11 @@ def build_skypilot_task_doc(
         options=options,
     )
     if setup.strip():
-        doc["setup"] = setup
+        # setup is where a stage pre-fetches weights (the self-hosted VLM backend
+        # downloads its model here so the eval's readiness window is not spent on
+        # it), and SkyPilot runs it in a different shell than run -- so the cache
+        # tree has to exist in both.
+        doc["setup"] = render_model_cache_shell(cache_root) + setup
     # When no workbench image is pinned, point setup at an existing S3 copy of
     # the npa package (SkyPilot local file_mounts create new buckets and fail
     # on Nebius). Operators set NPA_SRC_S3_URI=s3://bucket/prefix/npa, or persist

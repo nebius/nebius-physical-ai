@@ -912,6 +912,70 @@ def test_deploy_workbench_container_adds_groups_and_devices(mocker) -> None:
     assert "--device /dev/dri" in run_cmd
 
 
+def test_deploy_workbench_container_binds_and_exports_the_durable_cache(
+    mocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("NPA_MODEL_CACHE_HOST_PATH", "/mnt/weights")
+    mocker.patch("npa.deploy.configurator.install_container_runtime")
+    ssh = mocker.MagicMock()
+
+    configurator.deploy_workbench_container(
+        ssh,
+        image_ref="registry.example/npa-cosmos:1",
+        container_name="npa-cosmos",
+    )
+
+    commands = [call.args[0] for call in ssh.run_or_raise.call_args_list]
+    assert any("mkdir -p /mnt/weights" in command for command in commands)
+    run_cmd = commands[-1]
+    assert "-v /mnt/weights:/opt/npa-model-cache" in run_cmd
+    # `-e` wins over `--env-file`, so a shared cache supersedes the per-tool path
+    # the image bakes into its own environment.
+    assert "-e HF_HOME=/opt/npa-model-cache/huggingface" in run_cmd
+
+
+def test_deploy_workbench_container_without_a_cache_is_unchanged(
+    mocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in (
+        "NPA_MODEL_CACHE_HOST_PATH",
+        "NPA_MODEL_CACHE_PVC",
+        "NPA_MODEL_CACHE_DIR",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    mocker.patch("npa.deploy.configurator.install_container_runtime")
+    ssh = mocker.MagicMock()
+
+    configurator.deploy_workbench_container(
+        ssh,
+        image_ref="registry.example/npa-cosmos:1",
+        container_name="npa-cosmos",
+    )
+
+    run_cmd = ssh.run_or_raise.call_args_list[-1].args[0]
+    assert "npa-model-cache" not in run_cmd
+    assert " -e " not in run_cmd
+
+
+def test_deploy_lerobot_container_persists_the_hugging_face_cache(mocker) -> None:
+    # HF_LEROBOT_HOME pointed at a directory that was never bind-mounted, and this
+    # deploy runs `docker rm -f` first, so every deploy re-downloaded the datasets
+    # and policy weights LeRobot pulls from Hugging Face.
+    ssh = mocker.MagicMock()
+
+    configurator.deploy_lerobot_container(
+        ssh,
+        image_ref="registry.example/npa-lerobot:1",
+        server_config={"storage_endpoint": "https://storage.example"},
+    )
+
+    commands = [call.args[0] for call in ssh.run_or_raise.call_args_list]
+    assert any("/opt/lerobot/hf_cache" in command for command in commands)
+    run_cmd = commands[-1]
+    assert "--env HF_LEROBOT_HOME=/opt/lerobot/hf_cache" in run_cmd
+    assert "-v /opt/lerobot/hf_cache:/opt/lerobot/hf_cache" in run_cmd
+
+
 def test_deploy_server_runs_expected_remote_steps(mocker) -> None:
     ssh = mocker.MagicMock()
     ssh._config = SSHConfig(host="vm", user="ubuntu", key_path="key")

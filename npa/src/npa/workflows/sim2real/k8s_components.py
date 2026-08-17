@@ -14,6 +14,7 @@ from npa.workbench.cosmos.reason import (
     cosmos_reason_k8s_shell_preamble,
     vlm_k8s_component,
 )
+from npa.workbench.model_cache import MODEL_CACHE_ENV_NAMES
 from npa.workflows.sim2real.constants import DEFAULT_SIM_BACKEND, SIM_BACKEND_ISAAC
 from npa.workflows.sim2real.models import Sim2RealLoopConfig, Sim2RealLoopError
 from npa.workflows.sim2real.utils import _split_csv
@@ -273,6 +274,8 @@ def _kubernetes_component_env(
         if (
             key.startswith("NPA_SIM2REAL")
             or key.startswith("NPA_COSMOS_")
+            or key.startswith("NPA_MODEL_CACHE")
+            or key in MODEL_CACHE_ENV_NAMES
             or key
             in {
                 "HF_HOME",

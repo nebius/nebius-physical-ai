@@ -83,6 +83,28 @@ def test_build_serverless_job_env_basic() -> None:
     assert env["HF_HOME"] == "/tmp/hf_home"
 
 
+def test_build_serverless_job_env_uses_the_durable_weight_cache_when_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A serverless job allocates a GPU before the container starts, so a gated
+    # checkpoint re-downloaded into /tmp is billed GPU time on every submission.
+    monkeypatch.setenv("NPA_MODEL_CACHE_HOST_PATH", "/mnt/weights")
+
+    env = build_serverless_job_env(output_path="s3://bucket/prefix")
+
+    assert env["NPA_MODEL_CACHE_DIR"] == "/opt/npa-model-cache"
+    assert env["HF_HOME"] == "/opt/npa-model-cache/huggingface"
+    assert env["LEROBOT_HF_HOME"] == "/opt/npa-model-cache/lerobot"
+
+
+def test_build_serverless_job_env_lets_the_caller_override_the_cache() -> None:
+    env = build_serverless_job_env(
+        output_path="s3://bucket/prefix", extra_env={"HF_HOME": "/scratch/hf"}
+    )
+
+    assert env["HF_HOME"] == "/scratch/hf"
+
+
 def test_build_serverless_job_env_with_hf_token() -> None:
     env = build_serverless_job_env(output_path="s3://bucket/prefix", hf_token="PLACEHOLDER_HF_TOKEN")
 

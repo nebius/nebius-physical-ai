@@ -23,7 +23,11 @@ metadata:
 config:
   cosmos_source_repo: "https://github.com/NVIDIA/cosmos-framework.git"
   cosmos_model_id: "nvidia/Cosmos3-Nano"
-  cosmos_cache_dir: "/tmp/npa-cosmos3-cache"
+  # Empty means "use the cache the runtime resolved": the workflow renderer points
+  # NPA_COSMOS3_CACHE at the operator's durable model cache when one is configured,
+  # so the fetched checkpoint survives the run instead of dying with the pod. Set a
+  # path here to pin one explicitly.
+  cosmos_cache_dir: ""
   cosmos_hf_token_env: HF_TOKEN
   # Carried forward for the serve phase, as in the template.
   cosmos_reasoning_parser: qwen3
