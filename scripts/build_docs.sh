@@ -9,6 +9,10 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Every docs path below is relative, including the staging directory that has to
+# sit beside docs/cli for the swap to be a rename. Anchor them rather than
+# inheriting the caller's directory.
+cd "$REPO_ROOT"
 
 # Prefer the repository venv when NPA_BIN is not set explicitly: `npa` is only on
 # PATH when that venv is activated, and the repo convention (AGENTS.md, the CI
