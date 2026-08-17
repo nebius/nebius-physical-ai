@@ -4,7 +4,7 @@
 # The claim this image makes is "contains no LTX-2.5 and refuses to fetch it
 # without the operator's own entitlement". That claim is about the artifact, so
 # it is checked against the artifact: the refusal is exercised in every
-# direction and the caches are asserted still empty afterwards.
+# direction and the caches are asserted unwritten afterwards.
 set -euo pipefail
 
 ltx-runtime health
@@ -15,9 +15,22 @@ ltx-runtime terms
 RUNTIME_CACHE="${NPA_LTX_RUNTIME_CACHE:-/workspace/.cache/npa/ltx2/runtime}"
 MODEL_CACHE="${NPA_LTX_MODEL_CACHE:-/workspace/model-cache/ltx-2.5}"
 
-caches_are_empty() {
-  test -z "$(find "$RUNTIME_CACHE" -mindepth 1 -print -quit 2>/dev/null)"
-  test -z "$(find "$MODEL_CACHE" -mindepth 1 -print -quit 2>/dev/null)"
+cache_contents() {
+  find "$1" -mindepth 1 -printf '%P %s %T@\n' 2>/dev/null | LC_ALL=C sort
+}
+
+# The invariant is that a refusal writes nothing, and on a fresh container that
+# means the caches stay empty. When the run mounts the operator's durable weight
+# cache (docs/workbench/model-weight-cache.md) the model cache legitimately
+# starts populated by an earlier run, so the state is captured up front and
+# compared instead. What is under test is this image's payload, not the contents
+# of a volume the operator supplied.
+RUNTIME_CACHE_BEFORE="$(cache_contents "$RUNTIME_CACHE")"
+MODEL_CACHE_BEFORE="$(cache_contents "$MODEL_CACHE")"
+
+caches_are_untouched() {
+  test "$(cache_contents "$RUNTIME_CACHE")" = "$RUNTIME_CACHE_BEFORE"
+  test "$(cache_contents "$MODEL_CACHE")" = "$MODEL_CACHE_BEFORE"
 }
 
 # `-u HF_TOKEN` rather than `HF_TOKEN=`: an empty assignment still reads as a
@@ -31,7 +44,7 @@ refuses_with_78() {
   local rc=$?
   set -e
   test "$rc" = 78 || { echo "expected 78 for ${desc}, got ${rc}" >&2; exit 1; }
-  caches_are_empty || { echo "cache was written for ${desc}" >&2; exit 1; }
+  caches_are_untouched || { echo "cache was written for ${desc}" >&2; exit 1; }
 }
 
 # The source is licensed material too (Section 1.9), so it is gated on the same
@@ -47,7 +60,7 @@ grep -q "Nothing has been downloaded" /tmp/ltx-err
 # independently. `assert-refusal` reaches that gate without this script ever
 # holding a token, real or fake, and asserts which gate refused in each case.
 ltx-runtime assert-refusal | grep -Fq NPA_LTX_BOOTSTRAP_REFUSES_WITHOUT_ENTITLEMENT_OK
-caches_are_empty
+caches_are_untouched
 
 # The image must carry no LTX payload of its own.
 test -z "$(find / -xdev \( -name 'ltx_core' -o -name 'ltx_pipelines' -o -name 'ltx-2.5-*' \) -print -quit 2>/dev/null)"

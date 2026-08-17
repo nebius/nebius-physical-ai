@@ -243,6 +243,13 @@ nvidia_gate_without_acceptance() {
   require_nvidia_acceptance
 }
 
+cache_contents() {
+  # Every entry under a cache with its size and mtime, so "the refusal wrote
+  # nothing" can be checked by comparison. A missing directory prints nothing,
+  # which is the same answer as an empty one.
+  find "$1" -mindepth 1 -printf '%P %s %T@\n' 2>/dev/null | LC_ALL=C sort
+}
+
 assert_refusal() {
   # Proves, inside the build and again against the pushed image, that the
   # download path refuses without an entitlement — without the build ever running
@@ -250,6 +257,16 @@ assert_refusal() {
   # variables also keeps the build history free of `ltx-runtime ensure`, which
   # the payload scanner treats as a baked fetch precisely because it normally is
   # one.
+
+  # The invariant is that the refusal changes nothing, which is not the same as
+  # the caches being empty. At build time they are empty, but a run pointed at
+  # the operator's durable weight cache (NPA_LTX_MODEL_CACHE under
+  # docs/workbench/model-weight-cache.md) legitimately finds weights an earlier
+  # run fetched — and demanding emptiness there would fail every run after the
+  # first, which is exactly the cross-run caching the cache exists to provide.
+  local runtime_before model_before
+  runtime_before="$(cache_contents "$CACHE_ROOT")"
+  model_before="$(cache_contents "$MODEL_CACHE")"
 
   # The wired-up paths, through the real entry point. Both must stop on the
   # Hugging Face entitlement specifically: the source is licensed material too,
@@ -264,9 +281,9 @@ assert_refusal() {
   assert_gate "the NVIDIA runtime gate" "$NVIDIA_ACCEPT_ENV" \
     nvidia_gate_without_acceptance
 
-  [[ -z "$(find "$CACHE_ROOT" -mindepth 1 -print -quit 2>/dev/null)" ]] \
+  [[ "$(cache_contents "$CACHE_ROOT")" == "$runtime_before" ]] \
     || die "$EX_SOFTWARE" "refusal wrote to ${CACHE_ROOT}"
-  [[ -z "$(find "$MODEL_CACHE" -mindepth 1 -print -quit 2>/dev/null)" ]] \
+  [[ "$(cache_contents "$MODEL_CACHE")" == "$model_before" ]] \
     || die "$EX_SOFTWARE" "refusal wrote to ${MODEL_CACHE}"
   printf 'NPA_LTX_BOOTSTRAP_REFUSES_WITHOUT_ENTITLEMENT_OK\n'
 }

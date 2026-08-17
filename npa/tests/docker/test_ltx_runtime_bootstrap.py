@@ -145,6 +145,29 @@ class TestTheBuildTimeRefusalProof:
         assert MARKER in result.stdout
         assert nothing_was_fetched(image)
 
+    def test_it_passes_against_a_cache_an_earlier_run_already_filled(
+        self, image: Path
+    ) -> None:
+        """The invariant is "the refusal wrote nothing", not "the cache is empty".
+
+        Pointing `NPA_LTX_MODEL_CACHE` at the operator's durable weight cache
+        (docs/workbench/model-weight-cache.md) is what makes the second run of
+        this image a cache hit rather than another 22B download. An emptiness
+        assertion fails every run after the first, so the proof compares the cache
+        against itself instead.
+        """
+
+        weights = image.parent / "model-cache" / "vae"
+        weights.mkdir(parents=True)
+        preexisting = weights / "ltx-2.5-video-vae-bf16.safetensors"
+        preexisting.write_bytes(b"fetched by an earlier run")
+
+        result = run(image, "assert-refusal")
+
+        assert result.returncode == 0, result.stderr
+        assert MARKER in result.stdout
+        assert preexisting.read_bytes() == b"fetched by an earlier run"
+
 
 class TestTheProofItselfIsMutationTested:
     """Break each gate in turn; ``assert-refusal`` must notice every time.
@@ -213,14 +236,7 @@ class TestTheProofItselfIsMutationTested:
         assert MARKER not in result.stdout
         assert "'ensure' refused, but not on HF_TOKEN" in result.stderr
 
-    def test_fetching_before_the_gates_run_is_caught(self, image: Path) -> None:
-        """The ordering property, mutated rather than merely implied.
-
-        Both gates must close before `fetch_source` reaches the network. Move
-        the guard calls after the clone begins and the proof should notice — via
-        the cache the aborted clone leaves behind, not via the exit code.
-        """
-
+    def _fetch_before_the_gates(self, image: Path) -> None:
         script = image / "usr" / "local" / "bin" / "ltx-runtime"
         text = script.read_text(encoding="utf-8")
         guards = "  require_hf_token\n  require_nvidia_acceptance\n"
@@ -230,6 +246,16 @@ class TestTheProofItselfIsMutationTested:
         )
         script.write_text(moved, encoding="utf-8")
 
+    def test_fetching_before_the_gates_run_is_caught(self, image: Path) -> None:
+        """The ordering property, mutated rather than merely implied.
+
+        Both gates must close before `fetch_source` reaches the network. Move
+        the guard calls after the clone begins and the proof should notice — via
+        the cache the aborted clone leaves behind, not via the exit code.
+        """
+
+        self._fetch_before_the_gates(image)
+
         result = run(
             image,
             "assert-refusal",
@@ -238,6 +264,32 @@ class TestTheProofItselfIsMutationTested:
 
         assert result.returncode == EX_SOFTWARE
         assert MARKER not in result.stdout
+
+    def test_that_ordering_check_still_bites_on_a_warm_cache(
+        self, image: Path
+    ) -> None:
+        """Tolerating an already-filled cache must not tolerate a new write into it.
+
+        The check compares the cache against itself rather than against empty, so
+        this is the case that says the comparison is real: a run whose cache is
+        already populated by an earlier run must still catch a fetch that beat the
+        gates.
+        """
+
+        seeded = image.parent / "cache" / "src" / "from-an-earlier-run"
+        seeded.mkdir(parents=True)
+        (seeded / ".complete").write_text("", encoding="utf-8")
+        self._fetch_before_the_gates(image)
+
+        result = run(
+            image,
+            "assert-refusal",
+            env={"NPA_LTX_SOURCE_REPO": str(image.parent / "no-such-repo")},
+        )
+
+        assert result.returncode == EX_SOFTWARE
+        assert MARKER not in result.stdout
+        assert "refusal wrote to" in result.stderr, result.stderr
 
     def test_failing_to_scrub_the_builders_environment_is_caught(
         self, image: Path
