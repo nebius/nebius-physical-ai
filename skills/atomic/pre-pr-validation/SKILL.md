@@ -93,6 +93,20 @@ git worktree add /tmp/main-check origin/main
 cd /tmp/main-check && npa/.venv/bin/python -m pytest <the failing test> -q
 ```
 
+The shared dev/operator VM has both of those binaries, so the full suite passes
+there with nothing deselected. It is also shared, so take an isolated worktree +
+venv + tmux session rather than checking out in the common clone:
+
+```bash
+npa/scripts/dev_vm_isolated_session.sh start <branch> <run-id>
+```
+
+Give that session its own extras — `pip install -e "npa[dev,adapter]"` — before
+running the suite, and never install into the shared venv. Do not set
+`NPA_ISOLATED_FAST=1` for a full-suite run: fast mode skips the per-run venv and
+borrows the shared one, which lacks those extras, so collection dies on
+`jsonschema` and `av` before a single test executes.
+
 **Docs drift is expensive to re-run blind.** Change all CLI options first, then
 regenerate once with `bash scripts/build_docs.sh`. Per-subcommand option changes
 do not alter the generated pages; a new top-level command adds a page and a
