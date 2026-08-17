@@ -396,7 +396,14 @@ jobs:
           version_id="$(jq -r '.[0].id' <<<"$matches")"
           digest="$(jq -r '.[0].name' <<<"$matches")"
           test "$digest" = "$(crane digest "$IMAGE")"
-          gh api --method DELETE "${package_api}/versions/${version_id}"
+          if [ "$(jq length "$versions")" = 1 ]; then
+            # GHCR refuses deletion of a package's last tagged version. The
+            # package itself is exact and run-owned only after proving it has
+            # this one version and this one dev tag.
+            gh api --method DELETE "$package_api"
+          else
+            gh api --method DELETE "${package_api}/versions/${version_id}"
+          fi
           echo "Deleted exact development tag $tag at $digest." >> "$GITHUB_STEP_SUMMARY"
           echo "Deletion does not revoke downloads made while the public tag existed." >> "$GITHUB_STEP_SUMMARY"
 
@@ -444,7 +451,13 @@ jobs:
           version_id="$(jq -r '.[0].id' <<<"$matches")"
           digest="$(jq -r '.[0].name' <<<"$matches")"
           test "$digest" = "$(crane digest "$IMAGE")"
-          gh api --method DELETE "${package_api}/versions/${version_id}"
+          if [ "$(jq length "$versions")" = 1 ]; then
+            # Exact newly created package: GHCR refuses deletion of its last
+            # tagged version, so delete the proven one-version package.
+            gh api --method DELETE "$package_api"
+          else
+            gh api --method DELETE "${package_api}/versions/${version_id}"
+          fi
           echo "Deleted exact failed public dev tag $tag at $digest." >> "$GITHUB_STEP_SUMMARY"
           echo "Deletion does not revoke downloads made while the public tag existed." >> "$GITHUB_STEP_SUMMARY"
 

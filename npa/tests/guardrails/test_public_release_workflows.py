@@ -91,6 +91,8 @@ def test_failed_development_cleanup_is_exact_and_refuses_shared_digest() -> None
     assert "metadata.container.tags" in text
     assert "Refusing cleanup: digest also carries tags" in text
     assert "versions/${version_id}" in text
+    assert 'if [ "$(jq length "$versions")" = 1 ]' in text
+    assert 'gh api --method DELETE "$package_api"' in text
     assert "Deletion does not revoke downloads" in text
 
 
