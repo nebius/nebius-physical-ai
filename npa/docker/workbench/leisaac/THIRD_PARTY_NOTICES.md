@@ -12,5 +12,6 @@
 
 The image remains `redistribution: public`: NVIDIA drivers, NVENC libraries,
 Isaac/Kit, the NVIDIA WebRTC client, task assets, scenes, datasets, credentials,
-and recordings are runtime-injected or fetched after explicit operator acceptance
-and are rejected by the digest-bound payload scan.
+and recordings are runtime-injected or fetched only after the shared
+default/opt-out EULA preflight and are rejected by the digest-bound payload
+scan.

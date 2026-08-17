@@ -13646,8 +13646,6 @@
         // Invalidate any status refresh that started for the previous artifact.
         refreshGeneration += 1;
         operatorMediaPreviewActive = false;
-        const requestContext = arguments.length > 1 ? arguments[1] : null;
-        const context = requestContext && typeof requestContext === "object" ? requestContext : {};
         const renderModeOptions = context.operator === true ? { operator: true } : undefined;
         const isCurrent = () => requestId === artifactLoadRequestId &&
           loadGeneration === artifactLoadGeneration &&

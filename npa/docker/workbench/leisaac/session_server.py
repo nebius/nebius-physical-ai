@@ -2,8 +2,8 @@
 """Start the real LeIsaac teleoperator and expose its browser-streaming assets.
 
 Isaac Sim, task assets, and NVIDIA's WebRTC browser client are fetched only at
-runtime after the operator has explicitly accepted the two NVIDIA EULAs.  None
-of those bytes are part of the distributable image.
+runtime after the shared default/opt-out EULA preflight. None of those bytes are
+part of the distributable image.
 """
 
 from __future__ import annotations
