@@ -137,7 +137,10 @@ fetch_source() {
   # A killed installer must not leave a half-synced tree that later looks ready.
   find "$CACHE_ROOT/src" -maxdepth 1 -type d -name ".*.tmp.*" -exec rm -rf -- {} +
   tmp="$CACHE_ROOT/src/.${SOURCE_REF}.tmp.$$"
-  trap 'rm -rf -- "$tmp"' EXIT
+  # Any failure removes both the staging checkout and the incomplete final
+  # tree. The readiness marker is written last, so another process can never
+  # mistake a partial runtime install for a usable one.
+  trap 'rm -rf -- "$tmp" "$tree"' EXIT
 
   git init -q "$tmp"
   git -C "$tmp" remote add origin "$SOURCE_REPO"
@@ -151,20 +154,25 @@ fetch_source() {
     || die "$EX_SOFTWARE" "upstream LICENSE.md missing; refusing to install"
   rm -rf "$tmp/.git"
 
+  # Editable packages record their absolute checkout path in the virtualenv.
+  # Install only after the verified checkout has its final stable path; syncing
+  # in the temporary directory and renaming it leaves every editable path
+  # pointing at a directory that no longer exists.
+  rm -rf "$tree"
+  mv "$tmp" "$tree"
+
   # Upstream's own resolution: uv reads packages/ltx-core/pyproject.toml, which
   # is where the cu132 torch index and the transformers<5.15 bound live. We do
   # not re-pin them here; a second, divergent pin set is how a working upstream
   # install turns into an unsupported one.
-  ( cd "$tmp" && uv sync --extra "$UV_EXTRA" )
-  "$tmp/.venv/bin/python" -c 'import ltx_pipelines, ltx_core'  # fail before publishing the tree
+  ( cd "$tree" && uv sync --extra "$UV_EXTRA" )
+  "$tree/.venv/bin/python" -c 'import ltx_pipelines, ltx_core'  # fail before publishing the tree
 
   # The exact resolved closure is evidence, and it is only knowable after a real
   # resolution — so it is captured here instead of being asserted up front.
-  "$tmp/.venv/bin/python" -m uv pip freeze > "$tmp/npa_resolved_inventory.txt" 2>/dev/null \
-    || uv pip freeze --python "$tmp/.venv/bin/python" > "$tmp/npa_resolved_inventory.txt"
-  : > "$tmp/.complete"
-  rm -rf "$tree"
-  mv "$tmp" "$tree"
+  "$tree/.venv/bin/python" -m uv pip freeze > "$tree/npa_resolved_inventory.txt" 2>/dev/null \
+    || uv pip freeze --python "$tree/.venv/bin/python" > "$tree/npa_resolved_inventory.txt"
+  : > "$tree/.complete"
   # Release the install lock explicitly. The fd is not CLOEXEC, so in `exec`
   # mode it would otherwise stay open for the entire generation job and block
   # any sibling that arrived mid-install on a shared cache volume.

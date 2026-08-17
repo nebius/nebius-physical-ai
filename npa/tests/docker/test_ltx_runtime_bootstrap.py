@@ -125,6 +125,18 @@ def nothing_was_fetched(image: Path) -> bool:
     return True
 
 
+def test_runtime_sync_uses_the_final_checkout_path() -> None:
+    """Editable package paths must survive publication of the runtime tree."""
+
+    script = (DOCKER_DIR / "ltx_runtime.sh").read_text(encoding="utf-8")
+    move = script.index('mv "$tmp" "$tree"')
+    sync = script.index('( cd "$tree" && uv sync --extra "$UV_EXTRA" )')
+    marker = script.index(': > "$tree/.complete"')
+
+    assert move < sync < marker
+    assert '( cd "$tmp" && uv sync' not in script
+
+
 class TestTheBuildTimeRefusalProof:
     def test_assert_refusal_passes_exactly_as_the_dockerfile_runs_it(
         self, image: Path
