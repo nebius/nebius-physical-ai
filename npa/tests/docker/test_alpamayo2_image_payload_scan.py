@@ -28,6 +28,8 @@ def test_dockerfile_parses_torch_arch_flags_as_tokens() -> None:
     ).read_text(encoding="utf-8")
     assert "_cuda_getArchFlags().split()" in dockerfile
     assert "{'sm_90', 'sm_100', 'sm_120'} <= flags" in dockerfile
+    assert "npa-workflows/sim2real.yaml" in dockerfile
+    assert "npa-workflows/physical-ai-data-factory.yaml" in dockerfile
 
 
 def _tar(path: Path, members: dict[str, bytes]) -> Path:
