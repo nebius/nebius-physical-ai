@@ -266,8 +266,9 @@ The upstream license still applies, and we never redistribute weights.
 Official publication has two physically separate GHCR namespaces because GHCR
 visibility is package-level:
 
-- private candidates: `ghcr.io/nebius/nebius-physical-ai-private`, tagged only
-  with immutable `dev-<full-git-sha>` identifiers;
+- private candidates: `ghcr.io/nebius/nebius-physical-ai-private`, using
+  `npa-<tool>-candidate` package names tagged only with immutable
+  `dev-<full-git-sha>` identifiers;
 - public releases: `ghcr.io/nebius/nebius-physical-ai`, tagged with the validated
   supported-tool version and copied by digest from the candidate.
 
@@ -322,7 +323,7 @@ at an empty directory first so the read cannot succeed on an ambient login:
 ```bash
 export DOCKER_CONFIG="$(mktemp -d)"
 printf '%s' "$GHCR_TOKEN" | crane auth login ghcr.io -u "$GHCR_USER" --password-stdin
-crane manifest ghcr.io/nebius/nebius-physical-ai-private/npa-lerobot:dev-<full-git-sha> >/dev/null && echo ok
+crane manifest ghcr.io/nebius/nebius-physical-ai-private/npa-lerobot-candidate:dev-<full-git-sha> >/dev/null && echo ok
 ```
 
 You do not have to guess whether a real run would work: the `Publish public images`

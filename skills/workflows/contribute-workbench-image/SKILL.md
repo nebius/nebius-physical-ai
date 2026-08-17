@@ -106,23 +106,21 @@ Open the fork PR against `main`. Include:
 
 ## Build The Trusted Artifact
 
-After review, build from the exact trusted commit. Prefer the checked-in
-`build.sh`; otherwise use `docker buildx build --push` so a large image streams
-to the private GHCR candidate namespace rather than unpacking into the local
-daemon. Tag it with `dev-<full-git-sha>` and do not commit credentials.
+After review, build from the exact trusted commit. Use the guarded private-candidate
+workflow so it resolves the distinct `npa-<tool>-candidate` package, attaches the
+required attestations, verifies private visibility, and streams the large image to
+GHCR rather than unpacking it into the local daemon. Tag it with
+`dev-<full-git-sha>` and do not commit credentials.
 
 ```bash
-npa/docker/workbench/<tool>/build.sh \
-  --registry "$NPA_PRIVATE_REGISTRY" \
-  --tag "dev-$(git rev-parse HEAD)" \
-  --push
+gh workflow run publish-private-candidate-image.yml \
+  --ref "$(git branch --show-current)" \
+  -f tool=<tool>
 
-crane manifest "$NPA_PRIVATE_REGISTRY/npa-<tool>:dev-$(git rev-parse HEAD)" >/dev/null
+crane manifest "$NPA_PRIVATE_REGISTRY/npa-<tool>-candidate:dev-$(git rev-parse HEAD)" >/dev/null
 ```
 
-If the checked-in script has different flags, use its help rather than
-inventing an alternate build path. Match the pushed name and tag exactly to the
-pin resolved by `npa.deploy.images`.
+Match the pushed name and tag exactly to the pin resolved by `npa.deploy.images`.
 
 Inspect the registry artifact, not only the Dockerfile or local daemon:
 

@@ -43,12 +43,20 @@ def test_candidate_workflow_uses_immutable_private_refs_and_visibility_gate() ->
     assert "github.sha" in text
     assert "nebius-physical-ai-private" in text
     assert "visibility" in text and "= private" in text
+    assert "anonymously pullable" in text
     assert "NPA_SOURCE_SHA=${{ github.sha }}" in text
     assert "provenance: mode=max" in text
     assert "sbom: true" in text
     assert "{{json .Provenance}}" in text
     assert "{{json .SBOM}}" in text
     assert "trivy-action@v0.36.0" in text
+
+
+def test_live_payload_scan_can_read_a_private_candidate() -> None:
+    text = (WORKFLOWS / "image-security-scan.yml").read_text(encoding="utf-8")
+    assert "packages: read" in text
+    assert "docker/login-action@v3" in text
+    assert "secrets.GITHUB_TOKEN" in text
 
 
 def test_public_publisher_promotes_candidate_sha_to_separate_target() -> None:
@@ -76,6 +84,9 @@ def test_public_publisher_can_bootstrap_candidate_from_existing_dispatch_file() 
     assert "trivy-action@v0.36.0" in text
     assert "skypilot-0.12.2-v1" in text
     assert "visibility)\" = private" in text
+    assert "NPA_RETIRE_CANDIDATE_REF" in text
+    assert "crane delete" in text
+    assert "anonymously pullable" in text
 
 
 def test_public_health_is_anonymous_and_read_only() -> None:

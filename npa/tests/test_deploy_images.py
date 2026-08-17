@@ -124,7 +124,7 @@ def test_candidate_images_use_private_package_and_full_sha() -> None:
     sha = "a" * 40
     assert development_tag(sha) == f"dev-{sha}"
     assert candidate_image_for_tool("genesis", git_sha=sha) == (
-        f"ghcr.io/nebius/nebius-physical-ai-private/npa-genesis:dev-{sha}"
+        f"ghcr.io/nebius/nebius-physical-ai-private/npa-genesis-candidate:dev-{sha}"
     )
 
 

@@ -24,6 +24,7 @@ PUBLIC_CONTAINER_REGISTRY_ENV = "NPA_PUBLIC_REGISTRY"
 DEFAULT_PRIVATE_CANDIDATE_CONTAINER_REGISTRY = (
     "ghcr.io/nebius/nebius-physical-ai-private"
 )
+PRIVATE_CANDIDATE_IMAGE_SUFFIX = "-candidate"
 DEFAULT_PUBLIC_CONTAINER_REGISTRY = "ghcr.io/nebius/nebius-physical-ai"
 
 # Compatibility name for callers that mean "the normal execution registry". The
@@ -559,13 +560,17 @@ def candidate_image_for_tool(
         raise ValueError(
             "private candidate registry must be separate from the public GHCR release namespace"
         )
-    return container_image_for_tool(
+    resolved = container_image_for_tool(
         tool,
         registry=resolved_registry,
         tag=development_tag(git_sha),
         gpu_target=gpu_target,
         image_variant=image_variant,
     )
+    name, separator, tag = resolved.rpartition(":")
+    if not separator:
+        raise ValueError("candidate image must carry an immutable development tag")
+    return f"{name}{PRIVATE_CANDIDATE_IMAGE_SUFFIX}:{tag}"
 
 
 def is_public_registry(registry: str) -> bool:

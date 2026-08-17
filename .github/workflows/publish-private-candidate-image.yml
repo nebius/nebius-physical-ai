@@ -132,6 +132,11 @@ jobs:
             package_api="/users/${OWNER}/packages/container/${encoded}"
           fi
           test "$(gh api "$package_api" --jq .visibility)" = private
+          anonymous_config="$(mktemp -d)"
+          if DOCKER_CONFIG="$anonymous_config" docker buildx imagetools inspect "$IMAGE" >/dev/null 2>&1; then
+            echo "::error::Candidate manifest is anonymously pullable; refusing a public development package."
+            exit 1
+          fi
           echo "Candidate digest recorded by the workflow summary: $digest" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Scan candidate for critical vulnerabilities and secrets

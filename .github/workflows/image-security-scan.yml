@@ -20,13 +20,14 @@ on:
       omniverse_payload_scan_image:
         description: >-
           Image reference to scan for a baked NVIDIA Omniverse Kit payload, e.g.
-          ghcr.io/nebius/nebius-physical-ai-private/npa-isaac-lab:dev-<git-sha>.
+          ghcr.io/nebius/nebius-physical-ai-private/npa-isaac-lab-candidate:dev-<git-sha>.
           Needs private-package read access. Leave blank to skip.
         required: false
         default: ""
 
 permissions:
   contents: read
+  packages: read
   security-events: write
 
 concurrency:
@@ -99,6 +100,13 @@ jobs:
 
       - name: Install crane
         uses: imjasonh/setup-crane@v0.4
+
+      - name: Login for private candidate payload scan
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Scan the built image for a baked Omniverse Kit payload
         run: |

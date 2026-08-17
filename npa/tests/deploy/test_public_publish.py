@@ -287,7 +287,11 @@ def test_publish_plan_now_includes_the_isaac_images() -> None:
     """The point of the re-architecture: these are publishable at last."""
     plan = build_publish_plan(target_registry="ghcr.io/example/workbench")
     names = {item.source_ref.rsplit("/", 1)[-1].split(":", 1)[0] for item in plan}
-    for image in ("npa-isaac-lab", "npa-sonic", "npa-groot"):
+    for image in (
+        "npa-isaac-lab-candidate",
+        "npa-sonic-candidate",
+        "npa-groot-candidate",
+    ):
         assert image in names, image
     # sonic-mujoco is a sonic variant, so it ships through sonic's image manifest rather
     # than as its own tool key.
@@ -311,7 +315,7 @@ def test_publish_plan_still_refuses_a_restricted_image(monkeypatch) -> None:
     assert "npa-genesis" not in names
     # sonic is publishable under this monkeypatched set, so the plan must contain it -
     # proving the refusal followed the patched set instead of a captured one.
-    assert "npa-sonic" in names
+    assert "npa-sonic-candidate" in names
 
 
 def test_publish_plan_requires_a_target() -> None:
@@ -330,7 +334,9 @@ def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
     for item in plan:
         source_image = item.source_ref.rsplit("/", 1)[-1]
         target_image = item.target_ref.rsplit("/", 1)[-1]
-        assert source_image.split(":", 1)[0] == target_image.split(":", 1)[0], item
+        assert source_image.split(":", 1)[0] == (
+            target_image.split(":", 1)[0] + "-candidate"
+        ), item
         assert source_image.endswith(f":dev-{sha}"), item
         assert not target_image.endswith(f":dev-{sha}"), item
 
@@ -1645,7 +1651,7 @@ def _run2_readability(plan):
     unpushed_tag = {"npa-cosmos2-transfer"}
 
     def readable(ref: str, **_: object) -> tuple[bool, str]:
-        image = ref.rsplit("/", 1)[-1].split(":", 1)[0]
+        image = ref.rsplit("/", 1)[-1].split(":", 1)[0].removesuffix("-candidate")
         if image in never_built:
             return False, _NAME_UNKNOWN
         if image in unpushed_tag:
