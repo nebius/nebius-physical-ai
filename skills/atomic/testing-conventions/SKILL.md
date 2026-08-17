@@ -52,7 +52,13 @@ npa/.venv/bin/python -m ruff check <files>
 - Pipeline E2E tests use the `e2e_pipeline` pytest marker.
 - Live Nebius Token Factory tests use the `token_factory_e2e` marker (in `npa/tests/e2e/test_token_factory_e2e.py`). They self-skip without a real `NEBIUS_TOKEN_FACTORY_KEY`; the marker is in conftest `_LIVE_MARKERS` so the key is not scrubbed. Run with `NEBIUS_TOKEN_FACTORY_KEY=... pytest npa/tests/e2e/test_token_factory_e2e.py`.
 
-Expected baseline: 1242+ passed, 21 skipped, 1 xpassed, 0 failures.
+Expected baseline for `make test`: 10368+ passed, 38 skipped, 12 deselected,
+1 xpassed, 0 failures, ~11 min serial (measured 2026-08-17 at `48481e45`).
+
+The suite is hermetic: it needs no `kubectl`, no cluster, and no venv at a
+particular path. A failure that names a missing binary or `ModuleNotFoundError:
+No module named 'npa'` is a bug in the test or the script it drives, not a
+missing prerequisite — three of those were fixed in `516396ec`.
 
 Use evidence-based convergence: report numeric pass counts and exact failure messages, not subjective assessment.
 
