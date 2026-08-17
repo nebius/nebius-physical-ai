@@ -70,6 +70,22 @@ Image pullability is a *separate* gate that health does not cover; see
 `skills/atomic/submit-workflow/SKILL.md`. A green health report with an
 unpullable image still hangs in `ImagePullBackOff`.
 
+**A green `s3` row does not mean the submit can write.** The `s3` check lists
+the configured project bucket; `submit` runs a stricter one that puts a unique
+object into the bucket the *workflow* resolves, which is a different bucket
+whenever `NPA_S3_BUCKET` or `AWS_ENDPOINT_URL` is set in the environment. The
+two disagreeing looks like a passing preflight followed by:
+
+```
+Error: Cannot submit <spec>.yaml: missing prerequisites:
+  - writable S3 for this workflow (S3 write permission was denied.)
+```
+
+Believe the submit, not the preflight row: it is the check closer to the write
+you are about to do. Reconcile the endpoint and bucket the workflow sees with
+the ones `npa configure --show` reports before reaching for the printed
+`npa provision-if-absent --project <alias> --skip-k8s` fix.
+
 ## Persisting credentials you already hold
 
 If the tokens are in your environment but not in `~/.npa/credentials.yaml`,
