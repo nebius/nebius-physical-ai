@@ -500,7 +500,11 @@ jobs:
 
   promote:
     needs: [resolve, build-development]
-    if: ${{ always() && needs.resolve.result == 'success' && (needs.build-development.result == 'success' || needs.build-development.result == 'skipped') }}
+    # Promotion is deliberately a separate dispatch after exact-digest GPU
+    # acceptance. A build or cleanup dispatch must never fall through into an
+    # unrelated all-image release preflight (or a release write when dry_run is
+    # false).
+    if: ${{ always() && needs.resolve.result == 'success' && needs.resolve.outputs.build_count == '0' && needs.resolve.outputs.cleanup_count == '0' && (needs.build-development.result == 'success' || needs.build-development.result == 'skipped') }}
     runs-on: ubuntu-latest
     env:
       TARGET: ${{ needs.resolve.outputs.target }}

@@ -87,6 +87,13 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
         assert required in text
 
 
+def test_build_and_cleanup_dispatches_cannot_fall_through_to_promotion() -> None:
+    promote = _spec(PUBLISH)["jobs"]["promote"]
+    condition = str(promote["if"])
+    assert "needs.resolve.outputs.build_count == '0'" in condition
+    assert "needs.resolve.outputs.cleanup_count == '0'" in condition
+
+
 def test_failed_development_cleanup_is_exact_and_refuses_shared_digest() -> None:
     text = PUBLISH.read_text(encoding="utf-8")
     assert "cleanup-failed-build" in text
