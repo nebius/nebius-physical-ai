@@ -56,6 +56,7 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
         "Prove an existing destination package is public",
         "scan_image_omniverse_payload.py",
         "scan_image_ltx_payload.py",
+        "scan_image_wan_payload.py",
         "test_ltx_runtime_bootstrap.py",
         "scanners: vuln,secret,license",
         "format: spdx-json",
@@ -94,6 +95,7 @@ def test_failed_development_cleanup_is_exact_and_refuses_shared_digest() -> None
     assert 'if [ "$(jq length "$versions")" = 1 ]' in text
     assert 'gh api --method DELETE "$package_api"' in text
     assert "Deletion does not revoke downloads" in text
+    assert "Requested development tag is already absent" in text
 
 
 def test_public_health_is_anonymous_and_read_only() -> None:

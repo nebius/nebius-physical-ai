@@ -51,6 +51,39 @@ def _tar_bytes(members: dict[str, bytes], *, mode: str = "w") -> bytes:
     return _gzip(raw) if mode == "w:gz" else raw
 
 
+def _docker_save(
+    path: Path, *, layers: list[dict[str, bytes]], config: dict
+) -> Path:
+    layer_archives: list[tuple[str, bytes]] = []
+    for index, members in enumerate(layers):
+        layer_archives.append((f"layer-{index}/layer.tar", _tar_bytes(members)))
+    manifest = [{"Config": "config.json", "Layers": [name for name, _ in layer_archives]}]
+    return _tar(
+        path,
+        {
+            "manifest.json": json.dumps(manifest).encode(),
+            "config.json": json.dumps(config).encode(),
+            **dict(layer_archives),
+        },
+    )
+
+
+def test_docker_save_scans_payload_deleted_by_a_later_layer(tmp_path: Path) -> None:
+    archive = _docker_save(
+        tmp_path / "image.tar",
+        layers=[
+            {"workspace/model.safetensors": b"weights"},
+            {"workspace/.wh.model.safetensors": b""},
+        ],
+        config={"history": []},
+    )
+    layer_dir = tmp_path / "layers"
+    layer_dir.mkdir()
+    layers, config = scanner.docker_save_material(archive, layer_dir)
+    findings = scanner.scan_tars(layers, config)
+    assert "checkpoint_or_weight" in {finding.kind for finding in findings}
+
+
 def _zip_bytes(members: dict[str, bytes]) -> bytes:
     payload = io.BytesIO()
     with zipfile.ZipFile(payload, "w", compression=zipfile.ZIP_DEFLATED) as archive:

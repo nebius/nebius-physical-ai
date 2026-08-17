@@ -275,6 +275,11 @@ jobs:
               --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
               --output "$RUNNER_TEMP/${TOOL}-ltx-payload.json"
           fi
+          if [ "$TOOL" = wan2-2 ]; then
+            npa/.venv/bin/python npa/scripts/scan_image_wan_payload.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
+              --output "$RUNNER_TEMP/${TOOL}-wan-payload.json"
+          fi
 
       - name: Pre-publication vulnerability, secret, and license scan
         uses: aquasecurity/trivy-action@v0.36.0
@@ -352,6 +357,10 @@ jobs:
             npa/.venv/bin/python npa/scripts/scan_image_ltx_payload.py \
               "$exact" --output "$RUNNER_TEMP/${TOOL}-pushed-ltx-payload.json"
           fi
+          if [ "$TOOL" = wan2-2 ]; then
+            npa/.venv/bin/python npa/scripts/scan_image_wan_payload.py \
+              "$exact" --output "$RUNNER_TEMP/${TOOL}-pushed-wan-payload.json"
+          fi
           anonymous_config="$(mktemp -d)"
           DOCKER_CONFIG="$anonymous_config" crane manifest "$IMAGE" >/dev/null
           echo "Validated public development digest: $DIGEST" >> "$GITHUB_STEP_SUMMARY"
@@ -387,7 +396,12 @@ jobs:
             exit 0
           fi
           matches="$(jq --arg tag "$tag" '[.[] | select((.metadata.container.tags // []) | index($tag))]' "$versions")"
-          test "$(jq length <<<"$matches")" = 1
+          count="$(jq length <<<"$matches")"
+          if [ "$count" = 0 ]; then
+            echo "Requested development tag is already absent." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          test "$count" = 1
           tags="$(jq -c '.[0].metadata.container.tags // []' <<<"$matches")"
           test "$tags" = "[\"$tag\"]" || {
             echo "::error::Refusing cleanup: digest also carries tags $tags"

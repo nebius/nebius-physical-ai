@@ -29,6 +29,18 @@ BAKED_CONSTRAINTS = (
 )
 WAN_DOCKERFILE = ROOT / "npa" / "docker" / "workbench" / "wan2-2" / "Dockerfile"
 WAN_SMOKE = ROOT / "npa" / "docker" / "workbench" / "wan2-2" / "smoke.sh"
+WAN_ENTRYPOINT = ROOT / "npa" / "docker" / "workbench" / "wan2-2" / "entrypoint.sh"
+
+
+def test_entrypoint_allows_skypilot_bootstrap_without_runtime_fetch() -> None:
+    completed = subprocess.run(
+        ["bash", str(WAN_ENTRYPOINT), "printf", "BOOTSTRAP_OK"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == "BOOTSTRAP_OK"
 
 
 def test_runtime_requirements_are_hash_locked() -> None:
