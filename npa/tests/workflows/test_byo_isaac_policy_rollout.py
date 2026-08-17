@@ -49,6 +49,7 @@ def test_build_rollout_manifest_keeps_primary_compatibility_and_named_views():
         checkpoint_uri="s3://bucket/model_latest.pt",
         checkpoint_sha256="b" * 64,
         checkpoint_size_bytes=12345,
+        simulation_device="cpu",
         is_trained=True,
         capture={"width": 640, "height": 480, "fps": 10.0},
         camera_metadata_items=[
@@ -80,6 +81,7 @@ def test_build_rollout_manifest_keeps_primary_compatibility_and_named_views():
     )
     assert manifest["policy_checkpoint_sha256"] == "b" * 64
     assert manifest["policy_checkpoint_size_bytes"] == 12345
+    assert manifest["simulation_device"] == "cpu"
 
 
 def test_latest_checkpoint_uri_empty_inputs():
@@ -173,6 +175,13 @@ def test_build_isaac_rollout_job_manifest_shape():
     )
     assert "get_inference_policy(device=SIM_DEVICE)" in pr.ISAAC_ROLLOUT_SCRIPT
     assert 'device="cuda:0"' not in pr.ISAAC_ROLLOUT_SCRIPT
+    assert 'CameraType = CameraCfg if SIM_DEVICE == "cpu" else TiledCameraCfg' in (
+        pr.ISAAC_ROLLOUT_SCRIPT
+    )
+    assert "env_cfg.sim.use_fabric = False" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert "CPU physics camera fallback requires ROLLOUT_COUNT=1" in (
+        pr.ISAAC_ROLLOUT_SCRIPT
+    )
     assert '"simulation_device": SIM_DEVICE' in pr.ISAAC_ROLLOUT_SCRIPT
 
 

@@ -72,6 +72,7 @@ def build_rollout_manifest(
     checkpoint_sha256: str = "",
     checkpoint_size_bytes: int = 0,
     scenario: dict[str, Any] | None = None,
+    simulation_device: str = "cuda:0",
 ) -> dict[str, Any]:
     """Build an ``npa.sim2real.action_rollout.v1`` manifest for one rollout.
 
@@ -98,6 +99,7 @@ def build_rollout_manifest(
         # Provenance: distinguishes a real policy rollout from the synthetic stub.
         "source": "byo_isaac_policy_rollout",
         "sim_backend": "isaac",
+        "simulation_device": simulation_device,
         "policy_checkpoint": checkpoint_uri,
         "policy_checkpoint_sha256": checkpoint_sha256,
         "policy_checkpoint_size_bytes": int(checkpoint_size_bytes),
@@ -338,13 +340,17 @@ try:
         print("ROLLOUT_SCENARIO_TASK", TASK, flush=True)
     from isaaclab_tasks.utils import parse_env_cfg
     import isaaclab.sim as sim_utils
-    from isaaclab.sensors import TiledCameraCfg
+    from isaaclab.sensors import CameraCfg, TiledCameraCfg
     try:
         from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
     except Exception:
         from omni.isaac.lab_rl.rsl_rl import RslRlVecEnvWrapper
     from rsl_rl.runners import OnPolicyRunner
     env_cfg = parse_env_cfg(TASK, device=SIM_DEVICE, num_envs=N)
+    if SIM_DEVICE == "cpu":
+        if N != 1:
+            raise RuntimeError("CPU physics camera fallback requires ROLLOUT_COUNT=1")
+        env_cfg.sim.use_fabric = False
     print("ROLLOUT_SIM_DEVICE", SIM_DEVICE, flush=True)
     OBJECT_USD = os.environ.get("ROLLOUT_OBJECT_USD", "").strip()
     if OBJECT_USD:
@@ -355,13 +361,14 @@ try:
             raise RuntimeError("could not apply task-contract object USD: %r" % (e,)) from e
     def _camera_key(name):
         return "rollout_cam" if name == "primary" else "rollout_cam_" + name
+    CameraType = CameraCfg if SIM_DEVICE == "cpu" else TiledCameraCfg
     for view in CAMERA_VIEWS:
         setattr(
             env_cfg.scene,
             _camera_key(view["name"]),
-            TiledCameraCfg(
+            CameraType(
                 prim_path="{ENV_REGEX_NS}/rollout_cam_" + view["name"],
-                offset=TiledCameraCfg.OffsetCfg(
+                offset=CameraType.OffsetCfg(
                     pos=tuple(view["position"]),
                     rot=tuple(view["rotation"]),
                     convention="world",
@@ -883,6 +890,31 @@ def materialize_rollout_dirs(
         }
         if not view_frames:
             view_frames = {"primary": [str(name) for name in roll.get("frames", [])]}
+        expected_views = {
+            str(item.get("name") or "") for item in camera_meta if item.get("name")
+        }
+        horizon_steps = int(capture.get("horizon_steps") or 0)
+        capture_stride = max(1, int(capture.get("rollout_stride") or 1))
+        expected_frame_count = (
+            len(range(0, horizon_steps, capture_stride)) + 1
+            if horizon_steps > 0
+            else 0
+        )
+        missing_views = sorted(
+            name for name in expected_views if not view_frames.get(name)
+        )
+        wrong_counts = {
+            name: len(view_frames.get(name) or [])
+            for name in expected_views
+            if expected_frame_count
+            and len(view_frames.get(name) or []) != expected_frame_count
+        }
+        if missing_views or wrong_counts:
+            raise RuntimeError(
+                "real Isaac rollout camera coverage mismatch: "
+                f"missing={missing_views} counts={wrong_counts} "
+                f"expected_per_view={expected_frame_count}"
+            )
         all_frames = list(
             dict.fromkeys(frame for frames in view_frames.values() for frame in frames)
         )
@@ -907,6 +939,7 @@ def materialize_rollout_dirs(
             checkpoint_sha256=str(checkpoint.get("sha256") or ""),
             checkpoint_size_bytes=int(checkpoint.get("size_bytes") or 0),
             scenario=dict(roll.get("scenario") or {}),
+            simulation_device=str(meta.get("simulation_device") or "cuda:0"),
         )
         (rdir / "manifest.json").write_text(
             json.dumps(manifest, indent=2), encoding="utf-8"

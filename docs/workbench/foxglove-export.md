@@ -148,7 +148,9 @@ cameras correctly but its PhysX GPU pipeline cannot initialize, set
 `NPA_SIM2REAL_ISAAC_DEVICE=cpu` for an explicit CPU-physics fallback. The Job
 still requests and attests its GPU, and the RTX camera renderer still uses that
 device; `simulation_device` in the source manifest records the fallback so it
-cannot be mistaken for GPU physics.
+cannot be mistaken for GPU physics. This compatibility mode requires one
+rollout environment and uses ordinary Camera sensors with Fabric disabled;
+multi-environment tiled capture remains CUDA-only.
 
 Before handing off the run, inspect the canonical MCAP and require the expected
 per-topic counts, action-derived robot channels, valid MCAP magic, and a matching
