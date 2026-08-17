@@ -57,13 +57,18 @@ def test_mujoco_smoke_propagates_failures_and_uses_no_lfs_payload() -> None:
     assert "git-lfs.github.com/spec" in evaluator
 
 
-def test_candidate_manifest_refuses_release_until_exact_gpu_evidence() -> None:
+def test_manifest_records_exact_gpu_accepted_release() -> None:
+    from npa.deploy.images import GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS
+
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
     candidate = next(
         item for item in manifest["images"] if item["id"] == "sonic-mujoco-runtime-fetch"
     )
-    assert candidate["status"] == "candidate"
+    assert candidate["status"] == "active"
     assert candidate["redistribution"] == "public-runtime-fetch"
-    assert "digest" not in candidate
+    assert candidate["digest"] == (
+        "sha256:2388d9e97269afaa414966e83a27f676a3f44d4271e9828c57bc13fbdce80f57"
+    )
+    assert candidate["digest"] == GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS["sonic-mujoco"]
     assert candidate["base"]["image"].startswith("python:3.11.14-slim-bookworm@sha256:")
     assert candidate["base"]["cuda"] == "12.8 wheel closure"

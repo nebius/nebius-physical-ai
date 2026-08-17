@@ -62,7 +62,7 @@ The old `npa-cosmos:1.0.9` cu126 image stopped at Hopper. Its additive cu128/tor
 | `npa-lancedb` | supported | **verified** [26] | **verified** [27] | **verified** [24] | **verified** [25] |
 | `npa-detection-training` | supported | **verified** [29] | **verified** [30] | **verified** [28] | **verified** [31] |
 | `npa-cosmos3` | supported | supported | **verified** [59] | supported | supported |
-| `npa-cosmos3-serving` (zero-payload public candidate) | blocked (8-GPU memory floor) | candidate (8 GPUs; exact rebuilt digest requires revalidation) | candidate (8 GPUs) | candidate (8 GPUs) | candidate (8 GPUs) |
+| `npa-cosmos3-serving` (zero-payload public release) | blocked (8-GPU memory floor) | supported (8 GPUs) | supported (8 GPUs) | **verified** (8 GPUs) [65] | supported (8 GPUs) |
 | `npa-wan2-2` | supported | supported | **verified** [63] | **historical evidence** [61] | supported |
 | `npa-ltx2` | runtime not validated | runtime not validated | **verified** [62] | runtime not validated | runtime not validated |
 | `npa-cosmos3-reason` | supported | **verified** [38] | **verified** [43] | **verified** [36] | **verified** [37] |
@@ -76,7 +76,7 @@ The old `npa-cosmos:1.0.9` cu126 image stopped at Hopper. Its additive cu128/tor
 | `npa-isaac-lab` | supported | supported (headless) | supported | blocked | blocked |
 | `npa-leisaac` | not routed or validated by the current launcher | blocked (no RT cores) | supported (current hard-selected target) | blocked (no RT cores) | blocked (no RT cores) |
 | `npa-sonic` | supported | supported (headless) | supported | blocked | blocked |
-| `npa-sonic-mujoco` | candidate (headless) | candidate (headless) | candidate | candidate (headless) | candidate (headless) |
+| `npa-sonic-mujoco` | supported (headless) | supported (headless) | supported | **verified** (headless) [64] | supported (headless) |
 | `npa-groot` | supported | supported | supported | blocked | blocked |
 | `npa-cosmos-curate` | CPU | CPU | CPU | CPU | CPU |
 | `npa-cosmos-evaluator` | CPU | CPU | CPU | CPU | CPU |
@@ -170,6 +170,8 @@ Managed-Kubernetes nodes were placed successfully for both B200 in us-central1 a
 | 61 | 2026-08-09 | same superseded historical candidate (NCCL 2.27.7) | 4× NVIDIA B200 (`sm_100`) | official four-rank Wan path through the instrumented wrapper: NCCL, T5/DiT FULL_SHARD FSDP, Ulysses distributed attention/all-to-all, process-group teardown, MP4 validation, and verified Rerun postprocessing | HISTORICAL PASS; operator-only validation record, world size 4 with ranks 0–3 on four unique devices; current NCCL 2.29.7 closure is not yet live-qualified |
 | 62 | 2026-08-17 | exact accepted zero-payload `npa-ltx2` digest | NVIDIA RTX PRO 6000 Blackwell Server Edition (`sm_120`) | operator-entitled runtime source/weight fetch, text-to-video generation, in-pod decode/variation gate, entitlement-refusal proof, and independent operator-side decode | PASS; 1536×1024 H.264, 121 frames, 1,994,625 bytes; exact hashes and revisions are recorded in `npa/src/npa/deploy/ltx2_image_manifest.json`; no B200/B300 claim |
 | 63 | 2026-08-17 | exact accepted zero-payload `npa-wan2-2` public-dev digest | NVIDIA RTX PRO 6000 Blackwell Server Edition (`sm_120`) | Torch 2.13.0/CUDA 13.0 runtime fetch, official Wan TI2V-5B generation with native SDPA, full MP4 decode/variation validation, and verified Rerun postprocessing | PASS; 1280×704 H.264, 17 frames at 24 fps, 2,807,385 bytes; exact image, output, runtime, and RRD hashes are recorded in `npa/src/npa/deploy/wan2_2_image_manifest.json`; no current B200 claim |
+| 64 | 2026-08-17 | exact accepted public/runtime-fetch `npa-sonic-mujoco` public-dev digest | NVIDIA B200 (`sm_100`) | baked MuJoCo venv, torch CUDA, Unitree G1 SONIC environment construction, and a 64-step primitive-policy rollout with finite observations and rewards | PASS; 64/64 finite steps, fall rate 0, and no LFS-backed policy weights; Isaac/Omniverse modes remain runtime-fetch/refusal paths |
+| 65 | 2026-08-17 | exact accepted zero-payload `npa-cosmos3-serving` public-dev digest | 8× NVIDIA B200 (`sm_100`) | operator-entitled pinned runtime/model/guardrail fetch, guarded service boot and readiness, runtime Triton compilation, real synchronous video request, and output decode | PASS; 640×352 H.264, 93 frames, 707,047 bytes, SHA-256 `7a5c11387c5296c61f6d4824efe012b8f09af048966c0f6c0444a128878ad925`; Kubernetes validation required a 32 GiB memory-backed `/dev/shm` |
 
 ## Measured failures and negative controls
 

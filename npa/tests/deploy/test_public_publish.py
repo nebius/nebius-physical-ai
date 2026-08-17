@@ -44,6 +44,7 @@ from npa.deploy.publish_public import (
     _pin_wan_publication_sources as REAL_WAN_SOURCE_PIN,
     build_publish_plan,
     verify_bootstrap_publication_source as REAL_BOOTSTRAP_PUBLICATION_GATE,
+    verify_gpu_accepted_publication_source as REAL_GPU_ACCEPTANCE_GATE,
     verify_ltx_publication_source as REAL_LTX_PUBLICATION_GATE,
     verify_wan_publication_source as REAL_WAN_PUBLICATION_GATE,
 )
@@ -82,6 +83,38 @@ def _avoid_registry_attestation_reads_in_unrelated_publish_tests(monkeypatch) ->
         "verify_bootstrap_publication_source",
         lambda item: (True, "test fixture: bootstrap gate verified"),
     )
+    monkeypatch.setattr(
+        publish_public,
+        "verify_gpu_accepted_publication_source",
+        lambda item: (True, "test fixture: GPU acceptance gate verified"),
+    )
+
+
+def test_gpu_accepted_publication_gate_binds_exact_digest(monkeypatch) -> None:
+    from npa.deploy import publish_public
+
+    item = PublishItem(
+        tool="cosmos3-serving",
+        source_ref="ghcr.io/example/npa-cosmos3-serving:dev-source",
+        target_ref="ghcr.io/example/npa-cosmos3-serving:release",
+    )
+    accepted = images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS[item.tool]
+    monkeypatch.setattr(
+        publish_public, "_crane_digest", lambda _ref, **_: (True, accepted)
+    )
+    assert REAL_GPU_ACCEPTANCE_GATE(item) == (
+        True,
+        f"exact GPU-accepted digest {accepted}",
+    )
+
+    mutation = "sha256:" + "f" * 64
+    monkeypatch.setattr(
+        publish_public, "_crane_digest", lambda _ref, **_: (True, mutation)
+    )
+    ok, detail = REAL_GPU_ACCEPTANCE_GATE(item)
+    assert not ok
+    assert mutation in detail
+    assert accepted in detail
 
 
 def test_wan_source_tag_is_frozen_before_preflight_and_copy(monkeypatch) -> None:
@@ -243,8 +276,8 @@ def test_isaac_images_are_no_longer_restricted() -> None:
         assert is_publicly_redistributable(tool), tool
 
 
-def test_rebuilt_cosmos3_serving_and_sonic_mujoco_are_public_candidates() -> None:
-    """Clean bytes earn eligibility; exact GPU evidence still gates promotion.
+def test_rebuilt_cosmos3_serving_and_sonic_mujoco_are_gpu_accepted() -> None:
+    """Clean bytes and exact GPU evidence earn release eligibility.
 
     Omniverse Kit was only the first: sonic also baked gated model weights (git-LFS
     smudging) and NVIDIA Omniverse 3D assets (the RoboCasa asset library under
@@ -256,7 +289,11 @@ def test_rebuilt_cosmos3_serving_and_sonic_mujoco_are_public_candidates() -> Non
     assert RESTRICTED_DERIVED_IMAGES == frozenset()
     for tool in ("isaac-lab", "sonic", "groot", "cosmos3-serving", "sonic-mujoco"):
         assert is_publicly_redistributable(tool), tool
-    assert {"cosmos3-serving", "sonic-mujoco"} <= UNVALIDATED_PUBLICATION_TOOLS
+    assert UNVALIDATED_PUBLICATION_TOOLS == frozenset()
+    assert set(images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS) == {
+        "cosmos3-serving",
+        "sonic-mujoco",
+    }
 
 
 def test_public_set_excludes_every_restricted_tool(monkeypatch) -> None:
@@ -302,9 +339,8 @@ def test_publish_plan_now_includes_the_isaac_images() -> None:
         "npa-groot",
     ):
         assert image in names, image
-    # Both newly safe images remain omitted until their exact GPU evidence lands.
-    assert "npa-sonic-mujoco" not in names
-    assert "npa-cosmos3-serving" not in names
+    assert "npa-sonic-mujoco" in names
+    assert "npa-cosmos3-serving" in names
     for item in plan:
         assert item.target_ref.startswith("ghcr.io/example/workbench/")
 

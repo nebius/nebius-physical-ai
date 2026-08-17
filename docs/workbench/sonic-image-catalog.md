@@ -41,9 +41,9 @@ inherits those same restricted bytes. Resolvers reject both variants. An EULA
 credential or runtime flag cannot repair redistribution of bytes already baked
 into an image.
 
-## Public MuJoCo candidate
+## Public MuJoCo release
 
-`sonic-mujoco-runtime-fetch` is a new candidate, not a relabel of the legacy
+`sonic-mujoco-runtime-fetch` is a new release, not a relabel of the legacy
 digest. It builds independently on a digest-pinned official Python base from the
 pinned Apache-2.0 SONIC source, a hash-locked MuJoCo/PyTorch closure, and Debian
 EGL/GL libraries. The CUDA Toolkit runtime object files are retained only under
@@ -52,9 +52,9 @@ Lab, Omniverse Kit, NGC/NLC layers, driver userspace, weights, credentials, and
 accepted terms are absent. Isaac-facing modes retain the existing runtime-fetch
 refusal and require caller-supplied acceptance.
 
-The candidate has no accepted digest and resolvers reject it until the exact
-public development digest passes the full Omniverse/layer/history scans plus a
-real GPU MuJoCo rollout with artifact and metric checks.
+The supported tag is bound to the exact public development digest that passed
+the full Omniverse/layer/history scans plus a real B200 MuJoCo rollout with
+artifact and metric checks. Future bytes require a new accepted digest.
 
 The public source checkout intentionally skips every Git-LFS object. When the
 upstream G1 mesh paths are LFS pointers, headless evaluation retains the

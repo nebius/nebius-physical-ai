@@ -54,10 +54,10 @@ The quarantined historical runtime is:
 npa-sonic-mujoco:0.1.3-mvp
 ```
 
-The new candidate is `sonic-mujoco-runtime-fetch`, built independently by
-`Dockerfile.mujoco` on the digest-pinned public Python base. It has no release
-digest yet and is deliberately refused by resolution until exact-digest GPU
-acceptance is recorded.
+The replacement is `sonic-mujoco-runtime-fetch`, built independently by
+`Dockerfile.mujoco` on the digest-pinned public Python base. Release resolution
+is bound to the exact digest that passed payload gates and real B200 MuJoCo
+GPU acceptance; it never falls back to the quarantined historical digest.
 
 Build locally for inspection; official pushes use only the guarded immutable
 public development workflow:

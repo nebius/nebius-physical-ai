@@ -367,12 +367,12 @@ containers:
       network: OpenAI-compatible service on :8000 (/v1/models, /v1/videos)
       external_fetch: [vllm-omni-source-and-runtime, huggingface-models]
       notes: >-
-        Public-development candidate containing no serving/CUDA runtime, model,
+        Public zero-payload image containing no serving/CUDA runtime, model,
         guardrail, token, or accepted terms. The pinned vLLM-Omni source and
         hash-locked runtime closure are fetched only after explicit operator
         acceptance; model and guardrail access is checked with the caller's
-        Hugging Face token. Supported release resolution remains refused until
-        the exact public digest passes a real guarded 8-GPU boot and inference.
+        Hugging Face token. The supported release is bound to the exact digest
+        that passed a guarded eight-B200 boot and real H.264 inference.
     golden_eval:
       kind: entrypoint-smoke
       command: /opt/npa-cosmos3-serving/smoke_serving.sh
@@ -380,7 +380,7 @@ containers:
       serverless_gpu: b200
       gpu: required
       timeout_seconds: 3600
-      status: gpu-gated
+      status: ready
 
   cosmos3-reason:
     image: npa-cosmos3-reason
@@ -539,7 +539,7 @@ containers:
       serverless_gpu: b200
       gpu: required
       timeout_seconds: 600
-      status: gpu-gated
+      status: ready
 
   retargeting:
     image: npa-retargeting

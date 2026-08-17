@@ -116,11 +116,10 @@
     },
     {
       "id": "sonic-mujoco-runtime-fetch",
-      "status": "candidate",
+      "status": "active",
       "redistribution": "public-runtime-fetch",
-      "quarantine_reason": "License-eligible source architecture; release resolution remains refused until exact-digest payload scans and real GPU MuJoCo/SONIC evidence are recorded.",
       "name": "npa-sonic-mujoco",
-      "tag": "0.2.0-runtime-unbuilt",
+      "tag": "0.2.0-runtime",
       "purpose": "Public SONIC runtime plus pinned headless MuJoCo evaluation, with Isaac retained as operator-consented runtime fetch only.",
       "headless_geometry": "Upstream dynamics with primitive collision proxies when public checkout mesh paths are Git-LFS pointers; no LFS asset is baked.",
       "base": {
@@ -154,6 +153,13 @@
           "redistributable CUDA Toolkit runtime libraries under their included NVIDIA SDK terms",
           "public Debian EGL/GL runtime libraries"
         ]
+      },
+      "digest": "sha256:2388d9e97269afaa414966e83a27f676a3f44d4271e9828c57bc13fbdce80f57",
+      "validation": {
+        "hardware": "B200 (compute capability 10.0)",
+        "capability": "real Unitree G1 SONIC MuJoCo rollout",
+        "result": "64 finite simulation steps; fall rate 0; metrics artifact verified",
+        "payload": "filesystem, layer, history, Omniverse, secret, SBOM, vulnerability, and provenance gates passed"
       }
     }
   ],

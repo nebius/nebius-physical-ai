@@ -7,7 +7,7 @@ This tool is license-guarded: it only ever copies tools reported by
 The Isaac tools fetch Isaac Sim / Isaac Lab at first run under the operator's
 own EULA acceptance. Cosmos3 serving is a zero-payload runtime bootstrap, while
 SONIC MuJoCo is rebuilt independently without a vendor-container parent. Both
-are release-blocked until exact-digest GPU evidence is recorded.
+are promoted only from their recorded exact GPU-accepted digests.
 
 Example (dry run first, then execute):
 
@@ -394,6 +394,22 @@ def verify_validated_publication(item: PublishItem) -> tuple[bool, str]:
     )
 
 
+def verify_gpu_accepted_publication_source(item: PublishItem) -> tuple[bool, str]:
+    """Bind rebuilt GPU surfaces to the exact accepted public manifest."""
+
+    accepted = images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS.get(item.tool)
+    if accepted is None:
+        return True, "not applicable"
+    ok, digest = _crane_digest(item.source_ref)
+    if not ok:
+        return False, digest
+    if digest != accepted:
+        return False, (
+            f"source digest {digest} is not the GPU-accepted digest {accepted}"
+        )
+    return True, f"exact GPU-accepted digest {digest}"
+
+
 def verify_wan_publication_source(item: PublishItem) -> tuple[bool, str]:
     """Bind Wan publication to exact clean bytes plus SPDX/SLSA attestations."""
 
@@ -659,6 +675,9 @@ def preflight_sources(plan: list[PublishItem]) -> list[tuple[PublishItem, str]]:
             detail = f"UNVALIDATED — {detail}"
         if ok:
             ok, detail = _crane_manifest_readable(item.source_ref)
+        if ok and item.tool in images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS:
+            ok, detail = verify_gpu_accepted_publication_source(item)
+            detail = f"GPU ACCEPTANCE GATE — {detail}"
         if ok and item.tool in images.SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS:
             ok, detail = verify_bootstrap_publication_source(item)
             detail = f"BOOTSTRAP GATE — {detail}"

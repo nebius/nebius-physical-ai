@@ -100,6 +100,7 @@ def test_forbidden_vendor_payload_and_build_fetch_mutations(mutation: str) -> No
 def test_public_contract_nonroot_health_and_inventory() -> None:
     from npa.deploy.images import (
         CONTAINER_IMAGE_NAMES,
+        GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS,
         RESTRICTED_PUBLICATION_TOOLS,
         UNVALIDATED_PUBLICATION_TOOLS,
     )
@@ -110,7 +111,10 @@ def test_public_contract_nonroot_health_and_inventory() -> None:
     assert entry["tier"] == "service"
     assert CONTAINER_IMAGE_NAMES["cosmos3-serving"] == "npa-cosmos3-serving"
     assert "cosmos3-serving" not in RESTRICTED_PUBLICATION_TOOLS
-    assert "cosmos3-serving" in UNVALIDATED_PUBLICATION_TOOLS
+    assert "cosmos3-serving" not in UNVALIDATED_PUBLICATION_TOOLS
+    assert GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS["cosmos3-serving"] == (
+        "sha256:3342bbe44bd1c00ebf05ab4c9d7286058a94bb5ce90b49b164b23604d3acf180"
+    )
     users = re.findall(r"(?im)^USER\s+(\S+)$", _instructions())
     assert users[-1] == "ubuntu"
     assert "--start-period=1800s" in _instructions()

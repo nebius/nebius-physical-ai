@@ -469,12 +469,16 @@
     {
       "name": "npa-sonic-mujoco",
       "dockerfile": "sonic/Dockerfile.mujoco",
-      "verdict": "unknown",
-      "validation": "pending-gpu",
+      "verdict": "ready",
+      "validation": "validated",
       "torch": "hash-locked torch 2.9.0 cu128 wheel closure with sm_100 and sm_120",
       "source_compiled_extensions": [],
       "smoke": "MuJoCo evaluation episode",
-      "notes": "Independently rebuilt and exact local bytes scanned; the public development digest still requires a real B200 or RTX PRO 6000 capability rollout."
+      "notes": "Exact public development digest passed payload/layer/history/Omniverse and security gates plus a real B200 Unitree G1 SONIC MuJoCo rollout (64 finite steps, fall rate 0).",
+      "published_tag": "0.2.0-runtime",
+      "published_digest": "sha256:2388d9e97269afaa414966e83a27f676a3f44d4271e9828c57bc13fbdce80f57",
+      "publication_model": "exact-digest-promoted",
+      "published_registries": ["public-development", "public-release"]
     },
     {
       "name": "npa-groot",
@@ -549,12 +553,16 @@
       "name": "npa-cosmos3-serving",
       "dockerfile": "cosmos3-serving/Dockerfile",
       "build_script": "cosmos3-serving/build.sh",
-      "verdict": "unknown",
-      "validation": "pending-gpu",
+      "verdict": "ready",
+      "validation": "validated",
       "torch": "zero-payload bootstrap; hash-locked torch 2.11.0 CUDA closure is operator runtime fetch",
       "source_compiled_extensions": [],
       "smoke": "8-GPU Cosmos3-Super server readiness plus a real /v1/videos generation and full H.264 decode",
-      "notes": "The local zero-payload artifact passed filesystem/layer/history scans. The exact public development digest still requires a guardrails-on 8-GPU boot and real inference on B200 before release."
+      "notes": "Exact zero-payload public development digest passed filesystem/layer/history and security gates plus guarded 8-GPU B200 service boot, readiness, and real H.264 video inference.",
+      "published_tag": "0.2.0-oss",
+      "published_digest": "sha256:3342bbe44bd1c00ebf05ab4c9d7286058a94bb5ce90b49b164b23604d3acf180",
+      "publication_model": "exact-digest-promoted",
+      "published_registries": ["public-development", "public-release"]
     },
     {
       "name": "npa-cosmos-curate",

@@ -139,9 +139,15 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 #
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
-UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
-    {"cosmos3-serving", "sonic-mujoco"}
-)
+UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset()
+
+# Release promotion for the rebuilt surfaces is bound to the exact manifests
+# whose filesystem/layers were scanned and whose advertised GPU capability ran.
+# A newly built dev tag must earn fresh evidence before this mapping changes.
+GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS: dict[str, str] = {
+    "cosmos3-serving": "sha256:3342bbe44bd1c00ebf05ab4c9d7286058a94bb5ce90b49b164b23604d3acf180",
+    "sonic-mujoco": "sha256:2388d9e97269afaa414966e83a27f676a3f44d4271e9828c57bc13fbdce80f57",
+}
 
 # Registry hosts that serve anonymous/public pulls. Resolving a restricted image
 # against one of these is always wrong: either it is not there (we never publish
@@ -172,14 +178,14 @@ SUPPORTED_TOOL_VERSIONS = {
     # torch cu130. The immutable 1.2.2-cu130 tag remains rollback provenance.
     # No weights baked; gated Cosmos3 checkpoints download at runtime.
     "cosmos3": "1.2.2-cu130-r2",
-    "cosmos3-serving": "0.2.0-oss-unbuilt",
+    "cosmos3-serving": "0.2.0-oss",
     "cosmos3-reason": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "cosmos-curate": "0.1.2-skypilot-v1-20260813T164700Z",
     "cosmos-evaluator": "0.1.2-skypilot-v1-20260813T164700Z",
     "groot": "0.1.0",
     "fiftyone": "1.15.0.post1",
     "sonic": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
-    "sonic-mujoco": "0.2.0-runtime-unbuilt",
+    "sonic-mujoco": "0.2.0-runtime",
     "retargeting": "0.1.1",
     "envgen": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "reference-policy": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",

@@ -184,13 +184,24 @@ def test_published_tags_are_additive_and_arch_labelled(entries: list[dict]) -> N
     for entry in published:
         tag = entry["published_tag"]
         name = entry["name"]
-        assert tag.startswith(("cuda13-b300-", "cu128-torch27-sm100-")), (
-            f"{name} tag {tag!r} is outside the published Blackwell tag families"
-        )
-        assert re.search(r"-\d{8}T\d{6}Z$", tag), (
-            f"{name} tag {tag!r} has no UTC stamp, so a rebuild would overwrite it"
-        )
-        assert "sm100" in tag, f"{name} tag {tag!r} does not advertise sm_100"
+        if entry.get("publication_model") == "exact-digest-promoted":
+            from npa.deploy.images import (
+                CONTAINER_IMAGE_NAMES,
+                GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS,
+                SUPPORTED_TOOL_VERSIONS,
+            )
+
+            tool = next(tool for tool, image in CONTAINER_IMAGE_NAMES.items() if image == name)
+            assert tag == SUPPORTED_TOOL_VERSIONS[tool]
+            assert entry["published_digest"] == GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS[tool]
+        else:
+            assert tag.startswith(("cuda13-b300-", "cu128-torch27-sm100-")), (
+                f"{name} tag {tag!r} is outside the published Blackwell tag families"
+            )
+            assert re.search(r"-\d{8}T\d{6}Z$", tag), (
+                f"{name} tag {tag!r} has no UTC stamp, so a rebuild would overwrite it"
+            )
+            assert "sm100" in tag, f"{name} tag {tag!r} does not advertise sm_100"
         assert re.fullmatch(r"sha256:[0-9a-f]{64}", entry["published_digest"]), (
             f"{name} has a malformed digest"
         )
