@@ -182,6 +182,11 @@ def test_build_isaac_rollout_job_manifest_shape():
     assert "CPU physics camera fallback requires ROLLOUT_COUNT=1" in (
         pr.ISAAC_ROLLOUT_SCRIPT
     )
+    assert "def _write_rgb_png(path, rgb):" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert "from PIL import" not in pr.ISAAC_ROLLOUT_SCRIPT
+    assert "_write_rgb_png(os.path.join(d, name), arr[i])" in (
+        pr.ISAAC_ROLLOUT_SCRIPT
+    )
     assert '"simulation_device": SIM_DEVICE' in pr.ISAAC_ROLLOUT_SCRIPT
 
 

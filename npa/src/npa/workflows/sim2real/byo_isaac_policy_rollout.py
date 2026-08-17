@@ -445,11 +445,29 @@ try:
         "ROLLOUT realN", realN, "DECISION_POINTS", STEPS,
         "HORIZON_STEPS", HORIZON_STEPS, flush=True,
     )
-    try:
-        from PIL import Image as _PILImage
-        _have_pil = True
-    except Exception:
-        _have_pil = False
+    def _write_rgb_png(path, rgb):
+        # Isaac runtime images do not guarantee Pillow.  Keep capture independent
+        # of optional packages so a valid sensor stream cannot be silently lost.
+        import binascii, struct, zlib
+        pixels = np.asarray(rgb, dtype=np.uint8)
+        if pixels.ndim != 3 or pixels.shape[2] < 3:
+            raise RuntimeError("camera rgb output must be HxWxC")
+        pixels = np.ascontiguousarray(pixels[:, :, :3])
+        height, width = pixels.shape[:2]
+        raw = b"".join(b"\x00" + row.tobytes() for row in pixels)
+        def chunk(kind, payload):
+            body = kind + payload
+            return struct.pack(">I", len(payload)) + body + struct.pack(
+                ">I", binascii.crc32(body) & 0xFFFFFFFF
+            )
+        encoded = (
+            b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw, PNG_COMPRESS_LEVEL))
+            + chunk(b"IEND", b"")
+        )
+        with open(path, "wb") as handle:
+            handle.write(encoded)
     rollout_ids = [f"rollout-{i:04d}" for i in range(N)]
     frame_names = {
         i: {view["name"]: [] for view in CAMERA_VIEWS}
@@ -474,8 +492,6 @@ try:
     stable_grasp_steps = np.zeros(N, dtype=np.int64)
     stable_place_steps = np.zeros(N, dtype=np.int64)
     def capture(step):
-        if not _have_pil:
-            return
         if step % CAPTURE_STRIDE != 0 and step != HORIZON_STEPS:
             return
         for view in CAMERA_VIEWS:
@@ -491,9 +507,7 @@ try:
                         if view_name == "primary"
                         else "camera-%s-%03d.png" % (view_name, index)
                     )
-                    _PILImage.fromarray(arr[i, :, :, :3].astype(np.uint8)).save(
-                        os.path.join(d, name), compress_level=PNG_COMPRESS_LEVEL
-                    )
+                    _write_rgb_png(os.path.join(d, name), arr[i])
                     frame_names[i][view_name].append(name)
                     frame_metadata[i][view_name].append({
                         "path": name,
