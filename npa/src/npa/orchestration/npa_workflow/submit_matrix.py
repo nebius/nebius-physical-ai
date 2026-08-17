@@ -216,11 +216,12 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "cosmos3-text-to-image.yaml",
         "gpu",
-        secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         image_tool="cosmos3-reason",
         notes=(
-            "Clones the Cosmos framework, syncs its uv environment, downloads Cosmos3-Nano and "
-            "generates an image. Needs the Cosmos image rather than SkyPilot's default: "
+            "Clones the Cosmos framework, syncs its uv environment, anonymously downloads "
+            "public Cosmos3-Nano with guardrails disabled, and generates an image. Needs the "
+            "Cosmos image rather than SkyPilot's default: "
             "transformer_engine links against glibc >= 2.32 (job 301), which no LD_LIBRARY_PATH "
             "can supply."
         ),
@@ -232,8 +233,8 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         image_tool="cosmos3",
         notes=(
             "Runs the real Cosmos 3 omni-model generate path in the npa-cosmos3 image. "
-            "The image contains the framework but no weights, so HF_TOKEN is required "
-            "for the runtime checkpoint and guardrail downloads."
+            "The image contains the framework but no weights. Cosmos3-Nano is public; "
+            "HF_TOKEN is required here only because this workflow keeps gated guardrails on."
         ),
     ),
     SubmitLiveCase(
@@ -438,7 +439,6 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=(
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
-            "HF_TOKEN",
             "NGC_API_KEY",
         ),
         notes=(
@@ -492,7 +492,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "NuRec/NRE reconstruction on an RT-core GPU: real NCore V4 capture -> "
             "3DGUT Gaussians -> renderable USDZ -> rig-offset novel views -> "
             "reports/sim2real.rrd. Needs NGC_API_KEY for the nre-ga container and "
-            "HF_TOKEN for the PhysicalAI capture."
+            "the public PhysicalAI capture works anonymously."
         ),
     ),
     SubmitLiveCase(
@@ -674,6 +674,32 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "artifacts. One augmentation keeps the daily proof decisive."
         ),
     ),
+    SubmitLiveCase(
+        "paidf-cosmos3.yaml",
+        "multi",
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+        ),
+        requires_token_factory=True,
+        runtime=True,
+        config_vars=(("variant_count", "1"), ("variant_parallelism", "1")),
+        image_overrides=(
+            ("workbench.cosmos3.prepare_video_input", "cosmos3"),
+            ("workbench.cosmos3.generate_variants", "cosmos3"),
+            ("workbench.cosmos_evaluator.evaluate", "cosmos-evaluator"),
+            ("workbench.cosmos_curate.curate", "cosmos-curate"),
+            ("workbench.fiftyone.curate_augmented", "fiftyone"),
+            ("workbench.nurec.visualize", "rerun-viewer"),
+        ),
+        notes=(
+            "Real dynamic PAIDF Cosmos 3 acceptance using only the repository-owned "
+            "synthetic MP4 fixture. Proves source-video-conditioned framework output, "
+            "Cosmos Evaluator, Cosmos Curator, FiftyOne Brain, and Rerun evidence."
+        ),
+    ),
     # --- Plan-only: stubs or separately covered BYOF onboarding flows ---
     SubmitLiveCase(
         "sim2real.yaml",
@@ -731,6 +757,24 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="OpenPI Polaris B200 inference; covered by test_byof_openpi_polaris_live_e2e.py.",
     ),
     SubmitLiveCase(
+        "openpi-pi05-four-mode.yaml",
+        "multi",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "NPA_OPENPI_ACCEPT_GEMMA_TERMS",
+        ),
+        plan_only=True,
+        plan_only_justification=(
+            "the immutable runtime digest is produced by the connected BYOF build and "
+            "the dedicated OpenPI live E2E submits the complete graph"
+        ),
+        notes=(
+            "Real direct, cross-pod ClusterIP serve, LoRA optimizer, checkpoint reload, "
+            "and held-out evaluation; dedicated E2E uses top-level workflow submit."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-droid-policy-learning.yaml",
         "multi",
         plan_only=True,
@@ -748,17 +792,37 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
-        "byof-wan2.2.yaml",
+        "byof-ltx2.yaml",
         "multi",
         secret_envs=(
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
             "HF_TOKEN",
-            "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS",
+            "NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS",
         ),
         plan_only=True,
         plan_only_justification=(
-            "the dedicated RTX PRO live E2E owns the large gated model run"
+            "the npa-ltx2 image has not been built, so no live submit can run yet"
+        ),
+        notes=(
+            "BYOF LTX-2.5 candidate. Plan-only for a reason the other entries do "
+            "not share: the image does not exist yet. It also cannot be submitted "
+            "on an operator's behalf at all — both fetches refuse without that "
+            "operator's own entitlement on the gated Lightricks/LTX-2.5 "
+            "repository. test_ltx2_live_e2e.py owns the gated live path once an "
+            "image exists."
+        ),
+    ),
+    SubmitLiveCase(
+        "byof-wan2.2.yaml",
+        "multi",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        plan_only=True,
+        plan_only_justification=(
+            "the dedicated RTX PRO live E2E owns the large public model run"
         ),
         notes=(
             "BYOF Wan 2.2 TI2V-5B candidate. Plan-only in the shared matrix: "
@@ -772,12 +836,10 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=(
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
-            "HF_TOKEN",
-            "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS",
         ),
         plan_only=True,
         plan_only_justification=(
-            "the dedicated four-B200 live E2E owns the multi-GPU gated model run"
+            "the dedicated four-B200 live E2E owns the multi-GPU public model run"
         ),
         notes=(
             "Plan-only in the shared submit matrix: the dedicated Wan live E2E "

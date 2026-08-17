@@ -29,8 +29,22 @@ config:
   augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/augmented/"
   augment_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/augmented/manifest.json"
   # Optional Config-Gen manifest. The transfer input itself is always required and
-  # is converted into an on-the-fly edge control; no upstream media is bundled.
+  # is converted into an on-the-fly control signal; no upstream media is bundled.
   configs_uri: ""
+
+  # Conditioning shape. edge is the on-the-fly Canny default; seg swaps in a
+  # GroundingDINO+SAM2 segmentation of the same input, and the mask keys restrict
+  # the control to one region. Empty means "unset", so this spec's default run is
+  # byte-identical to the plain edge conditioning it has always done.
+  augment_control: "edge"
+  augment_control_weight: "1.0"
+  augment_control_prompt: ""
+  augment_control_asset_uri: ""
+  augment_mask_prompt: ""
+  augment_mask_asset_uri: ""
+  # Sibling of augment_uri: publishing the control map inside it would put a
+  # non-variant directory among the augmented clips.
+  augment_control_uri: "s3://{{config.bucket}}/{{config.prefix}}/control/"
 
 resources:
   transfer-gpu:

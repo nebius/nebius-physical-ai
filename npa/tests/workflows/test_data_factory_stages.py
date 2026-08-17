@@ -6,8 +6,47 @@ import json
 from pathlib import Path
 
 import pytest
+import typer
 
 from npa.workflows import data_factory_stages as dfs
+
+
+def _mock_committed_manifest(
+    monkeypatch: pytest.MonkeyPatch, keys: list[str], *, bucket: str = "b"
+) -> None:
+    """Make listed canonical test objects carry the real committed contract."""
+
+    original = dfs._download_json
+    videos = sorted(key for key in keys if key.endswith("/augmented_video.mp4"))
+    variants = [
+        {
+            "clip": key.rsplit("/", 2)[-2],
+            "augmented_video_uri": f"s3://{bucket}/{key}",
+        }
+        for key in videos
+    ]
+
+    def load(uri: str):
+        if uri.rstrip("/").endswith("cosmos_augmented/manifest.json"):
+            return {
+                "schema": "npa.cosmos2.transfer.v1",
+                "mode": "cosmos_transfer2.5_gpu",
+                "status": "executed",
+                "node_count": 1,
+                "variant_count": len(variants),
+                "variants": variants,
+            }
+        return original(uri)
+
+    monkeypatch.setattr(dfs, "_download_json", load)
+
+
+def test_attempt_keys_without_canonical_manifest_fail_closed() -> None:
+    keys = ["run/cosmos_augmented/_attempts/orphan/clip/augmented_video.mp4"]
+    with pytest.raises(RuntimeError, match="without a canonical manifest"):
+        dfs._committed_augment_manifest(
+            "s3://b/run/cosmos_augmented/", listed_keys=keys
+        )
 
 
 def test_generate_configs_writes_real_manifest(tmp_path: Path) -> None:
@@ -267,6 +306,83 @@ def test_quality_disposition_rejects_a_degraded_report(tmp_path: Path) -> None:
     assert "evaluator status is degraded" in payload["reasons"]
 
 
+@pytest.mark.parametrize(
+    ("report", "expected_status", "expected_decision"),
+    [
+        (
+            {"score": 0.9, "status": "completed", "passed": True},
+            "accepted",
+            "promote_checkpoint",
+        ),
+        (
+            {"score": 0.9, "status": "incomplete", "passed": True},
+            "rejected",
+            "loop_back",
+        ),
+        (
+            {"score": 0.9, "status": "completed", "passed": False},
+            "rejected",
+            "loop_back",
+        ),
+    ],
+)
+def test_dynamic_quality_disposition_persists_strict_route(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    report: dict,
+    expected_status: str,
+    expected_decision: str,
+) -> None:
+    scores = tmp_path / "cosmos_evaluator.json"
+    disposition = tmp_path / "quality_disposition.json"
+    scores.write_text(json.dumps(report), encoding="utf-8")
+    decisions: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.decisions.write_decision",
+        lambda uri, decision: decisions.append((uri, decision)),
+    )
+
+    result = dfs.write_quality_disposition(
+        str(scores),
+        str(disposition),
+        "s3://example-bucket/run/decision.json",
+        threshold=0.75,
+    )
+
+    assert result["quality_status"] == expected_status
+    assert result["decision"] == expected_decision
+    assert decisions == [
+        ("s3://example-bucket/run/decision.json", expected_decision)
+    ]
+    assert json.loads(disposition.read_text())["quality_status"] == expected_status
+
+
+@pytest.mark.parametrize("contents", [None, "not-json", "[]"])
+def test_dynamic_quality_disposition_rejects_unavailable_or_malformed_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    contents: str | None,
+) -> None:
+    scores = tmp_path / "cosmos_evaluator.json"
+    disposition = tmp_path / "quality_disposition.json"
+    if contents is not None:
+        scores.write_text(contents, encoding="utf-8")
+    decisions: list[str] = []
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.decisions.write_decision",
+        lambda _uri, decision: decisions.append(decision),
+    )
+
+    result = dfs.write_quality_disposition(
+        str(scores), str(disposition), str(tmp_path / "decision.json"), 0.75
+    )
+
+    assert result["quality_status"] == "rejected"
+    assert result["decision"] == "loop_back"
+    assert result["reasons"]
+    assert decisions == ["loop_back"]
+
+
 def test_grade_gate_falls_through_a_malformed_report_to_the_older_contract(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -387,15 +503,17 @@ def test_curate_merges_the_cosmos_curator_report(tmp_path: Path, monkeypatch) ->
             }
         )
     )
+    keys = [
+        "p/cosmos_augmented/manifest.json",
+        "p/cosmos_augmented/aug-0/augmented_video.mp4",
+        "p/cosmos_augmented/aug-1/augmented_video.mp4",
+    ]
     monkeypatch.setattr(
         dfs,
         "_list_keys",
-        lambda uri: [
-            "p/cosmos_augmented/manifest.json",
-            "p/cosmos_augmented/aug-0/augmented_video.mp4",
-            "p/cosmos_augmented/aug-1/augmented_video.mp4",
-        ],
+        lambda uri: keys,
     )
+    _mock_committed_manifest(monkeypatch, keys)
     monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
     report = dfs.curate(
         "s3://b/p/cosmos_augmented/",
@@ -448,6 +566,7 @@ def test_curate_counts_augmented_set(tmp_path: Path, monkeypatch) -> None:
         "p/cosmos_augmented/aug-run/metadata.json",
     ]
     monkeypatch.setattr(dfs, "_list_keys", lambda uri: keys)
+    _mock_committed_manifest(monkeypatch, keys)
     written = {}
     monkeypatch.setattr(
         dfs,
@@ -546,6 +665,7 @@ def test_publish_transfer_layout_interoperates_with_curate_and_viz(
 
     # (a) curate must parse the produced layout correctly.
     monkeypatch.setattr(dfs, "_list_keys", lambda uri: recorded)
+    _mock_committed_manifest(monkeypatch, recorded, bucket="bkt")
     monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
     report = dfs.curate(
         "s3://bkt/run1/cosmos_augmented/", "s3://bkt/run1/curation/report.json"
@@ -578,6 +698,7 @@ def test_curate_reports_multi_variant_for_multiple_clips(
         "p/cosmos_augmented/aug-run-2/metadata.json",
     ]
     monkeypatch.setattr(dfs, "_list_keys", lambda uri: keys)
+    _mock_committed_manifest(monkeypatch, keys)
     monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
     report = dfs.curate("s3://b/p/cosmos_augmented/", "s3://b/p/curation/report.json")
     assert report["augmented_clips"] == 3
@@ -598,6 +719,7 @@ def test_finalize_reports_multi_variant_from_clip_dirs(
         "physical-ai-data-factory/run1/reports/sim2real.rrd",
     ]
     monkeypatch.setattr(dfs, "_list_keys", lambda uri: keys)
+    _mock_committed_manifest(monkeypatch, keys, bucket="b")
     monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
     report = dfs.finalize(
         "s3://b/physical-ai-data-factory/run1/", "s3://b/.../final.json"
@@ -617,10 +739,14 @@ def test_all_augmentations_reads_every_combo(tmp_path: Path) -> None:
     assert _first_augmentation(configs_uri) == combos[0]
 
 
-def test_all_augmentations_missing_manifest_returns_empty(tmp_path: Path) -> None:
+def test_all_augmentations_missing_manifest_fails_closed(tmp_path: Path) -> None:
     from npa.cli.workbench.cosmos2 import _all_augmentations
 
-    assert _all_augmentations(str(tmp_path / "nope") + "/") == []
+    with pytest.raises(
+        typer.BadParameter,
+        match="configured augmentation manifest could not be read",
+    ):
+        _all_augmentations(str(tmp_path / "nope") + "/")
 
 
 def test_finalize_aggregates_stage_artifacts(tmp_path: Path, monkeypatch) -> None:

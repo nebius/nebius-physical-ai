@@ -62,7 +62,6 @@ from npa.clients.credentials import (
     apply_shared_credential_env,
     load_credentials,
     shared_credential_env,
-    warn_if_hf_token_missing,
 )
 from npa.clients.env import (
     merge_env_file_content,
@@ -117,10 +116,12 @@ from npa.deploy.safety import (
     format_replacement_required_error,
 )
 from npa.serverless_common import (
+    MissingIsaacEulaAcceptanceError,
     MissingS3CredentialsError,
     SubnetResolutionError,
     build_serverless_job_env,
     build_serverless_output_upload_cmd,
+    require_isaac_eula_acceptance,
     require_s3_credentials,
     resolve_gpu_platform,
     resolve_subnet,
@@ -230,41 +231,35 @@ SUPPORTED_EMBODIMENT_TAGS = (
 )
 
 
-def _groot_gated_models(model: str = DEFAULT_MODEL) -> list[str]:
-    repos = [model or DEFAULT_MODEL]
-    if COSMOS_REASON_MODEL not in repos:
-        repos.append(COSMOS_REASON_MODEL)
-    return repos
+def _groot_deploy_models(model: str = DEFAULT_MODEL) -> list[str]:
+    # The deployed service runtime-fetches both the policy checkpoint and the
+    # Cosmos-Reason critic.  Probe every asset before provisioning; a later 403
+    # inside a GPU workload is both expensive and needlessly hard to diagnose.
+    return list(dict.fromkeys((model or DEFAULT_MODEL, COSMOS_REASON_MODEL)))
+
+
+def _require_groot_isaac_consent(context: str) -> str:
+    try:
+        return require_isaac_eula_acceptance(context=context, resume_command="npa workbench groot deploy ...")
+    except MissingIsaacEulaAcceptanceError as exc:
+        _fail(str(exc))
 
 
 def _model_check_or_fail(
     *,
     credentials: Any,
     model: str,
-    skip_model_check: bool,
     dry_run: bool,
     no_shared_creds: bool,
 ) -> None:
-    if skip_model_check:
-        for repo in _groot_gated_models(model):
-            console.print(f"  HF access check skipped for {repo}")
-        if dry_run:
-            console.print("  [dry-run] HF gated-model validation skipped")
-        return
     token = "" if no_shared_creds else credentials.hf_token
-    if not token:
-        warn_if_hf_token_missing(credentials, warn=console.print)
-        for repo in _groot_gated_models(model):
-            console.print(f"  HF access check skipped for {repo}")
-        if dry_run:
-            raise typer.Exit(1)
-        return
-    for repo in _groot_gated_models(model):
+    for repo in _groot_deploy_models(model):
         result = validate_hf_access(token, repo)
         if not result.ok:
             _fail(result.error or f"Unable to validate Hugging Face access to {repo}")
         prefix = "[dry-run] " if dry_run else ""
-        console.print(f"  {prefix}HF access ok: {repo}")
+        auth = "authenticated" if token else "anonymous"
+        console.print(f"  {prefix}HF access ok ({auth}): {repo}")
 
 
 def _groot_service_env(
@@ -278,6 +273,7 @@ def _groot_service_env(
     service_env: dict[str, str],
     include_shared_creds: bool,
 ) -> dict[str, str]:
+    acceptance = _require_groot_isaac_consent("GR00T service with Isaac Lab")
     env = {
         "GROOT_MODEL_PATH": DEFAULT_MODEL,
         "GROOT_EMBODIMENT_TAG": DEFAULT_EMBODIMENT_TAG,
@@ -292,9 +288,7 @@ def _groot_service_env(
         "NEBIUS_S3_ENDPOINT": storage_ep,
         "NEBIUS_S3_BUCKET": bucket,
         "NEBIUS_REGION": env_region,
-        "OMNI_KIT_ACCEPT_EULA": "YES",
-        "ACCEPT_EULA": "Y",
-        "ISAACSIM_ACCEPT_EULA": "YES",
+        "ACCEPT_EULA": acceptance,
         "PYTHONUNBUFFERED": "1",
         **service_env,
     }
@@ -1175,12 +1169,13 @@ def _build_runtime_pin_patch_command() -> str:
 
 
 def _build_install_command(port: int = DEFAULT_SERVER_PORT) -> str:
+    _require_groot_isaac_consent("GR00T installation with Isaac Lab")
     server_py = _build_server_py(DEFAULT_MODEL, DEFAULT_EMBODIMENT_TAG)
     runtime_pin_patch = _build_runtime_pin_patch_command()
     script = f"""\
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
-export OMNI_KIT_ACCEPT_EULA="${{OMNI_KIT_ACCEPT_EULA:-YES}}"
+export ACCEPT_EULA=Y
 sudo apt-get update
 sudo apt-get install -y software-properties-common build-essential git git-lfs curl unzip ffmpeg libsm6 libxext6 libglu1-mesa
 git lfs install --system || true
@@ -2358,11 +2353,6 @@ def deploy_cmd(
         "--no-shared-creds",
         help="Do not inject ~/.npa/credentials.yaml shared credentials into the service env.",
     ),
-    skip_model_check: bool = typer.Option(
-        False,
-        "--skip-model-check",
-        help="Skip Hugging Face gated-model access validation.",
-    ),
     health_check_mode: HealthCheckMode = typer.Option(
         HealthCheckMode.auto,
         "--health-check-mode",
@@ -2410,6 +2400,8 @@ def deploy_cmd(
         _fail(f"--data-disk-size must be positive, got {data_disk_size}")
     if gpu_count < 0:
         _fail(f"--gpu-count must be 0 (all detected) or positive, got {gpu_count}")
+    if not destroy and not skip_app and not dry_run:
+        _require_groot_isaac_consent("GR00T deployment with Isaac Lab")
 
     byovm = is_byovm_runtime(runtime)
     if _is_serverless_runtime(runtime):
@@ -2443,6 +2435,15 @@ def deploy_cmd(
     if not proj_alias:
         proj_alias = env_region or ("byovm" if byovm else "default")
 
+    credentials = resolve_credentials()
+    if not destroy and not skip_app:
+        _model_check_or_fail(
+            credentials=credentials,
+            model=model,
+            dry_run=dry_run,
+            no_shared_creds=no_shared_creds,
+        )
+
     existing_managed_alias = alias_has_terraform_state(proj_alias, wb_name)
     existing_byovm_alias = workbench_is_byovm(proj_alias, wb_name)
     if not destroy and (existing_managed_alias or existing_byovm_alias):
@@ -2471,16 +2472,6 @@ def deploy_cmd(
             _confirm_or_exit(
                 f"--replace will provision replacement infrastructure for '{proj_alias}/{wb_name}'. Continue?"
             )
-
-    credentials = resolve_credentials()
-    if not destroy and not skip_app:
-        _model_check_or_fail(
-            credentials=credentials,
-            model=model,
-            skip_model_check=skip_model_check,
-            dry_run=dry_run,
-            no_shared_creds=no_shared_creds,
-        )
 
     nebius_creds: dict[str, str] = {}
     if use_remote_state and not skip_infra:
@@ -2908,9 +2899,7 @@ def deploy_cmd(
             "NEBIUS_S3_ENDPOINT": storage_ep,
             "NEBIUS_S3_BUCKET": bucket,
             "NEBIUS_REGION": env_region,
-            "OMNI_KIT_ACCEPT_EULA": "YES",
             "ACCEPT_EULA": "Y",
-            "ISAACSIM_ACCEPT_EULA": "YES",
             "PYTHONUNBUFFERED": "1",
             **gpu_env_fields(
                 byovm_gpu_info,
@@ -3704,6 +3693,10 @@ def eval_cmd(
     sim: bool = typer.Option(
         False, "--sim", help="Create a sim-eval request for an Isaac Lab workbench."
     ),
+    accept_eula: bool = typer.Option(
+        True, "--accept-eula/--no-accept-eula",
+        help="Isaac EULA routing for --sim; defaults on, with --no-accept-eula as opt-out.",
+    ),
     isaac_lab_workbench: str = typer.Option(
         "",
         "--isaac-lab-workbench",
@@ -3742,6 +3735,12 @@ def eval_cmd(
         _fail(str(exc))
 
     if sim:
+        if not accept_eula:
+            _fail(
+                "Refusing GR00T Isaac simulation after --no-accept-eula; offline "
+                "evaluation needs no Isaac EULA route. Omit --no-accept-eula or "
+                "omit --sim."
+            )
         if not isaac_lab_workbench:
             _fail("--isaac-lab-workbench is required with --sim")
         if num_episodes <= 0:

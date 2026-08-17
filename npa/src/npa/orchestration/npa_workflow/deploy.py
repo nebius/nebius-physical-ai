@@ -35,7 +35,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Callable, Mapping
 
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
-from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec
+from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec, profile_num_nodes
 from npa.provisioning_preflight import (
     DEFAULT_CPU_NODES,
     DEFAULT_CPU_PLATFORM,
@@ -153,6 +153,13 @@ def parse_deploy_targets(spec: NpaWorkflowSpec) -> list[DeployTarget]:
             )
         elif not _coerce_bool(directive):
             continue
+
+        # A gang-scheduled stage needs a cluster that can actually hold the block:
+        # `num_nodes: 4` on a one-GPU-node cluster does not fail, it sits PENDING.
+        # An explicit gpuNodes directive still wins when it asks for more.
+        gang_nodes = profile_num_nodes(dict(raw), name=str(profile), config=spec.config)
+        if accelerators and gang_nodes > gpu_nodes:
+            gpu_nodes = gang_nodes
 
         targets.append(
             DeployTarget(

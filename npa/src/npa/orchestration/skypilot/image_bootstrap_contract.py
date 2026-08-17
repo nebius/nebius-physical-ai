@@ -20,6 +20,7 @@ ATTESTATION_LABEL = "org.nebius.npa.skypilot-bootstrap-contract"
 FIRST_PARTY_REPOSITORY_PREFIX = "npa-"
 CANONICAL_PUBLIC_REGISTRY = "ghcr.io/nebius/nebius-physical-ai"
 PROBE_TIMEOUT_SECONDS = 180
+_KUBERNETES_NAME_RE = re.compile(r"^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?$")
 
 
 class ImageBootstrapContractError(RuntimeError):
@@ -271,6 +272,7 @@ def probe_image_capabilities(
     digest: str,
     context: str,
     kubeconfig: str = "",
+    image_pull_secrets: tuple[str, ...] = (),
     runner: Runner = _run,
     terminal_observer: TerminalObserver = _observe_terminal_phase,
     nonce_factory: Callable[[], str] = lambda: secrets.token_hex(8),
@@ -280,6 +282,16 @@ def probe_image_capabilities(
     immutable = immutable_image_reference(image, digest)
     if not str(context or "").strip():
         raise ImageBootstrapContractError("an exact Kubernetes context is required")
+    pull_secret_names = tuple(
+        dict.fromkeys(str(name or "").strip() for name in image_pull_secrets)
+    )
+    invalid_secret_names = [
+        name for name in pull_secret_names if not _KUBERNETES_NAME_RE.fullmatch(name)
+    ]
+    if invalid_secret_names:
+        raise ImageBootstrapContractError(
+            f"invalid Kubernetes image pull secret reference {invalid_secret_names[0]!r}"
+        )
     env = dict(os.environ)
     if kubeconfig:
         env["KUBECONFIG"] = kubeconfig
@@ -304,6 +316,23 @@ def probe_image_capabilities(
             f"npa.nebius.com/probe-id={probe_id}"
         )
         try:
+            overrides = []
+            if pull_secret_names:
+                overrides = [
+                    "--overrides="
+                    + json.dumps(
+                        {
+                            "apiVersion": "v1",
+                            "spec": {
+                                "imagePullSecrets": [
+                                    {"name": secret_name}
+                                    for secret_name in pull_secret_names
+                                ]
+                            },
+                        },
+                        separators=(",", ":"),
+                    )
+                ]
             create = runner(
                 [
                     *common,
@@ -312,6 +341,7 @@ def probe_image_capabilities(
                     "--restart=Never",
                     f"--image={immutable}",
                     f"--labels={labels}",
+                    *overrides,
                     "--",
                     "/bin/sh",
                     "-c",

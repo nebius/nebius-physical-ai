@@ -77,7 +77,7 @@ def test_agent_bootstrap_source_smoke() -> None:
         assert marker in bundled, f"missing Foxglove viewer contract marker: {marker!r}"
     # The Foxglove SDK must be loaded on demand (dynamic import), never eagerly:
     # opening the agent must not pay for an embed the operator did not ask for.
-    assert 'await import(moduleUrl)' in ui_source
+    assert "await import(moduleUrl)" in ui_source
     # The Foxglove routes are a shipped backend module registered by agent.py.
     assert "register_foxglove_routes(" in source
     routes_source = (
@@ -86,17 +86,22 @@ def test_agent_bootstrap_source_smoke() -> None:
     assert '@app.get("/foxglove/config")' in routes_source
     assert '@app.post("/foxglove/load-artifact")' in routes_source
     assert '@app.post("/foxglove/convert-run")' in routes_source
+    assert '@app.post("/foxglove/export")' in routes_source
     assert 'id="chatSend"' in bundled
     assert 'id="chatForm"' in bundled
     assert 'id="chatSessionSelect"' in bundled
     assert 'chatForm.addEventListener("submit"' in bundled
     assert "/api/chat/sessions" in bundled
     # nginx site policy now lives in agent_site.py (split out of the monolith).
-    site_source = (REPO_ROOT / "npa" / "src" / "npa" / "cli" / "agent_site.py").read_text(
-        encoding="utf-8"
+    site_source = (
+        REPO_ROOT / "npa" / "src" / "npa" / "cli" / "agent_site.py"
+    ).read_text(encoding="utf-8")
+    assert (
+        'add_header Cache-Control "no-store, no-cache, must-revalidate"' in site_source
     )
-    assert 'add_header Cache-Control "no-store, no-cache, must-revalidate"' in site_source
-    assert "local_media_type = artifact_media_type(safe_name)" in artifact_content_source
+    assert (
+        "local_media_type = artifact_media_type(safe_name)" in artifact_content_source
+    )
 
 
 def test_agent_live_tmux_script_help() -> None:

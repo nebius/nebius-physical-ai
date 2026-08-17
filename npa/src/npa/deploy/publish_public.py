@@ -110,6 +110,13 @@ def build_publish_plan(
 
     plan: list[PublishItem] = []
     for tool in publicly_publishable_tools():
+        # Licence eligibility and evidence are separate gates, and a tool can
+        # pass the first while having no built artifact to have checked. Those
+        # are excluded from the plan rather than failed during preflight,
+        # because the plan is meant to read as "what we would hand to the
+        # public" — and something that does not exist is not that.
+        if tool in images.UNVALIDATED_PUBLICATION_TOOLS:
+            continue
         # Read the restricted set through the module, never a from-import: a
         # defence-in-depth check that holds a stale copy of the thing it is defending is
         # worse than no check at all. (`from ... import OMNIVERSE_RESTRICTED_TOOLS` binds
@@ -282,6 +289,25 @@ def _scan_wan_trivy_exact_digest(image_ref: str) -> dict[str, int]:
         "critical_with_fix": len(fixed),
         "secrets": len(secrets),
     }
+
+
+def verify_validated_publication(item: PublishItem) -> tuple[bool, str]:
+    """Refuse to publish a tool that has no built, validated artifact yet.
+
+    Licence eligibility and evidence are separate gates. A tool can be correctly
+    classified `redistribution: public` and still have nothing whose bytes were
+    ever scanned or whose capabilities were ever run on a GPU. Publishing that
+    would put out an unearned claim, so it is refused by name here rather than
+    left to fail incidentally when the tag turns out not to exist.
+    """
+
+    if item.tool not in images.UNVALIDATED_PUBLICATION_TOOLS:
+        return True, "not applicable"
+    return False, (
+        f"{item.tool} has no accepted image: it has not been built, payload "
+        "scanned, or GPU validated. Publication is blocked until that evidence "
+        "exists and the tool leaves images.UNVALIDATED_PUBLICATION_TOOLS."
+    )
 
 
 def verify_wan_publication_source(item: PublishItem) -> tuple[bool, str]:
@@ -550,7 +576,14 @@ def preflight_sources(plan: list[PublishItem]) -> list[tuple[PublishItem, str]]:
     """Return the plan items whose SOURCE image cannot be read, with the reason."""
     failures: list[tuple[PublishItem, str]] = []
     for item in plan:
-        ok, detail = _crane_manifest_readable(item.source_ref)
+        # Defence in depth: build_plan already drops unvalidated tools, so
+        # reaching here means something reintroduced one. Refuse for the right
+        # reason rather than letting it fail as a missing tag.
+        ok, detail = verify_validated_publication(item)
+        if not ok:
+            detail = f"UNVALIDATED — {detail}"
+        if ok:
+            ok, detail = _crane_manifest_readable(item.source_ref)
         if ok and item.tool in images.SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS:
             ok, detail = verify_bootstrap_publication_source(item)
             detail = f"BOOTSTRAP GATE — {detail}"

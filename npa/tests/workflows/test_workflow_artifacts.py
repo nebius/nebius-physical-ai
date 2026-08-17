@@ -56,23 +56,44 @@ def test_build_fiftyone_dataset_groups_variants_and_summarizes() -> None:
     ]
     payloads = {
         f"{base}/cosmos_augmented/aug-{run}-0/metadata.json": {
-            "variables": {"cloth_color": "green", "lighting": "warm lamp light", "prompt": "a green cloth"}
+            "variables": {
+                "cloth_color": "green",
+                "lighting": "warm lamp light",
+                "prompt": "a green cloth",
+            }
         },
         f"{base}/cosmos_augmented/aug-{run}-1/metadata.json": {
-            "variables": {"cloth_color": "blue", "lighting": "cool overhead light", "prompt": "a blue cloth"}
+            "variables": {
+                "cloth_color": "blue",
+                "lighting": "cool overhead light",
+                "prompt": "a blue cloth",
+            }
         },
         f"{base}/labeled_augmented/captions.json": {
             "captions": [
-                {"image": f"aug-{run}-0/frame-00000.png", "caption": "green cloth on a countertop"},
-                {"image": f"aug-{run}-1/frame-00000.png", "caption": "blue cloth on a sofa"},
+                {
+                    "image": f"aug-{run}-0/frame-00000.png",
+                    "caption": "green cloth on a countertop",
+                },
+                {
+                    "image": f"aug-{run}-1/frame-00000.png",
+                    "caption": "blue cloth on a sofa",
+                },
             ]
         },
-        f"{base}/grade/vlm_eval_stub.json": {"score": 0.0, "model": "Qwen/Qwen2.5-VL-72B-Instruct"},
+        f"{base}/grade/vlm_eval_stub.json": {
+            "score": 0.0,
+            "model": "Qwen/Qwen2.5-VL-72B-Instruct",
+        },
         f"{base}/grade/decision.json": {"decision": "loop_back"},
-        f"{base}/curation/report.json": {"multiply": {"mode": "multi-variant", "variant_count": 2}},
+        f"{base}/curation/report.json": {
+            "multiply": {"mode": "multi-variant", "variant_count": 2}
+        },
     }
 
-    dataset = build_fiftyone_dataset(keys, run_id=run, read_json=lambda k: payloads.get(k))
+    dataset = build_fiftyone_dataset(
+        keys, run_id=run, read_json=lambda k: payloads.get(k)
+    )
 
     summary = dataset["summary"]
     assert summary["augmented_count"] == 2
@@ -88,7 +109,10 @@ def test_build_fiftyone_dataset_groups_variants_and_summarizes() -> None:
     aug = [s for s in dataset["samples"] if s["group"] == "augmented"]
     inp = [s for s in dataset["samples"] if s["group"] == "source"]
     assert len(aug) == 2 and len(inp) == 2
-    assert [sample["group"] for sample in dataset["samples"][:2]] == ["source", "source"]
+    assert [sample["group"] for sample in dataset["samples"][:2]] == [
+        "source",
+        "source",
+    ]
     assert all(sample["data_role"] == "source_input" for sample in inp)
     assert all(sample["data_role"] == "synthetic_augmented" for sample in aug)
     assert dataset["review"]["real_fiftyone"] is False
@@ -115,8 +139,12 @@ def test_build_fiftyone_dataset_surfaces_real_fiftyone_curation() -> None:
         f"{base}/curation/report.json",
     ]
     payloads = {
-        f"{base}/cosmos_augmented/aug-{run}-0/metadata.json": {"variables": {"cloth_color": "green"}},
-        f"{base}/cosmos_augmented/aug-{run}-1/metadata.json": {"variables": {"cloth_color": "blue"}},
+        f"{base}/cosmos_augmented/aug-{run}-0/metadata.json": {
+            "variables": {"cloth_color": "green"}
+        },
+        f"{base}/cosmos_augmented/aug-{run}-1/metadata.json": {
+            "variables": {"cloth_color": "blue"}
+        },
         f"{base}/curation/report.json": {
             "multiply": {"mode": "multi-variant", "variant_count": 2},
             "curation_engine": "fiftyone-brain",
@@ -129,14 +157,24 @@ def test_build_fiftyone_dataset_surfaces_real_fiftyone_curation() -> None:
                 },
                 "selection": {"near_duplicate_count": 1},
                 "samples": {
-                    f"aug-{run}-0": {"uniqueness": 0.9, "kept": True, "redundant": False},
-                    f"aug-{run}-1": {"uniqueness": 0.2, "kept": False, "redundant": True},
+                    f"aug-{run}-0": {
+                        "uniqueness": 0.9,
+                        "kept": True,
+                        "redundant": False,
+                    },
+                    f"aug-{run}-1": {
+                        "uniqueness": 0.2,
+                        "kept": False,
+                        "redundant": True,
+                    },
                 },
             },
         },
     }
 
-    dataset = build_fiftyone_dataset(keys, run_id=run, read_json=lambda k: payloads.get(k))
+    dataset = build_fiftyone_dataset(
+        keys, run_id=run, read_json=lambda k: payloads.get(k)
+    )
     summary = dataset["summary"]
     assert summary["curation_engine"] == "fiftyone-brain"
     assert summary["curated_kept"] == 1
@@ -147,7 +185,8 @@ def test_build_fiftyone_dataset_surfaces_real_fiftyone_curation() -> None:
     assert dataset["review"]["label"] == "Real FiftyOne Brain review"
 
     aug = sorted(
-        (s for s in dataset["samples"] if s["group"] == "augmented"), key=lambda s: s["id"]
+        (s for s in dataset["samples"] if s["group"] == "augmented"),
+        key=lambda s: s["id"],
     )
     assert aug[0]["uniqueness"] == 0.9
     assert aug[0]["curated"] is True
@@ -157,7 +196,9 @@ def test_build_fiftyone_dataset_surfaces_real_fiftyone_curation() -> None:
     assert aug[1]["curation_flags"] == ["redundant"]
 
 
-def test_build_fiftyone_dataset_surfaces_input_captions_video_and_visualization() -> None:
+def test_build_fiftyone_dataset_surfaces_input_captions_video_and_visualization() -> (
+    None
+):
     run = "paidf-more"
     base = f"checkpoints/physical-ai-data-factory/{run}"
     keys = [
@@ -172,8 +213,12 @@ def test_build_fiftyone_dataset_surfaces_input_captions_video_and_visualization(
         f"{base}/curation/report.json",
     ]
     payloads = {
-        f"{base}/cosmos_augmented/aug-{run}-0/metadata.json": {"variables": {"cloth_color": "green"}},
-        f"{base}/cosmos_augmented/aug-{run}-1/metadata.json": {"variables": {"cloth_color": "blue"}},
+        f"{base}/cosmos_augmented/aug-{run}-0/metadata.json": {
+            "variables": {"cloth_color": "green"}
+        },
+        f"{base}/cosmos_augmented/aug-{run}-1/metadata.json": {
+            "variables": {"cloth_color": "blue"}
+        },
         f"{base}/labeled_original/captions.json": {
             "captions": [
                 {"image": "frame_01.png", "caption": "source: robot arm, plain wall"},
@@ -188,14 +233,24 @@ def test_build_fiftyone_dataset_surfaces_input_captions_video_and_visualization(
                     {"id": f"aug-{run}-1", "point": [0.9, -0.3]},
                 ],
                 "samples": {
-                    f"aug-{run}-0": {"uniqueness": 0.9, "kept": True, "redundant": False},
-                    f"aug-{run}-1": {"uniqueness": 0.2, "kept": True, "redundant": True},
+                    f"aug-{run}-0": {
+                        "uniqueness": 0.9,
+                        "kept": True,
+                        "redundant": False,
+                    },
+                    f"aug-{run}-1": {
+                        "uniqueness": 0.2,
+                        "kept": True,
+                        "redundant": True,
+                    },
                 },
             },
         },
     }
 
-    dataset = build_fiftyone_dataset(keys, run_id=run, read_json=lambda k: payloads.get(k), bucket="bkt")
+    dataset = build_fiftyone_dataset(
+        keys, run_id=run, read_json=lambda k: payloads.get(k), bucket="bkt"
+    )
 
     # Visualization surfaced at the top level.
     assert len(dataset["visualization"]) == 2
@@ -210,7 +265,10 @@ def test_build_fiftyone_dataset_surfaces_input_captions_video_and_visualization(
     assert frame1["caption"] == "source: robot arm, plain wall"
 
     # Augmented samples carry their PCA point.
-    aug = sorted((s for s in dataset["samples"] if s["group"] == "augmented"), key=lambda s: s["id"])
+    aug = sorted(
+        (s for s in dataset["samples"] if s["group"] == "augmented"),
+        key=lambda s: s["id"],
+    )
     assert aug[0]["point"] == [0.1, 0.2]
 
 
@@ -278,16 +336,42 @@ def test_new_artifact_type_is_discoverable_without_code_changes(suffix: str) -> 
 
 def test_select_preferred_artifact_ranks_rerun_highest() -> None:
     artifacts = [
-        Artifact("run", "run/frame.png", "s3://bucket/run/frame.png", 1, "2026-01-01T00:00:00+00:00", "image", True),
-        Artifact("run", "run/trace.rrd", "s3://bucket/run/trace.rrd", 1, "2026-01-01T00:00:00+00:00", "rerun", True),
-        Artifact("run", "run/out.mp4", "s3://bucket/run/out.mp4", 1, "2026-01-01T00:00:00+00:00", "video", True),
+        Artifact(
+            "run",
+            "run/frame.png",
+            "s3://bucket/run/frame.png",
+            1,
+            "2026-01-01T00:00:00+00:00",
+            "image",
+            True,
+        ),
+        Artifact(
+            "run",
+            "run/trace.rrd",
+            "s3://bucket/run/trace.rrd",
+            1,
+            "2026-01-01T00:00:00+00:00",
+            "rerun",
+            True,
+        ),
+        Artifact(
+            "run",
+            "run/out.mp4",
+            "s3://bucket/run/out.mp4",
+            1,
+            "2026-01-01T00:00:00+00:00",
+            "video",
+            True,
+        ),
     ]
     chosen = select_preferred_artifact(artifacts)
     assert chosen is not None
     assert chosen.render == "rerun"
 
 
-def test_select_preferred_artifact_chooses_run_report_rrd_before_component_images() -> None:
+def test_select_preferred_artifact_chooses_run_report_rrd_before_component_images() -> (
+    None
+):
     artifacts = [
         Artifact(
             "run",
@@ -315,7 +399,15 @@ def test_select_preferred_artifact_chooses_run_report_rrd_before_component_image
 
 def test_select_preferred_artifact_keeps_unknown_download_selectable() -> None:
     artifacts = [
-        Artifact("run", "run/raw.foo", "s3://bucket/run/raw.foo", 1, "2026-01-01T00:00:00+00:00", "download", False)
+        Artifact(
+            "run",
+            "run/raw.foo",
+            "s3://bucket/run/raw.foo",
+            1,
+            "2026-01-01T00:00:00+00:00",
+            "download",
+            False,
+        )
     ]
     chosen = select_preferred_artifact(artifacts)
     assert chosen is not None
@@ -325,7 +417,13 @@ def test_select_preferred_artifact_keeps_unknown_download_selectable() -> None:
 def test_list_runs_reports_truncation_explicitly() -> None:
     s3 = _FakeS3(
         [
-            {"Contents": [_obj("run-1/a.txt"), _obj("run-2/b.txt"), _obj("run-3/c.txt")]},
+            {
+                "Contents": [
+                    _obj("run-1/a.txt"),
+                    _obj("run-2/b.txt"),
+                    _obj("run-3/c.txt"),
+                ]
+            },
         ]
     )
     page = list_runs("bucket", limit=2, s3=s3)
@@ -344,7 +442,9 @@ def test_download_s3_uri_fetches_explicit_object(tmp_path: Path) -> None:
 
 def test_render_hint_detects_text_csv_and_unknown_fallback() -> None:
     assert render_hint_for_object(key="x/table.csv") == "text"
-    assert render_hint_for_object(key="x/video.bin", content_type="video/mp4") == "video"
+    assert (
+        render_hint_for_object(key="x/video.bin", content_type="video/mp4") == "video"
+    )
     assert render_hint_for_object(key="x/opaque.new") == "download"
 
 
@@ -388,8 +488,14 @@ def test_list_runs_started_at_uses_run_start_not_newest_write() -> None:
                 "Contents": [
                     # Run started 2026-07-25 22:26:36Z (encoded in the id); first
                     # artifact a few seconds later, newest artifact two days on.
-                    _obj("sim2real-b/s2r-real-0725t222636z/env/data.json", ts="2026-07-25T22:26:39+00:00"),
-                    _obj("sim2real-b/s2r-real-0725t222636z/reports/sim2real.rrd", ts="2026-07-27T02:17:31+00:00"),
+                    _obj(
+                        "sim2real-b/s2r-real-0725t222636z/env/data.json",
+                        ts="2026-07-25T22:26:39+00:00",
+                    ),
+                    _obj(
+                        "sim2real-b/s2r-real-0725t222636z/reports/sim2real.rrd",
+                        ts="2026-07-27T02:17:31+00:00",
+                    ),
                 ]
             }
         ]
@@ -422,7 +528,9 @@ def test_list_runs_started_at_falls_back_to_earliest_write() -> None:
 def test_parse_run_id_timestamps_handles_full_and_yearless_forms() -> None:
     from npa.workflows.artifacts import _parse_run_id_timestamps, _run_started_at
 
-    assert _parse_run_id_timestamps("job-20260725T222636Z") == ["2026-07-25T22:26:36+00:00"]
+    assert _parse_run_id_timestamps("job-20260725T222636Z") == [
+        "2026-07-25T22:26:36+00:00"
+    ]
     # Year-less: the hinted year plus the prior year are offered as candidates.
     assert _parse_run_id_timestamps("s2r-real-0725t222636z", year_hint=2026) == [
         "2026-07-25T22:26:36+00:00",
@@ -430,7 +538,10 @@ def test_parse_run_id_timestamps_handles_full_and_yearless_forms() -> None:
     ]
     # No embedded timestamp -> nothing parsed, fall back to the earliest write.
     assert _parse_run_id_timestamps("free-form-run-name") == []
-    assert _run_started_at("free-form-run-name", "2026-05-10T08:00:00+00:00") == "2026-05-10T08:00:00+00:00"
+    assert (
+        _run_started_at("free-form-run-name", "2026-05-10T08:00:00+00:00")
+        == "2026-05-10T08:00:00+00:00"
+    )
 
 
 def test_run_started_at_distrusts_far_off_id_date() -> None:
@@ -448,7 +559,9 @@ def test_run_started_at_picks_real_start_past_a_red_herring_timestamp() -> None:
 
     # A leading red-herring timestamp (2020) plus the real year-less start; the
     # latest candidate at/just-before the first write (2026-07-25) is chosen.
-    started = _run_started_at("legacy-v20200101t000000-s2r-0725t222636z", "2026-07-25T22:26:39+00:00")
+    started = _run_started_at(
+        "legacy-v20200101t000000-s2r-0725t222636z", "2026-07-25T22:26:39+00:00"
+    )
     assert started == "2026-07-25T22:26:36+00:00"
 
 
@@ -480,7 +593,7 @@ class _PrefixAwareS3:
                     for key, _ts in store:
                         if not key.startswith(Prefix):
                             continue
-                        rest = key[len(Prefix):]
+                        rest = key[len(Prefix) :]
                         if "/" not in rest:
                             continue
                         seg = rest.split("/", 1)[0]
@@ -506,7 +619,9 @@ class _PrefixAwareS3:
         ContinuationToken="",  # noqa: N803
     ):
         del Bucket
-        matching = [_obj(key, ts=ts) for key, ts in self._keys if key.startswith(Prefix)]
+        matching = [
+            _obj(key, ts=ts) for key, ts in self._keys if key.startswith(Prefix)
+        ]
         start = int(ContinuationToken or 0)
         end = min(start + int(MaxKeys), len(matching))
         truncated = end < len(matching)
@@ -554,9 +669,7 @@ class _PaginatedPrefixAwareS3(_PrefixAwareS3):
                         yield {"CommonPrefixes": values[offset : offset + page_size]}
                 else:
                     values = [
-                        _obj(key, ts=ts)
-                        for key, ts in store
-                        if key.startswith(Prefix)
+                        _obj(key, ts=ts) for key, ts in store if key.startswith(Prefix)
                     ]
                     for offset in range(0, len(values), page_size):
                         yield {"Contents": values[offset : offset + page_size]}
@@ -566,7 +679,10 @@ class _PaginatedPrefixAwareS3(_PrefixAwareS3):
 
 _LAYOUT = [
     ("checkpoints/sim2real-b/run-a/reports/sim2real.rrd", "2026-07-01T00:00:00+00:00"),
-    ("checkpoints/physical-ai-data-factory/paidf-1/cosmos_augmented/f.png", "2026-07-22T00:00:00+00:00"),
+    (
+        "checkpoints/physical-ai-data-factory/paidf-1/cosmos_augmented/f.png",
+        "2026-07-22T00:00:00+00:00",
+    ),
     ("checkpoints/lerobot/default/model.pt", "2026-06-01T00:00:00+00:00"),
 ]
 
@@ -590,18 +706,44 @@ def test_list_all_runs_merges_across_categories_latest_first() -> None:
     assert page.total_runs == 3
 
 
+def test_list_all_runs_ignores_malformed_historical_template_prefixes() -> None:
+    s3 = _PrefixAwareS3(
+        _LAYOUT
+        + [
+            (
+                "checkpoints/isaac/2026-07-31_${NPA_ISAAC_RUN_ID}/report.json",
+                "2026-07-31T08:01:11+00:00",
+            )
+        ]
+    )
+
+    page = list_all_runs("bucket", base_prefix="checkpoints", limit=50, s3=s3)
+
+    assert {item.run_id for item in page.runs} == {"paidf-1", "run-a", "default"}
+    assert page.discovery_complete is True
+
+
 def test_find_run_artifacts_locates_run_in_any_category() -> None:
     s3 = _PrefixAwareS3(_LAYOUT)
-    arts = find_run_artifacts("bucket", base_prefix="checkpoints", run_id="paidf-1", s3=s3)
+    arts = find_run_artifacts(
+        "bucket", base_prefix="checkpoints", run_id="paidf-1", s3=s3
+    )
     assert [a.key for a in arts] == [
         "checkpoints/physical-ai-data-factory/paidf-1/cosmos_augmented/f.png"
     ]
     # A run under a different category is also found without a hardcoded prefix.
-    assert find_run_artifacts("bucket", base_prefix="checkpoints", run_id="run-a", s3=s3)
-    assert find_run_artifacts("bucket", base_prefix="checkpoints", run_id="missing", s3=s3) == []
+    assert find_run_artifacts(
+        "bucket", base_prefix="checkpoints", run_id="run-a", s3=s3
+    )
+    assert (
+        find_run_artifacts("bucket", base_prefix="checkpoints", run_id="missing", s3=s3)
+        == []
+    )
 
 
-def test_nested_storage_root_discovers_and_resolves_both_runs_without_body_fetch() -> None:
+def test_nested_storage_root_discovers_and_resolves_both_runs_without_body_fetch() -> (
+    None
+):
     layout = [
         ("archive/solutions/tool-a/run-one/report.rrd", "2026-08-01T00:00:00+00:00"),
         ("archive/solutions/tool-a/run-one/result.mp4", "2026-08-01T00:00:01+00:00"),
@@ -609,9 +751,7 @@ def test_nested_storage_root_discovers_and_resolves_both_runs_without_body_fetch
         ("archive/solutions/tool-b/run-two/notes.txt", "2026-08-02T00:00:01+00:00"),
     ]
     s3 = _PaginatedPrefixAwareS3(layout, page_size=1)
-    page = list_all_runs(
-        "bucket", base_prefix="archive/solutions", limit=100, s3=s3
-    )
+    page = list_all_runs("bucket", base_prefix="archive/solutions", limit=100, s3=s3)
     assert {item.run_id for item in page.runs} == {"run-one", "run-two"}
     assert page.total_runs == 2
     assert all(item.run_ref for item in page.runs)
@@ -633,7 +773,10 @@ def test_nested_storage_root_discovers_and_resolves_both_runs_without_body_fetch
 
 def test_paginated_discovery_has_no_duplicate_or_lost_runs() -> None:
     layout = [
-        (f"nested/root/category-{i % 3}/run-{i}/artifact-{j}.json", f"2026-08-{i + 1:02d}T00:00:0{j}+00:00")
+        (
+            f"nested/root/category-{i % 3}/run-{i}/artifact-{j}.json",
+            f"2026-08-{i + 1:02d}T00:00:0{j}+00:00",
+        )
         for i in range(6)
         for j in range(2)
     ]
@@ -662,7 +805,9 @@ def test_paginated_category_reports_true_total_beyond_global_limit() -> None:
     assert s3.object_body_fetches == 0
 
 
-def test_duplicate_run_basenames_are_source_qualified_and_plain_lookup_fails_closed() -> None:
+def test_duplicate_run_basenames_are_source_qualified_and_plain_lookup_fails_closed() -> (
+    None
+):
     layout = [
         ("root/category-a/shared-run/a.rrd", "2026-08-01T00:00:00+00:00"),
         ("root/category-b/shared-run/b.rrd", "2026-08-02T00:00:00+00:00"),
@@ -680,16 +825,23 @@ def test_duplicate_run_basenames_are_source_qualified_and_plain_lookup_fails_clo
     exact = resolve_run_artifacts(
         ["bucket"],
         base_prefix="root",
-        run_ref_or_id=next(item.run_ref for item in duplicates if item.source_prefix.endswith("category-b")),
+        run_ref_or_id=next(
+            item.run_ref
+            for item in duplicates
+            if item.source_prefix.endswith("category-b")
+        ),
         s3=s3,
     )
     assert exact is not None
-    assert [item.key for item in exact.artifacts] == ["root/category-b/shared-run/b.rrd"]
+    assert [item.key for item in exact.artifacts] == [
+        "root/category-b/shared-run/b.rrd"
+    ]
 
 
 def test_run_ref_must_match_a_server_discovered_exact_source(monkeypatch) -> None:
     import npa.workflows.artifacts as A
 
+    A._run_list_cache_clear()
     artifact = A.Artifact(
         "safe-run",
         "authorized/safe-run/report.json",
@@ -716,7 +868,138 @@ def test_run_ref_must_match_a_server_discovered_exact_source(monkeypatch) -> Non
     )
 
 
-def test_plain_run_resolution_fails_when_any_bucket_search_is_incomplete(monkeypatch) -> None:
+def test_exact_run_ref_reuses_credential_scoped_server_observation(monkeypatch) -> None:
+    import npa.workflows.artifacts as A
+
+    A._run_list_cache_clear()
+    s3 = _PrefixAwareS3(
+        [
+            (
+                "authorized/safe-run/report.json",
+                "2026-08-10T00:00:00+00:00",
+            )
+        ]
+    )
+    try:
+        page = A.list_runs_cached_multi(
+            ["bucket"],
+            base_prefix="",
+            limit=100,
+            contains="safe-run",
+            s3=s3,
+        )
+        assert len(page.runs) == 1
+        monkeypatch.setattr(
+            A,
+            "find_run_artifact_matches",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("cached exact selector repeated full discovery")
+            ),
+        )
+
+        resolved = A.resolve_run_artifacts(
+            ["bucket"],
+            base_prefix="",
+            run_ref_or_id=page.runs[0].run_ref,
+            s3=s3,
+        )
+
+        assert resolved is not None
+        assert resolved.source_prefix == "authorized"
+        assert [item.key for item in resolved.artifacts] == [
+            "authorized/safe-run/report.json"
+        ]
+    finally:
+        A._run_list_cache_clear()
+
+
+def test_server_discovered_exact_source_survives_unrelated_truncated_scan(
+    monkeypatch,
+) -> None:
+    import npa.workflows.artifacts as A
+
+    artifact = A.Artifact(
+        "safe-run",
+        "authorized/safe-run/report.json",
+        "s3://bucket/authorized/safe-run/report.json",
+        1,
+        "2026-08-10T00:00:00Z",
+        "json",
+        True,
+    )
+    monkeypatch.setattr(
+        A,
+        "_list_artifact_run_index",
+        lambda *_args, **_kwargs: A.RunListPage(
+            runs=[
+                A.RunSummary(
+                    run_id="safe-run",
+                    last_modified="2026-08-10T00:00:00Z",
+                    artifact_count=1,
+                    has_viewable=True,
+                    bucket="bucket",
+                    resolved_prefix="authorized",
+                    namespaces=("authorized",),
+                )
+            ],
+            truncated=True,
+            total_runs=1,
+            limit=100,
+            discovery_complete=False,
+        ),
+    )
+    monkeypatch.setattr(A, "list_artifacts", lambda *_args, **_kwargs: [artifact])
+
+    matches = A.find_run_artifact_matches(
+        "bucket",
+        base_prefix="",
+        run_id="safe-run",
+        exact_source_prefix="authorized",
+        s3=object(),
+    )
+
+    assert matches == [A.RunResolution("safe-run", "bucket", "authorized", [artifact])]
+
+
+def test_undiscovered_exact_source_still_fails_closed_on_truncated_scan(
+    monkeypatch,
+) -> None:
+    import npa.workflows.artifacts as A
+
+    monkeypatch.setattr(
+        A,
+        "_list_artifact_run_index",
+        lambda *_args, **_kwargs: A.RunListPage(
+            runs=[
+                A.RunSummary(
+                    run_id="safe-run",
+                    last_modified="2026-08-10T00:00:00Z",
+                    artifact_count=1,
+                    has_viewable=True,
+                    bucket="bucket",
+                    resolved_prefix="authorized",
+                )
+            ],
+            truncated=True,
+            total_runs=1,
+            limit=100,
+            discovery_complete=False,
+        ),
+    )
+
+    with pytest.raises(A.ArtifactDiscoveryError, match="incomplete"):
+        A.find_run_artifact_matches(
+            "bucket",
+            base_prefix="",
+            run_id="safe-run",
+            exact_source_prefix="guessed",
+            s3=object(),
+        )
+
+
+def test_plain_run_resolution_fails_when_any_bucket_search_is_incomplete(
+    monkeypatch,
+) -> None:
     import npa.workflows.artifacts as A
 
     artifact = A.Artifact(
@@ -755,7 +1038,9 @@ def test_plain_run_resolution_fails_when_any_bucket_search_is_incomplete(monkeyp
         ("run/blob.future", "download"),
     ],
 )
-def test_render_contract_covers_viewers_and_unknown_download(key: str, expected: str) -> None:
+def test_render_contract_covers_viewers_and_unknown_download(
+    key: str, expected: str
+) -> None:
     assert render_hint_for_object(key=key) == expected
 
 
@@ -769,25 +1054,40 @@ def test_run_refs_and_ids_reject_traversal_and_malformed_values() -> None:
         else:
             with pytest.raises(ArtifactDiscoveryError):
                 resolve_run_artifacts(
-                    ["valid-bucket"], base_prefix="nested/root", run_ref_or_id=bad, s3=_PrefixAwareS3([])
+                    ["valid-bucket"],
+                    base_prefix="nested/root",
+                    run_ref_or_id=bad,
+                    s3=_PrefixAwareS3([]),
                 )
     with pytest.raises(ArtifactDiscoveryError):
         encode_run_ref("valid-bucket", "nested/../escape", "safe-run")
+
 
 # Runs also live at the BUCKET ROOT under a category (not under the configured
 # base root), e.g. scenario-gen-smoke/<run>/... and physical-ai-data-factory/<run>/...
 # Discovery must span both roots so these are visible + openable.
 _MULTI_ROOT_LAYOUT = _LAYOUT + [
-    ("scenario-gen-smoke/scenario-gen-smoke-1/npa-workflow/manifest.json", "2026-07-23T15:32:22+00:00"),
-    ("scenario-gen-smoke/scenario-gen-smoke-1/ranked/ranked.json", "2026-07-23T15:32:20+00:00"),
-    ("physical-ai-data-factory/paidf-root-1/reports/final.json", "2026-07-19T00:00:00+00:00"),
+    (
+        "scenario-gen-smoke/scenario-gen-smoke-1/npa-workflow/manifest.json",
+        "2026-07-23T15:32:22+00:00",
+    ),
+    (
+        "scenario-gen-smoke/scenario-gen-smoke-1/ranked/ranked.json",
+        "2026-07-23T15:32:20+00:00",
+    ),
+    (
+        "physical-ai-data-factory/paidf-root-1/reports/final.json",
+        "2026-07-19T00:00:00+00:00",
+    ),
 ]
 
 
 def test_discovery_categories_spans_base_and_bucket_root() -> None:
     from npa.workflows.artifacts import discovery_categories
 
-    cats = discovery_categories("bucket", base_prefix="checkpoints", s3=_PrefixAwareS3(_MULTI_ROOT_LAYOUT))
+    cats = discovery_categories(
+        "bucket", base_prefix="checkpoints", s3=_PrefixAwareS3(_MULTI_ROOT_LAYOUT)
+    )
     # Base-root categories come first, then root-level categories; the base root
     # itself ("checkpoints") is NOT treated as a run parent (its children are cats).
     assert "checkpoints/sim2real-b" in cats
@@ -803,7 +1103,13 @@ def test_list_all_runs_surfaces_root_level_runs() -> None:
     ids = [r.run_id for r in page.runs]
     # Root-level runs are discovered alongside checkpoints runs, newest first.
     assert ids[0] == "scenario-gen-smoke-1"
-    assert set(ids) == {"scenario-gen-smoke-1", "paidf-1", "paidf-root-1", "run-a", "default"}
+    assert set(ids) == {
+        "scenario-gen-smoke-1",
+        "paidf-1",
+        "paidf-root-1",
+        "run-a",
+        "default",
+    }
 
 
 def test_lightweight_prefix_index_discovers_runs_without_object_summaries() -> None:
@@ -889,12 +1195,16 @@ def test_find_run_artifacts_merges_staging_inputs_with_authoritative_outputs() -
         (f"{run_id}/manifest.json", "2026-08-06T03:02:00+00:00"),
     ]
 
-    artifacts = find_run_artifacts("bucket", base_prefix="", run_id=run_id, s3=_PrefixAwareS3(layout))
+    artifacts = find_run_artifacts(
+        "bucket", base_prefix="", run_id=run_id, s3=_PrefixAwareS3(layout)
+    )
 
     assert {item.key for item in artifacts} == {key for key, _timestamp in layout}
-    assert {item.role for item in artifacts if "/source/" in item.key or "/data/" in item.key} == {
-        "input"
-    }
+    assert {
+        item.role
+        for item in artifacts
+        if "/source/" in item.key or "/data/" in item.key
+    } == {"input"}
     outputs = [item for item in artifacts if item.role == "output"]
     assert {item.key for item in outputs} == {
         f"{run_id}/checkpoints/model.safetensors",
@@ -914,7 +1224,9 @@ def test_list_all_runs_groups_duplicate_run_namespaces_and_counts_outputs() -> N
         (f"{run_id}/manifest.json", "2026-08-06T03:02:00+00:00"),
     ]
 
-    page = list_all_runs("bucket", base_prefix="", limit=50, contains=run_id, s3=_PrefixAwareS3(layout))
+    page = list_all_runs(
+        "bucket", base_prefix="", limit=50, contains=run_id, s3=_PrefixAwareS3(layout)
+    )
 
     matching = [run for run in page.runs if run.run_id == run_id]
     assert len(matching) == 1
@@ -996,10 +1308,15 @@ def test_yaml_artifact_is_renderable_text_and_downloadable() -> None:
 
 def test_list_runs_skips_bare_files_not_run_dirs() -> None:
     # A file sitting directly under a category is not a run directory.
-    s3 = _PrefixAwareS3([
-        ("scenario-gen-smoke/records.json", "2026-07-23T00:00:00+00:00"),
-        ("scenario-gen-smoke/real-run-1/npa-workflow/status.json", "2026-07-23T10:00:00+00:00"),
-    ])
+    s3 = _PrefixAwareS3(
+        [
+            ("scenario-gen-smoke/records.json", "2026-07-23T00:00:00+00:00"),
+            (
+                "scenario-gen-smoke/real-run-1/npa-workflow/status.json",
+                "2026-07-23T10:00:00+00:00",
+            ),
+        ]
+    )
     page = list_runs("bucket", prefix="scenario-gen-smoke", limit=50, s3=s3)
     ids = [r.run_id for r in page.runs]
     assert ids == ["real-run-1"]
@@ -1014,7 +1331,10 @@ def test_discovery_categories_excludes_infra_roots() -> None:
         ("npa-agent/tenants/t/chat-sessions/s.json", "2026-07-23T00:00:00+00:00"),
     ]
     cats = discovery_categories(
-        "bucket", base_prefix="checkpoints", exclude={"npa-agent"}, s3=_PrefixAwareS3(layout)
+        "bucket",
+        base_prefix="checkpoints",
+        exclude={"npa-agent"},
+        s3=_PrefixAwareS3(layout),
     )
     assert "npa-agent" not in cats
     assert "scenario-gen-smoke" in cats
@@ -1043,7 +1363,11 @@ def test_list_all_runs_excludes_infra_roots() -> None:
         ("npa-agent/session-state/a/state.json", "2026-07-23T00:00:00+00:00"),
     ]
     page = list_all_runs(
-        "bucket", base_prefix="checkpoints", limit=50, exclude={"npa-agent"}, s3=_PrefixAwareS3(layout)
+        "bucket",
+        base_prefix="checkpoints",
+        limit=50,
+        exclude={"npa-agent"},
+        s3=_PrefixAwareS3(layout),
     )
     ids = [r.run_id for r in page.runs]
     assert "session-state" not in ids
@@ -1052,13 +1376,24 @@ def test_list_all_runs_excludes_infra_roots() -> None:
 
 def test_infrastructure_state_roots_are_never_discovered_as_runs() -> None:
     layout = _MULTI_ROOT_LAYOUT + [
-        ("terraform-state/environments/production.tfstate", "2026-08-01T00:00:00+00:00"),
+        (
+            "terraform-state/environments/production.tfstate",
+            "2026-08-01T00:00:00+00:00",
+        ),
         ("terraform_state/workspaces/default.tfstate", "2026-08-01T00:01:00+00:00"),
-        ("checkpoints/sim2real-b/terraform-state/current.tfstate", "2026-08-01T00:02:00+00:00"),
-        ("scenario-gen-smoke/terraform_state/current.tfstate", "2026-08-01T00:03:00+00:00"),
+        (
+            "checkpoints/sim2real-b/terraform-state/current.tfstate",
+            "2026-08-01T00:02:00+00:00",
+        ),
+        (
+            "scenario-gen-smoke/terraform_state/current.tfstate",
+            "2026-08-01T00:03:00+00:00",
+        ),
     ]
 
-    full = list_all_runs("bucket", base_prefix="checkpoints", limit=50, s3=_PrefixAwareS3(layout))
+    full = list_all_runs(
+        "bucket", base_prefix="checkpoints", limit=50, s3=_PrefixAwareS3(layout)
+    )
     light = list_all_run_prefixes(
         "bucket", base_prefix="checkpoints", limit=50, s3=_PrefixAwareS3(layout)
     )
@@ -1071,11 +1406,16 @@ def test_infrastructure_state_roots_are_never_discovered_as_runs() -> None:
 
 def test_infrastructure_only_bucket_returns_no_user_runs() -> None:
     layout = [
-        ("terraform-state/environments/production.tfstate", "2026-08-01T00:00:00+00:00"),
+        (
+            "terraform-state/environments/production.tfstate",
+            "2026-08-01T00:00:00+00:00",
+        ),
         ("terraform_state/workspaces/default.tfstate", "2026-08-01T00:01:00+00:00"),
     ]
 
-    full = list_all_runs("bucket", limit=50, contains="terraform-state", s3=_PrefixAwareS3(layout))
+    full = list_all_runs(
+        "bucket", limit=50, contains="terraform-state", s3=_PrefixAwareS3(layout)
+    )
     light = list_all_run_prefixes(
         "bucket", limit=50, contains="terraform-state", s3=_PrefixAwareS3(layout)
     )
@@ -1144,15 +1484,24 @@ def test_mixed_category_and_flat_layout_retains_timestamped_parent_run() -> None
     run_ids = {item.run_id for item in page.runs}
     assert flat_run in run_ids
     assert "evaluation" not in run_ids
-    assert page.runs[[item.run_id for item in page.runs].index(flat_run)].to_dict()[
-        "source_type"
-    ] == "artifact_storage"
+    assert (
+        page.runs[[item.run_id for item in page.runs].index(flat_run)].to_dict()[
+            "source_type"
+        ]
+        == "artifact_storage"
+    )
 
 
 def test_flat_run_detection_still_honors_server_side_search() -> None:
     layout = [
-        ("alpha-run-20310405t060708z/evaluation/report.json", "2031-04-05T06:10:00+00:00"),
-        ("beta-run-20310406t060708z/evaluation/report.json", "2031-04-06T06:10:00+00:00"),
+        (
+            "alpha-run-20310405t060708z/evaluation/report.json",
+            "2031-04-05T06:10:00+00:00",
+        ),
+        (
+            "beta-run-20310406t060708z/evaluation/report.json",
+            "2031-04-06T06:10:00+00:00",
+        ),
     ]
 
     page = list_all_run_prefixes(
@@ -1179,22 +1528,44 @@ def test_ppm_and_netpbm_are_images_and_need_transcode() -> None:
 
 def test_list_runs_contains_search_survives_limit() -> None:
     # An old run beyond the newest `limit` must still be found by substring search.
-    keys = [(f"cat/run-new-{i:03d}/reports/r.json", f"2026-07-{(i%27)+1:02d}T00:00:00+00:00") for i in range(30)]
-    keys.append(("cat/rtxpro-staged-2x2-old/actions/train/camera-000.ppm", "2026-06-13T01:13:56+00:00"))
+    keys = [
+        (
+            f"cat/run-new-{i:03d}/reports/r.json",
+            f"2026-07-{(i % 27) + 1:02d}T00:00:00+00:00",
+        )
+        for i in range(30)
+    ]
+    keys.append(
+        (
+            "cat/rtxpro-staged-2x2-old/actions/train/camera-000.ppm",
+            "2026-06-13T01:13:56+00:00",
+        )
+    )
     s3 = _PrefixAwareS3(keys)
     # Without search, limit=5 returns only the 5 newest → the old run is cut off.
     page = list_runs("bucket", prefix="cat", limit=5, s3=s3)
     assert "rtxpro-staged-2x2-old" not in [r.run_id for r in page.runs]
     # With substring search, the old run is found despite the small limit.
-    page = list_runs("bucket", prefix="cat", limit=5, contains="rtxpro-staged-2x2", s3=s3)
+    page = list_runs(
+        "bucket", prefix="cat", limit=5, contains="rtxpro-staged-2x2", s3=s3
+    )
     assert [r.run_id for r in page.runs] == ["rtxpro-staged-2x2-old"]
 
 
 def test_list_all_runs_contains_search_across_roots() -> None:
     layout = _MULTI_ROOT_LAYOUT + [
-        ("sim2real-b/rtxpro-staged-2x2-old/actions/train/camera-000.ppm", "2026-06-13T01:13:56+00:00"),
+        (
+            "sim2real-b/rtxpro-staged-2x2-old/actions/train/camera-000.ppm",
+            "2026-06-13T01:13:56+00:00",
+        ),
     ]
-    page = list_all_runs("bucket", base_prefix="checkpoints", limit=3, contains="rtxpro-staged", s3=_PrefixAwareS3(layout))
+    page = list_all_runs(
+        "bucket",
+        base_prefix="checkpoints",
+        limit=3,
+        contains="rtxpro-staged",
+        s3=_PrefixAwareS3(layout),
+    )
     assert [r.run_id for r in page.runs] == ["rtxpro-staged-2x2-old"]
 
 
@@ -1222,7 +1593,9 @@ def test_exact_search_finds_flat_root_run_in_mixed_layout() -> None:
     assert page.runs[0].artifact_count == 6
     assert "eval" not in [item.run_id for item in page.runs]
     assert "checkpoints" not in [item.run_id for item in page.runs]
-    artifacts = find_run_artifacts("bucket", base_prefix="checkpoints", run_id=run_id, s3=s3)
+    artifacts = find_run_artifacts(
+        "bucket", base_prefix="checkpoints", run_id=run_id, s3=s3
+    )
     assert len(artifacts) == 6
     unknown = next(item for item in artifacts if item.key.endswith(".blobx"))
     assert unknown.render == "download"
@@ -1284,15 +1657,21 @@ def test_artifact_pages_preserve_unknown_formats_and_cursor() -> None:
     assert unknown.inline is False
 
 
-def test_run_artifact_discovery_object_scan_is_bounded_and_truthful(monkeypatch) -> None:
+def test_run_artifact_discovery_object_scan_is_bounded_and_truthful(
+    monkeypatch,
+) -> None:
     import npa.workflows.artifacts as A
+
     monkeypatch.setattr(A, "MAX_RUN_DISCOVERY_OBJECTS", 2)
     page = A.list_all_run_prefixes(
         "bucket",
         limit=50,
         s3=_PrefixAwareS3(
             [
-                (f"category/run-{index}/report.json", f"2030-01-0{index + 1}T00:00:00+00:00")
+                (
+                    f"category/run-{index}/report.json",
+                    f"2030-01-0{index + 1}T00:00:00+00:00",
+                )
                 for index in range(5)
             ]
         ),
@@ -1376,7 +1755,9 @@ def test_find_run_artifacts_across_buckets_returns_unique_match(monkeypatch) -> 
         return []
 
     monkeypatch.setattr(A, "find_run_artifact_matches", fake_find)
-    bkt, arts = A.find_run_artifacts_across_buckets(["b1", "b2", "b3"], base_prefix="", run_id="run-x", s3=object())
+    bkt, arts = A.find_run_artifacts_across_buckets(
+        ["b1", "b2", "b3"], base_prefix="", run_id="run-x", s3=object()
+    )
     assert bkt == "b2" and len(arts) == 1
     assert arts[0].s3_uri == "s3://b2/byof/run-x/x.json"
     assert scanned == ["b1", "b2", "b3"]  # all configured buckets prove uniqueness
@@ -1540,14 +1921,20 @@ def test_exact_source_discovery_rejects_excluded_structural_prefix() -> None:
     assert complete is True
 
 
-def test_multi_bucket_discovery_keeps_accessible_siblings_when_one_is_denied(monkeypatch) -> None:
+def test_multi_bucket_discovery_keeps_accessible_siblings_when_one_is_denied(
+    monkeypatch,
+) -> None:
     import npa.workflows.artifacts as A
 
     def fake_light(bucket, *, base_prefix, limit, exclude, contains, s3):
         if bucket == "denied-bucket":
             raise A.ArtifactDiscoveryError("access denied")
         return A.RunListPage(
-            runs=[A.RunSummary(f"real-run-{bucket}", "2030-01-01T00:00:00+00:00", 0, False)],
+            runs=[
+                A.RunSummary(
+                    f"real-run-{bucket}", "2030-01-01T00:00:00+00:00", 0, False
+                )
+            ],
             truncated=False,
             total_runs=1,
             limit=limit,
@@ -1577,8 +1964,14 @@ def test_build_fiftyone_dataset_emits_bucket_qualified_uris() -> None:
         f"{base}/cosmos_augmented/aug-{run}-0/frame-00000.png",
         f"{base}/cosmos_augmented/aug-{run}-0/metadata.json",
     ]
-    payloads = {f"{base}/cosmos_augmented/aug-{run}-0/metadata.json": {"variables": {"cloth_color": "green"}}}
-    ds = build_fiftyone_dataset(keys, run_id=run, read_json=lambda k: payloads.get(k), bucket="lerobot-d87cf691")
+    payloads = {
+        f"{base}/cosmos_augmented/aug-{run}-0/metadata.json": {
+            "variables": {"cloth_color": "green"}
+        }
+    }
+    ds = build_fiftyone_dataset(
+        keys, run_id=run, read_json=lambda k: payloads.get(k), bucket="lerobot-d87cf691"
+    )
     aug = [s for s in ds["samples"] if s["group"] == "augmented"][0]
     assert aug["thumbnail_uri"].startswith("s3://lerobot-d87cf691/")
     assert aug["thumbnail_uri"].endswith("frame-00000.png")
@@ -1628,7 +2021,9 @@ def test_dataset_exposes_seeded_source_and_derived_conditioning_clip() -> None:
     assert dataset["review"]["label"] == "Artifact summary only — FiftyOne did not run"
 
 
-def test_dataset_preserves_real_source_conditioning_variant_lineage_and_labels() -> None:
+def test_dataset_preserves_real_source_conditioning_variant_lineage_and_labels() -> (
+    None
+):
     run = "paidf-real"
     base = f"physical-ai-data-factory/{run}"
     keys = [
@@ -1750,9 +2145,12 @@ def test_artifact_roles_and_run_relative_resolution_are_explicit() -> None:
     assert original.to_dict()["data_role"] == "source_input"
     assert augmented.to_dict()["data_role"] == "synthetic_augmented"
     assert artifact_data_role(report.key, run)["role"] == "pipeline_metadata"
-    assert resolve_run_artifact(
-        [original, augmented, report],
-        run_id=run,
-        requested_key="reports/sim2real.rrd",
-    ) is report
+    assert (
+        resolve_run_artifact(
+            [original, augmented, report],
+            run_id=run,
+            requested_key="reports/sim2real.rrd",
+        )
+        is report
+    )
     assert infer_run_id_from_artifact_key(report.key) == run

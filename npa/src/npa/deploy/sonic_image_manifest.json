@@ -1,10 +1,13 @@
 {
   "format": "npa_sonic_image_manifest_v1",
   "tool": "sonic",
-  "default_variant": "sonic-l40s-baked",
+  "default_variant": "sonic-k8s-host-mounted",
   "images": [
     {
       "id": "sonic-l40s-baked",
+      "status": "quarantined",
+      "redistribution": "restricted",
+      "quarantine_reason": "Stale image bytes inherit nvcr.io/nvidia/isaac-lab and bake NVIDIA driver libraries; an EULA runtime flag cannot make those bytes publicly redistributable.",
       "name": "npa-sonic",
       "tag": "0.1.2",
       "purpose": "Self-contained SONIC runtime for compute-only VM hosts that do not mount NVIDIA graphics userspace.",
@@ -38,6 +41,8 @@
     },
     {
       "id": "sonic-k8s-host-mounted",
+      "status": "active",
+      "redistribution": "public-runtime-fetch",
       "name": "npa-sonic",
       "tag": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "purpose": "SONIC runtime for GPU-operator-managed Kubernetes nodes where the NVIDIA host driver is mounted into the container.",
@@ -70,6 +75,9 @@
     },
     {
       "id": "sonic-mujoco-h100-mvp",
+      "status": "quarantined",
+      "redistribution": "restricted",
+      "quarantine_reason": "Stale image bytes inherit the quarantined npa-sonic:0.1.2 image and its restricted baked NVIDIA payload.",
       "name": "npa-sonic-mujoco",
       "tag": "0.1.3-mvp",
       "purpose": "Combined SONIC fine-tuning and MuJoCo evaluation runtime for the first G1 MVP milestone.",
@@ -109,18 +117,6 @@
   ],
   "gpu_selection": [
     {
-      "variant": "sonic-mujoco-h100-mvp",
-      "matches": [
-        "h100",
-        "gpu-h100",
-        "gpu-h100-sxm",
-        "h200",
-        "gpu-h200",
-        "gpu-h200-sxm",
-        "sonic-mujoco"
-      ]
-    },
-    {
       "variant": "sonic-k8s-host-mounted",
       "matches": [
         "rtx6000",
@@ -130,14 +126,6 @@
         "sm_120",
         "gpu-rtx6000",
         "gpu-rtx-pro-6000"
-      ]
-    },
-    {
-      "variant": "sonic-l40s-baked",
-      "matches": [
-        "l40s",
-        "gpu-l40s-a",
-        "gpu-l40s-d"
       ]
     }
   ]

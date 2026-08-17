@@ -154,6 +154,37 @@ def test_docker_login_honors_nebius_profile_env(monkeypatch) -> None:
     assert seen["stdin"] == "agent-token"
 
 
+def test_docker_login_prefers_registry_only_profile(monkeypatch) -> None:
+    module = _load_module()
+    seen: dict[str, object] = {}
+
+    def fake_run(cmd, *, stdin=None, capture=False, env=None):
+        if cmd[:1] == ["nebius"] and cmd[-2:] == ["iam", "get-access-token"]:
+            seen["token_cmd"] = list(cmd)
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="registry-token\n", stderr=""
+            )
+        if cmd[:4] == ["docker", "login", "-u", "iam"]:
+            seen["stdin"] = stdin
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setenv("NEBIUS_REGISTRY_PROFILE", "registry-writer")
+    monkeypatch.setenv("NPA_NEBIUS_PROFILE", "cluster-admin")
+    monkeypatch.setattr(module, "_run", fake_run)
+
+    module._docker_login_nebius("cr.example.nebius.cloud")
+
+    assert seen["token_cmd"] == [
+        "nebius",
+        "--profile",
+        "registry-writer",
+        "iam",
+        "get-access-token",
+    ]
+    assert seen["stdin"] == "registry-token"
+
+
 def test_main_reports_403_base_image_hint(monkeypatch, capsys) -> None:
     module = _load_module()
 
@@ -1033,6 +1064,14 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     assert "NOPASSWD:ALL" in text
     assert "sudo" in text
     assert "mkdir -p /workspace" in text
+    assert "openssh-server" in text
+    assert "rsync" in text
+    assert "netcat-openbsd" in text
+    assert "ssh-keygen -A" in text
+    assert "rm -f /etc/ssh/ssh_host_*" in text
+    assert "ENV HOME=/home/ubuntu" in text
+    assert 'exec \\"$@\\"' in text
+    assert 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in text
 
 
 def test_compat_shim_delegates_to_run_byof_repo() -> None:

@@ -16,6 +16,8 @@ sharper question is whether the toolRef argv can run at all.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from npa.guardrails.tool_catalog_argv import (
@@ -59,6 +61,12 @@ NON_CLI_ARGV = frozenset(
         "workflow.groot.emit_learning_rrd",
         "workflow.groot.publish_learning",
         "workflow.groot.verify_agent_ui",
+        "workbench.openpi.direct",
+        "workbench.openpi.evaluate",
+        "workbench.openpi.negative_terms_gate",
+        "workbench.openpi.prepare_data",
+        "workbench.openpi.serve",
+        "workbench.openpi.train",
     }
 )
 
@@ -87,6 +95,12 @@ AUDITED_ELSEWHERE = frozenset(
         "workflow.groot.emit_learning_rrd",
         "workflow.groot.publish_learning",
         "workflow.groot.verify_agent_ui",
+        "workbench.openpi.direct",
+        "workbench.openpi.evaluate",
+        "workbench.openpi.negative_terms_gate",
+        "workbench.openpi.prepare_data",
+        "workbench.openpi.serve",
+        "workbench.openpi.train",
     }
 )
 
@@ -105,7 +119,9 @@ def test_the_exemption_list_shrinks_as_coverage_grows() -> None:
         if head == "bash":
             assert embedded_npa_commands(argv), tool_ref
         else:
-            assert head in {"python", "python3"} and str(argv[1]) == "-m", tool_ref
+            assert Path(head).name.startswith("python") and str(argv[1]) == "-m", (
+                tool_ref
+            )
 
 
 def _cli_backed_tool_refs() -> list[str]:

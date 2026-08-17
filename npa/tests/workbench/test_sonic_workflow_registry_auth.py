@@ -37,36 +37,24 @@ def _patch_nebius_token(monkeypatch: pytest.MonkeyPatch, token: str = "fresh-tes
     return calls
 
 
-def test_sonic_materializer_adds_nebius_registry_auth_for_vm_image_pull(monkeypatch) -> None:
+def test_sonic_materializer_rejects_quarantined_vm_image(monkeypatch) -> None:
     from npa.workbench.sonic.workflow import materialize_sonic_workflow
 
     calls = _patch_nebius_token(monkeypatch)
 
-    plan = materialize_sonic_workflow(
-        SONIC_TRAIN_STANDALONE_YAML,
-        run_id="sonic-proof",
-        registry="cr.eu-north1.nebius.cloud/registry-id",
-        gpu_target="h100",
-        s3_endpoint="https://storage.example",
-        s3_bucket="proof-bucket",
-    )
-
-    resources, envs = _task_docs(plan)
-    assert calls == [["nebius", "iam", "get-access-token"]]
-    assert resources["cloud"] == "nebius"
-    assert resources["accelerators"] == "H100:1"
-    assert resources["cpus"] == 16
-    assert resources["memory"] == 200
-    assert envs["SKYPILOT_DOCKER_USERNAME"] == "iam"
-    assert envs["SKYPILOT_DOCKER_PASSWORD"] == "fresh-test-token"
-    assert envs["SKYPILOT_DOCKER_SERVER"] == "cr.eu-north1.nebius.cloud"
-    assert plan.registry_auth_username == "iam"
-    assert plan.registry_auth_server == "cr.eu-north1.nebius.cloud"
-    assert plan.registry_auth_source == "nebius-iam-token"
-    assert "fresh-test-token" not in repr(plan)
+    with pytest.raises(ValueError, match="quarantined"):
+        materialize_sonic_workflow(
+            SONIC_TRAIN_STANDALONE_YAML,
+            run_id="sonic-proof",
+            registry="cr.eu-north1.nebius.cloud/registry-id",
+            gpu_target="h100",
+            s3_endpoint="https://storage.example",
+            s3_bucket="proof-bucket",
+        )
+    assert calls == []
 
 
-def test_sonic_materializer_adds_byo_registry_auth_for_docker_payload() -> None:
+def test_sonic_materializer_skips_registry_auth_for_kubernetes_docker_payload() -> None:
     from npa.workbench.sonic.workflow import materialize_sonic_workflow
 
     plan = materialize_sonic_workflow(
@@ -76,7 +64,7 @@ def test_sonic_materializer_adds_byo_registry_auth_for_docker_payload() -> None:
         registry_username="operator",
         registry_password="redacted-test-token",
         registry_server="https://registry.example/",
-        gpu_target="l40s",
+        gpu_target="gpu-rtx6000",
         s3_endpoint="https://storage.example",
         s3_bucket="proof-bucket",
         env_overrides={"SONIC_PAYLOAD_MODE": "docker"},
@@ -85,10 +73,9 @@ def test_sonic_materializer_adds_byo_registry_auth_for_docker_payload() -> None:
     resources, envs = _task_docs(plan)
     assert "image_id" not in resources
     assert envs["SONIC_PAYLOAD_MODE"] == "docker"
-    assert envs["SKYPILOT_DOCKER_USERNAME"] == "operator"
-    assert envs["SKYPILOT_DOCKER_PASSWORD"] == "redacted-test-token"
-    assert envs["SKYPILOT_DOCKER_SERVER"] == "registry.example"
-    assert plan.registry_auth_source == "explicit"
+    assert "SKYPILOT_DOCKER_USERNAME" not in envs
+    assert "SKYPILOT_DOCKER_PASSWORD" not in envs
+    assert plan.registry_auth_source == ""
     assert "docker_login_if_configured" in plan.yaml_text
     assert "docker login" in plan.yaml_text
 
@@ -113,51 +100,34 @@ def test_sonic_materializer_skips_registry_auth_for_kubernetes_targets(monkeypat
     assert calls == []
 
 
-@pytest.mark.parametrize(
-    ("gpu_target", "accelerators", "cpus", "memory"),
-    [
-        ("h100", "H100:1", 16, 200),
-        ("H200", "H200:1", 16, 200),
-        ("L40S", "L40S:1", 16, 64),
-        ("b200", "B200:1", 20, 224),
-    ],
-)
-def test_sonic_materializer_defaults_vm_resources_by_gpu_target(
-    gpu_target: str,
-    accelerators: str,
-    cpus: int,
-    memory: int,
-) -> None:
+@pytest.mark.parametrize("gpu_target", ["h100", "H200", "L40S"])
+def test_sonic_materializer_rejects_quarantined_gpu_targets(gpu_target: str) -> None:
+    from npa.workbench.sonic.workflow import materialize_sonic_workflow
+
+    with pytest.raises(ValueError, match="quarantined"):
+        materialize_sonic_workflow(
+            SONIC_TRAIN_STANDALONE_YAML,
+            run_id="sonic-proof",
+            registry="registry.example/workbench",
+            gpu_target=gpu_target,
+            s3_endpoint="https://storage.example",
+            s3_bucket="proof-bucket",
+        )
+
+
+def test_sonic_materializer_ignores_spot_for_active_kubernetes_image() -> None:
     from npa.workbench.sonic.workflow import materialize_sonic_workflow
 
     plan = materialize_sonic_workflow(
         SONIC_TRAIN_STANDALONE_YAML,
         run_id="sonic-proof",
         registry="registry.example/workbench",
-        gpu_target=gpu_target,
-        s3_endpoint="https://storage.example",
-        s3_bucket="proof-bucket",
-    )
-
-    resources, _ = _task_docs(plan)
-    assert resources["cloud"] == "nebius"
-    assert resources["accelerators"] == accelerators
-    assert resources["cpus"] == cpus
-    assert resources["memory"] == memory
-
-
-def test_sonic_materializer_can_enable_spot_for_vm_tasks() -> None:
-    from npa.workbench.sonic.workflow import materialize_sonic_workflow
-
-    plan = materialize_sonic_workflow(
-        SONIC_TRAIN_STANDALONE_YAML,
-        run_id="sonic-proof",
-        registry="registry.example/workbench",
-        gpu_target="h100",
+        gpu_target="gpu-rtx6000",
         use_spot=True,
         s3_endpoint="https://storage.example",
         s3_bucket="proof-bucket",
     )
 
     resources, _ = _task_docs(plan)
-    assert resources["use_spot"] is True
+    assert resources["cloud"] == "kubernetes"
+    assert "use_spot" not in resources

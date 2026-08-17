@@ -1583,6 +1583,161 @@ def test_malformed_variant_metadata_does_not_crash_and_degrades_run(
     assert warning in result.warnings[0]
 
 
+def test_attempt_scoped_evaluator_follows_only_the_committed_manifest(
+    tmp_path: Path,
+) -> None:
+    import npa.workbench.cosmos_evaluator.evaluate as evaluator
+
+    root = tmp_path / "cosmos_augmented"
+    current = root / "_attempts" / "current" / "aug-current"
+    old = root / "_attempts" / "old" / "aug-old"
+    current.mkdir(parents=True)
+    old.mkdir(parents=True)
+    current_video = current / "augmented_video.mp4"
+    current_video.write_bytes(b"current")
+    (old / "augmented_video.mp4").write_bytes(b"old")
+    (root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema": "npa.cosmos2.transfer.v1",
+                "mode": "cosmos_transfer2.5_gpu",
+                "status": "executed",
+                "node_count": 2,
+                "attempt_id": "current",
+                "scheduler_fence_sequence": 2,
+                "scheduler_fence_attempt": 1,
+                "scheduler_launch_id": "job",
+                "publication_generation": 2,
+                "logical_publication": "conditional",
+                "logical_wave_id": "grade-loop-2",
+                "membership_digest": "current-members",
+                "variant_count": 1,
+                "variants": [
+                    {
+                        "clip": "aug-current",
+                        "variant_index": 0,
+                        "augmented_video_uri": str(current_video),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert evaluator._list_clip_targets(str(root), store=object()) == [
+        ("aug-current", str(current) + "/")
+    ]
+
+
+def test_evaluator_refuses_attempt_layout_without_canonical_manifest(
+    tmp_path: Path,
+) -> None:
+    import npa.workbench.cosmos_evaluator.evaluate as evaluator
+
+    root = tmp_path / "cosmos_augmented"
+    (root / "_attempts" / "orphan" / "clip").mkdir(parents=True)
+    with pytest.raises(evaluator.CosmosEvaluatorError, match="without a valid canonical"):
+        evaluator._list_clip_targets(str(root), store=object())
+
+
+def test_evaluator_follows_committed_cosmos3_manifest(tmp_path: Path) -> None:
+    import npa.workbench.cosmos_evaluator.evaluate as evaluator
+    from npa.workflows.paidf_cosmos3 import ENGINE, MANIFEST_SCHEMA
+
+    root = tmp_path / "cosmos_augmented"
+    videos = []
+    variants = []
+    for index, seed in enumerate((17, 18)):
+        clip = f"variant-{index:04d}"
+        video = root / clip / "augmented_video.mp4"
+        video.parent.mkdir(parents=True)
+        video.write_bytes(f"video-{index}".encode())
+        videos.append(video)
+        variants.append(
+            {
+                "clip": clip,
+                "augmented_video_uri": str(video),
+                "seed": seed,
+                "video_bytes": video.stat().st_size,
+                "frame_count": 8,
+            }
+        )
+    (root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema": MANIFEST_SCHEMA,
+                "engine": ENGINE,
+                "status": "executed",
+                "mode": "video2video",
+                "input_conditioned": True,
+                "input_conditioning": "source-video",
+                "conditioned_input": "source.mp4",
+                "guardrails": True,
+                "weights_baked": False,
+                "model": "Cosmos3-Nano",
+                "lineage": {"input_provenance_uri": "input/provenance.json"},
+                "variant_count": 2,
+                "video_bytes": sum(item["video_bytes"] for item in variants),
+                "frame_count": 16,
+                "variants": variants,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert evaluator._list_clip_targets(str(root), store=object()) == [
+        (f"variant-{index:04d}", str(video.parent) + "/")
+        for index, video in enumerate(videos)
+    ]
+
+
+def test_evaluator_refuses_cosmos3_manifest_with_reused_seed(tmp_path: Path) -> None:
+    import npa.workbench.cosmos_evaluator.evaluate as evaluator
+    from npa.workflows.paidf_cosmos3 import ENGINE, MANIFEST_SCHEMA
+
+    root = tmp_path / "cosmos_augmented"
+    variants = []
+    for index in range(2):
+        clip = f"variant-{index:04d}"
+        video = root / clip / "augmented_video.mp4"
+        video.parent.mkdir(parents=True)
+        video.write_bytes(b"video")
+        variants.append(
+            {
+                "clip": clip,
+                "augmented_video_uri": str(video),
+                "seed": 17,
+                "video_bytes": 5,
+                "frame_count": 8,
+            }
+        )
+    (root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema": MANIFEST_SCHEMA,
+                "engine": ENGINE,
+                "status": "executed",
+                "mode": "video2video",
+                "input_conditioned": True,
+                "input_conditioning": "source-video",
+                "conditioned_input": "source.mp4",
+                "guardrails": True,
+                "weights_baked": False,
+                "model": "Cosmos3-Nano",
+                "lineage": {"input_provenance_uri": "input/provenance.json"},
+                "variant_count": 2,
+                "video_bytes": 10,
+                "frame_count": 16,
+                "variants": variants,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(evaluator.CosmosEvaluatorError, match="duplicated"):
+        evaluator._list_clip_targets(str(root), store=object())
+
+
 def write_report_helper(result: Any, tmp_path: Path) -> str:
     from npa.workbench.cosmos_evaluator.evaluate import write_report
 

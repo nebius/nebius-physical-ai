@@ -9,8 +9,6 @@ config:
   bucket: example-bucket
   prefix: "runs/{{run.id}}/sonic-export"
   sonic_runtime: local
-  # See sonic-train.yaml: empty means NVIDIA's terms are NOT accepted.
-  sonic_accept_nvidia_eula: ""
   train_iterations: "40"
   data_uri: "s3://{{config.bucket}}/{{config.prefix}}/data/"
   training_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/"

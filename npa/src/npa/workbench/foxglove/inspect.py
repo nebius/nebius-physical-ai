@@ -30,14 +30,15 @@ class McapInfo:
     valid_magic: bool = False
     message_count: int = 0
     channels: dict[str, int] = field(default_factory=dict)
+    channel_time_ranges: dict[str, dict[str, int]] = field(default_factory=dict)
     schemas: dict[str, str] = field(default_factory=dict)
+    numeric_paths: dict[str, list[str]] = field(default_factory=dict)
     start_time_ns: int = 0
     end_time_ns: int = 0
     duration_s: float = 0.0
     metadata: dict[str, dict[str, str]] = field(default_factory=dict)
     timestamps_in_int64_domain: bool = True
     channels_monotonic: bool = True
-    channel_time_ranges: dict[str, dict[str, int]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -46,16 +47,17 @@ class McapInfo:
             "valid_magic": self.valid_magic,
             "message_count": self.message_count,
             "channels": dict(self.channels),
+            "channel_time_ranges": {
+                k: dict(v) for k, v in self.channel_time_ranges.items()
+            },
             "schemas": dict(self.schemas),
+            "numeric_paths": {k: list(v) for k, v in self.numeric_paths.items()},
             "start_time_ns": self.start_time_ns,
             "end_time_ns": self.end_time_ns,
             "duration_s": self.duration_s,
             "metadata": {k: dict(v) for k, v in self.metadata.items()},
             "timestamps_in_int64_domain": self.timestamps_in_int64_domain,
             "channels_monotonic": self.channels_monotonic,
-            "channel_time_ranges": {
-                key: dict(value) for key, value in self.channel_time_ranges.items()
-            },
         }
 
 
@@ -114,8 +116,8 @@ def summarize_mcap(path: str | Path) -> McapInfo:
                 info.start_time_ns = int(summary.statistics.message_start_time)
                 info.end_time_ns = int(summary.statistics.message_end_time)
 
-        # Always inspect the real messages.  Summary statistics alone cannot
-        # prove per-channel ordering and historically hid timestamp overflow.
+        # Always inspect the real messages. Summary statistics alone cannot
+        # prove per-channel ordering, per-topic overlap, or timestamp bounds.
         handle.seek(0)
         reader = make_reader(handle)
         counts: dict[str, int] = {}
@@ -128,6 +130,23 @@ def summarize_mcap(path: str | Path) -> McapInfo:
             counts[topic] = counts.get(topic, 0) + 1
             if schema is not None:
                 info.schemas[topic] = schema.name
+                if topic not in info.numeric_paths and schema.encoding == "jsonschema":
+                    try:
+                        definition = json.loads(schema.data)
+                    except (TypeError, ValueError):
+                        definition = {}
+                    properties = (
+                        definition.get("properties", {})
+                        if isinstance(definition, dict)
+                        else {}
+                    )
+                    info.numeric_paths[topic] = sorted(
+                        str(name)
+                        for name, field_def in properties.items()
+                        if name != "timestamp"
+                        and isinstance(field_def, dict)
+                        and field_def.get("type") in {"number", "integer"}
+                    )
             if not 0 <= timestamp <= MAX_SIGNED_TIMESTAMP_NS:
                 info.timestamps_in_int64_domain = False
             previous = previous_by_topic.get(topic)
@@ -140,11 +159,11 @@ def summarize_mcap(path: str | Path) -> McapInfo:
             channel_range["start_time_ns"] = min(
                 channel_range["start_time_ns"], timestamp
             )
-            channel_range["end_time_ns"] = max(
-                channel_range["end_time_ns"], timestamp
-            )
+            channel_range["end_time_ns"] = max(channel_range["end_time_ns"], timestamp)
             first_timestamp = (
-                timestamp if first_timestamp is None else min(first_timestamp, timestamp)
+                timestamp
+                if first_timestamp is None
+                else min(first_timestamp, timestamp)
             )
             last_timestamp = (
                 timestamp if last_timestamp is None else max(last_timestamp, timestamp)

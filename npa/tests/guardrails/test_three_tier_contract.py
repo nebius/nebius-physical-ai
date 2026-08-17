@@ -93,7 +93,6 @@ SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
         "headless": "boolean",
         "image": "infra",
         "gpu_type": "infra",
-        "image_variant": "infra",
         "embodiment": "knob",
         "num_envs": "knob",
     },
@@ -154,7 +153,6 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
             "headless",
             "image",
             "gpu_type",
-            "image_variant",
         ),
         params=(
             _p("checkpoint", "checkpoint", "--checkpoint"),
@@ -167,7 +165,6 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
             _p("output_path", "output_path", "--output-path"),
             _p("image", "image", "--image"),
             _p("gpu_type", "gpu_type", "--gpu-type"),
-            _p("image_variant", "image_variant", "--image-variant"),
         ),
     ),
     CapabilityContract(
@@ -544,6 +541,10 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         "lerobot",
         # Static web viewer (caddy static server; no skypilot three-tier YAML).
         "lichtblick",
+        # LTX-2.5 licensing surface only: `terms` prints what governs the model.
+        # Generation runs through the BYOF tier (`base_image: tool://ltx2`), so
+        # this verb has no service or YAML env tier to stay coherent with.
+        "ltx2",
         "mjlab",
         # NuRec verbs take repeatable options (--camera-id, --override) and Hydra
         # passthrough, so the inspect-based CapabilityContract cannot express them.

@@ -15,6 +15,10 @@ class StorageError(Exception):
     pass
 
 
+class StoragePreconditionFailed(StorageError):
+    """A conditional object write lost its compare-and-swap race."""
+
+
 def _parse_bucket_uri(uri: str) -> tuple[str, str]:
     """Parse s3://bucket/prefix into (bucket, prefix)."""
     parsed = urlparse(uri)
@@ -153,6 +157,82 @@ class StorageClient:
             key = key + local_path.name
         self._s3.upload_file(str(local_path), bucket, key)
         return f"s3://{bucket}/{key}"
+
+    def read_bytes_with_etag(self, bucket_uri: str) -> tuple[bytes, str] | None:
+        """Read one object and its immutable version token, or ``None`` if absent."""
+
+        bucket, key = _parse_bucket_uri(bucket_uri)
+        if not key or key.endswith("/"):
+            raise StorageError(f"Expected an exact S3 object URI, got: {bucket_uri}")
+        try:
+            response = self._s3.get_object(Bucket=bucket, Key=key)
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            if code in {"404", "NoSuchKey", "NotFound"}:
+                return None
+            raise
+        body = response["Body"]
+        try:
+            payload = body.read()
+        finally:
+            body.close()
+        etag = str(response.get("ETag") or "").strip()
+        if not etag:
+            raise StorageError(f"Object storage returned no ETag for {bucket_uri}")
+        return bytes(payload), etag
+
+    def put_bytes_conditional(
+        self,
+        payload: bytes,
+        bucket_uri: str,
+        *,
+        if_match: str = "",
+        if_none_match: bool = False,
+        content_type: str = "application/octet-stream",
+    ) -> str:
+        """Atomically create or replace an object and return its new ETag.
+
+        Exactly one of ``if_match`` and ``if_none_match`` must be selected.  The
+        method intentionally exposes S3's object-level compare-and-swap rather
+        than emulating it with HEAD + upload, which would leave a late writer
+        able to publish over a newer recovery attempt.
+        """
+
+        if bool(if_match) == bool(if_none_match):
+            raise ValueError("choose exactly one conditional object-write guard")
+        bucket, key = _parse_bucket_uri(bucket_uri)
+        if not key or key.endswith("/"):
+            raise StorageError(f"Expected an exact S3 object URI, got: {bucket_uri}")
+        kwargs: dict[str, object] = {
+            "Bucket": bucket,
+            "Key": key,
+            "Body": payload,
+            "ContentType": content_type,
+        }
+        if if_match:
+            kwargs["IfMatch"] = if_match
+        else:
+            kwargs["IfNoneMatch"] = "*"
+        try:
+            response = self._s3.put_object(**kwargs)
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            status = int(exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0) or 0)
+            if code in {"412", "PreconditionFailed", "ConditionalRequestConflict"} or status in {
+                409,
+                412,
+            }:
+                raise StoragePreconditionFailed(
+                    f"conditional object write was superseded for {bucket_uri}"
+                ) from exc
+            raise
+        etag = str(response.get("ETag") or "").strip()
+        if not etag:
+            # S3-compatible providers are required to return an ETag for a
+            # successful PutObject. Failing closed keeps the caller from doing a
+            # later unguarded finalization with an unknown version token.
+            raise StorageError(f"Object storage returned no ETag for {bucket_uri}")
+        return etag
 
     def upload_path(self, local_path: str, bucket_uri: str) -> str:
         """Upload a local file or directory to S3. Returns the destination URI."""

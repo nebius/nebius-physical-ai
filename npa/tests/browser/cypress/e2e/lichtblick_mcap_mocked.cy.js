@@ -188,6 +188,26 @@ describe("Lichtblick MCAP viewer (mocked smoke)", () => {
       });
   });
 
+  it("keeps the latest MCAP source when prewarm and run mounts race layout seeding", () => {
+    cy.window().then((win) => {
+      const api = win.__NPA_AGENT_TEST__;
+      win.localStorage.setItem(api.LICHTBLICK_LAYOUT_SEED_KEY, "stale-version");
+      api.mountLichtblickIframe({
+        lichtblick_ready: false,
+        lichtblick_iframe_url: "/lichtblick/",
+      });
+      api.mountLichtblickIframe({
+        lichtblick_ready: true,
+        lichtblick_iframe_url:
+          "/lichtblick/?ds=remote-file&ds.url=" +
+          encodeURIComponent("/lichtblick/recordings/latest-run.mcap"),
+      });
+    });
+    cy.get("#lichtblickFrame")
+      .should("have.attr", "src")
+      .and("include", encodeURIComponent("/lichtblick/recordings/latest-run.mcap"));
+  });
+
   it("filters discovered artifacts to the MCAP (Lichtblick) type", () => {
     cy.get("#tabRerun").click();
     cy.get("#artifactTypeFilter").select("mcap");
@@ -196,6 +216,7 @@ describe("Lichtblick MCAP viewer (mocked smoke)", () => {
     cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
     cy.wait("@nonStockArtifactList");
     cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`);
+    cy.get("#artifactList").should("contain.text", "View in Foxglove");
     cy.get("#artifactList").should("contain.text", "View in Lichtblick");
     // Non-MCAP artifacts are hidden by the type filter.
     cy.get("#artifactList").should("not.contain.text", ".rrd");
@@ -235,24 +256,4 @@ describe("Lichtblick MCAP viewer (mocked smoke)", () => {
     cy.get("#viewerPaneLichtblick").should("have.class", "is-active-viewer");
   });
 
-  it("re-mounts the Lichtblick iframe on Reload without leaving the pane", () => {
-    cy.get("#tabRerun").click();
-    cy.get("#renderModeLichtblick").click();
-    cy.get("#loadLichtblickViewer").click();
-    cy.get("#viewerPaneLichtblick").should("have.class", "is-active-viewer");
-    cy.get("#lichtblickFrame").should("have.attr", "src").and("include", "/lichtblick/");
-    cy.get("#lichtblickFrame")
-      .its("0.contentWindow.__NPA_MOCK_LICHTBLICK__.loaded", { timeout: 15000 })
-      .should("eq", true);
-  });
-
-  it("opens the Lichtblick viewer in a new tab from Open in Lichtblick", () => {
-    cy.get("#tabRerun").click();
-    cy.get("#renderModeLichtblick").click();
-    cy.window().then((win) => {
-      cy.stub(win, "open").as("windowOpen");
-    });
-    cy.get("#openLichtblick").click();
-    cy.get("@windowOpen").should("have.been.called");
-  });
 });

@@ -31,29 +31,19 @@ def _nodes(*, cpu="6", memory="24Gi", gpu="0", taints=None):
     )
 
 
-def test_static_preflight_checks_all_runtime_secrets_and_transfer_access():
-    checked = []
-
-    def validate(_token, repo):
-        checked.append(repo)
-        return SimpleNamespace(ok=False, error="403 gated")
-
+def test_static_preflight_checks_all_runtime_secret_forwarding():
     issues = static_prerequisites(
         requested_secret_envs=["HF_TOKEN"],
-        secret_values={"HF_TOKEN": "redacted"},
-        hf_validator=validate,
     )
 
-    assert checked == ["nvidia/Cosmos-Transfer2.5-2B"]
     rendered = "\n".join(item for item, _ in issues)
     assert "NEBIUS_TOKEN_FACTORY_KEY" in rendered
     assert "AWS_ACCESS_KEY_ID" in rendered
     assert "AWS_SECRET_ACCESS_KEY" in rendered
-    assert "Cosmos-Transfer2.5-2B" in rendered
-    assert "--capability paidf" in "\n".join(remedy for _, remedy in issues)
+    assert "Cosmos-Transfer2.5-2B" not in rendered
 
 
-def test_static_preflight_passes_with_forwarded_secrets_and_gated_access():
+def test_static_preflight_passes_with_forwarded_secrets():
     names = [
         "NEBIUS_TOKEN_FACTORY_KEY",
         "AWS_ACCESS_KEY_ID",
@@ -63,8 +53,6 @@ def test_static_preflight_passes_with_forwarded_secrets_and_gated_access():
     assert (
         static_prerequisites(
             requested_secret_envs=names,
-            secret_values={"HF_TOKEN": "redacted"},
-            hf_validator=lambda _token, _repo: SimpleNamespace(ok=True),
         )
         == []
     )

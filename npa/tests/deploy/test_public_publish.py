@@ -32,6 +32,7 @@ from npa.deploy.images import (
     DEFAULT_PUBLIC_CONTAINER_REGISTRY,
     OMNIVERSE_RESTRICTED_DERIVED_IMAGES,
     OMNIVERSE_RESTRICTED_TOOLS,
+    UNVALIDATED_PUBLICATION_TOOLS,
     container_image_for_tool,
     is_public_registry,
     is_publicly_redistributable,
@@ -248,7 +249,7 @@ def test_isaac_tools_are_public_while_cosmos3_serving_is_restricted() -> None:
     npa-sonic:0.1.2-rtfetch-rc5, 125,655 entries, 16 allowlisted paths, VERDICT clean.
     """
     assert OMNIVERSE_RESTRICTED_TOOLS == frozenset({"cosmos3-serving"})
-    assert OMNIVERSE_RESTRICTED_DERIVED_IMAGES == frozenset()
+    assert OMNIVERSE_RESTRICTED_DERIVED_IMAGES == frozenset({"sonic-mujoco"})
     for tool in ("isaac-lab", "sonic", "groot"):
         assert is_publicly_redistributable(tool), tool
 
@@ -365,12 +366,19 @@ def test_publish_plan_targets_public_registry_by_default() -> None:
     # redistributable image does not silently drift this gate. (main's form, kept over an
     # earlier hardcoded 19 from this branch -- which main's 20th tool, foxglove-embed,
     # would have broken immediately.)
-    assert len(plan) == len(publicly_publishable_tools())
+    # Two independent gates remove tools from the plan: licence restriction, and
+    # having no built/validated artifact to publish. Both are subtracted from the
+    # contract-derived total rather than hardcoded, so adding a freely
+    # redistributable image does not silently drift this gate.
+    assert len(plan) == len(publicly_publishable_tools()) - len(
+        set(publicly_publishable_tools()) & set(UNVALIDATED_PUBLICATION_TOOLS)
+    )
     # And, since the Isaac re-architecture emptied the restricted set: every image the repo
-    # builds is now publishable. This is the assertion that would catch a tool silently
-    # dropping out of the plan, which the derived equality above cannot.
+    # builds and has validated is publishable. This is the assertion that would catch a
+    # tool silently dropping out of the plan, which the derived equality above cannot.
     assert len(plan) == len(CONTAINER_IMAGE_NAMES) - len(
-        set(CONTAINER_IMAGE_NAMES) & set(OMNIVERSE_RESTRICTED_TOOLS)
+        set(CONTAINER_IMAGE_NAMES)
+        & (set(OMNIVERSE_RESTRICTED_TOOLS) | set(UNVALIDATED_PUBLICATION_TOOLS))
     )
     for item in plan:
         assert item.target_ref.startswith(DEFAULT_PUBLIC_CONTAINER_REGISTRY + "/npa-")
@@ -400,7 +408,7 @@ def test_restricted_image_names_cover_every_contract_restricted_image() -> None:
     )
 
 
-def test_contract_marks_the_isaac_images_public_and_runtime_fetch() -> None:
+def test_contract_marks_active_isaac_images_public_and_runtime_fetch() -> None:
     """The contract must record BOTH facts: publishable, and what earns it.
 
     `redistribution: public` on its own would look like someone relabelled four restricted
@@ -408,17 +416,20 @@ def test_contract_marks_the_isaac_images_public_and_runtime_fetch() -> None:
     npa/tests/docker/test_packaging_contract.py checks the Dockerfiles implement it.
     """
     contract = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
-    for name in ("isaac-lab", "sonic", "sonic-mujoco", "groot"):
+    for name in ("isaac-lab", "sonic", "groot"):
         entry = contract["images"][name]
         assert entry["redistribution"] == "public", name
         assert entry.get("isaac_runtime_fetch") is True, name
+    stale = contract["images"]["sonic-mujoco"]
+    assert stale["redistribution"] == "restricted"
+    assert stale.get("isaac_runtime_fetch") is not True
 
 
 def test_the_restriction_mechanism_still_exists() -> None:
     """The build-your-own Cosmos3 serving image exercises this boundary."""
     assert hasattr(images, "OMNIVERSE_RESTRICTED_TOOLS")
     assert hasattr(images, "OMNIVERSE_RESTRICTED_DERIVED_IMAGES")
-    assert omniverse_restricted_image_names() == ["cosmos3-serving"]
+    assert omniverse_restricted_image_names() == ["cosmos3-serving", "sonic-mujoco"]
     for symbol in (
         "is_publicly_redistributable",
         "omniverse_restricted_image_names",
@@ -446,8 +457,10 @@ def test_selector_matches_packaging_contract_classification() -> None:
     for image_name, entry in contract["images"].items():
         if entry.get("redistribution") != "restricted":
             continue
-        # sonic-mujoco is a sonic variant (covered by the "sonic" restriction)
-        tool = "sonic" if image_name == "sonic-mujoco" else image_name
+        if image_name == "sonic-mujoco":
+            assert image_name in OMNIVERSE_RESTRICTED_DERIVED_IMAGES
+            continue
+        tool = image_name
         if tool in CONTAINER_IMAGE_NAMES:
             assert not is_publicly_redistributable(tool), image_name
         else:

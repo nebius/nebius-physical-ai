@@ -235,10 +235,17 @@ def access_command(
                 f"Choices: all, {', '.join(all_capabilities())}."
             )
 
+    ngc_validator = None
+    if not offline:
+        from npa.workbench.nurec.nurec import check_ngc_image_access
+
+        ngc_validator = check_ngc_image_access
+
     results = check_workbench_access(
         hf_token=resolved_hf,
         ngc_key=resolved_ngc,
         hf_validator=None if offline else validate_hf_access,
+        ngc_validator=ngc_validator,
         capabilities=selected,
     )
     if output_json:

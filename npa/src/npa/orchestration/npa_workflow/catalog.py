@@ -13,6 +13,19 @@ class ToolEntry:
     argv_template: list[str]
     description: str = ""
     stub: bool = False
+    # Multi-node profiles run the same command on every node.  The default is
+    # fail-closed because an ordinary writer would publish duplicate/racing
+    # outputs.  A sharded tool must own an explicit rank-aware contract.
+    multi_node_mode: str = "forbidden"
+    # Named import-light semantic contract evaluated by validate/plan/submit.
+    semantic_contract: str = ""
+    variant_count_config: str = ""
+    # A sharded executable is safe only when its rank-aware path is active and
+    # its join is published through durable shared storage.  These config keys
+    # make that precondition machine-checkable whenever a future workflow
+    # reuses a multi-node resource profile.
+    shard_activation_config: str = ""
+    shard_output_config: str = ""
 
 
 # Public composable entries intentionally available to customer-authored specs,
@@ -73,6 +86,13 @@ _BYOF_REPO_ARGV = [
     "--poll-interval",
     "{{config.poll_interval}}",
     "--cleanup",
+]
+
+_OPENPI_PIPELINE = ["python3", "-m", "npa.workflows.byof.openpi_pipeline"]
+_OPENPI_VENDOR_PIPELINE = [
+    "/opt/venv/bin/python",
+    "-m",
+    "npa.workflows.byof.openpi_pipeline",
 ]
 
 TOOL_CATALOG: dict[str, ToolEntry] = {
@@ -386,7 +406,16 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.cosmos2.transfer_execute": ToolEntry(
         name="workbench.cosmos2.transfer_execute",
-        description="Run the REAL Cosmos-Transfer2.5 model (GPU) and upload augmented video + frames to S3.",
+        description=(
+            "Run the REAL Cosmos-Transfer2.5 model (GPU) and upload augmented video "
+            "+ frames to S3, conditioned on the chosen control modality (edge, vis, "
+            "depth, or seg) and optionally restricted to a segmented region."
+        ),
+        multi_node_mode="sharded",
+        semantic_contract="cosmos_transfer_control",
+        variant_count_config="n_augmentations",
+        shard_activation_config="configs_uri",
+        shard_output_config="augment_uri",
         argv_template=[
             "npa",
             "workbench",
@@ -400,6 +429,24 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{run.id}}",
             "--configs-uri",
             "{{config.configs_uri}}",
+            # Conditioning shape. Edge/vis/seg may be computed from the staged
+            # input; depth requires an operator-owned precomputed control. The asset and
+            # prompt flags stay empty unless the spec sets them, and empty means
+            # "unset" in the CLI rather than a control the model must honour.
+            "--control",
+            "{{config.augment_control}}",
+            "--control-weight",
+            "{{config.augment_control_weight}}",
+            "--control-asset",
+            "{{config.augment_control_asset_uri}}",
+            "--control-prompt",
+            "{{config.augment_control_prompt}}",
+            "--mask-asset",
+            "{{config.augment_mask_asset_uri}}",
+            "--mask-prompt",
+            "{{config.augment_mask_prompt}}",
+            "--control-output-uri",
+            "{{config.augment_control_uri}}",
             "--condition-on-input",
             "--execute",
         ],
@@ -712,6 +759,212 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "RL, datagen, container-verify, or solution smoke."
         ),
         argv_template=_BYOF_REPO_ARGV,
+    ),
+    "workbench.openpi.prepare_data": ToolEntry(
+        name="workbench.openpi.prepare_data",
+        description=(
+            "Generate a deterministic, leakage-free miniature Franka joint-position "
+            "dataset for the real OpenPI optimizer/evaluation path."
+        ),
+        argv_template=[
+            *_OPENPI_PIPELINE,
+            "prepare-data",
+            "--dataset-uri",
+            "{{config.dataset_uri}}",
+            "--manifest-uri",
+            "{{config.dataset_manifest_uri}}",
+            "--train-samples",
+            "{{config.train_samples}}",
+            "--heldout-samples",
+            "{{config.heldout_samples}}",
+            "--seed",
+            "{{config.dataset_seed}}",
+        ],
+    ),
+    "workbench.openpi.negative_terms_gate": ToolEntry(
+        name="workbench.openpi.negative_terms_gate",
+        description=(
+            "Live-probe OpenPI's fail-closed terms gate in a child environment with "
+            "acceptance removed, before any accepted checkpoint fetch."
+        ),
+        argv_template=[
+            *_OPENPI_VENDOR_PIPELINE,
+            "negative-gate",
+            "--output-uri",
+            "{{config.negative_gate_uri}}",
+            "--terms-diagnostic-root-uri",
+            "{{config.terms_diagnostic_root_uri}}",
+            "--runtime-image",
+            "{{config.runtime_image}}",
+        ],
+    ),
+    "workbench.openpi.direct": ToolEntry(
+        name="workbench.openpi.direct",
+        description="Run real pinned OpenPI Polaris pi0.5 direct Franka inference.",
+        argv_template=[
+            *_OPENPI_VENDOR_PIPELINE,
+            "direct",
+            "--output-uri",
+            "{{config.direct_uri}}",
+            "--terms-diagnostic-root-uri",
+            "{{config.terms_diagnostic_root_uri}}",
+            "--runtime-image",
+            "{{config.runtime_image}}",
+            "--checkpoint-uri",
+            "{{config.base_checkpoint_uri}}",
+            "--config-name",
+            "{{config.base_config_name}}",
+            "--expected-gpu-type",
+            "{{config.expected_gpu_type}}",
+            "--expected-gpu-count",
+            "{{config.gpu_count}}",
+            "--expected-compute-capability",
+            "{{config.expected_compute_capability}}",
+        ],
+    ),
+    "workbench.openpi.serve": ToolEntry(
+        name="workbench.openpi.serve",
+        description=(
+            "Create an exact digest-pinned upstream OpenPI Deployment and ClusterIP "
+            "Service, validate it from a separate client Job, then remove it by exact identity."
+        ),
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.byof.openpi_service",
+            "--run-id",
+            "{{run.id}}",
+            "--output-uri",
+            "{{config.serve_uri}}",
+            "--cleanup-output-uri",
+            "{{config.serve_cleanup_uri}}",
+            "--terms-diagnostic-root-uri",
+            "{{config.terms_diagnostic_root_uri}}",
+            "--runtime-image",
+            "{{config.runtime_image}}",
+            "--namespace",
+            "{{config.service_namespace}}",
+            "--controller-service-account",
+            "{{config.service_account}}",
+            "--checkpoint-uri",
+            "{{config.base_checkpoint_uri}}",
+            "--config-name",
+            "{{config.base_config_name}}",
+            "--gpu-count",
+            "{{config.gpu_count}}",
+            "--expected-gpu-type",
+            "{{config.expected_gpu_type}}",
+            "--expected-compute-capability",
+            "{{config.expected_compute_capability}}",
+            "--server-cpu",
+            "{{config.service_server_cpus}}",
+            "--server-memory",
+            "{{config.service_server_memory}}",
+            "--client-cpu",
+            "{{config.service_client_cpus}}",
+            "--client-memory",
+            "{{config.service_client_memory}}",
+            "--pull-secret",
+            "{{config.service_image_pull_secret}}",
+            "--liveness-initial-delay-seconds",
+            "{{config.service_liveness_initial_delay_seconds}}",
+            "--gpu-node-selector-key",
+            "{{config.service_gpu_node_selector_key}}",
+            "--gpu-node-selector-value",
+            "{{config.service_gpu_node_selector_value}}",
+            "--service-cache-size",
+            "{{config.service_cache_size}}",
+            "--server-ready-timeout-seconds",
+            "{{config.service_server_ready_timeout_seconds}}",
+            "--client-timeout-seconds",
+            "{{config.service_client_timeout_seconds}}",
+            "--cleanup-timeout-seconds",
+            "{{config.service_cleanup_timeout_seconds}}",
+            "--poll-interval-seconds",
+            "{{config.service_poll_interval_seconds}}",
+            "--api-timeout-seconds",
+            "{{config.service_api_timeout_seconds}}",
+            "--http-timeout-seconds",
+            "{{config.service_http_timeout_seconds}}",
+        ],
+    ),
+    "workbench.openpi.train": ToolEntry(
+        name="workbench.openpi.train",
+        description=(
+            "Run pinned upstream pi0.5 LoRA forward/backward/AdamW updates and "
+            "publish a reloadable checkpoint."
+        ),
+        argv_template=[
+            *_OPENPI_VENDOR_PIPELINE,
+            "train",
+            "--output-uri",
+            "{{config.training_uri}}",
+            "--terms-diagnostic-root-uri",
+            "{{config.terms_diagnostic_root_uri}}",
+            "--runtime-image",
+            "{{config.runtime_image}}",
+            "--dataset-uri",
+            "{{config.dataset_uri}}",
+            "--dataset-manifest-uri",
+            "{{config.dataset_manifest_uri}}",
+            "--checkpoint-uri",
+            "{{config.trained_checkpoint_uri}}",
+            "--base-checkpoint-uri",
+            "{{config.base_checkpoint_uri}}",
+            "--train-steps",
+            "{{config.train_steps}}",
+            "--batch-size",
+            "{{config.train_batch_size}}",
+            "--fsdp-devices",
+            "{{config.train_fsdp_devices}}",
+            "--seed",
+            "{{config.train_seed}}",
+            "--expected-gpu-type",
+            "{{config.expected_gpu_type}}",
+            "--expected-gpu-count",
+            "{{config.gpu_count}}",
+            "--expected-compute-capability",
+            "{{config.expected_compute_capability}}",
+        ],
+    ),
+    "workbench.openpi.evaluate": ToolEntry(
+        name="workbench.openpi.evaluate",
+        description=(
+            "Reload the exact live-trained OpenPI checkpoint, compute real held-out "
+            "model loss and action-target metrics, and produce a valid trajectory."
+        ),
+        argv_template=[
+            *_OPENPI_VENDOR_PIPELINE,
+            "evaluate",
+            "--output-uri",
+            "{{config.evaluation_uri}}",
+            "--terms-diagnostic-root-uri",
+            "{{config.terms_diagnostic_root_uri}}",
+            "--runtime-image",
+            "{{config.runtime_image}}",
+            "--dataset-uri",
+            "{{config.dataset_uri}}",
+            "--dataset-manifest-uri",
+            "{{config.dataset_manifest_uri}}",
+            "--checkpoint-uri",
+            "{{config.trained_checkpoint_uri}}",
+            "--training-artifact-uri",
+            "{{config.training_uri}}",
+            "--base-checkpoint-uri",
+            "{{config.base_checkpoint_uri}}",
+            "--seed",
+            "{{config.evaluation_seed}}",
+            "--batch-size",
+            "{{config.evaluation_batch_size}}",
+            "--fsdp-devices",
+            "{{config.train_fsdp_devices}}",
+            "--expected-gpu-type",
+            "{{config.expected_gpu_type}}",
+            "--expected-gpu-count",
+            "{{config.gpu_count}}",
+            "--expected-compute-capability",
+            "{{config.expected_compute_capability}}",
+        ],
     ),
     "workbench.isaac_lab.byof_repo": ToolEntry(
         name="workbench.isaac_lab.byof_repo",
@@ -1641,11 +1894,6 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "train",
             "--runtime",
             "{{config.sonic_runtime}}",
-            # NVIDIA's terms are the operator's to accept. `--runtime in-job` downloads Isaac
-            # Sim and Isaac Lab onto the machine, and the SONIC entrypoint refuses until this
-            # is set (live job 327, EVIDENCE.md §R47). A spec is where a reviewer can see it.
-            "--accept-nvidia-eula",
-            "{{config.sonic_accept_nvidia_eula}}",
             "--checkpoint",
             "{{config.checkpoint_uri}}",
             "--data-path",
@@ -2040,8 +2288,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         name="workbench.cosmos3.generate",
         description=(
             "Generate an image or video with the Cosmos 3 omni model (real "
-            "inference in the npa-cosmos3 image; gated weights download at "
-            "runtime with the operator's HF token)."
+            "inference in the npa-cosmos3 image; public Cosmos3-Nano downloads "
+            "anonymously, while enabled gated guardrails use the operator's HF token)."
         ),
         argv_template=[
             "npa",
@@ -2056,6 +2304,99 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.output_uri}}",
             "--checkpoint",
             "{{config.cosmos3_checkpoint}}",
+            "--input-path",
+            "{{config.cosmos3_input_path}}",
+            "--seed",
+            "{{config.cosmos3_seed}}",
+            "--guidance",
+            "{{config.cosmos3_guidance}}",
+            "--num-steps",
+            "{{config.cosmos3_steps}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.cosmos3.prepare_video_input": ToolEntry(
+        name="workbench.cosmos3.prepare_video_input",
+        description=(
+            "Select one direct video or LeRobot v2/v3 episode/camera and stage "
+            "the canonical source video plus caption frames."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "cosmos3",
+            "prepare-video-input",
+            "--input-kind",
+            "{{config.input_kind}}",
+            "--input-video-uri",
+            "{{config.input_video_uri}}",
+            "--lerobot-dataset-uri",
+            "{{config.lerobot_dataset_uri}}",
+            "--episode",
+            "{{config.input_episode}}",
+            "--camera",
+            "{{config.input_camera}}",
+            "--output-uri",
+            "{{config.input_uri}}",
+            "--provenance-uri",
+            "{{config.input_provenance_uri}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.cosmos3.generate_variants": ToolEntry(
+        name="workbench.cosmos3.generate_variants",
+        description=(
+            "Run real Cosmos 3 video2video inference once per PAIDF variant, "
+            "with source-video conditioning and bounded adaptive refinement."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "cosmos3",
+            "generate-variants",
+            "--input-path",
+            "{{config.conditioning_video_uri}}",
+            "--input-provenance-uri",
+            "{{config.input_provenance_uri}}",
+            "--captions-uri",
+            "{{config.captions_uri}}",
+            "--configs-uri",
+            "{{config.configs_uri}}",
+            "--output-uri",
+            "{{config.augment_uri}}",
+            "--scores-uri",
+            "{{config.scores_uri}}",
+            "--attempt-uri",
+            "{{config.refinement_attempt_uri}}",
+            "--mode",
+            "{{config.cosmos3_mode}}",
+            "--checkpoint",
+            "{{config.cosmos3_checkpoint}}",
+            "--prompt",
+            "{{config.prompt}}",
+            "--negative-prompt",
+            "{{config.negative_prompt}}",
+            "--seed",
+            "{{config.seed}}",
+            "--guidance",
+            "{{config.guidance}}",
+            "--steps",
+            "{{config.steps}}",
+            "--variant-count",
+            "{{config.variant_count}}",
+            "--variant-parallelism",
+            "{{config.variant_parallelism}}",
+            "--retry-seed-stride",
+            "{{config.retry_seed_stride}}",
+            "--retry-guidance-delta",
+            "{{config.retry_guidance_delta}}",
+            "--retry-steps-delta",
+            "{{config.retry_steps_delta}}",
+            "--parallelism-preset",
+            "{{config.parallelism_preset}}",
+            "--guardrails",
             "--run-id",
             "{{run.id}}",
         ],

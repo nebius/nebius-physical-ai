@@ -302,17 +302,22 @@ def _merge_identity(
             marker = json.dumps(item, sort_keys=True, default=str)
             if marker not in seen:
                 if isinstance(item, Mapping):
+                    identity_keys = (
+                        ("instance_id", "agent_name")
+                        if path == "identity.agents"
+                        else (
+                            "agent_name",
+                            "cluster_id",
+                            "context",
+                            "run_id",
+                            "operation_id",
+                            "service_account_id",
+                        )
+                    )
                     identity_key = next(
                         (
                             key
-                            for key in (
-                                "agent_name",
-                                "cluster_id",
-                                "context",
-                                "run_id",
-                                "operation_id",
-                                "service_account_id",
-                            )
+                            for key in identity_keys
                             if item.get(key) not in (None, "")
                         ),
                         "",
@@ -639,8 +644,12 @@ def list_teardown_receipts(
                     found.update(collect(value, key))
             return found
 
-        subject_project_ids = collect(identity, "project_id") | ({receipt_project_id} if receipt_project_id else set())
-        subject_aliases = collect(identity, "project_alias") | ({receipt_alias} if receipt_alias else set())
+        subject_project_ids = collect(identity, "project_id") | (
+            {receipt_project_id} if receipt_project_id else set()
+        )
+        subject_aliases = collect(identity, "project_alias") | (
+            {receipt_alias} if receipt_alias else set()
+        )
         is_legacy = not subject_aliases and not subject_project_ids
         if legacy == "only" and not is_legacy:
             continue

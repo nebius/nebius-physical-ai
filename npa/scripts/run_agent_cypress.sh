@@ -4,35 +4,30 @@
 # Mocked mode:
 #   bash npa/scripts/run_agent_cypress.sh --mock
 #
-# Live mode:
-#   bash npa/scripts/run_agent_cypress.sh --live --project <alias> --name agent
-#   NPA_AGENT_CYPRESS_RUN_ID=<run> NPA_AGENT_CYPRESS_ARTIFACT_KEY=<key> \
-#     bash npa/scripts/run_agent_cypress.sh --live --project <alias> --name agent
-#   NPA_AGENT_CYPRESS_LIVE_DESTRUCTIVE=1 bash npa/scripts/run_agent_cypress.sh --live --project <alias> --name agent
+# Live mode is an explicit, credential-in-environment opt-in:
+#   NPA_AGENT_CYPRESS_LIVE=1 NPA_AGENT_BASE_URL=https://agent.example \
+#   NPA_AGENT_USER=... NPA_AGENT_PASSWORD=... \
+#     bash npa/scripts/run_agent_cypress.sh --live
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 BROWSER_DIR="${ROOT}/npa/tests/browser"
-NPA_BIN="${ROOT}/npa/.venv/bin/npa"
-PYTHON="${ROOT}/npa/.venv/bin/python"
 
 MODE="mock"
-PROJECT="${NPA_AGENT_PROJECT:-us-central1}"
-NAME="${NPA_AGENT_NAME:-agent}"
 LIVE_DESTRUCTIVE="${NPA_AGENT_CYPRESS_LIVE_DESTRUCTIVE:-0}"
 LIVE_RUN_ID="${NPA_AGENT_CYPRESS_RUN_ID:-${NPA_AGENT_RUN_ID:-}}"
+LIVE_RUN_REF="${NPA_AGENT_CYPRESS_RUN_REF:-${NPA_AGENT_RUN_REF:-}}"
+FOXGLOVE_RUN_ID="${NPA_AGENT_CYPRESS_FOXGLOVE_RUN_ID:-${LIVE_RUN_ID}}"
 LIVE_ARTIFACT_KEY="${NPA_AGENT_CYPRESS_ARTIFACT_KEY:-}"
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [--mock|--live] [--project NAME] [--name NAME]
+Usage: $(basename "$0") [--mock|--live]
 
 Options:
   --mock            Run mocked browser UI coverage (default)
-  --live            Run against a deployed agent using stored npa auth
-  --project NAME    NPA project alias for live mode (default: ${PROJECT})
-  --name NAME       Agent deployment name for live mode (default: ${NAME})
+  --live            Run against an HTTPS agent using explicit environment credentials
   --destructive     Enable live Cypress Sim2Real submit button test
   --help            Show this help
 EOF
@@ -47,14 +42,6 @@ while [[ $# -gt 0 ]]; do
     --live)
       MODE="live"
       shift
-      ;;
-    --project)
-      PROJECT="$2"
-      shift 2
-      ;;
-    --name)
-      NAME="$2"
-      shift 2
       ;;
     --destructive)
       LIVE_DESTRUCTIVE=1
@@ -81,51 +68,58 @@ if [[ "${MODE}" == "mock" ]]; then
   exit 0
 fi
 
-if [[ ! -x "${NPA_BIN}" || ! -x "${PYTHON}" ]]; then
-  echo "Missing npa virtualenv; expected ${NPA_BIN} and ${PYTHON}" >&2
+if [[ "${NPA_AGENT_CYPRESS_LIVE:-0}" != "1" ]]; then
+  echo "Live Cypress is disabled; set NPA_AGENT_CYPRESS_LIVE=1 explicitly." >&2
   exit 1
 fi
-
-STATUS_JSON="$("${NPA_BIN}" agent status --project "${PROJECT}" --name "${NAME}" --json)"
-AGENT_URL="$(NPA_STATUS_JSON="${STATUS_JSON}" "${PYTHON}" - <<'PY'
-import json
-import os
-
-data = json.loads(os.environ["NPA_STATUS_JSON"])
-print((data.get("public_url") or data.get("agent_url") or "").rstrip("/"))
-PY
-)"
-AUTH_ENV="${HOME}/.npa/agents/${PROJECT}/${NAME}/auth.env"
-if [[ ! -f "${AUTH_ENV}" ]]; then
-  echo "Missing live agent auth env: ${AUTH_ENV}" >&2
+if [[ -z "${NPA_AGENT_BASE_URL:-}" || -z "${NPA_AGENT_USER:-}" || -z "${NPA_AGENT_PASSWORD:-}" ]]; then
+  echo "Live Cypress requires NPA_AGENT_BASE_URL, NPA_AGENT_USER, and NPA_AGENT_PASSWORD." >&2
   exit 1
 fi
-# shellcheck disable=SC1090
-source "${AUTH_ENV}"
-
-if [[ -z "${AGENT_URL}" || -z "${AGENT_USER:-}" || -z "${AGENT_PASSWORD:-}" ]]; then
-  echo "Live Cypress requires agent URL plus AGENT_USER/AGENT_PASSWORD" >&2
-  exit 1
-fi
+case "${NPA_AGENT_BASE_URL}" in
+  https://*) ;;
+  *)
+    echo "Live Cypress requires an HTTPS NPA_AGENT_BASE_URL." >&2
+    exit 1
+    ;;
+esac
 
 LIVE_CYPRESS_SCRIPT="cy:live"
-if [[ -n "${LIVE_RUN_ID}" || -n "${LIVE_ARTIFACT_KEY}" ]]; then
-  if [[ -z "${LIVE_RUN_ID}" || -z "${LIVE_ARTIFACT_KEY}" ]]; then
-    echo "Exact RRD mode requires both NPA_AGENT_CYPRESS_RUN_ID and NPA_AGENT_CYPRESS_ARTIFACT_KEY" >&2
+if [[ -n "${LIVE_ARTIFACT_KEY}" ]]; then
+  if [[ -z "${LIVE_RUN_ID}" ]]; then
+    echo "Exact RRD mode requires NPA_AGENT_CYPRESS_RUN_ID with NPA_AGENT_CYPRESS_ARTIFACT_KEY" >&2
     exit 2
   fi
   LIVE_CYPRESS_SCRIPT="cy:live-rrd"
+fi
+if [[ "${LIVE_CYPRESS_SCRIPT}" == "cy:live" ]]; then
+  if [[ -z "${NPA_PLAYWRIGHT_CHROMIUM_EXECUTABLE:-}" || ! -x "${NPA_PLAYWRIGHT_CHROMIUM_EXECUTABLE}" ]]; then
+    echo "Live Foxglove Cypress requires NPA_PLAYWRIGHT_CHROMIUM_EXECUTABLE." >&2
+    exit 1
+  fi
+  if [[ -z "${NPA_AGENT_CYPRESS_EVIDENCE_DIR:-}" || "${NPA_AGENT_CYPRESS_EVIDENCE_DIR}" != /* ]]; then
+    echo "Live Foxglove Cypress requires an absolute NPA_AGENT_CYPRESS_EVIDENCE_DIR." >&2
+    exit 1
+  fi
+  case "${NPA_AGENT_CYPRESS_EVIDENCE_DIR}" in
+    "${ROOT}"|"${ROOT}"/*)
+      echo "Live Foxglove evidence must be stored outside the clone." >&2
+      exit 1
+      ;;
+  esac
 fi
 
 (
   cd "${BROWSER_DIR}"
   NODE_TLS_REJECT_UNAUTHORIZED=0 \
-    NPA_AGENT_BASE_URL="${AGENT_URL}" \
-    CYPRESS_NPA_AGENT_BASE_URL="${AGENT_URL}" \
-    CYPRESS_NPA_AGENT_USER="${AGENT_USER}" \
-    CYPRESS_NPA_AGENT_PASSWORD="${AGENT_PASSWORD}" \
+    CYPRESS_NPA_AGENT_CYPRESS_LIVE=1 \
+    CYPRESS_NPA_AGENT_BASE_URL="${NPA_AGENT_BASE_URL}" \
+    CYPRESS_NPA_AGENT_USER="${NPA_AGENT_USER}" \
+    CYPRESS_NPA_AGENT_PASSWORD="${NPA_AGENT_PASSWORD}" \
     CYPRESS_NPA_AGENT_CYPRESS_LIVE_DESTRUCTIVE="${LIVE_DESTRUCTIVE}" \
     CYPRESS_NPA_AGENT_CYPRESS_RUN_ID="${LIVE_RUN_ID}" \
+    CYPRESS_NPA_AGENT_CYPRESS_RUN_REF="${LIVE_RUN_REF}" \
+    CYPRESS_NPA_AGENT_CYPRESS_FOXGLOVE_RUN_ID="${FOXGLOVE_RUN_ID}" \
     CYPRESS_NPA_AGENT_CYPRESS_ARTIFACT_KEY="${LIVE_ARTIFACT_KEY}" \
-    npm run "${LIVE_CYPRESS_SCRIPT}" -- --env "NPA_AGENT_CYPRESS_LIVE_DESTRUCTIVE=${LIVE_DESTRUCTIVE},NPA_AGENT_CYPRESS_RUN_ID=${LIVE_RUN_ID},NPA_AGENT_CYPRESS_ARTIFACT_KEY=${LIVE_ARTIFACT_KEY}"
+    npm run "${LIVE_CYPRESS_SCRIPT}"
 )

@@ -47,12 +47,11 @@ label and Kubernetes priority class to the SkyPilot Pod, so parallel waves use
 observable admission instead of delete/recreate contention. The workflow task
 image must equal the payload's immutable digest.
 
-Isaac terms remain an operator decision rather than image metadata. The
-canonical spec declares empty `omni_kit_accept_eula` and
-`isaacsim_accept_eula` inputs, maps the supplied values into only the Isaac
-resource profile, and validates explicit accepted values before executing the
-nested Kit payload. Missing or rejected values fail before Kit starts; no image
-bakes acceptance and no unattended Job receives an interactive fallback.
+Isaac terms remain runtime state rather than image metadata. NPA applies its
+single `ACCEPT_EULA=Y` non-interactive default only to resolved Isaac routes;
+recognized negative values and `--no-accept-eula` opt out before scheduling,
+and invalid values fail locally. No image bakes acceptance, privacy consent, or
+telemetry consent.
 
 CPU contract/bookkeeping states use the dedicated digest-pinned
 `npa-sim2real-control` image. Its Python-slim base, exact source, and

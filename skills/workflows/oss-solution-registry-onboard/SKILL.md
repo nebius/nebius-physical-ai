@@ -98,7 +98,10 @@ Use the project's own vocabulary. Examples of good ids:
 - ManiSkill: `pickcube_cpu_step`, `pickcube_parallel_envs`
 - MuJoCo Playground: `mjx_cartpole_step`, `train_jax_ppo_cartpole_smoke`
 - RoboCasa: `kitchen_task_registration`, `download_kitchen_assets_lw`
-- OpenPI: `pi05_droid_jointpos_polaris_direct_infer`, `pi05_droid_jointpos_polaris_served_infer`
+- OpenPI: `pi05_droid_jointpos_polaris_direct_infer`,
+  `pi05_droid_jointpos_polaris_cross_pod_serve`,
+  `pi05_droid_jointpos_polaris_lora_optimizer_smoke`,
+  `pi05_droid_jointpos_polaris_heldout_evaluate`
 - DROID: `rlds_config_generator_contract`, `droid_100_config_gen`
 
 ### 2. Choose a golden hello-world per accepted claim
@@ -215,12 +218,24 @@ Also exercised in the same smoke (live-accepted with S3 evidence):
 - `kitchen_egl_env_reset` (post-download subprocess so `OBJ_CATEGORIES` sees mjcf paths)
 - `kitchen_random_rollout` (`run_random_rollouts` with mp4; pin `gymnasium==0.29.1` and bind `env.sim`)
 
-### OpenPI (`byof-openpi.yaml`)
+### OpenPI (`byof-openpi.yaml` + `openpi-pi05-four-mode.yaml`)
 
 Pinned: `Physical-Intelligence/openpi` `15a9616a00943ada6c20a0f158e3adb39df2ccac`
 
-Hard-gate capability: `pi05_droid_jointpos_polaris_served_infer` using the
-upstream WebSocket policy server/client on one B200 (`sm_100`).
+The builder's historical hard gate is
+`pi05_droid_jointpos_polaris_served_infer` using the upstream WebSocket
+policy server/client in one B200 (`sm_100`) pod. The connected four-mode gate
+must additionally pass all of:
+
+- `pi05_droid_jointpos_polaris_cross_pod_serve`: digest-pinned upstream server
+  Deployment, private ClusterIP Service with readiness/liveness, and two valid
+  requests from a distinct client pod
+- `pi05_droid_jointpos_polaris_lora_optimizer_smoke`: supported upstream pi0.5
+  LoRA configuration, real forward/backward/AdamW update, changed trainable
+  state, and reloadable Orbax checkpoint
+- `pi05_droid_jointpos_polaris_heldout_evaluate`: exact trained-checkpoint
+  reload, disjoint held-out upstream model loss plus action MAE/MSE, and a valid
+  reloaded trajectory
 
 Also hard-gated in the same smoke:
 
@@ -228,21 +243,25 @@ Also hard-gated in the same smoke:
 - `pi05_droid_jointpos_polaris_direct_infer` (`create_trained_policy` + `policy.infer`)
 - finite joint-position action chunks shaped `[T>=5,8]` from both paths
 
-Live acceptance requires the canonical isolated B200 (`sm_100`) gate: build the
+Four-mode live acceptance requires the canonical isolated B200 (`sm_100`) gate: build the
 pinned source, execute the declared editable-install and CUDA-compile commands,
 push it to the private project registry, resolve and pull the immutable digest,
 then run a separate invalid-terms workload that exits 64 before checkpoint/model
-loading. Only after that negative gate passes may the accepted workload fetch
-the 27 objects / 12,434,530,837 bytes at runtime and prove finite
-`float64[T>=5,8]` direct plus upstream WebSocket inference.
+loading. Only after that negative gate passes may accepted stages fetch the 27
+objects / 12,434,530,837 bytes at runtime. Direct and both cross-pod service
+requests must be finite `float64[T>=5,8]`. Training and held-out evaluation must
+consume machine-verifiably disjoint samples, and evaluation must consume the
+exact independently read-back training checkpoint.
 
 This checkpoint contains Gemma-derived material. Require the exact run-scoped
 `NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES` gate before build or download; forward it
 only through the secret channel and never bake/persist it. The image contains
-the pinned Apache-2.0 source and CUDA/JAX runtime, not checkpoint bytes. Training
-and evaluation remain unclaimed until a compatible real dataset and a real
-optimization/evaluation step are executed. The served check is same-pod loopback
-only; physical Franka success and cross-pod/Ingress serving are also unclaimed.
+the pinned Apache-2.0 source and CUDA/JAX runtime, not checkpoint bytes. A tiny
+deterministic compatible dataset is valid only for the real optimizer and
+held-out offline operational gate. It is not convergence evidence. Do not claim
+physical Franka success, external Ingress, or robot success from offline
+evaluation. The builder's legacy served check remains same-pod loopback; only
+the connected service capability may claim cross-pod ClusterIP transport.
 
 ### DROID policy learning (`byof-droid-policy-learning.yaml`)
 
@@ -358,6 +377,43 @@ Stock Wan action prediction is rejected as an upstream claim. Successful Wan
 runs are postprocessed into a verified Rerun recording that embeds the exact
 MP4 alongside static run evidence; see `skills/tools/wan2-2/SKILL.md` and
 `docs/workbench/wan2.2.md`.
+
+### Lightricks LTX-2.5 (`byof-ltx2.yaml`)
+
+Pinned upstream source:
+`Lightricks/LTX-2@fd4ded7f2d88d3da713abcdd4ad41ecc4a9314ca`; gated checkpoint
+set: `Lightricks/LTX-2.5`. **No capability here is live**: the image has been
+built, pushed, and scanned by digest, but no GPU has run it. The entry exists so
+the contract is reviewable before evidence, not so it can be mistaken for
+evidence.
+
+Read this one before onboarding any non-OSI model, because it breaks the habit
+the other entries teach. The LTX-2.x Community License Agreement (2026-08-11)
+licenses the **source** as well as the weights (Section 1.9 covers the
+accompanying source code), so "bake the code, fetch the weights" would have made
+the image non-redistributable. `npa-ltx2` bakes neither, and both fetches refuse
+without the operator's own `HF_TOKEN`:
+
+- `ltx2_5_text_to_video` (real `python -m ltx_pipelines.distilled` generation)
+- `ltx2_5_decoded_mp4_validation` (decode the pixels; reject an unreadable
+  container, a flat render, and one still repeated)
+
+The primary artifact is `ltx2_5_text_to_video.json`. Before either fetch, the
+run proves the refusal on the image it is actually running (`ltx-runtime
+assert-refusal`: exit 78, naming *which* gate refused, with both caches still
+empty) — a property of the image rather than a capability of the model.
+
+The licence acceptance is not ours to collect. It binds by conduct, and
+`Lightricks/LTX-2.5` is a gated repository, so a token that can read it is
+checkable evidence that a human accepted Lightricks' terms — strictly better
+than a `NPA_LTX_ACCEPT_COMMUNITY_LICENSE=YES` variable, which an earlier version
+of this entry required and which never formed the contract. Compliance with the
+Agreement, including Attachment A(18) (no training other models on the Outputs
+for commercial use, and a robot policy is another machine learning model), is
+the operator's own responsibility; the pipeline therefore stops at curation
+rather than training. Not claimed: image-to-video, audio-to-video, and LoRA
+fine-tuning. See `npa/docker/workbench/ltx2/REDISTRIBUTION.md` and
+`docs/workbench/ltx2.md`.
 
 ### Multi-GPU solutions
 

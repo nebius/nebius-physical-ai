@@ -20,8 +20,6 @@ npa workbench workflow submit \
   --var isaac_image=<immutable-ref> \
   --var viewer_image=<immutable-ref> \
   --var isaac_cache_pvc=<bound-rwx-pvc> \
-  --var omni_kit_accept_eula=YES \
-  --var isaacsim_accept_eula=YES \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY \
   --secret-env HF_TOKEN

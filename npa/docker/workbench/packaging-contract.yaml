@@ -121,14 +121,10 @@ redistribution:
         the registry (internal R&D, build-your-own), but hosting it PREBUILT on a
         public/anonymous registry would make us the third-party redistributor,
         which requires an NVIDIA AI Enterprise license.
-        NOTE: no image is currently classified restricted. The four Isaac images
-        used to be, and were re-architected to fetch Isaac Sim / Isaac Lab at
-        first run under the operator's own EULA acceptance instead of baking it
-        (npa/docker/workbench/common/isaac_bootstrap.sh), which is what made them
-        publicly redistributable. The class and every guard around it are kept
-        deliberately, with an empty membership, for the next runtime we cannot
-        ship — and the guards are tested against synthetic restricted images so
-        they cannot rot while unused.
+        Restricted membership is deliberate: cosmos3-serving remains
+        build-your-own under the NVIDIA Deep Learning Container License, and the
+        stale sonic-mujoco variant is quarantined because it inherits restricted
+        baked bytes. Credentials or runtime consent do not alter either result.
       reason: bakes-a-non-redistributable-runtime
 
 # Relative to npa/docker/workbench/
@@ -162,9 +158,33 @@ images:
     notes: >-
       Immutable Apache-2.0 Wan source plus an OSS CPU dependency base. CUDA
       PyTorch and all nvidia-* distributions are fetched only into a non-root
-      writable runtime volume after explicit operator acceptance; model and
+      writable runtime volume under their upstream package terms; model and
       tokenizer payloads are also runtime-only. Built-image byte/layer scanning
       is mandatory before publication.
+  ltx2:
+    dockerfile: ltx2/Dockerfile
+    tier: job
+    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; the final runtime user is non-root, no sshd service is enabled by default, and no credentials are baked into the image."
+    redistribution: public
+    notes: >-
+      Contains no LTX-2.5 at all. Unlike every other model image here, that
+      includes the SOURCE: the LTX-2.x Community License Agreement (2026-08-11)
+      covers ltx-core / ltx-pipelines as licensed material, not just the weights,
+      and its Section 3 conditions (impose the use restrictions by contract,
+      deliver the agreement, do not transfer to a Commercial Entity without a
+      paid licence) cannot be met by an anonymous registry pull. Baking the code
+      would therefore have forced `restricted`; baking nothing makes the question
+      moot. Upstream source is fetched at run time at an immutable commit and
+      installed by upstream's own uv resolution, and gated weights come from
+      Hugging Face — both only under the operator's own token, since Section 1.9
+      makes the source licensed material too and the gated repository is where
+      Lightricks actually grants access. Sections 2.1 (paid Commercial Use
+      Agreement above $10M revenue) and Attachment A(18) (no training other
+      models on Outputs for commercial use) govern the operator's own conduct and
+      artifacts, and are their responsibility rather than something this image
+      certifies. Byte/layer scanning
+      with scripts/scan_image_ltx_payload.py is mandatory before publication.
+      NOT YET BUILT OR GPU-VALIDATED; see ltx2/REDISTRIBUTION.md.
   sonic:
     dockerfile: sonic/Dockerfile
     isaac_runtime_fetch: true
@@ -173,9 +193,12 @@ images:
     redistribution: public
   sonic-mujoco:
     dockerfile: sonic/Dockerfile.mujoco
-    isaac_runtime_fetch: true
     tier: job
-    redistribution: public
+    redistribution: restricted
+    notes: >-
+      Quarantined legacy variant: its default parent is the old npa-sonic:0.1.2
+      image containing restricted NVIDIA bytes. Credentials or runtime consent
+      cannot make an already-baked payload redistributable.
   sim2real-eval:
     dockerfile: sim2real-eval/Dockerfile
     tier: job
@@ -249,7 +272,7 @@ images:
       requires material added primary functionality and downstream terms at
       least as protective; this thin serving wrapper and anonymous GHCR do not
       establish those conditions. Operators build into their own registry and
-      fetch gated weights at runtime with their own Hugging Face acceptance.
+      fetch gated weights at runtime using a token whose account has upstream access.
     redistribution: restricted
   cosmos3-reason:
     dockerfile: cosmos3-reason/Dockerfile

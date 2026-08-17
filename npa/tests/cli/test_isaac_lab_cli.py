@@ -21,6 +21,7 @@ TERRAFORM_PLAN_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "te
 
 @pytest.fixture(autouse=True)
 def _terraform_plan_allows_apply(mocker):
+    mocker.patch.dict("os.environ", {"ACCEPT_EULA": "Y"})
     mocker.patch(
         "npa.cli.isaac_lab.provisioner.plan",
         return_value=(TERRAFORM_PLAN_FIXTURES / "fresh_create.txt").read_text(),

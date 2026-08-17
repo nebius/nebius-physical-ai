@@ -42,6 +42,6 @@ if [[ "$PUSH" == 1 ]]; then
 else
   ARGS+=(--load --provenance=false)
 fi
-env -u HF_TOKEN -u NGC_API_KEY -u NEBIUS_IAM_TOKEN -u NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS \
+env -u HF_TOKEN -u NGC_API_KEY -u NEBIUS_IAM_TOKEN \
   docker buildx build "${ARGS[@]}" "$NPA_ROOT"
 echo "Built: $IMAGE"

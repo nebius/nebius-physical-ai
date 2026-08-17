@@ -209,7 +209,140 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#simRunId").should("contain.text", "mock-run");
   });
 
-  it("selects one escaped project detail at a time and preserves the stable project ID", () => {
+  it("keeps downstream controls wired when optional startup and viewer initialization fail", () => {
+    let discoveryRequests = 0;
+    cy.intercept("GET", "/api/access*", {
+      delay: 900,
+      statusCode: 503,
+      body: { detail: "simulated optional access startup failure" },
+    }).as("optionalAccessFailure");
+    cy.intercept("GET", "/api/foxglove/config", {
+      delay: 700,
+      statusCode: 503,
+      body: { detail: "simulated optional viewer startup failure" },
+    }).as("optionalFoxgloveFailure");
+    cy.intercept("GET", "/api/artifacts/runs*", (req) => {
+      discoveryRequests += 1;
+      req.reply({
+        delay: 650,
+        body: {
+          runs: [{
+            run_id: "startup-resilience-run",
+            run_ref: "npa1_startup_resilience",
+            last_modified: "2026-08-13T00:00:00Z",
+            artifact_count: 1,
+            has_viewable: true,
+          }],
+          total_runs: 1,
+          pagination_complete: true,
+          next_cursor: "",
+          access: { status: "available" },
+        },
+      });
+    }).as("resilientArtifactRuns");
+
+    cy.visit("/", {
+      onBeforeLoad(win) {
+        // Reproduce the reported monolithic-wiring failure: one synchronous
+        // optional viewer exception used to abort wireUi before chat, workflow,
+        // artifact, and viewer actions received their handlers.
+        const originalToggle = win.DOMTokenList.prototype.toggle;
+        let injected = false;
+        win.DOMTokenList.prototype.toggle = function toggle(token, ...args) {
+          if (!injected && token === "is-active-viewer") {
+            injected = true;
+            win.DOMTokenList.prototype.toggle = originalToggle;
+            throw new Error("simulated optional viewer initialization failure");
+          }
+          return originalToggle.call(this, token, ...args);
+        };
+      },
+    });
+
+    // These controls are all wired after initial viewer setup in wireUi.
+    cy.get("#chatActionS3").click();
+    cy.get("#chatInput").should("contain.value", "configure S3");
+    cy.get("#workflowValidate").click();
+    cy.wait("@workflowValidate");
+    cy.get("#workflowValidate").should("be.enabled").and("have.attr", "aria-busy", "false");
+    cy.get("#tabRerun").click();
+    cy.get("#renderModeFoxglove").click();
+    cy.wait("@optionalFoxgloveFailure");
+    cy.get("#tabMain").click();
+    cy.get("#chatActionCosmos").click();
+    cy.get("#chatInput").should("contain.value", "Cosmos3");
+
+    // Repeated activation while the request is pending must issue exactly one
+    // backend request and must restore the control state on completion.
+    cy.wait("@resilientArtifactRuns");
+    cy.then(() => { discoveryRequests = 0; });
+    cy.get("#artifactRefreshRuns").then(($button) => {
+      $button[0].click();
+      $button[0].click();
+    });
+    cy.wait("@resilientArtifactRuns");
+    cy.get("#artifactRefreshRuns").should("be.enabled").and("have.attr", "aria-busy", "false");
+    cy.then(() => expect(discoveryRequests, "single-flight discovery requests").to.eq(1));
+  });
+
+  it("renders the first discovery page while a later page is delayed", () => {
+    cy.intercept("GET", "/api/artifacts/runs*", (req) => {
+      const cursor = new URL(req.url).searchParams.get("cursor");
+      if (!cursor) {
+        req.reply({
+          delay: 120,
+          body: {
+            runs: [{
+              run_id: "progressive-first-page",
+              run_ref: "npa1_progressive_first",
+              last_modified: "2026-08-13T00:00:00Z",
+              artifact_count: 1,
+              has_viewable: true,
+            }],
+            total_runs: 2,
+            pagination_complete: false,
+            next_cursor: "second-page",
+            access: { status: "available" },
+          },
+        });
+        return;
+      }
+      req.reply({
+        delay: 2200,
+        body: {
+          runs: [{
+            run_id: "progressive-second-page",
+            run_ref: "npa1_progressive_second",
+            last_modified: "2026-08-12T00:00:00Z",
+            artifact_count: 1,
+            has_viewable: true,
+          }],
+          total_runs: 2,
+          pagination_complete: true,
+          next_cursor: "",
+          access: { status: "available" },
+        },
+      });
+    }).as("progressiveArtifactRuns");
+
+    cy.visit("/");
+    cy.wait("@progressiveArtifactRuns"); // bounded boot page
+    cy.get("#tabRerun").click();
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@progressiveArtifactRuns"); // first interactive page
+    cy.get('#runIdSelect option[data-run-id="progressive-first-page"]')
+      .should("exist");
+    cy.get("#artifactDiscoverStatus")
+      .should("contain.text", "loading more");
+    cy.get("#artifactRefreshRuns").should("be.disabled").and("have.attr", "aria-busy", "true");
+    cy.wait("@progressiveArtifactRuns"); // delayed second page
+    cy.get('#runIdSelect option[data-run-id="progressive-second-page"]')
+      .should("exist");
+    cy.get("#artifactDiscoverStatus").should("not.contain.text", "loading more");
+    cy.get("#artifactRefreshRuns").should("be.enabled").and("have.attr", "aria-busy", "false");
+  });
+
+  it("selects one escaped project and bucket detail at a time", () => {
     const projectCapabilities = (artifactStatus, artifactReason, readStatus, readReason, submitStatus, submitReason) => ({
       project_metadata: { status: "available", reason: "Project identity was returned by tenant discovery." },
       storage_resource_discovery: { status: "available", reason: "Object storage resources visible in this project were listed." },
@@ -278,7 +411,10 @@ describe("NPA agent UI with mocked APIs", () => {
         deployment_project: true,
         status: "available",
         capabilities: projectCapabilities("available", "At least one project bucket is searchable.", "available", "Artifact object reads were verified.", "available", "Workflow submission remains scoped to the deployment project."),
-        resources: [resource("resource-a", "project-artifacts")],
+        resources: [
+          resource("resource-a", "project-artifacts"),
+          resource("resource-a-archive", "archive-artifacts"),
+        ],
       },
       {
         id: "project-c",
@@ -323,6 +459,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.wait("@selectorAccess");
 
     cy.get('label[for="agentAccessProjectSelect"]').should("contain.text", "Project");
+    cy.get('label[for="agentAccessBucketSelect"]').should("contain.text", "Bucket");
     cy.get("#agentAccessProjectSelect")
       .should("have.prop", "tagName", "SELECT")
       .and("be.enabled")
@@ -342,11 +479,25 @@ describe("NPA agent UI with mocked APIs", () => {
       .and("contain.text", "Project Alpha")
       .and("contain.text", "project-a")
       .and("contain.text", "deployment project");
+    cy.get("#agentAccessBucketSelect")
+      .should("have.prop", "tagName", "SELECT")
+      .and("be.enabled")
+      .and("have.attr", "aria-describedby", "agentAccessBucketHint")
+      .and("have.value", "project-artifacts");
+    cy.get("#agentAccessBucketSelect option").should("have.length", 2);
+    cy.get("#agentAccessProjects .access-resource").should("have.length", 1)
+      .and("contain.text", "project-artifacts")
+      .and("not.contain.text", "archive-artifacts");
+    cy.get("#agentAccessBucketSelect").select("archive-artifacts");
+    cy.get("#agentAccessProjects .access-resource").should("have.length", 1)
+      .and("contain.text", "archive-artifacts")
+      .and("not.contain.text", "project-artifacts");
     cy.get("#agentAccessPanel").should(($panel) => {
       expect($panel.text()).not.to.match(/\bpartial\b/i);
     });
 
     cy.get("#agentAccessProjectSelect").select("project-b");
+    cy.get("#agentAccessBucketSelect").should("have.value", "foreign-artifacts");
     cy.get("#agentAccessProjects .access-project-detail").should("have.length", 1)
       .and("contain.text", "Foreign Project")
       .and("contain.text", "foreign-artifacts")
@@ -356,7 +507,18 @@ describe("NPA agent UI with mocked APIs", () => {
       .should("have.attr", "data-project-id", "project-b")
       .and("have.attr", "data-resource-bucket", "foreign-artifacts");
 
+    cy.get("#agentAccessProjectSelect").select("project-a");
+    cy.get("#agentAccessBucketSelect").should("have.value", "project-artifacts");
+    cy.get("#agentAccessProjects .access-resource")
+      .should("contain.text", "project-artifacts")
+      .and("not.contain.text", "archive-artifacts");
+
     cy.get("#agentAccessProjectSelect").select("project-c");
+    cy.get("#agentAccessBucketSelect")
+      .should("be.disabled")
+      .and("have.value", "")
+      .find("option")
+      .should("have.text", "No buckets available");
     cy.get("#agentAccessProjects .access-project-detail").should("have.length", 1)
       .and("contain.text", "No searchable artifact bucket.")
       .and("contain.text", "No Bucket")
@@ -364,6 +526,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#agentAccessProjects button[data-access-action]").should("not.exist");
 
     cy.get("#agentAccessProjectSelect").select("project-d");
+    cy.get("#agentAccessBucketSelect").should("be.enabled").and("have.value", "empty-artifacts");
     cy.get("#agentAccessProjects .access-project-detail").should("have.length", 1)
       .and("contain.text", "Empty Bucket")
       .and("contain.text", "empty-artifacts")
@@ -389,6 +552,7 @@ describe("NPA agent UI with mocked APIs", () => {
       ]);
     });
     cy.get("#agentAccessProjectSelect").invoke("val", hostileProjectId).trigger("change");
+    cy.get("#agentAccessBucketSelect").should("have.value", hostileBucket);
     cy.get("#agentAccessProjects .access-project-detail").should("have.length", 1)
       .and("contain.text", hostileProjectId)
       .and("contain.text", hostileBucket)
@@ -396,9 +560,16 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#agentAccessPanel").find("script, img, svg").should("not.exist");
     cy.window().its("__npaXss").should("not.exist");
     cy.get("#agentAccessProjectSelect").focus().should("be.focused");
+    cy.get("#agentAccessBucketSelect").focus().should("be.focused");
 
     cy.viewport(375, 667);
     cy.get("#agentAccessProjectSelect").should("be.visible").then(($select) => {
+      const selectRect = $select[0].getBoundingClientRect();
+      const panelRect = $select[0].closest("#agentAccessPanel").getBoundingClientRect();
+      expect(selectRect.left).to.be.at.least(panelRect.left);
+      expect(selectRect.right).to.be.at.most(panelRect.right + 1);
+    });
+    cy.get("#agentAccessBucketSelect").should("be.visible").then(($select) => {
       const selectRect = $select[0].getBoundingClientRect();
       const panelRect = $select[0].closest("#agentAccessPanel").getBoundingClientRect();
       expect(selectRect.left).to.be.at.least(panelRect.left);
@@ -463,14 +634,16 @@ describe("NPA agent UI with mocked APIs", () => {
 
   it("disables denied and unavailable access actions with visible reasons", () => {
     for (const bucket of ["denied-artifacts", "unavailable-artifacts"]) {
+      cy.get("#agentAccessBucketSelect").select(bucket);
       cy.get(`#agentAccessProjects [data-resource-bucket="${bucket}"]`).each(($button) => {
         expect($button[0].tagName).to.eq("BUTTON");
         expect($button).to.be.disabled;
         expect($button.attr("aria-describedby")).to.be.a("string").and.not.be.empty;
       });
     }
-    cy.get("#agentAccessProjects").should("contain.text", "Permission denied while listing objects.");
     cy.get("#agentAccessProjects").should("contain.text", "Object reads could not be verified.");
+    cy.get("#agentAccessBucketSelect").select("denied-artifacts");
+    cy.get("#agentAccessProjects").should("contain.text", "Permission denied while listing objects.");
   });
 
   it("shows busy/error feedback and blocks stale resource responses", () => {
@@ -506,6 +679,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#agentAccessActionResult")
       .should("have.attr", "aria-busy", "true")
       .and("contain.text", "Querying the selected project and bucket");
+    cy.get("#agentAccessBucketSelect").select("archive-artifacts");
     cy.get('#agentAccessProjects button[data-access-action="list"][data-resource-bucket="archive-artifacts"]').click();
     cy.wait("@scopedAccessRuns");
     cy.get("#agentAccessActionResult", { timeout: 3000 })
@@ -519,6 +693,7 @@ describe("NPA agent UI with mocked APIs", () => {
       statusCode: 502,
       body: { ok: false, error: "Scoped list probe failed." },
     }).as("failedAccessRuns");
+    cy.get("#agentAccessBucketSelect").select("project-artifacts");
     cy.get('#agentAccessProjects button[data-access-action="list"][data-resource-bucket="project-artifacts"]').click();
     cy.wait("@failedAccessRuns");
     cy.get("#agentAccessActionResult")
@@ -547,6 +722,26 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.wait(800);
     cy.get("#agentAccessActionResult").should("have.attr", "hidden");
     cy.get("#agentAccessActionResult").should("not.contain.text", "must-not-render-after-refresh");
+  });
+
+  it("preserves the selected bucket when an access refresh fails", () => {
+    cy.get("#agentAccessBucketSelect").select("archive-artifacts");
+    cy.get("#agentAccessProjects .access-resource").should("contain.text", "archive-artifacts");
+    cy.intercept("GET", "/api/access?refresh=true", {
+      statusCode: 503,
+      body: { ok: false, error: "Access inventory is temporarily unavailable." },
+    }).as("failedAccessRefresh");
+
+    cy.get("#agentAccessRefresh").click();
+    cy.wait("@failedAccessRefresh");
+    cy.get("#agentAccessStatus").should("have.text", "Access unavailable");
+    cy.get("#agentAccessErrors").should("contain.text", "Existing project-scoped operations are unchanged");
+    cy.get("#agentAccessProjectSelect").should("have.value", "project-a");
+    cy.get("#agentAccessBucketSelect").should("be.enabled").and("have.value", "archive-artifacts");
+    cy.get("#agentAccessProjects .access-resource")
+      .should("have.length", 1)
+      .and("contain.text", "archive-artifacts")
+      .and("not.contain.text", "project-artifacts");
   });
 
   it("opens a JSON-only run through Read and renders useful content", () => {
@@ -587,6 +782,9 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.window().then((win) => {
       cy.stub(win, "open").as("windowOpen");
     });
+  });
+
+  it("embeds the Lichtblick MCAP viewer as a Viewer render mode", () => {
     cy.get("#tabRerun").click();
     cy.get("#panelRerun").should("have.class", "is-active");
 
@@ -601,15 +799,6 @@ describe("NPA agent UI with mocked APIs", () => {
       .and("include", "ds.url");
     // The embedded Lichtblick app renders the MCAP data source (mock fixture).
     cy.get("#lichtblickFrame").its("0.contentWindow.__NPA_MOCK_LICHTBLICK__", { timeout: 15000 }).should("exist");
-
-    // "Open in Lichtblick" opens the same-origin viewer URL in a new tab.
-    cy.get("#openLichtblick").click();
-    cy.get("@windowOpen").should("have.been.called");
-
-    // Reload stays on the Lichtblick pane and re-mounts the iframe.
-    cy.get("#loadLichtblickViewer").click();
-    cy.get("#viewerPaneLichtblick").should("have.class", "is-active-viewer");
-    cy.get("#lichtblickFrame").should("have.attr", "src").and("include", "/lichtblick/");
 
     // Switching back to Rerun deactivates the Lichtblick pane (both stay mounted).
     cy.get("#renderModeRerun").click();
@@ -629,7 +818,11 @@ describe("NPA agent UI with mocked APIs", () => {
 
     cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`);
     cy.get("#artifactList").should("contain.text", "mcap");
+    cy.get("#artifactList").should("contain.text", "View in Foxglove");
     cy.get("#artifactList").should("contain.text", "View in Lichtblick");
+    cy.get(
+      `#artifactList button[data-action="open-foxglove-artifact"][data-key="${NON_STOCK_RUN_ID}/reports/sim2real.mcap"]`,
+    ).should("have.length", 1);
 
     cy.get(`#artifactList button[data-action="load-artifact"][data-key="${NON_STOCK_RUN_ID}/reports/sim2real.mcap"]`).click();
     cy.wait("@loadArtifact");
@@ -655,6 +848,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#artifactLoadRunArtifacts").click();
     cy.wait("@nonStockArtifactList");
     cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`);
+    cy.get("#artifactList").should("contain.text", "View in Foxglove");
     cy.get("#artifactList").should("contain.text", "View in Lichtblick");
     cy.get("#artifactList").should("not.contain.text", "mock-run/preview.png");
   });
@@ -1022,11 +1216,13 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#simStage").should("contain.text", "stage_14_rerun_viz");
     cy.get("#simCamera").should("contain.text", "customer-overhead");
 
-    cy.get(`#runIdSelect option[value="${NON_STOCK_RUN_ID}"][data-source-type="workflow_history"]`).then(($opt) => {
-      const select = $opt[0].parentElement;
-      select.selectedIndex = [...select.options].indexOf($opt[0]);
-      cy.wrap(select).trigger("change");
-    });
+    cy.get(`#runIdSelect option[value="${NON_STOCK_RUN_ID}"][data-source-type="workflow_history"]`)
+      .should("have.length", 1);
+    // Cypress's native select command changes the source-qualified option and
+    // dispatches its event atomically, matching an operator selection. Manually
+    // setting selectedIndex and queueing a later trigger lets a prior async
+    // artifact refresh repaint the picker between those two artificial steps.
+    cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
     cy.wait("@loadRun");
     cy.get("#tabMain").click();
     cy.get("#stagesPanel h3").should("have.text", "Stages");
@@ -1296,18 +1492,24 @@ describe("NPA agent UI with mocked APIs", () => {
     });
     cy.get("#artifactLoadRunArtifacts").click();
     cy.wait("@evilArtifactList");
-    cy.get("#artifactList").then(($el) => {
+    // The request finishing and the async artifact render are separate ticks;
+    // retry the assertion until the malicious row is actually in the DOM.
+    cy.get("#artifactList").should(($el) => {
       const html = $el.html() || "";
       // Attribute values must be quote-escaped so the key cannot break out of
       // data-*="..." and inject an event handler. Text nodes may still show
       // literal quotes after the browser parses escaped HTML.
       expect(html).to.include('data-key="a&quot; onmouseover=&quot;alert(1)"');
-      expect(html).to.not.match(/data-(?:key|name)="a"\s+onmouseover=/i);
-      cy.get("#artifactList button[data-action='download-artifact']").should(($btn) => {
-        // DOM getAttribute returns the decoded value; no separate attribute breakout.
-        expect($btn.attr("data-key")).to.eq(evilKey);
-        expect($btn.attr("onmouseover")).to.eq(undefined);
-      });
+      expect(html).to.include('data-s3-uri="s3://mock/a&quot; onmouseover=&quot;alert(1)"');
+      expect(html).to.not.match(/data-(?:key|s3-uri|name)="a"\s+onmouseover=/i);
+    });
+    cy.get(
+      "#artifactList button[data-action='download-artifact'], " +
+      "#artifactList button[data-action='load-artifact']"
+    ).first().should(($btn) => {
+      // DOM getAttribute returns the decoded value; no separate attribute breakout.
+      expect($btn.attr("data-key")).to.eq(evilKey);
+      expect($btn.attr("onmouseover")).to.eq(undefined);
     });
   });
 
@@ -1383,16 +1585,30 @@ describe("NPA agent UI with mocked APIs", () => {
       cy.get("#chatSend").click();
       cy.wait("@chat");
     }
+    cy.get("#chatLog .msg-row").should("have.length.at.least", 12);
     // Each new message auto-scrolls to the bottom, so the arrow is hidden.
     cy.get("#chatScrollBottom").should("have.attr", "hidden");
 
+    // Keep this deterministic across browser font metrics and host load: prove
+    // that the test viewport overflows before exercising the scroll behavior.
+    cy.get("#chatLog").invoke("css", "height", "160px");
+    cy.get("#chatLog").should(($log) => {
+      const el = $log[0];
+      expect(el.scrollHeight - el.clientHeight).to.be.greaterThan(40);
+    });
+    cy.get("#chatLog").scrollTo("bottom").trigger("scroll");
+    cy.get("#chatScrollBottom").should("have.attr", "hidden");
+
     // Scrolling up reveals the jump-to-latest arrow.
-    cy.get("#chatLog").scrollTo("top");
+    cy.get("#chatLog").scrollTo("top").trigger("scroll");
     cy.get("#chatScrollBottom").should("not.have.attr", "hidden");
     cy.get("#chatScrollBottom").should("be.visible");
 
     // Clicking the arrow returns to the end of the chat and hides the arrow.
-    cy.get("#chatScrollBottom").click();
+    // The preceding assertion proves visibility. Avoid Cypress's pre-click
+    // actionability scroll, which otherwise scrolls the chat log to the bottom
+    // and hides the overlaid button before dispatching the click.
+    cy.get("#chatScrollBottom").click({ force: true });
     cy.get("#chatLog").should(($log) => {
       const el = $log[0];
       expect(el.scrollHeight - el.scrollTop - el.clientHeight).to.be.lessThan(41);
@@ -1578,9 +1794,12 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#tabRerun").click();
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@trainingRuns");
+    // The refresh request and select rendering are separate async steps. Retry
+    // until the response is represented in the DOM instead of sampling the old
+    // options synchronously on a busy CI host.
+    cy.get(`#runIdSelect option[value="${TRAIN_RUN}"]`).should("have.length", 1);
     cy.get("#runIdSelect option").then(($opts) => {
       const values = [...$opts].map((opt) => opt.value).filter(Boolean);
-      expect(values).to.include(TRAIN_RUN);
       expect(values).not.to.include("checkpoints");
       expect(values).not.to.include("evidence");
     });
@@ -1974,6 +2193,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#tabRerun").click();
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@qualifiedRuns");
+    cy.get("#artifactRefreshRuns").should("be.enabled").and("have.attr", "aria-busy", "false");
     cy.get("#runIdSelect option").then(($opts) => {
       const values = [...$opts].map((option) => option.value).filter(Boolean);
       expect(values).to.include(REF_A);
@@ -2321,6 +2541,29 @@ describe("NPA agent UI with mocked APIs", () => {
     });
   });
 
+  it("falls back to 30 fps when captureStream(0) lacks requestFrame", () => {
+    cy.window().then((win) => {
+      const api = win.__NPA_AGENT_TEST__;
+      const rates = [];
+      const stopped = cy.stub();
+      const fallback = { getVideoTracks: () => [{ requestFrame() {} }], getTracks: () => [] };
+      const partial = {
+        getVideoTracks: () => [{}],
+        getTracks: () => [{ stop: stopped }],
+      };
+      const canvas = {
+        captureStream(rate) {
+          rates.push(rate);
+          return rate === 0 ? partial : fallback;
+        },
+      };
+
+      expect(api.captureStreamWithFrameFallback(canvas)).to.eq(fallback);
+      expect(rates).to.deep.eq([0, 30]);
+      expect(stopped).to.have.been.calledOnce;
+    });
+  });
+
   it("captures live WebGL canvas via captureStream when sync readback is blank", () => {
     cy.window().then(async (win) => {
       const api = win.__NPA_AGENT_TEST__;
@@ -2479,7 +2722,7 @@ describe("NPA agent UI with mocked APIs", () => {
       api.setRenderMode("image");
     });
 
-    cy.get("#describeVisual").click({ force: true });
+    cy.get("#describeVisual").should("be.enabled").click();
     cy.wait("@visualKindChat").then((interception) => {
       const body = interception.request.body;
       expect(body.visual_context.kind).to.eq("image");
@@ -2515,7 +2758,7 @@ describe("NPA agent UI with mocked APIs", () => {
       api.setRenderMode("video");
     });
 
-    cy.get("#describeVisual").click({ force: true });
+    cy.get("#describeVisual").should("be.enabled").click();
     cy.wait("@visualKindChat").then((interception) => {
       const body = interception.request.body;
       expect(body.visual_context.kind).to.eq("video");
@@ -2554,7 +2797,7 @@ describe("NPA agent UI with mocked APIs", () => {
       api.setRenderMode("data");
     });
 
-    cy.get("#describeVisual").click({ force: true });
+    cy.get("#describeVisual").should("be.enabled").click();
     cy.wait("@dataKindChat").then((interception) => {
       const body = interception.request.body;
       expect(body.visual_context.kind).to.eq("data");

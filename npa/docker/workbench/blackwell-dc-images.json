@@ -41,12 +41,15 @@
     "ready": "The base wheel/toolchain already covers sm_100, so the image needs an additive rebuild plus live validation - no dependency changes.",
     "port": "Needs a CUDA/torch bump or arch flags before it can target sm_100; the upstream wheels exist.",
     "blocked": "Upstream does not ship the architecture yet. Track the upstream reason; never stub a fake pass.",
-    "not-applicable": "CPU-only or GPU-agnostic. It already runs on a B200/B300 host; only node-pool scheduling needs confirming."
+    "not-applicable": "CPU-only or GPU-agnostic. It already runs on a B200/B300 host; only node-pool scheduling needs confirming.",
+    "unknown": "The image has not been built, and its arch outcome depends on a runtime resolution that has never run, so no verdict can be assigned without reading the Dockerfile - which pending-build forbids. Replace this with a real verdict in the same change that records the build."
   },
   "validation_states": {
     "validated": "get_device_capability() confirmed on a real B200/B300 node with the image's real capability smoke passing.",
     "pending-hardware": "Wheel arch set confirmed on the built image, but not yet run on a real datacenter Blackwell node.",
-    "not-required": "CPU-only image; no arch assertion applies."
+    "pending-build": "The Dockerfile is in tree but the image has not been built, so no wheel arch set and no GPU result exist yet. Never upgrade this from a reading of the Dockerfile.",
+    "not-required": "CPU-only image; no arch assertion applies.",
+    "pending-gpu": "The image has been built and its bytes checked (payload scan, layer history), but it has never run on a real datacenter Blackwell node, so no wheel arch set and no GPU result exist. Distinct from pending-build, which means no artifact exists at all."
   },
   "images": [
     {
@@ -215,6 +218,18 @@
       ]
     },
     {
+      "name": "npa-ltx2",
+      "dockerfile": "ltx2/Dockerfile",
+      "build_script": "ltx2/build.sh",
+      "verdict": "unknown",
+      "validation": "pending-gpu",
+      "redistribution": "public",
+      "torch": "not baked; the operator-owned runtime volume resolves upstream LTX-2's own cu132 torch pin (packages/ltx-core/pyproject.toml) under the operator's own HF_TOKEN and NVIDIA runtime-terms acceptance",
+      "source_compiled_extensions": [],
+      "smoke": "bash /opt/npa/ltx2/smoke.sh proves health, that the source and weight fetches each refuse without the operator's own HF_TOKEN (and names which gate refused), and the absence of any LTX or CUDA payload. Generation itself is the BYOF workflow, not a CLI subcommand.",
+      "notes": "The image itself is CPU-only and carries zero Lightricks bytes, so nothing about datacenter Blackwell has been measured. Built and byte-scanned: payload scan clean over 16 archives at the digest recorded in docs/workbench/ltx2.md. What is missing is a GPU run - one attempt reached real weight downloads and died on node ephemeral storage - so the verdict stays unknown until that produces a result."
+    },
+    {
       "name": "npa-cosmos3-reason",
       "dockerfile": "cosmos3-reason/Dockerfile",
       "verdict": "ready",
@@ -330,10 +345,21 @@
       "smoke": "generate one environment and step it",
       "notes": "The exact final tag passed real environment generation and a Genesis CUDA scene/physics step on physical B200, B300, H100, and RTX PRO 6000.",
       "measured_torch": "2.9.0+cu130",
-      "measured_arch_list": ["sm_75", "sm_80", "sm_86", "sm_90", "sm_100", "sm_120", "compute_120"],
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120",
+        "compute_120"
+      ],
       "published_tag": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:8e0ea40c064a15409233efdd036a369b36e1c04e713bcf81440d9d4372cae376",
-      "published_registries": ["primary", "mirror"]
+      "published_registries": [
+        "primary",
+        "mirror"
+      ]
     },
     {
       "name": "npa-reference-policy",
@@ -343,10 +369,21 @@
       "smoke": "reference-policy variant assertion, environment generation, and a Genesis CUDA scene/physics step",
       "notes": "The exact final tag passed its reference-policy variant assertion, real environment generation, and a Genesis CUDA scene/physics step on physical B200, B300, H100, and RTX PRO 6000. This smoke does not execute a policy rollout, so none is claimed.",
       "measured_torch": "2.9.0+cu130",
-      "measured_arch_list": ["sm_75", "sm_80", "sm_86", "sm_90", "sm_100", "sm_120", "compute_120"],
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120",
+        "compute_120"
+      ],
       "published_tag": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:58eb0d714f9d57fbae7fc8dfc56caf7f98f84699146c820dce18f2aaa2313cb6",
-      "published_registries": ["primary", "mirror"]
+      "published_registries": [
+        "primary",
+        "mirror"
+      ]
     },
     {
       "name": "npa-loop-eval",
@@ -367,7 +404,10 @@
       ],
       "published_tag": "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:9cb111c56d9c1db8357b04f43e46790f6853213ff1a78fd0b2dae5ad337eb75a",
-      "published_registries": ["primary", "mirror"]
+      "published_registries": [
+        "primary",
+        "mirror"
+      ]
     },
     {
       "name": "npa-lerobot-vlm-rl",
@@ -377,10 +417,21 @@
       "smoke": "VLM-signal adapter parameter update plus checkpoint output",
       "notes": "The exact final tag passed a real VLM-signal adapter update on physical B200, B300, H100, and RTX PRO 6000: parameters changed by L2 0.000250 and a checkpoint was written. This smoke does not execute a Genesis rollout, so none is claimed.",
       "measured_torch": "2.9.0+cu130",
-      "measured_arch_list": ["sm_75", "sm_80", "sm_86", "sm_90", "sm_100", "sm_120", "compute_120"],
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120",
+        "compute_120"
+      ],
       "published_tag": "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:7bd5b21d487f3ab6614197b8a8af81fe3ed001247b4501740615540cb55998e5",
-      "published_registries": ["primary", "mirror"]
+      "published_registries": [
+        "primary",
+        "mirror"
+      ]
     },
     {
       "name": "npa-isaac-lab",
@@ -403,10 +454,21 @@
       "smoke": "headless whole-body-control fine-tune step",
       "notes": "The exact final Kubernetes tag carries the corrected CUDA base and passed its torch/native-SASS controls on RTX PRO 6000. The same SONIC payload's real fine-tune reaches Isaac environment construction after the image fixes for undeclared lxml and Open3D dependencies, but both cold and warm attempts fail in Isaac's runtime-fetched URDF extension while opening a temporary pelvis USD layer, so this cell remains pending rather than falsely validated. This does not remove the NVIDIA datacenter vendor-stack blocker; isaac-render must never route to B200/B300.",
       "measured_torch": "2.9.0+cu130",
-      "measured_arch_list": ["sm_75", "sm_80", "sm_86", "sm_90", "sm_100", "sm_120", "compute_120"],
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120",
+        "compute_120"
+      ],
       "published_tag": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb",
-      "published_registries": ["primary", "mirror"]
+      "published_registries": [
+        "primary",
+        "mirror"
+      ]
     },
     {
       "name": "npa-sonic-mujoco",
@@ -563,10 +625,26 @@
     "npa-detection-training": {
       "hardware_run": "Validated on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03. On each GPU a real Faster R-CNN ran three forward/backward/SGD updates and then inference, producing finite classifier, box-regression, objectness, and RPN losses plus 89 detections before DETECTOR_EXTENSIVE_VALIDATION_PASSED.",
       "validated_gpus": {
-        "B200": {"platform": "gpu-b200-sxm", "capability": "10.0", "result": "DETECTOR_EXTENSIVE_VALIDATION_PASSED"},
-        "B300": {"platform": "gpu-b300-sxm", "capability": "10.3", "result": "DETECTOR_EXTENSIVE_VALIDATION_PASSED"},
-        "H100": {"platform": "gpu-h100-sxm", "capability": "9.0", "result": "DETECTOR_EXTENSIVE_VALIDATION_PASSED"},
-        "RTX PRO 6000": {"platform": "gpu-rtx6000", "capability": "12.0", "result": "DETECTOR_EXTENSIVE_VALIDATION_PASSED"}
+        "B200": {
+          "platform": "gpu-b200-sxm",
+          "capability": "10.0",
+          "result": "DETECTOR_EXTENSIVE_VALIDATION_PASSED"
+        },
+        "B300": {
+          "platform": "gpu-b300-sxm",
+          "capability": "10.3",
+          "result": "DETECTOR_EXTENSIVE_VALIDATION_PASSED"
+        },
+        "H100": {
+          "platform": "gpu-h100-sxm",
+          "capability": "9.0",
+          "result": "DETECTOR_EXTENSIVE_VALIDATION_PASSED"
+        },
+        "RTX PRO 6000": {
+          "platform": "gpu-rtx6000",
+          "capability": "12.0",
+          "result": "DETECTOR_EXTENSIVE_VALIDATION_PASSED"
+        }
       },
       "published_tag": "bdd100k-golden-eval-smoke-20260614T210000Z",
       "published_digest": "sha256:a432dd2a9e6bafed4b78466ac806f584c7fcf549cf3be0edaf75f2fecdadfdd9"
@@ -596,10 +674,26 @@
     "npa-lancedb": {
       "hardware_run": "The corrected additive image was validated on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03. Each run produced three real CLIP embeddings, checked 512-dimensional normalized distinct vectors, inserted them into a Lance table, and required top-1 self-search before LANCEDB_CLIP_EXTENSIVE_VALIDATION_PASSED. The historical npa-lancedb:0.30.3 image failed this smoke because it mishandled the current transformers BaseModelOutputWithPooling return type and remains superseded.",
       "validated_gpus": {
-        "B200": {"platform": "gpu-b200-sxm", "capability": "10.0", "result": "LANCEDB_CLIP_EXTENSIVE_VALIDATION_PASSED"},
-        "B300": {"platform": "gpu-b300-sxm", "capability": "10.3", "result": "LANCEDB_CLIP_EXTENSIVE_VALIDATION_PASSED"},
-        "H100": {"platform": "gpu-h100-sxm", "capability": "9.0", "result": "LANCEDB_CLIP_EXTENSIVE_VALIDATION_PASSED"},
-        "RTX PRO 6000": {"platform": "gpu-rtx6000", "capability": "12.0", "result": "LANCEDB_CLIP_EXTENSIVE_VALIDATION_PASSED"}
+        "B200": {
+          "platform": "gpu-b200-sxm",
+          "capability": "10.0",
+          "result": "LANCEDB_CLIP_EXTENSIVE_VALIDATION_PASSED"
+        },
+        "B300": {
+          "platform": "gpu-b300-sxm",
+          "capability": "10.3",
+          "result": "LANCEDB_CLIP_EXTENSIVE_VALIDATION_PASSED"
+        },
+        "H100": {
+          "platform": "gpu-h100-sxm",
+          "capability": "9.0",
+          "result": "LANCEDB_CLIP_EXTENSIVE_VALIDATION_PASSED"
+        },
+        "RTX PRO 6000": {
+          "platform": "gpu-rtx6000",
+          "capability": "12.0",
+          "result": "LANCEDB_CLIP_EXTENSIVE_VALIDATION_PASSED"
+        }
       },
       "published_tag": "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z",
       "published_digest": "sha256:a303b53d0769e612101d468ba957656997838f4b8e6a03430f2b5a2c89e3f8b5"
@@ -607,10 +701,26 @@
     "npa-lerobot": {
       "hardware_run": "The exact final tag passed on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03. Every run checked the inherited and dedicated LeRobot venv wheel arch sets and ran official ACT PushT for 50 training steps, produced a checkpoint, and evaluated one episode (5/5 checks). B200/B300/H100 also executed the datacenter flash-attn-4 CuTe kernel; RTX recorded the known non-TMA exception. The superseded npa-lerobot:0.5.1 image failed its B200 functional smoke on a torchcodec/FFmpeg mismatch and was not counted.",
       "validated_gpus": {
-        "B200": {"platform": "gpu-b200-sxm", "capability": "10.0", "result": "LEROBOT_VALIDATION_PASSED; 5/5 checks"},
-        "B300": {"platform": "gpu-b300-sxm", "capability": "10.3", "result": "LEROBOT_VALIDATION_PASSED; 5/5 checks"},
-        "H100": {"platform": "gpu-h100-sxm", "capability": "9.0", "result": "LEROBOT_VALIDATION_PASSED; 5/5 checks"},
-        "RTX PRO 6000": {"platform": "gpu-rtx6000", "capability": "12.0", "result": "LEROBOT_VALIDATION_PASSED; 5/5 checks (known non-TMA exception)"}
+        "B200": {
+          "platform": "gpu-b200-sxm",
+          "capability": "10.0",
+          "result": "LEROBOT_VALIDATION_PASSED; 5/5 checks"
+        },
+        "B300": {
+          "platform": "gpu-b300-sxm",
+          "capability": "10.3",
+          "result": "LEROBOT_VALIDATION_PASSED; 5/5 checks"
+        },
+        "H100": {
+          "platform": "gpu-h100-sxm",
+          "capability": "9.0",
+          "result": "LEROBOT_VALIDATION_PASSED; 5/5 checks"
+        },
+        "RTX PRO 6000": {
+          "platform": "gpu-rtx6000",
+          "capability": "12.0",
+          "result": "LEROBOT_VALIDATION_PASSED; 5/5 checks (known non-TMA exception)"
+        }
       },
       "published_tag": "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:14a2e0dfe61fb2c46c6e4b8d75f1a06f2f68f9cfa4a6428a175411afaf93749e"
@@ -618,10 +728,26 @@
     "npa-cosmos3-reason": {
       "hardware_run": "The exact final tag passed on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03. Every run completed baked arch/capability validators, downloaded four gated nvidia/Cosmos-Reason2-8B checkpoint shards, and completed a real two-frame VLM judgment. B200/B300/H100 also ran the flash-attn-4 forward against SDPA; RTX recorded only the known non-TMA exception. B200 emitted score 0.0/success true; B300, H100, and RTX emitted score 0.0/success false. All are functional execution passes, not semantic-quality claims. The superseded pre-rebuild image lacked the functional smoke module and was not counted.",
       "validated_gpus": {
-        "B200": {"platform": "gpu-b200-sxm", "capability": "10.0", "result": "Reason2-8B functional execution PASS"},
-        "B300": {"platform": "gpu-b300-sxm", "capability": "10.3", "result": "Reason2-8B functional execution PASS"},
-        "H100": {"platform": "gpu-h100-sxm", "capability": "9.0", "result": "Reason2-8B functional execution PASS"},
-        "RTX PRO 6000": {"platform": "gpu-rtx6000", "capability": "12.0", "result": "Reason2-8B functional execution PASS on exact final tag (known non-TMA exception)"}
+        "B200": {
+          "platform": "gpu-b200-sxm",
+          "capability": "10.0",
+          "result": "Reason2-8B functional execution PASS"
+        },
+        "B300": {
+          "platform": "gpu-b300-sxm",
+          "capability": "10.3",
+          "result": "Reason2-8B functional execution PASS"
+        },
+        "H100": {
+          "platform": "gpu-h100-sxm",
+          "capability": "9.0",
+          "result": "Reason2-8B functional execution PASS"
+        },
+        "RTX PRO 6000": {
+          "platform": "gpu-rtx6000",
+          "capability": "12.0",
+          "result": "Reason2-8B functional execution PASS on exact final tag (known non-TMA exception)"
+        }
       },
       "published_tag": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:e708aa32b9247eaedf1a7a5b0d82adbe65b95a9af50721b9d09fddbfd508bbc9"
@@ -629,10 +755,26 @@
     "npa-genesis": {
       "hardware_run": "The exact final tag was validated on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03. Every run passed native/same-major SASS and bf16/SDPA controls, initialized gs.cuda, generated environment rows, built a plane/Franka/box scene, compiled the runtime simulation kernels, and completed a physics step. The prior Taichi blocker did not reproduce on either datacenter Blackwell GPU.",
       "validated_gpus": {
-        "B200": {"platform": "gpu-b200-sxm", "capability": "10.0", "result": "Genesis CUDA kernel compilation and physics step PASS"},
-        "B300": {"platform": "gpu-b300-sxm", "capability": "10.3", "result": "Genesis CUDA kernel compilation and physics step PASS"},
-        "H100": {"platform": "gpu-h100-sxm", "capability": "9.0", "result": "Genesis CUDA kernel compilation and physics step PASS"},
-        "RTX PRO 6000": {"platform": "gpu-rtx6000", "capability": "12.0", "result": "Genesis CUDA kernel compilation and physics step PASS (known non-TMA exception in base control)"}
+        "B200": {
+          "platform": "gpu-b200-sxm",
+          "capability": "10.0",
+          "result": "Genesis CUDA kernel compilation and physics step PASS"
+        },
+        "B300": {
+          "platform": "gpu-b300-sxm",
+          "capability": "10.3",
+          "result": "Genesis CUDA kernel compilation and physics step PASS"
+        },
+        "H100": {
+          "platform": "gpu-h100-sxm",
+          "capability": "9.0",
+          "result": "Genesis CUDA kernel compilation and physics step PASS"
+        },
+        "RTX PRO 6000": {
+          "platform": "gpu-rtx6000",
+          "capability": "12.0",
+          "result": "Genesis CUDA kernel compilation and physics step PASS (known non-TMA exception in base control)"
+        }
       },
       "published_tag": "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:80cd1c4c7f7a5466533de29ee5cad1213202f348545346fea9ed6746fa03b1ca"
@@ -640,10 +782,26 @@
     "npa-envgen": {
       "hardware_run": "The exact final tag passed native/same-major SASS controls, real environment generation, Genesis runtime kernel compilation, and a CUDA physics step on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03.",
       "validated_gpus": {
-        "B200": {"platform": "gpu-b200-sxm", "capability": "10.0", "result": "DATACENTER_CHILD_VALIDATION_PASSED"},
-        "B300": {"platform": "gpu-b300-sxm", "capability": "10.3", "result": "DATACENTER_CHILD_VALIDATION_PASSED"},
-        "H100": {"platform": "gpu-h100-sxm", "capability": "9.0", "result": "DATACENTER_CHILD_VALIDATION_PASSED"},
-        "RTX PRO 6000": {"platform": "gpu-rtx6000", "capability": "12.0", "result": "environment generation and Genesis CUDA step PASS"}
+        "B200": {
+          "platform": "gpu-b200-sxm",
+          "capability": "10.0",
+          "result": "DATACENTER_CHILD_VALIDATION_PASSED"
+        },
+        "B300": {
+          "platform": "gpu-b300-sxm",
+          "capability": "10.3",
+          "result": "DATACENTER_CHILD_VALIDATION_PASSED"
+        },
+        "H100": {
+          "platform": "gpu-h100-sxm",
+          "capability": "9.0",
+          "result": "DATACENTER_CHILD_VALIDATION_PASSED"
+        },
+        "RTX PRO 6000": {
+          "platform": "gpu-rtx6000",
+          "capability": "12.0",
+          "result": "environment generation and Genesis CUDA step PASS"
+        }
       },
       "published_tag": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:8e0ea40c064a15409233efdd036a369b36e1c04e713bcf81440d9d4372cae376"
@@ -651,10 +809,26 @@
     "npa-reference-policy": {
       "hardware_run": "The exact final tag passed native/same-major SASS controls, the reference-policy variant assertion, real environment generation, Genesis runtime kernel compilation, and a CUDA scene/physics step on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03. This smoke did not execute a policy rollout, so none is claimed.",
       "validated_gpus": {
-        "B200": {"platform": "gpu-b200-sxm", "capability": "10.0", "result": "DATACENTER_CHILD_VALIDATION_PASSED"},
-        "B300": {"platform": "gpu-b300-sxm", "capability": "10.3", "result": "DATACENTER_CHILD_VALIDATION_PASSED"},
-        "H100": {"platform": "gpu-h100-sxm", "capability": "9.0", "result": "DATACENTER_CHILD_VALIDATION_PASSED"},
-        "RTX PRO 6000": {"platform": "gpu-rtx6000", "capability": "12.0", "result": "variant assertion, environment generation, and Genesis CUDA step PASS"}
+        "B200": {
+          "platform": "gpu-b200-sxm",
+          "capability": "10.0",
+          "result": "DATACENTER_CHILD_VALIDATION_PASSED"
+        },
+        "B300": {
+          "platform": "gpu-b300-sxm",
+          "capability": "10.3",
+          "result": "DATACENTER_CHILD_VALIDATION_PASSED"
+        },
+        "H100": {
+          "platform": "gpu-h100-sxm",
+          "capability": "9.0",
+          "result": "DATACENTER_CHILD_VALIDATION_PASSED"
+        },
+        "RTX PRO 6000": {
+          "platform": "gpu-rtx6000",
+          "capability": "12.0",
+          "result": "variant assertion, environment generation, and Genesis CUDA step PASS"
+        }
       },
       "published_tag": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:58eb0d714f9d57fbae7fc8dfc56caf7f98f84699146c820dce18f2aaa2313cb6"
@@ -662,10 +836,26 @@
     "npa-lerobot-vlm-rl": {
       "hardware_run": "The exact final tag passed native/same-major SASS controls and a real VLM-signal adapter update that changed parameters (delta L2 0.000250) and wrote a checkpoint on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03. This smoke did not run a Genesis rollout, so none is claimed.",
       "validated_gpus": {
-        "B200": {"platform": "gpu-b200-sxm", "capability": "10.0", "result": "parameter update and checkpoint PASS"},
-        "B300": {"platform": "gpu-b300-sxm", "capability": "10.3", "result": "parameter update and checkpoint PASS"},
-        "H100": {"platform": "gpu-h100-sxm", "capability": "9.0", "result": "parameter update and checkpoint PASS"},
-        "RTX PRO 6000": {"platform": "gpu-rtx6000", "capability": "12.0", "result": "parameter update and checkpoint PASS"}
+        "B200": {
+          "platform": "gpu-b200-sxm",
+          "capability": "10.0",
+          "result": "parameter update and checkpoint PASS"
+        },
+        "B300": {
+          "platform": "gpu-b300-sxm",
+          "capability": "10.3",
+          "result": "parameter update and checkpoint PASS"
+        },
+        "H100": {
+          "platform": "gpu-h100-sxm",
+          "capability": "9.0",
+          "result": "parameter update and checkpoint PASS"
+        },
+        "RTX PRO 6000": {
+          "platform": "gpu-rtx6000",
+          "capability": "12.0",
+          "result": "parameter update and checkpoint PASS"
+        }
       },
       "published_tag": "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:7bd5b21d487f3ab6614197b8a8af81fe3ed001247b4501740615540cb55998e5"
@@ -673,10 +863,26 @@
     "npa-loop-eval": {
       "hardware_run": "The exact final tag passed native/same-major SASS controls and a scored two-environment Franka pick-place CUDA rollout on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03.",
       "validated_gpus": {
-        "B200": {"platform": "gpu-b200-sxm", "capability": "10.0", "result": "two-environment Franka rollout PASS"},
-        "B300": {"platform": "gpu-b300-sxm", "capability": "10.3", "result": "two-environment Franka rollout PASS"},
-        "H100": {"platform": "gpu-h100-sxm", "capability": "9.0", "result": "two-environment Franka rollout PASS"},
-        "RTX PRO 6000": {"platform": "gpu-rtx6000", "capability": "12.0", "result": "two-environment Franka rollout PASS"}
+        "B200": {
+          "platform": "gpu-b200-sxm",
+          "capability": "10.0",
+          "result": "two-environment Franka rollout PASS"
+        },
+        "B300": {
+          "platform": "gpu-b300-sxm",
+          "capability": "10.3",
+          "result": "two-environment Franka rollout PASS"
+        },
+        "H100": {
+          "platform": "gpu-h100-sxm",
+          "capability": "9.0",
+          "result": "two-environment Franka rollout PASS"
+        },
+        "RTX PRO 6000": {
+          "platform": "gpu-rtx6000",
+          "capability": "12.0",
+          "result": "two-environment Franka rollout PASS"
+        }
       },
       "published_tag": "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:9cb111c56d9c1db8357b04f43e46790f6853213ff1a78fd0b2dae5ad337eb75a"

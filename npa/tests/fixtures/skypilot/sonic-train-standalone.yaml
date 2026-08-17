@@ -15,25 +15,21 @@ execution: serial
 ---
 name: sonic-train
 resources:
-  cloud: nebius
-  accelerators: L40S:1
+  cloud: kubernetes
+  accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
   cpus: 16
   memory: 64
 envs:
   # NVIDIA licence acceptance for the runtime-fetched Isaac Sim / Isaac Lab.
-  # Empty on purpose: these images ship no Isaac and REFUSE to fetch it (exit 78) unless
-  # the operator has accepted NVIDIA's terms, and hardcoding "YES" here would be us
-  # accepting on their behalf. Supply it at launch, e.g.
-  #   sky launch ... --env OMNI_KIT_ACCEPT_EULA=YES --env ISAACSIM_ACCEPT_EULA=YES
+  # Product default; submit --no-accept-eula renders an explicit empty opt-out.
   # See npa/docker/workbench/common/isaac_bootstrap.sh.
-  OMNI_KIT_ACCEPT_EULA: ""
-  ISAACSIM_ACCEPT_EULA: ""
-  POLICY_IMAGE: "example.invalid/npa-sonic:0.1.2"
-  SONIC_PAYLOAD_MODE: "docker"
-  SONIC_GPU_TYPE: "l40s"
+  ACCEPT_EULA: "Y"
+  POLICY_IMAGE: "example.invalid/npa-sonic:cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+  SONIC_PAYLOAD_MODE: "direct"
+  SONIC_GPU_TYPE: "gpu-rtx6000"
   SONIC_DOCKER_GPU_REQUEST: "all"
   SONIC_DOCKER_DRIVER_CAPABILITIES: "all"
-  SONIC_IMAGE_VARIANT: "sonic-l40s-baked"
+  SONIC_IMAGE_VARIANT: "sonic-k8s-host-mounted"
   AWS_PROFILE: "nebius"
   S3_ENDPOINT_URL: ""
   S3_BUCKET: "example-bucket"

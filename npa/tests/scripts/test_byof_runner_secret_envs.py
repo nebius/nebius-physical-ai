@@ -70,5 +70,9 @@ def test_runner_passes_secret_envs_to_submit_workflow(name: str) -> None:
 
     text = (SCRIPTS / name).read_text(encoding="utf-8")
 
-    assert "secret_envs=resolve_secret_envs(args.secret_env)" in text
+    assert "secret_envs=resolve_secret_envs(" in text
+    # The runner must name the solution, or every image receives every vendor's
+    # operator answers whenever they happen to be set in the shell.
+    if name == "run_byof_container_verify.py":
+        assert "solution_name=args.solution_name" in text
     assert '"--secret-env"' in text

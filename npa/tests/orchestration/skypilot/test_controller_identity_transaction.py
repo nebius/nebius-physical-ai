@@ -146,6 +146,8 @@ def test_remote_absence_receipt_precedes_real_local_state_removal(
     )
 
     assert result.ok
+    assert result.verified is True
+    assert result.remote_absence_verified is True
     assert observed_states == ["remote_absent_local_pending"]
     assert (
         teardown_receipts.latest_phase_states(project_alias="demo")["controller"][
@@ -193,6 +195,8 @@ def test_remote_delete_uses_cloned_state_then_verifies_then_mutates_real_state(
     )
 
     assert result.ok
+    assert result.verified is True
+    assert result.remote_absence_verified is True
     assert [item[0] for item in downs] == [name, name]
     assert downs[0][1] != tmp_path
     assert downs[0][2] == "in_progress"

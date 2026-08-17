@@ -135,13 +135,12 @@ run-time model/tokenizer, and data separately. Source/model declarations do not
 classify a built image. The promoted first-class `npa-wan2-2` contract is public
 eligible only when a pushed digest proves all `nvidia-*`, CUDA/cuDNN/NCCL,
 checkpoint, credential, and cache bytes absent from every layer and history via
-`npa/scripts/scan_image_wan_payload.py`. The operator must explicitly accept
-current NVIDIA terms before `wan-runtime` writes the CUDA stack to its volume;
-model/tokenizer acquisition remains runtime-only. Do not treat automation as
-human legal approval and never publish merely because the Dockerfile looks clean.
-Carry both the acceptance gate and Hugging Face token only as submission secrets
-(`--secret-env NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS --secret-env HF_TOKEN`), never
-as workflow config, task env literals, or image metadata.
+`npa/scripts/scan_image_wan_payload.py`. CUDA/PyTorch installation and use remain
+governed by the upstream package terms; NPA adds no per-run consent variable.
+Model/tokenizer acquisition remains runtime-only. Do not treat access as permission
+beyond the applicable licenses and never publish merely because the Dockerfile looks
+clean. `HF_TOKEN` is optional for public assets and remains a submission secret when
+supplied.
 
 ## Validation
 

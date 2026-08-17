@@ -12,6 +12,8 @@ Options
 Commands
 convert-run  Convert a run's artifacts into an MCAP recording the Foxglove viewer can open.
 inspect  Report the channels, schemas, and message counts inside an MCAP recording.
+export-run  Export run artifacts to MCAP.
+open  Build (and optionally launch) an official Foxglove Web recording link.
 install-sdk  Install the pinned, sha512-verified Foxglove embed SDK assets.
 config  Show the resolved Foxglove embed settings for this environment.
 ```
@@ -28,6 +30,8 @@ config  Show the resolved Foxglove embed settings for this environment.
 | --- | --- |
 | `convert-run` | Convert a run's artifacts into an MCAP recording the Foxglove viewer can open. |
 | `inspect` | Report the channels, schemas, and message counts inside an MCAP recording. |
+| `export-run` | Export run artifacts to MCAP. |
+| `open` | Build (and optionally launch) an official Foxglove Web recording link. |
 | `install-sdk` | Install the pinned, sha512-verified Foxglove embed SDK assets. |
 | `config` | Show the resolved Foxglove embed settings for this environment. |
 

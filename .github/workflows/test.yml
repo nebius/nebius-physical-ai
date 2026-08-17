@@ -25,10 +25,18 @@ jobs:
       NPA_S3_BUCKET: test-bucket-00000000
       NPA_E2E_PROJECT_ID: project-test-00000000
       NPA_E2E_GROOT_BUCKET: test-bucket-00000000
+      # The LTX-2.5 output validator decides whether a GPU run produced anything
+      # worth keeping, and its tests skip themselves when ffmpeg is absent. On a
+      # runner without ffmpeg that decision would go untested while the suite
+      # still reported green, so require it here and fail loudly instead.
+      NPA_REQUIRE_FFMPEG: "1"
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v6

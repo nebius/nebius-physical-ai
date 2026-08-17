@@ -84,11 +84,13 @@ from npa.deploy.safety import (
     format_replacement_required_error,
 )
 from npa.serverless_common import (
+    MissingIsaacEulaAcceptanceError,
     MissingS3CredentialsError,
     SubnetResolutionError,
     build_serverless_job_env,
     build_serverless_output_upload_cmd,
     require_s3_credentials,
+    require_isaac_eula_acceptance,
     resolve_gpu_platform,
     resolve_subnet,
     split_serverless_env,
@@ -201,6 +203,16 @@ def _remote_bash(script: str) -> str:
     return f"bash -lc {shlex.quote(script)}"
 
 
+def _require_isaac_consent(context: str, resume_command: str) -> str:
+    try:
+        return require_isaac_eula_acceptance(
+            context=context,
+            resume_command=resume_command,
+        )
+    except MissingIsaacEulaAcceptanceError as exc:
+        _fail(str(exc))
+
+
 def _is_serverless_runtime(runtime: Any) -> bool:
     return str(getattr(runtime, "value", runtime)) == WorkbenchRuntime.serverless.value
 
@@ -215,6 +227,10 @@ def _serverless_job_env(
     output_path: str,
     extra_env: dict[str, str] | None = None,
 ) -> tuple[dict[str, str], dict[str, str]]:
+    acceptance = _require_isaac_consent(
+        "Isaac Lab serverless job",
+        "npa workbench isaac-lab train --runtime serverless ...",
+    )
     storage = resolve_project_storage(project)
     shared_env = shared_credential_env(load_credentials(environ={}))
     s3_credentials = {
@@ -227,11 +243,13 @@ def _serverless_job_env(
         require_s3_credentials(s3_credentials, context="Isaac Lab serverless jobs")
     except MissingS3CredentialsError as exc:
         _fail(str(exc))
+    explicit_env = dict(extra_env or {})
+    explicit_env["ACCEPT_EULA"] = acceptance
     env = build_serverless_job_env(
         output_path=output_path,
         hf_token=shared_env.get("HF_TOKEN") or shared_env.get("HUGGING_FACE_HUB_TOKEN") or None,
         s3_credentials=s3_credentials,
-        extra_env=extra_env,
+        extra_env=explicit_env,
     )
     return split_serverless_env(env)
 
@@ -258,8 +276,8 @@ def _isaac_lab_serverless_train_command(
     local_dir = "/tmp/npa-isaac-lab-train"
     upload = build_serverless_output_upload_cmd(local_dir, "")
     body = (
-        'if [ -x /isaac-sim/python.sh ]; then NPA_PYTHON_BIN=/isaac-sim/python.sh; '
-        'elif [ -x /opt/isaac-lab/venv/bin/python ]; then NPA_PYTHON_BIN=/opt/isaac-lab/venv/bin/python; '
+        "if [ -x /isaac-sim/python.sh ]; then NPA_PYTHON_BIN=/isaac-sim/python.sh; "
+        "elif [ -x /opt/isaac-lab/venv/bin/python ]; then NPA_PYTHON_BIN=/opt/isaac-lab/venv/bin/python; "
         'else NPA_PYTHON_BIN="${NPA_PYTHON_BIN:-python3}"; fi\n'
         'if ! command -v "$NPA_PYTHON_BIN" >/dev/null 2>&1; then NPA_PYTHON_BIN=python; fi\n'
         + _build_rsl_rl_train_shell(
@@ -341,7 +359,16 @@ def _isaac_lab_serverless_train(
     try:
         if existing is not None:
             info = existing if submit_only or existing.status in {"succeeded", "failed", "cancelled"} else client.poll_job(existing.id, resolved_project_id, interval_s=poll_interval, ceiling_s=timeout)
-            _output({"status": "existing", "job_id": info.id, "job_name": info.name, "job_status": info.status, "output_path": out}, output_format)
+            _output(
+                {
+                    "status": "existing",
+                    "job_id": info.id,
+                    "job_name": info.name,
+                    "job_status": info.status,
+                    "output_path": out,
+                },
+                output_format,
+            )
             return
         info = client.create_job(
             project_id=resolved_project_id,
@@ -690,9 +717,13 @@ def _validate_gpu_selection(gpu_type: str, gpu_preset: str) -> None:
 
 
 def _build_install_command() -> str:
+    _require_isaac_consent(
+        "Isaac Lab installation", "npa workbench isaac-lab deploy ..."
+    )
     script = f"""\
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
+export ACCEPT_EULA=Y
 sudo apt-get update
 sudo apt-get install -y software-properties-common build-essential git curl libglu1-mesa
 if ! command -v python3.11 >/dev/null 2>&1; then
@@ -706,7 +737,6 @@ python3.11 -m venv {ISAAC_LAB_VENV}
 {ISAAC_LAB_VENV}/bin/python -m pip install --upgrade pip setuptools wheel
 {ISAAC_LAB_VENV}/bin/python -m pip install "isaaclab[isaacsim,all]=={ISAAC_LAB_VERSION}" --extra-index-url {PIP_EXTRA_INDEX_URL}
 source {ISAAC_LAB_VENV}/bin/activate
-export OMNI_KIT_ACCEPT_EULA="${{OMNI_KIT_ACCEPT_EULA:-YES}}"
 python - <<'PY'
 from importlib import metadata
 
@@ -737,12 +767,11 @@ PY
 
 
 def _activate_prefix() -> str:
+    _require_isaac_consent("Isaac Lab use", "npa workbench isaac-lab <command> ...")
     return (
         f"set -euo pipefail\n"
         f"source {ISAAC_LAB_VENV}/bin/activate\n"
-        f'export OMNI_KIT_ACCEPT_EULA="${{OMNI_KIT_ACCEPT_EULA:-YES}}"\n'
-        f'export ACCEPT_EULA="${{ACCEPT_EULA:-Y}}"\n'
-        f'export ISAACSIM_ACCEPT_EULA="${{ISAACSIM_ACCEPT_EULA:-YES}}"\n'
+        f"export ACCEPT_EULA=Y\n"
         f"export ISAACLAB_PKG={ISAAC_LAB_PKG}\n"
         'export PYTHONPATH="$ISAACLAB_PKG/source/isaaclab:'
         "$ISAACLAB_PKG/source/isaaclab_tasks:"
@@ -755,13 +784,8 @@ def _activate_prefix() -> str:
 
 
 def _container_prefix() -> str:
-    return (
-        "set -euo pipefail\n"
-        'export OMNI_KIT_ACCEPT_EULA="${OMNI_KIT_ACCEPT_EULA:-YES}"\n'
-        'export ACCEPT_EULA="${ACCEPT_EULA:-Y}"\n'
-        'export ISAACSIM_ACCEPT_EULA="${ISAACSIM_ACCEPT_EULA:-YES}"\n'
-        "export PYTHONUNBUFFERED=1\n"
-    )
+    _require_isaac_consent("Isaac Lab use", "npa workbench isaac-lab <command> ...")
+    return "set -euo pipefail\nexport ACCEPT_EULA=Y\nexport PYTHONUNBUFFERED=1\n"
 
 
 def _build_rsl_rl_train_shell(
@@ -789,7 +813,9 @@ def _build_rsl_rl_train_shell(
         if config.wandb.project:
             wandb_args.extend(["--log_project_name", config.wandb.project])
     hydra_args = ["agent.save_interval=1", *config.overrides]
-    extra_cmd_lines = "".join(f"  {shlex.quote(arg)}\n" for arg in [*wandb_args, *hydra_args])
+    extra_cmd_lines = "".join(
+        f"  {shlex.quote(arg)}\n" for arg in [*wandb_args, *hydra_args]
+    )
     script = (
         f"""\
 	export PYTHONUNBUFFERED=1
@@ -1132,6 +1158,7 @@ fi
     )
     return script.replace("{extra_cmd_lines.rstrip()}", extra_cmd_lines.rstrip())
 
+
 def _build_eval_script(
     task: str,
     checkpoint: str,
@@ -1164,8 +1191,7 @@ def _build_eval_script(
         "NPA_ISAAC_EVAL_VIDEO_FPS": str(video_fps),
     }
     prelude = "import os\n" + "".join(
-        f"os.environ[{name!r}] = {value!r}\n"
-        for name, value in environment.items()
+        f"os.environ[{name!r}] = {value!r}\n" for name, value in environment.items()
     )
     future_import = "from __future__ import annotations\n"
     future_offset = runner_source.find(future_import)
@@ -1723,13 +1749,19 @@ def cleanup_partial_cmd(
 
     state = classify_alias_state(proj_alias, wb_name)
     if state == "fresh":
-        typer.echo(f"No terraform state found for {proj_alias}/{wb_name}. Nothing to clean up.")
+        typer.echo(
+            f"No terraform state found for {proj_alias}/{wb_name}. Nothing to clean up."
+        )
         return
     if state == "byovm":
-        typer.echo(f"Alias {proj_alias}/{wb_name} is BYOVM. No terraform resources to clean.")
+        typer.echo(
+            f"Alias {proj_alias}/{wb_name} is BYOVM. No terraform resources to clean."
+        )
         return
     if state == "fully_deployed":
-        typer.echo(f"Alias {proj_alias}/{wb_name} appears fully deployed. Use `teardown` instead.")
+        typer.echo(
+            f"Alias {proj_alias}/{wb_name} appears fully deployed. Use `teardown` instead."
+        )
         raise typer.Exit(code=1)
 
     try:
@@ -1828,9 +1860,16 @@ def deploy_cmd(
     ),
 ) -> None:
     """Deploy or destroy an Isaac Lab workbench."""
+    if not destroy and not skip_app and not dry_run:
+        _require_isaac_consent(
+            "Isaac Lab deployment",
+            "npa workbench isaac-lab deploy ...",
+        )
     byovm = is_byovm_runtime(runtime)
     if _is_serverless_runtime(runtime):
-        _fail("Isaac Lab deploy does not use --runtime serverless; use `npa workbench isaac-lab train --runtime serverless`.")
+        _fail(
+            "Isaac Lab deploy does not use --runtime serverless; use `npa workbench isaac-lab train --runtime serverless`."
+        )
     if not destroy and not byovm:
         _validate_gpu_selection(gpu_type, gpu_preset)
 
@@ -2126,7 +2165,9 @@ def deploy_cmd(
                         )
                     )
                 if plan_analysis.decision == PlanDecision.NO_CHANGES:
-                    console.print("    Terraform plan has no changes; deploy is a no-op.")
+                    console.print(
+                        "    Terraform plan has no changes; deploy is a no-op."
+                    )
                     tf_outputs = provisioner.outputs(tf_dir=resolved_tf_dir or None)
                 else:
                     tf_outputs = provisioner.apply(
@@ -2332,9 +2373,6 @@ def deploy_cmd(
                 try:
                     service_env = {
                         "ACCEPT_EULA": "Y",
-                        "ISAACSIM_ACCEPT_EULA": "YES",
-                        "OMNI_KIT_ACCEPT_EULA": "YES",
-                        "PRIVACY_CONSENT": "Y",
                         "AWS_ACCESS_KEY_ID": merged_vars.get("nebius_api_key", ""),
                         "AWS_SECRET_ACCESS_KEY": merged_vars.get(
                             "nebius_secret_key", ""
@@ -2645,38 +2683,80 @@ def train_cmd(
     ),
     # Deprecated path alias: keep --output-dir working for existing scripts.
     output_dir: str = typer.Option("", "--output-dir", hidden=True),
-    data_path: str = typer.Option("", "--data-path", help="Canonical training data path metadata or mounted dataset URI."),
+    data_path: str = typer.Option(
+        "",
+        "--data-path",
+        help="Canonical training data path metadata or mounted dataset URI.",
+    ),
     override: list[str] = typer.Option(
         [],
         "--override",
         help="Generic Hydra override as KEY=VALUE. Repeat for learning rate, clip params, terminations, or any trainer key.",
     ),
-    wandb_enabled: bool = typer.Option(False, "--wandb/--no-wandb", help="Enable W&B logging for the training run."),
+    wandb_enabled: bool = typer.Option(
+        False, "--wandb/--no-wandb", help="Enable W&B logging for the training run."
+    ),
     wandb_project: str = typer.Option("", "--wandb-project", help="W&B project name."),
     wandb_run_name: str = typer.Option("", "--wandb-run-name", help="W&B run name."),
-    wandb_mode: str = typer.Option("offline", "--wandb-mode", help="W&B mode such as online, offline, or disabled."),
-    checkpoint_s3_uri: str = typer.Option("", "--checkpoint-s3-uri", help="S3 URI for checkpoint upload."),
-    checkpoint_s3_endpoint_url: str = typer.Option("", "--checkpoint-s3-endpoint-url", help="S3-compatible endpoint URL."),
-    checkpoint_s3_access_key_id: str = typer.Option("", "--checkpoint-s3-access-key-id", help="S3 access key ID."),
-    checkpoint_s3_secret_access_key: str = typer.Option("", "--checkpoint-s3-secret-access-key", help="S3 secret access key."),
-    runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help="Runtime. serverless creates a Nebius AI Job."),
-    project_id: str = typer.Option("", "--project-id", help="Nebius project ID for serverless Jobs."),
-    image: str = typer.Option("", "--image", help="Container image for the serverless Job."),
-    gpu_type: str = typer.Option("l40s", "--gpu-type", help="GPU type for serverless Jobs."),
-    gpu_count: int = typer.Option(1, "--gpu-count", help="GPU count for serverless Jobs."),
-    gpu_preset: str = typer.Option("", "--gpu-preset", help="Nebius GPU preset override."),
-    subnet_id: str = typer.Option("", "--subnet-id", help="Nebius VPC subnet ID for serverless Jobs."),
-    job_name: str = typer.Option("", "--job-name", help="Explicit serverless Job name."),
-    submit_only: bool = typer.Option(False, "--submit-only", help="Submit serverless Job and return before polling."),
-    poll_interval: float = typer.Option(30.0, "--poll-interval", help="Seconds between serverless status checks."),
-    timeout: float = typer.Option(3600.0, "--timeout", help="Seconds to wait for serverless completion."),
+    wandb_mode: str = typer.Option(
+        "offline", "--wandb-mode", help="W&B mode such as online, offline, or disabled."
+    ),
+    checkpoint_s3_uri: str = typer.Option(
+        "", "--checkpoint-s3-uri", help="S3 URI for checkpoint upload."
+    ),
+    checkpoint_s3_endpoint_url: str = typer.Option(
+        "", "--checkpoint-s3-endpoint-url", help="S3-compatible endpoint URL."
+    ),
+    checkpoint_s3_access_key_id: str = typer.Option(
+        "", "--checkpoint-s3-access-key-id", help="S3 access key ID."
+    ),
+    checkpoint_s3_secret_access_key: str = typer.Option(
+        "", "--checkpoint-s3-secret-access-key", help="S3 secret access key."
+    ),
+    runtime: WorkbenchRuntime = typer.Option(
+        WorkbenchRuntime.vm,
+        "--runtime",
+        help="Runtime. serverless creates a Nebius AI Job.",
+    ),
+    project_id: str = typer.Option(
+        "", "--project-id", help="Nebius project ID for serverless Jobs."
+    ),
+    image: str = typer.Option(
+        "", "--image", help="Container image for the serverless Job."
+    ),
+    gpu_type: str = typer.Option(
+        "l40s", "--gpu-type", help="GPU type for serverless Jobs."
+    ),
+    gpu_count: int = typer.Option(
+        1, "--gpu-count", help="GPU count for serverless Jobs."
+    ),
+    gpu_preset: str = typer.Option(
+        "", "--gpu-preset", help="Nebius GPU preset override."
+    ),
+    subnet_id: str = typer.Option(
+        "", "--subnet-id", help="Nebius VPC subnet ID for serverless Jobs."
+    ),
+    job_name: str = typer.Option(
+        "", "--job-name", help="Explicit serverless Job name."
+    ),
+    submit_only: bool = typer.Option(
+        False, "--submit-only", help="Submit serverless Job and return before polling."
+    ),
+    poll_interval: float = typer.Option(
+        30.0, "--poll-interval", help="Seconds between serverless status checks."
+    ),
+    timeout: float = typer.Option(
+        3600.0, "--timeout", help="Seconds to wait for serverless completion."
+    ),
     export_trajectories: bool = typer.Option(
         False,
         "--export-trajectories/--no-export-trajectories",
         help="After training, roll out the trained checkpoint and export numpy episodes (VM runtime only).",
     ),
     export_episodes: int = typer.Option(
-        3, "--export-episodes", help="Episodes to export when --export-trajectories is set."
+        3,
+        "--export-episodes",
+        help="Episodes to export when --export-trajectories is set.",
     ),
     export_steps_per_episode: int = typer.Option(
         50, "--export-steps-per-episode", help="Max steps per exported episode."
@@ -2710,7 +2790,9 @@ def train_cmd(
     checkpoint_output_path = resolve_checkpoint_s3_uri(training_config, output_path)
     if _is_serverless_runtime(runtime):
         if export_trajectories:
-            _fail("--export-trajectories is only supported on the VM runtime, not serverless")
+            _fail(
+                "--export-trajectories is only supported on the VM runtime, not serverless"
+            )
         _isaac_lab_serverless_train(
             task=task,
             num_envs=num_envs,
@@ -2734,7 +2816,9 @@ def train_cmd(
     cfg = _get_ssh_config()
     try:
         if checkpoint_output_path:
-            checkpoint_output_path = validate_write_path(checkpoint_output_path, tool="Isaac Lab train")
+            checkpoint_output_path = validate_write_path(
+                checkpoint_output_path, tool="Isaac Lab train"
+            )
     except PathContractError as exc:
         _fail(str(exc))
         return
@@ -2776,7 +2860,11 @@ def train_cmd(
         return
 
     ssh_exit_code = exit_code
-    if exit_code != 0 and "ISAAC_LAB_TRAIN_COMPLETE" in stdout and '"status": "success"' in stdout:
+    if (
+        exit_code != 0
+        and "ISAAC_LAB_TRAIN_COMPLETE" in stdout
+        and '"status": "success"' in stdout
+    ):
         exit_code = 0
 
     result = {
@@ -2812,7 +2900,9 @@ def train_cmd(
             if stream_logs:
                 console.print("[bold]Exporting trained-policy trajectories[/bold]")
             try:
-                traj_exit, traj_stdout, traj_stderr = ssh.run(traj_cmd, stream=stream_logs)
+                traj_exit, traj_stdout, traj_stderr = ssh.run(
+                    traj_cmd, stream=stream_logs
+                )
             except SSHError as exc:
                 traj_exit, traj_stdout, traj_stderr = 1, "", str(exc)
             result["trajectories_dir"] = trajectories_dir
@@ -2822,12 +2912,16 @@ def train_cmd(
             # Require the completion marker the script prints right before it
             # writes meta.json, otherwise an empty trajectories dir would be
             # reported as success.
-            traj_ok = traj_exit == 0 and "ISAAC_LAB_TRAJ_EXPORT_COMPLETE" in (traj_stdout or "")
+            traj_ok = traj_exit == 0 and "ISAAC_LAB_TRAJ_EXPORT_COMPLETE" in (
+                traj_stdout or ""
+            )
             result["trajectory_export"] = "success" if traj_ok else "failed"
             if not traj_ok:
                 # The checkpoint is still good; report the export failure
                 # without failing the training run.
-                result["trajectory_export_error"] = (traj_stderr or traj_stdout).strip()[-500:]
+                result["trajectory_export_error"] = (
+                    traj_stderr or traj_stdout
+                ).strip()[-500:]
         if output_is_s3:
             try:
                 try:
@@ -2841,8 +2935,10 @@ def train_cmd(
                     result["upload_mode"] = "local"
                 except Exception as local_exc:
                     result["local_upload_error"] = str(local_exc)
-                    result["output_path"] = _upload_existing_remote_directory_via_remote_env(
-                        ssh, remote_output_dir, target_output
+                    result["output_path"] = (
+                        _upload_existing_remote_directory_via_remote_env(
+                            ssh, remote_output_dir, target_output
+                        )
                     )
                     result["upload_mode"] = "remote-env"
             except Exception as exc:
@@ -2930,17 +3026,11 @@ def eval_cmd(
     if num_episodes <= 0:
         _fail(f"--num-episodes must be positive, got {num_episodes}")
     if max_steps_per_episode <= 0:
-        _fail(
-            "--max-steps-per-episode must be positive, "
-            f"got {max_steps_per_episode}"
-        )
+        _fail(f"--max-steps-per-episode must be positive, got {max_steps_per_episode}")
     if success_distance_m <= 0:
         _fail(f"--success-distance-m must be positive, got {success_distance_m}")
     if not 0.0 <= min_success_rate <= 1.0:
-        _fail(
-            "--min-success-rate must be between 0 and 1, "
-            f"got {min_success_rate}"
-        )
+        _fail(f"--min-success-rate must be between 0 and 1, got {min_success_rate}")
     if video_length <= 0:
         _fail(f"--video-length must be positive, got {video_length}")
     if video_fps <= 0:
@@ -3312,9 +3402,7 @@ def export_onnx_cmd(
             _fail(f"--input-path local checkpoint not found: {input_path}")
             return
         if output_is_s3:
-            output_path = validate_write_path(
-                output_path, tool="Isaac Lab export-onnx"
-            )
+            output_path = validate_write_path(output_path, tool="Isaac Lab export-onnx")
     except PathContractError as exc:
         _fail(str(exc))
         return

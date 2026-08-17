@@ -46,7 +46,7 @@ Options:
   --bootstrap        Run npa agent bootstrap before live checks
   --verify           Run npa agent verify-live after pytest live suite
   --chat-live        Set NPA_AGENT_CHAT_LIVE=1 for Token Factory chat smoke
-  --browser-e2e      Run Cypress live browser checks after HTTP live tests
+  --browser-e2e      Run opt-in Cypress live checks (requires NPA_AGENT_CYPRESS_LIVE=1 and access env)
   --dry-run          Print planned commands without launching tmux
   --help             Show this help
 EOF
@@ -105,7 +105,7 @@ SMOKE_CMD="cd ${ROOT} && ${PYTHON} -m pytest npa/tests/smoke/test_agent_smoke.py
 LIVE_CMD="cd ${ROOT} && export NPA_INTEGRATION_E2E=1 NPA_AGENT_LIVE=1 NPA_AGENT_PROJECT=${PROJECT} NPA_AGENT_NAME=${NAME} NPA_AGENT_CHAT_LIVE=${CHAT_LIVE} && ${PYTHON} -m pytest npa/tests/e2e/test_agent_live.py -q 2>&1 | tee ${LOG_ROOT}/live.log; ec=\${PIPESTATUS[0]}; echo \${ec} > ${LOG_ROOT}/live.exit"
 VERIFY_CMD="cd ${ROOT} && export NPA_INTEGRATION_E2E=1 NPA_AGENT_LIVE=1 NPA_AGENT_PROJECT=${PROJECT} NPA_AGENT_NAME=${NAME} NPA_AGENT_CHAT_LIVE=${CHAT_LIVE} && ${NPA_BIN} agent verify-live --project ${PROJECT} --name ${NAME} 2>&1 | tee ${LOG_ROOT}/verify.log; ec=\${PIPESTATUS[0]}; echo \${ec} > ${LOG_ROOT}/verify.exit"
 BOOTSTRAP_CMD="cd ${ROOT} && NPA_SSH_KEY=\${NPA_SSH_KEY:-\$HOME/.ssh/id_ed25519} ${NPA_BIN} agent bootstrap --project ${PROJECT} --name ${NAME} 2>&1 | tee ${LOG_ROOT}/bootstrap.log; ec=\${PIPESTATUS[0]}; echo \${ec} > ${LOG_ROOT}/bootstrap.exit"
-BROWSER_CMD="cd ${ROOT} && export NPA_AGENT_PROJECT=${PROJECT} NPA_AGENT_NAME=${NAME} && bash npa/scripts/run_agent_cypress.sh --live --project ${PROJECT} --name ${NAME} 2>&1 | tee ${LOG_ROOT}/browser.log; ec=\${PIPESTATUS[0]}; echo \${ec} > ${LOG_ROOT}/browser.exit"
+BROWSER_CMD="cd ${ROOT} && bash npa/scripts/run_agent_cypress.sh --live 2>&1 | tee ${LOG_ROOT}/browser.log; ec=\${PIPESTATUS[0]}; echo \${ec} > ${LOG_ROOT}/browser.exit"
 DASH_CMD="watch -n 2 'echo session=${SESSION}; ls -1 ${LOG_ROOT}/*.exit 2>/dev/null | while read f; do printf \"%s: \" \"\$(basename \"\${f}\")\"; cat \"\${f}\"; echo; done; echo; tail -n 3 ${LOG_ROOT}/live.log 2>/dev/null || true'"
 
 if [[ "${DRY_RUN}" -eq 1 ]]; then

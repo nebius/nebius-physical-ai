@@ -116,14 +116,15 @@ test "$(dpkg-query -W -f='${Version}' python3.11)" = "$PYTHON_VERSION"
 rm -rf /tmp/npa-python311
 
 if [ "$INSTALL_SKYPILOT_PREREQS" = "1" ]; then
-  # SkyPilot's in-pod Kubernetes bootstrap needs a SYSTEM python3 plus rsync, an ssh
-  # client, and passwordless sudo; without all of them provisioning fails with
+  # SkyPilot's in-pod Kubernetes bootstrap needs a SYSTEM python3 plus rsync, an SSH
+  # client/server, and passwordless sudo; without all of them provisioning fails with
   # `container not found ("ray-node")`. Guarded by
   # npa/tests/guardrails/test_workbench_image_k8s_prereqs.py.
   apt-get install -y --no-install-recommends \
-    python3 python3-venv python3-pip rsync openssh-client sudo netcat-openbsd
+    python3 python3-venv python3-pip rsync openssh-client openssh-server sudo netcat-openbsd
   printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/99-npa-runtime-user
   chmod 0440 /etc/sudoers.d/99-npa-runtime-user
+  install -d -m 0755 /run/sshd
 fi
 
 rm -rf /var/lib/apt/lists/*
@@ -204,7 +205,7 @@ bash -n /opt/npa/bin/isaac-python
 # This is the load-bearing legal mechanism, so the build proves the refusal instead of
 # proving a baked install. Exit 78 is EX_CONFIG: the operator must act.
 set +e
-env -u OMNI_KIT_ACCEPT_EULA -u ISAACSIM_ACCEPT_EULA \
+ACCEPT_EULA= env -u OMNI_KIT_ACCEPT_EULA -u ISAACSIM_ACCEPT_EULA \
   /opt/npa/bin/isaac-bootstrap ensure >/dev/null 2>/tmp/eula-refusal.txt
 refusal_rc=$?
 set -e
@@ -213,8 +214,7 @@ if [ "$refusal_rc" -ne 78 ]; then
   cat /tmp/eula-refusal.txt >&2
   exit 1
 fi
-grep -q OMNI_KIT_ACCEPT_EULA /tmp/eula-refusal.txt
-grep -q ISAACSIM_ACCEPT_EULA /tmp/eula-refusal.txt
+grep -q 'ACCEPT_EULA=Y' /tmp/eula-refusal.txt
 rm -f /tmp/eula-refusal.txt
 echo "NPA_ISAAC_BOOTSTRAP_REFUSES_WITHOUT_EULA_OK"
 

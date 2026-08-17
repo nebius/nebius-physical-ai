@@ -102,7 +102,8 @@ def test_lfs_media_models_and_build_credentials_are_excluded() -> None:
         r"--requirement /tmp/cosmos2-security-overrides\.txt",
         text,
     )
-    assert "--require-hashes" not in text
+    # The direct-URL security overrides carry URL-fragment hashes; the separate
+    # NPA CLI wheel overlay below deliberately uses pip-style --require-hashes.
     assert 'version("nltk") == "3.10.0"' in text
     assert 'version("defusedxml") == "0.7.1"' in text
     assert 'version("pip") == "26.2"' in text
@@ -111,6 +112,33 @@ def test_lfs_media_models_and_build_credentials_are_excluded() -> None:
     assert ".venv/bin/python -m pip --version" in text
     assert 'importlib.util.find_spec("pip") is None' in text
     assert 'importlib.util.find_spec("setuptools") is None' in text
+
+    cli_requirements = (IMAGE_DIR / "npa-cli-requirements.txt").read_text(
+        encoding="utf-8"
+    )
+    assert "typer==0.24.1" in cli_requirements
+    assert "kubernetes==33.1.0" in cli_requirements
+    assert "fastapi==0.136.1" in cli_requirements
+    requirement_lines = [
+        line
+        for line in cli_requirements.splitlines()
+        if line and not line.startswith(("#", " "))
+    ]
+    assert len(requirement_lines) == 17
+    assert cli_requirements.count("--hash=sha256:") == len(requirement_lines)
+    assert "--no-deps --require-hashes" in text
+    assert "pip install --no-deps /opt/npa" not in text
+    assert "python -m npa.cli.main" in text
+    assert "PYTHONPATH=/opt/npa/src" in text
+    assert (
+        "NPA_BAKED_PYTHON=/opt/cosmos/cosmos-transfer2.5/.venv/bin/python" in text
+    )
+    assert "ln -sfn /opt/npa/src/npa" in text
+    assert 'env -u PYTHONPATH "${NPA_BAKED_PYTHON}" -c' in text
+    assert "no build backend or package index is consulted" in text
+    assert "import npa.cli.main" in text
+    assert "workbench cosmos2 transfer --help" in text
+    assert "grep -q -- '--control-asset'" in text
 
 
 def test_forbidden_payload_guard_rejects_weight_and_media(tmp_path: Path) -> None:
@@ -291,6 +319,10 @@ def test_exact_pin_golden_eval_and_workflow_use_the_legal_path() -> None:
         golden["golden_eval"]["command"]
         == "bash /opt/cosmos2-transfer/smoke_functional.sh"
     )
+    smoke = (IMAGE_DIR / "smoke_functional.sh").read_text(encoding="utf-8")
+    assert "from npa.workbench.cosmos.transfer import _classify_output_videos" in smoke
+    assert "_classify_output_videos(out)" in smoke
+    assert 'if "control" not in Path(p).name.lower()' not in smoke
     assert "procedural input" in golden["safety"]["notes"]
     assert "built outside this repo" not in golden["safety"]["notes"]
     argv = TOOL_CATALOG["workbench.cosmos2.transfer_execute"].argv_template

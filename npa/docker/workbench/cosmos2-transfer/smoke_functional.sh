@@ -62,7 +62,6 @@ fi
 
 "${PY}" - "${OUT}" "${started_ns}" "${finished_ns}" "${GPU_SAMPLES}" \
   "${gpu_name}" "${fixture_json}" <<'PY'
-import glob
 import hashlib
 import json
 import os
@@ -70,19 +69,21 @@ import subprocess
 import sys
 from pathlib import Path
 
+from npa.workbench.cosmos.transfer import _classify_output_videos
+
 out = Path(sys.argv[1])
 started_ns, finished_ns = int(sys.argv[2]), int(sys.argv[3])
 gpu_samples = Path(sys.argv[4])
 gpu_name = sys.argv[5]
 fixture = json.loads(sys.argv[6])
-videos = [
-    Path(p)
-    for p in glob.glob(str(out / "**" / "*.mp4"), recursive=True)
-    if "control" not in Path(p).name.lower()
-]
-videos = sorted((p for p in videos if p.stat().st_size > 100_000), key=lambda p: p.stat().st_size, reverse=True)
+generated, _controls, _masks = _classify_output_videos(out)
+videos = sorted(
+    (Path(p) for p in generated if Path(p).stat().st_size > 100_000),
+    key=lambda p: p.stat().st_size,
+    reverse=True,
+)
 if not videos:
-    raise SystemExit(f"no non-control, non-trivial output MP4 under {out}")
+    raise SystemExit(f"no classified generated, non-trivial output MP4 under {out}")
 video = videos[0]
 probe = json.loads(
     subprocess.run(

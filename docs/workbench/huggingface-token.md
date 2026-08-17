@@ -1,11 +1,12 @@
 # Set up a Hugging Face token
 
 Many workbench models and datasets are hosted on [Hugging Face](https://huggingface.co).
-A Hugging Face access token lets `npa` download them (including **gated** models
-such as Llama and several NVIDIA Cosmos / GR00T assets). This guide creates one,
-accepts the gated licenses, and wires it into `npa`.
+A Hugging Face access token lets `npa` download private or **gated** assets and
+raises rate limits. Public assets work anonymously. A token authenticating an
+account that already has repository access is the complete automated preflight;
+NPA does not add another acceptance switch.
 
-> **TL;DR:** create a **Read** token at
+> **TL;DR:** for gated or private assets, create a **Read** token at
 > <https://huggingface.co/settings/tokens>, run `npa configure` and paste it at
 > the `HF_TOKEN` prompt, then click **Agree and access repository** on each
 > gated model page while signed in.
@@ -21,20 +22,24 @@ accepts the gated licenses, and wires it into `npa`.
 
 ## 2. Accept gated-model licenses (required for gated repos)
 
-Gated repositories require **interactive** license acceptance — there is no API
-to accept on your behalf. For each gated model you plan to use, open its page
-while signed in and click **Agree and access repository**. The workbench's gated
-models include, among others:
+Gated repositories require account access upstream — there is no API for NPA to
+grant it. For each gated model you plan to use, open its page while signed in
+and complete its access request. As reverified against the authoritative
+Hugging Face API on 2026-08-14, the workbench's gated models include:
 
-- <https://huggingface.co/nvidia/GR00T-N1.7-3B>
 - <https://huggingface.co/nvidia/Cosmos-Transfer2.5-2B>
 - <https://huggingface.co/nvidia/Cosmos-Reason2-2B>
 - <https://huggingface.co/nvidia/Cosmos-Reason2-8B>
-- <https://huggingface.co/nvidia/Cosmos-Reason1-7B>
+- <https://huggingface.co/nvidia/Cosmos-Guardrail1>
+- <https://huggingface.co/nvidia/Cosmos-1.0-Guardrail>
+- <https://huggingface.co/nvidia/Cosmos-1.0-Diffusion-7B-Text2World>
 - <https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct> (only needed if you
   self-host it; Nebius Token Factory serves it hosted with no HF gating)
 
-`npa` prints the exact acceptance URL for anything still gated when you run the
+The public defaults `nvidia/GR00T-N1.7-3B`, `nvidia/GEAR-SONIC`,
+`nvidia/Cosmos-Reason1-7B`, `nvidia/Cosmos3-Nano`, and the
+`nvidia/PhysicalAI-NuRec-PPISP` dataset work anonymously. `npa` prints the exact
+access URL for anything gated when you run the
 access check below, so you can also just react to that.
 
 ## 3. Give the token to `npa`
@@ -69,7 +74,7 @@ variable → `~/.npa/credentials.yaml`.
 ## 4. Verify access
 
 ```bash
-npa workbench health access          # checks HF (and NGC) access to gated models
+npa workbench health access          # checks selected HF assets and NGC entitlement
 npa workbench health access --capability paidf    # Cosmos Transfer only
 # or, credentials-presence only (no network):
 npa workbench health preflight --offline
@@ -91,6 +96,6 @@ URL to open.
 
 ## See also
 
-- [NVIDIA NGC API key](ngc-api-key.md) — for GR00T / Cosmos container + model pulls.
+- [NVIDIA NGC API key](ngc-api-key.md) — for paths that actually pull entitlement-controlled NGC artifacts.
 - [Nebius Token Factory key](token-factory-key.md) — zero-GPU hosted inference.
 - [Quickstart § credentials](../quickstart.md#4-configure-credentials)

@@ -5,8 +5,9 @@ metadata:
   name: cosmos3-generate
   description: >-
     Generate a Physical AI image with the Cosmos 3 omni model in the npa-cosmos3
-    container. The image ships the framework but no weights, so the run needs an
-    HF_TOKEN secret to fetch the checkpoint at runtime.
+    container. Cosmos3-Nano is public and supports anonymous download; the default
+    guardrails additionally fetch gated weights and therefore need an HF_TOKEN whose
+    owner already has access.
 
 config:
   bucket: example-bucket
@@ -14,6 +15,11 @@ config:
 
   cosmos3_mode: text2image
   cosmos3_checkpoint: Cosmos3-Nano
+  # Required by image2image/image2video/video2video; empty for text modes.
+  cosmos3_input_path: ""
+  cosmos3_seed: "0"
+  cosmos3_guidance: "0"
+  cosmos3_steps: "0"
   prompt: "a robot arm sorting colored blocks on a white workbench in a bright robotics lab"
 
   output_uri: "s3://{{config.bucket}}/{{config.prefix}}/generated/"
