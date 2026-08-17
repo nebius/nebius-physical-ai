@@ -221,8 +221,9 @@ or provider/auth verification failure is partial cleanup and exits 2.
 - For human authentication on a remote operator/dev VM, use
   `skills/atomic/vm-nebius-auth/SKILL.md`; the callback completes a CLI profile,
   after which IAM mints access tokens. Never transfer those tokens through chat.
-- Public NPA GHCR releases pull anonymously. Private GHCR candidates require
-  explicit exact-host `SKYPILOT_DOCKER_SERVER`, `SKYPILOT_DOCKER_USERNAME`, and
+- Official NPA GHCR development and release tags pull anonymously. Operator-
+  controlled private registries require explicit exact-host
+  `SKYPILOT_DOCKER_SERVER`, `SKYPILOT_DOCKER_USERNAME`, and
   `SKYPILOT_DOCKER_PASSWORD` credentials. Kubernetes users pre-create and
   explicitly reference a standard Docker config secret. NPA never mints a
   registry token and never creates or refreshes a provider-specific pull secret.

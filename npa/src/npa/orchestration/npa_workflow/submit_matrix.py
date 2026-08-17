@@ -802,15 +802,14 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
         plan_only=True,
         plan_only_justification=(
-            "the npa-ltx2 image has not been built, so no live submit can run yet"
+            "the zero-payload image is byte-scanned but has no accepted public "
+            "development digest or real GPU result yet"
         ),
         notes=(
-            "BYOF LTX-2.5 candidate. Plan-only for a reason the other entries do "
-            "not share: the image does not exist yet. It also cannot be submitted "
-            "on an operator's behalf at all — both fetches refuse without that "
-            "operator's own entitlement on the gated Lightricks/LTX-2.5 "
-            "repository. test_ltx2_live_e2e.py owns the gated live path once an "
-            "image exists."
+            "BYOF LTX-2.5 stays plan-only in the shared matrix until an entitled "
+            "operator validates an immutable public development digest. Both "
+            "fetches refuse without that operator's access to the gated "
+            "Lightricks/LTX-2.5 repository; test_ltx2_live_e2e.py owns the live path."
         ),
     ),
     SubmitLiveCase(

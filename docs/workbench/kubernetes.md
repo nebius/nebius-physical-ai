@@ -77,7 +77,7 @@ Expected result: the `kubectl auth can-i` commands print `yes`, nodes are
 listed and the `workbench` namespace exists for services. If `sky check` later reports an
 anonymous-user `403`, refresh the kube context before debugging workflow YAML.
 
-Public GHCR releases need no pull secret. For a private candidate or an
+Official public GHCR development and release tags need no pull secret. For an
 operator-controlled private registry, pre-create a standard Docker config
 secret, reference it explicitly in the workload, and rotate it through your
 normal secret-management process. NPA does not create or refresh registry

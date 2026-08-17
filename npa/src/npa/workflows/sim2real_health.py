@@ -411,7 +411,7 @@ def check_registry(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> Check
             summary=f"{len(unreachable)} image(s) are not pullable.",
             remedy=(
                 "Use a published public GHCR release, or configure exact-host "
-                "credentials for a private candidate/operator registry."
+                "credentials for an operator-controlled registry."
             ),
             details=tuple(unreachable),
         )

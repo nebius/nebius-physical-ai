@@ -446,9 +446,9 @@ def test_kubernetes_private_image_references_the_refreshed_pull_secret(
         spec,
         plan.steps,
         run_id="demo",
-        options=SkypilotRenderOptions(registry="cr.eu-north1.nebius.cloud/reg"),
+        options=SkypilotRenderOptions(registry="registry.example/reg"),
     )
-    assert set(authorities.values()) == {("npa-nebius-registry",)}
+    assert set(authorities.values()) == {()}
 
 
 def test_nurec_plan_exposes_its_ngc_pull_authority_to_preflight() -> None:

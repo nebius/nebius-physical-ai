@@ -1,4 +1,4 @@
-"""License-guarded private-candidate to public-release GHCR publishing.
+"""License-guarded public-development to supported-release GHCR publishing.
 
 These tests lock the license
 boundary: whatever is classified non-redistributable must never be selected for a public
@@ -11,7 +11,7 @@ acceptance instead of baking it. Cosmos3 serving remains build-your-own. That ma
 the boundary tests the delicate ones: asserting "nothing is restricted" would pass just
 as well against a guard that had been deleted. So the tests that exercise the refusal
 monkeypatch a synthetic restricted catalog tool in, proving the mechanism still bites;
-the real restricted Cosmos3 serving image is build-your-own and outside the candidate inventory.
+the real restricted Cosmos3 serving image is build-your-own and outside the public inventory.
 """
 
 from __future__ import annotations
@@ -288,9 +288,9 @@ def test_publish_plan_now_includes_the_isaac_images() -> None:
     plan = build_publish_plan(target_registry="ghcr.io/example/workbench")
     names = {item.source_ref.rsplit("/", 1)[-1].split(":", 1)[0] for item in plan}
     for image in (
-        "npa-isaac-lab-candidate",
-        "npa-sonic-candidate",
-        "npa-groot-candidate",
+        "npa-isaac-lab",
+        "npa-sonic",
+        "npa-groot",
     ):
         assert image in names, image
     # sonic-mujoco is a sonic variant, so it ships through sonic's image manifest rather
@@ -315,7 +315,7 @@ def test_publish_plan_still_refuses_a_restricted_image(monkeypatch) -> None:
     assert "npa-genesis" not in names
     # sonic is publishable under this monkeypatched set, so the plan must contain it -
     # proving the refusal followed the patched set instead of a captured one.
-    assert "npa-sonic-candidate" in names
+    assert "npa-sonic" in names
 
 
 def test_publish_plan_requires_a_target() -> None:
@@ -327,25 +327,19 @@ def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
     sha = "1" * 40
     plan = build_publish_plan(
         target_registry="ghcr.io/example/workbench",
-        source_registry="ghcr.io/example/private",
-        candidate_git_sha=sha,
+        development_git_sha=sha,
     )
     assert plan
     for item in plan:
         source_image = item.source_ref.rsplit("/", 1)[-1]
         target_image = item.target_ref.rsplit("/", 1)[-1]
-        assert source_image.split(":", 1)[0] == (
-            target_image.split(":", 1)[0] + "-candidate"
-        ), item
+        assert source_image.split(":", 1)[0] == target_image.split(":", 1)[0], item
         assert source_image.endswith(f":dev-{sha}"), item
         assert not target_image.endswith(f":dev-{sha}"), item
 
 
 def test_publish_plan_uses_the_public_sonic_pin_not_the_default_variant() -> None:
-    plan = build_publish_plan(
-        target_registry="ghcr.io/example/workbench",
-        source_registry="ghcr.io/example/private",
-    )
+    plan = build_publish_plan(target_registry="ghcr.io/example/workbench")
     sonic = next(item for item in plan if item.tool == "sonic")
     expected = (
         "npa-sonic:cuda13-b300-0.1.2-k8s-runtime-"
@@ -371,11 +365,11 @@ def test_official_channel_overrides_must_remain_on_ghcr(monkeypatch) -> None:
     with pytest.raises(ValueError, match="public release registry must be a GHCR"):
         public_container_registry()
 
-    with pytest.raises(ValueError, match="private candidate registry must be a GHCR"):
-        images.candidate_image_for_tool(
+    with pytest.raises(ValueError, match="public development registry must be a GHCR"):
+        images.development_image_for_tool(
             "genesis",
             git_sha="c" * 40,
-            registry="registry.example/workbench/candidates",
+            registry="registry.example/workbench/development",
         )
 
 
@@ -500,7 +494,6 @@ def test_selector_matches_packaging_contract_classification() -> None:
     "registry",
     [
         "ghcr.io/nebius/nebius-physical-ai",
-        "ghcr.io/nebius/nebius-physical-ai-private",
         "docker.io/nebius/workbench",
         "quay.io/nebius/workbench",
         "public.ecr.aws/nebius/workbench",
@@ -604,9 +597,7 @@ def test_verify_public_exits_non_zero_when_anything_is_private(
     )
     assert rc == 1
     captured = capsys.readouterr()
-    # The message has to tell an operator exactly what to do, because there is no API for it.
-    assert "Change visibility" in captured.err
-    assert "irreversible" in captured.err
+    assert "must be anonymously pullable" in captured.err
 
 
 def test_verify_public_exits_zero_when_everything_is_public(monkeypatch) -> None:
@@ -1249,9 +1240,9 @@ def test_a_successful_copy_still_fails_while_the_packages_are_private(
     assert rc == 1
     assert copied, "the copy itself must still have happened"
     assert github_output.read_text(encoding="utf-8") == "copy_phase_completed=true\n"
-    assert "The copy succeeded" in captured.err, "must not read as a failed copy"
+    assert "release-tag copy completed" in captured.err, "must not read as a failed copy"
     # The click-through list is the whole point: no hunting for 20-odd packages by hand.
-    assert "/packages/container/" in captured.out
+    assert "NOT PUBLIC" in captured.out
 
 
 def test_a_copy_exits_zero_only_once_the_packages_are_public(monkeypatch) -> None:
@@ -1377,13 +1368,12 @@ def test_crane_copy_updates_a_target_with_a_different_digest(
     [
         "MANIFEST_UNKNOWN: manifest unknown",
         "NAME_UNKNOWN: repository name not known",
-        "DENIED: requested access to the resource is denied",
     ],
 )
-def test_crane_copy_creates_a_missing_or_pull_denied_target(
+def test_crane_copy_creates_a_missing_target(
     monkeypatch, target_error: str
 ) -> None:
-    """A first GHCR push can create a package the pull path cannot read yet."""
+    """Only authoritative absence permits a release-tag write."""
     from npa.deploy import publish_public
     from npa.deploy.publish_public import PublishItem
 
@@ -1479,58 +1469,6 @@ def test_repeat_publish_skips_all_matching_copies_but_still_verifies(
     assert verified == [item.target_ref for item in plan]
 
 
-def test_settings_url_encodes_the_repository_nested_package_name() -> None:
-    from npa.deploy.publish_public import package_settings_url
-
-    url = package_settings_url("ghcr.io/nebius/nebius-physical-ai/npa-lerobot:0.5.1")
-
-    # GHCR package name is "<repo>/<image>"; the slash is percent-encoded in the path, and
-    # a raw slash here silently 404s.
-    assert url == (
-        "https://github.com/orgs/nebius/packages/container/"
-        "nebius-physical-ai%2Fnpa-lerobot/settings"
-    )
-
-
-def test_settings_url_is_none_for_a_registry_with_a_different_visibility_model() -> (
-    None
-):
-    from npa.deploy.publish_public import package_settings_url
-
-    assert package_settings_url("registry.example/abc/npa-lerobot:0.5.1") is None
-
-
-def test_the_checklist_covers_exactly_the_packages_still_private() -> None:
-    from npa.deploy import publish_public
-
-    plan = build_publish_plan(target_registry="ghcr.io/example/workbench")
-    failures = [(plan[0], "HTTP 403"), (plan[2], "HTTP 403")]
-
-    checklist = publish_public.visibility_checklist(failures)
-
-    assert checklist.count("- [ ] ") == 2
-    assert publish_public.ghcr_owner_and_package(plan[1].target_ref)[1] not in checklist
-
-
-def test_the_checklist_labels_a_package_the_way_its_settings_page_does() -> None:
-    """The label must be the package name, not the whole reference, or the list does not
-    match the page it links to."""
-    from npa.deploy import publish_public
-    from npa.deploy.publish_public import PublishItem
-
-    item = PublishItem(
-        tool="lerobot",
-        source_ref="registry.example/abc/npa-lerobot:0.5.1",
-        target_ref="ghcr.io/nebius/nebius-physical-ai/npa-lerobot:0.5.1",
-    )
-
-    assert publish_public.visibility_checklist([(item, "HTTP 403")]) == (
-        "- [ ] [nebius-physical-ai/npa-lerobot]"
-        "(https://github.com/orgs/nebius/packages/container/"
-        "nebius-physical-ai%2Fnpa-lerobot/settings)"
-    )
-
-
 def test_a_wholesale_unauthorized_preflight_blames_the_credential(
     monkeypatch, capsys
 ) -> None:
@@ -1551,7 +1489,7 @@ def test_a_wholesale_unauthorized_preflight_blames_the_credential(
 
     assert rc == 1
     assert "Every read was denied" in err
-    assert "NPA_PRIVATE_GHCR_TOKEN" in err
+    assert "GITHUB_TOKEN" in err
     assert "crane auth login ghcr.io" in err
     assert "lacks\nviewer" not in err, "a per-repository role hint would misdirect here"
 
@@ -1629,7 +1567,7 @@ def test_preflight_failures_are_classified_by_what_they_require(detail, kind) ->
 def test_a_denial_that_also_says_name_unknown_is_never_treated_as_absence() -> None:
     """A registry may answer NAME_UNKNOWN for a repository the identity cannot see.
 
-    Reading that as "not built yet" would silently drop a publishable image from the mirror,
+    Reading that as "not built yet" would silently drop a publishable release,
     so denial has to win over absence.
     """
     from npa.deploy.publish_public import classify_preflight_failure
@@ -1651,7 +1589,7 @@ def _run2_readability(plan):
     unpushed_tag = {"npa-cosmos2-transfer"}
 
     def readable(ref: str, **_: object) -> tuple[bool, str]:
-        image = ref.rsplit("/", 1)[-1].split(":", 1)[0].removesuffix("-candidate")
+        image = ref.rsplit("/", 1)[-1].split(":", 1)[0]
         if image in never_built:
             return False, _NAME_UNKNOWN
         if image in unpushed_tag:
@@ -1805,16 +1743,21 @@ def test_verify_public_with_skip_missing_ignores_the_unpublished(
             "ghcr.io/example/workbench",
             "--skip-missing",
             "--verify-public",
-            "--checklist",
         ]
     )
     captured = capsys.readouterr()
 
     assert rc == 1
-    assert captured.out.count("- [ ] ") == len(plan) - 5
+    assert captured.out.count("NOT PUBLIC") == len(plan) - 5
     # Match whole package names: "npa-cosmos3-reason" contains "npa-cosmos3" as a substring
     # and IS readable, so a substring check would fail for the wrong reason.
-    listed = set(re.findall(r"- \[ \] \[workbench/([^\]]+)\]", captured.out))
+    listed = set(
+        re.findall(
+            r"^\s+ghcr\.io/example/workbench/(npa-[^:]+):.*NOT PUBLIC",
+            captured.out,
+            re.MULTILINE,
+        )
+    )
     assert "npa-cosmos3" not in listed
     assert "npa-cosmos3-reason" in listed, (
         "a readable image whose name shares a prefix stays"

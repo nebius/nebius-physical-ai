@@ -37,8 +37,7 @@ Operator-required prerequisites:
   in `~/.npa/credentials.yaml` under `storage.aws_access_key_id`,
   `storage.aws_secret_access_key`, `storage.endpoint_url`, and `storage.bucket`
   if the workflow needs explicit storage credentials.
-- GHCR access only when using private candidates; public releases pull
-  anonymously.
+- Official GHCR development and release tags pull anonymously.
 
 Partner-specific values to collect before starting:
 
@@ -149,13 +148,10 @@ The default execution channel is the anonymously pullable public release
 namespace `ghcr.io/nebius/nebius-physical-ai`. `NPA_REGISTRY` may override it
 with a full operator registry prefix.
 
-Private maintainer candidates live in the separate
-`ghcr.io/nebius/nebius-physical-ai-private` namespace and use immutable
-`dev-<full-git-sha>` tags. For those only, configure exact-host
-`SKYPILOT_DOCKER_SERVER=ghcr.io`, `SKYPILOT_DOCKER_USERNAME`, and
-`SKYPILOT_DOCKER_PASSWORD`; on Kubernetes, the operator must pre-create and
-reference a standard `kubernetes.io/dockerconfigjson` secret. NPA does not mint
-registry credentials or refresh that secret.
+Pre-release validation uses immutable `dev-<full-git-sha>` tags in the same
+public packages. Operator-controlled private registries may require exact-host
+SkyPilot credentials or a pre-created Kubernetes Docker config secret; NPA does
+not mint registry credentials or refresh that secret.
 
 ## Verify Kubernetes Access
 
@@ -253,7 +249,7 @@ manifest from S3.
 | S3 upload logs contain literal `${AWS_ENDPOINT_URL}` | SkyPilot 0.12.2 does not interpolate variables inside YAML `envs` blocks at submission time. | Use `npa/scripts/run_isaac_lab_rl.py`, which materializes endpoint values before submission, or substitute `https://storage.eu-north1.nebius.cloud` in the YAML. |
 | `NoSuchBucket` from AWS CLI or a workflow upload | Wrong bucket name, endpoint, or region. | Confirm `storage.bucket` and `storage.endpoint_url` in `~/.npa/credentials.yaml`, then re-export `NPA_S3_BUCKET` without `s3://` and `AWS_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud`. |
 | `AccessDenied` from AWS CLI or a workflow upload | The access key does not have read/write access to the bucket. | Confirm `storage.aws_access_key_id` and `storage.aws_secret_access_key` in `~/.npa/credentials.yaml` are for the target bucket. |
-| A private GHCR candidate returns `401 Unauthorized` | Exact-host GHCR credentials or the operator-managed Kubernetes pull secret are absent/invalid. | Refresh the scoped GHCR credential and update the explicitly configured secret; public releases require neither. |
+| An official GHCR tag is not anonymously pullable | The package visibility or tag is wrong. | Stop before launch or promotion and repair the official public package; do not add pull credentials as a workaround. |
 | L40S scheduling backoff | The cluster has no available L40S capacity or the preset is too small for the CPU request. | Ask the operator to provision an L40S node group with sufficient CPU, or use a documented RT-core alternative. |
 
 ## Next Docs

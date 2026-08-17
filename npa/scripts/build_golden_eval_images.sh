@@ -55,8 +55,8 @@ if [[ "${PUSH}" == "1" ]]; then
     exit 2
   fi
   case "${REGISTRY%/}" in
-    ghcr.io/nebius/nebius-physical-ai|ghcr.io/nebius/nebius-physical-ai-private)
-      echo "ERROR: official GHCR publication is guarded by the candidate/release workflows" >&2
+    ghcr.io/nebius/nebius-physical-ai)
+      echo "ERROR: official GHCR publication is guarded by the public image workflow" >&2
       exit 2
       ;;
   esac

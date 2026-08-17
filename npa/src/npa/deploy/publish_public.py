@@ -1,4 +1,4 @@
-"""Promote validated private GHCR candidates to public GHCR releases.
+"""Promote validated public GHCR development images to supported releases.
 
 This tool is license-guarded: it only ever copies tools reported by
 ``images.publicly_publishable_tools()`` and hard-refuses anything in
@@ -14,12 +14,10 @@ Example (dry run first, then execute):
     python -m npa.deploy.publish_public --target ghcr.io/nebius/nebius-physical-ai --dry-run
     python -m npa.deploy.publish_public --target ghcr.io/nebius/nebius-physical-ai
 
-The copy path preflights the private candidate channel first, skips targets whose manifest digest
-already matches the source, and verifies the result after. A stale credential therefore
-fails before anything is written, unchanged images are not recopied, and a copy cannot
-report success while nothing is publicly pullable. Making the packages public is the one
-step that cannot be automated (see ``package_settings_url``); the verification prints a
-click-through list.
+Development and release tags share one public package. The copy path preflights every
+immutable ``dev-<full-git-sha>`` source, skips release tags whose manifest digest already
+matches, and verifies anonymous pullability and digest parity afterward. A stale
+credential therefore fails before anything is written and unchanged tags are not recopied.
 
 ``--verify-parity`` is the read-only drift check for automation: it runs the same source
 preflight and then requires every target tag to resolve to the exact same OCI digest. This
@@ -42,7 +40,6 @@ import shutil
 import subprocess
 import sys
 import urllib.error
-import urllib.parse
 import urllib.request
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -53,7 +50,6 @@ from npa.deploy.images import (
     CONTAINER_IMAGE_NAMES,
     is_publicly_redistributable,
     omniverse_restricted_image_names,
-    private_candidate_container_registry,
     public_container_registry,
     publicly_publishable_tools,
 )
@@ -69,10 +65,9 @@ class PublishItem:
 def _mark_copy_phase_complete() -> None:
     """Tell GitHub Actions that every planned copy operation completed.
 
-    The publish command can still exit non-zero after this point when GHCR created a
-    private package and anonymous verification fails. Keeping that state separate from
-    the process exit status prevents a pre-copy failure from producing irreversible
-    package-visibility instructions.
+    The publish command can still exit non-zero after this point when anonymous
+    verification fails. Keeping that state separate from the process exit status
+    distinguishes a pre-copy refusal from a failed final public verification.
     """
     github_output = os.environ.get("GITHUB_OUTPUT")
     if not github_output:
@@ -84,8 +79,7 @@ def _mark_copy_phase_complete() -> None:
 def build_publish_plan(
     *,
     target_registry: str,
-    source_registry: str | None = None,
-    candidate_git_sha: str | None = None,
+    development_git_sha: str | None = None,
 ) -> list[PublishItem]:
     """Return the (source -> target) copy plan for the public image subset.
 
@@ -97,16 +91,8 @@ def build_publish_plan(
     target_registry = images._ghcr_namespace(
         target_registry, channel="public release"
     )
-    source_registry = images._ghcr_namespace(
-        source_registry or private_candidate_container_registry(),
-        channel="private candidate",
-    )
-    source_sha = _candidate_git_sha(candidate_git_sha)
     target = target_registry.rstrip("/")
-    if source_registry.rstrip("/").lower() == target.lower():
-        raise ValueError(
-            "private candidate and public release registries must be separate namespaces"
-        )
+    source_sha = _development_git_sha(development_git_sha)
 
     plan: list[PublishItem] = []
     for tool in publicly_publishable_tools():
@@ -129,8 +115,8 @@ def build_publish_plan(
             raise ValueError(
                 f"refusing to publish restricted (Omniverse Kit) tool {tool!r} to a public registry"
             )
-        source_ref = images.candidate_image_for_tool(
-            tool, registry=source_registry, git_sha=source_sha
+        source_ref = images.development_image_for_tool(
+            tool, registry=target, git_sha=source_sha
         )
         image_name = CONTAINER_IMAGE_NAMES[tool]
         release_tag = images.public_release_tag_for_tool(tool)
@@ -144,9 +130,9 @@ def build_publish_plan(
     return plan
 
 
-def _candidate_git_sha(explicit: str | None = None) -> str:
-    """Resolve the exact source commit used for every private candidate tag."""
-    value = str(explicit or os.environ.get("NPA_CANDIDATE_SHA") or "").strip()
+def _development_git_sha(explicit: str | None = None) -> str:
+    """Resolve the exact source commit used for every public development tag."""
+    value = str(explicit or os.environ.get("NPA_DEVELOPMENT_SHA") or "").strip()
     if not value:
         completed = subprocess.run(
             ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False
@@ -647,17 +633,9 @@ def classify_preflight_failure(detail: str) -> str:
 # --------------------------------------------------------------------------------------
 # Anonymous pullability
 #
-# Pushing to GHCR is NOT the same as publishing. A newly created container package is
-# PRIVATE, and a package linked to a repository inherits that repository's access
-# *permissions* but explicitly NOT its visibility -- so even a public repo yields private
-# packages. Worse, GitHub exposes no REST API to change visibility for ORGANISATION-owned
-# packages: it is a manual step in the package's settings UI, and it is one-way (a public
-# package cannot be made private again).
-#
-# Without the check below, `publish_public` copies every image, exits 0, and reports
-# success while nothing is actually publicly pullable -- a silent false success on the one
-# action in this repo that cannot be undone. So the copy path in main() runs this
-# verification inline and fails on it.
+# Official development and release tags must already belong to public GHCR packages.
+# Without the check below, a registry write could report success while consumers cannot
+# pull the result. The unauthenticated HTTP path deliberately ignores ambient credentials.
 # --------------------------------------------------------------------------------------
 
 _ANON_TIMEOUT_SECONDS = 30
@@ -771,57 +749,6 @@ def verify_parity(plan: list[PublishItem]) -> list[tuple[PublishItem, str]]:
     return failures
 
 
-def ghcr_owner_and_package(target_ref: str) -> tuple[str, str] | None:
-    """Split a GHCR reference into its owner and package name.
-
-    GHCR nests the package under the repository: ``ghcr.io/<owner>/<repo>/<image>`` is
-    owner ``<owner>`` and package ``<repo>/<image>``. Returns ``None`` for any other
-    registry, which has its own naming and visibility model.
-    """
-    host, _, remainder = target_ref.partition("/")
-    if host != "ghcr.io" or not remainder:
-        return None
-    path = remainder.rpartition(":")[0] or remainder
-    owner, _, package = path.partition("/")
-    if not owner or not package:
-        return None
-    return owner, package
-
-
-def package_settings_url(target_ref: str, *, owner_type: str = "orgs") -> str | None:
-    """Deep link to the GHCR package settings page that owns ``target_ref``.
-
-    The visibility flip is the one step of a publish that cannot be automated -- GitHub
-    has no REST endpoint for it on organisation-owned packages -- so the least we can do
-    is not make someone hunt for each package in a list. The settings path
-    percent-encodes the slash in the nested package name; a raw slash 404s.
-    """
-    parsed = ghcr_owner_and_package(target_ref)
-    if parsed is None:
-        return None
-    owner, package = parsed
-    return (
-        f"https://github.com/{owner_type}/{owner}/packages/container/"
-        f"{urllib.parse.quote(package, safe='')}/settings"
-    )
-
-
-def visibility_checklist(failures: list[tuple[PublishItem, str]]) -> str:
-    """A markdown checklist of the packages still needing a manual visibility flip."""
-    lines = []
-    for item, _ in failures:
-        parsed = ghcr_owner_and_package(item.target_ref)
-        url = package_settings_url(item.target_ref)
-        # Label with the package name as the settings page shows it, so the list reads
-        # the same as the page it links to.
-        lines.append(
-            f"- [ ] [{parsed[1]}]({url})"
-            if parsed and url
-            else f"- [ ] {item.target_ref}"
-        )
-    return "\n".join(lines)
-
-
 def _crane_digest(
     ref: str, *, timeout: float = _PREFLIGHT_TIMEOUT_SECONDS
 ) -> tuple[bool, str]:
@@ -910,11 +837,8 @@ def _crane_copy(item: PublishItem) -> bool:
     """Copy ``item`` only when the target is absent or has a different digest.
 
     Returns ``True`` when a copy ran and ``False`` when the exact source digest was
-    already present. A target denial is allowed to reach ``crane copy`` because a new
-    private GHCR package can be unreadable through the pull path while the workflow's
-    token is still authorised to create it; the copy remains the authoritative write
-    check. Transient or unknown digest failures stop instead of risking an unnecessary
-    rewrite.
+    already present. Only authoritative tag absence may proceed to a copy. Denial,
+    transient, and unknown failures stop because official packages must already be public.
     """
     crane = shutil.which("crane")
     if not crane:
@@ -942,10 +866,10 @@ def _crane_copy(item: PublishItem) -> bool:
         )
     else:
         failure_kind = classify_preflight_failure(target_detail)
-        if failure_kind == "other":
+        if failure_kind != "missing":
             raise RuntimeError(
                 f"could not determine target digest for {item.target_ref}: {target_detail}; "
-                "refusing to copy because the target may already be current"
+                "refusing to copy because the official package is not proven public"
             )
         print(
             f"Target absent or unreadable ({target_detail}); copying {item.target_ref}"
@@ -970,16 +894,11 @@ def main(argv: list[str] | None = None) -> int:
         "defaults to $NPA_PUBLIC_REGISTRY.",
     )
     parser.add_argument(
-        "--source-registry",
-        default=None,
-        help="Private candidate namespace (defaults to $NPA_PRIVATE_REGISTRY).",
-    )
-    parser.add_argument(
-        "--candidate-sha",
+        "--development-sha",
         default=None,
         help=(
-            "Full Git SHA whose immutable dev-<sha> candidate is promoted. "
-            "Defaults to $NPA_CANDIDATE_SHA, then the checked-out HEAD."
+            "Full Git SHA whose immutable public dev-<sha> image is promoted. "
+            "Defaults to $NPA_DEVELOPMENT_SHA, then the checked-out HEAD."
         ),
     )
     parser.add_argument(
@@ -989,10 +908,8 @@ def main(argv: list[str] | None = None) -> int:
         "--verify-public",
         action="store_true",
         help=(
-            "Do not copy. Check that every planned target is pullable with NO credentials, "
-            "and exit non-zero if any is not. Pushing to GHCR leaves packages PRIVATE, and "
-            "there is no API to change that for org-owned packages, so this is how a "
-            "publish proves it actually published."
+            "Do not copy. Check that every planned release target is pullable with NO "
+            "credentials, and exit non-zero if any is not."
         ),
     )
     parser.add_argument(
@@ -1019,19 +936,11 @@ def main(argv: list[str] | None = None) -> int:
         "--skip-missing",
         action="store_true",
         help=(
-            "Operate on the images that exist, skipping any the private candidate channel does not have "
+            "Operate on the images that exist, skipping any public development tag that does not exist "
             "yet (NAME_UNKNOWN / MANIFEST_UNKNOWN), and report exactly which were skipped. "
             "The plan comes from the packaging contract, which records what this repo BUILDS, "
             "so a tool that landed before its image was built otherwise blocks every ready "
             "image. A denial is never skipped — that is a credential or role fault."
-        ),
-    )
-    parser.add_argument(
-        "--checklist",
-        action="store_true",
-        help=(
-            "With --verify-public, also print a markdown checklist of package settings "
-            "links for the targets that are not public yet (for a job summary)."
         ),
     )
     args = parser.parse_args(argv)
@@ -1041,8 +950,7 @@ def main(argv: list[str] | None = None) -> int:
 
     plan = build_publish_plan(
         target_registry=args.target,
-        source_registry=args.source_registry,
-        candidate_git_sha=args.candidate_sha,
+        development_git_sha=args.development_sha,
     )
     restricted = omniverse_restricted_image_names()
     print(f"Publishing {len(plan)} OSS image(s) to {args.target.rstrip('/')}")
@@ -1075,9 +983,7 @@ def main(argv: list[str] | None = None) -> int:
         print("\nVerifying anonymous (unauthenticated) pullability:")
         failures = verify_public(expected)
         if failures:
-            _explain_private_packages(failures, total=len(expected))
-            if args.checklist:
-                print("\n" + visibility_checklist(failures))
+            _explain_nonpublic_packages(failures, total=len(expected))
             return 1
         print(f"\nAll {len(expected)} image(s) are publicly pullable.")
         return 0
@@ -1132,8 +1038,7 @@ def main(argv: list[str] | None = None) -> int:
     print("\nVerifying anonymous (unauthenticated) pullability:")
     failures = verify_public(publishable)
     if failures:
-        _explain_private_packages(failures, total=len(publishable), after_copy=True)
-        print("\n" + visibility_checklist(failures))
+        _explain_nonpublic_packages(failures, total=len(publishable), after_copy=True)
         return 1
     print(f"\nAll {len(publishable)} image(s) are publicly pullable.")
     return 0
@@ -1192,8 +1097,8 @@ def _preflight_or_explain(
         lines.append(
             "Every read was denied, so this is the credential rather than any single tag or\n"
             "grant — the token did not resolve to an identity.\n"
-            "In CI, configure NPA_PRIVATE_GHCR_TOKEN with read access to the private\n"
-            "candidate packages (or grant the workflow GITHUB_TOKEN package access).\n"
+            "In CI, grant the workflow GITHUB_TOKEN package access to the public\n"
+            "development packages.\n"
             "Locally, log in with a GHCR package token and retry:\n"
             "  printf '%s' \"$GHCR_TOKEN\" | crane auth login ghcr.io -u \"$GHCR_USER\" "
             "--password-stdin"
@@ -1211,7 +1116,7 @@ def _preflight_or_explain(
             )
         if missing:
             lines.append(
-                f"{len(missing)} image(s) are simply not in the private candidate channel:"
+                f"{len(missing)} public development tag(s) do not exist:"
             )
             lines.extend(
                 f"  {item.source_ref}  ({_missing_reason(detail)})"
@@ -1239,24 +1144,19 @@ def _missing_reason(detail: str) -> str:
     return detail
 
 
-def _explain_private_packages(
+def _explain_nonpublic_packages(
     failures: list[tuple[PublishItem, str]], *, total: int, after_copy: bool = False
 ) -> None:
     lead = (
-        "The copy succeeded, but pushing to GHCR does not publish."
+        "The release-tag copy completed, but public verification failed."
         if after_copy
-        else "Pushing to GHCR does not publish."
+        else "Public verification failed."
     )
     print(
         f"\n{len(failures)} of {total} image(s) are NOT publicly pullable.\n"
-        f"{lead} A new container package is private, and a\n"
-        "package linked to a repository inherits the repository's access permissions\n"
-        "but NOT its visibility. GitHub offers no REST API to change visibility for\n"
-        "organisation-owned packages, so this is a MANUAL step per package:\n"
-        "  Package settings -> Danger Zone -> Change visibility -> Public\n"
-        "It is one-time — visibility persists across later pushes to the same package —\n"
-        "and irreversible: a public package cannot be made private again.\n"
-        "Direct links below (user-owned packages live under /users/ instead of /orgs/).",
+        f"{lead} Official development and release tags must be anonymously pullable.\n"
+        "Stop publication and investigate package visibility or registry availability;\n"
+        "do not treat an authenticated pull as public evidence.",
         file=sys.stderr,
     )
 

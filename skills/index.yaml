@@ -203,6 +203,17 @@ skills:
       - type: cli_help
         args: ["--help"]
         contains: "workbench"
+  - name: secure-image-build
+    category: atomic
+    when_to_use: "Build, tag, push, copy, or promote any NPA container image, especially immutable public development images and supported GHCR releases."
+    path: skills/atomic/secure-image-build/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/docker/workbench/packaging-contract.yaml
+      - type: file_exists
+        path: npa/src/npa/deploy/publish_public.py
+      - type: file_exists
+        path: .github/workflows/publish-public-images.yml
   - name: submit-workflow
     category: atomic
     when_to_use: "Submit, validate, or debug SkyPilot workflow YAML and runner paths."

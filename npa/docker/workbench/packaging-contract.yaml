@@ -184,7 +184,8 @@ images:
       artifacts, and are their responsibility rather than something this image
       certifies. Byte/layer scanning
       with scripts/scan_image_ltx_payload.py is mandatory before publication.
-      NOT YET BUILT OR GPU-VALIDATED; see ltx2/REDISTRIBUTION.md.
+      Built and scanned in development, but not yet validated by a real GPU
+      generation; it remains release-blocked in UNVALIDATED_PUBLICATION_TOOLS.
   sonic:
     dockerfile: sonic/Dockerfile
     isaac_runtime_fetch: true

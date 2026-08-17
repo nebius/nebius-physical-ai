@@ -34,8 +34,8 @@ if [[ "${PUSH}" == "1" && -z "${REGISTRY}" ]]; then
   exit 2
 fi
 case "${REGISTRY%/}" in
-  ghcr.io/nebius/nebius-physical-ai|ghcr.io/nebius/nebius-physical-ai-private)
-    echo "ERROR: npa-cosmos3-serving is restricted and cannot publish to an official NPA GHCR channel" >&2
+  ghcr.io/nebius/nebius-physical-ai)
+    echo "ERROR: npa-cosmos3-serving is restricted and cannot publish to official NPA GHCR" >&2
     exit 2
     ;;
 esac

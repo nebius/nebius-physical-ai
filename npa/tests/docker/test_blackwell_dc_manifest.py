@@ -194,7 +194,7 @@ def test_published_tags_are_additive_and_arch_labelled(entries: list[dict]) -> N
         assert re.fullmatch(r"sha256:[0-9a-f]{64}", entry["published_digest"]), (
             f"{name} has a malformed digest"
         )
-        assert set(entry["published_registries"]) == {"private-candidate", "public-release"}, (
+        assert set(entry["published_registries"]) == {"public-development", "public-release"}, (
             f"{name} must preserve candidate and release provenance"
         )
 

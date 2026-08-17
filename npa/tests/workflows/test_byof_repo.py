@@ -173,7 +173,7 @@ def test_docker_login_prefers_registry_only_profile(monkeypatch) -> None:
     monkeypatch.setenv("NPA_NEBIUS_PROFILE", "cluster-admin")
     monkeypatch.setattr(module, "_run", fake_run)
 
-    module._docker_login_nebius("cr.example.nebius.cloud")
+    module._docker_login_nebius("registry.example")
 
     assert seen["token_cmd"] == [
         "nebius",

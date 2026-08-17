@@ -42,10 +42,9 @@ The Kubernetes controller is the default path (`W9-skypilot-k8s-controller`). Th
   following state as its barrier.
 - Managed-job Python API `Dag` support is effectively single-task for this repo's burst path. Use `npa burst submit-yaml` only for rendered single-task SkyPilot YAMLs; use `npa workbench workflow submit` for multi-stage workbench YAMLs.
 - Direct Nebius burst jobs pull `resources.image_id` before YAML `setup` runs.
-  Public GHCR releases need no registry secret. Private GHCR candidates and
-  operator-controlled private registries require explicit exact-host SkyPilot
-  Docker credentials; NPA forwards them but never mints a cloud-provider
-  registry token.
+  Official public GHCR development and release tags need no registry secret.
+  Operator-controlled private registries require explicit exact-host SkyPilot
+  Docker credentials; NPA forwards them but never mints a provider token.
 
 ## What the Renderer Emits
 

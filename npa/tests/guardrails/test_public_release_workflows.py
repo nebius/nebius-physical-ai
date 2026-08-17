@@ -1,4 +1,4 @@
-"""Guard the separate private-candidate and public-release GHCR channels."""
+"""Guard the single public-development and public-release GHCR model."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOWS = ROOT / ".github" / "workflows"
-CANDIDATE = WORKFLOWS / "publish-private-candidate-image.yml"
 PUBLISH = WORKFLOWS / "publish-public-images.yml"
 HEALTH = WORKFLOWS / "public-release-health.yml"
 
@@ -27,73 +26,69 @@ def _runs(path: Path) -> str:
     )
 
 
-def test_all_three_channel_workflows_exist() -> None:
-    assert CANDIDATE.is_file()
+def test_public_only_workflows_exist_without_a_private_candidate_workflow() -> None:
     assert PUBLISH.is_file()
     assert HEALTH.is_file()
+    assert not (WORKFLOWS / "publish-private-candidate-image.yml").exists()
 
 
-def test_candidate_workflow_uses_immutable_private_refs_and_visibility_gate() -> None:
-    text = CANDIDATE.read_text(encoding="utf-8")
-    spec = _spec(CANDIDATE)
-    triggers = spec.get("on") or spec[True]
-    assert set(triggers) == {"workflow_dispatch"}
-    assert spec["permissions"]["packages"] == "write"
-    assert "candidate_image_for_tool" in text
-    assert "github.sha" in text
-    assert "nebius-physical-ai-private" in text
-    assert "visibility" in text and "= private" in text
-    assert "anonymously pullable" in text
-    assert 'DOCKER_CONFIG="$anonymous_config" crane manifest' in text
-    assert "NPA_SOURCE_SHA=${{ github.sha }}" in text
-    assert "provenance: mode=max" in text
-    assert "sbom: true" in text
-    assert "{{json .Provenance}}" in text
-    assert "{{json .SBOM}}" in text
-    assert "trivy-action@v0.36.0" in text
-
-
-def test_live_payload_scan_can_read_a_private_candidate() -> None:
-    text = (WORKFLOWS / "image-security-scan.yml").read_text(encoding="utf-8")
-    assert "packages: read" in text
-    assert "docker/login-action@v3" in text
-    assert "secrets.GITHUB_TOKEN" in text
-
-
-def test_public_publisher_promotes_candidate_sha_to_separate_target() -> None:
+def test_public_publisher_builds_only_immutable_public_development_refs() -> None:
     text = PUBLISH.read_text(encoding="utf-8")
     spec = _spec(PUBLISH)
     triggers = spec.get("on") or spec[True]
     assert set(triggers) == {"workflow_dispatch"}
     assert spec["permissions"]["packages"] == "write"
-    assert "candidate_sha" in text
-    assert "nebius-physical-ai-private" in text
-    assert "ghcr.io/${GITHUB_REPOSITORY,,}" in text
-    assert "NPA_PRIVATE_GHCR_TOKEN" in text
-    assert "iam get-access-token" not in text
+    assert spec["permissions"]["attestations"] == "write"
+    assert "development_image_for_tool" in text
+    assert "dev-<sha>" in text
+    assert "ghcr.io/nebius/nebius-physical-ai" in text
+    assert "nebius-physical-ai-private" not in text
+    assert "NPA_PRIVATE" not in text
 
 
-def test_public_publisher_can_bootstrap_candidate_from_existing_dispatch_file() -> None:
+def test_prepublication_gates_run_before_the_public_dev_push() -> None:
     text = PUBLISH.read_text(encoding="utf-8")
-    assert "NPA_BUILD_CANDIDATE_TOOL" in text
-    assert "candidate_image_for_tool" in text
-    assert "NPA_SOURCE_SHA=${{ inputs.candidate_sha || github.sha }}" in text
-    assert "provenance: mode=max" in text
-    assert "sbom: true" in text
-    assert "{{json .Provenance}}" in text
-    assert "{{json .SBOM}}" in text
-    assert "trivy-action@v0.36.0" in text
-    assert "skypilot-0.12.2-v1" in text
-    assert "visibility)\" = private" in text
-    assert "NPA_RETIRE_CANDIDATE_REF" in text
-    assert "vars.NPA_RETIRE_CANDIDATE_REF == ''" in text
+    push = text.index("Push only after every pre-publication gate passes")
+    for required in (
+        "test_packaging_contract.py",
+        "npa.guardrails.confidentiality",
+        "gitleaks detect",
+        "Prove destination package is already public",
+        "scan_image_omniverse_payload.py",
+        "scan_image_ltx_payload.py",
+        "test_ltx_runtime_bootstrap.py",
+        "scanners: vuln,secret,license",
+        "format: spdx-json",
+        "non-root runtime required",
+        "cached EULA acceptance",
+    ):
+        assert required in text
+        assert text.index(required) < push
+
+
+def test_post_push_and_promotion_gates_are_digest_bound() -> None:
+    text = PUBLISH.read_text(encoding="utf-8")
+    for required in (
+        "attest-build-provenance@v3",
+        "attest-sbom@v3",
+        "Require both digest-bound attestation results",
+        "crane digest",
+        "DOCKER_CONFIG=\"$anonymous_config\" crane manifest",
+        "--development-sha",
+        "--mode preflight",
+        "--mode publish",
+        "Retained immutable dev tags as release provenance",
+    ):
+        assert required in text
+
+
+def test_failed_development_cleanup_is_exact_and_refuses_shared_digest() -> None:
+    text = PUBLISH.read_text(encoding="utf-8")
+    assert "cleanup-failed-build" in text
     assert "metadata.container.tags" in text
-    assert "sole tagged version" in text
-    assert '/restore' in text
-    assert 'final cleanup verification remains required' in text
-    assert "gh api --method DELETE" in text
-    assert "anonymously pullable" in text
-    assert 'DOCKER_CONFIG="$anonymous_config" crane manifest' in text
+    assert "Refusing cleanup: digest also carries tags" in text
+    assert "versions/${version_id}" in text
+    assert "Deletion does not revoke downloads" in text
 
 
 def test_public_health_is_anonymous_and_read_only() -> None:
@@ -106,16 +101,3 @@ def test_public_health_is_anonymous_and_read_only() -> None:
     assert "--verify-public" in run
     assert "auth login" not in run
     assert "--preflight" not in run
-
-
-def test_no_workflow_mentions_nebius_container_registry_auth() -> None:
-    combined = "\n".join(
-        path.read_text(encoding="utf-8") for path in (CANDIDATE, PUBLISH, HEALTH)
-    )
-    for forbidden in (
-        "NEBIUS_" + "CR_TOKEN",
-        "NEBIUS_" + "SA_CREDENTIALS_JSON",
-        "iam get-access-token",
-        "npa-" + "nebius-registry",
-    ):
-        assert forbidden not in combined

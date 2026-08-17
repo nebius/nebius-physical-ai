@@ -424,7 +424,6 @@ Use environment variables and placeholders:
 - `NEBIUS_PROJECT_ID`
 - `NEBIUS_TENANT_ID`
 - `NPA_REGISTRY`
-- `NPA_PRIVATE_REGISTRY`
 - `NPA_PUBLIC_REGISTRY`
 - `NPA_S3_BUCKET`
 - `NPA_STORAGE_ENDPOINT`
@@ -703,12 +702,11 @@ Most named tools expose `system-info`. LanceDB's modular CLI registration in
 registration in `npa/src/npa/cli/workbench/sonic/cli.py` does not include it.
 
 New tools should include `system-info`.
-### Registry channels are explicit
-`NPA_PRIVATE_REGISTRY` selects the private GHCR candidate namespace used by
-maintainer publication, `NPA_PUBLIC_REGISTRY` selects the public release
-namespace, and `NPA_REGISTRY` is the operator execution override. Candidate
-tags are immutable `dev-<full-git-sha>` values. Restricted images use only an
-operator-controlled registry and cannot enter either official channel.
+### Public development and release tags share one namespace
+`NPA_PUBLIC_REGISTRY` selects the official public GHCR namespace, and
+`NPA_REGISTRY` is the operator execution override. Development tags are
+immutable `dev-<full-git-sha>` values on the normal image packages. Restricted
+images use only an operator-controlled registry and never enter official GHCR.
 ### Detection training is a service, not one of the 8 named tools
 `npa/src/npa/workbench/detection_training/` exists and is a strong service
 reference. It is not in the 8-tool architecture list in

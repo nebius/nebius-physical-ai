@@ -61,6 +61,13 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def test_official_build_helper_only_pushes_full_sha_development_tags() -> None:
+    build = (DOCKER_DIR / "build.sh").read_text(encoding="utf-8")
+    assert '"${REGISTRY%/}" == "ghcr.io/nebius/nebius-physical-ai"' in build
+    assert '"$TAG" == "dev-${SOURCE_COMMIT}"' in build
+    assert "promote releases by digest" in build
+
+
 @pytest.fixture
 def image(tmp_path: Path) -> Path:
     """Reproduce the parts of the image layout the script actually depends on."""

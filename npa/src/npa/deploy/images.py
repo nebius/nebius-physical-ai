@@ -9,22 +9,13 @@ import os
 from pathlib import Path
 from typing import Any
 
-# Official NPA images use two separate GHCR package namespaces. GHCR visibility is
-# package-level, so development tags must never share the public release packages:
-#
-# * maintainers push immutable ``dev-<git-sha>`` candidates to the private namespace;
-# * the guarded publisher copies a validated candidate digest to the public namespace
-#   under the supported release tag.
-#
-# ``NPA_REGISTRY`` remains the generic operator override for execution. It does not
-# change either official publication channel. Restricted/build-your-own images must use
-# an operator-controlled registry and are refused from both official GHCR namespaces.
-PRIVATE_CANDIDATE_CONTAINER_REGISTRY_ENV = "NPA_PRIVATE_REGISTRY"
+# Official NPA images use one public GHCR namespace. Immutable
+# ``dev-<full-git-sha>`` tags and supported release tags share each image package;
+# guarded promotion applies the release tag only to an already validated dev digest.
+# ``NPA_REGISTRY`` remains the generic operator execution override. Restricted and
+# build-your-own images must use an operator-controlled registry and are refused from
+# official GHCR.
 PUBLIC_CONTAINER_REGISTRY_ENV = "NPA_PUBLIC_REGISTRY"
-DEFAULT_PRIVATE_CANDIDATE_CONTAINER_REGISTRY = (
-    "ghcr.io/nebius/nebius-physical-ai-private"
-)
-PRIVATE_CANDIDATE_IMAGE_SUFFIX = "-candidate"
 DEFAULT_PUBLIC_CONTAINER_REGISTRY = "ghcr.io/nebius/nebius-physical-ai"
 
 # Compatibility name for callers that mean "the normal execution registry". The
@@ -364,6 +355,14 @@ def sonic_image_entry(
         raise ValueError(
             f"Unknown SONIC image variant {resolved!r}; choose one of: {choices}"
         ) from exc
+    if str(entry.get("status") or "active") != "active":
+        reason = str(entry.get("quarantine_reason") or "restricted image bytes")
+        raise ValueError(
+            f"SONIC image variant {resolved!r} is quarantined and cannot be resolved: "
+            f"{reason} Use sonic-k8s-host-mounted or build a newly scanned, "
+            "license-compatible replacement."
+        )
+    return entry
 
 
 def container_image_for_tool(
@@ -495,15 +494,6 @@ def container_image_candidates(
     ]
 
 
-def private_candidate_container_registry() -> str:
-    """Return the official private GHCR candidate namespace."""
-    value = (
-        os.environ.get(PRIVATE_CANDIDATE_CONTAINER_REGISTRY_ENV, "").strip()
-        or DEFAULT_PRIVATE_CANDIDATE_CONTAINER_REGISTRY
-    )
-    return _ghcr_namespace(value, channel="private candidate")
-
-
 def public_container_registry() -> str:
     """Return the official public GHCR release namespace."""
     value = (
@@ -526,16 +516,16 @@ def _ghcr_namespace(value: str, *, channel: str) -> str:
 
 
 def development_tag(git_sha: str) -> str:
-    """Return the immutable candidate tag for a full Git commit SHA."""
+    """Return the immutable public development tag for a full Git commit SHA."""
     normalized = str(git_sha or "").strip().lower()
     if len(normalized) != 40 or any(
         char not in "0123456789abcdef" for char in normalized
     ):
-        raise ValueError("candidate source SHA must be a full 40-character Git SHA")
+        raise ValueError("development source SHA must be a full 40-character Git SHA")
     return f"dev-{normalized}"
 
 
-def candidate_image_for_tool(
+def development_image_for_tool(
     tool: str,
     *,
     git_sha: str,
@@ -543,34 +533,22 @@ def candidate_image_for_tool(
     gpu_target: str | None = None,
     image_variant: str | None = None,
 ) -> str:
-    """Return an official private-candidate reference for redistributable bytes."""
+    """Return an official public development reference for redistributable bytes."""
     if not is_publicly_redistributable(tool):
         raise ValueError(
-            f"{tool!r} is restricted/build-your-own and cannot be pushed to either "
-            "official GHCR channel; use an operator-controlled registry"
+            f"{tool!r} is restricted/build-your-own and cannot be pushed to "
+            "official GHCR; use an operator-controlled registry"
         )
-    resolved_registry = registry or private_candidate_container_registry()
     resolved_registry = _ghcr_namespace(
-        resolved_registry, channel="private candidate"
+        registry or public_container_registry(), channel="public development"
     )
-    if (
-        resolved_registry.rstrip("/").lower()
-        == public_container_registry().rstrip("/").lower()
-    ):
-        raise ValueError(
-            "private candidate registry must be separate from the public GHCR release namespace"
-        )
-    resolved = container_image_for_tool(
+    return container_image_for_tool(
         tool,
         registry=resolved_registry,
         tag=development_tag(git_sha),
         gpu_target=gpu_target,
         image_variant=image_variant,
     )
-    name, separator, tag = resolved.rpartition(":")
-    if not separator:
-        raise ValueError("candidate image must carry an immutable development tag")
-    return f"{name}{PRIVATE_CANDIDATE_IMAGE_SUFFIX}:{tag}"
 
 
 def is_public_registry(registry: str) -> bool:
@@ -591,12 +569,9 @@ def is_public_registry(registry: str) -> bool:
 
 
 def is_official_container_registry(registry: str) -> bool:
-    """Whether ``registry`` is either official NPA GHCR publication channel."""
+    """Whether ``registry`` is the official NPA public GHCR namespace."""
     candidate = str(registry or "").strip().rstrip("/").lower()
-    return candidate in {
-        private_candidate_container_registry().rstrip("/").lower(),
-        public_container_registry().rstrip("/").lower(),
-    }
+    return candidate == public_container_registry().rstrip("/").lower()
 
 
 def is_publicly_redistributable(tool: str) -> bool:

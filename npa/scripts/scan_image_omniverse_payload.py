@@ -6,7 +6,7 @@ Dockerfile is not enough: the claim is about bytes in layers, so this inspects t
 image's filesystem and its layer history.
 
     npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
-        ghcr.io/nebius/nebius-physical-ai-private/npa-isaac-lab-candidate:dev-<git-sha>
+        ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab:dev-<full-git-sha>
 
     # or from a local docker save tarball, with no registry access
     docker save npa-isaac-lab:rc1 -o /tmp/img.tar

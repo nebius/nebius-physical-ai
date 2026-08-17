@@ -236,19 +236,36 @@ npa/docker/workbench/sonic/build.sh    --registry <your-registry>/<namespace> --
 npa/docker/workbench/groot/build.sh    --registry <your-registry>/<namespace> --push
 ```
 
-### Promoting the canonical tags — mind the order
+### Public development and release — mind the order
 
-Because the runtime-fetch images validate the run-scoped operator EULA policy
-before fetching Isaac,
-promoting them onto the canonical tags is not a neutral swap. Four layers had to be taught
-to forward that acceptance: the Isaac/GR00T/SONIC command builders, the SkyPilot
-renderer, and the canonical Sim2Real standard-workflow Isaac resource profile.
+Official images use one public namespace:
+`ghcr.io/nebius/nebius-physical-ai`. A reviewed build first receives the
+immutable tag `dev-<full-git-sha>` on its normal `npa-<tool>` package. Public
+development images are anonymously downloadable immediately; deleting a failed
+tag cannot revoke downloads.
 
-**Publish only after that plumbing is on the default branch.** Build the exact
-commit into the private GHCR namespace as `dev-<full-git-sha>`, validate and scan
-that digest, then run `npa.deploy.publish_public --candidate-sha <full-git-sha>`.
-The publisher promotes the validated candidate digest to the supported release
-tag; it never reads a moving canonical source tag.
+Before that first public push, run every packaging, licensing, base-pin,
+non-root, secret, customer-data, infrastructure-data, proprietary-payload,
+gated-asset, SBOM, vulnerability, provenance, source-revision, and bootstrap-
+contract gate. Restricted images never enter official GHCR. After the push,
+resolve the digest, repeat exact-digest scans, prove anonymous pullability, and
+run a real functional workflow on compatible physical hardware.
+
+Promote only the validated digest to its supported release tag:
+
+```bash
+npa/.venv/bin/python -m npa.deploy.publish_public \
+  --target ghcr.io/nebius/nebius-physical-ai \
+  --development-sha <full-git-sha> --dry-run
+npa/.venv/bin/python -m npa.deploy.publish_public \
+  --target ghcr.io/nebius/nebius-physical-ai \
+  --development-sha <full-git-sha>
+```
+
+The publisher resolves each development tag once and copies only by immutable
+digest. It checks config, licensing, payload scans, SBOM/provenance attestations,
+and any declared bootstrap contract before exposing a release tag, then verifies
+anonymous pullability and exact digest parity.
 
 **The honest trade.** `npa-isaac-lab` went from 8.41 GB to 10.66 GB compressed (+27%).
 Removing Isaac Sim saved less than adding a standalone PyTorch cu128 wheel set cost — its
@@ -263,39 +280,10 @@ Every required gated repository is probed before provisioning; there is no NPA
 manual terms flag or access-check bypass. Public repositories work anonymously.
 The upstream license still applies, and we never redistribute weights.
 
-Official publication has two physically separate GHCR namespaces because GHCR
-visibility is package-level:
-
-- private candidates: `ghcr.io/nebius/nebius-physical-ai-private`, using
-  `npa-<tool>-candidate` package names tagged only with immutable
-  `dev-<full-git-sha>` identifiers;
-- public releases: `ghcr.io/nebius/nebius-physical-ai`, tagged with the validated
-  supported-tool version and copied by digest from the candidate.
-
-Only the `public`-classified subset may enter either official channel. Use the
-license-guarded publisher, which copies exactly `publicly_publishable_tools()`
-and hard-refuses anything classified `restricted`:
-
-```bash
-# source defaults to $NPA_PRIVATE_REGISTRY; target defaults to $NPA_PUBLIC_REGISTRY
-python -m npa.deploy.publish_public --candidate-sha <full-git-sha> --dry-run
-python -m npa.deploy.publish_public --candidate-sha <full-git-sha>
-```
-
-The copy path is bracketed by checks it runs itself. Before writing anything it
-resolves every source tag once and uses only the resulting immutable digest for
-config inspection, licensing gates, bootstrap-attestation validation, and copy.
-The target tag is not exposed until all those gates pass. A missing/stale
-bootstrap label, a config/digest mismatch, or any scan failure leaves the public
-reference unchanged. The GitHub workflow serializes publishers for a target and
-does not cancel an in-progress publication because registries provide no atomic
-compare-and-swap for tags.
-
-It also reads every **candidate** manifest, because `crane auth login` writes a config file and
-exits 0 for any string without ever contacting the registry — so a stale credential
-would otherwise surface partway through the copy loop with some packages already
-created. Run it alone with `--preflight`. The registry's own error code says which
-of three unrelated problems you have:
+The manual `Publish public images` workflow can build selected public development
+images and can separately preflight/promote selected validated tools. It uses the
+repository-scoped `GITHUB_TOKEN` with `packages: write`; no second registry token
+or namespace is part of the official flow. Run `--preflight` before promotion.
 
 | Code | Meaning | Fix |
 | --- | --- | --- |
@@ -304,33 +292,18 @@ of three unrelated problems you have:
 | `NAME_UNKNOWN` | no such repository — the image was never built and pushed | build and push it, or `--skip-missing` |
 | `MANIFEST_UNKNOWN` | the repository exists but not this tag — the pin points at an unpushed build | correct the pin, or `--skip-missing` |
 
-Locally, log in with a scoped GHCR token that can read the private candidate packages:
+Locally, authenticate only when a registry operation needs a write-capable identity:
 
 ```bash
 printf '%s' "$GHCR_TOKEN" | crane auth login ghcr.io -u "$GHCR_USER" --password-stdin
 ```
 
-### CI credentials are GHCR-scoped
-
-`NPA_PRIVATE_GHCR_TOKEN` must have package read/write access to the private
-candidate packages. The workflow may use `GITHUB_TOKEN` when repository/package
-permissions permit. Neither credential is a Nebius IAM token, and NPA never
-mints cloud-provider tokens for registry access.
-
-Prove the credential by reading a real candidate manifest. Point `DOCKER_CONFIG`
-at an empty directory first so the read cannot succeed on an ambient login:
+Prove the development image anonymously with an empty Docker config:
 
 ```bash
 export DOCKER_CONFIG="$(mktemp -d)"
-printf '%s' "$GHCR_TOKEN" | crane auth login ghcr.io -u "$GHCR_USER" --password-stdin
-crane manifest ghcr.io/nebius/nebius-physical-ai-private/npa-lerobot-candidate:dev-<full-git-sha> >/dev/null && echo ok
+crane manifest ghcr.io/nebius/nebius-physical-ai/npa-lerobot:dev-<full-git-sha> >/dev/null
 ```
-
-You do not have to guess whether a real run would work: the `Publish public images`
-workflow's default **dry run is a full rehearsal** — it resolves the plan, logs in to
-the private candidate channel, preflights every pinned tag, and runs the Isaac gate, skipping
-only the copy and the public verification. A green dry run means the real run will get
-as far as writing.
 
 ### The plan is what we build, not what is pushed
 
@@ -356,76 +329,30 @@ copies the rest. Two properties matter here:
   `--skip-missing`, because a credential or role fault would otherwise quietly shrink the
   published set. Denial also wins when a registry answers `NAME_UNKNOWN` for a repository
   the identity cannot see.
-- **Skipped images are absent from the mirror**, so a consumer pointing `NPA_REGISTRY` at it
+- **Skipped release tags are absent**, so a consumer using the supported pin
   gets a pull failure for those tags until the image is built and the workflow re-run.
-  Adding one later costs one more visibility flip.
 
 The copy itself is incremental. After the complete digest-pinned source preflight,
 bootstrap attestation, and licensing gates,
 the publisher compares each source and target manifest digest. An exact match prints
 ``Already current; skipping copy`` and performs no registry write; only a missing or changed
 target runs ``crane copy``. This makes it safe to re-run the full guarded plan when one new
-image lands without republishing every existing image. A second run after the one-time GHCR
-visibility flips likewise skips all matching copies and only re-verifies anonymous pulls.
-
-or the `Publish public images` GitHub Actions workflow (manual dispatch,
-dry-run by default). **Consumers in any tenant** then pull the OSS images by
+image lands without republishing every existing image. Consumers then pull by
 pointing the resolver at the public release channel:
 
 ```bash
 export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai   # OSS images, any tenant
 ```
 
-### Pushing is not publishing
-
-A newly created GHCR container package is **private**, and a package linked to a repository
-inherits that repository's access *permissions* but **not** its visibility — so even a
-public repo yields private packages. GitHub exposes **no REST API** to change visibility for
-organisation-owned packages (only user-owned ones), so this step cannot be automated. It is
-manual, per package, and one-way.
-
-A copy therefore verifies the outcome it claims instead of reporting success on the
-push, and the same check runs standalone:
+Both development and release tags must pass the unauthenticated check:
 
 ```bash
-# checks every planned target over the UNAUTHENTICATED path; non-zero if any is private
-python -m npa.deploy.publish_public --verify-public
+npa/.venv/bin/python -m npa.deploy.publish_public --verify-public
 ```
 
-GHCR creates each package on first push; there is no registry service to provision.
-
-To make a package public, someone with admin on it opens that package's settings and
-uses **Danger Zone → Change visibility → Public**. `--verify-public --checklist` prints
-a direct link per package that is still private, and the publish workflow writes the
-same list into its job summary, so this is a row of clicks rather than a hunt through
-<https://github.com/orgs/nebius/packages>:
-
-```
-https://github.com/orgs/<org>/packages/container/<repo>%2F<image>/settings
-```
-
-The flip is **one-time per package**, not per release: visibility persists across later
-pushes of new tags to an existing package. So the manual cost is paid once at
-onboarding, and adding a new image later costs one more flip.
-
-> **This is irreversible.** A public package cannot be made private again, and deleting a
-> tag does not undo publication — treat a mistaken publish as an incident, not a revert.
-> Confirm the `redistribution` classification of every image in the plan first.
-
-Why this one step cannot be automated: GitHub's Packages REST API exposes list, delete
-and restore only, and the visibility `PATCH` that exists for *user*-owned packages has
-no organisation equivalent — it 404s for any token type, including GitHub App tokens.
-A package linked to a repository inherits that repository's access *permissions* but
-[explicitly not its
-visibility](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility),
-so a public repo does not yield public packages either. Note also that `crane copy`
-transfers manifests unchanged, so it cannot add an `org.opencontainers.image.source`
-label; linking every package to the repo automatically would mean rebuilding every
-image, which is deliberately not done here.
-
-Never add a `restricted` image to either official GHCR channel.
+Never add a `restricted` image to official GHCR.
 `cosmos3-serving` is currently restricted/build-your-own, and
-`publish_public` plus `candidate_image_for_tool` both refuse it as defence in
+`publish_public` plus `development_image_for_tool` both refuse it as defence in
 depth around the selector.
 
 > **Publishing is a business decision.** The engineering makes publication defensible —

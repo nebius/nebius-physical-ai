@@ -135,12 +135,12 @@ human legal approval.
 
 ## Status
 
-**Not yet built or GPU-validated.** No accepted-image manifest exists, no tag has
-been published, and `ltx2` is absent from the Blackwell/GPU compatibility
-manifests on purpose: those record physical evidence, and inventing entries for
-an unbuilt image would be the kind of unearned claim those files exist to
-prevent. `docs/workbench/ltx2.md` carries the dev-VM runbook that produces the
-evidence, and `npa/tests/e2e/test_ltx2_live_e2e.py` is the gated live check.
+**Built and byte-scanned; not GPU-validated or released.** No accepted-image
+manifest exists, and `ltx2` is absent from the Blackwell/GPU compatibility
+manifests on purpose: those record physical evidence, and inventing an entry
+before a real generation would be an unearned claim. `docs/workbench/ltx2.md`
+carries the runbook, and `npa/tests/e2e/test_ltx2_live_e2e.py` is the gated live
+check.
 
 One consequence of delegating installation to upstream's own `uv sync` is that
 the transitive dependency closure is **not** hash-locked the way
@@ -149,7 +149,7 @@ ref and upstream's own constraints. That is a deliberate trade — a lockfile we
 invented and could not resolve or verify here would be fiction — and the
 bootstrap captures the real resolved closure to
 `npa_resolved_inventory.txt` in the cache on first sync. Hardening that captured
-resolution into a checked-in hash lock is the follow-up once a real build exists.
+resolution into a checked-in hash lock is follow-up work after real GPU validation.
 
 The container starts as UID 1000 with the runtime and model caches owned by that
 user. As elsewhere in this workbench that is an ownership boundary, not a

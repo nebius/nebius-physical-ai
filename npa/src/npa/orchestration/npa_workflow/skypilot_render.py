@@ -1589,8 +1589,6 @@ def plan_image_pull_secrets(
             for item in raw_names
             if isinstance(item, dict) and str(item.get("name") or "").strip()
         )
-        if _is_nebius_registry_image(image):
-            names = tuple(dict.fromkeys((*names, "npa-nebius-registry")))
         paths.setdefault(image, []).append(names)
     return {
         image: ()
@@ -1820,23 +1818,22 @@ def build_skypilot_task_doc(
         ):
             envs["NPA_SRC_OVERLAY"] = "1"
             doc["envs"] = envs
-    _inject_private_registry_docker_secrets(
+    _inject_operator_registry_docker_secrets(
         doc,
         materialize=options.materialize_registry_secrets,
     )
     return doc
 
 
-def _inject_private_registry_docker_secrets(
+def _inject_operator_registry_docker_secrets(
     doc: dict[str, Any],
     *,
     materialize: bool = True,
 ) -> None:
-    """Embed exact-host credentials for private registry images when configured.
+    """Embed configured exact-host credentials for an operator registry.
 
-    Public GHCR releases remain anonymous. The official private candidate
-    namespace fails closed unless explicit GHCR credentials are available;
-    NPA never mints provider IAM tokens or manages Kubernetes pull secrets.
+    Official public GHCR development and release tags remain anonymous. NPA
+    never mints provider IAM tokens or manages Kubernetes pull secrets.
     """
 
     import os
@@ -1851,12 +1848,7 @@ def _inject_private_registry_docker_secrets(
 
     server = image_id.removeprefix("docker:").split("/", 1)[0]
     creds_server = str(os.environ.get("SKYPILOT_DOCKER_SERVER") or "").strip()
-    from npa.deploy.images import private_candidate_container_registry
-
-    candidate_prefix = private_candidate_container_registry().rstrip("/") + "/"
-    normalized_image = image_id.removeprefix("docker:").strip()
-    official_private = normalized_image.startswith(candidate_prefix)
-    if creds_server != server and not official_private:
+    if creds_server != server:
         return
 
     from npa.orchestration.skypilot.registry_preflight import (
@@ -1867,12 +1859,6 @@ def _inject_private_registry_docker_secrets(
     if not materialize:
         password = "<SKYPILOT_DOCKER_PASSWORD>"
     elif not password:
-        if official_private:
-            raise NpaWorkflowRenderError(
-                "private GHCR candidate image requires explicit exact-host "
-                "SKYPILOT_DOCKER_SERVER, SKYPILOT_DOCKER_USERNAME, and "
-                "SKYPILOT_DOCKER_PASSWORD credentials"
-            )
         return
 
     secrets = doc.setdefault("secrets", {})

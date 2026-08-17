@@ -900,7 +900,7 @@ npa workbench workflow plan-spec     npa/workflows/workbench/npa-workflows/vlm-e
 
 # Launch on Nebius (after npa configure)
 npa workbench workflow submit npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml \
-  --run-id demo --registry cr.eu-north1.nebius.cloud/<your-registry-id>
+  --run-id demo --registry ghcr.io/nebius/nebius-physical-ai
 
 # Inspect the plan without launching
 npa workbench workflow submit npa/workflows/workbench/npa-workflows/token-factory-caption.yaml \
@@ -930,20 +930,13 @@ Architecture context:
 
 ## Container registry
 
-Every Workbench tool ships as a container image in a Nebius container registry —
-a primary in `eu-north1` and a mirror in `us-central1`. Resolve the registry
-through `npa configure` or `npa.deploy.images`; never hardcode a registry id.
-The publicly redistributable subset is also mirrored to GHCR for anonymous
-external pulls.
+Official redistributable Workbench images ship in the public GHCR namespace
+`ghcr.io/nebius/nebius-physical-ai`. Resolve the registry through
+`npa configure` or `npa.deploy.images`; restricted images remain build-your-own
+in an operator-controlled registry.
 
 ```bash
-# Log Docker into the registry (tokens expire; a 401 on pull means refresh)
-REGISTRY_HOST=cr.eu-north1.nebius.cloud npa/scripts/nebius_registry_docker_login.sh
-
-# Build and push an image with the canonical tag for its tool
-npa/docker/workbench/lerobot/build.sh --registry "$NPA_REGISTRY" --push
-
-# Pull a published image without Nebius registry credentials
+# Pull a published image anonymously
 export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
 docker pull "${NPA_REGISTRY}/npa-retargeting:0.1.1"
 ```

@@ -524,9 +524,9 @@ def resolve_registry_credentials(
 ) -> tuple[str, str]:
     """Return explicit credentials scoped to the selected registry host.
 
-    NPA never mints cloud-provider registry tokens. Public GHCR releases use
-    anonymous pulls; private candidates or operator registries must supply an
-    exact-server username/password through the documented environment.
+    NPA never mints cloud-provider registry tokens. Official public GHCR tags
+    use anonymous pulls; operator-controlled registries must supply an exact-
+    server username/password through the documented environment.
     """
     del mint
 

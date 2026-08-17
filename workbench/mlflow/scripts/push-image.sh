@@ -10,8 +10,8 @@ if [[ -z "$REGISTRY" ]]; then
   exit 2
 fi
 case "${REGISTRY%/}" in
-  ghcr.io/nebius/nebius-physical-ai|ghcr.io/nebius/nebius-physical-ai-private)
-    echo "ERROR: this build-your-own helper cannot publish to either official GHCR channel" >&2
+  ghcr.io/nebius/nebius-physical-ai)
+    echo "ERROR: this build-your-own helper cannot publish to official NPA GHCR" >&2
     exit 2
     ;;
 esac

@@ -1,24 +1,6 @@
-# Promote immutable private GHCR candidates to separate PUBLIC GHCR packages.
-#
-# THE ISAAC IMAGES ARE NOW IN THAT SET. This comment previously said the opposite
-# -- that the workflow "HARD-refuses" isaac-lab/sonic/sonic-mujoco/groot as
-# NVIDIA-proprietary. That was true when they baked Omniverse Kit. They no longer
-# do: they ship no NVIDIA Isaac bytes and fetch Isaac Sim / Isaac Lab at first run
-# under the OPERATOR's own EULA acceptance. See docs/workbench/container-packaging.md.
-#
-# That reclassification rests on the canonical tags resolving to the runtime-fetch
-# images. If a canonical tag still points at an old Omniverse-baked build, this
-# workflow would publish proprietary content -- irreversibly, because GHCR package
-# visibility cannot be undone. The "Gate" step below checks that mechanically before
-# any copy happens; do not remove it.
-#
-# Manual dispatch only (never auto-publishes). Defaults to dry-run, and the dry run is a
-# real rehearsal: it resolves the plan, proves the source credential, reads every pinned
-# candidate dev-SHA tag, and runs the gate. Only the copy and public verification are skipped.
-#
-# Candidate tags are always dev-<full-git-sha>. Candidate and release package paths
-# remain separate because GHCR visibility is package-level; a dev tag in a public
-# package would be public. Restricted/build-your-own images never enter either path.
+# Build immutable PUBLIC development images and promote validated digests to supported
+# PUBLIC release tags. Development and release tags share one GHCR package namespace.
+# Restricted/build-your-own artifacts never enter this workflow.
 
 name: Publish public images
 
@@ -26,453 +8,477 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: "Target public registry (e.g. ghcr.io/OWNER/REPO)"
+        description: "Official public GHCR namespace"
         required: false
-        default: ""
+        default: "ghcr.io/nebius/nebius-physical-ai"
       dry_run:
-        description: "Dry run (plan only, no copy)"
+        description: "Plan/preflight only; do not apply release tags"
         type: boolean
         default: true
       skip_missing:
-        description: >-
-          Publish what exists, skipping images the private candidate channel does not have yet.
-          The plan comes from the packaging contract (what the repo BUILDS), so a tool
-          that landed before its image was built otherwise blocks every ready image.
-          A denial is never skipped.
+        description: "Skip absent dev tags; denials and gate failures still block"
         type: boolean
         default: false
-      source_registry:
-        description: "Optional private GHCR candidate namespace override"
-        required: false
-        default: ""
-      candidate_sha:
-        description: "Full Git SHA for the dev-<sha> candidate (defaults to dispatched ref)"
+      development_sha:
+        description: "Full Git SHA for immutable dev-<sha> tags (defaults to dispatched SHA)"
         required: false
         default: ""
       tool:
-        description: >-
-          Optional comma/space-separated workbench tools to publish without touching
-          unrelated images (for example: cosmos-curate,cosmos-evaluator,fiftyone,lichtblick)
+        description: "Comma/space-separated tools to preflight or promote"
         required: false
         default: ""
-      build_candidate_tool:
-        description: >-
-          Bootstrap only: build one guarded private dev-SHA candidate before
-          preflight. Prefer the dedicated candidate workflow once it exists on main.
+      build_development_tools:
+        description: "Comma/space-separated public tools to build and push as dev-<sha>"
+        required: false
+        default: ""
+      cleanup_development_tools:
+        description: "Exact failed/superseded dev tags to delete without promotion"
         required: false
         default: ""
 
 permissions:
   contents: read
   packages: write
+  attestations: write
+  id-token: write
 
-# A target tag has no registry compare-and-swap primitive. Serialize publishers
-# for this workflow so two validated releases cannot overwrite one another after
-# their respective preflights. Source references are independently digest-pinned
-# by publish_public before any copy.
 concurrency:
-  group: publish-public-images-${{ inputs.target || github.repository }}
+  group: public-image-${{ inputs.target || 'ghcr.io/nebius/nebius-physical-ai' }}-${{ inputs.development_sha || github.sha }}
   cancel-in-progress: false
 
 jobs:
-  publish:
+  resolve:
     runs-on: ubuntu-latest
+    outputs:
+      target: ${{ steps.plan.outputs.target }}
+      development_sha: ${{ steps.plan.outputs.development_sha }}
+      build_matrix: ${{ steps.plan.outputs.build_matrix }}
+      build_count: ${{ steps.plan.outputs.build_count }}
+      cleanup_matrix: ${{ steps.plan.outputs.cleanup_matrix }}
+      cleanup_count: ${{ steps.plan.outputs.cleanup_count }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
-      - name: Install package
-        run: python -m pip install -e ./npa
-
-      - name: Install crane
-        uses: imjasonh/setup-crane@v0.4
-
-      # Bootstrap bridge: workflow_dispatch only discovers files present on the
-      # default branch. This existing workflow can therefore build the first private
-      # candidate for a feature branch whose dedicated candidate workflow has not
-      # reached main yet. NPA_BUILD_CANDIDATE_TOOL is a temporary repository-variable
-      # fallback for GitHub's default-branch input schema and must be removed after use.
-      - name: Resolve guarded private candidate build
-        if: ${{ (inputs.build_candidate_tool || vars.NPA_BUILD_CANDIDATE_TOOL) != '' }}
-        id: candidate
-        env:
-          TOOL: ${{ inputs.build_candidate_tool || vars.NPA_BUILD_CANDIDATE_TOOL }}
-          SELECTED_TOOLS: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
-          CANDIDATE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY || 'ghcr.io/nebius/nebius-physical-ai-private' }}
-          SOURCE_SHA: ${{ inputs.candidate_sha || github.sha }}
+      - name: Install NPA validation environment
         run: |
-          python - <<'PY' >> "$GITHUB_OUTPUT"
-          import os
-          from pathlib import Path
-          from npa.deploy.images import candidate_image_for_tool
+          python -m venv npa/.venv
+          npa/.venv/bin/pip install -e "npa[dev]"
 
-          tool = os.environ["TOOL"].strip()
-          selected = {
-              item.strip()
-              for item in os.environ.get("SELECTED_TOOLS", "").replace(",", " ").split()
-              if item.strip()
-          }
-          if selected and selected != {tool}:
-              raise SystemExit(
-                  "bootstrap candidate build must match the single selected publish tool"
-              )
-          dockerfile = Path("npa/docker/workbench") / tool / "Dockerfile"
-          if not dockerfile.is_file():
-              raise SystemExit(f"tool has no canonical candidate Dockerfile: {tool}")
-          image = candidate_image_for_tool(
-              tool,
-              git_sha=os.environ["SOURCE_SHA"],
-              registry=os.environ["CANDIDATE_REGISTRY"],
-          )
-          print(f"image={image}")
-          print(f"dockerfile={dockerfile}")
-          print(f"owner={image.split('/', 2)[1]}")
-          print(f"package={image.split('/', 2)[2].rsplit(':', 1)[0]}")
+      # Repository-variable fallbacks allow this branch implementation to be used through
+      # the workflow_dispatch file already present on origin/main. Remove one-off variables
+      # after the run; explicit inputs take precedence after this workflow merges.
+      - name: Resolve immutable public development plan
+        id: plan
+        env:
+          TARGET: ${{ inputs.target || vars.NPA_PUBLIC_IMAGE_TARGET || 'ghcr.io/nebius/nebius-physical-ai' }}
+          DEVELOPMENT_SHA: ${{ inputs.development_sha || vars.NPA_DEVELOPMENT_SHA || github.sha }}
+          BUILD_TOOLS: ${{ inputs.build_development_tools || vars.NPA_BUILD_DEVELOPMENT_TOOLS }}
+          CLEANUP_TOOLS: ${{ inputs.cleanup_development_tools || vars.NPA_CLEANUP_DEVELOPMENT_TOOLS }}
+        run: |
+          NPA_PUBLIC_REGISTRY="$TARGET" npa/.venv/bin/python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+
+          import yaml
+
+          from npa.deploy.images import development_image_for_tool, development_tag
+
+          target = os.environ["TARGET"].strip().rstrip("/")
+          sha = os.environ["DEVELOPMENT_SHA"].strip().lower()
+          development_tag(sha)
+          head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          if head != sha:
+              raise SystemExit(f"development SHA {sha} does not match checked-out HEAD {head}")
+
+          def tools(name: str) -> list[str]:
+              values = [v for v in re.split(r"[\s,]+", os.environ.get(name, "").strip()) if v]
+              if len(values) != len(set(values)):
+                  raise SystemExit(f"duplicate tool in {name}")
+              return values
+
+          contract = yaml.safe_load(Path("npa/docker/workbench/packaging-contract.yaml").read_text())
+          entries = contract["images"]
+          matrix = []
+          for tool in tools("BUILD_TOOLS"):
+              key = tool if tool in entries else f"sim2real-{tool}"
+              entry = entries.get(key)
+              if not isinstance(entry, dict) or entry.get("redistribution") != "public":
+                  raise SystemExit(f"{tool}: redistribution is not public")
+              dockerfile = Path("npa/docker/workbench") / entry["dockerfile"]
+              if not dockerfile.is_file():
+                  raise SystemExit(f"{tool}: missing canonical Dockerfile {dockerfile}")
+              image = development_image_for_tool(tool, git_sha=sha, registry=target)
+              matrix.append({
+                  "tool": tool,
+                  "contract_key": key,
+                  "dockerfile": str(dockerfile),
+                  "image": image,
+              })
+
+          cleanup = []
+          for tool in tools("CLEANUP_TOOLS"):
+              cleanup.append({
+                  "tool": tool,
+                  "image": development_image_for_tool(tool, git_sha=sha, registry=target),
+              })
+
+          print(f"target={target}")
+          print(f"development_sha={sha}")
+          print(f"build_matrix={json.dumps(matrix, separators=(',', ':'))}")
+          print(f"build_count={len(matrix)}")
+          print(f"cleanup_matrix={json.dumps(cleanup, separators=(',', ':'))}")
+          print(f"cleanup_count={len(cleanup)}")
           PY
 
-      - name: Refuse a public candidate package before build
-        if: ${{ steps.candidate.outcome == 'success' && vars.NPA_RETIRE_CANDIDATE_REF == '' }}
-        env:
-          GH_TOKEN: ${{ secrets.NPA_PRIVATE_GHCR_TOKEN || secrets.GITHUB_TOKEN }}
-          OWNER: ${{ steps.candidate.outputs.owner }}
-          PACKAGE: ${{ steps.candidate.outputs.package }}
-        run: |
-          set -euo pipefail
-          encoded="${PACKAGE//\//%2F}"
-          owner_type="$(gh api "/users/${OWNER}" --jq .type)"
-          if [ "$owner_type" = "Organization" ]; then
-            package_api="/orgs/${OWNER}/packages/container/${encoded}"
-          else
-            package_api="/users/${OWNER}/packages/container/${encoded}"
-          fi
-          error_file="$(mktemp)"
-          if visibility="$(gh api "$package_api" --jq .visibility 2>"$error_file")"; then
-            test "$visibility" = private || {
-              echo "::error::Candidate package visibility is '$visibility'; refusing to push development bytes."
-              exit 1
-            }
-          elif ! grep -q 'HTTP 404' "$error_file"; then
-            echo "::error::Could not prove candidate package visibility."
-            sed 's/^/::error::/' "$error_file"
-            exit 1
-          fi
-
-      - name: Set up Buildx for candidate build
-        if: ${{ steps.candidate.outcome == 'success' && vars.NPA_RETIRE_CANDIDATE_REF == '' }}
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to private GHCR candidate channel for build
-        if: ${{ steps.candidate.outcome == 'success' && vars.NPA_RETIRE_CANDIDATE_REF == '' }}
-        uses: docker/login-action@v3
+  build-development:
+    needs: resolve
+    if: ${{ needs.resolve.outputs.build_count != '0' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.resolve.outputs.build_matrix) }}
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ${{ matrix.image }}
+      TOOL: ${{ matrix.tool }}
+      DOCKERFILE: ${{ matrix.dockerfile }}
+      DEVELOPMENT_SHA: ${{ needs.resolve.outputs.development_sha }}
+      NPA_PUBLIC_REGISTRY: ${{ needs.resolve.outputs.target }}
+    steps:
+      - uses: actions/checkout@v6
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.NPA_PRIVATE_GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
-      - name: Remove an exact retired candidate after failed privacy verification
-        if: ${{ steps.candidate.outcome == 'success' && vars.NPA_RETIRE_CANDIDATE_REF != '' }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install NPA validation environment
+        run: |
+          python -m venv npa/.venv
+          npa/.venv/bin/pip install -e "npa[dev]"
+
+      - name: Refuse source, license, packaging, or skill guard drift
+        run: |
+          test "$(git rev-parse HEAD)" = "$DEVELOPMENT_SHA"
+          npa/.venv/bin/python -m pytest \
+            npa/tests/docker/test_packaging_contract.py \
+            npa/tests/docker/test_image_payload_scan.py \
+            npa/tests/docker/test_isaac_bootstrap.py \
+            npa/tests/docker/test_ltx_runtime_bootstrap.py \
+            npa/tests/docker/test_ltx_image_payload_scan.py \
+            npa/tests/deploy/test_public_publish.py \
+            npa/tests/guardrails/test_secure_image_build_skill.py \
+            -q
+          git diff origin/main...HEAD --no-ext-diff | \
+            npa/.venv/bin/python -m npa.guardrails.confidentiality \
+              --built-in-nebius-infra --stdin-source publication-diff --stdin-is-diff
+
+      - name: Install gitleaks
         env:
-          GH_TOKEN: ${{ secrets.NPA_PRIVATE_GHCR_TOKEN || secrets.GITHUB_TOKEN }}
-          RETIRED_REF: ${{ vars.NPA_RETIRE_CANDIDATE_REF }}
-          EXPECTED_DIGEST: ${{ vars.NPA_RETIRE_CANDIDATE_DIGEST }}
+          GITLEAKS_VERSION: 8.28.0
+        run: |
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o gitleaks.tar.gz
+          tar -xzf gitleaks.tar.gz gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+          gitleaks detect --source . --config .gitleaks.toml --redact --no-banner --log-opts="origin/main..HEAD"
+
+      - name: Prove destination package is already public
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          test -n "$EXPECTED_DIGEST"
-          test "$(crane digest "$RETIRED_REF")" = "$EXPECTED_DIGEST"
-          registry_path="${RETIRED_REF#ghcr.io/}"
-          owner="${registry_path%%/*}"
-          package_and_tag="${registry_path#*/}"
+          path="${IMAGE#ghcr.io/}"
+          owner="${path%%/*}"
+          package_and_tag="${path#*/}"
           package="${package_and_tag%:*}"
-          retired_tag="${package_and_tag##*:}"
           encoded="${package//\//%2F}"
-          owner_type="$(gh api "/users/${owner}" --jq .type)"
-          if [ "$owner_type" = "Organization" ]; then
-            package_api="/orgs/${owner}/packages/container/${encoded}"
-          else
-            package_api="/users/${owner}/packages/container/${encoded}"
-          fi
-          package_error="$(mktemp)"
-          if ! gh api "$package_api" >/dev/null 2>"$package_error"; then
-            echo "Restoring the exact soft-deleted candidate package for verified deletion."
-            gh api --method POST "${package_api}/restore" >/dev/null
-          fi
-          visibility="$(gh api "$package_api" --jq .visibility)"
-          test "$visibility" = public || test "$visibility" = private
-          versions_file="$(mktemp)"
-          gh api "${package_api}/versions?per_page=100" > "$versions_file"
-          test "$(jq '[.[] | select(((.metadata.container.tags // []) | length) > 0)] | length' "$versions_file")" = 1
-          version_ids="$(jq -r \
-            --arg digest "$EXPECTED_DIGEST" \
-            --arg tag "$retired_tag" \
-            '.[] | select(.name == $digest and ((.metadata.container.tags // []) | index($tag))) | .id' \
-            "$versions_file")"
-          test "$(printf '%s\n' "$version_ids" | sed '/^$/d' | wc -l)" = 1
-          echo "Matched the sole tagged version to the exact retired digest."
-          gh api --method DELETE "$package_api"
-          if gh api "$package_api" >/dev/null 2>&1; then
-            echo "::error::Retired candidate package remains in the Packages API after deletion."
-            exit 1
-          fi
-          anonymous_config="$(mktemp -d)"
-          if DOCKER_CONFIG="$anonymous_config" crane manifest "$RETIRED_REF" >/dev/null 2>&1; then
-            echo "::warning::Deleted candidate still resolves from GHCR registry cache; final cleanup verification remains required."
-            echo "Deleted the exact package; GHCR registry-cache expiry remains pending." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "Removed the exact failed-privacy candidate tag." >> "$GITHUB_STEP_SUMMARY"
-          fi
+          test "$(gh api "/orgs/${owner}/packages/container/${encoded}" --jq .visibility)" = public
 
-      - name: Build and push immutable private candidate
-        if: ${{ steps.candidate.outcome == 'success' && vars.NPA_RETIRE_CANDIDATE_REF == '' }}
-        id: candidate-build
-        uses: docker/build-push-action@v6
-        with:
-          context: npa
-          file: ${{ steps.candidate.outputs.dockerfile }}
-          push: true
-          tags: ${{ steps.candidate.outputs.image }}
-          build-args: |
-            NPA_SOURCE_SHA=${{ inputs.candidate_sha || github.sha }}
-          provenance: mode=max
-          sbom: true
-          labels: |
-            org.opencontainers.image.revision=${{ inputs.candidate_sha || github.sha }}
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Verify candidate digest, attestation, and private visibility
-        if: ${{ steps.candidate-build.outcome == 'success' }}
-        env:
-          GH_TOKEN: ${{ secrets.NPA_PRIVATE_GHCR_TOKEN || secrets.GITHUB_TOKEN }}
-          OWNER: ${{ steps.candidate.outputs.owner }}
-          PACKAGE: ${{ steps.candidate.outputs.package }}
-          IMAGE: ${{ steps.candidate.outputs.image }}
-          BUILD_DIGEST: ${{ steps.candidate-build.outputs.digest }}
+      - uses: imjasonh/setup-crane@v0.4
+
+      # Build locally first. Every gate below inspects these exact bytes; no registry write
+      # occurs until the final explicit docker push.
+      - name: Build immutable development image locally
         run: |
-          set -euo pipefail
-          digest="$(crane digest "$IMAGE")"
-          test "$digest" = "$BUILD_DIGEST"
-          docker buildx imagetools inspect "$IMAGE" --format '{{json .Provenance}}' \
-            | jq -e '. != null and . != {}'
-          docker buildx imagetools inspect "$IMAGE" --format '{{json .SBOM}}' \
-            | jq -e '. != null and . != {}'
-          test "$(crane config "${IMAGE%@*}@${digest}" | jq -r '.config.Labels["org.nebius.npa.skypilot-bootstrap-contract"] // ""')" = "skypilot-0.12.2-v1"
-          test "$(crane config "${IMAGE%@*}@${digest}" | jq -r '.config.Labels["org.opencontainers.image.revision"] // ""')" = "${{ inputs.candidate_sha || github.sha }}"
-          encoded="${PACKAGE//\//%2F}"
-          owner_type="$(gh api "/users/${OWNER}" --jq .type)"
-          if [ "$owner_type" = "Organization" ]; then
-            package_api="/orgs/${OWNER}/packages/container/${encoded}"
-          else
-            package_api="/users/${OWNER}/packages/container/${encoded}"
-          fi
-          test "$(gh api "$package_api" --jq .visibility)" = private
-          anonymous_config="$(mktemp -d)"
-          if DOCKER_CONFIG="$anonymous_config" crane manifest "$IMAGE" >/dev/null 2>&1; then
-            echo "::error::Candidate manifest is anonymously pullable; refusing a public development package."
-            exit 1
-          fi
-          echo "Candidate digest: $digest" >> "$GITHUB_STEP_SUMMARY"
+          docker buildx build \
+            --load \
+            --file "$DOCKERFILE" \
+            --build-arg "NPA_SOURCE_SHA=$DEVELOPMENT_SHA" \
+            --label "org.opencontainers.image.revision=$DEVELOPMENT_SHA" \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --tag "$IMAGE" \
+            npa
 
-      - name: Scan candidate for critical vulnerabilities and secrets
-        if: ${{ steps.candidate-build.outcome == 'success' }}
+      - name: Enforce runtime, revision, bootstrap, config, and history contracts
+        run: |
+          npa/.venv/bin/python - <<'PY'
+          import json
+          import os
+          import subprocess
+          from npa.deploy.images import SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS
+          from npa.orchestration.skypilot.image_bootstrap_contract import ATTESTATION_LABEL, CONTRACT_VERSION
+
+          image = os.environ["IMAGE"]
+          tool = os.environ["TOOL"]
+          sha = os.environ["DEVELOPMENT_SHA"]
+          config = json.loads(subprocess.check_output(["docker", "inspect", image], text=True))[0]["Config"]
+          user = str(config.get("User") or "").strip().lower()
+          if user in {"", "0", "root", "0:0", "root:root"}:
+              raise SystemExit(f"non-root runtime required; found User={user!r}")
+          labels = config.get("Labels") or {}
+          if labels.get("org.opencontainers.image.revision") != sha:
+              raise SystemExit("OCI revision does not match the exact source commit")
+          if tool in SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS and labels.get(ATTESTATION_LABEL) != CONTRACT_VERSION:
+              raise SystemExit("required SkyPilot bootstrap attestation is absent or stale")
+          serialized = json.dumps(config, sort_keys=True)
+          forbidden = ("OMNI_KIT_ACCEPT_EULA=YES", "ISAACSIM_ACCEPT_EULA=YES")
+          if any(value in serialized for value in forbidden):
+              raise SystemExit("cached EULA acceptance found in OCI config")
+          history = subprocess.check_output(["docker", "history", "--no-trunc", image], text=True)
+          if any(value in history for value in forbidden):
+              raise SystemExit("cached EULA acceptance found in layer history")
+          PY
+          docker save "$IMAGE" --output "$RUNNER_TEMP/${TOOL}.tar"
+          npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
+            --tarball "$RUNNER_TEMP/${TOOL}.tar" \
+            --json "$RUNNER_TEMP/${TOOL}-payload.json"
+          if [ "$TOOL" = ltx2 ]; then
+            npa/.venv/bin/python npa/scripts/scan_image_ltx_payload.py \
+              --tarball "$RUNNER_TEMP/${TOOL}.tar" \
+              --json "$RUNNER_TEMP/${TOOL}-ltx-payload.json"
+          fi
+
+      - name: Pre-publication vulnerability, secret, and license scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ${{ steps.candidate.outputs.image }}
-          scanners: vuln,secret
+          image-ref: ${{ matrix.image }}
+          scanners: vuln,secret,license
           severity: CRITICAL
           exit-code: "1"
           ignore-unfixed: true
           format: table
 
-      - name: Resolve target registry
-        id: target
-        shell: bash
-        run: |
-          target="${{ inputs.target }}"
-          if [ -z "$target" ]; then
-            target="ghcr.io/${GITHUB_REPOSITORY,,}"
-          fi
-          echo "value=$target" >> "$GITHUB_OUTPUT"
-          echo "Target: $target"
+      - name: Generate pre-publication SBOM
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ matrix.image }}
+          scanners: vuln
+          format: spdx-json
+          output: ${{ runner.temp }}/${{ matrix.tool }}-sbom.spdx.json
 
-      - name: Plan (dry run — always)
-        env:
-          # Repository-variable fallbacks let a branch add these inputs before the
-          # workflow-dispatch schema reaches the default branch. Operators must remove
-          # one-off variables after the run; explicit inputs always win once available.
-          SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
-          SELECTED_TOOLS: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
-          CANDIDATE_SHA: ${{ inputs.candidate_sha || github.sha }}
-        run: |
-          args=(--target "${{ steps.target.outputs.value }}" --candidate-sha "$CANDIDATE_SHA")
-          if [ -n "$SOURCE_REGISTRY" ]; then
-            args+=(--source-registry "$SOURCE_REGISTRY")
-          fi
-          if [ -n "$SELECTED_TOOLS" ]; then
-            python .github/scripts/publish_selected_public_image.py \
-              "${args[@]}" --tool "$SELECTED_TOOLS" --mode plan
-          else
-            python -m npa.deploy.publish_public "${args[@]}" --dry-run
-          fi
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Login to GHCR candidate and release channels
-        env:
-          GH_TOKEN: ${{ secrets.NPA_PRIVATE_GHCR_TOKEN || secrets.GITHUB_TOKEN }}
-        run: printf '%s' "$GH_TOKEN" | crane auth login ghcr.io -u "${{ github.actor }}" --password-stdin
-
-      # `crane auth login` writes a config file and exits 0 for any string -- it never
-      # contacts the registry -- so the step above alone proves no package permission.
-      # This reads every source manifest, which fails in seconds on an expired token or a
-      # pin that was never pushed, rather than partway through the copy loop with some
-      # packages already created. It writes nothing, so it is safe in dry-run.
-      - name: Preflight the private candidate credential and every pinned tag
-        env:
-          SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
-          SELECTED_TOOLS: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
-          CANDIDATE_SHA: ${{ inputs.candidate_sha || github.sha }}
-        run: |
-          args=(--target "${{ steps.target.outputs.value }}" --candidate-sha "$CANDIDATE_SHA")
-          if [ -n "$SOURCE_REGISTRY" ]; then
-            args+=(--source-registry "$SOURCE_REGISTRY")
-          fi
-          if [ -n "$SELECTED_TOOLS" ]; then
-            python .github/scripts/publish_selected_public_image.py \
-              "${args[@]}" --tool "$SELECTED_TOOLS" --mode preflight
-          else
-            python -m npa.deploy.publish_public \
-              "${args[@]}" \
-              ${{ inputs.skip_missing && '--skip-missing' || '' }} \
-              --preflight
-          fi
-
-      # Last line of defence before an irreversible action. publish_public trusts the
-      # packaging contract, which is a statement about the Dockerfiles; this checks the
-      # actual images the canonical tags resolve to right now.
-      #
-      # History-only because a full filesystem scan streams ~69 GB across these five and
-      # would not finish on a hosted runner. It is the weaker check -- it catches a build
-      # that RAN an Isaac install, not payload that arrived by COPY -- so it is a gate,
-      # not the proof. The full scan runs in omniverse-payload-scan (image-security-scan.yml).
-      # Also runs in dry-run (it only reads), so the rehearsal exercises the whole safety
-      # chain rather than leaving the gate to fire for the first time on the real run.
-      - name: Gate — the Isaac canonical tags must not be Omniverse-baked
-        if: ${{ (inputs.tool || vars.NPA_PUBLISH_TOOL) == '' }}
-        env:
-          SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY || 'ghcr.io/nebius/nebius-physical-ai-private' }}
-          CANDIDATE_SHA: ${{ inputs.candidate_sha || github.sha }}
+      - name: Push only after every pre-publication gate passes
+        id: push
         run: |
           set -euo pipefail
-          source_registry="${SOURCE_REGISTRY%/}"
-          candidate_tag="dev-${CANDIDATE_SHA,,}"
-          failed=0
-          for ref in \
-            "npa-isaac-lab:${candidate_tag}" \
-            "npa-sonic:${candidate_tag}" \
-            "npa-groot:${candidate_tag}"; do
-            echo "::group::$ref"
-            if ! python npa/scripts/scan_image_omniverse_payload.py --history-only \
-                 "${source_registry}/${ref}"; then
-              echo "::error::${ref} shows a build-time Isaac install — refusing to publish"
-              failed=1
-            fi
-            echo "::endgroup::"
-          done
-          if [ "$failed" -ne 0 ]; then
-            echo "Refusing to publish. A canonical tag resolves to an Omniverse-baked image."
-            echo "Rebuild the exact private GHCR candidate before promotion."
+          docker push "$IMAGE"
+          digest="$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          test "$digest" = "$(crane digest "$IMAGE")"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Attest exact pushed digest provenance
+        id: provenance-attestation
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ${{ matrix.image }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest exact pushed digest SBOM
+        id: sbom-attestation
+        uses: actions/attest-sbom@v3
+        with:
+          subject-name: ${{ matrix.image }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          sbom-path: ${{ runner.temp }}/${{ matrix.tool }}-sbom.spdx.json
+          push-to-registry: true
+
+      - name: Require both digest-bound attestation results
+        env:
+          PROVENANCE_URL: ${{ steps.provenance-attestation.outputs.attestation-url }}
+          PROVENANCE_BUNDLE: ${{ steps.provenance-attestation.outputs.bundle-path }}
+          SBOM_URL: ${{ steps.sbom-attestation.outputs.attestation-url }}
+          SBOM_BUNDLE: ${{ steps.sbom-attestation.outputs.bundle-path }}
+        run: |
+          test -n "$PROVENANCE_URL" && test -s "$PROVENANCE_BUNDLE"
+          test -n "$SBOM_URL" && test -s "$SBOM_BUNDLE"
+
+      - name: Verify pushed bytes, revision, payload, and anonymous pull
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          repository="${IMAGE%:*}"
+          exact="${repository}@${DIGEST}"
+          test "$(crane digest "$IMAGE")" = "$DIGEST"
+          test "$(crane config "$exact" | jq -r '.config.Labels["org.opencontainers.image.revision"] // ""')" = "$DEVELOPMENT_SHA"
+          npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
+            "$exact" --json "$RUNNER_TEMP/${TOOL}-pushed-payload.json"
+          if [ "$TOOL" = ltx2 ]; then
+            npa/.venv/bin/python npa/scripts/scan_image_ltx_payload.py \
+              "$exact" --json "$RUNNER_TEMP/${TOOL}-pushed-ltx-payload.json"
+          fi
+          anonymous_config="$(mktemp -d)"
+          DOCKER_CONFIG="$anonymous_config" crane manifest "$IMAGE" >/dev/null
+          echo "Validated public development digest: $DIGEST" >> "$GITHUB_STEP_SUMMARY"
+          echo "The dev tag is public; later deletion cannot revoke prior downloads." >> "$GITHUB_STEP_SUMMARY"
+
+  cleanup-requested:
+    needs: resolve
+    if: ${{ always() && needs.resolve.outputs.cleanup_count != '0' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.resolve.outputs.cleanup_matrix) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete only the exact unpromoted development version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          path="${IMAGE#ghcr.io/}"
+          owner="${path%%/*}"
+          package_and_tag="${path#*/}"
+          package="${package_and_tag%:*}"
+          tag="${package_and_tag##*:}"
+          encoded="${package//\//%2F}"
+          package_api="/orgs/${owner}/packages/container/${encoded}"
+          versions="$(mktemp)"
+          gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"
+          matches="$(jq --arg tag "$tag" '[.[] | select((.metadata.container.tags // []) | index($tag))]' "$versions")"
+          test "$(jq length <<<"$matches")" = 1
+          tags="$(jq -c '.[0].metadata.container.tags // []' <<<"$matches")"
+          test "$tags" = "[\"$tag\"]" || {
+            echo "::error::Refusing cleanup: digest also carries tags $tags"
             exit 1
+          }
+          version_id="$(jq -r '.[0].id' <<<"$matches")"
+          digest="$(jq -r '.[0].name' <<<"$matches")"
+          test "$digest" = "$(crane digest "$IMAGE")"
+          gh api --method DELETE "${package_api}/versions/${version_id}"
+          echo "Deleted exact development tag $tag at $digest." >> "$GITHUB_STEP_SUMMARY"
+          echo "Deletion does not revoke downloads made while the public tag existed." >> "$GITHUB_STEP_SUMMARY"
+
+  cleanup-failed-build:
+    needs: [resolve, build-development]
+    if: ${{ always() && needs.resolve.outputs.build_count != '0' && needs.build-development.result == 'failure' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.resolve.outputs.build_matrix) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: imjasonh/setup-crane@v0.4
+
+      - name: Remove an exact run-owned dev tag after a failed build batch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          path="${IMAGE#ghcr.io/}"
+          owner="${path%%/*}"
+          package_and_tag="${path#*/}"
+          package="${package_and_tag%:*}"
+          tag="${package_and_tag##*:}"
+          encoded="${package//\//%2F}"
+          package_api="/orgs/${owner}/packages/container/${encoded}"
+          versions="$(mktemp)"
+          gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"
+          matches="$(jq --arg tag "$tag" '[.[] | select((.metadata.container.tags // []) | index($tag))]' "$versions")"
+          count="$(jq length <<<"$matches")"
+          if [ "$count" = 0 ]; then
+            echo "No pushed run-owned dev tag exists for cleanup." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          test "$count" = 1
+          tags="$(jq -c '.[0].metadata.container.tags // []' <<<"$matches")"
+          test "$tags" = "[\"$tag\"]" || {
+            echo "::error::Refusing cleanup: digest also carries tags $tags"
+            exit 1
+          }
+          version_id="$(jq -r '.[0].id' <<<"$matches")"
+          digest="$(jq -r '.[0].name' <<<"$matches")"
+          test "$digest" = "$(crane digest "$IMAGE")"
+          gh api --method DELETE "${package_api}/versions/${version_id}"
+          echo "Deleted exact failed public dev tag $tag at $digest." >> "$GITHUB_STEP_SUMMARY"
+          echo "Deletion does not revoke downloads made while the public tag existed." >> "$GITHUB_STEP_SUMMARY"
+
+  promote:
+    needs: [resolve, build-development]
+    if: ${{ always() && needs.resolve.result == 'success' && (needs.build-development.result == 'success' || needs.build-development.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    env:
+      TARGET: ${{ needs.resolve.outputs.target }}
+      DEVELOPMENT_SHA: ${{ needs.resolve.outputs.development_sha }}
+      SELECTED_TOOLS: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
+      NPA_PUBLIC_REGISTRY: ${{ needs.resolve.outputs.target }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install NPA
+        run: |
+          python -m venv npa/.venv
+          npa/.venv/bin/pip install -e npa
+
+      - uses: imjasonh/setup-crane@v0.4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Plan and preflight immutable public development digests
+        run: |
+          args=(--target "$TARGET" --development-sha "$DEVELOPMENT_SHA")
+          if [ -n "$SELECTED_TOOLS" ]; then
+            npa/.venv/bin/python .github/scripts/publish_selected_public_image.py \
+              "${args[@]}" --tool "$SELECTED_TOOLS" --mode plan
+            npa/.venv/bin/python .github/scripts/publish_selected_public_image.py \
+              "${args[@]}" --tool "$SELECTED_TOOLS" --mode preflight
+          else
+            npa/.venv/bin/python -m npa.deploy.publish_public "${args[@]}" --dry-run
+            npa/.venv/bin/python -m npa.deploy.publish_public \
+              "${args[@]}" ${{ inputs.skip_missing && '--skip-missing' || '' }} --preflight
           fi
 
-      # Pushing is not publishing. A new GHCR container package is PRIVATE, and a package
-      # linked to a repository inherits that repository's access permissions but NOT its
-      # visibility -- so even a public repo yields private packages. GitHub exposes no REST
-      # API to change visibility for organisation-owned packages, so it cannot be automated
-      # here; it is a one-time manual step per package, and it is irreversible.
-      #
-      # publish_public copies and then verifies inline, so this step fails when the copy
-      # worked but nothing is publicly pullable. That is the expected outcome of the FIRST
-      # publish; the summary below turns it into a click-through list.
-      - name: Publish and verify
-        id: publish
+      - name: Promote exact validated digests and verify public parity
         if: ${{ inputs.dry_run == false }}
-        env:
-          SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
-          SELECTED_TOOLS: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
-          CANDIDATE_SHA: ${{ inputs.candidate_sha || github.sha }}
         run: |
-          args=(--target "${{ steps.target.outputs.value }}" --candidate-sha "$CANDIDATE_SHA")
-          if [ -n "$SOURCE_REGISTRY" ]; then
-            args+=(--source-registry "$SOURCE_REGISTRY")
-          fi
+          args=(--target "$TARGET" --development-sha "$DEVELOPMENT_SHA")
           if [ -n "$SELECTED_TOOLS" ]; then
-            python .github/scripts/publish_selected_public_image.py \
+            npa/.venv/bin/python .github/scripts/publish_selected_public_image.py \
               "${args[@]}" --tool "$SELECTED_TOOLS" --mode publish
           else
-            python -m npa.deploy.publish_public \
-              "${args[@]}" \
-              ${{ inputs.skip_missing && '--skip-missing' || '' }}
+            npa/.venv/bin/python -m npa.deploy.publish_public \
+              "${args[@]}" ${{ inputs.skip_missing && '--skip-missing' || '' }}
           fi
-
-      - name: Write the visibility checklist to the job summary
-        if: ${{ failure() && inputs.dry_run == false && steps.publish.outputs.copy_phase_completed == 'true' }}
-        env:
-          SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
-          SELECTED_TOOLS: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
-        run: |
-          cat >> "$GITHUB_STEP_SUMMARY" <<'MD'
-          ## Images copied, but not yet public
-
-          If the failing step was **Publish and verify**, the copy succeeded and the packages
-          are **private** — GHCR's default for a newly created package. This cannot be
-          automated: GitHub has no REST API to set visibility for organisation-owned
-          packages.
-
-          Open each link below, then **Danger Zone → Change visibility → Public**. It is
-          one-time (visibility persists across later pushes to the same package).
-
-          > **This is irreversible.** A public package cannot be made private again, and
-          > deleting a tag does not undo publication. Confirm the redistribution
-          > classification before doing it — see `docs/workbench/container-packaging.md`.
-
-          MD
-          # Only the packages that are still private, so the list shrinks as they are flipped.
-          args=(--target "${{ steps.target.outputs.value }}")
-          if [ -n "$SOURCE_REGISTRY" ]; then
-            args+=(--source-registry "$SOURCE_REGISTRY")
-          fi
-          if [ -n "$SELECTED_TOOLS" ]; then
-            python .github/scripts/publish_selected_public_image.py \
-              "${args[@]}" --tool "$SELECTED_TOOLS" --mode checklist 2>/dev/null \
-              | grep '^- \[ \]' >> "$GITHUB_STEP_SUMMARY" || true
-          else
-            python -m npa.deploy.publish_public \
-              "${args[@]}" \
-              ${{ inputs.skip_missing && '--skip-missing' || '' }} \
-              --verify-public --checklist 2>/dev/null \
-              | grep '^- \[ \]' >> "$GITHUB_STEP_SUMMARY" || true
-          fi
-          cat >> "$GITHUB_STEP_SUMMARY" <<'MD'
-
-          Re-run this workflow with `dry_run=false` to re-verify, or run locally:
-
-          ```
-          npa/.venv/bin/python -m npa.deploy.publish_public --verify-public
-          ```
-          MD
-
-      - name: Write pre-copy failure guidance to the job summary
-        if: ${{ failure() && inputs.dry_run == false && steps.publish.outputs.copy_phase_completed != 'true' }}
-        run: |
-          cat >> "$GITHUB_STEP_SUMMARY" <<'MD'
-          ## Publication stopped before copy completion
-
-          The job did not record completion of the registry copy phase. Do **not** infer
-          that a package was created, and do not change GHCR visibility based on this run.
-          In a multi-image batch, earlier images may have copied before a later copy failed;
-          inspect the failing step, fix the error, and safely rerun the same batch. Already
-          current digests are skipped, and visibility guidance is emitted only after every
-          selected copy completes.
-          MD
+          # Dev and release tags share one GHCR version after promotion. Retain the dev
+          # tag deliberately: GHCR version deletion would also remove the supported tag.
+          echo "Retained immutable dev tags as release provenance because they share the promoted digest." >> "$GITHUB_STEP_SUMMARY"
