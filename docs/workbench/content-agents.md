@@ -46,9 +46,12 @@ dependencies are neither needed nor present.
 
 Content Agents source is Apache-2.0. OVRTX `0.3.0.312915` declares NVIDIA
 Proprietary Software and is installed from upstream's SHA-256-locked wheel list
-in an isolated environment. The operator must accept the NVIDIA Software License
-Agreement and applicable Omniverse Product-Specific Terms before building or
-using it. The build gate records that decision only in the invoking shell:
+in an isolated environment. The operator must accept the current
+[NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/)
+and the
+[Product Specific Terms for NVIDIA AI Products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/),
+which incorporate the former Omniverse product-specific terms, before building
+or using it. The build gate records that decision only in the invoking shell:
 
 ```bash
 export NPA_CONTENT_AGENTS_ACCEPT_NVIDIA_OMNIVERSE_TERMS=YES

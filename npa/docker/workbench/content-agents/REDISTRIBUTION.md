@@ -7,8 +7,12 @@ NVIDIA Content Agents source at release `v0.5.2` / commit
 native NVIDIA rendering payloads. Those bytes make the complete image
 ineligible for the NPA public mirror even though the worker source is open.
 
-Before building, the operator must review and accept the NVIDIA Software
-License Agreement and the Product-Specific Terms for NVIDIA Omniverse, then set
+Before building, the operator must review and accept the current NVIDIA
+Software License Agreement
+(`https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/`)
+and Product Specific Terms for NVIDIA AI Products
+(`https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/`),
+which incorporate the former Omniverse product-specific terms. Then set
 `NPA_CONTENT_AGENTS_ACCEPT_NVIDIA_OMNIVERSE_TERMS=YES` only in the build shell.
 The marker is consumed by `build.sh`; it is not passed into Docker or baked.
 

@@ -30,9 +30,15 @@ new failing test proves a current upstream gap.
 
 Content Agents is Apache-2.0, but hash-locked OVRTX 0.3.0.312915 is proprietary.
 The complete image is `restricted`, operator-built, and private-registry-only.
-Before build/use, confirm the operator accepted the NVIDIA Software License
-Agreement and applicable Omniverse Product-Specific Terms, then set only in the
-build shell:
+Before build/use, confirm the operator accepted the current NVIDIA Software
+License Agreement and Product Specific Terms for NVIDIA AI Products (which
+incorporate the former Omniverse product-specific terms), then set only in the
+build shell. Official terms:
+
+- `https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/`
+- `https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/`
+
+Set only in the build shell:
 
 ```bash
 export NPA_CONTENT_AGENTS_ACCEPT_NVIDIA_OMNIVERSE_TERMS=YES

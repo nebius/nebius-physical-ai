@@ -49,7 +49,9 @@ def test_operator_acceptance_is_explicit_and_never_baked() -> None:
     assert gate not in dockerfile
     assert f'if [[ "${{{gate}:-}}" != "YES" ]]' in build
     assert "NVIDIA Software License Agreement" in build
-    assert "Omniverse Product-Specific Terms" in build
+    assert "Product Specific Terms for NVIDIA AI Products" in build
+    assert "nvidia-software-license-agreement" in build
+    assert "product-specific-terms-for-ai-products" in build
     assert f"env -u {gate}" in build
     for host in ("ghcr.io", "docker.io", "quay.io", "public.ecr.aws"):
         assert host in build

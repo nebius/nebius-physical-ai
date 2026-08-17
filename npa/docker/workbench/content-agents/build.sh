@@ -26,7 +26,9 @@ done
 [[ -x "$NPA_PYTHON" ]] || { echo "ERROR: ${NPA_PYTHON} is required" >&2; exit 1; }
 if [[ "${NPA_CONTENT_AGENTS_ACCEPT_NVIDIA_OMNIVERSE_TERMS:-}" != "YES" ]]; then
   echo "ERROR: set NPA_CONTENT_AGENTS_ACCEPT_NVIDIA_OMNIVERSE_TERMS=YES after accepting" >&2
-  echo "the NVIDIA Software License Agreement and Omniverse Product-Specific Terms." >&2
+  echo "the NVIDIA Software License Agreement and Product Specific Terms for NVIDIA AI Products." >&2
+  echo "See https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/" >&2
+  echo "and https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/" >&2
   exit 2
 fi
 
