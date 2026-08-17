@@ -864,6 +864,33 @@ def down_cmd(
                 and item.get("ownership") == "created_by_this_operation"
                 and str(item.get("project_id") or "") == exact_project_id
             ]
+            if not resources and str(payload.get("phase") or "") == "prepared":
+                # A journal that never crossed the mutation boundary and has no
+                # durable state or operation-owned inventory has nothing that may
+                # be deleted.  In particular, do not call the provider with an
+                # empty cluster ID: doing so both fails recovery and risks turning
+                # a precise operation cleanup into name-based discovery.
+                recovery_operation.transition("destroyed")
+                message = (
+                    f"Operation {recovery_operation.operation_id} recorded no "
+                    "cluster mutation or owned resources; nothing to do. "
+                    "Terraform, provider, and Kubernetes APIs were not invoked."
+                )
+                result_payload = {
+                    **cleanup_identity.to_dict(),
+                    "outcome": "already_absent",
+                    "verified": True,
+                    "no_op": True,
+                    "state_consumers_absent": True,
+                    "resources_removed": [],
+                    "message": message,
+                }
+                if output_json:
+                    typer.echo(json.dumps(result_payload, indent=2, sort_keys=True))
+                else:
+                    typer.echo(f"identity_source: {cleanup_identity.source}")
+                    typer.echo(message)
+                return
             required_types = {
                 str(item.get("resource_type") or "")
                 for item in resources

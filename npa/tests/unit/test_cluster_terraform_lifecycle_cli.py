@@ -1304,6 +1304,68 @@ def test_down_with_no_cluster_is_a_true_local_noop(monkeypatch, tmp_path: Path) 
     assert not (tf_dir / ".terraform").exists()
 
 
+def test_down_terminalizes_pre_mutation_operation_without_provider_calls(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.provisioning_journal import ProvisioningOperation
+
+    journal_dir = tmp_path / "operations"
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(journal_dir))
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    operation = ProvisioningOperation.prepare(
+        command="npa cluster up",
+        project_alias="demo",
+        project_id="project-demo",
+        tenant_id="tenant-demo",
+        region="eu-test1",
+        backend={"kind": "local-state", "terraform_dir": str(tf_dir)},
+        resource_type="cluster",
+        requested_name="never-mutated",
+        ownership_source="cluster-terraform",
+        resume_command="npa cluster up --project demo --context never-mutated",
+        destroy_command="npa cluster down --project demo --context never-mutated --force",
+    )
+
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("pre-mutation recovery crossed an external boundary")
+
+    monkeypatch.setattr(tf_mod, "_require_bin", unexpected)
+    monkeypatch.setattr(tf_mod, "_terraform_env", unexpected)
+    monkeypatch.setattr(tf_mod, "_report_drain_blockers", unexpected)
+    monkeypatch.setattr(tf_mod, "_run_stream", unexpected)
+    monkeypatch.setattr(tf_mod, "_run_capture", unexpected)
+
+    result = runner.invoke(
+        app,
+        [
+            "down",
+            "--terraform-dir",
+            str(tf_dir),
+            "--project-id",
+            "project-demo",
+            "--tenant-id",
+            "tenant-demo",
+            "--region",
+            "eu-test1",
+            "--context",
+            "never-mutated",
+            "--operation-id",
+            operation.operation_id,
+            "--force",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["outcome"] == "already_absent"
+    assert payload["no_op"] is True
+    assert payload["resources_removed"] == []
+    assert operation.read()["phase"] == "destroyed"
+    assert not (tf_dir / ".terraform").exists()
+
+
 def test_down_checksum_mismatch_is_actionable_and_keeps_lock_immutable(
     monkeypatch, tmp_path: Path
 ) -> None:
