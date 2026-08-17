@@ -126,7 +126,7 @@ class SoperatorBackend:
             )
             result["reservation_preflight"] = summary
             result["resolved_desired"] = resolved
-        return result
+        return {"backend": self.name, **result}
 
     def materialize(
         self, desired: SoperatorSpec, request: SoperatorApplyRequest
@@ -144,22 +144,29 @@ class SoperatorBackend:
         from npa.soperator import lifecycle
 
         self.validate(desired)
-        result = lifecycle.deploy_cluster(
-            desired,
-            terraform_dir=request.terraform_dir,
-            work_root=request.work_root,
-            solutions_library_ref=request.solutions_library_ref,
-            root_login_ssh_public_key_file=request.root_login_ssh_public_key_file,
-            project=request.project,
-            timeout_minutes=request.timeout_minutes,
-            gpu_creation_check_timeout_seconds=request.gpu_creation_check_timeout_seconds,
-            apply_fixes=request.apply_fixes,
-            source_preflight_only=request.source_preflight_only,
-            stream_terraform_output=request.stream_terraform_output,
-            on_status=request.on_status,
-            profile=request.profile,
-        )
-        return result
+        try:
+            result = lifecycle.deploy_cluster(
+                desired,
+                terraform_dir=request.terraform_dir,
+                work_root=request.work_root,
+                solutions_library_ref=request.solutions_library_ref,
+                root_login_ssh_public_key_file=request.root_login_ssh_public_key_file,
+                project=request.project,
+                timeout_minutes=request.timeout_minutes,
+                gpu_creation_check_timeout_seconds=request.gpu_creation_check_timeout_seconds,
+                apply_fixes=request.apply_fixes,
+                source_preflight_only=request.source_preflight_only,
+                stream_terraform_output=request.stream_terraform_output,
+                on_status=request.on_status,
+                profile=request.profile,
+            )
+        except (
+            lifecycle.SoperatorDeploymentValidationError,
+            lifecycle.SoperatorStateCaptureError,
+        ) as exc:
+            exc.result["backend"] = self.name
+            raise
+        return {**(result or {}), "backend": self.name} if result is not None else None
 
     def status(
         self, desired: SoperatorSpec, request: SoperatorStatusRequest
@@ -194,4 +201,4 @@ class SoperatorBackend:
             on_status=request.on_status,
             profile=request.profile,
         )
-        return result
+        return {**result, "backend": self.name} if result is not None else None

@@ -157,6 +157,16 @@ Terraform-derived name, project parent, and cluster-bound persisted ownership
 all agree uniquely. Prefix-only matching is never deletion authority;
 ambiguity or unreadable evidence retains state for retry.
 
+A successful Soperator Terraform apply is not reported as a provisioning
+failure when the following authoritative state pull is unreadable or lacks an
+exact cluster ID/name. It returns `deployed-state-capture-failed`, preserves the
+Terraform state and pre-apply ownership sidecar, and instructs the operator to
+retry the identical deploy after restoring state readability. Cleanup never
+acts on resources whose ownership was not captured. `soperator destroy
+--timeout-minutes` is one deadline shared by Terraform destroy, exact cluster-absence
+convergence, and auxiliary-resource reconciliation; each phase reports where
+that deadline was exhausted while retaining recovery state.
+
 ### Legacy mk8s execution compatibility seam
 
 `npa.fleet.lifecycle._call_legacy_execution` exists only for downstream tests

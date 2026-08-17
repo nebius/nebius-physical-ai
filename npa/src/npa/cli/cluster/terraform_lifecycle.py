@@ -8,7 +8,6 @@ import inspect
 import os
 import re
 import shutil
-import signal
 import subprocess
 import threading
 import time
@@ -2079,12 +2078,12 @@ def _find_repo_root(path: Path) -> Path | None:
 
 
 def _require_bin(binary: str) -> str:
-    resolved = shutil.which(binary)
-    if resolved:
-        return resolved
-    if Path(binary).exists():
-        return binary
-    raise typer.BadParameter(f"Required executable not found: {binary}")
+    from npa.cluster_backends.process import BackendCommandError, require_bin
+
+    try:
+        return require_bin(binary)
+    except BackendCommandError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 def _apply_project_tf_vars(
@@ -2139,30 +2138,12 @@ def _terraform_env(nebius_bin: str, *, profile: str = "") -> dict[str, str]:
     targeting a different tenant mints the token for *that* principal instead of
     the machine's active profile.
     """
-    env = os.environ.copy()
-    # A stale ambient IAM token (e.g. a cloud-env token) silently shadows the
-    # intended Nebius profile and mints kubeconfig/registry credentials for the
-    # wrong principal -- the cause of Forbidden jobs/pods/nodes and 401 image
-    # pulls. Mint a fresh token by default after clearing any stale token; opt
-    # back into reuse only when NPA_REUSE_IAM_TOKEN is explicitly set (e.g. CI
-    # that injects a short-lived token intentionally).
-    reuse = env.get("NPA_REUSE_IAM_TOKEN", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-    if reuse and env.get("TF_VAR_iam_token"):
-        return env
-    env.pop("TF_VAR_iam_token", None)
-    env.pop("NEBIUS_IAM_TOKEN", None)
-    argv = [nebius_bin]
-    if profile:
-        argv += ["--profile", profile]
-    token = _run_capture([*argv, "iam", "get-access-token"], env=env).stdout.strip()
-    env["TF_VAR_iam_token"] = token
-    env["NEBIUS_IAM_TOKEN"] = token
-    return env
+    from npa.cluster_backends.process import BackendCommandError, terraform_env
+
+    try:
+        return terraform_env(nebius_bin, profile=profile, capture_runner=_run_capture)
+    except BackendCommandError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 def _run_stream(
@@ -2174,135 +2155,29 @@ def _run_stream(
     cancel: Callable[[], str] | None = None,
     capture_output: bool = False,
 ) -> subprocess.CompletedProcess[str]:
-    """Run *args*, streaming output.
+    """CLI compatibility wrapper around the backend-neutral runner."""
 
-    ``cancel`` is polled while the command runs; when it returns a non-empty
-    reason the process is asked to stop (SIGINT first, which Terraform handles as
-    a graceful shutdown that still persists state) and the reason is raised.
-    """
-    if cancel is None:
-        if capture_output:
-            from npa.clients.nebius import redact_nebius_output
+    from npa.cluster_backends.process import BackendCommandError, run_stream
 
-            process = subprocess.Popen(
-                args,
-                cwd=cwd,
-                env=env,
-                text=True,
-                bufsize=1,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            captured_stdout: list[str] = []
-            captured_stderr: list[str] = []
-
-            def drain(pipe: Any, captured: list[str], *, stderr: bool) -> None:
-                if pipe is None:
-                    return
-                for line in iter(pipe.readline, ""):
-                    safe_line = redact_nebius_output(line)
-                    captured.append(safe_line)
-                    typer.echo(safe_line, err=stderr, nl=False)
-                pipe.close()
-
-            readers = [
-                threading.Thread(
-                    target=drain,
-                    args=(process.stdout, captured_stdout),
-                    kwargs={"stderr": False},
-                    daemon=True,
-                ),
-                threading.Thread(
-                    target=drain,
-                    args=(process.stderr, captured_stderr),
-                    kwargs={"stderr": True},
-                    daemon=True,
-                ),
-            ]
-            for reader in readers:
-                reader.start()
-            try:
-                returncode = process.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                _stop_process(process)
-                raise
-            finally:
-                for reader in readers:
-                    reader.join(timeout=5)
-            result = subprocess.CompletedProcess(
-                args=args,
-                returncode=returncode,
-                stdout="".join(captured_stdout),
-                stderr="".join(captured_stderr),
-            )
-        else:
-            result = subprocess.run(
-                args,
-                cwd=cwd,
-                env=env,
-                text=True,
-                timeout=timeout,
-                check=False,
-            )
-        safe_stdout = result.stdout or ""
-        safe_stderr = result.stderr or ""
-        if result.returncode != 0:
-            detail = ""
-            if capture_output:
-                detail = "\n".join(
-                    part for part in (safe_stderr, safe_stdout) if part
-                ).strip()
-            suffix = f": {detail[-3000:]}" if detail else ""
-            raise typer.BadParameter(
-                f"Command failed ({result.returncode}): {' '.join(args)}{suffix}"
-            )
-        return result
-
-    reason = ""
-    process = subprocess.Popen(args, cwd=cwd, env=env, text=True)
-    deadline = None if timeout is None else time.monotonic() + timeout
     try:
-        while process.poll() is None:
-            if not reason:
-                reason = cancel() or ""
-                if reason:
-                    _stop_process(process)
-            if deadline is not None and time.monotonic() >= deadline:
-                _stop_process(process)
-                raise subprocess.TimeoutExpired(args, timeout or 0)
-            time.sleep(1.0)
-    except KeyboardInterrupt:
-        _stop_process(process)
-        raise
-    returncode = process.returncode or 0
-    if reason:
-        raise typer.BadParameter(f"Cancelled `{' '.join(args[:2])}`: {reason}")
-    if returncode != 0:
-        raise typer.BadParameter(f"Command failed ({returncode}): {' '.join(args)}")
-    return subprocess.CompletedProcess(
-        args=args, returncode=returncode, stdout="", stderr=""
-    )
+        return run_stream(
+            args,
+            cwd=cwd,
+            env=env,
+            timeout=timeout,
+            cancel=cancel,
+            capture_output=capture_output,
+        )
+    except BackendCommandError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 def _stop_process(process: subprocess.Popen[str]) -> None:
-    """Ask a process to stop: SIGINT (graceful for terraform), then SIGTERM/kill."""
-    for signal_name, grace in (("interrupt", 30.0), ("terminate", 10.0)):
-        if process.poll() is not None:
-            return
-        try:
-            if signal_name == "interrupt":
-                process.send_signal(signal.SIGINT)
-            else:
-                process.terminate()
-        except OSError:  # pragma: no cover - process already gone
-            return
-        try:
-            process.wait(timeout=grace)
-            return
-        except subprocess.TimeoutExpired:
-            continue
-    if process.poll() is None:  # pragma: no cover - terraform ignoring both signals
-        process.kill()
+    """Compatibility alias for tests and older internal callers."""
+
+    from npa.cluster_backends.process import _stop_process as stop_process
+
+    stop_process(process)
 
 
 def _run_capture(
@@ -2314,24 +2189,19 @@ def _run_capture(
     check: bool = True,
     input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(
-        args,
-        cwd=cwd,
-        env=env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        input=input_text,
-        timeout=timeout,
-        check=False,
-    )
-    if check and result.returncode != 0:
-        detail = (result.stderr or result.stdout).strip()
-        suffix = f": {detail}" if detail else ""
-        raise typer.BadParameter(
-            f"Command failed ({result.returncode}): {' '.join(args)}{suffix}"
+    from npa.cluster_backends.process import BackendCommandError, run_capture
+
+    try:
+        return run_capture(
+            args,
+            cwd=cwd,
+            env=env,
+            timeout=timeout,
+            check=check,
+            input_text=input_text,
         )
-    return result
+    except BackendCommandError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 def _terraform_init(
@@ -3611,16 +3481,21 @@ def _verify_residual_terraform_ownership(
                 "Legacy recovery Terraform state contains a malformed managed "
                 "resource; nothing was deleted."
             )
-        if resource_type == "nebius_mk8s_v1_cluster":
-            raise typer.BadParameter(
-                "Legacy recovery found an unidentifiable cluster resource; nothing "
-                "was deleted."
-            )
         instances = resource.get("instances")
         if not isinstance(instances, list):
             raise typer.BadParameter(
                 "Legacy recovery Terraform state contains malformed managed "
                 "instances; nothing was deleted."
+            )
+        if not instances:
+            # Terraform retains empty blocks after count/for_each transitions.
+            # They prove no live provider resource and carry no ownership to
+            # validate, including an already-removed cluster block.
+            continue
+        if resource_type == "nebius_mk8s_v1_cluster":
+            raise typer.BadParameter(
+                "Legacy recovery found an unidentifiable cluster resource; nothing "
+                "was deleted."
             )
         for instance in instances:
             attributes = (

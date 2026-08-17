@@ -212,6 +212,33 @@ def test_rendered_mk8s_provision_forwards_shared_backend_desired_state(
     assert captured["capacity_block_group"] == "runtime-reservation"
 
 
+def test_rendered_mk8s_dry_run_backend_validation_error_is_clean_400(
+    monkeypatch, tmp_path
+) -> None:
+    """Backend request-shape failures must not escape as agent tracebacks."""
+    import sys
+
+    from npa import provisioning
+
+    module_name = "npa_rendered_mk8s_backend_validation_error"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    monkeypatch.setattr(module, "_agent_project_alias", lambda _value: "project-alias")
+    monkeypatch.setattr(module, "_agent_npa_ready", lambda: (True, ""))
+
+    def reject(**_kwargs):
+        raise ValueError("strict reservation cannot be preemptible")
+
+    monkeypatch.setattr(provisioning, "provision_if_absent", reject)
+    try:
+        response = module.provision_infra({"dry_run": True, "skip_s3": True})
+        assert response.status_code == 400
+        payload = json.loads(response.body)
+        assert payload["status"] == "invalid"
+        assert "strict reservation" in payload["error"]
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

@@ -119,7 +119,10 @@ def deploy_cmd(
 
     from npa.cluster_backends import get_backend
     from npa.cluster_backends.soperator import SoperatorApplyRequest
-    from npa.soperator.lifecycle import SoperatorDeploymentValidationError
+    from npa.soperator.lifecycle import (
+        SoperatorDeploymentValidationError,
+        SoperatorStateCaptureError,
+    )
     from npa.soperator.spec import SoperatorSpecError, load_spec
 
     try:
@@ -161,6 +164,20 @@ def deploy_cmd(
             typer.echo(f"  worker pools: {', '.join(result['worker_pools'])}", err=True)
             typer.echo(f"  install dir: {result['install_dir']}", err=True)
         raise typer.Exit(1) from exc
+    except SoperatorStateCaptureError as exc:
+        if json_mode:
+            typer.echo(json.dumps(exc.result, indent=2))
+        else:
+            typer.echo(
+                f"Soperator cluster '{exc.result['name']}' was applied, but "
+                "authoritative ownership state could not be captured.",
+                err=True,
+            )
+            typer.echo(f"  error: {exc.result['error']}", err=True)
+            typer.echo(f"  recovery: {exc.result['recovery']}", err=True)
+        raise typer.Exit(1) from exc
+    except (ValueError, OSError, RuntimeError) as exc:
+        raise typer.BadParameter(f"Soperator deploy failed: {exc}") from exc
     if output == "json":
         typer.echo(json.dumps(result, indent=2))
     elif source_preflight_only:
@@ -237,17 +254,20 @@ def destroy_cmd(
         and not typer.confirm(f"Destroy soperator cluster '{name}'?")
     ):
         raise typer.Exit(1)
-    result = get_backend("soperator").destroy(
-        SoperatorSpec(name=name),
-        SoperatorDestroyRequest(
-            terraform_dir=terraform_dir,
-            solutions_library_ref=solutions_library_ref,
-            project=project or None,
-            timeout_minutes=timeout,
-            source_preflight_only=source_preflight_only,
-            on_status=lambda msg: typer.echo(f"  - {msg}"),
-        ),
-    )
+    try:
+        result = get_backend("soperator").destroy(
+            SoperatorSpec(name=name),
+            SoperatorDestroyRequest(
+                terraform_dir=terraform_dir,
+                solutions_library_ref=solutions_library_ref,
+                project=project or None,
+                timeout_minutes=timeout,
+                source_preflight_only=source_preflight_only,
+                on_status=lambda msg: typer.echo(f"  - {msg}"),
+            ),
+        )
+    except (ValueError, OSError, RuntimeError) as exc:
+        raise typer.BadParameter(f"Soperator destroy failed: {exc}") from exc
     if source_preflight_only:
         assert result is not None
         typer.echo(
@@ -273,9 +293,13 @@ def status_cmd(
     from npa.cluster_backends.soperator import SoperatorStatusRequest
     from npa.soperator.spec import SoperatorSpec
 
-    backend_status = get_backend("soperator").status(
-        SoperatorSpec(name=name), SoperatorStatusRequest(terraform_dir=terraform_dir)
-    )
+    try:
+        backend_status = get_backend("soperator").status(
+            SoperatorSpec(name=name),
+            SoperatorStatusRequest(terraform_dir=terraform_dir),
+        )
+    except (ValueError, OSError, RuntimeError) as exc:
+        raise typer.BadParameter(f"Soperator status failed: {exc}") from exc
     workers = backend_status["workers"]
     if output not in {"text", "json"}:
         raise typer.BadParameter("--output must be text or json")

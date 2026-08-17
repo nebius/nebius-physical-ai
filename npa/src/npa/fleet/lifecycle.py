@@ -30,11 +30,11 @@ from typing import Any, Callable
 
 import yaml  # type: ignore[import-untyped]
 
-from npa.cli.cluster.terraform_lifecycle import (
-    _require_bin,
-    _run_capture,
-    _run_stream,
-    _terraform_env,
+from npa.cluster_backends.process import (
+    require_bin as _require_bin,
+    run_capture as _run_capture,
+    run_stream as _run_stream,
+    terraform_env as _terraform_env,
 )
 from npa.cluster_backends import (
     BackendOwnershipError,
@@ -68,7 +68,10 @@ from npa.cluster_backends.soperator import (
     SoperatorDestroyRequest,
     SoperatorStatusRequest,
 )
-from npa.soperator.lifecycle import SoperatorDeploymentValidationError
+from npa.soperator.lifecycle import (
+    SoperatorDeploymentValidationError,
+    SoperatorStateCaptureError,
+)
 from npa.cluster_backends.quotas import preflight_region, shortfall_message
 from npa.fleet.spec import ClusterSpec, FleetSpec, ProjectSpec
 from npa.cluster_backends.mk8s_render import (
@@ -1284,7 +1287,7 @@ def deploy_fleet(
                 "region": region,
                 "backend_state_root": str(backend_root),
             }
-        except SoperatorDeploymentValidationError as exc:
+        except (SoperatorDeploymentValidationError, SoperatorStateCaptureError) as exc:
             # Terraform applied, but a real post-deploy validation gate failed.
             # Preserve the native degraded result and canonical recovery root.
             item = {
@@ -1332,7 +1335,10 @@ def deploy_fleet(
         for target in prepared:
             try:
                 soperator_results.append(_apply_soperator_target(target))
-            except SoperatorDeploymentValidationError as exc:
+            except (
+                SoperatorDeploymentValidationError,
+                SoperatorStateCaptureError,
+            ) as exc:
                 item = {
                     **exc.result,
                     "backend": "soperator",

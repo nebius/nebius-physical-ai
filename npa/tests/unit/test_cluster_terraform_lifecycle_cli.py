@@ -1444,6 +1444,47 @@ def test_residual_recovery_accepts_exact_cluster_scoped_node_group(
     ]
 
 
+def test_residual_recovery_ignores_zero_instance_cluster_block(
+    monkeypatch, tmp_path: Path
+) -> None:
+    state = {
+        "lineage": "lineage-a",
+        "serial": 6,
+        "resources": [
+            {
+                "mode": "managed",
+                "type": "nebius_mk8s_v1_cluster",
+                "instances": [],
+            },
+            {
+                "mode": "managed",
+                "type": "nebius_mk8s_v1_node_group",
+                "instances": [
+                    {
+                        "attributes": {
+                            "id": "node-group-a",
+                            "parent_id": "cluster-a",
+                        }
+                    }
+                ],
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        tf_mod,
+        "_run_capture",
+        lambda *_args, **_kwargs: _completed(json.dumps(state)),
+    )
+
+    assert tf_mod._verify_residual_terraform_ownership(
+        "terraform",
+        tmp_path,
+        {},
+        project_id="project-a",
+        cluster_id="cluster-a",
+    ) == ["nebius_mk8s_v1_node_group"]
+
+
 @pytest.mark.parametrize(
     "resource_type, attributes, expected",
     [

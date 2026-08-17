@@ -78,6 +78,49 @@ def test_deploy_help_documents_spec_and_fixes() -> None:
     assert DEFAULT_SOLUTIONS_LIBRARY_REF[:12] in result.output
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Required executable not found: terraform",
+        "Command failed (7): nebius project get: access_token=<redacted>",
+    ],
+)
+def test_standalone_cli_backend_errors_are_clean_typer_failures(
+    monkeypatch, message: str
+) -> None:
+    from npa.cluster_backends.process import BackendCommandError
+    from npa.cluster_backends.soperator import SoperatorBackend
+
+    def fail_status(*_args, **_kwargs):
+        raise BackendCommandError(message)
+
+    monkeypatch.setattr(SoperatorBackend, "status", fail_status)
+    result = runner.invoke(
+        app, ["soperator", "status", "--name", "c"], terminal_width=300
+    )
+
+    assert result.exit_code != 0
+    assert "Soperator status failed" in result.output
+    assert "Traceback" not in result.output
+    assert "provider-secret" not in result.output
+
+
+def test_cluster_status_redacts_provider_output(monkeypatch, tmp_path: Path) -> None:
+    from npa.soperator import lifecycle
+
+    kubectl = tmp_path / "kubectl"
+    kubectl.write_text(
+        "#!/bin/sh\nprintf 'secret_access_key: provider-secret\\n' >&2\nexit 9\n"
+    )
+    kubectl.chmod(0o700)
+    monkeypatch.setenv("NPA_KUBECTL_BIN", str(kubectl))
+
+    with pytest.raises(RuntimeError) as raised:
+        lifecycle.cluster_status("c")
+    assert "provider-secret" not in str(raised.value)
+    assert "<redacted>" in str(raised.value)
+
+
 def test_spec_multiple_presets_and_docker_cache() -> None:
     spec = spec_from_mapping(_base_spec_mapping())
     spec.validate()
@@ -843,8 +886,11 @@ def test_deploy_path_reconciles_legacy_source_before_provider_mutation(
     assert result["control_plane"]["system_max_size"] == 24
 
 
+@pytest.mark.parametrize(
+    "capture_failure", [None, "missing-id", "missing-name", "unreadable-auxiliary"]
+)
 def test_deploy_persists_exact_auxiliary_ids_before_reporting_success(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, capture_failure
 ) -> None:
     from npa.soperator import lifecycle
 
@@ -897,35 +943,70 @@ def test_deploy_persists_exact_auxiliary_ids_before_reporting_success(
         lifecycle, "_terraform_plan_without_unsafe_replacements", safe_plan
     )
     monkeypatch.setattr(
-        lifecycle, "_terraform_cluster_id", lambda *a, **k: "mk8scluster-owned"
-    )
-    monkeypatch.setattr(
-        lifecycle, "_terraform_cluster_name", lambda *a, **k: "soperator-owned"
+        lifecycle,
+        "_terraform_cluster_id",
+        lambda *a, **k: "" if capture_failure == "missing-id" else "mk8scluster-owned",
     )
     monkeypatch.setattr(
         lifecycle,
-        "_terraform_owned_auxiliary_resources",
-        lambda *a, **k: [
-            {
-                "kind": "filesystem",
-                "provider_type": "nebius_compute_v1_filesystem",
-                "id": "fs-jail",
-                "name": "soperator-owned-jail",
-            },
-            {
-                "kind": "filesystem",
-                "provider_type": "nebius_compute_v1_filesystem",
-                "id": "fs-spool",
-                "name": "soperator-owned-controller-spool",
-            },
-            {
-                "kind": "allocation",
-                "provider_type": "nebius_vpc_v1_allocation",
-                "id": "alloc-login",
-                "name": "soperator-owned-public-static-ip",
-            },
-        ],
+        "_terraform_cluster_name",
+        lambda *a, **k: "" if capture_failure == "missing-name" else "soperator-owned",
     )
+
+    ownership_records = [
+        {
+            "kind": "filesystem",
+            "provider_type": "nebius_compute_v1_filesystem",
+            "id": "fs-jail",
+            "name": "soperator-owned-jail",
+        },
+        {
+            "kind": "filesystem",
+            "provider_type": "nebius_compute_v1_filesystem",
+            "id": "fs-spool",
+            "name": "soperator-owned-controller-spool",
+        },
+        {
+            "kind": "allocation",
+            "provider_type": "nebius_vpc_v1_allocation",
+            "id": "alloc-login",
+            "name": "soperator-owned-public-static-ip",
+        },
+    ]
+
+    def capture_ownership(*_args, **_kwargs):
+        if capture_failure == "unreadable-auxiliary":
+            raise RuntimeError("applied Terraform state could not be read")
+        return ownership_records
+
+    monkeypatch.setattr(
+        lifecycle,
+        "_terraform_owned_auxiliary_resources",
+        capture_ownership,
+    )
+
+    if capture_failure:
+        with pytest.raises(lifecycle.SoperatorStateCaptureError) as caught:
+            lifecycle.deploy_cluster(spec, terraform_dir=recipe, apply_fixes=False)
+        assert caught.value.result["deployment_status"] == "applied"
+        assert caught.value.result["status"] == "deployed-state-capture-failed"
+        retained = lifecycle._load_env_sidecar(install)
+        assert retained is not None
+        assert retained["cluster_id"] == ""
+
+        # The same deploy is the recovery path: once state is readable, it
+        # atomically promotes the retained pre-apply sidecar without cleanup.
+        monkeypatch.setattr(
+            lifecycle, "_terraform_cluster_id", lambda *a, **k: "mk8scluster-owned"
+        )
+        monkeypatch.setattr(
+            lifecycle, "_terraform_cluster_name", lambda *a, **k: "soperator-owned"
+        )
+        monkeypatch.setattr(
+            lifecycle,
+            "_terraform_owned_auxiliary_resources",
+            lambda *a, **k: ownership_records,
+        )
 
     result = lifecycle.deploy_cluster(spec, terraform_dir=recipe, apply_fixes=False)
 
@@ -1682,16 +1763,25 @@ def test_destroy_reconstructs_tf_var_env_from_sidecar(tmp_path, monkeypatch) -> 
         subnet_id="vpcsubnet-123",
         o11y_profile="npa-mk8s",
         cluster_id="mk8scluster-exact",
+        provider_cluster_name="soperator-npatest",
+        owned_allocation_ids=["allocation-exact"],
     )
 
     monkeypatch.setattr(lifecycle, "_require_bin", lambda name: name)
     monkeypatch.setattr(
         lifecycle, "_assert_solutions_library_contract", lambda *a, **k: None
     )
+    captured: dict[str, object] = {}
+    command_timeouts: list[float | int | None] = []
+
     # _soperator_tf_env -> _terraform_env mints a real IAM token via the `nebius`
     # CLI; stub it so the destroy tests never touch real infra (CI has no nebius).
-    monkeypatch.setattr(lifecycle, "_terraform_env", lambda nebius_bin, **kwargs: {})
-    captured: dict[str, dict[str, str]] = {}
+    def fake_terraform_env(_nebius_bin, **kwargs):
+        command_timeouts.append(kwargs.get("timeout"))
+        return {}
+
+    monkeypatch.setattr(lifecycle, "_terraform_env", fake_terraform_env)
+    deadlines: list[float] = []
 
     class _Done:
         def __init__(self, stdout: str = "", returncode: int = 0) -> None:
@@ -1699,9 +1789,11 @@ def test_destroy_reconstructs_tf_var_env_from_sidecar(tmp_path, monkeypatch) -> 
             self.returncode = returncode
 
     def fake_stream(cmd, *, cwd=None, env=None, timeout=None):
+        command_timeouts.append(timeout)
         return None  # terraform init
 
     def fake_capture(cmd, *, cwd=None, env=None, timeout=None, check=True):
+        command_timeouts.append(timeout)
         # The hardened destroy runs `terraform destroy` via _run_capture; record
         # its env. state pull -> empty (no cluster id); filesystem list -> none.
         if "destroy" in cmd:
@@ -1712,21 +1804,38 @@ def test_destroy_reconstructs_tf_var_env_from_sidecar(tmp_path, monkeypatch) -> 
 
     monkeypatch.setattr(lifecycle, "_run_stream", fake_stream)
     monkeypatch.setattr(lifecycle, "_run_capture", fake_capture)
+    monkeypatch.setattr(lifecycle.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        lifecycle,
+        "_resolve_exact_cluster_presence",
+        lambda **kwargs: deadlines.append(kwargs["deadline"]) or (False, ""),
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "_cleanup_owned_provider_ids",
+        lambda **kwargs: deadlines.append(kwargs["deadline"]) or [],
+    )
 
     def fail_resolve(*args, **kwargs):  # sidecar present -> must not be called
         raise AssertionError("destroy fell back to resolve despite a sidecar")
 
     monkeypatch.setattr(lifecycle, "_resolve_subnet", fail_resolve)
 
-    lifecycle.destroy_cluster("npatest", terraform_dir=recipe)
+    lifecycle.destroy_cluster("npatest", terraform_dir=recipe, timeout_minutes=1)
 
     env = captured["env"]
+    assert isinstance(env, dict)
     assert env["TF_VAR_region"] == "us-central1"
     assert env["TF_VAR_iam_tenant_id"] == "tenant-abc"
     assert env["TF_VAR_iam_project_id"] == "project-xyz"
     assert env["TF_VAR_vpc_subnet_id"] == "vpcsubnet-123"
     assert env["TF_VAR_o11y_iam_tenant_id"] == "tenant-abc"
     assert env["TF_VAR_o11y_profile"] == "npa-mk8s"
+    assert len(deadlines) == 3
+    assert len(set(deadlines)) == 1
+    assert command_timeouts
+    assert None not in command_timeouts, command_timeouts
+    assert all(0 < timeout <= 60 for timeout in command_timeouts if timeout is not None)
 
 
 def test_destroy_deletes_orphaned_vpc_allocation(tmp_path, monkeypatch) -> None:

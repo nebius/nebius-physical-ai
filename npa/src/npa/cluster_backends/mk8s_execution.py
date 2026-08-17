@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import codecs
 import json
 import logging
 import os
 import re
-import selectors
 import shutil
 import stat
-import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -20,6 +17,7 @@ from typing import Any, Callable
 from npa.cluster.gpu_driver import resolve_gpu_driver_strategy
 from npa.cluster.gpu_health import GpuHealthConfig, validate_gpu_health
 from npa.cluster_backends.process import (
+    _redact as _redact_output,
     require_bin as _require_bin,
     run_capture as _run_capture,
     run_stream as _run_stream,
@@ -52,7 +50,7 @@ def verify_cluster(
     *,
     cluster: MK8sDesired,
     kubeconfig: Path,
-    kubectl_bin: str = "kubectl",
+    kubectl_bin: str = "",
     evidence_path: Path | None = None,
     on_status: Callable[[str], None] | None = None,
     run_capture: Callable[..., Any] = _run_capture,
@@ -72,6 +70,10 @@ def verify_cluster(
             "status": "validation-skipped",
             "verification": "skipped",
         }
+
+    kubectl_bin = kubectl_bin or _require_bin(
+        os.environ.get("NPA_KUBECTL_BIN") or "kubectl"
+    )
 
     if cluster.mig and cluster.mig.enabled:
         report = mig_verifier(
@@ -662,111 +664,21 @@ def _ensure_private_log_parent(log_path: Path, fleet_root: Path) -> None:
 def _run_to_log(
     args: list[str], *, cwd: Path, env: dict[str, str], timeout: int, log_path: Path
 ) -> None:
-    """Run *args*, streaming redacted stdout/stderr to a private log.
-
-    Terraform credentials remain environment-only. If provider output
-    accidentally prints a token, exact known credential values are redacted
-    before the bytes reach disk. The subprocess remains list-form and human
-    sequential mode continues to use ``_run_stream`` directly.
-    """
-
-    sensitive_values = sorted(
-        {
-            env[key]
-            for key in (
-                "TF_VAR_iam_token",
-                "NEBIUS_IAM_TOKEN",
-                "NPA_NEBIUS_IAM_TOKEN",
-            )
-            if env.get(key)
-        },
-        key=len,
-        reverse=True,
-    )
-    max_sensitive_length = max((len(value) for value in sensitive_values), default=0)
-    pending = ""
+    """Run *args* through the shared redacting process layer into a private log."""
 
     with _open_private_log(log_path) as fh:
-        fh.write(f"\n$ {' '.join(args)}\n")
+        fh.write(f"\n$ {_redact_output(' '.join(args))}\n")
         fh.flush()
-        proc = subprocess.Popen(
-            args, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
-        )
-        if proc.stdout is None:  # pragma: no cover - guaranteed by stdout=PIPE
-            proc.kill()
-            proc.wait()
-            raise RuntimeError("could not capture Terraform diagnostics")
-
-        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
-
-        def write_redacted(chunk: str, *, final: bool = False) -> None:
-            nonlocal pending
-            pending += chunk
-            if final or max_sensitive_length == 0:
-                cutoff = len(pending)
-            else:
-                # Retain enough trailing characters for a credential split
-                # across OS pipe reads to be recognized on the next read.
-                cutoff = max(0, len(pending) - max_sensitive_length + 1)
-                changed = True
-                while changed:
-                    changed = False
-                    for value in sensitive_values:
-                        start = 0
-                        while True:
-                            index = pending.find(value, start)
-                            if index < 0:
-                                break
-                            if index < cutoff < index + len(value):
-                                cutoff = index
-                                changed = True
-                            start = index + 1
-            prefix, pending = pending[:cutoff], pending[cutoff:]
-            for value in sensitive_values:
-                prefix = prefix.replace(value, "<redacted>")
-            if prefix:
-                fh.write(prefix)
-                fh.flush()
-
-        selector = selectors.DefaultSelector()
-        selector.register(proc.stdout, selectors.EVENT_READ)
-        deadline = time.monotonic() + timeout
         try:
-            while True:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    proc.kill()
-                    remainder, _ = proc.communicate()
-                    write_redacted(
-                        decoder.decode(remainder or b"", final=True), final=True
-                    )
-                    raise subprocess.TimeoutExpired(args, timeout)
-                events = selector.select(timeout=min(1.0, remaining))
-                if not events:
-                    continue
-                chunk = os.read(proc.stdout.fileno(), 65536)
-                if not chunk:
-                    break
-                write_redacted(decoder.decode(chunk))
-            write_redacted(decoder.decode(b"", final=True), final=True)
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                proc.kill()
-                proc.wait()
-                raise subprocess.TimeoutExpired(args, timeout)
-            returncode = proc.wait(timeout=remaining)
-        except BaseException:
-            if proc.poll() is None:
-                proc.kill()
-                proc.wait()
-            raise
-        finally:
-            selector.close()
-            proc.stdout.close()
-    if returncode != 0:
-        raise RuntimeError(
-            f"command failed ({returncode}): {' '.join(args)} (see {log_path})"
-        )
+            _run_stream(
+                args,
+                cwd=cwd,
+                env=env,
+                timeout=timeout,
+                output_sink=fh,
+            )
+        except RuntimeError as exc:
+            raise RuntimeError(f"{exc} (see {log_path})") from exc
 
 
 def _tf_run(
@@ -954,6 +866,43 @@ def _context_name(fleet_name: str, project_key: str, cluster_name: str) -> str:
     return f"fleet-{fleet_name}-{project_key}-{cluster_name}"
 
 
+def _normalize_tfvars_assignments(text: str) -> str:
+    """Normalize only an HCL line's first unquoted assignment operator."""
+
+    normalized: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        quote = ""
+        escaped = False
+        assignment = -1
+        for index, character in enumerate(line):
+            if escaped:
+                escaped = False
+                continue
+            if character == "\\" and quote:
+                escaped = True
+                continue
+            if quote:
+                if character == quote:
+                    quote = ""
+                continue
+            if character in {'"', "'"}:
+                quote = character
+                continue
+            if character == "=":
+                assignment = index
+                break
+        if assignment < 0:
+            normalized.append(line)
+        else:
+            normalized.append(
+                line[:assignment].rstrip() + "=" + line[assignment + 1 :].lstrip()
+            )
+    return "\n".join(normalized)
+
+
 def _is_verified_unchanged_target(
     *,
     project: MK8sProjectIdentity,
@@ -989,17 +938,9 @@ def _is_verified_unchanged_target(
         saved_tfvars = tfvars_path.read_text(encoding="utf-8")
         rendered_tfvars = render_tfvars(cluster, ssh_public_key=ssh_public_key)
 
-        # Normalize insignificant blank lines and whitespace around assignment
-        # operators before comparing the deterministic HCL. All remaining
-        # tokens and values stay significant.
-        def normalize(text: str) -> str:
-            return "\n".join(
-                re.sub(r"\s*=\s*", "=", line.strip())
-                for line in text.splitlines()
-                if line.strip()
-            )
-
-        if normalize(saved_tfvars) != normalize(rendered_tfvars):
+        if _normalize_tfvars_assignments(saved_tfvars) != _normalize_tfvars_assignments(
+            rendered_tfvars
+        ):
             return False
         provider_project = _get_project(nebius_bin, project_id, env, profile)
     except (OSError, RuntimeError, ValueError):
@@ -1201,7 +1142,7 @@ def _deploy_one_cluster(
     log_path: Path | None = None,
     validation_policy: str = "fleet",
     basic_validation_timeout_minutes: int = 30,
-    kubectl_bin: str = "kubectl",
+    kubectl_bin: str = "",
 ) -> dict[str, Any]:
     project_key = project.key()
     install_dir = fleet_root / project_key / cluster.name

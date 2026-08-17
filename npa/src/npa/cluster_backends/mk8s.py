@@ -60,7 +60,7 @@ class MK8sApplyRequest:
     # allowing the standalone ``--validate`` flag to leak into fleet semantics.
     post_deploy_validation: str = "fleet"
     basic_validation_timeout_minutes: int = 30
-    kubectl_bin: str = "kubectl"
+    kubectl_bin: str = ""
 
 
 @dataclass(frozen=True)
@@ -68,7 +68,7 @@ class MK8sStatusRequest:
     state: dict[str, Any] | None = None
     install_dir: Path | None = None
     kubeconfig: Path | None = None
-    kubectl_bin: str = "kubectl"
+    kubectl_bin: str = ""
     evidence_path: Path | None = None
     on_status: Callable[[str], None] | None = None
     run_capture: Callable[..., Any] | None = None

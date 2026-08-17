@@ -437,7 +437,7 @@ def provision_if_absent(
         actions.append("k8s:blocked until writable S3 is reconciled")
     elif skip_k8s:
         actions.append("k8s:skipped")
-    elif _has_cached_kubeconfig(context, kubeconfig_path):
+    elif not dry_run and _has_cached_kubeconfig(context, kubeconfig_path):
         actions.append(f"k8s:reused kubeconfig {kubeconfig_path}")
         if validate and gpu_nodes > 0:
             if mig_enabled:
@@ -512,7 +512,7 @@ def provision_if_absent(
                 )
                 actions.append("k8s:validated stable GPU health and CUDA vectorAdd")
         k8s_ready = True
-    elif not environment.project_id or not environment.tenant_id:
+    elif not dry_run and (not environment.project_id or not environment.tenant_id):
         warnings.append("project_id and tenant_id are required to ensure Kubernetes")
     elif dry_run:
         from npa.cluster_backends import get_backend
@@ -520,31 +520,18 @@ def provision_if_absent(
         from npa.cluster_backends.mig import MigSpec
         from npa.fleet.spec import ClusterSpec, NodePoolSpec
 
-        from npa.cli.cluster.terraform_lifecycle import (
-            _read_tfvars,
-            _resolve_terraform_dir,
-        )
-
-        standalone_tfvars = _read_tfvars(_resolve_terraform_dir(terraform_dir))
-        desired_gpu_count = (
-            gpu_nodes
-            if gpu_nodes >= 0
-            else int(standalone_tfvars.get("gpu_nodes_count", 1) or 0)
-        )
-        desired_cpu_count = (
-            cpu_nodes
-            if cpu_nodes >= 0
-            else int(standalone_tfvars.get("cpu_nodes_count", 1) or 0)
-        )
+        # The immutable preflight topology above already resolved all defaults.
+        # A dry-run must remain package-only: do not discover deploy/cluster,
+        # read tfvars, clone a recipe, or materialize anything on disk.
+        desired_gpu_count = gpu_nodes
+        desired_cpu_count = cpu_nodes
         backend_desired = ClusterSpec(
             name=context,
             cpu_nodes=(
                 NodePoolSpec(
                     count=desired_cpu_count,
-                    platform=cpu_platform
-                    or str(standalone_tfvars.get("cpu_nodes_platform") or "cpu-d3"),
-                    preset=cpu_preset
-                    or str(standalone_tfvars.get("cpu_nodes_preset") or "8vcpu-32gb"),
+                    platform=cpu_platform,
+                    preset=cpu_preset,
                 )
                 if desired_cpu_count
                 else None
@@ -552,16 +539,11 @@ def provision_if_absent(
             gpu_nodes=(
                 NodePoolSpec(
                     count=desired_gpu_count,
-                    platform=gpu_platform
-                    or str(
-                        standalone_tfvars.get("gpu_nodes_platform") or "gpu-rtx6000"
-                    ),
-                    preset=gpu_preset
-                    or str(
-                        standalone_tfvars.get("gpu_nodes_preset") or "1gpu-24vcpu-218gb"
-                    ),
+                    platform=gpu_platform,
+                    preset=gpu_preset,
                     disk_size_gib=128 if mig_enabled else 0,
                     capacity_block_group=capacity_block_group,
+                    preemptible=bool(preemptible),
                 )
                 if desired_gpu_count
                 else None
@@ -585,11 +567,11 @@ def provision_if_absent(
         backend = get_backend("mk8s")
         backend_plan = backend.plan(backend_desired)
         backend.preflight(backend_desired, MK8sApplyRequest())
-        materialized = backend.materialize(backend_desired, MK8sApplyRequest())
         actions.append(
             "k8s:shared-backend plan "
             f"backend={backend_plan['backend']} target={backend_plan['name']} "
-            f"materialized={bool(materialized.deployment_inputs)}"
+            f"cpu_nodes={backend_plan['cpu_nodes']} "
+            f"gpu_nodes={backend_plan['gpu_nodes']} provider_mutation=false"
         )
         shape = ", ".join(
             [

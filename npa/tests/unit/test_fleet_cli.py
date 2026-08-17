@@ -1129,6 +1129,61 @@ def test_deploy_one_cluster_success_promotes_sidecar(tmp_path, monkeypatch) -> N
     assert recorded[0]["project_id"] == "p1"
 
 
+def test_fleet_gpu_validation_honors_env_only_kubectl_override(
+    tmp_path, monkeypatch
+) -> None:
+    L = _mock_deploy_boundary(monkeypatch)
+    kubectl = tmp_path / "env-kubectl"
+    kubectl.write_text("#!/bin/sh\nexit 0\n")
+    kubectl.chmod(0o700)
+    monkeypatch.setenv("NPA_KUBECTL_BIN", str(kubectl))
+    seen: dict[str, str] = {}
+
+    def gpu_health(_runner, **kwargs):
+        seen["kubectl"] = kwargs["kubectl_bin"]
+        return {"status": "ready"}
+
+    monkeypatch.setattr(L, "validate_gpu_health", gpu_health)
+    cluster = ClusterSpec(
+        name="c",
+        gpu_nodes=NodePoolSpec(
+            count=1, platform="gpu-rtx6000", preset="1gpu-24vcpu-218gb"
+        ),
+    )
+    result = _run_one_cluster(L, tmp_path, cluster=cluster)
+    assert result["status"] == "deployed"
+    assert seen["kubectl"] == str(kubectl)
+
+
+def test_fleet_mig_validation_honors_env_only_kubectl_override(
+    tmp_path, monkeypatch
+) -> None:
+    from types import SimpleNamespace
+
+    L = _mock_deploy_boundary(monkeypatch)
+    kubectl = tmp_path / "env-kubectl"
+    kubectl.write_text("#!/bin/sh\nexit 0\n")
+    kubectl.chmod(0o700)
+    monkeypatch.setenv("NPA_KUBECTL_BIN", str(kubectl))
+    seen: dict[str, str] = {}
+
+    def mig_ready(**kwargs):
+        seen["kubectl"] = kwargs["kubectl_bin"]
+        return SimpleNamespace(nodes=[object()], as_dict=lambda: {"ready": True})
+
+    monkeypatch.setattr(L, "wait_for_mig_ready", mig_ready)
+    cluster = ClusterSpec(
+        name="c",
+        gpu_nodes=NodePoolSpec(
+            count=1, platform="gpu-rtx6000", preset="1gpu-24vcpu-218gb"
+        ),
+        mig=MigSpec(enabled=True),
+    )
+    result = _run_one_cluster(L, tmp_path, cluster=cluster)
+    assert result["status"] == "deployed"
+    assert seen["kubectl"] == str(kubectl)
+
+
 def test_fleet_cluster_identity_roundtrip_and_collision_guard(tmp_path) -> None:
     from npa.cluster.state import kubeconfig_file, load_cluster_state
     from npa.fleet import lifecycle as L
@@ -1862,7 +1917,31 @@ def test_run_to_log_writes_and_raises(tmp_path) -> None:
         ["true"], cwd=tmp_path, env={"PATH": "/usr/bin:/bin"}, timeout=30, log_path=log
     )
     assert log.exists() and "$ true" in log.read_text()
-    with pytest.raises(RuntimeError, match="command failed"):
+    emits_secrets = tmp_path / "emits-secrets"
+    emits_secrets.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$TF_VAR_iam_token\"\n"
+        "printf 'secret_access_key: hidden\\n"
+        "-----BEGIN PRIVATE KEY-----\\nprivate-material\\n"
+        "-----END PRIVATE KEY-----\\n'\n"
+    )
+    emits_secrets.chmod(0o700)
+    L._run_to_log(
+        [str(emits_secrets)],
+        cwd=tmp_path,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "TF_VAR_iam_token": "unlabelled-token-value",
+        },
+        timeout=30,
+        log_path=log,
+    )
+    contents = log.read_text()
+    assert "unlabelled-token-value" not in contents
+    assert "hidden" not in contents
+    assert "private-material" not in contents
+    assert contents.count("<redacted>") >= 2
+    assert "<redacted-private-key>" in contents
+    with pytest.raises(RuntimeError, match="Command failed"):
         L._run_to_log(
             ["false"],
             cwd=tmp_path,

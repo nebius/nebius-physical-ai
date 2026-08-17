@@ -16,7 +16,10 @@ from npa.cluster_backends.mk8s import (
 )
 from npa.cluster_backends.mk8s_model import MK8sDesired, MK8sNodePool
 from npa.cluster_backends.mig import MigSpec
-from npa.cluster_backends.soperator import SoperatorApplyRequest
+from npa.cluster_backends.soperator import (
+    SoperatorApplyRequest,
+    SoperatorDestroyRequest,
+)
 from npa.fleet.lifecycle import fleet_status, plan_fleet
 from npa.fleet.spec import (
     ClusterSpec,
@@ -27,6 +30,16 @@ from npa.fleet.spec import (
     spec_from_mapping,
 )
 from npa.soperator.spec import spec_from_mapping as soperator_spec_from_mapping
+
+
+def test_tfvars_normalizer_preserves_equals_inside_quoted_values() -> None:
+    from npa.cluster_backends.mk8s_execution import _normalize_tfvars_assignments
+
+    left = 'label = "team = robotics"\nurl = "https://example.test?a=b"\n'
+    right = 'label="team = robotics"\nurl="https://example.test?a=b"\n'
+    assert _normalize_tfvars_assignments(left) == _normalize_tfvars_assignments(right)
+    assert '"team = robotics"' in _normalize_tfvars_assignments(left)
+    assert "?a=b" in _normalize_tfvars_assignments(left)
 
 
 def _legacy_mk8s_mapping() -> dict:
@@ -271,6 +284,44 @@ def test_standalone_and_one_target_fleet_share_soperator_contract() -> None:
         backend.materialize(standalone, SoperatorApplyRequest()).deployment_inputs
         == backend.materialize(from_fleet, SoperatorApplyRequest()).deployment_inputs
     )
+
+
+def test_soperator_backend_apply_and_destroy_always_identify_backend(
+    monkeypatch,
+) -> None:
+    from npa.soperator import lifecycle
+
+    desired = soperator_spec_from_mapping(
+        {
+            "apiVersion": "npa.soperator/v0.0.1",
+            "name": "slurm",
+            "workers": [{"name": "cpu", "platform": "cpu-d3", "preset": "8vcpu-32gb"}],
+        }
+    )
+    monkeypatch.setattr(
+        lifecycle, "deploy_cluster", lambda *_a, **_k: {"status": "ready"}
+    )
+    monkeypatch.setattr(
+        lifecycle, "destroy_cluster", lambda *_a, **_k: {"status": "destroyed"}
+    )
+    backend = get_backend("soperator")
+    assert backend.apply(desired, SoperatorApplyRequest())["backend"] == "soperator"
+    destroyed = backend.destroy(desired, SoperatorDestroyRequest())
+    assert destroyed is not None
+    assert destroyed["backend"] == "soperator"
+
+
+def test_soperator_state_capture_error_is_actionable_and_non_destructive() -> None:
+    from npa.soperator.lifecycle import SoperatorStateCaptureError
+
+    error = SoperatorStateCaptureError(
+        {"name": "slurm", "install_dir": "/safe/state"},
+        "state is unreadable",
+    )
+    assert error.result["status"] == "deployed-state-capture-failed"
+    assert error.result["deployment_status"] == "applied"
+    assert "Retry the identical deploy" in error.result["recovery"]
+    assert "delete resources by name" in error.result["recovery"]
 
 
 def test_mk8s_materializer_preserves_preemptible_capacity_mode() -> None:
@@ -1226,6 +1277,78 @@ def test_full_cpu_validation_checks_exact_nodes_and_default_storage(tmp_path) ->
         "expected_nodes": 1,
         "default_storage_class": "compute-csi-default-sc",
     }
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_standalone_validation_kubectl_env_and_explicit_precedence(
+    tmp_path, monkeypatch, explicit
+) -> None:
+    from types import SimpleNamespace
+    from npa.cluster_backends import mk8s_execution
+
+    env_kubectl = tmp_path / "env-kubectl"
+    env_kubectl.write_text("#!/bin/sh\nexit 0\n")
+    env_kubectl.chmod(0o700)
+    monkeypatch.setenv("NPA_KUBECTL_BIN", str(env_kubectl))
+    commands: list[list[str]] = []
+
+    def capture(command, **_kwargs):
+        commands.append(command)
+        if "nodes" in command:
+            payload = {
+                "items": [
+                    {"status": {"conditions": [{"type": "Ready", "status": "True"}]}}
+                ]
+            }
+        else:
+            payload = {
+                "items": [
+                    {
+                        "metadata": {
+                            "name": "compute-csi-default-sc",
+                            "annotations": {
+                                "storageclass.kubernetes.io/is-default-class": "true"
+                            },
+                        }
+                    }
+                ]
+            }
+        return SimpleNamespace(returncode=0, stdout=json.dumps(payload))
+
+    desired = MK8sDesired(
+        name="cpu",
+        cpu_nodes=MK8sNodePool(count=1, platform="cpu-d3", preset="8vcpu-32gb"),
+    )
+    mk8s_execution.verify_cluster(
+        cluster=desired,
+        kubeconfig=tmp_path / "kubeconfig",
+        kubectl_bin="explicit-kubectl" if explicit else "",
+        run_capture=capture,
+        validation_policy="standalone-full",
+        basic_validation_timeout_seconds=1,
+    )
+    assert commands
+    expected = "explicit-kubectl" if explicit else str(env_kubectl)
+    assert all(command[0] == expected for command in commands)
+
+
+def test_standalone_validation_missing_env_kubectl_is_actionable(
+    tmp_path, monkeypatch
+) -> None:
+    from npa.cluster_backends import mk8s_execution
+    from npa.cluster_backends.process import BackendCommandError
+
+    monkeypatch.setenv("NPA_KUBECTL_BIN", str(tmp_path / "missing-kubectl"))
+    desired = MK8sDesired(
+        name="cpu",
+        cpu_nodes=MK8sNodePool(count=1, platform="cpu-d3", preset="8vcpu-32gb"),
+    )
+    with pytest.raises(BackendCommandError, match="Required executable not found"):
+        mk8s_execution.verify_cluster(
+            cluster=desired,
+            kubeconfig=tmp_path / "kubeconfig",
+            validation_policy="standalone-full",
+        )
 
 
 @pytest.mark.parametrize(

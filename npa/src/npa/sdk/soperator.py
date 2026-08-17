@@ -34,6 +34,7 @@ from npa.cluster_backends.soperator import (
 from npa.soperator.lifecycle import (
     DeploymentValidationFailure,
     SoperatorDeploymentValidationError,
+    SoperatorStateCaptureError,
     apply_post_deploy_fixes,
     plan_cluster as plan,
 )
@@ -69,6 +70,7 @@ __all__ = [
     "apply_post_deploy_fixes",
     "DeploymentValidationFailure",
     "SoperatorDeploymentValidationError",
+    "SoperatorStateCaptureError",
     "SoperatorSpec",
     "WorkerPoolSpec",
     "load_spec",

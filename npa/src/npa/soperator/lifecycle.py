@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from npa.cluster_backends.process import (
+    BackendCommandError,
     require_bin as _require_bin,
     run_capture as _run_capture,
     run_stream as _run_stream,
@@ -164,6 +165,24 @@ class SoperatorDeploymentValidationError(RuntimeError):
             "validation": failure.to_dict(),
         }
         super().__init__(failure.message)
+
+
+class SoperatorStateCaptureError(RuntimeError):
+    """Apply succeeded, but authoritative ownership could not be checkpointed."""
+
+    def __init__(self, deployment: dict[str, Any], message: str) -> None:
+        self.result = {
+            **deployment,
+            "status": "deployed-state-capture-failed",
+            "deployment_status": "applied",
+            "error": message,
+            "recovery": (
+                "Authoritative Terraform state and the pre-apply ownership sidecar "
+                "were retained. Retry the identical deploy after restoring state "
+                "readability; do not delete resources by name."
+            ),
+        }
+        super().__init__(message)
 
 
 class GPUCreationCheckError(RuntimeError):
@@ -501,7 +520,7 @@ def cluster_status(
 
     context = f"nebius-{name}-slurm"
     kubectl = _require_bin(os.environ.get("NPA_KUBECTL_BIN") or "kubectl")
-    proc = subprocess.run(
+    proc = _run_capture(
         [
             kubectl,
             "--context",
@@ -515,8 +534,6 @@ def cluster_status(
             "--",
             "sinfo",
         ],
-        text=True,
-        capture_output=True,
         check=False,
     )
     if proc.returncode != 0:
@@ -550,7 +567,7 @@ def _provider_json(
             check=False,
             timeout=120,
         )
-    except subprocess.TimeoutExpired as exc:
+    except (BackendCommandError, subprocess.TimeoutExpired) as exc:
         raise ValueError(
             f"{description} timed out; refusing provider mutation"
         ) from exc
@@ -1321,7 +1338,13 @@ def _nebius_cli_env(profile: str = "") -> dict[str, str]:
     return env
 
 
-def _resolve_subnet(nebius_bin: str, project_id: str, env: dict[str, str]) -> str:
+def _resolve_subnet(
+    nebius_bin: str,
+    project_id: str,
+    env: dict[str, str],
+    *,
+    timeout: int | float | None = None,
+) -> str:
     result = _run_capture(
         [
             nebius_bin,
@@ -1334,6 +1357,7 @@ def _resolve_subnet(nebius_bin: str, project_id: str, env: dict[str, str]) -> st
             "json",
         ],
         env=env,
+        timeout=timeout,
     )
     payload = json.loads(result.stdout or "{}")
     items = payload.get("items") or []
@@ -1752,12 +1776,16 @@ def _soperator_tf_env(
     project_id: str,
     subnet_id: str,
     profile: str = "",
+    timeout: int | float | None = None,
 ) -> dict[str, str]:
     profile = profile.strip() or (
         os.environ.get("NPA_NEBIUS_PROFILE", "").strip()
         or os.environ.get("NEBIUS_PROFILE", "").strip()
     )
-    env = _terraform_env(nebius_bin, profile=profile)
+    terraform_env_kwargs: dict[str, Any] = {"profile": profile}
+    if timeout is not None:
+        terraform_env_kwargs["timeout"] = timeout
+    env = _terraform_env(nebius_bin, **terraform_env_kwargs)
     if profile:
         # Terraform local-exec and kubeconfig generation invoke the bare CLI;
         # keep them on the same explicitly selected cross-tenant principal.
@@ -1773,12 +1801,20 @@ def _soperator_tf_env(
 
 
 def _terraform_cluster_identity(
-    terraform_bin: str, install_dir: Path, env: dict[str, str]
+    terraform_bin: str,
+    install_dir: Path,
+    env: dict[str, str],
+    *,
+    timeout: int | float | None = None,
 ) -> tuple[str, str]:
     """Return the exact mk8s ID/name pair from authoritative Terraform state."""
 
     result = _run_capture(
-        [terraform_bin, "state", "pull"], cwd=install_dir, env=env, check=False
+        [terraform_bin, "state", "pull"],
+        cwd=install_dir,
+        env=env,
+        check=False,
+        timeout=timeout,
     )
     if result.returncode != 0 or not result.stdout.strip():
         return "", ""
@@ -1798,19 +1834,31 @@ def _terraform_cluster_identity(
 
 
 def _terraform_cluster_id(
-    terraform_bin: str, install_dir: Path, env: dict[str, str]
+    terraform_bin: str,
+    install_dir: Path,
+    env: dict[str, str],
+    *,
+    timeout: int | float | None = None,
 ) -> str:
     """Return the mk8s cluster ID from Terraform state (empty if not found)."""
 
-    return _terraform_cluster_identity(terraform_bin, install_dir, env)[0]
+    return _terraform_cluster_identity(
+        terraform_bin, install_dir, env, timeout=timeout
+    )[0]
 
 
 def _terraform_cluster_name(
-    terraform_bin: str, install_dir: Path, env: dict[str, str]
+    terraform_bin: str,
+    install_dir: Path,
+    env: dict[str, str],
+    *,
+    timeout: int | float | None = None,
 ) -> str:
     """Return the provider mk8s name from Terraform state (empty if not found)."""
 
-    return _terraform_cluster_identity(terraform_bin, install_dir, env)[1]
+    return _terraform_cluster_identity(
+        terraform_bin, install_dir, env, timeout=timeout
+    )[1]
 
 
 _OWNED_AUXILIARY_RESOURCE_TYPES = {
@@ -1959,12 +2007,24 @@ def _is_not_found_result(result: Any) -> bool:
     return "not found" in text or "not_found" in text or "does not exist" in text
 
 
+def _deadline_timeout(deadline: float, maximum: int = 120) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise RuntimeError("configured destroy deadline has expired")
+    return min(float(maximum), remaining)
+
+
 def _provider_inventory_ids(
-    command: list[str], *, env: dict[str, str], description: str
+    command: list[str],
+    *,
+    env: dict[str, str],
+    description: str,
+    deadline: float | None = None,
 ) -> set[str]:
     """Read a provider list response without treating ambiguity as absence."""
 
-    listed = _run_capture(command, env=env, check=False, timeout=120)
+    timeout = 120 if deadline is None else _deadline_timeout(deadline)
+    listed = _run_capture(command, env=env, check=False, timeout=timeout)
     if listed.returncode != 0 or not listed.stdout.strip():
         raise RuntimeError(f"{description} inventory could not be read")
     try:
@@ -2017,10 +2077,15 @@ def _wait_for_provider_id_absence(
     last_error = ""
     while time.monotonic() < deadline:
         try:
-            result = _run_capture(command, env=env, check=False, timeout=120)
-        except (OSError, subprocess.TimeoutExpired) as exc:
+            result = _run_capture(
+                command,
+                env=env,
+                check=False,
+                timeout=_deadline_timeout(deadline),
+            )
+        except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
             last_error = type(exc).__name__
-            time.sleep(2)
+            time.sleep(min(2, max(0, deadline - time.monotonic())))
             continue
         if _is_not_found_result(result):
             return None
@@ -2030,7 +2095,7 @@ def _wait_for_provider_id_absence(
             return f"{description} absence check failed terminally"
         else:
             last_error = "provider read was transient or unreadable"
-        time.sleep(2)
+        time.sleep(min(2, max(0, deadline - time.monotonic())))
     return f"{description} absence was not confirmed before the configured deadline: {last_error}"
 
 
@@ -2061,11 +2126,11 @@ def _resolve_exact_cluster_presence(
                 ],
                 env=env,
                 check=False,
-                timeout=120,
+                timeout=_deadline_timeout(deadline),
             )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+        except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
             last_error = type(exc).__name__
-            time.sleep(2)
+            time.sleep(min(2, max(0, deadline - time.monotonic())))
             continue
         if _is_not_found_result(result):
             return False, ""
@@ -2073,7 +2138,7 @@ def _resolve_exact_cluster_presence(
             if _provider_read_terminal(result):
                 return None, "exact Managed Kubernetes identity check failed terminally"
             last_error = "transient or unreadable provider response"
-            time.sleep(2)
+            time.sleep(min(2, max(0, deadline - time.monotonic())))
             continue
         try:
             payload = json.loads(result.stdout)
@@ -2126,7 +2191,7 @@ def _cleanup_owned_provider_ids(
     ]
     try:
         inventory_ids = _provider_inventory_ids(
-            list_command, env=env, description=description
+            list_command, env=env, description=description, deadline=deadline
         )
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
         return [str(exc)]
@@ -2148,9 +2213,9 @@ def _cleanup_owned_provider_ids(
                     ],
                     env=env,
                     check=False,
-                    timeout=120,
+                    timeout=_deadline_timeout(deadline),
                 )
-            except (OSError, subprocess.TimeoutExpired) as exc:
+            except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
                 errors.append(
                     f"owned {description} {resource_id} presence check failed: "
                     f"{type(exc).__name__}"
@@ -2171,9 +2236,9 @@ def _cleanup_owned_provider_ids(
                     [nebius_bin, *service, "delete", "--id", resource_id],
                     env=env,
                     check=False,
-                    timeout=120,
+                    timeout=_deadline_timeout(deadline),
                 )
-            except (OSError, subprocess.TimeoutExpired) as exc:
+            except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
                 errors.append(
                     f"owned {description} {resource_id} delete failed: "
                     f"{type(exc).__name__}"
@@ -2242,7 +2307,7 @@ def _reconcile_recreated_auxiliary_resources(
             ],
             env=env,
             check=False,
-            timeout=120,
+            timeout=_deadline_timeout(deadline),
         )
         if listed.returncode != 0 or not listed.stdout.strip():
             errors.append(f"{kind} name reconciliation inventory could not be read")
@@ -2309,7 +2374,7 @@ def _reconcile_recreated_auxiliary_resources(
                 [nebius_bin, *service, "delete", "--id", replacement_id],
                 env=env,
                 check=False,
-                timeout=120,
+                timeout=_deadline_timeout(deadline),
             )
             if deleted.returncode != 0 and not _is_not_found_result(deleted):
                 errors.append(f"recreated owned {kind} delete failed")
@@ -2334,7 +2399,12 @@ def _reconcile_recreated_auxiliary_resources(
 
 
 def _refresh_kube_credentials(
-    nebius_bin: str, cluster_id: str, context: str, env: dict[str, str]
+    nebius_bin: str,
+    cluster_id: str,
+    context: str,
+    env: dict[str, str],
+    *,
+    timeout: int | float | None = None,
 ) -> None:
     """Write an admin kubeconfig context for the cluster (recipe writes a limited SA)."""
 
@@ -2360,6 +2430,7 @@ def _refresh_kube_credentials(
         ],
         env=env,
         check=False,
+        timeout=timeout,
     )
 
 
@@ -2934,7 +3005,7 @@ def _terraform_plan_without_unsafe_replacements(
                 timeout=timeout,
                 check=False,
             )
-        except subprocess.TimeoutExpired as exc:
+        except (BackendCommandError, subprocess.TimeoutExpired) as exc:
             raise RuntimeError(
                 "Terraform replacement-guard plan timed out before provider mutation"
             ) from exc
@@ -2963,7 +3034,7 @@ def _terraform_plan_without_unsafe_replacements(
                 timeout=timeout,
                 check=False,
             )
-        except subprocess.TimeoutExpired as exc:
+        except (BackendCommandError, subprocess.TimeoutExpired) as exc:
             raise RuntimeError(
                 "Terraform replacement-guard plan inspection timed out before "
                 "provider mutation"
@@ -3282,16 +3353,29 @@ def deploy_cluster(
     # The applied Terraform state is the ownership authority. Snapshot every
     # exact auxiliary ID and atomically promote the sidecar before any success
     # result or post-deploy validation can be returned.
-    cluster_id = _require_applied_cluster_id(terraform_bin, install_dir, env)
-    provider_cluster_name = _terraform_cluster_name(terraform_bin, install_dir, env)
-    if not provider_cluster_name:
-        raise RuntimeError(
-            "applied Terraform state has no exact Managed Kubernetes provider name; "
-            "refusing to overwrite durable ownership or report success"
+    try:
+        cluster_id = _require_applied_cluster_id(terraform_bin, install_dir, env)
+        provider_cluster_name = _terraform_cluster_name(terraform_bin, install_dir, env)
+        if not provider_cluster_name:
+            raise RuntimeError(
+                "applied Terraform state has no exact Managed Kubernetes provider "
+                "name; refusing to overwrite durable ownership or report success"
+            )
+        owned_auxiliary_resources = _terraform_owned_auxiliary_resources(
+            terraform_bin, install_dir, env
         )
-    owned_auxiliary_resources = _terraform_owned_auxiliary_resources(
-        terraform_bin, install_dir, env
-    )
+    except RuntimeError as exc:
+        raise SoperatorStateCaptureError(
+            {
+                "name": spec.name,
+                "region": region,
+                "project_id": project_id,
+                "install_dir": str(install_dir),
+                "kube_context": context,
+                "worker_pools": [pool.name for pool in spec.workers],
+            },
+            str(exc),
+        ) from exc
     owned_filesystem_ids = sorted(
         item["id"] for item in owned_auxiliary_resources if item["kind"] == "filesystem"
     )
@@ -3422,14 +3506,28 @@ def destroy_cluster(
         )
         return result
 
+    if timeout_minutes <= 0:
+        raise ValueError("soperator destroy timeout must be positive")
+    destroy_deadline = time.monotonic() + timeout_minutes * 60
+
+    def remaining(phase: str, maximum: int | None = None) -> int:
+        seconds = int(destroy_deadline - time.monotonic())
+        if seconds < 1:
+            raise RuntimeError(
+                f"Soperator destroy deadline exhausted during {phase}; exact "
+                "ownership state was retained for retry"
+            )
+        return min(seconds, maximum) if maximum is not None else seconds
+
     terraform_bin = _require_bin(os.environ.get("NPA_TERRAFORM_BIN") or "terraform")
     nebius_bin = _require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius")
 
     # ``terraform destroy`` still parses the config, so the region/tenant/project/
     # subnet/o11y variables (passed as env at apply time, never written to
     # terraform.tfvars) must be set or destroy fails on "No value for required
-    # variable". Prefer the sidecar written at deploy time; fall back to
-    # re-resolving from ~/.npa for installs predating the sidecar.
+    # variable". A complete sidecar written at deploy time is authoritative.
+    # A missing sidecar fails closed; an older partial sidecar takes the narrow
+    # compatibility path below and re-resolves the omitted environment fields.
     saved = _load_env_sidecar(install_dir)
     if not saved:
         raise ValueError(
@@ -3449,6 +3547,7 @@ def destroy_cluster(
             project_id=str(saved["project_id"]),
             subnet_id=str(saved.get("subnet_id") or ""),
             profile=str(saved.get("auth_profile") or profile),
+            timeout=remaining("Nebius IAM token exchange", 120),
         )
         if saved.get("o11y_profile"):
             env["TF_VAR_o11y_profile"] = str(saved["o11y_profile"])
@@ -3463,7 +3562,12 @@ def destroy_cluster(
                 f"{name!r}: no env sidecar at {install_dir / _ENV_SIDECAR} and "
                 "~/.npa config is incomplete (pass --project)"
             )
-        subnet_id = _resolve_subnet(nebius_bin, project_id, _nebius_cli_env(profile))
+        subnet_id = _resolve_subnet(
+            nebius_bin,
+            project_id,
+            _nebius_cli_env(profile),
+            timeout=remaining("subnet resolution", 120),
+        )
         env = _soperator_tf_env(
             nebius_bin,
             region=region,
@@ -3471,12 +3575,26 @@ def destroy_cluster(
             project_id=project_id,
             subnet_id=subnet_id,
             profile=profile,
+            timeout=remaining("Nebius IAM token exchange", 120),
         )
     _log(on_status, f"terraform destroy: {name}")
-    _run_stream([terraform_bin, "init"], cwd=install_dir, env=env, timeout=900)
-    terraform_cluster_id = _terraform_cluster_id(terraform_bin, install_dir, env)
+    _run_stream(
+        [terraform_bin, "init"],
+        cwd=install_dir,
+        env=env,
+        timeout=remaining("Terraform initialization", 900),
+    )
+    terraform_cluster_id = _terraform_cluster_id(
+        terraform_bin,
+        install_dir,
+        env,
+        timeout=remaining("Terraform cluster-ID state read", 120),
+    )
     terraform_provider_cluster_name = _terraform_cluster_name(
-        terraform_bin, install_dir, env
+        terraform_bin,
+        install_dir,
+        env,
+        timeout=remaining("Terraform cluster-name state read", 120),
     )
     persisted_cluster_id = str((saved or {}).get("cluster_id") or "")
     persisted_provider_cluster_name = str(
@@ -3519,7 +3637,13 @@ def destroy_cluster(
     # still reachable so the CSI provisioner releases their backing disks.
     if cluster_id:
         context = f"nebius-{name}-slurm"
-        _refresh_kube_credentials(nebius_bin, cluster_id, context, env)
+        _refresh_kube_credentials(
+            nebius_bin,
+            cluster_id,
+            context,
+            env,
+            timeout=remaining("kubeconfig refresh", 120),
+        )
         kubectl_bin = shutil.which(os.environ.get("NPA_KUBECTL_BIN") or "kubectl")
         if kubectl_bin:
             _log(on_status, "reclaiming CSI PVC disks before teardown")
@@ -3537,9 +3661,10 @@ def destroy_cluster(
                 ],
                 env=env,
                 check=False,
-                timeout=120,
+                timeout=remaining("PVC reclamation", 120),
             )
-            time.sleep(20)  # give the CSI provisioner a moment to delete disks
+            # Give CSI a bounded share of the one destroy deadline.
+            time.sleep(min(20, remaining("PVC reclamation convergence")))
 
     # Best-effort terraform destroy. The recipe's disk_cleanup local-exec and
     # occasional node-group deletion races can fail even when the cluster itself
@@ -3549,7 +3674,7 @@ def destroy_cluster(
         [terraform_bin, "destroy", "-auto-approve"],
         cwd=install_dir,
         env=env,
-        timeout=timeout_minutes * 60,
+        timeout=remaining("Terraform destroy"),
         check=False,
     )
     if destroy.returncode != 0:
@@ -3560,14 +3685,13 @@ def destroy_cluster(
 
     # Ensure the mk8s cluster is actually gone (cascades node groups + instances).
     if cluster_id:
-        deadline = time.monotonic() + timeout_minutes * 60
         still_present, presence_error = _resolve_exact_cluster_presence(
             nebius_bin=nebius_bin,
             cluster_id=cluster_id,
             cluster_name=provider_cluster_name,
             project_id=project_id,
             env=env,
-            deadline=deadline,
+            deadline=destroy_deadline,
         )
         if still_present is None:
             return {
@@ -3582,7 +3706,7 @@ def destroy_cluster(
                 [nebius_bin, "mk8s", "cluster", "delete", "--id", cluster_id],
                 env=env,
                 check=False,
-                timeout=timeout_minutes * 60,
+                timeout=remaining("exact Managed Kubernetes delete"),
             )
             if deleted.returncode != 0 and not _is_not_found_result(deleted):
                 return {
@@ -3599,7 +3723,7 @@ def destroy_cluster(
             # "Allocation ... already exists" (AlreadyExists). Poll get until gone.
             confirmed_absent = False
             last_absence_error = ""
-            while time.monotonic() < deadline:
+            while time.monotonic() < destroy_deadline:
                 try:
                     gone = _run_capture(
                         [
@@ -3614,10 +3738,11 @@ def destroy_cluster(
                         ],
                         env=env,
                         check=False,
+                        timeout=remaining("Managed Kubernetes absence check", 120),
                     )
-                except (OSError, subprocess.TimeoutExpired) as exc:
+                except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
                     last_absence_error = type(exc).__name__
-                    time.sleep(2)
+                    time.sleep(min(2, max(0, destroy_deadline - time.monotonic())))
                     continue
                 if _is_not_found_result(gone):
                     confirmed_absent = True
@@ -3633,10 +3758,10 @@ def destroy_cluster(
                             ],
                         }
                     last_absence_error = "transient or unreadable provider response"
-                    time.sleep(2)
+                    time.sleep(min(2, max(0, destroy_deadline - time.monotonic())))
                     continue
                 last_absence_error = "cluster is still present"
-                time.sleep(2)
+                time.sleep(min(2, max(0, destroy_deadline - time.monotonic())))
             if not confirmed_absent:
                 return {
                     "name": name,
@@ -3673,7 +3798,7 @@ def destroy_cluster(
         str(value) for value in (saved or {}).get("owned_allocation_ids", []) if value
     }
     auxiliary_errors: list[str] = []
-    auxiliary_deadline = time.monotonic() + timeout_minutes * 60
+    auxiliary_deadline = destroy_deadline
     if not project_id and (owned_filesystem_ids or owned_allocation_ids):
         auxiliary_errors.append(
             "persisted project identity is missing; exact auxiliary absence cannot be verified"
@@ -3949,7 +4074,7 @@ def _discover_slurm_gpu_nodes(
             check=False,
             timeout=timeout_seconds,
         )
-    except subprocess.TimeoutExpired as exc:
+    except (BackendCommandError, subprocess.TimeoutExpired) as exc:
         diagnostic = _tail_diagnostic(exc.stderr, exc.stdout)
         raise GPUCreationCheckError(
             "GPU creation check timed out while discovering live Slurm nodes"
@@ -4029,7 +4154,7 @@ def _cancel_and_verify_gpu_check_job(
             detail = _tail_diagnostic(cancelled.stderr, cancelled.stdout)
             if detail:
                 diagnostics.append(f"scancel: {detail}")
-    except subprocess.TimeoutExpired:
+    except (BackendCommandError, subprocess.TimeoutExpired):
         diagnostics.append("scancel timed out")
 
     squeue = _slurm_exec_command(
@@ -4051,7 +4176,7 @@ def _cancel_and_verify_gpu_check_job(
                 check=False,
                 timeout=remaining,
             )
-        except subprocess.TimeoutExpired:
+        except (BackendCommandError, subprocess.TimeoutExpired):
             diagnostics.append("squeue cleanup verification timed out")
             return False, "; ".join(diagnostics)
         if queued.returncode == 0 and not queued.stdout.strip():
@@ -4097,7 +4222,7 @@ def _verify_gpu_check_job_absent(
                 check=False,
                 timeout=remaining,
             )
-        except subprocess.TimeoutExpired:
+        except (BackendCommandError, subprocess.TimeoutExpired):
             return False
         if queued.returncode != 0:
             return False
@@ -4237,7 +4362,7 @@ fi
                 check=False,
                 timeout=remaining,
             )
-        except subprocess.TimeoutExpired as exc:
+        except (BackendCommandError, subprocess.TimeoutExpired) as exc:
             cleanup_confirmed, cleanup_detail = _cancel_and_verify_gpu_check_job(
                 context,
                 kubectl_bin,
