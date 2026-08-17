@@ -28,6 +28,7 @@ implicitly.
 ### Kubernetes (SkyPilot tasks, sim2real sibling GPU Jobs)
 
 ```bash
+kubectl get storageclass                       # confirm a ReadWriteMany class exists
 kubectl apply -f npa/docker/workbench/common/model-weight-cache.yaml
 kubectl wait --for=condition=complete job/npa-init-model-cache --timeout=5m
 export NPA_MODEL_CACHE_PVC=npa-model-cache
@@ -40,6 +41,16 @@ the same shared-filesystem class the [Isaac runtime
 cache](container-packaging.md#runtime-fetched-isaac-sim-why-the-isaac-images-are-publishable)
 uses. The one-shot init Job exists because a freshly provisioned volume is owned by
 root while NPA never runs a workload container as UID 0.
+
+**Check the storage class before applying.** Not every mk8s cluster has the
+shared-filesystem driver: one provisioned with only `compute.csi.nebius.com` has no
+ReadWriteMany class, and the claim then sits `Pending` with
+`storageclass.storage.k8s.io "csi-mounted-fs-path-sc" not found` while the pods that
+want it stay `ContainerCreating` — a failure that reads like a scheduling problem
+rather than a storage one. On such a cluster either add the shared filesystem, or
+switch the manifest to `[ReadWriteOnce]` on the block class and accept that every
+consumer must land on the volume's node (fine for a single-GPU-node cluster, not for
+a parallel workflow).
 
 Every task NPA renders then gets the cache variables in its `envs` and the claim
 mounted at `/opt/npa-model-cache` in its `kubernetes.pod_config`. A spec that
@@ -107,7 +118,11 @@ npa model cache: /opt/npa-model-cache (weights persist across runs)
 Absence of that line means the stage is on ephemeral storage. The line matters
 because a re-download that should have been a cache hit is otherwise invisible:
 "downloading 40 GB again" looks exactly like "downloading 40 GB the first time" in a
-stage log. To confirm from the cluster side:
+stage log.
+
+The decisive check is to make a download impossible and see the stage still work: set
+`HF_HUB_OFFLINE=1` (and `TRANSFORMERS_OFFLINE=1`) on a rerun. A stage that succeeds
+with those set read every byte from the cache. To confirm from the cluster side:
 
 ```bash
 kubectl run npa-cache-du --rm -it --restart=Never --image=busybox:1.37 \
@@ -122,6 +137,15 @@ kubectl run npa-cache-du --rm -it --restart=Never --image=busybox:1.37 \
 40 GiB (the manifest default) holds the Cosmos Transfer + guardrail set with room for
 one more model family. Budget ~100 GiB to run Cosmos3, the Reason family, and the
 curator towers against the same claim.
+
+**Size for throughput, not only capacity.** On Nebius network block storage the
+volume's throughput scales with its provisioned size, and the cache is read on the
+critical path of every warm run. Measured on a 60 GiB block claim: 29 MB/s on a
+direct (page-cache-bypassing) read, which is what a 3 GB checkpoint taking ~100 s to
+load off the volume looks like. The download it replaces ran at a comparable rate, so
+on an undersized volume the win is that the fetch disappears entirely — not that the
+bytes arrive faster. Provision generously, or use the shared-filesystem class, and the
+load gets faster too.
 
 The cache is append-only from NPA's side: **nothing evicts**. Weights are immutable
 per revision, so a stale entry is not a correctness problem, only a space one. Delete

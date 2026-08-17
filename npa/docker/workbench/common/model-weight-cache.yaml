@@ -26,11 +26,25 @@
 #   Nothing else changes: with the variable unset every runtime keeps the
 #   ephemeral defaults it has always used.
 #
-# STORAGE CLASS
+# STORAGE CLASS — CHECK THIS FIRST
 #   ReadWriteMany matters. Stages of one workflow land on different nodes and
 #   parallel waves run at the same time, so a ReadWriteOnce volume would serialise
-#   them or fail to attach. On Nebius mk8s use `csi-mounted-fs-path-sc`, the same
-#   shared-filesystem class the Isaac cache uses.
+#   them or fail to attach. On Nebius mk8s that is `csi-mounted-fs-path-sc`, the
+#   same shared-filesystem class the Isaac cache uses.
+#
+#   It is not present on every cluster. A cluster provisioned with only the block
+#   driver (`compute.csi.nebius.com`) has no ReadWriteMany class at all, and this
+#   claim then sits Pending with `storageclass.storage.k8s.io "..." not found`
+#   while the pods that want it stay ContainerCreating. Look before applying:
+#
+#     kubectl get storageclass
+#     kubectl get csidrivers
+#
+#   If `mounted-fs-path.csi.nebius.ai` is missing, either add the shared
+#   filesystem to the cluster, or fall back to ReadWriteOnce: swap `accessModes`
+#   to `[ReadWriteOnce]` and `storageClassName` to the block class. That trades
+#   away multi-node use -- every consumer must then land on the volume's node --
+#   so it fits a single-GPU-node cluster and not a parallel workflow.
 #
 # SIZING
 #   40 Gi holds the Cosmos Transfer + guardrail set with room for one more model
