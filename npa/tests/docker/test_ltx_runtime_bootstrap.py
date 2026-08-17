@@ -148,13 +148,13 @@ class TestTheBuildTimeRefusalProof:
     def test_it_passes_against_a_cache_an_earlier_run_already_filled(
         self, image: Path
     ) -> None:
-        """The invariant is "the refusal wrote nothing", not "the cache is empty".
+        """The invariant is "the refusal downloaded nothing", not "the cache is empty".
 
         Pointing `NPA_LTX_MODEL_CACHE` at the operator's durable weight cache
         (docs/workbench/model-weight-cache.md) is what makes the second run of
         this image a cache hit rather than another 22B download. An emptiness
-        assertion fails every run after the first, so the proof compares the cache
-        against itself instead.
+        assertion against the shared cache fails every run after the first, so the
+        gates are exercised against private directories instead.
         """
 
         weights = image.parent / "model-cache" / "vae"
@@ -167,6 +167,32 @@ class TestTheBuildTimeRefusalProof:
         assert result.returncode == 0, result.stderr
         assert MARKER in result.stdout
         assert preexisting.read_bytes() == b"fetched by an earlier run"
+
+    def test_it_ignores_another_stage_writing_to_the_shared_cache(
+        self, image: Path
+    ) -> None:
+        """A durable cache is shared, so writes to it are not attributable to us.
+
+        Two LTX stages can run at once against one claim, and the other one
+        fetching weights while this proof runs must not read as this proof's gate
+        leaking. Simulated deterministically by writing to the shared cache from
+        inside the proof, between the gates and the assertion.
+        """
+
+        script = image / "usr" / "local" / "bin" / "ltx-runtime"
+        text = script.read_text(encoding="utf-8")
+        anchor = '  [[ -z "$(find "$PROBE_RUNTIME_CACHE"'
+        assert anchor in text, "assert_refusal no longer checks a private tree"
+        concurrent = (
+            '  touch "$MODEL_CACHE/another-stage-fetched-this.safetensors"\n'
+            '  touch "$CACHE_ROOT/another-stage-built-this"\n'
+        )
+        script.write_text(text.replace(anchor, concurrent + anchor, 1), encoding="utf-8")
+
+        result = run(image, "assert-refusal")
+
+        assert result.returncode == 0, result.stderr
+        assert MARKER in result.stdout
 
 
 class TestTheProofItselfIsMutationTested:
@@ -268,12 +294,12 @@ class TestTheProofItselfIsMutationTested:
     def test_that_ordering_check_still_bites_on_a_warm_cache(
         self, image: Path
     ) -> None:
-        """Tolerating an already-filled cache must not tolerate a new write into it.
+        """Tolerating an already-filled cache must not tolerate a leaking gate.
 
-        The check compares the cache against itself rather than against empty, so
-        this is the case that says the comparison is real: a run whose cache is
-        already populated by an earlier run must still catch a fetch that beat the
-        gates.
+        The proof no longer demands the shared caches be empty, so this is the
+        case that says it still detects the thing it exists to detect: a run whose
+        cache is already populated by an earlier run must still catch a fetch that
+        beat the gates.
         """
 
         seeded = image.parent / "cache" / "src" / "from-an-earlier-run"

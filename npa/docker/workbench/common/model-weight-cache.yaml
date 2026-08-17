@@ -72,6 +72,14 @@ spec:
 # container as UID 0 (the SkyPilot bootstrap contract forbids the override). Pods
 # would then fail their first mkdir instead of caching anything. This one-shot Job
 # opens the tree once; the CSI driver's fsGroup handles the rest.
+#
+# The mode is 3777: world-writable, sticky (so one tool cannot delete another's
+# blobs), and setgid so directories created under it inherit the volume's group
+# rather than the creating pod's primary group. That covers today's images, which
+# all run as uid 1000. It does not make the cache safe to share between images
+# built with *different* runtime users: subdirectories are created with the
+# creator's umask, so a second uid would be refused inside them. If you rebuild an
+# image with a custom NPA_RUNTIME_USER, run its consumers with the same fsGroup.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -103,7 +111,7 @@ spec:
             - |
               set -eu
               mkdir -p /opt/npa-model-cache
-              chmod 1777 /opt/npa-model-cache
+              chmod 3777 /opt/npa-model-cache
               echo "npa model cache ready at /opt/npa-model-cache"
           volumeMounts:
             - name: model-cache
