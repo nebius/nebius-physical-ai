@@ -7,7 +7,7 @@ ARG COSMOS3_SERVING_VERSION=0.2.0
 ARG VLLM_OMNI_REVISION=a4ea67a21b20054dacc6e83952f9bd407e8ee4e7
 ARG VLLM_OMNI_SOURCE_SHA256=2a4ca4d3d83417a88717767fcdfdc5cb214200c6957d26d70625f17f58954800
 ARG COSMOS3_CLOSURE_SHA256=9d9edf4dd685c329a36bde45ed05bf5e0d51a3d78cf764d91bedb031e1a94694
-ARG DEBIAN_SNAPSHOT=20260801T000000Z
+ARG DEBIAN_SNAPSHOT=20260817T000000Z
 
 LABEL org.opencontainers.image.source="https://github.com/nebius/nebius-physical-ai" \
       org.opencontainers.image.licenses="Apache-2.0" \
@@ -40,7 +40,7 @@ RUN sed -ri \
     && printf 'Acquire::Check-Valid-Until "false";\n' >/etc/apt/apt.conf.d/99snapshot \
     && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-       ca-certificates curl ffmpeg libgl1 libglib2.0-0 \
+       ca-certificates curl ffmpeg libgl1 libglib2.0-0 libgnutls30 libssl3 openssl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --chmod=0644 docker/workbench/cosmos3-serving/requirements.lock /opt/npa-cosmos3-serving/requirements.lock

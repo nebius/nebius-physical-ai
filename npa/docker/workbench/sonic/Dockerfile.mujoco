@@ -2,7 +2,7 @@
 # historical SONIC container lineage: no NGC/NLC base, private-registry layer,
 # Isaac/Omniverse payload, model weights, driver userspace, terms, or credentials.
 ARG BASE_IMAGE=python:3.11.14-slim-bookworm@sha256:65a93d69fa75478d554f4ad27c85c1e69fa184956261b4301ebaf6dbb0a3543d
-ARG DEBIAN_SNAPSHOT=20260801T000000Z
+ARG DEBIAN_SNAPSHOT=20260817T000000Z
 
 FROM ${BASE_IMAGE} AS sonic-source
 ARG DEBIAN_SNAPSHOT
@@ -72,7 +72,7 @@ RUN sed -ri \
     && printf 'Acquire::Check-Valid-Until "false";\n' >/etc/apt/apt.conf.d/99snapshot \
     && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-       ca-certificates curl libegl1 libgl1 libglvnd0 \
+       ca-certificates curl libegl1 libgl1 libglvnd0 libgnutls30 libssl3 openssl \
     && rm -rf /var/lib/apt/lists/* \
     && python -m venv /opt/npa/venv
 

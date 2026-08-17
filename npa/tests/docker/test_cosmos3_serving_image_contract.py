@@ -52,7 +52,8 @@ def _instructions() -> str:
 def test_source_base_and_dependency_closure_are_immutable() -> None:
     text = _instructions()
     assert re.search(r"ARG BASE_IMAGE=python:[^\s]+@sha256:[0-9a-f]{64}", text)
-    assert "ARG DEBIAN_SNAPSHOT=20260801T000000Z" in text
+    assert "ARG DEBIAN_SNAPSHOT=20260817T000000Z" in text
+    assert "libgnutls30 libssl3 openssl" in text
     assert "snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}" in text
     assert SOURCE_REVISION in text
     assert SOURCE_SHA256 in text
