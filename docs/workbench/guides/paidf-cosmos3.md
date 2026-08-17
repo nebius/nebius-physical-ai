@@ -69,6 +69,11 @@ steps, attempt number, guardrail posture, non-baked weights, and input lineage.
 The run manifest records non-empty video bytes, variant count, actual GPU
 parallelism, and the same conditioning contract.
 
+`generate-variants` publishes this distributed stage contract to S3 only. Its
+`output_uri` must use `s3://`; local paths are rejected before generation so the
+workflow never implies that a local path shared across SkyPilot stages is
+supported.
+
 ## Validate, plan, and render
 
 ```bash
@@ -87,6 +92,16 @@ For execution, pass only secret names to the generic workflow submit surface:
 `AWS_SECRET_ACCESS_KEY`. Use an available supported `H100:1` or RTX PRO 6000
 accelerator through the normal workflow resource override; do not put cluster
 names into the spec.
+
+## Live validation scope
+
+The complete synthetic workflow has succeeded on reserved RTX PRO 6000, and
+real source-conditioned Cosmos 3 inference plus refinement semantics have
+succeeded on reserved B200. The preserved reserved topology exposes one
+requestable GPU per node on both paths. Because SkyPilot requires a two-GPU task
+to fit on one node, `variant_count=2` with `variant_parallelism=2` remains
+unit-tested rather than live-proven concurrently. No on-demand capacity was used;
+a sequential two-variant run must not be described as concurrent evidence.
 
 ## Optional Cosmos 3 versus Transfer 2.5 comparison
 

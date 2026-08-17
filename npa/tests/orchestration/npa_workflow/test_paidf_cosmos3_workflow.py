@@ -51,14 +51,16 @@ def test_dynamic_paths_stop_rejected_runs_before_downstream_components() -> None
         "evaluate",
         "quality-gate",
     ]
-    transitions = states["quality-disposition"]["transitions"]
+    assert states["quality-disposition"]["next"] == "visualize-quality-evidence"
+    assert states["visualize-quality-evidence"]["next"] == "quality-route"
+    transitions = states["quality-route"]["transitions"]
     assert transitions == [
-        {"when": "promote_checkpoint", "goto": "annotate-augmented"},
-        {"when": "loop_back", "goto": "visualize-rejected"},
+        {"when": "promote_checkpoint", "goto": "require-accepted-quality"},
+        {"when": "loop_back", "goto": "reject-quality"},
     ]
-    assert states["visualize-rejected"]["next"] == "reject-quality"
+    assert states["require-accepted-quality"]["next"] == "annotate-augmented"
     assert states["reject-quality"]["terminal"] is True
-    rejected = {"visualize-rejected", "reject-quality"}
+    rejected = {"visualize-quality-evidence", "quality-route", "reject-quality"}
     assert rejected.isdisjoint(
         {"annotate-augmented", "cosmos-curate", "curate", "finalize"}
     )
@@ -124,6 +126,14 @@ def test_validate_and_plan_both_decision_paths() -> None:
         else:
             assert names[-1] == "reject-quality"
             assert "cosmos-curate" not in names
+            assert "visualize-quality-evidence" in names
+        if decision == "promote_checkpoint":
+            assert names.index("require-accepted-quality") < names.index(
+                "annotate-augmented"
+            )
+            assert names.index("visualize-quality-evidence") < names.index(
+                "require-accepted-quality"
+            )
 
 
 def test_cosmos3_cli_exposes_conditioned_variant_commands() -> None:

@@ -357,6 +357,32 @@ def test_dynamic_quality_disposition_persists_strict_route(
     assert json.loads(disposition.read_text())["quality_status"] == expected_status
 
 
+@pytest.mark.parametrize("contents", [None, "not-json", "[]"])
+def test_dynamic_quality_disposition_rejects_unavailable_or_malformed_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    contents: str | None,
+) -> None:
+    scores = tmp_path / "cosmos_evaluator.json"
+    disposition = tmp_path / "quality_disposition.json"
+    if contents is not None:
+        scores.write_text(contents, encoding="utf-8")
+    decisions: list[str] = []
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.decisions.write_decision",
+        lambda _uri, decision: decisions.append(decision),
+    )
+
+    result = dfs.write_quality_disposition(
+        str(scores), str(disposition), str(tmp_path / "decision.json"), 0.75
+    )
+
+    assert result["quality_status"] == "rejected"
+    assert result["decision"] == "loop_back"
+    assert result["reasons"]
+    assert decisions == ["loop_back"]
+
+
 def test_grade_gate_falls_through_a_malformed_report_to_the_older_contract(
     tmp_path: Path, monkeypatch
 ) -> None:

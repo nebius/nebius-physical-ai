@@ -299,9 +299,14 @@ def _normalize_video(
 
 
 def _extract_frames(video: Path, destination: Path, count: int = 8) -> list[Path]:
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise PaidfCosmos3Error(
+            "ffmpeg is required to extract caption/evaluator frames"
+        )
     destination.mkdir(parents=True, exist_ok=True)
     argv = [
-        "ffmpeg",
+        ffmpeg,
         "-y",
         "-v",
         "error",
@@ -507,6 +512,10 @@ def _publish_variant(
     metadata: Mapping[str, Any],
     storage: Any,
 ) -> dict[str, Any]:
+    if not _is_s3(output_uri):
+        raise PaidfCosmos3Error(
+            "PAIDF Cosmos 3 variant publication requires an s3:// output URI"
+        )
     base = output_uri.rstrip("/") + f"/{clip}/"
     artifact = Path(str(result["output_path"]))
     if not artifact.is_file() or artifact.stat().st_size <= 0:
@@ -581,6 +590,10 @@ def generate_variants(
 ) -> dict[str, Any]:
     """Run one real Cosmos 3 video2video inference per configured variant."""
 
+    if not _is_s3(output_uri):
+        raise PaidfCosmos3Error(
+            "PAIDF Cosmos 3 generate-variants publication requires an s3:// output URI"
+        )
     if str(mode) != VIDEO_MODE:
         raise PaidfCosmos3Error("PAIDF Cosmos 3 generation must use video2video")
     enabled = str(guardrails).strip().lower() in {"1", "true", "yes", "on"}
@@ -767,6 +780,52 @@ def reject_quality(disposition_uri: str) -> None:
     )
 
 
+def route_quality_disposition(disposition_uri: str, decision_uri: str) -> str:
+    """Route only from the durable evaluator-derived disposition."""
+
+    from npa.orchestration.npa_workflow.decisions import write_decision
+
+    try:
+        disposition = _read_json(disposition_uri)
+    except Exception as exc:
+        raise PaidfCosmos3Error(
+            "quality disposition is missing or unreadable"
+        ) from exc
+    if not isinstance(disposition, dict):
+        raise PaidfCosmos3Error("quality disposition is not a JSON object")
+    quality_status = disposition.get("quality_status")
+    recorded_decision = disposition.get("decision")
+    expected = (
+        "promote_checkpoint" if quality_status == "accepted" else "loop_back"
+    )
+    if quality_status not in {"accepted", "rejected"} or recorded_decision != expected:
+        raise PaidfCosmos3Error("quality disposition has an inconsistent decision")
+    write_decision(decision_uri, expected)
+    return expected
+
+
+def require_accepted_quality(disposition_uri: str) -> None:
+    """Stop a statically promoted one-shot plan before downstream work."""
+
+    try:
+        disposition = _read_json(disposition_uri)
+    except Exception as exc:
+        raise PaidfCosmos3Error(
+            "accepted quality disposition is missing or unreadable"
+        ) from exc
+    if not isinstance(disposition, dict):
+        raise PaidfCosmos3Error("accepted quality disposition is not a JSON object")
+    if (
+        disposition.get("quality_status") != "accepted"
+        or disposition.get("decision") != "promote_checkpoint"
+        or disposition.get("evaluator_status") != "completed"
+        or disposition.get("hard_checks_passed") is not True
+    ):
+        raise PaidfCosmos3Error(
+            "annotation requires a complete accepted evaluator disposition"
+        )
+
+
 def finalize(
     run_root_uri: str, report_uri: str, *, storage: Any | None = None
 ) -> dict[str, Any]:
@@ -775,19 +834,74 @@ def finalize(
     client = storage or (_storage() if _is_s3(run_root_uri) else None)
     root = run_root_uri.rstrip("/") + "/"
     manifest = _read_json(root + "cosmos_augmented/manifest.json", storage=client)
+    if not isinstance(manifest, dict):
+        raise PaidfCosmos3Error("Cosmos 3 manifest is not a JSON object")
     evaluator = _complete_evaluator_report(
         _read_json(root + "grade/cosmos_evaluator.json", storage=client)
     )
     disposition = _read_json(root + "grade/quality_disposition.json", storage=client)
     curator = _read_json(root + "curation/cosmos_curator.json", storage=client)
     fiftyone = _read_json(root + "curation/report.json", storage=client)
-    if (
-        manifest.get("engine") != ENGINE
-        or manifest.get("status") != "executed"
-        or int(manifest.get("video_bytes", 0)) <= 0
-    ):
+    if not isinstance(disposition, dict):
+        raise PaidfCosmos3Error("quality disposition is not a JSON object")
+    if not isinstance(curator, dict):
+        raise PaidfCosmos3Error("Cosmos Curator report is not a JSON object")
+    if not isinstance(fiftyone, dict):
+        raise PaidfCosmos3Error("FiftyOne report is not a JSON object")
+    required_manifest = {
+        "schema": MANIFEST_SCHEMA,
+        "status": "executed",
+        "engine": ENGINE,
+        "mode": VIDEO_MODE,
+        "input_conditioned": True,
+        "input_conditioning": "source-video",
+        "conditioned_input": "source.mp4",
+        "guardrails": True,
+        "weights_baked": False,
+    }
+    missing_or_invalid = [
+        field
+        for field, expected in required_manifest.items()
+        if manifest.get(field) != expected
+    ]
+    model = manifest.get("model")
+    lineage = manifest.get("lineage")
+    variants = manifest.get("variants")
+    try:
+        variant_count = int(manifest.get("variant_count", 0))
+        video_bytes = int(manifest.get("video_bytes", 0))
+    except (TypeError, ValueError) as exc:
         raise PaidfCosmos3Error(
-            "Cosmos 3 manifest does not prove real non-empty framework output"
+            "Cosmos 3 manifest has invalid variant_count or video_bytes"
+        ) from exc
+    if not isinstance(model, str) or not model.strip():
+        missing_or_invalid.append("model")
+    if (
+        not isinstance(lineage, dict)
+        or not str(lineage.get("input_provenance_uri") or "").strip()
+    ):
+        missing_or_invalid.append("lineage.input_provenance_uri")
+    variants_valid = isinstance(variants, list) and len(variants) == variant_count
+    if variants_valid:
+        for item in variants:
+            try:
+                item_bytes = int(item.get("video_bytes", 0)) if isinstance(item, dict) else 0
+            except (TypeError, ValueError):
+                item_bytes = 0
+            if (
+                not isinstance(item, dict)
+                or not str(item.get("clip") or "").strip()
+                or not str(item.get("augmented_video_uri") or "").strip()
+                or item_bytes <= 0
+            ):
+                variants_valid = False
+                break
+    if not variants_valid:
+        missing_or_invalid.append("variants")
+    if missing_or_invalid or variant_count < 1 or video_bytes <= 0:
+        raise PaidfCosmos3Error(
+            "Cosmos 3 manifest does not prove real non-empty framework output; "
+            f"missing or invalid fields: {', '.join(missing_or_invalid) or 'counts'}"
         )
     if (
         disposition.get("quality_status") != "accepted"
@@ -815,12 +929,12 @@ def finalize(
         "schema": FINAL_SCHEMA,
         "status": "completed",
         "engine": ENGINE,
-        "mode": manifest["mode"],
-        "input_conditioned": manifest["input_conditioned"],
-        "model": manifest["model"],
-        "guardrails": manifest["guardrails"],
-        "variant_count": int(manifest["variant_count"]),
-        "video_bytes": int(manifest["video_bytes"]),
+        "mode": VIDEO_MODE,
+        "input_conditioned": True,
+        "model": model,
+        "guardrails": True,
+        "variant_count": variant_count,
+        "video_bytes": video_bytes,
         "evaluator_score": float(evaluator["score"]),
         "curated_clip_count": int(curator["clip_count"]),
         "fiftyone_engine": fiftyone["curation_engine"],
@@ -852,4 +966,6 @@ __all__ = [
     "generate_variants",
     "prepare_input",
     "reject_quality",
+    "require_accepted_quality",
+    "route_quality_disposition",
 ]

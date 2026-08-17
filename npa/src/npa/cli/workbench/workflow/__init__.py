@@ -2523,10 +2523,21 @@ def _preflight_submit_images(
     try:
         resolved_spec = spec or load_spec(yaml_path)
         run_id = f"{resolved_spec.name}-preflight"
-        plan = build_plan(resolved_spec, run_id=run_id, assume_decision=assume_decision)
-        images = plan_images(resolved_spec, plan.steps, run_id=run_id, options=options)
+        decisions = [assume_decision] if assume_decision.strip() else []
+        decisions.extend(
+            transition.when
+            for state in resolved_spec.states.values()
+            for transition in state.transitions
+        )
+        steps = []
+        for decision in dict.fromkeys(decisions):
+            plan = build_plan(
+                resolved_spec, run_id=run_id, assume_decision=decision
+            )
+            steps.extend(plan.steps)
+        images = plan_images(resolved_spec, steps, run_id=run_id, options=options)
         pull_secrets_by_image = plan_image_pull_secrets(
-            resolved_spec, plan.steps, run_id=run_id, options=options
+            resolved_spec, steps, run_id=run_id, options=options
         )
     except NpaWorkflowError:
         # Planning problems are reported by the submit path itself with better context.

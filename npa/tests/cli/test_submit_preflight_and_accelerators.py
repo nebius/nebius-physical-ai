@@ -13,6 +13,7 @@ import yaml
 from npa.cli.main import app
 from npa.cli.workbench import workflow as workflow_cli
 from npa.orchestration.npa_workflow.submit import load_spec_for_submit
+from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
 from npa.orchestration.skypilot.image_bootstrap_contract import (
     ATTESTATION_LABEL,
     CONTRACT_VERSION,
@@ -492,6 +493,88 @@ def test_image_preflight_plans_with_submit_config_overrides(
     )
 
     assert observed == {"runtime_image": digest}
+
+
+def test_image_preflight_includes_reject_only_image_and_pull_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reject_image = (
+        "cr.us-central1.nebius.cloud/example-registry/npa-cosmos3:reject-only"
+    )
+    spec_path = tmp_path / "dynamic.yaml"
+    spec_path.write_text(
+        """
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata: {name: dynamic-image-preflight}
+config:
+  bucket: example-bucket
+  prefix: runs/test
+  cosmos3_mode: text2image
+  prompt: test
+  output_uri: s3://example-bucket/out/
+  cosmos3_checkpoint: Cosmos3-Nano
+  cosmos3_input_path: ''
+  cosmos3_seed: 1
+  cosmos3_guidance: 5
+  cosmos3_steps: 1
+  decision_uri: s3://example-bucket/decision.json
+resources:
+  cpu: {cloud: kubernetes, cpus: 1, memory: 1Gi}
+  gpu: {cloud: kubernetes, accelerators: H100:1, cpus: 1, memory: 1Gi}
+initial: route
+states:
+  route:
+    writesDecision: true
+    resources: cpu
+    run: {shell: echo route}
+    transitions:
+      - {when: promote_checkpoint, goto: accept}
+      - {when: loop_back, goto: reject}
+  accept:
+    resources: cpu
+    run: {shell: echo accept}
+    terminal: true
+  reject:
+    resources: gpu
+    toolRef: workbench.cosmos3.generate
+    terminal: true
+""",
+        encoding="utf-8",
+    )
+    observed: dict[str, object] = {}
+
+    def check(images, **kwargs):
+        observed["images"] = list(images)
+        observed["pull_secrets_by_image"] = kwargs["pull_secrets_by_image"]
+        return [ImagePullCheck(image=image, status="ok", http_status=200) for image in images]
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        check,
+    )
+    monkeypatch.setattr(
+        workflow_cli,
+        "_preflight_image_bootstrap_contracts",
+        lambda *, images, **_kwargs: [
+            {"image": image, "state": "compatible"} for image in images
+        ],
+    )
+
+    workflow_cli._preflight_submit_images(
+        spec_path,
+        options=SkypilotRenderOptions(
+            image_overrides={"workbench.cosmos3.generate": reject_image}
+        ),
+        assume_decision="promote_checkpoint",
+        enabled=True,
+        infra="k8s/example-context",
+    )
+
+    assert reject_image in observed["images"]
+    assert observed["pull_secrets_by_image"] == {
+        reject_image: ("npa-nebius-registry",)
+    }
 
 
 def test_first_party_image_without_attestation_fails_instead_of_probing(

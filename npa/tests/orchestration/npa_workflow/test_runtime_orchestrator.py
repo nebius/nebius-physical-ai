@@ -1924,6 +1924,36 @@ def test_corrupt_decision_artifact_fails_the_run(tmp_path: Path) -> None:
     assert decisions, "the unreadable payload should be recorded in the ledger"
 
 
+def test_paidf_cosmos3_runtime_rejection_visualizes_and_skips_downstream() -> None:
+    spec_path = (
+        Path(__file__).resolve().parents[4]
+        / "npa"
+        / "workflows"
+        / "workbench"
+        / "npa-workflows"
+        / "paidf-cosmos3.yaml"
+    )
+    spec = load_spec(spec_path)
+    submitter = FakeSubmitter()
+    executor = _executor(spec, run_id="paidf-reject", submitter=submitter)
+
+    report = run_workflow_runtime(
+        spec,
+        run_id="paidf-reject",
+        executor=executor,
+        options=executor.options,
+        decision_reader=_decision_reader(["loop_back"]),
+        assume_decision="promote_checkpoint",
+    )
+
+    task_names = [name for call in submitter.calls for name in call["tasks"]]
+    assert report.status == "succeeded"
+    assert any("visualize-quality-evidence" in name for name in task_names)
+    assert any("reject-quality" in name for name in task_names)
+    for forbidden in ("annotate-augmented", "cosmos-curate", "curate", "finalize"):
+        assert not any(forbidden in name for name in task_names)
+
+
 # -------------------------------------------------------------- trigger bounds
 
 

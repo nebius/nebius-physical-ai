@@ -150,9 +150,7 @@ def checkpoint_eval_cmd(
         "--work-dir",
         help="Ephemeral local output and Hugging Face cache root.",
     ),
-    run_id: str = typer.Option(
-        "", "--run-id", help="Workflow run id carried into evidence."
-    ),
+    run_id: str = typer.Option("", "--run-id", help="Workflow run id carried into evidence."),
     runtime_image: str = typer.Option(
         "",
         "--runtime-image",
@@ -217,19 +215,11 @@ def generate_cmd(
         "Named checkpoints download at runtime with the operator's HF token; a "
         "staged path still needs one unless --no-guardrails is also passed.",
     ),
-    name: str = typer.Option(
-        DEFAULT_NAME, "--name", help="Sample name / output subdirectory."
-    ),
-    negative_prompt: str = typer.Option(
-        "", "--negative-prompt", help="Optional negative prompt."
-    ),
+    name: str = typer.Option(DEFAULT_NAME, "--name", help="Sample name / output subdirectory."),
+    negative_prompt: str = typer.Option("", "--negative-prompt", help="Optional negative prompt."),
     seed: int = typer.Option(0, "--seed", help="Sampling seed for reproducible runs."),
-    num_steps: int = typer.Option(
-        0, "--num-steps", help="Override the mode's sampling steps."
-    ),
-    guidance: float = typer.Option(
-        0.0, "--guidance", help="Override classifier-free guidance."
-    ),
+    num_steps: int = typer.Option(0, "--num-steps", help="Override the mode's sampling steps."),
+    guidance: float = typer.Option(0.0, "--guidance", help="Override classifier-free guidance."),
     no_guardrails: bool = typer.Option(
         False,
         "--no-guardrails",
@@ -240,9 +230,7 @@ def generate_cmd(
         "--parallelism-preset",
         help="Upstream parallelism preset: latency or throughput.",
     ),
-    run_id: str = typer.Option(
-        "", "--run-id", help="Run id carried into the manifest."
-    ),
+    run_id: str = typer.Option("", "--run-id", help="Run id carried into the manifest."),
     output_json: Optional[Path] = typer.Option(
         None, "--output-json", help="Write the result manifest JSON locally."
     ),
@@ -287,23 +275,13 @@ def generate_cmd(
 
 @app.command("reason")
 def reason_cmd(
-    input_uri: str = typer.Option(
-        ..., "--input-uri", help="Input rollout or frame URI."
-    ),
-    output_uri: str = typer.Option(
-        ..., "--output-uri", help="Output prefix for reasoning JSON."
-    ),
-    model: str = typer.Option(
-        "nvidia/Cosmos-Reason1-7B", "--model", help="Reasoning model id."
-    ),
+    input_uri: str = typer.Option(..., "--input-uri", help="Input rollout or frame URI."),
+    output_uri: str = typer.Option(..., "--output-uri", help="Output prefix for reasoning JSON."),
+    model: str = typer.Option("nvidia/Cosmos-Reason1-7B", "--model", help="Reasoning model id."),
     image: str = typer.Option("", "--image", help="BYO Cosmos3 reason image."),
     prompt: str = typer.Option("", "--prompt", help="Optional reasoning prompt."),
-    run_id: str = typer.Option(
-        "", "--run-id", help="Run id carried into the manifest."
-    ),
-    output_json: Optional[Path] = typer.Option(
-        None, "--output-json", help="Write manifest JSON locally."
-    ),
+    run_id: str = typer.Option("", "--run-id", help="Run id carried into the manifest."),
+    output_json: Optional[Path] = typer.Option(None, "--output-json", help="Write manifest JSON locally."),
 ) -> None:
     """Build the Cosmos3 reason stage manifest."""
 
@@ -324,9 +302,7 @@ def reason_cmd(
 
 @app.command("text-to-image")
 def text_to_image_cmd(
-    prompt: str = typer.Option(
-        ..., "--prompt", help="Text prompt to generate an image from."
-    ),
+    prompt: str = typer.Option(..., "--prompt", help="Text prompt to generate an image from."),
     output_uri: str = typer.Option(
         "", "--output-uri", help="S3 prefix to publish the image and its manifest to."
     ),
@@ -335,9 +311,7 @@ def text_to_image_cmd(
         "--output-dir",
         help="Local working directory for inference outputs.",
     ),
-    model_id: str = typer.Option(
-        "", "--model-id", help="HF model repo id for the checkpoint."
-    ),
+    model_id: str = typer.Option("", "--model-id", help="HF model repo id for the checkpoint."),
     checkpoint_name: str = typer.Option(
         "Cosmos3-Nano",
         "--checkpoint-name",
@@ -350,9 +324,7 @@ def text_to_image_cmd(
         None, "--cache-dir", help="Ephemeral runtime cache for source and checkpoint."
     ),
     uv_group: str = typer.Option(
-        DEFAULT_UV_GROUP,
-        "--uv-group",
-        help="uv dependency group to sync in the framework repo.",
+        DEFAULT_UV_GROUP, "--uv-group", help="uv dependency group to sync in the framework repo."
     ),
     seed: int = typer.Option(0, "--seed", help="Inference seed."),
     guardrails: bool = typer.Option(
@@ -361,14 +333,10 @@ def text_to_image_cmd(
         help="Run the framework's content guardrails (they download extra gated weights).",
     ),
     hf_token_env: str = typer.Option(
-        "HF_TOKEN",
-        "--hf-token-env",
-        help="Environment variable holding the Hugging Face token.",
+        "HF_TOKEN", "--hf-token-env", help="Environment variable holding the Hugging Face token."
     ),
     github_token_env: str = typer.Option(
-        "GITHUB_TOKEN",
-        "--github-token-env",
-        help="Environment variable holding a GitHub token.",
+        "GITHUB_TOKEN", "--github-token-env", help="Environment variable holding a GitHub token."
     ),
 ) -> None:
     """Generate an image from a prompt with the Cosmos3 framework, and publish it.

@@ -12,12 +12,18 @@ import pytest
 
 from npa.workflows import paidf_cosmos3 as c3
 
+FFMPEG = shutil.which("ffmpeg")
+requires_ffmpeg = pytest.mark.skipif(
+    FFMPEG is None, reason="ffmpeg is required for video fixture tests"
+)
+
 
 def _tiny_video(path: Path, *, color: str = "blue") -> Path:
+    assert FFMPEG is not None
     path.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         [
-            "ffmpeg",
+            FFMPEG,
             "-y",
             "-v",
             "error",
@@ -36,6 +42,7 @@ def _tiny_video(path: Path, *, color: str = "blue") -> Path:
     return path
 
 
+@requires_ffmpeg
 @pytest.mark.parametrize("version", ["v2.1", "v3.0"])
 def test_prepare_input_selects_generic_lerobot_v2_and_v3(
     tmp_path: Path, version: str
@@ -172,6 +179,7 @@ def _generation_inputs(tmp_path: Path) -> dict[str, Path]:
     }
 
 
+@requires_ffmpeg
 def test_generate_variants_runs_real_runner_contract_and_changes_retry(
     tmp_path: Path,
 ) -> None:
@@ -202,7 +210,7 @@ def test_generate_variants_runs_real_runner_contract_and_changes_retry(
         5.0,
         20,
         2,
-        1,
+        2,
         100,
         -0.5,
         2,
@@ -213,16 +221,18 @@ def test_generate_variants_runs_real_runner_contract_and_changes_retry(
     first = c3.generate_variants(
         *args,
         storage=storage,
-        environ={"CUDA_VISIBLE_DEVICES": "0"},
+        environ={"CUDA_VISIBLE_DEVICES": "0,1"},
         generator=fake_generator,
     )
     assert first["engine"] == c3.ENGINE
     assert first["input_conditioning"] == "source-video"
     assert first["variant_count"] == 2
+    assert first["variant_parallelism"] == 2
     assert first["video_bytes"] > 0
     assert all(call["mode"] == "video2video" for call in calls)
     assert all(call["no_guardrails"] is False for call in calls)
     assert {call["seed"] for call in calls} == {10, 11}
+    assert {call["environ"]["CUDA_VISIBLE_DEVICES"] for call in calls} == {"0", "1"}
     metadata = json.loads(
         storage.objects[
             "s3://example-bucket/run/cosmos_augmented/variant-0000/metadata.json"
@@ -240,7 +250,7 @@ def test_generate_variants_runs_real_runner_contract_and_changes_retry(
     second = c3.generate_variants(
         *args,
         storage=storage,
-        environ={"CUDA_VISIBLE_DEVICES": "0"},
+        environ={"CUDA_VISIBLE_DEVICES": "0,1"},
         generator=fake_generator,
     )
     assert second["attempt"] == 1
@@ -249,6 +259,7 @@ def test_generate_variants_runs_real_runner_contract_and_changes_retry(
     assert {call["num_steps"] for call in calls} == {22}
 
 
+@requires_ffmpeg
 def test_retry_fails_closed_on_incomplete_evaluator_report(tmp_path: Path) -> None:
     paths = _generation_inputs(tmp_path)
     paths["attempt"].write_text(
@@ -287,6 +298,7 @@ def test_retry_fails_closed_on_incomplete_evaluator_report(tmp_path: Path) -> No
         )
 
 
+@requires_ffmpeg
 def test_existing_unreadable_attempt_fails_closed(tmp_path: Path) -> None:
     paths = _generation_inputs(tmp_path)
     paths["attempt"].write_text("not-json", encoding="utf-8")
@@ -294,6 +306,7 @@ def test_existing_unreadable_attempt_fails_closed(tmp_path: Path) -> None:
         c3._load_attempt(str(paths["attempt"]), str(paths["scores"]))
 
 
+@requires_ffmpeg
 def test_generate_variants_rejects_unconditioned_mode(tmp_path: Path) -> None:
     paths = _generation_inputs(tmp_path)
     with pytest.raises(c3.PaidfCosmos3Error, match="must use video2video"):
@@ -332,13 +345,25 @@ def test_finalize_requires_every_real_component(tmp_path: Path) -> None:
         json.dumps(
             {
                 "engine": c3.ENGINE,
+                "schema": c3.MANIFEST_SCHEMA,
                 "status": "executed",
                 "mode": "video2video",
                 "video_bytes": 1234,
                 "variant_count": 1,
+                "variants": [
+                    {
+                        "clip": "variant-0000",
+                        "augmented_video_uri": "s3://example/variant-0000/video.mp4",
+                        "video_bytes": 1234,
+                    }
+                ],
                 "input_conditioned": True,
+                "input_conditioning": "source-video",
+                "conditioned_input": "source.mp4",
                 "model": "Cosmos3-Nano",
                 "guardrails": True,
+                "weights_baked": False,
+                "lineage": {"input_provenance_uri": "input/provenance.json"},
             }
         ),
         encoding="utf-8",
@@ -375,4 +400,155 @@ def test_finalize_requires_every_real_component(tmp_path: Path) -> None:
     )
     (root / "reports" / "sim2real.rrd").write_bytes(b"")
     with pytest.raises(c3.PaidfCosmos3Error, match="missing or empty"):
+        c3.finalize(str(root), str(root / "reports" / "final.json"))
+
+
+def test_extract_frames_reports_missing_ffmpeg_as_domain_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(c3.shutil, "which", lambda _binary: None)
+
+    with pytest.raises(c3.PaidfCosmos3Error, match="ffmpeg is required"):
+        c3._extract_frames(tmp_path / "video.mp4", tmp_path / "frames")
+
+
+@requires_ffmpeg
+def test_generate_variants_requires_s3_publication_before_generation(
+    tmp_path: Path,
+) -> None:
+    paths = _generation_inputs(tmp_path)
+
+    with pytest.raises(c3.PaidfCosmos3Error, match="s3:// output URI"):
+        c3.generate_variants(
+            str(paths["source"]),
+            str(paths["provenance"]),
+            str(paths["captions"]),
+            str(paths["configs"]),
+            str(tmp_path / "local-output"),
+            str(paths["scores"]),
+            str(paths["attempt"]),
+            "video2video",
+            "Cosmos3-Nano",
+            "prompt",
+            "",
+            1,
+            5,
+            10,
+            1,
+            1,
+            1,
+            0,
+            0,
+            "latency",
+            True,
+            "run",
+            storage=_MemoryStorage(),
+            environ={"CUDA_VISIBLE_DEVICES": "0"},
+        )
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "schema",
+        "mode",
+        "model",
+        "guardrails",
+        "input_conditioned",
+        "input_conditioning",
+        "conditioned_input",
+        "weights_baked",
+        "lineage",
+        "variants",
+    ],
+)
+def test_finalize_missing_truthful_manifest_fields_raise_domain_error(
+    tmp_path: Path, field: str
+) -> None:
+    root = tmp_path / "run"
+    for directory in ("cosmos_augmented", "grade", "curation", "reports"):
+        (root / directory).mkdir(parents=True)
+    manifest = {
+        "schema": c3.MANIFEST_SCHEMA,
+        "engine": c3.ENGINE,
+        "status": "executed",
+        "mode": "video2video",
+        "video_bytes": 1234,
+        "variant_count": 1,
+        "variants": [
+            {
+                "clip": "variant-0000",
+                "augmented_video_uri": "s3://example/variant-0000/video.mp4",
+                "video_bytes": 1234,
+            }
+        ],
+        "input_conditioned": True,
+        "input_conditioning": "source-video",
+        "conditioned_input": "source.mp4",
+        "model": "Cosmos3-Nano",
+        "guardrails": True,
+        "weights_baked": False,
+        "lineage": {"input_provenance_uri": "input/provenance.json"},
+    }
+    manifest.pop(field)
+    (root / "cosmos_augmented" / "manifest.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+    (root / "grade" / "cosmos_evaluator.json").write_text(
+        json.dumps({"status": "completed", "passed": True, "score": 0.88}),
+        encoding="utf-8",
+    )
+    (root / "grade" / "quality_disposition.json").write_text(
+        json.dumps({"quality_status": "accepted"}), encoding="utf-8"
+    )
+    (root / "curation" / "cosmos_curator.json").write_text(
+        json.dumps({"engine": "cosmos-curator-upstream", "clip_count": 1}),
+        encoding="utf-8",
+    )
+    (root / "curation" / "report.json").write_text(
+        json.dumps({"curation_engine": "fiftyone-brain"}), encoding="utf-8"
+    )
+    (root / "reports" / "sim2real.rrd").write_bytes(b"RRF2-real")
+
+    with pytest.raises(c3.PaidfCosmos3Error, match="missing or invalid fields"):
+        c3.finalize(str(root), str(root / "reports" / "final.json"))
+
+
+def test_quality_route_and_promotion_guard_require_durable_acceptance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    disposition = tmp_path / "quality_disposition.json"
+    decision = tmp_path / "decision.json"
+    disposition.write_text(
+        json.dumps(
+            {
+                "quality_status": "rejected",
+                "decision": "loop_back",
+                "evaluator_status": "missing",
+                "hard_checks_passed": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.decisions.write_decision",
+        lambda uri, value: Path(uri).write_text(
+            json.dumps({"decision": value}), encoding="utf-8"
+        ),
+    )
+
+    assert c3.route_quality_disposition(str(disposition), str(decision)) == "loop_back"
+    assert json.loads(decision.read_text())["decision"] == "loop_back"
+    with pytest.raises(c3.PaidfCosmos3Error, match="annotation requires"):
+        c3.require_accepted_quality(str(disposition))
+
+
+def test_finalize_non_object_manifest_raises_domain_error(tmp_path: Path) -> None:
+    root = tmp_path / "run"
+    (root / "cosmos_augmented").mkdir(parents=True)
+    (root / "cosmos_augmented" / "manifest.json").write_text(
+        "[]", encoding="utf-8"
+    )
+
+    with pytest.raises(c3.PaidfCosmos3Error, match="not a JSON object"):
         c3.finalize(str(root), str(root / "reports" / "final.json"))

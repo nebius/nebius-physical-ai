@@ -206,8 +206,7 @@ states:
         schema: npa.sim2real.threshold_decision.v1
 
   quality-disposition:
-    description: Re-read the final report and route accepted versus rejected evidence paths.
-    writesDecision: true
+    description: Persist a strict accepted or rejected disposition from the final evaluator report.
     needs: [refinement]
     resources: cpu
     run:
@@ -226,25 +225,58 @@ states:
         schema: npa.data_factory.quality_disposition.v1
       - uri: "{{config.decision_uri}}"
         schema: npa.sim2real.threshold_decision.v1
-    transitions:
-      - when: promote_checkpoint
-        goto: annotate-augmented
-      - when: loop_back
-        goto: visualize-rejected
+    next: visualize-quality-evidence
 
-  visualize-rejected:
-    description: Preserve real input, variant, evaluator, gate, and rejection evidence in Rerun.
+  visualize-quality-evidence:
+    description: Preserve input, generated, evaluator, gate, and disposition evidence in Rerun.
     needs: [quality-disposition]
     toolRef: workbench.nurec.visualize
     resources: cpu
     outputs:
       - uri: "{{config.rrd_uri}}"
         schema: npa.sim2real.rerun.v1
-    next: reject-quality
+    next: quality-route
+
+  quality-route:
+    description: Route only from the durable quality disposition after evidence visualization.
+    writesDecision: true
+    needs: [visualize-quality-evidence]
+    resources: cpu
+    run:
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.paidf_cosmos3 import route_quality_disposition;
+          route_quality_disposition(*sys.argv[1:])
+        - "{{config.quality_disposition_uri}}"
+        - "{{config.decision_uri}}"
+    outputs:
+      - uri: "{{config.decision_uri}}"
+        schema: npa.sim2real.threshold_decision.v1
+    transitions:
+      - when: promote_checkpoint
+        goto: require-accepted-quality
+      - when: loop_back
+        goto: reject-quality
+
+  require-accepted-quality:
+    description: Fail closed before annotation when a one-shot plan assumed promotion incorrectly.
+    needs: [quality-route]
+    resources: cpu
+    run:
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.paidf_cosmos3 import require_accepted_quality;
+          require_accepted_quality(*sys.argv[1:])
+        - "{{config.quality_disposition_uri}}"
+    next: annotate-augmented
 
   reject-quality:
     description: Terminate only after rejected Rerun evidence is durable.
-    needs: [visualize-rejected]
+    needs: [quality-route]
     resources: cpu
     run:
       argv:
@@ -258,7 +290,7 @@ states:
 
   annotate-augmented:
     description: Caption only accepted Cosmos 3 variants with the hosted VLM.
-    needs: [quality-disposition]
+    needs: [require-accepted-quality]
     resources: cpu
     run:
       shell: >-
