@@ -87,7 +87,7 @@ def test_public_publisher_can_bootstrap_candidate_from_existing_dispatch_file() 
     assert "visibility)\" = private" in text
     assert "NPA_RETIRE_CANDIDATE_REF" in text
     assert "metadata.container.tags" in text
-    assert "jq 'length'" in text
+    assert "sole tagged version" in text
     assert 'visibility=private' in text
     assert '/restore' in text
     assert "gh api --method DELETE" in text
