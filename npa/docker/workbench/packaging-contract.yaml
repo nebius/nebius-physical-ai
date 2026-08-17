@@ -1,6 +1,11 @@
 # Machine-readable packaging contract for workbench containers.
 # Enforced by npa/tests/docker/test_packaging_contract.py
 # Human companion: docs/workbench/container-packaging.md
+#
+# This file says which bytes may not be BAKED, which makes them run-time
+# downloads. Where those downloads land, so the operator pays for them once
+# instead of once per run, is npa/src/npa/workbench/model_cache.py and
+# docs/workbench/model-weight-cache.md.
 
 version: 1
 

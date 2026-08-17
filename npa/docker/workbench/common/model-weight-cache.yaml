@@ -1,0 +1,107 @@
+# Durable storage for the model weights the workbench images are not allowed to bake.
+#
+# WHY YOU WANT THIS
+#   Every gated NVIDIA checkpoint the workbench uses is downloaded at run time,
+#   because packaging-contract.yaml forbids baking it into a redistributable image
+#   (Cosmos-Transfer2.5, Cosmos-Guardrail1, the Cosmos Reason family, Cosmos3,
+#   GR00T, the curator towers, Wan 2.2, LTX). Without a volume that outlives the
+#   pod, each of those downloads happens again on every run, on an already-billing
+#   GPU. Cosmos-Transfer2.5 plus its guardrails is tens of gigabytes; the second
+#   run of the same image should be reading local bytes, not re-downloading them.
+#
+#   This is the weights counterpart of warm-isaac-cache.yaml. The difference is
+#   how it fills: the Isaac closure is warmed once by a CPU Job and consumed
+#   read-only, while weights arrive lazily from whichever stage needs them first,
+#   so this volume is mounted read-write and simply accumulates.
+#
+# USAGE
+#   1. kubectl apply -f model-weight-cache.yaml
+#   2. Point NPA at the claim before you submit:
+#        export NPA_MODEL_CACHE_PVC=npa-model-cache
+#      Every runtime then redirects its whole cache family (HF_HOME, HF_HUB_CACHE,
+#      TORCH_HOME, NPA_COSMOS3_CACHE, ...) into /opt/npa-model-cache. See
+#      docs/workbench/model-weight-cache.md for the full list and for the
+#      VM/Docker equivalent (NPA_MODEL_CACHE_HOST_PATH).
+#
+#   Nothing else changes: with the variable unset every runtime keeps the
+#   ephemeral defaults it has always used.
+#
+# STORAGE CLASS
+#   ReadWriteMany matters. Stages of one workflow land on different nodes and
+#   parallel waves run at the same time, so a ReadWriteOnce volume would serialise
+#   them or fail to attach. On Nebius mk8s use `csi-mounted-fs-path-sc`, the same
+#   shared-filesystem class the Isaac cache uses.
+#
+# SIZING
+#   40 Gi holds the Cosmos Transfer + guardrail set with room for one more model
+#   family. Budget ~100 Gi if you run Cosmos3, the Reason family, and the curator
+#   towers against the same claim. The cache is append-only from NPA's side:
+#   nothing here evicts, so delete the PVC to reclaim the space.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: npa-model-cache
+  labels:
+    app.kubernetes.io/name: npa-model-cache
+    app.kubernetes.io/managed-by: npa
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: csi-mounted-fs-path-sc
+  resources:
+    requests:
+      storage: 40Gi
+---
+# Make the volume writable by the unprivileged users the workbench images run as.
+#
+# A freshly provisioned volume is owned by root, and NPA never runs a workload
+# container as UID 0 (the SkyPilot bootstrap contract forbids the override). Pods
+# would then fail their first mkdir instead of caching anything. This one-shot Job
+# opens the tree once; the CSI driver's fsGroup handles the rest.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: npa-init-model-cache
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: npa-init-model-cache
+    spec:
+      restartPolicy: Never
+      securityContext:
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: init
+          # Any image with a shell works; this Job writes nothing but directories.
+          image: busybox:1.37
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              mkdir -p /opt/npa-model-cache
+              chmod 1777 /opt/npa-model-cache
+              echo "npa model cache ready at /opt/npa-model-cache"
+          volumeMounts:
+            - name: model-cache
+              mountPath: /opt/npa-model-cache
+          resources:
+            requests:
+              cpu: "100m"
+              memory: 64Mi
+            limits:
+              cpu: "500m"
+              memory: 256Mi
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: npa-model-cache

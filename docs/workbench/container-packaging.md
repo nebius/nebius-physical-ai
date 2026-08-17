@@ -272,7 +272,9 @@ GR00T N1, and Cosmos-Reason weights (and VLMs) are downloaded at **runtime**
 using the customer's own HF/NGC token when the upstream repository is gated.
 Every required gated repository is probed before provisioning; there is no NPA
 manual terms flag or access-check bypass. Public repositories work anonymously.
-The upstream license still applies, and we never redistribute weights.
+The upstream license still applies, and we never redistribute weights. Those
+downloads should survive the run that paid for them — see
+[Runtime-fetched model weights](#runtime-fetched-model-weights-and-where-they-land).
 
 Access model today (both regions): each workbench registry
 (`cr.eu-north1.nebius.cloud/…` primary, `cr.us-central1.nebius.cloud/…` mirror)
@@ -492,6 +494,35 @@ selector.
 > the images contain no NVIDIA-proprietary bytes, and NVIDIA delivers Isaac to each
 > operator under that operator's own acceptance — but dispatching the workflow with
 > `dry_run=false` should wait on sign-off from someone with the authority to accept it.
+
+## Runtime-fetched model weights (and where they land)
+
+Because no image bakes weights, every run of an image downloads them. Whether that
+happens **once** or **every time** is a property of the storage the operator gives
+the run, and for a long time nothing supplied it: each runtime wrote to whatever
+directory happened to be writable inside its image (`/tmp/hf_home`, a pod-local
+`emptyDir`, a path with no bind mount at all), so the download died with the
+container and the next run re-paid for it on an already-billing GPU.
+
+`npa/src/npa/workbench/model_cache.py` is now the one place that answers "where do
+downloaded weights live", and it is wired into every runtime NPA drives: SkyPilot
+task envs plus a Kubernetes volume at the cache root, sim2real sibling GPU Jobs,
+Serverless Job envs, and long-lived workbench containers on a VM. It is opt-in,
+because durability is storage only the operator can supply:
+
+```bash
+kubectl apply -f npa/docker/workbench/common/model-weight-cache.yaml
+export NPA_MODEL_CACHE_PVC=npa-model-cache      # or NPA_MODEL_CACHE_HOST_PATH on a VM
+```
+
+With none of the `NPA_MODEL_CACHE_*` variables set, every runtime keeps the ephemeral
+default it has always used. See
+[model-weight-cache.md](model-weight-cache.md) for the full variable family, sizing,
+and how to verify a run is hitting the cache.
+
+This does not move the redistribution boundary: the bytes still arrive from the
+vendor under the operator's own entitlement, into the operator's own storage. It only
+stops NPA from throwing them away.
 
 ## Feature exposure
 
