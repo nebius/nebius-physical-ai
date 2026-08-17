@@ -81,7 +81,9 @@ describe("NPA agent LeIsaac capability tab", () => {
     cy.get(".leisaac-launch-template")
       .should("contain.text", "npa workbench leisaac launch")
       .and("contain.text", "<project-alias>");
-    cy.get("#panelLeIsaac").should("contain.text", "This page never sets them");
+    cy.get("#panelLeIsaac")
+      .should("contain.text", "single public ACCEPT_EULA input")
+      .and("contain.text", "This page never changes that input or privacy/telemetry settings");
     cy.get("#leisaacRetry").click();
     cy.wait("@readinessRetry");
     cy.get("#leisaacAvailability").should("contain.text", "No LeIsaac runtime is registered");
