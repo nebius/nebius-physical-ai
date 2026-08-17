@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import stat
 import sys
+import sysconfig
 from pathlib import Path
 
 import pytest
@@ -235,6 +237,48 @@ def test_wrapper_yaml_flag_is_still_accepted(monkeypatch, capsys) -> None:
     assert payload["run_id"] == "bdd100k-alias-run"
     assert payload["stages"][0] == "ingest"
     assert "npa workbench lancedb import-bdd100k" in payload["rendered_skypilot"]
+
+
+class TestMockStageEnv:
+    """`--mock-endpoints` runs each stage's real argv, which begins with bare `npa`.
+
+    That resolves inside a task pod, and in CI, where the workflow pip-installs the
+    package so the console script is always on PATH. It does not resolve when the
+    runner is driven by an unactivated venv's interpreter -- `<venv>/bin/python -m
+    pytest` -- which is how a contributor hits FileNotFoundError on a suite that CI
+    calls green. Asserting on the function directly is what makes a revert fail
+    anywhere, since no subprocess or PATH-shaped fixture is involved.
+    """
+
+    def test_prepends_the_running_interpreters_scripts_dir(self, monkeypatch) -> None:
+        wrapper = _load_wrapper_module()
+        monkeypatch.setenv("PATH", "/usr/bin:/bin")
+
+        path = wrapper._mock_stage_env()["PATH"].split(os.pathsep)
+
+        scripts_dir = sysconfig.get_path("scripts")
+        assert path[0] == scripts_dir, "bare `npa` must resolve to this interpreter's"
+        # Prepend, never replace: stages also call git, aws and other real binaries.
+        assert path[1:] == ["/usr/bin", "/bin"]
+
+    def test_is_a_no_op_when_the_dir_is_already_on_path(self, monkeypatch) -> None:
+        wrapper = _load_wrapper_module()
+        scripts_dir = sysconfig.get_path("scripts")
+        monkeypatch.setenv("PATH", f"/usr/bin{os.pathsep}{scripts_dir}")
+
+        # An activated venv already has it, and duplicating entries on every call
+        # would grow PATH without changing which npa is found.
+        assert wrapper._mock_stage_env()["PATH"] == f"/usr/bin{os.pathsep}{scripts_dir}"
+
+    def test_carries_the_rest_of_the_environment(self, monkeypatch) -> None:
+        wrapper = _load_wrapper_module()
+        monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/prefix/npa")
+
+        # Stages read credentials and run config from the ambient environment, so
+        # this must stay a PATH edit rather than a constructed environment.
+        assert wrapper._mock_stage_env()["NPA_SRC_S3_URI"] == (
+            "s3://example-bucket/prefix/npa"
+        )
 
 
 @pytest.mark.timeout(300)

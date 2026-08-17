@@ -454,9 +454,19 @@ These workflows block a pull request:
 | `.github/workflows/gitleaks.yml` | the custom Nebius-pattern rules in `.gitleaks.toml` | `gitleaks detect` |
 | `.github/workflows/image-security-scan.yml` | Trivy against built images | `npa/tests/docker/` for the contract checks |
 
-`make check` runs the reproducible subset in one command. `test.yml` runs a Python
-matrix of 3.10, 3.12, and 3.14 on `main` and 3.12 alone on a pull request;
-`requires-python` is `>=3.10`.
+`make check` runs the reproducible subset in one command: `lint`, `docs-check`,
+`test`. It is not a full stand-in for `test.yml`, which additionally enforces
+`--cov-fail-under=60` and runs `tests/integration/test_cli_install.sh` and
+`scripts/check-source-drift.sh`. `make test` runs no coverage, so `make check` can
+pass while `test.yml` fails the 60% floor. Add coverage locally when a change moves
+a lot of untested code:
+
+```bash
+make test PYTEST_ADDOPTS="--cov=npa --cov-fail-under=60"
+```
+
+`test.yml` runs a Python matrix of 3.10, 3.12, and 3.14 on `main` and 3.12 alone on
+a pull request; `requires-python` is `>=3.10`.
 ## Testing Requirements
 
 Create the virtualenv at `npa/.venv` and install the dev tooling once (this pulls

@@ -18,6 +18,31 @@ SCRIPT = REPO_ROOT / "npa" / "scripts" / "start_golden_evals_tmux.sh"
 SCRIPT_ENV = {**os.environ, "GOLDEN_EVAL_PYTHON": sys.executable}
 
 
+def test_script_prefers_golden_eval_python_over_its_fallbacks(tmp_path) -> None:
+    """The precedence the smokes above rely on, asserted without needing tmux.
+
+    Both fallbacks -- `npa/.venv/bin/python` and python3 from PATH -- are
+    interpreters that may not have npa importable, which is how these smokes failed
+    for a contributor whose venv lives elsewhere. CI installs npa into the
+    interpreter it runs pytest with, so only a direct assertion catches a revert.
+    """
+
+    stub = tmp_path / "python-stub"
+    stub.write_text("#!/bin/sh\necho GOLDEN_EVAL_PYTHON_USED >&2\nexit 1\n")
+    stub.chmod(0o755)
+
+    proc = subprocess.run(
+        ["bash", str(SCRIPT), "--dry-run"],
+        cwd=REPO_ROOT,
+        env={**os.environ, "GOLDEN_EVAL_PYTHON": str(stub)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert "GOLDEN_EVAL_PYTHON_USED" in proc.stderr, proc.stderr
+
+
 def test_tmux_script_help() -> None:
     proc = subprocess.run(
         ["bash", str(SCRIPT), "--help"],
