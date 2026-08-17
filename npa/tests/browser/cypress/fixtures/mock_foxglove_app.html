@@ -26,6 +26,8 @@
       (function () {
         const params = new URLSearchParams(location.search);
         const received = [];
+        const topicErrors = [];
+        window.__mockFoxgloveTopicErrors = topicErrors;
         const stateEl = document.getElementById("state");
         const receivedEl = document.getElementById("received");
 
@@ -49,6 +51,10 @@
           if (!data || typeof data !== "object" || typeof data.type !== "string") return;
           record(data);
           if (data.type === "origin-ack") {
+            if (params.get("handshake") === "0") {
+              setState("sign-in-required");
+              return;
+            }
             // Parent acknowledged our origin request: start the handshake.
             toParent({ type: "foxglove-handshake-request" });
             setState("handshake-requested");
@@ -64,8 +70,42 @@
               setState("error-sent");
               return;
             }
-            toParent({ type: "foxglove-handshake-complete" });
-            setState("ready");
+            const collectPanels = (node) => {
+              if (!node || typeof node !== "object") return [];
+              if (node.type === "panel") return [node];
+              return [
+                ...(node.items || []).flatMap((item) => collectPanels(item.content)),
+                ...(node.tabs || []).flatMap((item) => collectPanels(item.content)),
+              ];
+            };
+            const layout = data.payload && data.payload.initialLayoutParams &&
+              data.payload.initialLayoutParams.layout;
+            const panels = collectPanels(layout && layout.content);
+            const cameraTopics = panels
+              .filter((panel) => panel.panelType === "Image")
+              .map((panel) => panel.config && panel.config.imageMode && panel.config.imageMode.imageTopic);
+            const scenePanel = panels.find((panel) =>
+              panel.panelType === "ThreeDee" && panel.config && panel.config.topics &&
+              panel.config.topics["/robot/diagnostic_scene"]
+            );
+            const expectedCameras = ["/camera", "/camera/side", "/camera/workspace"];
+            if (layout && layout.content && (
+              !scenePanel || expectedCameras.some((topic) => !cameraTopics.includes(topic))
+            )) {
+              const message = !scenePanel
+                ? "Error in topic /robot/diagnostic_scene: incompatible SceneUpdate layout"
+                : "Camera topic assignment is incomplete";
+              topicErrors.push(message);
+              toParent({ type: "foxglove-error", payload: { message } });
+              setState("topic-error-sent");
+              return;
+            }
+            if (params.get("complete") !== "0") {
+              toParent({ type: "foxglove-handshake-complete" });
+              setState("ready");
+            } else {
+              setState("usable-with-sign-in");
+            }
             return;
           }
           if (data.type === "get-layout") {

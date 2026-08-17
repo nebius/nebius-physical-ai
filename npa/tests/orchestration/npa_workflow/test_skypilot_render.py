@@ -25,7 +25,10 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     tool_image_key,
 )
 from npa.orchestration.npa_workflow.spec import load_spec
-from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
+from npa.orchestration.npa_workflow.submit import (
+    merge_config_overrides,
+    prepare_npa_workflow_for_submit,
+)
 from npa.orchestration.npa_workflow.submission_state import load_submission_state
 from npa.orchestration.skypilot.workflow import WorkflowResult
 
@@ -45,6 +48,128 @@ def test_is_npa_workflow_spec_false_for_skypilot() -> None:
     path = SKYPILOT_FIXTURES / "sonic-train-standalone.yaml"
     assert not is_npa_workflow_spec(path)
     assert detect_submit_format(path) == "skypilot"
+
+
+@pytest.mark.parametrize(
+    ("name", "expected_image"),
+    [
+        ("byof-openpi.yaml", "docker:nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04"),
+        ("byof-wan2.2.yaml", "docker:registry.example/npa-wan2-2:"),
+    ],
+)
+def test_non_isaac_byof_specs_render_their_declared_runtime_image(
+    name: str, expected_image: str
+) -> None:
+    spec = load_spec(NPA_SPECS / name)
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="byof-image"),
+        run_id="byof-image",
+        options=SkypilotRenderOptions(
+            registry="registry.example", materialize_registry_secrets=False
+        ),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
+    assert task["resources"]["image_id"].startswith(expected_image)
+    assert "ACCEPT_EULA" not in task["envs"]
+
+
+def test_kubernetes_profile_disk_size_renders_as_ephemeral_storage() -> None:
+    spec = load_spec(NPA_SPECS / "byof-wan2.2.yaml")
+    plan = build_plan(spec, run_id="disk-contract")
+    assert plan.steps[0].resources_profile["disk_size"] == 200
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="disk-contract",
+        options=SkypilotRenderOptions(
+            registry="registry.example", materialize_registry_secrets=False
+        ),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
+    assert task["resources"]["ephemeral_storage"] == 200
+    assert "disk_size" not in task["resources"]
+
+
+def test_every_byof_spec_declares_its_outer_runtime_image() -> None:
+    paths = sorted(NPA_SPECS.glob("byof*.yaml"))
+
+    assert len(paths) == 9
+    for path in paths:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        base_image = raw["config"].get("base_image")
+        assert isinstance(base_image, str) and base_image, path.name
+        for profile in raw["resources"].values():
+            assert profile["image"] == "{{config.base_image}}", path.name
+
+
+def test_isaac_byof_config_routes_image_and_preserves_cli_opt_out() -> None:
+    base = load_spec(NPA_SPECS / "byof.yaml")
+    spec = merge_config_overrides(
+        base,
+        {"base_profile": "isaac-lab", "base_image": "tool://isaac-lab"},
+    )
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="byof-isaac"),
+        run_id="byof-isaac",
+        options=SkypilotRenderOptions(
+            registry="registry.example",
+            materialize_registry_secrets=False,
+            accept_eula=False,
+        ),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
+    assert task["resources"]["image_id"].startswith(
+        "docker:registry.example/npa-isaac-lab:"
+    )
+    assert task["envs"]["ACCEPT_EULA"] == ""
+
+
+def test_resolved_isaac_image_routes_all_five_raw_shell_sweep_states() -> None:
+    spec = load_spec(NPA_SPECS / "isaac-lab-rl-sweep.yaml")
+    plan = build_plan(spec, run_id="resolved-isaac-sweep")
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="resolved-isaac-sweep",
+        options=SkypilotRenderOptions(
+            image_overrides={"*": "registry.example/npa-isaac-lab:runtime"},
+            materialize_registry_secrets=False,
+            accept_eula=False,
+        ),
+    )
+    tasks = [
+        doc for doc in yaml.safe_load_all(rendered) if doc and doc.get("resources")
+    ]
+
+    assert {task["name"] for task in tasks} == {
+        "variant-lr-1e-3",
+        "variant-lr-3e-4",
+        "variant-entropy-0",
+        "variant-entropy-0-01",
+        "select-best",
+    }
+    assert all(task["envs"]["ACCEPT_EULA"] == "" for task in tasks)
+
+
+def test_resolved_non_isaac_image_does_not_create_false_gate() -> None:
+    spec = load_spec(NPA_SPECS / "isaac-lab-rl-sweep.yaml")
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="resolved-ubuntu-control"),
+        run_id="resolved-ubuntu-control",
+        options=SkypilotRenderOptions(
+            image_overrides={"*": "ubuntu:22.04"},
+            materialize_registry_secrets=False,
+        ),
+    )
+    tasks = [
+        doc for doc in yaml.safe_load_all(rendered) if doc and doc.get("resources")
+    ]
+
+    assert len(tasks) == 5
+    assert all("ACCEPT_EULA" not in task["envs"] for task in tasks)
 
 
 def test_sonic_stage_setup_installs_torch_stack(
@@ -67,6 +192,22 @@ def test_sonic_stage_setup_installs_torch_stack(
         setup = doc.get("setup", "")
         assert "onnxruntime>=1.18" in setup, doc["name"]
         assert "torch>=2.12.1" in setup, doc["name"]
+
+
+def test_setup_prefers_the_dependency_complete_baked_npa_interpreter() -> None:
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="demo"),
+        run_id="demo",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    setup = [doc for doc in yaml.safe_load_all(rendered) if doc][1]["setup"]
+
+    candidate_loop = setup.split("for candidate in ", 1)[1].split("; do", 1)[0]
+    assert candidate_loop.index('"${NPA_BAKED_PYTHON:-}"') < candidate_loop.index(
+        "sys.executable"
+    )
 
 
 def test_sonic_specs_train_with_the_in_job_runtime() -> None:
@@ -166,6 +307,22 @@ def test_normalize_resources_leaves_exact_nebius_shapes() -> None:
         "cloud": "nebius",
         "cpus": 4,
         "memory": "16",
+    }
+
+
+def test_normalize_resources_translates_kubernetes_disk_capacity() -> None:
+    assert normalize_resources(
+        {"cloud": "kubernetes", "disk_size": 200, "cpus": 4}
+    ) == {
+        "cloud": "kubernetes",
+        "cpus": "4+",
+        "ephemeral_storage": 200,
+    }
+
+
+def test_normalize_resources_preserves_non_kubernetes_renderer_behavior() -> None:
+    assert normalize_resources({"cloud": "nebius", "disk_size": 200}) == {
+        "cloud": "nebius",
     }
 
 
@@ -285,6 +442,14 @@ def test_kubernetes_private_image_references_the_refreshed_pull_secret(
         {"name": "npa-nebius-registry"}
     ]
 
+    authorities = plan_image_pull_secrets(
+        spec,
+        plan.steps,
+        run_id="demo",
+        options=SkypilotRenderOptions(registry="cr.eu-north1.nebius.cloud/reg"),
+    )
+    assert set(authorities.values()) == {("npa-nebius-registry",)}
+
 
 def test_nurec_plan_exposes_its_ngc_pull_authority_to_preflight() -> None:
     spec = load_spec(NPA_SPECS / "nurec-reconstruct.yaml")
@@ -354,6 +519,8 @@ def test_render_transfer_forwards_explicit_runtime_tuning(
 ) -> None:
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
     monkeypatch.setenv("NPA_COSMOS_VARIANT_PARALLELISM", "4")
+    monkeypatch.setenv("NPA_COSMOS_VALIDATION_SCOPE", "demo")
+    monkeypatch.setenv("NPA_COSMOS_VALIDATION_DELAY_RANK", "1")
     monkeypatch.setenv("NPA_COSMOS_DISABLE_CONTENT_GUARDRAILS", "1")
     spec = load_spec(
         REPO_ROOT
@@ -372,6 +539,8 @@ def test_render_transfer_forwards_explicit_runtime_tuning(
     docs = [doc for doc in yaml.safe_load_all(rendered) if doc]
     transfer = next(doc for doc in docs if "cosmos2 transfer" in doc.get("run", ""))
     assert transfer["envs"]["NPA_COSMOS_VARIANT_PARALLELISM"] == "4"
+    assert transfer["envs"]["NPA_COSMOS_VALIDATION_SCOPE"] == "demo"
+    assert transfer["envs"]["NPA_COSMOS_VALIDATION_DELAY_RANK"] == "1"
     assert transfer["envs"]["NPA_COSMOS_DISABLE_CONTENT_GUARDRAILS"] == "1"
 
 
@@ -420,7 +589,9 @@ resources:
 """
     assert_no_unresolved_placeholders(rendered)
 
-    unresolved_env = rendered.replace("MATERIALIZED: ready", 'MATERIALIZED: "${MISSING}"')
+    unresolved_env = rendered.replace(
+        "MATERIALIZED: ready", 'MATERIALIZED: "${MISSING}"'
+    )
     with pytest.raises(NpaWorkflowRenderError, match=r"\$\{MISSING\}"):
         assert_no_unresolved_placeholders(unresolved_env)
 

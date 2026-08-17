@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from npa.workflows import data_factory_curate as dfc
 
 
@@ -140,9 +142,37 @@ def test_augmented_representatives_picks_first_frame_and_meta() -> None:
     assert reps["c2"]["meta_key"] == ""
 
 
-def test_run_curation_raises_when_fiftyone_absent() -> None:
-    import pytest
+def test_augmented_representatives_preserves_clips_inside_attempt_prefix() -> None:
+    keys = [
+        "p/aug/_attempts/fence-2/clip-a/frame-00000.png",
+        "p/aug/_attempts/fence-2/clip-a/metadata.json",
+        "p/aug/_attempts/fence-2/clip-b/frame-00000.png",
+        "p/aug/_attempts/fence-2/clip-b/metadata.json",
+    ]
 
+    reps = dfc._augmented_representatives(keys, "p/aug/")
+
+    assert set(reps) == {"clip-a", "clip-b"}
+    assert reps["clip-a"]["frame_key"].endswith(
+        "/_attempts/fence-2/clip-a/frame-00000.png"
+    )
+    assert reps["clip-b"]["meta_key"].endswith(
+        "/_attempts/fence-2/clip-b/metadata.json"
+    )
+
+
+def test_augmented_representatives_rejects_mixed_attempts() -> None:
+    with pytest.raises(ValueError, match="more than one augment attempt"):
+        dfc._augmented_representatives(
+            [
+                "p/aug/_attempts/old/clip-a/frame-00000.png",
+                "p/aug/_attempts/new/clip-b/frame-00000.png",
+            ],
+            "p/aug/",
+        )
+
+
+def test_run_curation_raises_when_fiftyone_absent() -> None:
     # In the unit-test env FiftyOne is not installed, so run_curation must raise
     # FiftyoneUnavailable (callers then fall back to the report-only path).
     with pytest.raises(dfc.FiftyoneUnavailable):

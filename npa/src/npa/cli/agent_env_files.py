@@ -12,6 +12,7 @@ import shlex
 import uuid
 from typing import Any
 
+from npa.clients.project_credential_store import merge_project_credentials_document
 from npa.clients.ssh import SSHClient
 
 
@@ -70,6 +71,7 @@ def _write_agent_s3_env(
         target="/opt/npa-agent/s3.env",
     )
 
+
 def _write_agent_operator_profile(
     ssh: SSHClient,
     *,
@@ -80,6 +82,7 @@ def _write_agent_operator_profile(
     region: str,
     tf_api_key: str,
     nebius_ai_key: str = "",
+    foxglove_api_token: str = "",
     s3_bucket: str,
     s3_prefix: str = "",
     s3_endpoint: str,
@@ -90,6 +93,10 @@ def _write_agent_operator_profile(
     """Write ~/.npa/config.yaml + credentials.yaml on the agent VM for operator workflows."""
     if not (project_alias and project_id and tenant_id and region):
         return
+    if not foxglove_api_token:
+        from npa.clients.credentials import load_credentials
+
+        foxglove_api_token = load_credentials().foxglove_api_token
     config_payload: dict[str, Any] = {
         "default_project": project_alias,
         "projects": {
@@ -107,16 +114,39 @@ def _write_agent_operator_profile(
             tokens["NEBIUS_AI_CLOUD_KEY"] = nebius_ai_key.strip()
         if tf_api_key.strip():
             tokens["NEBIUS_TOKEN_FACTORY_KEY"] = tf_api_key.strip()
+        if foxglove_api_token.strip():
+            tokens["FOXGLOVE_API_TOKEN"] = foxglove_api_token.strip()
     storage_payload = {
         "access_key_id": s3_access_key.strip(),
         "secret_access_key": s3_secret_key.strip(),
         "endpoint": s3_endpoint.strip(),
-        "bucket": "s3://" + s3_bucket.strip() + (("/" + s3_prefix.strip().strip("/") + "/") if s3_prefix.strip().strip("/") else ""),
+        "bucket": "s3://"
+        + s3_bucket.strip()
+        + (
+            ("/" + s3_prefix.strip().strip("/") + "/")
+            if s3_prefix.strip().strip("/")
+            else ""
+        ),
     }
+    project_payload: dict[str, Any] = {}
     if any(storage_payload.values()):
-        credentials_payload["storage"] = storage_payload
+        project_payload["storage"] = storage_payload
     if service_account_id.strip():
-        credentials_payload["nebius"] = {"service_account_id": service_account_id.strip()}
+        project_payload["nebius"] = {
+            "service_account_id": service_account_id.strip(),
+            "service_account_project_id": project_id,
+        }
+    # Agent-side workflow commands use the same exact-project credential
+    # resolver as the operator. Write its authoritative v2 record, while the
+    # helper retains the selected project's legacy compatibility views for
+    # older commands. A bare top-level ``storage`` section has no provable
+    # owner and causes provision/dry-run to fail closed on a fresh VM.
+    credentials_payload = merge_project_credentials_document(
+        credentials_payload,
+        project_id,
+        project_payload,
+        alias=project_alias,
+    )
     user_home = f"/home/{ssh_user}"
     targets = [
         (f"{user_home}/.npa", f"{ssh_user}:{ssh_user}"),
@@ -142,6 +172,7 @@ def _write_agent_operator_profile(
             target=creds_path,
             owner=owner,
         )
+
 
 def _write_agent_nebius_env(
     ssh: SSHClient,

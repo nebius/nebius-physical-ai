@@ -21,7 +21,7 @@ from npa.orchestration.skypilot.workflow import submit_workflow as _submit_skypi
 
 DEFAULT_S3_ENDPOINT = "https://storage.eu-north1.nebius.cloud"
 DEFAULT_AWS_PROFILE = "nebius"
-DEFAULT_GPU_TARGET = "l40s"
+DEFAULT_GPU_TARGET = "gpu-rtx6000"
 DEFAULT_SONIC_WORKFLOW_PREFIX = "sonic-locomotion"
 UNRESOLVED_SUBMIT_TOKENS = (
     "<your-",
@@ -95,6 +95,7 @@ def materialize_sonic_workflow(
     region: str = "",
     use_spot: bool | None = None,
     env_overrides: dict[str, str] | None = None,
+    accept_eula: bool = True,
 ) -> SonicWorkflowPlan:
     """Return a concrete SONIC workflow YAML with no submit-time env indirection."""
 
@@ -162,6 +163,7 @@ def materialize_sonic_workflow(
                 use_spot=use_spot,
                 registry_auth=resolved_registry_auth,
                 env_overrides=env_overrides or {},
+                accept_eula=accept_eula,
             )
 
     yaml_text = yaml.safe_dump_all(materialized, sort_keys=False)
@@ -209,6 +211,7 @@ def submit_sonic_workflow(
     region: str = "",
     use_spot: bool | None = None,
     env_overrides: dict[str, str] | None = None,
+    accept_eula: bool = True,
     isolated_config_dir: Path | None = None,
     config_path: Path | None = None,
     sky_bin: str | None = None,
@@ -218,6 +221,12 @@ def submit_sonic_workflow(
     timeout: int = 1800,
 ) -> WorkflowResult:
     """Materialize and submit a SONIC SkyPilot workflow."""
+
+    if not accept_eula:
+        raise ValueError(
+            "SONIC uses Isaac Sim and the caller explicitly opted out; omit the "
+            "opt-out to use NPA's default ACCEPT_EULA=Y policy."
+        )
 
     plan = materialize_sonic_workflow(
         yaml_path,
@@ -240,6 +249,7 @@ def submit_sonic_workflow(
         region=region,
         use_spot=use_spot,
         env_overrides=env_overrides,
+        accept_eula=accept_eula,
     )
     unresolved = unresolved_submit_placeholders(plan.yaml_text)
     if unresolved:
@@ -371,6 +381,7 @@ def _materialize_task_doc(
     use_spot: bool | None,
     registry_auth: _RegistryAuthConfig | None,
     env_overrides: dict[str, str],
+    accept_eula: bool,
 ) -> None:
     envs = doc.get("envs")
     resources = doc.get("resources")
@@ -431,6 +442,8 @@ def _materialize_task_doc(
     for key, value in env_overrides.items():
         if key in envs:
             envs[key] = value
+    if has_sonic_env:
+        envs["ACCEPT_EULA"] = "Y" if accept_eula else ""
     if registry_auth and _uses_registry_auth_target(doc, registry_auth.server, policy_image):
         envs[SKYPILOT_DOCKER_USERNAME] = registry_auth.username
         envs[SKYPILOT_DOCKER_PASSWORD] = registry_auth.password

@@ -209,8 +209,9 @@ def test_groot_infer_rejects_conflicting_projects_before_env_resolution(mocker) 
 
 
 def test_isaac_lab_export_routes_target_project_credentials(
-    tmp_path: Path, mocker
+    tmp_path: Path, mocker, monkeypatch
 ) -> None:
+    monkeypatch.setenv("ACCEPT_EULA", "Y")
     ssh = mocker.MagicMock()
     ssh.run.return_value = (0, "ISAAC_LAB_EXPORT_LEROBOT_COMPLETE", "")
     cfg = _isaac_cfg()

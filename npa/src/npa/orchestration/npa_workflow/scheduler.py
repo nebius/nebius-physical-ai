@@ -26,15 +26,18 @@ def num_nodes_for_step(spec: NpaWorkflowSpec, step: PlanStep) -> int:
     inside it (see ``sky/utils/schemas.py`` and ``npa.burst.core.build_task_spec``). It
     lives on the resource profile in a spec because that is where per-stage shape
     belongs, and the renderer lifts it back out to the task document.
+
+    A ``{{config.*}}`` value is resolved here against the (already ``--var``-merged)
+    config, which is how a shipped blueprint's block size can be chosen at submit
+    time.
     """
 
-    raw = resources_for_step(spec, step).get("num_nodes")
-    try:
-        return max(1, int(str(raw))) if raw not in (None, "") else 1
-    except (TypeError, ValueError):
-        # validate_spec rejects a non-integer, so this is only reachable for a spec
-        # built in-process; be conservative rather than crashing the renderer.
-        return 1
+    from npa.orchestration.npa_workflow.spec import profile_num_nodes
+
+    profile = step.resources or "default"
+    return profile_num_nodes(
+        resources_for_step(spec, step), name=profile, config=spec.config
+    )
 
 
 def build_scheduler_task(

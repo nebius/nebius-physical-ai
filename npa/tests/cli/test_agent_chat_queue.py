@@ -21,7 +21,6 @@ def _embedded_ui_html(source: str = "") -> str:
     return rendered_agent_ui_html()
 
 
-
 def test_chat_queue_contract_in_ui() -> None:
     source = AGENT_MODULE.read_text(encoding="utf-8")
     ui = _embedded_ui_html(source)
@@ -32,7 +31,9 @@ def test_chat_queue_contract_in_ui() -> None:
     send = ui.split("async function sendChat()")[1].split("function setChatInput")[0]
     assert "queueChatText" in send
     assert "if (chatSendInFlight)" not in send
-    queue = ui.split("function enqueueChatJob")[1].split("async function activateMainTab")[0]
+    queue = ui.split("function enqueueChatJob")[1].split(
+        "async function activateMainTab"
+    )[0]
     assert "chatQueue.push" in queue
     assert "processChatQueue" in queue
     # Single-flight drain prevents concurrent /api/chat races.
@@ -50,7 +51,9 @@ def test_viewer_chat_drawer_contract() -> None:
     ui = _embedded_ui_html(source)
     for marker in AGENT_VIEWER_CHAT_DRAWER_CONTRACT:
         assert marker in ui, marker
-    describe = ui.split("async function describeVisual()")[1].split("let lastRrdUpdatedAt")[0]
+    describe = ui.split("async function describeVisual()")[1].split(
+        "let lastRrdUpdatedAt"
+    )[0]
     assert "openChatDrawer" in describe
     assert "queueChatText" in describe
     # Request appears in chat before capture finishes.
@@ -64,10 +67,12 @@ def test_viewer_chat_drawer_contract() -> None:
     assert "never pops the drawer out" in ui
     assert 'id="chatDrawerToggle"' in ui
     assert "openFullChatTab" in ui
-    # Bottom-right online-chat widget (collapsible FAB + panel), mobile-safe.
-    assert "Online-chat widget: bottom-right FAB" in ui
+    # Top-right online-chat widget (collapsible FAB + panel), kept clear of
+    # viewer playback controls and mobile-safe.
+    assert "Keep viewer affordances away from bottom playback controls" in ui
     assert "chatDrawerClose" in ui
-    assert "env(safe-area-inset-bottom)" in ui
+    assert "top: max(84px, env(safe-area-inset-top))" in ui
+    assert "top: calc(150px + env(safe-area-inset-top))" in ui
     assert "min(380px, calc(100vw - 28px))" in ui
     assert "@media (max-width: 900px)" in ui
 
@@ -117,7 +122,9 @@ def test_soft_swap_prefers_quality_without_rrd_prefetch() -> None:
     assert "alreadyWarm" in mount
     assert "Opening Rerun viewer" in mount or "Opening viewer" in mount
     assert "scheduleRerunBundleUncover" in mount
-    best = ui.split("async function bestEffortMountRerun")[1].split("async function loadRerunViewer")[0]
+    best = ui.split("async function bestEffortMountRerun")[1].split(
+        "async function loadRerunViewer"
+    )[0]
     assert 'setRerunMountStatus(RERUN_MOUNT_SUCCESS, "best-effort")' not in best
     assert "best-effort-no-success" in best
     assert "No RRD/MCAP recording; use the artifacts below" in ui

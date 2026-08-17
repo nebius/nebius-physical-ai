@@ -17,6 +17,7 @@ required option, an unknown flag, or a value the parser's ``type=`` rejects all 
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 import re
 from importlib import import_module
 from typing import Sequence
@@ -38,6 +39,8 @@ PARSER_FACTORIES = {
     "npa.workflows.groot_visualization": "build_parser",
     "npa.workflows.groot_learning": "build_parser",
     "npa.workflows.groot_task_performance": "build_parser",
+    "npa.workflows.byof.openpi_pipeline": "build_parser",
+    "npa.workflows.byof.openpi_service": "build_parser",
 }
 
 
@@ -49,7 +52,7 @@ def _module_tool_refs() -> list[tuple[str, tuple[str, ...]]]:
         argv = tuple(str(part) for part in entry.argv_template)
         if entry.stub or len(argv) < 4:
             continue
-        if argv[0] not in {"python", "python3"} or argv[1] != "-m":
+        if not Path(argv[0]).name.startswith("python") or argv[1] != "-m":
             continue
         out.append((tool_ref, argv))
     return out
@@ -143,13 +146,18 @@ def test_module_tool_ref_argv_parses(tool_ref: str, argv: tuple[str, ...]) -> No
     try:
         parser.parse_args(_resolve(argv[3:], parser))
     except SystemExit as exc:  # argparse exits 2 on a usage error
-        pytest.fail(f"{tool_ref} argv does not parse against {module_name}: exit {exc.code}")
+        pytest.fail(
+            f"{tool_ref} argv does not parse against {module_name}: exit {exc.code}"
+        )
 
 
 def test_raw_shard_routes_through_the_public_cli_with_fan_out_options() -> None:
     """The catalog and documented public command must be the same surface."""
 
-    argv = tuple(str(part) for part in TOOL_CATALOG["workbench.sim2real_envgen.raw_shard"].argv_template)
+    argv = tuple(
+        str(part)
+        for part in TOOL_CATALOG["workbench.sim2real_envgen.raw_shard"].argv_template
+    )
 
     assert argv[:4] == ("npa", "workbench", "sim2real-envgen", "raw-shard")
     assert {
@@ -161,7 +169,9 @@ def test_raw_shard_routes_through_the_public_cli_with_fan_out_options() -> None:
         "--seed",
         "--augmented-frames-uri",
     } <= set(argv), argv
-    assert "--train-fraction" not in argv, "raw shard generation does not split the dataset"
+    assert "--train-fraction" not in argv, (
+        "raw shard generation does not split the dataset"
+    )
 
 
 def test_the_guardrail_would_have_caught_the_missing_run_id() -> None:

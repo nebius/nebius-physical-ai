@@ -204,9 +204,7 @@ def cleanup_jobs_controller(
             "context": context,
             "cluster_id": str(getattr(local_cluster, "cluster_id", "") or ""),
             "cluster_name": str(getattr(local_cluster, "name", "") or ""),
-            "kubeconfig_path": str(
-                getattr(local_cluster, "kubeconfig_path", "") or ""
-            ),
+            "kubeconfig_path": str(getattr(local_cluster, "kubeconfig_path", "") or ""),
         }
 
         try:
@@ -426,6 +424,7 @@ def cleanup_jobs_controller(
             config_path=config_path,
             sky_bin=sky_bin,
         )
+        cleanup.verified = cleanup.ok
         _record_controller_result(
             identity,
             cleanup,
@@ -494,6 +493,7 @@ def cleanup_jobs_controller(
         config_path=config_path,
         sky_bin=sky_bin,
     )
+    cleanup.verified = cleanup.ok
     _record_controller_result(
         identity,
         cleanup,
@@ -1155,8 +1155,7 @@ def _matching_jobs(
     def name_matches(value: object) -> bool:
         normalized = str(value or "").strip()
         return any(
-            pattern
-            and (normalized == pattern or normalized.startswith(pattern + "-"))
+            pattern and (normalized == pattern or normalized.startswith(pattern + "-"))
             for pattern in patterns
         )
 

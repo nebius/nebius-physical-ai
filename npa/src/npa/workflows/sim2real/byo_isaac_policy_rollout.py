@@ -606,22 +606,13 @@ except Exception as e:
 
 
 def _isaac_eula_env_entries() -> list[dict[str, str]]:
-    """Kubernetes ``env`` entries carrying the operator's NVIDIA licence acceptance.
+    """Canonical Kubernetes env for this known Isaac route."""
 
-    The Isaac image ships no Isaac Sim and refuses to fetch it (exit 78) unless
-    OMNI_KIT_ACCEPT_EULA and ISAACSIM_ACCEPT_EULA are set. These jobs invoke
-    /isaac-sim/python.sh, so without forwarding they cannot run at all.
-
-    Read from the submitting process's environment and never defaulted to "YES": the
-    operator driving the pipeline is the one consenting, and hardcoding acceptance here
-    would put us in the position of accepting on their behalf. Unset stays unset, and the
-    job then fails with the bootstrap's actionable refusal instead of silently consenting.
-    """
+    from npa.serverless_common.env import resolved_isaac_eula_env
 
     return [
-        {"name": name, "value": os.environ[name]}
-        for name in ("OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA")
-        if os.environ.get(name)
+        {"name": name, "value": value}
+        for name, value in resolved_isaac_eula_env().items()
     ]
 
 

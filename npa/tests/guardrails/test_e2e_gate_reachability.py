@@ -22,9 +22,9 @@ MANUAL_GATES = {
     "NPA_BYOF_LIVE_GPU": "BYOF GPU mutation requires a reviewed onboarding target",
     "NPA_BYOF_OD_VERIFY_RUN": "Open Dreamer verification requires an explicitly selected run",
     "NPA_BYOF_OPEN_DREAMER_LIVE_GPU": "Open Dreamer GPU mutation remains an operator acceptance test",
-    "NPA_BYOF_OPENPI_LIVE_B200": "OpenPI B200 validation requires explicit scoped Gemma terms acceptance",
-    "NPA_BYOF_WAN22_LIVE_GPU": "Wan single-GPU BYOF mutation requires an explicitly selected acceptance run",
-    "NPA_BYOF_WAN22_MULTIGPU_LIVE_GPU": "Wan multi-GPU BYOF mutation requires an explicitly selected acceptance run",
+    "NPA_BYOF_OPENPI_LIVE_B200": "OpenPI B200 validation requires live GPU and registry access",
+    "NPA_BYOF_WAN22_LIVE_GPU": "Wan single-GPU BYOF mutation requires an explicitly selected validation run",
+    "NPA_BYOF_WAN22_MULTIGPU_LIVE_GPU": "Wan multi-GPU BYOF mutation requires an explicitly selected validation run",
     "NPA_BYOF_LIVE_UBUNTU": "BYOF Ubuntu mutation is a dedicated onboarding acceptance",
     "NPA_E2E_BYOVM_SELF_HEAL": "targets an explicitly selected existing BYOVM service",
     "NPA_CONFIGURE_E2E": "creates storage configuration and needs exact project selectors",
@@ -40,6 +40,9 @@ MANUAL_GATES = {
     "NPA_SRC_S3_URI": "runtime source-staging prerequisite, not an authorization gate",
     "NPA_PREEMPTIBLE_E2E": "destructive preemptible VM suite remains operator-selected",
     "NPA_DRY_RUN": "test-mode selector used by specialized workflow durability suites",
+    "NPA_FLEET_MIG_RUN_WORKLOAD_MATRIX": (
+        "destructive all-slice MIG qualification requires an operator-selected cluster"
+    ),
 }
 
 
@@ -81,10 +84,14 @@ def test_every_e2e_environment_gate_is_reachable_or_explicitly_manual() -> None:
     declared = set().union(*(_skip_gates(path) for path in E2E.glob("test_*.py")))
     runner_text = "\n".join(path.read_text(encoding="utf-8") for path in RUNNER_FILES)
     unreachable = sorted(
-        gate for gate in declared if gate not in runner_text and gate not in MANUAL_GATES
+        gate
+        for gate in declared
+        if gate not in runner_text and gate not in MANUAL_GATES
     )
     stale_allowlist = sorted(set(MANUAL_GATES) - declared)
-    assert not unreachable, f"E2E gates have no runner mapping or manual reason: {unreachable}"
+    assert not unreachable, (
+        f"E2E gates have no runner mapping or manual reason: {unreachable}"
+    )
     assert not stale_allowlist, f"manual E2E gate reasons are stale: {stale_allowlist}"
     assert all(len(reason.split()) >= 5 for reason in MANUAL_GATES.values())
 

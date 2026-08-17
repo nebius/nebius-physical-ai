@@ -10,7 +10,10 @@ config:
   repo_url: "<repo-url>"
   repo_ref: "<repo-ref>"
   base_profile: ubuntu
-  base_image: ""
+  # The outer workflow task runs in this same declared base instead of silently
+  # falling back to SkyPilot's default. For Isaac use base_profile=isaac-lab and
+  # base_image=tool://isaac-lab so routing and EULA preflight see the real runtime.
+  base_image: "ubuntu:22.04"
   build_command: ""
   workload: "<workload>"
   smoke_command: ""
@@ -32,6 +35,7 @@ config:
 resources:
   gpu:
     cloud: kubernetes
+    image: "{{config.base_image}}"
     accelerators: RTXPRO6000:1
 initial: byof-run
 states:

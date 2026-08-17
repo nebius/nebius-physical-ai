@@ -21,7 +21,7 @@ config:
     python3 -m venv /opt/venv &&
     /opt/venv/bin/python -m pip install --no-cache-dir --upgrade pip uv &&
     GIT_LFS_SKIP_SMUDGE=1 /opt/venv/bin/uv pip install
-    --python /opt/venv/bin/python --no-cache -e . &&
+    --python /opt/venv/bin/python --no-cache -e . 'boto3>=1.34' &&
     printf '%s\n'
     '#include <cuda_runtime.h>'
     '#include <cstdio>'
@@ -401,6 +401,7 @@ config:
 resources:
   gpu:
     cloud: kubernetes
+    image: "{{config.base_image}}"
     accelerators: B200:1
     cpus: 16
     memory: 96Gi

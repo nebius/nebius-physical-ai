@@ -5,11 +5,9 @@ whether the token already has access to every gated model the workbench uses and
 points at the exact page to accept for anything still gated.
 
 Important: Hugging Face gated repositories require *interactive* license
-acceptance ("Agree and access repository" on each model page). There is no
-public API to accept a license on a user's behalf, so this module does not (and
-cannot honestly) auto-accept. It checks access and surfaces the acceptance URLs,
-which is the part that can be automated. NGC access is a valid, well-formed key
-plus (for org/team-scoped keys) the matching org/team.
+account authorization upstream. NPA checks repository access with the supplied
+token and does not invent another acceptance flag. NGC access likewise requires
+both a key and a successful repository entitlement probe.
 
 Every check is a pure function that takes the resolved tokens plus an injectable
 Hugging Face validator; the CLI wires the real probe, tests inject fakes.
@@ -26,6 +24,7 @@ from npa.workflows.sim2real_health import FAIL, PASS, WARN, CheckResult, has_fai
 
 HF = "huggingface"
 NGC = "ngc"
+HF_GATING_LAST_VERIFIED = "2026-08-14"
 
 
 @dataclass(frozen=True)
@@ -37,6 +36,7 @@ class GatedAsset:
     capabilities: tuple[str, ...]
     gated: bool
     note: str = ""
+    repo_type: str = "model"
 
 
 # This tuple is the single source of truth for the models the access check
@@ -44,6 +44,9 @@ class GatedAsset:
 # `npa configure`'s model-access NOTE, `npa workbench health access`, and
 # `gated_hf_repos()` / `check_workbench_access()` all derive from it, so no other
 # file needs to change.
+# Gating metadata was reverified against Hugging Face's authoritative model and
+# dataset APIs on 2026-08-14; capability-default drift tests below keep membership
+# current, while the online preflight remains the final access authority.
 #
 # The entries mirror the tool default-model constants in:
 #   - npa/src/npa/cli/groot/__init__.py         DEFAULT_MODEL, COSMOS_REASON_MODEL
@@ -56,12 +59,23 @@ class GatedAsset:
 # updated. `gated=True` marks repos that require accepting the license on Hugging
 # Face before the token can download them.
 WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
-    GatedAsset("nvidia/GR00T-N1.7-3B", HF, ("groot",), True),
+    GatedAsset("nvidia/GR00T-N1.7-3B", HF, ("groot",), False),
+    GatedAsset("nvidia/GEAR-SONIC", HF, ("sonic",), False),
     GatedAsset("nvidia/Cosmos-Transfer2.5-2B", HF, ("paidf", "sim2real"), True),
     GatedAsset("nvidia/Cosmos-Reason2-2B", HF, ("groot", "sim2real"), True),
     GatedAsset("nvidia/Cosmos-Reason2-8B", HF, ("sim2real",), True),
-    GatedAsset("nvidia/Cosmos-Reason1-7B", HF, ("cosmos",), True),
+    GatedAsset("nvidia/Cosmos-Reason1-7B", HF, ("cosmos",), False),
+    GatedAsset("nvidia/Cosmos3-Nano", HF, ("cosmos3",), False),
+    GatedAsset("nvidia/Cosmos-Guardrail1", HF, ("cosmos3",), True),
+    GatedAsset("nvidia/Cosmos-1.0-Guardrail", HF, ("cosmos3-serving",), True),
     GatedAsset("nvidia/Cosmos-1.0-Diffusion-7B-Text2World", HF, ("cosmos",), True),
+    GatedAsset(
+        "nvidia/PhysicalAI-NuRec-PPISP",
+        HF,
+        ("nurec",),
+        False,
+        repo_type="dataset",
+    ),
     GatedAsset(
         "meta-llama/Llama-3.3-70B-Instruct",
         HF,
@@ -78,7 +92,7 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
 
 # Capabilities whose NVIDIA containers/models are pulled from NGC and therefore
 # need a valid NGC API key in addition to Hugging Face access.
-NGC_CAPABILITIES: tuple[str, ...] = ("groot", "cosmos")
+NGC_CAPABILITIES: tuple[str, ...] = ("nurec",)
 
 
 def hf_model_url(repo: str) -> str:
@@ -132,7 +146,7 @@ def _cap_suffix(asset: GatedAsset) -> str:
 def check_hf_asset(
     asset: GatedAsset,
     token: str,
-    hf_validator: Callable[[str, str], Any] | None,
+    hf_validator: Callable[[str, str, str], Any] | None,
 ) -> CheckResult:
     """Check whether *token* can access one gated Hugging Face repo."""
 
@@ -150,24 +164,31 @@ def check_hf_asset(
                     "--save-env-credentials`."
                 ),
             )
-        return CheckResult(
-            name=name,
-            status=WARN,
-            summary=f"No HF token; {asset.repo} is public but downloads may be rate-limited.{caps}",
-            remedy="Set HF_TOKEN via `npa configure` for authenticated downloads.",
-        )
+        if hf_validator is None:
+            return CheckResult(
+                name=name,
+                status=PASS,
+                summary=(
+                    f"Public HF asset supports anonymous access; repository was not "
+                    f"probed offline: {asset.repo}.{caps}"
+                ),
+                remedy="Set HF_TOKEN only for authenticated downloads or rate limits.",
+            )
     if hf_validator is None:
         return CheckResult(
             name=name,
             status=PASS,
             summary=f"HF token present; {asset.repo} access not verified (offline).{caps}",
         )
-    result = hf_validator(token, asset.repo)
+    result = hf_validator(token, asset.repo, asset.repo_type)
     if getattr(result, "ok", False):
         return CheckResult(
             name=name,
             status=PASS,
-            summary=f"HF access ok: {asset.repo}.{caps}",
+            summary=(
+                f"HF access ok ({'authenticated' if token else 'anonymous'}): "
+                f"{asset.repo}.{caps}"
+            ),
         )
     status_code = getattr(result, "status_code", None)
     error = getattr(result, "error", "") or "unknown error"
@@ -186,8 +207,15 @@ def check_hf_asset(
         return CheckResult(
             name=name,
             status=FAIL,
-            summary=f"HF token rejected for {asset.repo}.{caps}",
-            remedy="Regenerate the token at https://huggingface.co/settings/tokens.",
+            summary=(
+                f"HF {'token rejected' if token else 'anonymous access rejected'} "
+                f"for {asset.repo}.{caps}"
+            ),
+            remedy=(
+                "Regenerate the token at https://huggingface.co/settings/tokens."
+                if token
+                else "The asset metadata may have changed; verify its Hugging Face page."
+            ),
             details=(error,),
         )
     return CheckResult(
@@ -199,8 +227,13 @@ def check_hf_asset(
     )
 
 
-def check_ngc_key(ngc_key: str, *, needed: bool) -> CheckResult:
-    """Check the NGC API key is present and well-formed for NVIDIA asset pulls."""
+def check_ngc_key(
+    ngc_key: str,
+    *,
+    needed: bool,
+    ngc_validator: Callable[[str], str] | None = None,
+) -> CheckResult:
+    """Check NGC credentials and, online, actual repository pull entitlement."""
 
     if not needed:
         return CheckResult(
@@ -213,7 +246,7 @@ def check_ngc_key(ngc_key: str, *, needed: bool) -> CheckResult:
         return CheckResult(
             name="ngc",
             status=WARN,
-            summary="NGC_API_KEY is not set (needed for GR00T / Cosmos NVIDIA pulls).",
+            summary="NGC_API_KEY is not set (needed for the NuRec NRE image pull).",
             remedy=(
                 "Create one at https://org.ngc.nvidia.com/setup/api-key and run "
                 "`npa configure --no-interactive --save-env-credentials` with "
@@ -227,14 +260,39 @@ def check_ngc_key(ngc_key: str, *, needed: bool) -> CheckResult:
             summary="NGC_API_KEY is set but does not look like an NGC key.",
             remedy="NGC keys start with 'nvapi-'. Re-check the value.",
         )
-    return CheckResult(name="ngc", status=PASS, summary="NGC_API_KEY is set.")
+    if ngc_validator is None:
+        return CheckResult(
+            name="ngc",
+            status=WARN,
+            summary=(
+                "NGC_API_KEY is present and well-formed; repository entitlement "
+                "was not probed in offline mode."
+            ),
+        )
+    outcome = str(ngc_validator(key) or "unreachable")
+    if outcome == "reachable":
+        return CheckResult(
+            name="ngc",
+            status=PASS,
+            summary="NGC_API_KEY can pull the selected NuRec NRE repository.",
+        )
+    return CheckResult(
+        name="ngc",
+        status=FAIL if outcome == "entitlement-required" else WARN,
+        summary=f"NGC repository pull preflight failed: {outcome}.",
+        remedy=(
+            "Verify NGC_API_KEY and repository entitlement. The credential alone "
+            "does not grant pull access."
+        ),
+    )
 
 
 def check_workbench_access(
     *,
     hf_token: str,
     ngc_key: str,
-    hf_validator: Callable[[str, str], Any] | None = None,
+    hf_validator: Callable[[str, str, str], Any] | None = None,
+    ngc_validator: Callable[[str], str] | None = None,
     capabilities: Iterable[str] | None = None,
     gated_only: bool = False,
 ) -> list[CheckResult]:
@@ -248,7 +306,13 @@ def check_workbench_access(
     """
 
     selected = list(capabilities) if capabilities is not None else None
-    results: list[CheckResult] = [check_ngc_key(ngc_key, needed=_ngc_needed(selected))]
+    results: list[CheckResult] = [
+        check_ngc_key(
+            ngc_key,
+            needed=_ngc_needed(selected),
+            ngc_validator=ngc_validator,
+        )
+    ]
     for asset in assets_for(selected):
         if asset.provider != HF:
             continue
@@ -271,6 +335,12 @@ def access_note(results: list[CheckResult]) -> str:
     hf_unverified = [r.name for r in results if r.name != "ngc" and r.status == WARN]
     ngc = next((r for r in results if r.name == "ngc"), None)
     ngc_ok = ngc is None or ngc.status == PASS
+    ngc_missing = bool(
+        ngc is not None
+        and ngc.status == WARN
+        and ("not set" in ngc.summary or "does not look" in ngc.summary)
+    )
+    ngc_unverified = bool(ngc is not None and ngc.status == WARN and not ngc_missing)
 
     if not hf_no and ngc_ok and not hf_unverified:
         return "[NOTE] HF and NGC tokens can access all checked workbench models."
@@ -278,13 +348,23 @@ def access_note(results: list[CheckResult]) -> str:
     parts: list[str] = []
     if hf_no:
         parts.append("HF has no access to: " + ", ".join(hf_no))
-    if not ngc_ok:
+    if ngc_missing:
         # NGC gates NVIDIA *container/model pulls* for whole capabilities, not
         # individual HF repos — name the affected capabilities, not repo IDs.
         parts.append(
             "NGC not configured (blocks NVIDIA pulls for: "
             + ", ".join(NGC_CAPABILITIES)
             + ")"
+        )
+    elif ngc_unverified:
+        parts.append(
+            "NGC repository entitlement unverified for: "
+            + ", ".join(NGC_CAPABILITIES)
+        )
+    elif not ngc_ok:
+        parts.append(
+            "NGC repository entitlement denied for: "
+            + ", ".join(NGC_CAPABILITIES)
         )
     if hf_unverified:
         parts.append(f"{len(hf_unverified)} model(s) unverified")
@@ -298,6 +378,7 @@ def access_note(results: list[CheckResult]) -> str:
 __all__ = [
     "GatedAsset",
     "HF",
+    "HF_GATING_LAST_VERIFIED",
     "NGC",
     "NGC_CAPABILITIES",
     "WORKBENCH_ASSETS",

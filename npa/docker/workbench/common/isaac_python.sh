@@ -25,6 +25,10 @@
 #
 set -uo pipefail
 
+# Match isaac_bootstrap.sh: unset means accepted by default, while an explicitly
+# empty/recognized-negative value remains an opt-out.
+ACCEPT_EULA="${ACCEPT_EULA-Y}"
+
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 BOOTSTRAP="${NPA_ISAAC_BOOTSTRAP:-}"
 if [ -z "$BOOTSTRAP" ]; then
@@ -49,6 +53,12 @@ PYTHON="$TREE/venv/bin/python"
   echo "isaac-python: bootstrap reported ${TREE} but ${PYTHON} is not executable" >&2
   exit 70
 }
+
+# `ensure` runs in command substitution, so exports made by the bootstrap cannot reach
+# this launcher. A successful ensure has already normalized and validated the public
+# value through the single shell parser, so propagate only the internal Kit acknowledgement.
+# This never derives or enables privacy consent.
+export OMNI_KIT_ACCEPT_EULA=YES
 
 # Isaac Lab's repo layout (scripts/, source/, apps/) lives in the cache because the
 # isaaclab wheel ships the library without scripts/, and every SkyPilot Isaac task

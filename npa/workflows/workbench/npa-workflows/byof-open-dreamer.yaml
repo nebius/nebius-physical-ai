@@ -558,6 +558,7 @@ config:
 resources:
   gpu:
     cloud: kubernetes
+    image: "{{config.base_image}}"
     # Source of truth for scheduling is `resource_profile_yaml`
     # (byof-solution-smoke-rtxpro-2gpu.yaml); keep this inline accelerator name
     # aligned with it to avoid confusion about which name is real.

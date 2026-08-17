@@ -1,0 +1,27 @@
+apiVersion: npa.fleet/v0.0.1
+name: rtxpro-mig
+region: us-central1
+defaults:
+  name: rtxpro-mig
+  k8s_version: "1.34"
+  cpu_nodes:
+    count: 0
+    platform: cpu-d3
+    preset: 4vcpu-16gb
+  gpu_nodes:
+    count: 2
+    platform: gpu-rtx6000
+    preset: 1gpu-24vcpu-218gb
+    disk_size_gib: 128
+    # Replace at runtime. NPA verifies this exact block and renders STRICT;
+    # never commit a live capacity-block ID.
+    capacity_block_group: capacityblockgroup-REPLACE_AT_RUNTIME
+  enable_gpu_cluster: false
+  enable_filestore: false
+  mig:
+    enabled: true
+    strategy: mixed
+    config: all-balanced
+projects:
+  # Replace at runtime; keep real tenant/project IDs out of committed specs.
+  - project_id: project-REPLACE_AT_RUNTIME

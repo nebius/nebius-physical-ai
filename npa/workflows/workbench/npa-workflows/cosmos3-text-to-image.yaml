@@ -11,14 +11,13 @@ kind: Workflow
 # `npa workbench cosmos3 text-to-image`, and this spec is a single call to it.
 #
 #   npa workbench workflow submit cosmos3-text-to-image.yaml --run-id <id> \
-#     --secret-env HF_TOKEN \
 #     --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 
 metadata:
   name: cosmos3-text-to-image
   description: >
-    Generate an image from a text prompt with the Cosmos3 framework on a GPU, verify it is a
-    real image, and publish it with a manifest.
+    Generate an image anonymously from public Cosmos3-Nano weights with guardrails disabled,
+    verify it is a real image, and publish it with a manifest.
 
 config:
   bucket: example-bucket

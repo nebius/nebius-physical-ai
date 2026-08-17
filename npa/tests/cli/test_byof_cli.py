@@ -4,14 +4,31 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 
 from typer.testing import CliRunner
 
 from npa.cli.main import app
+from npa.cli.workbench import byof as byof_cli
 from npa.cli.workbench.byof import build_byof_argv
 from npa.sdk.workbench import byof as byof_sdk
 
 runner = CliRunner()
+
+
+def test_byof_runner_resolves_from_staged_npa_source(
+    tmp_path: Path, monkeypatch
+) -> None:
+    staged_module = tmp_path / "src/npa/cli/workbench/byof.py"
+    staged_module.parent.mkdir(parents=True)
+    staged_module.touch()
+    staged_runner = tmp_path / "scripts/run_byof_repo.py"
+    staged_runner.parent.mkdir()
+    staged_runner.touch()
+    monkeypatch.delenv("NPA_REPO_ROOT", raising=False)
+    monkeypatch.setattr(byof_cli, "__file__", str(staged_module))
+
+    assert byof_cli._script_path() == staged_runner
 
 
 def test_byof_registered_in_workbench_help() -> None:
@@ -76,7 +93,10 @@ def test_build_byof_argv_and_sdk_plan() -> None:
         skip_run=True,
     )
     assert "--skip-run" in argv
-    assert byof_sdk.plan_argv(
-        repo_url="https://github.com/example/repo.git",
-        skip_run=True,
-    ) == argv
+    assert (
+        byof_sdk.plan_argv(
+            repo_url="https://github.com/example/repo.git",
+            skip_run=True,
+        )
+        == argv
+    )

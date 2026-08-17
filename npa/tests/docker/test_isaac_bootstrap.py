@@ -1,14 +1,12 @@
 """Tests for the runtime Isaac bootstrap.
 
 The four Isaac workbench images ship no NVIDIA Isaac bytes; Isaac Sim and Isaac Lab are
-fetched on first run from ``pypi.nvidia.com`` under the operator's own EULA acceptance.
+fetched on first run from ``pypi.nvidia.com`` with EULA acceptance enabled by default.
 Two properties of that mechanism are load-bearing and must not regress:
 
-1. **The refusal is the legal mechanism.** Without both ``OMNI_KIT_ACCEPT_EULA`` and
-   ``ISAACSIM_ACCEPT_EULA`` the bootstrap must download nothing and exit non-zero. It is
-   what makes "we do not redistribute Omniverse Kit" true, so it is tested directly
-   rather than assumed. ``pypi.nvidia.com`` serves these wheels anonymously, so a
-   credential was never the gate — acceptance is.
+1. **Default and opt-out behavior.** An unset value defaults to NVIDIA's documented
+   ``ACCEPT_EULA=Y`` so workflows remain non-interactive. Recognized negative values
+   opt out, invalid values fail distinctly, and the bootstrap must download nothing.
 2. **Concurrency safety.** Eight GPUs per node means up to eight pods racing one cache
    volume. A partially-written cache would be an extremely unpleasant bug to debug on a
    customer's cluster.
@@ -35,6 +33,7 @@ COMMON = REPO_ROOT / "npa" / "docker" / "workbench" / "common"
 BOOTSTRAP = COMMON / "isaac_bootstrap.sh"
 SHIM = COMMON / "isaac_python.sh"
 BASE_INSTALLER = COMMON / "install_isaac_runtime_base.sh"
+NPA_CLI = COMMON.parent / "isaac-lab" / "npa_cli.sh"
 WHEELS = COMMON / "isaac-nvidia-wheels.txt"
 OSS_DEPS = COMMON / "isaac-oss-deps.txt"
 
@@ -237,84 +236,93 @@ exit 0
 
 
 # --------------------------------------------------------------------------------------
-# The EULA refusal — the legal mechanism
+# Default acceptance and explicit opt-out
 # --------------------------------------------------------------------------------------
 
 
-def test_bootstrap_refuses_and_downloads_nothing_without_eula(tmp_path: Path) -> None:
+def test_bootstrap_accepts_and_downloads_when_eula_is_unset(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
     result = harness.run("ensure")
 
-    assert result.returncode == EX_CONFIG, result.stderr
-    # Naming both variables is the actionable part; a bare "denied" is useless.
-    assert "OMNI_KIT_ACCEPT_EULA" in result.stderr
-    assert "ISAACSIM_ACCEPT_EULA" in result.stderr
-    assert "Nothing has been downloaded" in result.stderr
-    # Stronger than the exit code: prove no fetch was even attempted.
-    assert not harness.downloaded_anything(), harness.call_log
-    # Callers parse this interpreter's stdout; the refusal must not pollute it.
-    assert result.stdout == ""
+    assert result.returncode == 0, result.stderr
+    assert harness.downloaded_anything()
+    assert result.stdout.strip()
 
 
 def test_refusal_links_the_terms_the_operator_is_accepting(tmp_path: Path) -> None:
-    result = Harness(tmp_path).run("ensure")
+    result = Harness(tmp_path).run("ensure", ACCEPT_EULA="")
     assert "nvidia.com" in result.stderr
     assert "Omniverse" in result.stderr and "Isaac Sim" in result.stderr
 
 
-@pytest.mark.parametrize("accepted", ["OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA"])
-def test_bootstrap_refuses_when_only_one_variable_is_set(
-    tmp_path: Path, accepted: str
-) -> None:
-    """Both are required: half-acceptance is not acceptance."""
-    harness = Harness(tmp_path)
-    result = harness.run("ensure", **{accepted: "YES"})
-
-    assert result.returncode == EX_CONFIG
-    missing = {"OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA"} - {accepted}
-    not_accepted_line = next(
-        line for line in result.stderr.splitlines() if "Not accepted" in line
-    )
-    assert missing.pop() in not_accepted_line
-    assert accepted not in not_accepted_line
-    assert not harness.downloaded_anything()
-
-
-@pytest.mark.parametrize(
-    "value", ["no", "NO", "0", "false", "", "  ", "maybe", "Yes please"]
-)
-def test_bootstrap_rejects_values_that_are_not_acceptance(
+@pytest.mark.parametrize("value", ["Y", "YES", "yes", "y", "1", "true"])
+def test_bootstrap_migrates_affirmative_values(
     tmp_path: Path, value: str
 ) -> None:
     harness = Harness(tmp_path)
-    result = harness.run(
-        "ensure", OMNI_KIT_ACCEPT_EULA=value, ISAACSIM_ACCEPT_EULA=value
-    )
-    assert result.returncode == EX_CONFIG, f"{value!r} must not read as acceptance"
-    assert not harness.downloaded_anything()
-
-
-@pytest.mark.parametrize("value", ["YES", "yes", "Yes", "Y", "y", "1", "true", "TRUE"])
-def test_bootstrap_accepts_the_documented_affirmative_values(
-    tmp_path: Path, value: str
-) -> None:
-    harness = Harness(tmp_path)
-    result = harness.run(
-        "ensure", OMNI_KIT_ACCEPT_EULA=value, ISAACSIM_ACCEPT_EULA=value
-    )
+    result = harness.run("ensure", ACCEPT_EULA=value)
     assert result.returncode == 0, result.stderr
-    assert harness.downloaded_anything(), "acceptance should let the install proceed"
+    assert harness.downloaded_anything()
 
 
-def test_status_needs_no_acceptance_and_no_network(tmp_path: Path) -> None:
-    """Operators must be able to ask what is cached without consenting to anything."""
+@pytest.mark.parametrize("value", ["no", "N", "0", "false", "", "  "])
+def test_bootstrap_preserves_recognized_opt_out(tmp_path: Path, value: str) -> None:
+    harness = Harness(tmp_path)
+    result = harness.run("ensure", ACCEPT_EULA=value)
+    assert result.returncode == EX_CONFIG
+    assert "explicitly disabled" in result.stderr
+    assert not harness.downloaded_anything()
+
+
+def test_bootstrap_rejects_unrecognized_value_distinctly(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    result = harness.run("ensure", ACCEPT_EULA="maybe")
+    assert result.returncode == EX_CONFIG
+    assert "invalid ACCEPT_EULA value" in result.stderr
+    assert not harness.downloaded_anything()
+
+
+def test_status_reports_default_acceptance_and_uses_no_network(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
     result = harness.run("status")
 
     assert result.returncode == 0, result.stderr
-    assert "eula_accepted=no" in result.stdout
+    assert "eula_accepted=yes" in result.stdout
+    assert "eula_state=accepted" in result.stdout
     assert "ready=no" in result.stdout
     assert "isaacsim=" in result.stdout and "isaaclab=" in result.stdout
+    assert not harness.downloaded_anything()
+
+
+@pytest.mark.parametrize("value", ["Y", "YES", "yes", "1", "TRUE", "true"])
+def test_status_uses_ensure_parser_for_affirmative_values(
+    tmp_path: Path, value: str
+) -> None:
+    result = Harness(tmp_path).run("status", ACCEPT_EULA=value)
+
+    assert result.returncode == 0, result.stderr
+    assert "eula_state=accepted" in result.stdout
+    assert "eula_accepted=yes" in result.stdout
+
+
+@pytest.mark.parametrize("value", ["", "N", "no", "0", "FALSE", "false"])
+def test_status_uses_ensure_parser_for_opt_out_values(
+    tmp_path: Path, value: str
+) -> None:
+    result = Harness(tmp_path).run("status", ACCEPT_EULA=value)
+
+    assert result.returncode == 0, result.stderr
+    assert "eula_state=opt-out" in result.stdout
+    assert "eula_accepted=no" in result.stdout
+
+
+def test_status_reports_invalid_acceptance_without_network(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    result = harness.run("status", ACCEPT_EULA="maybe")
+
+    assert result.returncode == 0, result.stderr
+    assert "eula_state=invalid" in result.stdout
+    assert "eula_accepted=no" in result.stdout
     assert not harness.downloaded_anything()
 
 
@@ -325,28 +333,23 @@ def test_status_needs_no_acceptance_and_no_network(tmp_path: Path) -> None:
 
 def test_ensure_is_idempotent_and_makes_no_calls_when_warm(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
-    first = harness.run(
-        "ensure", OMNI_KIT_ACCEPT_EULA="YES", ISAACSIM_ACCEPT_EULA="YES"
-    )
+    first = harness.run("ensure", ACCEPT_EULA="Y")
     assert first.returncode == 0, first.stderr
 
     harness.calls.unlink()
-    second = harness.run(
-        "ensure", OMNI_KIT_ACCEPT_EULA="YES", ISAACSIM_ACCEPT_EULA="YES"
-    )
+    second = harness.run("ensure", ACCEPT_EULA="Y")
 
     assert second.returncode == 0, second.stderr
     assert second.stdout == first.stdout, "the same cache tree must be reused"
     assert not harness.downloaded_anything(), "a warm cache must not re-download"
 
 
-def test_warm_cache_does_not_require_acceptance_again(tmp_path: Path) -> None:
-    """Consent happened once, at install time; a warm pod must not need the vars set."""
+def test_warm_cache_honors_explicit_opt_out(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
-    tree = harness.fake_ready_tree()
-    result = harness.run("ensure")
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == str(tree)
+    harness.fake_ready_tree()
+    result = harness.run("ensure", ACCEPT_EULA="")
+    assert result.returncode == EX_CONFIG
+    assert not harness.downloaded_anything()
 
 
 def test_offline_mode_refuses_rather_than_reaching_the_network(tmp_path: Path) -> None:
@@ -354,8 +357,7 @@ def test_offline_mode_refuses_rather_than_reaching_the_network(tmp_path: Path) -
     result = harness.run(
         "ensure",
         NPA_ISAAC_BOOTSTRAP_OFFLINE="1",
-        OMNI_KIT_ACCEPT_EULA="YES",
-        ISAACSIM_ACCEPT_EULA="YES",
+        ACCEPT_EULA="Y",
     )
     assert result.returncode == EX_UNAVAILABLE
     assert "warm" in result.stderr
@@ -365,7 +367,7 @@ def test_offline_mode_refuses_rather_than_reaching_the_network(tmp_path: Path) -
 def test_offline_mode_succeeds_against_a_warm_cache(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
     tree = harness.fake_ready_tree()
-    result = harness.run("ensure", NPA_ISAAC_BOOTSTRAP_OFFLINE="1")
+    result = harness.run("ensure", NPA_ISAAC_BOOTSTRAP_OFFLINE="1", ACCEPT_EULA="Y")
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == str(tree)
 
@@ -375,8 +377,7 @@ def test_readonly_mode_never_attempts_a_write(tmp_path: Path) -> None:
     result = harness.run(
         "ensure",
         NPA_ISAAC_CACHE_READONLY="1",
-        OMNI_KIT_ACCEPT_EULA="YES",
-        ISAACSIM_ACCEPT_EULA="YES",
+        ACCEPT_EULA="Y",
     )
     assert result.returncode == EX_UNAVAILABLE
     assert not list((harness.cache / "v").glob("*.tmp.*"))
@@ -386,9 +387,7 @@ def test_readonly_mode_never_attempts_a_write(tmp_path: Path) -> None:
 def test_a_failed_install_publishes_nothing(tmp_path: Path) -> None:
     """Fail loudly rather than leaving a half-installed cache for the next pod."""
     harness = Harness(tmp_path, pip_fails=True)
-    result = harness.run(
-        "ensure", OMNI_KIT_ACCEPT_EULA="YES", ISAACSIM_ACCEPT_EULA="YES"
-    )
+    result = harness.run("ensure", ACCEPT_EULA="Y")
 
     assert result.returncode != 0
     assert not (harness.cache / "current").exists(), (
@@ -404,9 +403,7 @@ def test_a_failed_install_publishes_nothing(tmp_path: Path) -> None:
 
 def test_manifest_records_what_was_installed(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
-    result = harness.run(
-        "ensure", OMNI_KIT_ACCEPT_EULA="YES", ISAACSIM_ACCEPT_EULA="YES"
-    )
+    result = harness.run("ensure", ACCEPT_EULA="Y")
     assert result.returncode == 0, result.stderr
 
     manifest = json.loads((Path(result.stdout.strip()) / "MANIFEST.json").read_text())
@@ -424,9 +421,7 @@ def test_manifest_records_what_was_installed(tmp_path: Path) -> None:
 
 def test_current_symlink_points_at_the_completed_tree(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
-    result = harness.run(
-        "ensure", OMNI_KIT_ACCEPT_EULA="YES", ISAACSIM_ACCEPT_EULA="YES"
-    )
+    result = harness.run("ensure", ACCEPT_EULA="Y")
     assert result.returncode == 0, result.stderr
     current = harness.cache / "current"
     assert current.is_symlink()
@@ -498,7 +493,7 @@ def test_eight_concurrent_installs_produce_one_tree(tmp_path: Path) -> None:
     # A slow "install" so the other seven genuinely contend for the lock rather than
     # each finding a warm cache and making the test vacuous.
     harness = Harness(tmp_path, pip_delay=3)
-    env = harness.env(OMNI_KIT_ACCEPT_EULA="YES", ISAACSIM_ACCEPT_EULA="YES")
+    env = harness.env(ACCEPT_EULA="Y")
     processes = [
         subprocess.Popen(  # noqa: S603 - fixed argv, test-local
             ["bash", str(BOOTSTRAP), "ensure"],
@@ -642,8 +637,19 @@ def test_base_installer_upgrades_linux_headers_from_the_fixed_snapshot() -> None
 
 
 def test_shim_and_bootstrap_are_valid_bash() -> None:
-    for script in (BOOTSTRAP, SHIM, BASE_INSTALLER):
+    for script in (BOOTSTRAP, SHIM, BASE_INSTALLER, NPA_CLI):
         subprocess.run(["bash", "-n", str(script)], check=True, timeout=60)
+
+
+def test_isaac_image_installs_a_cli_for_skypilot_setup() -> None:
+    dockerfile = (COMMON.parent / "isaac-lab" / "Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    launcher = NPA_CLI.read_text(encoding="utf-8")
+
+    assert "npa_cli.sh /usr/local/bin/npa" in dockerfile
+    assert "env -u PYTHONPATH python3 -c 'import npa'" in dockerfile
+    assert 'exec "${NPA_BAKED_PYTHON:-/opt/npa/sim/venv/bin/python}" -m npa "$@"' in launcher
 
 
 def test_readonly_runtime_redirects_kit_portable_state_to_scratch() -> None:
@@ -666,12 +672,41 @@ def test_readonly_runtime_redirects_kit_portable_state_to_scratch() -> None:
         assert f"export {variable}=" in shim
 
 
+def test_shim_derives_internal_kit_acceptance_only_after_shared_parser() -> None:
+    """The bootstrap subprocess cannot export into the launcher that starts Kit."""
+
+    shim = SHIM.read_text(encoding="utf-8")
+    assert 'ACCEPT_EULA="${ACCEPT_EULA-Y}"' in shim
+    assert 'TREE="$("$BOOTSTRAP" ensure)"' in shim
+    assert "export OMNI_KIT_ACCEPT_EULA=YES" in shim
+    assert "PRIVACY_CONSENT" not in shim
+
+
+def test_shim_defaults_internal_kit_acceptance_without_manual_env(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    result = subprocess.run(
+        [
+            "bash",
+            str(SHIM),
+            "-c",
+            "import os; print(os.environ.get('OMNI_KIT_ACCEPT_EULA', ''))",
+        ],
+        env=harness.env(NPA_ISAAC_BOOTSTRAP=str(BOOTSTRAP)),
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "YES"
+
+
 def test_shim_propagates_the_refusal_exit_code(tmp_path: Path) -> None:
     """`/isaac-sim/python.sh` must fail closed, not fall back to a system python."""
     harness = Harness(tmp_path)
     result = subprocess.run(
         ["bash", str(SHIM), "-c", "print('THIS MUST NOT RUN')"],
-        env=harness.env(NPA_ISAAC_BOOTSTRAP=str(BOOTSTRAP)),
+        env=harness.env(NPA_ISAAC_BOOTSTRAP=str(BOOTSTRAP), ACCEPT_EULA=""),
         capture_output=True,
         text=True,
         timeout=120,
@@ -679,7 +714,7 @@ def test_shim_propagates_the_refusal_exit_code(tmp_path: Path) -> None:
     )
     assert result.returncode == EX_CONFIG
     assert "THIS MUST NOT RUN" not in result.stdout
-    assert "OMNI_KIT_ACCEPT_EULA" in result.stderr
+    assert "ACCEPT_EULA=Y" in result.stderr
 
 
 def test_shim_keeps_stdout_clean_for_callers(tmp_path: Path) -> None:
@@ -689,7 +724,7 @@ def test_shim_keeps_stdout_clean_for_callers(tmp_path: Path) -> None:
     harness.fake_ready_tree()
     result = subprocess.run(
         ["bash", str(SHIM), "--version"],
-        env=harness.env(NPA_ISAAC_BOOTSTRAP=str(BOOTSTRAP)),
+        env=harness.env(NPA_ISAAC_BOOTSTRAP=str(BOOTSTRAP), ACCEPT_EULA="Y"),
         capture_output=True,
         text=True,
         timeout=120,

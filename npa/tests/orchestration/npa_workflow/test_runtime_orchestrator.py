@@ -652,6 +652,104 @@ def test_runtime_runs_full_budget_when_gate_keeps_looping(tmp_path: Path) -> Non
     assert sum(1 for call in submitter.calls if call["tasks"] == ["gate"]) == 3
     assert submitter.calls[-1]["tasks"] == ["publish"]
     assert len(report.decisions) == 3
+    # This traverses the actual dynamic loop, rather than manually rendering two
+    # states. Each repeated work wave gets the runtime's next durable ordinal.
+    work_fences = []
+    for call in submitter.calls:
+        if call["tasks"] != ["work"]:
+            continue
+        task = [doc for doc in yaml.safe_load_all(call["yaml"]) if doc][1]
+        work_fences.append(int(task["envs"]["NPA_WORKFLOW_FENCE_SEQUENCE"]))
+        assert task["envs"]["NPA_WORKFLOW_FENCE_ATTEMPT"] == "1"
+    assert work_fences == [1, 3, 5]
+
+
+def test_runtime_refreshes_launch_dependencies_for_every_wave(tmp_path: Path) -> None:
+    """A loop can outlive a short-lived registry credential minted at submit."""
+
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    submitter = FakeSubmitter()
+    refreshed: list[list[str]] = []
+
+    def refresh(path: Path) -> None:
+        docs = [doc for doc in yaml.safe_load_all(path.read_text()) if doc]
+        refreshed.append([doc["name"] for doc in docs[1:]])
+
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        pre_submit_hook=refresh,
+    )
+    executor = _executor(spec, submitter=submitter, options=options)
+
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-refresh-every-wave",
+        executor=executor,
+        options=options,
+        decision_reader=_decision_reader(["loop_back", "promote_checkpoint"]),
+    )
+
+    assert report.status == "succeeded"
+    assert refreshed == [["work"], ["gate"], ["work"], ["gate"], ["publish"]]
+    assert refreshed == [call["tasks"] for call in submitter.calls]
+
+
+def test_runtime_refreshes_launch_dependencies_again_before_retry(
+    tmp_path: Path,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    submitter = FakeSubmitter()
+    refreshed: list[str] = []
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        retries=1,
+        retry_backoff_seconds=0,
+        pre_submit_hook=lambda path: refreshed.append(path.read_text()),
+    )
+    executor = _executor(
+        spec,
+        submitter=submitter,
+        status_fn=FakeStatus(["FAILED", "SUCCEEDED"]),
+        options=options,
+    )
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-refresh-retry", executor=executor, options=options
+    )
+
+    assert report.status == "succeeded"
+    assert len(refreshed) == len(submitter.calls) == 4
+    assert submitter.calls[0]["tasks"] == submitter.calls[1]["tasks"] == [
+        "shard-a",
+        "shard-b",
+    ]
+
+
+def test_runtime_launch_dependency_refresh_failure_prevents_submit(
+    tmp_path: Path,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    submitter = FakeSubmitter()
+
+    def fail_refresh(_path: Path) -> None:
+        raise RuntimeError("registry credential refresh failed")
+
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        pre_submit_hook=fail_refresh,
+    )
+    executor = _executor(spec, submitter=submitter, options=options)
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-refresh-fail-closed", executor=executor, options=options
+    )
+
+    assert report.status == "failed"
+    assert "registry credential refresh failed" in report.error
+    assert submitter.calls == []
 
 
 def test_runtime_branch_follows_transition_goto(tmp_path: Path) -> None:
@@ -831,6 +929,47 @@ def test_wave_retry_recovers_from_a_transient_failure(tmp_path: Path) -> None:
     assert [wave["attempt"] for wave in attempts] == [1, 2]
     assert attempts[0]["status"] == "failed"
     assert attempts[1]["status"] == "succeeded"
+    first_docs = [doc for doc in yaml.safe_load_all(submitter.calls[0]["yaml"]) if doc]
+    second_docs = [doc for doc in yaml.safe_load_all(submitter.calls[1]["yaml"]) if doc]
+    assert {doc["envs"]["NPA_WORKFLOW_FENCE_ATTEMPT"] for doc in first_docs[1:]} == {
+        "1"
+    }
+    assert {doc["envs"]["NPA_WORKFLOW_FENCE_ATTEMPT"] for doc in second_docs[1:]} == {
+        "2"
+    }
+    first_attempt_ids = {
+        doc["envs"]["NPA_WORKFLOW_ATTEMPT_ID"] for doc in first_docs[1:]
+    }
+    second_attempt_ids = {
+        doc["envs"]["NPA_WORKFLOW_ATTEMPT_ID"] for doc in second_docs[1:]
+    }
+    assert len(first_attempt_ids) == len(second_attempt_ids) == 1
+    assert first_attempt_ids.isdisjoint(second_attempt_ids)
+    assert {
+        doc["envs"]["NPA_WORKFLOW_FENCE_SEQUENCE"] for doc in first_docs[1:]
+    } == {doc["envs"]["NPA_WORKFLOW_FENCE_SEQUENCE"] for doc in second_docs[1:]}
+
+
+def test_launch_transaction_cannot_overwrite_the_scheduler_publication_fence() -> None:
+    attempt = WaveAttempt(
+        key="wave",
+        states=["augment"],
+        kind="serial",
+        scheduler_fence_sequence=7,
+    )
+
+    SkyPilotWaveExecutor._apply_launch_transaction(
+        attempt,
+        {
+            "launch_sequence": 3,
+            "logical_launch_id": "durable-launch",
+            "recovery_decision": "interrupted_verified_absent",
+        },
+    )
+
+    assert attempt.scheduler_fence_sequence == 7
+    assert attempt.launch_sequence == 3
+    assert attempt.to_dict()["scheduler_fence_sequence"] == 7
 
 
 def test_wave_retry_exhausted_fails_the_run(tmp_path: Path) -> None:
@@ -1068,6 +1207,15 @@ def test_resume_with_explicit_retry_replays_success_and_retries_terminal_wave(
         spec, run_id="rt-explicit-retry", executor=first, options=first.options
     )
     assert first_report.status == "failed"
+    persisted = store.read_runtime_state()
+    assert persisted is not None
+    failed_join = next(wave for wave in persisted.waves if wave["states"] == ["join"])
+    assert failed_join["scheduler_fence_sequence"] == 3
+    # Simulate a launch transaction phase that differs from the scheduler wave
+    # ordinal. Resume must never render this transaction field as publication
+    # authority.
+    failed_join["launch_sequence"] = 99
+    store.write_runtime_state(persisted)
 
     submitter = FakeSubmitter()
     options = RuntimeOptions(
@@ -1092,6 +1240,12 @@ def test_resume_with_explicit_retry_replays_success_and_retries_terminal_wave(
     assert [call["tasks"] for call in submitter.calls] == [["join"]]
     assert submitter.calls[0]["job_name"].endswith("-a2")
     assert [wave["replayed"] for wave in report.waves[:2]] == [True, True]
+    retry_doc = [doc for doc in yaml.safe_load_all(submitter.calls[0]["yaml"]) if doc][1]
+    assert retry_doc["envs"]["NPA_WORKFLOW_FENCE_SEQUENCE"] == "3"
+    assert retry_doc["envs"]["NPA_WORKFLOW_FENCE_ATTEMPT"] == "2"
+    retried = next(wave for wave in report.waves if wave["states"] == ["join"])
+    assert retried["scheduler_fence_sequence"] == 3
+    assert retried["launch_sequence"] == 0
 
 
 def test_long_run_id_preserves_retry_attempt_suffix(tmp_path: Path) -> None:

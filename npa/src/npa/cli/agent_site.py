@@ -38,7 +38,8 @@ def foxglove_nginx_locations(*, asset_root: str = FOXGLOVE_ASSET_ROOT) -> str:
     default_type application/octet-stream;
     # Byte ranges carry MCAP playback; a compressed response would break them.
     gzip off;
-    add_header Accept-Ranges bytes always;
+    # nginx's static module already emits exactly one `Accept-Ranges: bytes`.
+    # Adding it here yields `bytes, bytes`, which strict MCAP readers reject.
     add_header Access-Control-Allow-Origin * always;
     add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
     add_header Access-Control-Allow-Headers "Range, If-Range, Content-Type" always;
@@ -172,16 +173,16 @@ def _lichtblick_default_layout_script() -> str:
     learning = _lichtblick_learning_layout_json()
     sim2real = _lichtblick_default_layout_json()
     return (
-        '(()=>{const query=new URLSearchParams(window.location.search);'
+        "(()=>{const query=new URLSearchParams(window.location.search);"
         'const hintedSize=Number(query.get("npa.size")||0);'
         'if(Number.isSafeInteger(hintedSize)&&hintedSize>0&&typeof window.Worker==="function"){'
-        'const NativeWorker=window.Worker;window.Worker=function(scriptUrl,options){'
+        "const NativeWorker=window.Worker;window.Worker=function(scriptUrl,options){"
         'if(options&&options.type==="module")return new NativeWorker(scriptUrl,options);'
-        'const absolute=new URL(String(scriptUrl),window.location.href).href;'
+        "const absolute=new URL(String(scriptUrl),window.location.href).href;"
         'const wrapped=new URL("/lichtblick/npa-worker.js",window.location.origin);'
         'wrapped.searchParams.set("npa.size",String(hintedSize));'
         'wrapped.searchParams.set("npa.target",absolute);'
-        'return new NativeWorker(wrapped.href,options);};window.Worker.prototype=NativeWorker.prototype;}'
+        "return new NativeWorker(wrapped.href,options);};window.Worker.prototype=NativeWorker.prototype;}"
         'if(query.get("npa.layout")!=="learning")return '
         f"{sim2real};"
         f"const selected={learning};"
@@ -190,7 +191,7 @@ def _lichtblick_default_layout_script() -> str:
         '"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-".includes(char)))'
         'throw new Error("invalid primary camera");'
         'selected.configById["Image!npalearningcamera"].imageMode.imageTopic="/camera/"+camera;'
-        'return selected;})()'
+        "return selected;})()"
     )
 
 
@@ -203,34 +204,34 @@ def _lichtblick_worker_script() -> str:
     """
 
     return (
-        '(()=>{const params=new URLSearchParams(self.location.search);'
+        "(()=>{const params=new URLSearchParams(self.location.search);"
         'const sizeHint=Number(params.get("npa.size")||0);'
         'const rawTarget=params.get("npa.target")||"";'
         'const reject=(message)=>{throw new Error("invalid Lichtblick worker target: "+message);};'
         'const hasUnsafeChar=(value)=>value.split("").some((char)=>'
-        '{const code=char.charCodeAt(0);return code===92||code<32||code===127;});'
+        "{const code=char.charCodeAt(0);return code===92||code<32||code===127;});"
         'if(!rawTarget||hasUnsafeChar(rawTarget)||rawTarget.startsWith("//")||rawTarget.includes("#"))reject("target");'
         'let target;try{target=new URL(rawTarget,self.location.origin);}catch(_error){reject("url");}'
         'if((target.protocol!=="http:"&&target.protocol!=="https:")||target.origin!==self.location.origin||'
         'target.username||target.password||target.search||target.hash)reject("origin");'
-        'let decoded=target.pathname;for(let depth=0;depth<3;depth++){let next;'
+        "let decoded=target.pathname;for(let depth=0;depth<3;depth++){let next;"
         'try{next=decodeURIComponent(decoded);}catch(_error){reject("encoding");}'
-        'if(next===decoded)break;decoded=next;}'
+        "if(next===decoded)break;decoded=next;}"
         'if(hasUnsafeChar(decoded)||decoded.includes("?")||decoded.includes("#")||'
         'decoded.split("/").some((part)=>part==="."||part==="..")||'
         '!decoded.startsWith("/lichtblick/")||decoded.startsWith("/lichtblick/recordings/")||'
         'decoded==="/lichtblick/npa-worker.js"||!decoded.endsWith(".js"))reject("path");'
         'if(!Number.isSafeInteger(sizeHint)||sizeHint<=0)reject("size");'
-        'const nativeFetch=self.fetch.bind(self);self.fetch=async(input,init)=>{'
-        'const response=await nativeFetch(input,init);try{'
+        "const nativeFetch=self.fetch.bind(self);self.fetch=async(input,init)=>{"
+        "const response=await nativeFetch(input,init);try{"
         'const rawUrl=typeof input==="string"?input:String((input&&input.url)||input||"");'
-        'const url=new URL(rawUrl,self.location.href);const headersIn=new Headers((init&&init.headers)||undefined);'
+        "const url=new URL(rawUrl,self.location.href);const headersIn=new Headers((init&&init.headers)||undefined);"
         'if(url.origin===self.location.origin&&url.pathname.startsWith("/lichtblick/recordings/")&&'
         'url.pathname.endsWith(".mcap")&&!headersIn.has("range")&&'
         'response.headers.get("accept-ranges")==="bytes"){const headers=new Headers(response.headers);'
         'headers.set("content-length",String(sizeHint));return new Response(response.body,{'
-        'status:response.status,statusText:response.statusText,headers});}}catch(_error){}return response;};'
-        'importScripts(target.href);})()'
+        "status:response.status,statusText:response.statusText,headers});}}catch(_error){}return response;};"
+        "importScripts(target.href);})()"
     )
 
 

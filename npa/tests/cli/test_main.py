@@ -1364,20 +1364,21 @@ def _note_line(output: str) -> str:
 
 
 def test_configure_prints_model_access_note_all_ok(monkeypatch, tmp_path) -> None:
-    # Autouse fixture makes every HF probe succeed; NGC key is well-formed.
+    # Autouse fixture makes every HF probe succeed. Configure does not pull an
+    # NGC image, so a well-formed key cannot prove repository entitlement here.
     result = _run_reuse_bucket_configure(
         monkeypatch, tmp_path, hf_token="hf_good", ngc_key="nvapi-good"
     )
     assert result.exit_code == 0, result.output
     note = _note_line(result.output)
-    assert note == "[NOTE] HF and NGC tokens can access all checked workbench models."
+    assert note == "[NOTE] NGC repository entitlement unverified for: nurec."
 
 
 def test_configure_note_lists_inaccessible_hf_models(monkeypatch, tmp_path) -> None:
     from npa.clients import huggingface
     from npa.clients.huggingface import HFAccessResult
 
-    denied = "nvidia/GR00T-N1.7-3B"
+    denied = "nvidia/Cosmos-Reason2-2B"
 
     def _deny_one(token, repo, *, timeout=10.0):
         if repo == denied:
@@ -1408,7 +1409,8 @@ def test_configure_note_lists_ngc_blocked_when_key_missing(
     assert result.exit_code == 0, result.output
     note = _note_line(result.output)
     assert "NGC not configured" in note
-    assert "groot" in note and "cosmos" in note
+    assert "nurec" in note
+    assert "groot" not in note and "cosmos" not in note
 
 
 def test_configure_note_never_breaks_on_probe_error(monkeypatch, tmp_path) -> None:

@@ -180,6 +180,7 @@ def test_openpi_polaris_contract_is_runtime_only_and_position_targeted() -> None
     assert "-arch=sm_100" in build
     assert "/opt/venv/bin/uv pip install" in build
     assert "--no-cache -e ." in build
+    assert "boto3>=1.34" in build
     assert "pi05_droid_jointpos_polaris" not in build
     assert "openpi-assets/checkpoints" not in build
     assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES" not in spec_text

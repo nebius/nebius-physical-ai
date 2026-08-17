@@ -6,7 +6,6 @@ set -euo pipefail
 readonly EX_CONFIG=78
 readonly EX_UNAVAILABLE=69
 readonly EX_SOFTWARE=70
-readonly ACCEPT_ENV=NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS
 
 CACHE_ROOT="${NPA_WAN_RUNTIME_CACHE:-/workspace/.cache/npa/wan2-2/runtime}"
 BASE_PYTHON="${NPA_WAN_BASE_PYTHON:-/opt/wan-base/bin/python}"
@@ -25,33 +24,6 @@ cleanup_tmp() {
 trap cleanup_tmp EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-
-accepted() {
-  case "$(printf '%s' "${!ACCEPT_ENV:-}" | tr '[:lower:]' '[:upper:]')" in
-    YES) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-require_acceptance() {
-  accepted && return 0
-  cat >&2 <<'EOF'
-wan-runtime: refusing to download or execute the NVIDIA CUDA Python runtime.
-
-The image contains no NVIDIA CUDA wheels or libraries. The requested operation
-would ask PyPI to deliver pinned torch 2.13.0 with its CUDA 13.0 NVIDIA
-dependencies into this operator-owned writable cache. Nebius
-cannot accept NVIDIA terms for the operator, so acceptance is never baked in.
-
-Review the current terms before proceeding:
-  https://docs.nvidia.com/cuda/eula/index.html
-  https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/
-
-Set NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS=YES to record the operator's explicit
-acceptance. Any other value refuses with exit 78. Nothing has been downloaded.
-EOF
-  exit "$EX_CONFIG"
-}
 
 cache_stamp() {
   local requirement_sha abi
@@ -108,8 +80,6 @@ PY
 }
 
 ensure_runtime() {
-  # This gate intentionally precedes mkdir, locks, package probes, and network.
-  require_acceptance
   local stamp target lock base_site cache_site
   stamp="$(cache_stamp)"
   target="$CACHE_ROOT/$stamp"

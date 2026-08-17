@@ -56,6 +56,12 @@ from npa.cli.agent_preflight import (
     _agent_token_factory_result,
     _render_agent_checks,
 )
+from npa.cli.agent_records import (  # noqa: F401 - compatibility re-exports
+    agent_record as _agent_record,
+    remove_agent_record as _remove_agent_record,
+    resolve_project_agents,
+    store_agent_record as _store_agent_record,
+)
 from npa.cli.agent_network import (
     _agent_ssh_egress_result,
 )
@@ -124,7 +130,10 @@ from npa.cli.agent_contracts import (  # noqa: F401 - public compatibility expor
     rendered_agent_ui_html,
 )
 from npa.cli.agent_embed import embedded_python_source
-from npa.cli.agent_site import DEFAULT_LICHTBLICK_PORT, nginx_agent_site_body as _nginx_agent_site_body
+from npa.cli.agent_site import (
+    DEFAULT_LICHTBLICK_PORT,
+    nginx_agent_site_body as _nginx_agent_site_body,
+)
 from npa.cli.agent_deployment import (
     DeploymentIdentityError,
     assert_remote_owner_if_present,
@@ -141,11 +150,7 @@ from npa.provisioning_journal import (
     operation_context,
     operation_heartbeats,
 )
-from npa.workbench.foxglove import (
-    DEFAULT_FOXGLOVE_EMBED_SRC,
-    FOXGLOVE_EMBED_SDK_INTEGRITY,
-    FOXGLOVE_EMBED_SDK_VERSION,
-)
+from npa.cli import agent_foxglove_config
 
 app = typer.Typer(
     name="agent",
@@ -178,7 +183,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026081001"
+AGENT_UI_VERSION = "2026081401"
 ARTIFACT_DISCOVERY_CONTRACT = "s3-source-qualified-v1"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
@@ -363,6 +368,14 @@ def _fail(message: str) -> NoReturn:
     raise typer.Exit(code=1)
 
 
+def _resolve_foxglove_settings_or_fail(**settings: Any) -> dict[str, str]:
+    """Translate expected Foxglove setting errors at the CLI boundary."""
+    try:
+        return agent_foxglove_config.resolve_settings(**settings)
+    except agent_foxglove_config.FoxgloveSettingsError as exc:
+        _fail(str(exc))
+
+
 def _looks_like_compute_permission_denied(message: str) -> bool:
     lowered = str(message or "").lower()
     return "permissiondenied" in lowered and "service compute" in lowered
@@ -395,53 +408,6 @@ def _resolve_project_alias(project: str) -> str:
     if len(projects) == 1:
         return next(iter(projects))
     return configured or DEFAULT_PROJECT_ALIAS
-
-
-def _agent_record(project_alias: str, name: str) -> dict[str, Any]:
-    cfg = resolve_project_agents(project_alias)
-    record = cfg.get(name, {})
-    return record if isinstance(record, dict) else {}
-
-
-def resolve_project_agents(project_alias: str) -> dict[str, Any]:
-    from npa.clients.config import list_projects
-
-    projects = list_projects()
-    project = projects.get(project_alias, {})
-    agents = project.get("agents", {}) if isinstance(project, dict) else {}
-    return agents if isinstance(agents, dict) else {}
-
-
-def _store_agent_record(project_alias: str, name: str, payload: dict[str, Any]) -> None:
-    write_config({"projects": {project_alias: {"agents": {name: payload}}}})
-
-
-def _remove_agent_record(project_alias: str, name: str) -> None:
-    from copy import deepcopy
-
-    from npa.clients.config import update_config_document
-
-    def remove(current: dict[str, Any]) -> dict[str, Any]:
-        data = deepcopy(current)
-        projects = data.get("projects", {})
-        if not isinstance(projects, dict):
-            return data
-        project = projects.get(project_alias, {})
-        if not isinstance(project, dict):
-            return data
-        agents = project.get("agents", {})
-        if not isinstance(agents, dict) or name not in agents:
-            return data
-        del agents[name]
-        if agents:
-            project["agents"] = agents
-        else:
-            project.pop("agents", None)
-        projects[project_alias] = project
-        data["projects"] = projects
-        return data
-
-    update_config_document(remove)
 
 
 def _agent_extra_ingress_ports(
@@ -624,15 +590,16 @@ def _resolve_deploy_storage_credentials(
             project_bucket = str(project_storage.checkpoint_bucket or "").strip()
             project_prefix = ""
             if project_bucket.startswith("s3://"):
-                rest = project_bucket[len("s3://"):]
+                rest = project_bucket[len("s3://") :]
                 project_bucket, _sep, project_prefix = rest.partition("/")
                 project_prefix = project_prefix.strip("/")
             project_endpoint = str(
-                project_storage.endpoint_url
-                or f"https://storage.{region}.nebius.cloud"
+                project_storage.endpoint_url or f"https://storage.{region}.nebius.cloud"
             ).strip()
             project_access_key = str(project_storage.aws_access_key_id or "").strip()
-            project_secret_key = str(project_storage.aws_secret_access_key or "").strip()
+            project_secret_key = str(
+                project_storage.aws_secret_access_key or ""
+            ).strip()
             if project_bucket and _storage_credentials_allow_writes(
                 bucket=project_bucket,
                 endpoint=project_endpoint,
@@ -698,34 +665,39 @@ def _resolve_deploy_storage_credentials(
             candidate["nebius_secret_key"] = configured_secret_key
             return candidate
 
-    shared = load_credentials(environ={})
-    shared_bucket = str(shared.s3_bucket or "").strip()
-    shared_prefix = ""
-    if shared_bucket.startswith("s3://"):
-        rest = shared_bucket[len("s3://"):]
-        shared_bucket, _sep, shared_prefix = rest.partition("/")
-        shared_prefix = shared_prefix.strip("/")
-    shared_endpoint = str(shared.s3_endpoint or f"https://storage.{region}.nebius.cloud").strip()
-    shared_access_key = str(shared.s3_access_key_id or "").strip()
-    shared_secret_key = str(shared.s3_secret_access_key or "").strip()
-    if shared_bucket and _storage_credentials_allow_writes(
-        bucket=shared_bucket,
-        endpoint=shared_endpoint,
-        access_key=shared_access_key,
-        secret_key=shared_secret_key,
-        region=region,
-        prefix=shared_prefix,
-    ):
-        if emit_status:
-            typer.echo(
-                "  Using health-verified shared artifact storage credentials."
-            )
-        candidate["s3_bucket"] = shared_bucket
-        candidate["s3_prefix"] = shared_prefix
-        candidate["s3_endpoint"] = shared_endpoint
-        candidate["nebius_api_key"] = shared_access_key
-        candidate["nebius_secret_key"] = shared_secret_key
-        return candidate
+    # Never record a host-level shared bucket as an explicit project's remote
+    # backend; keep immutable journal ownership exact.
+    if not project_name:
+        shared = load_credentials(environ={})
+        shared_bucket = str(shared.s3_bucket or "").strip()
+        shared_prefix = ""
+        if shared_bucket.startswith("s3://"):
+            rest = shared_bucket[len("s3://") :]
+            shared_bucket, _sep, shared_prefix = rest.partition("/")
+            shared_prefix = shared_prefix.strip("/")
+        shared_endpoint = str(
+            shared.s3_endpoint or f"https://storage.{region}.nebius.cloud"
+        ).strip()
+        shared_access_key = str(shared.s3_access_key_id or "").strip()
+        shared_secret_key = str(shared.s3_secret_access_key or "").strip()
+        if shared_bucket and _storage_credentials_allow_writes(
+            bucket=shared_bucket,
+            endpoint=shared_endpoint,
+            access_key=shared_access_key,
+            secret_key=shared_secret_key,
+            region=region,
+            prefix=shared_prefix,
+        ):
+            if emit_status:
+                typer.echo(
+                    "  Using health-verified shared artifact storage credentials."
+                )
+            candidate["s3_bucket"] = shared_bucket
+            candidate["s3_prefix"] = shared_prefix
+            candidate["s3_endpoint"] = shared_endpoint
+            candidate["nebius_api_key"] = shared_access_key
+            candidate["nebius_secret_key"] = shared_secret_key
+            return candidate
 
     bucket = str(candidate.get("s3_bucket", "")).strip()
     endpoint = str(candidate.get("s3_endpoint", "")).strip()
@@ -953,15 +925,6 @@ def _store_project_environment(
     )
 
 
-def _env_line_value(value: str) -> str:
-    """Return ``value`` as a single safe ``KEY=value`` line fragment.
-
-    Bootstrap writes plain env files inside a quoted heredoc, so the only real
-    hazard is an embedded newline (which would inject an extra assignment).
-    """
-    return " ".join(str(value or "").split()).strip()
-
-
 def _create_agent_source_archive() -> str:
     """Package the NPA source tree needed for agent-side workflow execution."""
     repo_root = Path(__file__).resolve().parents[4]
@@ -1105,11 +1068,20 @@ def _bootstrap_agent_stack(
     nebius_tenant_id: str = "",
     public_https: bool = True,
     foxglove_embed_src: str = "",
+    foxglove_viewer_backend: str = "",
     foxglove_org_slug: str = "",
     foxglove_live_url: str = "",
+    foxglove_cloud_import_timeout_seconds: str = "",
     deployment: dict[str, str] | None = None,
     preload_stock_demo: bool = True,
 ) -> None:
+    foxglove_env = agent_foxglove_config.bootstrap_env_values(
+        embed_src=foxglove_embed_src,
+        viewer_backend=foxglove_viewer_backend,
+        org_slug=foxglove_org_slug,
+        live_url=foxglove_live_url,
+        cloud_import_timeout_seconds=foxglove_cloud_import_timeout_seconds,
+    )
     ssh = SSHClient(
         config=resolve_ssh_config(
             ssh_host=host,
@@ -1154,17 +1126,6 @@ def _bootstrap_agent_stack(
     nginx_site_body = _nginx_agent_site_body(
         backend_port=backend_port, rerun_port=rerun_port
     )
-    foxglove_embed_src_value = _env_line_value(
-        foxglove_embed_src or os.environ.get("NPA_FOXGLOVE_EMBED_SRC", "")
-    )
-    foxglove_org_slug_value = _env_line_value(
-        foxglove_org_slug or os.environ.get("NPA_FOXGLOVE_ORG_SLUG", "")
-    )
-    foxglove_live_url_value = _env_line_value(
-        foxglove_live_url or os.environ.get("NPA_FOXGLOVE_LIVE_URL", "")
-    )
-    foxglove_sdk_version = _env_line_value(FOXGLOVE_EMBED_SDK_VERSION)
-    foxglove_sdk_integrity = shlex.quote(FOXGLOVE_EMBED_SDK_INTEGRITY)
     login_form_html = _agent_public_login_form_html(auth_user)
     mobile_login_help_html = _agent_mobile_login_help_html()
     strip_url_credentials_js = _agent_strip_url_credentials_js()
@@ -1196,11 +1157,10 @@ server {{
     expected_agent_service_account_id = shlex.quote(service_account_id.strip())
     expected_agent_tenant_id = shlex.quote((nebius_tenant_id or tenant_id).strip())
     lichtblick_port = DEFAULT_LICHTBLICK_PORT
-    rerun_recording_arg = (
-        "/opt/npa-agent/sim2real.rrd " if preload_stock_demo else ""
-    )
+    rerun_recording_arg = "/opt/npa-agent/sim2real.rrd " if preload_stock_demo else ""
     lichtblick_image = str(
-        os.environ.get("NPA_AGENT_LICHTBLICK_IMAGE", "").strip() or "npa-lichtblick:1.26.0"
+        os.environ.get("NPA_AGENT_LICHTBLICK_IMAGE", "").strip()
+        or "npa-lichtblick:1.26.0"
     )
     # Region-agnostic image acquisition: the Lichtblick image is mirrored to both
     # the eu-north1 and us-central1 registries, so a fresh VM in any region pulls
@@ -1280,10 +1240,12 @@ NPA_AGENT_PRELOAD_STOCK_DEMO={preload_stock_demo_value}
 ENV
 cat <<'ENV' | sudo tee /opt/npa-agent/foxglove.env >/dev/null
 NPA_FOXGLOVE_ENABLED=1
-NPA_FOXGLOVE_EMBED_SRC={foxglove_embed_src_value}
-NPA_FOXGLOVE_ORG_SLUG={foxglove_org_slug_value}
-NPA_FOXGLOVE_LIVE_URL={foxglove_live_url_value}
-NPA_FOXGLOVE_SDK_VERSION={foxglove_sdk_version}
+NPA_FOXGLOVE_EMBED_SRC={foxglove_env["embed_src"]}
+NPA_FOXGLOVE_VIEWER_BACKEND={foxglove_env["viewer_backend"]}
+NPA_FOXGLOVE_ORG_SLUG={foxglove_env["org_slug"]}
+NPA_FOXGLOVE_LIVE_URL={foxglove_env["live_url"]}
+NPA_FOXGLOVE_CLOUD_IMPORT_TIMEOUT_SECONDS={foxglove_env["cloud_import_timeout_seconds"]}
+NPA_FOXGLOVE_SDK_VERSION={foxglove_env["sdk_version"]}
 ENV
 sudo mkdir -p /opt/npa-agent/foxglove/sdk /opt/npa-agent/foxglove/app /opt/npa-agent/foxglove/data
 # Install the pinned, sha512-verified @foxglove/embed browser SDK. Non-fatal: an
@@ -1291,8 +1253,8 @@ sudo mkdir -p /opt/npa-agent/foxglove/sdk /opt/npa-agent/foxglove/app /opt/npa-a
 # /api/foxglove/config reports exactly why the viewer is unavailable.
 if sudo bash {AGENT_SOURCE_ROOT}/npa/docker/workbench/foxglove-embed/install-sdk.sh \\
     --dest /opt/npa-agent/foxglove/sdk \\
-    --version {foxglove_sdk_version} \\
-    --integrity {foxglove_sdk_integrity}; then
+    --version {foxglove_env["sdk_version"]} \\
+    --integrity {foxglove_env["sdk_integrity"]}; then
   sudo rm -f /opt/npa-agent/foxglove/INSTALL_FAILED
 else
   echo "install-sdk.sh failed at $(date -u +%Y-%m-%dT%H:%M:%SZ)" | sudo tee /opt/npa-agent/foxglove/INSTALL_FAILED >/dev/null
@@ -1347,13 +1309,24 @@ from npa.cli.agent_resources import (
 {_AGENT_RRD_PROXY_EMBED}
 
 # Foxglove viewer helpers + routes are SHIPPED modules (see agent_backend/).
+from agent_backend.canonical_mcap import CANONICAL_MCAP_DEFAULT_STATE
+from agent_backend.canonical_mcap import clear_cross_run_mcap_state
+from agent_backend.canonical_mcap import has_rich_visualization_contract
+from agent_backend.canonical_mcap import prepare_canonical_mcap
 from agent_backend.foxglove import (
+    artifact_source_fingerprint,
     convert_run_request,
     describe_foxglove_context,
     foxglove_status_payload,
     is_foxglove_artifact,
     publish_recording,
     resolve_foxglove_config,
+    self_hosted_viewer_url,
+)
+from agent_backend.foxglove_cloud import (
+    data_aware_layout_data,
+    ensure_layout_from_credentials,
+    ensure_recording_and_layout_from_credentials,
 )
 from agent_backend.foxglove_routes import FoxgloveDeps, register_foxglove_routes
 
@@ -1409,19 +1382,27 @@ def _lichtblick_recording_url(*, cache_bust: bool = False) -> str:
 
 
 def _lichtblick_iframe_url(
-    *, mcap_url: str = "", mcap_size: int = 0, primary_camera: str = ""
+    *,
+    mcap_url: str = "",
+    mcap_size: int = 0,
+    primary_camera: str = "",
+    start_time_ns: int = 0,
+    end_time_ns: int = 0,
 ) -> str:
     # Lichtblick opens a remote MCAP the same way the standalone tool does; the MCAP is
     # co-served same-origin under /lichtblick/recordings/ so the browser fetch needs no CORS.
     source = mcap_url or _lichtblick_recording_url()
+    url = self_hosted_viewer_url(
+        source,
+        base="/lichtblick/",
+        start_time_ns=start_time_ns,
+        end_time_ns=end_time_ns,
+    )
     size_hint = max(0, int(mcap_size or 0))
     size_query = f"&npa.size={{size_hint}}" if size_hint else ""
     camera = str(primary_camera or "").strip()
     camera_query = f"&npa.camera={{quote(camera, safe='')}}" if camera else ""
-    return (
-        f"/lichtblick/?ds=remote-file&ds.url={{quote(source, safe='')}}"
-        f"{{size_query}}{{camera_query}}"
-    )
+    return f"{{url}}{{size_query}}{{camera_query}}"
 
 
 def _publish_mcap_recording(source: Path) -> Path:
@@ -1509,6 +1490,14 @@ DEFAULT_SIM_VIZ = {{
     "lichtblick_iframe_url": "/lichtblick/",
     "foxglove_ready": False,
     "foxglove_url": "",
+    "canonical_mcap_s3_uri": "",
+    "canonical_mcap_key": "",
+    "canonical_mcap_sha256": "",
+    "canonical_mcap_size_bytes": 0,
+    "canonical_mcap_source": "",
+    "canonical_mcap_provenance": {{}},
+    "transport_state": "",
+    "foxglove_cloud": {{}},
 }}
 SIM2REAL_STAGE_TEMPLATE = [
     ("submit", "Submit request"),
@@ -2674,13 +2663,46 @@ def _foxglove_config(state: dict | None = None) -> dict:
     session = state if isinstance(state, dict) else _load_state()
     sim_viz = session.get("sim_viz") if isinstance(session.get("sim_viz"), dict) else {{}}
     env, origin = dict(os.environ), _agent_public_origin()
-    return resolve_foxglove_config(
+    payload = resolve_foxglove_config(
         env,
         assets_dir=FOXGLOVE_SDK_DIR,
         origin=origin,
         sim_viz=sim_viz,
         self_hosted_ready=_self_hosted_viewer_healthy(),
     )
+    selected_foxglove = dict(sim_viz.get("foxglove_selected_artifact") or {{}})
+    selected_key = str(selected_foxglove.get("key") or "")
+    canonical_key = str(sim_viz.get("canonical_mcap_key") or "")
+    provenance = (
+        dict(sim_viz.get("canonical_mcap_provenance") or {{}})
+        if not selected_key or selected_key == canonical_key
+        else {{}}
+    )
+    rich_visualization = has_rich_visualization_contract(provenance)
+    if provenance:
+        payload["layout"] = (
+            data_aware_layout_data(provenance) if rich_visualization else {{}}
+        )
+        if not rich_visualization:
+            payload["layout_storage_key"] = (
+                str(payload.get("layout_storage_key") or "npa-agent-foxglove")
+                + "-source-default"
+            )
+        payload["visualization"] = {{
+            "contract": str(provenance.get("visualization_contract") or ""),
+            "fixed_frame": str(provenance.get("visualization_fixed_frame") or ""),
+            "fidelity": str(provenance.get("visualization_fidelity") or ""),
+            "topics": dict(provenance.get("schemas") or {{}}),
+            "checked": rich_visualization,
+        }}
+    else:
+        payload["layout"] = {{}}
+        payload["layout_storage_key"] = (
+            str(payload.get("layout_storage_key") or "npa-agent-foxglove")
+            + "-source-default"
+        )
+        payload["visualization"] = {{"checked": False}}
+    return payload
 
 
 _RERUN_RESTART_MIN_INTERVAL_S = 8.0
@@ -2825,6 +2847,28 @@ def _wire_active_sim2real_recording(state: dict, *, camera: str = "workspace") -
         "submit_mode": str(current.get("submit_mode") or latest.get("submit_mode") or "completed-k8s"),
         "workflow_name": "sim2real",
     }}
+    if str(current.get("run_id") or "").strip() == run_id:
+        # This helper repairs the Rerun recording after bootstrap or a shared
+        # slot overwrite. It must not silently unpublish the same run's already
+        # validated canonical MCAP while doing so; otherwise the next clean
+        # Foxglove tab performs the entire S3 conversion again and briefly has
+        # no source/layout. Cross-run selection is still cleared by
+        # clear_cross_run_mcap_state in the artifact loader.
+        for key in (
+            *CANONICAL_MCAP_DEFAULT_STATE,
+            "artifact_run_ref",
+            "bucket",
+            "project_id",
+            "resolved_prefix",
+            "mcap_uri",
+            "mcap_updated_at",
+            "lichtblick_ready",
+            "lichtblick_iframe_url",
+            "foxglove_ready",
+            "foxglove_url",
+        ):
+            if key in current:
+                viz[key] = current[key]
     for key in ("decision", "success_rate", "threshold"):
         if key in current:
             viz[key] = current[key]
@@ -6373,6 +6417,28 @@ def sim_viz_load_run(payload: dict | None = None):
             role_counts = artifact_inventory_counts(artifacts)
             state = _load_state()
             sim_viz = dict(DEFAULT_SIM_VIZ)
+            current = state.get("sim_viz")
+            if (
+                isinstance(current, dict)
+                and str(current.get("run_id") or "").strip() == resolved_run_id
+            ):
+                # An unqualified same-run load may legitimately find artifacts
+                # but no preferred RRD. Keep a canonical MCAP that was already
+                # validated/published for that exact run; selecting the View tab
+                # must not make the next clean Foxglove profile reconvert S3.
+                # Cross-run loads still start from DEFAULT_SIM_VIZ and therefore
+                # cannot inherit another run's source, layout, or provenance.
+                for key in (
+                    *CANONICAL_MCAP_DEFAULT_STATE,
+                    "mcap_uri",
+                    "mcap_updated_at",
+                    "lichtblick_ready",
+                    "lichtblick_iframe_url",
+                    "foxglove_ready",
+                    "foxglove_url",
+                ):
+                    if key in current:
+                        sim_viz[key] = current[key]
             sim_viz.update({{
                 "run_id": resolved_run_id,
                 "artifact_run_ref": resolved_ref,
@@ -6653,11 +6719,38 @@ def artifacts_for_run(
         else:
             normalized_run = validate_run_id(requested_ref)
         s3, settings = _agent_s3_client()
-        access_report = _agent_access_report()
-        bucket_projects = artifact_bucket_projects(access_report)
-        allowed_buckets, _selected_scope = _agent_artifact_list_scope(
-            access_report, resource_bucket, project_id
+        exact_source_request = bool(
+            requested_ref.startswith("npa1_") and resource_bucket and project_id
         )
+        if exact_source_request:
+            source_bucket, source_project, source_prefix = _authorize_exact_run_ref_source(
+                s3=s3,
+                settings=settings,
+                run_id=normalized_run,
+                run_ref=requested_ref,
+                resource_bucket=resource_bucket,
+                project_id=project_id,
+                resolved_prefix=resolved_prefix,
+            )
+            resource_bucket = source_bucket
+            project_id = source_project
+            resolved_prefix = source_prefix
+            allowed_buckets = [source_bucket]
+            bucket_projects = {{source_bucket: source_project}}
+            access_report = None
+            access_diagnostics = {{
+                "status": "available",
+                "scope": "selected_source",
+                "searched_projects": [{{"id": source_project, "name": source_project}}],
+                "unavailable_projects": [],
+            }}
+        else:
+            access_report = _agent_access_report()
+            bucket_projects = artifact_bucket_projects(access_report)
+            allowed_buckets, _selected_scope = _agent_artifact_list_scope(
+                access_report, resource_bucket, project_id
+            )
+            access_diagnostics = _agent_access_diagnostics(access_report)
         search_buckets = [resource_bucket] if resource_bucket else allowed_buckets
         requested_prefix = _validated_resolved_prefix(resolved_prefix or prefix)
         matches, source_errors, discovery_complete = find_run_sources_across_buckets(
@@ -6682,7 +6775,13 @@ def artifacts_for_run(
         search_complete = bool(
             discovery_complete
             and not source_errors
-            and (resource_bucket or _artifact_search_scope_complete(access_report))
+            and (
+                resource_bucket
+                or (
+                    access_report is not None
+                    and _artifact_search_scope_complete(access_report)
+                )
+            )
         )
         if not matches:
             code = "run_not_discovered" if search_complete else "artifact_search_incomplete"
@@ -6700,7 +6799,7 @@ def artifacts_for_run(
                     "error": {{"code": code, "message": message}},
                     "run_id": normalized_run,
                     "namespace": "npa_workflow_artifact_run",
-                    "access": _agent_access_diagnostics(access_report),
+                    "access": access_diagnostics,
                     "source_errors": [dict(item) for item in source_errors],
                 }},
             )
@@ -6716,7 +6815,7 @@ def artifacts_for_run(
                     }},
                     "run_id": normalized_run,
                     "namespace": "npa_workflow_artifact_run",
-                    "access": _agent_access_diagnostics(access_report),
+                    "access": access_diagnostics,
                     "source_errors": [dict(item) for item in source_errors],
                 }},
             )
@@ -6731,7 +6830,7 @@ def artifacts_for_run(
                     }},
                     "run_id": normalized_run,
                     "sources": [item.to_dict() for item in matches],
-                    "access": _agent_access_diagnostics(access_report),
+                    "access": access_diagnostics,
                 }},
             )
         selected = matches[0]
@@ -6751,6 +6850,27 @@ def artifacts_for_run(
             page.artifacts,
             _summary_documents_for_run(s3, run_bucket, page.artifacts),
         )
+        if exact_source_request:
+            # The card is rendered immediately before its playback action. Keep
+            # the just-proven narrow authorization warm for the same 30-second
+            # window as the effective-access cache so export need not repeat
+            # project inventory and bucket probing. Export still re-HEADs the
+            # exact object and validates its strong identity/provenance.
+            _remember_exact_run_ref_source_authorization(
+                run_id=normalized_run,
+                run_ref=requested_ref,
+                resource_bucket=run_bucket,
+                project_id=str(bucket_projects.get(run_bucket) or ""),
+                resolved_prefix=artifact_prefix,
+            )
+            _remember_foxglove_exact_artifact_inventory(
+                run_id=normalized_run,
+                run_ref=requested_ref,
+                resource_bucket=run_bucket,
+                project_id=str(bucket_projects.get(run_bucket) or ""),
+                resolved_prefix=artifact_prefix,
+                artifacts=page.artifacts,
+            )
         return {{
             "ok": True,
             "contract": ARTIFACT_DISCOVERY_CONTRACT,
@@ -6767,7 +6887,7 @@ def artifacts_for_run(
                 "continue_with": ["next_cursor", "resolved_prefix", "resource_bucket", "source_selected"],
             }},
             "preferred": preferred.to_dict() if preferred else None,
-            "access": _agent_access_diagnostics(access_report),
+            "access": access_diagnostics,
             **page.to_dict(),
             "output_artifact_count": role_counts["output"],
             "input_artifact_count": role_counts["input"],
@@ -7293,6 +7413,351 @@ def _foxglove_convert_run(**kwargs):
     return convert_run(**kwargs)
 
 
+_FOXGLOVE_EXACT_INVENTORY_TTL_SECONDS = 30.0
+_FOXGLOVE_EXACT_INVENTORY_CACHE: dict[tuple[str, ...], tuple[float, tuple]] = {{}}
+_FOXGLOVE_EXACT_INVENTORY_LOCK = threading.Lock()
+
+
+def _foxglove_exact_inventory_key(
+    *, run_id: str, run_ref: str, resource_bucket: str, project_id: str, resolved_prefix: str
+) -> tuple[str, ...]:
+    return (
+        str(os.environ.get("NEBIUS_TENANT_ID") or "").strip(),
+        str(os.environ.get("NEBIUS_PROJECT_ID") or "").strip(),
+        str(project_id or "").strip(),
+        str(resource_bucket or "").strip(),
+        str(resolved_prefix or "").strip(),
+        str(run_id or "").strip(),
+        str(run_ref or "").strip(),
+    )
+
+
+def _remember_foxglove_exact_artifact_inventory(
+    *,
+    run_id: str,
+    run_ref: str,
+    resource_bucket: str,
+    project_id: str,
+    resolved_prefix: str,
+    artifacts,
+) -> None:
+    key = _foxglove_exact_inventory_key(
+        run_id=run_id,
+        run_ref=run_ref,
+        resource_bucket=resource_bucket,
+        project_id=project_id,
+        resolved_prefix=resolved_prefix,
+    )
+    with _FOXGLOVE_EXACT_INVENTORY_LOCK:
+        _FOXGLOVE_EXACT_INVENTORY_CACHE[key] = (
+            time.monotonic() + _FOXGLOVE_EXACT_INVENTORY_TTL_SECONDS,
+            tuple(artifacts or ()),
+        )
+
+
+def _cached_foxglove_exact_artifact_resolution(
+    *,
+    run_id: str,
+    run_ref: str,
+    resource_bucket: str,
+    project_id: str,
+    resolved_prefix: str,
+):
+    key = _foxglove_exact_inventory_key(
+        run_id=run_id,
+        run_ref=run_ref,
+        resource_bucket=resource_bucket,
+        project_id=project_id,
+        resolved_prefix=resolved_prefix,
+    )
+    now_mono = time.monotonic()
+    with _FOXGLOVE_EXACT_INVENTORY_LOCK:
+        entry = _FOXGLOVE_EXACT_INVENTORY_CACHE.get(key)
+        if entry is None or entry[0] <= now_mono:
+            _FOXGLOVE_EXACT_INVENTORY_CACHE.pop(key, None)
+            return None
+        artifacts = list(entry[1])
+    return RunResolution(run_id, resource_bucket, resolved_prefix, artifacts)
+
+
+def _foxglove_artifact_fingerprint(s3, bucket: str, artifact) -> tuple[str, int, str]:
+    key = str(artifact.key)
+    try:
+        head = s3.head_object(Bucket=bucket, Key=key)
+    except Exception:
+        logging.getLogger("npa.agent.foxglove").exception(
+            "Could not read authoritative MCAP object identity"
+        )
+        return "", int(getattr(artifact, "size", 0) or 0), str(
+            getattr(artifact, "last_modified", "") or ""
+        )
+    modified = head.get("LastModified") or getattr(artifact, "last_modified", "")
+    if hasattr(modified, "isoformat"):
+        modified = modified.isoformat()
+    size = int(head.get("ContentLength") or getattr(artifact, "size", 0) or 0)
+    fingerprint = artifact_source_fingerprint(
+        bucket=bucket,
+        key=key,
+        size=size,
+        last_modified=str(modified or ""),
+        etag=str(head.get("ETag") or ""),
+        version_id=str(head.get("VersionId") or ""),
+    )
+    return fingerprint, size, str(modified or "")
+
+
+def _foxglove_resolve_artifact(payload: dict) -> dict:
+    body = payload if isinstance(payload, dict) else {{}}
+    run_id = str(body.get("run_id") or "").strip()
+    run_ref = str(body.get("run_ref") or "").strip()
+    key = _safe_artifact_key(str(body.get("key") or ""))
+    if not run_id or not key:
+        raise HTTPException(status_code=400, detail="run_id and key are required")
+    s3, settings = _agent_s3_client()
+    requested_bucket = str(body.get("resource_bucket") or body.get("bucket") or "").strip()
+    requested_project = str(body.get("project_id") or "").strip()
+    exact_source_request = bool(
+        run_ref
+        and requested_bucket
+        and requested_project
+        and "resolved_prefix" in body
+    )
+    if exact_source_request:
+        source_bucket, source_project, source_prefix = _authorize_exact_run_ref_source(
+            s3=s3,
+            settings=settings,
+            run_id=run_id,
+            run_ref=run_ref,
+            resource_bucket=requested_bucket,
+            project_id=requested_project,
+            resolved_prefix=str(body.get("resolved_prefix") or ""),
+        )
+        resolution_buckets = [source_bucket]
+        resolution = _cached_foxglove_exact_artifact_resolution(
+            run_id=run_id,
+            run_ref=run_ref,
+            resource_bucket=source_bucket,
+            project_id=source_project,
+            resolved_prefix=source_prefix,
+        )
+        if resolution is None:
+            matches, source_errors, discovery_complete = find_run_sources_across_buckets(
+                [source_bucket],
+                base_prefix=settings.get("prefix", ""),
+                run_id=run_id,
+                exact_prefix=source_prefix,
+                exclude=_discovery_exclude_roots(),
+                bucket_projects={{source_bucket: source_project}},
+                s3=s3,
+            )
+            exact_matches = [
+                item
+                for item in matches
+                if item.bucket == source_bucket
+                and item.project_id == source_project
+                and item.resolved_prefix == source_prefix
+            ]
+            if source_errors or not discovery_complete:
+                raise HTTPException(
+                    status_code=503,
+                    detail="the selected Foxglove artifact source could not be verified",
+                )
+            if not exact_matches:
+                raise HTTPException(status_code=404, detail="run_id not found")
+            if len(exact_matches) > 1:
+                raise HTTPException(
+                    status_code=409,
+                    detail="the selected Foxglove artifact source is ambiguous",
+                )
+            namespaces = exact_matches[0].namespaces or (source_prefix,)
+            resolution = RunResolution(
+                run_id,
+                source_bucket,
+                source_prefix,
+                [
+                    artifact
+                    for namespace in namespaces
+                    for artifact in list_artifacts(
+                        source_bucket,
+                        run_id,
+                        prefix=namespace,
+                        s3=s3,
+                    )
+                ],
+            )
+    else:
+        resolution_buckets = _agent_s3_buckets(s3, settings)
+        resolution = None
+    if resolution is None:
+        resolution = resolve_run_artifacts(
+            resolution_buckets,
+            base_prefix=settings.get("prefix", ""),
+            run_ref_or_id=run_ref or run_id,
+            s3=s3,
+        )
+    if resolution is None:
+        raise HTTPException(status_code=404, detail="run_id not found")
+    if exact_source_request:
+        _remember_foxglove_exact_artifact_inventory(
+            run_id=resolution.run_id,
+            run_ref=resolution.run_ref,
+            resource_bucket=source_bucket,
+            project_id=source_project,
+            resolved_prefix=source_prefix,
+            artifacts=resolution.artifacts,
+        )
+    artifact = next((item for item in resolution.artifacts if item.key == key), None)
+    if artifact is None:
+        raise HTTPException(status_code=400, detail="artifact key is outside the selected run")
+    if not exact_source_request:
+        source_bucket, source_project, source_prefix = _artifact_source_metadata(
+            _agent_access_report(), resolution.bucket, key, resolution.run_id
+        )
+    selected = {{
+        "run_id": resolution.run_id,
+        "run_ref": resolution.run_ref,
+        "key": key,
+        "s3_uri": str(artifact.s3_uri),
+        "bucket": source_bucket or resolution.bucket,
+        "resource_bucket": source_bucket or resolution.bucket,
+        "project_id": source_project,
+        "resolved_prefix": source_prefix,
+    }}
+    for requested_field, actual_field in (
+        ("bucket", "bucket"),
+        ("project_id", "project_id"),
+        ("resolved_prefix", "resolved_prefix"),
+        ("s3_uri", "s3_uri"),
+    ):
+        request_key = (
+            "resource_bucket"
+            if requested_field == "bucket" and "resource_bucket" in body
+            else requested_field
+        )
+        if request_key in body and str(body.get(request_key) or "") != str(
+            selected.get(actual_field) or ""
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=f"the selected Foxglove artifact {{requested_field}} does not match discovery",
+            )
+    fingerprint, size, last_modified = _foxglove_artifact_fingerprint(
+        s3, resolution.bucket, artifact
+    )
+    selected.update(
+        {{
+            "source_fingerprint": fingerprint,
+            "source_size_bytes": size,
+            "source_last_modified": last_modified,
+        }}
+    )
+    return selected
+
+
+def _foxglove_prepare_canonical_mcap(
+    *, run_id: str, run_ref: str = "", fps: float, max_frames: int
+):
+    from npa.sdk.workbench.foxglove import inspect_mcap
+
+    s3, settings = _agent_s3_client()
+    resolution = resolve_run_artifacts(
+        _agent_s3_buckets(s3, settings),
+        base_prefix=settings.get("prefix", ""),
+        run_ref_or_id=run_ref or run_id,
+        s3=s3,
+    )
+    if resolution is None:
+        raise RuntimeError(f"run_id not found: {{run_id}}")
+
+    def _resolved_artifacts(*_args, **_kwargs):
+        return resolution.bucket, list(resolution.artifacts)
+
+    return prepare_canonical_mcap(
+        run_id=run_id,
+        source_bucket=resolution.bucket,
+        source_prefix=resolution.source_prefix,
+        fps=fps,
+        max_frames=max_frames,
+        validate_run_id=validate_run_id,
+        s3_client=lambda: (s3, settings),
+        list_buckets=_agent_s3_buckets,
+        find_artifacts=_resolved_artifacts,
+        safe_key=_safe_artifact_key,
+        download=download_s3_uri,
+        convert=_foxglove_convert_run,
+        summarize=inspect_mcap,
+        invalidate_cache=_run_list_cache_clear,
+        now_iso=_now_iso,
+        recordings_dir=RECORDINGS_DIR,
+    )
+
+
+def _foxglove_apply_prepared_canonical(
+    *, canonical: dict, run_id: str, run_ref: str = ""
+) -> dict:
+    key = _safe_artifact_key(str(canonical.get("artifact_key") or ""))
+    s3_uri = str(canonical.get("s3_uri") or "").strip()
+    local_path = Path(str(canonical.get("local_path") or ""))
+    if not key or not s3_uri or not local_path.is_file():
+        raise HTTPException(
+            status_code=502,
+            detail="canonical MCAP persistence returned an incomplete local transport",
+        )
+    s3, _settings = _agent_s3_client()
+    bucket, resolved_key = parse_s3_uri(s3_uri)
+    if resolved_key != key:
+        raise HTTPException(status_code=409, detail="canonical MCAP key changed before publication")
+    head = s3.head_object(Bucket=bucket, Key=key)
+    modified = head.get("LastModified") or ""
+    if hasattr(modified, "isoformat"):
+        modified = modified.isoformat()
+    size = int(head.get("ContentLength") or local_path.stat().st_size)
+    fingerprint = artifact_source_fingerprint(
+        bucket=bucket,
+        key=key,
+        size=size,
+        last_modified=str(modified or ""),
+        etag=str(head.get("ETag") or ""),
+        version_id=str(head.get("VersionId") or ""),
+    )
+    source_bucket, source_project, source_prefix = _artifact_source_metadata(
+        _agent_access_report(), bucket, key, run_id
+    )
+    state = _load_state()
+    sim_viz = _apply_loaded_artifact(
+        state=state,
+        run_id=run_id,
+        key=key,
+        s3_uri=s3_uri,
+        render="mcap",
+        local_path=local_path,
+        source_identity=(source_bucket, source_project, source_prefix),
+        run_ref=run_ref,
+        source_fingerprint=fingerprint,
+        source_size_bytes=size,
+        source_last_modified=str(modified or ""),
+    )
+    return {{"ok": True, "render": "mcap", "sim_viz": sim_viz, "run_ref": run_ref}}
+
+
+def _foxglove_ensure_cloud_recording(
+    local_path: Path, run_id: str, *, provenance: dict
+):
+    return ensure_recording_and_layout_from_credentials(
+        local_path,
+        run_id,
+        provenance,
+        credentials_path="/root/.npa/credentials.yaml",
+    )
+
+
+def _foxglove_ensure_cloud_layout(*, provenance: dict):
+    return ensure_layout_from_credentials(
+        provenance,
+        credentials_path="/root/.npa/credentials.yaml",
+    )
+
+
 register_foxglove_routes(
     app,
     FoxgloveDeps(
@@ -7307,6 +7772,11 @@ register_foxglove_routes(
         data_dir=FOXGLOVE_DATA_DIR,
         runs_dir=Path("/opt/npa-agent/runs"),
         keep_published=FOXGLOVE_KEEP_PUBLISHED,
+        ensure_cloud_recording=_foxglove_ensure_cloud_recording,
+        ensure_cloud_layout=_foxglove_ensure_cloud_layout,
+        prepare_canonical_mcap=_foxglove_prepare_canonical_mcap,
+        resolve_artifact=_foxglove_resolve_artifact,
+        apply_prepared_canonical=_foxglove_apply_prepared_canonical,
     ),
     HTTPException,
 )
@@ -8295,7 +8765,16 @@ WantedBy=multi-user.target
 UNIT
 # Lichtblick (Foxglove-compatible MCAP viewer) sidecar — best-effort: the agent UI
 # embeds it at /lichtblick/ and co-serves the run MCAP at /lichtblick/recordings/.
-# Requires docker + the npa-lichtblick image on the VM; degrades gracefully if absent.
+# Fresh driverless agent images do not include Docker, so install the Ubuntu
+# package before acquiring the sidecar image. If package or registry access is
+# unavailable, the UI retains its explicit viewer-unavailable state.
+if ! command -v docker >/dev/null 2>&1; then
+  if sudo apt-get update -qq && sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io >/dev/null; then
+    sudo systemctl enable --now docker
+  else
+    echo "docker install failed; Lichtblick self-hosted fallback will be unavailable"
+  fi
+fi
 # The sidecar serves only the viewer bundle: the MCAP itself is served by nginx from
 # the recordings alias below (so it needs no mount into the container), and the file
 # is pre-created so that location returns an empty 200 rather than 404 before a run
@@ -8433,7 +8912,11 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
     if (
         tf_api_key.strip()
         or (s3_bucket.strip() and s3_access_key.strip() and s3_secret_key.strip())
-        or ((nebius_project_id or project_id).strip() and s3_access_key.strip() and s3_secret_key.strip())
+        or (
+            (nebius_project_id or project_id).strip()
+            and s3_access_key.strip()
+            and s3_secret_key.strip()
+        )
     ):
         ssh.run_or_raise(
             "sudo systemctl reset-failed npa-agent-backend || true; "
@@ -8517,6 +9000,7 @@ def _health(
         return False, 0
     return response.status_code == 200, response.status_code
 
+
 _artifact_only_http_probe = agent_resources.artifact_only_http_probe
 
 
@@ -8557,10 +9041,7 @@ def _verify_artifact_only_live(
     )
     typer.echo(format_bundle_budget_report(bundle_result))
     if not bundle_result.ok:
-        _fail(
-            "rerun bundle load budget failed: "
-            + "; ".join(bundle_result.errors[:4])
-        )
+        _fail("rerun bundle load budget failed: " + "; ".join(bundle_result.errors[:4]))
 
     test_env = {
         **dict(os.environ),
@@ -8625,6 +9106,7 @@ def _verify_artifact_only_live(
         f"runs={result['run_count']} tool_refs={result['tool_ref_count']} "
         f"state_sha256={result['state_sha256']}"
     )
+
 
 @app.command("preflight")
 def preflight_cmd(
@@ -8724,6 +9206,11 @@ def _transactional_agent_command(command: str):
                     "foxglove_embed_src",
                     "--foxglove-embed-src",
                     bound.arguments.get("foxglove_embed_src"),
+                ),
+                (
+                    "foxglove_viewer_backend",
+                    "--foxglove-viewer-backend",
+                    bound.arguments.get("foxglove_viewer_backend"),
                 ),
                 (
                     "foxglove_org_slug",
@@ -8872,7 +9359,9 @@ def deploy_cmd(
     tf_var: list[str] = typer.Option(
         [], "--tf-var", help="Additional Terraform var key=value."
     ),
-    agent_only: bool = typer.Option(False, "--agent-only", help="Provision agent only."),
+    agent_only: bool = typer.Option(
+        False, "--agent-only", help="Provision agent only."
+    ),
     agent_port: int = typer.Option(
         DEFAULT_AGENT_PORT, "--agent-port", help="Public agent UI port."
     ),
@@ -8892,24 +9381,10 @@ def deploy_cmd(
         "--llm-models",
         help="Additional Token Factory model IDs (repeat flag or comma-separate values).",
     ),
-    foxglove_embed_src: str = typer.Option(
-        "",
-        "--foxglove-embed-src",
-        help=(
-            "Foxglove embed application URL for the viewer pane "
-            f"(default: $NPA_FOXGLOVE_EMBED_SRC or {DEFAULT_FOXGLOVE_EMBED_SRC})."
-        ),
-    ),
-    foxglove_org_slug: str = typer.Option(
-        "",
-        "--foxglove-org-slug",
-        help="Foxglove organization slug users should sign into (default: $NPA_FOXGLOVE_ORG_SLUG).",
-    ),
-    foxglove_live_url: str = typer.Option(
-        "",
-        "--foxglove-live-url",
-        help="Optional live ws:// or wss:// Foxglove/ROS-bridge URL for the viewer pane.",
-    ),
+    foxglove_embed_src: str = agent_foxglove_config.embed_src_option(),
+    foxglove_viewer_backend: str = agent_foxglove_config.viewer_backend_option(),
+    foxglove_org_slug: str = agent_foxglove_config.org_slug_option(),
+    foxglove_live_url: str = agent_foxglove_config.live_url_option(),
     no_public_https: bool = typer.Option(
         False,
         "--no-public-https",
@@ -8938,6 +9413,12 @@ def deploy_cmd(
     # (OptionInfo) can never crash `for item in tf_var` / `list(llm_models)`.
     tf_var = _coerce_cli_list(tf_var)
     llm_models = _coerce_cli_list(llm_models)
+    foxglove_settings = _resolve_foxglove_settings_or_fail(
+        embed_src=foxglove_embed_src,
+        viewer_backend=foxglove_viewer_backend,
+        org_slug=foxglove_org_slug,
+        live_url=foxglove_live_url,
+    )
     # Expand ``~`` up front so the absolute path flows into Terraform vars and
     # outputs (e.g. ssh_key_path). Terraform reads the key with pathexpand, but
     # the raw var also lands in outputs consumed downstream, where an unexpanded
@@ -9297,6 +9778,7 @@ def deploy_cmd(
         "project_id": env_project_id,
         "region": env_region,
         "service_account_id": str(creds.get("service_account_id", "")),
+        "foxglove": foxglove_settings,
     }
     partial_urls = build_agent_urls(
         public_ip, agent_port=agent_port, public_https=public_https
@@ -9316,6 +9798,7 @@ def deploy_cmd(
         "public_https": public_https,
         "setup_state": "remote_bootstrap_pending",
         "service_account_id": str(creds.get("service_account_id", "")),
+        "foxglove": foxglove_settings,
     }
     _store_agent_record(project, name, partial_record)
     if operation is not None:
@@ -9371,9 +9854,13 @@ def deploy_cmd(
             "nebius_tenant_id": env_tenant_id,
             "service_account_id": str(creds.get("service_account_id", "")),
             "public_https": public_https,
-            "foxglove_embed_src": foxglove_embed_src,
-            "foxglove_org_slug": foxglove_org_slug,
-            "foxglove_live_url": foxglove_live_url,
+            "foxglove_embed_src": foxglove_settings["embed_src"],
+            "foxglove_viewer_backend": foxglove_settings["viewer_backend"],
+            "foxglove_org_slug": foxglove_settings["org_slug"],
+            "foxglove_live_url": foxglove_settings["live_url"],
+            "foxglove_cloud_import_timeout_seconds": foxglove_settings[
+                "cloud_import_timeout_seconds"
+            ],
         },
         reconcile_kwargs={
             "host": public_ip,
@@ -9394,6 +9881,7 @@ def deploy_cmd(
         progress=lambda payload: typer.echo(
             "progress: " + json.dumps(payload, sort_keys=True), err=True
         ),
+        fatal_errors=(DeploymentIdentityError,),
         transport_errors=(ConfigError, SSHError, ValueError),
     )
     reconciliation = convergence.evidence
@@ -9468,6 +9956,7 @@ def deploy_cmd(
         service_account_id=str(creds.get("service_account_id", "")),
     )
     final_record = record.to_dict()
+    final_record["foxglove"] = foxglove_settings
     final_record["setup_state"] = "healthy"
     final_record["setup_evidence"] = {
         key: reconciliation.get(key)
@@ -9767,24 +10256,10 @@ def bootstrap_cmd(
         "--refresh-credentials",
         help="Re-provision the long-lived npa-agent service account and restage VM credentials.",
     ),
-    foxglove_embed_src: str = typer.Option(
-        "",
-        "--foxglove-embed-src",
-        help=(
-            "Foxglove embed application URL for the viewer pane "
-            f"(default: $NPA_FOXGLOVE_EMBED_SRC or {DEFAULT_FOXGLOVE_EMBED_SRC})."
-        ),
-    ),
-    foxglove_org_slug: str = typer.Option(
-        "",
-        "--foxglove-org-slug",
-        help="Foxglove organization slug users should sign into (default: $NPA_FOXGLOVE_ORG_SLUG).",
-    ),
-    foxglove_live_url: str = typer.Option(
-        "",
-        "--foxglove-live-url",
-        help="Optional live ws:// or wss:// Foxglove/ROS-bridge URL for the viewer pane.",
-    ),
+    foxglove_embed_src: str = agent_foxglove_config.embed_src_option(),
+    foxglove_viewer_backend: str = agent_foxglove_config.viewer_backend_option(),
+    foxglove_org_slug: str = agent_foxglove_config.org_slug_option(),
+    foxglove_live_url: str = agent_foxglove_config.live_url_option(),
     no_public_https: bool = typer.Option(
         False,
         "--no-public-https",
@@ -9796,6 +10271,13 @@ def bootstrap_cmd(
     record = _agent_record(project, name)
     if not record:
         _fail(f"Agent config not found for {project}/{name}")
+    foxglove_settings = _resolve_foxglove_settings_or_fail(
+        embed_src=foxglove_embed_src,
+        viewer_backend=foxglove_viewer_backend,
+        org_slug=foxglove_org_slug,
+        live_url=foxglove_live_url,
+        saved=record.get("foxglove"),
+    )
     public_ip = str(record.get("public_ip", "")).strip()
     if not _is_routable_public_ip(public_ip):
         _fail("agent VM does not have a routable public IP")
@@ -9975,9 +10457,13 @@ def bootstrap_cmd(
             "nebius_tenant_id": tenant_id,
             "service_account_id": service_account_id,
             "public_https": public_https,
-            "foxglove_embed_src": foxglove_embed_src,
-            "foxglove_org_slug": foxglove_org_slug,
-            "foxglove_live_url": foxglove_live_url,
+            "foxglove_embed_src": foxglove_settings["embed_src"],
+            "foxglove_viewer_backend": foxglove_settings["viewer_backend"],
+            "foxglove_org_slug": foxglove_settings["org_slug"],
+            "foxglove_live_url": foxglove_settings["live_url"],
+            "foxglove_cloud_import_timeout_seconds": foxglove_settings[
+                "cloud_import_timeout_seconds"
+            ],
         },
         reconcile_kwargs={
             "host": public_ip,
@@ -9998,6 +10484,7 @@ def bootstrap_cmd(
         progress=lambda payload: typer.echo(
             "progress: " + json.dumps(payload, sort_keys=True), err=True
         ),
+        fatal_errors=(DeploymentIdentityError,),
         transport_errors=(ConfigError, SSHError, ValueError),
     )
     reconciliation = convergence.evidence
@@ -10044,6 +10531,7 @@ def bootstrap_cmd(
     llm_payload["models"] = list(resolved_llm_models)
     updated["llm"] = llm_payload
     updated["ssh_key_path"] = ssh_key_path
+    updated["foxglove"] = foxglove_settings
     updated["setup_state"] = "healthy"
     updated["setup_evidence"] = {
         key: reconciliation.get(key)
@@ -10687,7 +11175,10 @@ def verify_live_cmd(
         access_payload = access_resp.json()
     except Exception as exc:  # noqa: BLE001
         _fail(f"agent access endpoint failed: {exc}")
-    if not isinstance(access_payload, dict) or access_payload.get("apiVersion") != ACCESS_SCHEMA:
+    if (
+        not isinstance(access_payload, dict)
+        or access_payload.get("apiVersion") != ACCESS_SCHEMA
+    ):
         _fail("agent access endpoint returned an invalid schema")
     if access_payload.get("status") not in ACCESS_STATES:
         _fail("agent access endpoint returned an invalid status")
@@ -10760,7 +11251,10 @@ def verify_live_cmd(
             auth=(auth_user, auth_password),
             json={
                 "messages": [
-                    {"role": "user", "content": "create 2-step sim2real workflow"}
+                    {
+                        "role": "user",
+                        "content": "create 2-step sim2real workflow with 5000 environments, seed 9, an RTX PRO 6000 accelerator, and 1 GPU",
+                    }
                 ]
             },
             timeout=30.0,

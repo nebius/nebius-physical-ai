@@ -62,6 +62,15 @@ resource "helm_release" "gpu-operator" {
       name  = "devicePlugin.enabled"
       value = true
     },
+    {
+      name  = "devicePlugin.version"
+      value = var.device_plugin_version
+    },
+
+    {
+      name  = "gfd.version"
+      value = var.gfd_version
+    },
 
     # Container Toolkit
     {
@@ -79,6 +88,19 @@ resource "helm_release" "gpu-operator" {
     {
       name  = "migManager.enabled"
       value = var.mig_strategy != "none"
+    },
+    {
+      name  = "migManager.version"
+      value = var.mig_manager_version
+    },
+    {
+      name  = "migManager.env[0].name"
+      value = "WITH_REBOOT"
+    },
+    {
+      name  = "migManager.env[0].value"
+      value = var.mig_with_reboot ? "true" : "false"
+      type  = "string"
     },
 
     # Validator to ensure GPU stack is working

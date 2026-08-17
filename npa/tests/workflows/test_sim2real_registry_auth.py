@@ -22,6 +22,7 @@ def test_mint_nebius_registry_token(monkeypatch: pytest.MonkeyPatch) -> None:
     # Delegated to the canonical npa.clients.nebius_auth helper; with no ambient
     # token the profile-scoped CLI exchange is used.
     monkeypatch.delenv("NEBIUS_IAM_TOKEN", raising=False)
+    monkeypatch.delenv("NEBIUS_REGISTRY_PROFILE", raising=False)
     monkeypatch.setattr(
         "npa.clients.nebius_auth.subprocess.run",
         lambda *args, **kwargs: MagicMock(
@@ -29,6 +30,31 @@ def test_mint_nebius_registry_token(monkeypatch: pytest.MonkeyPatch) -> None:
         ),
     )
     assert mint_nebius_registry_token() == "token-abc"
+
+
+def test_mint_nebius_registry_token_uses_registry_only_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, object] = {}
+
+    def run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        seen["env"] = kwargs["env"]
+        return MagicMock(returncode=0, stdout="registry-token\n", stderr="")
+
+    monkeypatch.setenv("NEBIUS_REGISTRY_PROFILE", "registry-writer")
+    monkeypatch.setenv("NPA_NEBIUS_PROFILE", "cluster-admin")
+    monkeypatch.setattr("npa.clients.nebius_auth.subprocess.run", run)
+
+    assert mint_nebius_registry_token() == "registry-token"
+    assert seen["cmd"] == [
+        "nebius",
+        "--profile",
+        "registry-writer",
+        "iam",
+        "get-access-token",
+    ]
+    assert "NEBIUS_IAM_TOKEN" not in seen["env"]
 
 
 def test_mint_nebius_registry_token_falls_back_to_env_without_cli(
@@ -236,6 +262,76 @@ users:
         "context": "fresh-context",
         "bearer_token": "fresh-token",
     }
+
+
+def test_registry_profile_is_not_inherited_by_kubeconfig_exec_auth(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text(
+        """
+current-context: fresh-context
+contexts:
+- name: fresh-context
+  context: {user: mk8s-user}
+users:
+- name: mk8s-user
+  user:
+    exec:
+      command: nebius
+      args: [iam, get-access-token]
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NEBIUS_REGISTRY_PROFILE", "registry-writer")
+    monkeypatch.setenv("NPA_NEBIUS_PROFILE", "cluster-admin")
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.registry_auth._docker_helper_credential",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.registry_auth.mint_nebius_registry_token",
+        lambda **kwargs: "registry-token",
+    )
+    cluster_mint: dict[str, object] = {}
+
+    def mint_cluster_token(**kwargs):
+        cluster_mint.update(kwargs)
+        return "cluster-token"
+
+    monkeypatch.setattr(
+        "npa.clients.nebius_auth.mint_nebius_iam_token", mint_cluster_token
+    )
+    captured: dict[str, object] = {}
+
+    class FakeClient:
+        def apply_secret(self, payload):
+            captured["payload"] = payload
+
+    def fake_client(**kwargs):
+        captured["client_kwargs"] = kwargs
+        return FakeClient()
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.k8s_client.KubernetesJobClient.from_environment",
+        fake_client,
+    )
+
+    ensure_nebius_registry_pull_secret(
+        registry_server="cr.us-central1.nebius.cloud",
+        kubeconfig=str(kubeconfig),
+        k8s_context="fresh-context",
+    )
+
+    assert captured["client_kwargs"] == {
+        "namespace": "default",
+        "kubeconfig": str(kubeconfig),
+        "context": "fresh-context",
+        "bearer_token": "cluster-token",
+    }
+    assert cluster_mint["nebius_cli"] == "nebius"
+    assert cluster_mint["env"]["NPA_NEBIUS_PROFILE"] == "cluster-admin"
+    assert "NEBIUS_REGISTRY_PROFILE" not in cluster_mint["env"]
 
 
 @pytest.mark.parametrize(

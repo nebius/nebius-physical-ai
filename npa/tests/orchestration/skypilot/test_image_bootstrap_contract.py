@@ -157,6 +157,40 @@ def test_root_and_compliant_non_root_probe_share_exact_contract() -> None:
     ]
 
 
+def test_probe_attaches_declared_image_pull_secrets() -> None:
+    calls: list[list[str]] = []
+
+    evidence = probe_image_capabilities(
+        image=IMAGE,
+        digest=DIGEST,
+        context="ctx-exact",
+        image_pull_secrets=("npa-nebius-registry", "npa-nebius-registry"),
+        runner=_successful_runner(calls),
+        terminal_observer=_terminal_observer(),
+        nonce_factory=lambda: "c" * 16,
+    )
+
+    assert evidence.ok
+    raw_overrides = next(
+        item.removeprefix("--overrides=")
+        for item in calls[0]
+        if item.startswith("--overrides=")
+    )
+    assert json.loads(raw_overrides)["spec"]["imagePullSecrets"] == [
+        {"name": "npa-nebius-registry"}
+    ]
+
+
+def test_probe_rejects_invalid_image_pull_secret_name_before_creation() -> None:
+    with pytest.raises(ImageBootstrapContractError, match="invalid Kubernetes"):
+        probe_image_capabilities(
+            image=IMAGE,
+            digest=DIGEST,
+            context="ctx-exact",
+            image_pull_secrets=("unsafe/name",),
+        )
+
+
 @pytest.mark.parametrize(
     "failure",
     [

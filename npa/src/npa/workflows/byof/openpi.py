@@ -1,6 +1,6 @@
 """OpenPI BYOF runtime-access contract.
 
-OpenPI's pi0.5 checkpoints contain Gemma-derived weights.  Acceptance is an
+OpenPI's pi0.5 checkpoints contain Gemma-derived weights. Acceptance is an
 operator decision scoped to a run: it must never be rendered into workflow
 YAML, embedded in an image, or persisted in project credentials.
 """

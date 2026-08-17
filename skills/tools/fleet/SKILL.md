@@ -24,6 +24,14 @@ Three-tier contract:
 - **YAML / agent**: `apiVersion: npa.fleet/v0.0.1` spec; workflow
   `toolRef: infra.fleet.deploy` (config key `fleet_spec`).
 
+RTX PRO 6000 hardware MIG is an additive cluster policy. Use `mig: {enabled:
+true, strategy: mixed, config: all-balanced}` only with two strict
+reserved-capacity `gpu-rtx6000` / `1gpu-24vcpu-218gb` workers and 128 GiB boot
+disks. NPA pins and live-verifies GPU Operator `v26.3.3`, driver `580.173.02`,
+device plugin/GFD `v0.19.3`, MIG Manager `v0.14.2`, exact per-node resources,
+and zero whole-GPU capacity/allocatable. See
+`docs/fleet-rtx-pro-6000-mig.md` and `npa/examples/fleet/rtxpro-mig.yaml`.
+
 ## Spec (npa.fleet/v0.0.1)
 
 A `defaults` cluster profile is deep-merged under every cluster, so **identical**
@@ -217,9 +225,27 @@ depends on it.
    For GPU clusters it also inspects the materialized recipe's variables and
    `gpu_settings` wiring. If the selected managed-driver mode/preset cannot be
    represented, deployment fails with an actionable compatibility error rather
-   than silently reverting to the operator driver.
+   than silently reverting to the operator driver. MIG-enabled targets also
+   require all seven pinned Operator/lifecycle variables in the resolved recipe;
+   this check runs before quota, project, subnet, or Terraform mutation.
 8. **Status / teardown**: `npa fleet status --spec fleet.yaml`; `npa fleet
    destroy --spec fleet.yaml` (prompts; `--yes`/`-y` or `--force` to skip).
+9. **MIG readiness is part of deploy.** A MIG-enabled cluster is not marked
+   deployed until two consecutive exact snapshots agree. `npa fleet verify-mig
+   --spec fleet.yaml --output json` is the read-only diagnostic; add `--wait
+   --reconcile` to perform the single ordered GFD/device-plugin stale-resource
+   repair. It removes only the exact obsolete
+   `nvidia.com/gpu=mig-not-ready:NoSchedule` taint from a successful replacement
+   worker, preserving unrelated taints. It also reconciles a stale `OnDelete`
+   driver pod template one worker
+   at a time, but only after failing closed on every active application pod that
+   requests an `nvidia.com/*` resource; operators must delete those workloads
+   explicitly. Nonzero `nvidia.com/gpu` in either capacity or allocatable,
+   cordoned/NotReady nodes, or stale Operator/DaemonSet generations are always
+   failures. Readiness, driver replacement, and a mandatory representative
+   `mig-1g.24gb` CUDA vectorAdd/MIG-identity smoke share
+   `gpu_health_timeout_minutes`; timeout or smoke cleanup failure leaves the
+   cluster in validation-failed state instead of reporting deployment success.
 
 ## Add / remove clusters and projects
 
@@ -338,5 +364,6 @@ Both `deploy` and `destroy` confirm before acting (bypass with `--yes`/`-y`;
 ```bash
 npa fleet plan --help
 npa fleet deploy --help
+npa fleet verify-mig --help
 npa/.venv/bin/python -m pytest npa/tests/unit/test_fleet_cli.py -q
 ```

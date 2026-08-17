@@ -29,6 +29,21 @@ if [ "${#ARGS[@]}" -lt 4 ] || [ "${#ARGS[@]}" -gt 6 ]; then
   exit 2
 fi
 
+ACCEPT_EULA_VALUE="${ACCEPT_EULA-Y}"
+case "$(printf '%s' "$ACCEPT_EULA_VALUE" | tr '[:lower:]' '[:upper:]')" in
+  Y|YES|1|TRUE)
+    export ACCEPT_EULA=Y
+    ;;
+  ''|N|NO|0|FALSE)
+    echo "Refusing before provisioning: ACCEPT_EULA explicitly opts out of this Isaac operation." >&2
+    exit 78
+    ;;
+  *)
+    echo "Refusing before provisioning: invalid ACCEPT_EULA value; use Y/YES/1/TRUE or N/NO/0/FALSE." >&2
+    exit 64
+    ;;
+esac
+
 PROJECT="${ARGS[0]}"
 NAME="${ARGS[1]}"
 GPU_TYPE="${ARGS[2]}"
@@ -483,7 +498,7 @@ python -m npa.smoke.test_groot_env" || exit 1
 
 run_remote_script_step "run Isaac Lab environment smoke test" "set -euo pipefail
 source $ISAAC_LAB_VENV/bin/activate
-export OMNI_KIT_ACCEPT_EULA=\"\${OMNI_KIT_ACCEPT_EULA:-YES}\"
+export ACCEPT_EULA=\"$ACCEPT_EULA\"
 python - <<'PY'
 try:
     import tomllib

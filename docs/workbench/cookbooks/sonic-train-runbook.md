@@ -5,14 +5,15 @@ for Isaac Lab-based SONIC training and smoke validation.
 
 ## Purpose
 
-The serverless train command submits a Nebius Serverless Job using the
-self-contained SONIC image. The job validates that Isaac Lab and SONIC are
+The serverless train command submits a Nebius Serverless Job using the active
+runtime-fetch SONIC image. The job validates that Isaac Lab and SONIC are
 available in the same container, writes `sonic_smoke_result.json`, and uploads
 artifacts to the requested S3 prefix.
 
-The image is an Option A self-contained build: official NVIDIA Isaac Lab base,
-explicit `linux/amd64` target, Isaac Lab normalized to `2.3.2.post1`, then
-`gear_sonic` installed from `NVlabs/GR00T-WholeBodyControl`. The default build
+The image contains no Isaac or NVIDIA driver userspace. It defaults the run-scoped
+Isaac route to `ACCEPT_EULA=Y` (with `--no-accept-eula` as an explicit opt-out),
+then acquires pinned Isaac dependencies and uses
+`gear_sonic` from `NVlabs/GR00T-WholeBodyControl`. The default build
 skips optional C++ deploy compilation; use `BUILD_SONIC_DEPLOY=1` only when
 validating the TensorRT/ONNX Runtime deploy path.
 
@@ -27,7 +28,7 @@ SMOKE_TS=$(date -u +%Y%m%dT%H%M%SZ)
 npa workbench sonic -p eu-north1 -n w7sonic train \
   --runtime serverless \
   --project-id <YOUR_PROJECT_ID> \
-  --gpu-type l40s \
+  --gpu-type rtx6000 \
   --gpu-count 1 \
   --embodiment unitree-g1 \
   --steps 10 \
@@ -40,7 +41,7 @@ npa workbench sonic -p eu-north1 -n w7sonic train \
 When validating an unpromoted build, pass the pushed image explicitly:
 
 ```bash
---image "${NPA_REGISTRY}/npa-sonic:0.1.2"
+--image "${NPA_REGISTRY}/npa-sonic:cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 ```
 
 ## Standalone SkyPilot YAML
@@ -53,13 +54,13 @@ editable defaults because SkyPilot 0.12.2 does not interpolate `${VAR}` inside
 For a zero-NPA raw SkyPilot run, copy the YAML, replace these literals, and
 launch it directly:
 
-| YAML field | L40S value | RTX PRO 6000 Kubernetes value |
-| --- | --- | --- |
-| `resources.image_id` and `POLICY_IMAGE` | `cr.eu-north1.nebius.cloud/<registry-id>/npa-sonic:0.1.2` | `cr.eu-north1.nebius.cloud/<registry-id>/npa-sonic:0.1.2-k8s-runtime` |
-| `SONIC_GPU_TYPE` | `l40s` | `gpu-rtx6000` |
-| `SONIC_IMAGE_VARIANT` | `sonic-l40s-baked` | `sonic-k8s-host-mounted` |
-| `S3_ENDPOINT_URL` | your S3-compatible endpoint | your S3-compatible endpoint |
-| `S3_BUCKET` / `SONIC_OUTPUT_PREFIX` | your artifact destination | your artifact destination |
+| YAML field | Active RTX PRO 6000 Kubernetes value |
+| --- | --- |
+| `resources.image_id` and `POLICY_IMAGE` | exact active tag from `sonic_image_manifest.json` |
+| `SONIC_GPU_TYPE` | `gpu-rtx6000` |
+| `SONIC_IMAGE_VARIANT` | `sonic-k8s-host-mounted` |
+| `S3_ENDPOINT_URL` | your S3-compatible endpoint |
+| `S3_BUCKET` / `SONIC_OUTPUT_PREFIX` | your artifact destination |
 
 ```bash
 cp npa/workflows/workbench/npa-workflows/sonic-train.yaml /tmp/sonic-train.yaml
@@ -132,25 +133,15 @@ sonic.submit_workflow(
 )
 ```
 
-Build and push the required first-party image from the repo root. Use the L40S
-baked variant for compute-only VM hosts:
-
-```bash
-export NPA_REGISTRY=cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}
-npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push --variant baked
-docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2"
-```
-
-For RTX PRO 6000 Blackwell on Kubernetes with the NVIDIA GPU Operator, use the
-host-mounted variant:
+Build and push only a newly scanned host-mounted runtime-fetch variant for RTX
+PRO 6000 Blackwell Kubernetes with the NVIDIA GPU Operator:
 
 ```bash
 npa/docker/workbench/sonic/build.sh \
   --registry "${NPA_REGISTRY}" \
   --push \
   --variant k8s \
-  --tag 0.1.2-k8s-runtime
-docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2-k8s-runtime"
+  --tag <new-additive-runtime-fetch-tag>
 ```
 
 Expected output artifacts:
@@ -200,15 +191,8 @@ consumes the budget without SONIC logs.
   code runs.
 - `FAIL_NER`: capacity or quota blocks scheduling.
 
-If the serverless smoke fails after the retry budget, run a degraded container
-smoke:
-
-```bash
-docker run --rm --platform linux/amd64 npa-sonic:0.1.2 smoke
-```
-
-That validates the container entrypoint and imports without consuming Nebius GPU
-capacity.
+Do not fall back to `npa-sonic:0.1.2`: it is quarantined because its built bytes
+inherit restricted NVIDIA content and baked driver libraries.
 
 ## Known Limitations
 

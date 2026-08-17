@@ -418,6 +418,53 @@ variable "mig_strategy" {
   description = "MIG strategy for GPU operator"
   type        = string
   default     = null
+
+  validation {
+    condition     = var.mig_strategy == null || contains(["none", "single", "mixed"], coalesce(var.mig_strategy, "none"))
+    error_message = "MIG strategy must be one of: none, single, mixed, or null."
+  }
+}
+
+variable "gpu_operator_version" {
+  description = "Pinned NVIDIA GPU Operator Helm chart version for the custom-driver path."
+  type        = string
+  default     = "v25.10.0"
+}
+
+variable "gpu_driver_version" {
+  description = "Pinned NVIDIA driver version for the custom-driver path."
+  type        = string
+  default     = "580.95.05"
+}
+
+variable "gpu_device_plugin_version" {
+  description = "Pinned NVIDIA Kubernetes device plugin version for the custom-driver path."
+  type        = string
+  default     = "v0.18.0"
+}
+
+variable "gpu_gfd_version" {
+  description = "Pinned NVIDIA GPU Feature Discovery version for the custom-driver path."
+  type        = string
+  default     = "v0.18.0"
+}
+
+variable "gpu_mig_manager_version" {
+  description = "Pinned NVIDIA MIG Manager version for the custom-driver path."
+  type        = string
+  default     = "v0.13.0"
+}
+
+variable "gpu_mig_with_reboot" {
+  description = "Allow MIG Manager to reboot nodes when the selected CSP GPU requires lifecycle reconciliation."
+  type        = bool
+  default     = false
+}
+
+variable "gpu_operator_rdma_enabled" {
+  description = "Enable the GPU Operator RDMA driver path for custom-driver clusters."
+  type        = bool
+  default     = true
 }
 
 variable "cpu_nodes_preemptible" {

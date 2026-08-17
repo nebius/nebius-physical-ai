@@ -1,7 +1,7 @@
 """Contract and gated real four-B200 E2E for distributed Wan 2.2 TI2V-5B.
 
 The always-on test plans the dedicated checked-in spec. The live gate may reuse
-the exact immutable image already accepted by the single-GPU Wan run because the
+the exact immutable image already validated by the single-GPU Wan run because the
 distributed behavior is an upstream/runtime contract; it still pulls that image
 onto a B200 node and fails closed unless all four physical devices participate in
 one `torch.distributed.run → instrumentation wrapper → runpy(generate.py)`
@@ -130,6 +130,7 @@ def test_wan22_multigpu_spec_plans_the_real_official_path() -> None:
     resources = payload["resources"]["gpu"]
     assert resources == {
         "cloud": "kubernetes",
+        "image": "{{config.base_image}}",
         "accelerators": "B200:4",
         "cpus": 32,
         "memory": "256Gi",
