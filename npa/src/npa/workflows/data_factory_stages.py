@@ -492,6 +492,73 @@ def enforce_quality_disposition(
     return payload
 
 
+def write_quality_disposition(
+    scores_uri: str,
+    disposition_uri: str,
+    decision_uri: str,
+    threshold: float | str = 0.75,
+) -> dict[str, Any]:
+    """Persist the final quality result and route without weakening rejection.
+
+    Dynamic workflows need one state that can branch accepted runs into labeling
+    and rejected runs into evidence-only visualization.  Reuse the same strict
+    evaluator contract as :func:`enforce_quality_disposition`, but defer the
+    terminal exception until after the rejected visualization state.
+    """
+
+    from npa.orchestration.npa_workflow.decisions import write_decision
+    from npa.workbench.cosmos_evaluator import RESULT_FILENAME
+
+    try:
+        numeric_threshold = float(threshold)
+    except (TypeError, ValueError):
+        numeric_threshold = 0.75
+    report_uri = (
+        scores_uri
+        if scores_uri.endswith(".json")
+        else f"{scores_uri.rstrip('/')}/{RESULT_FILENAME}"
+    )
+    reasons: list[str] = []
+    report: dict[str, Any] = {}
+    try:
+        downloaded = _download_json(report_uri)
+        if not isinstance(downloaded, dict):
+            raise TypeError(f"expected a JSON object, got {type(downloaded).__name__}")
+        report = downloaded
+    except Exception as exc:  # noqa: BLE001 - the rejection artifact is mandatory
+        reasons.append(f"evaluator report unavailable or malformed: {exc}"[:300])
+    try:
+        score = float(report.get("score", 0.0))
+    except (TypeError, ValueError):
+        score = 0.0
+        reasons.append("evaluator score is not numeric")
+    evaluator_status = str(report.get("status", "missing"))
+    hard_checks_passed = report.get("passed") is True
+    if evaluator_status != "completed":
+        reasons.append(f"evaluator status is {evaluator_status}")
+    if score < numeric_threshold:
+        reasons.append("aggregate score is below threshold")
+    if not hard_checks_passed:
+        reasons.append("one or more required checks did not pass")
+    accepted = not reasons
+    decision = "promote_checkpoint" if accepted else "loop_back"
+    payload = {
+        "schema": "npa.data_factory.quality_disposition.v1",
+        "quality_status": "accepted" if accepted else "rejected",
+        "evaluator_status": evaluator_status,
+        "score": score,
+        "threshold": numeric_threshold,
+        "hard_checks_passed": hard_checks_passed,
+        "evaluator_report_uri": report_uri,
+        "reasons": reasons,
+        "decision": decision,
+    }
+    payload["written_uri"] = _upload_json(payload, disposition_uri)
+    write_decision(decision_uri, decision)
+    print(json.dumps(payload))
+    return payload
+
+
 def curate(
     augment_uri: str,
     report_uri: str,

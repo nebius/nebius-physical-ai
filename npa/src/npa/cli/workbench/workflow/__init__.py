@@ -1420,12 +1420,22 @@ def submit_cmd(
             # Runtime renders one wave at a time and historically returned before
             # the one-shot path refreshed Kubernetes pull credentials.  Validate
             # the complete selected plan once solely to install the exact private-
-            # registry secret before any managed job can enter ErrImagePull.
+            # registry secret before any managed job can enter ErrImagePull.  A
+            # dynamic runtime must still read its real gate artifact, so a branch
+            # assumption used only for this throwaway render must not leak into the
+            # runtime driver.  Prefer an operator/spec assumption when present and
+            # otherwise render the promotion branch, which includes the downstream
+            # states whose images need registry authentication.
             try:
+                registry_auth_assume = (
+                    assume_decision
+                    or str(spec_config.get("plan_assume_decision") or "").strip()
+                    or "promote_checkpoint"
+                )
                 registry_auth_plan = prepare_npa_workflow_for_submit(
                     yaml_path,
                     run_id=resolved_run_id,
-                    assume_decision=assume_decision,
+                    assume_decision=registry_auth_assume,
                     config_overrides=substitutions,
                     render_options=npa_render_options,
                 )
@@ -2513,10 +2523,21 @@ def _preflight_submit_images(
     try:
         resolved_spec = spec or load_spec(yaml_path)
         run_id = f"{resolved_spec.name}-preflight"
-        plan = build_plan(resolved_spec, run_id=run_id, assume_decision=assume_decision)
-        images = plan_images(resolved_spec, plan.steps, run_id=run_id, options=options)
+        decisions = [assume_decision] if assume_decision.strip() else []
+        decisions.extend(
+            transition.when
+            for state in resolved_spec.states.values()
+            for transition in state.transitions
+        )
+        steps = []
+        for decision in dict.fromkeys(decisions):
+            plan = build_plan(
+                resolved_spec, run_id=run_id, assume_decision=decision
+            )
+            steps.extend(plan.steps)
+        images = plan_images(resolved_spec, steps, run_id=run_id, options=options)
         pull_secrets_by_image = plan_image_pull_secrets(
-            resolved_spec, plan.steps, run_id=run_id, options=options
+            resolved_spec, steps, run_id=run_id, options=options
         )
     except NpaWorkflowError:
         # Planning problems are reported by the submit path itself with better context.

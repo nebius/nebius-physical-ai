@@ -2947,6 +2947,7 @@ def _save_terraform_cluster_state(
         last_seen_state=last_seen_state,
         endpoint=str(endpoints.get("public_endpoint") or ""),
         kubeconfig_path=str(kubeconfig_path),
+        provider_name=str(cluster.get("name") or ""),
     )
     save_cluster_state(
         state,

@@ -27,6 +27,8 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     # Generation runs in the Cosmos 3 framework image; the reason stage runs in the
     # (differently built) Cosmos-Reason VLM image. Exact match wins over the prefix.
     "workbench.cosmos3.generate": "cosmos3",
+    "workbench.cosmos3.generate_variants": "cosmos3",
+    "workbench.cosmos3.prepare_video_input": "cosmos3",
     "workbench.cosmos3.checkpoint_eval": "cosmos3",
     "workbench.cosmos3": "cosmos3-reason",
     "workbench.cosmos_curate": "cosmos-curate",
@@ -1456,9 +1458,18 @@ def render_setup_for_tool(
             # fails there and only adds a confusing "error:
             # externally-managed-environment" to the logs before the fallback wins.
             "npa_nurec_pip() {\n"
-            '  "$npa_nurec_py" -m pip install -q "$@" --break-system-packages \\\n'
-            '    || "$npa_nurec_py" -m pip install -q "$@" \\\n'
-            '    || "$npa_nurec_py" -m pip install -q "$@" --user\n'
+            '  if "$npa_nurec_py" -m pip --version >/dev/null 2>&1; then\n'
+            '    "$npa_nurec_py" -m pip install -q "$@" --break-system-packages \\\n'
+            '      || "$npa_nurec_py" -m pip install -q "$@" \\\n'
+            '      || "$npa_nurec_py" -m pip install -q "$@" --user\n'
+            "  elif command -v uv >/dev/null 2>&1; then\n"
+            '    uv pip install -q --python "$npa_nurec_py" "$@"\n'
+            "  elif command -v uvx >/dev/null 2>&1; then\n"
+            '    uvx --from uv uv pip install -q --python "$npa_nurec_py" "$@"\n'
+            "  else\n"
+            '    echo "NuRec dependencies require pip, uv, or uvx: $npa_nurec_py" >&2\n'
+            "    return 1\n"
+            "  fi\n"
             "}\n"
             f"npa_nurec_pip 'huggingface_hub>=0.30' 'nvidia-ncore' '{NUREC_RERUN_PIN}' 'pillow>=10.0'\n"
             '"$npa_nurec_py" -c \'import ncore, rerun; print("nurec runtime deps ready")\'\n'

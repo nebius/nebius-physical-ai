@@ -152,6 +152,179 @@ def test_rendered_backend_compiles(monkeypatch) -> None:
     assert 'DEPLOYMENT = {"bootstrap_timestamp":' in body
     assert '@app.get("/deployment")' in body
     assert '"deployment": dict(DEPLOYMENT)' in body
+    assert "register_gpu_allocation_routes(" in body
+    assert "POST /api/agent/gpu-allocation/attempt" in body
+    assert "POST /api/agent/gpu-allocation/consent" in body
+
+
+def test_rendered_gpu_fallback_route_is_zero_token_and_confirmation_bound(
+    monkeypatch, tmp_path
+) -> None:
+    import sys
+
+    module_name = "npa_rendered_gpu_fallback_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    module.STATE_PATH = tmp_path / "gpu-fallback-state.json"
+    module._STATE_STORE = None
+    request = {
+        "gpu_family": "rtx-pro",
+        "gpu_product": "RTXPRO6000",
+        "gpu_count": 1,
+        "image": "registry.example/npa@sha256:synthetic",
+        "image_digest": "sha256:synthetic",
+        "sm": "sm_120",
+        "rt_cores_required": True,
+        "backend": "kubernetes",
+        "model": "policy-a",
+        "workload_tier": "render",
+        "execution_mode": "train",
+        "boot_disk_count": 1,
+        "boot_disk_size_bytes": 1023 * 1024**3,
+        "pool": "on-demand",
+    }
+    candidate = {**request, "pool": "preemptible"}
+    try:
+        attempt = next(
+            route.endpoint
+            for route in module.app.router.routes
+            if getattr(route, "path", "") == "/agent/gpu-allocation/attempt"
+        )
+        consent = next(
+            route.endpoint
+            for route in module.app.router.routes
+            if getattr(route, "path", "") == "/agent/gpu-allocation/consent"
+        )
+        health = next(
+            route.endpoint
+            for route in module.app.router.routes
+            if getattr(route, "path", "") == "/health"
+        )
+        capability = health()["capabilities"]["gpu_allocation_fallback"]
+        assert capability["status"] == "available"
+        assert capability["grounded"] is True
+        assert capability["routes"] == [
+            "POST /api/agent/gpu-allocation/attempt",
+            "POST /api/agent/gpu-allocation/consent",
+        ]
+        response = attempt(
+            {
+                "logical_allocation": "private-logical-name",
+                "request": request,
+                "failure": {"code": "quota_exhausted", "message": "raw private response"},
+                "evidence": {
+                    "source": "provider-preflight",
+                    "on_demand_impossible": True,
+                    "preemptible_available": True,
+                },
+                "preemptible_candidate": candidate,
+            }
+        )
+        assert response["grounded"] is True
+        assert response["usage"] == {"total_tokens": 0}
+        assert response["needs_confirmation"] is True
+        assert "private-logical-name" not in json.dumps(response)
+        accepted = consent(
+            {
+                "logical_allocation": "private-logical-name",
+                "accept": True,
+                "confirm_token": response["confirm_token"],
+            }
+        )
+        assert accepted["allocation"]["selected_pool"] == "preemptible"
+        assert module._peek_agent_confirm_token() == ("", "", None)
+        later = attempt(
+            {
+                "logical_allocation": "private-logical-name",
+                "request": request,
+                "failure": {"code": "capacity_exhausted"},
+                "evidence": {
+                    "source": "provider-preflight",
+                    "on_demand_impossible": True,
+                    "preemptible_available": True,
+                    "fingerprint": "new-evidence",
+                },
+                "preemptible_candidate": candidate,
+            }
+        )
+        assert later["decision"] == {
+            "prompt": False,
+            "reason": "preemptible_already_selected",
+        }
+        assert "confirm_token" not in later
+        with pytest.raises(module.HTTPException, match="awaiting consent"):
+            consent(
+                {
+                    "logical_allocation": "private-logical-name",
+                    "accept": True,
+                    "confirm_token": response["confirm_token"],
+                }
+            )
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_gpu_decline_preserves_unrelated_pending_confirmation(monkeypatch, tmp_path) -> None:
+    import sys
+
+    module_name = "npa_rendered_gpu_decline_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    module.STATE_PATH = tmp_path / "gpu-decline-state.json"
+    module._STATE_STORE = None
+    request = {
+        "gpu_family": "rtx-pro",
+        "gpu_product": "RTXPRO6000",
+        "gpu_count": 1,
+        "image": "registry.example/npa@sha256:synthetic",
+        "image_digest": "sha256:synthetic",
+        "sm": "sm_120",
+        "rt_cores_required": True,
+        "backend": "kubernetes",
+        "model": "policy-a",
+        "workload_tier": "render",
+        "execution_mode": "train",
+        "boot_disk_count": 1,
+        "boot_disk_size_bytes": 1023 * 1024**3,
+        "pool": "on-demand",
+    }
+    candidate = {**request, "pool": "preemptible"}
+    try:
+        attempt = next(
+            route.endpoint
+            for route in module.app.router.routes
+            if getattr(route, "path", "") == "/agent/gpu-allocation/attempt"
+        )
+        consent = next(
+            route.endpoint
+            for route in module.app.router.routes
+            if getattr(route, "path", "") == "/agent/gpu-allocation/consent"
+        )
+        prompt = attempt(
+            {
+                "logical_allocation": "declined-allocation",
+                "request": request,
+                "failure": {"code": "quota_exhausted"},
+                "evidence": {
+                    "source": "provider-preflight",
+                    "on_demand_impossible": True,
+                    "preemptible_available": True,
+                },
+                "preemptible_candidate": candidate,
+            }
+        )
+        assert prompt["needs_confirmation"] is True
+        unrelated = {"action": "provision_infra", "project": "synthetic"}
+        unrelated_digest = module.action_digest(unrelated)
+        unrelated_token = module._issue_agent_confirm_token(unrelated, unrelated_digest)
+
+        declined = consent({"logical_allocation": "declined-allocation", "accept": False})
+        assert declined["allocation"]["selected_pool"] == "on-demand"
+        assert module._consume_agent_confirm_token() == (
+            unrelated_token,
+            unrelated_digest,
+            unrelated,
+        )
+    finally:
+        sys.modules.pop(module_name, None)
 
 
 def test_session_owned_status_skips_cross_bucket_artifact_discovery(
@@ -694,6 +867,8 @@ def _import_rendered_backend(monkeypatch, tmp_path, *, module_name: str):
         "canonical_mcap",
         "foxglove_cloud",
         "foxglove_routes",
+        "gpu_allocation_fallback",
+        "gpu_allocation_routes",
         "artifact_routes",
     ):
         (package / f"{name}.py").write_text(
@@ -718,6 +893,8 @@ def _import_rendered_backend(monkeypatch, tmp_path, *, module_name: str):
         ("sim2real_loop", "def drive_sim2real_loop"),
         ("retrieval", "def build_lance_store"),
         ("trace", "def analyze_traces"),
+        ("gpu_allocation_fallback", "def record_attempt"),
+        ("gpu_allocation_routes", "def register_gpu_allocation_routes"),
         ("artifact_routes", "def register_artifact_routes"),
         ("canonical_mcap", "def prepare_canonical_mcap"),
         ("foxglove_cloud", "class FoxgloveCloudClient"),
