@@ -230,6 +230,21 @@
       "notes": "The image itself is CPU-only and carries zero Lightricks bytes, so nothing about datacenter Blackwell has been measured. Built and byte-scanned: payload scan clean over 16 archives at the digest recorded in docs/workbench/ltx2.md. What is missing is a GPU run - one attempt reached real weight downloads and died on node ephemeral storage - so the verdict stays unknown until that produces a result."
     },
     {
+      "name": "npa-alpamayo2-super",
+      "dockerfile": "alpamayo2-super/Dockerfile",
+      "build_script": "alpamayo2-super/build.sh",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "redistribution": "public",
+      "torch": "upstream-locked 2.8.0+cu128; not measured until the image is built",
+      "torch_cuda_arch_list": "9.0 10.0 12.0",
+      "source_compiled_extensions": [
+        "flash-attn 2.8.x"
+      ],
+      "smoke": "Pinned upstream Alpamayo2-Super inference_smoke loads the real 34B VLM plus diffusion expert, reads a gated PhysicalAI-AV sample, predicts an ego trajectory, and writes non-empty JSON and calibrated-camera PNG artifacts.",
+      "notes": "The public image contains pinned Apache-2.0 source/runtime only. OpenMDW model weights and non-transferable PhysicalAI-AV bytes are fetched into the operator-owned runtime cache. B200 sm_100 and RTX PRO 6000 sm_120 each require an independent real inference result; no architecture result is inferred from the other."
+    },
+    {
       "name": "npa-cosmos3-reason",
       "dockerfile": "cosmos3-reason/Dockerfile",
       "verdict": "ready",

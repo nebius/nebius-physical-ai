@@ -1,0 +1,49 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: alpamayo2-super-inference
+  description: >-
+    Run NVIDIA Alpamayo 2 Super's real 34B VLA expert inference on one
+    PhysicalAI-AV validation sample and publish trajectory JSON, a calibrated
+    camera visualization, and immutable provenance. The public image contains
+    no model weights or dataset bytes; both are fetched at runtime under the
+    operator's own Hugging Face identity and dataset acceptance.
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/alpamayo2-super"
+  output_uri: "s3://{{config.bucket}}/{{config.prefix}}/inference/"
+  model_id: nvidia/Alpamayo2-Super
+  model_revision: 00554695e729a6ff0b6281fd2c81b18d06e33dbe
+  dataset_revision: b719eea7f0a63619ef51ec7f54178af0937ef050
+  sample_index: "0"
+  diffusion_steps: "10"
+  seed: "42"
+  figure_style: blog
+
+resources:
+  gpu:
+    cloud: kubernetes
+    # Headless inference needs no RT cores. B200's 180+ GiB leaves margin above
+    # NVIDIA's measured 72,115 MiB H100 peak; RTX PRO 6000 is qualified
+    # separately because sm_120 is not implied by a B200 result.
+    accelerators: B200:1
+    cpus: 16
+    memory: 128Gi
+
+initial: infer
+
+states:
+  infer:
+    description: Run the upstream VLM plus diffusion expert and publish useful artifacts.
+    toolRef: workbench.alpamayo2_super.infer
+    resources: gpu
+    outputs:
+      - uri: "{{config.output_uri}}result.json"
+        schema: npa.workbench.alpamayo2_super.inference.v1
+      - uri: "{{config.output_uri}}trajectory.json"
+        schema: npa.alpamayo2_super.trajectory.v1
+      - uri: "{{config.output_uri}}trajectory.png"
+        schema: npa.image.png.v1
+    terminal: true

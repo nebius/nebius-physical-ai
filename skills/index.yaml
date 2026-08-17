@@ -515,6 +515,19 @@ skills:
         paths:
           - npa/workflows/workbench/npa-workflows/byof-wan2.2.yaml
           - npa/workflows/workbench/npa-workflows/byof-wan2.2-multigpu.yaml
+  - name: alpamayo2-super
+    category: tools
+    when_to_use: "Package, preflight, run, validate, or troubleshoot NVIDIA Alpamayo 2 Super 34B VLA inference, its runtime-fetch image, separately gated PhysicalAI-AV data, and B200/RTX PRO 6000 workflow evidence."
+    path: skills/tools/alpamayo2-super/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "alpamayo2-super", "infer", "--help"]
+        contains: "output-path"
+      - type: npa_workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/alpamayo2-super-inference.yaml
+      - type: file_exists
+        path: npa/docker/workbench/alpamayo2-super/REDISTRIBUTION.md
   - name: retargeting
     category: tools
     when_to_use: "Motion retargeting, SONIC retargeted motion artifacts, SkyPilot retargeting YAMLs, or CLI behavior."

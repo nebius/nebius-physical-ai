@@ -36,11 +36,13 @@ def _public_asset():
 
 
 def test_catalog_matches_current_nvidia_hf_gating() -> None:
-    assert HF_GATING_LAST_VERIFIED == "2026-08-14"
+    assert HF_GATING_LAST_VERIFIED == "2026-08-17"
     repos = {a.repo for a in WORKBENCH_ASSETS}
     assert "nvidia/GR00T-N1.7-3B" in repos
+    assert "nvidia/Alpamayo2-Super" in repos
     assert "nvidia/Cosmos-Reason2-8B" in repos
     gated = {a.repo for a in WORKBENCH_ASSETS if a.gated}
+    assert "nvidia/PhysicalAI-Autonomous-Vehicles" in gated
     assert "nvidia/GR00T-N1.7-3B" not in gated
     assert "nvidia/Cosmos-Reason1-7B" not in gated
     assert "nvidia/Cosmos3-Nano" not in gated

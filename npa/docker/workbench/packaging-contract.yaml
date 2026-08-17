@@ -185,6 +185,18 @@ images:
       certifies. Byte/layer scanning
       with scripts/scan_image_ltx_payload.py is mandatory before publication.
       NOT YET BUILT OR GPU-VALIDATED; see ltx2/REDISTRIBUTION.md.
+  alpamayo2-super:
+    dockerfile: alpamayo2-super/Dockerfile
+    tier: service
+    ports: [8080]
+    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; the final runtime user is non-root, no sshd service is enabled by default, and no credentials are baked into the image."
+    redistribution: public
+    notes: >-
+      Bakes immutable Apache-2.0 Alpamayo 2 source and its CUDA/PyTorch
+      inference runtime. The OpenMDW-1.1 checkpoint, separately restricted
+      PhysicalAI-AV dataset, operator credentials, and populated caches are
+      absent and fetched only at runtime. Built-image byte/layer scanning and
+      real B200 plus RTX PRO 6000 inference are publication gates.
   sonic:
     dockerfile: sonic/Dockerfile
     isaac_runtime_fetch: true

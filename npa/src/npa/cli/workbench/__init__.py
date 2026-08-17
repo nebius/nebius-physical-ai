@@ -15,6 +15,7 @@ from npa.cli.workbench.foxglove import app as foxglove_app
 from npa.cli.workbench.lichtblick import app as lichtblick_app
 from npa.cli.workbench.lerobot import app as lerobot_app
 from npa.cli.workbench.ltx2 import app as ltx2_app
+from npa.cli.workbench.alpamayo2_super import app as alpamayo2_super_app
 from npa.cli.workbench.mjlab import app as mjlab_app
 from npa.cli.cosmos import app as cosmos_app
 from npa.cli.fiftyone import app as fiftyone_app
@@ -68,6 +69,7 @@ app.add_typer(sonic_app, name="sonic")
 app.add_typer(mjlab_app, name="mjlab")
 app.add_typer(lichtblick_app, name="lichtblick")
 app.add_typer(ltx2_app, name="ltx2")
+app.add_typer(alpamayo2_super_app, name="alpamayo2-super")
 app.add_typer(lancedb_app, name="lancedb")
 app.add_typer(detection_training_app, name="detection-training")
 app.add_typer(scenario_gen_app, name="scenario-gen")

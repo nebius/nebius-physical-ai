@@ -96,6 +96,38 @@ _OPENPI_VENDOR_PIPELINE = [
 ]
 
 TOOL_CATALOG: dict[str, ToolEntry] = {
+    "workbench.alpamayo2_super.infer": ToolEntry(
+        name="workbench.alpamayo2_super.infer",
+        description=(
+            "Run NVIDIA Alpamayo 2 Super's genuine VLM + diffusion-expert "
+            "trajectory inference. Model weights and gated PhysicalAI-AV data "
+            "are fetched at runtime under the operator's Hugging Face identity."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "alpamayo2-super",
+            "infer",
+            "--output-path",
+            "{{config.output_uri}}",
+            "--model-id",
+            "{{config.model_id}}",
+            "--model-revision",
+            "{{config.model_revision}}",
+            "--dataset-revision",
+            "{{config.dataset_revision}}",
+            "--sample-index",
+            "{{config.sample_index}}",
+            "--diffusion-steps",
+            "{{config.diffusion_steps}}",
+            "--seed",
+            "{{config.seed}}",
+            "--figure-style",
+            "{{config.figure_style}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
     "infra.fleet.deploy": ToolEntry(
         name="infra.fleet.deploy",
         description=(

@@ -24,7 +24,7 @@ from npa.workflows.sim2real_health import FAIL, PASS, WARN, CheckResult, has_fai
 
 HF = "huggingface"
 NGC = "ngc"
-HF_GATING_LAST_VERIFIED = "2026-08-14"
+HF_GATING_LAST_VERIFIED = "2026-08-17"
 
 
 @dataclass(frozen=True)
@@ -59,6 +59,18 @@ class GatedAsset:
 # updated. `gated=True` marks repos that require accepting the license on Hugging
 # Face before the token can download them.
 WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
+    GatedAsset("nvidia/Alpamayo2-Super", HF, ("alpamayo2-super",), False),
+    GatedAsset(
+        "nvidia/PhysicalAI-Autonomous-Vehicles",
+        HF,
+        ("alpamayo2-super",),
+        True,
+        note=(
+            "Accept the NVIDIA Autonomous Vehicle Dataset License Agreement "
+            "interactively; dataset bytes are non-transferable and runtime-only."
+        ),
+        repo_type="dataset",
+    ),
     GatedAsset("nvidia/GR00T-N1.7-3B", HF, ("groot",), False),
     GatedAsset("nvidia/GEAR-SONIC", HF, ("sonic",), False),
     GatedAsset("nvidia/Cosmos-Transfer2.5-2B", HF, ("paidf", "sim2real"), True),
