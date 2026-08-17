@@ -196,6 +196,11 @@ jobs:
           else
             package_api="/users/${owner}/packages/container/${encoded}"
           fi
+          package_error="$(mktemp)"
+          if ! gh api "$package_api" >/dev/null 2>"$package_error"; then
+            grep -q 'HTTP 404' "$package_error"
+            gh api --method POST "${package_api}/restore"
+          fi
           versions_file="$(mktemp)"
           gh api "${package_api}/versions?per_page=100" > "$versions_file"
           test "$(jq 'length' "$versions_file")" = 1
@@ -205,14 +210,15 @@ jobs:
             '.[] | select(.name == $digest and ((.metadata.container.tags // []) | index($tag))) | .id' \
             "$versions_file")"
           test "$(printf '%s\n' "$version_ids" | sed '/^$/d' | wc -l)" = 1
-          gh api --method DELETE "$package_api"
-          if crane manifest "$RETIRED_REF" >/dev/null 2>&1; then
-            echo "::error::Exact retired candidate tag still resolves after deletion."
-            exit 1
-          fi
+          gh api --method PATCH "$package_api" -f visibility=private >/dev/null
           anonymous_config="$(mktemp -d)"
           if DOCKER_CONFIG="$anonymous_config" docker buildx imagetools inspect "$RETIRED_REF" >/dev/null 2>&1; then
-            echo "::error::Retired candidate remains anonymously pullable."
+            echo "::error::Retired candidate remains anonymously pullable after privacy update."
+            exit 1
+          fi
+          gh api --method DELETE "$package_api"
+          if DOCKER_CONFIG="$anonymous_config" docker buildx imagetools inspect "$RETIRED_REF" >/dev/null 2>&1; then
+            echo "::error::Retired candidate became anonymously pullable after deletion."
             exit 1
           fi
           echo "Removed the exact failed-privacy candidate tag." >> "$GITHUB_STEP_SUMMARY"
