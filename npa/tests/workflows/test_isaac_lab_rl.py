@@ -148,6 +148,8 @@ def test_isaac_lab_runner_renders_and_submits(monkeypatch, tmp_path, capsys) -> 
             str(sky_bin),
             "--poll-interval",
             "0",
+            "--wait-timeout",
+            "-1",
         ]
     )
 

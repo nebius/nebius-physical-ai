@@ -836,13 +836,12 @@ def test_resolve_ssh_config_guard_allows_matching_tool(isolated_config: Path) ->
     assert resolved.workbench_type == "groot"
 
 
-def test_resolve_container_registry_prefers_project_override(
+def test_resolve_container_registry_prefers_environment_override(
     isolated_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _write_full_config(isolated_config)
     monkeypatch.setenv("NPA_REGISTRY", "registry-env.example/npa")
-    # proj-a has an explicit container_registry, which wins over env.
-    assert config.resolve_container_registry("proj-a") == "registry.example/npa"
+    assert config.resolve_container_registry("proj-a") == "registry-env.example/npa"
 
 
 def test_write_config_locks_down_file_and_directory(tmp_path, monkeypatch) -> None:
