@@ -5,8 +5,8 @@ description: Use before pushing an npa change to pick which gates apply and run 
 
 # Pre-PR Validation
 
-Six workflows gate every pull request: `Lint / ruff`, `Lint / docs-drift`,
-`Test / test (3.12)`, `harness guardrails`, `gitleaks`, and
+Six checks across five workflows gate every pull request: `Lint / ruff`,
+`Lint / docs-drift`, `Test / test (3.12)`, `harness guardrails`, `gitleaks`, and
 `confidentiality scan`. A seventh, `image-security-scan`, is path-triggered on
 Docker changes.
 
@@ -30,8 +30,8 @@ make test PYTHON=/workspace/npa/.venv/bin/python
 ## The Ladder
 
 ```bash
-# 1. Lint — seconds. CI runs the narrower `src tests`; make lint checks all of npa/.
-cd npa && ../npa/.venv/bin/python -m ruff check src tests
+# 1. Lint — seconds. This mirrors CI; `make lint` checks all of npa/ instead.
+npa/.venv/bin/python -m ruff check npa/src npa/tests
 
 # 2. Onboarding smoke — ~20s.
 make test-smoke PYTHON=/workspace/npa/.venv/bin/python
@@ -75,23 +75,47 @@ after every meaningful edit; save 5 and 6 for before you push.
 sets a 180s timeout; CI runs with coverage and enforces `--cov-fail-under=60`.
 A local pass is a strong signal, not proof of the CI result.
 
+**Some local failures are missing host tools, not broken code.** The suite shells
+out to real binaries that CI has and a bare workstation or container may not.
+Before investigating a failure, check whether it is one of these:
+
+- `Required executable not found: kubectl` in `npa/tests/test_provisioning.py`
+  means `kubectl` is not installed. Install it or accept the skip.
+- `FileNotFoundError: 'npa'` in `npa/tests/workflows/test_bdd100k_pipeline.py`
+  means the `npa` console script is not on `PATH`. Fix it by prepending the
+  venv: `PATH="$PWD/npa/.venv/bin:$PATH"`.
+
+When a failure looks unrelated to your change, confirm it against a clean base
+before spending time on it:
+
+```bash
+git worktree add /tmp/main-check origin/main
+cd /tmp/main-check && npa/.venv/bin/python -m pytest <the failing test> -q
+```
+
 **Docs drift is expensive to re-run blind.** Change all CLI options first, then
 regenerate once with `bash scripts/build_docs.sh`. Per-subcommand option changes
 do not alter the generated pages; a new top-level command adds a page and a
 README index line.
 
-**The confidentiality scan has two modes.** CI runs an operator denylist supplied
-as a repository secret, which you will not have locally. The built-in Nebius
-pattern set needs no secret and covers the deterministic leak classes.
+**The confidentiality scan has two modes, and only one is reproducible locally.**
+CI scans with an operator denylist supplied as a repository secret, which you do
+not have. The built-in Nebius pattern set needs no secret and covers the
+deterministic leak classes, so it is the local substitute — not the same check.
 
-Scope it to your diff. A `--tree` scan reads every tracked file and reports
-pre-existing hits in files you never touched, which is noise for a PR check:
+Scope it to your diff:
 
 ```bash
-# Your change only — this is the one that should be clean.
+# Your change only — this is the one that must be clean.
 npa/.venv/bin/python -m npa.guardrails.confidentiality \
   --repo-root . --diff-range origin/main..HEAD --built-in-nebius-infra
 ```
+
+Do not run the built-in patterns over `--tree` and read the result as a verdict
+on your change. That scan exits non-zero on this repository today, with dozens
+of hits in long-standing files — including `.gitleaks.toml`, which necessarily
+contains the patterns being searched for. Those are allowlisted in CI. A tree
+scan tells you nothing about whether you introduced a leak; the diff scan does.
 
 **Gitleaks needs full history.** CI checks out with `fetch-depth: 0` and scans
 the PR range. Locally: `gitleaks detect --source . --config .gitleaks.toml
