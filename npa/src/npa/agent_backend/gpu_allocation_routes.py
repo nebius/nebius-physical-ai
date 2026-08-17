@@ -16,6 +16,7 @@ class GpuAllocationDeps:
     load_state: Callable[[], dict]
     save_state: Callable[[dict], Any]
     issue_confirmation: Callable[[dict, str], str]
+    peek_confirmation: Callable[[], tuple[str, str, dict | None]]
     consume_confirmation: Callable[[], tuple[str, str, dict | None]]
     action_digest: Callable[[Any], str]
 
@@ -84,10 +85,20 @@ def register_gpu_allocation_routes(app: Any, deps: GpuAllocationDeps, http_error
         if not logical or not isinstance(body.get("accept"), bool):
             raise http_error(status_code=400, detail="logical_allocation and boolean accept are required")
         accepted = bool(body["accept"])
+        state = deps.load_state()
+        records = state.get("gpu_allocation_fallback")
+        records = records if isinstance(records, dict) else {}
+        logical_ref = fallback.logical_allocation_ref(logical)
+        current = records.get(logical_ref)
+        if not isinstance(current, dict):
+            raise http_error(status_code=409, detail="no tracked GPU allocation fallback")
+        pending_action_digest = str(current.get("pending_action_digest") or "")
+        if not pending_action_digest:
+            raise http_error(status_code=409, detail="no GPU allocation fallback is awaiting consent")
         confirmed_digest = ""
         if accepted:
             supplied = str(body.get("confirm_token") or "").strip()
-            session_token, session_digest, pending = deps.consume_confirmation()
+            session_token, session_digest, pending = deps.peek_confirmation()
             pending = pending if isinstance(pending, dict) else {}
             pending_digest = str(pending.get("digest") or "")
             unsigned = {key: value for key, value in pending.items() if key != "digest"}
@@ -96,21 +107,31 @@ def register_gpu_allocation_routes(app: Any, deps: GpuAllocationDeps, http_error
                 or supplied != session_token
                 or not session_digest
                 or session_digest != pending_digest
+                or session_digest != pending_action_digest
+                or str(pending.get("logical_allocation_ref") or "") != logical_ref
                 or deps.action_digest(unsigned) != session_digest
             ):
                 raise http_error(
                     status_code=403,
                     detail="invalid or expired confirmation for GPU pool switch",
                 )
-            confirmed_digest = session_digest
-        else:
-            deps.consume_confirmation()
-        state = deps.load_state()
-        records = state.get("gpu_allocation_fallback")
-        records = records if isinstance(records, dict) else {}
-        current = records.get(fallback.logical_allocation_ref(logical))
-        if not isinstance(current, dict):
-            raise http_error(status_code=409, detail="no tracked GPU allocation fallback")
+            consumed_token, consumed_digest, consumed_pending = deps.consume_confirmation()
+            if (
+                consumed_token != session_token
+                or consumed_digest != session_digest
+                or consumed_pending != pending
+            ):
+                raise http_error(
+                    status_code=403,
+                    detail="invalid or expired confirmation for GPU pool switch",
+                )
+            confirmed_digest = consumed_digest
+            # ``consume_confirmation`` persists the cleared single-use gate.
+            # Continue from that fresh state so saving the allocation cannot
+            # accidentally restore the consumed token from our earlier snapshot.
+            state = deps.load_state()
+            records = state.get("gpu_allocation_fallback")
+            records = records if isinstance(records, dict) else {}
         try:
             advanced = fallback.record_consent(
                 current,
@@ -119,7 +140,7 @@ def register_gpu_allocation_routes(app: Any, deps: GpuAllocationDeps, http_error
             )
         except ValueError as exc:
             raise http_error(status_code=409, detail=str(exc)) from exc
-        records[fallback.logical_allocation_ref(logical)] = advanced
+        records[logical_ref] = advanced
         state["gpu_allocation_fallback"] = records
         deps.save_state(state)
         return {

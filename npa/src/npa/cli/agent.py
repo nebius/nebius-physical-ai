@@ -3066,6 +3066,8 @@ def _agent_system_prompt() -> str:
         "- POST /api/workflows/submit — validate workflow YAML, ensure agent-side Kubernetes infra when needed, and return scheduler plan",
         "- GET /api/models — list Token Factory chat models available to this VM key",
         "- GET /api/tools — workbench toolRef catalog",
+        "- POST /api/agent/gpu-allocation/attempt — record typed GPU placement evidence and get a grounded fallback decision",
+        "- POST /api/agent/gpu-allocation/consent — accept or decline the exact tracked fallback; acceptance requires its confirmation token",
         "",
         "To view Franka immediately, tell users to open the **Rerun** tab and click **Load Franka in Rerun**",
         "(or POST /api/sim-viz/load-franka-demo). The UI has two tabs: **Chat** and **Rerun**.",
@@ -5112,6 +5114,16 @@ def _consume_agent_confirm_token():
         _save_state(state)
     return token, digest, pending
 
+def _peek_agent_confirm_token():
+    state = _load_state()
+    act_state = state.get("agent_act")
+    if not isinstance(act_state, dict):
+        return "", "", None
+    token = str(act_state.get("confirm_token") or "")
+    digest = str(act_state.get("confirm_digest") or "")
+    pending = act_state.get("pending_action")
+    return token, digest, pending if isinstance(pending, dict) else None
+
 def _issue_agent_confirm_token(action, digest):
     # Issue a fresh token bound to a specific proposed action digest.
     token = secrets.token_hex(8)
@@ -5444,6 +5456,7 @@ register_gpu_allocation_routes(
         load_state=_load_state,
         save_state=_save_state,
         issue_confirmation=_issue_agent_confirm_token,
+        peek_confirmation=_peek_agent_confirm_token,
         consume_confirmation=_consume_agent_confirm_token,
         action_digest=action_digest,
     ),
@@ -5925,6 +5938,16 @@ def health():
     return {{
         "ok": True,
         "tool_refs": len(TOOL_REFS),
+        "capabilities": {{
+            "gpu_allocation_fallback": {{
+                "status": "available",
+                "grounded": True,
+                "routes": [
+                    "POST /api/agent/gpu-allocation/attempt",
+                    "POST /api/agent/gpu-allocation/consent",
+                ],
+            }},
+        }},
         "deployment": dict(DEPLOYMENT),
         "state_sha256": state_sha256,
     }}

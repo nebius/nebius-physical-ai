@@ -42,8 +42,11 @@ def test_auth_profile_cli_reports_safe_failure_without_secret(monkeypatch) -> No
     monkeypatch.setattr(
         nebius_vm_auth,
         "run_vm_profile_auth",
-        lambda **_kwargs: (_ for _ in ()).throw(nebius_vm_auth.VmAuthError("callback unavailable")),
+        lambda **_kwargs: (_ for _ in ()).throw(
+            nebius_vm_auth.VmAuthError("authorization: Bearer exception-secret")
+        ),
     )
     result = CliRunner().invoke(app, ["auth-profile", "--ssh-host", "operator.example"])
     assert result.exit_code == 1
-    assert "Authentication failed safely: callback unavailable" in result.output
+    assert "Authentication failed safely: authorization: [REDACTED]" in result.output
+    assert "exception-secret" not in result.output

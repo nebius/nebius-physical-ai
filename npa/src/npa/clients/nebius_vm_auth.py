@@ -32,6 +32,8 @@ _OPAQUE_LINE_RE = re.compile(r"(?m)^(\s*)[A-Za-z0-9._~-]{40,}(\s*)$")
 _SAFE_BROWSER_SUFFIXES = (".nebius.com", ".nebius.cloud")
 _CALLBACK_KEYS = frozenset({"redirect_uri", "redirect_url", "callback", "callback_url", "return_url"})
 _SECRET_QUERY_KEYS = frozenset({"access_token", "id_token", "token", "refresh_token"})
+_PTY_COLUMNS = 4096
+_MAX_TRANSCRIPT_BYTES = 131072
 
 
 @dataclass(frozen=True)
@@ -133,7 +135,10 @@ def parse_auth_transcript(
 
     clean = _ANSI_RE.sub("", str(transcript or ""))
     urls = [_clean_url(match.group(0)) for match in _URL_RE.finditer(clean)]
-    browser_urls = [url for url in urls if _safe_browser_url(url)]
+    # Interactive terminal UIs commonly redraw the same instruction (often with
+    # carriage returns). Identical safe URLs are one candidate; distinct URLs
+    # remain ambiguous and fail closed below.
+    browser_urls = list(dict.fromkeys(url for url in urls if _safe_browser_url(url)))
     ports: set[int] = set()
     for url in urls:
         ports.update(_nested_callback_ports(url))
@@ -161,6 +166,56 @@ def redact_auth_output(text: str) -> str:
     value = _TOKEN_LINE_RE.sub(r"\1[REDACTED]", value)
     value = _OPAQUE_LINE_RE.sub(r"\1[REDACTED]\2", value)
     return _URL_RE.sub("<authentication-url>", value)
+
+
+def _wait_readable(stream: object, timeout: float) -> bool:
+    readable, _, _ = select.select([stream], [], [], max(0.0, timeout))
+    return bool(readable)
+
+
+def _read_chunk(stream: object) -> bytes:
+    try:
+        return os.read(stream.fileno(), 65536)  # type: ignore[attr-defined]
+    except BlockingIOError:
+        return b""
+
+
+def _signal_process_group(process: subprocess.Popen[bytes], sig: signal.Signals) -> None:
+    """Best-effort signal for both ``script`` and its interactive CLI child."""
+
+    if process.poll() is not None:
+        return
+    try:
+        os.killpg(process.pid, sig)
+    except (AttributeError, OSError):
+        try:
+            process.send_signal(sig)
+        except OSError:
+            pass
+
+
+def _stop_process(process: subprocess.Popen[bytes]) -> None:
+    """Best-effort bounded cleanup for the PTY wrapper and its child."""
+
+    if process.poll() is None:
+        _signal_process_group(process, signal.SIGINT)
+    try:
+        process.wait(timeout=2)
+        return
+    except (subprocess.TimeoutExpired, TypeError):
+        pass
+    if process.poll() is None:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (AttributeError, OSError):
+            try:
+                process.kill()
+            except OSError:
+                pass
+    try:
+        process.wait(timeout=2)
+    except (subprocess.TimeoutExpired, TypeError):
+        pass
 
 
 def verify_profile(
@@ -203,6 +258,9 @@ def run_vm_profile_auth(
     auth_timeout_seconds: int = 900,
     nebius_cli: str = "nebius",
     output: TextIO | None = None,
+    _clock: Callable[[], float] = time.monotonic,
+    _wait_for_output: Callable[[object, float], bool] = _wait_readable,
+    _read_output: Callable[[object], bytes] = _read_chunk,
 ) -> ProfileVerification:
     """Run the real no-browser CLI flow, relay safely, then verify the profile."""
 
@@ -225,41 +283,70 @@ def run_vm_profile_auth(
     ]
     if profile:
         command.append(profile)
+    auth_probe = [
+        nebius_cli,
+        *(["--profile", profile] if profile else []),
+        "--no-browser",
+        "--auth-timeout",
+        f"{int(auth_timeout_seconds)}s",
+        "--no-check-update",
+        "iam",
+        "whoami",
+    ]
     script_bin = shutil.which("script")
     if not script_bin:
         raise VmAuthError("the `script` PTY helper is required for interactive CLI authentication")
     # Nebius profile creation is an interactive terminal UI. ``script`` provides
-    # a PTY while writing its transcript only to /dev/null; NPA sanitizes the
-    # relayed stream and retains no authentication transcript.
-    command = [script_bin, "-qefc", shlex.join(command), "/dev/null"]
+    # a PTY while writing its transcript only to /dev/null. Set a deliberately
+    # wide PTY before exec so long OAuth URLs (including late redirect_uri query
+    # parameters) are not terminal-wrapped at common 80/100/120-column widths.
+    # Current CLI releases create the profile before OAuth and start federation
+    # on the first authenticated call. Keep both operations in the same PTY so
+    # releases that authenticate during create and releases that authenticate on
+    # first use both expose the safe callback to the same parser/deadline.
+    pty_command = (
+        f"stty cols {_PTY_COLUMNS} rows 24; "
+        f"{shlex.join(command)} && exec {shlex.join(auth_probe)}"
+    )
+    command = [script_bin, "-qefc", pty_command, "/dev/null"]
     env = strip_ambient_token_env(os.environ)
     process = subprocess.Popen(
         command,
         stdin=None,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
+        text=False,
+        bufsize=0,
         env=env,
+        start_new_session=True,
     )
     assert process.stdout is not None
-    transcript = ""
-    instructions: AuthInstructions | None = None
-    deadline = time.monotonic() + int(auth_timeout_seconds)
     try:
-        while process.poll() is None:
-            if time.monotonic() >= deadline:
-                process.send_signal(signal.SIGINT)
+        os.set_blocking(process.stdout.fileno(), False)
+    except (AttributeError, OSError):
+        pass
+    transcript_bytes = bytearray()
+    instructions: AuthInstructions | None = None
+    deadline = _clock() + int(auth_timeout_seconds)
+    try:
+        while True:
+            now = _clock()
+            if process.poll() is None and now >= deadline:
+                _signal_process_group(process, signal.SIGINT)
                 raise VmAuthError("Nebius CLI authentication timed out and was cancelled")
-            readable, _, _ = select.select([process.stdout], [], [], 0.2)
+            readable = _wait_for_output(process.stdout, min(0.2, max(0.0, deadline - now)))
             if not readable:
+                if process.poll() is not None:
+                    break
                 continue
-            chunk = process.stdout.readline()
+            chunk = _read_output(process.stdout)
             if not chunk:
+                if process.poll() is not None:
+                    break
                 continue
-            transcript = (transcript + chunk)[-131072:]
-            output.write(redact_auth_output(chunk))
-            output.flush()
+            transcript_bytes.extend(chunk)
+            del transcript_bytes[:-_MAX_TRANSCRIPT_BYTES]
+            transcript = transcript_bytes.decode("utf-8", errors="replace")
             if instructions is None:
                 try:
                     instructions = parse_auth_transcript(
@@ -274,17 +361,11 @@ def run_vm_profile_auth(
                     output.write(f"Open locally: {instructions.browser_url}\n")
                     output.write(f"In another local terminal: {instructions.ssh_command}\n")
                     output.flush()
-        remainder = process.stdout.read() or ""
-        transcript = (transcript + remainder)[-131072:]
-        if remainder:
-            output.write(redact_auth_output(remainder))
     except KeyboardInterrupt as exc:
-        process.send_signal(signal.SIGINT)
+        _signal_process_group(process, signal.SIGINT)
         raise VmAuthError("Nebius CLI authentication was cancelled") from exc
     finally:
-        if process.poll() is None:
-            process.kill()
-        process.wait()
+        _stop_process(process)
 
     if process.returncode != 0:
         raise VmAuthError("Nebius CLI profile creation did not complete")

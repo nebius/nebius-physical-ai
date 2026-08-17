@@ -14,7 +14,9 @@ npa/.venv/bin/npa agent auth-profile \
 ```
 
 The command strips ambient IAM-token variables, returns immediately for an
-already-authenticated profile, or starts `nebius --no-browser` in a PTY. When the
+already-authenticated profile, or starts `nebius --no-browser` profile creation
+and its first profile-scoped IAM probe in one PTY (CLI versions may defer OAuth
+until first use). When the
 CLI advertises exactly one official HTTPS browser URL and one loopback callback,
 it prints the URL and an exact local-machine `ssh -N -L` command using the
 runtime-selected port. Run the tunnel locally before opening the URL. Unsafe,

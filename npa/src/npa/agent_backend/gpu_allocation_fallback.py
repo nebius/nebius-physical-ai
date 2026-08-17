@@ -198,6 +198,15 @@ def record_attempt(
     public_evidence = _public_evidence(evidence)
     evidence_digest = _digest(public_evidence)
 
+    if current.get("selected_pool") == PREEMPTIBLE and current.get("consent") == "accepted":
+        _provenance(
+            current,
+            classification="already_selected",
+            evidence_digest=evidence_digest,
+            outcome="ignored",
+        )
+        return current, {"prompt": False, "reason": "preemptible_already_selected"}
+
     if str(request.get("pool") or ON_DEMAND) != ON_DEMAND:
         _provenance(current, classification="not_on_demand", evidence_digest=evidence_digest, outcome="ignored")
         return current, {"prompt": False, "reason": "not_on_demand"}

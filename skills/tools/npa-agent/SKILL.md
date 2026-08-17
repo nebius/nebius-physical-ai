@@ -200,8 +200,26 @@ All paths are under `/api/` (nginx proxies to FastAPI backend on `:8787`).
 ### `GET /api/health`
 
 ```json
-{"ok": true, "tool_refs": 19}
+{
+  "ok": true,
+  "tool_refs": 19,
+  "capabilities": {
+    "gpu_allocation_fallback": {
+      "status": "available",
+      "grounded": true,
+      "routes": [
+        "POST /api/agent/gpu-allocation/attempt",
+        "POST /api/agent/gpu-allocation/consent"
+      ]
+    }
+  }
+}
 ```
+
+The GPU allocation routes are embedded-backend capabilities, not workbench
+`toolRef`s. `attempt` accepts typed placement evidence and returns a zero-token
+decision; `consent` declines without consuming another action's confirmation or
+accepts only the exact single-use, action-digest-bound confirmation token.
 
 ### `GET /api/session`
 

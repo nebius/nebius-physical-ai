@@ -174,6 +174,43 @@ def test_consent_yes_requires_bound_digest_and_only_changes_pool() -> None:
         record_consent(accepted, accepted=True, confirmed_action_digest="anything")
 
 
+def test_accepted_preemptible_pool_suppresses_later_on_demand_evidence() -> None:
+    state, decision = record_attempt(
+        None,
+        logical_allocation="run-a",
+        request=_request(),
+        failure_code="quota_exhausted",
+        evidence={
+            "source": "provider-preflight",
+            "on_demand_impossible": True,
+            "preemptible_available": True,
+            "fingerprint": "first",
+        },
+        candidate=_candidate(),
+    )
+    accepted = record_consent(
+        state,
+        accepted=True,
+        confirmed_action_digest=decision["proposed_action"]["digest"],
+    )
+    later, later_decision = record_attempt(
+        accepted,
+        logical_allocation="run-a",
+        request=_request(),
+        failure_code="capacity_exhausted",
+        evidence={
+            "source": "provider-preflight",
+            "on_demand_impossible": True,
+            "preemptible_available": True,
+            "fingerprint": "materially-new-evidence",
+        },
+        candidate=_candidate(),
+    )
+    assert later_decision == {"prompt": False, "reason": "preemptible_already_selected"}
+    assert later["selected_pool"] == PREEMPTIBLE
+    assert later["consent"] == "accepted"
+
+
 def test_decline_preserves_on_demand_and_new_evidence_reprompts() -> None:
     state, _ = record_attempt(
         None,
