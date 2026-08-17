@@ -334,7 +334,7 @@ skills:
         contains: "ttl-hours"
   - name: burst
     category: tools
-    when_to_use: "Run one gang-scheduled multi-node GPU job through SkyPilot without authoring a workflow: `npa burst submit` wires torchrun rendezvous across nodes, `submit-yaml` submits a single-task YAML with `${VAR}` substitution and Nebius registry login."
+    when_to_use: "Run one gang-scheduled multi-node GPU job through SkyPilot without authoring a workflow: `npa burst submit` wires torchrun rendezvous across nodes, while `submit-yaml` supports one task, `${VAR}` substitution, and optional generic registry credentials."
     path: skills/tools/burst/SKILL.md
     smoke:
       - type: cli_help
