@@ -198,13 +198,14 @@ jobs:
           fi
           versions_file="$(mktemp)"
           gh api "${package_api}/versions?per_page=100" > "$versions_file"
+          test "$(jq 'length' "$versions_file")" = 1
           version_ids="$(jq -r \
             --arg digest "$EXPECTED_DIGEST" \
             --arg tag "$retired_tag" \
             '.[] | select(.name == $digest and ((.metadata.container.tags // []) | index($tag))) | .id' \
             "$versions_file")"
           test "$(printf '%s\n' "$version_ids" | sed '/^$/d' | wc -l)" = 1
-          gh api --method DELETE "${package_api}/versions/${version_ids}"
+          gh api --method DELETE "$package_api"
           if crane manifest "$RETIRED_REF" >/dev/null 2>&1; then
             echo "::error::Exact retired candidate tag still resolves after deletion."
             exit 1
