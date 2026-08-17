@@ -32,6 +32,119 @@ class PaidfCosmos3Error(RuntimeError):
     """A PAIDF Cosmos 3 contract could not be satisfied."""
 
 
+def validate_committed_augment_manifest(
+    document: Any, output_uri: str = ""
+) -> list[dict[str, Any]]:
+    """Validate the canonical, source-conditioned Cosmos 3 publication.
+
+    Consumers must follow this manifest rather than infer outputs by listing the
+    augment prefix.  Keep the checks fail closed: the document must prove real
+    video2video execution with guardrails, source lineage, non-empty artifacts,
+    distinct seeds, and videos confined to their declared variant directories.
+    """
+
+    if not isinstance(document, dict):
+        raise PaidfCosmos3Error("canonical Cosmos 3 augment manifest is not an object")
+    required = {
+        "schema": MANIFEST_SCHEMA,
+        "engine": ENGINE,
+        "status": "executed",
+        "mode": VIDEO_MODE,
+        "input_conditioned": True,
+        "input_conditioning": "source-video",
+        "conditioned_input": "source.mp4",
+        "guardrails": True,
+        "weights_baked": False,
+    }
+    invalid = [key for key, expected in required.items() if document.get(key) != expected]
+    lineage = document.get("lineage")
+    if not isinstance(lineage, dict) or not str(
+        lineage.get("input_provenance_uri") or ""
+    ).strip():
+        invalid.append("lineage.input_provenance_uri")
+    if not str(document.get("model") or "").strip():
+        invalid.append("model")
+    if invalid:
+        raise PaidfCosmos3Error(
+            "canonical Cosmos 3 augment manifest has invalid fields: "
+            + ", ".join(invalid)
+        )
+
+    variants = document.get("variants")
+    try:
+        variant_count = int(document.get("variant_count", -1))
+        total_bytes = int(document.get("video_bytes", 0))
+        total_frames = int(document.get("frame_count", 0))
+    except (TypeError, ValueError) as exc:
+        raise PaidfCosmos3Error(
+            "canonical Cosmos 3 augment manifest has invalid aggregate counts"
+        ) from exc
+    if (
+        not isinstance(variants, list)
+        or not variants
+        or variant_count != len(variants)
+        or total_bytes <= 0
+        or total_frames <= 0
+    ):
+        raise PaidfCosmos3Error(
+            "canonical Cosmos 3 augment manifest has inconsistent variants or counts"
+        )
+
+    root = output_uri.rstrip("/") + "/" if output_uri else ""
+    if not root:
+        first_uri = str(variants[0].get("augmented_video_uri") or "")
+        marker = "/cosmos_augmented/"
+        if marker in first_uri:
+            root = first_uri.split(marker, 1)[0] + marker
+    if not root:
+        raise PaidfCosmos3Error(
+            "canonical Cosmos 3 augment manifest output root is indeterminate"
+        )
+
+    seen_clips: set[str] = set()
+    seen_seeds: set[int] = set()
+    variant_bytes = 0
+    variant_frames = 0
+    for item in variants:
+        if not isinstance(item, dict):
+            raise PaidfCosmos3Error(
+                "canonical Cosmos 3 augment manifest has an invalid variant"
+            )
+        clip = str(item.get("clip") or "").strip()
+        video_uri = str(item.get("augmented_video_uri") or "").strip()
+        try:
+            seed = int(item["seed"])
+            video_bytes = int(item.get("video_bytes", 0))
+            frame_count = int(item.get("frame_count", 0))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise PaidfCosmos3Error(
+                "canonical Cosmos 3 augment manifest has invalid variant metadata"
+            ) from exc
+        expected_prefix = f"{root}{clip}/"
+        if (
+            not clip
+            or clip in seen_clips
+            or seed in seen_seeds
+            or not video_uri.startswith(expected_prefix)
+            or video_uri.rsplit("/", 1)[-1] != "augmented_video.mp4"
+            or video_bytes <= 0
+            or frame_count <= 0
+        ):
+            raise PaidfCosmos3Error(
+                "canonical Cosmos 3 augment manifest has duplicated, empty, or "
+                "out-of-prefix variant evidence"
+            )
+        seen_clips.add(clip)
+        seen_seeds.add(seed)
+        variant_bytes += video_bytes
+        variant_frames += frame_count
+    if variant_bytes != total_bytes or variant_frames != total_frames:
+        raise PaidfCosmos3Error(
+            "canonical Cosmos 3 augment manifest aggregate counts do not match variants"
+        )
+    return variants
+
+
 def _storage() -> Any:
     from npa.clients.storage import StorageClient
 
