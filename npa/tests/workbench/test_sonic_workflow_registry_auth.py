@@ -20,26 +20,18 @@ def _task_docs(plan) -> tuple[dict, dict]:
     return task["resources"], task["envs"]
 
 
-def test_sonic_materializer_does_not_mint_registry_auth(monkeypatch) -> None:
+def test_sonic_materializer_rejects_quarantined_vm_image() -> None:
     from npa.workbench.sonic.workflow import materialize_sonic_workflow
 
-    plan = materialize_sonic_workflow(
-        SONIC_TRAIN_STANDALONE_YAML,
-        run_id="sonic-proof",
-        registry="ghcr.io/nebius/nebius-physical-ai",
-        gpu_target="h100",
-        s3_endpoint="https://storage.example",
-        s3_bucket="proof-bucket",
-    )
-
-    resources, envs = _task_docs(plan)
-    assert resources["cloud"] == "nebius"
-    assert resources["accelerators"] == "H100:1"
-    assert resources["cpus"] == 16
-    assert resources["memory"] == 200
-    assert "SKYPILOT_DOCKER_USERNAME" not in envs
-    assert "SKYPILOT_DOCKER_PASSWORD" not in envs
-    assert plan.registry_auth_source == ""
+    with pytest.raises(ValueError, match="quarantined"):
+        materialize_sonic_workflow(
+            SONIC_TRAIN_STANDALONE_YAML,
+            run_id="sonic-proof",
+            registry="ghcr.io/nebius/nebius-physical-ai",
+            gpu_target="h100",
+            s3_endpoint="https://storage.example",
+            s3_bucket="proof-bucket",
+        )
 
 
 def test_sonic_materializer_skips_registry_auth_for_kubernetes_docker_payload() -> None:

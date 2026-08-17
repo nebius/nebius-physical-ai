@@ -1353,7 +1353,6 @@ def submit_cmd(
                 retries=retries,
                 max_concurrency=max_concurrency,
                 resume=resume,
-                refresh_registry_secret=refresh_registry_secret,
                 output_format=output_format,
                 project=project,
                 auto_load=auto_load,
@@ -1915,7 +1914,6 @@ def _run_npa_workflow_runtime(
     retries: int,
     max_concurrency: int,
     resume: bool,
-    refresh_registry_secret: bool,
     output_format: "OutputFormat",
     project: str = "",
     auto_load: bool = True,
@@ -1971,19 +1969,6 @@ def _run_npa_workflow_runtime(
     )
 
     resolved_secret_envs = secret_env_names(secret_envs, values=secret_env_values)
-    pre_submit_hook = None
-    if refresh_registry_secret:
-        runtime_k8s_context = _infra_kube_context(infra)
-        runtime_kubeconfig = os.environ.get("KUBECONFIG", "")
-
-        def _refresh_runtime_pull_secret(rendered_path: Path) -> None:
-            _refresh_kubernetes_pull_secrets(
-                rendered_path,
-                k8s_context=runtime_k8s_context,
-                kubeconfig=runtime_kubeconfig,
-            )
-
-        pre_submit_hook = _refresh_runtime_pull_secret
     options = RuntimeOptions(
         poll_seconds=poll_seconds,
         max_wait_seconds=max_wait_seconds,
@@ -2004,7 +1989,6 @@ def _run_npa_workflow_runtime(
             project=project,
             requested=list(resolved_secret_envs),
         ),
-        pre_submit_hook=pre_submit_hook,
     )
     runtime_env = dict(secret_env_values)
     endpoint = str(getattr(render_options, "aws_endpoint_url", "") or "").strip()

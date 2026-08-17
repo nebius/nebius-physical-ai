@@ -34,6 +34,11 @@ from npa.workflows.byof.live import (
     resolve_skypilot_bin,
     skypilot_config_for_project,
 )
+from npa.workflows.byof.openpi_service import (
+    build_controller_rbac_manifests,
+    controller_service_account_name,
+    service_resource_names,
+)
 
 from .npa_workflow_live_helpers import live_bucket
 
@@ -1737,12 +1742,6 @@ def test_openpi_polaris_live_b200_all_four_modes(
 
     positive_env = dict(env)
     positive_env["NPA_OPENPI_ACCEPT_GEMMA_TERMS"] = "YES"
-    # The connected four-mode run and independent multi-GB checkpoint readback
-    # can outlive the registry token materialized before the negative split run.
-    # Refresh immediately before this separate direct launch so a cache miss
-    # still proves digest-pinned private-registry auth rather than depending on
-    # stale credentials or a node-local image.
-    _refresh_pull_secrets(project=e2e_project, registry=project_registry)
     positive_proc = _run_byof(
         _smoke_command(
             planned=planned,

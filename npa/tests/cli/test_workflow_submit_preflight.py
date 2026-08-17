@@ -252,6 +252,9 @@ def test_paidf_placement_fails_before_storage_or_staging_without_explicit_infra(
         "npa.cli.workbench.workflow._paidf_kubernetes_prerequisites_for_submit",
         return_value=[("placement blocked", "resize the selected node")],
     )
+    exact_access = mocker.patch(
+        "npa.workbench.cosmos.checkpoint_access.preflight_control_checkpoint_access"
+    )
     mocker.patch("npa.cli.workbench.workflow._preflight_submit_images", return_value={})
     storage = mocker.patch("npa.clients.storage_validation.probe_storage_write")
     prepare_input = mocker.patch("npa.workflows.data_factory_input.prepare_paidf_input")

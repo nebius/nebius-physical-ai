@@ -73,6 +73,7 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
     for required in (
         "attest-build-provenance@v3",
         "attest-sbom@v3",
+        "subject-name: ${{ steps.push.outputs.repository }}",
         "Require both digest-bound attestation results",
         "crane digest",
         "DOCKER_CONFIG=\"$anonymous_config\" crane manifest",

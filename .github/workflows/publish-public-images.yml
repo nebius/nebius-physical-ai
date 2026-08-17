@@ -308,12 +308,13 @@ jobs:
           digest="$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest.Digest}}' | tr -d '"')"
           test "$digest" = "$(crane digest "$IMAGE")"
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "repository=${IMAGE%:*}" >> "$GITHUB_OUTPUT"
 
       - name: Attest exact pushed digest provenance
         id: provenance-attestation
         uses: actions/attest-build-provenance@v3
         with:
-          subject-name: ${{ matrix.image }}
+          subject-name: ${{ steps.push.outputs.repository }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
 
@@ -321,7 +322,7 @@ jobs:
         id: sbom-attestation
         uses: actions/attest-sbom@v3
         with:
-          subject-name: ${{ matrix.image }}
+          subject-name: ${{ steps.push.outputs.repository }}
           subject-digest: ${{ steps.push.outputs.digest }}
           sbom-path: ${{ runner.temp }}/${{ matrix.tool }}-sbom.spdx.json
           push-to-registry: true
