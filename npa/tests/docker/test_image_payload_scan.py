@@ -107,6 +107,12 @@ def test_leisaac_dockerfile_removes_parent_imageio_ffmpeg_payload() -> None:
     assert "FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04@sha256:" in dockerfile
     assert "NPA_ISAAC_OSS_DEPS_FILE=" in dockerfile
     assert "sed -E '/^(moviepy|imageio-ffmpeg)==/d'" in dockerfile
+    runtime_base_layer = dockerfile.split(
+        "COPY docker/workbench/leisaac/upstream-observability.patch", 1
+    )[0]
+    assert "-name imageio_ffmpeg" in runtime_base_layer
+    assert "-exec rm -rf -- {} +" in runtime_base_layer
+    assert "*/imageio_ffmpeg/binaries/ffmpeg*" in runtime_base_layer
     assert "FROM ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab" not in dockerfile
     assert 'rm -rf /root/.cache /home/"${NPA_RUNTIME_USER}"/.cache' in dockerfile
     assert 'test ! -e /home/"${NPA_RUNTIME_USER}"/.cache' in dockerfile

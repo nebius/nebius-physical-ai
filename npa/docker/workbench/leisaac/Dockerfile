@@ -56,6 +56,14 @@ RUN sed -E '/^(moviepy|imageio-ffmpeg)==/d' /opt/npa/docker/workbench/common/isa
        NPA_ISAAC_VENV=/opt/npa/sim/venv \
        NPA_ISAAC_OSS_DEPS_FILE=/opt/npa/docker/workbench/common/leisaac-oss-deps.txt \
        /opt/npa/docker/workbench/common/install_isaac_runtime_base.sh \
+    && find /opt/npa/sim/venv/lib/python3.11/site-packages -maxdepth 1 \
+      \( -name moviepy -o -name 'moviepy-*.dist-info' \
+         -o -name imageio_ffmpeg -o -name 'imageio_ffmpeg-*.dist-info' \) \
+      -exec rm -rf -- {} + \
+    && test -z "$(find /opt/npa/sim/venv/lib/python3.11/site-packages -maxdepth 1 \
+      \( -name moviepy -o -name 'moviepy-*.dist-info' \
+         -o -name imageio_ffmpeg -o -name 'imageio_ffmpeg-*.dist-info' \) -print -quit)" \
+    && test -z "$(find /opt/npa/sim/venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
     && find /opt/npa/docker/workbench/common -type d -exec chmod 0755 {} + \
     && find /opt/npa/docker/workbench/common -type f -exec chmod 0644 {} + \
     && chmod 0755 /opt/npa/docker/workbench/common/*.sh \
