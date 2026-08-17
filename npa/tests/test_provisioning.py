@@ -78,6 +78,13 @@ def _successful_storage_probe(monkeypatch):
             "default_storage_class": "compute-csi-default-sc",
         },
     )
+    # provision_if_absent resolves kubectl before calling the validator stubbed
+    # above, so without this the cached-cluster tests pass only on a machine that
+    # happens to have kubectl installed. Nothing here ever executes the binary.
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle._require_bin",
+        lambda binary: binary,
+    )
 
 
 def _write_runtime(tmp_path: Path, monkeypatch) -> None:
