@@ -96,8 +96,6 @@ jobs:
           sha = os.environ["DEVELOPMENT_SHA"].strip().lower()
           development_tag(sha)
           head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-          if head != sha:
-              raise SystemExit(f"development SHA {sha} does not match checked-out HEAD {head}")
 
           def tools(name: str) -> list[str]:
               values = [v for v in re.split(r"[\s,]+", os.environ.get(name, "").strip()) if v]
@@ -130,6 +128,11 @@ jobs:
                   "tool": tool,
                   "image": development_image_for_tool(tool, git_sha=sha, registry=target),
               })
+
+          # Builds must describe the exact checked-out source. A later promotion may
+          # deliberately name an older dev SHA after GPU evidence is committed.
+          if matrix and head != sha:
+              raise SystemExit(f"development SHA {sha} does not match checked-out HEAD {head}")
 
           print(f"target={target}")
           print(f"development_sha={sha}")
@@ -192,7 +195,7 @@ jobs:
           sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
           gitleaks detect --source . --config .gitleaks.toml --redact --no-banner --log-opts="origin/main..HEAD"
 
-      - name: Prove destination package is already public
+      - name: Prove an existing destination package is public
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -202,7 +205,20 @@ jobs:
           package_and_tag="${path#*/}"
           package="${package_and_tag%:*}"
           encoded="${package//\//%2F}"
-          test "$(gh api "/orgs/${owner}/packages/container/${encoded}" --jq .visibility)" = public
+          response="$(mktemp)"
+          status="$(gh api --silent --include "/orgs/${owner}/packages/container/${encoded}" >"$response" 2>/dev/null; printf '%s' "$?")"
+          if [ "$status" = 0 ]; then
+            test "$(gh api "/orgs/${owner}/packages/container/${encoded}" --jq .visibility)" = public
+          elif grep -q '^HTTP/.* 404 ' "$response"; then
+            # The organisation policy forbids private package creation. A new package
+            # can therefore be created only after every byte-level gate below passes;
+            # the post-push anonymous check remains mandatory and failure triggers the
+            # exact run-owned version cleanup job.
+            echo "New package; organisation policy and post-push anonymous verification apply." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::Could not prove destination package state"
+            exit 1
+          fi
 
       - uses: docker/setup-buildx-action@v3
 
@@ -349,6 +365,8 @@ jobs:
         include: ${{ fromJSON(needs.resolve.outputs.cleanup_matrix) }}
     runs-on: ubuntu-latest
     steps:
+      - uses: imjasonh/setup-crane@v0.4
+
       - name: Delete only the exact unpromoted development version
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -363,7 +381,10 @@ jobs:
           encoded="${package//\//%2F}"
           package_api="/orgs/${owner}/packages/container/${encoded}"
           versions="$(mktemp)"
-          gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"
+          if ! gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"; then
+            echo "No package exists for requested cleanup." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           matches="$(jq --arg tag "$tag" '[.[] | select((.metadata.container.tags // []) | index($tag))]' "$versions")"
           test "$(jq length <<<"$matches")" = 1
           tags="$(jq -c '.[0].metadata.container.tags // []' <<<"$matches")"
@@ -403,7 +424,10 @@ jobs:
           encoded="${package//\//%2F}"
           package_api="/orgs/${owner}/packages/container/${encoded}"
           versions="$(mktemp)"
-          gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"
+          if ! gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"; then
+            echo "No package exists for failed-build cleanup." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           matches="$(jq --arg tag "$tag" '[.[] | select((.metadata.container.tags // []) | index($tag))]' "$versions")"
           count="$(jq length <<<"$matches")"
           if [ "$count" = 0 ]; then

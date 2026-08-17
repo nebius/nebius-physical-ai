@@ -53,7 +53,7 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
         "test_packaging_contract.py",
         "npa.guardrails.confidentiality",
         "gitleaks detect",
-        "Prove destination package is already public",
+        "Prove an existing destination package is public",
         "scan_image_omniverse_payload.py",
         "scan_image_ltx_payload.py",
         "test_ltx_runtime_bootstrap.py",
@@ -64,6 +64,8 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
     ):
         assert required in text
         assert text.index(required) < push
+    assert "organisation policy and post-push anonymous verification apply" in text
+    assert "if matrix and head != sha" in text
 
 
 def test_post_push_and_promotion_gates_are_digest_bound() -> None:
