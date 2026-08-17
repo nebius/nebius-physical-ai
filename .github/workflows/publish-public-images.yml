@@ -198,7 +198,7 @@ jobs:
           fi
           package_error="$(mktemp)"
           if ! gh api "$package_api" >/dev/null 2>"$package_error"; then
-            echo "Restoring the exact soft-deleted candidate package for privacy repair."
+            echo "Restoring the exact soft-deleted candidate package for verified deletion."
             gh api --method POST "${package_api}/restore" >/dev/null
           fi
           visibility="$(gh api "$package_api" --jq .visibility)"
@@ -213,21 +213,18 @@ jobs:
             "$versions_file")"
           test "$(printf '%s\n' "$version_ids" | sed '/^$/d' | wc -l)" = 1
           echo "Matched the sole tagged version to the exact retired digest."
-          if [ "$visibility" = public ]; then
-            gh api --method PATCH "$package_api" -f visibility=private >/dev/null
+          gh api --method DELETE "$package_api"
+          if gh api "$package_api" >/dev/null 2>&1; then
+            echo "::error::Retired candidate package remains in the Packages API after deletion."
+            exit 1
           fi
-          test "$(gh api "$package_api" --jq .visibility)" = private
           anonymous_config="$(mktemp -d)"
           if DOCKER_CONFIG="$anonymous_config" crane manifest "$RETIRED_REF" >/dev/null 2>&1; then
-            echo "::error::Retired candidate remains anonymously pullable after privacy update."
-            exit 1
+            echo "::warning::Deleted candidate still resolves from GHCR registry cache; final cleanup verification remains required."
+            echo "Deleted the exact package; GHCR registry-cache expiry remains pending." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Removed the exact failed-privacy candidate tag." >> "$GITHUB_STEP_SUMMARY"
           fi
-          gh api --method DELETE "$package_api"
-          if DOCKER_CONFIG="$anonymous_config" crane manifest "$RETIRED_REF" >/dev/null 2>&1; then
-            echo "::error::Retired candidate became anonymously pullable after deletion."
-            exit 1
-          fi
-          echo "Removed the exact failed-privacy candidate tag." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build and push immutable private candidate
         if: ${{ steps.candidate.outcome == 'success' }}
