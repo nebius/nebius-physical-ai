@@ -40,6 +40,7 @@ def _runner(*, redistribution: str = "restricted", findings: bool = False):
                                     "36dbf3f274f8e256637230a05a085853f65cc175"
                                 ),
                                 "org.opencontainers.image.version": "0.5.2",
+                                "npa.source_revision": "3" * 40,
                                 "org.opencontainers.image.licenses": (
                                     "Apache-2.0 AND LicenseRef-NVIDIA-Proprietary-OVRTX"
                                 ),
@@ -56,6 +57,21 @@ def _runner(*, redistribution: str = "restricted", findings: bool = False):
                     "ovrtx": {"version": "0.3.0.312915", "isolated_venv": True},
                     "ovphysx": False,
                     "scene_optimizer_core": False,
+                }
+            )
+        if "config_parse" in script:
+            return json.dumps(
+                {
+                    "config_parse": {
+                        "material": {
+                            "dry_run_exit_code": 0,
+                            "plan_rendered": True,
+                        },
+                        "physics": {
+                            "dry_run_exit_code": 0,
+                            "plan_rendered": True,
+                        },
+                    }
                 }
             )
         return json.dumps(
@@ -75,6 +91,11 @@ def test_built_image_audit_passes_only_the_expected_restricted_boundary() -> Non
     )
     assert result["status"] == "passed"
     assert result["runtime"]["ovrtx"]["version"] == "0.3.0.312915"
+    assert result["npa_source_revision"] == "3" * 40
+    assert result["config_parse"]["config_parse"]["material"] == {
+        "dry_run_exit_code": 0,
+        "plan_rendered": True,
+    }
     assert result["inventory"] == {
         "forbidden_exact": [],
         "forbidden_dirs": [],
@@ -90,3 +111,10 @@ def test_built_image_audit_refuses_a_public_classification() -> None:
 def test_built_image_audit_fails_on_excluded_payload() -> None:
     with pytest.raises(scanner.ImageAuditError, match="forbidden payload"):
         scanner.audit_image("image", runner=_runner(findings=True))
+
+
+def test_built_image_audit_enforces_requested_npa_source_checkpoint() -> None:
+    with pytest.raises(scanner.ImageAuditError, match="requested checkpoint"):
+        scanner.audit_image(
+            "image", expected_npa_source_sha="4" * 40, runner=_runner()
+        )
