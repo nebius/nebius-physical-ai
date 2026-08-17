@@ -41,6 +41,10 @@ from npa.clients.network import (
     resolve_instance_network_context,
 )
 from npa.clients.ssh import SSHClient, SSHTimeoutError
+from npa.serverless_common.env import (
+    MissingIsaacEulaAcceptanceError,
+    require_isaac_eula_acceptance,
+)
 from npa.workbench.leisaac import (
     GPU_PRODUCT,
     SESSION_SCHEMA,
@@ -109,11 +113,24 @@ _DEFAULT_READY_TIMEOUT_SECONDS = 14_400.0
 _LIFECYCLE_LOCK_STALE_SECONDS = 10 * 60
 _LIFECYCLE_LOCK_RENEW_SECONDS = 30.0
 _LIFECYCLE_LOCK_IO_TIMEOUT_SECONDS = 30.0
+_LEISAAC_EULA_ENV = {"ACCEPT_EULA": "Y"}
 
 
 def _fail(message: str) -> NoReturn:
     typer.echo(f"Error: {message}", err=True)
     raise typer.Exit(1)
+
+
+def _require_isaac_consent() -> str:
+    """Resolve the shared Isaac default or fail before any launch mutation."""
+
+    try:
+        return require_isaac_eula_acceptance(
+            context="a LeIsaac GPU session",
+            resume_command="npa workbench leisaac launch ...",
+        )
+    except MissingIsaacEulaAcceptanceError as exc:
+        _fail(str(exc))
 
 
 def _wait_timeout(environment_name: str, default: float) -> float:
@@ -753,14 +770,20 @@ def _agent_artifact_storage(project: str, name: str) -> dict[str, str]:
     """
 
     record = _agent_record(project, name)
-    credentials = record.get("credentials")
-    values = credentials if isinstance(credentials, dict) else {}
+    # Bootstrap keeps storage keys in the owner-only project credential store
+    # instead of duplicating them into the config-backed agent record. Reuse
+    # that resolver so current records and legacy embedded records both work.
+    from npa.cli.agent import _resolve_agent_storage_credentials
+
+    bucket, prefix, endpoint, access_key, secret_key, _service_account_id = (
+        _resolve_agent_storage_credentials(project, record)
+    )
     storage = {
-        "bucket": str(values.get("s3_bucket") or "").strip(),
-        "prefix": str(values.get("s3_prefix") or "").strip().strip("/"),
-        "endpoint": str(values.get("s3_endpoint") or "").strip(),
-        "access_key": str(values.get("access_key") or "").strip(),
-        "secret_key": str(values.get("secret_key") or "").strip(),
+        "bucket": str(bucket or "").strip(),
+        "prefix": str(prefix or "").strip().strip("/"),
+        "endpoint": str(endpoint or "").strip(),
+        "access_key": str(access_key or "").strip(),
+        "secret_key": str(secret_key or "").strip(),
         "region": str(record.get("region") or "").strip(),
     }
     missing = [
@@ -1445,9 +1468,7 @@ def _existing_relay_contract(
         if isinstance(item, dict) and item.get("name") == "leisaac"
     )
     environment_items = [
-        item
-        for item in (main_container.get("env") or [])
-        if isinstance(item, dict)
+        item for item in (main_container.get("env") or []) if isinstance(item, dict)
     ]
     environment = {
         str(item.get("name") or ""): str(item.get("value") or "")
@@ -1650,6 +1671,7 @@ def launch_cmd(
             "public-load-balancer is unsupported because its S3 discovery "
             "manifest cannot securely provision browser credentials; use agent-relay"
         )
+    accept_eula = _require_isaac_consent()
     name = ""
     instance_id = ""
     ssh: SSHClient | None = None
@@ -1800,6 +1822,7 @@ def launch_cmd(
             environment_index=environment_index,
             seed=seed,
             num_envs=num_envs,
+            accept_eula=accept_eula,
         )
         _apply(context, namespace, [deployment])
         launch_deadline = time.monotonic() + launch_timeout
@@ -2087,7 +2110,7 @@ def reconnect_agent_cmd(
                             }
                         ]
                     },
-                }
+                },
             }
         }
         rotated = _kubectl(

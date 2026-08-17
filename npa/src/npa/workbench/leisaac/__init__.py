@@ -364,6 +364,7 @@ def deployment_manifest(
     environment_index: int = 0,
     seed: int = 42,
     num_envs: int = 1,
+    accept_eula: str = "Y",
 ) -> dict[str, Any]:
     run_id = validate_run_id(run_id)
     image = validate_image(image)
@@ -378,6 +379,10 @@ def deployment_manifest(
     if not recorder_secret:
         raise LeIsaacConfigError(
             "LeIsaac demonstration collection requires a recorder Secret"
+        )
+    if accept_eula != "Y":
+        raise LeIsaacConfigError(
+            "LeIsaac deployment requires canonical ACCEPT_EULA=Y from the shared preflight"
         )
     media_host = validate_public_ip(media_host, "media host")
     if relay_client_secret:
@@ -401,8 +406,7 @@ def deployment_manifest(
     }
     configuration = resolve_configuration(task)
     environment = {
-        "OMNI_KIT_ACCEPT_EULA": "YES",
-        "ISAACSIM_ACCEPT_EULA": "YES",
+        "ACCEPT_EULA": accept_eula,
         "NPA_LEISAAC_RUN_ID": run_id,
         "NPA_LEISAAC_SESSION_NONCE": session_nonce,
         "NPA_LEISAAC_TASK": task,

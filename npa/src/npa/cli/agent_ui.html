@@ -3165,7 +3165,7 @@
               <section class="leisaac-readiness-card" aria-labelledby="leisaacPrerequisitesTitle">
                 <h4 id="leisaacPrerequisitesTitle">Operator readiness checklist</h4>
                 <ul>
-                  <li>Explicit operator acceptance of the NVIDIA Omniverse Kit and Isaac Sim/Isaac Lab agreements for this launch.</li>
+                  <li>The shared Isaac acceptance preflight, which defaults <code>ACCEPT_EULA=Y</code> and honors an explicit opt-out before download.</li>
                   <li>RT-core capacity on the supported RTX PRO 6000 Kubernetes pool.</li>
                   <li>A digest-pinned <code>npa-leisaac</code> image in an accessible registry.</li>
                   <li>A valid Kubernetes context/namespace and configured S3 storage destination.</li>
@@ -3180,7 +3180,7 @@
   --agent-project &lt;project-alias&gt; --agent-name &lt;agent-name&gt; \\
   --output-path s3://&lt;bucket&gt;/&lt;dataset-prefix&gt; \\
   --manifest-prefix s3://&lt;bucket&gt;/&lt;capability-prefix&gt;</pre>
-                <p>After the operator accepts the agreements, the launch environment must explicitly contain both <code>OMNI_KIT_ACCEPT_EULA=YES</code> and <code>ISAACSIM_ACCEPT_EULA=YES</code>. This page never sets them.</p>
+                <p>The CLI uses the single public <code>ACCEPT_EULA</code> input. Affirmative legacy values normalize to <code>Y</code>; empty or negative values refuse before download, and invalid values fail distinctly. This page never changes that input or privacy/telemetry settings.</p>
               </section>
               ${leisaacOfflineBundleMarkup(status)}
               ${leisaacOfflineEpisodesMarkup(status)}

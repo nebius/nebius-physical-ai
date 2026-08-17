@@ -1,10 +1,11 @@
 # LeIsaac container redistribution
 
-`npa-leisaac:0.4.0` is an additive image over NPA's public, runtime-fetch
-`npa-isaac-lab:2.3.2.post1` image. It bakes the Apache-2.0 LeIsaac source at
-commit `1651c321e9b0c1bb54233211fc7b3cd70d8373d5` and its OSS Python
-dependencies. It does not bake Isaac Sim, Isaac Lab, Omniverse Kit, the NVIDIA
-WebRTC browser client, or LeIsaac task assets.
+`npa-leisaac:0.4.0` builds directly from the same digest-pinned CUDA base and
+shared runtime-fetch closure used by NPA's Isaac workbench images. It bakes the
+Apache-2.0 LeIsaac source at commit
+`1651c321e9b0c1bb54233211fc7b3cd70d8373d5` and its OSS Python dependencies. It
+does not bake Isaac Sim, Isaac Lab, Omniverse Kit, the NVIDIA WebRTC browser
+client, or LeIsaac task assets.
 
 The collector adds distro FFmpeg plus PyArrow and boto3 from PyPI to encode the
 real viewport and publish LeRobot v3 Parquet/video objects. These are OSS
@@ -31,10 +32,12 @@ the coturn image includes its BSD-3-Clause license at
 or task assets and does not change this image's `redistribution: public`
 classification.
 
-At container startup, the operator must explicitly provide both
-`OMNI_KIT_ACCEPT_EULA=YES` and `ISAACSIM_ACCEPT_EULA=YES`. Only then does the
-shared NPA bootstrap fetch the pinned Isaac Sim 5.1.0.0 / Isaac Lab
-2.3.2.post1 runtime. The service also fetches the pinned SO101 asset, the
+At container startup, the shared Isaac contract defaults the single public
+`ACCEPT_EULA` input to `Y`. Affirmative legacy spellings normalize to `Y`;
+recognized negative or empty values opt out before any download, and invalid
+values fail distinctly. The shared runtime derives its vendor launcher variable
+internally. Only after this preflight does NPA fetch the pinned Isaac Sim
+5.1.0.0 / Isaac Lab 2.3.2.post1 runtime. The service also fetches the pinned SO101 asset, the
 v0.1.0 kitchen scene, the v0.1.2 table-with-cube scene, and NVIDIA WebRTC
 client 5.6.0 into its mounted cache, verifies their
 cryptographic hashes, and writes `provenance.json`. The pristine client source
@@ -42,8 +45,8 @@ hash is also the served hash: NPA does not modify NVIDIA's JavaScript bytes.
 An NPA-owned browser adapter selects WSS for the exact same-origin signaling
 path on port 443, matching NVIDIA's documented TLS proxy topology; provenance
 records that adapter decision.
-EULA acceptance is never a Docker `ARG` or `ENV` and is not persisted in an
-image layer.
+Acceptance is never a Docker `ARG` or baked `ENV` and is not persisted in an
+image layer. Privacy and telemetry consent remain off by default.
 
 Vendor-source review (accessed 2026-08-06): NVIDIA's
 [Traffic Encryption](https://docs.omniverse.nvidia.com/ovas/latest/configuration/traffic-encryption.html)

@@ -347,9 +347,7 @@ def _queue_mode_request(message: dict[str, Any]) -> bool:
             command = _default_mode_state()
         revision = int(message["revision"])
         revision_key = (
-            "view_revision"
-            if message["type"] == "view-mode"
-            else "recording_revision"
+            "view_revision" if message["type"] == "view-mode" else "recording_revision"
         )
         # Fallback requests use independent HTTP exchanges and can complete out
         # of order. Never let an older revision replace the latest scheduler
@@ -486,18 +484,26 @@ def enqueue_recorder_command(
 
 
 def require_operator_eula() -> None:
-    missing = [
-        name
-        for name in ("OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA")
-        if os.environ.get(name) != "YES"
-    ]
-    if missing:
+    """Apply the shared ACCEPT_EULA default before any runtime asset download."""
+
+    raw = os.environ.get("ACCEPT_EULA", "Y").strip()
+    normalized = raw.upper()
+    if normalized in {"Y", "YES", "1", "TRUE"}:
+        os.environ["ACCEPT_EULA"] = "Y"
+        return
+    if normalized in {"", "N", "NO", "0", "FALSE"}:
         print(
-            "LeIsaac refuses to start until the operator sets "
-            + " and ".join(f"{name}=YES" for name in missing),
+            "LeIsaac refuses to download runtime assets because ACCEPT_EULA "
+            "explicitly opts out; set ACCEPT_EULA=Y to continue.",
             file=sys.stderr,
         )
         raise SystemExit(78)
+    print(
+        f"Invalid ACCEPT_EULA value {raw!r}; expected Y, YES, 1, TRUE, N, NO, "
+        "0, FALSE, or an empty string. Nothing has been downloaded.",
+        file=sys.stderr,
+    )
+    raise SystemExit(78)
 
 
 def validate_runtime_configuration() -> None:
@@ -992,10 +998,14 @@ def _mark_runtime_ready() -> bool:
             stream_ready=True,
             stream_transport="webrtc" if hardware else "websocket-v1",
             requested_video_transport="webrtc-kit-h264",
-            active_video_transport=("webrtc-kit-h264" if hardware else "jpeg-websocket"),
+            active_video_transport=(
+                "webrtc-kit-h264" if hardware else "jpeg-websocket"
+            ),
             video_codec="H264" if hardware else "JPEG",
             hardware_acceleration="runtime-nvenc" if hardware else "none",
-            video_fallback_reason=("" if hardware else str(VIDEO_PATH["fallback_reason"])),
+            video_fallback_reason=(
+                "" if hardware else str(VIDEO_PATH["fallback_reason"])
+            ),
         )
         return True
 
@@ -1375,7 +1385,10 @@ def _read_consistent_frame(
         try:
             observed_producer = int(trusted_metadata.get("producer_pid") or 0)
             observed_sequence = int(trusted_metadata.get("sequence") or 0)
-            if observed_producer == producer_pid and observed_sequence <= after_sequence:
+            if (
+                observed_producer == producer_pid
+                and observed_sequence <= after_sequence
+            ):
                 return None
             jpeg = trusted_jpeg if trusted_jpeg is not None else frame_path.read_bytes()
             declared_size = int(trusted_metadata.get("bytes") or 0)
@@ -1635,7 +1648,10 @@ async def _wait_for_mode_applied(message: dict[str, Any]) -> dict[str, Any]:
     while True:
         state = await asyncio.to_thread(_mode_state)
         applied_revision = int(state.get(revision_key) or 0)
-        if applied_revision == int(message["revision"]) and state.get(mode_key) == message["mode"]:
+        if (
+            applied_revision == int(message["revision"])
+            and state.get(mode_key) == message["mode"]
+        ):
             return {
                 "v": 1,
                 "type": "ack",
@@ -1741,8 +1757,10 @@ async def _serve_control_protocol(
                     raise TransportProtocolError(
                         "controller_busy", "control lease resume capability is required"
                     )
-            next_lease_id = secrets.token_hex(32) if resume else str(
-                CONTROL_OWNER.get("lease_id") or ""
+            next_lease_id = (
+                secrets.token_hex(32)
+                if resume
+                else str(CONTROL_OWNER.get("lease_id") or "")
             )
             CONTROL_OWNER.update(
                 token=owner_token,
@@ -1977,7 +1995,10 @@ async def _serve_control_datachannel(channel: Any) -> None:
 
     @channel.on("message")
     def on_message(raw: Any) -> None:
-        if not isinstance(raw, str) or len(raw.encode("utf-8")) > MAX_CONTROL_MESSAGE_BYTES:
+        if (
+            not isinstance(raw, str)
+            or len(raw.encode("utf-8")) > MAX_CONTROL_MESSAGE_BYTES
+        ):
             channel.close()
             return
         try:
@@ -2040,7 +2061,10 @@ async def _video_datachannel_frames():
         )
         generations[camera] = generation
         camera, metadata, jpeg = item
-        if camera == "overview" and _mode_state().get("applied_view_mode") != "dual_slow":
+        if (
+            camera == "overview"
+            and _mode_state().get("applied_view_mode") != "dual_slow"
+        ):
             continue
         sequence = int(metadata["sequence"])
         previous_sequence = previous_sequences.get(camera, 0)
@@ -2060,9 +2084,7 @@ async def _video_datachannel_frames():
             runtime_send_monotonic_ns=relay_receive_ns,
             agent_receive_monotonic_ns=relay_receive_ns,
             agent_send_monotonic_ns=time.monotonic_ns(),
-            causal_action_sequence=int(
-                metadata.get("causal_action_sequence") or 0
-            ),
+            causal_action_sequence=int(metadata.get("causal_action_sequence") or 0),
             causal_applied_monotonic_ns=int(
                 metadata.get("causal_applied_monotonic_ns") or 0
             ),
@@ -2133,7 +2155,10 @@ def build_app() -> FastAPI:
             return JSONResponse(status_code=403, content={"detail": "forbidden"})
         if camera not in CAMERA_PATHS:
             return JSONResponse(status_code=400, content={"detail": "invalid camera"})
-        if camera == "overview" and _mode_state().get("applied_view_mode") != "dual_slow":
+        if (
+            camera == "overview"
+            and _mode_state().get("applied_view_mode") != "dual_slow"
+        ):
             return JSONResponse(
                 status_code=409,
                 content={"detail": "secondary camera is disabled in Fast single"},
@@ -2266,11 +2291,9 @@ def build_app() -> FastAPI:
 
     @application.post("/transport/control-webrtc")
     async def transport_control_webrtc(request: Request) -> Response:
-        if (
-            not _authorized(request.headers)
-            or str(request.headers.get("x-npa-leisaac-run-id") or "")
-            != os.environ.get("NPA_LEISAAC_RUN_ID", "")
-        ):
+        if not _authorized(request.headers) or str(
+            request.headers.get("x-npa-leisaac-run-id") or ""
+        ) != os.environ.get("NPA_LEISAAC_RUN_ID", ""):
             return JSONResponse(status_code=403, content={"detail": "forbidden"})
         try:
             content_length = int(request.headers.get("content-length") or "0")
@@ -2314,11 +2337,9 @@ def build_app() -> FastAPI:
 
     @application.post("/transport/video-webrtc")
     async def transport_video_webrtc(request: Request) -> Response:
-        if (
-            not _authorized(request.headers)
-            or str(request.headers.get("x-npa-leisaac-run-id") or "")
-            != os.environ.get("NPA_LEISAAC_RUN_ID", "")
-        ):
+        if not _authorized(request.headers) or str(
+            request.headers.get("x-npa-leisaac-run-id") or ""
+        ) != os.environ.get("NPA_LEISAAC_RUN_ID", ""):
             return JSONResponse(status_code=403, content={"detail": "forbidden"})
         try:
             content_length = int(request.headers.get("content-length") or "0")
@@ -2415,9 +2436,7 @@ def build_app() -> FastAPI:
                 else 400,
                 content=exc.payload(),
             )
-        if not _controller_lease_authorized(
-            request.headers, str(message["client_id"])
-        ):
+        if not _controller_lease_authorized(request.headers, str(message["client_id"])):
             return _controller_busy()
         with STATE_LOCK:
             ready = STATE.get("state") == "ready"
@@ -2543,7 +2562,10 @@ def build_app() -> FastAPI:
                 )
                 generations[camera] = generation
                 camera, metadata, jpeg = item
-                if camera == "overview" and _mode_state().get("applied_view_mode") != "dual_slow":
+                if (
+                    camera == "overview"
+                    and _mode_state().get("applied_view_mode") != "dual_slow"
+                ):
                     continue
                 sequence = int(metadata["sequence"])
                 previous_sequence = previous_sequences.get(camera, 0)

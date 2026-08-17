@@ -322,7 +322,7 @@ images:
       in leisaac/THIRD_PARTY_NOTICES.md. Its agent-relay deployment pulls the digest-pinned
       coturn 4.6.3-r3 BSD-3-Clause sidecar. Isaac Sim/Lab, the NVIDIA WebRTC
       browser client, and task assets are cryptographically verified runtime
-      fetches after explicit operator EULA acceptance; see
+      fetches after the shared default/opt-out EULA preflight; see
       leisaac/REDISTRIBUTION.md.
     redistribution: public
   fiftyone:

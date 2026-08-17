@@ -31,10 +31,12 @@ Also load these skills when their surfaces are involved:
   RTX PRO 6000 Kubernetes pool. Do not route this workload to H100/H200, and
   do not advertise L40S until this exact image and launch path are validated.
 - Isaac Sim/Lab, NVIDIA's browser client, SO-101, and scene assets are
-  runtime-fetched after the operator explicitly accepts the relevant NVIDIA
-  agreements and sets both `OMNI_KIT_ACCEPT_EULA=YES` and
-  `ISAACSIM_ACCEPT_EULA=YES`. Never infer, automate, or record legal acceptance
-  on an operator's behalf.
+  runtime-fetched only after the shared Isaac preflight. The single public
+  input defaults `ACCEPT_EULA=Y`; `Y`, `YES`, `1`, and `TRUE` normalize to `Y`,
+  while empty, `N`, `NO`, `0`, and `FALSE` explicitly opt out before download
+  and other values are invalid. The runtime derives
+  `OMNI_KIT_ACCEPT_EULA=YES` internally. Do not add duplicate public consent
+  variables or prompts. Keep `PRIVACY_CONSENT` and telemetry off by default.
 - This is a lifecycle-bearing interactive service, not a finite
   `npa.workflow` step. Launch and destroy it with the workbench CLI.
 
@@ -75,11 +77,10 @@ Inspect supported tasks before launch:
 npa/.venv/bin/npa workbench leisaac list-tasks --output json
 ```
 
-After explicit operator acceptance, launch a digest-pinned image:
+Launch a digest-pinned image. Isaac acceptance defaults on for this route;
+`ACCEPT_EULA=N` is the explicit pre-download opt-out:
 
 ```bash
-export OMNI_KIT_ACCEPT_EULA=YES
-export ISAACSIM_ACCEPT_EULA=YES
 npa/.venv/bin/npa workbench leisaac launch \
   --run-id <run-id> \
   --image <registry>/npa-leisaac@sha256:<digest> \

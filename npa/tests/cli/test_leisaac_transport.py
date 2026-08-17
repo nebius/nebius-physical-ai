@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import socket
 import struct
@@ -124,12 +125,15 @@ def test_authoritative_view_mode_defaults_and_exact_parser() -> None:
         type="recording-cameras",
         mode=RecordingCameraMode.PRIMARY_AND_SECONDARY.value,
     )
-    assert parse_control_message(
-        json.dumps(recording), expected_run_id=RUN_ID
-    )["mode"] == RecordingCameraMode.PRIMARY_AND_SECONDARY.value
+    assert (
+        parse_control_message(json.dumps(recording), expected_run_id=RUN_ID)["mode"]
+        == RecordingCameraMode.PRIMARY_AND_SECONDARY.value
+    )
 
 
-def test_single_fast_reader_performs_zero_secondary_work(monkeypatch, tmp_path: Path) -> None:
+def test_single_fast_reader_performs_zero_secondary_work(
+    monkeypatch, tmp_path: Path
+) -> None:
     runtime = _prepare_runtime(monkeypatch, tmp_path)
     monkeypatch.setattr(
         runtime, "_mode_state", lambda: {"applied_view_mode": "single_fast"}
@@ -520,23 +524,26 @@ def test_binary_frame_envelope_round_trips_and_detects_tampering() -> None:
 
 def test_binary_frame_envelope_accepts_v1_as_zero_causal_compatibility() -> None:
     jpeg = b"\xff\xd8legacy\xff\xd9"
-    legacy = struct.Struct("!4sBBHQQQQQQQQII32s").pack(
-        b"NPAF",
-        1,
-        0,
-        112,
-        3,
-        10,
-        11,
-        12,
-        13,
-        14,
-        15,
-        16,
-        len(jpeg),
-        2,
-        hashlib.sha256(jpeg).digest(),
-    ) + jpeg
+    legacy = (
+        struct.Struct("!4sBBHQQQQQQQQII32s").pack(
+            b"NPAF",
+            1,
+            0,
+            112,
+            3,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            len(jpeg),
+            2,
+            hashlib.sha256(jpeg).digest(),
+        )
+        + jpeg
+    )
 
     envelope, content = unpack_frame(legacy)
 
@@ -560,25 +567,28 @@ def test_binary_frame_claimed_v3_truncation_is_a_protocol_error(length: int) -> 
 
 def test_binary_frame_envelope_accepts_v2_as_zero_view_revision() -> None:
     jpeg = b"\xff\xd8v2-frame\xff\xd9"
-    legacy = struct.Struct("!4sBBHQQQQQQQQQQII32s").pack(
-        b"NPAF",
-        2,
-        0,
-        128,
-        4,
-        10,
-        11,
-        12,
-        13,
-        14,
-        15,
-        16,
-        17,
-        18,
-        len(jpeg),
-        0,
-        hashlib.sha256(jpeg).digest(),
-    ) + jpeg
+    legacy = (
+        struct.Struct("!4sBBHQQQQQQQQQQII32s").pack(
+            b"NPAF",
+            2,
+            0,
+            128,
+            4,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            len(jpeg),
+            0,
+            hashlib.sha256(jpeg).digest(),
+        )
+        + jpeg
+    )
 
     envelope, content = unpack_frame(legacy)
 
@@ -1364,37 +1374,45 @@ def test_runtime_client_exception_still_waits_for_disconnect_release(
     ]
 
 
-@pytest.mark.parametrize(
-    "accept_omni,accept_isaac,missing",
-    [
-        (None, None, {"OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA"}),
-        ("YES", None, {"ISAACSIM_ACCEPT_EULA"}),
-        (None, "YES", {"OMNI_KIT_ACCEPT_EULA"}),
-    ],
-)
-def test_runtime_eula_gate_refuses_unless_both_acceptances_are_explicit(
-    monkeypatch, capsys, accept_omni, accept_isaac, missing
+@pytest.mark.parametrize("value", ["", "N", "no", "0", "FALSE"])
+def test_runtime_eula_gate_refuses_recognized_opt_out_before_download(
+    monkeypatch, capsys, value
 ) -> None:
     runtime = _runtime_module()
-    monkeypatch.delenv("OMNI_KIT_ACCEPT_EULA", raising=False)
-    monkeypatch.delenv("ISAACSIM_ACCEPT_EULA", raising=False)
-    if accept_omni is not None:
-        monkeypatch.setenv("OMNI_KIT_ACCEPT_EULA", accept_omni)
-    if accept_isaac is not None:
-        monkeypatch.setenv("ISAACSIM_ACCEPT_EULA", accept_isaac)
+    monkeypatch.setenv("ACCEPT_EULA", value)
     with pytest.raises(SystemExit) as exc_info:
         runtime.require_operator_eula()
     assert exc_info.value.code == 78
     message = capsys.readouterr().err
-    assert all(f"{name}=YES" in message for name in missing)
+    assert "explicitly opts out" in message
+    assert "ACCEPT_EULA=Y" in message
     assert "token" not in message.lower() and "secret" not in message.lower()
 
 
-def test_runtime_eula_gate_accepts_only_both_explicit_yes_values(monkeypatch) -> None:
+@pytest.mark.parametrize("value", [None, "Y", "YES", "yes", "1", "TRUE"])
+def test_runtime_eula_gate_defaults_and_normalizes_affirmative_values(
+    monkeypatch, value
+) -> None:
     runtime = _runtime_module()
-    monkeypatch.setenv("OMNI_KIT_ACCEPT_EULA", "YES")
-    monkeypatch.setenv("ISAACSIM_ACCEPT_EULA", "YES")
+    if value is None:
+        monkeypatch.delenv("ACCEPT_EULA", raising=False)
+    else:
+        monkeypatch.setenv("ACCEPT_EULA", value)
     runtime.require_operator_eula()
+    assert os.environ["ACCEPT_EULA"] == "Y"
+
+
+def test_runtime_eula_gate_rejects_invalid_value_distinctly(
+    monkeypatch, capsys
+) -> None:
+    runtime = _runtime_module()
+    monkeypatch.setenv("ACCEPT_EULA", "maybe")
+    with pytest.raises(SystemExit) as exc_info:
+        runtime.require_operator_eula()
+    assert exc_info.value.code == 78
+    message = capsys.readouterr().err
+    assert "Invalid ACCEPT_EULA" in message
+    assert "Nothing has been downloaded" in message
 
 
 def test_runtime_rejects_bad_auth_and_preserves_polling_fallback(
@@ -1465,9 +1483,7 @@ def test_runtime_rejects_bad_auth_and_preserves_polling_fallback(
         )
         assert stale.status_code == 202
         assert stale.json()["phase"] == "superseded"
-        still_queued = json.loads(
-            runtime.MODE_COMMAND_PATH.read_text(encoding="utf-8")
-        )
+        still_queued = json.loads(runtime.MODE_COMMAND_PATH.read_text(encoding="utf-8"))
         assert still_queued["requested_view_mode"] == "dual_slow"
         assert still_queued["view_revision"] == 9
 
@@ -1732,7 +1748,9 @@ def test_runtime_lifespan_receives_unix_datagrams_on_uvloop(
                     if runtime.CONTROL_LEDGER.applied("browser-test", 1) is not None:
                         break
                     await asyncio.sleep(0.001)
-                assert runtime.CONTROL_LEDGER.applied("browser-test", 1) == acknowledgement
+                assert (
+                    runtime.CONTROL_LEDGER.applied("browser-test", 1) == acknowledgement
+                )
             finally:
                 sender.close()
 

@@ -1023,8 +1023,6 @@ def _args() -> list[str]:
 
 
 def _patch_launch(monkeypatch):
-    monkeypatch.setenv("OMNI_KIT_ACCEPT_EULA", "YES")
-    monkeypatch.setenv("ISAACSIM_ACCEPT_EULA", "YES")
     monkeypatch.setattr(
         "npa.cli.workbench.leisaac._acquire_run_lifecycle_lease",
         lambda *_args: _FakeLifecycleLease(),
@@ -1350,8 +1348,7 @@ def test_existing_relay_contract_accepts_secret_referenced_nonce(monkeypatch) ->
                             "name": "leisaac",
                             "env": [
                                 {"name": "NPA_LEISAAC_RUN_ID", "value": "live-relay"},
-                                {"name": "OMNI_KIT_ACCEPT_EULA", "value": "YES"},
-                                {"name": "ISAACSIM_ACCEPT_EULA", "value": "YES"},
+                                {"name": "ACCEPT_EULA", "value": "Y"},
                                 {
                                     "name": "NPA_LEISAAC_SESSION_NONCE",
                                     "valueFrom": {
@@ -1369,9 +1366,7 @@ def test_existing_relay_contract_accepts_secret_referenced_nonce(monkeypatch) ->
                     "volumes": [
                         {
                             "name": "relay-client",
-                            "secret": {
-                                "secretName": "leisaac-live-relay-relay-client"
-                            },
+                            "secret": {"secretName": "leisaac-live-relay-relay-client"},
                         }
                     ],
                 }
@@ -1408,8 +1403,7 @@ def test_list_tasks_json_is_machine_readable_and_parallel_launch_is_rejected(
         "LeIsaac-SO101-PickOrange-v0",
         "LeIsaac-SO101-LiftCube-v0",
     }
-    monkeypatch.setenv("OMNI_KIT_ACCEPT_EULA", "YES")
-    monkeypatch.setenv("ISAACSIM_ACCEPT_EULA", "YES")
+    monkeypatch.delenv("ACCEPT_EULA", raising=False)
     rejected = runner.invoke(app, [*_args(), "--num-envs", "2"])
     assert rejected.exit_code == 1
     assert "exactly one active environment" in rejected.output
@@ -1443,6 +1437,64 @@ def test_launch_defaults_to_agent_relay_and_rejects_undiscoverable_public_lb(
     assert "cannot securely provision browser credentials" in rejected.output
     assert "use agent-relay" in rejected.output
     assert len(manifests) == 1
+
+
+@pytest.mark.parametrize("value", ["Y", "YES", "yes", "1", "TRUE"])
+def test_launch_normalizes_affirmative_accept_eula(monkeypatch, value) -> None:
+    monkeypatch.setenv("ACCEPT_EULA", value)
+    applied, *_rest = _patch_launch(monkeypatch)
+
+    result = runner.invoke(app, _args())
+
+    assert result.exit_code == 0, result.output
+    deployment = next(item for item in applied if item["kind"] == "Deployment")
+    environment = {
+        item["name"]: item.get("value")
+        for item in deployment["spec"]["template"]["spec"]["containers"][0]["env"]
+        if "value" in item
+    }
+    assert environment["ACCEPT_EULA"] == "Y"
+    assert "OMNI_KIT_ACCEPT_EULA" not in environment
+    assert "ISAACSIM_ACCEPT_EULA" not in environment
+
+
+@pytest.mark.parametrize("value", ["", "N", "no", "0", "FALSE"])
+def test_launch_refuses_accept_eula_opt_out_before_mutation(monkeypatch, value) -> None:
+    monkeypatch.setenv("ACCEPT_EULA", value)
+    mutations: list[str] = []
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._acquire_run_lifecycle_lease",
+        lambda *_args, **_kwargs: mutations.append("lock"),
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac.ensure_registry_pull_secret_for_images",
+        lambda *_args, **_kwargs: mutations.append("registry"),
+    )
+
+    result = runner.invoke(app, _args())
+
+    assert result.exit_code == 1
+    assert "explicitly disabled" in result.output
+    assert "No expensive action has begun" in result.output
+    assert mutations == []
+
+
+def test_launch_rejects_invalid_accept_eula_distinctly_before_mutation(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ACCEPT_EULA", "maybe")
+    mutations: list[str] = []
+    monkeypatch.setattr(
+        "npa.cli.workbench.leisaac._acquire_run_lifecycle_lease",
+        lambda *_args, **_kwargs: mutations.append("lock"),
+    )
+
+    result = runner.invoke(app, _args())
+
+    assert result.exit_code == 1
+    assert "Invalid ACCEPT_EULA" in result.output
+    assert "No expensive action has begun" in result.output
+    assert mutations == []
 
 
 def test_launch_agent_relay_wires_private_cluster_public_agent_and_manifest(
@@ -1483,6 +1535,10 @@ def test_launch_agent_relay_wires_private_cluster_public_agent_and_manifest(
     deployment_env = {
         item["name"]: item
         for item in deployment["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert deployment_env["ACCEPT_EULA"] == {
+        "name": "ACCEPT_EULA",
+        "value": "Y",
     }
     assert deployment_env["NPA_LEISAAC_MEDIA_HOST"]["valueFrom"] == {
         "fieldRef": {"fieldPath": "status.podIP"}
@@ -1536,8 +1592,7 @@ def test_launch_agent_relay_wires_private_cluster_public_agent_and_manifest(
 
 
 def test_reconnect_agent_rotates_only_existing_relay_contract(monkeypatch) -> None:
-    monkeypatch.delenv("OMNI_KIT_ACCEPT_EULA", raising=False)
-    monkeypatch.delenv("ISAACSIM_ACCEPT_EULA", raising=False)
+    monkeypatch.delenv("ACCEPT_EULA", raising=False)
     lease_events: list[str] = []
     monkeypatch.setattr(
         "npa.cli.workbench.leisaac._acquire_run_lifecycle_lease",

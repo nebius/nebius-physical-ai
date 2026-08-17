@@ -1,7 +1,7 @@
-# LeIsaac v0.4.0 teleoperation service. Build directly from the same digest-pinned
-# CUDA base as npa-isaac-lab so an imageio-ffmpeg executable from that published
-# parent's historical OSS closure never enters any LeIsaac layer. Isaac Sim and
-# Isaac Lab are fetched at runtime only after operator EULA acceptance.
+# LeIsaac v0.4.0 teleoperation service. Build directly from a digest-pinned CUDA
+# base and install the shared runtime-fetch closure, so an imageio-ffmpeg
+# executable from historical parent layers never enters any LeIsaac layer.
+# Isaac Sim and Isaac Lab are fetched only after the shared EULA preflight.
 FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04@sha256:ad6d59a3bbf3e82c1c849c9ac09cfc2a3e0bbb8655042fd899be6681b3fe2a85
 
 ARG ISAAC_LAB_VERSION=2.3.2.post1

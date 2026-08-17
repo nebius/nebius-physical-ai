@@ -238,9 +238,12 @@ Kubernetes can
 restart it while preserving the pod-local `emptyDir` caches.
 The exact patch is commit-locked in the image build and named in runtime
 provenance. It
-refuses to start until the operator explicitly sets both
-`OMNI_KIT_ACCEPT_EULA=YES` and `ISAACSIM_ACCEPT_EULA=YES`. Only then are Isaac,
-the NVIDIA client, the SO101 asset, and both scene assets fetched into mounted caches. The
+uses the shared Isaac acceptance contract before any download. The single public
+input defaults to `ACCEPT_EULA=Y`; affirmative legacy values normalize to `Y`,
+recognized negative or empty values opt out before download, and other values
+fail distinctly. The runtime derives its vendor launcher variable internally.
+Only after that preflight are Isaac, the NVIDIA client, the SO101 asset, and both
+scene assets fetched into mounted caches. The
 assets and client are hash-verified and recorded in runtime `provenance.json`;
 EULA acceptance and proprietary bytes are never baked into an image.
 
@@ -294,8 +297,7 @@ curl -sk -u "${AGENT_USER}:${AGENT_PASSWORD}" "${AGENT_URL}/api/health"
 ```
 
 ```bash
-export OMNI_KIT_ACCEPT_EULA=YES
-export ISAACSIM_ACCEPT_EULA=YES
+# ACCEPT_EULA defaults to Y for Isaac-backed routes. To opt out, set it to N.
 # On shared operator hosts, select the registry-authorized identity separately
 # from the Nebius/Kubernetes access profile used by the rest of the command.
 export NPA_NEBIUS_PROFILE=agent-sa

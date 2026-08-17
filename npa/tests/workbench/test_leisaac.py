@@ -128,7 +128,9 @@ def test_runtime_control_datachannel_offer_uses_shared_control_handler(
             "sdp": "v=0\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n",
         }
 
-    monkeypatch.setattr(module.CONTROL_DATACHANNEL_PEERS, "create_answer", create_answer)
+    monkeypatch.setattr(
+        module.CONTROL_DATACHANNEL_PEERS, "create_answer", create_answer
+    )
     client = TestClient(module.build_app())
     payload = {
         "v": 1,
@@ -158,7 +160,9 @@ def test_runtime_public_surfaces_require_nonce_while_health_endpoints_are_minima
     monkeypatch.setenv("NPA_LEISAAC_SESSION_NONCE", nonce)
     client_root = tmp_path / "client"
     client_root.mkdir()
-    (client_root / "index.js").write_text("window.testClient = true;\n", encoding="utf-8")
+    (client_root / "index.js").write_text(
+        "window.testClient = true;\n", encoding="utf-8"
+    )
     provenance = tmp_path / "provenance.json"
     provenance.write_text('{"schema":"test-provenance"}\n', encoding="utf-8")
     monkeypatch.setattr(module, "CLIENT_ROOT", client_root)
@@ -263,9 +267,12 @@ def test_runtime_configuration_and_recorder_require_active_controller_lease(
         **nonce_headers,
         "X-NPA-LeIsaac-System-Restore": "1",
     }
-    assert client.post(
-        "/bundles/apply", headers=restore_headers, json={"selection": {}}
-    ).status_code == 409
+    assert (
+        client.post(
+            "/bundles/apply", headers=restore_headers, json={"selection": {}}
+        ).status_code
+        == 409
+    )
     restore_recorder = client.post(
         "/recorder/control",
         headers=restore_headers,
@@ -328,8 +335,9 @@ def test_deployment_is_real_rt_core_leisaac_and_operator_eula_runtime_config() -
     assert container["resources"]["limits"]["nvidia.com/gpu"] == "1"
     assert container["securityContext"]["runAsNonRoot"] is True
     env = {item["name"]: item["value"] for item in container["env"] if "value" in item}
-    assert env["OMNI_KIT_ACCEPT_EULA"] == "YES"
-    assert env["ISAACSIM_ACCEPT_EULA"] == "YES"
+    assert env["ACCEPT_EULA"] == "Y"
+    assert "OMNI_KIT_ACCEPT_EULA" not in env
+    assert "ISAACSIM_ACCEPT_EULA" not in env
     assert env["NPA_LEISAAC_MEDIA_HOST"] == "1.1.1.1"
     assert "/readyz" == container["readinessProbe"]["httpGet"]["path"]
     assert container["livenessProbe"]["failureThreshold"] == 30
@@ -416,9 +424,7 @@ def test_agent_relay_client_is_secret_mounted_as_non_gpu_sidecar() -> None:
     assert "--listening-ip=127.0.0.1" in turn["args"][0]
     assert "--relay-ip=${NPA_LEISAAC_POD_IP}" in turn["args"][0]
     assert "--allowed-peer-ip=${NPA_LEISAAC_POD_IP}" in turn["args"][0]
-    assert "NPA_LEISAAC_MEDIA_SERVER" not in {
-        item["name"] for item in turn["env"]
-    }
+    assert "NPA_LEISAAC_MEDIA_SERVER" not in {item["name"] for item in turn["env"]}
     assert turn["env"] == [
         {
             "name": "NPA_LEISAAC_POD_IP",
@@ -444,7 +450,9 @@ def test_agent_relay_client_is_secret_mounted_as_non_gpu_sidecar() -> None:
 
 
 def test_agent_relay_deployment_requires_resolved_private_service_ip() -> None:
-    with pytest.raises(LeIsaacConfigError, match="agent relay media server must be an IP"):
+    with pytest.raises(
+        LeIsaacConfigError, match="agent relay media server must be an IP"
+    ):
         deployment_manifest(
             run_id="live-relay",
             namespace="leisaac",
@@ -453,7 +461,6 @@ def test_agent_relay_deployment_requires_resolved_private_service_ip() -> None:
             session_nonce=NONCE,
             relay_client_secret="live-relay-relay-client",
             recorder_secret=RECORDER_SECRET,
-            eula_env=EULA_ENV,
         )
 
     with pytest.raises(LeIsaacConfigError, match="private IPv4"):
@@ -466,7 +473,6 @@ def test_agent_relay_deployment_requires_resolved_private_service_ip() -> None:
             session_nonce=NONCE,
             relay_client_secret="live-relay-relay-client",
             recorder_secret=RECORDER_SECRET,
-            eula_env=EULA_ENV,
         )
 
 
@@ -640,7 +646,10 @@ def test_container_never_bakes_eula_client_or_assets() -> None:
     assert "READY_PATH.is_file()" in server and "HEARTBEAT_PATH.is_file()" in server
     assert 'update_state(detail="warming RTX renderer")' in server
     assert 'requested_video_transport="webrtc-kit-h264"' in server
-    assert 'active_video_transport=("webrtc-kit-h264" if hardware else "jpeg-websocket")' in server
+    assert (
+        'active_video_transport=("webrtc-kit-h264"ifhardwareelse"jpeg-websocket")'
+        in "".join(server.split())
+    )
     assert '"--/renderer/multiGpu/enabled=False"' in server
     assert "NPA_LEISAAC_INPUT_COUNTER" in server
     assert "NPA_LEISAAC_APPLIED_COUNTER" in server
@@ -648,15 +657,15 @@ def test_container_never_bakes_eula_client_or_assets() -> None:
     assert "NPA_LEISAAC_FRAME_PATH" in server
     assert "pandas==2.3.3" in dockerfile
     assert "aiortc==1.15.0" in dockerfile
-    assert "leisaac_datachannel.py /opt/npa/leisaac/leisaac_datachannel.py" in dockerfile
+    assert (
+        "leisaac_datachannel.py /opt/npa/leisaac/leisaac_datachannel.py" in dockerfile
+    )
     assert "EXPOSE 8080/tcp 49100/tcp 47998/udp" in dockerfile
     assert "feetech-servo-sdk" in dockerfile and "-m pip check" in dockerfile
     assert "sed -i" not in dockerfile
     assert "upstream-packaging.patch" in dockerfile
     assert "THIRD_PARTY_NOTICES.md" in dockerfile
-    assert (
-        "git -C /opt/leisaac apply --recount --check --unidiff-zero" in dockerfile
-    )
+    assert "git -C /opt/leisaac apply --recount --check --unidiff-zero" in dockerfile
     assert (
         "/opt/leisaac/source/leisaac/leisaac/devices/keyboard/so101_keyboard.py"
         in dockerfile
@@ -675,7 +684,7 @@ def test_container_never_bakes_eula_client_or_assets() -> None:
     pyproject = (ROOT / "npa/pyproject.toml").read_text(encoding="utf-8")
     assert "imageio-ffmpeg 0.6.0" in notices and "FFmpeg" in notices
     assert "pygame 2.6.1" in notices and "LGPL-2.1" in notices
-    assert 'leisaac = [' in pyproject and '"imageio-ffmpeg==0.6.0"' in pyproject
+    assert "leisaac = [" in pyproject and '"imageio-ffmpeg==0.6.0"' in pyproject
     extras = tomllib.loads(pyproject)["project"]["optional-dependencies"]
     assert extras["full"] == []
     assert extras["leisaac"] == ["imageio-ffmpeg==0.6.0"]
@@ -704,7 +713,9 @@ def test_observability_patch_is_exact_and_records_real_upstream_input() -> None:
     assert "+    single_primary_capture_fps = 10.0 if native_video else 16.0" in source
     assert "+        if primary_due or secondary_due:" in source
     assert "(not native_video or recording_active)" not in source
-    assert "self._advance_counter(self._applied_counter, len(acknowledgements))" in source
+    assert (
+        "self._advance_counter(self._applied_counter, len(acknowledgements))" in source
+    )
     assert "target.writelines(" in source
     assert "os.fsync(target.fileno())" in source
     assert "NPA_LEISAAC_READY_PATH" in source
@@ -719,14 +730,12 @@ def test_observability_patch_is_exact_and_records_real_upstream_input() -> None:
     assert '"task": args_cli.task' in source
     assert (
         " env_cfg = parse_env_cfg(args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs)\n"
-        '+    if os.environ.get("NPA_LEISAAC_BROWSER_TELEOP") == "1":'
-        in source
+        '+    if os.environ.get("NPA_LEISAAC_BROWSER_TELEOP") == "1":' in source
     )
     assert (
         " env: ManagerBasedRLEnv | DirectRLEnv = gym.make(task_name, cfg=env_cfg).unwrapped\n"
         '+    if os.environ.get("NPA_LEISAAC_BROWSER_TELEOP") == "1":\n'
-        "+        env.cfg.sim.render_interval = 1_000_000_000"
-        in source
+        "+        env.cfg.sim.render_interval = 1_000_000_000" in source
     )
     assert "capture_viewport_to_buffer" in source
     assert 'workspace_camera_path = "/OmniverseKit_Persp"' in source
@@ -737,19 +746,28 @@ def test_observability_patch_is_exact_and_records_real_upstream_input() -> None:
     assert "image=image" in source
     assert "await asyncio.to_thread(" not in source
     assert "ThreadPoolExecutor(max_workers=1" in source
-    assert 'capture_encoder.submit(\n+                encode_and_publish_capture' in source
+    assert (
+        "capture_encoder.submit(\n+                encode_and_publish_capture" in source
+    )
     assert "def poll_encoded_capture():" in source
     assert "encode_and_publish_capture" in source
     assert "recorder.shutdown(wait=True)" in source
     assert " env.reset()\n+    recorder = EpisodeRecorder(" in source
     assert 'str(applied.get("event") or "") == "release"' in source
-    assert 'source_queue.pop(0)' in source
+    assert "source_queue.pop(0)" in source
     assert 'if capture_state["active"]:' in source
-    assert "Submit only after Kit reports the prior GPU capture fully complete" in source
+    assert (
+        "Submit only after Kit reports the prior GPU capture fully complete" in source
+    )
     assert "await capture_helper.wait_for_result(completion_frames=0)" in source
     assert source.count("viewport.camera_path = workspace_camera_path") == 2
     assert source.count("schedule_browser_capture()\n+        env.render()") == 1
-    assert source.count("apply_view_command()\n+                schedule_browser_capture()") == 1
+    assert (
+        source.count(
+            "apply_view_command()\n+                schedule_browser_capture()"
+        )
+        == 1
+    )
     assert "def apply_mode_command():" in source
     assert "RecordingCameraMode.PRIMARY_AND_SECONDARY" in source
     assert "def browser_capture_needs_render():" in source
@@ -765,49 +783,50 @@ def test_observability_patch_is_exact_and_records_real_upstream_input() -> None:
         '+        if capture_state["encode_future"] is not None:\n'
         "+            return False\n"
         "+        return bool(\n"
-        '+            capture_state["active"]'
-        in source
+        '+            capture_state["active"]' in source
     )
     assert (
         "capture_encoder.shutdown(wait=True, cancel_futures=True)\n"
         "+        poll_encoded_capture()\n"
         "+        recorder.shutdown(wait=True)\n"
         "+        ipc_event_socket.close()\n"
-        "         signal.signal(signal.SIGINT, original_sigint_handler)"
-        in source
+        "         signal.signal(signal.SIGINT, original_sigint_handler)" in source
     )
     assert "and browser_capture_needs_render()" in source
     assert 'capture_state["queue"].clear()' in source
     assert 'capture_state["priority_queue"]' in source
-    assert source.count("single_primary_capture_fps = 10.0 if native_video else 16.0") == 1
-    assert source.count("dual_primary_capture_fps = 10.0 if native_video else 20.0") == 1
-    assert source.count("secondary_capture_fps = 4.0") == 1
-    assert 'capture_state["last_causal_at"] = causal_at' in source
     assert (
-        'capture_state["next_at"]["workspace"] = causal_at'
-        in source
+        source.count("single_primary_capture_fps = 10.0 if native_video else 16.0") == 1
     )
     assert (
+        source.count("dual_primary_capture_fps = 10.0 if native_video else 20.0") == 1
+    )
+    assert source.count("secondary_capture_fps = 4.0") == 1
+    assert 'capture_state["last_causal_at"] = causal_at' in source
+    assert 'capture_state["next_at"]["workspace"] = causal_at' in source
+    assert (
         'if str(applied.get("event") or "") == "release":\n'
-        '+            # Releases remain causal primary work; they never wait for the\n'
-        '+            # slower secondary cadence or a stale background request.'
+        "+            # Releases remain causal primary work; they never wait for the\n"
+        "+            # slower secondary cadence or a stale background request."
         in source
     )
     assert 'time.monotonic() >= capture_state["next_at"]["workspace"]' in source
     assert 'mode_state["applied_view_mode"] == ViewMode.DUAL_SLOW.value' in source
-    assert '"causal_action_sequence": capture_result["causal_action_sequence"]' in source
+    assert (
+        '"causal_action_sequence": capture_result["causal_action_sequence"]' in source
+    )
     assert "mark_remote_step_applied(sim_step)" in source
     assert "asyncio.ensure_future" in source
     assert "create_viewport_window" not in source
     assert 'overview_camera_path = "/World/NPAOverviewCamera"' in source
-    assert 'resolution=(640, 360)' in source
+    assert "resolution=(640, 360)" in source
     assert "camera = Camera(" in source
     assert "camera.initialize()" in source
     assert "camera.get_rgba()" in source
     assert "camera.destroy()" in source
     assert "overview_camera_path = workspace_camera_path" not in source
     assert "next_viewport_frame_async" not in source
-    assert "if camera_id == \"overview\":" in source
+    assert 'if camera_id == "overview":' in source
     assert "NPA_LEISAAC_INPUT_QUEUE" in source
     assert "NPA_LEISAAC_APPLIED_COUNTER" in source
     assert "NPA_LEISAAC_FRAME_PATH" in source
@@ -1002,17 +1021,26 @@ def test_recorder_control_reservation_prevents_duplicate_commits(
 
 def _resolve_live_browser_mode(**values: str) -> subprocess.CompletedProcess[str]:
     environment = {
-        key: value for key, value in os.environ.items()
-        if key not in {
-            "NPA_AGENT_RUN_ID", "NPA_AGENT_CYPRESS_RUN_ID", "NPA_LEISAAC_RUN_ID",
-            "NPA_AGENT_CYPRESS_ARTIFACT_KEY", "NPA_AGENT_TASK",
-            "NPA_AGENT_ENVIRONMENT_ID", "NPA_AGENT_COMPLETED_EPISODES",
+        key: value
+        for key, value in os.environ.items()
+        if key
+        not in {
+            "NPA_AGENT_RUN_ID",
+            "NPA_AGENT_CYPRESS_RUN_ID",
+            "NPA_LEISAAC_RUN_ID",
+            "NPA_AGENT_CYPRESS_ARTIFACT_KEY",
+            "NPA_AGENT_TASK",
+            "NPA_AGENT_ENVIRONMENT_ID",
+            "NPA_AGENT_COMPLETED_EPISODES",
         }
     }
     environment.update(values)
     return subprocess.run(
         ["bash", str(ROOT / "npa/scripts/run_agent_cypress.sh"), "--resolve-mode"],
-        check=False, capture_output=True, text=True, env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
     )
 
 
@@ -1028,12 +1056,14 @@ def test_live_browser_runner_preserves_legacy_exact_rrd_selector() -> None:
 @pytest.mark.parametrize("selector", ["explicit", "legacy"])
 def test_live_browser_runner_resolves_complete_leisaac_context(selector: str) -> None:
     run_key = "NPA_LEISAAC_RUN_ID" if selector == "explicit" else "NPA_AGENT_RUN_ID"
-    result = _resolve_live_browser_mode(**{
-        run_key: "leisaac-live-run",
-        "NPA_AGENT_TASK": "LeIsaac-SO101-LiftCube-v0",
-        "NPA_AGENT_ENVIRONMENT_ID": "lift-cube-a",
-        "NPA_AGENT_COMPLETED_EPISODES": "0",
-    })
+    result = _resolve_live_browser_mode(
+        **{
+            run_key: "leisaac-live-run",
+            "NPA_AGENT_TASK": "LeIsaac-SO101-LiftCube-v0",
+            "NPA_AGENT_ENVIRONMENT_ID": "lift-cube-a",
+            "NPA_AGENT_COMPLETED_EPISODES": "0",
+        }
+    )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "cy:live-leisaac"
 

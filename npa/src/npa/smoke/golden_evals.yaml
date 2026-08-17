@@ -248,13 +248,13 @@ containers:
         teleoperation and browser WebRTC streaming for the agent UI.
     safety:
       runs_as: ubuntu
-      base_image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab:2.3.2.post1
+      base_image: nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04
       network: source-restricted status/signaling TCP and WebRTC UDP media
       external_fetch: ["pypi.nvidia.com (operator EULA)", github-leisaac-assets, nvidia-webrtc-client]
       notes: >-
         Bakes Apache-2.0 LeIsaac source and OSS dependencies only. Isaac Sim,
         Isaac Lab, task assets, and NVIDIA's browser client are fetched at
-        runtime after explicit operator EULA acceptance and hash verified.
+        runtime after the shared default/opt-out EULA preflight and hash verified.
         Rendering is hard-routed to RTX PRO 6000, never H100/H200.
     golden_eval:
       kind: container-smoke
