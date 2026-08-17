@@ -198,6 +198,9 @@ def test_guardrail_runtime_materializes_snapshot_symlinks(tmp_path: Path) -> Non
     assert module.materialize_symlinks(blocklist) == 1
     assert not link.is_symlink()
     assert link.read_text(encoding="utf-8") == "runtime-only data"
+    assert module.materialize_symlinks(blocklist) == 0
+    assert link.is_file()
+    assert not link.is_symlink()
     pin = HF_SNAPSHOT_PIN.read_text(encoding="utf-8")
     assert "NPA_COSMOS3_SERVE_GUARDRAIL_REVISION" in pin
     assert "refusing unpinned guardrail revision" in pin

@@ -7,6 +7,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
+
 def materialize_symlinks(root: Path) -> int:
     """Replace every symlink below *root* with a regular copy of its target."""
 
@@ -57,11 +58,13 @@ def main() -> int:
     if not blocklist.is_dir():
         raise RuntimeError("guardrail snapshot has no blocklist runtime data")
     replaced = materialize_symlinks(blocklist)
-    if replaced == 0:
-        raise RuntimeError("guardrail blocklist contained no snapshot symlinks to materialize")
+    regular_files = [path for path in blocklist.rglob("*") if path.is_file()]
+    if not regular_files:
+        raise RuntimeError("guardrail blocklist contains no runtime files")
     print(
         f"[npa-cosmos3-serving] prepared pinned guardrail blocklist "
-        f"with {replaced} regular runtime files"
+        f"with {len(regular_files)} regular runtime files "
+        f"({replaced} newly materialized)"
     )
     return 0
 
