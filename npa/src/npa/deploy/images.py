@@ -217,7 +217,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "lancedb": "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z",
     "detection-training": "bdd100k-golden-eval-smoke-20260614T210000Z",
     # Public-eligible Wan source/CPU base; CUDA torch is operator-gated runtime fetch.
-    "wan2-2": "2.2-ti2v5b-rtfetch-cu128-20260809T011658Z-r7",
+    "wan2-2": "2.2-ti2v5b-rtfetch-cu130-20260817",
     # LTX source and weights remain operator-entitled runtime fetches. This tag
     # resolves only to the zero-payload digest recorded in ltx2_image_manifest.json.
     "ltx2": "2.5-rtfetch-20260817",

@@ -721,7 +721,7 @@ skills:
         contains: "guardrails"
   - name: contribute-workbench-image
     category: workflows
-    when_to_use: "Carry an external or maintainer-authored NPA image change from a fork PR through license classification, trusted build, private registry validation, and incremental GHCR publication."
+    when_to_use: "Carry an external or maintainer-authored NPA image change from a fork PR through license classification, trusted build, immutable public-dev validation, and incremental GHCR publication."
     path: skills/workflows/contribute-workbench-image/SKILL.md
     smoke:
       - type: file_exists

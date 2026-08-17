@@ -635,9 +635,9 @@ containers:
       notes: >-
         Ships no CUDA/NVIDIA Python distribution or model bytes. The no-GPU
         golden eval proves source/health, the current Torch 2.13.0/CUDA 13.0
-        metadata closure, and refusal. The prior Torch 2.7.1/CUDA 12.8 live
-        evidence is historical; current CUDA execution remains a dedicated
-        operator-accepted live workflow gate.
+        metadata closure, and refusal. The exact public-dev digest has accepted
+        Torch 2.13.0/CUDA 13.0 single-GPU evidence on RTX PRO 6000. The current
+        four-GPU B200 path remains a separate unqualified live gate.
     golden_eval:
       kind: container-smoke
       command: bash /opt/npa/wan2-2/smoke.sh

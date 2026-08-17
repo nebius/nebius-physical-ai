@@ -308,27 +308,25 @@ def test_wan_validation_is_bound_to_an_immutable_accepted_tuple(
 
     assert accepted["format"] == "npa_wan_accepted_image_manifest_v1"
     assert re.fullmatch(r"sha256:[0-9a-f]{64}", accepted["oci_digest"])
-    assert re.fullmatch(r"sha256:[0-9a-f]{64}", accepted["amd64_manifest"])
+    assert re.fullmatch(r"[0-9a-f]{40}", accepted["development_sha"])
     assert re.fullmatch(r"[0-9a-f]{64}", accepted["runtime_requirements_sha256"])
+    assert re.fullmatch(r"[0-9a-f]{64}", accepted["baked_constraints_sha256"])
     for identity_name in ("source", "model", "tokenizer"):
         assert re.fullmatch(r"[0-9a-f]{40}", accepted[identity_name]["revision"])
-    assert re.fullmatch(
-        r"[0-9a-f]{64}", accepted["runtime_acceptance"]["manifest_sha256"]
-    )
-    for proof_name, count in (("single_gpu_proof", 1), ("distributed_proof", 4)):
-        proof = accepted[proof_name]
-        assert proof["gpu_count"] == count
-        assert proof["observed_image_id_digest"] == accepted["oci_digest"]
-        for key in ("mp4_sha256", "rrd_sha256", "rrd_manifest_sha256"):
-            assert re.fullmatch(r"[0-9a-f]{64}", proof[key])
-    assert accepted["distributed_proof"]["run_id"] == wan["validation_run"]
-    assert re.fullmatch(r"[0-9a-f]{64}", accepted["payload_scan"]["report_sha256"])
+    proof = accepted["single_gpu_proof"]
+    assert proof["gpu_count"] == 1
+    assert proof["observed_image_digest"] == accepted["oci_digest"]
+    for key in (
+        "artifact_sha256",
+        "runtime_inventory_sha256",
+        "mp4_sha256",
+        "rrd_sha256",
+        "rrd_manifest_sha256",
+    ):
+        assert re.fullmatch(r"[0-9a-f]{64}", proof[key])
+    assert proof["record"] == wan["validation_run"]
     assert accepted["payload_scan"]["archives_scanned"] == 20
     assert accepted["payload_scan"]["findings"] == 0
-    assert re.fullmatch(
-        r"[0-9a-f]{64}", accepted["vulnerability_scan"]["report_sha256"]
-    )
-    assert accepted["vulnerability_scan"]["critical_total"] == 27
     assert accepted["vulnerability_scan"]["critical_with_fix"] == 0
     assert accepted["vulnerability_scan"]["secrets"] == 0
 

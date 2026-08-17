@@ -859,106 +859,26 @@ def test_the_preflight_flag_never_copies(monkeypatch) -> None:
 def test_wan_publication_gate_binds_clean_bytes_and_attestations(monkeypatch) -> None:
     from npa.deploy import publish_public
 
-    platform_digest = "sha256:" + "1" * 64
-    index_digest = "sha256:" + "2" * 64
-    attestation_digest = "sha256:" + "3" * 64
-    subject = [{"name": "pkg", "digest": {"sha256": "1" * 64}}]
-    accepted = {
-        "oci_digest": index_digest,
-        "amd64_manifest": platform_digest,
-        "runtime_requirements_sha256": "4" * 64,
-        "source": {"revision": "source-ref"},
-        "model": {"revision": "model-ref"},
-        "tokenizer": {"revision": "tokenizer-ref"},
-        "runtime_acceptance": {"manifest_sha256": "b" * 64},
-        "payload_scan": {
-            "report_sha256": "c" * 64,
-            "archives_scanned": 2,
-            "findings": 0,
-        },
-        "single_gpu_proof": {
-            "run_id": "single",
-            "gpu_count": 1,
-            "observed_image_id_digest": index_digest,
-            "mp4_sha256": "5" * 64,
-            "rrd_sha256": "6" * 64,
-            "rrd_manifest_sha256": "7" * 64,
-        },
-        "distributed_proof": {
-            "run_id": "multi",
-            "gpu_count": 4,
-            "observed_image_id_digest": index_digest,
-            "mp4_sha256": "8" * 64,
-            "rrd_sha256": "9" * 64,
-            "rrd_manifest_sha256": "a" * 64,
-        },
-        "vulnerability_scan": {
-            "report_sha256": "d" * 64,
-            "critical_total": 27,
-            "critical_with_fix": 0,
-            "secrets": 0,
-        },
-    }
-    index = {
-        "manifests": [
-            {
-                "digest": platform_digest,
-                "platform": {"architecture": "amd64", "os": "linux"},
-            },
-            {
-                "digest": attestation_digest,
-                "annotations": {
-                    "vnd.docker.reference.type": "attestation-manifest",
-                    "vnd.docker.reference.digest": platform_digest,
-                },
-            },
-        ]
-    }
-    attestation = {
-        "layers": [
-            {
-                "digest": "sha256:spdx",
-                "annotations": {
-                    "in-toto.io/predicate-type": "https://spdx.dev/Document"
-                },
-            },
-            {
-                "digest": "sha256:slsa",
-                "annotations": {
-                    "in-toto.io/predicate-type": "https://slsa.dev/provenance/v1"
-                },
-            },
-        ]
-    }
+    accepted = images.wan_accepted_image_manifest()
+    digest = accepted["oci_digest"]
 
     monkeypatch.setattr(
-        publish_public, "_crane_digest", lambda ref, **_: (True, index_digest)
-    )
-    monkeypatch.setattr(
-        publish_public.images, "wan_accepted_image_manifest", lambda: accepted
+        publish_public, "_crane_digest", lambda ref, **_: (True, digest)
     )
     monkeypatch.setattr(
         publish_public,
         "_crane_json",
         lambda args: (
-            index if args[0:1] == ["manifest"] and "@" not in args[1] else attestation
+            {"config": {}, "layers": [{}]}
+            if args[0] == "manifest"
+            else {"architecture": "amd64", "os": "linux"}
         ),
     )
-
-    def fake_blob(repository: str, digest: str) -> dict:
-        if digest == "sha256:spdx":
-            return {
-                "subject": subject,
-                "predicateType": "https://spdx.dev/Document",
-                "predicate": {"packages": [{"name": "npa-wan2-2"}]},
-            }
-        return {
-            "subject": subject,
-            "predicateType": "https://slsa.dev/provenance/v1",
-            "predicate": {"buildDefinition": {"buildType": "docker"}},
-        }
-
-    monkeypatch.setattr(publish_public, "_crane_blob_json", fake_blob)
+    monkeypatch.setattr(
+        publish_public,
+        "_github_attestation_predicates",
+        lambda **_: set(accepted["attestations"]["required_predicates"]),
+    )
 
     class CleanScan:
         returncode = 0
@@ -980,7 +900,7 @@ def test_wan_publication_gate_binds_clean_bytes_and_attestations(monkeypatch) ->
                                         "Severity": "CRITICAL",
                                         "FixedVersion": "",
                                     }
-                                    for index in range(27)
+                                    for index in range(3)
                                 ]
                             }
                         ]
@@ -998,15 +918,16 @@ def test_wan_publication_gate_binds_clean_bytes_and_attestations(monkeypatch) ->
     ok, detail = REAL_WAN_PUBLICATION_GATE(
         PublishItem(
             tool="wan2-2",
-            source_ref="source.example/npa-wan2-2:accepted",
-            target_ref="ghcr.io/example/npa-wan2-2:accepted",
+            source_ref=(
+                "ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@" + digest
+            ),
+            target_ref="ghcr.io/nebius/nebius-physical-ai/npa-wan2-2:accepted",
         )
     )
 
     assert ok, detail
-    assert index_digest in detail
-    assert platform_digest in detail
-    assert "residual unfixed CRITICAL findings disclosed: 27" in detail
+    assert digest in detail
+    assert "residual unfixed CRITICAL findings disclosed: 3" in detail
 
 
 @pytest.mark.parametrize(
@@ -1264,7 +1185,7 @@ def test_wan_publication_gate_refuses_an_extra_unscanned_platform(monkeypatch) -
     )
 
     assert not ok
-    assert "unscanned/unattested extra manifest" in detail
+    assert "one scanned platform manifest" in detail
 
 
 def test_wan_publication_gate_blocks_copy_before_any_write(monkeypatch, capsys) -> None:

@@ -173,11 +173,11 @@ local plus remote verification results. Only a verified manifest names the
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
-| `wan2.2_ti2v_5b_text_to_video` | accepted historical evidence | prior Torch 2.7.1/CUDA 12.8 runtime produced a real 1280×704 output on RTX PRO 6000 Blackwell; the current Torch 2.13.0/CUDA 13.0 gate requires new operator-accepted live evidence |
-| `wan2.2_decoded_mp4_validation` | accepted historical evidence | the same prior run decoded all 17 frames at 24 fps and passed non-uniform-content gates |
+| `wan2.2_ti2v_5b_text_to_video` | accepted current evidence | the exact zero-payload public-dev digest used Torch 2.13.0/CUDA 13.0 to produce a real 1280×704 output on RTX PRO 6000 Blackwell |
+| `wan2.2_decoded_mp4_validation` | accepted current evidence | the same exact-digest run decoded all 17 frames at 24 fps and passed non-uniform-content gates |
 | `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted historical evidence | the prior runtime completed the official four-rank path on 4×B200 |
 | `wan2.2_distributed_rank_topology_validation` | accepted historical evidence | the prior runtime proved unique ranks/devices, NCCL 2.27.7 transport and sum 10/10, T5/DiT FULL_SHARD, Ulysses calls, and process-group teardown; the current NCCL 2.29.7 gate requires new operator-accepted live qualification |
-| `wan2.2_verified_rerun_recording` | accepted historical evidence | prior single- and four-GPU RRDs were built from their exact MP4/JSON evidence, uploaded, and remotely re-verified; those artifacts document the prior runtime and do not satisfy the current runtime gate |
+| `wan2.2_verified_rerun_recording` | accepted current single-GPU evidence | the exact MP4 and JSON evidence produced an uploaded RRD that passed local and remote identity and structural verification |
 | `wan2.2_ti2v_5b_image_to_video` | deferred | optional real input path exists but lacks separately accepted live evidence |
 | A14B, S2V-14B, Animate-14B | deferred | separate models and input/GPU contracts |
 | official TI2V fine-tuning | deferred | pinned official source has no TI2V training entrypoint |
@@ -186,19 +186,22 @@ local plus remote verification results. Only a verified manifest names the
 The generated RRD is an evidence visualization of official inference. It does
 not turn Wan into a world model or add action conditioning.
 
-For the historical qualification, Kubernetes independently reported the then-
-accepted OCI digest as the running container `imageID` for both the one-GPU and
-four-GPU pods. The immutable tuple
-of OCI/platform digests, runtime-requirements hash, source/model/tokenizer
-revisions, observed image IDs, run IDs, and MP4/RRD proof hashes is recorded in
+For the current single-GPU qualification, Kubernetes independently reported the
+accepted digest as the running container `imageID`. The immutable tuple of image
+digest, runtime-requirements hash, source/model/tokenizer revisions, observed
+image ID, and MP4/RRD proof hashes is recorded in
 `npa/src/npa/deploy/wan2_2_image_manifest.json`.
+
+The supported tag is `2.2-ti2v5b-rtfetch-cu130-20260817`. Its promotion gate
+accepts only the exact validated public-dev digest and does not claim the
+historical four-GPU result for the current runtime.
 
 The materialized historical distributed recording is:
 
-- `s3://<project-bucket>/oss-solutions/wan2.2-multigpu/<private-run-id>/wan2_2_ti2v_5b_multigpu.rrd`
+- `s3://<project-bucket>/oss-solutions/wan2.2-multigpu/<operator-run-id>/wan2_2_ti2v_5b_multigpu.rrd`
   (2,948,508 bytes; SHA-256
   `5a4f77461f0877e72c3543508df20edd3a12d0e1fb6bf3f9cfd7215b0dfe0606`).
-- `s3://<project-bucket>/oss-solutions/wan2.2-multigpu/<private-run-id>/wan2_2_ti2v_5b_multigpu_rrd_manifest.json`
+- `s3://<project-bucket>/oss-solutions/wan2.2-multigpu/<operator-run-id>/wan2_2_ti2v_5b_multigpu_rrd_manifest.json`
   (10,801 bytes; SHA-256
   `1f256009e149100c5dfb06c200861537e41e89dc11d11a5923b4615fb14bc308`).
 
