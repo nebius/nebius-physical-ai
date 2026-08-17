@@ -60,6 +60,8 @@ def test_source_base_and_dependency_closure_are_immutable() -> None:
     bootstrap = RUNTIME_BOOTSTRAP.read_text(encoding="utf-8")
     assert "sha256sum -c" in bootstrap
     assert "--require-hashes" in bootstrap
+    assert 'python -m venv "${VENV}"' in bootstrap
+    assert 'mv "${work}/venv" "${VENV}"' not in bootstrap
     assert "vllm/vllm-omni" not in text
     assert "nvcr.io" not in text
     assert "vllm==0.26.0" in LOCK.read_text(encoding="utf-8")

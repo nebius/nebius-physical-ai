@@ -33,8 +33,12 @@ work="${ROOT}/.install-$$"
 trap 'rm -rf "${work}"' EXIT
 mkdir -p "${work}"
 echo "${NPA_COSMOS3_CLOSURE_SHA256}  ${LOCK}" | sha256sum -c -
-python -m venv "${work}/venv"
-"${work}/venv/bin/python" -m pip install --no-cache-dir --require-hashes --only-binary=:all: \
+rm -rf "${VENV}"
+# Virtualenv console scripts embed their interpreter as an absolute shebang.
+# Build at the final path: moving a completed venv from ${work} would leave
+# every entry point referring to a deleted temporary interpreter.
+python -m venv "${VENV}"
+"${VENV}/bin/python" -m pip install --no-cache-dir --require-hashes --only-binary=:all: \
   --no-binary=antlr4-python3-runtime,openai-whisper -r "${LOCK}"
 curl -fL --retry 3 --proto '=https' --tlsv1.2 \
   -o "${work}/vllm-omni.tar.gz" \
@@ -43,10 +47,8 @@ echo "${SOURCE_SHA}  ${work}/vllm-omni.tar.gz" | sha256sum -c -
 mkdir "${work}/source"
 tar -xzf "${work}/vllm-omni.tar.gz" --strip-components=1 -C "${work}/source"
 VLLM_OMNI_TARGET_DEVICE=cuda VLLM_OMNI_VERSION_OVERRIDE=0.26.0 \
-  "${work}/venv/bin/python" -m pip install --no-cache-dir --no-deps "${work}/source"
-"${work}/venv/bin/python" -m pip check
-rm -rf "${VENV}"
-mv "${work}/venv" "${VENV}"
+  "${VENV}/bin/python" -m pip install --no-cache-dir --no-deps "${work}/source"
+"${VENV}/bin/python" -m pip check
 touch "${MARKER}"
 export PATH="${VENV}/bin:${PATH}"
 exec "$@"
