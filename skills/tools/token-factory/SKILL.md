@@ -92,10 +92,12 @@ npa workbench workflow submit <spec.yaml> --secret-env NEBIUS_TOKEN_FACTORY_KEY
 toolRefs: `workbench.token_factory.caption`, `.generate`, `.reason`, `.triage`
 (digest a run's textual artifacts into a triage report).
 
-Checked-in specs, listed by `npa workbench token-factory workflow`:
+`npa workbench token-factory workflow` prints exactly four:
+`token-factory-caption.yaml`, `token-factory-generate.yaml`,
+`token-factory-cosmos-reason.yaml`, and `vlm-eval-token-factory.yaml`. Several
+more are checked in but not listed by that command, so do not treat its output as
+the full inventory:
 
-- `token-factory-caption.yaml`, `token-factory-generate.yaml`,
-  `token-factory-cosmos-reason.yaml` — single-purpose.
 - `token-factory-parallel-fanout.yaml` — parallel batches.
 - `token-factory-gate-loop.yaml`, `tokenfactory-cosmos-gate.yaml` — a hosted
   model as a gate that decides whether the pipeline continues.

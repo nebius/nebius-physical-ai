@@ -61,6 +61,9 @@ making architecture, review, or domain judgments.
  and the offline manifest validation that gates CI.
 - `skills/tools/burst/SKILL.md`: one gang-scheduled multi-node GPU job with
  torchrun rendezvous, deliberately not a workflow surface.
+- `skills/tools/gpu-cluster-provisioning/SKILL.md`: managed-image vs GPU-Operator
+ driver strategy (operator mode is unsafe on NVSwitch), the post-apply health
+ gates, accelerator-name discovery, and triage for nodes whose GPUs do not work.
 - `skills/tools/detection-training/SKILL.md`: Faster R-CNN detectors trained from
  LanceDB materialized views (BDD100K failure-mode slices).
 - `skills/tools/artifact-viz-share/SKILL.md`: sim demos → LeRobotDataset →

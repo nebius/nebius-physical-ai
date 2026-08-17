@@ -380,6 +380,24 @@ skills:
         path: npa/src/npa/smoke/golden_evals.yaml
       - type: file_exists
         path: npa/tests/smoke/test_golden_eval_manifest.py
+  - name: gpu-cluster-provisioning
+    category: tools
+    when_to_use: "Create or repair a GPU Kubernetes cluster for npa: the managed-image vs GPU-Operator driver decision, why operator mode is unsafe on NVSwitch, the post-apply health gates (fabric, CUDA vectorAdd, stability window), accelerator-name discovery, and triage for nodes whose GPUs do not work."
+    path: skills/tools/gpu-cluster-provisioning/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["cluster", "up", "--help"]
+        contains: "gpu-driver-mode"
+      - type: cli_help
+        args: ["cluster", "node-group", "--help"]
+        contains: "add-cpu"
+      - type: cli_help
+        args: ["workbench", "workflow", "gpus", "--help"]
+        contains: "cluster"
+      - type: file_exists
+        path: docs/workbench/mk8s-gpu-driver-strategy.md
+      - type: file_exists
+        path: docs/workbench/image-gpu-compatibility-matrix.md
   - name: groot
     category: tools
     when_to_use: "GR00T model download, finetuning, evaluation, serving, inference, conversion, status, and routing."

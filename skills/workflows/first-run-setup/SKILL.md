@@ -188,8 +188,11 @@ audit.
   lives in `NEBIUS_TOKEN_FACTORY_KEY`.
 - **Isaac Lab needs an RT-core GPU** (L40S or RTX PRO 6000), not H100/H200. See
   `skills/atomic/gpu-selection/SKILL.md`.
-- **Pass `-p <project> -n <name>` to any tool's `status`.** A bare `status` can
-  resolve a stale endpoint.
+- **Scope `status` explicitly where the tool supports it.** For deployed-service
+  tools that accept `-p <project>` / `-n <name>` (SONIC among them), a bare
+  `status` can resolve a stale endpoint. Flags differ per tool — `detection-training
+  status` wants `--run-id`, and `token-factory status` takes neither — so check
+  `--help` rather than assuming a common shape.
 - **`--offline` on health checks proves presence, not validity.** An expired token
   passes offline and fails on first pull.
 

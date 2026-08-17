@@ -57,7 +57,7 @@ Confusing these two wastes time and money in opposite directions.
 | `npa cluster down` | Yes | Terraform-managed cluster and its nodes |
 | `npa agent destroy` | Yes | Agent VM and its resources |
 | `npa storage bucket delete` | Yes | Contents and versions included |
-| `npa destroy --delete-project` | Yes | Ownership-gated, opt-in |
+| `npa destroy --all --delete-project --yes` | Yes | Ownership-gated; all three flags required |
 
 `npa cleanup` never deletes cloud resources. It *reports* what teardown left
 behind and prints the ordered runbook, which makes it the right first command

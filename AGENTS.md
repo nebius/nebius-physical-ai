@@ -24,6 +24,7 @@ The source of truth is `skills/index.yaml`. The tree is organized as:
 - `skills/tools/vlm-eval/SKILL.md`: score rollouts with a VLM and turn the score into a gate — `run` vs `loop`, rubric/threshold benchmark sweeps, backend selection, and judging against a plan an earlier stage wrote.
 - `skills/tools/golden-eval/SKILL.md`: prove a container image actually works — per-container hello-world manifest, dry-run/local/serverless tiers, batch runs, and the offline manifest validation that gates CI.
 - `skills/tools/burst/SKILL.md`: one gang-scheduled multi-node GPU job with torchrun rendezvous, deliberately not a workflow surface.
+- `skills/tools/gpu-cluster-provisioning/SKILL.md`: managed-image vs GPU-Operator driver strategy (operator mode is unsafe on NVSwitch), the post-apply health gates (fabric, CUDA vectorAdd, stability window), accelerator-name discovery, and triage for nodes whose GPUs do not work.
 - `skills/tools/detection-training/SKILL.md`: Faster R-CNN detectors trained from LanceDB materialized views (BDD100K failure-mode slices).
 - `skills/tools/artifact-viz-share/SKILL.md`: sim demos → LeRobotDataset → `.rrd`/MP4, and time-boxed presigned Rerun share links.
 - `skills/tools/fleet/SKILL.md`: deploy a fleet of Nebius Managed Kubernetes (k8s-training) clusters across one or many projects in a tenant from an `npa.fleet/v0.0.1` spec — identical and/or custom clusters, create-on-demand projects, and a k8s-training source that can consume the latest upstream recipe.
