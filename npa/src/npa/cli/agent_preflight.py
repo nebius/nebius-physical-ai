@@ -6,6 +6,8 @@ underscore aliases preserve the established ``npa.cli.agent`` compatibility API.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import os
 import shutil
 from pathlib import Path
@@ -15,6 +17,41 @@ import typer
 
 if TYPE_CHECKING:  # pragma: no cover - type-checker visibility only
     from npa.workflows.sim2real_health import CheckResult
+
+
+_OPENSSH_PUBLIC_KEY_PREFIXES = (
+    "ssh-",
+    "ecdsa-sha2-",
+    "sk-ssh-",
+    "sk-ecdsa-",
+)
+
+
+def _is_openssh_public_key(path: Path) -> bool:
+    """Return whether *path* is one bounded OpenSSH public-key line.
+
+    Merely checking that the path exists lets an operator accidentally pass the
+    adjacent private key. Terraform would then interpolate a multiline secret
+    into cloud-init user-data before the provider rejects the malformed YAML.
+    """
+
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return False
+    if len(raw.encode("utf-8")) > 16 * 1024:
+        return False
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    if len(lines) != 1:
+        return False
+    fields = lines[0].split()
+    if len(fields) < 2 or not fields[0].startswith(_OPENSSH_PUBLIC_KEY_PREFIXES):
+        return False
+    try:
+        decoded = base64.b64decode(fields[1], validate=True)
+    except (binascii.Error, ValueError):
+        return False
+    return bool(decoded)
 
 
 def _terraform_binary() -> str:
@@ -81,7 +118,7 @@ def agent_hard_prereq_results(
         if str(public_path).endswith(".pub")
         else str(public_path)
     )
-    if public_path.is_file():
+    if public_path.is_file() and _is_openssh_public_key(public_path):
         results.append(
             CheckResult(
                 name="ssh_public_key",
@@ -90,14 +127,20 @@ def agent_hard_prereq_results(
             )
         )
     else:
+        present_but_invalid = public_path.is_file()
         results.append(
             CheckResult(
                 name="ssh_public_key",
                 status=FAIL,
-                summary=f"SSH public key not found: {public_path}",
+                summary=(
+                    f"SSH public key is not a single OpenSSH public-key line: {public_path}"
+                    if present_but_invalid
+                    else f"SSH public key not found: {public_path}"
+                ),
                 remedy=(
                     f"Generate a keypair (`ssh-keygen -t ed25519 -f {private_path}`) "
-                    "or pass --ssh-public-key-path to an existing key."
+                    "or pass --ssh-public-key-path to the public `.pub` file; never "
+                    "pass a private key."
                 ),
             )
         )

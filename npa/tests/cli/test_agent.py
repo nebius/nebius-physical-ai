@@ -4043,6 +4043,38 @@ def test_agent_preflight_json_output(monkeypatch, tmp_path) -> None:
     }
 
 
+def test_agent_preflight_rejects_private_key_passed_as_public_path(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cli import agent as agent_module
+
+    private = tmp_path / "id_ed25519"
+    private.write_text(
+        "-----BEGIN OPENSSH PRIVATE KEY-----\nprivate-material\n"
+        "-----END OPENSSH PRIVATE KEY-----\n"
+    )
+    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
+    monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
+    monkeypatch.setattr(
+        agent_module, "_resolve_deploy_llm_credentials", lambda: ("tf-key", "m")
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "preflight",
+            "--skip-nebius",
+            "--ssh-public-key-path",
+            str(private),
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "[FAIL] ssh_public_key" in result.output
+    assert "public `.pub` file" in result.output
+    assert "private-material" not in result.output
+
+
 def test_agent_preflight_fails_when_storage_write_probe_is_forbidden(
     monkeypatch, tmp_path
 ) -> None:
