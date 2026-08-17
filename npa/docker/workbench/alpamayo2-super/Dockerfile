@@ -56,7 +56,7 @@ RUN python3.12 -m venv /opt/uv \
     && /opt/uv/bin/uv sync --locked --no-dev \
     && /opt/alpamayo2/.venv/bin/python - <<'PY'
 import torch
-flags = set(torch._C._cuda_getArchFlags())
+flags = set(torch._C._cuda_getArchFlags().split())
 assert {'sm_90', 'sm_100', 'sm_120'} <= flags, flags
 PY
 

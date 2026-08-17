@@ -18,6 +18,18 @@ sys.modules[SPEC.name] = scanner
 SPEC.loader.exec_module(scanner)
 
 
+def test_dockerfile_parses_torch_arch_flags_as_tokens() -> None:
+    dockerfile = (
+        Path(__file__).resolve().parents[2]
+        / "docker"
+        / "workbench"
+        / "alpamayo2-super"
+        / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert "_cuda_getArchFlags().split()" in dockerfile
+    assert "{'sm_90', 'sm_100', 'sm_120'} <= flags" in dockerfile
+
+
 def _tar(path: Path, members: dict[str, bytes]) -> Path:
     with tarfile.open(path, "w") as archive:
         for name, payload in members.items():
