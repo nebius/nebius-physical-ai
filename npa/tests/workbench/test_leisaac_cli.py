@@ -17,6 +17,7 @@ from npa.cli.workbench.leisaac import (
     _existing_relay_contract,
     _external_ip,
     _install_agent_relay,
+    _node_internal_ip,
     _kubectl,
     _load_manifest,
     _put_manifest,
@@ -36,6 +37,43 @@ from npa.agent_backend.leisaac_registry import DEFAULT_TASK, REGISTRY_FINGERPRIN
 
 IMAGE = "registry.example/npa-leisaac@sha256:" + "1" * 64
 runner = CliRunner()
+
+
+@pytest.mark.parametrize(
+    "labels",
+    [
+        {"nvidia.com/gpu.product": "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"},
+        {"nebius.com/gpu-name": "RTX6000"},
+    ],
+)
+def test_node_internal_ip_accepts_either_verified_rtx6000_label(
+    monkeypatch, labels
+) -> None:
+    def kubectl(_context, _namespace, args, **_kwargs):
+        assert args == ["get", "nodes", "-o", "json"]
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "items": [
+                        {
+                            "metadata": {"labels": labels},
+                            "status": {
+                                "conditions": [{"type": "Ready", "status": "True"}],
+                                "addresses": [
+                                    {"type": "InternalIP", "address": "10.0.0.8"}
+                                ],
+                            },
+                        }
+                    ]
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("npa.cli.workbench.leisaac._kubectl", kubectl)
+
+    assert _node_internal_ip("cluster", "namespace") == "10.0.0.8"
 
 
 class _FakeLifecycleLease:

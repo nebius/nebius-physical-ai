@@ -47,6 +47,9 @@ from npa.serverless_common.env import (
 )
 from npa.workbench.leisaac import (
     GPU_PRODUCT,
+    GPU_PRODUCT_LABEL,
+    GPU_PROVIDER_LABEL,
+    GPU_PROVIDER_VALUE,
     SESSION_SCHEMA,
     SOURCE_COMMIT,
     LeIsaacConfigError,
@@ -724,7 +727,11 @@ def _node_internal_ip(context: str, namespace: str) -> str:
             condition.get("type") == "Ready" and condition.get("status") == "True"
             for condition in node.get("status", {}).get("conditions", []) or []
         )
-        if not ready or labels.get("nvidia.com/gpu.product") != GPU_PRODUCT:
+        is_rtx6000 = (
+            labels.get(GPU_PRODUCT_LABEL) == GPU_PRODUCT
+            or labels.get(GPU_PROVIDER_LABEL) == GPU_PROVIDER_VALUE
+        )
+        if not ready or not is_rtx6000:
             continue
         for address in node.get("status", {}).get("addresses", []) or []:
             if address.get("type") == "InternalIP" and address.get("address"):

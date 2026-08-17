@@ -42,6 +42,9 @@ TURN_IMAGE = (
 SERVICE_PORT = 8080
 RELAY_SERVICE_PORT = 48080
 GPU_PRODUCT = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
+GPU_PRODUCT_LABEL = "nvidia.com/gpu.product"
+GPU_PROVIDER_LABEL = "nebius.com/gpu-name"
+GPU_PROVIDER_VALUE = "RTX6000"
 TRANSPORT_LOAD_BALANCER = "public-load-balancer"
 TRANSPORT_AGENT_RELAY = "agent-relay"
 
@@ -464,9 +467,38 @@ def deployment_manifest(
     pod_spec: dict[str, Any] = {
         # The device plugin allocates /dev/nvidia*, while the NVIDIA runtime
         # injects the matching graphics/Vulkan driver libraries that
-        # Omniverse rendering requires.  CUDA compute alone is insufficient.
+        # Omniverse rendering requires. CUDA compute alone is insufficient.
+        # Managed Nebius GPU nodes expose the provider label even when their
+        # preinstalled driver deliberately disables GPU Operator operands, while
+        # self-managed clusters may expose only GPU Feature Discovery's product
+        # label. Require one of the two exact RTX PRO 6000 identities.
         "runtimeClassName": "nvidia",
-        "nodeSelector": {"nvidia.com/gpu.product": GPU_PRODUCT},
+        "affinity": {
+            "nodeAffinity": {
+                "requiredDuringSchedulingIgnoredDuringExecution": {
+                    "nodeSelectorTerms": [
+                        {
+                            "matchExpressions": [
+                                {
+                                    "key": GPU_PRODUCT_LABEL,
+                                    "operator": "In",
+                                    "values": [GPU_PRODUCT],
+                                }
+                            ]
+                        },
+                        {
+                            "matchExpressions": [
+                                {
+                                    "key": GPU_PROVIDER_LABEL,
+                                    "operator": "In",
+                                    "values": [GPU_PROVIDER_VALUE],
+                                }
+                            ]
+                        },
+                    ]
+                }
+            }
+        },
         "containers": [
             {
                 "name": "leisaac",

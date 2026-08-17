@@ -28,6 +28,9 @@ from npa.agent_backend.leisaac import LEISAAC_CLIENT_JS_SHA256
 from npa.agent_backend.leisaac_transport import AsyncLatestByKey, unpack_frame
 from npa.workbench.leisaac import (
     GPU_PRODUCT,
+    GPU_PRODUCT_LABEL,
+    GPU_PROVIDER_LABEL,
+    GPU_PROVIDER_VALUE,
     MEDIA_PORT,
     TURN_PORT,
     TURN_RELAY_PORT,
@@ -328,7 +331,30 @@ def test_deployment_is_real_rt_core_leisaac_and_operator_eula_runtime_config() -
     )
     pod = deployment["spec"]["template"]["spec"]
     assert pod["runtimeClassName"] == "nvidia"
-    assert pod["nodeSelector"] == {"nvidia.com/gpu.product": GPU_PRODUCT}
+    assert "nodeSelector" not in pod
+    terms = pod["affinity"]["nodeAffinity"][
+        "requiredDuringSchedulingIgnoredDuringExecution"
+    ]["nodeSelectorTerms"]
+    assert terms == [
+        {
+            "matchExpressions": [
+                {
+                    "key": GPU_PRODUCT_LABEL,
+                    "operator": "In",
+                    "values": [GPU_PRODUCT],
+                }
+            ]
+        },
+        {
+            "matchExpressions": [
+                {
+                    "key": GPU_PROVIDER_LABEL,
+                    "operator": "In",
+                    "values": [GPU_PROVIDER_VALUE],
+                }
+            ]
+        },
+    ]
     container = pod["containers"][0]
     assert container["resources"]["requests"]["cpu"] == "16"
     assert container["resources"]["limits"]["cpu"] == "32"

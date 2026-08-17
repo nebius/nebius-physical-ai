@@ -100,6 +100,10 @@ The omitted `--transport` deliberately defaults to `agent-relay`. The image
 must be `repository@sha256:digest`; source ranges must be explicit restricted
 CIDRs. `--output-path` is the dataset prefix. `--manifest-prefix` is the
 capability prefix or exact `.../reports/leisaac-session.json` leaf.
+LeIsaac's required node affinity accepts either GPU Feature Discovery's exact
+RTX PRO 6000 product label or Nebius's managed-node `RTX6000` provider label;
+this preserves RT-core routing when managed drivers intentionally disable GPU
+Operator operands.
 
 Inspect and clean up only the selected run:
 
