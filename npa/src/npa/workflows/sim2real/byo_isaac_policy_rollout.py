@@ -399,7 +399,7 @@ try:
     if agent_cfg is None:
         raise RuntimeError("could not load rsl_rl_cfg_entry_point for task")
     acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
-    runner = OnPolicyRunner(env, acfg, log_dir=None, device="cuda:0")
+    runner = OnPolicyRunner(env, acfg, log_dir=None, device=SIM_DEVICE)
     trained = False
     if CKPT and os.path.isfile(CKPT):
         try:
@@ -409,7 +409,7 @@ try:
             raise RuntimeError("trained checkpoint failed to load: %r" % (e,)) from e
     else:
         print("ROLLOUT_UNTRAINED_POLICY (no checkpoint yet)", flush=True)
-    policy = runner.get_inference_policy(device="cuda:0")
+    policy = runner.get_inference_policy(device=SIM_DEVICE)
     realN = int(getattr(env.unwrapped, "num_envs", N) or N)
     try:
         reset_out = env.reset()
