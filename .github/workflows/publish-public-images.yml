@@ -177,6 +177,7 @@ jobs:
       - name: Remove an exact retired candidate after failed privacy verification
         if: ${{ steps.candidate.outcome == 'success' && vars.NPA_RETIRE_CANDIDATE_REF != '' }}
         env:
+          GH_TOKEN: ${{ secrets.NPA_PRIVATE_GHCR_TOKEN || secrets.GITHUB_TOKEN }}
           RETIRED_REF: ${{ vars.NPA_RETIRE_CANDIDATE_REF }}
           EXPECTED_DIGEST: ${{ vars.NPA_RETIRE_CANDIDATE_DIGEST }}
         run: |
