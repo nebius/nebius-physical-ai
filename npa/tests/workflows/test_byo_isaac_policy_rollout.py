@@ -157,6 +157,7 @@ def test_build_isaac_rollout_job_manifest_shape():
     assert "ROLLOUT_CAMERA_VIEWS_JSON=" in script
     assert 'ROLLOUT_CAPTURE_WIDTH="640"' in script
     assert 'ROLLOUT_CAPTURE_HEIGHT="480"' in script
+    assert "ROLLOUT_SIM_DEVICE=cuda:0" in script
     assert '"name":"side"' in script
     assert '"name":"overhead"' in script
     assert "/opt/npa/isaac-runtime/isaac_rollout.py" in script
@@ -166,6 +167,36 @@ def test_build_isaac_rollout_job_manifest_shape():
     assert m["spec"]["backoffLimit"] == 1
     assert "--portable-root /tmp/npa-isaac-kit" in pr.ISAAC_ROLLOUT_SCRIPT
     assert "kit_args=os.environ.get(" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert "device=SIM_DEVICE" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert '"simulation_device": SIM_DEVICE' in pr.ISAAC_ROLLOUT_SCRIPT
+
+
+def test_rollout_job_can_select_cpu_physics_without_releasing_gpu(
+    monkeypatch,
+):
+    monkeypatch.setenv("NPA_SIM2REAL_ISAAC_DEVICE", "cpu")
+    manifest = pr.build_isaac_rollout_job_manifest(
+        job_name="s2r-byo-isaac-roll-run1-cpu",
+        run_id="run1",
+        image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0",
+        rollout_count=1,
+        steps_per_rollout=1,
+        checkpoint_uri="",
+        out_s3_prefix="s3://b/sim2real-b/run1/byo-rollouts/cpu",
+        s3_endpoint="",
+        namespace="default",
+        service_account="agent-sa",
+        gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+    )
+
+    script = _manifest_script(manifest)
+    assert "ROLLOUT_SIM_DEVICE=cpu" in script
+    resources = manifest["spec"]["template"]["spec"]["containers"][0][
+        "resources"
+    ]
+    assert resources["requests"]["nvidia.com/gpu"] == "1"
+    assert resources["limits"]["nvidia.com/gpu"] == "1"
 
 
 def test_untrained_job_manifest_skips_download():

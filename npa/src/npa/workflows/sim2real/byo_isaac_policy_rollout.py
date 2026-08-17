@@ -268,6 +268,11 @@ CAPTURE_HEIGHT = int(os.environ.get("ROLLOUT_CAPTURE_HEIGHT", "480"))
 CAPTURE_STRIDE = max(1, int(os.environ.get("ROLLOUT_CAPTURE_STRIDE", "1")))
 PNG_COMPRESS_LEVEL = int(os.environ.get("ROLLOUT_PNG_COMPRESS_LEVEL", "3"))
 CAPTURE_FPS = float(os.environ.get("ROLLOUT_CAPTURE_FPS", "10"))
+SIM_DEVICE = os.environ.get("ROLLOUT_SIM_DEVICE", "cuda:0").strip() or "cuda:0"
+if SIM_DEVICE != "cpu" and not (
+    SIM_DEVICE.startswith("cuda:") and SIM_DEVICE.removeprefix("cuda:").isdigit()
+):
+    raise RuntimeError("ROLLOUT_SIM_DEVICE must be cpu or cuda:<index>")
 CKPT_URI = os.environ.get("ROLLOUT_CKPT_URI", "").strip()
 trained = False
 def checkpoint_provenance():
@@ -285,6 +290,7 @@ def upload_and_exit(rollouts, note, applied=None):
             "applied_scenarios": applied or {},
             "policy_checkpoint": checkpoint,
             "camera_metadata": CAMERA_VIEWS,
+            "simulation_device": SIM_DEVICE,
             "capture": {"width": CAPTURE_WIDTH, "height": CAPTURE_HEIGHT,
                         "rollout_stride": CAPTURE_STRIDE,
                         "decision_points": STEPS, "horizon_steps": HORIZON_STEPS,
@@ -338,7 +344,8 @@ try:
     except Exception:
         from omni.isaac.lab_rl.rsl_rl import RslRlVecEnvWrapper
     from rsl_rl.runners import OnPolicyRunner
-    env_cfg = parse_env_cfg(TASK, device="cuda:0", num_envs=N)
+    env_cfg = parse_env_cfg(TASK, device=SIM_DEVICE, num_envs=N)
+    print("ROLLOUT_SIM_DEVICE", SIM_DEVICE, flush=True)
     OBJECT_USD = os.environ.get("ROLLOUT_OBJECT_USD", "").strip()
     if OBJECT_USD:
         try:
@@ -716,6 +723,7 @@ def build_isaac_rollout_job_manifest(
         f'ROLLOUT_CAPTURE_STRIDE="{capture["rollout_stride"]}" '
         f'ROLLOUT_PNG_COMPRESS_LEVEL="{capture["png_compress_level"]}" '
         f'ROLLOUT_CAPTURE_FPS="{capture["fps"]}" '
+        f"ROLLOUT_SIM_DEVICE={_shlex.quote(_env('NPA_SIM2REAL_ISAAC_DEVICE', 'cuda:0'))} "
         f"ROLLOUT_CKPT_URI={_shlex.quote(checkpoint_uri)} "
         f'ROLLOUT_CKPT_LOCAL="{ckpt_local}" '
         f"ROLLOUT_OUT_S3={_shlex.quote(out_s3_prefix)} "
