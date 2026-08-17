@@ -67,6 +67,11 @@ NON_CLI_ARGV = frozenset(
         "workbench.openpi.prepare_data",
         "workbench.openpi.serve",
         "workbench.openpi.train",
+        "workbench.content_agents.acquire",
+        "workbench.content_agents.materials",
+        "workbench.content_agents.physics",
+        "workbench.content_agents.validate",
+        "workbench.content_agents.package",
     }
 )
 
@@ -101,6 +106,11 @@ AUDITED_ELSEWHERE = frozenset(
         "workbench.openpi.prepare_data",
         "workbench.openpi.serve",
         "workbench.openpi.train",
+        "workbench.content_agents.acquire",
+        "workbench.content_agents.materials",
+        "workbench.content_agents.physics",
+        "workbench.content_agents.validate",
+        "workbench.content_agents.package",
     }
 )
 

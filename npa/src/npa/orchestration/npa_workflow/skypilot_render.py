@@ -60,6 +60,10 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     "workbench.vlm_eval": (),
     # Attribute verification generates and answers its questions on Token Factory.
     "workbench.cosmos_evaluator": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    # Material and physics classification call a real hosted vision model. The
+    # acquire/validate/package actions do not consume the key, but one prefix
+    # hint makes the complete shipped workflow's credential requirement clear.
+    "workbench.content_agents": ("NEBIUS_TOKEN_FACTORY_KEY",),
     # This entry explicitly disables the parent Cosmos3 hint: the public Nano
     # checkpoint is downloaded anonymously and this toolRef passes --no-guardrails.
     "workbench.cosmos3.text_to_image": (),

@@ -1,0 +1,44 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+# SPDX-License-Identifier: Apache-2.0
+set -eu
+
+display_num="${OVRTX_XVFB_DISPLAY:-99}"
+case "$display_num" in
+  ''|*[!0-9]*)
+    echo "OVRTX_XVFB_DISPLAY must be numeric" >&2
+    exit 1
+    ;;
+esac
+
+lock_file="/tmp/.X${display_num}-lock"
+socket_file="/tmp/.X11-unix/X${display_num}"
+for artifact in "$lock_file" "$socket_file"; do
+  if [ -L "$artifact" ]; then
+    echo "Refusing symlinked Xvfb artifact: $artifact" >&2
+    exit 1
+  fi
+  if [ -e "$artifact" ]; then
+    if [ ! -O "$artifact" ]; then
+      echo "Refusing Xvfb artifact owned by another user: $artifact" >&2
+      exit 1
+    fi
+    rm -f -- "$artifact"
+  fi
+done
+
+mkdir -p /tmp/.X11-unix
+Xvfb ":${display_num}" -screen 0 "${OVRTX_XVFB_SCREEN:-1024x768x24}" \
+  +extension GLX -nolisten tcp &
+xvfb_pid="$!"
+
+while [ ! -S "$socket_file" ]; do
+  if ! kill -0 "$xvfb_pid" 2>/dev/null; then
+    wait "$xvfb_pid" || status="$?"
+    echo "Xvfb failed on display :${display_num} (exit ${status:-1})" >&2
+    exit "${status:-1}"
+  fi
+done
+
+export DISPLAY=":${display_num}"
+exec "$@"

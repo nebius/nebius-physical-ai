@@ -1,0 +1,146 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# NVIDIA Content Agents v0.5.2, packaged as a restricted operator-built runtime.
+# The accepted handoff is deliberately narrow: one rigid, non-articulated Isaac
+# object.  It does not claim arbitrary scene, robot, joint, texture, or Genesis
+# compatibility.
+#
+# Build the image into the active project's private registry after accepting the
+# named NVIDIA terms, resolve its immutable digest, then submit:
+#
+#   npa workbench workflow submit content-agents-rigid-object.yaml \
+#     --run-id <id> \
+#     --var bucket=<private-bucket> \
+#     --var runtime_image=<private-registry>/npa-content-agents@sha256:<digest> \
+#     --secret-env NEBIUS_TOKEN_FACTORY_KEY \
+#     --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+
+metadata:
+  name: content-agents-rigid-object
+  description: >
+    Enrich one self-contained USD object with a generated material, rigid-body
+    collision/mass/friction properties, fresh OVRTX renders, upstream Validation
+    Agent reports, a self-contained USDZ, provenance, and an Isaac Stage-2 adapter.
+
+config:
+  bucket: example-bucket
+  prefix: "content-agents/{{run.id}}"
+  run_uri: "s3://{{config.bucket}}/{{config.prefix}}"
+  # The default is repository-authored/generated and redistributable. Replace it
+  # with an s3:// URI for a customer-owned self-contained USD/USDZ.
+  source_uri: "generated://rigid-cube"
+  # Restricted images never resolve through tool:// or the public mirror. The
+  # operator must supply a private registry digest at submit time.
+  runtime_image: "registry.example.invalid/npa-content-agents@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  vlm_model: "Qwen/Qwen2.5-VL-72B-Instruct"
+  vlm_base_url: "https://api.tokenfactory.nebius.com/v1/"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+    image: "{{config.runtime_image}}"
+  rtx-render:
+    cloud: kubernetes
+    # OVRTX path tracing requires RT cores. B200 is not a valid substitute.
+    accelerators: RTXPRO6000:1
+    cpus: 16
+    memory: 64Gi
+    image: "{{config.runtime_image}}"
+    kubernetes:
+      pod_config:
+        spec:
+          containers:
+            - name: ray-node
+              volumeMounts:
+                - name: dshm
+                  mountPath: /dev/shm
+          volumes:
+            - name: dshm
+              emptyDir:
+                medium: Memory
+                sizeLimit: 16Gi
+
+initial: acquire
+
+states:
+  acquire:
+    description: Normalize a generated or customer-owned self-contained USD object.
+    toolRef: workbench.content_agents.acquire
+    resources: cpu
+    outputs:
+      - uri: "{{config.run_uri}}/acquire/asset.usda"
+        schema: npa.content_agents.usd.acquired.v1
+      - uri: "{{config.run_uri}}/acquire/report.json"
+        schema: npa.content_agents.stage_report.v1
+    next: materials
+
+  materials:
+    description: Run real Material Agent inference and OVRTX before/after renders.
+    needs: [acquire]
+    toolRef: workbench.content_agents.materials
+    resources: rtx-render
+    inputs:
+      - uri: "{{config.run_uri}}/acquire/asset.usda"
+        schema: npa.content_agents.usd.acquired.v1
+    outputs:
+      - uri: "{{config.run_uri}}/materials/asset_material.usda"
+        schema: npa.content_agents.usd.material.v1
+      - uri: "{{config.run_uri}}/materials/report.json"
+        schema: npa.content_agents.stage_report.v1
+    next: physics
+
+  physics:
+    description: Run real Physics Agent inference and author rigid simulation schemas.
+    needs: [materials]
+    toolRef: workbench.content_agents.physics
+    resources: rtx-render
+    inputs:
+      - uri: "{{config.run_uri}}/materials/asset_material.usda"
+        schema: npa.content_agents.usd.material.v1
+    outputs:
+      - uri: "{{config.run_uri}}/physics/asset_physics.usda"
+        schema: npa.content_agents.usd.physics.v1
+      - uri: "{{config.run_uri}}/physics/report.json"
+        schema: npa.content_agents.stage_report.v1
+    next: validate
+
+  validate:
+    description: Run upstream render_valid and physics_sane release profiles.
+    needs: [physics]
+    toolRef: workbench.content_agents.validate
+    resources: rtx-render
+    inputs:
+      - uri: "{{config.run_uri}}/physics/asset_physics.usda"
+        schema: npa.content_agents.usd.physics.v1
+    outputs:
+      - uri: "{{config.run_uri}}/validation/upstream/validation_result.json"
+        schema: nvidia.content_agents.validation_result.v1
+      - uri: "{{config.run_uri}}/validation/report.json"
+        schema: npa.content_agents.stage_report.v1
+    next: package
+
+  package:
+    description: Package the rigid asset, provenance, and Isaac Stage-2 handoff.
+    needs: [validate]
+    toolRef: workbench.content_agents.package
+    resources: cpu
+    inputs:
+      - uri: "{{config.run_uri}}/physics/asset_physics.usda"
+        schema: npa.content_agents.usd.physics.v1
+      - uri: "{{config.run_uri}}/validation/upstream/validation_result.json"
+        schema: nvidia.content_agents.validation_result.v1
+    outputs:
+      - uri: "{{config.run_uri}}/package/asset_simready.usdz"
+        schema: npa.content_agents.isaac_rigid_asset.v1
+      - uri: "{{config.run_uri}}/package/sim_asset_manifest.json"
+        schema: npa.content_agents.isaac_rigid_asset.v1
+      - uri: "{{config.run_uri}}/package/scene_spec.json"
+        schema: npa.sim2real.manip_scene_spec.v1
+      - uri: "{{config.run_uri}}/reports/provenance.json"
+        schema: npa.content_agents.provenance.v1
+      - uri: "{{config.run_uri}}/reports/final.json"
+        schema: npa.content_agents.final.v1
+    terminal: true

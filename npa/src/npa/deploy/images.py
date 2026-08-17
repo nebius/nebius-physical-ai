@@ -66,6 +66,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "cosmos2-transfer",
         "cosmos-curate",
         "cosmos-evaluator",
+        "content-agents",
         "fiftyone",
     }
 )
@@ -86,20 +87,19 @@ def requires_skypilot_bootstrap_runtime_probe(image: str) -> bool:
     raw = str(image or "").strip().removeprefix("docker:").partition("@")[0]
     leaf = raw.rsplit("/", 1)[-1].split(":", 1)[0]
     return leaf in {
-        CONTAINER_IMAGE_NAMES[tool]
-        for tool in SKYPILOT_BOOTSTRAP_RUNTIME_PROBED_TOOLS
+        CONTAINER_IMAGE_NAMES[tool] for tool in SKYPILOT_BOOTSTRAP_RUNTIME_PROBED_TOOLS
     }
+
 
 # Tools whose built image may NOT be published to a public/anonymous registry,
 # because it bakes a runtime we are not licensed to redistribute.
 #
 # The Isaac-family membership is deliberately empty: those images were
-# re-architected to fetch Isaac at runtime. Cosmos3 serving is restricted for a
-# separate reason: its pinned vLLM-Omni base embeds the NVIDIA Deep Learning
-# Container License and the thin wrapper does not establish the license's
-# material-additional-functionality and downstream-terms conditions for an
-# anonymous standalone GHCR distribution. Operators may build it into their own
-# registry instead.
+# re-architected to fetch Isaac at runtime. Cosmos3 serving and Content Agents
+# are separate build-your-own cases. The former embeds an NVIDIA Deep Learning
+# Container base; the latter embeds the proprietary, hash-locked OVRTX wheel.
+# Neither packaging contract establishes anonymous standalone distribution
+# rights, so operators may build them only into their own private registry.
 #
 # It used to hold {"isaac-lab", "sonic", "groot"}, because those images baked NVIDIA
 # Omniverse Kit (Isaac Sim): the Isaac Sim SOURCE is Apache-2.0, but the shipped
@@ -120,7 +120,9 @@ def requires_skypilot_bootstrap_runtime_probe(image: str) -> bool:
 # deliberate API rename; the behavior is the general restricted-runtime guard.
 # Kept in sync with packaging-contract.yaml's `redistribution:` fields by
 # npa/tests/deploy/test_public_publish.py.
-OMNIVERSE_RESTRICTED_TOOLS: frozenset[str] = frozenset({"cosmos3-serving"})
+OMNIVERSE_RESTRICTED_TOOLS: frozenset[str] = frozenset(
+    {"content-agents", "cosmos3-serving"}
+)
 
 # Images built FROM a restricted tool image, so they inherit whatever it bakes and
 # the same no-public-redistribution rule. They are not separate

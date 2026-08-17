@@ -1,0 +1,169 @@
+#!/usr/bin/env python3
+"""Audit the built, restricted NVIDIA Content Agents image.
+
+This scanner proves the deliberate boundary on actual image bytes: reviewed
+Content Agents and OVRTX must be present, while optional proprietary components,
+sample/customer data, model weights, credentials, and source-control metadata
+must be absent. It never decides that the image is publicly redistributable;
+success requires the restricted label.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+import subprocess
+from typing import Any, Callable, Sequence
+
+
+class ImageAuditError(RuntimeError):
+    """Raised when the built image violates its packaging contract."""
+
+
+Runner = Callable[[Sequence[str]], str]
+
+
+def _run(argv: Sequence[str]) -> str:
+    completed = subprocess.run(list(argv), check=False, capture_output=True, text=True)
+    if completed.returncode:
+        raise ImageAuditError(
+            f"{Path(argv[0]).name} failed with exit code {completed.returncode}"
+        )
+    return completed.stdout
+
+
+def _container_json(image: str, script: str, runner: Runner) -> dict[str, Any]:
+    raw = runner(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--entrypoint",
+            "/opt/venv/bin/python",
+            image,
+            "-c",
+            script,
+        ]
+    )
+    payload = json.loads(raw)
+    if not isinstance(payload, dict):
+        raise ImageAuditError("container audit did not return a JSON object")
+    return payload
+
+
+def audit_image(image: str, *, runner: Runner = _run) -> dict[str, Any]:
+    inspected = json.loads(runner(["docker", "image", "inspect", image]))
+    if not isinstance(inspected, list) or len(inspected) != 1:
+        raise ImageAuditError("docker inspect did not resolve exactly one image")
+    record = inspected[0]
+    config = record.get("Config") or {}
+    labels = config.get("Labels") or {}
+    expected_labels = {
+        "npa.tool": "content-agents",
+        "npa.redistribution": "restricted",
+        "org.opencontainers.image.revision": (
+            "36dbf3f274f8e256637230a05a085853f65cc175"
+        ),
+        "org.opencontainers.image.version": "0.5.2",
+    }
+    for key, expected in expected_labels.items():
+        if labels.get(key) != expected:
+            raise ImageAuditError(f"image label {key} is not {expected!r}")
+    licenses = str(labels.get("org.opencontainers.image.licenses") or "")
+    if "Apache-2.0" not in licenses or "NVIDIA-Proprietary-OVRTX" not in licenses:
+        raise ImageAuditError(
+            "image license label omits a required source/runtime class"
+        )
+    if str(config.get("User") or "") not in {"ubuntu", "1000", "1000:1000"}:
+        raise ImageAuditError("final image user is not the reviewed non-root identity")
+
+    runtime = _container_json(
+        image,
+        """
+import json
+from npa.workflows.content_agents import inspect_runtime
+print(json.dumps(inspect_runtime(), sort_keys=True))
+""",
+        runner,
+    )
+    if runtime.get("status") != "ready":
+        raise ImageAuditError("runtime self-inspection did not report ready")
+
+    inventory = _container_json(
+        image,
+        """
+import json
+from pathlib import Path
+
+root = Path('/opt/content-agents')
+forbidden_exact = [
+    root / '.git',
+    root / '.build-resources' / 'scene_optimizer_core',
+    root / 'apps' / 'material_agent' / 'data',
+    root / 'apps' / 'physics_agent' / 'data',
+]
+forbidden_dirs = []
+for name in ('tests', 'examples'):
+    forbidden_dirs.extend(str(path) for path in root.glob(f'apps/*/{name}'))
+weight_suffixes = {'.pt', '.pth', '.ckpt', '.safetensors', '.onnx', '.gguf'}
+weight_files = [
+    str(path) for path in root.rglob('*')
+    if path.is_file() and path.suffix.lower() in weight_suffixes
+]
+print(json.dumps({
+    'forbidden_exact': [str(path) for path in forbidden_exact if path.exists()],
+    'forbidden_dirs': forbidden_dirs,
+    'weight_files': weight_files,
+}, sort_keys=True))
+""",
+        runner,
+    )
+    findings = {
+        key: values
+        for key, values in inventory.items()
+        if isinstance(values, list) and values
+    }
+    if findings:
+        raise ImageAuditError(f"forbidden payload found in built image: {findings}")
+
+    image_id = str(record.get("Id") or "")
+    if not image_id.startswith("sha256:"):
+        raise ImageAuditError("docker inspect returned no immutable image ID")
+    repo_digests = sorted(str(value) for value in (record.get("RepoDigests") or []))
+    return {
+        "schema": "npa.content_agents.image_audit.v1",
+        "status": "passed",
+        "image_id": image_id,
+        "repo_digests": repo_digests,
+        "labels": expected_labels,
+        "licenses": licenses,
+        "runtime": runtime,
+        "inventory": inventory,
+    }
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "image", help="Local image tag or immutable private-registry ref"
+    )
+    parser.add_argument(
+        "--output", type=Path, help="Write the private JSON audit record"
+    )
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    result = audit_image(args.image)
+    encoded = json.dumps(result, indent=2, sort_keys=True) + "\n"
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(encoded, encoding="utf-8")
+    print(encoded, end="")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

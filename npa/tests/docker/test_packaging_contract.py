@@ -156,7 +156,11 @@ def _validate_derived_bootstrap_source(
     assert dockerfile != WORKBENCH_DOCKER / str(entry.get("dockerfile") or ""), (
         f"{image_name}: derived contract must not attest the canonical Dockerfile"
     )
-    text = source_text if source_text is not None else dockerfile.read_text(encoding="utf-8")
+    text = (
+        source_text
+        if source_text is not None
+        else dockerfile.read_text(encoding="utf-8")
+    )
     version = str(derived["version"])
     assert f'org.nebius.npa.skypilot-bootstrap-contract="{version}"' in text
     for token in (
@@ -166,9 +170,9 @@ def _validate_derived_bootstrap_source(
         "ubuntu ALL=(ALL) NOPASSWD:ALL",
         "ssh-keygen -A",
         "rm -f /etc/ssh/ssh_host_*",
-        'PasswordAuthentication no',
-        'PermitRootLogin no',
-        r'exec \"$@\"',
+        "PasswordAuthentication no",
+        "PermitRootLogin no",
+        r"exec \"$@\"",
     ):
         assert token in text, f"{image_name}: derived source missing {token!r}"
     assert _final_user(text) == "ubuntu", image_name
@@ -330,7 +334,7 @@ def test_runtime_probed_bootstrap_inventory_matches_exact_derived_sources() -> N
         "openssh-server",
         "ssh-keygen -A",
         "rm -f /etc/ssh/ssh_host_*",
-        r'exec \"$@\"',
+        r"exec \"$@\"",
         'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"',
     ],
 )
@@ -338,9 +342,9 @@ def test_derived_bootstrap_source_guard_rejects_contract_mutations(
     removed_token: str,
 ) -> None:
     entry = _load_contract()["images"]["groot"]
-    dockerfile = WORKBENCH_DOCKER / entry["derived_skypilot_bootstrap_contract"][
-        "dockerfile"
-    ]
+    dockerfile = (
+        WORKBENCH_DOCKER / entry["derived_skypilot_bootstrap_contract"]["dockerfile"]
+    )
     text = dockerfile.read_text(encoding="utf-8")
     assert removed_token in text
 
@@ -623,6 +627,10 @@ MUST_DETECT = {
     "bootstrap warm at build time": "RUN isaac_bootstrap.sh warm\n",
     "isaac shim invoked at build time": 'RUN /isaac-sim/python.sh -c "import isaaclab"\n',
     "isaac-python invoked at build time": "RUN isaac-python -m pip install foo\n",
+    "hash-locked OVRTX wheel install": (
+        "RUN uv pip install --python /opt/ovrtx/bin/python "
+        "-r pylock.ovrtx-runtime.toml --require-hashes --no-deps\n"
+    ),
 }
 
 MUST_NOT_DETECT = {
