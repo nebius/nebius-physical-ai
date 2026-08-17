@@ -8,10 +8,40 @@
 #
 set -euo pipefail
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Prefer the repository venv when NPA_BIN is not set explicitly: `npa` is only on
+# PATH when that venv is activated, and the repo convention (AGENTS.md, the CI
+# guardrail jobs) is npa/.venv.
+if [ -z "${NPA_BIN:-}" ] && [ -x "${REPO_ROOT}/npa/.venv/bin/npa" ]; then
+  NPA_BIN="${REPO_ROOT}/npa/.venv/bin/npa"
+fi
 NPA_BIN="${NPA_BIN:-npa}"
 # Execution may use an absolute path from an isolated venv, but generated docs
 # must show the stable public command name rather than leaking that checkout.
 NPA_DISPLAY_BIN="${NPA_DOCS_DISPLAY_BIN:-$(basename "$NPA_BIN")}"
+
+# Every help fetch below tolerates a non-zero exit, because a leaf command may
+# legitimately fail --help. That tolerance used to hide a missing interpreter
+# entirely: with no `npa` on PATH the walk documented nothing, `--check` reported
+# every page as drifted, and an in-place run deleted docs/cli/ and wrote nothing
+# back. Resolve the binary once, up front, and fail with a usable message.
+if ! env COLUMNS=200 NO_COLOR=1 "$NPA_BIN" --help >/dev/null 2>&1; then
+  cat >&2 <<EOF
+ERROR: cannot run '${NPA_BIN}'.
+
+The CLI reference is generated from live \`npa --help\` output, so this script
+needs a working npa. Install it and retry, or point NPA_BIN at an interpreter's
+console script:
+
+  python3 -m venv npa/.venv && npa/.venv/bin/pip install -e npa
+  bash scripts/build_docs.sh${1:+ $1}
+
+  # or
+  NPA_BIN=/path/to/venv/bin/npa bash scripts/build_docs.sh${1:+ $1}
+EOF
+  exit 1
+fi
 # Typer/Rich reads COLUMNS when rendering help. Do not inherit a shell or tmux
 # width: the generated Markdown must be identical in CI and an interactive TTY.
 DOCS_COLUMNS="${NPA_DOCS_COLUMNS:-200}"
