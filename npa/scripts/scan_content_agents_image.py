@@ -185,11 +185,18 @@ forbidden_exact = [
 forbidden_dirs = []
 for name in ('tests', 'examples'):
     forbidden_dirs.extend(str(path) for path in root.glob(f'apps/*/{name}'))
-weight_suffixes = {'.pt', '.pth', '.ckpt', '.safetensors', '.onnx', '.gguf'}
+weight_suffixes = {'.pt', '.ckpt', '.safetensors', '.onnx', '.gguf'}
 weight_files = [
     str(path) for path in root.rglob('*')
     if path.is_file() and path.suffix.lower() in weight_suffixes
 ]
+# Python reserves direct ``site-packages/*.pth`` files for import-path hooks
+# (for example ``_virtualenv.pth``). A checkpoint beneath a package/model
+# directory remains forbidden, as does every other reviewed weight suffix.
+weight_files.extend(
+    str(path) for path in root.rglob('*.pth')
+    if path.is_file() and path.parent.name != 'site-packages'
+)
 print(json.dumps({
     'forbidden_exact': [str(path) for path in forbidden_exact if path.exists()],
     'forbidden_dirs': forbidden_dirs,

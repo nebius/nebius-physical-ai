@@ -118,3 +118,9 @@ def test_built_image_audit_enforces_requested_npa_source_checkpoint() -> None:
         scanner.audit_image(
             "image", expected_npa_source_sha="4" * 40, runner=_runner()
         )
+
+
+def test_scanner_distinguishes_python_path_hooks_from_nested_pth_weights() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert "path.parent.name != 'site-packages'" in source
+    assert "{'.pt', '.ckpt', '.safetensors', '.onnx', '.gguf'}" in source
