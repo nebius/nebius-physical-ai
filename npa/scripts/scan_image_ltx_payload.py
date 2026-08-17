@@ -15,9 +15,12 @@ LTX-specific.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import re
+import shutil
 import sys
+import tarfile
 import tempfile
 from dataclasses import asdict
 from pathlib import Path
@@ -272,20 +275,65 @@ def scan_tars(tars: list[Path], config: dict[str, Any]) -> list[walker.Finding]:
         return walker.scan_tars(tars, config)
 
 
+def docker_save_material(
+    archive_path: Path, temp_dir: Path
+) -> tuple[list[Path], dict[str, Any]]:
+    """Read every layer and the OCI config from one ``docker save`` archive.
+
+    Reading layers independently is intentional: a merged rootfs would hide a
+    credential or gated payload that a later whiteout deleted.
+    """
+
+    with tarfile.open(archive_path, "r:*") as archive:
+        manifest_member = archive.getmember("manifest.json")
+        manifest_stream = archive.extractfile(manifest_member)
+        if manifest_stream is None:
+            raise RuntimeError("docker save archive has no readable manifest.json")
+        manifests = json.load(io.TextIOWrapper(manifest_stream, encoding="utf-8"))
+        if not isinstance(manifests, list) or len(manifests) != 1:
+            raise RuntimeError("docker save archive must contain exactly one image")
+        manifest = manifests[0]
+        config_name = str(manifest.get("Config") or "")
+        layer_names = manifest.get("Layers") or []
+        if not config_name or not layer_names:
+            raise RuntimeError("docker save manifest has no config or layers")
+
+        config_stream = archive.extractfile(archive.getmember(config_name))
+        if config_stream is None:
+            raise RuntimeError("docker save archive has no readable image config")
+        config = json.load(io.TextIOWrapper(config_stream, encoding="utf-8"))
+
+        layers: list[Path] = []
+        for index, layer_name in enumerate(layer_names):
+            layer_stream = archive.extractfile(archive.getmember(str(layer_name)))
+            if layer_stream is None:
+                raise RuntimeError(f"docker save layer {index} is not readable")
+            layer_path = temp_dir / f"layer-{index:03d}.tar"
+            with layer_path.open("wb") as output:
+                shutil.copyfileobj(layer_stream, output)
+            layers.append(layer_path)
+    return layers, config
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", nargs="?")
     parser.add_argument("--rootfs-tar", type=Path)
+    parser.add_argument("--docker-save", type=Path)
     parser.add_argument("--config-json", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
-    if bool(args.image) == bool(args.rootfs_tar):
-        parser.error("provide exactly one IMAGE or --rootfs-tar")
+    if sum(bool(value) for value in (args.image, args.rootfs_tar, args.docker_save)) != 1:
+        parser.error("provide exactly one IMAGE, --rootfs-tar, or --docker-save")
+    if args.config_json and not args.rootfs_tar:
+        parser.error("--config-json is valid only with --rootfs-tar")
 
     try:
         with tempfile.TemporaryDirectory(prefix="npa-ltx-byte-scan-") as tmp:
             if args.image:
                 tars, config = walker.remote_material(args.image, Path(tmp))
+            elif args.docker_save:
+                tars, config = docker_save_material(args.docker_save, Path(tmp))
             else:
                 tars = [args.rootfs_tar]
                 config = (
@@ -298,7 +346,7 @@ def main(argv: list[str] | None = None) -> int:
 
     result = {
         "format": "npa_ltx_image_byte_scan_v1",
-        "image": args.image or "offline-rootfs",
+        "image": args.image or ("docker-save" if args.docker_save else "offline-rootfs"),
         "status": "pass" if not findings else "fail",
         "archives_scanned": len(tars),
         "findings": [asdict(item) for item in findings],

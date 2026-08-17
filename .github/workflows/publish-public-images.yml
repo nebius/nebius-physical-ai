@@ -272,8 +272,8 @@ jobs:
             --json "$RUNNER_TEMP/${TOOL}-payload.json"
           if [ "$TOOL" = ltx2 ]; then
             npa/.venv/bin/python npa/scripts/scan_image_ltx_payload.py \
-              --tarball "$RUNNER_TEMP/${TOOL}.tar" \
-              --json "$RUNNER_TEMP/${TOOL}-ltx-payload.json"
+              --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
+              --output "$RUNNER_TEMP/${TOOL}-ltx-payload.json"
           fi
 
       - name: Pre-publication vulnerability, secret, and license scan
@@ -349,7 +349,7 @@ jobs:
             "$exact" --json "$RUNNER_TEMP/${TOOL}-pushed-payload.json"
           if [ "$TOOL" = ltx2 ]; then
             npa/.venv/bin/python npa/scripts/scan_image_ltx_payload.py \
-              "$exact" --json "$RUNNER_TEMP/${TOOL}-pushed-ltx-payload.json"
+              "$exact" --output "$RUNNER_TEMP/${TOOL}-pushed-ltx-payload.json"
           fi
           anonymous_config="$(mktemp -d)"
           DOCKER_CONFIG="$anonymous_config" crane manifest "$IMAGE" >/dev/null
