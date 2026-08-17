@@ -174,9 +174,6 @@ AUDITED_SECRET_LITERAL_FILE_SHA256: dict[str, str] = {
     "opt/wan-base/lib/python3.10/site-packages/PIL/ImageFont.py": (
         "24fa5feeb91b4bf63eaad0ebba08a8161e9c889d9fd056a37c928134097b9649"
     ),
-    "opt/wan-base/lib/python3.10/site-packages/PIL/__pycache__/ImageFont.cpython-310.pyc": (
-        "59632aaf913b02078acc5d366bcef3e28a14194acaf7904c4c13ac4714c319a2"
-    ),
     "opt/wan-base/lib/python3.10/site-packages/accelerate/commands/config/sagemaker.py": (
         "4912eea7d5eb57f67edb703777c8196e4a9ba270dcb1c3030e66e99b2b42cdb6"
     ),
@@ -209,9 +206,6 @@ AUDITED_SECRET_LITERAL_FILE_SHA256: dict[str, str] = {
     ),
     "opt/wan-base/lib/python3.10/site-packages/cryptography/hazmat/primitives/serialization/ssh.py": (
         "162b177bf9d429d3c67ea10d5612a99a86b399a23ca87f067be5466dcd1dca4c"
-    ),
-    "opt/wan-base/lib/python3.10/site-packages/cryptography/hazmat/primitives/serialization/__pycache__/ssh.cpython-310.pyc": (
-        "b269114f93539cfc4c55511c3ecb8e55e7a8f1f9dd8755deef8762f9938eec3e"
     ),
     "opt/wan-base/lib/python3.10/site-packages/diffusers/loaders/textual_inversion.py": (
         "9cc89fb4b0ac9762e4434723f8447d8833d26b03844804ee11493ce4b5f7512a"

@@ -90,7 +90,8 @@ def test_security_fixed_runtime_and_baked_image_are_fully_pinned() -> None:
     assert "-e '/\"flash_attn\",/d'" in dockerfile
     assert "pip install --no-cache-dir --no-deps -e /opt/byof" in dockerfile
     assert "-m compileall -q --invalidation-mode checked-hash" in dockerfile
-    assert "-type d -name __pycache__ -prune" not in dockerfile
+    assert "find /opt/wan-base -type d -name __pycache__ -prune" in dockerfile
+    assert "find /opt/wan-base -type f -name '*.pyc'" in dockerfile
     assert '"$tree/venv/bin/python" -m pip check' in RUNTIME_SCRIPT.read_text(
         encoding="utf-8"
     )

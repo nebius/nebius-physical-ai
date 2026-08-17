@@ -624,20 +624,12 @@ def test_secret_literal_exception_requires_exact_audited_bytes(
     )
 
 
-def test_precompiled_secret_literal_allowlist_is_exact() -> None:
-    expected = {
-        "opt/wan-base/lib/python3.10/site-packages/PIL/__pycache__/ImageFont.cpython-310.pyc": (
-            "59632aaf913b02078acc5d366bcef3e28a14194acaf7904c4c13ac4714c319a2"
-        ),
-        "opt/wan-base/lib/python3.10/site-packages/cryptography/hazmat/primitives/serialization/__pycache__/ssh.cpython-310.pyc": (
-            "b269114f93539cfc4c55511c3ecb8e55e7a8f1f9dd8755deef8762f9938eec3e"
-        ),
-    }
-
-    assert {
-        path: scanner.AUDITED_SECRET_LITERAL_FILE_SHA256.get(path)
-        for path in expected
-    } == expected
+def test_secret_literal_allowlist_contains_no_precompiled_bytecode() -> None:
+    assert not [
+        path
+        for path in scanner.AUDITED_SECRET_LITERAL_FILE_SHA256
+        if "/__pycache__/" in path or path.endswith(".pyc")
+    ]
 
 
 @pytest.mark.parametrize(
