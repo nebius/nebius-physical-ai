@@ -325,7 +325,7 @@ def test_wan_validation_is_bound_to_an_immutable_accepted_tuple(
     ):
         assert re.fullmatch(r"[0-9a-f]{64}", proof[key])
     assert proof["record"] == wan["validation_run"]
-    assert accepted["payload_scan"]["archives_scanned"] == 20
+    assert accepted["payload_scan"]["archives_scanned"] == 21
     assert accepted["payload_scan"]["findings"] == 0
     assert accepted["vulnerability_scan"]["critical_with_fix"] == 0
     assert accepted["vulnerability_scan"]["secrets"] == 0

@@ -61,7 +61,7 @@
   },
   "payload_scan": {
     "scanner": "npa/scripts/scan_image_wan_payload.py",
-    "archives_scanned": 20,
+    "archives_scanned": 21,
     "findings": 0,
     "weights_baked": false,
     "credentials_baked": false
