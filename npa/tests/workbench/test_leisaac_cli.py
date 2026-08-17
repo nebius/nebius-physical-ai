@@ -1675,6 +1675,10 @@ def test_reconnect_agent_rotates_only_existing_relay_contract(monkeypatch) -> No
         )
     ]
     rotation_patch = json.loads(kubectl_calls[0][2][-1])
+    assert rotation_patch["spec"]["strategy"] == {
+        "type": "Recreate",
+        "rollingUpdate": None,
+    }
     nonce_env = rotation_patch["spec"]["template"]["spec"]["containers"][0]["env"][0]
     assert nonce_env == {
         "name": "NPA_LEISAAC_SESSION_NONCE",

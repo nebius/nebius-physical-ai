@@ -650,6 +650,10 @@ def deployment_manifest(
         "metadata": {"name": name, "namespace": namespace, "labels": labels},
         "spec": {
             "replicas": 1,
+            # A singleton GPU pod cannot use the default RollingUpdate strategy:
+            # maxUnavailable rounds to zero while maxSurge needs a second GPU.
+            # Recreate gives relay rotations a schedulable, bounded restart.
+            "strategy": {"type": "Recreate"},
             "selector": {"matchLabels": {"app": name}},
             "template": {"metadata": {"labels": labels}, "spec": pod_spec},
         },

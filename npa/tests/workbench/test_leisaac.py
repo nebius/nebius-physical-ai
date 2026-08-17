@@ -395,6 +395,7 @@ def test_agent_relay_client_is_secret_mounted_as_non_gpu_sidecar() -> None:
         recorder_secret=RECORDER_SECRET,
     )
     pod = deployment["spec"]["template"]["spec"]
+    assert deployment["spec"]["strategy"] == {"type": "Recreate"}
     sidecar = pod["containers"][1]
     assert sidecar["name"] == "agent-relay-client"
     assert "nvidia.com/gpu" not in sidecar["resources"]["requests"]

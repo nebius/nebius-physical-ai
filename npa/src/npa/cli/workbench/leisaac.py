@@ -2058,6 +2058,10 @@ def reconnect_agent_cmd(
         # when the valueFrom contract is already installed.
         rotation_patch = {
             "spec": {
+                # Preserved runs may predate the explicit Recreate strategy.
+                # Change the strategy in the same patch as the pod template so
+                # a one-GPU Deployment never deadlocks waiting for surge capacity.
+                "strategy": {"type": "Recreate", "rollingUpdate": None},
                 "template": {
                     "metadata": {
                         "annotations": {
