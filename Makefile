@@ -13,9 +13,14 @@ PYTEST := cd npa && $(PYTHON) -m pytest
 # to launch real infrastructure if a developer has SkyPilot/creds configured.
 LIVE_DESELECT := -m "not e2e and not e2e_serverless and not e2e_skypilot and not e2e_pipeline and not gpu and not multi_gpu and not byovm_live and not ngc_e2e"
 
-# The CLI reference is generated from live `npa --help`, so the docs targets need
-# the console script that belongs to $(PYTHON) rather than whatever is on PATH.
-NPA_BIN_FOR_PYTHON = NPA_BIN="$${NPA_BIN:-$$(dirname "$$(command -v $(PYTHON))")/npa}"
+# The CLI reference is generated from live `npa --help`, so a PYTHON override
+# should also select that interpreter's console script. Only export NPA_BIN when
+# the derived script actually exists: build_docs.sh already resolves npa/.venv and
+# then PATH, and handing it a path that is not there suppresses both. `command -v`
+# is empty when $(PYTHON) is not on PATH at all, which is how an unconditional
+# `dirname` produced "./npa" and broke every docs target.
+NPA_BIN_FOR_PYTHON = NPA_BIN="$${NPA_BIN:-$$(bin=$$(command -v $(PYTHON) 2>/dev/null) \
+	&& [ -x "$$(dirname "$$bin")/npa" ] && printf '%s' "$$(dirname "$$bin")/npa" || true)}"
 
 .PHONY: help install-dev test test-smoke test-all test-e2e test-guardrails \
 	lint format docs docs-check check
