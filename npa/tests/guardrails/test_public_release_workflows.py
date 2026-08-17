@@ -43,6 +43,12 @@ def test_candidate_workflow_uses_immutable_private_refs_and_visibility_gate() ->
     assert "github.sha" in text
     assert "nebius-physical-ai-private" in text
     assert "visibility" in text and "= private" in text
+    assert "NPA_SOURCE_SHA=${{ github.sha }}" in text
+    assert "provenance: mode=max" in text
+    assert "sbom: true" in text
+    assert "{{json .Provenance}}" in text
+    assert "{{json .SBOM}}" in text
+    assert "trivy-action@v0.36.0" in text
 
 
 def test_public_publisher_promotes_candidate_sha_to_separate_target() -> None:
@@ -56,6 +62,20 @@ def test_public_publisher_promotes_candidate_sha_to_separate_target() -> None:
     assert "ghcr.io/${GITHUB_REPOSITORY,,}" in text
     assert "NPA_PRIVATE_GHCR_TOKEN" in text
     assert "iam get-access-token" not in text
+
+
+def test_public_publisher_can_bootstrap_candidate_from_existing_dispatch_file() -> None:
+    text = PUBLISH.read_text(encoding="utf-8")
+    assert "NPA_BUILD_CANDIDATE_TOOL" in text
+    assert "candidate_image_for_tool" in text
+    assert "NPA_SOURCE_SHA=${{ inputs.candidate_sha || github.sha }}" in text
+    assert "provenance: mode=max" in text
+    assert "sbom: true" in text
+    assert "{{json .Provenance}}" in text
+    assert "{{json .SBOM}}" in text
+    assert "trivy-action@v0.36.0" in text
+    assert "skypilot-0.12.2-v1" in text
+    assert "visibility)\" = private" in text
 
 
 def test_public_health_is_anonymous_and_read_only() -> None:

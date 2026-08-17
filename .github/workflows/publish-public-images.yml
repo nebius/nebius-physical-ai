@@ -55,6 +55,12 @@ on:
           unrelated images (for example: cosmos-curate,cosmos-evaluator,fiftyone,lichtblick)
         required: false
         default: ""
+      build_candidate_tool:
+        description: >-
+          Bootstrap only: build one guarded private dev-SHA candidate before
+          preflight. Prefer the dedicated candidate workflow once it exists on main.
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -85,6 +91,144 @@ jobs:
 
       - name: Install crane
         uses: imjasonh/setup-crane@v0.4
+
+      # Bootstrap bridge: workflow_dispatch only discovers files present on the
+      # default branch. This existing workflow can therefore build the first private
+      # candidate for a feature branch whose dedicated candidate workflow has not
+      # reached main yet. NPA_BUILD_CANDIDATE_TOOL is a temporary repository-variable
+      # fallback for GitHub's default-branch input schema and must be removed after use.
+      - name: Resolve guarded private candidate build
+        if: ${{ (inputs.build_candidate_tool || vars.NPA_BUILD_CANDIDATE_TOOL) != '' }}
+        id: candidate
+        env:
+          TOOL: ${{ inputs.build_candidate_tool || vars.NPA_BUILD_CANDIDATE_TOOL }}
+          SELECTED_TOOLS: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
+          CANDIDATE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY || 'ghcr.io/nebius/nebius-physical-ai-private' }}
+          SOURCE_SHA: ${{ inputs.candidate_sha || github.sha }}
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import os
+          from pathlib import Path
+          from npa.deploy.images import candidate_image_for_tool
+
+          tool = os.environ["TOOL"].strip()
+          selected = {
+              item.strip()
+              for item in os.environ.get("SELECTED_TOOLS", "").replace(",", " ").split()
+              if item.strip()
+          }
+          if selected and selected != {tool}:
+              raise SystemExit(
+                  "bootstrap candidate build must match the single selected publish tool"
+              )
+          dockerfile = Path("npa/docker/workbench") / tool / "Dockerfile"
+          if not dockerfile.is_file():
+              raise SystemExit(f"tool has no canonical candidate Dockerfile: {tool}")
+          image = candidate_image_for_tool(
+              tool,
+              git_sha=os.environ["SOURCE_SHA"],
+              registry=os.environ["CANDIDATE_REGISTRY"],
+          )
+          print(f"image={image}")
+          print(f"dockerfile={dockerfile}")
+          print(f"owner={image.split('/', 2)[1]}")
+          print(f"package={image.split('/', 2)[2].rsplit(':', 1)[0]}")
+          PY
+
+      - name: Refuse a public candidate package before build
+        if: ${{ steps.candidate.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ secrets.NPA_PRIVATE_GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+          OWNER: ${{ steps.candidate.outputs.owner }}
+          PACKAGE: ${{ steps.candidate.outputs.package }}
+        run: |
+          set -euo pipefail
+          encoded="${PACKAGE//\//%2F}"
+          owner_type="$(gh api "/users/${OWNER}" --jq .type)"
+          if [ "$owner_type" = "Organization" ]; then
+            package_api="/orgs/${OWNER}/packages/container/${encoded}"
+          else
+            package_api="/users/${OWNER}/packages/container/${encoded}"
+          fi
+          error_file="$(mktemp)"
+          if visibility="$(gh api "$package_api" --jq .visibility 2>"$error_file")"; then
+            test "$visibility" = private || {
+              echo "::error::Candidate package visibility is '$visibility'; refusing to push development bytes."
+              exit 1
+            }
+          elif ! grep -q 'HTTP 404' "$error_file"; then
+            echo "::error::Could not prove candidate package visibility."
+            sed 's/^/::error::/' "$error_file"
+            exit 1
+          fi
+
+      - name: Set up Buildx for candidate build
+        if: ${{ steps.candidate.outcome == 'success' }}
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to private GHCR candidate channel for build
+        if: ${{ steps.candidate.outcome == 'success' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.NPA_PRIVATE_GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Build and push immutable private candidate
+        if: ${{ steps.candidate.outcome == 'success' }}
+        id: candidate-build
+        uses: docker/build-push-action@v6
+        with:
+          context: npa
+          file: ${{ steps.candidate.outputs.dockerfile }}
+          push: true
+          tags: ${{ steps.candidate.outputs.image }}
+          build-args: |
+            NPA_SOURCE_SHA=${{ inputs.candidate_sha || github.sha }}
+          provenance: mode=max
+          sbom: true
+          labels: |
+            org.opencontainers.image.revision=${{ inputs.candidate_sha || github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+
+      - name: Verify candidate digest, attestation, and private visibility
+        if: ${{ steps.candidate-build.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ secrets.NPA_PRIVATE_GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+          OWNER: ${{ steps.candidate.outputs.owner }}
+          PACKAGE: ${{ steps.candidate.outputs.package }}
+          IMAGE: ${{ steps.candidate.outputs.image }}
+          BUILD_DIGEST: ${{ steps.candidate-build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          digest="$(crane digest "$IMAGE")"
+          test "$digest" = "$BUILD_DIGEST"
+          docker buildx imagetools inspect "$IMAGE" --format '{{json .Provenance}}' \
+            | jq -e '. != null and . != {}'
+          docker buildx imagetools inspect "$IMAGE" --format '{{json .SBOM}}' \
+            | jq -e '. != null and . != {}'
+          test "$(crane config "${IMAGE%@*}@${digest}" | jq -r '.config.Labels["org.nebius.npa.skypilot-bootstrap-contract"] // ""')" = "skypilot-0.12.2-v1"
+          test "$(crane config "${IMAGE%@*}@${digest}" | jq -r '.config.Labels["org.opencontainers.image.revision"] // ""')" = "${{ inputs.candidate_sha || github.sha }}"
+          encoded="${PACKAGE//\//%2F}"
+          owner_type="$(gh api "/users/${OWNER}" --jq .type)"
+          if [ "$owner_type" = "Organization" ]; then
+            package_api="/orgs/${OWNER}/packages/container/${encoded}"
+          else
+            package_api="/users/${OWNER}/packages/container/${encoded}"
+          fi
+          test "$(gh api "$package_api" --jq .visibility)" = private
+          echo "Candidate digest: $digest" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Scan candidate for critical vulnerabilities and secrets
+        if: ${{ steps.candidate-build.outcome == 'success' }}
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ steps.candidate.outputs.image }}
+          scanners: vuln,secret
+          severity: CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+          format: table
 
       - name: Resolve target registry
         id: target

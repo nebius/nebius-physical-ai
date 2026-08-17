@@ -26,7 +26,7 @@ BUILD_BASE_SHA = (
 RUNTIME_BASE_SHA = (
     "sha256:9175fa92f96de35a8cfb9493f0dfcf9435c7a597e9d95ad41d2cae382a95e3f9"
 )
-EXACT_TAG = "2.5.1-skypilot-ready-20260801T053000Z"
+EXACT_TAG = "2.5.1-skypilot-v1-ghcr-20260817"
 
 
 def _dockerfile() -> str:

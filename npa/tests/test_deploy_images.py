@@ -57,7 +57,7 @@ def test_non_sonic_workbench_images_resolve_from_supported_tools() -> None:
     assert (
         container_image_for_tool("cosmos2-transfer")
         == "ghcr.io/nebius/nebius-physical-ai/"
-        "npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z"
+        "npa-cosmos2-transfer:2.5.1-skypilot-v1-ghcr-20260817"
     )
     assert (
         container_image_for_tool("cosmos3") == "ghcr.io/nebius/nebius-physical-ai/"

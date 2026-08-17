@@ -94,12 +94,17 @@ jobs:
           password: ${{ secrets.NPA_PRIVATE_GHCR_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Build and push immutable candidate
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: npa
           file: ${{ steps.candidate.outputs.dockerfile }}
           push: true
           tags: ${{ steps.candidate.outputs.image }}
+          build-args: |
+            NPA_SOURCE_SHA=${{ github.sha }}
+          provenance: mode=max
+          sbom: true
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
@@ -110,9 +115,15 @@ jobs:
           OWNER: ${{ steps.candidate.outputs.owner }}
           PACKAGE: ${{ steps.candidate.outputs.package }}
           IMAGE: ${{ steps.candidate.outputs.image }}
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
         run: |
-          digest="$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest.Digest}}')"
+          digest="$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest.Digest}}' | tr -d '"')"
           test -n "$digest"
+          test "$digest" = "$BUILD_DIGEST"
+          docker buildx imagetools inspect "$IMAGE" --format '{{json .Provenance}}' \
+            | jq -e '. != null and . != {}'
+          docker buildx imagetools inspect "$IMAGE" --format '{{json .SBOM}}' \
+            | jq -e '. != null and . != {}'
           encoded="${PACKAGE//\//%2F}"
           owner_type="$(gh api "/users/${OWNER}" --jq .type)"
           if [ "$owner_type" = "Organization" ]; then
@@ -122,3 +133,13 @@ jobs:
           fi
           test "$(gh api "$package_api" --jq .visibility)" = private
           echo "Candidate digest recorded by the workflow summary: $digest" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Scan candidate for critical vulnerabilities and secrets
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ steps.candidate.outputs.image }}
+          scanners: vuln,secret
+          severity: CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+          format: table
