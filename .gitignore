@@ -98,3 +98,8 @@ node_modules/
 # Generated security scan reports
 kingfisher-result*.json
 semgrep-*.json
+
+# build_docs.sh stages the CLI reference beside docs/cli so the swap is a rename.
+# Its cleanup trap removes these; a hard kill cannot, so keep them uncommittable.
+docs/.cli-stage-*/
+docs/.cli-prev-*/

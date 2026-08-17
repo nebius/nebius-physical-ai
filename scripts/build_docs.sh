@@ -58,14 +58,17 @@ if [ "${1:-}" = "--check" ]; then
   CHECK=1
 fi
 
-# Single cleanup handler: bash keeps only the last `trap ... EXIT`, so both the
-# scratch help file and the --check temp dir must be removed from one place.
+# Single cleanup handler: bash keeps only the last `trap ... EXIT`, so the scratch
+# help file and every staging directory must be removed from one place. A
+# successful in-place swap renames the staging dir away, so removing it is a no-op.
 TMP_FILE=""
 TEMP_DOCS_DIR=""
+PREV_DOCS_DIR=""
 HELP_CACHE_DIR=""
 cleanup() {
   [ -n "$TMP_FILE" ] && rm -f "$TMP_FILE"
   [ -n "$TEMP_DOCS_DIR" ] && rm -rf "$TEMP_DOCS_DIR"
+  [ -n "$PREV_DOCS_DIR" ] && rm -rf "$PREV_DOCS_DIR"
   [ -n "$HELP_CACHE_DIR" ] && rm -rf "$HELP_CACHE_DIR"
   # An EXIT trap's final command can replace an otherwise successful status.
   # Keep normal regeneration successful when TEMP_DOCS_DIR is intentionally empty.
@@ -73,11 +76,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-DOCS_DIR="docs/cli"
-if [ "$CHECK" -eq 1 ]; then
-  TEMP_DOCS_DIR="$(mktemp -d)"
-  DOCS_DIR="$TEMP_DOCS_DIR"
-fi
+# Always generate into a staging directory, including for an in-place run. The
+# generator used to clear docs/cli first and write pages as it walked, so any walk
+# that produced nothing left the reference deleted. Staging means no destructive
+# step happens until a complete, non-empty result exists.
+#
+# Stage inside docs/ so the swap below is a same-filesystem rename.
+TEMP_DOCS_DIR="$(mktemp -d "docs/.cli-stage-XXXXXX")"
+DOCS_DIR="$TEMP_DOCS_DIR"
 
 HELP_CACHE_DIR="$(mktemp -d)"
 
@@ -137,11 +143,9 @@ is_group() {
   esac
 }
 
+# A fresh staging directory is inherently a clean slate, so pages for commands
+# that were hidden or removed from `--help` cannot linger as orphans.
 mkdir -p "$DOCS_DIR"
-# Regenerate from a clean slate so pages for commands that were hidden or
-# removed from `--help` do not linger as orphans (keeps in-place output
-# identical to `--check`).
-rm -f "$DOCS_DIR"/*.md
 
 TMP_FILE="$(mktemp)"
 tmp="$TMP_FILE"
@@ -191,6 +195,25 @@ document_group_recursive() {
 top_help="$(help_for "$NPA_BIN")"
 groups="$(printf "%s" "$top_help" | discover_commands)"
 
+# `discover_commands` scrapes Rich's box-drawing table out of --help text. A Typer
+# or Rich upgrade, or a COLUMNS value that makes Rich wrap differently, can leave
+# that regex matching nothing while npa itself is perfectly healthy. Silently
+# publishing an empty reference is the failure this guards.
+if [ -z "$groups" ]; then
+  cat >&2 <<EOF
+ERROR: found no commands in '${NPA_BIN} --help'.
+
+The command table is parsed out of Rich's help output, so this usually means the
+help rendering changed rather than that the CLI is broken. Compare:
+
+  COLUMNS=${DOCS_COLUMNS} NO_COLOR=1 ${NPA_BIN} --help
+
+against the parser in scripts/build_docs.sh:discover_commands. docs/cli was left
+untouched.
+EOF
+  exit 1
+fi
+
 # The top level is the widest layer of the walk; warming it in parallel turns the
 # dominant cost (one interpreter start per command) into wall-clock we overlap.
 top_paths=()
@@ -209,6 +232,13 @@ done
 
 python3 scripts/_generate_docs_index.py "$DOCS_DIR/" > "$DOCS_DIR/README.md"
 
+# Belt and braces behind the empty-groups guard: never install a tree with no pages.
+staged_pages=("$DOCS_DIR"/*.md)
+if [ ! -e "${staged_pages[0]}" ]; then
+  echo "ERROR: generated no pages for groups: $groups. docs/cli was left untouched." >&2
+  exit 1
+fi
+
 if [ "$CHECK" -eq 1 ]; then
   if ! diff -ruN docs/cli "$DOCS_DIR" > "$tmp" 2>&1; then
     echo "docs/cli is out of date. Run 'scripts/build_docs.sh' and commit the result." >&2
@@ -218,5 +248,18 @@ if [ "$CHECK" -eq 1 ]; then
   fi
   echo "docs/cli is up to date."
 else
+  # Two same-filesystem renames, so docs/cli is only ever replaced by a complete
+  # tree and an interrupted run cannot leave it half-written.
+  PREV_DOCS_DIR="$(mktemp -d "docs/.cli-prev-XXXXXX")"
+  if [ -d docs/cli ]; then
+    mv docs/cli "$PREV_DOCS_DIR/cli"
+  fi
+  if ! mv "$TEMP_DOCS_DIR" docs/cli; then
+    if [ -d "$PREV_DOCS_DIR/cli" ]; then
+      mv "$PREV_DOCS_DIR/cli" docs/cli
+    fi
+    echo "ERROR: could not install generated docs; docs/cli restored." >&2
+    exit 1
+  fi
   echo "Docs generated for groups: $groups"
 fi
