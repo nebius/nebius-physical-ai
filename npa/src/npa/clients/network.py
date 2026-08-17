@@ -374,13 +374,19 @@ def ensure_ingress(
     if project_id and not ip and not vm_id:
         raise NetworkIngressError("--project requires --ip unless --vm is used")
 
-    instance = _get_instance(vm_id) if vm_id else _find_instance_by_ip(ip or "", project_id or "")
+    instance = (
+        _get_instance(vm_id)
+        if vm_id
+        else _find_instance_by_ip(ip or "", project_id or "")
+    )
     instance_id = _metadata(instance).get("id", "")
     parent_id = _metadata(instance).get("parent_id", project_id or "")
     public_ip = _instance_public_ip(instance)
     security_group_ids = _instance_security_group_ids(instance)
     if not security_group_ids:
-        raise NetworkIngressError(f"VM {instance_id or vm_id or ip} has no security group references")
+        raise NetworkIngressError(
+            f"VM {instance_id or vm_id or ip} has no security group references"
+        )
 
     group_contexts: list[_SecurityGroupContext] = []
     covered_ports: set[int] = set()
@@ -469,23 +475,29 @@ def _get_instance(vm_id: str | None) -> dict[str, Any]:
 def _find_instance_by_ip(ip: str, project_id: str) -> dict[str, Any]:
     target = _strip_cidr(ip)
     try:
-        data = nebius._run_json([
-            "compute",
-            "instance",
-            "list",
-            "--parent-id",
-            project_id,
-            "--all",
-        ])
+        data = nebius._run_json(
+            [
+                "compute",
+                "instance",
+                "list",
+                "--parent-id",
+                project_id,
+                "--all",
+            ]
+        )
     except NebiusError as exc:
-        raise NetworkIngressError(f"Could not list VMs in project {project_id}: {exc}") from exc
+        raise NetworkIngressError(
+            f"Could not list VMs in project {project_id}: {exc}"
+        ) from exc
 
     for item in data.get("items", []):
         for iface in item.get("status", {}).get("network_interfaces", []) or []:
             public_ip = iface.get("public_ip_address", {}).get("address", "")
             if _strip_cidr(public_ip) == target:
                 return item
-    raise NetworkIngressError(f"No VM with public IP {target} found in project {project_id}")
+    raise NetworkIngressError(
+        f"No VM with public IP {target} found in project {project_id}"
+    )
 
 
 def _get_security_group(security_group_id: str) -> dict[str, Any]:
@@ -499,14 +511,16 @@ def _get_security_group(security_group_id: str) -> dict[str, Any]:
 
 def _list_security_rules(security_group_id: str) -> list[dict[str, Any]]:
     try:
-        data = nebius._run_json([
-            "vpc",
-            "security-rule",
-            "list",
-            "--parent-id",
-            security_group_id,
-            "--all",
-        ])
+        data = nebius._run_json(
+            [
+                "vpc",
+                "security-rule",
+                "list",
+                "--parent-id",
+                security_group_id,
+                "--all",
+            ]
+        )
     except NebiusError as exc:
         raise NetworkIngressError(
             f"Could not list security rules for {security_group_id}: {exc}"
@@ -566,30 +580,32 @@ def _create_group_ingress(
     security_group_id = _metadata(security_group).get("id", "")
     create_name = rule_name(tool, missing_ports)
     try:
-        created = nebius._run_json([
-            "vpc",
-            "security-rule",
-            "create",
-            "--parent-id",
-            security_group_id,
-            "--name",
-            create_name,
-            "--access",
-            "allow",
-            "--protocol",
-            protocol.lower(),
-            "--type",
-            "stateful",
-            "--priority",
-            "500",
-            "--ingress-source-cidrs",
-            source,
-            *[
-                item
-                for port in missing_ports
-                for item in ("--ingress-destination-ports", str(port))
-            ],
-        ])
+        created = nebius._run_json(
+            [
+                "vpc",
+                "security-rule",
+                "create",
+                "--parent-id",
+                security_group_id,
+                "--name",
+                create_name,
+                "--access",
+                "allow",
+                "--protocol",
+                protocol.lower(),
+                "--type",
+                "stateful",
+                "--priority",
+                "500",
+                "--ingress-source-cidrs",
+                source,
+                *[
+                    item
+                    for port in missing_ports
+                    for item in ("--ingress-destination-ports", str(port))
+                ],
+            ]
+        )
     except NebiusError as exc:
         raise NetworkIngressError(
             f"Could not create ingress rule on {security_group_id}: {exc}"
@@ -621,9 +637,13 @@ def _covered_ports(
             continue
         if source not in (ingress.get("source_cidrs") or []):
             continue
-        destination_ports = {int(port) for port in ingress.get("destination_ports") or []}
+        destination_ports = {
+            int(port) for port in ingress.get("destination_ports") or []
+        }
         covered.update(
-            requested if not destination_ports else requested.intersection(destination_ports)
+            requested
+            if not destination_ports
+            else requested.intersection(destination_ports)
         )
     return covered
 
@@ -644,7 +664,9 @@ def _name_collision_warnings(
             continue
         spec = rule.get("spec", {})
         ingress = spec.get("ingress") or {}
-        destination_ports = {int(port) for port in ingress.get("destination_ports") or []}
+        destination_ports = {
+            int(port) for port in ingress.get("destination_ports") or []
+        }
         source_cidrs = ingress.get("source_cidrs") or []
         matches = (
             spec.get("access", "").upper() == "ALLOW"

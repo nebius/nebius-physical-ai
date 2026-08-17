@@ -100,7 +100,10 @@ def test_leisaac_dockerfile_removes_parent_imageio_ffmpeg_payload() -> None:
         REPO_ROOT / "npa" / "docker" / "workbench" / "leisaac" / "Dockerfile"
     ).read_text(encoding="utf-8")
     assert "pip uninstall -y moviepy imageio-ffmpeg" in dockerfile
-    assert "! /opt/npa/sim/venv/bin/python -m pip show moviepy imageio-ffmpeg" in dockerfile
+    assert (
+        "! /opt/npa/sim/venv/bin/python -m pip show moviepy imageio-ffmpeg"
+        in dockerfile
+    )
     assert "FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04@sha256:" in dockerfile
     assert "NPA_ISAAC_OSS_DEPS_FILE=" in dockerfile
     assert "sed -E '/^(moviepy|imageio-ffmpeg)==/d'" in dockerfile

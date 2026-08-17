@@ -75,12 +75,12 @@ def test_agent_relay_tunes_both_udp_socket_buffers() -> None:
 
 
 @pytest.mark.parametrize("size", [0, 1, 3, 4, 5, 127, 1260, 180 * 1024])
-def test_private_websocket_mask_is_byte_identical_for_arbitrary_sizes(size: int) -> None:
+def test_private_websocket_mask_is_byte_identical_for_arbitrary_sizes(
+    size: int,
+) -> None:
     payload = os.urandom(size)
     mask = os.urandom(4)
-    expected = bytes(
-        value ^ mask[index % 4] for index, value in enumerate(payload)
-    )
+    expected = bytes(value ^ mask[index % 4] for index, value in enumerate(payload))
     assert _mask_websocket_payload(payload, mask) == expected
     assert _mask_websocket_payload(expected, mask) == payload
 
@@ -112,9 +112,7 @@ def test_relay_configs_pin_nonce_public_agent_and_certificate(tmp_path: Path) ->
     assert loaded["hello_timeout_seconds"] == DEFAULT_HELLO_TIMEOUT_SECONDS
 
     server_path.write_text(
-        json.dumps(
-            {"run_id": "run-123", "session_nonce": NONCE, "expires_at": ""}
-        ),
+        json.dumps({"run_id": "run-123", "session_nonce": NONCE, "expires_at": ""}),
         encoding="utf-8",
     )
     loaded = load_server_config(server_path)
@@ -169,7 +167,9 @@ def test_relay_configs_pin_nonce_public_agent_and_certificate(tmp_path: Path) ->
         {
             "run_id": "run-123",
             "session_nonce": NONCE,
-            "expires_at": (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),
+            "expires_at": (
+                datetime.now(timezone.utc) - timedelta(seconds=1)
+            ).isoformat(),
         },
     ):
         server_path.write_text(json.dumps(invalid), encoding="utf-8")
@@ -178,12 +178,14 @@ def test_relay_configs_pin_nonce_public_agent_and_certificate(tmp_path: Path) ->
 
     for invalid_timeout in (0, 61, "not-a-number"):
         server_path.write_text(
-            json.dumps({
-                "run_id": "run-123",
-                "session_nonce": NONCE,
-                "expires_at": expires_at,
-                "hello_timeout_seconds": invalid_timeout,
-            }),
+            json.dumps(
+                {
+                    "run_id": "run-123",
+                    "session_nonce": NONCE,
+                    "expires_at": expires_at,
+                    "hello_timeout_seconds": invalid_timeout,
+                }
+            ),
             encoding="utf-8",
         )
         with pytest.raises(ValueError, match="HELLO timeout"):
@@ -311,9 +313,11 @@ def test_revoke_unblocks_a_silent_preauth_socket() -> None:
 
     def authenticate() -> None:
         try:
-            outcome.append(_authenticate_backhaul(
-                backhaul, server_connection, hello_timeout_seconds=30.0
-            ))
+            outcome.append(
+                _authenticate_backhaul(
+                    backhaul, server_connection, hello_timeout_seconds=30.0
+                )
+            )
         except BaseException as exc:
             outcome.append(type(exc))
 
@@ -396,9 +400,9 @@ def test_active_backhaul_does_not_block_stale_credential_rejection(
         raise AssertionError("relay listener did not start")
 
     legitimate = connect()
-    good_hello = json.dumps(
-        {"nonce": NONCE, "peer_public_ip": "8.8.4.4"}
-    ).encode("ascii")
+    good_hello = json.dumps({"nonce": NONCE, "peer_public_ip": "8.8.4.4"}).encode(
+        "ascii"
+    )
     legitimate.sendall(
         __import__("struct").pack("!BII", HELLO, 0, len(good_hello)) + good_hello
     )
@@ -410,9 +414,9 @@ def test_active_backhaul_does_not_block_stale_credential_rejection(
 
     stale = connect()
     stale.settimeout(1.0)
-    stale_hello = json.dumps(
-        {"nonce": "b" * 64, "peer_public_ip": "8.8.4.4"}
-    ).encode("ascii")
+    stale_hello = json.dumps({"nonce": "b" * 64, "peer_public_ip": "8.8.4.4"}).encode(
+        "ascii"
+    )
     stale.sendall(
         __import__("struct").pack("!BII", HELLO, 0, len(stale_hello)) + stale_hello
     )
@@ -616,9 +620,7 @@ def test_private_websocket_heartbeat_aborts_a_half_open_backhaul(
     client_socket, server_socket = socket.socketpair()
     websocket = WebSocketConnection(client_socket)  # type: ignore[arg-type]
     websocket.last_pong = 10.0
-    monkeypatch.setattr(
-        reverse_client, "WEBSOCKET_HEARTBEAT_TIMEOUT_SECONDS", 30.0
-    )
+    monkeypatch.setattr(reverse_client, "WEBSOCKET_HEARTBEAT_TIMEOUT_SECONDS", 30.0)
 
     assert websocket._heartbeat_once(now=40.0) is False
     assert websocket.closed.is_set()

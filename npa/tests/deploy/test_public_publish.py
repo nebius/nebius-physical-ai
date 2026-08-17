@@ -689,9 +689,7 @@ def test_verify_parity_is_read_only(monkeypatch) -> None:
 
     monkeypatch.setattr(publish_public, "_crane_copy", explode)
     assert (
-        publish_public.main(
-            ["--target", "target.example/workbench", "--verify-parity"]
-        )
+        publish_public.main(["--target", "target.example/workbench", "--verify-parity"])
         == 0
     )
 

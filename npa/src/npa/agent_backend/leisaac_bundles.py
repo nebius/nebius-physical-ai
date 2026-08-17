@@ -398,7 +398,11 @@ class BundleStore:
             error = response.get("Error", {}) if isinstance(response, dict) else {}
             code = str(error.get("Code") or "") if isinstance(error, dict) else ""
             detail = str(exc).lower()
-            if code not in {"PreconditionFailed", "KeyAlreadyExists", "412"} and not any(
+            if code not in {
+                "PreconditionFailed",
+                "KeyAlreadyExists",
+                "412",
+            } and not any(
                 marker in detail
                 for marker in ("precondition failed", "keyalreadyexists")
             ):

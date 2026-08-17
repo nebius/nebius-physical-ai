@@ -293,9 +293,12 @@ def _bind_backhaul_hello_peer(payload: bytes, peer_public_ip: str) -> bytes:
     bound = json.dumps(hello, sort_keys=True, separators=(",", ":")).encode("ascii")
     if len(bound) > _BACKHAUL_MAX_FRAME:
         raise ValueError("invalid LeIsaac backhaul HELLO payload")
-    return bytes((_BACKHAUL_HELLO,)) + (0).to_bytes(4, "big") + len(bound).to_bytes(
-        4, "big"
-    ) + bound
+    return (
+        bytes((_BACKHAUL_HELLO,))
+        + (0).to_bytes(4, "big")
+        + len(bound).to_bytes(4, "big")
+        + bound
+    )
 
 
 def _mint_ws_session(
@@ -594,10 +597,9 @@ def register_leisaac_routes(app: Any, deps: LeIsaacDeps) -> None:
         if not isinstance(state, dict) or not isinstance(manifest, dict):
             return {}
         leisaac = state.get("leisaac")
-        if (
-            not isinstance(leisaac, dict)
-            or leisaac.get("bundle_selection_scope") != selection_scope(manifest)
-        ):
+        if not isinstance(leisaac, dict) or leisaac.get(
+            "bundle_selection_scope"
+        ) != selection_scope(manifest):
             return {}
         raw = leisaac.get("bundle_selection")
         if not isinstance(raw, dict) or len(raw) > 3:
@@ -622,8 +624,7 @@ def register_leisaac_routes(app: Any, deps: LeIsaacDeps) -> None:
 
     def _selection_digests(selection: dict[str, dict[str, str]]) -> dict[str, str]:
         return {
-            kind: str(item["bundle_sha256"])
-            for kind, item in sorted(selection.items())
+            kind: str(item["bundle_sha256"]) for kind, item in sorted(selection.items())
         }
 
     def bundle_error(exc: BundleError) -> Any:
@@ -762,7 +763,9 @@ def register_leisaac_routes(app: Any, deps: LeIsaacDeps) -> None:
                         for key, deadline in list(bundle_mutation_deadlines.items()):
                             if deadline <= now:
                                 bundle_mutation_deadlines.pop(key, None)
-                        mutation_active = str(manifest["run_id"]) in bundle_mutation_deadlines
+                        mutation_active = (
+                            str(manifest["run_id"]) in bundle_mutation_deadlines
+                        )
                 if selection_pending and mutation_active:
                     payload = status_payload(
                         manifest,
@@ -1569,7 +1572,10 @@ def register_leisaac_routes(app: Any, deps: LeIsaacDeps) -> None:
         allowed_transport = (
             {"websocket-v1", "webrtc"} if control_offer else {"websocket-v1"}
         )
-        if not health or str(health.get("stream_transport") or "") not in allowed_transport:
+        if (
+            not health
+            or str(health.get("stream_transport") or "") not in allowed_transport
+        ):
             return deps.response(
                 content=json.dumps(
                     {"detail": reason or "preferred video transport is unavailable"}

@@ -385,9 +385,7 @@ def test_load_artifact_authorizes_exact_uri_for_duplicate_run_ids(
     import sys
 
     module_name = "npa_rendered_exact_artifact_backend"
-    module = _import_rendered_backend(
-        monkeypatch, tmp_path, module_name=module_name
-    )
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
     uri = "s3://bucket-b/team/run-1/reports/preview.mp4"
     authorization: dict[str, str] = {}
 
@@ -401,11 +399,14 @@ def test_load_artifact_authorizes_exact_uri_for_duplicate_run_ids(
 
     try:
         monkeypatch.setattr(module, "RECORDINGS_DIR", tmp_path / "recordings")
+
         class _S3:
             def head_object(self, **_kwargs):
                 return {"ContentLength": 24}
 
-        monkeypatch.setattr(module, "_agent_s3_client", lambda: (_S3(), {"bucket": "bucket-a"}))
+        monkeypatch.setattr(
+            module, "_agent_s3_client", lambda: (_S3(), {"bucket": "bucket-a"})
+        )
         monkeypatch.setattr(module, "_resolve_accessible_run_artifact", _authorize)
         monkeypatch.setattr(
             module,
@@ -1024,7 +1025,10 @@ def test_artifact_only_load_run_preserves_ui_contract_and_active_state(
     assert response["run_ref"]
     assert state["active_run_id"] == "artifact-only-run"
     assert sim_viz["preview_status"] == "no_previewable_recording"
-    assert sim_viz["visualization_note"] == "No previewable recording; artifacts available."
+    assert (
+        sim_viz["visualization_note"]
+        == "No previewable recording; artifacts available."
+    )
     assert sim_viz["artifact_count"] == 4
     assert sim_viz["output_artifact_count"] == 2
     assert sim_viz["input_artifact_count"] == 1
@@ -1083,13 +1087,15 @@ def test_workflow_dry_run_plans_provision_even_with_existing_infra(
 
     assert response["ok"] is True
     assert response["submit_mode"] == "agent-live-infra-dry-run"
-    assert provisions == [{
-        "project": "demo",
-        "cluster_name": "npa-cluster",
-        "dry_run": True,
-        "validate": False,
-        "skip_s3": True,
-    }]
+    assert provisions == [
+        {
+            "project": "demo",
+            "cluster_name": "npa-cluster",
+            "dry_run": True,
+            "validate": False,
+            "skip_s3": True,
+        }
+    ]
 
 
 @pytest.mark.parametrize(

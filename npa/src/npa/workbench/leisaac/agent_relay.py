@@ -75,7 +75,9 @@ def load_config(path: str | Path) -> dict[str, Any]:
         try:
             expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
         except ValueError as exc:
-            raise ValueError("relay credential expiry must be an ISO-8601 timestamp") from exc
+            raise ValueError(
+                "relay credential expiry must be an ISO-8601 timestamp"
+            ) from exc
         if expiry.tzinfo is None:
             raise ValueError("relay credential expiry must include a timezone")
         normalized_expiry = expiry.astimezone(timezone.utc).isoformat()
@@ -176,9 +178,9 @@ class Backhaul:
         self.preauth_connections: set[socket.socket] = set()
 
     def expired(self, *, now: float | None = None) -> bool:
-        return self.revoked or (
-            time.time() if now is None else now
-        ) >= self.expires_epoch
+        return (
+            self.revoked or (time.time() if now is None else now) >= self.expires_epoch
+        )
 
     def revoke(self) -> None:
         """Close every credential-bound path when the short lease expires."""
@@ -234,10 +236,7 @@ class Backhaul:
             or stream_id != 0
             or not hmac.compare_digest(nonce, self.nonce)
             or peer.version != 4
-            or (
-                not peer.is_global
-                and peer_text != COMPATIBILITY_PEER_IPV4_FIELD
-            )
+            or (not peer.is_global and peer_text != COMPATIBILITY_PEER_IPV4_FIELD)
         ):
             return False
         with self.lifecycle_lock:

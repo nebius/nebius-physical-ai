@@ -178,13 +178,9 @@ def _json_body(response: dict[str, Any], limit: int, detail: str) -> dict[str, A
         body = _read_body(response["Body"], limit, detail)
         payload = json.loads(body)
     except EpisodeStoreError as exc:
-        raise EpisodeStoreError(
-            detail, status_code=502, skippable_legacy=True
-        ) from exc
+        raise EpisodeStoreError(detail, status_code=502, skippable_legacy=True) from exc
     except (KeyError, UnicodeDecodeError, ValueError) as exc:
-        raise EpisodeStoreError(
-            detail, status_code=502, skippable_legacy=True
-        ) from exc
+        raise EpisodeStoreError(detail, status_code=502, skippable_legacy=True) from exc
     if not isinstance(payload, dict):
         raise EpisodeStoreError(detail, status_code=502, skippable_legacy=True)
     checksum = hashlib.sha256(body).hexdigest()
@@ -267,9 +263,7 @@ class EpisodeStore:
             ) from exc
         return _json_body(response, limit, detail), response
 
-    def _version_listing_entry(
-        self, version_prefix: str
-    ) -> dict[str, Any] | None:
+    def _version_listing_entry(self, version_prefix: str) -> dict[str, Any] | None:
         version_id = version_prefix.rstrip("/").split("/")[-1]
         if not _VERSION_ID.fullmatch(version_id):
             return None
@@ -285,8 +279,7 @@ class EpisodeStore:
         if (
             manifest.get("schema") != "npa.leisaac.dataset.v1"
             or str(manifest.get("version") or "") != version_id
-            or str(manifest.get("output_prefix") or "").rstrip("/")
-            != self.dataset_uri
+            or str(manifest.get("output_prefix") or "").rstrip("/") != self.dataset_uri
         ):
             return None
         metadata_checksum = str((raw.get("Metadata") or {}).get("sha256") or "")
@@ -508,7 +501,10 @@ class EpisodeStore:
                 continue
             if version_commit_keys is not None and key not in version_commit_keys:
                 continue
-            if version_episode_count is not None and int(match.group(1)) >= version_episode_count:
+            if (
+                version_episode_count is not None
+                and int(match.group(1)) >= version_episode_count
+            ):
                 continue
             candidates.append((key, int(match.group(1))))
 

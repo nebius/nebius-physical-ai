@@ -20,7 +20,12 @@ def test_curate_augmented_help_documents_flags() -> None:
     )
     output = strip_ansi(result.output)
     assert result.exit_code == 0
-    for flag in ("--augment-uri", "--report-uri", "--curator-report-uri", "--dedup-threshold"):
+    for flag in (
+        "--augment-uri",
+        "--report-uri",
+        "--curator-report-uri",
+        "--dedup-threshold",
+    ):
         assert flag in output
     assert "--curator-report-uri" in output and "required" in output.lower()
 
@@ -29,9 +34,13 @@ def test_curate_augmented_requires_curator_report_uri() -> None:
     result = runner.invoke(
         app,
         [
-            "workbench", "fiftyone", "curate-augmented",
-            "--augment-uri", "s3://b/p/cosmos_augmented/",
-            "--report-uri", "s3://b/p/curation/report.json",
+            "workbench",
+            "fiftyone",
+            "curate-augmented",
+            "--augment-uri",
+            "s3://b/p/cosmos_augmented/",
+            "--report-uri",
+            "s3://b/p/curation/report.json",
         ],
     )
     assert result.exit_code == 2
@@ -87,7 +96,9 @@ def test_curate_augmented_invokes_curate_and_emits_summary(mocker) -> None:
         "written_uri": "s3://b/p/curation/report.json",
         "fiftyone": {"brain": {"uniqueness": {"count": 2, "mean": 0.5}}},
     }
-    curate = mocker.patch("npa.workflows.data_factory_stages.curate", return_value=fake_report)
+    curate = mocker.patch(
+        "npa.workflows.data_factory_stages.curate", return_value=fake_report
+    )
 
     result = runner.invoke(
         app,

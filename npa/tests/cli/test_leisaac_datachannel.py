@@ -60,10 +60,16 @@ def test_datachannel_offer_requires_exact_bounded_run_bound_sdp() -> None:
 
 
 def test_aiortc_runtime_version_is_exact_and_fails_clearly(monkeypatch) -> None:
-    monkeypatch.setattr("npa.agent_backend.leisaac_datachannel.version", lambda _name: "1.15.0")
+    monkeypatch.setattr(
+        "npa.agent_backend.leisaac_datachannel.version", lambda _name: "1.15.0"
+    )
     require_aiortc_runtime_version()
-    monkeypatch.setattr("npa.agent_backend.leisaac_datachannel.version", lambda _name: "1.16.0")
-    with pytest.raises(VideoDataChannelError, match=r"requires aiortc 1\.15\.0; found 1\.16\.0"):
+    monkeypatch.setattr(
+        "npa.agent_backend.leisaac_datachannel.version", lambda _name: "1.16.0"
+    )
+    with pytest.raises(
+        VideoDataChannelError, match=r"requires aiortc 1\.15\.0; found 1\.16\.0"
+    ):
         require_aiortc_runtime_version()
 
 

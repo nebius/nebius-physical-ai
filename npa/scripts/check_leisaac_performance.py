@@ -56,7 +56,8 @@ def main() -> int:
         if stalls:
             failures.append(f"trial {index}: {stalls} active stalls >=250 ms")
         secondary_frames = int(
-            summary.get("frame_stages", {}).get("overview", {}).get("delivered_frames") or 0
+            summary.get("frame_stages", {}).get("overview", {}).get("delivered_frames")
+            or 0
         )
         if args.mode == "single_fast" and secondary_frames:
             failures.append(f"trial {index}: secondary work occurred in Fast single")
@@ -70,9 +71,23 @@ def main() -> int:
             failures.append(f"median causal p50 {median_p50:.3f} ms failed")
         if median_p95 > min(180.0, float(prior["causal_p95_ms"]) * regression):
             failures.append(f"median causal p95 {median_p95:.3f} ms failed")
-    elif median_p50 > float(prior["causal_p50_ms"]) * regression or median_p95 > float(prior["causal_p95_ms"]) * regression:
+    elif (
+        median_p50 > float(prior["causal_p50_ms"]) * regression
+        or median_p95 > float(prior["causal_p95_ms"]) * regression
+    ):
         failures.append("Dual slow causal latency regressed by more than 10%")
-    print(json.dumps({"mode": args.mode, "trials": len(trials), "median_p50_ms": median_p50, "median_p95_ms": median_p95, "failures": failures}, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "mode": args.mode,
+                "trials": len(trials),
+                "median_p50_ms": median_p50,
+                "median_p95_ms": median_p95,
+                "failures": failures,
+            },
+            sort_keys=True,
+        )
+    )
     return 1 if failures else 0
 
 

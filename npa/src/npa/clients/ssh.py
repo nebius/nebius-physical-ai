@@ -147,13 +147,7 @@ class SSHClient:
         if not env_file:
             raise SSHError("Token env file was not prepared")
         env_file_q = shlex.quote(env_file)
-        script = (
-            "set -a\n"
-            f". {env_file_q}\n"
-            "set +a\n"
-            f"rm -f {env_file_q}\n"
-            f"{command}"
-        )
+        script = f"set -a\n. {env_file_q}\nset +a\nrm -f {env_file_q}\n{command}"
         return f"bash -lc {shlex.quote(script)}"
 
     def run(
@@ -198,7 +192,9 @@ class SSHClient:
             )
             if deadline_expired.is_set():
                 raise SSHTimeoutError(f"SSH command timed out after {timeout:g}s")
-            token_env_file = self._write_token_env_file(client) if self._config.tokens else None
+            token_env_file = (
+                self._write_token_env_file(client) if self._config.tokens else None
+            )
             transport = client.get_transport()
             if transport is None:
                 raise SSHError("SSH transport is not available")
@@ -292,7 +288,9 @@ class SSHClient:
             sftp.get(remote_path, str(local))
             return str(local)
         except Exception as exc:
-            raise SSHError(f"SFTP download failed: {remote_path} -> {local_path}: {exc}") from exc
+            raise SSHError(
+                f"SFTP download failed: {remote_path} -> {local_path}: {exc}"
+            ) from exc
         finally:
             if sftp is not None:
                 sftp.close()
@@ -310,7 +308,9 @@ class SSHClient:
             sftp.put(str(local), remote_path)
             return remote_path
         except Exception as exc:
-            raise SSHError(f"SFTP upload failed: {local_path} -> {remote_path}: {exc}") from exc
+            raise SSHError(
+                f"SFTP upload failed: {local_path} -> {remote_path}: {exc}"
+            ) from exc
         finally:
             if sftp is not None:
                 sftp.close()
@@ -331,7 +331,9 @@ class SSHClient:
                 remote_file.flush()
             return remote_path
         except Exception as exc:
-            raise SSHError(f"Private SFTP upload failed for {remote_path}: {exc}") from exc
+            raise SSHError(
+                f"Private SFTP upload failed for {remote_path}: {exc}"
+            ) from exc
         finally:
             if sftp is not None:
                 sftp.close()

@@ -87,9 +87,9 @@ def requires_skypilot_bootstrap_runtime_probe(image: str) -> bool:
     raw = str(image or "").strip().removeprefix("docker:").partition("@")[0]
     leaf = raw.rsplit("/", 1)[-1].split(":", 1)[0]
     return leaf in {
-        CONTAINER_IMAGE_NAMES[tool]
-        for tool in SKYPILOT_BOOTSTRAP_RUNTIME_PROBED_TOOLS
+        CONTAINER_IMAGE_NAMES[tool] for tool in SKYPILOT_BOOTSTRAP_RUNTIME_PROBED_TOOLS
     }
+
 
 # Tools whose built image may NOT be published to a public/anonymous registry,
 # because it bakes a runtime we are not licensed to redistribute.

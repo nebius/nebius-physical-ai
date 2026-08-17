@@ -416,7 +416,9 @@ class EpisodeRecorder:
                 "last_command": self._last_command,
                 "command_revision": self._command_revision,
                 "cameras": list(self.camera_ids),
-                "display_view_mode": str(self.provenance.get("display_view_mode") or ""),
+                "display_view_mode": str(
+                    self.provenance.get("display_view_mode") or ""
+                ),
                 "recording_camera_mode": str(
                     self.provenance.get("recording_camera_mode") or ""
                 ),
@@ -939,9 +941,7 @@ def _probe_video_with_ffmpeg(
         stream,
     )
     rate_match = re.search(r",\s*([0-9]+(?:\.[0-9]+)?)\s+fps(?:,|\s)", stream)
-    duration_match = re.search(
-        r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", input_report
-    )
+    duration_match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", input_report)
     frame_matches = re.findall(
         r"\bn:\s*(\d+)\s+pts:.*?\bpts_time:([0-9.eE+\-]+).*?"
         r"\bfmt:([A-Za-z0-9_]+).*?\bs:(\d+)x(\d+)",
@@ -1611,16 +1611,12 @@ class S3DatasetStore:
         try:
             pointer = json.loads(response["Body"].read())
             commit_key = str(pointer["commit_key"])
-            commit_response = self.client.get_object(
-                Bucket=self.bucket, Key=commit_key
-            )
+            commit_response = self.client.get_object(Bucket=self.bucket, Key=commit_key)
             commit = json.loads(commit_response["Body"].read())
         except Exception as exc:
             raise DatasetError("episode UUID index is malformed") from exc
-        if (
-            commit.get("episode_uuid") != episode_uuid
-            or commit_key
-            != self._key(f"commits/episode-{int(commit.get('episode_index', -1)):06d}.json")
+        if commit.get("episode_uuid") != episode_uuid or commit_key != self._key(
+            f"commits/episode-{int(commit.get('episode_index', -1)):06d}.json"
         ):
             raise DatasetError("episode UUID index does not match its commit")
         return commit
@@ -1652,7 +1648,11 @@ class S3DatasetStore:
         objects = commit.get("objects")
         videos = objects.get("videos") if isinstance(objects, dict) else None
         storage = objects.get("camera_storage") if isinstance(objects, dict) else None
-        primary = str(storage.get("primary_camera") or "") if isinstance(storage, dict) else ""
+        primary = (
+            str(storage.get("primary_camera") or "")
+            if isinstance(storage, dict)
+            else ""
+        )
         record_ref = objects.get("records") if isinstance(objects, dict) else None
         video_ref = videos.get(primary) if isinstance(videos, dict) else None
         if (
@@ -1731,11 +1731,9 @@ class S3DatasetStore:
         records = episode_dir / "records.jsonl"
         rows = _load_records(records)
         primary_frame_paths = sorted((episode_dir / "frames").glob("frame-*.jpg"))
-        if (
-            len(primary_frame_paths) != len(rows)
-            or [sha256_file(path) for path in primary_frame_paths]
-            != [str(row["frame_sha256"]) for row in rows]
-        ):
+        if len(primary_frame_paths) != len(rows) or [
+            sha256_file(path) for path in primary_frame_paths
+        ] != [str(row["frame_sha256"]) for row in rows]:
             raise DatasetError("raw primary frames do not match episode records")
         fps = int(metadata.get("fps") or FPS)
         media = _validate_camera_media(videos, expected_frames=len(rows), fps=fps)
@@ -1753,9 +1751,7 @@ class S3DatasetStore:
             else:
                 if (int(latest["episode_count"]) if latest else 0) != episode_index:
                     raise DatasetError("episode UUID index is ahead of dataset history")
-                self._validate_retry_sources(
-                    existing, records, videos[primary_camera]
-                )
+                self._validate_retry_sources(existing, records, videos[primary_camera])
                 previous = self._manifest_from_latest(latest) if latest else None
                 version = self._publish_version(
                     previous,
@@ -1951,11 +1947,8 @@ class S3DatasetStore:
                         path,
                     )
                 )
-            commit_uri = (
-                f"s3://{self.bucket}/"
-                + self._key(
-                    f"commits/episode-{int(commit['episode_index']):06d}.json"
-                )
+            commit_uri = f"s3://{self.bucket}/" + self._key(
+                f"commits/episode-{int(commit['episode_index']):06d}.json"
             )
             info = dict(shard_info)
             manifest = {

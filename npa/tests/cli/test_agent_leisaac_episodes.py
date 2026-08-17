@@ -287,9 +287,9 @@ def test_json_checksums_are_computed_when_gateway_omits_metadata() -> None:
     s3.objects[version_key] = (version_body, {})
 
     store = _store(s3)
-    assert store.detail("0")["commit_checksum"] == hashlib.sha256(
-        commit_body
-    ).hexdigest()
+    assert (
+        store.detail("0")["commit_checksum"] == hashlib.sha256(commit_body).hexdigest()
+    )
     assert store.list_versions()["versions"][0]["manifest_checksum"] == (
         hashlib.sha256(version_body).hexdigest()
     )

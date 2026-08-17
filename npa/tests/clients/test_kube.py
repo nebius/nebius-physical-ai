@@ -108,7 +108,9 @@ def test_stdin_and_both_valid_token_aliases_are_preserved() -> None:
 def test_retries_without_token_on_stale_auth_error() -> None:
     rec = _Recorder(
         [
-            _FakeProc(1, "", "Service iam error Unauthenticated; failed with exit code 7"),
+            _FakeProc(
+                1, "", "Service iam error Unauthenticated; failed with exit code 7"
+            ),
             _FakeProc(0, "16"),
         ]
     )
@@ -130,7 +132,9 @@ def test_retries_without_token_on_stale_auth_error() -> None:
 
 def test_no_retry_when_no_ambient_token() -> None:
     rec = _Recorder([_FakeProc(1, "", "Unauthenticated")])
-    result = run_kubectl(["get", "nodes"], binary="kubectl", env={"PATH": "/bin"}, runner=rec)
+    result = run_kubectl(
+        ["get", "nodes"], binary="kubectl", env={"PATH": "/bin"}, runner=rec
+    )
     assert result.returncode == 1
     assert result.retried_without_iam_token is False
     assert len(rec.calls) == 1

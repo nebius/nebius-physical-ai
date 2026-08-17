@@ -192,9 +192,10 @@ def destroy_cmd(
         payload=identity.to_dict(),
     )
     selected_operation = load_operation(exact_operation) if exact_operation else None
-    if selected_operation is not None and str(
-        selected_operation.read().get("phase") or ""
-    ) not in TERMINAL_PHASES:
+    if (
+        selected_operation is not None
+        and str(selected_operation.read().get("phase") or "") not in TERMINAL_PHASES
+    ):
         # Supplying the exact nonterminal setup operation is the explicit safe
         # recovery path: teardown resumes under that operation's project lease.
         teardown_operation = selected_operation

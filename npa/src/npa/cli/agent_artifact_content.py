@@ -87,7 +87,10 @@ def _summary_documents_for_run(s3, bucket: str, artifacts: list) -> dict:
     documents = {}
     for artifact in artifacts:
         relative = str(getattr(artifact, "relative_key", "") or "").strip().lstrip("/")
-        if relative not in candidates or int(getattr(artifact, "size", 0) or 0) > INLINE_TEXT_MAX_BYTES:
+        if (
+            relative not in candidates
+            or int(getattr(artifact, "size", 0) or 0) > INLINE_TEXT_MAX_BYTES
+        ):
             continue
         try:
             obj = s3.get_object(Bucket=bucket, Key=str(artifact.key))
@@ -95,7 +98,13 @@ def _summary_documents_for_run(s3, bucket: str, artifacts: list) -> dict:
             if len(raw) > INLINE_TEXT_MAX_BYTES:
                 continue
             documents[relative] = json.loads(raw.decode("utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError, TypeError):
+        except (
+            OSError,
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+            ValueError,
+            TypeError,
+        ):
             _artifact_content_logger.warning(
                 "Ignoring malformed summary document at key %s", artifact.key
             )
@@ -124,14 +133,12 @@ def _resolved_artifact_for_content(
         # caller's source precision for duplicate basenames and can turn a
         # single-object authorization check into a multi-second bucket scan.
         normalized_run = validate_run_id(run_id)
-        run_bucket, normalized_key, normalized_run = (
-            _resolve_accessible_run_artifact(
-                s3=s3,
-                settings=settings,
-                run_id=normalized_run,
-                key=normalized_key,
-                bucket=requested_bucket,
-            )
+        run_bucket, normalized_key, normalized_run = _resolve_accessible_run_artifact(
+            s3=s3,
+            settings=settings,
+            run_id=normalized_run,
+            key=normalized_key,
+            bucket=requested_bucket,
         )
         key_parts = [part for part in normalized_key.split("/") if part]
         run_index = key_parts.index(normalized_run)
@@ -179,7 +186,8 @@ def _resolved_artifact_for_content(
         )
     except ArtifactDiscoveryError as exc:
         raise HTTPException(
-            status_code=404, detail="artifact key is not present in the authorized run inventory"
+            status_code=404,
+            detail="artifact key is not present in the authorized run inventory",
         ) from exc
     artifact = next(item for item in artifacts if str(item.key) == normalized_key)
     artifact_bucket, artifact_key = parse_s3_uri(str(artifact.s3_uri))
@@ -261,8 +269,10 @@ def _artifact_content_response(
             raw = obj["Body"].read(INLINE_TEXT_MAX_BYTES + 1)
             content_range = str(obj.get("ContentRange") or "")
             range_match = re.fullmatch(r"bytes \d+-\d+/(\d+)", content_range)
-            actual_total = int(range_match.group(1)) if range_match else int(
-                obj.get("ContentLength") or len(raw)
+            actual_total = (
+                int(range_match.group(1))
+                if range_match
+                else int(obj.get("ContentLength") or len(raw))
             )
             if actual_total != total:
                 raise HTTPException(
@@ -289,12 +299,8 @@ def _artifact_content_response(
         headers["Content-Disposition"] = safe_content_disposition(
             str(artifact.key), attachment=False
         )
-        headers["X-NPA-Preview-Truncated"] = (
-            "true" if preview["truncated"] else "false"
-        )
-        headers["X-NPA-Preview-Redacted"] = (
-            "true" if preview["redacted"] else "false"
-        )
+        headers["X-NPA-Preview-Truncated"] = "true" if preview["truncated"] else "false"
+        headers["X-NPA-Preview-Redacted"] = "true" if preview["redacted"] else "false"
         return JSONResponse(content=preview, headers=headers)
 
     range_value = str(request.headers.get("range") or "").strip()
@@ -322,8 +328,12 @@ def _artifact_content_response(
         match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+)", actual_range)
         if match is None:
             obj["Body"].close()
-            raise HTTPException(status_code=502, detail="S3 range response omitted Content-Range")
-        actual_start, actual_end, actual_total = (int(value) for value in match.groups())
+            raise HTTPException(
+                status_code=502, detail="S3 range response omitted Content-Range"
+            )
+        actual_start, actual_end, actual_total = (
+            int(value) for value in match.groups()
+        )
         if actual_total != total or (actual_start, actual_end) != selected_range:
             obj["Body"].close()
             raise HTTPException(

@@ -1431,7 +1431,9 @@ def test_destroy_plan_never_emits_identityless_storage_iam_delete(
     monkeypatch.setattr(
         "npa.controller_ownership.controller_owner", lambda *_args: None
     )
-    monkeypatch.setattr("npa.provisioning_journal.list_operations", lambda **_kwargs: [])
+    monkeypatch.setattr(
+        "npa.provisioning_journal.list_operations", lambda **_kwargs: []
+    )
     monkeypatch.setattr(project_destroy, "_project_bucket_name", lambda *_a: "")
     monkeypatch.setattr(
         project_destroy, "_project_storage_iam_generation_ids", lambda *_a: ()

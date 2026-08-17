@@ -192,7 +192,9 @@ DEFAULT_LLM_MODEL = "nvidia/Cosmos3-Super-Reasoner"
 # Cost-ordered ladder; per-turn routing reorders it, while no-routing paths and
 # the model picker retain the cheap workhorse as their default.
 DEFAULT_LLM_MODELS = (
-    "Qwen/Qwen3-32B", "meta-llama/Llama-3.3-70B-Instruct", DEFAULT_LLM_MODEL,
+    "Qwen/Qwen3-32B",
+    "meta-llama/Llama-3.3-70B-Instruct",
+    DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
 AGENT_UI_VERSION = "2026081401"
@@ -245,13 +247,23 @@ def _resolve_record_public_ip(record: dict[str, Any]) -> str:
 
 def _embedded_agent_module_source(filename: str) -> str:
     """Return one standalone agent module embedded into the backend."""
-    return embedded_python_source(Path(__file__).with_name(filename), strip_standalone=True)
+    return embedded_python_source(
+        Path(__file__).with_name(filename), strip_standalone=True
+    )
 
 
-_embedded_agent_stage_runtime_source = functools.partial(_embedded_agent_module_source, "agent_stage_runtime.py")
-_embedded_agent_viewer_runtime_source = functools.partial(_embedded_agent_module_source, "agent_viewer_runtime.py")
-_embedded_agent_access_source = functools.partial(_embedded_agent_module_source, "agent_access.py")
-_embedded_agent_access_runtime_source = functools.partial(_embedded_agent_module_source, "agent_access_runtime.py")
+_embedded_agent_stage_runtime_source = functools.partial(
+    _embedded_agent_module_source, "agent_stage_runtime.py"
+)
+_embedded_agent_viewer_runtime_source = functools.partial(
+    _embedded_agent_module_source, "agent_viewer_runtime.py"
+)
+_embedded_agent_access_source = functools.partial(
+    _embedded_agent_module_source, "agent_access.py"
+)
+_embedded_agent_access_runtime_source = functools.partial(
+    _embedded_agent_module_source, "agent_access_runtime.py"
+)
 
 
 def _fail(message: str) -> NoReturn:

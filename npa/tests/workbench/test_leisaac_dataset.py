@@ -117,9 +117,9 @@ def test_registry_resolves_real_defaults_and_cumulative_custom_overrides() -> No
     assert defaults["device"]["id"] == "browser_keyboard_so101"
     assert defaults["task"]["id"] == "LeIsaac-SO101-LiftCube-v0"
     assert defaults["custom_bundle_count"] == 0
-    assert {
-        defaults[kind]["source"] for kind in ("robot", "scene", "device")
-    } == {"built-in-runtime"}
+    assert {defaults[kind]["source"] for kind in ("robot", "scene", "device")} == {
+        "built-in-runtime"
+    }
 
     custom = resolve_configuration(
         selected_bundles={
@@ -675,8 +675,14 @@ def test_packaged_ffmpeg_fallback_decodes_and_validates_media_without_ffprobe(
     assert all(item["codec"] == "h264" for item in commit["media"].values())
     assert all(item["pix_fmt"] == "yuv420p" for item in commit["media"].values())
     assert all(item["frames"] == 3 for item in commit["media"].values())
-    assert all((item["width"], item["height"]) == (1280, 720) for item in commit["media"].values())
-    assert commit["media"]["workspace"]["timestamps"] == commit["media"]["overview"]["timestamps"]
+    assert all(
+        (item["width"], item["height"]) == (1280, 720)
+        for item in commit["media"].values()
+    )
+    assert (
+        commit["media"]["workspace"]["timestamps"]
+        == commit["media"]["overview"]["timestamps"]
+    )
 
 
 def test_s3_store_resumes_episode_numbers_and_publishes_lerobot_v3(
@@ -761,7 +767,9 @@ def test_s3_store_resumes_episode_numbers_and_publishes_lerobot_v3(
     assert info["features"]["observation.images.front"]["info"]["video.codec"] == "h264"
     assert info["features"]["observation.images.front"]["shape"] == [720, 1280, 3]
     tasks_ref = next(
-        item for item in manifest["new_episode_files"] if item["key"].endswith("/meta/tasks.parquet")
+        item
+        for item in manifest["new_episode_files"]
+        if item["key"].endswith("/meta/tasks.parquet")
     )
     tasks_bytes = fake.objects[("bucket", tasks_ref["key"])][0]
     tasks = pq.read_table(io.BytesIO(tasks_bytes))
@@ -815,7 +823,14 @@ def test_32_episode_finalize_work_is_constant_and_never_reuploads_history(
             for camera in videos
         }
 
-    def build(_episodes, output: Path, *, episode_index_offset, global_index_offset, task_catalog):
+    def build(
+        _episodes,
+        output: Path,
+        *,
+        episode_index_offset,
+        global_index_offset,
+        task_catalog,
+    ):
         output.mkdir(parents=True)
         (output / "episode-shard.bin").write_bytes(
             f"shard-{episode_index_offset}".encode()
@@ -845,7 +860,9 @@ def test_32_episode_finalize_work_is_constant_and_never_reuploads_history(
         put_counts.append(len(fake.put_keys) - puts_before)
         get_counts.append(len(fake.get_keys) - gets_before)
         version_prefix = result["dataset_version_uri"].split("s3://bucket/", 1)[1]
-        manifest_body = fake.objects[("bucket", f"{version_prefix}/npa-dataset.json")][0]
+        manifest_body = fake.objects[("bucket", f"{version_prefix}/npa-dataset.json")][
+            0
+        ]
         manifest_sizes.append(len(manifest_body))
 
     assert max(put_counts) == min(put_counts)
@@ -856,8 +873,7 @@ def test_32_episode_finalize_work_is_constant_and_never_reuploads_history(
     first_media_prefix = "demos/leisaac-scale/episodes/by-id/episode-0/"
     assert sum(key.startswith(first_media_prefix) for key in fake.put_keys) == 6
     assert not fake.get_keys or not any(
-        "/episodes/by-id/" in key or "/lerobot-shards/" in key
-        for key in fake.get_keys
+        "/episodes/by-id/" in key or "/lerobot-shards/" in key for key in fake.get_keys
     )
 
 
@@ -866,14 +882,10 @@ def test_finalize_recovers_commit_written_before_uuid_index_and_latest(
 ) -> None:
     fake = _FakeS3()
     store = S3DatasetStore("s3://bucket/demos/leisaac-crash", client=fake)
-    episode = _episode_dir(
-        tmp_path, "LeIsaac-SO101-LiftCube-v0", "crash-recovery", 0
-    )
+    episode = _episode_dir(tmp_path, "LeIsaac-SO101-LiftCube-v0", "crash-recovery", 0)
     store.publish_episode(*episode)
     fake.objects.pop(("bucket", "demos/leisaac-crash/latest.json"))
-    fake.objects.pop(
-        ("bucket", "demos/leisaac-crash/episode-uuids/episode-0.json")
-    )
+    fake.objects.pop(("bucket", "demos/leisaac-crash/episode-uuids/episode-0.json"))
 
     recovered = store.publish_episode(*episode)
 

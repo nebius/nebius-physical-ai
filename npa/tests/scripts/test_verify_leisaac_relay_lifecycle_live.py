@@ -707,16 +707,11 @@ def test_lifecycle_lock_contention_fails_before_mutation(monkeypatch) -> None:
     monkeypatch.setattr(
         module,
         "_kubectl",
-        lambda *args, **kwargs: (
-            calls.append((args, kwargs))
-            or next(results)
-        ),
+        lambda *args, **kwargs: calls.append((args, kwargs)) or next(results),
     )
 
     with pytest.raises(RuntimeError, match="already holds"):
-        module._acquire_lifecycle_lock(
-            "cluster", "namespace", "deployment", "holder-a"
-        )
+        module._acquire_lifecycle_lock("cluster", "namespace", "deployment", "holder-a")
 
     assert calls[0][0][2] == ["create", "-f", "-"]
     created = json.loads(calls[0][1]["stdin"])
@@ -855,20 +850,15 @@ def test_stale_lifecycle_lock_is_reclaimed_with_resource_version(monkeypatch) ->
         lambda *args, **kwargs: calls.append((args, kwargs)) or next(results),
     )
 
-    assert (
-        module._acquire_lifecycle_lock(
-            "cluster", "namespace", "deployment", "holder-a"
-        )
-        == module._lifecycle_lock_name("deployment")
-    )
+    assert module._acquire_lifecycle_lock(
+        "cluster", "namespace", "deployment", "holder-a"
+    ) == module._lifecycle_lock_name("deployment")
     replacement = json.loads(calls[2][1]["stdin"])
     assert calls[2][0][2] == ["replace", "-f", "-"]
     assert replacement["metadata"]["resourceVersion"] == "7"
     assert replacement["kind"] == "Secret"
     assert (
-        replacement["metadata"]["annotations"][
-            "npa.nebius.com/lifecycle-holder"
-        ]
+        replacement["metadata"]["annotations"]["npa.nebius.com/lifecycle-holder"]
         == "holder-a"
     )
 
@@ -953,9 +943,7 @@ def test_lifecycle_lock_heartbeat_renews_until_stopped(monkeypatch) -> None:
             self.calls += 1
             return self.calls > 1
 
-    heartbeat = module._LifecycleLockHeartbeat(
-        "cluster", "namespace", "lock", "holder"
-    )
+    heartbeat = module._LifecycleLockHeartbeat("cluster", "namespace", "lock", "holder")
     heartbeat.stop_event = FakeEvent()
     monkeypatch.setattr(
         module,
@@ -976,9 +964,7 @@ def test_lifecycle_lock_heartbeat_latches_a_renewal_failure(monkeypatch) -> None
         def wait(self, _seconds: float) -> bool:
             return False
 
-    heartbeat = module._LifecycleLockHeartbeat(
-        "cluster", "namespace", "lock", "holder"
-    )
+    heartbeat = module._LifecycleLockHeartbeat("cluster", "namespace", "lock", "holder")
     heartbeat.stop_event = FakeEvent()
     monkeypatch.setattr(
         module,
@@ -1076,13 +1062,16 @@ def test_browser_socket_wait_retries_through_negative_manifest_cache(
     monkeypatch.setattr(module, "_browser_sockets", browser_sockets)
     monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
 
-    assert module._wait_browser_sockets(
-        host="203.0.113.10",
-        run_id="existing-run",
-        user="agent",
-        password="password",
-        certificate_sha256="b" * 64,
-    ) == expected
+    assert (
+        module._wait_browser_sockets(
+            host="203.0.113.10",
+            run_id="existing-run",
+            user="agent",
+            password="password",
+            certificate_sha256="b" * 64,
+        )
+        == expected
+    )
 
 
 def test_browser_socket_wait_preserves_last_error_on_timeout(monkeypatch) -> None:
@@ -1155,7 +1144,9 @@ def test_forced_release_requires_empty_keys_and_an_advanced_sequence() -> None:
         )
 
 
-def test_disconnect_release_wait_observes_status_without_claiming_owner(monkeypatch) -> None:
+def test_disconnect_release_wait_observes_status_without_claiming_owner(
+    monkeypatch,
+) -> None:
     module = _load_module()
     statuses = iter(
         (
@@ -1247,9 +1238,7 @@ def test_relay_and_release_rejects_success_after_original_deadline(monkeypatch) 
     moments = iter((10.0, 12.0, 15.0, 41.0))
     monkeypatch.setattr(module.time, "monotonic", lambda: next(moments))
     monkeypatch.setattr(module, "_wait_relay_ready", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(
-        module, "_wait_controller_release", lambda **_kwargs: None
-    )
+    monkeypatch.setattr(module, "_wait_controller_release", lambda **_kwargs: None)
 
     with pytest.raises(RuntimeError, match="within 30s of disconnect"):
         module._wait_relay_and_release(
@@ -1279,8 +1268,9 @@ def test_restart_safety_deadline_starts_before_relay_mutation(monkeypatch) -> No
     monkeypatch.setattr(
         module,
         "_wait_closed",
-        lambda *_args, **kwargs: calls.append(("disconnect", kwargs["timeout"]))
-        or 0.25,
+        lambda *_args, **kwargs: (
+            calls.append(("disconnect", kwargs["timeout"])) or 0.25
+        ),
     )
 
     disconnected, started, deadline = module._restart_relay_for_release_proof(
@@ -1358,7 +1348,9 @@ def test_release_deadline_fails_before_another_recovery_attempt(monkeypatch) -> 
     assert called == []
 
 
-def test_resume_wait_closes_busy_attempt_before_returning_live_pair(monkeypatch) -> None:
+def test_resume_wait_closes_busy_attempt_before_returning_live_pair(
+    monkeypatch,
+) -> None:
     module = _load_module()
     responses = iter(
         (

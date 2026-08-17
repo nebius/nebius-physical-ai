@@ -45,7 +45,9 @@ class StateStore:
                 if isinstance(payload, dict):
                     return payload
             except Exception:  # noqa: BLE001
-                logger.debug("failed to load agent state from %s", self.path, exc_info=True)
+                logger.debug(
+                    "failed to load agent state from %s", self.path, exc_info=True
+                )
         return self._default_factory()
 
     def save(self, state: dict[str, Any]) -> None:
@@ -59,7 +61,11 @@ class StateStore:
             try:
                 self._after_save(state)
             except Exception:  # noqa: BLE001
-                logger.debug("agent state after_save hook failed for %s", self.path, exc_info=True)
+                logger.debug(
+                    "agent state after_save hook failed for %s",
+                    self.path,
+                    exc_info=True,
+                )
 
     def mutate(self, fn: Callable[[dict[str, Any]], T]) -> T:
         """Atomically load → mutate → save under the process-wide lock."""

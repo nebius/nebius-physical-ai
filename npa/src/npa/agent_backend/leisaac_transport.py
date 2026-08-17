@@ -300,7 +300,9 @@ def parse_control_message(raw: str | bytes, *, expected_run_id: str) -> dict[str
         try:
             mode = enum_type(str(payload.get("mode") or ""))
         except ValueError as exc:
-            raise TransportProtocolError("invalid_message", "invalid mode request") from exc
+            raise TransportProtocolError(
+                "invalid_message", "invalid mode request"
+            ) from exc
         result.update(
             revision=_sequence(payload.get("revision"), name="mode revision"),
             mode=mode.value,
@@ -557,9 +559,7 @@ class ControlLedger:
     ) -> dict[str, Any]:
         with self._lock:
             mono_ns = (
-                time.monotonic_ns()
-                if received_mono_ns is None
-                else received_mono_ns
+                time.monotonic_ns() if received_mono_ns is None else received_mono_ns
             )
             state = self._state_for(client_id, mono_ns)
             applied = [
@@ -697,9 +697,7 @@ def unpack_frame(
         agent_receive_monotonic_ns=unpacked[10],
         agent_send_monotonic_ns=unpacked[11],
         causal_action_sequence=(unpacked[12] if version >= 2 else 0),
-        causal_applied_monotonic_ns=(
-            unpacked[13] if version >= 2 else 0
-        ),
+        causal_applied_monotonic_ns=(unpacked[13] if version >= 2 else 0),
         view_revision=(unpacked[14] if version == FRAME_PROTOCOL_VERSION else 0),
         dropped_before=unpacked[dropped_index],
         flags=flags,

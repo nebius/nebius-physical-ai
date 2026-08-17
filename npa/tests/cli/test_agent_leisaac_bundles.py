@@ -143,7 +143,8 @@ def test_rejects_traversal_tampering_and_executable_python(mutate, match) -> Non
 def test_rejects_hostile_usd_asset_references(reference: str, match: str) -> None:
     payload = _payload()
     payload["files"][0] = _file(
-        "robot.usda", f'#usda 1.0\ndef Xform "Robot" (references = @{reference}@) {{}}\n'.encode()
+        "robot.usda",
+        f'#usda 1.0\ndef Xform "Robot" (references = @{reference}@) {{}}\n'.encode(),
     )
     with pytest.raises(BundleError, match=match):
         validate_bundle(payload)
@@ -158,7 +159,8 @@ def test_rejects_opaque_usdc_and_accepts_bundle_local_usda_reference() -> None:
 
     local = _payload()
     local["files"][0] = _file(
-        "robot.usda", b'#usda 1.0\ndef Xform "Robot" (references = @parts/arm.usda@) {}\n'
+        "robot.usda",
+        b'#usda 1.0\ndef Xform "Robot" (references = @parts/arm.usda@) {}\n',
     )
     local["files"].append(_file("parts/arm.usda", b'#usda 1.0\ndef Xform "Arm" {}\n'))
     manifest, _files = validate_bundle(local)

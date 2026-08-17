@@ -275,8 +275,10 @@ def _unreachable_statement_violations(path: Path) -> list[str]:
     violations: list[str] = []
     for node in ast.walk(tree):
         for field_name, value in ast.iter_fields(node):
-            if not isinstance(value, list) or not value or not all(
-                isinstance(item, ast.stmt) for item in value
+            if (
+                not isinstance(value, list)
+                or not value
+                or not all(isinstance(item, ast.stmt) for item in value)
             ):
                 continue
             terminated = False
@@ -310,9 +312,7 @@ def test_leisaac_runtime_has_no_statements_after_unconditional_terminator() -> N
 def test_unreachable_statement_guard_catches_fixture(tmp_path: Path) -> None:
     broken = tmp_path / "broken.py"
     broken.write_text(
-        "def handler():\n"
-        "    return 1\n"
-        "    publish_side_effect()\n",
+        "def handler():\n    return 1\n    publish_side_effect()\n",
         encoding="utf-8",
     )
     assert _unreachable_statement_violations(broken)

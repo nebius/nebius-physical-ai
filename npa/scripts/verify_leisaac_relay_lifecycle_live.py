@@ -1980,8 +1980,7 @@ def main() -> int:
         # input, so derive its baseline locally: another HTTPS request here
         # could consume the intentionally short expiry window being tested.
         expiry_input_events = (
-            _input_event_count(_expiry_status, phase="credential expiry baseline")
-            + 1
+            _input_event_count(_expiry_status, phase="credential expiry baseline") + 1
         )
         expiry_disconnect = _wait_closed(
             control,
@@ -2329,9 +2328,7 @@ def main() -> int:
             active_failure=(
                 active_failure
                 or (
-                    browser_cleanup_failures[0][1]
-                    if browser_cleanup_failures
-                    else None
+                    browser_cleanup_failures[0][1] if browser_cleanup_failures else None
                 )
                 or (lock_cleanup_failures[0][1] if lock_cleanup_failures else None)
             ),

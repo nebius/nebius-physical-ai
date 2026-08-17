@@ -126,7 +126,9 @@ def run_kubectl(
         return result
 
     combined = f"{result.stderr}\n{result.stdout}"
-    if ambient_iam_token_present(base_env) and looks_like_stale_iam_token_error(combined):
+    if ambient_iam_token_present(base_env) and looks_like_stale_iam_token_error(
+        combined
+    ):
         retry = _invoke(strip_iam_token_env(base_env))
         return KubectlResult(
             returncode=retry.returncode,

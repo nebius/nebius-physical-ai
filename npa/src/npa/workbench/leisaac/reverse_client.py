@@ -212,9 +212,7 @@ class WebSocketConnection:
         self.connection.close()
 
 
-def _receive_exact(
-    connection: socket.socket | WebSocketConnection, size: int
-) -> bytes:
+def _receive_exact(connection: socket.socket | WebSocketConnection, size: int) -> bytes:
     chunks = bytearray()
     while len(chunks) < size:
         chunk = connection.recv(size - len(chunks))

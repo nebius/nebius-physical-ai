@@ -223,7 +223,9 @@ def test_dockerfile_provides_golden_eval_entrypoint(name: str) -> None:
         )
     else:  # pragma: no cover - guards against an unhandled command shape.
         if name != "leisaac":
-            raise AssertionError(f"{name}: unexpected in-image smoke command: {command!r}")
+            raise AssertionError(
+                f"{name}: unexpected in-image smoke command: {command!r}"
+            )
         assert command == "golden-smoke"
 
 

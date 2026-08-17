@@ -283,7 +283,9 @@ def test_manifest_artifact_loader_rejects_exact_uri_outside_agent_bucket() -> No
     assert loaded is None
 
 
-def test_manifest_artifact_loader_reads_configured_canonical_key_without_discovery() -> None:
+def test_manifest_artifact_loader_reads_configured_canonical_key_without_discovery() -> (
+    None
+):
     payload = b'{"schema":"npa.leisaac.session.v1"}'
     calls: list[dict[str, str]] = []
 
@@ -780,7 +782,9 @@ def test_authenticated_backend_routes_gate_status_and_proxy_client(monkeypatch) 
     assert status.status_code == 200
     assert status.json()["available"] is True
     assert status.json()["input_events"] == 17
-    assert status.json()["video_datachannel_url"] == "/api/leisaac/transport/video-webrtc"
+    assert (
+        status.json()["video_datachannel_url"] == "/api/leisaac/transport/video-webrtc"
+    )
     assert status.headers["cache-control"] == "private, no-store"
     forbidden_selection = client.post(
         "/leisaac/select",
@@ -828,8 +832,7 @@ def test_authenticated_backend_routes_gate_status_and_proxy_client(monkeypatch) 
         for cookie in cookies
     )
     assert any(
-        "npa_leisaac_signal_ws=" in cookie
-        and "Path=/api/leisaac/signal" in cookie
+        "npa_leisaac_signal_ws=" in cookie and "Path=/api/leisaac/signal" in cookie
         for cookie in cookies
     )
     assert any(
@@ -895,7 +898,9 @@ def test_authenticated_backend_routes_gate_status_and_proxy_client(monkeypatch) 
     )
     assert video_offer.status_code == 200
     assert video_offer.json()["type"] == "answer"
-    video_post = next(item for item in posted if item[0].endswith("/transport/video-webrtc"))
+    video_post = next(
+        item for item in posted if item[0].endswith("/transport/video-webrtc")
+    )
     assert video_post[1]["headers"] == {
         "X-NPA-LeIsaac-Nonce": raw_manifest["session_nonce"],
         "X-NPA-LeIsaac-Run-ID": raw_manifest["run_id"],
@@ -1004,7 +1009,9 @@ def test_authenticated_backend_routes_gate_status_and_proxy_client(monkeypatch) 
         json={"command": "mark-success", "request_id": "route-test-command"},
     )
     assert recorder_control.status_code == 202
-    recorder_post = next(item for item in posted if item[0].endswith("/recorder/control"))
+    recorder_post = next(
+        item for item in posted if item[0].endswith("/recorder/control")
+    )
     assert recorder_post[1]["json"] == {
         "command": "mark-success",
         "request_id": "route-test-command",
@@ -1198,9 +1205,7 @@ def test_signaling_proxy_preserves_only_upstream_sign_in_path() -> None:
         for cookie in session.headers.get_list("set-cookie")
         if cookie.startswith("npa_leisaac_signal_ws=")
     )
-    signal_token = signal_cookie.split("npa_leisaac_signal_ws=", 1)[1].split(
-        ";", 1
-    )[0]
+    signal_token = signal_cookie.split("npa_leisaac_signal_ws=", 1)[1].split(";", 1)[0]
     headers = {
         "x-forwarded-proto": "https",
         "origin": "https://testserver",
@@ -1216,7 +1221,9 @@ def test_signaling_proxy_preserves_only_upstream_sign_in_path() -> None:
     assert connected == [f"ws://127.0.0.1:{LEISAAC_SIGNAL_PORT}/sign_in?{query}"]
     assert health_checks_off_event_loop == [True]
 
-    with client.websocket_connect(f"/leisaac/signal?{query}", headers=headers) as websocket:
+    with client.websocket_connect(
+        f"/leisaac/signal?{query}", headers=headers
+    ) as websocket:
         assert websocket.receive_text() == '{"ackid":1}'
 
     with pytest.raises(WebSocketDisconnect) as exc_info:

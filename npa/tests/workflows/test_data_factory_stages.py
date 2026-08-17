@@ -91,7 +91,9 @@ def test_generate_configs_writes_real_manifest(tmp_path: Path) -> None:
     assert json.loads(out.read_text())["schema"] == "npa.data_factory.configs.v1"
 
 
-def test_generate_configs_propagates_augmentation_subject_into_real_prompts(tmp_path: Path) -> None:
+def test_generate_configs_propagates_augmentation_subject_into_real_prompts(
+    tmp_path: Path,
+) -> None:
     result = dfs.generate_configs(
         str(tmp_path / "subject") + "/",
         n_augmentations=2,
@@ -377,9 +379,7 @@ def test_dynamic_quality_disposition_persists_strict_route(
 
     assert result["quality_status"] == expected_status
     assert result["decision"] == expected_decision
-    assert decisions == [
-        ("s3://example-bucket/run/decision.json", expected_decision)
-    ]
+    assert decisions == [("s3://example-bucket/run/decision.json", expected_decision)]
     assert json.loads(disposition.read_text())["quality_status"] == expected_status
 
 
@@ -565,10 +565,10 @@ def test_curate_fails_closed_when_curator_report_is_missing(
     monkeypatch.setattr(dfs, "_enrich_with_fiftyone_curation", _stub_real_fiftyone)
     with pytest.raises(RuntimeError, match="could not be loaded"):
         dfs.curate(
-        "s3://b/p/cosmos_augmented/",
-        str(tmp_path / "report.json"),
-        curator_report_uri=str(tmp_path / "absent.json"),
-    )
+            "s3://b/p/cosmos_augmented/",
+            str(tmp_path / "report.json"),
+            curator_report_uri=str(tmp_path / "absent.json"),
+        )
 
 
 def test_curate_fails_closed_when_no_curator_report_is_passed(
@@ -940,7 +940,9 @@ def test_seed_default_input_frames_writes_when_empty(monkeypatch) -> None:
     fake = _FakeStorage()
     monkeypatch.setattr(dfs, "_storage", lambda: fake)
 
-    written = dfs._seed_default_input_frames("s3://b/physical-ai-data-factory/run/input/", count=3, seed="x")
+    written = dfs._seed_default_input_frames(
+        "s3://b/physical-ai-data-factory/run/input/", count=3, seed="x"
+    )
 
     assert written == 3
     assert len(fake.uploads) == 3
@@ -949,11 +951,17 @@ def test_seed_default_input_frames_writes_when_empty(monkeypatch) -> None:
 
 
 def test_seed_default_input_frames_skips_when_images_exist(monkeypatch) -> None:
-    monkeypatch.setattr(dfs, "_list_keys", lambda _uri: ["physical-ai-data-factory/run/input/frame_0000.png"])
+    monkeypatch.setattr(
+        dfs,
+        "_list_keys",
+        lambda _uri: ["physical-ai-data-factory/run/input/frame_0000.png"],
+    )
     fake = _FakeStorage()
     monkeypatch.setattr(dfs, "_storage", lambda: fake)
 
-    written = dfs._seed_default_input_frames("s3://b/physical-ai-data-factory/run/input/", seed="x")
+    written = dfs._seed_default_input_frames(
+        "s3://b/physical-ai-data-factory/run/input/", seed="x"
+    )
 
     assert written == 0
     assert fake.uploads == []
@@ -963,7 +971,9 @@ def test_seed_default_input_frames_noop_without_uri() -> None:
     assert dfs._seed_default_input_frames("", seed="x") == 0
 
 
-def test_generate_configs_seeds_default_input_when_flag_set(tmp_path: Path, monkeypatch) -> None:
+def test_generate_configs_seeds_default_input_when_flag_set(
+    tmp_path: Path, monkeypatch
+) -> None:
     calls: dict[str, str] = {}
 
     def fake_seed(input_uri: str, seed: str = "") -> int:
@@ -1017,7 +1027,9 @@ def test_generate_configs_records_the_seeded_count_in_the_written_manifest(
     monkeypatch.setattr(
         dfs,
         "_upload_json",
-        lambda payload, uri: uri if uri.startswith("s3://") else real_upload(payload, uri),
+        lambda payload, uri: (
+            uri if uri.startswith("s3://") else real_upload(payload, uri)
+        ),
     )
     configs = tmp_path / "c.json"
 
@@ -1034,7 +1046,9 @@ def test_generate_configs_records_the_seeded_count_in_the_written_manifest(
     assert written["input_source"]["kind"] == "npa_seeded_fixture"
 
 
-def test_generate_configs_fails_when_requested_seeding_fails(tmp_path: Path, monkeypatch) -> None:
+def test_generate_configs_fails_when_requested_seeding_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
     """Requested-but-failed seeding must not defer the failure to annotate-original."""
 
     def boom(*_a, **_k) -> int:

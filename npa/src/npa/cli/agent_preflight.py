@@ -82,9 +82,7 @@ def _render_agent_cloud_init(ssh_user: str, public_key: str) -> str:
         raise ValueError("agent cloud-init template boundary is missing or ambiguous")
     rendered = template.split(_AGENT_CLOUD_INIT_BRANCH, 1)[0]
     rendered = rendered.replace("${jsonencode(ssh_user)}", json.dumps(ssh_user))
-    rendered = rendered.replace(
-        "${jsonencode(ssh_public_key)}", json.dumps(public_key)
-    )
+    rendered = rendered.replace("${jsonencode(ssh_public_key)}", json.dumps(public_key))
     if "${" in rendered or "%{" in rendered:
         raise ValueError("agent cloud-init template contains unresolved interpolation")
     parsed = yaml.safe_load(rendered)
@@ -127,9 +125,7 @@ def agent_hard_prereq_results(
 
     results: list[Any] = []
     terraform = (
-        str(terraform_bin).strip()
-        if terraform_bin is not None
-        else _terraform_binary()
+        str(terraform_bin).strip() if terraform_bin is not None else _terraform_binary()
     )
     if terraform:
         from npa.deploy import provisioner
@@ -173,9 +169,7 @@ def agent_hard_prereq_results(
 
     public_path = Path(ssh_public_key_path).expanduser()
     private_path = Path(
-        str(public_path)[:-4]
-        if str(public_path).endswith(".pub")
-        else str(public_path)
+        str(public_path)[:-4] if str(public_path).endswith(".pub") else str(public_path)
     )
     public_key = ""
     if public_path.is_file():

@@ -284,7 +284,9 @@ projects:
         def upload_private_text(self, content: str, _remote_path: str) -> None:
             staged.append(content)
 
-        def run_or_raise(self, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
+        def run_or_raise(
+            self, *_args: object, **_kwargs: object
+        ) -> tuple[int, str, str]:
             return 0, "", ""
 
         def run(self, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
@@ -340,7 +342,9 @@ def test_agent_operator_profile_privately_stages_remote_kubeconfig(
         def upload_private_text(self, content: str, remote_path: str) -> None:
             staged.append((content, remote_path))
 
-        def run_or_raise(self, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
+        def run_or_raise(
+            self, *_args: object, **_kwargs: object
+        ) -> tuple[int, str, str]:
             return 0, "", ""
 
         def run(self, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
@@ -364,9 +368,7 @@ def test_agent_operator_profile_privately_stages_remote_kubeconfig(
         "apiVersion: v1\nclusters: []\n"
     ) == 2
     configs = [
-        json.loads(value)
-        for value, _path in staged
-        if '"default_project"' in value
+        json.loads(value) for value, _path in staged if '"default_project"' in value
     ]
     assert configs[0]["projects"]["demo"]["kubernetes"]["kubeconfig"] == (
         "/home/ubuntu/.npa/clusters/exact-cluster/kubeconfig"
@@ -385,7 +387,9 @@ def test_agent_operator_profile_stages_exact_project_credentials() -> None:
         def upload_private_text(self, content: str, _remote_path: str) -> None:
             staged.append(content)
 
-        def run_or_raise(self, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
+        def run_or_raise(
+            self, *_args: object, **_kwargs: object
+        ) -> tuple[int, str, str]:
             return 0, "", ""
 
         def run(self, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
@@ -407,9 +411,7 @@ def test_agent_operator_profile_stages_exact_project_credentials() -> None:
     )
 
     credentials = [
-        json.loads(value)
-        for value in staged
-        if '"project_credentials"' in value
+        json.loads(value) for value in staged if '"project_credentials"' in value
     ]
     assert len(credentials) == 2
     root = credentials[0]["project_credentials"]
@@ -456,9 +458,7 @@ def test_agent_access_logs_are_query_free() -> None:
         rerun_port=9090,
         ui_version="test",
     )
-    log_block = source.split("log_format npa_agent_safe", 1)[1].split(
-        "NGINXLOG", 1
-    )[0]
+    log_block = source.split("log_format npa_agent_safe", 1)[1].split("NGINXLOG", 1)[0]
 
     assert "--no-access-log" in source
     assert "--log-level warning" in source
@@ -502,7 +502,9 @@ def test_existing_agent_public_ip_resolves_from_provider_state(monkeypatch) -> N
     )
 
 
-def test_existing_agent_public_ip_rejects_non_public_provider_state(monkeypatch) -> None:
+def test_existing_agent_public_ip_rejects_non_public_provider_state(
+    monkeypatch,
+) -> None:
     from npa.cli.agent import _resolve_record_public_ip
     from npa.clients.network import NetworkIngressError
 
@@ -1324,13 +1326,16 @@ def test_deploy_persists_terraform_state_before_apply(monkeypatch, tmp_path) -> 
     monkeypatch.setattr("npa.cli.agent._bootstrap_agent_stack", lambda **_kwargs: None)
     monkeypatch.setattr("npa.cli.agent.ensure_ingress", lambda **_kwargs: None)
     monkeypatch.setattr(
-        "npa.cli.agent.remove_npa_ingress_for_instance_ports", lambda *_args, **_kwargs: []
+        "npa.cli.agent.remove_npa_ingress_for_instance_ports",
+        lambda *_args, **_kwargs: [],
     )
     monkeypatch.setattr("npa.cli.agent.write_config", _write_config)
 
     # Satisfy the fail-fast deploy prerequisites (terraform + SSH key pair) that
     # now run before any cloud side effects.
-    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n")
+    (tmp_path / "id_ed25519.pub").write_text(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
+    )
     (tmp_path / "id_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
 
@@ -1394,7 +1399,9 @@ def test_public_ingress_excludes_internal_backend_port() -> None:
     assert 8787 not in ports
 
 
-def test_existing_agent_bootstrap_fails_closed_when_https_ingress_cannot_be_ensured() -> None:
+def test_existing_agent_bootstrap_fails_closed_when_https_ingress_cannot_be_ensured() -> (
+    None
+):
     source = _agent_source()
     assert '_fail(f"npa network ensure-ingress failed: {exc}")' in source
     assert "Customer HTTPS on port 443 may be unreachable" not in source
@@ -3859,12 +3866,18 @@ def test_deploy_seeds_cost_ordered_ladder_without_explicit_models(
     monkeypatch.setattr("npa.cli.agent._bootstrap_agent_stack", lambda **k: None)
     monkeypatch.setattr("npa.cli.agent.ensure_ingress", lambda **k: None)
     monkeypatch.setattr(
-        "npa.cli.agent.remove_npa_ingress_for_instance_ports", lambda *_args, **_kwargs: []
+        "npa.cli.agent.remove_npa_ingress_for_instance_ports",
+        lambda *_args, **_kwargs: [],
     )
-    monkeypatch.setattr("npa.cli.agent._store_agent_record", lambda project, name, rec: captured.update(rec))
+    monkeypatch.setattr(
+        "npa.cli.agent._store_agent_record",
+        lambda project, name, rec: captured.update(rec),
+    )
 
     # Satisfy the fail-fast deploy prerequisites (terraform + SSH key pair).
-    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n")
+    (tmp_path / "id_ed25519.pub").write_text(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
+    )
     (tmp_path / "id_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
 
@@ -3899,7 +3912,9 @@ def test_deploy_seeds_cost_ordered_ladder_without_explicit_models(
 def test_agent_preflight_all_pass(monkeypatch, tmp_path) -> None:
     from npa.cli import agent as agent_module
 
-    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n")
+    (tmp_path / "id_ed25519.pub").write_text(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
+    )
     (tmp_path / "id_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
     monkeypatch.setattr(
@@ -3928,7 +3943,10 @@ def test_agent_hard_prereqs_fail_closed_on_provider_lock_error(
     from npa.terraform_lock import TerraformLockError
 
     public_key = tmp_path / "id_ed25519.pub"
-    public_key.write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n", encoding="utf-8")
+    public_key.write_text(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n",
+        encoding="utf-8",
+    )
     (tmp_path / "id_ed25519").write_text("private\n", encoding="utf-8")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
 
@@ -3949,7 +3967,9 @@ def test_agent_preflight_invokes_exact_deploy_storage_decision(
 ) -> None:
     from npa.cli import agent as agent_module
 
-    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n")
+    (tmp_path / "id_ed25519.pub").write_text(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
+    )
     (tmp_path / "id_ed25519").write_text("priv\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
     monkeypatch.setattr(
@@ -4015,7 +4035,9 @@ def test_agent_preflight_fails_on_missing_terraform_and_keys(
 def test_agent_preflight_json_output(monkeypatch, tmp_path) -> None:
     from npa.cli import agent as agent_module
 
-    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n")
+    (tmp_path / "id_ed25519.pub").write_text(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
+    )
     (tmp_path / "id_ed25519").write_text("priv\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
     monkeypatch.setattr(
@@ -4056,7 +4078,9 @@ def test_agent_preflight_rejects_private_key_passed_as_public_path(
         "-----BEGIN OPENSSH PRIVATE KEY-----\nprivate-material\n"
         "-----END OPENSSH PRIVATE KEY-----\n"
     )
-    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n")
+    (tmp_path / "id_ed25519.pub").write_text(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
+    )
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
     monkeypatch.setattr(
         agent_module, "_resolve_deploy_llm_credentials", lambda: ("tf-key", "m")
@@ -4088,7 +4112,9 @@ def test_agent_cloud_init_quotes_public_key_comments_before_yaml_parse() -> None
     assert payload["users"][0]["ssh_authorized_keys"] == [public_key]
 
 
-def test_legacy_agent_cloud_init_reproduces_multiline_private_key_yaml_failure() -> None:
+def test_legacy_agent_cloud_init_reproduces_multiline_private_key_yaml_failure() -> (
+    None
+):
     legacy = """#cloud-config
 
 users:
@@ -4112,7 +4138,9 @@ def test_agent_preflight_fails_when_storage_write_probe_is_forbidden(
     from npa.clients import storage_validation
     from npa.clients.storage_validation import StorageProbeResult
 
-    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n")
+    (tmp_path / "id_ed25519.pub").write_text(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
+    )
     (tmp_path / "id_ed25519").write_text("priv\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
     monkeypatch.setattr(
@@ -4180,7 +4208,9 @@ def test_agent_status_read_only_does_not_probe_storage(monkeypatch, tmp_path) ->
 def test_agent_preflight_nebius_fail(monkeypatch, tmp_path) -> None:
     from npa.cli import agent as agent_module
 
-    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n")
+    (tmp_path / "id_ed25519.pub").write_text(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
+    )
     (tmp_path / "id_ed25519").write_text("priv\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
     monkeypatch.setattr(
@@ -4247,7 +4277,9 @@ def test_deploy_fails_fast_on_missing_terraform(monkeypatch, tmp_path) -> None:
     from npa.cli import agent as agent_module
     from npa.cli.agent import deploy_cmd
 
-    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n")
+    (tmp_path / "id_ed25519.pub").write_text(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
+    )
     (tmp_path / "id_ed25519").write_text("priv\n")
     monkeypatch.delenv("NPA_TERRAFORM_BIN", raising=False)
     monkeypatch.setattr(agent_module.shutil, "which", lambda name: None)
@@ -4295,7 +4327,9 @@ def test_deploy_warns_on_missing_token_factory_key(
     from npa.cli.agent import deploy_cmd
     from npa.clients.nebius import NebiusError
 
-    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n")
+    (tmp_path / "id_ed25519.pub").write_text(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
+    )
     (tmp_path / "id_ed25519").write_text("priv\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
     monkeypatch.setattr(
@@ -4448,7 +4482,9 @@ def test_agent_setup_picks_configured_project(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
 
     key_file = tmp_path / "id_ed25519.pub"
-    key_file.write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n")
+    key_file.write_text(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
+    )
 
     captured: dict = {}
 
@@ -4504,7 +4540,9 @@ def _write_agent_setup_config(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
     key_file = tmp_path / "id_ed25519.pub"
-    key_file.write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n")
+    key_file.write_text(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
+    )
     (tmp_path / "id_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
     return key_file

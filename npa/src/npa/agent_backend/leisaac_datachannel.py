@@ -196,9 +196,7 @@ class _DataChannelPeerPool:
                     credential=str(ice_server.get("credential") or ""),
                 )
             )
-        peer = RTCPeerConnection(
-            configuration=RTCConfiguration(iceServers=ice_servers)
-        )
+        peer = RTCPeerConnection(configuration=RTCConfiguration(iceServers=ice_servers))
         async with self._lock:
             closed = {
                 item
@@ -221,9 +219,7 @@ class _DataChannelPeerPool:
                 channel.close()
                 if not channel_ready.done():
                     channel_ready.set_exception(
-                        VideoDataChannelError(
-                            f"invalid WebRTC {channel_kind} channel"
-                        )
+                        VideoDataChannelError(f"invalid WebRTC {channel_kind} channel")
                     )
                 return
             channel_ready.set_result(channel)
@@ -270,9 +266,7 @@ class VideoDataChannelPeerPool(_DataChannelPeerPool):
         def validate_channel(channel: Any) -> bool:
             valid = valid_video_datachannel(channel)
             if valid:
-                channel.bufferedAmountLowThreshold = (
-                    VIDEO_DATACHANNEL_BUFFER_LOW_BYTES
-                )
+                channel.bufferedAmountLowThreshold = VIDEO_DATACHANNEL_BUFFER_LOW_BYTES
             return valid
 
         peer, channel_ready, answer_sdp = await self._negotiate(
@@ -314,7 +308,10 @@ class VideoDataChannelPeerPool(_DataChannelPeerPool):
                 # coalesced before serialization instead of becoming a local
                 # stale send queue.
                 frame = await anext(source)
-                if not isinstance(frame, bytes) or len(frame) > MAX_VIDEO_DATACHANNEL_FRAME_BYTES:
+                if (
+                    not isinstance(frame, bytes)
+                    or len(frame) > MAX_VIDEO_DATACHANNEL_FRAME_BYTES
+                ):
                     raise VideoDataChannelError(
                         "WebRTC video frame exceeds the bounded channel size"
                     )

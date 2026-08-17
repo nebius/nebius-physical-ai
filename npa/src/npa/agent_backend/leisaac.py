@@ -361,11 +361,7 @@ def normalize_manifest(
     media_host = _public_ip(data.get("media_host"))
     raw_media_server = data.get("media_server")
     media_server = _private_ip(raw_media_server)
-    if (
-        not signal_host
-        or not media_host
-        or not media_server
-    ):
+    if not signal_host or not media_host or not media_server:
         return None, "LeIsaac session endpoints violate the fixed network contract"
     if _integer(data.get("signal_port")) != LEISAAC_SIGNAL_PORT:
         return None, "LeIsaac session has an unsupported signaling port"
@@ -509,14 +505,23 @@ def validate_health(manifest: dict, payload: dict | None) -> tuple[dict | None, 
     video_codec = str(data.get("video_codec") or "")
     hardware_acceleration = str(data.get("hardware_acceleration") or "")
     video_fallback_reason = str(data.get("video_fallback_reason") or "")[:256]
-    if stream_transport == "webrtc" and any(
-        (requested_video_transport, active_video_transport, video_codec, hardware_acceleration)
-    ) and (
-        requested_video_transport != "webrtc-kit-h264"
-        or active_video_transport != "webrtc-kit-h264"
-        or video_codec != "H264"
-        or hardware_acceleration != "runtime-nvenc"
-        or video_fallback_reason
+    if (
+        stream_transport == "webrtc"
+        and any(
+            (
+                requested_video_transport,
+                active_video_transport,
+                video_codec,
+                hardware_acceleration,
+            )
+        )
+        and (
+            requested_video_transport != "webrtc-kit-h264"
+            or active_video_transport != "webrtc-kit-h264"
+            or video_codec != "H264"
+            or hardware_acceleration != "runtime-nvenc"
+            or video_fallback_reason
+        )
     ):
         return None, "LeIsaac service returned an invalid hardware video contract"
     if str(data.get("state") or "") != "ready" or not stream_ready:
@@ -675,9 +680,8 @@ def validate_health(manifest: dict, payload: dict | None) -> tuple[dict | None, 
         "view_revision": _integer(data.get("view_revision")) or 0,
         "applied_view_revision": _integer(data.get("applied_view_revision")) or 0,
         "recording_revision": _integer(data.get("recording_revision")) or 0,
-        "applied_recording_revision": _integer(
-            data.get("applied_recording_revision")
-        ) or 0,
+        "applied_recording_revision": _integer(data.get("applied_recording_revision"))
+        or 0,
         "mode_transition_latency_ms": transition_latency_ms,
         "selected_bundles": selected_bundles,
         "configuration": configuration,
@@ -810,9 +814,7 @@ def status_payload(
         "requested_recording_camera_mode": health.get(
             "requested_recording_camera_mode"
         ),
-        "applied_recording_camera_mode": health.get(
-            "applied_recording_camera_mode"
-        ),
+        "applied_recording_camera_mode": health.get("applied_recording_camera_mode"),
         "view_revision": health.get("view_revision", 0),
         "applied_view_revision": health.get("applied_view_revision", 0),
         "recording_revision": health.get("recording_revision", 0),

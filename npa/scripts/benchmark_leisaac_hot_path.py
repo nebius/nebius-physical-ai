@@ -58,8 +58,7 @@ def counter_benchmark() -> dict[str, float | int]:
         runtime.INPUT_QUEUE_PATH = root / "inputs.jsonl"
         runtime.INPUT_COUNTER_PATH.write_text("0\n", encoding="utf-8")
         rows = [
-            {"type": "control", "event": "release", "seq": index}
-            for index in range(8)
+            {"type": "control", "event": "release", "seq": index} for index in range(8)
         ]
         return timed(lambda: runtime._append_inputs(rows), samples=40)
 
@@ -100,9 +99,7 @@ def main() -> int:
         "mask_180k": timed(lambda: _mask_websocket_payload(payload, mask)),
         "sha256_180k": timed(lambda: hashlib.sha256(payload).digest()),
         "counter_append_8_releases": counter_benchmark(),
-        "unix_datagram_wakeup": ipc_benchmark(
-            b'{"type":"frame","camera":"workspace"}'
-        ),
+        "unix_datagram_wakeup": ipc_benchmark(b'{"type":"frame","camera":"workspace"}'),
         "unix_datagram_frame_180k": ipc_benchmark(payload, samples=40),
         "latest_value_relay_schedule": asyncio.run(relay_benchmark()),
         "browser_decode_paint": "measured by agent_leisaac_performance_live.cy.js",
