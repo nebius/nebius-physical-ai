@@ -361,9 +361,17 @@ def test_wan22_live_rtxpro_candidate_generate_and_decode(
         cwd=str(REPO_ROOT),
         env=env,
     )
-    combined = proc.stdout + "\n" + proc.stderr
-    assert proc.returncode == 0, combined[-12000:]
     runner = _parse_last_json_blob(proc.stdout)
+    assert proc.returncode == 0, json.dumps(
+        {
+            "runner_error_tail": str(runner.get("error") or "")[-2000:],
+            "runner_hint": runner.get("hint"),
+            "runner_stdout_tail": runner.get("stdout_tail"),
+            "runner_stderr_tail": runner.get("stderr_tail"),
+            "stderr_tail": proc.stderr[-2000:],
+        },
+        indent=2,
+    )
     assert runner["status"] == "ok"
     assert runner["image"] == image
     assert runner["repo_ref"] == planned["--repo-ref"]
