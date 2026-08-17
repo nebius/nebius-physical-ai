@@ -198,9 +198,11 @@ jobs:
           fi
           package_error="$(mktemp)"
           if ! gh api "$package_api" >/dev/null 2>"$package_error"; then
-            grep -q 'HTTP 404' "$package_error"
-            gh api --method POST "${package_api}/restore"
+            echo "Restoring the exact soft-deleted candidate package for privacy repair."
+            gh api --method POST "${package_api}/restore" >/dev/null
           fi
+          visibility="$(gh api "$package_api" --jq .visibility)"
+          test "$visibility" = public || test "$visibility" = private
           versions_file="$(mktemp)"
           gh api "${package_api}/versions?per_page=100" > "$versions_file"
           test "$(jq 'length' "$versions_file")" = 1
@@ -210,14 +212,17 @@ jobs:
             '.[] | select(.name == $digest and ((.metadata.container.tags // []) | index($tag))) | .id' \
             "$versions_file")"
           test "$(printf '%s\n' "$version_ids" | sed '/^$/d' | wc -l)" = 1
-          gh api --method PATCH "$package_api" -f visibility=private >/dev/null
+          if [ "$visibility" = public ]; then
+            gh api --method PATCH "$package_api" -f visibility=private >/dev/null
+          fi
+          test "$(gh api "$package_api" --jq .visibility)" = private
           anonymous_config="$(mktemp -d)"
-          if DOCKER_CONFIG="$anonymous_config" docker buildx imagetools inspect "$RETIRED_REF" >/dev/null 2>&1; then
+          if DOCKER_CONFIG="$anonymous_config" crane manifest "$RETIRED_REF" >/dev/null 2>&1; then
             echo "::error::Retired candidate remains anonymously pullable after privacy update."
             exit 1
           fi
           gh api --method DELETE "$package_api"
-          if DOCKER_CONFIG="$anonymous_config" docker buildx imagetools inspect "$RETIRED_REF" >/dev/null 2>&1; then
+          if DOCKER_CONFIG="$anonymous_config" crane manifest "$RETIRED_REF" >/dev/null 2>&1; then
             echo "::error::Retired candidate became anonymously pullable after deletion."
             exit 1
           fi
@@ -267,7 +272,7 @@ jobs:
           fi
           test "$(gh api "$package_api" --jq .visibility)" = private
           anonymous_config="$(mktemp -d)"
-          if DOCKER_CONFIG="$anonymous_config" docker buildx imagetools inspect "$IMAGE" >/dev/null 2>&1; then
+          if DOCKER_CONFIG="$anonymous_config" crane manifest "$IMAGE" >/dev/null 2>&1; then
             echo "::error::Candidate manifest is anonymously pullable; refusing a public development package."
             exit 1
           fi

@@ -44,6 +44,7 @@ def test_candidate_workflow_uses_immutable_private_refs_and_visibility_gate() ->
     assert "nebius-physical-ai-private" in text
     assert "visibility" in text and "= private" in text
     assert "anonymously pullable" in text
+    assert 'DOCKER_CONFIG="$anonymous_config" crane manifest' in text
     assert "NPA_SOURCE_SHA=${{ github.sha }}" in text
     assert "provenance: mode=max" in text
     assert "sbom: true" in text
@@ -91,6 +92,7 @@ def test_public_publisher_can_bootstrap_candidate_from_existing_dispatch_file() 
     assert '/restore' in text
     assert "gh api --method DELETE" in text
     assert "anonymously pullable" in text
+    assert 'DOCKER_CONFIG="$anonymous_config" crane manifest' in text
 
 
 def test_public_health_is_anonymous_and_read_only() -> None:
