@@ -186,7 +186,8 @@ def test_rejected_credentials_are_reported_as_unauthorized() -> None:
     assert check.status == "unauthorized"
     assert check.http_status == 401
     assert "UNAUTHORIZED" in check.detail
-    assert "profile" in check.remedy
+    assert "registry's standard authentication flow" in check.remedy
+    assert "profile" not in check.remedy
 
 
 def test_a_challenge_without_credentials_tries_an_anonymous_token_first() -> None:

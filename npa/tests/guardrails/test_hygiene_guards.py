@@ -189,7 +189,6 @@ def test_legacy_registry_hosts_are_only_vendor_dependencies_or_history() -> None
         "EVIDENCE.md",
         "CHANGELOG.md",
         "SECURITY.md",
-        "deploy/cluster/vendor/nebius-solutions-library/",
     )
     host = re.compile(r"cr\.[a-z0-9-]+\.nebius\.cloud", re.IGNORECASE)
     offenders: list[str] = []
@@ -211,6 +210,33 @@ def test_legacy_registry_hosts_are_only_vendor_dependencies_or_history() -> None
         if host.search(text):
             offenders.append(relative)
     assert not offenders, "operative legacy registry hosts found: " + ", ".join(
+        sorted(offenders)
+    )
+
+
+def test_no_provider_specific_registry_auth_or_pull_secret_defaults() -> None:
+    """NPA-owned paths use anonymous GHCR or explicit generic BYOF auth only."""
+    forbidden = re.compile(
+        "(?i)(npa-" + "nebius-registry|NEBIUS_" + "REGISTRY_PROFILE|"
+        "private-" + "candidate|Nebius Container " + "Registry)"
+    )
+    allowed = {"EVIDENCE.md", "SECURITY.md"}
+    offenders: list[str] = []
+    for path in REPO_ROOT.rglob("*"):
+        if not path.is_file() or {".git", ".venv", "__pycache__"}.intersection(
+            path.parts
+        ):
+            continue
+        relative = str(path.relative_to(REPO_ROOT))
+        if relative in allowed:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if forbidden.search(text):
+            offenders.append(relative)
+    assert not offenders, "provider-specific registry dependency found: " + ", ".join(
         sorted(offenders)
     )
 

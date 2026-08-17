@@ -29,11 +29,12 @@ template is retired).
 
   ```bash
   export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
-  npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push --variant baked
-  npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push --variant k8s --tag 0.1.2-k8s-runtime
-  docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2"
-  docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2-k8s-runtime"
+  docker manifest inspect \
+    "${NPA_REGISTRY}/npa-sonic:cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
   ```
+
+  Quarantined variants must not be rebuilt or pushed into the official public
+  namespace. Generic operator-owned BYOF images remain supported.
 
   See `docs/workbench/sonic-image-catalog.md` for the compatibility matrix.
 

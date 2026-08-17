@@ -381,8 +381,9 @@ def check_image_pull(
                     http_status=token_status,
                     detail="registry requires authentication and no credentials were supplied",
                     remedy=(
-                        "export SKYPILOT_DOCKER_PASSWORD (or make `nebius iam get-access-token` "
-                        "work) so submit can mint a pull token"
+                        "export exact-host SKYPILOT_DOCKER_USERNAME and "
+                        "SKYPILOT_DOCKER_PASSWORD credentials supplied by the "
+                        "operator-controlled registry"
                     ),
                 )
             return ImagePullCheck(
@@ -393,8 +394,8 @@ def check_image_pull(
                 or "registry rejected the supplied credentials",
                 remedy=(
                     "the credentials this run injects are not valid for "
-                    f"{reference.registry}; re-mint them (`nebius iam get-access-token`) "
-                    "and confirm the active profile is the one that owns the registry"
+                    f"{reference.registry}; refresh them through that registry's "
+                    "standard authentication flow and confirm the exact host scope"
                 ),
             )
         try:

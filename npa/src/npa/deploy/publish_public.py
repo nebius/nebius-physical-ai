@@ -2,12 +2,12 @@
 
 This tool is license-guarded: it only ever copies tools reported by
 ``images.publicly_publishable_tools()`` and hard-refuses anything in
-``images.OMNIVERSE_RESTRICTED_TOOLS`` as defence in depth around that selector.
+``images.RESTRICTED_PUBLICATION_TOOLS`` as defence in depth around that selector.
 
-The Isaac tools were re-architected to fetch Isaac Sim / Isaac Lab at first run
-under the operator's own EULA acceptance and are publishable. The separately
-contracted ``cosmos3-serving`` image remains build-your-own because its pinned
-vendor base has distribution conditions that anonymous GHCR does not establish.
+The Isaac tools fetch Isaac Sim / Isaac Lab at first run under the operator's
+own EULA acceptance. Cosmos3 serving is a zero-payload runtime bootstrap, while
+SONIC MuJoCo is rebuilt independently without a vendor-container parent. Both
+are release-blocked until exact-digest GPU evidence is recorded.
 
 Example (dry run first, then execute):
 
@@ -50,9 +50,9 @@ from npa.deploy import images
 from npa.deploy.images import (
     CONTAINER_IMAGE_NAMES,
     is_publicly_redistributable,
-    omniverse_restricted_image_names,
     public_container_registry,
     publicly_publishable_tools,
+    restricted_image_names,
 )
 
 
@@ -106,15 +106,15 @@ def build_publish_plan(
             continue
         # Read the restricted set through the module, never a from-import: a
         # defence-in-depth check that holds a stale copy of the thing it is defending is
-        # worse than no check at all. (`from ... import OMNIVERSE_RESTRICTED_TOOLS` binds
+        # worse than no check at all. (`from ... import RESTRICTED_PUBLICATION_TOOLS` binds
         # the value at import time, so this guard and publicly_publishable_tools() could
         # disagree - which is exactly what a test caught once the set stopped being empty.)
         if (
             not is_publicly_redistributable(tool)
-            or tool in images.OMNIVERSE_RESTRICTED_TOOLS
+            or tool in images.RESTRICTED_PUBLICATION_TOOLS
         ):
             raise ValueError(
-                f"refusing to publish restricted (Omniverse Kit) tool {tool!r} to a public registry"
+                f"refusing to publish restricted tool {tool!r} to a public registry"
             )
         source_ref = images.development_image_for_tool(
             tool, registry=target, git_sha=source_sha
@@ -1027,7 +1027,7 @@ def main(argv: list[str] | None = None) -> int:
         target_registry=args.target,
         development_git_sha=args.development_sha,
     )
-    restricted = omniverse_restricted_image_names()
+    restricted = restricted_image_names()
     print(f"Publishing {len(plan)} OSS image(s) to {args.target.rstrip('/')}")
     if restricted:
         print(

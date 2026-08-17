@@ -3372,7 +3372,6 @@ def deploy_cmd(
                             + shlex.quote(f"exec {FIFTYONE_VENV}/bin/python {FIFTYONE_HOME}/app.py")
                         ),
                         gpu=uses_gpu,
-                        registry_token=merged_vars.get("iam_token", ""),
                     )
                     if verify_env and not no_shared_creds:
                         failed_keys = audit_remote_env(

@@ -7,7 +7,6 @@ import argparse
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -274,32 +273,6 @@ def _registry_path(image_ref: str) -> str:
     if last_slash <= 0:
         return ""
     return without_digest[:last_slash]
-
-
-def _docker_login_nebius(server: str, *, env: dict[str, str] | None = None) -> None:
-    # Keep registry write authority separate from the profile used by kubeconfig
-    # exec plugins.  A registry-only service account may intentionally have no
-    # Kubernetes RBAC, so reusing NPA_NEBIUS_PROFILE for both operations can make
-    # an otherwise valid build fail when pull secrets are refreshed.
-    merged = {**os.environ, **(env or {})}
-    profile = (
-        merged.get("NEBIUS_REGISTRY_PROFILE", "").strip()
-        or merged.get("NPA_NEBIUS_PROFILE", "").strip()
-        or merged.get("NEBIUS_PROFILE", "").strip()
-    )
-    token_cmd = ["nebius"]
-    if profile:
-        token_cmd.extend(["--profile", profile])
-    token_cmd.extend(["iam", "get-access-token"])
-    token_proc = _run(token_cmd, capture=True)
-    token = token_proc.stdout.strip()
-    if not token:
-        raise RuntimeError("nebius iam get-access-token returned empty token")
-    _run(
-        ["docker", "login", "-u", "iam", "--password-stdin", server],
-        stdin=token,
-        env=env,
-    )
 
 
 def _dockerfile_text() -> str:
@@ -577,7 +550,9 @@ def main(argv: list[str] | None = None) -> int:
         "smoke_artifact_name": args.smoke_artifact_name,
     }
 
-    docker_config_dir: str | None = None
+    # BYOF registries are standards-based operator interoperability. Authentication
+    # must already exist in the caller's Docker config; NPA never mints provider IAM
+    # registry tokens or creates a hidden registry-specific credential directory.
     docker_env: dict[str, str] = {}
     try:
         postprocess_key = _required_postprocess_key(
@@ -594,10 +569,6 @@ def main(argv: list[str] | None = None) -> int:
                 "because verified postprocessing is mandatory"
             )
         if not skip_build:
-            if not skip_push:
-                docker_config_dir = tempfile.mkdtemp(prefix="npa-docker-auth-")
-                docker_env = {"DOCKER_CONFIG": docker_config_dir}
-                _docker_login_nebius(_registry_server(image), env=docker_env)
             with tempfile.TemporaryDirectory(prefix="npa-byof-build-") as tmp:
                 context = Path(tmp)
                 (context / "Dockerfile").write_text(
@@ -794,9 +765,6 @@ def main(argv: list[str] | None = None) -> int:
         if hint:
             print(f"HINT: {hint}", file=sys.stderr)
         return 1
-    finally:
-        if docker_config_dir:
-            shutil.rmtree(docker_config_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

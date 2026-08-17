@@ -39,7 +39,7 @@ jobs:
               echo "Every supported release tag is anonymously pullable."
             else
               echo "**One or more supported public releases is unavailable anonymously.**"
-              echo "Use the guarded private-candidate promotion workflow; never push a"
-              echo "development tag into these public packages."
+              echo "Repair the exact immutable public development digest and rerun the"
+              echo "guarded release promotion; never overwrite a supported release blindly."
             fi
           } >> "$GITHUB_STEP_SUMMARY"

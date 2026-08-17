@@ -24,7 +24,6 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import storage_env_for_project
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.orchestration.npa_workflow.skypilot_render import secret_env_hints_for_plan
@@ -1312,11 +1311,14 @@ def test_openpi_polaris_live_b200_all_four_modes(
     assert not os.environ.get("NPA_BYOF_OPENPI_REUSE_IMAGE", "").strip(), (
         "the canonical gate must build and push; use the runner manually for reuse debugging"
     )
-    saved_registry = resolve_container_registry(e2e_project)
-    project_registry = (
-        os.environ.get("NPA_BYOF_OPENPI_PROJECT_REGISTRY", "").strip() or saved_registry
+    project_registry = os.environ.get("NPA_BYOF_OPENPI_REGISTRY", "").strip()
+    assert project_registry, (
+        "NPA_BYOF_OPENPI_REGISTRY must name an authenticated operator-controlled "
+        "registry; restricted OpenPI bytes must not enter the official NPA GHCR namespace"
     )
-    assert project_registry.startswith("cr.") and ".nebius.cloud/" in project_registry
+    assert project_registry.rstrip("/").lower() != (
+        "ghcr.io/nebius/nebius-physical-ai"
+    )
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     build_run_id = f"byof-openpi-polaris-build-{stamp}"

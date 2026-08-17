@@ -48,7 +48,8 @@ GENESIS_IMAGE="${NPA_REGISTRY}/npa-genesis:cuda13-b300-0.4.6-sm80-sm90-sm100-sm1
 npa/docker/workbench/sim2real-build.sh --registry "${NPA_REGISTRY}" --push
 ```
 
-Build the SONIC RTX PRO 6000 Kubernetes runtime:
+For a generic operator-owned BYOF registry, build the SONIC RTX PRO 6000
+Kubernetes runtime with:
 
 ```bash
 npa/docker/workbench/sonic/build.sh \
@@ -57,6 +58,10 @@ npa/docker/workbench/sonic/build.sh \
   --tag 0.1.2-k8s-runtime \
   --push
 ```
+
+This command is not the NPA release path. Official GHCR development builds and
+promotions use `.github/workflows/publish-public-images.yml` and immutable
+source-SHA tags.
 
 ## Live Smoke
 

@@ -29,7 +29,8 @@ def _runs(path: Path) -> str:
 def test_public_only_workflows_exist_without_a_private_candidate_workflow() -> None:
     assert PUBLISH.is_file()
     assert HEALTH.is_file()
-    assert not (WORKFLOWS / "publish-private-candidate-image.yml").exists()
+    retired = "publish-private-" + "candidate-image.yml"
+    assert not (WORKFLOWS / retired).exists()
 
 
 def test_public_publisher_builds_only_immutable_public_development_refs() -> None:

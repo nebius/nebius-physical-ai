@@ -149,7 +149,9 @@ historical baseline.
 ### SONIC Image Routing Reconciled
 
 SONIC image selection is manifest-driven. The old baked `npa-sonic:0.1.2` and
-inherited MuJoCo variants are quarantined as restricted; only the scanned,
+inherited MuJoCo variants are quarantined as restricted. The independently
+rebuilt public MuJoCo candidate remains release-gated pending exact-digest GPU
+evidence; only the scanned,
 host-mounted runtime-fetch variant is active for RTX PRO 6000 Blackwell Kubernetes
 targets with NVIDIA GPU Operator mounted drivers. The source of truth is
 `npa/src/npa/deploy/sonic_image_manifest.json`.

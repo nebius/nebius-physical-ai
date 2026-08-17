@@ -133,25 +133,18 @@ sonic.submit_workflow(
 )
 ```
 
-Build and push the required first-party image from the repo root. Use the L40S
-baked variant for compute-only VM hosts:
+Use the exact supported host-mounted image from the manifest for RTX PRO 6000
+Blackwell on Kubernetes with the NVIDIA GPU Operator:
 
 ```bash
 export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
-npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push --variant baked
-docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2"
+docker manifest inspect \
+  "${NPA_REGISTRY}/npa-sonic:cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 ```
 
-For RTX PRO 6000 Blackwell on Kubernetes with the NVIDIA GPU Operator, use the
-host-mounted variant:
-
-```bash
-npa/docker/workbench/sonic/build.sh \
-  --registry "${NPA_REGISTRY}" \
-  --push \
-  --variant k8s \
-  --tag <new-additive-runtime-fetch-tag>
-```
+The L40S baked variant is quarantined and must not be rebuilt or pushed as an
+NPA-owned public image. Compute-only deployments require an independently
+licensed, operator-built and validated BYOF image.
 
 Expected output artifacts:
 
@@ -184,13 +177,6 @@ runtime resolver reads `npa/src/npa/deploy/sonic_image_manifest.json`.
 - `--submit-only`: submit and return without polling.
 
 If `--data-path` is omitted, the command treats the run as a sample-data smoke.
-
-## Cost Guard
-
-The W7-sonic build-fix smoke budget is capped at $30. A single L40S smoke
-should stay well below that if it reaches terminal state promptly. Stop retrying
-and classify the run as platform or training failure if scheduling or startup
-consumes the budget without SONIC logs.
 
 ## Failure Classification
 

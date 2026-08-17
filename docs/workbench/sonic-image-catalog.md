@@ -12,7 +12,6 @@ whose NVIDIA GPU Operator mounts driver-matched userspace:
 
 | Variant | Tag | Driver provisioning | Use for | Why |
 | --- | --- | --- | --- | --- |
-| `sonic-l40s-baked` | `npa-sonic:0.1.2` | `baked` | L40S VM or compute-only host driver targets | The host does not mount the NVIDIA graphics userspace needed by Isaac Lab, so the image carries the matching NVML, GL, and Vulkan libraries. |
 | `sonic-k8s-host-mounted` | `npa-sonic:0.1.2-k8s-runtime` | `host-mounted` | RTX PRO 6000 Blackwell on Kubernetes with the NVIDIA GPU Operator | The GPU Operator mounts driver-matched NVML, GL, and Vulkan libraries from the node, so the image must not carry conflicting driver libraries. |
 
 Use `${NPA_REGISTRY}/npa-sonic:<tag>` for a concrete registry reference:
@@ -42,6 +41,29 @@ inherits those same restricted bytes. Resolvers reject both variants. An EULA
 credential or runtime flag cannot repair redistribution of bytes already baked
 into an image.
 
+## Public MuJoCo candidate
+
+`sonic-mujoco-runtime-fetch` is a new candidate, not a relabel of the legacy
+digest. It builds independently on a digest-pinned official Python base from the
+pinned Apache-2.0 SONIC source, a hash-locked MuJoCo/PyTorch closure, and Debian
+EGL/GL libraries. The CUDA Toolkit runtime object files are retained only under
+the redistribution grant in their included NVIDIA SDK terms. Isaac Sim, Isaac
+Lab, Omniverse Kit, NGC/NLC layers, driver userspace, weights, credentials, and
+accepted terms are absent. Isaac-facing modes retain the existing runtime-fetch
+refusal and require caller-supplied acceptance.
+
+The candidate has no accepted digest and resolvers reject it until the exact
+public development digest passes the full Omniverse/layer/history scans plus a
+real GPU MuJoCo rollout with artifact and metric checks.
+
+The public source checkout intentionally skips every Git-LFS object. When the
+upstream G1 mesh paths are LFS pointers, headless evaluation retains the
+upstream joints, actuators, mass, and inertia but substitutes primitive collision
+proxies and records `geometry_mode=primitive-proxy-no-lfs-payload`. This prevents
+unclassified robot assets from silently entering the image; it is not a visual
+or mesh-fidelity validation claim.
+
+```python
 sonic.submit_workflow(
     Path("npa/workflows/workbench/npa-workflows/sonic-train.yaml"),
     run_id="sonic-smoke",
@@ -71,25 +93,22 @@ MJLab workflows use `NPA_WORKBENCH_IMAGE` for the generic Workbench CLI image.
 The committed default remains
 `ghcr.io/nebius/nebius-physical-ai/npa-genesis:0.4.6`.
 
-## Build Commands
+## Build and publication commands
 
-Baked L40S variant:
-
-```bash
-npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push --variant baked
-```
-
-Kubernetes host-mounted variant:
+Do not rebuild or push either quarantined variant. Official NPA-owned image
+publication runs only through the guarded workflow, which creates an immutable
+`dev-<full-git-sha>` tag after its pre-publication gates:
 
 ```bash
-npa/docker/workbench/sonic/build.sh \
-  --registry "${NPA_REGISTRY}" \
-  --push \
-  --variant k8s \
-  --tag <new-additive-runtime-fetch-tag>
+gh workflow run publish-public-images.yml \
+  --ref <prepared-branch> \
+  -f development_sha=<full-git-sha> \
+  -f build_development_tools=sonic-mujoco \
+  -f dry_run=true
 ```
 
-Publication selects the exact active tag from the manifest. The public image
+An operator may use `build.sh` with an operator-controlled generic registry for
+BYOF interoperability. Such an image is not an NPA release. Public NPA images
 must contain no Isaac Sim, Isaac Lab, Omniverse Kit, NVIDIA driver userspace, or
 baked consent. Isaac dependencies are acquired at runtime only after the
 operator supplies NVIDIA's documented, run-scoped `ACCEPT_EULA=Y`.

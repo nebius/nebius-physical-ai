@@ -469,13 +469,12 @@
     {
       "name": "npa-sonic-mujoco",
       "dockerfile": "sonic/Dockerfile.mujoco",
-      "verdict": "blocked",
-      "validation": "pending-hardware",
-      "inherits_blocker_from": "npa-sonic",
-      "blocked_reason": "Built on top of npa-sonic, so it inherits the vendor CUDA 12.8 pin.",
-      "upstream_tracking": "NVIDIA Isaac Lab / Isaac Sim release notes for x86_64 CUDA 13 alignment",
+      "verdict": "unknown",
+      "validation": "pending-gpu",
+      "torch": "hash-locked torch 2.9.0 cu128 wheel closure with sm_100 and sm_120",
+      "source_compiled_extensions": [],
       "smoke": "MuJoCo evaluation episode",
-      "notes": "Unblocks with npa-sonic."
+      "notes": "Independently rebuilt and exact local bytes scanned; the public development digest still requires a real B200 or RTX PRO 6000 capability rollout."
     },
     {
       "name": "npa-groot",
@@ -550,12 +549,12 @@
       "name": "npa-cosmos3-serving",
       "dockerfile": "cosmos3-serving/Dockerfile",
       "build_script": "cosmos3-serving/build.sh",
-      "verdict": "ready",
-      "validation": "pending-hardware",
-      "torch": "CUDA 13 / vLLM-Omni runtime with TORCH_CUDA_ARCH_LIST covering 10.0",
+      "verdict": "unknown",
+      "validation": "pending-gpu",
+      "torch": "zero-payload bootstrap; hash-locked torch 2.11.0 CUDA closure is operator runtime fetch",
       "source_compiled_extensions": [],
       "smoke": "8-GPU Cosmos3-Super server readiness plus a real /v1/videos generation and full H.264 decode",
-      "notes": "Build-your-own restricted image, never a public release channel candidate. The pinned amd64 base declares CUDA 13.0 and TORCH_CUDA_ARCH_LIST including 10.0. The serving stack passed a real guardrails-on generation on 8xH200, but has not run on B200 or B300."
+      "notes": "The local zero-payload artifact passed filesystem/layer/history scans. The exact public development digest still requires a guardrails-on 8-GPU boot and real inference on B200 before release."
     },
     {
       "name": "npa-cosmos-curate",

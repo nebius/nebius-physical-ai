@@ -7,11 +7,11 @@ registry, and the selector must stay in sync with the packaging contract's
 
 The Isaac images are no longer restricted — they were
 re-architected to fetch Isaac Sim / Isaac Lab at first run under the operator's own EULA
-acceptance instead of baking it. Cosmos3 serving remains build-your-own. That makes
+acceptance instead of baking it. Cosmos3 serving is now a zero-payload runtime
+bootstrap and SONIC MuJoCo is independently rebuilt on a public base. That makes
 the boundary tests the delicate ones: asserting "nothing is restricted" would pass just
 as well against a guard that had been deleted. So the tests that exercise the refusal
-monkeypatch a synthetic restricted catalog tool in, proving the mechanism still bites;
-the real restricted Cosmos3 serving image is build-your-own and outside the public inventory.
+monkeypatch a synthetic restricted catalog tool in, proving the mechanism still bites.
 """
 
 from __future__ import annotations
@@ -28,15 +28,15 @@ from npa.deploy import images
 from npa.deploy.images import (
     CONTAINER_IMAGE_NAMES,
     DEFAULT_PUBLIC_CONTAINER_REGISTRY,
-    OMNIVERSE_RESTRICTED_DERIVED_IMAGES,
-    OMNIVERSE_RESTRICTED_TOOLS,
+    RESTRICTED_DERIVED_IMAGES,
+    RESTRICTED_PUBLICATION_TOOLS,
     UNVALIDATED_PUBLICATION_TOOLS,
     container_image_for_tool,
     is_public_registry,
     is_publicly_redistributable,
-    omniverse_restricted_image_names,
     public_container_registry,
     publicly_publishable_tools,
+    restricted_image_names,
 )
 from npa.deploy.publish_public import (
     PublishItem,
@@ -243,8 +243,8 @@ def test_isaac_images_are_no_longer_restricted() -> None:
         assert is_publicly_redistributable(tool), tool
 
 
-def test_isaac_tools_are_public_while_cosmos3_serving_is_restricted() -> None:
-    """The Isaac fixes do not imply an unrelated vendor base may be mirrored.
+def test_rebuilt_cosmos3_serving_and_sonic_mujoco_are_public_candidates() -> None:
+    """Clean bytes earn eligibility; exact GPU evidence still gates promotion.
 
     Omniverse Kit was only the first: sonic also baked gated model weights (git-LFS
     smudging) and NVIDIA Omniverse 3D assets (the RoboCasa asset library under
@@ -252,16 +252,17 @@ def test_isaac_tools_are_public_while_cosmos3_serving_is_restricted() -> None:
     visible in the Dockerfile. The scan that clears it:
     npa-sonic:0.1.2-rtfetch-rc5, 125,655 entries, 16 allowlisted paths, VERDICT clean.
     """
-    assert OMNIVERSE_RESTRICTED_TOOLS == frozenset({"cosmos3-serving"})
-    assert OMNIVERSE_RESTRICTED_DERIVED_IMAGES == frozenset({"sonic-mujoco"})
-    for tool in ("isaac-lab", "sonic", "groot"):
+    assert RESTRICTED_PUBLICATION_TOOLS == frozenset()
+    assert RESTRICTED_DERIVED_IMAGES == frozenset()
+    for tool in ("isaac-lab", "sonic", "groot", "cosmos3-serving", "sonic-mujoco"):
         assert is_publicly_redistributable(tool), tool
+    assert {"cosmos3-serving", "sonic-mujoco"} <= UNVALIDATED_PUBLICATION_TOOLS
 
 
 def test_public_set_excludes_every_restricted_tool(monkeypatch) -> None:
     """The exclusion remains effective for canonical tools too."""
     monkeypatch.setattr(
-        images, "OMNIVERSE_RESTRICTED_TOOLS", frozenset({"genesis", "cosmos"})
+        images, "RESTRICTED_PUBLICATION_TOOLS", frozenset({"genesis", "cosmos"})
     )
     public = set(publicly_publishable_tools())
     assert public.isdisjoint({"genesis", "cosmos"})
@@ -284,9 +285,11 @@ def test_public_set_includes_the_oss_tools() -> None:
         "isaac-lab",
         "sonic",
         "groot",
+        "cosmos3-serving",
+        "sonic-mujoco",
     ):
         assert tool in public, tool
-    assert public == set(CONTAINER_IMAGE_NAMES) - OMNIVERSE_RESTRICTED_TOOLS
+    assert public == set(CONTAINER_IMAGE_NAMES) - RESTRICTED_PUBLICATION_TOOLS
 
 
 def test_publish_plan_now_includes_the_isaac_images() -> None:
@@ -299,9 +302,9 @@ def test_publish_plan_now_includes_the_isaac_images() -> None:
         "npa-groot",
     ):
         assert image in names, image
-    # sonic-mujoco is a sonic variant, so it ships through sonic's image manifest rather
-    # than as its own tool key.
+    # Both newly safe images remain omitted until their exact GPU evidence lands.
     assert "npa-sonic-mujoco" not in names
+    assert "npa-cosmos3-serving" not in names
     for item in plan:
         assert item.target_ref.startswith("ghcr.io/example/workbench/")
 
@@ -315,7 +318,7 @@ def test_publish_plan_still_refuses_a_restricted_image(monkeypatch) -> None:
     refusal and the whole plan raised. A defence-in-depth check holding a stale copy of the
     thing it defends is worse than no check.
     """
-    monkeypatch.setattr(images, "OMNIVERSE_RESTRICTED_TOOLS", frozenset({"genesis"}))
+    monkeypatch.setattr(images, "RESTRICTED_PUBLICATION_TOOLS", frozenset({"genesis"}))
     plan = build_publish_plan(target_registry="ghcr.io/example/workbench")
     names = {item.source_ref.rsplit("/", 1)[-1].split(":", 1)[0] for item in plan}
     assert "npa-genesis" not in names
@@ -397,7 +400,7 @@ def test_publish_plan_targets_public_registry_by_default() -> None:
     # tool silently dropping out of the plan, which the derived equality above cannot.
     assert len(plan) == len(CONTAINER_IMAGE_NAMES) - len(
         set(CONTAINER_IMAGE_NAMES)
-        & (set(OMNIVERSE_RESTRICTED_TOOLS) | set(UNVALIDATED_PUBLICATION_TOOLS))
+        & (set(RESTRICTED_PUBLICATION_TOOLS) | set(UNVALIDATED_PUBLICATION_TOOLS))
     )
     for item in plan:
         assert item.target_ref.startswith(DEFAULT_PUBLIC_CONTAINER_REGISTRY + "/npa-")
@@ -418,11 +421,11 @@ def test_restricted_image_names_cover_every_contract_restricted_image() -> None:
         for name, entry in contract["images"].items()
         if entry.get("redistribution") == "restricted"
     }
-    names = omniverse_restricted_image_names()
+    names = restricted_image_names()
     assert names == sorted(names), "names must be stable/sorted for operator output"
     assert contract_restricted <= set(names), sorted(contract_restricted - set(names))
-    assert set(OMNIVERSE_RESTRICTED_DERIVED_IMAGES).isdisjoint(CONTAINER_IMAGE_NAMES)
-    assert set(OMNIVERSE_RESTRICTED_DERIVED_IMAGES).isdisjoint(
+    assert set(RESTRICTED_DERIVED_IMAGES).isdisjoint(CONTAINER_IMAGE_NAMES)
+    assert set(RESTRICTED_DERIVED_IMAGES).isdisjoint(
         publicly_publishable_tools()
     )
 
@@ -439,18 +442,19 @@ def test_contract_marks_active_isaac_images_public_and_runtime_fetch() -> None:
         entry = contract["images"][name]
         assert entry["redistribution"] == "public", name
         assert entry.get("isaac_runtime_fetch") is True, name
-    stale = contract["images"]["sonic-mujoco"]
-    assert stale["redistribution"] == "restricted"
-    assert stale.get("isaac_runtime_fetch") is not True
+    mujoco = contract["images"]["sonic-mujoco"]
+    assert mujoco["redistribution"] == "public"
+    assert "runtime-fetch" in mujoco["notes"]
 
 
 def test_the_restriction_mechanism_still_exists() -> None:
-    """The build-your-own Cosmos3 serving image exercises this boundary."""
+    """The general refusal API remains even with no current restricted image."""
     assert hasattr(images, "OMNIVERSE_RESTRICTED_TOOLS")
     assert hasattr(images, "OMNIVERSE_RESTRICTED_DERIVED_IMAGES")
-    assert omniverse_restricted_image_names() == ["cosmos3-serving", "sonic-mujoco"]
+    assert restricted_image_names() == []
     for symbol in (
         "is_publicly_redistributable",
+        "restricted_image_names",
         "omniverse_restricted_image_names",
         "publicly_publishable_tools",
         "is_public_registry",
@@ -477,15 +481,15 @@ def test_selector_matches_packaging_contract_classification() -> None:
         if entry.get("redistribution") != "restricted":
             continue
         if image_name == "sonic-mujoco":
-            assert image_name in OMNIVERSE_RESTRICTED_DERIVED_IMAGES
+            assert image_name in RESTRICTED_DERIVED_IMAGES
             continue
         tool = image_name
         if tool in CONTAINER_IMAGE_NAMES:
             assert not is_publicly_redistributable(tool), image_name
         else:
-            # non-canonical restricted image (e.g. sonic-mujoco) must map to a
+            # A future non-canonical restricted image must map to a
             # restricted canonical tool
-            assert tool in OMNIVERSE_RESTRICTED_TOOLS, image_name
+            assert tool in RESTRICTED_PUBLICATION_TOOLS, image_name
 
 
 # --- Resolution guard: a restricted tool must never resolve from a public registry ----
@@ -508,7 +512,7 @@ def test_selector_matches_packaging_contract_classification() -> None:
 def test_restricted_tools_refuse_to_resolve_from_a_public_registry(
     monkeypatch, registry
 ) -> None:
-    monkeypatch.setattr(images, "OMNIVERSE_RESTRICTED_TOOLS", frozenset({"genesis"}))
+    monkeypatch.setattr(images, "RESTRICTED_PUBLICATION_TOOLS", frozenset({"genesis"}))
     with pytest.raises(ValueError, match="not publicly redistributable"):
         container_image_for_tool("genesis", registry=registry)
 
@@ -517,7 +521,7 @@ def test_restricted_tools_still_resolve_from_an_operators_own_registry(
     monkeypatch,
 ) -> None:
     """Build-your-own into a private registry is the licensed path; do not block it."""
-    monkeypatch.setattr(images, "OMNIVERSE_RESTRICTED_TOOLS", frozenset({"genesis"}))
+    monkeypatch.setattr(images, "RESTRICTED_PUBLICATION_TOOLS", frozenset({"genesis"}))
     ref = container_image_for_tool("genesis", registry="registry.example/example")
     assert ref.startswith("registry.example/example/npa-genesis:")
 
@@ -918,9 +922,7 @@ def test_wan_publication_gate_binds_clean_bytes_and_attestations(monkeypatch) ->
     ok, detail = REAL_WAN_PUBLICATION_GATE(
         PublishItem(
             tool="wan2-2",
-            source_ref=(
-                "ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@" + digest
-            ),
+            source_ref=("ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@" + digest),
             target_ref="ghcr.io/nebius/nebius-physical-ai/npa-wan2-2:accepted",
         )
     )
@@ -1235,7 +1237,9 @@ def test_a_successful_copy_still_fails_while_the_packages_are_private(
     assert rc == 1
     assert copied, "the copy itself must still have happened"
     assert github_output.read_text(encoding="utf-8") == "copy_phase_completed=true\n"
-    assert "release-tag copy completed" in captured.err, "must not read as a failed copy"
+    assert "release-tag copy completed" in captured.err, (
+        "must not read as a failed copy"
+    )
     # The click-through list is the whole point: no hunting for 20-odd packages by hand.
     assert "NOT PUBLIC" in captured.out
 
@@ -1365,9 +1369,7 @@ def test_crane_copy_updates_a_target_with_a_different_digest(
         "NAME_UNKNOWN: repository name not known",
     ],
 )
-def test_crane_copy_creates_a_missing_target(
-    monkeypatch, target_error: str
-) -> None:
+def test_crane_copy_creates_a_missing_target(monkeypatch, target_error: str) -> None:
     """Only authoritative absence permits a release-tag write."""
     from npa.deploy import publish_public
     from npa.deploy.publish_public import PublishItem

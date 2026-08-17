@@ -61,8 +61,8 @@ satisfy:
   an anonymous puller.
 
 Had we baked `ltx-core`, this image would have been `restricted` /
-build-your-own for exactly the reason `cosmos3-serving` is: a derived-container
-grant whose conditions anonymous distribution does not establish. Baking nothing
+build-your-own for the same reason the retired Cosmos3-serving parent was: a
+derived-container grant whose conditions anonymous distribution does not establish. Baking nothing
 makes the question moot instead of arguable, which is the stronger position and
 the one the Isaac re-architecture already set as this repo's precedent. Prefer
 arguments that survive the vendor changing their mind.

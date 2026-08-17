@@ -9003,16 +9003,11 @@ sudo systemctl reset-failed npa-agent-backend npa-rerun nginx || true
 sudo systemctl enable --now npa-agent-backend npa-rerun nginx
 sudo systemctl restart npa-rerun nginx
 sudo systemctl restart npa-agent-backend
-# Region-agnostic Lichtblick image acquisition: pull from whichever mirror
-# registry (eu-north1 or us-central1) is reachable and retag to the sidecar's
-# image, so a fresh VM in any region works without a locally-built image. Falls
-# back to any local image. Best-effort — never blocks the deploy.
+# Region-agnostic Lichtblick image acquisition from the anonymous public GHCR
+# release. Retag to the sidecar's local service name. Best-effort — never blocks
+# the deploy.
 for lb_cand in {lichtblick_pull_candidates}; do
   lb_host="${{lb_cand%%/*}}"
-  if command -v nebius >/dev/null 2>&1; then
-    lb_tok="$(nebius iam get-access-token 2>/dev/null || true)"
-    [ -n "$lb_tok" ] && printf '%s' "$lb_tok" | sudo docker login "$lb_host" -u iam --password-stdin >/dev/null 2>&1 || true
-  fi
   if sudo docker pull "$lb_cand" >/dev/null 2>&1; then
     sudo docker tag "$lb_cand" {lichtblick_image} >/dev/null 2>&1 || true
     echo "npa-lichtblick image acquired from $lb_host"

@@ -117,11 +117,15 @@ image (`public` | `restricted`), enforced by
   build-your-own), but hosting it **prebuilt on a public/anonymous registry** would
   make us the third-party redistributor.
 
-  **`cosmos3-serving` is currently `restricted`.** Its pinned vLLM-Omni base embeds
-  NVIDIA's Deep Learning Container License; the thin wrapper and anonymous GHCR do
-  not establish that license's derived-distribution conditions. `isaac-lab`, `sonic`,
-  `sonic-mujoco` and `groot` used to be restricted, and the re-architecture that made
-  those four public is described below.
+  `cosmos3-serving` and the replacement `sonic-mujoco` are public only because
+  their old restricted parents were removed. Cosmos serving now ships a
+  zero-payload bootstrap and performs its hash-locked CUDA Python/source/model
+  delivery at runtime under operator credentials and explicit terms. SONIC
+  MuJoCo now builds independently from a digest-pinned public Python base and
+  contains only SONIC source, MuJoCo, and the CUDA Toolkit runtime libraries
+  expressly listed as redistributable by their included SDK terms. Both remain
+  release-gated until their exact public development digests pass real GPU
+  acceptance.
 
 ## Manual gate audit (2026-08-16)
 
@@ -232,7 +236,7 @@ is nothing credentialed left to pull:
 
 ```bash
 npa/docker/workbench/isaac-lab/build.sh --registry <your-registry>/<namespace> --push
-npa/docker/workbench/sonic/build.sh    --registry <your-registry>/<namespace> --push --variant baked
+npa/docker/workbench/sonic/build.sh    --registry <your-registry>/<namespace> --push --variant k8s
 npa/docker/workbench/groot/build.sh    --registry <your-registry>/<namespace> --push
 ```
 
@@ -351,9 +355,10 @@ npa/.venv/bin/python -m npa.deploy.publish_public --verify-public
 ```
 
 Never add a `restricted` image to official GHCR.
-`cosmos3-serving` is currently restricted/build-your-own, and
-`publish_public` plus `development_image_for_tool` both refuse it as defence in
-depth around the selector.
+`publish_public` and `development_image_for_tool` refuse every member of the
+general restricted-image inventory. Separately, license-eligible candidates
+remain in `UNVALIDATED_PUBLICATION_TOOLS` until exact-digest GPU evidence is
+recorded, so a classification change alone cannot create a supported release.
 
 > **Publishing is a business decision.** The engineering makes publication defensible —
 > the images contain no NVIDIA-proprietary bytes, and NVIDIA delivers Isaac to each

@@ -517,15 +517,15 @@ NPA_AGENT_CHAT_LIVE=1 npa agent verify-live --project <alias> --name <agent-name
 
 ---
 
-## 4. Choose the public release channel or build into a private registry
+## 4. Choose the public release channel or an operator-owned registry
 
 Three stages pull a workbench image: `augment` needs `npa-cosmos2-transfer`,
 `evaluate` needs `npa-cosmos-evaluator`, and `curate` needs `npa-cosmos-curate`.
 
-The public `ghcr.io/nebius/nebius-physical-ai` mirror is anonymously pullable.
-A new private project registry starts empty: `npa configure` selects or creates
-it, but does not mirror images into it. Pick one path and preflight the same
-registry submit will use:
+The supported NPA-owned images are anonymously pullable from
+`ghcr.io/nebius/nebius-physical-ai`. An operator may instead use a
+standards-compatible registry for independently built BYOF images. Pick one
+path and preflight the same registry submit will use:
 
 ```bash
 REGISTRY=ghcr.io/nebius/nebius-physical-ai    # or the configured NPA_REGISTRY
@@ -545,21 +545,28 @@ For the public release channel, an attested `ok` needs no login or build. Reacha
 alone is insufficient: preflight resolves the tag once, verifies the bootstrap
 contract against that immutable digest, and submits that digest. A historical
 tag that predates the contract is rejected even when `docker manifest inspect`
-succeeds. For a private registry, build and push what preflight reports missing
-or incompatible (tags below track
-`npa/src/npa/deploy/images.py`, which is what submit pulls):
+succeeds. NPA-owned images are published only by the guarded repository workflow
+as immutable `dev-<full-git-sha>` images, followed by digest-identical supported
+release tags after live validation. Do not rebuild or mirror those images as an
+NPA release.
+
+For an independently maintained BYOF image, authenticate directly to the exact
+operator-owned registry host by its documented standards-based mechanism, then
+build and push an immutable reference. The example host below is intentionally
+non-operative:
 
 ```bash
-REGISTRY="$(npa configure --show 2>/dev/null | grep -o 'cr\.[^ ]*' | head -1)"   # or your NPA_REGISTRY
-printf '%s' "$(nebius iam get-access-token)" \
-  | docker login "${REGISTRY%%/*}" -u iam --password-stdin
+BYOF_REGISTRY=registry.example.invalid/operator
+BYOF_TAG=operator-build
+# Authenticate to registry.example.invalid using that registry's own instructions.
 
 docker buildx create --name npa-cosmos-oss --driver docker-container   # scoped cache
 for tool in cosmos-evaluator cosmos-curate; do
-  # Tag must match npa/src/npa/deploy/images.py; submit pulls exactly that tag.
+  # Use only for operator-owned variants; pass each resulting immutable digest
+  # with --image-override during preflight and submit.
   docker buildx build --builder npa-cosmos-oss --push \
     -f "npa/docker/workbench/$tool/Dockerfile" \
-    -t "$REGISTRY/npa-$tool:0.1.2-skypilot-v1-20260813T164700Z" npa
+    -t "$BYOF_REGISTRY/npa-$tool:${BYOF_TAG}" npa
 done
 docker buildx rm npa-cosmos-oss
 ```
@@ -568,8 +575,10 @@ Neither image carries model weights. The evaluator needs none; the curator's GPU
 stages fetch theirs at run time with your Hugging Face token:
 
 ```bash
+CURATOR_TOOL=cosmos-curate
+CURATOR_BYOF_IMAGE="${BYOF_REGISTRY}/npa-${CURATOR_TOOL}:${BYOF_TAG}"
 docker run --rm -e HF_TOKEN="$HF_TOKEN" -v curator-weights:/config/models \
-  "$REGISTRY/npa-cosmos-curate:0.1.2-skypilot-v1-20260813T164700Z" fetch-models --models split-annotate
+  "$CURATOR_BYOF_IMAGE" fetch-models --models split-annotate
 ```
 
 The loop below is only a registry reachability diagnostic. The mandatory
@@ -578,6 +587,7 @@ results to immutable digests and refuses a missing, stale, or wrong-digest
 bootstrap attestation before spending GPU time:
 
 ```bash
+REGISTRY=ghcr.io/nebius/nebius-physical-ai
 for ref in npa-cosmos2-transfer:2.5.1-skypilot-v1-ghcr-20260817 \
            npa-cosmos-evaluator:0.1.2-skypilot-v1-20260813T164700Z \
            npa-cosmos-curate:0.1.2-skypilot-v1-20260813T164700Z; do

@@ -126,10 +126,10 @@ def test_restricted_image_cannot_enter_official_development_channel() -> None:
     import pytest
     from npa.deploy import images
 
-    original = images.OMNIVERSE_RESTRICTED_TOOLS
-    images.OMNIVERSE_RESTRICTED_TOOLS = frozenset({"genesis"})
+    original = images.RESTRICTED_PUBLICATION_TOOLS
+    images.RESTRICTED_PUBLICATION_TOOLS = frozenset({"genesis"})
     try:
         with pytest.raises(ValueError, match="restricted/build-your-own"):
             development_image_for_tool("genesis", git_sha="b" * 40)
     finally:
-        images.OMNIVERSE_RESTRICTED_TOOLS = original
+        images.RESTRICTED_PUBLICATION_TOOLS = original

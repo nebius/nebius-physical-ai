@@ -179,6 +179,8 @@ jobs:
             npa/tests/docker/test_isaac_bootstrap.py \
             npa/tests/docker/test_ltx_runtime_bootstrap.py \
             npa/tests/docker/test_ltx_image_payload_scan.py \
+            npa/tests/docker/test_cosmos3_serving_image_contract.py \
+            npa/tests/docker/test_sonic_mujoco_public_image_contract.py \
             npa/tests/deploy/test_public_publish.py \
             npa/tests/guardrails/test_secure_image_build_skill.py \
             -q
@@ -266,7 +268,7 @@ jobs:
           if any(value in history for value in forbidden):
               raise SystemExit("cached EULA acceptance found in layer history")
           PY
-          docker save "$IMAGE" --output "$RUNNER_TEMP/${TOOL}.tar"
+          docker save --output "$RUNNER_TEMP/${TOOL}.tar" "$IMAGE"
           npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
             --tarball "$RUNNER_TEMP/${TOOL}.tar" \
             --json "$RUNNER_TEMP/${TOOL}-payload.json"
@@ -279,6 +281,15 @@ jobs:
             npa/.venv/bin/python npa/scripts/scan_image_wan_payload.py \
               --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
               --output "$RUNNER_TEMP/${TOOL}-wan-payload.json"
+          fi
+          if [ "$TOOL" = cosmos3-serving ]; then
+            npa/.venv/bin/python npa/scripts/scan_image_cosmos3_serving_payload.py \
+              --tarball "$RUNNER_TEMP/${TOOL}.tar" \
+              --json "$RUNNER_TEMP/${TOOL}-cosmos3-serving-payload.json"
+          fi
+          if [ "$TOOL" = sonic-mujoco ]; then
+            docker run --rm --entrypoint /opt/npa/venv/bin/python "$IMAGE" \
+              /opt/npa/docker/workbench/sonic/verify_mujoco_image.py
           fi
 
       - name: Pre-publication vulnerability, secret, and license scan
@@ -360,6 +371,18 @@ jobs:
           if [ "$TOOL" = wan2-2 ]; then
             npa/.venv/bin/python npa/scripts/scan_image_wan_payload.py \
               "$exact" --output "$RUNNER_TEMP/${TOOL}-pushed-wan-payload.json"
+          fi
+          if [ "$TOOL" = cosmos3-serving ]; then
+            docker pull "$exact"
+            docker save --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"
+            npa/.venv/bin/python npa/scripts/scan_image_cosmos3_serving_payload.py \
+              --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --json "$RUNNER_TEMP/${TOOL}-pushed-cosmos3-serving-payload.json"
+          fi
+          if [ "$TOOL" = sonic-mujoco ]; then
+            docker pull "$exact"
+            docker run --rm --entrypoint /opt/npa/venv/bin/python "$exact" \
+              /opt/npa/docker/workbench/sonic/verify_mujoco_image.py
           fi
           anonymous_config="$(mktemp -d)"
           DOCKER_CONFIG="$anonymous_config" crane manifest "$IMAGE" >/dev/null

@@ -600,15 +600,11 @@ first GPU submit.
   *requestable quantity per node*: SkyPilot puts all GPUs of one task on one
   node, so `NAME:2` cannot be scheduled on a fleet of 1-GPU nodes no matter how
   many nodes you add.
-- **Registry pull secrets expire silently.** A `401` on image pull usually
-  means the `npa-nebius-registry` pull secret needs refreshing; a `403` means the
-  credentials are valid but not permitted to pull that repository — and being able
-  to list its tags does not rule that out. Kubernetes retries image pulls forever,
-  so either one leaves the job in `PENDING`/`ImagePullBackOff` instead of failing.
-  Run `npa workbench workflow preflight-images <spec.yaml>` to reproduce the pull
-  with the run's own credentials before spending GPU time (`submit` runs it by
-  default). See
-  [known-footguns.md § Registry Pull Secret](docs/workbench/troubleshooting/known-footguns.md#registry-pull-secret-expires-silently).
+- **Public NPA releases need no pull secret.** A `401`/`403` from an optional
+  operator-owned BYOF registry means that registry's explicitly configured
+  credential is missing or lacks access. Run
+  `npa workbench workflow preflight-images <spec.yaml>` before spending GPU time
+  (`submit` runs it by default).
 - **Bootstrap SkyPilot with `npa skypilot bootstrap`.** It pins a kubernetes
   client SkyPilot can actually use; a newer one makes the managed-jobs controller
   reject every `pod_config` and retry forever, which looks like a hung submit.
@@ -952,12 +948,12 @@ docker pull "${NPA_REGISTRY}/npa-retargeting:0.1.1"
 | Submitting a multi-stage job | Use `npa workbench workflow submit`; avoid hand-editing scheduler YAML. |
 
 Every image declares a `redistribution` class in the packaging contract, which
-decides whether it may leave the owning org. Public images may be mirrored to
-GHCR; restricted images remain build-your-own in an operator-owned registry.
-`cosmos3-serving` is currently restricted because its pinned base embeds a
-runtime under NVIDIA's Deep Learning Container License. Set the class when you
-add an image — the packaging-contract test fails a build that bakes a
-non-redistributable runtime while claiming `public`.
+decides whether it may enter the official public GHCR namespace. Restricted
+images remain build-your-own in an operator-owned registry. `cosmos3-serving`
+is a public zero-payload bootstrap: its pinned vLLM-Omni/CUDA serving closure,
+models, and guardrails are fetched directly for the operator at runtime after
+the required access and terms checks. The packaging and built-image gates fail
+if the former NVIDIA container runtime or any gated payload returns.
 
 ---
 

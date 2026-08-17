@@ -2,16 +2,15 @@
 # Build (and optionally push) npa-cosmos3-serving: Cosmos3-Super as a served
 # endpoint on one 8-GPU node.
 #
-# The image wraps NVIDIA's vLLM-Omni runtime at a pinned digest and adds a
-# preflight entrypoint. Model weights are never baked; they download at runtime
-# with the operator's own Hugging Face credentials. No GPU is needed to build.
+# The public image is a zero-payload bootstrap. The pinned serving closure,
+# source, models, and guardrails are operator-entitled runtime fetches.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NPA_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 REGISTRY="${REGISTRY:-}"
 BASE_IMAGE="${COSMOS3_SERVING_BASE_IMAGE:-}"
-TAG="${COSMOS3_SERVING_TAG:-0.1.0}"
+TAG="${COSMOS3_SERVING_TAG:-0.2.0}"
 PUSH=0
 
 usage() {
@@ -30,15 +29,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "${PUSH}" == "1" && -z "${REGISTRY}" ]]; then
-  echo "ERROR: --push requires an operator-controlled --registry" >&2
+  echo "ERROR: --push requires --registry" >&2
   exit 2
 fi
-case "${REGISTRY%/}" in
-  ghcr.io/nebius/nebius-physical-ai)
-    echo "ERROR: npa-cosmos3-serving is restricted and cannot publish to official NPA GHCR" >&2
-    exit 2
-    ;;
-esac
 
 LOCAL_REF="npa-cosmos3-serving:${TAG}"
 REMOTE_REF=""

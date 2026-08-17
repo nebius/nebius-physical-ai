@@ -62,7 +62,7 @@ The old `npa-cosmos:1.0.9` cu126 image stopped at Hopper. Its additive cu128/tor
 | `npa-lancedb` | supported | **verified** [26] | **verified** [27] | **verified** [24] | **verified** [25] |
 | `npa-detection-training` | supported | **verified** [29] | **verified** [30] | **verified** [28] | **verified** [31] |
 | `npa-cosmos3` | supported | supported | **verified** [59] | supported | supported |
-| `npa-cosmos3-serving` (build-your-own) | blocked (8-GPU memory floor) | **verified** (8xH200) | supported (8 GPUs) | supported (8 GPUs) | supported (8 GPUs) |
+| `npa-cosmos3-serving` (zero-payload public candidate) | blocked (8-GPU memory floor) | candidate (8 GPUs; exact rebuilt digest requires revalidation) | candidate (8 GPUs) | candidate (8 GPUs) | candidate (8 GPUs) |
 | `npa-wan2-2` | supported | supported | **verified** [63] | **historical evidence** [61] | supported |
 | `npa-ltx2` | runtime not validated | runtime not validated | **verified** [62] | runtime not validated | runtime not validated |
 | `npa-cosmos3-reason` | supported | **verified** [38] | **verified** [43] | **verified** [36] | **verified** [37] |
@@ -76,7 +76,7 @@ The old `npa-cosmos:1.0.9` cu126 image stopped at Hopper. Its additive cu128/tor
 | `npa-isaac-lab` | supported | supported (headless) | supported | blocked | blocked |
 | `npa-leisaac` | not routed or validated by the current launcher | blocked (no RT cores) | supported (current hard-selected target) | blocked (no RT cores) | blocked (no RT cores) |
 | `npa-sonic` | supported | supported (headless) | supported | blocked | blocked |
-| `npa-sonic-mujoco` | supported | supported (headless) | supported | blocked | blocked |
+| `npa-sonic-mujoco` | candidate (headless) | candidate (headless) | candidate | candidate (headless) | candidate (headless) |
 | `npa-groot` | supported | supported | supported | blocked | blocked |
 | `npa-cosmos-curate` | CPU | CPU | CPU | CPU | CPU |
 | `npa-cosmos-evaluator` | CPU | CPU | CPU | CPU | CPU |

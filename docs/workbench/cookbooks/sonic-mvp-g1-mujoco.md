@@ -9,15 +9,16 @@ rejects `h100`, `h200`, `mujoco`, and the explicit legacy variant ID. Supplying
 credentials or EULA acceptance at runtime cannot change the licensing of bytes
 already baked into the image.
 
-A replacement must:
+A replacement candidate now exists. It:
 
-1. Build from the active runtime-fetch SONIC base without NVIDIA Isaac or driver
-   payloads.
-2. Add only redistributable MuJoCo/EGL dependencies.
-3. Pass the built-byte Omniverse payload scan and no-baked-consent checks.
-4. Record a new additive tag and immutable digest in
-   `npa/src/npa/deploy/sonic_image_manifest.json`.
-5. Pass real GPU training/evaluation validation before its status becomes
+1. Builds independently from pinned Apache-2.0 SONIC source on a digest-pinned
+   official Python base, without NVIDIA Isaac or driver payloads.
+2. Adds a hash-locked MuJoCo/PyTorch closure and only redistributable EGL/GL
+   libraries. CUDA Toolkit runtime objects retain their upstream SDK terms.
+3. Enforces the built-byte Omniverse payload scan, source/lock verification,
+   no-weight, no-baked-consent, and Isaac runtime-fetch refusal checks.
+4. Remains a rejected candidate until an immutable public development digest is
+   recorded with real GPU rollout evidence; only then may its status become
    `active`.
 
 The actor policy observation terms are state/proprioceptive:
@@ -32,6 +33,10 @@ Camera and render paths are optional. The base env has `render_results: false`,
 and `train_agent_trl.py` only enables cameras when `enable_cameras`,
 `render_results`, `render_ego`, or `overview_camera` is true. The H100 proof
 therefore uses headless state-based training; RT-core rendering is not required.
+The public evaluator does not bake upstream Git-LFS mesh objects. If those paths
+are pointers, it substitutes primitive collision proxies while retaining the G1
+joint, actuator, mass, and inertia model, and reports that geometry mode in the
+metrics. This validates the checkpoint-to-dynamics path, not mesh fidelity.
 
 Combined-image feasibility is positive because `gear_sonic` pins
 `numpy==1.26.4` and `gear_sonic[sim]` depends on `mujoco` without forcing
@@ -41,26 +46,26 @@ image; that file pins `numpy==2.2.6`.
 The warm-start checkpoint is `nvidia/GEAR-SONIC:sonic_release/last.pt`, which
 the upstream downloader saves as `sonic_release/last.pt`.
 
-## Image
+## Images
 
-The additive combined runtime is:
+The quarantined historical runtime is:
 
 ```text
 npa-sonic-mujoco:0.1.3-mvp
 ```
 
-It is built from the existing SONIC runtime and adds only MuJoCo/EGL support,
-`boto3`, and the checkpoint-to-MuJoCo adapter. The manifest variant is
-`sonic-mujoco-h100-mvp`, selected for `h100` and `h200`.
+The new candidate is `sonic-mujoco-runtime-fetch`, built independently by
+`Dockerfile.mujoco` on the digest-pinned public Python base. It has no release
+digest yet and is deliberately refused by resolution until exact-digest GPU
+acceptance is recorded.
 
-Build and push without overwriting existing tags:
+Build locally for inspection; official pushes use only the guarded immutable
+public development workflow:
 
 ```bash
 npa/docker/workbench/sonic/build.sh \
-  --registry <your-registry>/<namespace> \
   --variant mujoco \
-  --tag 0.1.3-mvp \
-  --push
+  --tag local-audit
 ```
 
 ## Raw YAML

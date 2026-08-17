@@ -60,12 +60,14 @@ CONTAINER_IMAGE_NAMES = {
     "cosmos": "npa-cosmos",
     "cosmos2-transfer": "npa-cosmos2-transfer",
     "cosmos3": "npa-cosmos3",
+    "cosmos3-serving": "npa-cosmos3-serving",
     "cosmos3-reason": "npa-cosmos3-reason",
     "cosmos-curate": "npa-cosmos-curate",
     "cosmos-evaluator": "npa-cosmos-evaluator",
     "groot": "npa-groot",
     "fiftyone": "npa-fiftyone",
     "sonic": "npa-sonic",
+    "sonic-mujoco": "npa-sonic-mujoco",
     "retargeting": "npa-retargeting",
     "envgen": "npa-envgen",
     "reference-policy": "npa-reference-policy",
@@ -114,51 +116,21 @@ def requires_skypilot_bootstrap_runtime_probe(image: str) -> bool:
     }
 
 
-# Tools whose built image may NOT be published to a public/anonymous registry,
-# because it bakes a runtime we are not licensed to redistribute.
-#
-# The Isaac-family membership is deliberately empty: those images were
-# re-architected to fetch Isaac at runtime. Cosmos3 serving is restricted for a
-# separate reason: its pinned vLLM-Omni base embeds the NVIDIA Deep Learning
-# Container License and the thin wrapper does not establish the license's
-# material-additional-functionality and downstream-terms conditions for an
-# anonymous standalone GHCR distribution. Operators may build it into their own
-# registry instead.
-#
-# It used to hold {"isaac-lab", "sonic", "groot"}, because those images baked NVIDIA
-# Omniverse Kit (Isaac Sim): the Isaac Sim SOURCE is Apache-2.0, but the shipped
-# binary bundles the Kit SDK + NVIDIA assets, and both the isaacsim AND isaaclab
-# PyPI packages declare "License: NVIDIA Proprietary Software". Publishing them
-# would have made us the third-party redistributor of Omniverse Kit, which needs
-# an NVIDIA AI Enterprise license.
-#
-# They were re-architected to contain no NVIDIA Isaac bytes at all: Isaac Sim and
-# Isaac Lab are fetched on first run from pypi.nvidia.com, into a cache volume,
-# under the OPERATOR's own EULA acceptance, and the image refuses to start Isaac
-# without it (npa/docker/workbench/common/isaac_bootstrap.sh). NVIDIA delivers to
-# each operator directly, so we are never the redistributor — the same pattern the
-# workbench already uses for gated model weights. Verified mechanically against the
-# built images by npa/scripts/scan_image_omniverse_payload.py.
-#
-# The compatibility name predates this non-Omniverse member. Keep it until a
-# deliberate API rename; the behavior is the general restricted-runtime guard.
-# Kept in sync with packaging-contract.yaml's `redistribution:` fields by
-# npa/tests/deploy/test_public_publish.py.
-OMNIVERSE_RESTRICTED_TOOLS: frozenset[str] = frozenset({"cosmos3-serving"})
+# General public-registry refusal inventories. They intentionally describe the
+# redistribution decision, not a particular vendor payload. Both are empty now:
+# Cosmos3 serving is a zero-payload runtime bootstrap on a public Python base,
+# and sonic-mujoco is rebuilt independently without its quarantined parent.
+RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset()
+RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
 
-# Images built FROM a restricted tool image, so they inherit whatever it bakes and
-# the same no-public-redistribution rule. They are not separate
-# CONTAINER_IMAGE_NAMES entries (they are variants of their parent tool), so they
-# never reach publicly_publishable_tools(); they are listed here so operator-facing
-# output can name every excluded image without hardcoding it at the call site.
-# Empty for the same reason as above: ``sonic-mujoco`` inherits sonic's runtime-fetch
-# architecture and adds no Isaac and no Omniverse assets of its own.
-OMNIVERSE_RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset({"sonic-mujoco"})
+# Compatibility exports for installed callers. New code uses the general names.
+OMNIVERSE_RESTRICTED_TOOLS = RESTRICTED_PUBLICATION_TOOLS
+OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 
 # Tools that are licence-eligible for public redistribution but have no accepted
 # built/GPU-validated artifact yet.
 #
-# This is a different question from `OMNIVERSE_RESTRICTED_TOOLS`, and conflating
+# This is a different question from `RESTRICTED_PUBLICATION_TOOLS`, and conflating
 # them would be wrong in both directions: these are not restricted (the licensing
 # work is done and the answer was "public"), they are simply unproven. Publishing
 # an image whose payload scan and GPU smoke have never run would hand out a claim
@@ -167,7 +139,9 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset({"sonic-mujoco"}
 #
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
-UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset()
+UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
+    {"cosmos3-serving", "sonic-mujoco"}
+)
 
 # Registry hosts that serve anonymous/public pulls. Resolving a restricted image
 # against one of these is always wrong: either it is not there (we never publish
@@ -198,12 +172,14 @@ SUPPORTED_TOOL_VERSIONS = {
     # torch cu130. The immutable 1.2.2-cu130 tag remains rollback provenance.
     # No weights baked; gated Cosmos3 checkpoints download at runtime.
     "cosmos3": "1.2.2-cu130-r2",
+    "cosmos3-serving": "0.2.0-oss-unbuilt",
     "cosmos3-reason": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "cosmos-curate": "0.1.2-skypilot-v1-20260813T164700Z",
     "cosmos-evaluator": "0.1.2-skypilot-v1-20260813T164700Z",
     "groot": "0.1.0",
     "fiftyone": "1.15.0.post1",
     "sonic": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+    "sonic-mujoco": "0.2.0-runtime-unbuilt",
     "retargeting": "0.1.1",
     "envgen": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "reference-policy": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
@@ -395,9 +371,10 @@ def sonic_image_entry(
             f"Unknown SONIC image variant {resolved!r}; choose one of: {choices}"
         ) from exc
     if str(entry.get("status") or "active") != "active":
-        reason = str(entry.get("quarantine_reason") or "restricted image bytes")
+        status = str(entry.get("status") or "unknown")
+        reason = str(entry.get("quarantine_reason") or "image is not accepted")
         raise ValueError(
-            f"SONIC image variant {resolved!r} is quarantined and cannot be resolved: "
+            f"SONIC image variant {resolved!r} has status {status!r} and cannot be resolved: "
             f"{reason} Use sonic-k8s-host-mounted or build a newly scanned, "
             "license-compatible replacement."
         )
@@ -616,25 +593,30 @@ def is_official_container_registry(registry: str) -> bool:
 def is_publicly_redistributable(tool: str) -> bool:
     """Whether a tool image may be published to a public/anonymous registry.
 
-    ``False`` for any tool in ``OMNIVERSE_RESTRICTED_TOOLS`` — images that bake a
+    ``False`` for any tool in ``RESTRICTED_PUBLICATION_TOOLS`` — images that bake a
     runtime we may not redistribute, which are licensed for internal-R&D /
     build-your-own use only. See the set's comment for current membership.
     """
-    return tool not in OMNIVERSE_RESTRICTED_TOOLS
+    return tool not in RESTRICTED_PUBLICATION_TOOLS
+
+
+def restricted_image_names() -> list[str]:
+    """Return every image name excluded from public registries."""
+    return sorted(RESTRICTED_PUBLICATION_TOOLS | RESTRICTED_DERIVED_IMAGES)
 
 
 def omniverse_restricted_image_names() -> list[str]:
-    """Return every image name excluded from public registries (tools + variants)."""
-    return sorted(OMNIVERSE_RESTRICTED_TOOLS | OMNIVERSE_RESTRICTED_DERIVED_IMAGES)
+    """Compatibility alias for :func:`restricted_image_names`."""
+    return restricted_image_names()
 
 
 def publicly_publishable_tools() -> list[str]:
     """Return the workbench tools that are OSS-redistributable to a public registry.
 
-    Excludes anything in ``OMNIVERSE_RESTRICTED_TOOLS``. The Isaac images now
+    Excludes anything in ``RESTRICTED_PUBLICATION_TOOLS``. The Isaac images now
     fetch Isaac Sim / Isaac Lab at run time under the operator's own EULA
-    acceptance, so every entry in ``CONTAINER_IMAGE_NAMES`` remains publishable;
-    the separately contracted Cosmos3 serving image stays build-your-own.
+    acceptance. Cosmos3 serving and SONIC MuJoCo are licence-eligible public
+    candidates but remain separately blocked from release until GPU acceptance.
     """
     return sorted(
         tool for tool in CONTAINER_IMAGE_NAMES if is_publicly_redistributable(tool)
@@ -685,11 +667,9 @@ def _normalize_sonic_variant(
         "rtx-pro": "sonic-k8s-host-mounted",
         "rtx6000": "sonic-k8s-host-mounted",
         "rtx-pro-6000": "sonic-k8s-host-mounted",
-        "mujoco": "sonic-mujoco-h100-mvp",
-        "h100": "sonic-mujoco-h100-mvp",
-        "h200": "sonic-mujoco-h100-mvp",
-        "sonic-mujoco": "sonic-mujoco-h100-mvp",
-        "mvp": "sonic-mujoco-h100-mvp",
+        "mujoco": "sonic-mujoco-runtime-fetch",
+        "b200": "sonic-mujoco-runtime-fetch",
+        "sonic-mujoco": "sonic-mujoco-runtime-fetch",
     }
     resolved = aliases.get(normalized, normalized)
     if resolved not in variants:

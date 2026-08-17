@@ -495,12 +495,10 @@ def test_image_preflight_plans_with_submit_config_overrides(
     assert observed == {"runtime_image": digest}
 
 
-def test_image_preflight_includes_reject_only_image_and_pull_secret(
+def test_image_preflight_includes_reject_only_image_without_provider_secret(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    reject_image = (
-        "cr.us-central1.nebius.cloud/example-registry/npa-cosmos3:reject-only"
-    )
+    reject_image = "registry.example.invalid/operator/npa-cosmos3:reject-only"
     spec_path = tmp_path / "dynamic.yaml"
     spec_path.write_text(
         """
@@ -572,9 +570,7 @@ states:
     )
 
     assert reject_image in observed["images"]
-    assert observed["pull_secrets_by_image"] == {
-        reject_image: ("npa-nebius-registry",)
-    }
+    assert observed["pull_secrets_by_image"] == {reject_image: ()}
 
 
 def test_first_party_image_without_attestation_fails_instead_of_probing(

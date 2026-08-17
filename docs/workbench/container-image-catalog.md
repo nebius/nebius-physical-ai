@@ -49,29 +49,31 @@ Rows are ordered by **Built** date, then by friendly name.
 | Sim2Real EnvGen 0.1.2 | `npa-envgen` | `0.1.2`, `cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | 2026-08-03 | Generates randomized Sim2Real environments and scenes on the Genesis base. Exact-source workflow builds also bake the snapshot-pinned non-root SkyPilot Kubernetes bootstrap closure (`sudo`, SSH, and rsync); this is required before a standard workflow task can start. It is the parent image for BYO policy containers and is built from `sim2real-envgen/Dockerfile`. |
 | Sim2Real Loop Eval 0.1.3 | `npa-loop-eval` | `0.1.3-genuine-sm120`, `cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | 2026-08-03 | Batched closed-loop policy evaluation in Genesis (default 16 environments and 240 steps), providing the scoring stage of the Sim2Real loop. Exact-source workflow builds bake the same snapshot-pinned non-root SkyPilot Kubernetes bootstrap closure as EnvGen so Stage 14 can start without a privileged or moving bootstrap image. Built from `sim2real-eval/Dockerfile`; the tool key is `loop-eval`. |
 | Sim2Real Reference Policy 0.1.2 | `npa-reference-policy` | `0.1.2`, `cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | 2026-08-03 | Reference BYO-compatible Sim2Real action policy and worked example of the policy-container contract. Includes the policy functional smoke for comparison with custom images. |
-| SONIC (GR00T-WholeBodyControl) | `npa-sonic` | `cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` (active RTX PRO Kubernetes); `0.1.2` (quarantined L40S) | 2026-08-03 | Whole-body humanoid locomotion training and evaluation using `gear_sonic` (Apache-2.0 at a pinned commit). The public active image runtime-fetches Isaac and requires GPU Operator driver mounts. The old L40S and combined H100/H200 MuJoCo images are restricted and rejected; compute-only serverless use requires a separately validated custom image. |
-| LeIsaac 0.4.0 | `npa-leisaac` | `0.4.0-20260817T231825Z` (publication-pending public mirror) | 2026-08-17 | Browser teleoperation for the real upstream SO-101 LiftCube and PickOrange tasks, with secure agent-relay transport and immutable LeRobot episode recording. The image contains Apache-2.0 LeIsaac source and OSS dependencies only; Isaac Sim/Lab, NVIDIA's browser client, and task assets are runtime-fetched under the shared `ACCEPT_EULA` contract and are never baked into the image. Revalidate a digest before use. |
+| SONIC (GR00T-WholeBodyControl) | `npa-sonic` | `cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` (active RTX PRO Kubernetes); `0.1.2` (quarantined L40S) | 2026-08-03 | Whole-body humanoid locomotion training and evaluation using pinned Apache-2.0 `gear_sonic`. The active image runtime-fetches Isaac. A separately rebuilt `npa-sonic-mujoco` public candidate is awaiting exact-digest GPU acceptance; the legacy combined image remains quarantined. |
+| SONIC MuJoCo candidate | `npa-sonic-mujoco` | `0.2.0-runtime-unbuilt` (release-blocked candidate) | 2026-08-17 | Independently rebuilt from pinned Apache-2.0 SONIC source on a digest-pinned public Python base with a hash-locked PyTorch/MuJoCo closure. Contains no Isaac, Omniverse, NGC/NLC, driver userspace, weights, credentials, or accepted terms. Release resolution remains refused until exact-digest GPU acceptance is recorded. |
+| LeIsaac 0.4.0 | `npa-leisaac` | `0.4.0-20260817T231825Z` (publication-pending public release) | 2026-08-17 | Browser teleoperation for the real upstream SO-101 LiftCube and PickOrange tasks, with secure agent-relay transport and immutable LeRobot episode recording. The image contains Apache-2.0 LeIsaac source and OSS dependencies only; Isaac Sim/Lab, NVIDIA's browser client, and task assets are runtime-fetched under the shared `ACCEPT_EULA` contract and are never baked into the image. Revalidate a digest before use. |
 | Cosmos 3 (`cosmos-framework` 1.2.2) | `npa-cosmos3` | `1.2.2-cu130`, `1.2.2-cu130-r2` | 2026-08-08 | Cosmos 3 omni-model generation: text-to-image, image-to-image, text-to-video, image-to-video, and video-to-video. Contains OpenMDW-1.1 source and a CUDA 13 venv only; checkpoints, Wan VAE, and guardrails download at runtime. |
+| Cosmos3-Super serving candidate | `npa-cosmos3-serving` | `0.2.0-oss-unbuilt` (release-blocked candidate) | 2026-08-17 | Zero-payload non-root bootstrap on a digest-pinned public Python base. The pinned vLLM-Omni serving closure, models, and guardrails are operator runtime fetches after explicit terms and entitlement checks. Release resolution remains refused until the exact public digest passes guarded 8-GPU serving and inference validation. |
 | Wan 2.2 TI2V-5B | `npa-wan2-2` | `2.2-ti2v5b-rtfetch-cu130-20260817` | 2026-08-17 | Wan 2.2 text/image-to-video generation from Apache-2.0 source on an OSS dependency base. CUDA PyTorch and `nvidia-*` wheels are runtime-fetched under their upstream package terms, while public models and tokenizers download anonymously. The accepted exact digest passed the zero-payload, SPDX/SLSA, vulnerability, and RTX PRO 6000 official TI2V/MP4/Rerun gates. The current four-GPU B200 path is not a release claim. |
 | Cosmos Curator 0.1.2 | `npa-cosmos-curate` | `0.1.2-skypilot-v1-20260813T164700Z` | 2026-08-13 | Runs real `cosmos-curate` stages in process: download, fixed-stride extraction, clip transcode, motion-vector decode, motion filtering, and clip writing. GPU-stage models are fetched at runtime with the operator's Hugging Face token. |
 | Cosmos Evaluator 0.1.2 | `npa-cosmos-evaluator` | `0.1.2-skypilot-v1-20260813T164700Z` | 2026-08-13 | Runs the upstream `HallucinationProcessor` quality gate on generated video using classical computer vision and no weights. Attribute verification calls an OpenAI-compatible endpoint; the LFS/EULA-gated obstacle checker is deliberately not fetched. |
 | FiftyOne 1.15.0.post1 (Voxel51) | `npa-fiftyone` | `1.15.0.post1` | 2026-08-13 | Dataset curation and visualization UI on port 5151, including uniqueness, similarity, and embedding visualization. Bundles a `mongod` binary so FiftyOne can launch its own metadata database. |
 
-## Intentionally not published as separate images
+## Internal artifacts and pre-release candidates
 
 - **`npa-sim2real-control`** is an internal workflow artifact, not a public-release
   tool. Its packaging contract permits redistribution, but it has no entry in
   `CONTAINER_IMAGE_NAMES` and is therefore outside `publicly_publishable_tools()`;
   anonymous resolution of `npa-sim2real-control:0.1.2` was denied during the
   2026-08-14 audit. Eligibility is not evidence of publication.
-- **`npa-cosmos3-serving`** is `restricted` and build-your-own only. Its pinned
-  vLLM-Omni base embeds a runtime under NVIDIA's Deep Learning Container License;
-  the thin wrapper and anonymous GHCR distribution do not establish that
-  license's derived-distribution conditions. Operators build it into their own
-  registry; see [Cosmos3-Super serving](cosmos3-super-serving.md).
-- **`npa-sonic-mujoco`** is a SONIC variant, not a separate public-publish tool.
-  It ships through the `sonic` tool and SONIC image manifest rather than getting
-  an independent row in the public publishing plan.
+- **`npa-cosmos3-serving`** is a canonical public zero-payload bootstrap
+  candidate. It contains no serving runtime or gated asset and remains excluded
+  from supported releases until the exact public development digest passes the
+  required 8-GPU boot and inference gate; see
+  [Cosmos3-Super serving](cosmos3-super-serving.md).
+- **`npa-sonic-mujoco`** is now a canonical independently built public candidate.
+  The legacy `0.1.3-mvp` digest remains quarantined; only a new exact digest that
+  passes payload scans and real MuJoCo/SONIC GPU validation may become active.
 
 ## Verification scope
 
