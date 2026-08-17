@@ -183,7 +183,27 @@ jobs:
           set -euo pipefail
           test -n "$EXPECTED_DIGEST"
           test "$(crane digest "$RETIRED_REF")" = "$EXPECTED_DIGEST"
-          crane delete "$RETIRED_REF"
+          registry_path="${RETIRED_REF#ghcr.io/}"
+          owner="${registry_path%%/*}"
+          package_and_tag="${registry_path#*/}"
+          package="${package_and_tag%:*}"
+          retired_tag="${package_and_tag##*:}"
+          encoded="${package//\//%2F}"
+          owner_type="$(gh api "/users/${owner}" --jq .type)"
+          if [ "$owner_type" = "Organization" ]; then
+            package_api="/orgs/${owner}/packages/container/${encoded}"
+          else
+            package_api="/users/${owner}/packages/container/${encoded}"
+          fi
+          versions_file="$(mktemp)"
+          gh api "${package_api}/versions?per_page=100" > "$versions_file"
+          version_ids="$(jq -r \
+            --arg digest "$EXPECTED_DIGEST" \
+            --arg tag "$retired_tag" \
+            '.[] | select(.name == $digest and ((.metadata.container.tags // []) | index($tag))) | .id' \
+            "$versions_file")"
+          test "$(printf '%s\n' "$version_ids" | sed '/^$/d' | wc -l)" = 1
+          gh api --method DELETE "${package_api}/versions/${version_ids}"
           if crane manifest "$RETIRED_REF" >/dev/null 2>&1; then
             echo "::error::Exact retired candidate tag still resolves after deletion."
             exit 1
