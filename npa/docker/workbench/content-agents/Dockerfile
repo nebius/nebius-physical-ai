@@ -24,6 +24,8 @@ LABEL org.opencontainers.image.title="NPA NVIDIA Content Agents" \
       org.opencontainers.image.licenses="Apache-2.0 AND LicenseRef-NVIDIA-Proprietary-OVRTX" \
       npa.tool="content-agents" \
       npa.redistribution="restricted" \
+      npa.driver_provisioning="gpu-operator-host-mounted" \
+      npa.driver_capabilities="compute,utility,graphics,display" \
       org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -171,7 +173,7 @@ ENV HOME=/home/ubuntu \
 WORKDIR /workspace
 USER ubuntu
 
-# Xvfb is a local OVRTX runtime dependency, not a service/orchestrator. The
-# reviewed wrapper starts it, waits for the display socket, then execs the exact
-# SkyPilot-provided argv; Kubernetes tears down the complete task process group.
+# Xvfb is a local OVRTX runtime dependency, not a service/orchestrator. Direct
+# container runs use this entrypoint. SkyPilot replaces image entrypoints, so
+# the workflow renderer invokes the same wrapper in render-stage run shells.
 ENTRYPOINT ["/usr/local/bin/npa-content-agents-entrypoint"]

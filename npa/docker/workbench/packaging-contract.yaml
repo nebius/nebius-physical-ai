@@ -297,7 +297,9 @@ images:
       so the complete image stays in the accepting operator's private registry.
       Scene Optimizer Core, OvPhysX, upstream material/sample assets, model
       weights, credentials, and customer data are excluded. Hosted VLM inference
-      and customer assets enter only at run time.
+      and customer assets enter only at run time. NVIDIA driver userspace is not
+      baked; OVRTX requires an RTX Kubernetes node whose GPU Operator mounts
+      compute, utility, graphics, and display capabilities.
     redistribution: restricted
     skypilot_bootstrap_contract: skypilot-0.12.2-v1
   cosmos3-reason:

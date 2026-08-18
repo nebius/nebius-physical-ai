@@ -74,6 +74,8 @@ def test_image_runs_non_root_and_uses_a_forwarding_xvfb_wrapper() -> None:
     assert 'ENTRYPOINT ["/usr/local/bin/npa-content-agents-entrypoint"]' in text
     assert "docker/workbench/content-agents/npa-content-agents-entrypoint" in text
     assert "NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics" in text
+    assert 'npa.driver_provisioning="gpu-operator-host-mounted"' in text
+    assert 'npa.driver_capabilities="compute,utility,graphics,display"' in text
     assert "EXPOSE" not in text
 
 

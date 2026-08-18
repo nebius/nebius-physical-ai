@@ -68,6 +68,8 @@ def audit_image(
     expected_labels = {
         "npa.tool": "content-agents",
         "npa.redistribution": "restricted",
+        "npa.driver_provisioning": "gpu-operator-host-mounted",
+        "npa.driver_capabilities": "compute,utility,graphics,display",
         "org.opencontainers.image.revision": (
             "36dbf3f274f8e256637230a05a085853f65cc175"
         ),

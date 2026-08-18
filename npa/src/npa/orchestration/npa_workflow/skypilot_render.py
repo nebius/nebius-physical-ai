@@ -816,6 +816,30 @@ def render_run_preamble_for_tool(tool_ref: str, *, config: Mapping[str, Any]) ->
     shells — a server started in setup is gone by the time the command runs.
     """
 
+    if tool_ref in {
+        "workbench.content_agents.materials",
+        "workbench.content_agents.physics",
+        "workbench.content_agents.validate",
+    }:
+        # SkyPilot's Kubernetes bootstrap replaces an image ENTRYPOINT with its
+        # own bash command. Content Agents therefore restores the local Xvfb
+        # process in the shell that actually invokes OVRTX. Fail before the
+        # expensive upstream pipeline if the node exposes CUDA devices without
+        # the host-mounted graphics userspace OVRTX requires.
+        return (
+            "if ! python3 -c 'import ctypes; "
+            'ctypes.CDLL("libGLX_nvidia.so.0")' "' >/dev/null 2>&1; then\n"
+            "  echo 'OVRTX requires NVIDIA GPU Operator graphics driver mounts; "
+            "libGLX_nvidia.so.0 is unavailable' >&2\n"
+            "  exit 1\n"
+            "fi\n"
+            'npa_ovrtx_display="$(printenv OVRTX_XVFB_DISPLAY 2>/dev/null || true)"\n'
+            'if [ -z "$npa_ovrtx_display" ]; then npa_ovrtx_display=99; fi\n'
+            'if [ -z "$(printenv DISPLAY 2>/dev/null || true)" ]; then\n'
+            "  /usr/local/bin/npa-content-agents-entrypoint /bin/true\n"
+            '  export DISPLAY=":$npa_ovrtx_display"\n'
+            "fi\n"
+        )
     if not tool_ref.startswith("workbench.vlm_eval"):
         return ""
     # #236 skipped the benchmark toolRef here, correctly for the twin it had: a `sample`

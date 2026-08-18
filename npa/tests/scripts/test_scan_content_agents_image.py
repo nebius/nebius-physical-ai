@@ -36,6 +36,12 @@ def _runner(*, redistribution: str = "restricted", findings: bool = False):
                             "Labels": {
                                 "npa.tool": "content-agents",
                                 "npa.redistribution": redistribution,
+                                "npa.driver_provisioning": (
+                                    "gpu-operator-host-mounted"
+                                ),
+                                "npa.driver_capabilities": (
+                                    "compute,utility,graphics,display"
+                                ),
                                 "org.opencontainers.image.revision": (
                                     "36dbf3f274f8e256637230a05a085853f65cc175"
                                 ),

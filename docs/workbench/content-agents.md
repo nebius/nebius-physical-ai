@@ -67,11 +67,15 @@ The image separately excludes Scene Optimizer Core, OvPhysX, NVIDIA/default
 material libraries, upstream samples, model weights, and caches. The workflow
 generates a minimal PreviewSurface library at run time and calls a hosted
 OpenAI-compatible VLM using `NEBIUS_TOKEN_FACTORY_KEY`; no model bytes are baked.
+NVIDIA driver userspace is also not baked. OVRTX requires the host-mounted
+Vulkan/GLX libraries supplied by NVIDIA GPU Operator with `compute`, `utility`,
+`graphics`, and `display` capabilities.
 
 ## Validate and run
 
 ```bash
 SPEC=npa/workflows/workbench/npa-workflows/content-agents-rigid-object.yaml
+npa cluster up ... --gpu-driver-mode operator
 npa workbench health preflight --output json
 npa workbench workflow validate-spec "$SPEC"
 npa workbench workflow plan-spec "$SPEC" --run-id content-agents-check \
@@ -85,6 +89,13 @@ npa workbench workflow submit "$SPEC" --runtime \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY
 ```
+
+Operator mode is intentional for this single-GPU PCIe RTX render cluster: the
+Nebius managed CUDA image exposes CUDA but does not mount the graphics userspace
+OVRTX needs. Do not copy this setting to NVSwitch clusters, where operator-mode
+driver startup is unsafe. SkyPilot also replaces Docker entrypoints; the
+rendered material, physics, and validation jobs explicitly start the reviewed
+Xvfb wrapper and fail early if `libGLX_nvidia.so.0` is unavailable.
 
 Use the NPA-configured S3 endpoint and credentials; the spec contains no bucket,
 registry, project, or endpoint identifiers. Inspect status, logs, and artifacts

@@ -54,22 +54,32 @@ caches must remain absent from the image.
 
 1. Run `npa workbench health preflight --output json`. Stop on any required S3,
    Token Factory, registry, or cluster failure.
-2. Resolve the active project's private registry and bucket through NPA config;
+2. Provision the single-GPU PCIe RTX cluster with `--gpu-driver-mode operator`.
+   OVRTX requires the GPU Operator's host-mounted Vulkan/GLX userspace; the
+   managed CUDA image exposes compute devices but not the required graphics
+   libraries. This exception is specific to the RTX render recipe and must not
+   be copied to NVSwitch clusters.
+3. Resolve the active project's private registry and bucket through NPA config;
    never paste their identifiers into repository files.
-3. Resolve the pushed image to `@sha256:` and verify labels, running pod image
+4. Resolve the pushed image to `@sha256:` and verify labels, running pod image
    ID, and private-registry pull before workflow submission.
-4. Validate and plan
+5. Validate and plan
    `npa/workflows/workbench/npa-workflows/content-agents-rigid-object.yaml` with
    the private bucket and digest-pinned image.
-5. Submit through `npa workbench workflow submit ... --runtime`, forwarding
+6. Submit through `npa workbench workflow submit ... --runtime`, forwarding
    `NEBIUS_TOKEN_FACTORY_KEY` and S3 credentials through `--secret-env`.
-6. Require non-empty material/physics/validation renders, a passing upstream
+7. Require non-empty material/physics/validation renders, a passing upstream
    `validation_result.json`, a reopenable USD/USDZ, and all rigid/collision/
    mass-or-density/friction/material-binding checks in the manifest.
 
 All render-bearing states must use `RTXPRO6000:1`. B200/B300 lack RT cores and
 are invalid OVRTX targets. Hosted VLM inference is already zero-GPU from NPA's
 perspective; do not create a B200 job merely to exercise capacity.
+
+SkyPilot replaces image entrypoints during Kubernetes bootstrap. The workflow
+renderer therefore starts the image's reviewed Xvfb wrapper in each render
+stage and fails before upstream execution unless `libGLX_nvidia.so.0` is
+available from the GPU Operator mount.
 
 ## Failure and cleanup
 
