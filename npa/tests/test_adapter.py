@@ -17,6 +17,7 @@ from npa.adapter.sim_to_lerobot import (
     AdapterError,
     _build_data_schema,
     _compute_feature_stats,
+    _numeric_feature_values,
     _write_episodes_parquet,
     _write_tasks_parquet,
     convert,
@@ -138,6 +139,15 @@ class TestAdapterHelpers:
         assert schema.field("observation.state").type.list_size == 10
         assert schema.field("action").type.list_size == 8
         assert schema.field("timestamp").type == pa.float32()
+
+    def test_build_data_schema_uses_lerobot_scalar_encoding_for_width_one(
+        self,
+    ) -> None:
+        schema = _build_data_schema(n_state=1, n_actions=1)
+
+        assert schema.field("observation.state").type == pa.float32()
+        assert schema.field("action").type == pa.float32()
+        assert _numeric_feature_values([{"action": [2.5]}], "action", 1) == [2.5]
 
     def test_write_tasks_parquet_creates_parent_dirs(self, tmp_path: Path) -> None:
         out = tmp_path / "nested" / "tasks.parquet"

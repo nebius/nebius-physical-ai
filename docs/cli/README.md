@@ -4,6 +4,7 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 
 - [npa adapter](adapter.md)
 - [npa agent](agent.md)
+- [npa workbench antioch](antioch.md)
 - [npa storage bucket](bucket.md)
 - [npa burst](burst.md)
 - [npa workbench byof](byof.md)
