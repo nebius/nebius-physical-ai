@@ -218,6 +218,27 @@ def test_create_workflow_grounded_reply_includes_yaml_fence() -> None:
     assert "GET /api" not in reply
 
 
+def test_generic_sim2real_goal_uses_canonical_two_step_template() -> None:
+    from npa.cli.agent_workflow import author_workflow_from_goal
+    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+
+    authored = author_workflow_from_goal(
+        "create 2-step sim2real workflow",
+        tool_refs=frozenset(TOOL_CATALOG),
+    )
+
+    # With no concrete component in the goal, chat rejects catalog composition
+    # and falls back to generate_workflow_draft("two-step").
+    assert authored["matched_tool_refs"] == []
+    draft = generate_workflow_draft(
+        user_text="create 2-step sim2real workflow",
+        intent="create_workflow",
+        tool_refs=frozenset(TOOL_CATALOG),
+    )
+    assert draft["runnable"] is True
+    assert set(draft["validation"]["states"]) == {"augment", "envgen"}
+
+
 def test_create_workflow_apis() -> None:
     apis = apis_for_intent("create_workflow")
     assert any(path.endswith("draft") for path in apis)

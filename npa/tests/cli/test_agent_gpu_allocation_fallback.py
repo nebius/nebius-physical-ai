@@ -46,7 +46,11 @@ def _candidate(**overrides):
         ("capacity_exhausted", "", "capacity_exhausted"),
         ("unschedulable_gpu", "", "unschedulable_gpu"),
         ("no_compatible_product", "", "no_compatible_product"),
-        ("", "0/3 nodes are Unschedulable: insufficient nvidia.com/gpu", "unschedulable_gpu"),
+        (
+            "",
+            "0/3 nodes are Unschedulable: insufficient nvidia.com/gpu",
+            "unschedulable_gpu",
+        ),
     ],
 )
 def test_qualifying_classifications(code: str, message: str, category: str) -> None:
@@ -55,7 +59,16 @@ def test_qualifying_classifications(code: str, message: str, category: str) -> N
 
 @pytest.mark.parametrize(
     "code",
-    ["auth", "rbac", "network", "image_pull", "checkpoint", "application", "runtime", "timeout"],
+    [
+        "auth",
+        "rbac",
+        "network",
+        "image_pull",
+        "checkpoint",
+        "application",
+        "runtime",
+        "timeout",
+    ],
 )
 def test_non_placement_failures_never_count(code: str) -> None:
     state, decision = record_attempt(
@@ -110,7 +123,11 @@ def test_deterministic_preflight_does_not_need_a_prior_failed_apply() -> None:
         None,
         logical_allocation="run-a",
         request=_request(),
-        evidence={"source": "provider-preflight", "on_demand_impossible": True, "preemptible_available": True},
+        evidence={
+            "source": "provider-preflight",
+            "on_demand_impossible": True,
+            "preemptible_available": True,
+        },
         candidate=_candidate(),
     )
     assert decision["prompt"] is True
@@ -147,7 +164,9 @@ def test_missing_invariant_or_preemptible_source_never_prompts() -> None:
         ("boot_disk_size_bytes", 1023 * 1024**3),
     ],
 )
-def test_compatibility_and_disk_invariants_block_fallback(field: str, value: object) -> None:
+def test_compatibility_and_disk_invariants_block_fallback(
+    field: str, value: object
+) -> None:
     assert candidate_is_compatible(_request(), _candidate(**{field: value})) is False
 
 
@@ -158,7 +177,11 @@ def test_consent_yes_requires_bound_digest_and_only_changes_pool() -> None:
         logical_allocation="run-a",
         request=request,
         failure_code="quota_exhausted",
-        evidence={"source": "provider-preflight", "on_demand_impossible": True, "preemptible_available": True},
+        evidence={
+            "source": "provider-preflight",
+            "on_demand_impossible": True,
+            "preemptible_available": True,
+        },
         candidate=_candidate(),
     )
     with pytest.raises(ValueError, match="not bound"):
@@ -217,7 +240,11 @@ def test_decline_preserves_on_demand_and_new_evidence_reprompts() -> None:
         logical_allocation="run-a",
         request=_request(),
         failure_code="quota_exhausted",
-        evidence={"source": "provider-preflight", "on_demand_impossible": True, "preemptible_available": True},
+        evidence={
+            "source": "provider-preflight",
+            "on_demand_impossible": True,
+            "preemptible_available": True,
+        },
         candidate=_candidate(),
     )
     declined = record_consent(state, accepted=False)
@@ -227,7 +254,11 @@ def test_decline_preserves_on_demand_and_new_evidence_reprompts() -> None:
         logical_allocation="run-a",
         request=_request(),
         failure_code="quota_exhausted",
-        evidence={"source": "provider-preflight", "on_demand_impossible": True, "preemptible_available": True},
+        evidence={
+            "source": "provider-preflight",
+            "on_demand_impossible": True,
+            "preemptible_available": True,
+        },
         candidate=_candidate(),
     )
     assert same_decision["prompt"] is False
@@ -236,7 +267,11 @@ def test_decline_preserves_on_demand_and_new_evidence_reprompts() -> None:
         logical_allocation="run-a",
         request=_request(),
         failure_code="capacity_exhausted",
-        evidence={"source": "scheduler", "on_demand_impossible": True, "preemptible_available": True},
+        evidence={
+            "source": "scheduler",
+            "on_demand_impossible": True,
+            "preemptible_available": True,
+        },
         candidate=_candidate(),
     )
     assert changed_decision["prompt"] is True

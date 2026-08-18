@@ -197,6 +197,7 @@ def test_curation_runs_the_real_cosmos_curator_before_review() -> None:
     argv = TOOL_CATALOG["workbench.cosmos_curate.curate"].argv_template
     assert argv[:4] == ["npa", "workbench", "cosmos-curate", "curate-augmented"]
     assert "--curated-uri" in argv and "--report-uri" in argv
+    assert "--require-curator" in argv
 
     assert states["cosmos-curate"]["next"] == "curate"
     assert states["curate"]["needs"] == ["cosmos-curate"]
@@ -205,6 +206,7 @@ def test_curation_runs_the_real_cosmos_curator_before_review() -> None:
     assert fiftyone_argv[:4] == ["npa", "workbench", "fiftyone", "curate-augmented"]
     assert "--curator-report-uri" in fiftyone_argv
     assert "--require-fiftyone" in fiftyone_argv
+    assert not TOOL_CATALOG["workbench.fiftyone.curate_augmented"].stub
 
 
 def test_quality_gate_reads_the_evaluator_report() -> None:

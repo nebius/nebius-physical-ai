@@ -24,7 +24,11 @@ def auth_profile_cmd(
     IAM verification output is discarded and no IAM token is printed or stored.
     """
 
-    from npa.clients.nebius_vm_auth import VmAuthError, redact_auth_output, run_vm_profile_auth
+    from npa.clients.nebius_vm_auth import (
+        VmAuthError,
+        redact_auth_output,
+        run_vm_profile_auth,
+    )
 
     try:
         run_vm_profile_auth(
@@ -35,5 +39,7 @@ def auth_profile_cmd(
             auth_timeout_seconds=auth_timeout_seconds,
         )
     except VmAuthError as exc:
-        typer.echo(f"Authentication failed safely: {redact_auth_output(str(exc))}", err=True)
+        typer.echo(
+            f"Authentication failed safely: {redact_auth_output(str(exc))}", err=True
+        )
         raise typer.Exit(code=1) from exc

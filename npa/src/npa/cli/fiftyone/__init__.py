@@ -3651,9 +3651,9 @@ def curate_augmented_cmd(
         help="S3 URI where the FiftyOne curation report JSON is written.",
     ),
     curator_report_uri: str = typer.Option(
-        "",
+        ...,
         "--curator-report-uri",
-        help="Optional Cosmos Curator summary URI to merge into the FiftyOne report.",
+        help="Required completed real Cosmos Curator summary URI to merge into the FiftyOne report.",
     ),
     dedup_threshold: float = typer.Option(
         0.10,
@@ -3662,8 +3662,8 @@ def curate_augmented_cmd(
     ),
     require_fiftyone: bool = typer.Option(
         False,
-        "--require-fiftyone/--allow-report-only",
-        help="Fail unless real FiftyOne Brain curation completed.",
+        "--require-fiftyone",
+        help="Compatibility assertion that real FiftyOne Brain must complete; curation is always fail-closed.",
     ),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
@@ -3672,9 +3672,10 @@ def curate_augmented_cmd(
     Intended to run in-container (inside the npa-fiftyone image, where FiftyOne is
     installed): it builds a real fiftyone.Dataset from the augmented scenario
     variants, computes per-sample uniqueness, detects near-duplicates, and writes a
-    curation report recording which variants were kept vs dropped. Standalone use
-    may allow the explicit report-only fallback; advertised workflow stages pass
-    ``--require-fiftyone`` and fail closed if the real component is unavailable.
+    curation report recording which variants were kept vs dropped. The preceding
+    real Cosmos Curator report is required. All callers fail closed when either
+    real component is unavailable; ``--require-fiftyone`` remains an explicit
+    workflow contract marker for compatibility.
     """
     aug = augment_uri.strip()
     rpt = report_uri.strip()
@@ -3682,8 +3683,8 @@ def curate_augmented_cmd(
         _fail("--augment-uri must be an s3:// URI.")
     if not rpt.startswith("s3://"):
         _fail("--report-uri must be an s3:// URI.")
-    if curator_report_uri and not curator_report_uri.startswith("s3://"):
-        _fail("--curator-report-uri must be an s3:// URI when provided.")
+    if not curator_report_uri.startswith("s3://"):
+        _fail("--curator-report-uri must be an s3:// URI.")
 
     from npa.workflows.data_factory_stages import curate as _curate
 

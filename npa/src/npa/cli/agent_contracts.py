@@ -7,6 +7,26 @@ from pathlib import Path
 from npa.cli.agent_source_embed import embedded_module_source
 
 
+LEISAAC_CONTROL_READINESS_CONTRACT = "LEISAAC_CONTROL_READINESS_CONTRACT"
+
+
+AGENT_LEISAAC_CONTRACT = (
+    LEISAAC_CONTROL_READINESS_CONTRACT,
+    "ensureLeIsaacTab",
+    "ensureLeIsaacTab(leisaacCapability)",
+    "unavailableLeIsaacStatus",
+    "removeLeIsaacTab",
+    "refreshLeIsaacCapability",
+    "connectLeIsaac",
+    "/api/leisaac/status",
+    "/api/leisaac/select",
+    "/api/leisaac/bundles/reset",
+    "/api/leisaac/client/index.js",
+    "/api/leisaac/signal",
+    "LeIsaac-SO101-LiftCube-v0",
+)
+
+
 AGENT_MEDIA_PREVIEW_CONTRACT = (
     "authenticatedPreviewObjectUrl",
     "artifactContentUrl",

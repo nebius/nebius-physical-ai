@@ -59,6 +59,9 @@ making architecture, review, or domain judgments.
 - `skills/tools/insights/SKILL.md`: lineage graph + common metrics store over
  workflow-run artifacts — non-invasive ingest-run, query, compare, lineage
  traversal, and dashboard (CPU-only, append-only S3 JSONL, LanceDB-optional).
+- `skills/tools/leisaac/SKILL.md`: LeIsaac browser teleoperation, secure
+ agent-relay transport, immutable LeRobot datasets, custom bundles, and PAIDF
+ interoperability.
 - `skills/tools/fleet/SKILL.md`: deploy a fleet of Nebius Managed Kubernetes
  (k8s-training) clusters across one or many projects in a tenant from an
  `npa.fleet/v0.0.1` spec — identical and/or custom clusters, create-on-demand

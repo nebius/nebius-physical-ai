@@ -7,6 +7,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+import yaml
 
 from npa.clients.config import SSHConfig
 from npa.clients.ssh import SSHClient
@@ -48,7 +49,9 @@ def test_secrets_go_through_a_var_file_not_the_process_table(tmp_path: Path) -> 
         # A path that merely contains "key" is not a secret.
         assert "ssh_public_key_path=/home/op/.ssh/id_ed25519.pub" in args
 
-        var_file = next(path for path in tf_path.iterdir() if path.name.endswith(".tfvars.json"))
+        var_file = next(
+            path for path in tf_path.iterdir() if path.name.endswith(".tfvars.json")
+        )
         assert json.loads(var_file.read_text())["iam_token"] == "t1.token-value"
         assert var_file.stat().st_mode & 0o077 == 0
         # Not `*.auto.tfvars.json`: it must apply only to the command that passes it.
@@ -135,10 +138,10 @@ def test_state_resource_id_reads_only_the_named_network_resource(
             args=[],
             returncode=0,
             stdout=(
-                '# nebius_vpc_v1_network.workbench:\n'
+                "# nebius_vpc_v1_network.workbench:\n"
                 'resource "nebius_vpc_v1_network" "workbench" {\n'
                 '    id = "vpcnetwork-owned"\n'
-                '}\n'
+                "}\n"
             ),
             stderr="",
         ),
@@ -163,7 +166,9 @@ def test_state_resource_id_reads_only_the_named_network_resource(
 
 
 def test_cloud_init_branches_bootstrap_by_workbench_type() -> None:
-    template = (PACKAGE_ROOT / "src/npa/deploy/terraform/cloud_init.yaml.tpl").read_text()
+    template = (
+        PACKAGE_ROOT / "src/npa/deploy/terraform/cloud_init.yaml.tpl"
+    ).read_text()
     assert "\t" not in template
     branches = template.split('%{ if workbench_type == "fiftyone" ~}')
     container_marker = '%{ if workbench_type == "lerobot-container" ~}'
@@ -190,8 +195,13 @@ def test_cloud_init_branches_bootstrap_by_workbench_type() -> None:
 
     assert "/opt/lerobot/.env" in lerobot_branch
     assert "Installing LeRobot ${lerobot_version}" in lerobot_branch
-    assert 'LEROBOT_PIP_SPEC="lerobot[pusht,libero]==${lerobot_version}"' in lerobot_branch
-    assert 'LEROBOT_PIP_SPEC="lerobot[training,evaluation,pusht,libero]==${lerobot_version}"' in lerobot_branch
+    assert (
+        'LEROBOT_PIP_SPEC="lerobot[pusht,libero]==${lerobot_version}"' in lerobot_branch
+    )
+    assert (
+        'LEROBOT_PIP_SPEC="lerobot[training,evaluation,pusht,libero]==${lerobot_version}"'
+        in lerobot_branch
+    )
     assert 'if [ "${lerobot_version}" = "0.6.0" ]' in lerobot_branch
     assert '"$LEROBOT_VENV/bin/pip" install "$LEROBOT_PIP_SPEC"' in lerobot_branch
 
@@ -208,10 +218,10 @@ def test_agent_cloud_init_renders_without_s3_secrets(tmp_path: Path) -> None:
     template = PACKAGE_ROOT / "src/npa/deploy/terraform/cloud_init.yaml.tpl"
     config = tmp_path / "main.tf"
     config.write_text(
-        f'''locals {{
+        f"""locals {{
   rendered = templatefile({json.dumps(str(template))}, {{
     ssh_user = "ubuntu"
-    ssh_public_key = "ssh-ed25519 fixture"
+    ssh_public_key = "ssh-ed25519 AAAA operator: recovery # fixture"
     workbench_type = "agent"
     server_port = 8088
     lerobot_version = "0.6.0"
@@ -226,7 +236,7 @@ def test_agent_cloud_init_renders_without_s3_secrets(tmp_path: Path) -> None:
 output "rendered" {{
   value = local.rendered
 }}
-''',
+""",
         encoding="utf-8",
     )
 
@@ -242,6 +252,18 @@ output "rendered" {{
     assert "NPA_PR218_ACCESS_SENTINEL_DO_NOT_PERSIST" not in rendered.stdout
     assert "NPA_PR218_SECRET_SENTINEL_DO_NOT_PERSIST" not in rendered.stdout
     assert "write_files:" not in rendered.stdout
+
+    raw = subprocess.run(
+        [terraform, "output", "-raw", "rendered"],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout
+    cloud_init = yaml.safe_load(raw)
+    assert cloud_init["users"][0]["ssh_authorized_keys"] == [
+        "ssh-ed25519 AAAA operator: recovery # fixture"
+    ]
 
 
 def test_terraform_outputs_use_compute_and_cpu_names_with_legacy_aliases() -> None:
@@ -267,11 +289,11 @@ def test_terraform_outputs_use_compute_and_cpu_names_with_legacy_aliases() -> No
     )
 
 
-def test_agent_destroy_hides_deprecated_gpu_aliases_from_human_terraform_output() -> None:
+def test_agent_destroy_hides_deprecated_gpu_aliases_from_human_terraform_output() -> (
+    None
+):
     assert (
-        provisioner._filter_destroy_output_line(
-            '  - gpu_platform = "cpu-d3" -> null\n'
-        )
+        provisioner._filter_destroy_output_line('  - gpu_platform = "cpu-d3" -> null\n')
         == ""
     )
     assert (
@@ -312,7 +334,9 @@ def test_agent_apply_compacts_terraform_local_exec_script_body() -> None:
 
 
 def test_cloud_init_mounts_cosmos_data_disk() -> None:
-    template = (PACKAGE_ROOT / "src/npa/deploy/terraform/cloud_init.yaml.tpl").read_text()
+    template = (
+        PACKAGE_ROOT / "src/npa/deploy/terraform/cloud_init.yaml.tpl"
+    ).read_text()
 
     assert '%{ if workbench_type == "cosmos" ~}' in template
     assert "/dev/disk/by-id/virtio-npa-cosmos-data" in template
@@ -323,18 +347,22 @@ def test_cloud_init_mounts_cosmos_data_disk() -> None:
 
 
 def test_cloud_init_mounts_groot_data_disk() -> None:
-    template = (PACKAGE_ROOT / "src/npa/deploy/terraform/cloud_init.yaml.tpl").read_text()
+    template = (
+        PACKAGE_ROOT / "src/npa/deploy/terraform/cloud_init.yaml.tpl"
+    ).read_text()
 
     assert "/dev/disk/by-id/virtio-npa-groot-data" in template
     assert "/opt/groot-data" in template
-    assert "mkfs.ext4 -F \"$GROOT_DATA_DEVICE\"" in template
+    assert 'mkfs.ext4 -F "$GROOT_DATA_DEVICE"' in template
     assert "$GROOT_DATA_MOUNT/models" in template
     assert "$GROOT_DATA_MOUNT/hf_cache" in template
     assert "$GROOT_DATA_MOUNT/checkpoints" in template
     assert "$GROOT_DATA_MOUNT/eval_data_cache" in template
-    assert 'workbench_type == "groot" || workbench_type == "groot-container"' in template
+    assert (
+        'workbench_type == "groot" || workbench_type == "groot-container"' in template
+    )
     assert '%{ if workbench_type == "groot" ~}' in template
-    assert "ln -s \"$GROOT_DATA_MOUNT\" /opt/groot" in template
+    assert 'ln -s "$GROOT_DATA_MOUNT" /opt/groot' in template
 
 
 def test_terraform_template_receives_workbench_type_and_versions() -> None:
@@ -365,7 +393,9 @@ def test_boot_disk_defaults_are_runtime_aware() -> None:
 
 
 def test_boot_disk_disk_size_override_applies_to_any_runtime() -> None:
-    assert provisioner.boot_disk_tf_vars("container", 384) == {"boot_disk_size_gb": "384"}
+    assert provisioner.boot_disk_tf_vars("container", 384) == {
+        "boot_disk_size_gb": "384"
+    }
     assert provisioner.boot_disk_tf_vars("vm", 384) == {"boot_disk_size_gb": "384"}
 
 
@@ -416,9 +446,7 @@ def test_require_terraform_errors_when_missing(mocker) -> None:
         provisioner._require_terraform()
 
 
-def test_run_invokes_terraform_and_maps_capture_errors(
-    tmp_path: Path, mocker
-) -> None:
+def test_run_invokes_terraform_and_maps_capture_errors(tmp_path: Path, mocker) -> None:
     mocker.patch("shutil.which", return_value="/usr/bin/terraform")
     run = mocker.patch(
         "subprocess.run",
@@ -472,7 +500,9 @@ def test_terraform_command_wrappers_delegate_to_run(tmp_path: Path, mocker) -> N
     )
 
     (tmp_path / ".terraform.lock.hcl").write_text("lock\n")
-    mocker.patch("npa.terraform_lock.validate_provider_lock", return_value="linux_amd64")
+    mocker.patch(
+        "npa.terraform_lock.validate_provider_lock", return_value="linux_amd64"
+    )
     provisioner.init(tmp_path, backend_config={"access_key": "key"})
     assert run.call_args.args[0] == [
         "init",
@@ -496,7 +526,9 @@ def test_backend_rotation_forces_reconfigure_without_secret_argv(
     tmp_path: Path, mocker
 ) -> None:
     (tmp_path / ".terraform.lock.hcl").write_text("lock\n")
-    mocker.patch("npa.terraform_lock.validate_provider_lock", return_value="linux_amd64")
+    mocker.patch(
+        "npa.terraform_lock.validate_provider_lock", return_value="linux_amd64"
+    )
     run = mocker.patch(
         "npa.deploy.provisioner._run",
         return_value=subprocess.CompletedProcess(
@@ -523,7 +555,9 @@ def test_changed_backend_target_can_force_reconfigure_without_credentials(
     tmp_path: Path, mocker
 ) -> None:
     (tmp_path / ".terraform.lock.hcl").write_text("lock\n")
-    mocker.patch("npa.terraform_lock.validate_provider_lock", return_value="linux_amd64")
+    mocker.patch(
+        "npa.terraform_lock.validate_provider_lock", return_value="linux_amd64"
+    )
     run = mocker.patch(
         "npa.deploy.provisioner._run",
         return_value=subprocess.CompletedProcess(
@@ -550,7 +584,9 @@ def test_backend_init_failures_are_typed(
     tmp_path: Path, mocker, detail: str, expected: type[Exception]
 ) -> None:
     (tmp_path / ".terraform.lock.hcl").write_text("lock\n")
-    mocker.patch("npa.terraform_lock.validate_provider_lock", return_value="linux_amd64")
+    mocker.patch(
+        "npa.terraform_lock.validate_provider_lock", return_value="linux_amd64"
+    )
     mocker.patch(
         "npa.deploy.provisioner._run",
         side_effect=ProvisionerError(f"terraform init failed: {detail}"),
@@ -591,7 +627,9 @@ def test_state_pull_failure_preserves_cause_and_type(tmp_path: Path, mocker) -> 
     assert isinstance(caught.value.__cause__, ProvisionerError)
 
 
-def test_run_sets_terraform_plugin_cache_dir(tmp_path: Path, monkeypatch, mocker) -> None:
+def test_run_sets_terraform_plugin_cache_dir(
+    tmp_path: Path, monkeypatch, mocker
+) -> None:
     monkeypatch.delenv("TF_PLUGIN_CACHE_DIR", raising=False)
     monkeypatch.setattr(provisioner, "_TF_PLUGIN_CACHE_DIR", tmp_path / "tf-cache")
     module_dir = tmp_path / "module"
@@ -611,7 +649,9 @@ def test_run_sets_terraform_plugin_cache_dir(tmp_path: Path, monkeypatch, mocker
     assert (tmp_path / "tf-cache" / "linux_amd64").is_dir()
 
 
-def test_run_respects_preexisting_plugin_cache_env(tmp_path: Path, monkeypatch, mocker) -> None:
+def test_run_respects_preexisting_plugin_cache_env(
+    tmp_path: Path, monkeypatch, mocker
+) -> None:
     module_dir = tmp_path / "module"
     module_dir.mkdir()
     cache_root = tmp_path / "custom-cache"
@@ -633,7 +673,9 @@ def test_run_respects_preexisting_plugin_cache_env(tmp_path: Path, monkeypatch, 
 
 def test_init_retries_transient_registry_failure(tmp_path: Path, mocker) -> None:
     (tmp_path / ".terraform.lock.hcl").write_text("lock\n")
-    mocker.patch("npa.terraform_lock.validate_provider_lock", return_value="linux_amd64")
+    mocker.patch(
+        "npa.terraform_lock.validate_provider_lock", return_value="linux_amd64"
+    )
     calls = {"n": 0}
 
     def fake_run(args, *, cwd, capture=False, stream=False):
@@ -644,7 +686,9 @@ def test_init_retries_transient_registry_failure(tmp_path: Path, mocker) -> None
                 "net/http: request canceled while waiting for connection (Client.Timeout exceeded "
                 "while awaiting headers)"
             )
-        return subprocess.CompletedProcess(args=["terraform"], returncode=0, stdout="", stderr="")
+        return subprocess.CompletedProcess(
+            args=["terraform"], returncode=0, stdout="", stderr=""
+        )
 
     mocker.patch("npa.deploy.provisioner._run", side_effect=fake_run)
     slept: list[float] = []
@@ -657,9 +701,14 @@ def test_init_retries_transient_registry_failure(tmp_path: Path, mocker) -> None
 
 def test_init_does_not_retry_config_error(tmp_path: Path, mocker) -> None:
     (tmp_path / ".terraform.lock.hcl").write_text("lock\n")
-    mocker.patch("npa.terraform_lock.validate_provider_lock", return_value="linux_amd64")
+    mocker.patch(
+        "npa.terraform_lock.validate_provider_lock", return_value="linux_amd64"
+    )
+
     def fake_run(args, *, cwd, capture=False, stream=False):
-        raise ProvisionerError("terraform init failed (exit 1):\nInvalid provider configuration")
+        raise ProvisionerError(
+            "terraform init failed (exit 1):\nInvalid provider configuration"
+        )
 
     mocker.patch("npa.deploy.provisioner._run", side_effect=fake_run)
     slept: list[float] = []
@@ -672,9 +721,14 @@ def test_init_does_not_retry_config_error(tmp_path: Path, mocker) -> None:
 
 def test_init_gives_up_after_retries(tmp_path: Path, mocker) -> None:
     (tmp_path / ".terraform.lock.hcl").write_text("lock\n")
-    mocker.patch("npa.terraform_lock.validate_provider_lock", return_value="linux_amd64")
+    mocker.patch(
+        "npa.terraform_lock.validate_provider_lock", return_value="linux_amd64"
+    )
+
     def fake_run(args, *, cwd, capture=False, stream=False):
-        raise ProvisionerError("could not connect to registry.terraform.io: i/o timeout")
+        raise ProvisionerError(
+            "could not connect to registry.terraform.io: i/o timeout"
+        )
 
     mocker.patch("npa.deploy.provisioner._run", side_effect=fake_run)
     slept: list[float] = []
@@ -688,7 +742,9 @@ def test_init_gives_up_after_retries(tmp_path: Path, mocker) -> None:
 def test_init_keeps_provider_lock_immutable(tmp_path: Path, mocker) -> None:
     lock_file = tmp_path / ".terraform.lock.hcl"
     lock_file.write_text("tracked-lock\n")
-    mocker.patch("npa.terraform_lock.validate_provider_lock", return_value="linux_amd64")
+    mocker.patch(
+        "npa.terraform_lock.validate_provider_lock", return_value="linux_amd64"
+    )
 
     def mutate_lock(args, *, cwd, capture=False, stream=False):
         assert "-lockfile=readonly" in args
@@ -765,7 +821,9 @@ def test_health_check_returns_false_after_retries(mocker) -> None:
 def test_health_check_auto_falls_back_to_ssh(mocker) -> None:
     ssh = mocker.MagicMock()
     public = mocker.patch("npa.deploy.configurator.health_check", return_value=False)
-    ssh_health = mocker.patch("npa.deploy.configurator.health_check_ssh", return_value=True)
+    ssh_health = mocker.patch(
+        "npa.deploy.configurator.health_check_ssh", return_value=True
+    )
 
     healthy, note = configurator.health_check_auto(
         "http://vm:8080",
@@ -805,7 +863,9 @@ def test_health_check_auto_reports_failed_when_public_and_ssh_fail(mocker) -> No
 def test_health_check_auto_limits_public_retry_budget(mocker) -> None:
     ssh = mocker.MagicMock()
     public = mocker.patch("npa.deploy.configurator.health_check", return_value=False)
-    ssh_health = mocker.patch("npa.deploy.configurator.health_check_ssh", return_value=True)
+    ssh_health = mocker.patch(
+        "npa.deploy.configurator.health_check_ssh", return_value=True
+    )
 
     healthy, _ = configurator.health_check_auto(
         "http://vm:5151",
@@ -838,7 +898,9 @@ def test_write_remote_env_file_renders_shell_safe_values(mocker) -> None:
     uploads: list[str] = []
     mocker.patch(
         "npa.deploy.configurator._sftp_upload",
-        side_effect=lambda _ssh, local, _remote: uploads.append(Path(local).read_text()),
+        side_effect=lambda _ssh, local, _remote: uploads.append(
+            Path(local).read_text()
+        ),
     )
 
     configurator.write_remote_env_file(
@@ -936,7 +998,10 @@ def test_deploy_server_runs_expected_remote_steps(mocker) -> None:
     assert "/tmp/npa-deploy/npa.tgz" in remote_paths
     assert "/tmp/npa-server.yaml" in remote_paths
     assert "/tmp/npa-server.env" in remote_paths
-    assert any("systemctl restart npa-lerobot-server" in call.args[0] for call in ssh.run_or_raise.call_args_list)
+    assert any(
+        "systemctl restart npa-lerobot-server" in call.args[0]
+        for call in ssh.run_or_raise.call_args_list
+    )
 
 
 def test_sftp_upload_uses_paramiko(mocker) -> None:

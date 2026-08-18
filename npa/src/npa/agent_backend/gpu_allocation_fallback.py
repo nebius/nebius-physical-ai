@@ -39,10 +39,30 @@ _NON_PLACEMENT_RE = re.compile(
     re.IGNORECASE,
 )
 _PLACEMENT_PATTERNS = (
-    ("quota_exhausted", re.compile(r"\b(quota (?:exceeded|exhausted|shortfall)|resource exhausted)\b", re.I)),
-    ("capacity_exhausted", re.compile(r"\b(insufficient capacity|capacity (?:unavailable|exhausted)|out of capacity)\b", re.I)),
-    ("unschedulable_gpu", re.compile(r"\b(unschedulable|insufficient (?:nvidia\.com/)?gpu)\b", re.I)),
-    ("no_compatible_product", re.compile(r"\b(no matching (?:compatible )?(?:gpu )?product|affinity mismatch|didn't match.*affinity)\b", re.I)),
+    (
+        "quota_exhausted",
+        re.compile(
+            r"\b(quota (?:exceeded|exhausted|shortfall)|resource exhausted)\b", re.I
+        ),
+    ),
+    (
+        "capacity_exhausted",
+        re.compile(
+            r"\b(insufficient capacity|capacity (?:unavailable|exhausted)|out of capacity)\b",
+            re.I,
+        ),
+    ),
+    (
+        "unschedulable_gpu",
+        re.compile(r"\b(unschedulable|insufficient (?:nvidia\.com/)?gpu)\b", re.I),
+    ),
+    (
+        "no_compatible_product",
+        re.compile(
+            r"\b(no matching (?:compatible )?(?:gpu )?product|affinity mismatch|didn't match.*affinity)\b",
+            re.I,
+        ),
+    ),
 )
 INVARIANT_KEYS = (
     "gpu_family",
@@ -76,7 +96,9 @@ def classify_failure(code: str = "", message: str = "") -> dict[str, Any]:
     """Classify only concrete placement evidence as qualifying."""
 
     normalized = str(code or "").strip().lower().replace("-", "_")
-    if normalized in NON_PLACEMENT_CODES or _NON_PLACEMENT_RE.search(str(message or "")):
+    if normalized in NON_PLACEMENT_CODES or _NON_PLACEMENT_RE.search(
+        str(message or "")
+    ):
         return {"category": normalized or "non_placement", "qualifying": False}
     if normalized in PLACEMENT_CODES:
         return {"category": PLACEMENT_CODES[normalized], "qualifying": True}
@@ -142,7 +164,13 @@ def new_state(logical_allocation: str, request: Mapping[str, Any]) -> dict[str, 
 
 def _public_evidence(evidence: Mapping[str, Any] | None) -> dict[str, Any]:
     source = str((evidence or {}).get("source") or "unknown")
-    if source not in {"provider-preflight", "scheduler", "terraform", "skypilot", "unknown"}:
+    if source not in {
+        "provider-preflight",
+        "scheduler",
+        "terraform",
+        "skypilot",
+        "unknown",
+    }:
         source = "unknown"
     return {
         "source": source,
@@ -198,7 +226,10 @@ def record_attempt(
     public_evidence = _public_evidence(evidence)
     evidence_digest = _digest(public_evidence)
 
-    if current.get("selected_pool") == PREEMPTIBLE and current.get("consent") == "accepted":
+    if (
+        current.get("selected_pool") == PREEMPTIBLE
+        and current.get("consent") == "accepted"
+    ):
         _provenance(
             current,
             classification="already_selected",
@@ -208,7 +239,12 @@ def record_attempt(
         return current, {"prompt": False, "reason": "preemptible_already_selected"}
 
     if str(request.get("pool") or ON_DEMAND) != ON_DEMAND:
-        _provenance(current, classification="not_on_demand", evidence_digest=evidence_digest, outcome="ignored")
+        _provenance(
+            current,
+            classification="not_on_demand",
+            evidence_digest=evidence_digest,
+            outcome="ignored",
+        )
         return current, {"prompt": False, "reason": "not_on_demand"}
 
     if success:
@@ -222,12 +258,19 @@ def record_attempt(
                 "consent": "not-requested",
             }
         )
-        _provenance(current, classification="success", evidence_digest=evidence_digest, outcome="success")
+        _provenance(
+            current,
+            classification="success",
+            evidence_digest=evidence_digest,
+            outcome="success",
+        )
         return current, {"prompt": False, "reason": "allocation_succeeded"}
 
     classification = classify_failure(failure_code, failure_message)
     if classification["qualifying"]:
-        current["qualifying_attempts"] = int(current.get("qualifying_attempts") or 0) + 1
+        current["qualifying_attempts"] = (
+            int(current.get("qualifying_attempts") or 0) + 1
+        )
     _provenance(
         current,
         classification=str(classification["category"]),
@@ -248,11 +291,15 @@ def record_attempt(
     )
     already_prompted = current.get("prompted_evidence_digest") == evidence_digest
     declined_same = current.get("declined_evidence_digest") == evidence_digest
-    should_prompt = (immediate or threshold_met) and not already_prompted and not declined_same
+    should_prompt = (
+        (immediate or threshold_met) and not already_prompted and not declined_same
+    )
     if not should_prompt:
         return current, {
             "prompt": False,
-            "reason": "suppressed" if already_prompted or declined_same else "threshold_not_met",
+            "reason": "suppressed"
+            if already_prompted or declined_same
+            else "threshold_not_met",
             "classification": classification,
         }
 
@@ -275,7 +322,9 @@ def record_attempt(
     )
     return current, {
         "prompt": True,
-        "reason": "deterministic_preflight" if immediate else "failed_attempt_threshold",
+        "reason": "deterministic_preflight"
+        if immediate
+        else "failed_attempt_threshold",
         "classification": classification,
         "message": "On-demand GPU placement cannot proceed. Switch this identical allocation to preemptible capacity?",
         "proposed_action": {**proposed, "digest": action_digest},
@@ -295,7 +344,9 @@ def record_consent(
     if not pending:
         raise ValueError("no GPU allocation fallback is awaiting consent")
     if accepted and confirmed_action_digest != pending:
-        raise ValueError("confirmation is not bound to the pending GPU allocation action")
+        raise ValueError(
+            "confirmation is not bound to the pending GPU allocation action"
+        )
     evidence_digest = str(current.get("prompted_evidence_digest") or "")
     if accepted:
         current.update(
@@ -318,7 +369,12 @@ def record_consent(
             }
         )
         outcome = "declined"
-    _provenance(current, classification="consent", evidence_digest=evidence_digest, outcome=outcome)
+    _provenance(
+        current,
+        classification="consent",
+        evidence_digest=evidence_digest,
+        outcome=outcome,
+    )
     return current
 
 

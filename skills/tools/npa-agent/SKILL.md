@@ -276,7 +276,12 @@ Body: `{"camera": "workspace"}` → generates `.rrd`, restarts Rerun service, re
   effective access before searching and returns the selected provenance. Follow
   `next_cursor` until it is empty; `pagination_complete=false` means a bounded
   source scan or access scope was incomplete. Category/state/source-cache roots
-  are not runs.
+  are not runs. `q` filters the cached bounded discovery index in process.
+  `total_runs` is present only when that source index is complete; otherwise it
+  is null and `observed_run_count`, `observed_match_count`, `query_complete`,
+  and `total_runs_scope=unavailable` describe the bounded observation without
+  presenting it as a global total. Lightweight rows preserve
+  `summary_complete=false` and unknown viewability/count fields until enriched.
 - `GET /api/artifacts/run/{run_id}` returns an S3-native artifact page with
   `render` hints. Follow `next_cursor` with the returned `resolved_prefix` and
   `bucket` (as `resource_bucket`) until `truncated=false`; the UI exposes this

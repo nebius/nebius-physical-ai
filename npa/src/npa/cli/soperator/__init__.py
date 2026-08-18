@@ -33,11 +33,11 @@ def plan_cmd(
 ) -> None:
     """Show a public-safe, provider-free Soperator capacity plan."""
 
-    from npa.soperator.lifecycle import plan_cluster
+    from npa.cluster_backends import get_backend
     from npa.soperator.spec import SoperatorSpecError, load_spec
 
     try:
-        result = plan_cluster(load_spec(spec_path))
+        result = get_backend("soperator").plan(load_spec(spec_path))
     except (SoperatorSpecError, FileNotFoundError, OSError) as exc:
         raise typer.BadParameter(f"Invalid soperator spec: {exc}") from exc
     if output not in {"text", "json"}:
@@ -68,7 +68,9 @@ def deploy_cmd(
         help="Path to an npa.soperator/v0.0.1 cluster spec YAML.",
     ),
     project: str = typer.Option(
-        "", "--project", help="Config project alias to resolve region/tenant/project from ~/.npa."
+        "",
+        "--project",
+        help="Config project alias to resolve region/tenant/project from ~/.npa.",
     ),
     terraform_dir: Path | None = typer.Option(
         None,
@@ -87,7 +89,9 @@ def deploy_cmd(
         help="Public-key file granting root SSH access on the public login node; "
         "overrides the spec, environment, and operator-home discovery.",
     ),
-    timeout: int = typer.Option(90, "--timeout", help="Terraform apply timeout in minutes."),
+    timeout: int = typer.Option(
+        90, "--timeout", help="Terraform apply timeout in minutes."
+    ),
     gpu_creation_check_timeout: int = typer.Option(
         DEFAULT_GPU_CREATION_CHECK_TIMEOUT_SECONDS,
         "--gpu-creation-check-timeout",
@@ -113,7 +117,12 @@ def deploy_cmd(
 ) -> None:
     """Deploy or reconcile a pinned-contract Soperator cluster spec."""
 
-    from npa.soperator.lifecycle import SoperatorDeploymentValidationError, deploy_cluster
+    from npa.cluster_backends import get_backend
+    from npa.cluster_backends.soperator import SoperatorApplyRequest
+    from npa.soperator.lifecycle import (
+        SoperatorDeploymentValidationError,
+        SoperatorStateCaptureError,
+    )
     from npa.soperator.spec import SoperatorSpecError, load_spec
 
     try:
@@ -125,18 +134,20 @@ def deploy_cmd(
         raise typer.BadParameter("--output must be text or json")
     json_mode = output == "json"
     try:
-        result = deploy_cluster(
+        result = get_backend("soperator").apply(
             spec,
-            terraform_dir=terraform_dir,
-            solutions_library_ref=solutions_library_ref,
-            root_login_ssh_public_key_file=root_login_ssh_public_key_file,
-            project=project or None,
-            timeout_minutes=timeout,
-            gpu_creation_check_timeout_seconds=gpu_creation_check_timeout,
-            apply_fixes=apply_fixes,
-            source_preflight_only=source_preflight_only,
-            stream_terraform_output=not json_mode,
-            on_status=lambda msg: typer.echo(f"  - {msg}", err=json_mode),
+            SoperatorApplyRequest(
+                terraform_dir=terraform_dir,
+                solutions_library_ref=solutions_library_ref,
+                root_login_ssh_public_key_file=root_login_ssh_public_key_file,
+                project=project or None,
+                timeout_minutes=timeout,
+                gpu_creation_check_timeout_seconds=gpu_creation_check_timeout,
+                apply_fixes=apply_fixes,
+                source_preflight_only=source_preflight_only,
+                stream_terraform_output=not json_mode,
+                on_status=lambda msg: typer.echo(f"  - {msg}", err=json_mode),
+            ),
         )
     except SoperatorDeploymentValidationError as exc:
         if json_mode:
@@ -153,6 +164,20 @@ def deploy_cmd(
             typer.echo(f"  worker pools: {', '.join(result['worker_pools'])}", err=True)
             typer.echo(f"  install dir: {result['install_dir']}", err=True)
         raise typer.Exit(1) from exc
+    except SoperatorStateCaptureError as exc:
+        if json_mode:
+            typer.echo(json.dumps(exc.result, indent=2))
+        else:
+            typer.echo(
+                f"Soperator cluster '{exc.result['name']}' was applied, but "
+                "authoritative ownership state could not be captured.",
+                err=True,
+            )
+            typer.echo(f"  error: {exc.result['error']}", err=True)
+            typer.echo(f"  recovery: {exc.result['recovery']}", err=True)
+        raise typer.Exit(1) from exc
+    except (ValueError, OSError, RuntimeError) as exc:
+        raise typer.BadParameter(f"Soperator deploy failed: {exc}") from exc
     if output == "json":
         typer.echo(json.dumps(result, indent=2))
     elif source_preflight_only:
@@ -172,7 +197,9 @@ def deploy_cmd(
             )
         typer.echo(f"  install dir: {result['install_dir']}")
     else:
-        typer.echo(f"Deployed soperator cluster '{result['name']}' in {result['region']}.")
+        typer.echo(
+            f"Deployed soperator cluster '{result['name']}' in {result['region']}."
+        )
         typer.echo(f"  kube context: {result['kube_context']}")
         typer.echo(f"  worker pools: {', '.join(result['worker_pools'])}")
         if result.get("docker_cache_pools"):
@@ -180,16 +207,18 @@ def deploy_cmd(
                 f"  docker-cache pools (IO_M3): {', '.join(result['docker_cache_pools'])}"
             )
         for worker in result.get("workers", []):
-            typer.echo(
-                f"  worker {worker['name']} capacity: {worker['capacity_mode']}"
-            )
+            typer.echo(f"  worker {worker['name']} capacity: {worker['capacity_mode']}")
         typer.echo(f"  install dir: {result['install_dir']}")
 
 
 def destroy_cmd(
-    name: str = typer.Option(..., "--name", help="Cluster name (company_name in the spec)."),
+    name: str = typer.Option(
+        ..., "--name", help="Cluster name (company_name in the spec)."
+    ),
     terraform_dir: Path | None = typer.Option(
-        None, "--terraform-dir", help="solutions-library 'soperator' recipe dir (if not the default)."
+        None,
+        "--terraform-dir",
+        help="solutions-library 'soperator' recipe dir (if not the default).",
     ),
     solutions_library_ref: str = typer.Option(
         DEFAULT_SOLUTIONS_LIBRARY_REF,
@@ -202,7 +231,9 @@ def destroy_cmd(
         help="Config project alias to resolve region/tenant/project from ~/.npa "
         "(only used for installs predating the env sidecar).",
     ),
-    timeout: int = typer.Option(90, "--timeout", help="Terraform destroy timeout in minutes."),
+    timeout: int = typer.Option(
+        90, "--timeout", help="Terraform destroy timeout in minutes."
+    ),
     source_preflight_only: bool = typer.Option(
         False,
         "--source-preflight-only",
@@ -213,21 +244,30 @@ def destroy_cmd(
 ) -> None:
     """Destroy an npa-managed soperator cluster by name."""
 
-    from npa.soperator.lifecycle import destroy_cluster
+    from npa.cluster_backends import get_backend
+    from npa.cluster_backends.soperator import SoperatorDestroyRequest
+    from npa.soperator.spec import SoperatorSpec
 
-    if not source_preflight_only and not force and not typer.confirm(
-        f"Destroy soperator cluster '{name}'?"
+    if (
+        not source_preflight_only
+        and not force
+        and not typer.confirm(f"Destroy soperator cluster '{name}'?")
     ):
         raise typer.Exit(1)
-    result = destroy_cluster(
-        name,
-        terraform_dir=terraform_dir,
-        solutions_library_ref=solutions_library_ref,
-        project=project or None,
-        timeout_minutes=timeout,
-        source_preflight_only=source_preflight_only,
-        on_status=lambda msg: typer.echo(f"  - {msg}"),
-    )
+    try:
+        result = get_backend("soperator").destroy(
+            SoperatorSpec(name=name),
+            SoperatorDestroyRequest(
+                terraform_dir=terraform_dir,
+                solutions_library_ref=solutions_library_ref,
+                project=project or None,
+                timeout_minutes=timeout,
+                source_preflight_only=source_preflight_only,
+                on_status=lambda msg: typer.echo(f"  - {msg}"),
+            ),
+        )
+    except (ValueError, OSError, RuntimeError) as exc:
+        raise typer.BadParameter(f"Soperator destroy failed: {exc}") from exc
     if source_preflight_only:
         assert result is not None
         typer.echo(
@@ -249,28 +289,18 @@ def status_cmd(
 ) -> None:
     """Show a soperator cluster's Slurm partitions/nodes via kubectl."""
 
-    import os
-    import shutil
+    from npa.cluster_backends import get_backend
+    from npa.cluster_backends.soperator import SoperatorStatusRequest
+    from npa.soperator.spec import SoperatorSpec
 
-    context = f"nebius-{name}-slurm"
-    kubectl = os.environ.get("NPA_KUBECTL_BIN") or "kubectl"
-    if not shutil.which(kubectl):
-        raise typer.BadParameter(f"kubectl not found: {kubectl}")
-    import subprocess
-
-    proc = subprocess.run(
-        [kubectl, "--context", context, "exec", "-n", "soperator", "controller-0",
-         "-c", "slurmctld", "--", "sinfo"],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout).strip()
-        raise typer.BadParameter(f"Could not query Slurm on '{name}': {detail}")
-    from npa.soperator.lifecycle import worker_capacity_status
-
-    workers = worker_capacity_status(name, terraform_dir=terraform_dir)
+    try:
+        backend_status = get_backend("soperator").status(
+            SoperatorSpec(name=name),
+            SoperatorStatusRequest(terraform_dir=terraform_dir),
+        )
+    except (ValueError, OSError, RuntimeError) as exc:
+        raise typer.BadParameter(f"Soperator status failed: {exc}") from exc
+    workers = backend_status["workers"]
     if output not in {"text", "json"}:
         raise typer.BadParameter("--output must be text or json")
     if output == "json":
@@ -278,15 +308,15 @@ def status_cmd(
             json.dumps(
                 {
                     "name": name,
-                    "context": context,
-                    "sinfo": proc.stdout,
+                    "context": backend_status["context"],
+                    "sinfo": backend_status["sinfo"],
                     "workers": workers,
                     "capacity_status": "applied" if workers else "unknown",
                 }
             )
         )
     else:
-        typer.echo(proc.stdout)
+        typer.echo(backend_status["sinfo"])
         if workers:
             for worker in workers:
                 typer.echo(

@@ -262,3 +262,57 @@ def test_no_silent_except_exception_pass() -> None:
         "Silent `except Exception: pass` found; log the exception at debug "
         "level or narrow the except type:\n" + "\n".join(offenders)
     )
+
+
+def _unreachable_statement_violations(path: Path) -> list[str]:
+    """Find statements after an unconditional terminator in one AST block."""
+
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    try:
+        display_path = path.relative_to(REPO_ROOT)
+    except ValueError:
+        display_path = path
+    violations: list[str] = []
+    for node in ast.walk(tree):
+        for field_name, value in ast.iter_fields(node):
+            if (
+                not isinstance(value, list)
+                or not value
+                or not all(isinstance(item, ast.stmt) for item in value)
+            ):
+                continue
+            terminated = False
+            for statement in value:
+                if terminated:
+                    violations.append(
+                        f"{display_path}:{statement.lineno}: "
+                        f"unreachable statement in {field_name} block"
+                    )
+                    break
+                terminated = isinstance(
+                    statement, (ast.Return, ast.Raise, ast.Break, ast.Continue)
+                )
+    return violations
+
+
+def test_leisaac_runtime_has_no_statements_after_unconditional_terminator() -> None:
+    roots = [
+        REPO_ROOT / "npa" / "src" / "npa" / "agent_backend",
+        REPO_ROOT / "npa" / "docker" / "workbench" / "leisaac",
+    ]
+    offenders = [
+        violation
+        for root in roots
+        for path in sorted(root.rglob("*.py"))
+        for violation in _unreachable_statement_violations(path)
+    ]
+    assert not offenders, "\n".join(offenders)
+
+
+def test_unreachable_statement_guard_catches_fixture(tmp_path: Path) -> None:
+    broken = tmp_path / "broken.py"
+    broken.write_text(
+        "def handler():\n    return 1\n    publish_side_effect()\n",
+        encoding="utf-8",
+    )
+    assert _unreachable_statement_violations(broken)

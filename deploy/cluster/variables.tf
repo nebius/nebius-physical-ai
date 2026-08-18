@@ -118,6 +118,59 @@ variable "allow_unsafe_nvswitch_operator" {
   default     = false
 }
 
+variable "mig_enabled" {
+  description = "Enable the validated RTX PRO 6000 hardware-MIG desired state."
+  type        = bool
+  default     = false
+}
+
+variable "mig_strategy" {
+  description = "GPU Operator MIG strategy used when mig_enabled is true."
+  type        = string
+  default     = "mixed"
+}
+
+variable "mig_parted_config" {
+  description = "MIG Manager geometry label used when mig_enabled is true."
+  type        = string
+  default     = "all-balanced"
+}
+
+variable "gpu_operator_version" {
+  type    = string
+  default = "v26.3.3"
+}
+
+variable "gpu_driver_version" {
+  type    = string
+  default = "580.173.02"
+}
+
+variable "gpu_device_plugin_version" {
+  type    = string
+  default = "v0.19.3"
+}
+
+variable "gpu_gfd_version" {
+  type    = string
+  default = "v0.19.3"
+}
+
+variable "gpu_mig_manager_version" {
+  type    = string
+  default = "v0.14.2"
+}
+
+variable "gpu_mig_with_reboot" {
+  type    = bool
+  default = true
+}
+
+variable "gpu_operator_rdma_enabled" {
+  type    = bool
+  default = false
+}
+
 variable "capacity_block_group" {
   description = "Optional capacity block group ID used as a strict GPU node-group reservation selector. Leave empty for on-demand capacity."
   type        = string

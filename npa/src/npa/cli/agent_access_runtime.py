@@ -69,7 +69,11 @@ _AGENT_NEBIUS_TIMEOUT_SECONDS = 15.0
 _AGENT_ACCESS_CACHE_TTL_SECONDS = 30.0
 _AGENT_EXACT_SOURCE_ACCESS_TTL_SECONDS = 30.0
 _MAX_ARTIFACT_MEMBERSHIP_BUCKETS = 32
-_AGENT_ACCESS_CACHE = {"report": None, "expires_at": 0.0, "refreshing": False}
+_AGENT_ACCESS_CACHE: dict[str, Any] = {
+    "report": None,
+    "expires_at": 0.0,
+    "refreshing": False,
+}
 _AGENT_EXACT_SOURCE_ACCESS_CACHE: dict[tuple[str, ...], float] = {}
 _AGENT_ACCESS_LOCK = threading.Lock()
 _AGENT_ACCESS_CONDITION = threading.Condition(_AGENT_ACCESS_LOCK)
@@ -267,6 +271,55 @@ def _agent_probe_bucket(s3, bucket: str) -> "BucketProbe":
     )
 
 
+def _discover_agent_access_report() -> "AgentAccessReport":
+    s3, settings = _agent_s3_client_optional()
+    primary = str(settings.get("bucket") or "").strip()
+    configured = [primary] if primary else []
+    for item in str(os.environ.get("NPA_AGENT_S3_BUCKETS", "")).split(","):
+        name = item.strip()
+        if name and name not in configured:
+            configured.append(name)
+    _inventory_env, inventory_profile, inventory_config, credential_source = (
+        _agent_inventory_credential_context()
+    )
+    return discover_agent_access(
+        tenant_id=str(os.environ.get("NEBIUS_TENANT_ID") or "").strip(),
+        deployment_project_id=str(os.environ.get("NEBIUS_PROJECT_ID") or "").strip(),
+        deployment_project_name=str(
+            os.environ.get("NPA_AGENT_PROJECT_ALIAS") or NPA_PROJECT_ALIAS
+        ).strip(),
+        fallback_buckets=configured,
+        list_projects=_agent_list_tenant_projects,
+        list_buckets=_agent_list_project_buckets,
+        probe_bucket=lambda bucket: _agent_probe_bucket(s3, bucket),
+        service_account_id=str(
+            os.environ.get("NEBIUS_SERVICE_ACCOUNT_ID") or ""
+        ).strip(),
+        credential_source=credential_source,
+        credential_profile=inventory_profile,
+        credential_config=inventory_config,
+    )
+
+
+def _finish_agent_access_refresh(report: "AgentAccessReport | None") -> None:
+    with _AGENT_ACCESS_CONDITION:
+        if report is not None:
+            _AGENT_ACCESS_CACHE["report"] = report
+            _AGENT_ACCESS_CACHE["expires_at"] = (
+                time.monotonic() + _AGENT_ACCESS_CACHE_TTL_SECONDS
+            )
+        _AGENT_ACCESS_CACHE["refreshing"] = False
+        _AGENT_ACCESS_CONDITION.notify_all()
+
+
+def _refresh_agent_access_in_background() -> None:
+    try:
+        report = _discover_agent_access_report()
+    except BaseException:
+        report = None
+    _finish_agent_access_refresh(report)
+
+
 def _agent_access_report(*, refresh: bool = False) -> "AgentAccessReport":
     now_mono = time.monotonic()
     with _AGENT_ACCESS_CONDITION:
@@ -274,11 +327,16 @@ def _agent_access_report(*, refresh: bool = False) -> "AgentAccessReport":
             _AGENT_EXACT_SOURCE_ACCESS_CACHE.clear()
         cached = _AGENT_ACCESS_CACHE.get("report")
         expires_at = float(_AGENT_ACCESS_CACHE.get("expires_at") or 0.0)
-        if (
-            not refresh
-            and isinstance(cached, AgentAccessReport)
-            and expires_at > now_mono
-        ):
+        if not refresh and isinstance(cached, AgentAccessReport):
+            if expires_at <= now_mono and not bool(
+                _AGENT_ACCESS_CACHE.get("refreshing")
+            ):
+                _AGENT_ACCESS_CACHE["refreshing"] = True
+                threading.Thread(
+                    target=_refresh_agent_access_in_background,
+                    name="npa-agent-access-refresh",
+                    daemon=True,
+                ).start()
             return cached
         if bool(_AGENT_ACCESS_CACHE.get("refreshing")):
             while bool(_AGENT_ACCESS_CACHE.get("refreshing")):
@@ -288,47 +346,11 @@ def _agent_access_report(*, refresh: bool = False) -> "AgentAccessReport":
                 return cached
         _AGENT_ACCESS_CACHE["refreshing"] = True
     try:
-        s3, settings = _agent_s3_client_optional()
-        primary = str(settings.get("bucket") or "").strip()
-        configured = [primary] if primary else []
-        for item in str(os.environ.get("NPA_AGENT_S3_BUCKETS", "")).split(","):
-            name = item.strip()
-            if name and name not in configured:
-                configured.append(name)
-        _inventory_env, inventory_profile, inventory_config, credential_source = (
-            _agent_inventory_credential_context()
-        )
-        report = discover_agent_access(
-            tenant_id=str(os.environ.get("NEBIUS_TENANT_ID") or "").strip(),
-            deployment_project_id=str(
-                os.environ.get("NEBIUS_PROJECT_ID") or ""
-            ).strip(),
-            deployment_project_name=str(
-                os.environ.get("NPA_AGENT_PROJECT_ALIAS") or NPA_PROJECT_ALIAS
-            ).strip(),
-            fallback_buckets=configured,
-            list_projects=_agent_list_tenant_projects,
-            list_buckets=_agent_list_project_buckets,
-            probe_bucket=lambda bucket: _agent_probe_bucket(s3, bucket),
-            service_account_id=str(
-                os.environ.get("NEBIUS_SERVICE_ACCOUNT_ID") or ""
-            ).strip(),
-            credential_source=credential_source,
-            credential_profile=inventory_profile,
-            credential_config=inventory_config,
-        )
+        report = _discover_agent_access_report()
     except BaseException:
-        with _AGENT_ACCESS_CONDITION:
-            _AGENT_ACCESS_CACHE["refreshing"] = False
-            _AGENT_ACCESS_CONDITION.notify_all()
+        _finish_agent_access_refresh(None)
         raise
-    with _AGENT_ACCESS_CONDITION:
-        _AGENT_ACCESS_CACHE["report"] = report
-        _AGENT_ACCESS_CACHE["expires_at"] = (
-            time.monotonic() + _AGENT_ACCESS_CACHE_TTL_SECONDS
-        )
-        _AGENT_ACCESS_CACHE["refreshing"] = False
-        _AGENT_ACCESS_CONDITION.notify_all()
+    _finish_agent_access_refresh(report)
     return report
 
 

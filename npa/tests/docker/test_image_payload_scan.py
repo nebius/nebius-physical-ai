@@ -63,6 +63,11 @@ PAYLOAD_PATHS = [
     "usr/lib/libomni.usd.so",
     "opt/nvidia/omniverse/kit/kernel/plugins/carb.dll",
     "isaac-sim/assets/Isaac/Robots/Franka/franka.usd",
+    "opt/leisaac-cache/client/99.42.7/index.js",
+    "opt/leisaac-cache/downloads/omniverse-webrtc-streaming-library-99.42.7.tgz",
+    "opt/leisaac-cache/assets/runtime/robots/arbitrary-version/robot.usda",
+    "opt/leisaac/assets/scenes/future-release/task.usdc",
+    "opt/venv/lib/python3.11/site-packages/imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2",
 ]
 
 # Paths the re-architected images legitimately DO ship.
@@ -88,6 +93,29 @@ ALLOWED_PATHS = [
     "opt/groot/Isaac-GR00T/gr00t/model/gr00t_n1d7/gr00t_n1d7.py",
     "usr/lib/x86_64-linux-gnu/libEGL_nvidia.so.0",
 ]
+
+
+def test_leisaac_dockerfile_removes_parent_imageio_ffmpeg_payload() -> None:
+    dockerfile = (
+        REPO_ROOT / "npa" / "docker" / "workbench" / "leisaac" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert "pip uninstall -y moviepy imageio-ffmpeg" in dockerfile
+    assert (
+        "! /opt/npa/sim/venv/bin/python -m pip show moviepy imageio-ffmpeg"
+        in dockerfile
+    )
+    assert "FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04@sha256:" in dockerfile
+    assert "NPA_ISAAC_OSS_DEPS_FILE=" in dockerfile
+    assert "sed -E '/^(moviepy|imageio-ffmpeg)==/d'" in dockerfile
+    runtime_base_layer = dockerfile.split(
+        "COPY docker/workbench/leisaac/upstream-observability.patch", 1
+    )[0]
+    assert "-name imageio_ffmpeg" in runtime_base_layer
+    assert "-exec rm -rf -- {} +" in runtime_base_layer
+    assert "*/imageio_ffmpeg/binaries/ffmpeg*" in runtime_base_layer
+    assert "FROM ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab" not in dockerfile
+    assert 'rm -rf /root/.cache /home/"${NPA_RUNTIME_USER}"/.cache' in dockerfile
+    assert 'test ! -e /home/"${NPA_RUNTIME_USER}"/.cache' in dockerfile
 
 
 @pytest.mark.parametrize("path", PAYLOAD_PATHS)
@@ -177,7 +205,22 @@ def test_report_verdict_and_exit_semantics() -> None:
 
     report.payload_hits.append({"path": "isaac-sim/kit/libcarb.so", "why": "carb"})
     assert not report.clean
-    assert report.to_dict()["verdict"] == "omniverse-payload-detected"
+    assert report.to_dict()["verdict"] == "restricted-payload-detected"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "opt/leisaac-cache/client/5.6.0/index.js",
+        "opt/leisaac-cache/client/2029.11.0/dist/client.min.js",
+        "opt/leisaac-cache/assets/runtime/scenes/kitchen/scene.usd",
+        "opt/leisaac-cache/assets/runtime/robots/custom/arm.usdc",
+    ],
+)
+def test_leisaac_restricted_payload_mutations_fail_at_arbitrary_versions(
+    path: str,
+) -> None:
+    assert scanner.classify_path(path), path
 
     history_only = scanner.ScanReport(image="example:tag", source="registry")
     history_only.history_hits.append(

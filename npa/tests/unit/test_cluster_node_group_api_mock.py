@@ -49,8 +49,12 @@ def test_create_gpu_node_group_invokes_mk8s_create() -> None:
             return _result(_node_group())
         raise AssertionError(f"unexpected command: {args}")
 
-    client = MK8sClient(nebius_bin="nebius", subprocess_runner=run, sleep=lambda _: None)
-    config = NodeGroupConfig(cluster_name="cluster-a", gpu_type="h100", subnet_id="vpcsubnet-a")
+    client = MK8sClient(
+        nebius_bin="nebius", subprocess_runner=run, sleep=lambda _: None
+    )
+    config = NodeGroupConfig(
+        cluster_name="cluster-a", gpu_type="h100", subnet_id="vpcsubnet-a"
+    )
 
     info = client.create_gpu_node_group(config, "mk8scluster-a")
 
@@ -63,6 +67,28 @@ def test_create_gpu_node_group_invokes_mk8s_create() -> None:
     assert json.loads(calls[0][network_index]) == [{"subnet_id": "vpcsubnet-a"}]
 
 
+def test_create_operator_gpu_node_group_omits_managed_driver_image() -> None:
+    calls: list[list[str]] = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        return _result(_node_group())
+
+    client = MK8sClient(
+        nebius_bin="nebius", subprocess_runner=run, sleep=lambda _: None
+    )
+    config = NodeGroupConfig(
+        cluster_name="cluster-a",
+        gpu_type="h100",
+        subnet_id="vpcsubnet-a",
+        driver_preset="",
+    )
+
+    client.create_gpu_node_group(config, "mk8scluster-a")
+
+    assert "--template-gpu-settings-drivers-preset" not in calls[0]
+
+
 def test_create_gpu_node_group_public_ip_opt_in() -> None:
     calls: list[list[str]] = []
 
@@ -70,7 +96,9 @@ def test_create_gpu_node_group_public_ip_opt_in() -> None:
         calls.append(args)
         return _result(_node_group())
 
-    client = MK8sClient(nebius_bin="nebius", subprocess_runner=run, sleep=lambda _: None)
+    client = MK8sClient(
+        nebius_bin="nebius", subprocess_runner=run, sleep=lambda _: None
+    )
     config = NodeGroupConfig(
         cluster_name="cluster-a",
         gpu_type="h100",
@@ -93,7 +121,9 @@ def test_create_gpu_node_group_uses_autoscaling_flags() -> None:
         calls.append(args)
         return _result(_node_group())
 
-    client = MK8sClient(nebius_bin="nebius", subprocess_runner=run, sleep=lambda _: None)
+    client = MK8sClient(
+        nebius_bin="nebius", subprocess_runner=run, sleep=lambda _: None
+    )
     config = NodeGroupConfig(
         cluster_name="cluster-a",
         gpu_type="h100",
@@ -115,7 +145,9 @@ def test_create_gpu_node_group_uses_capacity_block_group() -> None:
         calls.append(args)
         return _result(_node_group())
 
-    client = MK8sClient(nebius_bin="nebius", subprocess_runner=run, sleep=lambda _: None)
+    client = MK8sClient(
+        nebius_bin="nebius", subprocess_runner=run, sleep=lambda _: None
+    )
     config = NodeGroupConfig(
         cluster_name="cluster-a",
         gpu_type="h100",
@@ -181,10 +213,15 @@ def test_wait_for_node_group_ready_accepts_running_and_ready(state: str) -> None
             return _result(_node_group(state=state))
         raise AssertionError(f"unexpected command: {args}")
 
-    client = MK8sClient(nebius_bin="nebius", subprocess_runner=run, sleep=lambda _: None)
+    client = MK8sClient(
+        nebius_bin="nebius", subprocess_runner=run, sleep=lambda _: None
+    )
 
     assert is_ready(state)
-    assert client.wait_for_node_group_ready("mk8scluster-a", "mk8snodegroup-gpu").status == state
+    assert (
+        client.wait_for_node_group_ready("mk8scluster-a", "mk8snodegroup-gpu").status
+        == state
+    )
 
 
 def test_node_group_create_error_raises_cluster_error() -> None:

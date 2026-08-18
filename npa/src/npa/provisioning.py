@@ -15,7 +15,10 @@ from urllib.parse import urlparse
 from npa.clients import config as config_module
 from npa.clients.config import ConfigError, EnvironmentConfig, StorageConfig
 from npa.cluster.gpu_driver import DEFAULT_MANAGED_DRIVER_PRESET
-from npa.cluster.gpu_health import DEFAULT_CUDA_SMOKE_IMAGE, DEFAULT_STABILIZATION_SECONDS
+from npa.cluster.gpu_health import (
+    DEFAULT_CUDA_SMOKE_IMAGE,
+    DEFAULT_STABILIZATION_SECONDS,
+)
 from npa.cluster.state import kubeconfig_file, load_cluster_state
 from npa.provisioning_journal import (
     ProvisioningOperation,
@@ -303,8 +306,13 @@ def provision_if_absent(
     managed_driver_preset: str = "",
     allow_unsafe_nvswitch_operator: bool | None = None,
     gpu_health_stabilization_seconds: int = DEFAULT_STABILIZATION_SECONDS,
+    gpu_health_timeout_minutes: int = 60,
     gpu_cuda_smoke: bool = True,
     gpu_cuda_smoke_image: str = DEFAULT_CUDA_SMOKE_IMAGE,
+    mig_enabled: bool = False,
+    mig_strategy: str = "mixed",
+    mig_config: str = "all-balanced",
+    capacity_block_group: str = "",
     preemptible: bool | None = None,
     accelerator: str = "",
     gpu_readiness_timeout: float = 600.0,
@@ -429,45 +437,142 @@ def provision_if_absent(
         actions.append("k8s:blocked until writable S3 is reconciled")
     elif skip_k8s:
         actions.append("k8s:skipped")
-    elif _has_cached_kubeconfig(context, kubeconfig_path):
+    elif not dry_run and _has_cached_kubeconfig(context, kubeconfig_path):
         actions.append(f"k8s:reused kubeconfig {kubeconfig_path}")
         if validate and gpu_nodes > 0:
-            from npa.cli.cluster.terraform_lifecycle import (
-                _require_bin,
-                _validate_cluster,
-            )
+            if mig_enabled:
+                from npa.cluster_backends import get_backend
+                from npa.cluster_backends.mk8s import MK8sStatusRequest
+                from npa.cluster_backends.mig import MigSpec
+                from npa.fleet.spec import ClusterSpec, NodePoolSpec
 
-            kubectl_bin = _require_bin(
-                os.environ.get("NPA_KUBECTL_BIN") or "kubectl"
-            )
-            _validate_cluster(
-                kubectl_bin,
-                Path(kubeconfig_path),
-                {
-                    "cpu_nodes_count": cpu_nodes,
-                    "gpu_nodes_count": gpu_nodes,
-                    "gpu_nodes_platform": gpu_platform,
-                    "gpu_nodes_preset": gpu_preset,
-                    "gpu_driver_mode": gpu_driver_mode or "auto",
-                    "managed_driver_preset": (
-                        managed_driver_preset or DEFAULT_MANAGED_DRIVER_PRESET
+                desired = ClusterSpec(
+                    name=context,
+                    cpu_nodes=(
+                        NodePoolSpec(
+                            count=cpu_nodes,
+                            platform=cpu_platform,
+                            preset=cpu_preset,
+                        )
+                        if cpu_nodes
+                        else None
                     ),
-                    "allow_unsafe_nvswitch_operator": bool(
-                        allow_unsafe_nvswitch_operator
+                    gpu_nodes=NodePoolSpec(
+                        count=gpu_nodes,
+                        platform=gpu_platform,
+                        preset=gpu_preset,
+                        disk_size_gib=128,
+                        capacity_block_group=capacity_block_group,
+                        preemptible=bool(preemptible),
                     ),
-                },
-                60,
-                gpu_health_stabilization_seconds=(
-                    gpu_health_stabilization_seconds
-                ),
-                gpu_cuda_smoke=gpu_cuda_smoke,
-                gpu_cuda_smoke_image=gpu_cuda_smoke_image,
-            )
-            actions.append("k8s:validated stable GPU health and CUDA vectorAdd")
+                    gpu_driver_mode="operator",
+                    gpu_health_stabilization_seconds=gpu_health_stabilization_seconds,
+                    gpu_health_timeout_minutes=gpu_health_timeout_minutes,
+                    gpu_cuda_smoke=gpu_cuda_smoke,
+                    gpu_cuda_smoke_image=gpu_cuda_smoke_image,
+                    mig=MigSpec(enabled=True, strategy=mig_strategy, config=mig_config),
+                )
+                kubectl_bin = os.environ.get("NPA_KUBECTL_BIN") or "kubectl"
+                get_backend("mk8s").verify(
+                    desired,
+                    MK8sStatusRequest(
+                        kubeconfig=Path(kubeconfig_path), kubectl_bin=kubectl_bin
+                    ),
+                )
+                actions.append("k8s:verified exact MIG topology and CUDA allocation")
+            else:
+                from npa.cli.cluster.terraform_lifecycle import (
+                    _require_bin,
+                    _validate_cluster,
+                )
+
+                kubectl_bin = _require_bin(
+                    os.environ.get("NPA_KUBECTL_BIN") or "kubectl"
+                )
+                _validate_cluster(
+                    kubectl_bin,
+                    Path(kubeconfig_path),
+                    {
+                        "cpu_nodes_count": cpu_nodes,
+                        "gpu_nodes_count": gpu_nodes,
+                        "gpu_nodes_platform": gpu_platform,
+                        "gpu_nodes_preset": gpu_preset,
+                        "gpu_driver_mode": gpu_driver_mode or "auto",
+                        "managed_driver_preset": (
+                            managed_driver_preset or DEFAULT_MANAGED_DRIVER_PRESET
+                        ),
+                        "allow_unsafe_nvswitch_operator": bool(
+                            allow_unsafe_nvswitch_operator
+                        ),
+                    },
+                    gpu_health_timeout_minutes,
+                    gpu_health_stabilization_seconds=(gpu_health_stabilization_seconds),
+                    gpu_cuda_smoke=gpu_cuda_smoke,
+                    gpu_cuda_smoke_image=gpu_cuda_smoke_image,
+                )
+                actions.append("k8s:validated stable GPU health and CUDA vectorAdd")
         k8s_ready = True
-    elif not environment.project_id or not environment.tenant_id:
+    elif not dry_run and (not environment.project_id or not environment.tenant_id):
         warnings.append("project_id and tenant_id are required to ensure Kubernetes")
     elif dry_run:
+        from npa.cluster_backends import get_backend
+        from npa.cluster_backends.mk8s import MK8sApplyRequest
+        from npa.cluster_backends.mig import MigSpec
+        from npa.fleet.spec import ClusterSpec, NodePoolSpec
+
+        # The immutable preflight topology above already resolved all defaults.
+        # A dry-run must remain package-only: do not discover deploy/cluster,
+        # read tfvars, clone a recipe, or materialize anything on disk.
+        desired_gpu_count = gpu_nodes
+        desired_cpu_count = cpu_nodes
+        backend_desired = ClusterSpec(
+            name=context,
+            cpu_nodes=(
+                NodePoolSpec(
+                    count=desired_cpu_count,
+                    platform=cpu_platform,
+                    preset=cpu_preset,
+                )
+                if desired_cpu_count
+                else None
+            ),
+            gpu_nodes=(
+                NodePoolSpec(
+                    count=desired_gpu_count,
+                    platform=gpu_platform,
+                    preset=gpu_preset,
+                    disk_size_gib=128 if mig_enabled else 0,
+                    capacity_block_group=capacity_block_group,
+                    preemptible=bool(preemptible),
+                )
+                if desired_gpu_count
+                else None
+            ),
+            gpu_driver_mode="operator" if mig_enabled else (gpu_driver_mode or "auto"),
+            managed_driver_preset=(
+                managed_driver_preset or DEFAULT_MANAGED_DRIVER_PRESET
+            ),
+            allow_unsafe_nvswitch_operator=bool(allow_unsafe_nvswitch_operator),
+            gpu_health_stabilization_seconds=gpu_health_stabilization_seconds,
+            gpu_health_timeout_minutes=gpu_health_timeout_minutes,
+            gpu_cuda_smoke=gpu_cuda_smoke,
+            gpu_cuda_smoke_image=gpu_cuda_smoke_image,
+            mig=(
+                MigSpec(enabled=True, strategy=mig_strategy, config=mig_config)
+                if mig_enabled
+                else None
+            ),
+            allow_control_plane_only=True,
+        )
+        backend = get_backend("mk8s")
+        backend_plan = backend.plan(backend_desired)
+        backend.preflight(backend_desired, MK8sApplyRequest())
+        actions.append(
+            "k8s:shared-backend plan "
+            f"backend={backend_plan['backend']} target={backend_plan['name']} "
+            f"cpu_nodes={backend_plan['cpu_nodes']} "
+            f"gpu_nodes={backend_plan['gpu_nodes']} provider_mutation=false"
+        )
         shape = ", ".join(
             [
                 f"{name}={count}"
@@ -499,8 +604,9 @@ def provision_if_absent(
     else:
         from npa.provisioning_preflight import resolved_plan_context
 
-        with _runtime_env(alias, environment, storage, registry), resolved_plan_context(
-            plan
+        with (
+            _runtime_env(alias, environment, storage, registry),
+            resolved_plan_context(plan),
         ):
             from npa.cli.cluster.terraform_lifecycle import up_cmd
 
@@ -520,7 +626,7 @@ def provision_if_absent(
                 sky_smoke=False,
                 sky_gpus="",
                 sky_bin=sky_bin,
-                capacity_block_group="",
+                capacity_block_group=capacity_block_group,
                 gpu_nodes=gpu_nodes,
                 cpu_nodes=cpu_nodes,
                 cpu_platform=cpu_platform,
@@ -530,13 +636,14 @@ def provision_if_absent(
                 gpu_driver_mode=gpu_driver_mode,
                 managed_driver_preset=managed_driver_preset,
                 allow_unsafe_nvswitch_operator=allow_unsafe_nvswitch_operator,
-                gpu_health_stabilization_seconds=(
-                    gpu_health_stabilization_seconds
-                ),
+                gpu_health_stabilization_seconds=(gpu_health_stabilization_seconds),
                 gpu_cuda_smoke=gpu_cuda_smoke,
                 gpu_cuda_smoke_image=gpu_cuda_smoke_image,
+                mig_enabled=mig_enabled,
+                mig_strategy=mig_strategy,
+                mig_config=mig_config,
                 preemptible=preemptible,
-                validation_timeout=60,
+                validation_timeout=gpu_health_timeout_minutes,
                 timeout=timeout,
             )
         actions.append(f"k8s:ensured terraform cluster {context}")
@@ -840,7 +947,10 @@ def _rollback_owned_cluster(
             completed=False,
             removed=[],
             preserved=list(payload.get("resources") or []),
-            outcomes=[{**item, "outcome": "preserved_missing_cluster_identity"} for item in created],
+            outcomes=[
+                {**item, "outcome": "preserved_missing_cluster_identity"}
+                for item in created
+            ],
             error=error,
         )
         operation.transition("rollback-incomplete", error=error)
@@ -915,7 +1025,10 @@ def _rollback_owned_cluster(
         preserved=preserved,
         outcomes=[
             *({**item, "outcome": "removed"} for item in terraform_owned),
-            *({**item, "outcome": "preserved_not_owned_by_terraform"} for item in preserved),
+            *(
+                {**item, "outcome": "preserved_not_owned_by_terraform"}
+                for item in preserved
+            ),
         ],
     )
     operation.transition("rolled-back")

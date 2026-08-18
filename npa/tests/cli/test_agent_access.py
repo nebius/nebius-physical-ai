@@ -841,3 +841,36 @@ def test_exact_run_ref_authorization_fails_closed_on_wrong_project_bucket(
             project_id="selected-project",
             resolved_prefix="nested/source",
         )
+
+
+def test_expired_access_cache_is_served_while_single_refresh_runs(monkeypatch) -> None:
+    from npa.cli import agent_access_runtime as runtime
+
+    stale = _discover()
+    fresh = _discover()
+    entered = threading.Event()
+    release = threading.Event()
+
+    def discover():
+        entered.set()
+        assert release.wait(timeout=2)
+        return fresh
+
+    monkeypatch.setattr(runtime, "_discover_agent_access_report", discover)
+    with runtime._AGENT_ACCESS_CONDITION:
+        runtime._AGENT_ACCESS_CACHE.update(
+            report=stale,
+            expires_at=0.0,
+            refreshing=False,
+        )
+
+    assert runtime._agent_access_report() is stale
+    assert entered.wait(timeout=2)
+    assert runtime._agent_access_report() is stale
+    release.set()
+    with runtime._AGENT_ACCESS_CONDITION:
+        assert runtime._AGENT_ACCESS_CONDITION.wait_for(
+            lambda: not bool(runtime._AGENT_ACCESS_CACHE["refreshing"]),
+            timeout=2,
+        )
+    assert runtime._agent_access_report() is fresh

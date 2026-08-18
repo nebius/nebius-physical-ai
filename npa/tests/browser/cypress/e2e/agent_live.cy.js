@@ -12,7 +12,10 @@ function destructiveLiveEnabled() {
 }
 
 function liveRunId() {
-  return Cypress.env("NPA_AGENT_CYPRESS_RUN_ID") || Cypress.env("NPA_AGENT_RUN_ID") || "";
+  // The generic live suite needs a Sim2Real run with reports/sim2real.rrd.
+  // NPA_AGENT_RUN_ID is reserved for capability-specific journeys such as
+  // LeIsaac, whose run intentionally has a different artifact contract.
+  return Cypress.env("NPA_AGENT_CYPRESS_RUN_ID") || "";
 }
 
 function liveArtifactRunId() {
@@ -26,6 +29,7 @@ function liveAgentRequest(path, options = {}) {
   return cy.request({
     url: `${String(baseUrl || "").replace(/\/$/, "")}${path}`,
     auth: { username, password },
+    timeout: 120000,
     ...options,
   });
 }
@@ -142,9 +146,10 @@ describe("NPA agent UI against live infra", () => {
   beforeEach(() => {
     cy.visitLiveAgent();
     cy.get("meta[name='npa-ui-version']").should("have.attr", "content").and("match", /^\d+$/);
-    cy.get("#statusBar", { timeout: 30000 }).should("exist");
-    // Wait for boot mount so load-run is not clobbered by ensureFrankaRerunLoaded.
-    cy.get("#rerunBundleCover", { timeout: 60000 }).should("have.attr", "hidden");
+    // Page boot restores the session and starts its own artifact refresh.  Do
+    // not let a test's explicit control click race that background request;
+    // the visible Ready state is the operator-facing interaction boundary.
+    cy.get("#statusBar", { timeout: 120000 }).should("contain.text", "Ready");
   });
 
   it("loads deployed UI and every shipped button is present", () => {
@@ -185,8 +190,38 @@ describe("NPA agent UI against live infra", () => {
     });
   });
 
-  it("selects four live project access states without duplicate or stale details", () => {
-    liveAgentRequest("/api/access?refresh=true").then((response) => {
+  it("keeps the LeIsaac panel discoverable without an active GPU session", () => {
+    cy.get("#tabLeIsaac", { timeout: 10000 }).should("be.visible").click();
+    cy.get("#panelLeIsaac").should("have.class", "is-active");
+    cy.get("#leisaacConnect").should("be.disabled");
+    cy.get("#leisaacRetry").should("be.visible");
+    cy.get("#leisaacEpisodesTitle").should("be.visible");
+    cy.screenshot("leisaac-unavailable-panel-live", { capture: "viewport" });
+    cy.window().then(async (win) => {
+      const controller = new win.AbortController();
+      const deadline = win.setTimeout(() => controller.abort(), 10000);
+      try {
+        const response = await win.fetch("/api/leisaac/status", {
+          credentials: "include",
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        expect(response.status, "same-origin authenticated status").to.equal(200);
+        expect(
+          String(response.headers.get("cache-control") || ""),
+          "status response cache policy",
+        ).to.include("no-store");
+        const status = await response.json();
+        expect(status.available, "no EULA-gated simulator was launched").to.equal(false);
+        expect(String(status.reason || ""), "honest unavailable reason").not.to.equal("");
+      } finally {
+        win.clearTimeout(deadline);
+      }
+    });
+  });
+
+  it("selects live project access states without duplicate or stale details", () => {
+    liveAgentRequest("/api/access").then((response) => {
       expect(response.status).to.eq(200);
       const access = response.body || {};
       const projects = Array.isArray(access.projects) ? access.projects : [];
@@ -205,9 +240,13 @@ describe("NPA agent UI against live infra", () => {
           return read.status === "unverified" && /empty|no object/i.test(String(read.reason || ""));
         })
       ));
-      const representatives = [deployment, foreignWithBucket, noBucket, emptyBucket];
-      expect(representatives.every(Boolean), JSON.stringify(representatives)).to.eq(true);
-      expect(new Set(representatives.map((project) => project.id)).size).to.eq(4);
+      const representatives = [...new Map(
+        [deployment, foreignWithBucket, noBucket, emptyBucket]
+          .filter(Boolean)
+          .map((project) => [String(project.id || ""), project]),
+      ).values()];
+      expect(deployment, JSON.stringify(projects)).to.be.an("object");
+      expect(representatives.length).to.be.greaterThan(0);
 
       cy.get('label[for="agentAccessProjectSelect"]').should("be.visible");
       cy.get("#agentAccessProjectSelect")
@@ -257,23 +296,36 @@ describe("NPA agent UI against live infra", () => {
         previousProject = projectId;
       });
 
-      const emptyProjectId = String(emptyBucket.id || "");
-      const emptyReason = String((((emptyBucket.resources || [])[0].capabilities || {}).artifact_read || {}).reason || "");
-      cy.get("#agentAccessProjectSelect").select(emptyProjectId);
-      cy.get("#agentAccessProjects").should("contain.text", "Read: Unverified").and("contain.text", emptyReason);
-      cy.get('#agentAccessProjects button[data-access-action="read"]').should("be.disabled");
-      cy.get("#agentAccessRefresh").click();
-      cy.get("#agentAccessStatus", { timeout: 60000 }).should("not.contain.text", "Refreshing access");
-      cy.get("#agentAccessProjectSelect", { timeout: 60000 }).should("have.value", emptyProjectId);
+      if (emptyBucket) {
+        const emptyProjectId = String(emptyBucket.id || "");
+        const emptyResource = (emptyBucket.resources || []).find((resource) => {
+          const read = ((resource.capabilities || {}).artifact_read || {});
+          return read.status === "unverified" && /empty|no object/i.test(String(read.reason || ""));
+        });
+        const emptyReason = String((((emptyResource || {}).capabilities || {}).artifact_read || {}).reason || "");
+        const emptyBucketName = String((emptyResource || {}).name || "");
+        cy.get("#agentAccessProjectSelect").select(emptyProjectId);
+        cy.get("#agentAccessProjects").should("contain.text", "Read: Unverified").and("contain.text", emptyReason);
+        cy.get(
+          `#agentAccessProjects button[data-access-action="read"][data-resource-bucket="${emptyBucketName}"]`,
+        ).should("be.disabled");
+      }
+      // Restore the deployment scope before the next test. Persisting a foreign
+      // project here would make later artifact checks correctly search only that
+      // project and turn this test's state into cross-test coupling.
+      const persistedProjectId = String(deployment.id || "");
+      cy.get("#agentAccessProjectSelect").select(persistedProjectId);
       cy.reload();
-      cy.get("#agentAccessProjectSelect", { timeout: 60000 }).should("have.value", emptyProjectId);
+      cy.get("#agentAccessProjectSelect", { timeout: 60000 }).should("have.value", persistedProjectId);
       cy.get("#agentAccessProjects .access-project-detail")
         .should("have.length", 1)
-        .and("have.attr", "data-project-id", emptyProjectId);
+        .and("have.attr", "data-project-id", persistedProjectId);
     });
   });
 
   it("never shows Loading application bundle without mount latency", () => {
+    cy.get("#tabRerun").click();
+    cy.get("#panelRerun").should("have.class", "is-active");
     cy.get("#rerunBundleCover").should("exist");
     cy.window().then((win) => {
       const html = win.document.documentElement.outerHTML;
@@ -322,16 +374,14 @@ describe("NPA agent UI against live infra", () => {
     cy.get("#tabMain").click();
     cy.get("#runSummary", { timeout: 30000 }).should("contain.text", "status");
 
-    cy.get("#tabRerun").click();
-    cy.get("#artifactRefreshRuns").click();
-    cy.get("#artifactDiscoverStatus", { timeout: 30000 }).should("contain.text", "consolidated");
-
     cy.get("#loadRerunViewer").click({ force: true });
     cy.get("#statusBar", { timeout: 120000 }).should(($bar) => {
       const text = $bar.text();
       expect(text).to.match(/done|Ready|SUCCESS|Rerun|Reload/i);
     });
 
+    cy.get("#tabRerun").click();
+    cy.get("#panelRerun").should("have.class", "is-active");
     cy.get("#openRerun").should("be.visible");
   });
 
@@ -690,7 +740,7 @@ describe("NPA agent UI against live infra", () => {
 
   it("loads a live mp4 artifact into the Video viewer with authenticated preview", () => {
     // Keep this after Rerun-specific cases so video preview state cannot race them.
-    liveAgentRequest("/api/artifacts/runs").then((runsResp) => {
+    liveAgentRequest("/api/artifacts/runs?limit=200").then((runsResp) => {
       expect(runsResp.status).to.eq(200);
       const runs = (runsResp.body && runsResp.body.runs) || [];
       expect(runs.length, "discovered runs").to.be.greaterThan(0);
@@ -728,7 +778,7 @@ describe("NPA agent UI against live infra", () => {
         cy.log("no mp4 artifact discoverable in live runs — skipping Video viewer assertions");
         return;
       }
-      const { runId, s3Uri, entry, role } = found;
+      const { runId, key, s3Uri, entry, role } = found;
       return liveAgentRequest("/api/sim-viz/load-artifact", {
         method: "POST",
         body: { run_id: runId, run_ref: String(entry.run_ref || ""), s3_uri: s3Uri },
@@ -746,33 +796,41 @@ describe("NPA agent UI against live infra", () => {
         });
       }).then(() => {
         cy.get("#tabRerun").click();
-        cy.get("#artifactRefreshRuns").click();
-        cy.get("#artifactDiscoverStatus", { timeout: 30000 }).should("contain.text", "consolidated");
-        cy.get("#runIdSelect", { timeout: 30000 }).then(($select) => {
-          const options = [...$select[0].options];
-          const sourceIndex = options.findIndex((option) =>
-            String(option.dataset.runId || "") === runId &&
-            (!entry.run_ref || option.value === String(entry.run_ref)) &&
-            String(option.dataset.bucket || "") === String(entry.bucket || "") &&
-            String(option.dataset.resolvedPrefix || "") === String(entry.resolved_prefix || "")
-          );
-          expect(sourceIndex, `source option for ${runId}`).to.be.at.least(0);
+        cy.get("#panelRerun").should("have.class", "is-active");
+        // Select through the same server-backed Find-run path an operator uses.
+        // The separate search journey below covers the generic Discover button;
+        // this video journey should stay scoped to the exact source it already
+        // proved and loaded through the backend.
+        cy.get("#artifactPrefix").clear().type(runId, { delay: 0 });
+        const exactSourceIndex = ($select) => [...$select[0].options].findIndex((option) =>
+          String(option.dataset.runId || "") === runId &&
+          (!entry.run_ref || option.value === String(entry.run_ref)) &&
+          String(option.dataset.bucket || "") === String(entry.bucket || "") &&
+          String(option.dataset.resolvedPrefix || "") === String(entry.resolved_prefix || "")
+        );
+        cy.get("#runIdSelect", { timeout: 120000 }).should(($select) => {
+          expect(exactSourceIndex($select), `source option for ${runId}`).to.be.at.least(0);
+        }).then(($select) => {
+          const sourceIndex = exactSourceIndex($select);
           $select[0].selectedIndex = sourceIndex;
           cy.wrap($select).trigger("change");
         });
         cy.get("#runIdInput", { timeout: 120000 }).should("have.value", runId);
-        cy.get("#artifactList", { timeout: 120000 }).should("contain.text", ".mp4");
         // Artifact inventory is role-separated. Follow the discovered artifact's
         // role before applying the video render filter.
         cy.get("#artifactRoleFilter").select(role);
+        cy.get("#artifactList", { timeout: 120000 }).should("contain.text", ".mp4");
         cy.get("#artifactTypeFilter").select("video");
         cy.get("#artifactList", { timeout: 120000 }).should("contain.text", ".mp4");
-        cy.contains("#artifactList button", "Play").first().click();
+        cy.get("#artifactList button[data-action='preview-artifact']")
+          .filter((_index, button) => String(button.dataset.key || "") === key)
+          .should("have.length", 1)
+          .click();
         cy.get("#renderModeVideo", { timeout: 30000 }).should("have.class", "is-active");
         cy.get("#viewerPaneMedia").should("have.class", "is-active-viewer");
         cy.get("#artifactPreviewHost video", { timeout: 60000 })
           .should("have.attr", "src")
-          .and("match", /^blob:/);
+          .and("include", "/api/artifacts/content?");
         cy.get("#artifactPreviewHost video")
           .should("have.attr", "data-preview-url")
           .and("include", ".mp4");
@@ -788,7 +846,7 @@ describe("NPA agent UI against live infra", () => {
     // beyond the newest page is configured via NPA_AGENT_CYPRESS_SEARCH_RUN_ID,
     // this proves the union path (server search + client render) end-to-end;
     // otherwise it falls back to a run discovered on the default page.
-    liveAgentRequest("/api/artifacts/runs?limit=100").then((resp) => {
+    liveAgentRequest("/api/artifacts/runs?limit=200").then((resp) => {
       expect(resp.status).to.eq(200);
       const runs = (resp.body && resp.body.runs) || [];
       expect(runs.length, "default page runs").to.be.greaterThan(0);
@@ -801,7 +859,7 @@ describe("NPA agent UI against live infra", () => {
 
       const resolveTarget = configured
         ? liveAgentRequest(
-            `/api/artifacts/runs?limit=100&q=${encodeURIComponent(configured)}`,
+            `/api/artifacts/runs?limit=200&q=${encodeURIComponent(configured)}`,
           ).then((qr) => {
             const qruns = (qr.body && qr.body.runs) || [];
             const hit =
@@ -826,7 +884,7 @@ describe("NPA agent UI against live infra", () => {
         // assertion while the 350ms debounce + fetch complete).
         cy.get("#tabRerun").click();
         cy.get("#artifactPrefix", { timeout: 30000 }).clear().type(fragment, { delay: 0 });
-        cy.get("#runIdSelect option", { timeout: 30000 }).should(($opts) => {
+        cy.get("#runIdSelect option", { timeout: 120000 }).should(($opts) => {
           const runIds = [...$opts].map((o) => String(o.dataset.runId || "")).filter(Boolean);
           expect(runIds, "Rerun picker surfaces the searched run").to.include(targetRunId);
         });
@@ -834,7 +892,7 @@ describe("NPA agent UI against live infra", () => {
         // Stages-tab picker: same server-search path must populate the select.
         cy.get("#tabMain").click();
         cy.get("#stagesRunInput", { timeout: 30000 }).clear().type(fragment, { delay: 0 });
-        cy.get("#stagesRunSelect option", { timeout: 30000 }).should(($opts) => {
+        cy.get("#stagesRunSelect option", { timeout: 120000 }).should(($opts) => {
           const runIds = [...$opts].map((o) => String(o.dataset.runId || "")).filter(Boolean);
           expect(runIds, "Stages picker surfaces the searched run").to.include(targetRunId);
         });

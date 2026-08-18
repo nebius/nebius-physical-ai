@@ -853,6 +853,78 @@ def test_agent_destroy_no_vm_id_continues_exact_owned_iam_cleanup(
     assert json.loads(result.stdout)["infrastructure_absent"] is True
 
 
+def test_agent_destroy_shared_iam_degradation_terminalizes_teardown_lease(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.cli.main import app
+    from npa.clients import config
+    from npa.cli import agent as agent_module
+    from npa.cli.agent_iam import AgentIAMCleanupError
+    from npa.provisioning_journal import list_operations
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "demo",
+                "projects": {
+                    "demo": {
+                        "project_id": "project-a",
+                        "tenant_id": "tenant-a",
+                        "region": "eu-test1",
+                        "agents": {"agent": {"project_id": "project-a"}},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "CONFIG_PATH", config_path)
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    ProvisioningOperation.prepare(
+        command="npa agent deploy",
+        project_alias="demo",
+        project_id="project-a",
+        tenant_id="tenant-a",
+        region="eu-test1",
+        resource_type="agent",
+        requested_name="agent",
+        resume_command="npa agent deploy --project demo",
+    )
+    monkeypatch.setattr(
+        agent_module, "_destroy_agent_terraform", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        agent_module, "_cleanup_agent_local_files", lambda *_a, **_k: None
+    )
+
+    def retain_shared_iam(*_args, **_kwargs) -> None:
+        raise AgentIAMCleanupError(
+            "agent IAM remains because exact provider inventory reports dependent VMs"
+        )
+
+    monkeypatch.setattr(
+        "npa.cli.agent_iam.report_destroyed_agent_iam", retain_shared_iam
+    )
+
+    result = CliRunner().invoke(
+        app, ["agent", "destroy", "--project", "demo", "--yes", "--json"]
+    )
+
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
+    assert payload["outcome"] == "partial_iam_cleanup"
+    assert payload["infrastructure_absent"] is True
+    assert payload["iam_cleanup_complete"] is False
+    [teardown] = list_operations(
+        project_id="project-a",
+        resource_type="agent-teardown",
+        requested_name="agent",
+    )
+    assert teardown.read()["phase"] == "destroyed"
+
+
 def test_destroyed_agent_operation_needs_no_deleted_backend_credentials(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1359,7 +1431,9 @@ def test_destroy_plan_never_emits_identityless_storage_iam_delete(
     monkeypatch.setattr(
         "npa.controller_ownership.controller_owner", lambda *_args: None
     )
-    monkeypatch.setattr("npa.provisioning_journal.list_operations", lambda **_kwargs: [])
+    monkeypatch.setattr(
+        "npa.provisioning_journal.list_operations", lambda **_kwargs: []
+    )
     monkeypatch.setattr(project_destroy, "_project_bucket_name", lambda *_a: "")
     monkeypatch.setattr(
         project_destroy, "_project_storage_iam_generation_ids", lambda *_a: ()

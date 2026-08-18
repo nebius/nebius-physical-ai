@@ -24,13 +24,17 @@ class VmAuthError(RuntimeError):
 
 _ANSI_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 _URL_RE = re.compile(r"https?://[^\s<>\"']+")
-_JWT_RE = re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+")
+_JWT_RE = re.compile(
+    r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+"
+)
 _TOKEN_LINE_RE = re.compile(
     r"(?im)^(\s*(?:access[_ -]?token|iam[_ -]?token|authorization)\s*[:=]\s*).+$"
 )
 _OPAQUE_LINE_RE = re.compile(r"(?m)^(\s*)[A-Za-z0-9._~-]{40,}(\s*)$")
 _SAFE_BROWSER_SUFFIXES = (".nebius.com", ".nebius.cloud")
-_CALLBACK_KEYS = frozenset({"redirect_uri", "redirect_url", "callback", "callback_url", "return_url"})
+_CALLBACK_KEYS = frozenset(
+    {"redirect_uri", "redirect_url", "callback", "callback_url", "return_url"}
+)
 _SECRET_QUERY_KEYS = frozenset({"access_token", "id_token", "token", "refresh_token"})
 _PTY_COLUMNS = 4096
 _MAX_TRANSCRIPT_BYTES = 131072
@@ -143,9 +147,13 @@ def parse_auth_transcript(
     for url in urls:
         ports.update(_nested_callback_ports(url))
     if len(browser_urls) != 1:
-        raise VmAuthError("Nebius CLI output did not contain exactly one safe browser URL")
+        raise VmAuthError(
+            "Nebius CLI output did not contain exactly one safe browser URL"
+        )
     if len(ports) != 1:
-        raise VmAuthError("Nebius CLI output did not contain one unambiguous loopback callback")
+        raise VmAuthError(
+            "Nebius CLI output did not contain one unambiguous loopback callback"
+        )
     port = ports.pop()
     return AuthInstructions(
         browser_url=browser_urls[0],
@@ -180,7 +188,9 @@ def _read_chunk(stream: object) -> bytes:
         return b""
 
 
-def _signal_process_group(process: subprocess.Popen[bytes], sig: signal.Signals) -> None:
+def _signal_process_group(
+    process: subprocess.Popen[bytes], sig: signal.Signals
+) -> None:
     """Best-effort signal for both ``script`` and its interactive CLI child."""
 
     if process.poll() is not None:
@@ -229,7 +239,7 @@ def verify_profile(
     """Verify identity and IAM minting while discarding both command outputs."""
 
     clean_env = strip_ambient_token_env(env)
-    prefix = [nebius_cli, *( ["--profile", profile] if profile else [])]
+    prefix = [nebius_cli, *(["--profile", profile] if profile else [])]
     common = {
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,
@@ -269,7 +279,9 @@ def run_vm_profile_auth(
         raise VmAuthError("Nebius CLI is not installed")
     initial = verify_profile(profile, nebius_cli=nebius_cli)
     if initial.identity_verified and initial.iam_token_minted:
-        output.write("Nebius CLI profile is already authenticated; identity and IAM minting verified.\n")
+        output.write(
+            "Nebius CLI profile is already authenticated; identity and IAM minting verified.\n"
+        )
         return initial
 
     command = [
@@ -295,7 +307,9 @@ def run_vm_profile_auth(
     ]
     script_bin = shutil.which("script")
     if not script_bin:
-        raise VmAuthError("the `script` PTY helper is required for interactive CLI authentication")
+        raise VmAuthError(
+            "the `script` PTY helper is required for interactive CLI authentication"
+        )
     # Nebius profile creation is an interactive terminal UI. ``script`` provides
     # a PTY while writing its transcript only to /dev/null. Set a deliberately
     # wide PTY before exec so long OAuth URLs (including late redirect_uri query
@@ -333,8 +347,12 @@ def run_vm_profile_auth(
             now = _clock()
             if process.poll() is None and now >= deadline:
                 _signal_process_group(process, signal.SIGINT)
-                raise VmAuthError("Nebius CLI authentication timed out and was cancelled")
-            readable = _wait_for_output(process.stdout, min(0.2, max(0.0, deadline - now)))
+                raise VmAuthError(
+                    "Nebius CLI authentication timed out and was cancelled"
+                )
+            readable = _wait_for_output(
+                process.stdout, min(0.2, max(0.0, deadline - now))
+            )
             if not readable:
                 if process.poll() is not None:
                     break
@@ -359,7 +377,9 @@ def run_vm_profile_auth(
                     pass
                 else:
                     output.write(f"Open locally: {instructions.browser_url}\n")
-                    output.write(f"In another local terminal: {instructions.ssh_command}\n")
+                    output.write(
+                        f"In another local terminal: {instructions.ssh_command}\n"
+                    )
                     output.flush()
     except KeyboardInterrupt as exc:
         _signal_process_group(process, signal.SIGINT)
@@ -372,9 +392,15 @@ def run_vm_profile_auth(
     if instructions is None:
         # A successful interactive federation flow must have advertised a safe
         # callback. Do not declare success from malformed or unexpected output.
-        raise VmAuthError("profile completed without a verifiable safe loopback callback")
+        raise VmAuthError(
+            "profile completed without a verifiable safe loopback callback"
+        )
     result = verify_profile(profile, nebius_cli=nebius_cli)
     if not (result.identity_verified and result.iam_token_minted):
-        raise VmAuthError("profile callback completed, but identity or IAM minting verification failed")
-    output.write("CLI profile callback completed; identity and subsequent IAM token minting verified.\n")
+        raise VmAuthError(
+            "profile callback completed, but identity or IAM minting verification failed"
+        )
+    output.write(
+        "CLI profile callback completed; identity and subsequent IAM token minting verified.\n"
+    )
     return result

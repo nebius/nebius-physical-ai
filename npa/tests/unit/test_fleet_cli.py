@@ -1076,6 +1076,11 @@ def _mock_deploy_boundary(monkeypatch, *, apply_fails: bool = False):
         "_terraform_outputs",
         lambda *a, **k: {"kube_cluster": {"value": {"id": "mk8s-1"}}},
     )
+    monkeypatch.setattr(
+        L,
+        "_terraform_managed_ids",
+        lambda *_args, **_kwargs: ["node-group-1"],
+    )
     monkeypatch.setattr(L, "_write_kubeconfig", lambda *a, **k: None)
     monkeypatch.setattr(L, "_persist_npa_cluster_identity", lambda **k: None)
     return L
@@ -1122,6 +1127,61 @@ def test_deploy_one_cluster_success_promotes_sidecar(tmp_path, monkeypatch) -> N
     assert recorded[0]["context"] == "fleet-f-a-c"
     assert recorded[0]["cluster_id"] == "mk8s-1"
     assert recorded[0]["project_id"] == "p1"
+
+
+def test_fleet_gpu_validation_honors_env_only_kubectl_override(
+    tmp_path, monkeypatch
+) -> None:
+    L = _mock_deploy_boundary(monkeypatch)
+    kubectl = tmp_path / "env-kubectl"
+    kubectl.write_text("#!/bin/sh\nexit 0\n")
+    kubectl.chmod(0o700)
+    monkeypatch.setenv("NPA_KUBECTL_BIN", str(kubectl))
+    seen: dict[str, str] = {}
+
+    def gpu_health(_runner, **kwargs):
+        seen["kubectl"] = kwargs["kubectl_bin"]
+        return {"status": "ready"}
+
+    monkeypatch.setattr(L, "validate_gpu_health", gpu_health)
+    cluster = ClusterSpec(
+        name="c",
+        gpu_nodes=NodePoolSpec(
+            count=1, platform="gpu-rtx6000", preset="1gpu-24vcpu-218gb"
+        ),
+    )
+    result = _run_one_cluster(L, tmp_path, cluster=cluster)
+    assert result["status"] == "deployed"
+    assert seen["kubectl"] == str(kubectl)
+
+
+def test_fleet_mig_validation_honors_env_only_kubectl_override(
+    tmp_path, monkeypatch
+) -> None:
+    from types import SimpleNamespace
+
+    L = _mock_deploy_boundary(monkeypatch)
+    kubectl = tmp_path / "env-kubectl"
+    kubectl.write_text("#!/bin/sh\nexit 0\n")
+    kubectl.chmod(0o700)
+    monkeypatch.setenv("NPA_KUBECTL_BIN", str(kubectl))
+    seen: dict[str, str] = {}
+
+    def mig_ready(**kwargs):
+        seen["kubectl"] = kwargs["kubectl_bin"]
+        return SimpleNamespace(nodes=[object()], as_dict=lambda: {"ready": True})
+
+    monkeypatch.setattr(L, "wait_for_mig_ready", mig_ready)
+    cluster = ClusterSpec(
+        name="c",
+        gpu_nodes=NodePoolSpec(
+            count=1, platform="gpu-rtx6000", preset="1gpu-24vcpu-218gb"
+        ),
+        mig=MigSpec(enabled=True),
+    )
+    result = _run_one_cluster(L, tmp_path, cluster=cluster)
+    assert result["status"] == "deployed"
+    assert seen["kubectl"] == str(kubectl)
 
 
 def test_fleet_cluster_identity_roundtrip_and_collision_guard(tmp_path) -> None:
@@ -1595,6 +1655,7 @@ def _destroy_one_with_mocked_terraform(tmp_path, monkeypatch, *, destroy_fails: 
             "subnet_id": "sub-9",
             "created_network_id": "net-9",
             "cluster_name": "c",
+            "cluster_id": "cluster-test",
             "status": "deployed",
         },
     )
@@ -1856,7 +1917,31 @@ def test_run_to_log_writes_and_raises(tmp_path) -> None:
         ["true"], cwd=tmp_path, env={"PATH": "/usr/bin:/bin"}, timeout=30, log_path=log
     )
     assert log.exists() and "$ true" in log.read_text()
-    with pytest.raises(RuntimeError, match="command failed"):
+    emits_secrets = tmp_path / "emits-secrets"
+    emits_secrets.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$TF_VAR_iam_token\"\n"
+        "printf 'secret_access_key: hidden\\n"
+        "-----BEGIN PRIVATE KEY-----\\nprivate-material\\n"
+        "-----END PRIVATE KEY-----\\n'\n"
+    )
+    emits_secrets.chmod(0o700)
+    L._run_to_log(
+        [str(emits_secrets)],
+        cwd=tmp_path,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "TF_VAR_iam_token": "unlabelled-token-value",
+        },
+        timeout=30,
+        log_path=log,
+    )
+    contents = log.read_text()
+    assert "unlabelled-token-value" not in contents
+    assert "hidden" not in contents
+    assert "private-material" not in contents
+    assert contents.count("<redacted>") >= 2
+    assert "<redacted-private-key>" in contents
+    with pytest.raises(RuntimeError, match="Command failed"):
         L._run_to_log(
             ["false"],
             cwd=tmp_path,
@@ -2069,6 +2154,12 @@ def _fake_terraform_executable(tmp_path: Path) -> Path:
               output)
                 printf '{{"kube_cluster":{{"value":{{"id":"mk8s-test"}}}}}}\\n'
                 ;;
+              state)
+                if [ "${{2:-}}" != "pull" ]; then
+                  exit 19
+                fi
+                printf '{{"resources":[{{"mode":"managed","type":"nebius_mk8s_v1_node_group","instances":[{{"attributes":{{"id":"node-group-test"}}}}]}}]}}\\n'
+                ;;
               init|apply|destroy)
                 printf '{_FAKE_TERRAFORM_MARKER} stdout %s\\n' "$action"
                 printf '{_FAKE_TERRAFORM_MARKER} stderr %s\\n' "$action" >&2
@@ -2166,6 +2257,7 @@ def _prepare_destroy_state(L, work_root: Path, cluster_names: tuple[str, ...]) -
         L._write_env_sidecar(
             install_dir,
             {
+                "backend": "mk8s",
                 "tenant_id": "tenant-test",
                 "project_id": "project-test",
                 "region": "us-central1",
@@ -3806,7 +3898,24 @@ def test_destroy_fallback_failure_is_reported_and_state_retained(
         tmp_path, monkeypatch, destroy_fails=True
     )
     monkeypatch.setattr(L, "_find_cluster_id_by_name", lambda *a, **k: "cluster-test")
-    monkeypatch.setattr(L, "_run_capture", lambda *a, **k: _Cap("permission denied", 7))
+
+    def provider_call(args, **_kwargs):
+        if "get" in args:
+            return _Cap(
+                json.dumps(
+                    {
+                        "metadata": {
+                            "id": "cluster-test",
+                            "name": "c",
+                            "parent_id": "p1",
+                        }
+                    }
+                ),
+                0,
+            )
+        return _Cap("permission denied", 7)
+
+    monkeypatch.setattr(L, "_run_capture", provider_call)
     result = L._destroy_one_cluster(
         spec=FleetSpec(name="f"),
         project=ProjectSpec(name="a"),
@@ -3898,8 +4007,8 @@ def test_quota_filesystem_byte_unit_usage_and_drift() -> None:
         parse_allowances(json.dumps({"items": [drift]}), "us-central1")
 
 
-def test_nebius_discovery_fails_closed_and_state_write_logs(
-    tmp_path, monkeypatch, caplog
+def test_nebius_discovery_fails_closed_and_state_write_fails(
+    tmp_path, monkeypatch
 ) -> None:
     from npa.fleet import lifecycle as L
 
@@ -3914,8 +4023,8 @@ def test_nebius_discovery_fails_closed_and_state_write_logs(
         "_write_json_file",
         lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")),
     )
-    L._write_fleet_state(tmp_path, {"name": "f"})
-    assert "could not persist fleet summary" in caplog.text
+    with pytest.raises(OSError, match="disk full"):
+        L._write_fleet_state(tmp_path, {"name": "f"})
 
 
 def test_nebius_config_parse_failure_logs_without_content(

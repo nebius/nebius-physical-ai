@@ -689,9 +689,7 @@ def test_verify_parity_is_read_only(monkeypatch) -> None:
 
     monkeypatch.setattr(publish_public, "_crane_copy", explode)
     assert (
-        publish_public.main(
-            ["--target", "target.example/workbench", "--verify-parity"]
-        )
+        publish_public.main(["--target", "target.example/workbench", "--verify-parity"])
         == 0
     )
 
@@ -1774,7 +1772,7 @@ def test_a_denial_that_also_says_name_unknown_is_never_treated_as_absence() -> N
 
 
 def _run2_readability(plan):
-    """The exact pass/fail split run #2 saw: 18 readable, 4 absent repos, 1 absent tag."""
+    """The catalog fixture has 19 readable images, 4 absent repos, and 1 absent tag."""
     never_built = {
         "npa-cosmos-curate",
         "npa-cosmos-evaluator",

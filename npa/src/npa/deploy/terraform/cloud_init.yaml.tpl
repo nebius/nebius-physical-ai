@@ -1,11 +1,11 @@
 #cloud-config
 
 users:
-  - name: ${ssh_user}
+  - name: ${jsonencode(ssh_user)}
     shell: /bin/bash
     sudo: ALL=(ALL) NOPASSWD:ALL
     ssh_authorized_keys:
-      - ${ssh_public_key}
+      - ${jsonencode(ssh_public_key)}
 
 %{ if workbench_type != "agent" ~}
 write_files:

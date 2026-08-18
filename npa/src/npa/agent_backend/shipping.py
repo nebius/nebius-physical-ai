@@ -24,6 +24,13 @@ SHIPPED_BACKEND_MODULES = (
     "gpu_allocation_fallback",
     "gpu_allocation_routes",
     "artifact_routes",
+    "leisaac_registry",
+    "leisaac",
+    "leisaac_episodes",
+    "leisaac_bundles",
+    "leisaac_transport",
+    "leisaac_datachannel",
+    "leisaac_routes",
 )
 
 _HEREDOC_MARKER = "PY"

@@ -506,6 +506,18 @@ skills:
       - type: cli_help
         args: ["workbench", "lerobot", "train", "--help"]
         contains: "policy"
+  - name: leisaac
+    category: tools
+    when_to_use: "Build, launch, operate, review, or live-test LeIsaac browser teleoperation, secure agent-relay transport, immutable demonstrations, custom bundles, or PAIDF materialization."
+    path: skills/tools/leisaac/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "leisaac", "launch", "--help"]
+        contains: "agent-relay"
+      - type: file_exists
+        path: docs/workbench/leisaac-teleoperation.md
+      - type: file_exists
+        path: npa/docker/workbench/leisaac/REDISTRIBUTION.md
   - name: mjlab
     category: tools
     when_to_use: "MJLab locomotion evaluation, SONIC checkpoint scoring, SkyPilot MJLab YAMLs, or CLI behavior."

@@ -89,7 +89,9 @@ def test_add_node_group_saves_state(monkeypatch) -> None:
             return _node_group(state="RUNNING")
 
     monkeypatch.setattr(node_group_mod, "MK8sClient", FakeClient)
-    monkeypatch.setattr(node_group_mod, "load_cluster_state", lambda name: _cluster_state())
+    monkeypatch.setattr(
+        node_group_mod, "load_cluster_state", lambda name: _cluster_state()
+    )
     monkeypatch.setattr(node_group_mod, "save_node_group_state", saved.append)
 
     result = runner.invoke(
@@ -109,15 +111,54 @@ def test_add_node_group_saves_state(monkeypatch) -> None:
     assert result.exit_code == 0
     assert seen_configs[0].public_ip is False
     assert seen_configs[0].capacity_block_group == "capacityblockgroup-test"
+    assert seen_configs[0].driver_preset == "cuda13.0"
     assert saved[-1].last_seen_state == "RUNNING"
     assert "Node group ID: mk8snodegroup-gpu" in result.output
 
 
+def test_add_node_group_operator_mode_omits_managed_driver_preset(monkeypatch) -> None:
+    seen_configs: list[NodeGroupConfig] = []
+
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def get_cluster(self, name, *, project_id=""):
+            return _cluster()
+
+        def create_gpu_node_group(self, config, cluster_id):
+            seen_configs.append(config)
+            return _node_group(state="RUNNING")
+
+    monkeypatch.setattr(node_group_mod, "MK8sClient", FakeClient)
+    monkeypatch.setattr(
+        node_group_mod, "load_cluster_state", lambda name: _cluster_state()
+    )
+    monkeypatch.setattr(node_group_mod, "save_node_group_state", lambda state: None)
+
+    result = runner.invoke(
+        app,
+        [
+            "node-group",
+            "add",
+            "--cluster-name",
+            "cluster-a",
+            "--gpu-type",
+            "h100",
+            "--gpu-driver-mode",
+            "operator",
+            "--no-wait",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen_configs[0].driver_preset == ""
+    assert "GPU driver mode: operator" in result.output
+
+
 def test_add_node_group_normalizes_live_provider_k8s_version(monkeypatch) -> None:
     seen_configs: list[NodeGroupConfig] = []
-    live_state = replace(
-        _cluster_state(), k8s_version="v1.33.7-nebius-node.64"
-    )
+    live_state = replace(_cluster_state(), k8s_version="v1.33.7-nebius-node.64")
 
     class FakeClient:
         def __init__(self, **kwargs) -> None:
@@ -146,7 +187,42 @@ def test_add_node_group_normalizes_live_provider_k8s_version(monkeypatch) -> Non
     assert seen_configs[0].k8s_version == "1.33"
 
 
-def test_add_node_group_uses_default_when_discovery_has_no_k8s_version(monkeypatch) -> None:
+def test_add_node_group_prefers_live_control_plane_version(monkeypatch) -> None:
+    seen_configs: list[NodeGroupConfig] = []
+    live_cluster = replace(_cluster(), k8s_version="v1.35.2-nebius-control.1")
+
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def get_cluster(self, name, *, project_id=""):
+            return live_cluster
+
+        def create_gpu_node_group(self, config, cluster_id):
+            seen_configs.append(config)
+            return _node_group(state="PROVISIONING")
+
+        def wait_for_node_group_ready(self, cluster_id, name, **kwargs):
+            return _node_group(state="RUNNING")
+
+    monkeypatch.setattr(node_group_mod, "MK8sClient", FakeClient)
+    monkeypatch.setattr(
+        node_group_mod, "load_cluster_state", lambda name: _cluster_state()
+    )
+    monkeypatch.setattr(node_group_mod, "save_node_group_state", lambda state: None)
+
+    result = runner.invoke(
+        app,
+        ["node-group", "add", "--cluster-name", "cluster-a", "--gpu-type", "h100"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen_configs[0].k8s_version == "1.35"
+
+
+def test_add_node_group_uses_default_when_discovery_has_no_k8s_version(
+    monkeypatch,
+) -> None:
     seen_configs: list[NodeGroupConfig] = []
     live_state = replace(_cluster_state(), k8s_version="")
 
@@ -180,9 +256,7 @@ def test_add_node_group_uses_default_when_discovery_has_no_k8s_version(monkeypat
 def test_add_cpu_node_group_saves_state(monkeypatch) -> None:
     saved: list[NodeGroupState] = []
     seen: list[dict] = []
-    live_state = replace(
-        _cluster_state(), k8s_version="v1.33.7-nebius-node.64"
-    )
+    live_state = replace(_cluster_state(), k8s_version="v1.33.7-nebius-node.64")
 
     def _cpu_node_group(state: str = "RUNNING") -> NodeGroupInfo:
         return NodeGroupInfo(
@@ -251,12 +325,21 @@ def test_add_cpu_node_group_rejects_bad_preset(monkeypatch) -> None:
             return _cluster()
 
     monkeypatch.setattr(node_group_mod, "MK8sClient", FakeClient)
-    monkeypatch.setattr(node_group_mod, "load_cluster_state", lambda name: _cluster_state())
+    monkeypatch.setattr(
+        node_group_mod, "load_cluster_state", lambda name: _cluster_state()
+    )
     monkeypatch.setattr(node_group_mod, "save_node_group_state", lambda state: None)
 
     result = runner.invoke(
         app,
-        ["node-group", "add-cpu", "--cluster-name", "cluster-a", "--preset", "999vcpu-9gb"],
+        [
+            "node-group",
+            "add-cpu",
+            "--cluster-name",
+            "cluster-a",
+            "--preset",
+            "999vcpu-9gb",
+        ],
     )
 
     assert result.exit_code == 1
@@ -277,13 +360,31 @@ def test_remove_node_group_handles_local_state_remote_missing(monkeypatch) -> No
             raise NodeGroupNotFoundError("missing")
 
     monkeypatch.setattr(node_group_mod, "MK8sClient", FakeClient)
-    monkeypatch.setattr(node_group_mod, "load_cluster_state", lambda name: _cluster_state())
-    monkeypatch.setattr(node_group_mod, "load_node_group_state", lambda cluster_name, name: _node_state())
-    monkeypatch.setattr(node_group_mod, "delete_node_group_state", lambda cluster_name, name: deleted.append((cluster_name, name)))
+    monkeypatch.setattr(
+        node_group_mod, "load_cluster_state", lambda name: _cluster_state()
+    )
+    monkeypatch.setattr(
+        node_group_mod,
+        "load_node_group_state",
+        lambda cluster_name, name: _node_state(),
+    )
+    monkeypatch.setattr(
+        node_group_mod,
+        "delete_node_group_state",
+        lambda cluster_name, name: deleted.append((cluster_name, name)),
+    )
 
     result = runner.invoke(
         app,
-        ["node-group", "remove", "--cluster-name", "cluster-a", "--name", "cluster-a-h100-gpu", "--force"],
+        [
+            "node-group",
+            "remove",
+            "--cluster-name",
+            "cluster-a",
+            "--name",
+            "cluster-a-h100-gpu",
+            "--force",
+        ],
     )
 
     assert result.exit_code == 0
@@ -312,13 +413,27 @@ def test_remove_node_group_handles_remote_only(monkeypatch) -> None:
             calls.append(("wait", name))
 
     monkeypatch.setattr(node_group_mod, "MK8sClient", FakeClient)
-    monkeypatch.setattr(node_group_mod, "load_cluster_state", lambda name: _cluster_state())
-    monkeypatch.setattr(node_group_mod, "load_node_group_state", lambda cluster_name, name: None)
-    monkeypatch.setattr(node_group_mod, "delete_node_group_state", lambda cluster_name, name: None)
+    monkeypatch.setattr(
+        node_group_mod, "load_cluster_state", lambda name: _cluster_state()
+    )
+    monkeypatch.setattr(
+        node_group_mod, "load_node_group_state", lambda cluster_name, name: None
+    )
+    monkeypatch.setattr(
+        node_group_mod, "delete_node_group_state", lambda cluster_name, name: None
+    )
 
     result = runner.invoke(
         app,
-        ["node-group", "remove", "--cluster-name", "cluster-a", "--name", "cluster-a-h100-gpu", "--force"],
+        [
+            "node-group",
+            "remove",
+            "--cluster-name",
+            "cluster-a",
+            "--name",
+            "cluster-a-h100-gpu",
+            "--force",
+        ],
     )
 
     assert result.exit_code == 0
@@ -341,12 +456,24 @@ def test_remove_node_group_missing_everywhere_is_clean_noop(monkeypatch) -> None
             raise NodeGroupNotFoundError("missing")
 
     monkeypatch.setattr(node_group_mod, "MK8sClient", FakeClient)
-    monkeypatch.setattr(node_group_mod, "load_cluster_state", lambda name: _cluster_state())
-    monkeypatch.setattr(node_group_mod, "load_node_group_state", lambda cluster_name, name: None)
+    monkeypatch.setattr(
+        node_group_mod, "load_cluster_state", lambda name: _cluster_state()
+    )
+    monkeypatch.setattr(
+        node_group_mod, "load_node_group_state", lambda cluster_name, name: None
+    )
 
     result = runner.invoke(
         app,
-        ["node-group", "remove", "--cluster-name", "cluster-a", "--name", "missing", "--force"],
+        [
+            "node-group",
+            "remove",
+            "--cluster-name",
+            "cluster-a",
+            "--name",
+            "missing",
+            "--force",
+        ],
     )
 
     assert result.exit_code == 0
@@ -367,8 +494,12 @@ def test_status_json_merges_remote_and_local(monkeypatch) -> None:
             return [_node_group()]
 
     monkeypatch.setattr(node_group_mod, "MK8sClient", FakeClient)
-    monkeypatch.setattr(node_group_mod, "load_cluster_state", lambda name: _cluster_state())
-    monkeypatch.setattr(node_group_mod, "list_node_group_states", lambda cluster_name: [_node_state()])
+    monkeypatch.setattr(
+        node_group_mod, "load_cluster_state", lambda name: _cluster_state()
+    )
+    monkeypatch.setattr(
+        node_group_mod, "list_node_group_states", lambda cluster_name: [_node_state()]
+    )
     monkeypatch.setattr(node_group_mod, "save_node_group_state", saved.append)
 
     result = runner.invoke(
@@ -419,8 +550,14 @@ def test_status_name_filters_node_groups(monkeypatch) -> None:
             ]
 
     monkeypatch.setattr(node_group_mod, "MK8sClient", FakeClient)
-    monkeypatch.setattr(node_group_mod, "load_cluster_state", lambda name: _cluster_state())
-    monkeypatch.setattr(node_group_mod, "list_node_group_states", lambda cluster_name: [_node_state(), h200_state])
+    monkeypatch.setattr(
+        node_group_mod, "load_cluster_state", lambda name: _cluster_state()
+    )
+    monkeypatch.setattr(
+        node_group_mod,
+        "list_node_group_states",
+        lambda cluster_name: [_node_state(), h200_state],
+    )
     monkeypatch.setattr(node_group_mod, "save_node_group_state", lambda state: None)
 
     result = runner.invoke(
@@ -452,8 +589,12 @@ def test_list_table_without_cluster_scans_local(monkeypatch) -> None:
             return [_node_group()]
 
     monkeypatch.setattr(node_group_mod, "MK8sClient", FakeClient)
-    monkeypatch.setattr(node_group_mod, "list_local_clusters", lambda: [_cluster_state()])
-    monkeypatch.setattr(node_group_mod, "list_node_group_states", lambda cluster_name: [_node_state()])
+    monkeypatch.setattr(
+        node_group_mod, "list_local_clusters", lambda: [_cluster_state()]
+    )
+    monkeypatch.setattr(
+        node_group_mod, "list_node_group_states", lambda cluster_name: [_node_state()]
+    )
     monkeypatch.setattr(node_group_mod, "resolve_project_id", lambda: "")
 
     result = runner.invoke(app, ["node-group", "list"])

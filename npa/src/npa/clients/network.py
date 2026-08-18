@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 from typing import Any
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from npa.clients import nebius
 from npa.clients.nebius import NebiusError
@@ -13,6 +13,10 @@ from npa.clients.nebius import NebiusError
 
 class NetworkIngressError(Exception):
     """Raised when ingress cannot be resolved or changed."""
+
+    def __init__(self, message: str, *, deleted: tuple[str, ...] = ()) -> None:
+        super().__init__(message)
+        self.deleted = tuple(deleted)
 
 
 class NetworkCleanupError(Exception):
@@ -240,6 +244,114 @@ def remove_ingress_for_instance(
     )
 
 
+def remove_npa_ingress_for_instance_ports(
+    instance_id: str,
+    *,
+    ports: tuple[int, ...],
+    on_status: Callable[[str], None] | None = None,
+) -> list[str]:
+    """Remove exact NPA-managed ingress rules for internal-only ports.
+
+    Reused agent VMs may retain rules created by older NPA releases that
+    exposed the backend port.  Delete only a dedicated ``allow-npa-*`` TCP
+    rule whose destination ports are entirely within ``ports``.  An unmanaged,
+    mixed-purpose, or all-port rule is not safe to rewrite automatically, so
+    fail closed and let the operator resolve it explicitly. Nebius defines an
+    empty ``destination_ports`` list as matching any port, rather than none:
+    https://docs.nebius.com/terraform-provider/reference/resources/vpc_v1_security_rule
+    """
+
+    protected = {int(port) for port in ports}
+    if not protected:
+        raise NetworkIngressError("at least one internal-only port is required")
+    instance = _get_instance(instance_id)
+    deleted: list[str] = []
+    for group_id in _instance_security_group_ids(instance):
+        for rule in _list_security_rules(group_id):
+            spec = rule.get("spec", {})
+            ingress = spec.get("ingress")
+            if not ingress or spec.get("access", "").upper() != "ALLOW":
+                continue
+            protocol = str(spec.get("protocol", "")).upper()
+            raw_ports = ingress.get("destination_ports") or []
+            destination_ports = {int(port) for port in raw_ports}
+            exposes_protected = protocol in {"TCP", "ANY"} and (
+                not destination_ports or bool(protected.intersection(destination_ports))
+            )
+            if not exposes_protected:
+                continue
+            metadata = _metadata(rule)
+            name = str(metadata.get("name", ""))
+            rule_id = str(metadata.get("id", ""))
+            if (
+                protocol != "TCP"
+                or not destination_ports
+                or not destination_ports.issubset(protected)
+                or not name.startswith(NPA_INGRESS_RULE_PREFIX)
+                or not rule_id
+            ):
+                raise NetworkIngressError(
+                    f"security rule {name or rule_id or '<unnamed>'!r} exposes "
+                    f"internal agent port(s) {sorted(protected)} and is not a "
+                    "dedicated NPA-managed rule",
+                    deleted=tuple(deleted),
+                )
+            try:
+                nebius._run(["vpc", "security-rule", "delete", "--id", rule_id])
+            except NebiusError as exc:
+                raise NetworkIngressError(
+                    f"Could not remove internal-port ingress rule {rule_id}: {exc}",
+                    deleted=tuple(deleted),
+                ) from exc
+            deleted.append(rule_id)
+            if on_status:
+                on_status(f"Removed legacy internal-port ingress rule {name!r}.")
+    return deleted
+
+
+def remove_exact_npa_ingress_for_instance(
+    instance_id: str,
+    *,
+    ports: tuple[int, ...],
+    source: str,
+    tool: str,
+    protocol: str = "TCP",
+    on_status: Callable[[str], None] | None = None,
+) -> list[str]:
+    """Remove only the exact NPA-managed rule created for one service contract."""
+
+    normalized_protocol = _normalize_protocol(protocol)
+    expected_ports = {int(port) for port in ports}
+    expected_name = rule_name(tool, tuple(sorted(expected_ports)))
+    instance = _get_instance(instance_id)
+    deleted: list[str] = []
+    for group_id in _instance_security_group_ids(instance):
+        for rule in _list_security_rules(group_id):
+            metadata = _metadata(rule)
+            spec = rule.get("spec", {})
+            ingress = spec.get("ingress") or {}
+            rule_id = str(metadata.get("id", ""))
+            if (
+                rule_id
+                and metadata.get("name") == expected_name
+                and str(spec.get("access", "")).upper() == "ALLOW"
+                and str(spec.get("protocol", "")).upper() == normalized_protocol
+                and set(ingress.get("source_cidrs") or []) == {source}
+                and {int(port) for port in ingress.get("destination_ports") or []}
+                == expected_ports
+            ):
+                try:
+                    nebius._run(["vpc", "security-rule", "delete", "--id", rule_id])
+                except NebiusError as exc:
+                    raise NetworkIngressError(
+                        f"Could not remove ingress rule {rule_id}: {exc}"
+                    ) from exc
+                deleted.append(rule_id)
+                if on_status:
+                    on_status(f"Removed ingress rule {expected_name!r} ({rule_id}).")
+    return deleted
+
+
 def ensure_ingress(
     *,
     vm_id: str | None = None,
@@ -248,11 +360,13 @@ def ensure_ingress(
     ports: tuple[int, ...],
     source: str = "0.0.0.0/0",
     tool: str = "manual",
+    protocol: str = "TCP",
 ) -> EnsureIngressResult:
-    """Ensure TCP ingress from ``source`` to ``ports`` on the target VM security groups."""
+    """Ensure TCP or UDP ingress from ``source`` to ``ports`` on the target VM groups."""
     from npa.lifecycle_intent import forbid_destructive_provisioning
 
     forbid_destructive_provisioning("ensure_ingress")
+    normalized_protocol = _normalize_protocol(protocol)
     if bool(vm_id) == bool(ip and project_id):
         raise NetworkIngressError("pass exactly one of --vm or (--ip and --project)")
     if ip and not project_id:
@@ -260,20 +374,33 @@ def ensure_ingress(
     if project_id and not ip and not vm_id:
         raise NetworkIngressError("--project requires --ip unless --vm is used")
 
-    instance = _get_instance(vm_id) if vm_id else _find_instance_by_ip(ip or "", project_id or "")
+    instance = (
+        _get_instance(vm_id)
+        if vm_id
+        else _find_instance_by_ip(ip or "", project_id or "")
+    )
     instance_id = _metadata(instance).get("id", "")
     parent_id = _metadata(instance).get("parent_id", project_id or "")
     public_ip = _instance_public_ip(instance)
     security_group_ids = _instance_security_group_ids(instance)
     if not security_group_ids:
-        raise NetworkIngressError(f"VM {instance_id or vm_id or ip} has no security group references")
+        raise NetworkIngressError(
+            f"VM {instance_id or vm_id or ip} has no security group references"
+        )
 
     group_contexts: list[_SecurityGroupContext] = []
     covered_ports: set[int] = set()
     for security_group_id in security_group_ids:
         security_group = _get_security_group(security_group_id)
         rules = tuple(_list_security_rules(security_group_id))
-        group_covered = frozenset(_covered_ports(rules, requested_ports=ports, source=source))
+        group_covered = frozenset(
+            _covered_ports(
+                rules,
+                requested_ports=ports,
+                source=source,
+                protocol=normalized_protocol,
+            )
+        )
         covered_ports.update(group_covered)
         group_contexts.append(
             _SecurityGroupContext(
@@ -286,6 +413,7 @@ def ensure_ingress(
                         desired_name=rule_name(tool, ports),
                         ports=ports,
                         source=source,
+                        protocol=normalized_protocol,
                     )
                 ),
             )
@@ -297,6 +425,7 @@ def ensure_ingress(
         missing_ports=missing_ports,
         source=source,
         tool=tool,
+        protocol=normalized_protocol,
     )
 
     return EnsureIngressResult(
@@ -346,23 +475,29 @@ def _get_instance(vm_id: str | None) -> dict[str, Any]:
 def _find_instance_by_ip(ip: str, project_id: str) -> dict[str, Any]:
     target = _strip_cidr(ip)
     try:
-        data = nebius._run_json([
-            "compute",
-            "instance",
-            "list",
-            "--parent-id",
-            project_id,
-            "--all",
-        ])
+        data = nebius._run_json(
+            [
+                "compute",
+                "instance",
+                "list",
+                "--parent-id",
+                project_id,
+                "--all",
+            ]
+        )
     except NebiusError as exc:
-        raise NetworkIngressError(f"Could not list VMs in project {project_id}: {exc}") from exc
+        raise NetworkIngressError(
+            f"Could not list VMs in project {project_id}: {exc}"
+        ) from exc
 
     for item in data.get("items", []):
         for iface in item.get("status", {}).get("network_interfaces", []) or []:
             public_ip = iface.get("public_ip_address", {}).get("address", "")
             if _strip_cidr(public_ip) == target:
                 return item
-    raise NetworkIngressError(f"No VM with public IP {target} found in project {project_id}")
+    raise NetworkIngressError(
+        f"No VM with public IP {target} found in project {project_id}"
+    )
 
 
 def _get_security_group(security_group_id: str) -> dict[str, Any]:
@@ -376,14 +511,16 @@ def _get_security_group(security_group_id: str) -> dict[str, Any]:
 
 def _list_security_rules(security_group_id: str) -> list[dict[str, Any]]:
     try:
-        data = nebius._run_json([
-            "vpc",
-            "security-rule",
-            "list",
-            "--parent-id",
-            security_group_id,
-            "--all",
-        ])
+        data = nebius._run_json(
+            [
+                "vpc",
+                "security-rule",
+                "list",
+                "--parent-id",
+                security_group_id,
+                "--all",
+            ]
+        )
     except NebiusError as exc:
         raise NetworkIngressError(
             f"Could not list security rules for {security_group_id}: {exc}"
@@ -397,6 +534,7 @@ def _build_group_results(
     missing_ports: tuple[int, ...],
     source: str,
     tool: str,
+    protocol: str,
 ) -> list[SecurityGroupIngressResult]:
     if not group_contexts:
         return []
@@ -411,6 +549,7 @@ def _build_group_results(
             missing_ports=missing_ports,
             source=source,
             tool=tool,
+            protocol=protocol,
         )
 
     for index, context in enumerate(group_contexts):
@@ -436,34 +575,37 @@ def _create_group_ingress(
     missing_ports: tuple[int, ...],
     source: str,
     tool: str,
+    protocol: str,
 ) -> tuple[str, str]:
     security_group_id = _metadata(security_group).get("id", "")
     create_name = rule_name(tool, missing_ports)
     try:
-        created = nebius._run_json([
-            "vpc",
-            "security-rule",
-            "create",
-            "--parent-id",
-            security_group_id,
-            "--name",
-            create_name,
-            "--access",
-            "allow",
-            "--protocol",
-            "tcp",
-            "--type",
-            "stateful",
-            "--priority",
-            "500",
-            "--ingress-source-cidrs",
-            source,
-            *[
-                item
-                for port in missing_ports
-                for item in ("--ingress-destination-ports", str(port))
-            ],
-        ])
+        created = nebius._run_json(
+            [
+                "vpc",
+                "security-rule",
+                "create",
+                "--parent-id",
+                security_group_id,
+                "--name",
+                create_name,
+                "--access",
+                "allow",
+                "--protocol",
+                protocol.lower(),
+                "--type",
+                "stateful",
+                "--priority",
+                "500",
+                "--ingress-source-cidrs",
+                source,
+                *[
+                    item
+                    for port in missing_ports
+                    for item in ("--ingress-destination-ports", str(port))
+                ],
+            ]
+        )
     except NebiusError as exc:
         raise NetworkIngressError(
             f"Could not create ingress rule on {security_group_id}: {exc}"
@@ -476,10 +618,11 @@ def _create_group_ingress(
 
 
 def _covered_ports(
-    rules: list[dict[str, Any]],
+    rules: Sequence[dict[str, Any]],
     *,
     requested_ports: tuple[int, ...],
     source: str,
+    protocol: str = "TCP",
 ) -> set[int]:
     requested = set(requested_ports)
     covered: set[int] = set()
@@ -490,21 +633,28 @@ def _covered_ports(
             continue
         if spec.get("access", "").upper() != "ALLOW":
             continue
-        if spec.get("protocol", "").upper() != "TCP":
+        if spec.get("protocol", "").upper() != protocol:
             continue
         if source not in (ingress.get("source_cidrs") or []):
             continue
-        destination_ports = {int(port) for port in ingress.get("destination_ports") or []}
-        covered.update(requested.intersection(destination_ports))
+        destination_ports = {
+            int(port) for port in ingress.get("destination_ports") or []
+        }
+        covered.update(
+            requested
+            if not destination_ports
+            else requested.intersection(destination_ports)
+        )
     return covered
 
 
 def _name_collision_warnings(
-    rules: list[dict[str, Any]],
+    rules: Sequence[dict[str, Any]],
     *,
     desired_name: str,
     ports: tuple[int, ...],
     source: str,
+    protocol: str = "TCP",
 ) -> list[str]:
     warnings: list[str] = []
     requested = set(ports)
@@ -514,13 +664,15 @@ def _name_collision_warnings(
             continue
         spec = rule.get("spec", {})
         ingress = spec.get("ingress") or {}
-        destination_ports = {int(port) for port in ingress.get("destination_ports") or []}
+        destination_ports = {
+            int(port) for port in ingress.get("destination_ports") or []
+        }
         source_cidrs = ingress.get("source_cidrs") or []
         matches = (
             spec.get("access", "").upper() == "ALLOW"
-            and spec.get("protocol", "").upper() == "TCP"
+            and spec.get("protocol", "").upper() == protocol
             and source in source_cidrs
-            and requested.issubset(destination_ports)
+            and (not destination_ports or requested.issubset(destination_ports))
         )
         if not matches:
             warnings.append(
@@ -554,3 +706,10 @@ def _metadata(resource: dict[str, Any]) -> dict[str, Any]:
 
 def _strip_cidr(value: str) -> str:
     return value.split("/", 1)[0]
+
+
+def _normalize_protocol(value: str) -> str:
+    protocol = str(value or "").strip().upper()
+    if protocol not in ("TCP", "UDP"):
+        raise NetworkIngressError("protocol must be TCP or UDP")
+    return protocol

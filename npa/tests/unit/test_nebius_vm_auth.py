@@ -55,7 +55,8 @@ def test_duplicate_terminal_redraws_are_one_safe_candidate() -> None:
 def test_distinct_safe_browser_urls_remain_ambiguous() -> None:
     with pytest.raises(VmAuthError, match="exactly one safe browser URL"):
         parse_auth_transcript(
-            _long_transcript(4040) + _long_transcript(4040).replace("state=", "state=other-"),
+            _long_transcript(4040)
+            + _long_transcript(4040).replace("state=", "state=other-"),
             ssh_host="operator.example",
         )
 
@@ -108,12 +109,19 @@ def test_profile_readiness_scrubs_ambient_tokens_and_discards_output() -> None:
 
     result = verify_profile(
         "operator",
-        env={"PATH": "/bin", "NEBIUS_IAM_TOKEN": "stale", "NEBIUS_IAM_TOKEN_FILE": "/tmp/stale"},
+        env={
+            "PATH": "/bin",
+            "NEBIUS_IAM_TOKEN": "stale",
+            "NEBIUS_IAM_TOKEN_FILE": "/tmp/stale",
+        },
         runner=runner,
     )
     assert result.identity_verified is True
     assert result.iam_token_minted is True
-    assert [call[0][-2:] for call in calls] == [["iam", "whoami"], ["iam", "get-access-token"]]
+    assert [call[0][-2:] for call in calls] == [
+        ["iam", "whoami"],
+        ["iam", "get-access-token"],
+    ]
     assert all(call[1]["stdout"] is subprocess.DEVNULL for call in calls)
     assert all("NEBIUS_IAM_TOKEN" not in call[1]["env"] for call in calls)
     assert all("NEBIUS_IAM_TOKEN_FILE" not in call[1]["env"] for call in calls)
@@ -138,7 +146,9 @@ def test_already_authenticated_profile_never_starts_browser_flow(monkeypatch) ->
     monkeypatch.setattr(
         nebius_vm_auth.subprocess,
         "Popen",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not launch")),
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("must not launch")
+        ),
     )
     output = StringIO()
     result = nebius_vm_auth.run_vm_profile_auth(
@@ -252,7 +262,9 @@ def test_vm_auth_handles_cr_only_redraw_and_partial_reads_without_leaking_proces
     raw = ("access_token: process-secret\r" + transcript + transcript).encode()
     process = _ChunkProcess([raw[:31], raw[31:173], raw[173:]])
     wait_for_output, read_output = _drive_chunks(process)
-    monkeypatch.setattr(nebius_vm_auth.subprocess, "Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr(
+        nebius_vm_auth.subprocess, "Popen", lambda *args, **kwargs: process
+    )
     output = StringIO()
     result = nebius_vm_auth.run_vm_profile_auth(
         ssh_host="operator.example",
@@ -267,13 +279,19 @@ def test_vm_auth_handles_cr_only_redraw_and_partial_reads_without_leaking_proces
     assert rendered.count("Open locally:") == 1
 
 
-def test_successful_process_with_malformed_output_fails_closed_and_is_reaped(monkeypatch) -> None:
+def test_successful_process_with_malformed_output_fails_closed_and_is_reaped(
+    monkeypatch,
+) -> None:
     not_ready = nebius_vm_auth.ProfileVerification("", False, False)
-    monkeypatch.setattr(nebius_vm_auth, "verify_profile", lambda *args, **kwargs: not_ready)
+    monkeypatch.setattr(
+        nebius_vm_auth, "verify_profile", lambda *args, **kwargs: not_ready
+    )
     monkeypatch.setattr(nebius_vm_auth.shutil, "which", lambda name: f"/usr/bin/{name}")
     process = _ChunkProcess([b"unexpected terminal output\r"])
     wait_for_output, read_output = _drive_chunks(process)
-    monkeypatch.setattr(nebius_vm_auth.subprocess, "Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr(
+        nebius_vm_auth.subprocess, "Popen", lambda *args, **kwargs: process
+    )
     with pytest.raises(VmAuthError, match="verifiable safe loopback"):
         nebius_vm_auth.run_vm_profile_auth(
             ssh_host="operator.example",
@@ -287,7 +305,9 @@ def test_successful_process_with_malformed_output_fails_closed_and_is_reaped(mon
 
 def test_vm_auth_timeout_cancels_child(monkeypatch) -> None:
     not_ready = nebius_vm_auth.ProfileVerification("", False, False)
-    monkeypatch.setattr(nebius_vm_auth, "verify_profile", lambda *args, **kwargs: not_ready)
+    monkeypatch.setattr(
+        nebius_vm_auth, "verify_profile", lambda *args, **kwargs: not_ready
+    )
     monkeypatch.setattr(nebius_vm_auth.shutil, "which", lambda _name: "/usr/bin/tool")
     monkeypatch.setattr(
         nebius_vm_auth.os,
@@ -295,7 +315,9 @@ def test_vm_auth_timeout_cancels_child(monkeypatch) -> None:
         lambda *_args: (_ for _ in ()).throw(ProcessLookupError()),
     )
     process = _FakeProcess(StringIO(""))
-    monkeypatch.setattr(nebius_vm_auth.subprocess, "Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr(
+        nebius_vm_auth.subprocess, "Popen", lambda *args, **kwargs: process
+    )
     times = iter([0.0, 2.0])
     with pytest.raises(VmAuthError, match="timed out"):
         nebius_vm_auth.run_vm_profile_auth(
@@ -309,7 +331,9 @@ def test_vm_auth_timeout_cancels_child(monkeypatch) -> None:
 
 def test_vm_auth_keyboard_cancel_cancels_child(monkeypatch) -> None:
     not_ready = nebius_vm_auth.ProfileVerification("", False, False)
-    monkeypatch.setattr(nebius_vm_auth, "verify_profile", lambda *args, **kwargs: not_ready)
+    monkeypatch.setattr(
+        nebius_vm_auth, "verify_profile", lambda *args, **kwargs: not_ready
+    )
     monkeypatch.setattr(nebius_vm_auth.shutil, "which", lambda _name: "/usr/bin/tool")
     monkeypatch.setattr(
         nebius_vm_auth.os,
@@ -317,7 +341,9 @@ def test_vm_auth_keyboard_cancel_cancels_child(monkeypatch) -> None:
         lambda *_args: (_ for _ in ()).throw(ProcessLookupError()),
     )
     process = _FakeProcess(object())
-    monkeypatch.setattr(nebius_vm_auth.subprocess, "Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr(
+        nebius_vm_auth.subprocess, "Popen", lambda *args, **kwargs: process
+    )
 
     def cancel(_stream, _timeout):
         raise KeyboardInterrupt

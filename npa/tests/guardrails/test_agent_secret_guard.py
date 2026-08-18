@@ -76,7 +76,9 @@ def test_agent_bootstrap_does_not_commit_generated_passwords() -> None:
     assert "_write_auth_secret" in source
     assert "auth_secret_path" in source
     for pattern in LITERAL_SECRET_PATTERNS:
-        assert not pattern.search(source), f"literal secret pattern in agent.py: {pattern.pattern}"
+        assert not pattern.search(source), (
+            f"literal secret pattern in agent.py: {pattern.pattern}"
+        )
 
 
 def test_vm_auth_verification_never_surfaces_iam_token_output() -> None:
