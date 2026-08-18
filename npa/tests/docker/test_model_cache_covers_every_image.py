@@ -1,0 +1,107 @@
+"""Every image's weight cache must be one the durable cache can redirect.
+
+The cache works the same way for every image precisely because
+``MODEL_CACHE_LAYOUT`` names every variable a workbench runtime reads. That is a
+list someone has to remember to extend, and forgetting is invisible: the image
+keeps working, and quietly re-downloads its weights on every run while the stage
+next to it hits the cache. So the Dockerfiles are the source of truth here, and a
+new cache-shaped variable has to be either redirected or explicitly excused.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import pytest
+
+from npa.workbench.model_cache import MODEL_CACHE_ENV_NAMES
+
+DOCKER_DIR = Path(__file__).resolve().parents[2] / "docker" / "workbench"
+
+# Anything whose name looks like it could point at downloaded model bytes.
+CANDIDATE = re.compile(
+    r"^\s*(?:ENV\s+)?([A-Z][A-Z0-9_]*(?:CACHE|_HOME|MODEL_DIR|MODELS|WEIGHTS)[A-Z0-9_]*)=(\S+)",
+    re.M,
+)
+
+# Excused, with the reason each one is not a weight cache. Keep this specific:
+# a bare "it is fine" entry is how the next real cache gets missed.
+EXCUSED: dict[str, str] = {
+    # Build-time package manager switches, not runtime caches.
+    "PIP_NO_CACHE_DIR": "pip build flag",
+    "UV_NO_CACHE": "uv build flag",
+    "UV_CACHE_DIR": "wheel cache, not model weights",
+    "PIP_CACHE_DIR": "wheel cache, not model weights",
+    # Where the tool is installed, not where its weights land.
+    "COSMOS_HOME": "install root",
+    "GROOT_HOME": "install root",
+    "SONIC_HOME": "install root",
+    "NPA_GENESIS_HOME": "install root",
+    "CUDA_HOME": "toolkit root",
+    "JAVA_HOME": "toolkit root",
+    "PYTHONHOME": "interpreter root",
+    # Application state and viewer config, not runtime-fetched weights.
+    "FIFTYONE_HOME": "dataset app state",
+    "XDG_CONFIG_HOME": "viewer config",
+    "XDG_DATA_HOME": "viewer state",
+    # Generic XDG cache root (fontconfig, matplotlib, uv). Every library that
+    # downloads weights is pointed at an explicit variable above, so nothing
+    # model-sized reaches its fallback here.
+    "XDG_CACHE_HOME": "generic cache root, not a weight fallback in practice",
+    # Runtime dependency closures, deliberately a separate volume: they are
+    # verified wheel sets warmed once and consumed read-only, not weights that
+    # accumulate. See docs/workbench/model-weight-cache.md.
+    "NPA_ISAAC_CACHE_DIR": "Isaac wheel closure (warm-isaac-cache.yaml)",
+    "NPA_LTX_RUNTIME_CACHE": "CUDA wheel closure",
+    "NPA_WAN_RUNTIME_CACHE": "CUDA wheel closure",
+    # Per-tool data mounts that the VM deploy already bind-mounts from the host,
+    # so they outlive the container by their own mechanism.
+    "COSMOS_DATA_HOME": "host-mounted data dir (deploy_cosmos)",
+    "COSMOS_MODEL_DIR": "host-mounted data dir (deploy_cosmos)",
+    "GROOT_MODEL_DIR": "host-mounted data dir (deploy_groot)",
+}
+
+
+def _declared_cache_variables() -> dict[str, set[str]]:
+    found: dict[str, set[str]] = {}
+    for dockerfile in sorted(DOCKER_DIR.glob("*/Dockerfile")):
+        for name, _value in CANDIDATE.findall(dockerfile.read_text(encoding="utf-8")):
+            found.setdefault(name, set()).add(dockerfile.parent.name)
+    return found
+
+
+def test_every_cache_variable_an_image_bakes_is_redirected_or_excused() -> None:
+    unaccounted = {
+        name: sorted(images)
+        for name, images in _declared_cache_variables().items()
+        if name not in MODEL_CACHE_ENV_NAMES and name not in EXCUSED
+    }
+
+    assert not unaccounted, (
+        "these images bake a cache-shaped variable the durable model cache does not "
+        f"redirect: {unaccounted}. Add it to MODEL_CACHE_LAYOUT so its downloads land "
+        "in the shared cache, or excuse it in EXCUSED with the reason it is not "
+        "runtime-fetched model weights."
+    )
+
+
+def test_the_excuse_list_does_not_rot() -> None:
+    """An excuse for a variable no image sets any more is a stale claim."""
+
+    declared = set(_declared_cache_variables())
+    # Excuses for variables set outside the Dockerfiles (toolkit roots inherited
+    # from base images) are legitimate; only flag ones this repo used to declare.
+    stale = {
+        name
+        for name in EXCUSED
+        if name.startswith(("NPA_", "COSMOS_", "GROOT_", "SONIC_", "FIFTYONE_"))
+        and name not in declared
+    }
+
+    assert not stale, f"excused variables no image declares any more: {sorted(stale)}"
+
+
+@pytest.mark.parametrize("name", sorted(MODEL_CACHE_ENV_NAMES))
+def test_no_variable_is_both_redirected_and_excused(name: str) -> None:
+    assert name not in EXCUSED, f"{name} is redirected; the excuse contradicts it"
