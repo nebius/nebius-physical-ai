@@ -4,7 +4,7 @@
 # The claim this image makes is "contains no LTX-2.5 and refuses to fetch it
 # without the operator's own entitlement". That claim is about the artifact, so
 # it is checked against the artifact: the refusal is exercised in every
-# direction and the caches are asserted unwritten afterwards.
+# direction, against private directories asserted empty afterwards.
 set -euo pipefail
 
 ltx-runtime health
@@ -12,25 +12,22 @@ ltx-runtime version
 ltx-runtime status
 ltx-runtime terms
 
-RUNTIME_CACHE="${NPA_LTX_RUNTIME_CACHE:-/workspace/.cache/npa/ltx2/runtime}"
-MODEL_CACHE="${NPA_LTX_MODEL_CACHE:-/workspace/model-cache/ltx-2.5}"
-
-cache_contents() {
-  find "$1" -mindepth 1 -printf '%P %s %T@\n' 2>/dev/null | LC_ALL=C sort
-}
-
-# The invariant is that a refusal writes nothing, and on a fresh container that
-# means the caches stay empty. When the run mounts the operator's durable weight
-# cache (docs/workbench/model-weight-cache.md) the model cache legitimately
-# starts populated by an earlier run, so the state is captured up front and
-# compared instead. What is under test is this image's payload, not the contents
-# of a volume the operator supplied.
-RUNTIME_CACHE_BEFORE="$(cache_contents "$RUNTIME_CACHE")"
-MODEL_CACHE_BEFORE="$(cache_contents "$MODEL_CACHE")"
+# Each refusal runs against directories only this smoke can see, the same way
+# `ltx-runtime assert-refusal` does. Watching the real caches cannot express "the
+# refusal downloaded nothing" once they are durable and shared
+# (docs/workbench/model-weight-cache.md): the second run legitimately finds what
+# the first fetched, and another LTX stage can be writing to them throughout. A
+# write that lands in the shared tree is not attributable to this smoke; a write
+# that lands here is.
+PROBE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/npa-ltx-smoke.XXXXXX")"
+trap 'rm -rf "$PROBE_DIR"' EXIT
+PROBE_RUNTIME_CACHE="$PROBE_DIR/runtime"
+PROBE_MODEL_CACHE="$PROBE_DIR/weights"
+mkdir -p "$PROBE_RUNTIME_CACHE" "$PROBE_MODEL_CACHE"
 
 caches_are_untouched() {
-  test "$(cache_contents "$RUNTIME_CACHE")" = "$RUNTIME_CACHE_BEFORE"
-  test "$(cache_contents "$MODEL_CACHE")" = "$MODEL_CACHE_BEFORE"
+  test -z "$(find "$PROBE_RUNTIME_CACHE" -mindepth 1 -print -quit 2>/dev/null)"
+  test -z "$(find "$PROBE_MODEL_CACHE" -mindepth 1 -print -quit 2>/dev/null)"
 }
 
 # `-u HF_TOKEN` rather than `HF_TOKEN=`: an empty assignment still reads as a
@@ -40,7 +37,9 @@ caches_are_untouched() {
 refuses_with_78() {
   local desc="$1" mode="$2"; shift 2
   set +e
-  env "$@" ltx-runtime "$mode" >/tmp/ltx-out 2>/tmp/ltx-err
+  env "NPA_LTX_RUNTIME_CACHE=$PROBE_RUNTIME_CACHE" \
+      "NPA_LTX_MODEL_CACHE=$PROBE_MODEL_CACHE" \
+      "$@" ltx-runtime "$mode" >/tmp/ltx-out 2>/tmp/ltx-err
   local rc=$?
   set -e
   test "$rc" = 78 || { echo "expected 78 for ${desc}, got ${rc}" >&2; exit 1; }

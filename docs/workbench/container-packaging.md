@@ -508,18 +508,21 @@ container and the next run re-paid for it on an already-billing GPU.
 `npa/src/npa/workbench/model_cache.py` is now the one place that answers "where do
 downloaded weights live", and it is wired into every runtime NPA drives: SkyPilot
 task envs plus a Kubernetes volume at the cache root, sim2real sibling GPU Jobs,
-Serverless Job envs, and long-lived workbench containers on a VM. It is opt-in,
-because durability is storage only the operator can supply:
+Serverless Jobs, long-lived workbench containers on a VM, and the OpenPI and LeIsaac
+Deployments. It is on wherever that does not mean inventing storage: a VM deploy
+creates a directory on its own disk, and on Kubernetes applying the shipped manifest
+is the whole of it, because submit finds the claim by name.
 
 ```bash
 kubectl apply -f npa/docker/workbench/common/model-weight-cache.yaml
-export NPA_MODEL_CACHE_PVC=npa-model-cache      # or NPA_MODEL_CACHE_HOST_PATH on a VM
 ```
 
-With none of the `NPA_MODEL_CACHE_*` variables set, every runtime keeps the ephemeral
-default it has always used. See
-[model-weight-cache.md](model-weight-cache.md) for the full variable family, sizing,
-and how to verify a run is hitting the cache.
+NPA never creates a claim, chooses a storage class, or bills anyone for a volume, so
+Kubernetes stays inert until that claim exists, and a Serverless Job caches only once
+`NPA_MODEL_CACHE_FILESYSTEM` names a filesystem. `NPA_MODEL_CACHE_DISABLED=1` turns
+everything off. See [model-weight-cache.md](model-weight-cache.md) for the full
+variable family, which runtime honors which, sizing, and how to verify a run is
+hitting the cache.
 
 This does not move the redistribution boundary: the bytes still arrive from the
 vendor under the operator's own entitlement, into the operator's own storage. It only

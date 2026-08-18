@@ -99,3 +99,32 @@ def test_an_operators_own_choice_is_never_overridden(
     assert preflight.adopt_model_cache_claim(context="ctx", environ=environ) == ""
     assert environ == configured
     assert calls == []
+
+
+def test_the_namespace_can_be_pointed_somewhere_other_than_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A claim only helps pods that can see it.
+
+    An operator whose SkyPilot pods live outside `default` must be able to say so,
+    or the lookup quietly finds nothing and the run pays for the download again.
+    """
+
+    calls = _fake_kubectl(monkeypatch, phase="Bound")
+    monkeypatch.setenv("NPA_MODEL_CACHE_NAMESPACE", "workbench")
+    environ: dict[str, str] = {}
+
+    preflight.adopt_model_cache_claim(context="ctx", environ=environ)
+
+    argv = calls[0]
+    assert argv[argv.index("-n") + 1] == "workbench"
+
+
+def test_an_explicit_namespace_argument_wins(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _fake_kubectl(monkeypatch, phase="Bound")
+    monkeypatch.setenv("NPA_MODEL_CACHE_NAMESPACE", "workbench")
+
+    preflight.find_model_cache_claim(context="ctx", namespace="explicit")
+
+    argv = calls[0]
+    assert argv[argv.index("-n") + 1] == "explicit"

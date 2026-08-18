@@ -234,10 +234,17 @@ def deploy_workbench_container(
         # returns non-zero, which would abort the deploy over a directory that is
         # already owned correctly. Own the root only, and let the container's own
         # user create what it needs beneath it.
+        #
+        # Mode 3777 rather than the ssh user's ownership alone: the container's
+        # runtime uid is the image's business, not this host's, and the two agree
+        # only by convention (both are 1000 today). If they ever diverge, an
+        # unwritable cache root is not a slow deploy but a broken one -- the tool's
+        # first mkdir fails. Sticky keeps one tool from deleting another's blobs and
+        # setgid keeps the group stable, matching the Kubernetes init Job.
         dirs = " ".join(shlex.quote(path) for path in cache_host_dirs)
         ssh.run_or_raise(
             f"sudo install -d -o {shlex.quote(ssh_user)} -g {shlex.quote(ssh_user)} "
-            f"-m 0775 {dirs}"
+            f"-m 3777 {dirs}"
         )
 
     registry = image_ref.split("/", 1)[0]

@@ -93,6 +93,18 @@ spec:
 # built with *different* runtime users: subdirectories are created with the
 # creator's umask, so a second uid would be refused inside them. If you rebuild an
 # image with a custom NPA_RUNTIME_USER, run its consumers with the same fsGroup.
+#
+# THIS JOB NEEDS TO RUN AS ROOT, which a `restricted` PodSecurity namespace does
+# not allow: chmod on a freshly provisioned volume root is the one privileged act
+# in the whole design, and there is no unprivileged spelling of it. Two ways out,
+# both fine:
+#   * apply it in a namespace at `baseline`, since it touches nothing but this
+#     volume and exits, or
+#   * skip the Job entirely and let `fsGroup` do it. Most CSI drivers apply the
+#     pod's fsGroup ownership to the volume root on first mount, which is enough
+#     when every consumer sets the same fsGroup: 1000. Check with
+#     `kubectl exec <pod> -- ls -ld /opt/npa-model-cache` before relying on it;
+#     the workload's own first write is otherwise where you find out.
 apiVersion: batch/v1
 kind: Job
 metadata:

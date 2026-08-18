@@ -991,7 +991,9 @@ def test_deploy_workbench_container_binds_and_exports_the_durable_cache(
     # The cache root is created but never recursively chowned: it is a growing tree
     # of downloaded weights, walking it on every deploy is wasted work, and on a
     # root-squashed network mount a failing chown would abort the whole deploy.
-    assert any("install -d -o ubuntu -g ubuntu -m 0775 /mnt/weights" in c for c in commands)
+    # Mode 3777, not the ssh user's ownership alone: the container's runtime uid is
+    # the image's business and the two agree only by convention today.
+    assert any("install -d -o ubuntu -g ubuntu -m 3777 /mnt/weights" in c for c in commands)
     assert not any("chown -R" in c and "/mnt/weights" in c for c in commands)
     run_cmd = commands[-1]
     assert "-v /mnt/weights:/opt/npa-model-cache" in run_cmd

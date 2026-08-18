@@ -57,7 +57,8 @@ kubectl wait --for=condition=complete job/npa-init-model-cache --timeout=5m
 
 That is the whole setup: submit finds the claim by name and reports
 `model weight cache: using claim 'npa-model-cache'`. Export
-`NPA_MODEL_CACHE_PVC=<name>` only to point at a claim you named something else.
+`NPA_MODEL_CACHE_PVC=<name>` only to point at a claim you named something else, and
+`NPA_MODEL_CACHE_NAMESPACE=<ns>` when your SkyPilot pods do not land in `default`.
 
 The claim is `ReadWriteMany` on purpose: stages of one workflow land on different
 nodes and parallel waves run at the same time, so a `ReadWriteOnce` volume would
@@ -74,6 +75,12 @@ What discriminates is whether a node registers the driver:
 ```bash
 kubectl get csinode -o custom-columns=NODE:.metadata.name,DRIVERS:.spec.drivers[*].name
 ```
+
+The init Job that opens the volume's permissions runs as root — `chmod` on a fresh
+volume root is the one privileged act here — so a `restricted` PodSecurity namespace
+rejects it. Either apply it somewhere at `baseline`, or skip it and rely on
+`fsGroup: 1000`, which most CSI drivers apply to the volume root on first mount;
+`kubectl exec <pod> -- ls -ld /opt/npa-model-cache` tells you before a workload does.
 
 `mounted-fs-path.csi.nebius.ai` has to be in that list. It is missing in two
 different situations, and only the first is obvious:
@@ -157,6 +164,7 @@ first `mkdir` fails and the stage dies where it used to work.
 | `npa deploy` container on a VM | `_HOST_PATH` | `/var/lib/npa/model-cache` |
 | Workbench Serverless Job | `_FILESYSTEM` | off |
 | OpenPI policy server (Deployment) | `_PVC`, `_HOST_PATH` | pod-local `emptyDir` |
+| LeIsaac session (Deployment) | `_PVC`, `_HOST_PATH` | pod-local `emptyDir` |
 | LeRobot server on a VM | `_HOST_PATH` | `/var/lib/npa/model-cache` |
 | In-container code reading its own env | none | off |
 
