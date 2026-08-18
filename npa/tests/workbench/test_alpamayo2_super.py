@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from npa.cli.main import app
+from npa.sdk.workbench.alpamayo2_super import infer
 from npa.workbench.alpamayo2_super.runtime import (
     DEFAULT_DATASET_REVISION,
     DEFAULT_MODEL_REVISION,
@@ -75,6 +76,9 @@ def test_cli_and_api_share_dry_run_contract(tmp_path: Path) -> None:
     )
     assert response.status_code == 200
     assert response.json()["schema"] == ARTIFACT_SCHEMA
+
+    sdk = infer(output_path=str(tmp_path), dry_run=True)
+    assert sdk["schema"] == ARTIFACT_SCHEMA
 
 
 def test_terms_keep_model_and_dataset_licenses_separate() -> None:

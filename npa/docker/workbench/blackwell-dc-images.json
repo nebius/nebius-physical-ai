@@ -253,11 +253,9 @@
         "sm_100",
         "sm_120"
       ],
-      "published_tag": "0.1.0-cu128",
-      "published_digest": "sha256:2164450f8baf57d8798f64063ea27bf11611f5b695c467de0c2e319e3134ebd5",
-      "published_registries": [
-        "operator"
-      ]
+      "validated_tag": "0.1.0-cu128",
+      "validated_digest": "sha256:2164450f8baf57d8798f64063ea27bf11611f5b695c467de0c2e319e3134ebd5",
+      "validated_registry_scope": "operator"
     },
     {
       "name": "npa-cosmos3-reason",
@@ -626,8 +624,9 @@
           "peak_memory_mib": 71447
         }
       },
-      "published_tag": "0.1.0-cu128",
-      "published_digest": "sha256:2164450f8baf57d8798f64063ea27bf11611f5b695c467de0c2e319e3134ebd5"
+      "validated_tag": "0.1.0-cu128",
+      "validated_digest": "sha256:2164450f8baf57d8798f64063ea27bf11611f5b695c467de0c2e319e3134ebd5",
+      "validated_registry_scope": "operator"
     },
     "npa-base": {
       "built": true,
