@@ -31,6 +31,7 @@ def test_dockerfile_parses_torch_arch_flags_as_tokens() -> None:
     assert "npa-workflows/sim2real.yaml" in dockerfile
     assert "npa-workflows/physical-ai-data-factory.yaml" in dockerfile
     assert "chown -R ubuntu:ubuntu /opt/alpamayo2" not in dockerfile
+    assert "'uvicorn==0.41.0' /opt/npa-src" in dockerfile
 
 
 def _tar(path: Path, members: dict[str, bytes]) -> Path:

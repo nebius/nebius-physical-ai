@@ -65,7 +65,7 @@ COPY src/npa /opt/npa-src/src/npa
 COPY workflows/workbench/npa-workflows/sim2real.yaml /opt/npa-src/workflows/workbench/npa-workflows/sim2real.yaml
 COPY workflows/workbench/npa-workflows/physical-ai-data-factory.yaml /opt/npa-src/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
 RUN python3.12 -m venv /opt/npa-venv \
-    && /opt/npa-venv/bin/pip install --no-cache-dir /opt/npa-src \
+    && /opt/npa-venv/bin/pip install --no-cache-dir 'uvicorn==0.41.0' /opt/npa-src \
     && rm -rf /root/.cache /tmp/uv-cache /tmp/pip-* \
     && test -z "$(find /opt/alpamayo2 /opt/npa-src /opt/npa-venv \
       \( -iname '*.safetensors' -o -iname '*.ckpt' -o -iname 'pytorch_model*.bin' \) \
