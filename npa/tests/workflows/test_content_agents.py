@@ -2,12 +2,72 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
 import re
 
 import pytest
 import yaml
 
 from npa.workflows import content_agents as ca
+
+
+def test_upstream_failure_preserves_private_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    uploaded: list[tuple[Path, str]] = []
+
+    monkeypatch.setattr(
+        ca.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            ["material-agent"], 17
+        ),
+    )
+    monkeypatch.setattr(
+        ca,
+        "_upload",
+        lambda path, uri: uploaded.append((path, uri)) or uri,
+    )
+
+    with pytest.raises(ca.ContentAgentsError, match="private stage log was preserved"):
+        ca._run(
+            ["material-agent", "run"],
+            cwd=tmp_path,
+            log_path=tmp_path / "material-agent.log",
+            failure_log_uri="s3://private/run/material-agent.failed.log",
+        )
+
+    assert uploaded == [
+        (tmp_path / "material-agent.log", "s3://private/run/material-agent.failed.log")
+    ]
+
+
+def test_upstream_failure_remains_primary_when_log_upload_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        ca.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            ["physics-agent"], 23
+        ),
+    )
+
+    def fail_upload(_path: Path, _uri: str) -> str:
+        raise RuntimeError("private storage unavailable")
+
+    monkeypatch.setattr(ca, "_upload", fail_upload)
+
+    with pytest.raises(
+        ca.ContentAgentsError,
+        match="physics-agent failed with exit code 23; the private stage log could not be preserved",
+    ):
+        ca._run(
+            ["physics-agent", "run"],
+            cwd=tmp_path,
+            log_path=tmp_path / "physics-agent.log",
+            failure_log_uri="s3://private/run/physics-agent.failed.log",
+        )
 
 
 ROOT = Path(__file__).resolve().parents[3]

@@ -109,7 +109,13 @@ def _upload_tree(directory: Path, uri: str) -> str:
     return _storage().upload_directory(str(directory), uri)
 
 
-def _run(command: Sequence[str], *, cwd: Path, log_path: Path) -> None:
+def _run(
+    command: Sequence[str],
+    *,
+    cwd: Path,
+    log_path: Path,
+    failure_log_uri: str = "",
+) -> None:
     """Run one real upstream entrypoint without leaking environment values."""
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -124,9 +130,20 @@ def _run(command: Sequence[str], *, cwd: Path, log_path: Path) -> None:
             text=True,
         )
     if completed.returncode:
+        log_preserved = False
+        if failure_log_uri:
+            try:
+                _upload(log_path, failure_log_uri)
+                log_preserved = True
+            except Exception:  # preserve the upstream failure as the root cause
+                log_preserved = False
         raise ContentAgentsError(
             f"{Path(command[0]).name} failed with exit code {completed.returncode}; "
-            f"inspect the private stage log"
+            + (
+                "the private stage log was preserved"
+                if log_preserved
+                else "the private stage log could not be preserved"
+            )
         )
 
 
@@ -601,6 +618,9 @@ def materials_stage(*, run_uri: str, model: str, base_url: str) -> dict[str, Any
             ],
             cwd=work,
             log_path=log_path,
+            failure_log_uri=_s3_join(
+                run_uri, "materials", "material-agent.failed.log"
+            ),
         )
         _require_file(output_usd, "Material Agent output")
         metadata = _validate_open_stage(output_usd)
@@ -666,6 +686,7 @@ def physics_stage(*, run_uri: str, model: str, base_url: str) -> dict[str, Any]:
             ],
             cwd=work,
             log_path=log_path,
+            failure_log_uri=_s3_join(run_uri, "physics", "physics-agent.failed.log"),
         )
         _require_file(output_usd, "Physics Agent output")
         inspection = inspect_physics(output_usd)
@@ -733,6 +754,9 @@ def validate_stage(*, run_uri: str) -> dict[str, Any]:
             ],
             cwd=work,
             log_path=log_path,
+            failure_log_uri=_s3_join(
+                run_uri, "validation", "validation-agent.failed.log"
+            ),
         )
         upstream_result = validation_dir / "validation_result.json"
         _require_file(upstream_result, "Validation Agent result")
