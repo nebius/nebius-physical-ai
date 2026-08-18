@@ -409,6 +409,60 @@ def test_submit_workflow_secrets_can_come_from_extra_env(monkeypatch, tmp_path) 
     assert "from-config" not in cmd
     assert captured_env["AWS_ACCESS_KEY_ID"] == "from-config"
 
+    rendered = yaml.safe_load(
+        (
+            tmp_path
+            / "sky-state"
+            / "submissions"
+            / "run-config-secrets"
+            / "skypilot-config.yaml"
+        ).read_text(encoding="utf-8")
+    )
+    assert rendered["kubernetes"]["allowed_contexts"] == ["npa-rtxpro-mk8s"]
+
+
+def test_submit_workflow_replaces_stale_kubernetes_context_allowlist(
+    monkeypatch, tmp_path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "name: demo\nresources:\n  cloud: kubernetes\n", encoding="utf-8"
+    )
+    global_config = tmp_path / "global.yaml"
+    global_config.write_text(
+        "kubernetes:\n"
+        "  allowed_contexts: [old-customer-context]\n"
+        "  pod_config:\n"
+        "    spec:\n"
+        "      imagePullSecrets:\n"
+        "        - name: npa-nebius-registry\n",
+        encoding="utf-8",
+    )
+    sky_bin = _fake_sky(tmp_path)
+
+    def fake_run(cmd, **kwargs):
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="Job submitted, ID: 12\n", stderr=""
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = submit_workflow(
+        yaml_path,
+        "run-exact-context",
+        config_path=global_config,
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=sky_bin,
+        infra="k8s/run-owned-context",
+    )
+
+    rendered = yaml.safe_load(Path(result.log_paths["config"]).read_text())
+    assert rendered["kubernetes"]["allowed_contexts"] == ["run-owned-context"]
+    assert rendered["kubernetes"]["pod_config"]["spec"]["imagePullSecrets"] == [
+        {"name": "npa-nebius-registry"}
+    ]
+
 
 def test_submit_workflow_honors_isolated_config_dir(monkeypatch, tmp_path) -> None:
     yaml_path = tmp_path / "workflow.yaml"
