@@ -101,6 +101,8 @@ def test_material_config_uses_real_upstream_ovrtx_and_runtime_key(
     )
 
     assert config["steps"]["optimize_usd"] == {"enabled": False}
+    assert config["steps"]["validate_input"]["on_failure"] == "block"
+    assert config["steps"]["validate_output"]["on_failure"] == "block"
     assert config["steps"]["build_dataset_usd"]["renderer"]["backend"] == "ovrtx"
     assert config["steps"]["render"]["backend"] == "ovrtx"
     vlm = config["steps"]["predict"]["vlm"]

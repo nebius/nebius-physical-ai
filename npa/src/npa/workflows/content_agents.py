@@ -272,7 +272,10 @@ def material_config(
         },
         "materials": {"path": "materials.yaml"},
         "steps": {
-            "validate_input": {"enabled": True, "on_failure": "fail"},
+            # NVIDIA Content Agents v0.5.2 accepts warn/block/fix here.  Use
+            # block for a fail-closed release pipeline; "fail" is not a valid
+            # upstream mode and is rejected before the validator runs.
+            "validate_input": {"enabled": True, "on_failure": "block"},
             "optimize_usd": {"enabled": False},
             "build_dataset_usd": {
                 "enabled": True,
@@ -354,7 +357,7 @@ def material_config(
                 "allow_empty_predictions": False,
                 "fail_on_unknown_material": True,
             },
-            "validate_output": {"enabled": True, "on_failure": "fail"},
+            "validate_output": {"enabled": True, "on_failure": "block"},
             "render": {
                 "enabled": True,
                 "backend": "ovrtx",
