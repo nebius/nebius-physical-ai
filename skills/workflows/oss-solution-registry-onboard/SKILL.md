@@ -378,6 +378,43 @@ runs are postprocessed into a verified Rerun recording that embeds the exact
 MP4 alongside static run evidence; see `skills/tools/wan2-2/SKILL.md` and
 `docs/workbench/wan2.2.md`.
 
+### Lightricks LTX-2.5 (`byof-ltx2.yaml`)
+
+Pinned upstream source:
+`Lightricks/LTX-2@fd4ded7f2d88d3da713abcdd4ad41ecc4a9314ca`; gated checkpoint
+set: `Lightricks/LTX-2.5`. **No capability here is live**: the image has been
+built, pushed, and scanned by digest, but no GPU has run it. The entry exists so
+the contract is reviewable before evidence, not so it can be mistaken for
+evidence.
+
+Read this one before onboarding any non-OSI model, because it breaks the habit
+the other entries teach. The LTX-2.x Community License Agreement (2026-08-11)
+licenses the **source** as well as the weights (Section 1.9 covers the
+accompanying source code), so "bake the code, fetch the weights" would have made
+the image non-redistributable. `npa-ltx2` bakes neither, and both fetches refuse
+without the operator's own `HF_TOKEN`:
+
+- `ltx2_5_text_to_video` (real `python -m ltx_pipelines.distilled` generation)
+- `ltx2_5_decoded_mp4_validation` (decode the pixels; reject an unreadable
+  container, a flat render, and one still repeated)
+
+The primary artifact is `ltx2_5_text_to_video.json`. Before either fetch, the
+run proves the refusal on the image it is actually running (`ltx-runtime
+assert-refusal`: exit 78, naming *which* gate refused, with both caches still
+empty) — a property of the image rather than a capability of the model.
+
+The licence acceptance is not ours to collect. It binds by conduct, and
+`Lightricks/LTX-2.5` is a gated repository, so a token that can read it is
+checkable evidence that a human accepted Lightricks' terms — strictly better
+than a `NPA_LTX_ACCEPT_COMMUNITY_LICENSE=YES` variable, which an earlier version
+of this entry required and which never formed the contract. Compliance with the
+Agreement, including Attachment A(18) (no training other models on the Outputs
+for commercial use, and a robot policy is another machine learning model), is
+the operator's own responsibility; the pipeline therefore stops at curation
+rather than training. Not claimed: image-to-video, audio-to-video, and LoRA
+fine-tuning. See `npa/docker/workbench/ltx2/REDISTRIBUTION.md` and
+`docs/workbench/ltx2.md`.
+
 ### Multi-GPU solutions
 
 When a solution's accepted capability is only meaningful across multiple GPUs

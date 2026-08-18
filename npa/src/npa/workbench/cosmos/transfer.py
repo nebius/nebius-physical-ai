@@ -837,6 +837,17 @@ def validate_committed_run_manifest(
 
     if not isinstance(document, dict):
         raise ValueError("canonical Cosmos augment manifest is not an object")
+    from npa.workflows.paidf_cosmos3 import (
+        MANIFEST_SCHEMA as COSMOS3_MANIFEST_SCHEMA,
+        PaidfCosmos3Error,
+        validate_committed_augment_manifest,
+    )
+
+    if document.get("schema") == COSMOS3_MANIFEST_SCHEMA:
+        try:
+            return validate_committed_augment_manifest(document, output_uri)
+        except PaidfCosmos3Error as exc:
+            raise ValueError(str(exc)) from exc
     if not (
         document.get("schema") == TRANSFER_MANIFEST_SCHEMA
         and document.get("mode") == TRANSFER_MANIFEST_MODE

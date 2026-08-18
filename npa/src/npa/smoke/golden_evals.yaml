@@ -617,6 +617,36 @@ containers:
       timeout_seconds: 120
       status: ready
 
+  ltx2:
+    image: npa-ltx2
+    dockerfile: npa/docker/workbench/ltx2/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        LTX-2.5 open-weights video/audio world model for synthetic clip
+        generation, feeding the existing evaluator/curation/visualisation chain.
+        Attachment A(18) bars training other models on its Outputs for
+        commercial use; that restriction governs artifacts in the customer's own
+        bucket, so compliance with it is the operator's own responsibility.
+    safety:
+      runs_as: ubuntu
+      base_image: python:3.12-slim-bookworm (digest pinned)
+      network: runtime-only LTX source, gated Hugging Face weights, CUDA torch, and S3
+      external_fetch: [github-lightricks-under-operator-hf-entitlement, pytorch-cu132-after-operator-acceptance, huggingface, s3]
+      notes: >-
+        Ships no LTX-2.5 source, no weights, and no CUDA/NVIDIA Python
+        distribution. The no-GPU golden eval proves health plus every refusal
+        path; accepted GPU execution is a dedicated live workflow gate.
+    golden_eval:
+      kind: container-smoke
+      command: bash /opt/npa/ltx2/smoke.sh
+      gpu: none
+      timeout_seconds: 120
+      # The image has not been built or pushed yet, so there is nothing to run
+      # this against. Flipping to `ready` is part of the dev-VM build runbook in
+      # docs/workbench/ltx2.md, not something to assume here.
+      status: needs-image-update
+
   sim2real-control:
     image: npa-sim2real-control
     internal: true

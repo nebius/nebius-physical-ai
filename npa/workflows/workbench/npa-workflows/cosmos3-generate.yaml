@@ -15,6 +15,11 @@ config:
 
   cosmos3_mode: text2image
   cosmos3_checkpoint: Cosmos3-Nano
+  # Required by image2image/image2video/video2video; empty for text modes.
+  cosmos3_input_path: ""
+  cosmos3_seed: "0"
+  cosmos3_guidance: "0"
+  cosmos3_steps: "0"
   prompt: "a robot arm sorting colored blocks on a white workbench in a bright robotics lab"
 
   output_uri: "s3://{{config.bucket}}/{{config.prefix}}/generated/"

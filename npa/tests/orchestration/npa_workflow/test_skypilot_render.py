@@ -94,7 +94,9 @@ def test_kubernetes_profile_disk_size_renders_as_ephemeral_storage() -> None:
 def test_every_byof_spec_declares_its_outer_runtime_image() -> None:
     paths = sorted(NPA_SPECS.glob("byof*.yaml"))
 
-    assert len(paths) == 9
+    # Pinned so a new BYOF spec cannot skip the per-profile image assertion
+    # below by simply not being globbed. Bump it when you add one.
+    assert len(paths) == 10
     for path in paths:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         base_image = raw["config"].get("base_image")

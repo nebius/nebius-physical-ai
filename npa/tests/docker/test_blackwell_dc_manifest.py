@@ -267,6 +267,10 @@ def test_compatibility_matrix_lists_every_image(entries: list[dict]) -> None:
 
 def test_compatibility_matrix_is_linked_from_the_readme() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    # The property is that a reader can find the matrix from the front page.
+    # This also asserted a `## Container registry` heading, which #289 removed
+    # while leaving the link in place — an incidental check on the shape of a
+    # document rather than on the thing being guarded.
     assert "docs/workbench/image-gpu-compatibility-matrix.md" in readme
 
 

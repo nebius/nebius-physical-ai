@@ -16,6 +16,8 @@ import sys
 import tarfile
 import tempfile
 import zipfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import IO, Any
@@ -706,6 +708,67 @@ def _scan_nested_archive(
                 f"cannot inspect nested archive in {source}: {exc}",
             )
         )
+
+
+@contextmanager
+def payload_policy(
+    *,
+    forbidden_paths: tuple[tuple[str, re.Pattern[str]], ...] | None = None,
+    forbidden_history: tuple[tuple[str, re.Pattern[str]], ...] | None = None,
+    audited_secret_files: dict[str, str] | None = None,
+    audited_libraries: dict[str, str] | None = None,
+) -> Iterator[None]:
+    """Scan under a different payload policy, reusing this archive walker.
+
+    The nested-archive traversal here (tar/zip/ar/gzip/bzip2/xz/zstd, ELF
+    dependency inspection, budgets) is generic; only the pattern tables are
+    Wan-specific. Sibling scanners for other images declare their own tables and
+    borrow the walker rather than forking 800 lines of it, which is how the
+    traversal fixes and hardening stay in one place.
+
+    The tables are module globals because the walker reads them at every level of
+    recursion, so this swaps and restores them. It is therefore not re-entrant or
+    thread-safe — fine for a CLI scanner, and the restore is in a ``finally`` so a
+    failed scan cannot leave the Wan policy replaced.
+    """
+
+    global FORBIDDEN_PATHS, FORBIDDEN_HISTORY
+    global AUDITED_SECRET_LITERAL_FILE_SHA256, AUDITED_LITERAL_LIBRARY_SHA256
+    previous = (
+        FORBIDDEN_PATHS,
+        FORBIDDEN_HISTORY,
+        AUDITED_SECRET_LITERAL_FILE_SHA256,
+        AUDITED_LITERAL_LIBRARY_SHA256,
+    )
+    if forbidden_paths is not None:
+        FORBIDDEN_PATHS = forbidden_paths
+    if forbidden_history is not None:
+        FORBIDDEN_HISTORY = forbidden_history
+    if audited_secret_files is not None:
+        AUDITED_SECRET_LITERAL_FILE_SHA256 = audited_secret_files
+    if audited_libraries is not None:
+        AUDITED_LITERAL_LIBRARY_SHA256 = audited_libraries
+    try:
+        yield
+    finally:
+        (
+            FORBIDDEN_PATHS,
+            FORBIDDEN_HISTORY,
+            AUDITED_SECRET_LITERAL_FILE_SHA256,
+            AUDITED_LITERAL_LIBRARY_SHA256,
+        ) = previous
+
+
+def scan_tars(tars: list[Path], config: dict[str, Any]) -> list[Finding]:
+    """Scan several layer/rootfs tars plus image history under the active policy."""
+
+    return _scan_tars(tars, config)
+
+
+def remote_material(image: str, temp_dir: Path) -> tuple[list[Path], dict[str, Any]]:
+    """Export a built image's rootfs, layers, and OCI config with crane."""
+
+    return _remote_material(image, temp_dir)
 
 
 def _config_text(config: dict[str, Any]) -> str:

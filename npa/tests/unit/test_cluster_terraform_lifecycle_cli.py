@@ -1649,6 +1649,8 @@ def test_kubeconfig_cmd_adopts_a_running_cluster(monkeypatch, tmp_path: Path) ->
     assert "mk8scluster-live" in credentials
     assert str(kubeconfig) in credentials
     assert saved and saved[-1].cluster_id == "mk8scluster-live"
+    assert saved[-1].name == "npa-cluster"
+    assert saved[-1].provider_name == "npa-cluster"
 
 
 def test_kubeconfig_cmd_names_what_exists_when_the_cluster_is_absent(

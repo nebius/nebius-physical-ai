@@ -68,6 +68,8 @@ verdicts in `npa/docker/workbench/blackwell-dc-images.json`.
 - Preemptible GPU placement does not change any boot-disk allocation. Preserve
   the identical `compute.disk.count` and `compute.disk.size.network-ssd` byte
   requirements in quota plans.
+- For repeated typed on-demand placement failures and consent-gated pool
+  switching, load `skills/atomic/gpu-allocation-fallback/SKILL.md`.
 - B200/B300 enablement depends on upstream library support per tool. Treat it as
   vendor-paced unless current tests prove the path. The 2026-08-03 final
   Genesis/Sim2Real tags passed real kernel compilation and physics smokes on

@@ -161,6 +161,30 @@ images:
       writable runtime volume under their upstream package terms; model and
       tokenizer payloads are also runtime-only. Built-image byte/layer scanning
       is mandatory before publication.
+  ltx2:
+    dockerfile: ltx2/Dockerfile
+    tier: job
+    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; the final runtime user is non-root, no sshd service is enabled by default, and no credentials are baked into the image."
+    redistribution: public
+    notes: >-
+      Contains no LTX-2.5 at all. Unlike every other model image here, that
+      includes the SOURCE: the LTX-2.x Community License Agreement (2026-08-11)
+      covers ltx-core / ltx-pipelines as licensed material, not just the weights,
+      and its Section 3 conditions (impose the use restrictions by contract,
+      deliver the agreement, do not transfer to a Commercial Entity without a
+      paid licence) cannot be met by an anonymous registry pull. Baking the code
+      would therefore have forced `restricted`; baking nothing makes the question
+      moot. Upstream source is fetched at run time at an immutable commit and
+      installed by upstream's own uv resolution, and gated weights come from
+      Hugging Face — both only under the operator's own token, since Section 1.9
+      makes the source licensed material too and the gated repository is where
+      Lightricks actually grants access. Sections 2.1 (paid Commercial Use
+      Agreement above $10M revenue) and Attachment A(18) (no training other
+      models on Outputs for commercial use) govern the operator's own conduct and
+      artifacts, and are their responsibility rather than something this image
+      certifies. Byte/layer scanning
+      with scripts/scan_image_ltx_payload.py is mandatory before publication.
+      NOT YET BUILT OR GPU-VALIDATED; see ltx2/REDISTRIBUTION.md.
   sonic:
     dockerfile: sonic/Dockerfile
     isaac_runtime_fetch: true

@@ -32,6 +32,7 @@ from npa.deploy.images import (
     DEFAULT_PUBLIC_CONTAINER_REGISTRY,
     OMNIVERSE_RESTRICTED_DERIVED_IMAGES,
     OMNIVERSE_RESTRICTED_TOOLS,
+    UNVALIDATED_PUBLICATION_TOOLS,
     container_image_for_tool,
     is_public_registry,
     is_publicly_redistributable,
@@ -365,12 +366,19 @@ def test_publish_plan_targets_public_registry_by_default() -> None:
     # redistributable image does not silently drift this gate. (main's form, kept over an
     # earlier hardcoded 19 from this branch -- which main's 20th tool, foxglove-embed,
     # would have broken immediately.)
-    assert len(plan) == len(publicly_publishable_tools())
+    # Two independent gates remove tools from the plan: licence restriction, and
+    # having no built/validated artifact to publish. Both are subtracted from the
+    # contract-derived total rather than hardcoded, so adding a freely
+    # redistributable image does not silently drift this gate.
+    assert len(plan) == len(publicly_publishable_tools()) - len(
+        set(publicly_publishable_tools()) & set(UNVALIDATED_PUBLICATION_TOOLS)
+    )
     # And, since the Isaac re-architecture emptied the restricted set: every image the repo
-    # builds is now publishable. This is the assertion that would catch a tool silently
-    # dropping out of the plan, which the derived equality above cannot.
+    # builds and has validated is publishable. This is the assertion that would catch a
+    # tool silently dropping out of the plan, which the derived equality above cannot.
     assert len(plan) == len(CONTAINER_IMAGE_NAMES) - len(
-        set(CONTAINER_IMAGE_NAMES) & set(OMNIVERSE_RESTRICTED_TOOLS)
+        set(CONTAINER_IMAGE_NAMES)
+        & (set(OMNIVERSE_RESTRICTED_TOOLS) | set(UNVALIDATED_PUBLICATION_TOOLS))
     )
     for item in plan:
         assert item.target_ref.startswith(DEFAULT_PUBLIC_CONTAINER_REGISTRY + "/npa-")

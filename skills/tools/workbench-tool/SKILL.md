@@ -5,6 +5,13 @@ description: Use when adding, changing, deploying, or calling any NPA workbench 
 
 # Workbench Tool Pattern
 
+This skill is the architectural contract. For the procedures built on it:
+
+- Adding a tool end to end: `skills/workflows/add-workbench-tool/SKILL.md`
+- Writing the CLI and SDK: `skills/atomic/npa-cli-conventions/SKILL.md`
+- Wiring it into a workflow: `skills/atomic/toolref-argv-contract/SKILL.md`
+- Validating before you push: `skills/atomic/pre-pr-validation/SKILL.md`
+
 Every workbench tool is a containerized FastAPI service. The container is the unit of deployment; the service endpoint is the unit of invocation; the CLI and SDK are clients.
 
 Each capability must have one source of truth. Put behavior in the service or shared implementation layer, then have all access paths call it. Never duplicate training, inference, import, or status logic separately across API, CLI, and SDK layers.
@@ -46,3 +53,7 @@ required flags (e.g. `--run-id`). A mismatch passes `validate-spec`/`plan-spec`
 but crashes on real submit with an unknown-option error. Verify against the CLI
 signature, and keep `catalog.py` and `docs/workbench/npa-workflow-tool-catalog.md`
 in sync. Prefer standardizing new tools on `--input-path`/`--output-path`.
+
+The full contract — literal-value rules, wrapper templates, reachability, image
+routing, and the local check that proves an argv can run — is in
+`skills/atomic/toolref-argv-contract/SKILL.md`.

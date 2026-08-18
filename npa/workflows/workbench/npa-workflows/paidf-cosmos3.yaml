@@ -1,0 +1,363 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: paidf-cosmos3
+  description: >-
+    Independent Physical AI Data Factory variant: select a generic direct video
+    or LeRobot v2/v3 episode/camera, understand it with a hosted VLM, generate
+    real source-video-conditioned Cosmos 3 variants, evaluate and refine them,
+    then run real Cosmos Curator, FiftyOne Brain, Rerun, and final aggregation.
+
+config:
+  bucket: example-bucket
+  prefix: "paidf-cosmos3/{{run.id}}"
+
+  # Input selector. The live matrix seeds this run-scoped fixture URI; operators
+  # can point video at another generic MP4, or select a LeRobot v2/v3 dataset.
+  input_kind: video
+  input_video_uri: "s3://{{config.bucket}}/{{config.prefix}}/fixture/source.mp4"
+  lerobot_dataset_uri: ""
+  input_episode: "0"
+  input_camera: "observation.images.front"
+
+  # Cosmos 3 generation and bounded refinement. video2video is required because
+  # describing an unconditioned or still-conditioned result as source-video-
+  # conditioned is forbidden. Every retry changes at least the seed by default.
+  cosmos3_mode: video2video
+  cosmos3_checkpoint: Cosmos3-Nano
+  prompt: "Preserve the source robot motion and scene structure while creating a physically plausible appearance variant."
+  negative_prompt: "distorted robot geometry, impossible motion, unsafe content"
+  seed: "17"
+  guidance: "5.0"
+  steps: "24"
+  variant_count: "2"
+  variant_parallelism: "1"
+  parallelism_preset: latency
+  refinement_iterations: "2"
+  retry_seed_stride: "1000"
+  retry_guidance_delta: "-0.5"
+  retry_steps_delta: "4"
+  grade_threshold: "0.75"
+  default_decision: loop_back
+
+  # Shared PAIDF appearance sampler and evaluator settings.
+  augment_subject: "the selected input robot episode"
+  temporal_consistency_mode: advisory
+  temporal_consistency_threshold: "0.8"
+  temporal_noise_floor: "0.25"
+  temporal_blur_ksize: "7"
+  temporal_regions_json: ""
+  appearance_fidelity_mode: advisory
+  appearance_fidelity_threshold: "0.8"
+  appearance_luminance_tolerance: "18.0"
+  appearance_global_chroma_tolerance: "8.0"
+  appearance_local_chroma_tolerance: "6.0"
+  appearance_chroma_instability_tolerance: "4.0"
+  appearance_blur_ksize: "7"
+  appearance_max_dimension: "256"
+  appearance_regions_json: ""
+  caption_model: "Qwen/Qwen2.5-VL-72B-Instruct"
+  vlm_backend: api
+  max_images: "8"
+  max_tokens: "512"
+  curator_clip_len_s: "3"
+  curator_min_clip_len_s: "1"
+  curator_motion_filter: score-only
+  fiftyone_dedup_threshold: "0.10"
+
+  run_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  input_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
+  conditioning_video_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/source.mp4"
+  input_provenance_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/provenance.json"
+  images_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
+  configs_uri: "s3://{{config.bucket}}/{{config.prefix}}/configs/"
+  captions_uri: "s3://{{config.bucket}}/{{config.prefix}}/labeled_original/"
+  refinement_attempt_uri: "s3://{{config.bucket}}/{{config.prefix}}/configs/cosmos3-attempt.json"
+  augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/"
+  augment_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/manifest.json"
+  rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/"
+  scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/grade/"
+  decision_uri: "s3://{{config.bucket}}/{{config.prefix}}/grade/decision.json"
+  quality_disposition_uri: "s3://{{config.bucket}}/{{config.prefix}}/grade/quality_disposition.json"
+  augmented_frames_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/"
+  labeled_augmented_uri: "s3://{{config.bucket}}/{{config.prefix}}/labeled_augmented/"
+  lance_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/"
+  curated_clips_uri: "s3://{{config.bucket}}/{{config.prefix}}/curation/cosmos_curator/"
+  curator_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/curation/cosmos_curator.json"
+  curation_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/curation/report.json"
+  rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/sim2real.rrd"
+  finalize_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/final.json"
+
+resources:
+  gpu:
+    cloud: kubernetes
+    # Portable supported default. NPA_WORKFLOW_GPU_ACCELERATOR may select an
+    # available RTX PRO 6000 product label without baking a cluster identifier.
+    accelerators: H100:1
+    cpus: 16
+    memory: 128Gi
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+
+initial: prepare-input
+
+states:
+  prepare-input:
+    description: >-
+      Select exactly one generic MP4 or LeRobot v2/v3 episode and camera. Stage
+      input/source.mp4 plus real decoded frames and truthful provenance.
+    toolRef: workbench.cosmos3.prepare_video_input
+    resources: cpu
+    outputs:
+      - uri: "{{config.input_provenance_uri}}"
+        schema: npa.paidf.cosmos3.input.v1
+      - uri: "{{config.images_uri}}"
+        schema: npa.data_factory.frames.v1
+    next: generate-configs
+
+  generate-configs:
+    description: Sample configuration-driven appearance prompts for each variant.
+    needs: [prepare-input]
+    resources: cpu
+    run:
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.data_factory_stages import generate_configs;
+          generate_configs(*sys.argv[1:])
+        - "{{config.configs_uri}}"
+        - "{{config.variant_count}}"
+        - "{{run.id}}"
+        - "{{config.images_uri}}"
+        - "false"
+        - "false"
+        - "{{config.augment_subject}}"
+    outputs:
+      - uri: "{{config.configs_uri}}manifest.json"
+        schema: npa.data_factory.configs.v1
+    next: annotate-original
+
+  annotate-original:
+    description: Understand and caption decoded frames from the selected source video.
+    needs: [generate-configs]
+    toolRef: workbench.token_factory.caption
+    resources: cpu
+    inputs:
+      - uri: "{{config.images_uri}}"
+        schema: npa.data_factory.frames.v1
+    outputs:
+      - uri: "{{config.captions_uri}}captions.json"
+        schema: npa.token_factory.captions.v1
+    next: refinement
+
+  refinement:
+    description: >-
+      Bounded dynamic refinement. Every pass runs real Cosmos 3 video2video,
+      evaluates every variant, and gates the complete report. A retry derives new
+      seed/guidance/steps from the prior failed report and cannot replay unchanged.
+    needs: [annotate-original]
+    loop:
+      max: "{{config.refinement_iterations}}"
+      until: promote_checkpoint
+    sequence:
+      - generate-variants
+      - evaluate
+      - quality-gate
+    outputs:
+      - uri: "{{config.augment_manifest_uri}}"
+        schema: npa.paidf.cosmos3.augment.v1
+    next: quality-disposition
+
+  generate-variants:
+    description: >-
+      Run one real npa-cosmos3/cosmos-framework video2video inference per variant.
+      The source input, captions, prompt, model, seed, guardrails, and lineage are
+      recorded in per-variant metadata and the run manifest.
+    toolRef: workbench.cosmos3.generate_variants
+    resources: gpu
+    inputs:
+      - uri: "{{config.conditioning_video_uri}}"
+        schema: npa.paidf.cosmos3.input.v1
+    outputs:
+      - uri: "{{config.augment_manifest_uri}}"
+        schema: npa.paidf.cosmos3.augment.v1
+
+  evaluate:
+    description: Run real Cosmos Evaluator checks over every conditioned variant.
+    toolRef: workbench.cosmos_evaluator.evaluate
+    resources: cpu
+    inputs:
+      - uri: "{{config.rollouts_uri}}"
+        schema: npa.paidf.cosmos3.augment.v1
+    outputs:
+      - uri: "{{config.scores_uri}}cosmos_evaluator.json"
+        schema: npa.cosmos_evaluator.report.v1
+
+  quality-gate:
+    description: Fail closed to loop_back on failed checks, incomplete reports, or missing decisions.
+    writesDecision: true
+    needs: [evaluate]
+    resources: cpu
+    run:
+      shell: >-
+        python3 -c "from npa.workflows.data_factory_stages import grade_gate;
+        grade_gate('{{config.scores_uri}}', '{{config.decision_uri}}', '{{config.grade_threshold}}')"
+    outputs:
+      - uri: "{{config.decision_uri}}"
+        schema: npa.sim2real.threshold_decision.v1
+
+  quality-disposition:
+    description: Persist a strict accepted or rejected disposition from the final evaluator report.
+    needs: [refinement]
+    resources: cpu
+    run:
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.data_factory_stages import write_quality_disposition;
+          write_quality_disposition(*sys.argv[1:])
+        - "{{config.scores_uri}}"
+        - "{{config.quality_disposition_uri}}"
+        - "{{config.decision_uri}}"
+        - "{{config.grade_threshold}}"
+    outputs:
+      - uri: "{{config.quality_disposition_uri}}"
+        schema: npa.data_factory.quality_disposition.v1
+      - uri: "{{config.decision_uri}}"
+        schema: npa.sim2real.threshold_decision.v1
+    next: visualize-quality-evidence
+
+  visualize-quality-evidence:
+    description: Preserve input, generated, evaluator, gate, and disposition evidence in Rerun.
+    needs: [quality-disposition]
+    toolRef: workbench.nurec.visualize
+    resources: cpu
+    outputs:
+      - uri: "{{config.rrd_uri}}"
+        schema: npa.sim2real.rerun.v1
+    next: quality-route
+
+  quality-route:
+    description: Route only from the durable quality disposition after evidence visualization.
+    writesDecision: true
+    needs: [visualize-quality-evidence]
+    resources: cpu
+    run:
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.paidf_cosmos3 import route_quality_disposition;
+          route_quality_disposition(*sys.argv[1:])
+        - "{{config.quality_disposition_uri}}"
+        - "{{config.decision_uri}}"
+    outputs:
+      - uri: "{{config.decision_uri}}"
+        schema: npa.sim2real.threshold_decision.v1
+    transitions:
+      - when: promote_checkpoint
+        goto: require-accepted-quality
+      - when: loop_back
+        goto: reject-quality
+
+  require-accepted-quality:
+    description: Fail closed before annotation when a one-shot plan assumed promotion incorrectly.
+    needs: [quality-route]
+    resources: cpu
+    run:
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.paidf_cosmos3 import require_accepted_quality;
+          require_accepted_quality(*sys.argv[1:])
+        - "{{config.quality_disposition_uri}}"
+    next: annotate-augmented
+
+  reject-quality:
+    description: Terminate only after rejected Rerun evidence is durable.
+    needs: [quality-route]
+    resources: cpu
+    run:
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.paidf_cosmos3 import reject_quality;
+          reject_quality(*sys.argv[1:])
+        - "{{config.quality_disposition_uri}}"
+    terminal: true
+
+  annotate-augmented:
+    description: Caption only accepted Cosmos 3 variants with the hosted VLM.
+    needs: [require-accepted-quality]
+    resources: cpu
+    run:
+      shell: >-
+        npa workbench token-factory caption
+        --input-path "{{config.augmented_frames_uri}}"
+        --output-path "{{config.labeled_augmented_uri}}"
+        --model "{{config.caption_model}}"
+        --max-images "{{config.max_images}}"
+        --max-tokens "{{config.max_tokens}}"
+        --output json
+    outputs:
+      - uri: "{{config.labeled_augmented_uri}}captions.json"
+        schema: npa.token_factory.captions.v1
+    next: cosmos-curate
+
+  cosmos-curate:
+    description: Run real NVIDIA Cosmos Curator stages over accepted variants.
+    needs: [annotate-augmented]
+    toolRef: workbench.cosmos_curate.curate
+    resources: cpu
+    inputs:
+      - uri: "{{config.augment_uri}}"
+        schema: npa.paidf.cosmos3.augment.v1
+    outputs:
+      - uri: "{{config.curator_report_uri}}"
+        schema: npa.cosmos_curate.curation.v1
+    next: curate
+
+  curate:
+    description: Run real FiftyOne Brain uniqueness, similarity, duplicate, and PCA curation.
+    needs: [cosmos-curate]
+    toolRef: workbench.fiftyone.curate_augmented
+    resources: cpu
+    outputs:
+      - uri: "{{config.curation_report_uri}}"
+        schema: npa.fiftyone.curation.v1
+    next: visualize
+
+  visualize:
+    description: Build a real Rerun recording for the accepted full pipeline.
+    needs: [curate]
+    toolRef: workbench.nurec.visualize
+    resources: cpu
+    outputs:
+      - uri: "{{config.rrd_uri}}"
+        schema: npa.sim2real.rerun.v1
+    next: finalize
+
+  finalize:
+    description: Verify and aggregate genuine Cosmos 3, evaluator, curator, FiftyOne, and Rerun evidence.
+    needs: [visualize]
+    resources: cpu
+    run:
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.paidf_cosmos3 import finalize;
+          finalize(*sys.argv[1:])
+        - "{{config.run_root_uri}}"
+        - "{{config.finalize_report_uri}}"
+    outputs:
+      - uri: "{{config.finalize_report_uri}}"
+        schema: npa.paidf.cosmos3.final.v1
+    terminal: true

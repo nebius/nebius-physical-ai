@@ -53,7 +53,26 @@ DEFAULT_IMAGE_PULL_SECRETS = ("agent-sa",)
 #: rendered YAML). Without this a run provisions, pulls the image, executes the profile
 #: and then dies at the upload with
 #: ``botocore.exceptions.NoCredentialsError: Unable to locate credentials``.
-OPERATOR_RUNTIME_ENVS = ("NPA_OPENPI_ACCEPT_GEMMA_TERMS",)
+#: Operator-held runtime state that a vendor gate reads inside the pod: vendor
+#: terms acceptances and the operator's own gated-repository token. These are
+#: things a person holds or did, not workflow configuration, so they travel
+#: through SkyPilot's redacted secret channel and never appear in a rendered
+#: YAML. Unset names are dropped, so a run that holds nothing forwards nothing
+#: and the container's own gate refuses.
+#:
+#: Keyed by solution, because these are per-vendor answers and a single shared
+#: tuple quietly widens every other image's environment: a variable added for
+#: one solution is forwarded into every other BYOF run whenever it happens to be
+#: set in the operator's shell. A solution that is not listed forwards none.
+OPERATOR_RUNTIME_ENVS_BY_SOLUTION: dict[str, tuple[str, ...]] = {
+    "openpi": ("NPA_OPENPI_ACCEPT_GEMMA_TERMS",),
+    "ltx2.5": (
+        "NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS",
+        # The gated-repository entitlement, which the container requires for the
+        # LTX source as well as the weights.
+        "HF_TOKEN",
+    ),
+}
 DEFAULT_SECRET_ENVS = (
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
@@ -61,17 +80,23 @@ DEFAULT_SECRET_ENVS = (
 )
 
 
-def resolve_secret_envs(explicit: list[str] | None) -> list[str]:
+def resolve_secret_envs(
+    explicit: list[str] | None, *, solution_name: str = ""
+) -> list[str]:
     """Return the secret env names to forward to SkyPilot.
 
-    An explicit ``--secret-env`` list replaces the default storage names. An
-    explicitly set OpenPI run gate is appended in either case so it can only
-    travel through SkyPilot's redacted secret channel. Names with no value are
-    dropped, since SkyPilot rejects a secret it cannot resolve.
+    An explicit ``--secret-env`` list replaces the default storage names. The
+    operator-runtime gates *this solution* reads are appended in either case, so
+    acceptance cannot fall back to rendered YAML — and a solution never receives
+    another vendor's answers. Names with no value are dropped, since SkyPilot
+    rejects a secret it cannot resolve.
     """
 
     names = list(explicit if explicit is not None else DEFAULT_SECRET_ENVS)
-    names.extend(OPERATOR_RUNTIME_ENVS)
+    # Operator acceptance is runtime state, not workflow configuration. Always
+    # carry an explicitly set gate through SkyPilot's redacted secret channel,
+    # even when a caller supplies an otherwise explicit secret allowlist.
+    names.extend(OPERATOR_RUNTIME_ENVS_BY_SOLUTION.get(solution_name.strip(), ()))
     return [name for name in dict.fromkeys(names) if os.environ.get(name)]
 
 
@@ -468,7 +493,9 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     infra=infra,
                     config_path=config_path,
                     cleanup=args.cleanup,
-                    secret_envs=resolve_secret_envs(args.secret_env),
+                    secret_envs=resolve_secret_envs(
+                        args.secret_env, solution_name=args.solution_name
+                    ),
                 )
             teardown_guard = SignalTeardown(
                 run_id=run_id,
@@ -491,7 +518,9 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     config_path=submit_config_path,
                     sky_bin=sky_bin,
                     infra=infra,
-                    secret_envs=resolve_secret_envs(args.secret_env),
+                    secret_envs=resolve_secret_envs(
+                        args.secret_env, solution_name=args.solution_name
+                    ),
                     timeout=args.submit_timeout,
                 )
                 submitted_config_path = (

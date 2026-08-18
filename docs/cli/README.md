@@ -34,6 +34,7 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa workbench lancedb](lancedb.md)
 - [npa workbench lerobot](lerobot.md)
 - [npa workbench lichtblick](lichtblick.md)
+- [npa workbench ltx2](ltx2.md)
 - [npa workbench mjlab](mjlab.md)
 - [npa network](network.md)
 - [npa cluster node-group](node-group.md)

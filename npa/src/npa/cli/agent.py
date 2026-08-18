@@ -48,6 +48,7 @@ from npa.cli.agent_env_files import (  # noqa: F401 - re-exported for tests/call
     _write_agent_s3_env,
 )
 from npa.cli.agent_destroy import destroy_cmd as _destroy_cmd_impl
+from npa.cli.agent_auth import auth_profile_cmd
 from npa.cli.agent_inventory import agent_list_cmd
 from npa.cli.agent_preflight import (
     _agent_hard_prereq_results,
@@ -157,6 +158,7 @@ app = typer.Typer(
     help="Deploy and operate a public NPA chat agent VM.",
     no_args_is_help=True,
 )
+app.command("auth-profile")(auth_profile_cmd)
 app.command("list")(agent_list_cmd)
 
 DEFAULT_AGENT_PORT = 8088
@@ -1617,6 +1619,7 @@ def _default_state() -> dict:
         "latest_submit": {{}},
         "workflow_draft": {{"yaml": "", "name": "", "states": [], "updated_at": "", "plan": {{}}, "runnable": False}},
         "workflow_submit": {{}},
+        "gpu_allocation_fallback": {{}},
         "chat_history": [],
         "active_chat_session_id": "default",
         "chat_sessions": {{}},
@@ -1668,6 +1671,8 @@ def _normalize_loaded_state(data: dict | None) -> dict:
         merged["chat_history"] = []
     if not isinstance(merged.get("chat_sessions"), dict):
         merged["chat_sessions"] = {{}}
+    if not isinstance(merged.get("gpu_allocation_fallback"), dict):
+        merged["gpu_allocation_fallback"] = {{}}
     if not isinstance(merged.get("active_chat_session_id"), str):
         merged["active_chat_session_id"] = "default"
     if not PRELOAD_STOCK_DEMO:
@@ -3105,6 +3110,8 @@ def _agent_system_prompt() -> str:
         "- POST /api/workflows/submit — validate workflow YAML, ensure agent-side Kubernetes infra when needed, and return scheduler plan",
         "- GET /api/models — list Token Factory chat models available to this VM key",
         "- GET /api/tools — workbench toolRef catalog",
+        "- POST /api/agent/gpu-allocation/attempt — record typed GPU placement evidence and get a grounded fallback decision",
+        "- POST /api/agent/gpu-allocation/consent — accept or decline the exact tracked fallback; acceptance requires its confirmation token",
         "",
         "To view Franka immediately, tell users to open the **Rerun** tab and click **Load Franka in Rerun**",
         "(or POST /api/sim-viz/load-franka-demo). The UI has two tabs: **Chat** and **Rerun**.",
@@ -3285,6 +3292,7 @@ from agent_backend.memory import RunMemory, JsonFileStore
 # Blueprint Phases H/I: retrieval + observability are also shipped modules.
 from agent_backend import retrieval as _retrieval
 from agent_backend import trace as _agent_tracing
+from agent_backend import gpu_allocation_fallback as _gpu_fallback
 
 {_AGENT_WORKFLOW_EMBED}
 
@@ -3926,6 +3934,7 @@ def _provision_agent_infra(
     dry_run: bool = False,
     validate: bool = True,
     skip_s3: bool = True,
+    preemptible: bool | None = None,
 ) -> dict:
     ready, reason = _agent_npa_ready()
     if not ready:
@@ -3941,6 +3950,7 @@ def _provision_agent_infra(
             validate=validate,
             sky_smoke=False,
             dry_run=dry_run,
+            preemptible=preemptible,
         )
         payload = result.to_dict()
         payload["ok"] = True
@@ -5148,6 +5158,16 @@ def _consume_agent_confirm_token():
         _save_state(state)
     return token, digest, pending
 
+def _peek_agent_confirm_token():
+    state = _load_state()
+    act_state = state.get("agent_act")
+    if not isinstance(act_state, dict):
+        return "", "", None
+    token = str(act_state.get("confirm_token") or "")
+    digest = str(act_state.get("confirm_digest") or "")
+    pending = act_state.get("pending_action")
+    return token, digest, pending if isinstance(pending, dict) else None
+
 def _issue_agent_confirm_token(action, digest):
     # Issue a fresh token bound to a specific proposed action digest.
     token = secrets.token_hex(8)
@@ -5467,6 +5487,25 @@ def agent_act(payload: dict):
     # Phase I: record structured spans for the offline analyzer / injected tracer.
     _record_agent_trace(result)
     return result
+
+
+from agent_backend.gpu_allocation_routes import (
+    GpuAllocationDeps,
+    register_gpu_allocation_routes,
+)
+
+register_gpu_allocation_routes(
+    app,
+    GpuAllocationDeps(
+        load_state=_load_state,
+        save_state=_save_state,
+        issue_confirmation=_issue_agent_confirm_token,
+        peek_confirmation=_peek_agent_confirm_token,
+        consume_confirmation=_consume_agent_confirm_token,
+        action_digest=action_digest,
+    ),
+    HTTPException,
+)
 
 def _sim2real_gate_metrics(run_id: str, iteration: int) -> dict:
     # Read gate metrics only from real run artifacts; never fabricate a score.
@@ -5943,6 +5982,16 @@ def health():
     return {{
         "ok": True,
         "tool_refs": len(TOOL_REFS),
+        "capabilities": {{
+            "gpu_allocation_fallback": {{
+                "status": "available",
+                "grounded": True,
+                "routes": [
+                    "POST /api/agent/gpu-allocation/attempt",
+                    "POST /api/agent/gpu-allocation/consent",
+                ],
+            }},
+        }},
         "deployment": dict(DEPLOYMENT),
         "state_sha256": state_sha256,
     }}
@@ -8112,19 +8161,33 @@ def provision_infra(payload: dict | None = None):
     dry_run = bool(body.get("dry_run", True))
     validate = bool(body.get("validate", True))
     skip_s3 = bool(body.get("skip_s3", True))
+    logical = str(body.get("logical_allocation") or "").strip()
+    preemptible = bool(body.get("preemptible", False))
+    if logical:
+        fallback_records = _load_state().get("gpu_allocation_fallback")
+        fallback_records = fallback_records if isinstance(fallback_records, dict) else {{}}
+        fallback = fallback_records.get(_gpu_fallback.logical_allocation_ref(logical))
+        if isinstance(fallback, dict) and fallback.get("selected_pool") == _gpu_fallback.PREEMPTIBLE:
+            preemptible = True
     if not dry_run:
         confirm_token = str(body.get("confirm_token") or "").strip()
-        digest = "provision_infra:" + project + ":" + cluster_name
+        proposed_action = {{
+            "action": "provision_infra",
+            "project": project,
+            "cluster_name": cluster_name,
+            "preemptible": preemptible,
+        }}
+        digest = action_digest(proposed_action)
         if not confirm_token:
             token = _issue_agent_confirm_token(
-                {{"action": "provision_infra", "project": project, "cluster_name": cluster_name}},
+                proposed_action,
                 digest,
             )
             return {{
                 "ok": False,
                 "needs_confirmation": True,
                 "confirm_token": token,
-                "proposed_action": {{"action": "provision_infra", "project": project, "cluster_name": cluster_name, "dry_run": False}},
+                "proposed_action": {{**proposed_action, "dry_run": False}},
                 "error": "Real infra provision requires confirm_token",
                 "project": project,
                 "cluster_name": cluster_name,
@@ -8132,9 +8195,16 @@ def provision_infra(payload: dict | None = None):
         session_token, confirm_digest, _pending = _consume_agent_confirm_token()
         if not session_token or confirm_token != session_token or (confirm_digest and confirm_digest != digest):
             raise HTTPException(status_code=403, detail="invalid or expired confirm_token for provision")
-    result = _provision_agent_infra(project, cluster_name, dry_run=dry_run, validate=validate, skip_s3=skip_s3)
+    result = _provision_agent_infra(
+        project,
+        cluster_name,
+        dry_run=dry_run,
+        validate=validate,
+        skip_s3=skip_s3,
+        preemptible=preemptible,
+    )
     status = _agent_k8s_backends(project)
-    return {{"ok": bool(result.get("ok")), "project": project, "cluster_name": cluster_name, "result": result, "infra": status, "dry_run": dry_run}}
+    return {{"ok": bool(result.get("ok")), "project": project, "cluster_name": cluster_name, "result": result, "infra": status, "dry_run": dry_run, "capacity_pool": "preemptible" if preemptible else "on-demand"}}
 
 
 @app.post("/infra/soperator/validate")
