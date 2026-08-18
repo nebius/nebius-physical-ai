@@ -94,7 +94,10 @@ must carry arrays `observation_state`, `observation_image_workspace`,
 `observation_image_wrist`, `action`, `reward`, `terminated`, `truncated`,
 `timestamp`, plus JSON `provenance`. Lengths must agree; timestamps must increase;
 observations/actions must be finite; and exactly one of terminated/truncated must
-be true on the final frame only.
+be true on the final frame only. The action width must match `action_schema`.
+The pinned LeRobot ACT path currently requires at least two physically meaningful
+action channels; collection fails closed rather than padding or duplicating a
+single-channel control.
 
 The `npa.antioch.episode.v1` provenance includes scenario, case, seed, parameters,
 engine and SDK versions, source SHA-256, asset hashes, observation/action schemas,

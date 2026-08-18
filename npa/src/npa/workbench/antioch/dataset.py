@@ -55,6 +55,15 @@ def validate_episode(path: Path) -> tuple[dict[str, np.ndarray], EpisodeProvenan
         )
     if arrays["observation_state"].ndim != 2 or arrays["action"].ndim != 2:
         raise AntiochDatasetError("observation_state and action must be rank-2 arrays")
+    if arrays["action"].shape[1] != len(provenance.action_schema):
+        raise AntiochDatasetError(
+            "action width does not match provenance action_schema"
+        )
+    if arrays["action"].shape[1] < 2:
+        raise AntiochDatasetError(
+            "the pinned LeRobot ACT trainer requires at least two action channels; "
+            "refusing to pad or duplicate a one-channel control"
+        )
     for camera in ("observation_image_workspace", "observation_image_wrist"):
         value = arrays[camera]
         if value.ndim != 4 or value.shape[-1] != 3 or value.dtype != np.uint8:

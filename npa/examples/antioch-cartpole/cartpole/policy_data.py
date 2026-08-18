@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from isaaclab.sim import SimulationContext
 
 SOURCE_CONTRACT_SHA256 = (
-    "5e77337d11362e05439b8e110e93126dd9c74ff1221057e7409b089a0de09fee"
+    "00481edd23e2ae6555e8bf3cc4f2118b90ff8a44c0fc57105501e0bc72891aaf"
 )
 
 
@@ -93,7 +93,13 @@ def cartpole_offline_policy_episode(
         scene.update(simulation.get_physics_dt())
         if step % 3 == 0:
             states.append(state)
-            actions.append(np.array([effort], dtype=np.float32))
+            # Model the cart as two opposing actuator commands. Their
+            # difference is the exact effort applied above, so both exported
+            # policy channels have a physical meaning and no synthetic padding
+            # is introduced merely to satisfy a trainer shape.
+            actions.append(
+                np.array([max(effort, 0.0), max(-effort, 0.0)], dtype=np.float32)
+            )
             rewards.append(-abs(float(state[1])))
             workspace.append(_state_image(state, alternate=False))
             wrist.append(_state_image(state, alternate=True))
@@ -117,7 +123,7 @@ def cartpole_offline_policy_episode(
             "diagnostic_rgb_workspace",
             "diagnostic_rgb_wrist",
         ],
-        "action_schema": ["cart_effort"],
+        "action_schema": ["cart_effort_positive", "cart_effort_negative"],
         "fps": 20,
     }
     target = Path("/tmp/npa-antioch-cartpole-episode.npz")

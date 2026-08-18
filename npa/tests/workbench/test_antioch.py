@@ -225,14 +225,14 @@ def _episode(path: Path, **replacements: Any) -> None:
         source_sha256="a" * 64,
         assets_sha256={"cart": "b" * 64},
         observation_schema=["position", "velocity"],
-        action_schema=["force"],
+        action_schema=["force_positive", "force_negative"],
         fps=20,
     )
     arrays: dict[str, Any] = {
         "observation_state": np.zeros((length, 2), dtype=np.float32),
         "observation_image_workspace": np.zeros((length, 8, 8, 3), dtype=np.uint8),
         "observation_image_wrist": np.zeros((length, 8, 8, 3), dtype=np.uint8),
-        "action": np.zeros((length, 1), dtype=np.float32),
+        "action": np.zeros((length, 2), dtype=np.float32),
         "reward": np.ones(length, dtype=np.float32),
         "terminated": np.array([False, False, False, True]),
         "truncated": np.zeros(length, dtype=bool),
@@ -247,7 +247,7 @@ def test_episode_contract_accepts_complete_data(tmp_path: Path) -> None:
     path = tmp_path / "episode.npz"
     _episode(path)
     arrays, provenance = validate_episode(path)
-    assert arrays["action"].shape == (4, 1)
+    assert arrays["action"].shape == (4, 2)
     assert provenance.seed == 7
 
 
@@ -256,7 +256,7 @@ def test_episode_contract_accepts_complete_data(tmp_path: Path) -> None:
     [
         {"timestamp": np.array([0.0, 0.1, 0.1, 0.2])},
         {"terminated": np.zeros(4, dtype=bool)},
-        {"action": np.zeros((3, 1))},
+        {"action": np.zeros((3, 2))},
     ],
 )
 def test_episode_contract_fails_closed_on_incompatible_data(
@@ -272,6 +272,30 @@ def test_episode_contract_rejects_partial_bundle(tmp_path: Path) -> None:
     path = tmp_path / "partial.npz"
     np.savez(path, action=np.zeros((2, 1)))
     with pytest.raises(AntiochDatasetError, match="missing required"):
+        validate_episode(path)
+
+
+def test_episode_contract_rejects_single_channel_act_data(tmp_path: Path) -> None:
+    path = tmp_path / "single-action.npz"
+    provenance = EpisodeProvenance(
+        scenario="cartpole",
+        case="balance",
+        seed=7,
+        parameters={},
+        engine_version="1",
+        sdk_version="0.3.47",
+        source_sha256="a" * 64,
+        assets_sha256={"cart": "b" * 64},
+        observation_schema=["position", "velocity"],
+        action_schema=["force"],
+        fps=20,
+    )
+    _episode(
+        path,
+        action=np.zeros((4, 1), dtype=np.float32),
+        provenance=np.array(provenance.model_dump_json()),
+    )
+    with pytest.raises(AntiochDatasetError, match="at least two action channels"):
         validate_episode(path)
 
 
