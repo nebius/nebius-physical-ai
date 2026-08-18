@@ -42,7 +42,9 @@ def _tar(path: Path, members: dict[str, bytes]) -> Path:
     return path
 
 
-def _saved_image(tmp_path: Path, members: dict[str, bytes]) -> Path:
+def _saved_image(
+    tmp_path: Path, members: dict[str, bytes], *, config: bytes = b"{}"
+) -> Path:
     layer = _tar(tmp_path / "layer.tar", members)
     return _tar(
         tmp_path / "image.tar",
@@ -56,7 +58,7 @@ def _saved_image(tmp_path: Path, members: dict[str, bytes]) -> Path:
                     }
                 ]
             ).encode(),
-            "config.json": b"{}",
+            "config.json": config,
             "layer.tar": layer.read_bytes(),
         },
     )
@@ -101,6 +103,32 @@ def test_secret_content_in_source_fails(tmp_path: Path) -> None:
     findings, _ = scanner.scan_saved_image(
         _saved_image(
             tmp_path, {"opt/alpamayo2/config": b"hf_abcdefghijklmnopqrstuvwxyz"}
+        )
+    )
+    assert {finding.kind for finding in findings} == {"credential_content"}
+
+
+def test_dependency_fixtures_do_not_impersonate_operator_payload(
+    tmp_path: Path,
+) -> None:
+    findings, _ = scanner.scan_saved_image(
+        _saved_image(
+            tmp_path,
+            {
+                "opt/alpamayo2/.venv/site-packages/pkg/testing.py": b"hf_abcdefghijklmnopqrstuvwxyz",
+                "opt/alpamayo2/.venv/site-packages/pyarrow/tests/example.parquet": b"x",
+            },
+        )
+    )
+    assert findings == []
+
+
+def test_secret_in_image_environment_fails(tmp_path: Path) -> None:
+    findings, _ = scanner.scan_saved_image(
+        _saved_image(
+            tmp_path,
+            {},
+            config=b'{"config":{"Env":["HF_TOKEN=hf_abcdefghijklmnopqrstuvwxyz"]}}',
         )
     )
     assert {finding.kind for finding in findings} == {"credential_content"}

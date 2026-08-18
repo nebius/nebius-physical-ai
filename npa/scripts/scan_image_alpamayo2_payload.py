@@ -32,7 +32,7 @@ FORBIDDEN_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
     (
         "physical_ai_av_dataset_payload",
-        re.compile(r"^opt/alpamayo2/.+\.(?:parquet|mp4|mcap|usdz)$", re.I),
+        re.compile(r"^opt/alpamayo2/(?!\.venv/).+\.(?:parquet|mp4|mcap|usdz)$", re.I),
     ),
     (
         "credential_file",
@@ -51,6 +51,13 @@ SECRET_CONTENT = (
 )
 
 
+def _is_application_content(name: str) -> bool:
+    return name.startswith("opt/npa-src/") or (
+        name.startswith("opt/alpamayo2/")
+        and not name.startswith("opt/alpamayo2/.venv/")
+    )
+
+
 def _scan_layer_archive(archive: tarfile.TarFile, *, layer: str) -> list[Finding]:
     findings: list[Finding] = []
     for member in archive:
@@ -61,7 +68,7 @@ def _scan_layer_archive(archive: tarfile.TarFile, *, layer: str) -> list[Finding
                     findings.append(Finding(kind, layer, name))
             if (
                 member.isfile()
-                and name.startswith(("opt/alpamayo2/", "opt/npa-src/"))
+                and _is_application_content(name)
                 and member.size <= 16 * 1024**2
             ):
                 stream = archive.extractfile(member)
@@ -90,6 +97,13 @@ def scan_saved_image(image_tar: Path) -> tuple[list[Finding], int]:
         manifests = json.loads(manifest_stream.read())
         if len(manifests) != 1:
             raise RuntimeError("expected exactly one image manifest")
+        config_name = manifests[0].get("Config", "")
+        config_stream = archive.extractfile(config_name) if config_name else None
+        if config_stream is None:
+            raise RuntimeError("docker-save archive has no image config")
+        config_payload = config_stream.read()
+        if any(pattern.search(config_payload) for pattern in SECRET_CONTENT):
+            findings.append(Finding("credential_content", "image-config", config_name))
         for relative in manifests[0]["Layers"]:
             layers += 1
             layer_stream = archive.extractfile(relative)
