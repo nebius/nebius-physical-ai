@@ -14,8 +14,8 @@ docker pull "${NPA_REGISTRY}/npa-retargeting:0.1.1"
 ```
 
 The catalog was verified against the public GHCR tag and OCI manifest APIs on
-2026-08-15. Of the 25 images selected by the repository's public publishing
-plan, 24 resolved anonymously. The configured `npa-leisaac` tag returned HTTP
+2026-08-18. Of the 28 images selected by the repository's public publishing
+plan, 27 resolved anonymously. The configured `npa-leisaac` tag returned HTTP
 403 from GHCR's anonymous token endpoint and is marked publication-pending
 below; repository redistribution eligibility and publishing intent do not prove
 current registry visibility. **Built** is the UTC build date of the newest
