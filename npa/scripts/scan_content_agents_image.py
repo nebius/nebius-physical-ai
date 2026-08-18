@@ -103,6 +103,38 @@ print(json.dumps(inspect_runtime(), sort_keys=True))
     if runtime.get("status") != "ready":
         raise ImageAuditError("runtime self-inspection did not report ready")
 
+    cli_contract = _container_json(
+        image,
+        """
+import json
+import shutil
+import subprocess
+
+executable = shutil.which("npa")
+completed = subprocess.run(
+    [executable, "--version"] if executable else ["/bin/false"],
+    check=False,
+    capture_output=True,
+    text=True,
+)
+print(json.dumps({
+    "cli_contract": {
+        "executable_present": executable is not None,
+        "version_exit_code": completed.returncode,
+        "version_output_present": bool(completed.stdout.strip()),
+    }
+}, sort_keys=True))
+""",
+        runner,
+    )
+    cli_result = cli_contract.get("cli_contract") or {}
+    if (
+        not cli_result.get("executable_present")
+        or cli_result.get("version_exit_code") != 0
+        or not cli_result.get("version_output_present")
+    ):
+        raise ImageAuditError("npa console entry point is not runnable")
+
     config_parse = _container_json(
         image,
         """
@@ -226,6 +258,7 @@ print(json.dumps({
         "npa_source_revision": source_sha,
         "licenses": licenses,
         "runtime": runtime,
+        "cli_contract": cli_contract,
         "config_parse": config_parse,
         "inventory": inventory,
     }

@@ -87,3 +87,11 @@ def test_only_real_upstream_agent_entrypoints_are_installed_and_invoked() -> Non
         assert entrypoint in adapter
     assert "docker compose" not in dockerfile.lower()
     assert "echo" not in adapter.lower()
+
+
+def test_image_installs_the_npa_workflow_console_without_dynamic_dependencies() -> None:
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    assert "uv pip install --python /opt/venv/bin/python /opt/npa" in dockerfile
+    assert "--no-deps --no-config --no-sources" in dockerfile
+    assert "command -v npa" in dockerfile
+    assert "npa --version" in dockerfile

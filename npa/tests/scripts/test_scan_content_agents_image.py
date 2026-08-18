@@ -59,6 +59,16 @@ def _runner(*, redistribution: str = "restricted", findings: bool = False):
                     "scene_optimizer_core": False,
                 }
             )
+        if "cli_contract" in script:
+            return json.dumps(
+                {
+                    "cli_contract": {
+                        "executable_present": True,
+                        "version_exit_code": 0,
+                        "version_output_present": True,
+                    }
+                }
+            )
         if "config_parse" in script:
             return json.dumps(
                 {
@@ -92,6 +102,11 @@ def test_built_image_audit_passes_only_the_expected_restricted_boundary() -> Non
     assert result["status"] == "passed"
     assert result["runtime"]["ovrtx"]["version"] == "0.3.0.312915"
     assert result["npa_source_revision"] == "3" * 40
+    assert result["cli_contract"]["cli_contract"] == {
+        "executable_present": True,
+        "version_exit_code": 0,
+        "version_output_present": True,
+    }
     assert result["config_parse"]["config_parse"]["material"] == {
         "dry_run_exit_code": 0,
         "plan_rendered": True,
@@ -118,6 +133,26 @@ def test_built_image_audit_enforces_requested_npa_source_checkpoint() -> None:
         scanner.audit_image(
             "image", expected_npa_source_sha="4" * 40, runner=_runner()
         )
+
+
+def test_built_image_audit_requires_the_npa_console_entrypoint() -> None:
+    runner = _runner()
+
+    def missing_cli(argv):
+        if argv[1:3] != ["image", "inspect"] and "cli_contract" in argv[-1]:
+            return json.dumps(
+                {
+                    "cli_contract": {
+                        "executable_present": False,
+                        "version_exit_code": 1,
+                        "version_output_present": False,
+                    }
+                }
+            )
+        return runner(argv)
+
+    with pytest.raises(scanner.ImageAuditError, match="console entry point"):
+        scanner.audit_image("image", runner=missing_cli)
 
 
 def test_scanner_distinguishes_python_path_hooks_from_nested_pth_weights() -> None:

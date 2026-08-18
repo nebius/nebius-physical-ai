@@ -128,6 +128,16 @@ COPY docker/workbench/content-agents/REDISTRIBUTION.md \
 COPY docker/workbench/content-agents/npa-content-agents-entrypoint \
     /usr/local/bin/npa-content-agents-entrypoint
 
+# The workflow renderer invokes the first-party ``npa`` console entry point in
+# every toolRef stage.  Copying the package source makes module imports work but
+# does not create that executable, so install the already-vendored package
+# without resolving any additional runtime dependencies.  The Content Agents
+# environment above already carries the narrow CLI dependencies used here.
+RUN uv pip install --python /opt/venv/bin/python /opt/npa \
+      --no-deps --no-config --no-sources \
+    && command -v npa \
+    && npa --version
+
 # SkyPilot currently performs privileged SSH/bootstrap setup in each ephemeral
 # task pod.  The final process is uid 1000, host keys are generated only at run
 # time, and neither sshd nor a network service is started by this image.
