@@ -16,7 +16,7 @@ from npa.workbench.alpamayo2_super.runtime import (
     Alpamayo2SuperRequest,
     run_inference,
 )
-from npa.workbench.alpamayo2_super.service import app as service_app
+from npa.workbench.alpamayo2_super.service import app as service_app, create_app
 
 
 def test_dry_run_is_revision_pinned_and_real_upstream_argv(tmp_path: Path) -> None:
@@ -79,6 +79,11 @@ def test_cli_and_api_share_dry_run_contract(tmp_path: Path) -> None:
 
     sdk = infer(output_path=str(tmp_path), dry_run=True)
     assert sdk["schema"] == ARTIFACT_SCHEMA
+
+
+def test_service_factory_exposes_standard_endpoints() -> None:
+    paths = {route.path for route in create_app().routes}
+    assert {"/health", "/run", "/status", "/system-info", "/list"} <= paths
 
 
 def test_terms_keep_model_and_dataset_licenses_separate() -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 __all__ = [
+    "alpamayo2_super",
     "cosmos",
     "data",
     "dataset",

@@ -16,7 +16,11 @@ from npa.workbench.alpamayo2_super.runtime import (
     run_inference,
 )
 
-app = typer.Typer(name="alpamayo2-super", no_args_is_help=True)
+app = typer.Typer(
+    name="alpamayo2-super",
+    help="NVIDIA Alpamayo 2 Super trajectory-inference workbench.",
+    no_args_is_help=True,
+)
 
 
 @app.command("infer")
