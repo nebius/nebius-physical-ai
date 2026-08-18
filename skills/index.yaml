@@ -150,6 +150,18 @@ skills:
       - type: cli_help
         args: ["workbench", "sonic", "train", "--help"]
         contains: "gpu"
+  - name: gpu-allocation-fallback
+    category: atomic
+    when_to_use: "Track typed on-demand GPU placement failures and offer an action-digest-confirmed switch to an identical preemptible allocation."
+    path: skills/atomic/gpu-allocation-fallback/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/src/npa/agent_backend/gpu_allocation_fallback.py
+      - type: file_exists
+        path: npa/tests/cli/test_agent_gpu_allocation_fallback.py
+      - type: cli_help
+        args: ["provision-if-absent", "--help"]
+        contains: "--preemptible"
   - name: health-preflight
     category: atomic
     when_to_use: "Before any deploy, image build, or GPU submit: prove HF/NGC/S3/Token Factory credentials and gated-model access with `npa workbench health preflight` and `npa workbench health access` instead of failing mid-run."
@@ -231,6 +243,16 @@ skills:
       - type: cli_help
         args: ["--help"]
         contains: "Nebius Physical AI"
+  - name: vm-nebius-auth
+    category: atomic
+    when_to_use: "Start, recover, or verify no-browser human Nebius CLI profile authentication on a remote operator/dev VM with a safe SSH loopback callback forward."
+    path: skills/atomic/vm-nebius-auth/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/src/npa/clients/nebius_vm_auth.py
+      - type: cli_help
+        args: ["agent", "auth-profile", "--help"]
+        contains: "ssh-host"
   - name: third-party-eula-preflight
     category: atomic
     when_to_use: "Before provisioning, building, downloading, or submitting workloads whose images, software, models, or data require third-party terms: apply the documented product policy (including Isaac default/opt-out and OpenPI scoped opt-in), verify real upstream credential access for gated runtime fetches, and keep privacy and redistribution controls separate."

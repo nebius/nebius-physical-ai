@@ -1,0 +1,4 @@
+interface:
+  display_name: "VM Nebius Authentication"
+  short_description: "Complete Nebius CLI auth safely on a remote VM."
+  default_prompt: "Start or verify VM-friendly Nebius CLI authentication without exposing IAM tokens."

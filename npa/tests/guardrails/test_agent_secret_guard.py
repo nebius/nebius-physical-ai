@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import re
 import subprocess
+from dataclasses import asdict
 from pathlib import Path
+
+from npa.clients.nebius_vm_auth import verify_profile
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 GITIGNORE = REPO_ROOT / ".gitignore"
 AGENT_PATH = REPO_ROOT / "npa" / "src" / "npa" / "cli" / "agent.py"
+VM_AUTH_PATH = REPO_ROOT / "npa" / "src" / "npa" / "clients" / "nebius_vm_auth.py"
 
 FORBIDDEN_TRACKED_SUFFIXES = (
     "auth.env",
@@ -75,11 +79,50 @@ def test_agent_bootstrap_does_not_commit_generated_passwords() -> None:
         assert not pattern.search(source), f"literal secret pattern in agent.py: {pattern.pattern}"
 
 
+def test_vm_auth_verification_never_surfaces_iam_token_output() -> None:
+    secret = "iam-output-must-not-surface"
+
+    def runner(command, **kwargs):
+        assert kwargs["stdout"] is subprocess.DEVNULL
+        assert kwargs["stderr"] is subprocess.DEVNULL
+        return subprocess.CompletedProcess(command, 0, stdout=secret, stderr=secret)
+
+    result = verify_profile("operator", runner=runner)
+    public_result = asdict(result)
+    assert public_result == {
+        "profile": "operator",
+        "identity_verified": True,
+        "iam_token_minted": True,
+    }
+    assert secret not in repr(result)
+    assert secret not in repr(public_result)
+
+    def failing_runner(command, **_kwargs):
+        raise subprocess.CalledProcessError(1, command, output=secret, stderr=secret)
+
+    failed = verify_profile("operator", runner=failing_runner)
+    assert failed.identity_verified is False
+    assert failed.iam_token_minted is False
+    assert secret not in repr(failed)
+
+    # Keep static checks as defense in depth; behavior above is the contract.
+    source = VM_AUTH_PATH.read_text(encoding="utf-8")
+    assert "strip_ambient_token_env" in source
+    assert '"stdout": subprocess.DEVNULL' in source
+    assert "iam_token_minted: bool" in source
+    assert "print(token" not in source
+
+
 def test_agent_tracked_files_have_no_literal_secrets_or_live_ips() -> None:
     tracked = [
         path
         for path in _tracked_files()
-        if path.startswith("npa/") and ("/agent" in path or path.endswith("agent.py"))
+        if path.startswith("npa/")
+        and (
+            "/agent" in path
+            or path.endswith("agent.py")
+            or path.endswith("nebius_vm_auth.py")
+        )
     ]
     violations: list[str] = []
     for rel in tracked:
