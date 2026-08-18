@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import tempfile
+import threading
 import time
+import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -95,9 +99,56 @@ def _scenario_ids(kind: str, remote: dict[str, Any], own_id: str) -> list[str]:
     return sorted(set(ids))
 
 
+@contextmanager
+def _submission_heartbeat(states: StateStore, record: OperationRecord, owner: str):
+    """Renew the S3 fencing lease while a vendor queue command is staging."""
+
+    stop = threading.Event()
+    errors: list[Exception] = []
+
+    def renew() -> None:
+        while not stop.wait(20):
+            try:
+                states.refresh_submission(record, owner)
+            except Exception as exc:  # state fencing must fail closed
+                errors.append(exc)
+                stop.set()
+
+    worker = threading.Thread(
+        target=renew, name="antioch-submission-lease", daemon=True
+    )
+    worker.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        worker.join()
+    if errors:
+        raise AntiochOperationError(
+            "durable submission lease renewal failed",
+            retryable=True,
+            error_type="lease_lost",
+        ) from errors[0]
+
+
 class AntiochManager:
     def __init__(self, storage: StorageClient | None = None) -> None:
-        self.storage = storage or StorageClient.from_environment()
+        if storage is None:
+            endpoint = os.environ.get("AWS_ENDPOINT_URL", "") or os.environ.get(
+                "NEBIUS_S3_ENDPOINT", ""
+            )
+            if endpoint:
+                storage = StorageClient.from_environment(endpoint_url=endpoint)
+            else:
+                from npa.clients.config import resolve_project_storage
+
+                configured = resolve_project_storage()
+                storage = StorageClient.from_environment(
+                    endpoint_url=configured.endpoint_url,
+                    aws_access_key_id=configured.aws_access_key_id,
+                    aws_secret_access_key=configured.aws_secret_access_key,
+                )
+        self.storage = storage
         self.states = StateStore(self.storage)
 
     def _cli(self, expected_version: str = "0.3.47") -> AntiochCli:
@@ -133,39 +184,46 @@ class AntiochManager:
         )
         if record.remote_id:
             return record
+        owner = str(uuid.uuid4())
+        record, acquired = self.states.acquire_submission(record, owner)
+        if not acquired:
+            return record
         cli = self._cli(request.expected_cli_version)
         try:
-            with tempfile.TemporaryDirectory(prefix="npa-antioch-submit-") as temp_name:
-                project, _manifest, digest = stage_project(
-                    self.storage,
-                    request.input_path,
-                    Path(temp_name),
-                    project_id=record.derived_project_id,
-                )
-                # The deterministic project id closes the crash window between a successful
-                # vendor submission and publishing the remote id to durable S3 state.
-                existing = cli.list_for_project(
-                    project, kind=kind, project_id=record.derived_project_id
-                )
-                if len(existing) > 1:
-                    raise AntiochOperationError(
-                        "multiple remote runs exist for the deterministic project identity; refusing ambiguity",
-                        error_type="reconciliation_conflict",
+            with _submission_heartbeat(self.states, record, owner):
+                with tempfile.TemporaryDirectory(
+                    prefix="npa-antioch-submit-"
+                ) as temp_name:
+                    project, _manifest, digest = stage_project(
+                        self.storage,
+                        request.input_path,
+                        Path(temp_name),
+                        project_id=record.derived_project_id,
                     )
-                payload = (
-                    existing[0]
-                    if existing
-                    else (
-                        cli.submit_suite(project, request.suite)
-                        if kind == "suite"
-                        else cli.submit_scenario(
-                            project,
-                            request.scenario,
-                            scenario_case=request.scenario_case,
-                            parameters=request.parameters,
+                    # The deterministic project id closes the crash window between a successful
+                    # vendor submission and publishing the remote id to durable S3 state.
+                    existing = cli.list_for_project(
+                        project, kind=kind, project_id=record.derived_project_id
+                    )
+                    if len(existing) > 1:
+                        raise AntiochOperationError(
+                            "multiple remote runs exist for the deterministic project identity; refusing ambiguity",
+                            error_type="reconciliation_conflict",
+                        )
+                    payload = (
+                        existing[0]
+                        if existing
+                        else (
+                            cli.submit_suite(project, request.suite)
+                            if kind == "suite"
+                            else cli.submit_scenario(
+                                project,
+                                request.scenario,
+                                scenario_case=request.scenario_case,
+                                parameters=request.parameters,
+                            )
                         )
                     )
-                )
                 return self.states.update(
                     record,
                     input_sha256=digest,
@@ -175,6 +233,8 @@ class AntiochManager:
                     retryable=False,
                     error_type="",
                     error_message="",
+                    submission_owner="",
+                    submission_lease_expires_at="",
                 )
         except AntiochCliError as exc:
             self.states.update(
@@ -182,6 +242,8 @@ class AntiochManager:
                 retryable=exc.retryable,
                 error_type=exc.error_type,
                 error_message=str(exc),
+                submission_owner="",
+                submission_lease_expires_at="",
             )
             raise AntiochOperationError(
                 str(exc), retryable=exc.retryable, error_type=exc.error_type
@@ -441,6 +503,16 @@ class AntiochManager:
             workflow_run=request.workflow_run,
             state_id=request.state_id,
         )
+        while not record.remote_id:
+            time.sleep(poll_seconds)
+            current = self.states.read(record.output_path, record.idempotency_key)
+            if current is None:
+                raise AntiochOperationError(
+                    "durable Antioch state disappeared during submission"
+                )
+            record = current[0]
+            if not record.submission_owner:
+                record = self.submit(request)
         while record.status not in {"completed", "failed", "cancelled"}:
             time.sleep(poll_seconds)
             record = self.reconcile(resume)

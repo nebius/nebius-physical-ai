@@ -131,6 +131,8 @@ class OperationRecord(BaseModel):
     selection: str
     remote_id: str = ""
     invocation_id: str = ""
+    submission_owner: str = ""
+    submission_lease_expires_at: str = ""
     remote_phase: str = ""
     remote_outcome: str = ""
     status: OperationStatus = "claimed"

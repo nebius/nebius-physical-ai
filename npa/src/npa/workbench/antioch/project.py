@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import gzip
 import json
 import re
 import tarfile
@@ -124,3 +125,74 @@ def stage_project(
     _assert_no_secrets(root)
     _rewrite_project_id(candidates[0], project_id)
     return root, manifest, digest
+
+
+def package_project(
+    source: Path,
+    destination: Path,
+    *,
+    source_name: str,
+    source_revision: str,
+    source_license: str,
+    source_sha256: str,
+    asset_hashes: dict[str, str] | None = None,
+) -> ProjectManifest:
+    """Create a deterministic, credential-free project package for S3 staging."""
+
+    if not source.is_dir() or not (source / "antioch.yaml").is_file():
+        raise AntiochProjectError(
+            "project directory must contain antioch.yaml at its root"
+        )
+    _assert_no_secrets(source)
+    members = [
+        path
+        for path in sorted(source.rglob("*"))
+        if not any(
+            part in {".git", ".venv", "__pycache__"}
+            for part in path.relative_to(source).parts
+        )
+        and path.suffix != ".pyc"
+    ]
+    if any(
+        path.is_symlink() or not (path.is_file() or path.is_dir()) for path in members
+    ):
+        raise AntiochProjectError(
+            "project directory contains a link or unsupported filesystem object"
+        )
+    destination.mkdir(parents=True, exist_ok=True)
+    archive = destination / "project.tar.gz"
+    with (
+        archive.open("wb") as raw,
+        gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as compressed,
+        tarfile.open(fileobj=compressed, mode="w") as bundle,
+    ):
+        for path in members:
+            relative = path.relative_to(source).as_posix()
+            info = bundle.gettarinfo(str(path), arcname=relative)
+            info.uid = info.gid = 0
+            info.uname = info.gname = ""
+            info.mtime = 0
+            if info.isfile():
+                info.mode = 0o644
+                with path.open("rb") as stream:
+                    bundle.addfile(info, stream)
+            else:
+                info.mode = 0o755
+                bundle.addfile(info)
+    manifest = ProjectManifest(
+        archive={
+            "name": archive.name,
+            "size_bytes": archive.stat().st_size,
+            "sha256": sha256_file(archive),
+        },
+        source_name=source_name,
+        source_revision=source_revision,
+        source_license=source_license,
+        source_sha256=source_sha256,
+        asset_hashes=asset_hashes or {},
+    )
+    (destination / "project-manifest.json").write_text(
+        json.dumps(manifest.model_dump(mode="json"), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return manifest

@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 import subprocess
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 import typer
 
 from npa.sdk.workbench import antioch as sdk
 from npa.workbench.antioch.manager import AntiochManager
+from npa.workbench.antioch.project import package_project
 from npa.workbench.antioch.runtime import (
     ensure_runtime,
     runtime_has_proprietary_distribution,
@@ -76,6 +78,40 @@ def _request(
 def health(output: OutputFormat = typer.Option(OutputFormat.text, "--output")) -> None:
     try:
         _emit({"status": "ok", **AntiochCli(ensure_runtime()).health()}, output)
+    except Exception as exc:
+        _fail(exc)
+
+
+@app.command("package-project")
+def package_project_cmd(
+    project_dir: Path = typer.Option(
+        ..., "--project-dir", exists=True, file_okay=False
+    ),
+    package_dir: Path = typer.Option(..., "--package-dir"),
+    source_name: str = typer.Option(..., "--source-name"),
+    source_revision: str = typer.Option(..., "--source-revision"),
+    source_license: str = typer.Option(..., "--source-license"),
+    source_sha256: str = typer.Option(..., "--source-sha256"),
+    output: OutputFormat = typer.Option(OutputFormat.text, "--output"),
+) -> None:
+    """Build a deterministic, credential-free immutable project package."""
+    try:
+        manifest = package_project(
+            project_dir,
+            package_dir,
+            source_name=source_name,
+            source_revision=source_revision,
+            source_license=source_license,
+            source_sha256=source_sha256,
+        )
+        _emit(
+            {
+                "status": "packaged",
+                "package_dir": str(package_dir),
+                "manifest": manifest.model_dump(mode="json"),
+            },
+            output,
+        )
     except Exception as exc:
         _fail(exc)
 

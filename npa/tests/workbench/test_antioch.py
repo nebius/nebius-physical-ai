@@ -12,15 +12,17 @@ import pytest
 from fastapi.testclient import TestClient
 
 from npa.workbench.antioch.dataset import AntiochDatasetError, validate_episode
-from npa.workbench.antioch.manager import AntiochManager
+from npa.workbench.antioch.manager import AntiochManager, operation_key
 from npa.workbench.antioch.project import (
     AntiochProjectError,
     deterministic_project_id,
+    package_project,
     stage_project,
 )
 from npa.workbench.antioch.redaction import REDACTED, redact_payload, redact_text
 from npa.workbench.antioch.schemas import (
     EpisodeProvenance,
+    OperationRecord,
     ProjectArchive,
     ProjectManifest,
     ResumeRequest,
@@ -190,6 +192,27 @@ def test_project_staging_rejects_traversal(tmp_path: Path) -> None:
         )
 
 
+def test_project_packaging_is_reproducible_and_excludes_caches(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "antioch.yaml").write_text("id: example\nservices: {}\n")
+    (source / "scenario.py").write_text("VALUE = 1\n")
+    (source / "__pycache__").mkdir()
+    (source / "__pycache__" / "scenario.pyc").write_bytes(b"cache")
+    kwargs = {
+        "source_name": "synthetic",
+        "source_revision": "1",
+        "source_license": "CC0-1.0",
+        "source_sha256": "a" * 64,
+    }
+    first = package_project(source, tmp_path / "first", **kwargs)
+    second = package_project(source, tmp_path / "second", **kwargs)
+    assert first.archive.sha256 == second.archive.sha256
+    with tarfile.open(tmp_path / "first" / "project.tar.gz") as bundle:
+        assert "scenario.py" in bundle.getnames()
+        assert not any("__pycache__" in name for name in bundle.getnames())
+
+
 def _episode(path: Path, **replacements: Any) -> None:
     length = 4
     provenance = EpisodeProvenance(
@@ -256,9 +279,10 @@ class FakeCli:
     def __init__(self) -> None:
         self.submissions = 0
         self.cancellations = 0
+        self.existing: list[dict[str, str]] = []
 
     def list_for_project(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201
-        return []
+        return self.existing
 
     def submit_suite(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201
         self.submissions += 1
@@ -300,6 +324,53 @@ def test_idempotent_retry_restart_reconcile_and_cancel(
     assert restarted.cancel(resume).status == "cancelled"
     assert restarted.cancel(resume).status == "cancelled"
     assert cli.cancellations == 1
+
+
+def test_concurrent_submitter_is_fenced_and_expired_restart_reconciles(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    memory = MemoryStorage()
+    manager = AntiochManager.__new__(AntiochManager)
+    manager.storage = memory
+    manager.states = StateStore(memory)
+    request = _submit()
+    key = operation_key(request.workflow_run, request.state_id)
+    claimed = manager.states.claim(
+        OperationRecord(
+            idempotency_key=key,
+            request_sha256=sha256_bytes(
+                canonical_json(request.model_dump(mode="json"))
+            ),
+            workflow_run=request.workflow_run,
+            state_id=request.state_id,
+            input_path=request.input_path,
+            output_path=request.output_path,
+            derived_project_id=deterministic_project_id(
+                request.workflow_run, request.state_id
+            ),
+            remote_kind="suite",
+            selection="smoke",
+        )
+    )
+    leased, acquired = manager.states.acquire_submission(claimed, "first-owner")
+    assert acquired
+    cli = FakeCli()
+    manager._cli = lambda *a, **k: cli  # type: ignore[method-assign]
+    assert manager.submit(request).remote_id == ""
+    assert cli.submissions == 0
+
+    manager.states.update(
+        leased,
+        submission_lease_expires_at="2000-01-01T00:00:00Z",
+    )
+    cli.existing = [{"suite_run_id": "suite-recovered"}]
+    monkeypatch.setattr(
+        "npa.workbench.antioch.manager.stage_project",
+        lambda *a, **k: (tmp_path, object(), "c" * 64),
+    )
+    recovered = manager.submit(request)
+    assert recovered.remote_id == "suite-recovered"
+    assert cli.submissions == 0
 
 
 def test_atomic_immutable_completion_conflict() -> None:

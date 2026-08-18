@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import mimetypes
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -120,6 +121,75 @@ class StateStore:
                 return updated
             except StoragePreconditionFailed:
                 continue
+
+    def acquire_submission(
+        self, record: OperationRecord, owner: str, *, lease_seconds: int = 60
+    ) -> tuple[OperationRecord, bool]:
+        """Acquire a renewable S3-fenced submission lease without limiting the run."""
+
+        while True:
+            current = self.read(record.output_path, record.idempotency_key)
+            if current is None:
+                raise AntiochStorageError(
+                    "cannot lease missing Antioch operation state"
+                )
+            latest, etag = current
+            if latest.remote_id:
+                return latest, False
+            now = datetime.now(timezone.utc)
+            expires = None
+            if latest.submission_lease_expires_at:
+                try:
+                    expires = datetime.fromisoformat(
+                        latest.submission_lease_expires_at.replace("Z", "+00:00")
+                    )
+                except ValueError as exc:
+                    raise AntiochStorageError(
+                        "submission lease timestamp is malformed"
+                    ) from exc
+            if (
+                latest.submission_owner not in {"", owner}
+                and expires is not None
+                and expires > now
+            ):
+                return latest, False
+            updated = latest.model_copy(
+                update={
+                    "submission_owner": owner,
+                    "submission_lease_expires_at": (
+                        now + timedelta(seconds=lease_seconds)
+                    )
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                    "updated_at": utc_now(),
+                    "revision": latest.revision + 1,
+                }
+            )
+            try:
+                self.client.put_bytes_conditional(
+                    canonical_json(updated.model_dump(mode="json")),
+                    self.state_uri(updated.output_path, updated.idempotency_key),
+                    if_match=etag,
+                    content_type="application/json",
+                )
+                return updated, True
+            except StoragePreconditionFailed:
+                continue
+
+    def refresh_submission(
+        self, record: OperationRecord, owner: str, *, lease_seconds: int = 60
+    ) -> OperationRecord:
+        current = self.read(record.output_path, record.idempotency_key)
+        if current is None or current[0].submission_owner != owner:
+            raise AntiochStorageError("submission lease ownership was lost")
+        return self.update(
+            current[0],
+            submission_lease_expires_at=(
+                datetime.now(timezone.utc) + timedelta(seconds=lease_seconds)
+            )
+            .isoformat()
+            .replace("+00:00", "Z"),
+        )
 
     def list(self, output_path: str) -> list[OperationRecord]:
         bucket, prefix = _parse_bucket_uri(join_uri(output_path, "_control") + "/")
