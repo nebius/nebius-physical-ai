@@ -503,6 +503,14 @@
       "notes": "cu128 already carries sm_100, so a headless compute-only finetune variant may be reasonable ahead of full vendor alignment - validate compute-only first."
     },
     {
+      "name": "npa-antioch",
+      "dockerfile": "antioch/Dockerfile",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "smoke": "FastAPI service import, non-root runtime, and proprietary-payload image scan",
+      "notes": "CPU-only control-plane adapter. Antioch-managed simulation capacity is remote; this image contains no CUDA, simulator engine, Antioch wheel, credentials, or customer payloads."
+    },
+    {
       "name": "npa-fiftyone",
       "dockerfile": "fiftyone/Dockerfile",
       "verdict": "not-applicable",
