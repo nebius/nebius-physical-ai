@@ -39,6 +39,26 @@ SCENE_SPEC_SCHEMA = "npa.sim2real.manip_scene_spec.v1"
 DEFAULT_MODEL = "Qwen/Qwen2.5-VL-72B-Instruct"
 DEFAULT_BASE_URL = "https://api.tokenfactory.nebius.com/v1/"
 SUPPORTED_USD_SUFFIXES = frozenset({".usd", ".usda", ".usdc", ".usdz"})
+PHYSICS_SYSTEM_PROMPT = """\
+Identify the rendered component and estimate simulation physics from its geometry,
+appearance, material, and role in the complete asset. Use SI units. Compute mass as
+density times the component volume times a realistic solid-fill factor, and check the
+arithmetic before responding.
+
+Return exactly two XML-style blocks and no other text:
+<reasoning>one concise sentence</reasoning>
+<answer>one JSON object</answer>
+
+The answer object must contain asset_type, component_type, component_name, material,
+physical_properties, confidence, and reasoning. physical_properties must contain
+density, estimated_mass_kg, static_friction, dynamic_friction, and restitution. Every
+physical property must be a finite JSON number. The answer block must be strict JSON:
+never use Markdown fences, comments, equations, units in numeric fields, NaN, trailing
+commas, or placeholders.
+"""
+PHYSICS_USER_PROMPT = (
+    "Classify this component and provide the complete strict-JSON physics record."
+)
 
 
 class ContentAgentsError(RuntimeError):
@@ -447,6 +467,18 @@ def physics_config(
                 "enabled": True,
                 "include_prim_path_context": True,
                 "include_geometric_context": True,
+                "prompts": {
+                    "system": PHYSICS_SYSTEM_PROMPT,
+                    "user": PHYSICS_USER_PROMPT,
+                    "vlm_image_prompts": {
+                        "composition": (
+                            "The complete asset gives the target component's context."
+                        ),
+                        "prim_only_original": (
+                            "The isolated target component retains its original appearance."
+                        ),
+                    },
+                },
             },
             "predict": {
                 "enabled": True,

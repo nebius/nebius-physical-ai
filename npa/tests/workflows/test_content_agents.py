@@ -134,6 +134,11 @@ def test_physics_config_requires_real_vlm_and_authors_the_rigid_contract(
     assert config["steps"]["build_dataset_usd"]["renderer"]["backend"] == "ovrtx"
     assert config["steps"]["predict"]["enabled"] is True
     assert config["steps"]["predict"]["allow_empty_predictions"] is False
+    prompts = config["steps"]["build_dataset_prepare_dataset"]["prompts"]
+    assert prompts["system"] == ca.PHYSICS_SYSTEM_PROMPT
+    assert "strict JSON" in prompts["system"]
+    assert "never use Markdown fences, comments" in prompts["system"]
+    assert prompts["user"] == ca.PHYSICS_USER_PROMPT
     apply = config["steps"]["apply_physics"]
     assert apply["enabled"] is True
     assert apply["collision_approx"] == "convexHull"
