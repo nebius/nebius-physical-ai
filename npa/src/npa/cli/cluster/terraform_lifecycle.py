@@ -8,10 +8,10 @@ import inspect
 import os
 import re
 import shutil
-import signal
 import subprocess
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -38,6 +38,26 @@ from npa.cluster.gpu_health import (
     probe_gpu_health,
     validate_gpu_health,
 )
+from npa.cluster_backends import get_backend
+from npa.cluster_backends.mk8s import (
+    MK8sApplyRequest,
+    MK8sDestroyRequest,
+    MK8sExecutionScope,
+    MK8sProjectIdentity,
+    MK8sStatusRequest,
+)
+from npa.cluster_backends.mig import (
+    GPU_DEVICE_PLUGIN_VERSION,
+    GPU_DRIVER_VERSION,
+    GPU_GFD_VERSION,
+    GPU_MIG_MANAGER_VERSION,
+    GPU_OPERATOR_VERSION,
+    MIG_KUBERNETES_VERSION,
+    MigSpec,
+    wait_for_mig_ready,
+)
+from npa.fleet.spec import ClusterSpec, FleetSpec, NodePoolSpec, ProjectSpec
+from npa.cluster_backends.mk8s_render import validate_recipe_mig_compatibility
 from npa.provisioning_journal import (
     ProvisioningOperation,
     current_operation,
@@ -58,6 +78,12 @@ _GIB = 1024**3
 # wall of "Unsupported Terraform Core version" / "Unsupported block type" errors
 # from vendored files the operator never wrote. Check up front instead.
 _MIN_TERRAFORM_VERSION = (1, 12, 0)
+
+
+def _redacted_exception_message(prefix: str, exc: BaseException) -> str:
+    from npa.clients.nebius import redact_nebius_output
+
+    return redact_nebius_output(f"{prefix}: {type(exc).__name__}: {exc}")
 
 
 def _transactional_cluster_up(function):
@@ -136,6 +162,9 @@ def _transactional_cluster_up(function):
             try:
                 result = function(*args, **kwargs)
             except BaseException as exc:
+                typer.echo(
+                    _redacted_exception_message("cluster up failed", exc), err=True
+                )
                 operation.record_failure(exc)
                 for candidate in (
                     tf_dir / "errored.tfstate",
@@ -332,6 +361,19 @@ def up_cmd(
         "--gpu-cuda-smoke-image",
         help="Container image for the post-deploy CUDA vectorAdd smoke.",
     ),
+    mig_enabled: bool = typer.Option(
+        False,
+        "--mig/--no-mig",
+        help="Enable the pinned RTX PRO 6000 hardware-MIG policy and exact readiness gate.",
+    ),
+    mig_strategy: str = typer.Option(
+        "mixed", "--mig-strategy", help="Hardware-MIG strategy (validated: mixed)."
+    ),
+    mig_config: str = typer.Option(
+        "all-balanced",
+        "--mig-config",
+        help="RTX PRO 6000 MIG geometry (validated: all-balanced).",
+    ),
     preemptible: bool | None = typer.Option(
         None,
         "--preemptible/--on-demand",
@@ -420,9 +462,12 @@ def up_cmd(
         _preflight_terraform_version(terraform_bin)
         _apply_project_tf_vars(env, project, tfvars)
         _guard_tfvars_iam_token(tf_dir, tfvars)
-        _preflight_whole_path_capacity(
-            tfvars, env, context=context, project_alias=project
-        )
+        _apply_capacity_block_group_tfvars(tfvars, capacity_block_group)
+        # MIG uses the recipe's deliberately small 128 GiB worker disk. Apply
+        # that resolved desired state before whole-path disk quota accounting.
+        if mig_enabled:
+            tfvars["gpu_disk_size"] = 128
+            tfvars["mig_enabled"] = True
         driver = _resolve_gpu_driver_selection(tfvars, env)
         typer.echo(
             "GPU driver strategy: "
@@ -438,8 +483,282 @@ def up_cmd(
                 "re-enables the unsafe driver/Fabric Manager host-device ordering path.",
                 err=True,
             )
+        resolved_gpu_nodes = int(_tfvar_value(tfvars, env, "gpu_nodes_count", 1) or 0)
+        resolved_cpu_nodes = int(_tfvar_value(tfvars, env, "cpu_nodes_count", 1) or 0)
+        resolved_capacity = capacity_block_group.strip() or str(
+            _tfvar_value(tfvars, env, "capacity_block_group", "") or ""
+        )
+        backend_desired = ClusterSpec(
+            name=context,
+            k8s_version=(
+                MIG_KUBERNETES_VERSION
+                if mig_enabled
+                else str(_tfvar_value(tfvars, env, "k8s_version", "") or "")
+            ),
+            cpu_nodes=(
+                NodePoolSpec(
+                    count=resolved_cpu_nodes,
+                    platform=str(
+                        _tfvar_value(tfvars, env, "cpu_nodes_platform", "cpu-d3")
+                    ),
+                    preset=str(
+                        _tfvar_value(tfvars, env, "cpu_nodes_preset", "8vcpu-32gb")
+                    ),
+                )
+                if resolved_cpu_nodes
+                else None
+            ),
+            gpu_nodes=(
+                NodePoolSpec(
+                    count=resolved_gpu_nodes,
+                    platform=str(
+                        _tfvar_value(tfvars, env, "gpu_nodes_platform", "gpu-rtx6000")
+                        or "gpu-rtx6000"
+                    ),
+                    preset=str(
+                        _tfvar_value(
+                            tfvars, env, "gpu_nodes_preset", "1gpu-24vcpu-218gb"
+                        )
+                        or "1gpu-24vcpu-218gb"
+                    ),
+                    disk_size_gib=(
+                        128
+                        if mig_enabled
+                        else int(_tfvar_value(tfvars, env, "gpu_disk_size", 0) or 0)
+                    ),
+                    capacity_block_group=resolved_capacity,
+                    preemptible=_tfvar_bool(
+                        tfvars, env, "gpu_nodes_preemptible", False
+                    ),
+                )
+                if resolved_gpu_nodes
+                else None
+            ),
+            enable_gpu_cluster=_tfvar_bool(tfvars, env, "enable_gpu_cluster", False),
+            infiniband_fabric=str(
+                _tfvar_value(tfvars, env, "infiniband_fabric", "") or ""
+            ),
+            enable_filestore=(
+                _tfvar_bool(tfvars, env, "enable_filestore", False)
+                or bool(_tfvar_value(tfvars, env, "existing_filestore", ""))
+            ),
+            existing_filestore=str(
+                _tfvar_value(tfvars, env, "existing_filestore", "") or ""
+            ),
+            subnet_id=str(_tfvar_value(tfvars, env, "subnet_id", "") or ""),
+            filestore_disk_size_gibibytes=int(
+                _tfvar_value(tfvars, env, "filestore_disk_size_gibibytes", 1024) or 1024
+            ),
+            gpu_driver_mode=(
+                "operator"
+                if mig_enabled
+                else str(_tfvar_value(tfvars, env, "gpu_driver_mode", "auto") or "auto")
+            ),
+            managed_driver_preset=str(
+                _tfvar_value(
+                    tfvars,
+                    env,
+                    "managed_driver_preset",
+                    DEFAULT_MANAGED_DRIVER_PRESET,
+                )
+                or DEFAULT_MANAGED_DRIVER_PRESET
+            ),
+            allow_unsafe_nvswitch_operator=_tfvar_bool(
+                tfvars, env, "allow_unsafe_nvswitch_operator", False
+            ),
+            gpu_health_stabilization_seconds=gpu_health_stabilization_seconds,
+            gpu_health_timeout_minutes=validation_timeout,
+            gpu_cuda_smoke=gpu_cuda_smoke,
+            gpu_cuda_smoke_image=gpu_cuda_smoke_image,
+            mig=(
+                MigSpec(enabled=True, strategy=mig_strategy, config=mig_config)
+                if mig_enabled
+                else None
+            ),
+            allow_control_plane_only=True,
+        )
+        backend_desired.validate()
+        recipe_dir = tf_dir / "vendor" / "nebius-solutions-library" / "k8s-training"
+        if mig_enabled:
+            validate_recipe_mig_compatibility(backend_desired, recipe_dir)
+        from npa.cluster.state import cluster_dir
+
+        project_id_value = str(_tfvar_value(tfvars, env, "parent_id", "") or "")
+        tenant_id_value = str(_tfvar_value(tfvars, env, "tenant_id", "") or "")
+        region_value = str(_tfvar_value(tfvars, env, "region", "") or "")
+        legacy_state_exists = any(
+            candidate.is_file()
+            for candidate in (tf_dir / "terraform.tfstate", tf_dir / "errored.tfstate")
+        )
+        shared_recipe_available = (recipe_dir / "variables.tf").is_file() and (
+            recipe_dir.parent / "modules"
+        ).is_dir()
+        shared_ssh_public_key = (
+            _resolve_shared_ssh_public_key(tfvars, env)
+            if not legacy_state_exists and shared_recipe_available
+            else str(_tfvar_value(tfvars, env, "ssh_public_key", "") or "")
+        )
+        backend_root = cluster_dir(context) / "backend-state"
+        project_spec = ProjectSpec(
+            # Existing-project identity is ID-backed. Giving it a synthetic
+            # name would make provider reconciliation compare that fake name
+            # with the real cloud project and defeat zero-increment reuse.
+            name="",
+            project_id=project_id_value,
+            region=region_value,
+            clusters=[backend_desired],
+        )
+        one_target = FleetSpec(
+            name="standalone",
+            tenant_id=tenant_id_value,
+            region=region_value,
+            projects=[project_spec],
+        )
+        # Standalone, agent, and fleet consume one canonical desired-state,
+        # capability, and materialization boundary for every mk8s topology.
+        adapter_request = MK8sApplyRequest(
+            recipe_dir=(
+                recipe_dir if (recipe_dir / "variables.tf").is_file() else None
+            ),
+            nebius_bin=nebius_bin,
+            tenant_id=tenant_id_value,
+            region=region_value,
+            provider_env=env,
+            # Every fresh shared-backend apply uses the fleet capacity/quota
+            # preflight, not only MIG targets. In particular, a non-MIG GPU
+            # pool with a capacity block must prove the exact STRICT
+            # reservation before subnet or Terraform mutation. Existing
+            # legacy Terraform state keeps its established reconciliation
+            # checks below instead of being reclassified as fleet state.
+            provider_preflight=(
+                mig_enabled or (not legacy_state_exists and shared_recipe_available)
+            ),
+            scope=MK8sExecutionScope(
+                fleet_name=one_target.name,
+                tenant_id=tenant_id_value,
+                region=region_value,
+                project_prefix=one_target.project_prefix,
+            ),
+            project=MK8sProjectIdentity(
+                project_key=project_spec.key(),
+                project_id=project_id_value,
+                project_name=project_spec.name,
+                expected_provider_name=project_spec.display_name(
+                    one_target.project_prefix
+                ),
+            ),
+            project_id=project_id_value,
+            subnet_id=backend_desired.subnet_id,
+            ssh_public_key=shared_ssh_public_key,
+            fleet_root=backend_root,
+        )
+        get_backend("mk8s").preflight(backend_desired, adapter_request)
+        get_backend("mk8s").materialize(backend_desired, adapter_request)
+        mig_desired = backend_desired if mig_enabled else None
+        _preflight_whole_path_capacity(
+            tfvars, env, context=context, project_alias=project
+        )
+        if not legacy_state_exists and shared_recipe_available:
+            if not (project_id_value and tenant_id_value and region_value):
+                raise typer.BadParameter(
+                    "shared mk8s apply requires resolved project, tenant, and region"
+                )
+            # Subnet creation is a provider mutation. Run it only after both
+            # shared and whole-path capacity checks have succeeded.
+            if not backend_desired.subnet_id:
+                from npa.fleet.lifecycle import ensure_subnet
+
+                resolved_subnet_id, _created_network_id = ensure_subnet(
+                    nebius_bin,
+                    project_id_value,
+                    name_stem=context,
+                    env=env,
+                    network_state_path=(
+                        backend_root / project_spec.key() / ".npa-fleet-network.json"
+                    ),
+                    on_status=lambda message: typer.echo(message, err=True),
+                )
+                backend_desired = replace(backend_desired, subnet_id=resolved_subnet_id)
+                project_spec = replace(project_spec, clusters=[backend_desired])
+                one_target = replace(one_target, projects=[project_spec])
+            result = get_backend("mk8s").apply(
+                backend_desired,
+                MK8sApplyRequest(
+                    scope=MK8sExecutionScope(
+                        fleet_name=one_target.name,
+                        tenant_id=tenant_id_value,
+                        region=region_value,
+                        project_prefix=one_target.project_prefix,
+                    ),
+                    project=MK8sProjectIdentity(
+                        project_key=project_spec.key(),
+                        project_id=project_id_value,
+                        project_name=project_spec.name,
+                        expected_provider_name=project_spec.display_name(
+                            one_target.project_prefix
+                        ),
+                    ),
+                    project_id=project_id_value,
+                    subnet_id=backend_desired.subnet_id,
+                    region=region_value,
+                    tenant_id=tenant_id_value,
+                    ssh_public_key=shared_ssh_public_key,
+                    fleet_root=backend_root,
+                    recipe_root=recipe_dir.parent,
+                    terraform_bin=terraform_bin,
+                    nebius_bin=nebius_bin,
+                    timeout_minutes=timeout,
+                    on_status=lambda message: typer.echo(message, err=True),
+                    standalone_context=context,
+                    standalone_kubeconfig=kubeconfig,
+                    post_deploy_validation=("standalone-full" if validate else "skip"),
+                    basic_validation_timeout_minutes=validation_timeout,
+                    kubectl_bin=kubectl_bin,
+                ),
+            )
+            if result.get("status") != "deployed":
+                raise RuntimeError(
+                    str(result.get("error") or "shared mk8s backend apply failed")
+                )
+            kubeconfig_path = Path(str(result["kubeconfig"]))
+            typer.echo(f"Cluster ID: {result['cluster_id']}")
+            typer.echo(f"Cluster name: {backend_desired.name}")
+            typer.echo(f"Kubeconfig: {kubeconfig_path}")
+            if validate:
+                basics = result.get("cluster_basics") or {}
+                typer.echo(
+                    "Validation: "
+                    f"{basics.get('ready_nodes', 0)} Ready nodes, "
+                    f"default StorageClass "
+                    f"{basics.get('default_storage_class', 'unknown')}"
+                )
+            else:
+                typer.echo(
+                    "Post-deploy validation skipped by --skip-validate; "
+                    "Terraform apply and identity persistence still completed."
+                )
+            if sky_smoke and mig_desired is None:
+                from npa.orchestration.skypilot.k8s_gpu_catalog import (
+                    wait_for_kubernetes_accelerators,
+                )
+
+                wait_for_kubernetes_accelerators(
+                    [sky_gpus] if sky_gpus.strip() else [],
+                    context=context,
+                    kubeconfig=kubeconfig_path,
+                    sky_bin=sky_bin or None,
+                    label_known_gpus=True,
+                    on_status=lambda message: typer.echo(message, err=True),
+                )
+                _run_skypilot_smoke(
+                    kubeconfig_path,
+                    context,
+                    backend_desired.name,
+                    sky_gpus,
+                    sky_bin=sky_bin,
+                )
+            return
         _terraform_init(terraform_bin, tf_dir, env)
-        _apply_capacity_block_group_tfvars(tfvars, capacity_block_group)
         _guard_unmanaged_duplicate(nebius_bin, terraform_bin, tf_dir, tfvars, env)
         _preflight_filestore_quota(nebius_bin, tfvars, env)
         _preflight_gpu_capacity(nebius_bin, tfvars, env)
@@ -463,6 +782,38 @@ def up_cmd(
             *_string_var_args("gpu_nodes_preset", gpu_preset),
             *_string_var_args("gpu_driver_mode", gpu_driver_mode),
             *_string_var_args("managed_driver_preset", managed_driver_preset),
+            *(
+                [
+                    "-var",
+                    "mig_enabled=true",
+                    "-var",
+                    f"mig_strategy={mig_strategy}",
+                    "-var",
+                    f"mig_parted_config={mig_config}",
+                    "-var",
+                    "gpu_driver_mode=operator",
+                    "-var",
+                    "gpu_disk_size=128",
+                    "-var",
+                    f"k8s_version={MIG_KUBERNETES_VERSION}",
+                    "-var",
+                    f"gpu_operator_version={GPU_OPERATOR_VERSION}",
+                    "-var",
+                    f"gpu_driver_version={GPU_DRIVER_VERSION}",
+                    "-var",
+                    f"gpu_device_plugin_version={GPU_DEVICE_PLUGIN_VERSION}",
+                    "-var",
+                    f"gpu_gfd_version={GPU_GFD_VERSION}",
+                    "-var",
+                    f"gpu_mig_manager_version={GPU_MIG_MANAGER_VERSION}",
+                    "-var",
+                    "gpu_mig_with_reboot=true",
+                    "-var",
+                    "gpu_operator_rdma_enabled=false",
+                ]
+                if mig_enabled
+                else []
+            ),
             *(
                 [
                     "-var",
@@ -496,16 +847,23 @@ def up_cmd(
             )
         )
         try:
-            _run_stream(
-                apply_args,
-                cwd=tf_dir,
-                env=env,
-                timeout=timeout * 60,
-                cancel=lambda: watcher.fatal_reason,
+            get_backend("mk8s").apply(
+                backend_desired,
+                replace(
+                    adapter_request,
+                    terraform_command=tuple(apply_args),
+                    terraform_cwd=tf_dir,
+                    terraform_env=env,
+                    terraform_timeout_seconds=timeout * 60,
+                    terraform_cancel_reason=lambda: watcher.fatal_reason,
+                    command_runner=_run_stream,
+                ),
             )
         except BaseException as exc:
             watcher.stop()
-            typer.echo(f"terraform apply error: {exc}", err=True)
+            typer.echo(
+                _redacted_exception_message("terraform apply error", exc), err=True
+            )
             operation = current_operation()
             rolled_back = False
             if operation is not None:
@@ -621,7 +979,26 @@ def up_cmd(
         typer.echo(f"Cluster name: {cluster_name}")
         typer.echo(f"Kubeconfig: {kubeconfig_path}")
 
-        if validate:
+        if mig_desired is not None:
+            typer.echo("Waiting for exact two-snapshot MIG convergence...")
+            verification = get_backend("mk8s").verify(
+                mig_desired,
+                MK8sStatusRequest(
+                    kubeconfig=kubeconfig_path,
+                    kubectl_bin=kubectl_bin,
+                    on_status=lambda message: typer.echo(message, err=True),
+                    run_capture=_run_capture,
+                    mig_verifier=wait_for_mig_ready,
+                    gpu_health_verifier=validate_gpu_health,
+                ),
+            )
+            typer.echo(
+                "MIG validation: "
+                f"{verification['verified_nodes']} reserved workers with exact "
+                "partition resources"
+            )
+
+        if validate and mig_desired is None:
             validation = _validate_cluster(
                 kubectl_bin,
                 kubeconfig_path,
@@ -638,7 +1015,7 @@ def up_cmd(
                 f"{validation['total_gpus']} allocatable GPUs, "
                 f"default StorageClass {validation['default_storage_class']}"
             )
-        if sky_smoke:
+        if sky_smoke and mig_desired is None:
             from npa.orchestration.skypilot.k8s_gpu_catalog import (
                 wait_for_kubernetes_accelerators,
             )
@@ -663,6 +1040,11 @@ def up_cmd(
                 sky_gpus,
                 sky_bin=sky_bin,
                 credentials_checked=True,
+            )
+        elif sky_smoke and mig_desired is not None:
+            typer.echo(
+                "SkyPilot whole-GPU smoke skipped: the mandatory MIG readiness "
+                "gate already ran a representative MIG CUDA allocation."
             )
         _save_terraform_cluster_state(
             tfvars,
@@ -764,6 +1146,17 @@ def down_cmd(
         "context": context_name.strip() or str(tfvars.get("cluster_name") or ""),
     }
     try:
+        saved_cluster = load_cluster_state(str(live["context"] or ""))
+    except Exception as exc:  # noqa: BLE001 - ownership evidence must fail closed
+        raise typer.BadParameter(
+            f"Local cluster ownership state is unreadable: {exc}. "
+            "Nothing was deleted; repair or restore the state before retrying."
+        ) from exc
+    if saved_cluster is not None:
+        live["project_id"] = live["project_id"] or saved_cluster.project_id
+        live["region"] = live["region"] or saved_cluster.region
+        live["cluster_id"] = saved_cluster.cluster_id
+    try:
         cleanup_identity = resolve_cleanup_identity(
             explicit={
                 "project_alias": alias,
@@ -790,6 +1183,150 @@ def down_cmd(
     )
     exact_project_id = str(cleanup_identity.get("project_id") or "")
     exact_cluster_id = str(cleanup_identity.get("cluster_id") or "")
+    from npa.cluster.state import delete_cluster_state, metadata_file
+
+    shared_metadata_path = metadata_file(preview_context)
+    shared_metadata: dict[str, Any] = {}
+    metadata_present = (
+        shared_metadata_path.exists() or shared_metadata_path.is_symlink()
+    )
+    if metadata_present:
+        if shared_metadata_path.is_symlink() or not shared_metadata_path.is_file():
+            raise typer.BadParameter(
+                "Local cluster ownership metadata is not a regular file; "
+                "nothing was deleted."
+            )
+        try:
+            candidate = json.loads(shared_metadata_path.read_text())
+        except (json.JSONDecodeError, OSError) as exc:
+            raise typer.BadParameter(
+                f"Local cluster ownership metadata is unreadable: {exc}. "
+                "Nothing was deleted; repair or restore the metadata before retrying."
+            ) from exc
+        if not isinstance(candidate, dict):
+            raise typer.BadParameter(
+                "Local cluster ownership metadata must be a JSON object; "
+                "nothing was deleted."
+            )
+        shared_metadata = candidate
+    if saved_cluster is not None and not metadata_present:
+        raise typer.BadParameter(
+            "Local cluster state exists without its ownership metadata; nothing was "
+            "deleted. Restore metadata before retrying."
+        )
+    if shared_metadata.get("managed_by") == "npa cluster shared-mk8s-backend":
+        from npa.fleet.lifecycle import _reclaim_unused_project_networks
+
+        recorded_project = str(shared_metadata.get("backend_project_id") or "")
+        recorded_cluster = str(shared_metadata.get("backend_cluster_id") or "")
+        if exact_project_id and exact_project_id != recorded_project:
+            raise typer.BadParameter(
+                "shared mk8s teardown project identity does not match local ownership"
+            )
+        if exact_cluster_id and exact_cluster_id != recorded_cluster:
+            raise typer.BadParameter(
+                "shared mk8s teardown cluster identity does not match local ownership"
+            )
+        backend_root = Path(
+            str(shared_metadata.get("backend_state_root") or "")
+        ).expanduser()
+        expected_root = shared_metadata_path.parent / "backend-state"
+        if (
+            not backend_root.is_absolute()
+            or backend_root.resolve() != expected_root.resolve()
+        ):
+            raise typer.BadParameter(
+                "shared mk8s backend state root is missing or non-canonical"
+            )
+        provider_name = str(shared_metadata.get("backend_cluster_name") or "")
+        project_key = str(shared_metadata.get("backend_project_key") or "")
+        fleet_name = str(shared_metadata.get("backend_fleet_name") or "")
+        if not (provider_name and project_key and fleet_name and recorded_project):
+            raise typer.BadParameter("shared mk8s ownership metadata is incomplete")
+        desired = ClusterSpec(name=provider_name, allow_control_plane_only=True)
+        backend_project = ProjectSpec(
+            name=project_key,
+            project_id=recorded_project,
+            clusters=[desired],
+        )
+        backend_spec = FleetSpec(
+            name=fleet_name,
+            tenant_id=str(shared_metadata.get("backend_tenant_id") or ""),
+            region=str(shared_metadata.get("backend_region") or ""),
+            projects=[backend_project],
+        )
+        if not force and not typer.confirm(
+            f"Destroy shared-backend cluster {preview_context} ({recorded_cluster})?"
+        ):
+            raise typer.Abort()
+        destroyed = get_backend("mk8s").destroy(
+            desired,
+            MK8sDestroyRequest(
+                scope=MK8sExecutionScope(
+                    fleet_name=backend_spec.name,
+                    tenant_id=backend_spec.tenant_id,
+                    region=backend_spec.region,
+                    project_prefix=backend_spec.project_prefix,
+                ),
+                project=MK8sProjectIdentity(
+                    project_key=backend_project.key(),
+                    project_id=backend_project.project_id,
+                    project_name=backend_project.name,
+                    expected_provider_name=backend_project.display_name(
+                        backend_spec.project_prefix
+                    ),
+                ),
+                fleet_root=backend_root,
+                terraform_bin=_require_bin(
+                    os.environ.get("NPA_TERRAFORM_BIN") or "terraform"
+                ),
+                nebius_bin=_require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius"),
+                profile=str(shared_metadata.get("backend_profile") or ""),
+                timeout_minutes=timeout,
+                on_status=lambda message: typer.echo(message, err=True),
+            ),
+        )
+        network_results = _reclaim_unused_project_networks(
+            backend_spec,
+            fleet_root=backend_root,
+            nebius_bin=_require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius"),
+            prefix=backend_spec.project_prefix,
+            only_projects=[backend_project.key()],
+            profile=str(shared_metadata.get("backend_profile") or ""),
+            on_status=lambda message: typer.echo(message, err=True),
+        )
+        network_errors = [
+            str(error)
+            for item in network_results
+            for error in item.get("errors", [])
+            if isinstance(item, dict)
+        ]
+        if network_errors:
+            raise RuntimeError("; ".join(network_errors))
+        if destroyed and destroyed.get("status") == "destroy-incomplete":
+            raise RuntimeError(
+                "; ".join(str(item) for item in destroyed.get("errors") or [])
+            )
+        if not keep_local_state:
+            delete_cluster_state(preview_context)
+        response = {
+            "status": "destroyed",
+            "backend": "mk8s",
+            "cluster_id": recorded_cluster,
+            "context": preview_context,
+        }
+        typer.echo(
+            json.dumps(response) if output_json else f"Destroyed {preview_context}."
+        )
+        return
+    if (
+        metadata_present
+        and shared_metadata.get("managed_by") != "npa cluster terraform"
+    ):
+        raise typer.BadParameter(
+            "Local cluster ownership metadata does not authorize legacy Terraform "
+            "destroy; nothing was deleted."
+        )
     if operation_id:
         from npa.provisioning_journal import load_operation
 
@@ -864,6 +1401,33 @@ def down_cmd(
                 and item.get("ownership") == "created_by_this_operation"
                 and str(item.get("project_id") or "") == exact_project_id
             ]
+            if not resources and str(payload.get("phase") or "") == "prepared":
+                # A journal that never crossed the mutation boundary and has no
+                # durable state or operation-owned inventory has nothing that may
+                # be deleted.  In particular, do not call the provider with an
+                # empty cluster ID: doing so both fails recovery and risks turning
+                # a precise operation cleanup into name-based discovery.
+                recovery_operation.transition("destroyed")
+                message = (
+                    f"Operation {recovery_operation.operation_id} recorded no "
+                    "cluster mutation or owned resources; nothing to do. "
+                    "Terraform, provider, and Kubernetes APIs were not invoked."
+                )
+                result_payload = {
+                    **cleanup_identity.to_dict(),
+                    "outcome": "already_absent",
+                    "verified": True,
+                    "no_op": True,
+                    "state_consumers_absent": True,
+                    "resources_removed": [],
+                    "message": message,
+                }
+                if output_json:
+                    typer.echo(json.dumps(result_payload, indent=2, sort_keys=True))
+                else:
+                    typer.echo(f"identity_source: {cleanup_identity.source}")
+                    typer.echo(message)
+                return
             required_types = {
                 str(item.get("resource_type") or "")
                 for item in resources
@@ -1147,6 +1711,67 @@ def down_cmd(
         if preview_state_issue is not None:
             preview_inventory = None
         _terraform_init(terraform_bin, tf_dir, env)
+        if saved_cluster is not None or exact_cluster_id:
+            if not exact_cluster_id:
+                raise typer.BadParameter(
+                    "Legacy Terraform destroy requires an exact persisted cluster ID; "
+                    "nothing was deleted."
+                )
+            managed_cluster_ids = _terraform_state_cluster_ids(
+                terraform_bin, tf_dir, env
+            )
+            if managed_cluster_ids and managed_cluster_ids != {exact_cluster_id}:
+                raise typer.BadParameter(
+                    "Legacy Terraform state does not own exactly the persisted cluster "
+                    f"ID {exact_cluster_id}; nothing was deleted."
+                )
+            if not managed_cluster_ids:
+                if (
+                    saved_cluster is None
+                    or not metadata_present
+                    or shared_metadata.get("managed_by") != "npa cluster terraform"
+                    or saved_cluster.cluster_id != exact_cluster_id
+                    or saved_cluster.project_id != exact_project_id
+                    or saved_cluster.name != preview_context
+                ):
+                    raise typer.BadParameter(
+                        "Legacy residual recovery lacks matching persisted cluster, "
+                        "project, context, and Terraform ownership evidence; nothing "
+                        "was deleted."
+                    )
+                residual_types = _verify_residual_terraform_ownership(
+                    terraform_bin,
+                    tf_dir,
+                    env,
+                    project_id=exact_project_id,
+                    cluster_id=exact_cluster_id,
+                )
+                from npa.cluster.api import MK8sClient
+                from npa.cluster.exceptions import ClusterNotFoundError
+
+                try:
+                    MK8sClient(timeout=120, poll_interval=15.0).get_cluster(
+                        exact_cluster_id,
+                        project_id=exact_project_id,
+                    )
+                except ClusterNotFoundError:
+                    typer.echo(
+                        "Legacy recovery: exact cluster is provider-absent; "
+                        "destroying retained Terraform-owned residuals ("
+                        + ", ".join(residual_types)
+                        + ").",
+                        err=True,
+                    )
+                except Exception as exc:
+                    raise typer.BadParameter(
+                        "Legacy recovery could not prove exact provider cluster "
+                        f"absence: {exc}. Nothing was deleted."
+                    ) from exc
+                else:
+                    raise typer.BadParameter(
+                        "Legacy recovery exact cluster is still present while retained "
+                        "Terraform state no longer owns it; nothing was deleted."
+                    )
         # `Still destroying...` every 10s with no detail made a ~6-minute node-group
         # drain look like a hang. Report node-group state while it happens.
         watcher = _NodeGroupWatcher(nebius_bin, tfvars, env)
@@ -1490,12 +2115,12 @@ def _find_repo_root(path: Path) -> Path | None:
 
 
 def _require_bin(binary: str) -> str:
-    resolved = shutil.which(binary)
-    if resolved:
-        return resolved
-    if Path(binary).exists():
-        return binary
-    raise typer.BadParameter(f"Required executable not found: {binary}")
+    from npa.cluster_backends.process import BackendCommandError, require_bin
+
+    try:
+        return require_bin(binary)
+    except BackendCommandError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 def _apply_project_tf_vars(
@@ -1550,30 +2175,12 @@ def _terraform_env(nebius_bin: str, *, profile: str = "") -> dict[str, str]:
     targeting a different tenant mints the token for *that* principal instead of
     the machine's active profile.
     """
-    env = os.environ.copy()
-    # A stale ambient IAM token (e.g. a cloud-env token) silently shadows the
-    # intended Nebius profile and mints kubeconfig/registry credentials for the
-    # wrong principal -- the cause of Forbidden jobs/pods/nodes and 401 image
-    # pulls. Mint a fresh token by default after clearing any stale token; opt
-    # back into reuse only when NPA_REUSE_IAM_TOKEN is explicitly set (e.g. CI
-    # that injects a short-lived token intentionally).
-    reuse = env.get("NPA_REUSE_IAM_TOKEN", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-    if reuse and env.get("TF_VAR_iam_token"):
-        return env
-    env.pop("TF_VAR_iam_token", None)
-    env.pop("NEBIUS_IAM_TOKEN", None)
-    argv = [nebius_bin]
-    if profile:
-        argv += ["--profile", profile]
-    token = _run_capture([*argv, "iam", "get-access-token"], env=env).stdout.strip()
-    env["TF_VAR_iam_token"] = token
-    env["NEBIUS_IAM_TOKEN"] = token
-    return env
+    from npa.cluster_backends.process import BackendCommandError, terraform_env
+
+    try:
+        return terraform_env(nebius_bin, profile=profile, capture_runner=_run_capture)
+    except BackendCommandError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 def _run_stream(
@@ -1585,135 +2192,29 @@ def _run_stream(
     cancel: Callable[[], str] | None = None,
     capture_output: bool = False,
 ) -> subprocess.CompletedProcess[str]:
-    """Run *args*, streaming output.
+    """CLI compatibility wrapper around the backend-neutral runner."""
 
-    ``cancel`` is polled while the command runs; when it returns a non-empty
-    reason the process is asked to stop (SIGINT first, which Terraform handles as
-    a graceful shutdown that still persists state) and the reason is raised.
-    """
-    if cancel is None:
-        if capture_output:
-            from npa.clients.nebius import redact_nebius_output
+    from npa.cluster_backends.process import BackendCommandError, run_stream
 
-            process = subprocess.Popen(
-                args,
-                cwd=cwd,
-                env=env,
-                text=True,
-                bufsize=1,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            captured_stdout: list[str] = []
-            captured_stderr: list[str] = []
-
-            def drain(pipe: Any, captured: list[str], *, stderr: bool) -> None:
-                if pipe is None:
-                    return
-                for line in iter(pipe.readline, ""):
-                    safe_line = redact_nebius_output(line)
-                    captured.append(safe_line)
-                    typer.echo(safe_line, err=stderr, nl=False)
-                pipe.close()
-
-            readers = [
-                threading.Thread(
-                    target=drain,
-                    args=(process.stdout, captured_stdout),
-                    kwargs={"stderr": False},
-                    daemon=True,
-                ),
-                threading.Thread(
-                    target=drain,
-                    args=(process.stderr, captured_stderr),
-                    kwargs={"stderr": True},
-                    daemon=True,
-                ),
-            ]
-            for reader in readers:
-                reader.start()
-            try:
-                returncode = process.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                _stop_process(process)
-                raise
-            finally:
-                for reader in readers:
-                    reader.join(timeout=5)
-            result = subprocess.CompletedProcess(
-                args=args,
-                returncode=returncode,
-                stdout="".join(captured_stdout),
-                stderr="".join(captured_stderr),
-            )
-        else:
-            result = subprocess.run(
-                args,
-                cwd=cwd,
-                env=env,
-                text=True,
-                timeout=timeout,
-                check=False,
-            )
-        safe_stdout = result.stdout or ""
-        safe_stderr = result.stderr or ""
-        if result.returncode != 0:
-            detail = ""
-            if capture_output:
-                detail = "\n".join(
-                    part for part in (safe_stderr, safe_stdout) if part
-                ).strip()
-            suffix = f": {detail[-3000:]}" if detail else ""
-            raise typer.BadParameter(
-                f"Command failed ({result.returncode}): {' '.join(args)}{suffix}"
-            )
-        return result
-
-    reason = ""
-    process = subprocess.Popen(args, cwd=cwd, env=env, text=True)
-    deadline = None if timeout is None else time.monotonic() + timeout
     try:
-        while process.poll() is None:
-            if not reason:
-                reason = cancel() or ""
-                if reason:
-                    _stop_process(process)
-            if deadline is not None and time.monotonic() >= deadline:
-                _stop_process(process)
-                raise subprocess.TimeoutExpired(args, timeout or 0)
-            time.sleep(1.0)
-    except KeyboardInterrupt:
-        _stop_process(process)
-        raise
-    returncode = process.returncode or 0
-    if reason:
-        raise typer.BadParameter(f"Cancelled `{' '.join(args[:2])}`: {reason}")
-    if returncode != 0:
-        raise typer.BadParameter(f"Command failed ({returncode}): {' '.join(args)}")
-    return subprocess.CompletedProcess(
-        args=args, returncode=returncode, stdout="", stderr=""
-    )
+        return run_stream(
+            args,
+            cwd=cwd,
+            env=env,
+            timeout=timeout,
+            cancel=cancel,
+            capture_output=capture_output,
+        )
+    except BackendCommandError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 def _stop_process(process: subprocess.Popen[str]) -> None:
-    """Ask a process to stop: SIGINT (graceful for terraform), then SIGTERM/kill."""
-    for signal_name, grace in (("interrupt", 30.0), ("terminate", 10.0)):
-        if process.poll() is not None:
-            return
-        try:
-            if signal_name == "interrupt":
-                process.send_signal(signal.SIGINT)
-            else:
-                process.terminate()
-        except OSError:  # pragma: no cover - process already gone
-            return
-        try:
-            process.wait(timeout=grace)
-            return
-        except subprocess.TimeoutExpired:
-            continue
-    if process.poll() is None:  # pragma: no cover - terraform ignoring both signals
-        process.kill()
+    """Compatibility alias for tests and older internal callers."""
+
+    from npa.cluster_backends.process import _stop_process as stop_process
+
+    stop_process(process)
 
 
 def _run_capture(
@@ -1725,24 +2226,19 @@ def _run_capture(
     check: bool = True,
     input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(
-        args,
-        cwd=cwd,
-        env=env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        input=input_text,
-        timeout=timeout,
-        check=False,
-    )
-    if check and result.returncode != 0:
-        detail = (result.stderr or result.stdout).strip()
-        suffix = f": {detail}" if detail else ""
-        raise typer.BadParameter(
-            f"Command failed ({result.returncode}): {' '.join(args)}{suffix}"
+    from npa.cluster_backends.process import BackendCommandError, run_capture
+
+    try:
+        return run_capture(
+            args,
+            cwd=cwd,
+            env=env,
+            timeout=timeout,
+            check=check,
+            input_text=input_text,
         )
-    return result
+    except BackendCommandError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 def _terraform_init(
@@ -1923,6 +2419,41 @@ def _capacity_block_group_var_args(capacity_block_group: str) -> list[str]:
 #: Node-group SSH keys, most modern first. `ssh-keygen` has defaulted to ed25519
 #: for years, and the rest of the CLI (agent deploy, the tfvars example) uses it.
 _SSH_PUBLIC_KEY_NAMES = ("id_ed25519.pub", "id_rsa.pub", "id_ecdsa.pub")
+
+
+def _resolve_shared_ssh_public_key(tfvars: dict[str, Any], env: dict[str, str]) -> str:
+    """Resolve legacy path-or-key tfvars into the shared recipe's key value."""
+
+    raw = tfvars.get("ssh_public_key")
+    if raw is None:
+        raw = env.get("TF_VAR_ssh_public_key", "")
+    document = str(raw or "").strip()
+    key_match = re.search(r'\bkey\s*=\s*"([^"]+)"', document, re.DOTALL)
+    if key_match:
+        return key_match.group(1).strip()
+    path_match = re.search(r'\bpath\s*=\s*"([^"]+)"', document, re.DOTALL)
+    if path_match:
+        path = Path(path_match.group(1)).expanduser()
+        if not path.is_file():
+            raise typer.BadParameter(f"SSH public key path does not exist: {path}")
+        return path.read_text(encoding="utf-8").strip()
+    if document and document.startswith(("ssh-", "ecdsa-")):
+        return document
+    explicit = os.environ.get("NPA_SSH_PUBLIC_KEY", "").strip()
+    candidates = (
+        [Path(explicit).expanduser()]
+        if explicit
+        else [Path.home() / ".ssh" / name for name in _SSH_PUBLIC_KEY_NAMES]
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.read_text(encoding="utf-8").strip()
+    searched = ", ".join(str(path) for path in candidates)
+    raise typer.BadParameter(
+        f"No SSH public key found for the cluster node groups (looked at {searched}). "
+        "Create one with `ssh-keygen -t ed25519`, point NPA_SSH_PUBLIC_KEY at an "
+        "existing key, or set ssh_public_key in terraform.tfvars."
+    )
 
 
 def _ssh_public_key_var_args(
@@ -2389,6 +2920,14 @@ def _preflight_gpu_capacity(
 
     gpu_nodes = int(_tfvar_value(tfvars, env, "gpu_nodes_count", 0) or 0)
     if gpu_nodes <= 0:
+        return
+    # MIG's STRICT capacity-block-backed pool consumes the named reservation,
+    # not ordinary on-demand GPU quota. Reservation ownership/region/platform
+    # and remaining capacity are validated by the shared mk8s preflight above.
+    if (
+        _tfvar_bool(tfvars, env, "mig_enabled", False)
+        and str(_tfvar_value(tfvars, env, "capacity_block_group", "") or "").strip()
+    ):
         return
     platform = str(
         _tfvar_value(tfvars, env, "gpu_nodes_platform", "gpu-rtx6000") or ""
@@ -2880,6 +3419,197 @@ def _terraform_state_cluster_ids(
     return ids
 
 
+def _verify_residual_terraform_ownership(
+    terraform_bin: str,
+    terraform_dir: Path,
+    env: dict[str, str],
+    *,
+    project_id: str,
+    cluster_id: str,
+) -> list[str]:
+    """Validate residual-only state for an out-of-band/partial cluster delete."""
+
+    result = _run_capture(
+        [terraform_bin, "state", "pull"],
+        cwd=terraform_dir,
+        env=env,
+        check=False,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        raise typer.BadParameter(
+            "Legacy recovery requires readable retained Terraform state; nothing "
+            "was deleted. Restore the state and retry."
+        )
+    try:
+        state = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise typer.BadParameter(
+            "Legacy recovery Terraform state is malformed; nothing was deleted."
+        ) from exc
+    resources = state.get("resources") if isinstance(state, dict) else None
+    if (
+        not isinstance(resources, list)
+        or not str(state.get("lineage") or "").strip()
+        or not isinstance(state.get("serial"), int)
+    ):
+        raise typer.BadParameter(
+            "Legacy recovery Terraform state lacks valid lineage/resource ownership; "
+            "nothing was deleted."
+        )
+    project_scoped_types = {
+        "nebius_compute_v1_filesystem",
+        "nebius_compute_v1_gpu_cluster",
+        "nebius_applications_v1alpha1_k8s_release",
+        "nebius_iam_v1_service_account",
+        "nebius_storage_v1_bucket",
+        "nebius_vpc_v1_network",
+        "nebius_vpc_v1_subnet",
+    }
+    cluster_scoped_types = {
+        "nebius_mk8s_v1_node_group",
+    }
+    indirect_types = {
+        "nebius_iam_v1_group_membership",
+        "nebius_iam_v2_access_key",
+    }
+    managed_ids: dict[str, set[str]] = {}
+    for resource in resources:
+        if (
+            not isinstance(resource, dict)
+            or resource.get("mode", "managed") != "managed"
+        ):
+            continue
+        resource_type = str(resource.get("type") or "")
+        instances = resource.get("instances")
+        if not resource_type or not isinstance(instances, list):
+            raise typer.BadParameter(
+                "Legacy recovery Terraform state contains malformed managed "
+                "resource inventory; nothing was deleted."
+            )
+        for instance in instances:
+            attributes = (
+                instance.get("attributes") if isinstance(instance, dict) else None
+            )
+            if not isinstance(attributes, dict):
+                raise typer.BadParameter(
+                    "Legacy recovery Terraform state contains malformed ownership "
+                    "attributes; nothing was deleted."
+                )
+            resource_id = str(attributes.get("id") or "").strip()
+            if resource_type.startswith("nebius_") and not resource_id:
+                raise typer.BadParameter(
+                    "Legacy recovery Terraform state contains a Nebius resource "
+                    "without an exact provider ID; nothing was deleted."
+                )
+            if resource_id:
+                managed_ids.setdefault(resource_type, set()).add(resource_id)
+
+    service_account_ids = managed_ids.get("nebius_iam_v1_service_account", set())
+    residual_types: list[str] = []
+    for resource in resources:
+        if (
+            not isinstance(resource, dict)
+            or resource.get("mode", "managed") != "managed"
+        ):
+            continue
+        resource_type = str(resource.get("type") or "")
+        if not resource_type:
+            raise typer.BadParameter(
+                "Legacy recovery Terraform state contains a malformed managed "
+                "resource; nothing was deleted."
+            )
+        instances = resource.get("instances")
+        if not isinstance(instances, list):
+            raise typer.BadParameter(
+                "Legacy recovery Terraform state contains malformed managed "
+                "instances; nothing was deleted."
+            )
+        if not instances:
+            # Terraform retains empty blocks after count/for_each transitions.
+            # They prove no live provider resource and carry no ownership to
+            # validate, including an already-removed cluster block.
+            continue
+        if resource_type == "nebius_mk8s_v1_cluster":
+            raise typer.BadParameter(
+                "Legacy recovery found an unidentifiable cluster resource; nothing "
+                "was deleted."
+            )
+        for instance in instances:
+            attributes = (
+                instance.get("attributes") if isinstance(instance, dict) else None
+            )
+            if not isinstance(attributes, dict):
+                raise typer.BadParameter(
+                    "Legacy recovery Terraform state contains malformed ownership "
+                    "attributes; nothing was deleted."
+                )
+            candidate_parents = {
+                str(attributes.get(key) or "").strip()
+                for key in ("parent_id", "project_id", "parentId", "projectId")
+                if str(attributes.get(key) or "").strip()
+            }
+            if resource_type in project_scoped_types and candidate_parents != {
+                project_id
+            }:
+                raise typer.BadParameter(
+                    "Legacy recovery Terraform residuals do not match the requested "
+                    "project; nothing was deleted."
+                )
+            if resource_type in cluster_scoped_types and candidate_parents != {
+                cluster_id
+            }:
+                raise typer.BadParameter(
+                    "Legacy recovery Terraform residuals do not match the exact "
+                    "persisted cluster; nothing was deleted."
+                )
+            if resource_type == "nebius_applications_v1alpha1_k8s_release":
+                linked_cluster_id = str(
+                    attributes.get("cluster_id") or attributes.get("clusterId") or ""
+                ).strip()
+                if linked_cluster_id != cluster_id:
+                    raise typer.BadParameter(
+                        "Legacy recovery application-release ownership is not "
+                        "linked to the exact persisted cluster; nothing was deleted."
+                    )
+            if resource_type == "nebius_iam_v2_access_key":
+                if len(candidate_parents) != 1 or not candidate_parents.issubset(
+                    service_account_ids
+                ):
+                    raise typer.BadParameter(
+                        "Legacy recovery access-key ownership is not linked to an "
+                        "exact Terraform-owned service account; nothing was deleted."
+                    )
+            if resource_type == "nebius_iam_v1_group_membership":
+                member = attributes.get("member")
+                member_id = str(
+                    attributes.get("member_id")
+                    or attributes.get("memberId")
+                    or (member.get("id") if isinstance(member, dict) else "")
+                ).strip()
+                if len(candidate_parents) != 1 or member_id not in service_account_ids:
+                    raise typer.BadParameter(
+                        "Legacy recovery group-membership ownership is not linked to "
+                        "an exact Terraform-owned service account; nothing was deleted."
+                    )
+            if (
+                resource_type.startswith("nebius_")
+                and resource_type not in project_scoped_types
+                and resource_type not in cluster_scoped_types
+                and resource_type not in indirect_types
+            ):
+                raise typer.BadParameter(
+                    f"Legacy recovery does not recognize Nebius residual type "
+                    f"{resource_type!r}; nothing was deleted."
+                )
+        residual_types.append(resource_type)
+    if not residual_types:
+        raise typer.BadParameter(
+            "Legacy recovery state contains no Terraform-owned residual resources; "
+            "nothing was deleted."
+        )
+    return sorted(set(residual_types))
+
+
 def _terraform_outputs(
     terraform_bin: str, terraform_dir: Path, env: dict[str, str]
 ) -> dict[str, Any]:
@@ -2947,6 +3677,7 @@ def _save_terraform_cluster_state(
         last_seen_state=last_seen_state,
         endpoint=str(endpoints.get("public_endpoint") or ""),
         kubeconfig_path=str(kubeconfig_path),
+        provider_name=str(cluster.get("name") or ""),
     )
     save_cluster_state(
         state,

@@ -15,6 +15,11 @@ declarative `npa.workflow` spec that all share one implementation.
 | `npa.workflow` toolRef | `workbench.cosmos3.generate` |
 | Golden eval | `npa.smoke.test_cosmos3_generate_functional` (`gpu-gated`) |
 
+The general toolRef also forwards `config.cosmos3_input_path`, seed, guidance,
+and steps. Conditioned modes fail closed when the input path is empty. The
+independent multi-variant PAIDF composition and its canonical artifact contract
+are documented in [PAIDF with Cosmos 3](guides/paidf-cosmos3.md).
+
 Modes: `text2image`, `image2image`, `text2video`, `image2video`, `video2video`.
 The last three
 condition on an input asset, so they require `--input-path` (a local path, an

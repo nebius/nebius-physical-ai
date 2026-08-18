@@ -21,6 +21,7 @@ foxglove  Foxglove embedded viewer: MCAP conversion, inspection, and SDK assets.
 genesis  Genesis simulation: teacher training, demo generation, evaluation.
 groot  NVIDIA Isaac GR00T humanoid foundation-model workbench.
 isaac-lab  Isaac Lab simulation workbench deployment, training, and evaluation.
+leisaac  LeIsaac SO101 browser teleoperation on the RTX PRO 6000 Kubernetes pool.
 nurec  NVIDIA Omniverse NuRec / Neural Reconstruction Engine: sensor recordings -> 3DGUT Gaussian reconstruction -> renderable USDZ -> novel-view renders. Requires an RT-core GPU
     (L40S or RTX PRO 6000 Blackwell); never route the render path at H100/H200.
 sonic  NVIDIA GEAR-SONIC whole-body-control workbench.
@@ -62,6 +63,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `genesis` | Genesis simulation: teacher training, demo generation, evaluation. |
 | `groot` | NVIDIA Isaac GR00T humanoid foundation-model workbench. |
 | `isaac-lab` | Isaac Lab simulation workbench deployment, training, and evaluation. |
+| `leisaac` | LeIsaac SO101 browser teleoperation on the RTX PRO 6000 Kubernetes pool. |
 | `nurec` | NVIDIA Omniverse NuRec / Neural Reconstruction Engine: sensor recordings -> 3DGUT Gaussian reconstruction -> renderable USDZ -> novel-view renders. Requires an RT-core GPU (L40S or RTX PRO 6000 Blackwell); never route the render path at H100/H200. |
 | `sonic` | NVIDIA GEAR-SONIC whole-body-control workbench. |
 | `mjlab` | MJLab locomotion policy evaluation for SONIC workflows. |

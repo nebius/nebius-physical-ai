@@ -8,12 +8,55 @@ them there keep working.
 from __future__ import annotations
 
 import json
+from pathlib import Path
+import re
 import shlex
 import uuid
 from typing import Any
 
+from npa.clients.config import CONFIG_PATH, _load_yaml_file
 from npa.clients.project_credential_store import merge_project_credentials_document
 from npa.clients.ssh import SSHClient
+
+
+_REMOTE_KUBERNETES_KEYS = (
+    "cluster_name",
+    "context",
+    "gpu_profile",
+    "gpu_accelerator",
+)
+
+
+def _remote_kubernetes_config(project_alias: str) -> tuple[dict[str, str], str]:
+    """Return the non-secret exact backend fields safe to stage on an agent VM.
+
+    The configured kubeconfig is returned as private content, not as its operator path.
+    The caller stages it through the same owner-only SFTP path used for credentials and
+    writes a per-remote-user path into config.yaml.
+    """
+
+    payload = _load_yaml_file(Path(CONFIG_PATH))
+    if not isinstance(payload, dict):
+        return {}, ""
+    projects = payload.get("projects")
+    project = projects.get(project_alias) if isinstance(projects, dict) else None
+    kubernetes = project.get("kubernetes") if isinstance(project, dict) else None
+    if not isinstance(kubernetes, dict):
+        return {}, ""
+    result = {
+        key: value
+        for key in _REMOTE_KUBERNETES_KEYS
+        if (value := str(kubernetes.get(key) or "").strip())
+    }
+    cluster_name = result.get("cluster_name", "")
+    source = str(kubernetes.get("kubeconfig") or "").strip()
+    if not source or not re.fullmatch(r"[A-Za-z0-9_.-]+", cluster_name):
+        return result, ""
+    try:
+        content = Path(source).expanduser().read_text(encoding="utf-8")
+    except OSError:
+        content = ""
+    return result, content
 
 
 def _stage_private_text(
@@ -107,6 +150,9 @@ def _write_agent_operator_profile(
             }
         },
     }
+    kubernetes, kubeconfig_content = _remote_kubernetes_config(project_alias)
+    if kubernetes:
+        config_payload["projects"][project_alias]["kubernetes"] = kubernetes
     credentials_payload: dict[str, Any] = {"tokens": {}}
     tokens = credentials_payload["tokens"]
     if isinstance(tokens, dict):
@@ -153,6 +199,25 @@ def _write_agent_operator_profile(
         ("/root/.npa", "root:root"),
     ]
     for npa_dir, owner in targets:
+        remote_config_payload = json.loads(json.dumps(config_payload))
+        if kubernetes and kubeconfig_content:
+            cluster_name = kubernetes["cluster_name"]
+            cluster_dir = f"{npa_dir}/clusters/{cluster_name}"
+            remote_kubeconfig = f"{cluster_dir}/kubeconfig"
+            remote_config_payload["projects"][project_alias]["kubernetes"][
+                "kubeconfig"
+            ] = remote_kubeconfig
+            ssh.run_or_raise(
+                f"sudo install -d -m 700 -o {shlex.quote(owner.split(':', 1)[0])} "
+                f"-g {shlex.quote(owner.split(':', 1)[1])} {shlex.quote(cluster_dir)}",
+                label=f"prepare private {cluster_dir}",
+            )
+            _stage_private_text(
+                ssh,
+                content=kubeconfig_content,
+                target=remote_kubeconfig,
+                owner=owner,
+            )
         config_path = f"{npa_dir}/config.yaml"
         creds_path = f"{npa_dir}/credentials.yaml"
         ssh.run_or_raise(
@@ -162,7 +227,7 @@ def _write_agent_operator_profile(
         )
         _stage_private_text(
             ssh,
-            content=json.dumps(config_payload, indent=2) + "\n",
+            content=json.dumps(remote_config_payload, indent=2) + "\n",
             target=config_path,
             owner=owner,
         )

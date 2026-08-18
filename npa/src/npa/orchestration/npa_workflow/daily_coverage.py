@@ -46,15 +46,9 @@ WORKFLOW_IMAGE_TOOLS: frozenset[str] = frozenset(TOOL_REF_IMAGE_TOOL.values())
 #:
 #:   sonic / retargeting : only appear in the 3-step SONIC locomotion chain.
 #:   cosmos3-reason      : single-step reason spec only.
-#:   cosmos3             : single-step generate spec only. The generate path is
-#:                         itself GPU-verified end to end (direct k8s Job, the
-#:                         cosmos3-generate SkyPilot template, and the
-#:                         cosmos3-generate npa.workflow spec); what is missing
-#:                         is a >= 4-step pipeline that consumes its output.
-#:   lerobot / genesis   : component/tool images with no workflow toolRef step
-#:                         yet (covered by their own tool + serverless E2Es and
-#:                         by the daily registry-reachability check, not by a
-#:                         multi-step workflow).
+#:   lerobot / genesis : component/tool images with no comprehensive workflow
+#:                       toolRef chain yet (covered by their own tool + serverless
+#:                       E2Es and by the daily registry-reachability check).
 #:
 #: ``groot`` left this set with the GR00T 1.7 multi-GPU training workflow.
 #: ``lerobot`` briefly left it too, when byof-ltx2.yaml ended in a policy-training
@@ -64,7 +58,6 @@ EXEMPT_IMAGE_TOOLS: frozenset[str] = frozenset(
     {
         "sonic",
         "retargeting",
-        "cosmos3",
         "cosmos3-reason",
         "genesis",
         "lerobot",

@@ -33,6 +33,7 @@ CONTAINER_IMAGE_NAMES = {
     "lerobot-policy": "npa-lerobot-policy",
     "genesis": "npa-genesis",
     "isaac-lab": "npa-isaac-lab",
+    "leisaac": "npa-leisaac",
     "cosmos": "npa-cosmos",
     "cosmos2-transfer": "npa-cosmos2-transfer",
     "cosmos3": "npa-cosmos3",
@@ -86,9 +87,9 @@ def requires_skypilot_bootstrap_runtime_probe(image: str) -> bool:
     raw = str(image or "").strip().removeprefix("docker:").partition("@")[0]
     leaf = raw.rsplit("/", 1)[-1].split(":", 1)[0]
     return leaf in {
-        CONTAINER_IMAGE_NAMES[tool]
-        for tool in SKYPILOT_BOOTSTRAP_RUNTIME_PROBED_TOOLS
+        CONTAINER_IMAGE_NAMES[tool] for tool in SKYPILOT_BOOTSTRAP_RUNTIME_PROBED_TOOLS
     }
+
 
 # Tools whose built image may NOT be published to a public/anonymous registry,
 # because it bakes a runtime we are not licensed to redistribute.
@@ -180,6 +181,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "lerobot-policy": "0.1.1",
     "genesis": "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "isaac-lab": "2.3.2.post1",
+    "leisaac": "0.4.0-20260817T231825Z",
     "cosmos": "cu128-torch27-sm100-1.0.9-20260803T002017Z",
     "cosmos2-transfer": "2.5.1-skypilot-ready-20260801T053000Z",
     # Additive r2 release of cosmos-framework 1.2.2 (pinned commit 5e67049c) +

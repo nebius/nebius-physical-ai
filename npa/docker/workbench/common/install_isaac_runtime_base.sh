@@ -50,6 +50,7 @@ ISAAC_VENV="${NPA_ISAAC_VENV:-/opt/npa/sim/venv}"
 RUNTIME_USER="${NPA_RUNTIME_USER:-ubuntu}"
 CACHE_DIR="${NPA_ISAAC_CACHE_DIR:-/opt/isaac-cache}"
 COMMON_DIR="${NPA_ISAAC_COMMON_DIR:-/opt/npa/docker/workbench/common}"
+OSS_DEPS_FILE="${NPA_ISAAC_OSS_DEPS_FILE:-${COMMON_DIR}/isaac-oss-deps.txt}"
 INSTALL_SKYPILOT_PREREQS="${NPA_INSTALL_SKYPILOT_PREREQS:-1}"
 # Set to 1 when the base image already provides a python3.11 venv with PyTorch (npa-base
 # does, at /opt/npa/venv, with cu130 for Blackwell). Reinstalling torch over it would

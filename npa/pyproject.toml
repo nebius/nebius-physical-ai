@@ -87,6 +87,11 @@ agent-trace = [
     "langfuse>=2.0",
     "opentelemetry-sdk>=1.20",
 ]
+leisaac = [
+    # BSD-2-Clause wrapper. PyPI wheels bundle a separately licensed static
+    # FFmpeg executable; LeIsaac packaging scans and records those bytes.
+    "imageio-ffmpeg==0.6.0",
+]
 genesis = [
     "genesis-world",
     "rsl-rl-lib==2.2.4",
@@ -114,6 +119,10 @@ sonic = [
 # standard (non-e2e) test suite collects without pulling in the GPU-heavy
 # extras (genesis, groot, sonic).
 dev = [
+    # Test-only media runtime for the LeIsaac dataset/PAIDF integration tests.
+    # Keep this explicit development dependency out of core and `full`; the
+    # LeIsaac image separately removes and scans bundled static FFmpeg bytes.
+    "imageio-ffmpeg==0.6.0",
     "pytest>=8.0",
     "pytest-mock>=3.14",
     "pytest-cov>=5.0",
@@ -128,6 +137,8 @@ dev = [
 [dependency-groups]
 dev = [
     "fastapi~=0.136.1",
+    # Mirrors project.optional-dependencies.dev for `uv sync --group dev`.
+    "imageio-ffmpeg==0.6.0",
     "pytest>=8.0",
     "pytest-mock>=3.14",
     "pytest-cov>=5.0",
@@ -149,6 +160,7 @@ lerobot = "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 lerobot-policy = "0.1.1"
 genesis = "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 isaac-lab = "2.3.2.post1"
+leisaac = "0.4.0-20260817T231825Z"
 cosmos = "cu128-torch27-sm100-1.0.9-20260803T002017Z"
 cosmos2-transfer = "2.5.1-skypilot-ready-20260801T053000Z"
 # Additive r2 image release for cosmos-framework 1.2.2 (pinned commit) + torch

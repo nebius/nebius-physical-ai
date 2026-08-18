@@ -314,9 +314,11 @@ def test_agent_soperator_validate_and_dry_run_deploy(ctx: AgentLiveContext) -> N
         "name": "agentdryrun",
         "region": "us-central1",
         "control_plane": {
+            # Exercise the supported pinned sizing tier instead of freezing
+            # undersized pre-#292 control-plane presets into the live gate.
             "system": {"min_size": 3},
             "controller": {},
-            "login": {},
+            "login": {"preset": "16vcpu-64gb"},
         },
         "workers": [
             {

@@ -674,6 +674,32 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "artifacts. One augmentation keeps the daily proof decisive."
         ),
     ),
+    SubmitLiveCase(
+        "paidf-cosmos3.yaml",
+        "multi",
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+        ),
+        requires_token_factory=True,
+        runtime=True,
+        config_vars=(("variant_count", "1"), ("variant_parallelism", "1")),
+        image_overrides=(
+            ("workbench.cosmos3.prepare_video_input", "cosmos3"),
+            ("workbench.cosmos3.generate_variants", "cosmos3"),
+            ("workbench.cosmos_evaluator.evaluate", "cosmos-evaluator"),
+            ("workbench.cosmos_curate.curate", "cosmos-curate"),
+            ("workbench.fiftyone.curate_augmented", "fiftyone"),
+            ("workbench.nurec.visualize", "rerun-viewer"),
+        ),
+        notes=(
+            "Real dynamic PAIDF Cosmos 3 acceptance using only the repository-owned "
+            "synthetic MP4 fixture. Proves source-video-conditioned framework output, "
+            "Cosmos Evaluator, Cosmos Curator, FiftyOne Brain, and Rerun evidence."
+        ),
+    ),
     # --- Plan-only: stubs or separately covered BYOF onboarding flows ---
     SubmitLiveCase(
         "sim2real.yaml",

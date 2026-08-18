@@ -53,18 +53,20 @@ endpoints through a transient SSH-local route.
 
 The image ships FiftyOne Brain (uniqueness / similarity / visualization) so it can
 do *real* curation, not just viewing. `npa workbench fiftyone curate-augmented
---augment-uri <cosmos_augmented/> --report-uri <curation/report.json>` runs the
+--augment-uri <cosmos_augmented/> --curator-report-uri
+<curation/cosmos_curator.json> --report-uri <curation/report.json>` runs the
 Physical AI Data Factory curation in-container: it builds a real `fiftyone.Dataset`
 from the augmented scenario variants, computes a GPU-free per-variant embedding
 (downsampled RGB + color histogram, via Pillow/numpy), and runs
 `fob.compute_uniqueness` + `fob.compute_similarity(...).find_duplicates()` +
 `fob.compute_visualization(method="pca")`. The report records `curation_engine:
 fiftyone-brain`, per-variant `uniqueness`, near-duplicate clusters, and which
-variants were kept vs dropped. Outside the image (no FiftyOne) it degrades to a
-truthfully labeled report-only counts path for standalone callers. Pass
-`--require-fiftyone` to fail closed instead; the shipped PAIDF workflow always
-does this through the `workbench.fiftyone.curate_augmented` toolRef, so a claimed
-PAIDF FiftyOne review always means Brain actually ran. The container functional smoke
+variants were kept vs dropped. A completed real Cosmos Curator report is
+required via `--curator-report-uri`; missing/unavailable Curator or FiftyOne
+Brain is always a hard failure. The shipped PAIDF workflow also passes
+`--require-fiftyone` as an explicit compatibility assertion through the
+`workbench.fiftyone.curate_augmented` toolRef, so a claimed PAIDF FiftyOne review
+always means both real stages ran. The container functional smoke
 (`docker/workbench/fiftyone/smoke_functional.py`) exercises this Brain path.
 
 The `npa-fiftyone` image bundles `mongod` (the prebuilt `fiftyone_db` wheel ships

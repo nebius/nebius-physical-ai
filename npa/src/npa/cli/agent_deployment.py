@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import fcntl
+import ipaddress
 import json
 import os
 import re
@@ -148,7 +149,28 @@ def record_tls_verify(record: Mapping[str, Any]) -> bool:
 
 
 def record_customer_url(record: Mapping[str, Any]) -> str:
+    public_ip = str(record.get("public_ip") or "").strip()
+    if record_public_https(record) and is_routable_public_ip(public_ip):
+        return f"https://{public_ip}/"
     return str(record.get("public_url") or record.get("agent_url") or "").strip()
+
+
+def is_routable_public_ip(value: str) -> bool:
+    """Return whether a literal address is safe as a public agent endpoint."""
+
+    candidate = str(value or "").strip()
+    if not candidate or candidate == "localhost":
+        return False
+    try:
+        address = ipaddress.ip_address(candidate)
+    except ValueError:
+        return False
+    return not (
+        address.is_loopback
+        or address.is_private
+        or address.is_unspecified
+        or address.is_link_local
+    )
 
 
 def validate_namespace_segment(value: str, *, field: str) -> str:

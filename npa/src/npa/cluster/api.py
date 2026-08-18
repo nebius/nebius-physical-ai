@@ -60,6 +60,7 @@ class ClusterInfo:
     endpoint: str = ""
     node_count: int = 0
     node_group_id: str = ""
+    k8s_version: str = ""
     raw: dict[str, Any] | None = None
 
 
@@ -147,8 +148,12 @@ class MK8sClient:
                 timeout=self._timeout,
             )
             if result.returncode != 0:
-                self._raise_for_error(result, f"create cluster failed for {config.name}")
-            cluster = self._parse_cluster(result.stdout, fallback_project_id=config.project_id)
+                self._raise_for_error(
+                    result, f"create cluster failed for {config.name}"
+                )
+            cluster = self._parse_cluster(
+                result.stdout, fallback_project_id=config.project_id
+            )
             if not cluster.id:
                 cluster = self.get_cluster(config.name, project_id=config.project_id)
             created_cluster_id = cluster.id
@@ -178,7 +183,9 @@ class MK8sClient:
                 pass
             raise
 
-    def create_cpu_node_group(self, config: ClusterConfig, cluster_id: str) -> NodeGroupInfo:
+    def create_cpu_node_group(
+        self, config: ClusterConfig, cluster_id: str
+    ) -> NodeGroupInfo:
         return self.create_node_group(
             cluster_id=cluster_id,
             name=f"{config.name}-cpu",
@@ -192,7 +199,9 @@ class MK8sClient:
             boot_disk_size_gib=config.boot_disk_size_gib,
         )
 
-    def create_gpu_node_group(self, config: NodeGroupConfig, cluster_id: str) -> NodeGroupInfo:
+    def create_gpu_node_group(
+        self, config: NodeGroupConfig, cluster_id: str
+    ) -> NodeGroupInfo:
         return self.create_node_group(
             cluster_id=cluster_id,
             name=config.name,
@@ -286,7 +295,11 @@ class MK8sClient:
 
         result = self._run(args, timeout=self._timeout)
         if result.returncode != 0:
-            self._raise_for_error(result, f"create node group failed for {name}", not_found_error=NodeGroupNotFoundError)
+            self._raise_for_error(
+                result,
+                f"create node group failed for {name}",
+                not_found_error=NodeGroupNotFoundError,
+            )
         node_group = self._parse_node_group(result.stdout, cluster_id=cluster_id)
         if not node_group.id:
             groups = self.list_node_groups(cluster_id)
@@ -317,13 +330,17 @@ class MK8sClient:
             timeout=120,
         )
         if result.returncode != 0:
-            self._raise_for_error(result, f"list clusters failed for project {project_id}")
+            self._raise_for_error(
+                result, f"list clusters failed for project {project_id}"
+            )
         return [
             self._cluster_from_dict(item, fallback_project_id=project_id)
             for item in _as_items(_json_loads(result.stdout))
         ]
 
-    def get_cluster(self, cluster_id_or_name: str, *, project_id: str = "") -> ClusterInfo:
+    def get_cluster(
+        self, cluster_id_or_name: str, *, project_id: str = ""
+    ) -> ClusterInfo:
         result = self._run(
             ["mk8s", "cluster", "get", "--id", cluster_id_or_name, "--format", "json"],
             timeout=120,
@@ -346,10 +363,16 @@ class MK8sClient:
                 timeout=120,
             )
             if by_name.returncode == 0:
-                return self._parse_cluster(by_name.stdout, fallback_project_id=project_id)
+                return self._parse_cluster(
+                    by_name.stdout, fallback_project_id=project_id
+                )
             if self._is_not_found(by_name):
-                raise ClusterNotFoundError(f"Cluster {cluster_id_or_name} not found in project {project_id}")
-            self._raise_for_error(by_name, f"get cluster failed for {cluster_id_or_name}")
+                raise ClusterNotFoundError(
+                    f"Cluster {cluster_id_or_name} not found in project {project_id}"
+                )
+            self._raise_for_error(
+                by_name, f"get cluster failed for {cluster_id_or_name}"
+            )
         if self._is_not_found(result):
             raise ClusterNotFoundError(f"Cluster {cluster_id_or_name} not found")
         self._raise_for_error(result, f"get cluster failed for {cluster_id_or_name}")
@@ -360,19 +383,33 @@ class MK8sClient:
             cluster = self.get_cluster(cluster_id_or_name, project_id=project_id)
         except ClusterNotFoundError:
             return
-        result = self._run(["mk8s", "cluster", "delete", "--id", cluster.id], timeout=self._timeout)
+        result = self._run(
+            ["mk8s", "cluster", "delete", "--id", cluster.id], timeout=self._timeout
+        )
         if result.returncode != 0 and not self._is_not_found(result):
-            self._raise_for_error(result, f"delete cluster failed for {cluster_id_or_name}")
+            self._raise_for_error(
+                result, f"delete cluster failed for {cluster_id_or_name}"
+            )
 
     def list_node_groups(self, cluster_id: str) -> list[NodeGroupInfo]:
         result = self._run(
-            ["mk8s", "node-group", "list", "--parent-id", cluster_id, "--format", "json"],
+            [
+                "mk8s",
+                "node-group",
+                "list",
+                "--parent-id",
+                cluster_id,
+                "--format",
+                "json",
+            ],
             timeout=120,
         )
         if result.returncode != 0:
             if self._is_not_found(result):
                 return []
-            self._raise_for_error(result, f"list node groups failed for cluster {cluster_id}")
+            self._raise_for_error(
+                result, f"list node groups failed for cluster {cluster_id}"
+            )
         return [
             self._node_group_from_dict(item, cluster_id=cluster_id)
             for item in _as_items(_json_loads(result.stdout))
@@ -402,8 +439,14 @@ class MK8sClient:
         if by_name.returncode == 0:
             return self._parse_node_group(by_name.stdout, cluster_id=cluster_id)
         if self._is_not_found(result) or self._is_not_found(by_name):
-            raise NodeGroupNotFoundError(f"Node group {name_or_id} not found in cluster {cluster_id}")
-        self._raise_for_error(by_name, f"get node group failed for {name_or_id}", not_found_error=NodeGroupNotFoundError)
+            raise NodeGroupNotFoundError(
+                f"Node group {name_or_id} not found in cluster {cluster_id}"
+            )
+        self._raise_for_error(
+            by_name,
+            f"get node group failed for {name_or_id}",
+            not_found_error=NodeGroupNotFoundError,
+        )
         raise AssertionError("unreachable")
 
     def delete_node_group(self, cluster_id: str, name_or_id: str) -> None:
@@ -411,7 +454,10 @@ class MK8sClient:
             node_group = self.get_node_group(cluster_id, name_or_id)
         except NodeGroupNotFoundError:
             return
-        result = self._run(["mk8s", "node-group", "delete", "--id", node_group.id], timeout=self._timeout)
+        result = self._run(
+            ["mk8s", "node-group", "delete", "--id", node_group.id],
+            timeout=self._timeout,
+        )
         if result.returncode != 0 and not self._is_not_found(result):
             self._raise_for_error(
                 result,
@@ -437,7 +483,9 @@ class MK8sClient:
             last_status = node_group.status
             last_node_group = node_group
             if is_error(node_group.status):
-                raise NodeGroupError(f"Node group {name_or_id} entered terminal state {node_group.status}")
+                raise NodeGroupError(
+                    f"Node group {name_or_id} entered terminal state {node_group.status}"
+                )
             if is_ready(node_group.status):
                 return node_group
             self._sleep(self._poll_interval)
@@ -489,7 +537,9 @@ class MK8sClient:
             args.extend(["--context-name", context_name])
         result = self._run(args, timeout=120)
         if result.returncode != 0:
-            self._raise_for_error(result, f"get kubeconfig failed for cluster {cluster_id}")
+            self._raise_for_error(
+                result, f"get kubeconfig failed for cluster {cluster_id}"
+            )
         return kubeconfig_path
 
     def wait_for_ready(
@@ -499,7 +549,8 @@ class MK8sClient:
         project_id: str = "",
         expected_node_count: int = 1,
         timeout_minutes: int = 30,
-        on_state_change: Callable[[ClusterInfo, list[NodeGroupInfo]], None] | None = None,
+        on_state_change: Callable[[ClusterInfo, list[NodeGroupInfo]], None]
+        | None = None,
     ) -> ClusterInfo:
         deadline = time.monotonic() + timeout_minutes * 60
         last_state = ""
@@ -515,12 +566,22 @@ class MK8sClient:
             last_cluster = cluster
             last_groups = groups
             if is_error(cluster.status):
-                raise ClusterError(f"Cluster {cluster.id} entered terminal state {cluster.status}")
+                raise ClusterError(
+                    f"Cluster {cluster.id} entered terminal state {cluster.status}"
+                )
             if any(is_error(group.status) for group in groups):
                 failed = ", ".join(f"{group.name}:{group.status}" for group in groups)
-                raise ClusterError(f"Cluster {cluster.id} has failed node group state: {failed}")
-            ready_nodes = sum(group.node_count for group in groups if is_ready(group.status))
-            if is_ready(cluster.status) and groups and ready_nodes >= expected_node_count:
+                raise ClusterError(
+                    f"Cluster {cluster.id} has failed node group state: {failed}"
+                )
+            ready_nodes = sum(
+                group.node_count for group in groups if is_ready(group.status)
+            )
+            if (
+                is_ready(cluster.status)
+                and groups
+                and ready_nodes >= expected_node_count
+            ):
                 cluster.node_count = ready_nodes
                 cluster.node_group_id = groups[0].id
                 return cluster
@@ -554,7 +615,9 @@ class MK8sClient:
         items = _as_items(_json_loads(raw))
         if not items:
             return ClusterInfo(id="", name="", project_id=fallback_project_id, raw={})
-        return self._cluster_from_dict(items[0], fallback_project_id=fallback_project_id)
+        return self._cluster_from_dict(
+            items[0], fallback_project_id=fallback_project_id
+        )
 
     def _parse_node_group(self, raw: str, *, cluster_id: str) -> NodeGroupInfo:
         items = _as_items(_json_loads(raw))
@@ -562,19 +625,39 @@ class MK8sClient:
             return NodeGroupInfo(id="", name="", cluster_id=cluster_id, raw={})
         return self._node_group_from_dict(items[0], cluster_id=cluster_id)
 
-    def _cluster_from_dict(self, data: dict[str, Any], *, fallback_project_id: str = "") -> ClusterInfo:
+    def _cluster_from_dict(
+        self, data: dict[str, Any], *, fallback_project_id: str = ""
+    ) -> ClusterInfo:
         metadata = data.get("metadata") if isinstance(data, dict) else {}
         return ClusterInfo(
             id=str((metadata or {}).get("id") or data.get("id") or ""),
             name=str((metadata or {}).get("name") or data.get("name") or ""),
-            project_id=str((metadata or {}).get("parent_id") or data.get("parent_id") or fallback_project_id),
+            project_id=str(
+                (metadata or {}).get("parent_id")
+                or data.get("parent_id")
+                or fallback_project_id
+            ),
             status=_normalize_state(_deep_get(data, ("status", "state"), ("state",))),
-            created_at=str((metadata or {}).get("created_at") or data.get("created_at") or ""),
+            created_at=str(
+                (metadata or {}).get("created_at") or data.get("created_at") or ""
+            ),
             endpoint=_endpoint_from_cluster(data),
+            k8s_version=str(
+                _deep_get(
+                    data,
+                    ("status", "control_plane", "version"),
+                    ("status", "controlPlane", "version"),
+                    ("spec", "control_plane", "version"),
+                    ("spec", "controlPlane", "version"),
+                )
+                or ""
+            ),
             raw=data,
         )
 
-    def _node_group_from_dict(self, data: dict[str, Any], *, cluster_id: str) -> NodeGroupInfo:
+    def _node_group_from_dict(
+        self, data: dict[str, Any], *, cluster_id: str
+    ) -> NodeGroupInfo:
         metadata = data.get("metadata") if isinstance(data, dict) else {}
         node_count = _int_value(
             _deep_get(
@@ -604,10 +687,18 @@ class MK8sClient:
             or ""
         )
         autoscaling_min = _optional_int(
-            _deep_get(data, ("spec", "autoscaling", "min_node_count"), ("spec", "autoscaling", "minNodeCount"))
+            _deep_get(
+                data,
+                ("spec", "autoscaling", "min_node_count"),
+                ("spec", "autoscaling", "minNodeCount"),
+            )
         )
         autoscaling_max = _optional_int(
-            _deep_get(data, ("spec", "autoscaling", "max_node_count"), ("spec", "autoscaling", "maxNodeCount"))
+            _deep_get(
+                data,
+                ("spec", "autoscaling", "max_node_count"),
+                ("spec", "autoscaling", "maxNodeCount"),
+            )
         )
         public_ip = _has_public_ip(data)
         return NodeGroupInfo(
@@ -616,7 +707,9 @@ class MK8sClient:
             cluster_id=cluster_id,
             status=_normalize_state(_deep_get(data, ("status", "state"), ("state",))),
             node_count=node_count,
-            created_at=str((metadata or {}).get("created_at") or data.get("created_at") or ""),
+            created_at=str(
+                (metadata or {}).get("created_at") or data.get("created_at") or ""
+            ),
             platform=platform,
             preset=preset,
             gpu_type=gpu_type_from_platform(platform),
@@ -661,12 +754,16 @@ class MK8sClient:
                     raise ClusterError(
                         f"Nebius CLI timed out: {shlex.join(full_args)}"
                     ) from exc
-                self._sleep(min(2 ** attempt, 10))
+                self._sleep(min(2**attempt, 10))
                 continue
             last_result = result
-            if result.returncode == 0 or not self._is_transient(result) or attempt >= self._retries:
+            if (
+                result.returncode == 0
+                or not self._is_transient(result)
+                or attempt >= self._retries
+            ):
                 return result
-            self._sleep(min(2 ** attempt, 10))
+            self._sleep(min(2**attempt, 10))
         if last_result is not None:
             return last_result
         raise ClusterError(f"Unable to run Nebius CLI: {shlex.join(full_args)}")
@@ -816,10 +913,14 @@ def _enrich_node_group(
     node_group.gpu_type = node_group.gpu_type or gpu_type
     node_group.public_ip = node_group.public_ip or public_ip
     node_group.autoscaling_min = (
-        node_group.autoscaling_min if node_group.autoscaling_min is not None else autoscaling_min
+        node_group.autoscaling_min
+        if node_group.autoscaling_min is not None
+        else autoscaling_min
     )
     node_group.autoscaling_max = (
-        node_group.autoscaling_max if node_group.autoscaling_max is not None else autoscaling_max
+        node_group.autoscaling_max
+        if node_group.autoscaling_max is not None
+        else autoscaling_max
     )
     return node_group
 

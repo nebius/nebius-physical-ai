@@ -19,6 +19,7 @@ from npa.cli.agent_deployment import (
     load_runtime_deployment,
     verify_remote_deployment,
 )
+from npa.cli import agent_deployment, agent_public
 from npa.deploy import provisioner
 
 
@@ -29,6 +30,14 @@ def _git(repo: Path, *args: str) -> str:
         capture_output=True,
         text=True,
     ).stdout.strip()
+
+
+def test_public_agent_policy_is_deliberately_reexported_from_one_source() -> None:
+    assert agent_public.AgentConfig is agent_deployment.AgentConfig
+    assert agent_public.build_agent_urls is agent_deployment.build_agent_urls
+    assert agent_public.record_public_https is agent_deployment.record_public_https
+    assert agent_public.record_tls_verify is agent_deployment.record_tls_verify
+    assert agent_public.record_customer_url is agent_deployment.record_customer_url
 
 
 @pytest.fixture

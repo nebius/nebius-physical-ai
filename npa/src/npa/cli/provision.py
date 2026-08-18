@@ -8,7 +8,10 @@ from pathlib import Path
 
 import typer
 
-from npa.cluster.gpu_health import DEFAULT_CUDA_SMOKE_IMAGE, DEFAULT_STABILIZATION_SECONDS
+from npa.cluster.gpu_health import (
+    DEFAULT_CUDA_SMOKE_IMAGE,
+    DEFAULT_STABILIZATION_SECONDS,
+)
 from npa.provisioning import provision_if_absent
 
 app = typer.Typer(
@@ -90,6 +93,11 @@ def provision_if_absent_cmd(
         "--gpu-health-stabilization-seconds",
         help="Required stable GPU-health interval, matching `npa cluster up`.",
     ),
+    gpu_health_timeout_minutes: int = typer.Option(
+        60,
+        "--gpu-health-timeout-minutes",
+        help="GPU/MIG health deadline, matching `npa cluster up`.",
+    ),
     gpu_cuda_smoke: bool = typer.Option(
         True,
         "--gpu-cuda-smoke/--skip-gpu-cuda-smoke",
@@ -99,6 +107,18 @@ def provision_if_absent_cmd(
         DEFAULT_CUDA_SMOKE_IMAGE,
         "--gpu-cuda-smoke-image",
         help="Container image for CUDA vectorAdd validation.",
+    ),
+    mig_enabled: bool = typer.Option(
+        False,
+        "--mig/--no-mig",
+        help="Enable the same pinned RTX PRO 6000 MIG policy as fleet.",
+    ),
+    mig_strategy: str = typer.Option("mixed", "--mig-strategy"),
+    mig_config: str = typer.Option("all-balanced", "--mig-config"),
+    capacity_block_group: str = typer.Option(
+        "",
+        "--capacity-block-group",
+        help="Runtime-only strict GPU capacity block selector.",
     ),
     preemptible: bool | None = typer.Option(
         None,
@@ -158,8 +178,13 @@ def provision_if_absent_cmd(
         managed_driver_preset=managed_driver_preset,
         allow_unsafe_nvswitch_operator=allow_unsafe_nvswitch_operator,
         gpu_health_stabilization_seconds=gpu_health_stabilization_seconds,
+        gpu_health_timeout_minutes=gpu_health_timeout_minutes,
         gpu_cuda_smoke=gpu_cuda_smoke,
         gpu_cuda_smoke_image=gpu_cuda_smoke_image,
+        mig_enabled=mig_enabled,
+        mig_strategy=mig_strategy,
+        mig_config=mig_config,
+        capacity_block_group=capacity_block_group,
         preemptible=preemptible,
         accelerator=accelerator,
         gpu_readiness_timeout=gpu_readiness_timeout,

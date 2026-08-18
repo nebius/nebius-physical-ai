@@ -689,9 +689,7 @@ def test_verify_parity_is_read_only(monkeypatch) -> None:
 
     monkeypatch.setattr(publish_public, "_crane_copy", explode)
     assert (
-        publish_public.main(
-            ["--target", "target.example/workbench", "--verify-parity"]
-        )
+        publish_public.main(["--target", "target.example/workbench", "--verify-parity"])
         == 0
     )
 
@@ -1767,7 +1765,7 @@ def test_a_denial_that_also_says_name_unknown_is_never_treated_as_absence() -> N
 
 
 def _run2_readability(plan):
-    """The exact pass/fail split run #2 saw: 18 readable, 4 absent repos, 1 absent tag."""
+    """The catalog fixture has 19 readable images, 4 absent repos, and 1 absent tag."""
     never_built = {
         "npa-cosmos-curate",
         "npa-cosmos-evaluator",
@@ -1808,7 +1806,7 @@ def test_unbuilt_images_block_the_publish_by_default(monkeypatch, capsys) -> Non
     err = capsys.readouterr().err
 
     assert rc == 1
-    assert "5 of 24" in err
+    assert f"5 of {len(plan)}" in err
     # Both codes must survive into the explanation: they need different fixes, and an
     # operator greps for the registry's own wording.
     assert "NAME_UNKNOWN" in err and "never been pushed" in err
@@ -1851,7 +1849,7 @@ def test_skip_missing_publishes_the_ready_images_and_names_the_skipped(
     assert any("/npa-lerobot:" in ref for ref in copied), (
         "ready images must still publish"
     )
-    assert "Copied 19 image(s)." in captured.out
+    assert f"Copied {len(plan) - 5} image(s)." in captured.out
 
 
 def test_skip_missing_never_skips_past_a_denial(monkeypatch, capsys) -> None:

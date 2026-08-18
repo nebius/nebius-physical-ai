@@ -45,6 +45,12 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "manipulation env create",
         "env step loop",
     ],
+    "leisaac": [
+        "real LeIsaac-SO101-PickOrange-v0 environment starts",
+        "upstream SO101Keyboard teleoperation device active",
+        "Isaac Sim WebRTC signaling port ready on an RT-core GPU",
+        "runtime-fetched task assets and NVIDIA browser client hash verified",
+    ],
     "cosmos": [
         "Cosmos package version",
         "model load (with safety guardrail enabled)",

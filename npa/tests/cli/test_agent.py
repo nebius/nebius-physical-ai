@@ -8,6 +8,7 @@ import json
 import subprocess
 import re
 import shutil
+from typing import NoReturn, get_type_hints
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -15,6 +16,7 @@ from unittest.mock import Mock
 import pytest
 from typer import Exit
 from typer.testing import CliRunner
+import yaml
 
 from npa.cli.agent import (
     AGENT_MEDIA_PREVIEW_CONTRACT,
@@ -26,6 +28,13 @@ from npa.cli.agent import (
 )
 
 runner = CliRunner()
+
+
+def test_fail_is_typed_as_non_returning_and_preserves_cli_exit() -> None:
+    assert get_type_hints(agent_module._fail)["return"] is NoReturn
+    with pytest.raises(Exit) as caught:
+        agent_module._fail("focused failure")
+    assert caught.value.exit_code == 1
 
 
 def test_artifact_only_timeout_allows_preserved_run_inventory() -> None:
@@ -247,6 +256,176 @@ def _agent_nginx_site() -> str:
     return _nginx_agent_site_body(backend_port=8787, rerun_port=9090)
 
 
+def test_agent_operator_profile_stages_exact_nonsecret_kubernetes_target(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.cli import agent_env_files
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+projects:
+  demo:
+    kubernetes:
+      cluster_name: exact-cluster
+      context: exact-context
+      kubeconfig: /operator/private/kubeconfig
+      gpu_profile: rtxpro
+      gpu_accelerator: RTXPRO-6000-BLACKWELL-SERVER-EDITION
+      untrusted_extension: must-not-copy
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(agent_env_files, "CONFIG_PATH", config_path)
+
+    staged: list[str] = []
+
+    class FakeSSH:
+        def upload_private_text(self, content: str, _remote_path: str) -> None:
+            staged.append(content)
+
+        def run_or_raise(
+            self, *_args: object, **_kwargs: object
+        ) -> tuple[int, str, str]:
+            return 0, "", ""
+
+        def run(self, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
+            return 0, "", ""
+
+    agent_env_files._write_agent_operator_profile(
+        FakeSSH(),  # type: ignore[arg-type]
+        ssh_user="ubuntu",
+        project_alias="demo",
+        project_id="project-1",
+        tenant_id="tenant-1",
+        region="us-central1",
+        tf_api_key="",
+        s3_bucket="",
+        s3_endpoint="",
+        s3_access_key="",
+        s3_secret_key="",
+    )
+
+    configs = [json.loads(value) for value in staged if '"default_project"' in value]
+    assert len(configs) == 2
+    target = configs[0]["projects"]["demo"]["kubernetes"]
+    assert target == {
+        "cluster_name": "exact-cluster",
+        "context": "exact-context",
+        "gpu_profile": "rtxpro",
+        "gpu_accelerator": "RTXPRO-6000-BLACKWELL-SERVER-EDITION",
+    }
+
+
+def test_agent_operator_profile_privately_stages_remote_kubeconfig(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.cli import agent_env_files
+
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\nclusters: []\n", encoding="utf-8")
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "projects:\n"
+        "  demo:\n"
+        "    kubernetes:\n"
+        "      cluster_name: exact-cluster\n"
+        "      context: exact-context\n"
+        f"      kubeconfig: {kubeconfig}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(agent_env_files, "CONFIG_PATH", config_path)
+
+    staged: list[tuple[str, str]] = []
+
+    class FakeSSH:
+        def upload_private_text(self, content: str, remote_path: str) -> None:
+            staged.append((content, remote_path))
+
+        def run_or_raise(
+            self, *_args: object, **_kwargs: object
+        ) -> tuple[int, str, str]:
+            return 0, "", ""
+
+        def run(self, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
+            return 0, "", ""
+
+    agent_env_files._write_agent_operator_profile(
+        FakeSSH(),  # type: ignore[arg-type]
+        ssh_user="ubuntu",
+        project_alias="demo",
+        project_id="project-1",
+        tenant_id="tenant-1",
+        region="us-central1",
+        tf_api_key="",
+        s3_bucket="",
+        s3_endpoint="",
+        s3_access_key="",
+        s3_secret_key="",
+    )
+
+    assert [value for value, _path in staged].count(
+        "apiVersion: v1\nclusters: []\n"
+    ) == 2
+    configs = [
+        json.loads(value) for value, _path in staged if '"default_project"' in value
+    ]
+    assert configs[0]["projects"]["demo"]["kubernetes"]["kubeconfig"] == (
+        "/home/ubuntu/.npa/clusters/exact-cluster/kubeconfig"
+    )
+    assert configs[1]["projects"]["demo"]["kubernetes"]["kubeconfig"] == (
+        "/root/.npa/clusters/exact-cluster/kubeconfig"
+    )
+
+
+def test_agent_operator_profile_stages_exact_project_credentials() -> None:
+    from npa.cli import agent_env_files
+
+    staged: list[str] = []
+
+    class FakeSSH:
+        def upload_private_text(self, content: str, _remote_path: str) -> None:
+            staged.append(content)
+
+        def run_or_raise(
+            self, *_args: object, **_kwargs: object
+        ) -> tuple[int, str, str]:
+            return 0, "", ""
+
+        def run(self, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
+            return 0, "", ""
+
+    agent_env_files._write_agent_operator_profile(
+        FakeSSH(),  # type: ignore[arg-type]
+        ssh_user="ubuntu",
+        project_alias="demo",
+        project_id="project-1",
+        tenant_id="tenant-1",
+        region="us-central1",
+        tf_api_key="token-factory-secret",
+        s3_bucket="bucket-1",
+        s3_endpoint="https://storage.us-central1.nebius.cloud",
+        s3_access_key="access-secret",
+        s3_secret_key="storage-secret",
+        service_account_id="service-account-1",
+    )
+
+    credentials = [
+        json.loads(value) for value in staged if '"project_credentials"' in value
+    ]
+    assert len(credentials) == 2
+    root = credentials[0]["project_credentials"]
+    assert root["schema_version"] == "npa.project-credentials.v2"
+    assert root["current_project_id"] == "project-1"
+    exact = root["projects"]["project-1"]
+    assert exact["aliases"] == ["demo"]
+    assert exact["storage"]["bucket"] == "s3://bucket-1"
+    assert exact["nebius"] == {
+        "service_account_id": "service-account-1",
+        "service_account_project_id": "project-1",
+    }
+
+
 def test_build_agent_urls_https_default() -> None:
     urls = build_agent_urls("203.0.113.50")
     assert urls["public_url"] == "https://203.0.113.50/"
@@ -268,6 +447,74 @@ def test_build_agent_urls_http_legacy() -> None:
         urls["cameras_api_url"]
         == "http://203.0.113.50:8088/assets/api/sim-assets/cameras"
     )
+
+
+def test_agent_access_logs_are_query_free() -> None:
+    from npa.cli.agent_site import nginx_agent_site_body
+
+    source = _agent_source()
+    site = nginx_agent_site_body(
+        backend_port=8787,
+        rerun_port=9090,
+        ui_version="test",
+    )
+    log_block = source.split("log_format npa_agent_safe", 1)[1].split("NGINXLOG", 1)[0]
+
+    assert "--no-access-log" in source
+    assert "--log-level warning" in source
+    assert "npa-agent-access.log npa_agent_safe" in site
+    assert "$request_method $uri $server_protocol" in log_block
+    assert "$request_uri" not in log_block
+    assert '"$request "' not in log_block
+
+
+def test_customer_url_is_canonical_for_persisted_public_https_ip() -> None:
+    from npa.cli.agent import _record_customer_url
+
+    record = {
+        "public_ip": "8.8.8.8",
+        "public_https": True,
+        "public_url": "https://203.0.113.50/",
+        "agent_url": "https://203.0.113.50/",
+    }
+
+    assert _record_customer_url(record) == "https://8.8.8.8/"
+
+
+def test_existing_agent_public_ip_resolves_from_provider_state(monkeypatch) -> None:
+    from npa.cli.agent import _resolve_record_public_ip
+
+    monkeypatch.setattr(
+        "npa.cli.agent.resolve_instance_network_context",
+        lambda instance_id: SimpleNamespace(
+            instance_id=instance_id,
+            public_ip="8.8.8.8/32",
+            project_id="project-1",
+            security_group_ids=("sg-1",),
+        ),
+    )
+
+    assert (
+        _resolve_record_public_ip(
+            {"instance_id": "instance-1", "public_ip": "203.0.113.50"}
+        )
+        == "8.8.8.8"
+    )
+
+
+def test_existing_agent_public_ip_rejects_non_public_provider_state(
+    monkeypatch,
+) -> None:
+    from npa.cli.agent import _resolve_record_public_ip
+    from npa.clients.network import NetworkIngressError
+
+    monkeypatch.setattr(
+        "npa.cli.agent.resolve_instance_network_context",
+        lambda _instance_id: SimpleNamespace(public_ip="127.0.0.1"),
+    )
+
+    with pytest.raises(NetworkIngressError, match="routable public IP"):
+        _resolve_record_public_ip({"instance_id": "instance-1"})
 
 
 def test_ensure_terraform_state_bucket_preserves_missing_configuration(
@@ -1078,11 +1325,17 @@ def test_deploy_persists_terraform_state_before_apply(monkeypatch, tmp_path) -> 
     )
     monkeypatch.setattr("npa.cli.agent._bootstrap_agent_stack", lambda **_kwargs: None)
     monkeypatch.setattr("npa.cli.agent.ensure_ingress", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        "npa.cli.agent.remove_npa_ingress_for_instance_ports",
+        lambda *_args, **_kwargs: [],
+    )
     monkeypatch.setattr("npa.cli.agent.write_config", _write_config)
 
     # Satisfy the fail-fast deploy prerequisites (terraform + SSH key pair) that
     # now run before any cloud side effects.
-    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
+    (tmp_path / "id_ed25519.pub").write_text(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
+    )
     (tmp_path / "id_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
 
@@ -1125,6 +1378,58 @@ def test_bootstrap_enables_public_https_nginx() -> None:
     assert "DEFAULT_HTTPS_PORT" in source
     assert "Customer URL: use" in source
     assert "--no-public-https" in source
+
+
+def test_public_https_keeps_backend_loopback_only() -> None:
+    source = _agent_source()
+    assert "uvicorn backend:app --host 127.0.0.1 --port {backend_port}" in source
+    assert "uvicorn backend:app --host 0.0.0.0 --port {backend_port}" not in source
+    assert "proxy_pass http://127.0.0.1:{backend_port}/;" in source
+
+
+def test_public_ingress_excludes_internal_backend_port() -> None:
+    from npa.cli.agent import _agent_extra_ingress_ports
+
+    ports = _agent_extra_ingress_ports(
+        agent_port=8088,
+        rerun_port=9090,
+        public_https=True,
+    )
+    assert ports == [443, 9090]
+    assert 8787 not in ports
+
+
+def test_existing_agent_bootstrap_fails_closed_when_https_ingress_cannot_be_ensured() -> (
+    None
+):
+    source = _agent_source()
+    assert '_fail(f"npa network ensure-ingress failed: {exc}")' in source
+    assert "Customer HTTPS on port 443 may be unreachable" not in source
+
+
+def test_leisaac_signaling_uses_backend_session_auth() -> None:
+    source = _agent_source()
+    assert "location ^~ /api/leisaac/signal {{" not in source
+    for route in ("/api/leisaac/signal", "/api/leisaac/signal/sign_in"):
+        location = source.split(f"location = {route} {{{{", 1)[1].split("  }}", 1)[0]
+        assert "auth_basic off" in location
+        assert "proxy_set_header Upgrade $http_upgrade;" in location
+        assert "proxy_set_header Host $http_host;" in location
+        assert "proxy_set_header Origin $http_origin;" in location
+    general_api = source.split("location /api/ {{", 1)[1].split("  }}", 1)[0]
+    assert "auth_basic off" not in general_api
+    assert "Server-level Basic auth protects the general /api/ location" in source
+    assert "exact signaling WebSocket routes turn it off" in source
+
+
+def test_leisaac_pod_backhaul_uses_authenticated_public_https_only() -> None:
+    source = _agent_source()
+    location = source.split("location = /api/leisaac/backhaul {{", 1)[1].split(
+        "location /api/ {{", 1
+    )[0]
+    assert "auth_basic off" not in location
+    assert "proxy_pass http://127.0.0.1:{backend_port}/;" in location
+    assert "proxy_set_header X-Forwarded-Proto $scheme;" in location
 
 
 def test_bootstrap_nginx_serves_public_rerun_recording() -> None:
@@ -2374,14 +2679,14 @@ def test_agent_status_json(monkeypatch) -> None:
         "npa.cli.agent._agent_record",
         lambda project, name: {
             "public_ip": "8.8.8.8",
-            "agent_url": "https://203.0.113.50/",
-            "public_url": "https://203.0.113.50/",
+            "agent_url": "https://8.8.8.8/",
+            "public_url": "https://8.8.8.8/",
             "public_https": True,
-            "direct_url": "http://203.0.113.50:8088/",
-            "rerun_url": "https://203.0.113.50/rerun/",
-            "sim_viz_url": "https://203.0.113.50/rerun/",
-            "sim_assets_url": "https://203.0.113.50/assets/",
-            "cameras_api_url": "https://203.0.113.50/assets/api/sim-assets/cameras",
+            "direct_url": "http://8.8.8.8:8088/",
+            "rerun_url": "https://8.8.8.8/rerun/",
+            "sim_viz_url": "https://8.8.8.8/rerun/",
+            "sim_assets_url": "https://8.8.8.8/assets/",
+            "cameras_api_url": "https://8.8.8.8/assets/api/sim-assets/cameras",
             "auth_secret_path": "/tmp/agent-auth",
             "llm": {
                 "provider": "token_factory",
@@ -2401,8 +2706,9 @@ def test_agent_status_json(monkeypatch) -> None:
     assert payload["health"] is True
     assert payload["ui_status_code"] == 200
     assert payload["rerun_status_code"] == 200
+    assert payload["public_url"] == "https://8.8.8.8/"
     assert payload["sim_viz_url"].endswith("/rerun/")
-    assert payload["sim_assets_url"].endswith("203.0.113.50/assets/")
+    assert payload["sim_assets_url"].endswith("8.8.8.8/assets/")
     assert payload["cameras_api_url"].endswith("/assets/api/sim-assets/cameras")
 
 
@@ -2508,14 +2814,14 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
         lambda project, name: {
             "public_ip": "8.8.8.8",
             "region": "us-central1",
-            "agent_url": "https://203.0.113.50/",
-            "public_url": "https://203.0.113.50/",
+            "agent_url": "https://8.8.8.8/",
+            "public_url": "https://8.8.8.8/",
             "public_https": True,
-            "direct_url": "http://203.0.113.50:8088/",
-            "rerun_url": "https://203.0.113.50/rerun/",
-            "sim_viz_url": "https://203.0.113.50/rerun/",
-            "sim_assets_url": "https://203.0.113.50/assets/",
-            "cameras_api_url": "https://203.0.113.50/assets/api/sim-assets/cameras",
+            "direct_url": "http://8.8.8.8:8088/",
+            "rerun_url": "https://8.8.8.8/rerun/",
+            "sim_viz_url": "https://8.8.8.8/rerun/",
+            "sim_assets_url": "https://8.8.8.8/assets/",
+            "cameras_api_url": "https://8.8.8.8/assets/api/sim-assets/cameras",
             "auth_secret_path": "/tmp/agent-auth",
         },
     )
@@ -2590,6 +2896,15 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             return _Resp(b"RRD" * 32, status_code=200)
         if url_s.endswith("/api/health"):
             return _Resp({"ok": True})
+        if url_s.endswith("/api/leisaac/status"):
+            return _Resp(
+                {
+                    "available": False,
+                    "episodes_available": False,
+                    "run_id": "",
+                    "reason": "No LeIsaac runtime is registered with this agent.",
+                }
+            )
         if url_s.endswith("/api/infra/k8s"):
             return _Resp({"ok": True, "agent_npa_ready": True})
         if "/api/resources" in url_s:
@@ -2626,10 +2941,14 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             return _Resp('{"ok":true}', status_code=200)
         if "/rerun/" in url_s:
             return _Resp(b"console.log('rerun');", status_code=200)
-        if url_s.rstrip("/").endswith(("203.0.113.50", ":8088")):
+        if url_s.rstrip("/").endswith(("8.8.8.8", ":8088")):
+            if _kwargs.get("auth") is None:
+                return _Resp({"detail": "authentication required"}, status_code=401)
             html = (
                 f'<html><head><meta name="viewport" content="width=device-width, initial-scale=1">'
-                f'<meta name="npa-ui-version" content="{AGENT_UI_VERSION}"></head>'
+                f'<meta name="npa-ui-version" content="{AGENT_UI_VERSION}">'
+                '<meta name="leisaac-control-readiness-contract" '
+                'content="LEISAAC_CONTROL_READINESS_CONTRACT"></head>'
                 "<body>"
                 '<div id="tabMain"></div><div id="tabRerun"></div>'
                 '<div id="agentAccessPanel"></div><button id="agentAccessRefresh"></button>'
@@ -2665,6 +2984,12 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 "function queueChatText(){} function waitForQualityRerunFrame(){} "
                 "function captureCanvasDataUrl(){} function ensureRerunCaptureBridge(){} "
                 "function pickBestIframeCanvas(){} function sampleFrameStats(){} "
+                "function ensureLeIsaacTab(){} function removeLeIsaacTab(){} "
+                "function unavailableLeIsaacStatus(){} function refreshLeIsaacCapability(){} "
+                "function connectLeIsaac(){} ensureLeIsaacTab(leisaacCapability); "
+                "/api/leisaac/status /api/leisaac/select /api/leisaac/bundles/reset "
+                "/api/leisaac/client/index.js /api/leisaac/signal "
+                "LeIsaac-SO101-LiftCube-v0 "
                 "function openFullChatTab(){} "
                 'function refreshTenantResources(){ fetch("/api/resources"); } '
                 "do not prefetch .rrd bytes; skipUserAppend; Describe this — capturing; "
@@ -3102,6 +3427,8 @@ def test_bootstrap_emitted_ui_script_is_valid_javascript(monkeypatch) -> None:
     )
 
     setup_script = captured["setup_script"]
+    assert "--ws-per-message-deflate false" in setup_script
+    assert "--no-ws-per-message-deflate" not in setup_script
     shell_proc = subprocess.run(
         ["bash", "-n"],
         input=setup_script,
@@ -3539,12 +3866,18 @@ def test_deploy_seeds_cost_ordered_ladder_without_explicit_models(
     monkeypatch.setattr("npa.cli.agent._bootstrap_agent_stack", lambda **k: None)
     monkeypatch.setattr("npa.cli.agent.ensure_ingress", lambda **k: None)
     monkeypatch.setattr(
+        "npa.cli.agent.remove_npa_ingress_for_instance_ports",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(
         "npa.cli.agent._store_agent_record",
         lambda project, name, rec: captured.update(rec),
     )
 
     # Satisfy the fail-fast deploy prerequisites (terraform + SSH key pair).
-    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
+    (tmp_path / "id_ed25519.pub").write_text(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
+    )
     (tmp_path / "id_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
 
@@ -3579,7 +3912,9 @@ def test_deploy_seeds_cost_ordered_ladder_without_explicit_models(
 def test_agent_preflight_all_pass(monkeypatch, tmp_path) -> None:
     from npa.cli import agent as agent_module
 
-    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
+    (tmp_path / "id_ed25519.pub").write_text(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
+    )
     (tmp_path / "id_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
     monkeypatch.setattr(
@@ -3598,6 +3933,7 @@ def test_agent_preflight_all_pass(monkeypatch, tmp_path) -> None:
     assert result.exit_code == 0, result.output
     assert "[PASS] terraform" in result.output
     assert "[PASS] ssh_public_key" in result.output
+    assert "[PASS] cloud_init_yaml" in result.output
     assert "[PASS] token_factory" in result.output
 
 
@@ -3607,7 +3943,10 @@ def test_agent_hard_prereqs_fail_closed_on_provider_lock_error(
     from npa.terraform_lock import TerraformLockError
 
     public_key = tmp_path / "id_ed25519.pub"
-    public_key.write_text("ssh-ed25519 AAAA test\n", encoding="utf-8")
+    public_key.write_text(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n",
+        encoding="utf-8",
+    )
     (tmp_path / "id_ed25519").write_text("private\n", encoding="utf-8")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
 
@@ -3628,7 +3967,9 @@ def test_agent_preflight_invokes_exact_deploy_storage_decision(
 ) -> None:
     from npa.cli import agent as agent_module
 
-    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
+    (tmp_path / "id_ed25519.pub").write_text(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
+    )
     (tmp_path / "id_ed25519").write_text("priv\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
     monkeypatch.setattr(
@@ -3694,7 +4035,9 @@ def test_agent_preflight_fails_on_missing_terraform_and_keys(
 def test_agent_preflight_json_output(monkeypatch, tmp_path) -> None:
     from npa.cli import agent as agent_module
 
-    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
+    (tmp_path / "id_ed25519.pub").write_text(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
+    )
     (tmp_path / "id_ed25519").write_text("priv\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
     monkeypatch.setattr(
@@ -3717,11 +4060,75 @@ def test_agent_preflight_json_output(monkeypatch, tmp_path) -> None:
     assert {c["name"] for c in payload["checks"]} == {
         "terraform",
         "ssh_public_key",
+        "cloud_init_yaml",
         "ssh_private_key",
         "ssh_egress",
         "writable_s3",
         "token_factory",
     }
+
+
+def test_agent_preflight_rejects_private_key_passed_as_public_path(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cli import agent as agent_module
+
+    private = tmp_path / "id_ed25519"
+    private.write_text(
+        "-----BEGIN OPENSSH PRIVATE KEY-----\nprivate-material\n"
+        "-----END OPENSSH PRIVATE KEY-----\n"
+    )
+    (tmp_path / "id_ed25519.pub").write_text(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
+    )
+    monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
+    monkeypatch.setattr(
+        agent_module, "_resolve_deploy_llm_credentials", lambda: ("tf-key", "m")
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "preflight",
+            "--skip-nebius",
+            "--ssh-public-key-path",
+            str(private),
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "[FAIL] ssh_public_key" in result.output
+    assert "[FAIL] cloud_init_yaml" in result.output
+    assert "public `.pub` file" in result.output
+    assert "private-material" not in result.output
+
+
+def test_agent_cloud_init_quotes_public_key_comments_before_yaml_parse() -> None:
+    public_key = "ssh-ed25519 AAAA operator: recovery # comment"
+
+    rendered = agent_module._render_agent_cloud_init("ubuntu", public_key)
+    payload = yaml.safe_load(rendered)
+
+    assert payload["users"][0]["ssh_authorized_keys"] == [public_key]
+
+
+def test_legacy_agent_cloud_init_reproduces_multiline_private_key_yaml_failure() -> (
+    None
+):
+    legacy = """#cloud-config
+
+users:
+  - name: ubuntu
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      - -----BEGIN OPENSSH PRIVATE KEY-----
+private-material
+-----END OPENSSH PRIVATE KEY-----
+"""
+
+    with pytest.raises(yaml.YAMLError):
+        yaml.safe_load(legacy)
 
 
 def test_agent_preflight_fails_when_storage_write_probe_is_forbidden(
@@ -3731,7 +4138,9 @@ def test_agent_preflight_fails_when_storage_write_probe_is_forbidden(
     from npa.clients import storage_validation
     from npa.clients.storage_validation import StorageProbeResult
 
-    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
+    (tmp_path / "id_ed25519.pub").write_text(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
+    )
     (tmp_path / "id_ed25519").write_text("priv\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
     monkeypatch.setattr(
@@ -3799,7 +4208,9 @@ def test_agent_status_read_only_does_not_probe_storage(monkeypatch, tmp_path) ->
 def test_agent_preflight_nebius_fail(monkeypatch, tmp_path) -> None:
     from npa.cli import agent as agent_module
 
-    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
+    (tmp_path / "id_ed25519.pub").write_text(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
+    )
     (tmp_path / "id_ed25519").write_text("priv\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
     monkeypatch.setattr(
@@ -3866,7 +4277,9 @@ def test_deploy_fails_fast_on_missing_terraform(monkeypatch, tmp_path) -> None:
     from npa.cli import agent as agent_module
     from npa.cli.agent import deploy_cmd
 
-    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
+    (tmp_path / "id_ed25519.pub").write_text(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
+    )
     (tmp_path / "id_ed25519").write_text("priv\n")
     monkeypatch.delenv("NPA_TERRAFORM_BIN", raising=False)
     monkeypatch.setattr(agent_module.shutil, "which", lambda name: None)
@@ -3914,7 +4327,9 @@ def test_deploy_warns_on_missing_token_factory_key(
     from npa.cli.agent import deploy_cmd
     from npa.clients.nebius import NebiusError
 
-    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
+    (tmp_path / "id_ed25519.pub").write_text(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
+    )
     (tmp_path / "id_ed25519").write_text("priv\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
     monkeypatch.setattr(
@@ -4067,7 +4482,9 @@ def test_agent_setup_picks_configured_project(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
 
     key_file = tmp_path / "id_ed25519.pub"
-    key_file.write_text("ssh-ed25519 AAAA test\n")
+    key_file.write_text(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
+    )
 
     captured: dict = {}
 
@@ -4123,7 +4540,9 @@ def _write_agent_setup_config(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
     key_file = tmp_path / "id_ed25519.pub"
-    key_file.write_text("ssh-ed25519 AAAA test\n")
+    key_file.write_text(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
+    )
     (tmp_path / "id_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
     return key_file
@@ -4235,6 +4654,10 @@ def _stub_agent_deploy_cloud_calls(
         lambda **kwargs: calls.__setitem__("bootstrap", dict(kwargs)),
     )
     monkeypatch.setattr("npa.cli.agent.ensure_ingress", lambda **k: None)
+    monkeypatch.setattr(
+        "npa.cli.agent.remove_npa_ingress_for_instance_ports",
+        lambda *_args, **_kwargs: [],
+    )
     return calls
 
 

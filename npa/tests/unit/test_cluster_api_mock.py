@@ -28,7 +28,11 @@ def _cluster(cluster_id: str = "mk8scluster-a", state: str = "READY") -> dict:
             "parent_id": "project-a",
             "created_at": "2026-05-14T21:46:00Z",
         },
-        "status": {"state": state, "endpoint": "https://api.example.invalid"},
+        "status": {
+            "state": state,
+            "endpoint": "https://api.example.invalid",
+            "control_plane": {"version": "v1.35.2-nebius-control.1"},
+        },
     }
 
 
@@ -93,7 +97,9 @@ def test_create_cluster_creates_cluster_then_node_group() -> None:
             return _result(_node_group())
         raise AssertionError(f"unexpected command: {args}")
 
-    client = MK8sClient(nebius_bin="nebius", subprocess_runner=run, sleep=lambda _: None)
+    client = MK8sClient(
+        nebius_bin="nebius", subprocess_runner=run, sleep=lambda _: None
+    )
 
     info = client.create_cluster(_config())
 
@@ -116,7 +122,9 @@ def test_public_node_ip_is_opt_in() -> None:
             return _result(_node_group())
         raise AssertionError(f"unexpected command: {args}")
 
-    client = MK8sClient(nebius_bin="nebius", subprocess_runner=run, sleep=lambda _: None)
+    client = MK8sClient(
+        nebius_bin="nebius", subprocess_runner=run, sleep=lambda _: None
+    )
 
     client.create_cpu_node_group(
         ClusterConfig(
@@ -147,7 +155,9 @@ def test_create_cluster_reuses_existing_cluster_and_node_group() -> None:
             return _result({"items": [_node_group(state="RUNNING")]})
         raise AssertionError(f"unexpected command: {args}")
 
-    client = MK8sClient(nebius_bin="nebius", subprocess_runner=run, sleep=lambda _: None)
+    client = MK8sClient(
+        nebius_bin="nebius", subprocess_runner=run, sleep=lambda _: None
+    )
 
     info = client.create_cluster(_config())
 
@@ -169,6 +179,7 @@ def test_list_clusters_parses_items() -> None:
     assert len(clusters) == 1
     assert clusters[0].name == "cluster-a"
     assert clusters[0].status == "READY"
+    assert clusters[0].k8s_version == "v1.35.2-nebius-control.1"
 
 
 def test_get_cluster_uses_name_fallback_after_id_miss() -> None:
@@ -238,7 +249,10 @@ def test_get_kubeconfig_invokes_get_credentials(tmp_path: Path) -> None:
     client = MK8sClient(nebius_bin="nebius", subprocess_runner=run)
     target = tmp_path / "kubeconfig"
 
-    assert client.get_kubeconfig("mk8scluster-a", target, context_name="cluster-a") == target
+    assert (
+        client.get_kubeconfig("mk8scluster-a", target, context_name="cluster-a")
+        == target
+    )
 
     assert calls[0][1:4] == ["mk8s", "cluster", "get-credentials"]
     assert "--external" in calls[0]

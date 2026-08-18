@@ -25,23 +25,52 @@ Example::
 
 from __future__ import annotations
 
+from npa.cluster_backends import get_backend
+from npa.cluster_backends.soperator import (
+    SoperatorApplyRequest,
+    SoperatorDestroyRequest,
+    SoperatorStatusRequest,
+)
 from npa.soperator.lifecycle import (
     DeploymentValidationFailure,
     SoperatorDeploymentValidationError,
+    SoperatorStateCaptureError,
     apply_post_deploy_fixes,
-    deploy_cluster as deploy,
-    destroy_cluster as destroy,
     plan_cluster as plan,
 )
-from npa.soperator.spec import SoperatorSpec, WorkerPoolSpec, load_spec, spec_from_mapping
+from npa.soperator.spec import (
+    SoperatorSpec,
+    WorkerPoolSpec,
+    load_spec,
+    spec_from_mapping,
+)
+
+
+def deploy(spec: SoperatorSpec, **kwargs):
+    return get_backend("soperator").apply(spec, SoperatorApplyRequest(**kwargs))
+
+
+def destroy(name: str, **kwargs):
+    return get_backend("soperator").destroy(
+        SoperatorSpec(name=name), SoperatorDestroyRequest(**kwargs)
+    )
+
+
+def status(name: str, **kwargs):
+    return get_backend("soperator").status(
+        SoperatorSpec(name=name), SoperatorStatusRequest(**kwargs)
+    )
+
 
 __all__ = [
     "deploy",
     "destroy",
     "plan",
+    "status",
     "apply_post_deploy_fixes",
     "DeploymentValidationFailure",
     "SoperatorDeploymentValidationError",
+    "SoperatorStateCaptureError",
     "SoperatorSpec",
     "WorkerPoolSpec",
     "load_spec",

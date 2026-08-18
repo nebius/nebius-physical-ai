@@ -15,7 +15,6 @@ import subprocess
 import ipaddress
 import tarfile
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -48,12 +47,14 @@ from npa.cli.agent_env_files import (  # noqa: F401 - re-exported for tests/call
     _write_agent_s3_env,
 )
 from npa.cli.agent_destroy import destroy_cmd as _destroy_cmd_impl
+from npa.cli.agent_auth import auth_profile_cmd
 from npa.cli.agent_inventory import agent_list_cmd
 from npa.cli.agent_preflight import (
     _agent_hard_prereq_results,
     _agent_nebius_auth_result,
     _agent_storage_result,
     _agent_token_factory_result,
+    _render_agent_cloud_init,  # noqa: F401 - compatibility re-export for tests
     _render_agent_checks,
 )
 from npa.cli.agent_records import (  # noqa: F401 - compatibility re-exports
@@ -97,8 +98,18 @@ from npa.clients.network import (
     NetworkIngressError,
     ensure_ingress,
     remove_ingress_for_instance,
+    remove_npa_ingress_for_instance_ports,
+    resolve_instance_network_context,
 )
 from npa.clients.ssh import SSHClient, SSHError
+from npa.cli.agent_public import (
+    AgentConfig,
+    build_agent_urls,
+    record_public_https as _record_public_https,
+    record_tls_verify as _record_tls_verify,
+    record_customer_url as _record_customer_url,
+    resolve_record_public_ip,
+)
 from npa.agent_backend.shipping import render_shipped_backend_install
 from npa.cli import agent_resources
 from npa.cli.agent_access import (
@@ -109,12 +120,14 @@ from npa.cli.agent_access import (
 from npa.cli.agent_contracts import (  # noqa: F401 - public compatibility exports
     AGENT_CHAT_QUEUE_CONTRACT,
     AGENT_FOXGLOVE_CONTRACT,
+    AGENT_LEISAAC_CONTRACT,
     AGENT_MEDIA_PREVIEW_CONTRACT,
     AGENT_READABLE_COLOR_CONTRACT,
     AGENT_RERUN_NO_BUNDLE_SPLASH_CONTRACT,
     AGENT_STAGES_RUN_PICKER_CONTRACT,
     AGENT_VIEWER_CHAT_DRAWER_CONTRACT,
     AGENT_VISUAL_FEEDBACK_CONTRACT,
+    LEISAAC_CONTROL_READINESS_CONTRACT,
     _embedded_agent_artifact_content_source,
     _embedded_agent_artifacts_source,
     _embedded_agent_chat_source,
@@ -157,6 +170,7 @@ app = typer.Typer(
     help="Deploy and operate a public NPA chat agent VM.",
     no_args_is_help=True,
 )
+app.command("auth-profile")(auth_profile_cmd)
 app.command("list")(agent_list_cmd)
 
 DEFAULT_AGENT_PORT = 8088
@@ -227,140 +241,29 @@ _AGENT_PROVENANCE_EMBED = "__NPA_AGENT_PROVENANCE_EMBED__"
 _AGENT_UI_HTML_EMBED = "__NPA_AGENT_UI_HTML__"
 
 
-def _embedded_agent_stage_runtime_source() -> str:
-    """Return agent_stage_runtime.py source embedded into the backend."""
+def _resolve_record_public_ip(record: dict[str, Any]) -> str:
+    return resolve_record_public_ip(record, resolver=resolve_instance_network_context)
+
+
+def _embedded_agent_module_source(filename: str) -> str:
+    """Return one standalone agent module embedded into the backend."""
     return embedded_python_source(
-        Path(__file__).with_name("agent_stage_runtime.py"), strip_standalone=True
+        Path(__file__).with_name(filename), strip_standalone=True
     )
 
 
-def _embedded_agent_viewer_runtime_source() -> str:
-    """Return agent_viewer_runtime.py source embedded into the backend."""
-    return embedded_python_source(
-        Path(__file__).with_name("agent_viewer_runtime.py"), strip_standalone=True
-    )
-
-
-def _embedded_agent_access_source() -> str:
-    """Return agent_access.py source embedded into the backend."""
-    return embedded_python_source(
-        Path(__file__).with_name("agent_access.py"), strip_standalone=True
-    )
-
-
-def _embedded_agent_access_runtime_source() -> str:
-    """Return agent_access_runtime.py source embedded into the backend."""
-    return embedded_python_source(
-        Path(__file__).with_name("agent_access_runtime.py"), strip_standalone=True
-    )
-
-
-@dataclass(frozen=True)
-class AgentConfig:
-    project_alias: str
-    name: str
-    project_id: str
-    tenant_id: str
-    region: str
-    public_ip: str
-    instance_id: str
-    agent_url: str
-    rerun_url: str
-    sim_viz_url: str
-    sim_assets_url: str
-    cameras_api_url: str
-    auth_user: str
-    auth_secret_path: str
-    llm_provider: str
-    llm_model: str
-    service_account_id: str = ""
-    llm_models: tuple[str, ...] = ()
-    public_url: str = ""
-    public_https: bool = True
-    direct_url: str = ""
-    ssh_key_path: str = ""
-    credentials: dict[str, str] | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            "project_id": self.project_id,
-            "tenant_id": self.tenant_id,
-            "region": self.region,
-            "public_ip": self.public_ip,
-            "instance_id": self.instance_id,
-            "service_account_id": self.service_account_id,
-            "agent_url": self.agent_url,
-            "rerun_url": self.rerun_url,
-            "sim_viz_url": self.sim_viz_url,
-            "sim_assets_url": self.sim_assets_url,
-            "cameras_api_url": self.cameras_api_url,
-            "auth_user": self.auth_user,
-            "auth_secret_path": self.auth_secret_path,
-            "llm": {
-                "provider": self.llm_provider,
-                "model": self.llm_model,
-                "models": list(self.llm_models or (self.llm_model,)),
-            },
-        }
-        if self.public_url:
-            payload["public_url"] = self.public_url
-        if self.public_https:
-            payload["public_https"] = True
-        if self.direct_url:
-            payload["direct_url"] = self.direct_url
-        if self.ssh_key_path:
-            payload["ssh_key_path"] = self.ssh_key_path
-        if self.service_account_id:
-            payload["service_account_id"] = self.service_account_id
-        if self.credentials:
-            payload["credentials"] = dict(self.credentials)
-        return payload
-
-
-def build_agent_urls(
-    public_ip: str,
-    *,
-    agent_port: int = DEFAULT_AGENT_PORT,
-    public_https: bool = True,
-) -> dict[str, str]:
-    """Return customer-facing and operator-direct URLs for an agent VM."""
-    direct = f"http://{public_ip}:{agent_port}/"
-    if public_https:
-        base = f"https://{public_ip}/"
-    else:
-        base = direct
-    root = base.rstrip("/")
-    return {
-        "public_url": base,
-        "agent_url": base,
-        "rerun_url": f"{root}/rerun/",
-        "sim_viz_url": f"{root}/rerun/",
-        "sim_assets_url": f"{root}/assets/",
-        "cameras_api_url": f"{root}/assets/api/sim-assets/cameras",
-        "direct_url": direct,
-    }
-
-
-def _record_public_https(record: dict[str, Any]) -> bool:
-    if "public_https" in record:
-        return bool(record.get("public_https"))
-    public_url = str(record.get("public_url", "")).strip()
-    if public_url.startswith("https://"):
-        return True
-    agent_url = str(record.get("agent_url", "")).strip()
-    return agent_url.startswith("https://")
-
-
-def _record_tls_verify(record: dict[str, Any]) -> bool:
-    """Self-signed HTTPS on the VM public IP is expected; skip CA verification."""
-    return not _record_public_https(record)
-
-
-def _record_customer_url(record: dict[str, Any]) -> str:
-    public_url = str(record.get("public_url", "")).strip()
-    if public_url:
-        return public_url
-    return str(record.get("agent_url", "")).strip()
+_embedded_agent_stage_runtime_source = functools.partial(
+    _embedded_agent_module_source, "agent_stage_runtime.py"
+)
+_embedded_agent_viewer_runtime_source = functools.partial(
+    _embedded_agent_module_source, "agent_viewer_runtime.py"
+)
+_embedded_agent_access_source = functools.partial(
+    _embedded_agent_module_source, "agent_access.py"
+)
+_embedded_agent_access_runtime_source = functools.partial(
+    _embedded_agent_module_source, "agent_access_runtime.py"
+)
 
 
 def _fail(message: str) -> NoReturn:
@@ -573,7 +476,6 @@ def _resolve_deploy_storage_credentials(
     later when no configured candidate works and a caller explicitly supplies
     freshly bootstrapped credentials.
     """
-
     candidate = dict(bootstrap_creds or {})
     from npa.clients.credentials import load_credentials
 
@@ -618,7 +520,6 @@ def _resolve_deploy_storage_credentials(
                 candidate["nebius_api_key"] = project_access_key
                 candidate["nebius_secret_key"] = project_secret_key
                 return candidate
-
     # With no selected project, resolve_project_storage(None) is the canonical
     # shared/default storage view and may combine the configured bucket with the
     # shared credential file. Never use this view for an explicit project: that
@@ -664,7 +565,6 @@ def _resolve_deploy_storage_credentials(
             candidate["nebius_api_key"] = configured_access_key
             candidate["nebius_secret_key"] = configured_secret_key
             return candidate
-
     # Never record a host-level shared bucket as an explicit project's remote
     # backend; keep immutable journal ownership exact.
     if not project_name:
@@ -771,7 +671,6 @@ def _resolve_agent_service_account_id(
 def _persist_agent_service_account_id(
     service_account_id: str, project_id: str = ""
 ) -> None:
-    """Write discovered SA id into ~/.npa/credentials.yaml when missing."""
     _persist_project_agent_service_account_id(project_id, service_account_id)
 
 
@@ -1172,7 +1071,7 @@ server {{
     )
     setup_script = f"""set -euo pipefail
 sudo apt-get update
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx apache2-utils python3-venv python3-pip curl unzip ca-certificates
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx apache2-utils python3-venv python3-pip curl unzip ca-certificates coturn
 if ! command -v nebius >/dev/null 2>&1; then
   curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
 fi
@@ -1329,6 +1228,17 @@ from agent_backend.foxglove_cloud import (
     ensure_recording_and_layout_from_credentials,
 )
 from agent_backend.foxglove_routes import FoxgloveDeps, register_foxglove_routes
+from agent_backend.leisaac import load_manifest_artifact
+from agent_backend.leisaac_routes import LeIsaacDeps, register_leisaac_routes
+
+
+def _leisaac_websocket_connect(*args, **kwargs):
+    # Imported only when a browser opens the gated LeIsaac tab. This keeps the
+    # ordinary agent backend importable for offline/unit use; the deployed agent
+    # venv installs websockets as part of the bootstrap below.
+    from websockets.asyncio.client import connect
+
+    return connect(*args, **kwargs)
 
 RERUN_CAPABILITY_NAME_RE = re.compile(r"cap-[A-Za-z0-9_-]{{43}}\\.rrd")
 MCAP_RECORDING_PATH = Path("/opt/npa-agent/recordings/sim2real.mcap")
@@ -1617,6 +1527,7 @@ def _default_state() -> dict:
         "latest_submit": {{}},
         "workflow_draft": {{"yaml": "", "name": "", "states": [], "updated_at": "", "plan": {{}}, "runnable": False}},
         "workflow_submit": {{}},
+        "gpu_allocation_fallback": {{}},
         "chat_history": [],
         "active_chat_session_id": "default",
         "chat_sessions": {{}},
@@ -1668,6 +1579,8 @@ def _normalize_loaded_state(data: dict | None) -> dict:
         merged["chat_history"] = []
     if not isinstance(merged.get("chat_sessions"), dict):
         merged["chat_sessions"] = {{}}
+    if not isinstance(merged.get("gpu_allocation_fallback"), dict):
+        merged["gpu_allocation_fallback"] = {{}}
     if not isinstance(merged.get("active_chat_session_id"), str):
         merged["active_chat_session_id"] = "default"
     if not PRELOAD_STOCK_DEMO:
@@ -1721,6 +1634,14 @@ def _load_state() -> dict:
 
 def _save_state(state: dict) -> None:
     with _STATE_LOCK:
+        # LeIsaac bundle/run selection is written through _mutate_state.  Older
+        # handlers elsewhere in this backend still perform load -> work -> save;
+        # preserve the latest atomic namespace when one of those handlers
+        # finishes with a stale snapshot after a simulator restart.
+        latest = _load_state_unlocked()
+        preserved = preserve_latest_namespaces(state, latest, ("leisaac",))
+        state.clear()
+        state.update(preserved)
         _save_state_unlocked(state)
 
 
@@ -3105,6 +3026,8 @@ def _agent_system_prompt() -> str:
         "- POST /api/workflows/submit — validate workflow YAML, ensure agent-side Kubernetes infra when needed, and return scheduler plan",
         "- GET /api/models — list Token Factory chat models available to this VM key",
         "- GET /api/tools — workbench toolRef catalog",
+        "- POST /api/agent/gpu-allocation/attempt — record typed GPU placement evidence and get a grounded fallback decision",
+        "- POST /api/agent/gpu-allocation/consent — accept or decline the exact tracked fallback; acceptance requires its confirmation token",
         "",
         "To view Franka immediately, tell users to open the **Rerun** tab and click **Load Franka in Rerun**",
         "(or POST /api/sim-viz/load-franka-demo). The UI has two tabs: **Chat** and **Rerun**.",
@@ -3285,6 +3208,7 @@ from agent_backend.memory import RunMemory, JsonFileStore
 # Blueprint Phases H/I: retrieval + observability are also shipped modules.
 from agent_backend import retrieval as _retrieval
 from agent_backend import trace as _agent_tracing
+from agent_backend import gpu_allocation_fallback as _gpu_fallback
 
 {_AGENT_WORKFLOW_EMBED}
 
@@ -3919,6 +3843,31 @@ def _write_workflow_temp_yaml(yaml_text: str) -> Path:
     return path
 
 
+def _agent_mk8s_numeric(value, *, field: str, minimum: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ValueError(f"{{field}} must be an integer >= {{minimum}}")
+    if isinstance(value, str) and not re.fullmatch(r"-?[0-9]+", value.strip()):
+        raise ValueError(f"{{field}} must be an integer >= {{minimum}}")
+    parsed = int(value)
+    if parsed < minimum:
+        raise ValueError(f"{{field}} must be an integer >= {{minimum}}")
+    return parsed
+
+
+def _normalize_agent_mk8s_desired(desired: dict | None) -> dict:
+    requested = dict(desired) if isinstance(desired, dict) else {{}}
+    for field, default, minimum in (
+        ("gpu_nodes", -1, -1),
+        ("cpu_nodes", -1, -1),
+        ("gpu_health_stabilization_seconds", 120, 0),
+        ("gpu_health_timeout_minutes", 60, 1),
+    ):
+        requested[field] = _agent_mk8s_numeric(
+            requested.get(field, default), field=field, minimum=minimum
+        )
+    return requested
+
+
 def _provision_agent_infra(
     project: str,
     cluster_name: str,
@@ -3926,6 +3875,8 @@ def _provision_agent_infra(
     dry_run: bool = False,
     validate: bool = True,
     skip_s3: bool = True,
+    desired: dict | None = None,
+    preemptible: bool | None = None,
 ) -> dict:
     ready, reason = _agent_npa_ready()
     if not ready:
@@ -3933,6 +3884,9 @@ def _provision_agent_infra(
     try:
         from npa.provisioning import provision_if_absent
 
+        requested = _normalize_agent_mk8s_desired(desired)
+        mig_value = requested.get("mig", False)
+        mig_mapping = mig_value if isinstance(mig_value, dict) else {{}}
         result = provision_if_absent(
             project=project or None,
             cluster_name=cluster_name or "npa-cluster",
@@ -3941,11 +3895,28 @@ def _provision_agent_infra(
             validate=validate,
             sky_smoke=False,
             dry_run=dry_run,
+            gpu_nodes=int(requested.get("gpu_nodes", -1)),
+            cpu_nodes=int(requested.get("cpu_nodes", -1)),
+            gpu_platform=str(requested.get("gpu_platform") or ""),
+            gpu_preset=str(requested.get("gpu_preset") or ""),
+            gpu_driver_mode=str(requested.get("gpu_driver_mode") or ""),
+            managed_driver_preset=str(requested.get("managed_driver_preset") or ""),
+            gpu_health_stabilization_seconds=int(requested.get("gpu_health_stabilization_seconds", 120)),
+            gpu_health_timeout_minutes=int(requested.get("gpu_health_timeout_minutes", 60)),
+            gpu_cuda_smoke=bool(requested.get("gpu_cuda_smoke", True)),
+            gpu_cuda_smoke_image=str(requested.get("gpu_cuda_smoke_image") or "nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0-ubuntu22.04"),
+            mig_enabled=(bool(mig_mapping.get("enabled", True)) if mig_mapping else bool(mig_value)),
+            mig_strategy=str(mig_mapping.get("strategy") or requested.get("mig_strategy") or "mixed"),
+            mig_config=str(mig_mapping.get("config") or requested.get("mig_config") or "all-balanced"),
+            capacity_block_group=str(requested.get("capacity_block_group") or ""),
+            preemptible=preemptible,
         )
         payload = result.to_dict()
         payload["ok"] = True
         payload["dry_run"] = dry_run
         return payload
+    except (TypeError, ValueError) as exc:
+        return {{"ok": False, "status": "invalid", "error": str(exc), "dry_run": dry_run}}
     except Exception as exc:
         return {{"ok": False, "status": "error", "error": str(exc), "dry_run": dry_run}}
 
@@ -4052,7 +4023,19 @@ def _soperator_deploy_from_payload(body: dict) -> dict:
             "solutions_library_ref": ref,
             "gpu_creation_check_timeout_seconds": gpu_creation_check_timeout_seconds,
         }}
-    timeout_minutes = int(body.get("timeout_minutes") or body.get("timeout") or 90)
+    try:
+        timeout_minutes = _agent_mk8s_numeric(
+            body.get("timeout_minutes") or body.get("timeout") or 90,
+            field="timeout_minutes",
+            minimum=1,
+        )
+    except (TypeError, ValueError) as exc:
+        return {{
+            "ok": False,
+            "status": "invalid",
+            "error": str(exc),
+            "validation": validation,
+        }}
     project = _agent_project_alias(str(body.get("project") or ""))
     terraform_dir_text = str(body.get("terraform_dir") or "").strip()
     terraform_dir = Path(terraform_dir_text).expanduser() if terraform_dir_text else None
@@ -5132,6 +5115,24 @@ def _consume_agent_confirm_token():
     # clear the gate in state before any side effect so a replayed request cannot
     # re-authorize. Only call this when the request actually presents a
     # confirm_token, so an unrelated turn never burns a pending gate.
+    def consume(state):
+        act_state = state.get("agent_act")
+        if not isinstance(act_state, dict):
+            return "", "", None
+        token = str(act_state.get("confirm_token") or "")
+        digest = str(act_state.get("confirm_digest") or "")
+        pending = act_state.get("pending_action")
+        pending = pending if isinstance(pending, dict) else None
+        if token:
+            act_state["confirm_token"] = ""
+            act_state["confirm_digest"] = ""
+            act_state["pending_action"] = None
+            state["agent_act"] = act_state
+        return token, digest, pending
+
+    return _mutate_state(consume)
+
+def _peek_agent_confirm_token():
     state = _load_state()
     act_state = state.get("agent_act")
     if not isinstance(act_state, dict):
@@ -5139,27 +5140,22 @@ def _consume_agent_confirm_token():
     token = str(act_state.get("confirm_token") or "")
     digest = str(act_state.get("confirm_digest") or "")
     pending = act_state.get("pending_action")
-    pending = pending if isinstance(pending, dict) else None
-    if token:
-        act_state["confirm_token"] = ""
-        act_state["confirm_digest"] = ""
-        act_state["pending_action"] = None
-        state["agent_act"] = act_state
-        _save_state(state)
-    return token, digest, pending
+    return token, digest, pending if isinstance(pending, dict) else None
 
 def _issue_agent_confirm_token(action, digest):
     # Issue a fresh token bound to a specific proposed action digest.
     token = secrets.token_hex(8)
-    state = _load_state()
-    act_state = state.get("agent_act")
-    if not isinstance(act_state, dict):
-        act_state = {{}}
-    act_state["confirm_token"] = token
-    act_state["confirm_digest"] = str(digest or "")
-    act_state["pending_action"] = action if isinstance(action, dict) else {{}}
-    state["agent_act"] = act_state
-    _save_state(state)
+
+    def issue(state):
+        act_state = state.get("agent_act")
+        if not isinstance(act_state, dict):
+            act_state = {{}}
+        act_state["confirm_token"] = token
+        act_state["confirm_digest"] = str(digest or "")
+        act_state["pending_action"] = action if isinstance(action, dict) else {{}}
+        state["agent_act"] = act_state
+
+    _mutate_state(issue)
     return token
 
 def _act_response_to_dict(result) -> dict:
@@ -5467,6 +5463,21 @@ def agent_act(payload: dict):
     # Phase I: record structured spans for the offline analyzer / injected tracer.
     _record_agent_trace(result)
     return result
+
+
+from agent_backend.gpu_allocation_routes import (
+    GpuAllocationDeps,
+    register_gpu_allocation_routes,
+)
+
+register_gpu_allocation_routes(
+    app,
+    GpuAllocationDeps(
+        mutate_state=_mutate_state,
+        action_digest=action_digest,
+    ),
+    HTTPException,
+)
 
 def _sim2real_gate_metrics(run_id: str, iteration: int) -> dict:
     # Read gate metrics only from real run artifacts; never fabricate a score.
@@ -5943,6 +5954,16 @@ def health():
     return {{
         "ok": True,
         "tool_refs": len(TOOL_REFS),
+        "capabilities": {{
+            "gpu_allocation_fallback": {{
+                "status": "available",
+                "grounded": True,
+                "routes": [
+                    "POST /api/agent/gpu-allocation/attempt",
+                    "POST /api/agent/gpu-allocation/consent",
+                ],
+            }},
+        }},
         "deployment": dict(DEPLOYMENT),
         "state_sha256": state_sha256,
     }}
@@ -6411,9 +6432,12 @@ def sim_viz_load_run(payload: dict | None = None):
                 "preferred": preferred.to_dict(),
                 "run_ref": resolved_ref,
             }}
-        if requested_bucket:
-            raise HTTPException(status_code=404, detail="selected artifact source has no loadable artifacts")
         if artifacts:
+            # A selected run is still real and usable when its capability is a
+            # service/session artifact rather than an RRD recording. Persist an
+            # artifact-backed active context so conditional tabs (LeIsaac in
+            # particular) survive periodic refresh, while keeping Rerun
+            # truthfully unavailable instead of downloading JSON as a viewer.
             role_counts = artifact_inventory_counts(artifacts)
             state = _load_state()
             sim_viz = dict(DEFAULT_SIM_VIZ)
@@ -6442,14 +6466,14 @@ def sim_viz_load_run(payload: dict | None = None):
             sim_viz.update({{
                 "run_id": resolved_run_id,
                 "artifact_run_ref": resolved_ref,
-                "stage": "artifacts",
+                "stage": "artifacts_available",
                 "camera": camera,
                 "rrd_uri": "",
                 "rerun_ready": False,
                 "rerun_iframe_url": "",
-                "artifact_key": "",
-                "artifact_uri": "",
-                "artifact_render": "",
+                "artifact_key": str(preferred.key if preferred else ""),
+                "artifact_uri": str(preferred.s3_uri if preferred else ""),
+                "artifact_render": str(preferred.render if preferred else ""),
                 "artifact_count": len(artifacts),
                 "output_artifact_count": role_counts["output"],
                 "input_artifact_count": role_counts["input"],
@@ -6471,6 +6495,8 @@ def sim_viz_load_run(payload: dict | None = None):
                 "preferred": preferred.to_dict() if preferred else None,
                 "run_ref": resolved_ref,
             }}
+        if requested_bucket:
+            raise HTTPException(status_code=404, detail="selected artifact source has no loadable artifacts")
     except AmbiguousRunError as exc:
         raise HTTPException(
             status_code=409,
@@ -6568,9 +6594,9 @@ def artifacts_runs(
     prefix: str = "", limit: int = 50, q: str = "", cursor: str = "",
     resource_bucket: str = "", project_id: str = "",
 ):
-    # q: case-insensitive substring search over run ids, applied across ALL runs
-    # (every bucket root) before the limit — so old runs beyond the newest `limit`
-    # are still findable by name from the "Find run" box.
+    # q is a case-insensitive substring filter over a bounded, cached discovery
+    # index. Response metadata says whether that source index was complete; a
+    # bounded observed match count is never represented as a global total.
     try:
         s3, settings = _agent_s3_client()
         access_report = _agent_access_report()
@@ -6585,9 +6611,19 @@ def artifacts_runs(
         discovery_limit = 10_000
 
         def _page_response(page, *, effective_prefix: str):
-            end = min(offset + page_size, len(page.runs))
-            visible = page.runs[offset:end]
-            has_more = end < len(page.runs)
+            # The bounded discovery page is intentionally cached without the
+            # search term.  A query only filters that already-discovered index;
+            # making ``q`` part of the cache key caused every distinct browser
+            # fragment to repeat the same full multi-bucket object walk.
+            indexed = page.runs
+            if query:
+                needle = query.lower()
+                indexed = [item for item in indexed if needle in item.run_id.lower()]
+            source_complete = bool(not page.truncated and page.discovery_complete)
+            observed_match_count = len(indexed)
+            end = min(offset + page_size, len(indexed))
+            visible = indexed[offset:end]
+            has_more = end < len(indexed)
             next_cursor = _artifact_run_cursor(end) if has_more else ""
             return {{
                 "ok": True,
@@ -6604,7 +6640,16 @@ def artifacts_runs(
                 "access": access_diagnostics,
                 "runs": [item.to_dict() for item in visible],
                 "count": len(visible),
-                "total_runs": page.total_runs,
+                "count_scope": "page",
+                "total_runs": observed_match_count if source_complete else None,
+                "total_runs_scope": (
+                    "filtered_global" if query and source_complete
+                    else "global" if source_complete
+                    else "unavailable"
+                ),
+                "observed_run_count": int(page.total_runs),
+                "observed_match_count": observed_match_count,
+                "query_complete": source_complete,
                 "limit": page_size,
                 "cursor": cursor,
                 "next_cursor": next_cursor,
@@ -6625,9 +6670,9 @@ def artifacts_runs(
                 prefix=effective_prefix,
                 base_prefix=settings.get("prefix", ""),
                 limit=discovery_limit,
-                contains=query,
+                contains="",
                 bucket_projects=bucket_projects,
-                lightweight=not bool(query),
+                lightweight=True,
                 s3=s3,
             )
             return _page_response(page, effective_prefix=effective_prefix)
@@ -6647,9 +6692,9 @@ def artifacts_runs(
             base_prefix=base,
             limit=discovery_limit,
             exclude=_discovery_exclude_roots(),
-            contains=query,
+            contains="",
             bucket_projects=bucket_projects,
-            lightweight=not bool(query),
+            lightweight=True,
             s3=s3,
         )
         return _page_response(page, effective_prefix=base)
@@ -7316,25 +7361,52 @@ def sim_viz_load_artifact(payload: dict | None = None):
             bucket, key = parse_s3_uri(requested_uri)
             key = _safe_artifact_key(key)
             s3_uri = requested_uri
-            selector = requested_run_ref or requested_run
-            run_id, bucket, artifact = _resolved_artifact_for_content(
-                s3,
-                settings,
-                run_id=selector,
-                key=key,
-                requested_bucket=bucket,
-            )
-            key = str(artifact.key)
-            s3_uri = str(artifact.s3_uri)
-            resolution = resolve_run_artifacts(
-                _agent_s3_buckets(s3, settings),
-                base_prefix=settings.get("prefix", ""),
-                run_ref_or_id=selector,
-                s3=s3,
-            )
-            if resolution is None:
-                raise HTTPException(status_code=404, detail="run_id not found")
-            resolved_ref = resolution.run_ref
+            if requested_run_ref:
+                ref_bucket, ref_prefix, ref_run_id = decode_run_ref(
+                    requested_run_ref
+                )
+                ref_scope = "/".join(
+                    part for part in (ref_prefix, ref_run_id) if part
+                ) + "/"
+                if (
+                    bucket != ref_bucket
+                    or not key.startswith(ref_scope)
+                    or (requested_run and requested_run != ref_run_id)
+                ):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="artifact URI is outside the selected run",
+                    )
+                # The caller supplied both exact identities emitted by the
+                # server.  Re-prove the tuple with the bounded source/object
+                # membership checks instead of throwing that precision away
+                # and rescanning every object in the bucket.
+                run_id, bucket, artifact = _resolved_artifact_for_content(
+                    s3,
+                    settings,
+                    run_id=ref_run_id,
+                    key=key,
+                    requested_bucket=ref_bucket,
+                    exact_membership=True,
+                )
+                key = str(artifact.key)
+                s3_uri = str(artifact.s3_uri)
+                resolved_ref = encode_run_ref(bucket, ref_prefix, run_id)
+            elif requested_run:
+                # A plain run basename may exist under several exact sources.
+                # The caller already supplied an exact URI, so authorize that
+                # bucket/key against the requested run instead of resolving the
+                # ambiguous basename to an arbitrary sibling source.
+                run_id, bucket, artifact = _resolved_artifact_for_content(
+                    s3,
+                    settings,
+                    run_id=requested_run,
+                    key=key,
+                    requested_bucket=bucket,
+                    exact_membership=True,
+                )
+                key = str(artifact.key)
+                s3_uri = str(artifact.s3_uri)
         else:
             key = _safe_artifact_key(requested_key)
             resolution = resolve_run_artifacts(
@@ -7359,10 +7431,11 @@ def sim_viz_load_artifact(payload: dict | None = None):
         source_bucket, source_project, source_prefix = _artifact_source_metadata(
             _agent_access_report(), bucket, key, run_id
         )
+        run_artifacts = resolution.artifacts if resolution is not None else []
         run_summary = build_run_summary(
             run_id,
-            resolution.artifacts,
-            _summary_documents_for_run(s3, bucket, resolution.artifacts),
+            run_artifacts,
+            _summary_documents_for_run(s3, bucket, run_artifacts),
         )
         learning_summary = run_summary.get("learning")
         learning_contract = (
@@ -7782,6 +7855,71 @@ register_foxglove_routes(
 )
 
 
+def _leisaac_manifest_for_run(run_id: str) -> dict | None:
+    # An active private relay is authoritative for which single LeIsaac run
+    # this agent can serve. Reject unrelated viewer selections before generic
+    # artifact discovery; otherwise a polling UI can repeatedly walk the full
+    # bucket for an ordinary sim-viz run while teleoperation is launching.
+    try:
+        credential = json.loads(
+            Path("/etc/npa/leisaac-relay.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        credential = None
+    if (
+        isinstance(credential, dict)
+        and str(credential.get("run_id") or "").strip()
+        and credential.get("run_id") != run_id
+    ):
+        return None
+    manifest = load_manifest_artifact(
+        run_id, validate_run_id=validate_run_id,
+        s3_client=_agent_s3_client, s3_buckets=_agent_s3_buckets,
+        find_artifacts=find_run_artifacts_across_buckets,
+        exact_uri=(
+            str(credential.get("manifest_uri") or "")
+            if isinstance(credential, dict) and credential.get("run_id") == run_id
+            else ""
+        ),
+    )
+    if not isinstance(manifest, dict):
+        return None
+    # Dataset manifests remain nonsecret. Runtime authority is injected from
+    # the short-lived root-owned relay credential, which teardown removes.
+    if not isinstance(credential, dict):
+        return manifest
+    if credential.get("run_id") != run_id:
+        return manifest
+    raw_expiry = str(credential.get("expires_at") or "").strip()
+    if raw_expiry:
+        try:
+            expiry = datetime.fromisoformat(raw_expiry.replace("Z", "+00:00"))
+        except ValueError:
+            return manifest
+        if expiry <= datetime.now(timezone.utc):
+            return manifest
+    resolved = dict(manifest)
+    resolved["session_nonce"] = str(credential.get("session_nonce") or "")
+    return resolved
+
+
+register_leisaac_routes(
+    app,
+    LeIsaacDeps(
+        load_state=_load_state,
+        save_state=_save_state,
+        resolve_manifest=_leisaac_manifest_for_run,
+        http_get=httpx.get,
+        http_post=httpx.post,
+        response=Response,
+        websocket_connect=_leisaac_websocket_connect,
+        mutate_state=_mutate_state,
+        s3_client=_agent_s3_client,
+        s3_buckets=_agent_s3_buckets,
+    ),
+)
+
+
 @app.post("/sim-viz/load-franka-demo")
 def load_franka_demo(payload: dict | None = None):
     body = payload if isinstance(payload, dict) else {{}}
@@ -8112,19 +8250,55 @@ def provision_infra(payload: dict | None = None):
     dry_run = bool(body.get("dry_run", True))
     validate = bool(body.get("validate", True))
     skip_s3 = bool(body.get("skip_s3", True))
+    desired = {{
+        key: body[key]
+        for key in (
+            "gpu_nodes", "cpu_nodes", "gpu_platform", "gpu_preset",
+            "gpu_driver_mode", "managed_driver_preset",
+            "gpu_health_stabilization_seconds", "gpu_health_timeout_minutes",
+            "gpu_cuda_smoke",
+            "gpu_cuda_smoke_image", "mig", "mig_strategy", "mig_config",
+            "capacity_block_group",
+        )
+        if key in body
+    }}
+    try:
+        desired = _normalize_agent_mk8s_desired(desired)
+    except (TypeError, ValueError) as exc:
+        return JSONResponse(
+            status_code=400,
+            content={{"ok": False, "status": "invalid", "error": str(exc)}},
+        )
+    logical = str(body.get("logical_allocation") or "").strip()
+    preemptible = bool(body.get("preemptible", False))
+    if logical:
+        fallback_records = _load_state().get("gpu_allocation_fallback")
+        fallback_records = fallback_records if isinstance(fallback_records, dict) else {{}}
+        fallback = fallback_records.get(_gpu_fallback.logical_allocation_ref(logical))
+        if isinstance(fallback, dict) and fallback.get("selected_pool") == _gpu_fallback.PREEMPTIBLE:
+            preemptible = True
     if not dry_run:
         confirm_token = str(body.get("confirm_token") or "").strip()
-        digest = "provision_infra:" + project + ":" + cluster_name
+        proposed_action = {{
+            "action": "provision_infra",
+            "project": project,
+            "cluster_name": cluster_name,
+            "desired": desired,
+            "preemptible": preemptible,
+            "skip_s3": skip_s3,
+            "validate": validate,
+        }}
+        digest = action_digest(proposed_action)
         if not confirm_token:
             token = _issue_agent_confirm_token(
-                {{"action": "provision_infra", "project": project, "cluster_name": cluster_name}},
+                proposed_action,
                 digest,
             )
             return {{
                 "ok": False,
                 "needs_confirmation": True,
                 "confirm_token": token,
-                "proposed_action": {{"action": "provision_infra", "project": project, "cluster_name": cluster_name, "dry_run": False}},
+                "proposed_action": {{**proposed_action, "dry_run": False}},
                 "error": "Real infra provision requires confirm_token",
                 "project": project,
                 "cluster_name": cluster_name,
@@ -8132,9 +8306,19 @@ def provision_infra(payload: dict | None = None):
         session_token, confirm_digest, _pending = _consume_agent_confirm_token()
         if not session_token or confirm_token != session_token or (confirm_digest and confirm_digest != digest):
             raise HTTPException(status_code=403, detail="invalid or expired confirm_token for provision")
-    result = _provision_agent_infra(project, cluster_name, dry_run=dry_run, validate=validate, skip_s3=skip_s3)
+    result = _provision_agent_infra(
+        project,
+        cluster_name,
+        dry_run=dry_run,
+        validate=validate,
+        skip_s3=skip_s3,
+        desired=desired,
+        preemptible=preemptible,
+    )
+    if not result.get("ok") and result.get("status") == "invalid":
+        return JSONResponse(status_code=400, content=result)
     status = _agent_k8s_backends(project)
-    return {{"ok": bool(result.get("ok")), "project": project, "cluster_name": cluster_name, "result": result, "infra": status, "dry_run": dry_run}}
+    return {{"ok": bool(result.get("ok")), "project": project, "cluster_name": cluster_name, "result": result, "infra": status, "dry_run": dry_run, "capacity_pool": "preemptible" if preemptible else "on-demand"}}
 
 
 @app.post("/infra/soperator/validate")
@@ -8287,7 +8471,10 @@ def submit_npa_workflow(payload: dict):
             project,
             cluster_name,
             dry_run=dry_run,
-            validate=validate_infra,
+            # provision-if-absent may validate a cached kubeconfig before its
+            # own dry-run branch; validation launches real CUDA smoke pods.
+            # Keep workflow dry-run strictly read-only.
+            validate=False if dry_run else validate_infra,
             skip_s3=bool(body.get("skip_s3", True)),
         )
         if not provision.get("ok"):
@@ -8725,7 +8912,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
 HTML
 sudo python3 -m venv /opt/npa-agent/venv
 sudo /opt/npa-agent/venv/bin/pip install --upgrade pip
-sudo /opt/npa-agent/venv/bin/pip install fastapi uvicorn httpx pyyaml boto3 "rerun-sdk>=0.32"
+sudo /opt/npa-agent/venv/bin/pip install fastapi uvicorn httpx pyyaml boto3 websockets "rerun-sdk>=0.32"
 sudo /opt/npa-agent/venv/bin/pip install -e "{AGENT_SOURCE_ROOT}/npa[server,foxglove]"
 if [ {preload_stock_demo_value} = 1 ]; then
   sudo /opt/npa-agent/venv/bin/python /opt/npa-agent/bootstrap_rrd.py
@@ -8744,7 +8931,7 @@ EnvironmentFile=-/opt/npa-agent/nebius.env
 EnvironmentFile=-/opt/npa-agent/s3.env
 EnvironmentFile=-/opt/npa-agent/public.env
 EnvironmentFile=-/opt/npa-agent/foxglove.env
-ExecStart=/opt/npa-agent/venv/bin/uvicorn backend:app --host 0.0.0.0 --port {backend_port}
+ExecStart=/opt/npa-agent/venv/bin/uvicorn backend:app --host 127.0.0.1 --port {backend_port} --log-level warning --no-access-log --ws websockets --ws-max-size 4194304 --ws-max-queue 4 --ws-ping-interval 10 --ws-ping-timeout 10 --ws-per-message-deflate false
 WorkingDirectory=/opt/npa-agent
 Restart=always
 [Install]
@@ -8798,6 +8985,11 @@ WantedBy=multi-user.target
 UNIT
 sudo htpasswd -bc /etc/nginx/.npa-agent-htpasswd {shlex.quote(auth_user)} {shlex.quote(auth_password)}
 {https_ssl_setup}
+cat <<'NGINXLOG' | sudo tee /etc/nginx/conf.d/npa-agent-safe-log.conf >/dev/null
+# Deliberately use $uri, never $request or $request_uri: those include the
+# browser-controlled query string used by WebRTC signaling and artifact APIs.
+log_format npa_agent_safe '$remote_addr [$time_local] "$request_method $uri $server_protocol" $status $body_bytes_sent';
+NGINXLOG
 cat <<'NGINX' | sudo tee /etc/nginx/sites-available/npa-agent >/dev/null
 server {{
   listen {agent_port};
@@ -9155,7 +9347,8 @@ def preflight_cmd(
         )
     results.append(_agent_ssh_egress_result())
     results.append(_agent_storage_result(project))
-    results.append(_agent_token_factory_result(_resolve_deploy_llm_credentials()[0]))
+    tf_api_key, _default_llm_model = _resolve_deploy_llm_credentials()
+    results.append(_agent_token_factory_result(tf_api_key))
     has_fail = _render_agent_checks(results, output_json=output_json)
     if has_fail:
         raise typer.Exit(code=1)
@@ -9918,6 +10111,11 @@ def deploy_cmd(
         ingress_ports.append(DEFAULT_HTTPS_PORT)
     try:
         ensure_ingress(vm_id=instance_id, ports=tuple(ingress_ports), tool="agent")
+        remove_npa_ingress_for_instance_ports(
+            instance_id,
+            ports=(backend_port,),
+            on_status=lambda message: typer.echo(f"  {message}"),
+        )
     except NetworkIngressError as exc:
         try:
             _destroy_agent_terraform(
@@ -10278,9 +10476,10 @@ def bootstrap_cmd(
         live_url=foxglove_live_url,
         saved=record.get("foxglove"),
     )
-    public_ip = str(record.get("public_ip", "")).strip()
-    if not _is_routable_public_ip(public_ip):
-        _fail("agent VM does not have a routable public IP")
+    try:
+        public_ip = _resolve_record_public_ip(record)
+    except NetworkIngressError as exc:
+        _fail(str(exc))
     public_https = not no_public_https
     ssh_key_path = _resolve_agent_ssh_key(record, cli_ssh_key=ssh_key or None)
     if not Path(ssh_key_path).expanduser().exists():
@@ -10513,15 +10712,17 @@ def bootstrap_cmd(
             ingress_ports.append(DEFAULT_HTTPS_PORT)
         try:
             ensure_ingress(vm_id=instance_id, ports=tuple(ingress_ports), tool="agent")
-        except NetworkIngressError as exc:
-            typer.echo(
-                f"Warning: npa network ensure-ingress failed ({exc}). "
-                "Customer HTTPS on port 443 may be unreachable until ingress is opened.",
-                err=True,
+            remove_npa_ingress_for_instance_ports(
+                instance_id,
+                ports=(backend_port,),
+                on_status=lambda message: typer.echo(f"  {message}"),
             )
+        except NetworkIngressError as exc:
+            _fail(f"npa network ensure-ingress failed: {exc}")
     urls = build_agent_urls(public_ip, agent_port=agent_port, public_https=public_https)
     updated = dict(record)
     updated.update(urls)
+    updated["public_ip"] = public_ip
     updated["public_https"] = public_https
     llm_payload = dict(
         updated.get("llm", {}) if isinstance(updated.get("llm"), dict) else {}
@@ -10684,6 +10885,8 @@ def verify_live_cmd(
     customer_url = _record_customer_url(record)
     tls_verify = _record_tls_verify(record)
     if customer_url:
+        if _record_public_https(record) and customer_url != f"https://{public_ip}/":
+            _fail("public customer URL is not the canonical HTTPS public-IP endpoint")
         try:
             welcome_resp = httpx.get(
                 f"{customer_url.rstrip('/')}/welcome",
@@ -10701,6 +10904,28 @@ def verify_live_cmd(
             )
             if healthz_resp.status_code != 200:
                 _fail(f"public healthz unhealthy (status={healthz_resp.status_code})")
+            unauthenticated_ui = httpx.get(
+                customer_url,
+                timeout=5.0,
+                verify=tls_verify,
+                follow_redirects=False,
+            )
+            if unauthenticated_ui.status_code != 401:
+                _fail(
+                    "public UI did not enforce basic authentication "
+                    f"(status={unauthenticated_ui.status_code})"
+                )
+            api_health = httpx.get(
+                f"{customer_url.rstrip('/')}/api/health",
+                auth=(auth_user, auth_password),
+                timeout=5.0,
+                verify=tls_verify,
+            )
+            if api_health.status_code != 200:
+                _fail(
+                    "authenticated public API unhealthy "
+                    f"(status={api_health.status_code})"
+                )
         except httpx.HTTPError as exc:
             _fail(f"public customer URL unreachable: {exc}")
 
@@ -11010,6 +11235,22 @@ def verify_live_cmd(
         _fail("health endpoint did not return ok=true")
 
     try:
+        leisaac_status_resp = httpx.get(
+            f"{agent_base}/api/leisaac/status",
+            auth=(auth_user, auth_password),
+            timeout=10.0,
+            verify=tls_verify,
+        )
+        leisaac_status_resp.raise_for_status()
+        leisaac_status_payload = leisaac_status_resp.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"LeIsaac status endpoint failed: {exc}")
+    if not isinstance(leisaac_status_payload, dict) or not isinstance(
+        leisaac_status_payload.get("available"), bool
+    ):
+        _fail("LeIsaac status endpoint did not return an availability object")
+
+    try:
         workflow_status_resp = httpx.get(
             f"{agent_base}/api/workflows/sim2real/status",
             auth=(auth_user, auth_password),
@@ -11115,6 +11356,17 @@ def verify_live_cmd(
         "/api/resources",
         "Accessible / discovered",
         "Configured references",
+        # Capability-gated LeIsaac tab and authenticated WebRTC bridge.
+        LEISAAC_CONTROL_READINESS_CONTRACT,
+        "ensureLeIsaacTab",
+        "ensureLeIsaacTab(leisaacCapability)",
+        "unavailableLeIsaacStatus",
+        "removeLeIsaacTab",
+        "refreshLeIsaacCapability",
+        "connectLeIsaac",
+        "/api/leisaac/status",
+        "/api/leisaac/select",
+        "/api/leisaac/bundles/reset",
     ):
         if marker not in ui_html:
             _fail(f"UI html missing wiring marker: {marker}")

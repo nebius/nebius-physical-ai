@@ -93,6 +93,14 @@ def test_run_stream_capture_output_is_visible_and_retained(capsys) -> None:
     assert "check-detail" in result.stderr
 
 
+def test_cluster_failure_message_redacts_provider_secret() -> None:
+    message = tf_mod._redacted_exception_message(
+        "cluster up failed", RuntimeError("iam_token=provider-secret")
+    )
+    assert "provider-secret" not in message
+    assert "<redacted>" in message
+
+
 def test_skypilot_smoke_scopes_check_and_uses_explicit_binary(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1234,6 +1242,416 @@ def test_down_runs_terraform_destroy(monkeypatch, tmp_path: Path) -> None:
     assert _find_call(stream_calls, "terraform", "destroy", "-auto-approve")
 
 
+def _save_legacy_cluster_ownership(
+    monkeypatch, tmp_path: Path, *, metadata: object
+) -> None:
+    from npa.cluster import state as state_module
+
+    monkeypatch.setattr(state_module, "CLUSTERS_DIR", tmp_path / "clusters")
+    state_module.save_cluster_state(
+        state_module.ClusterState(
+            name="selected-cluster",
+            cluster_id="cluster-a",
+            project_id="project-a",
+            region="us-central1",
+            node_count=1,
+            node_platform="cpu-d3",
+            node_preset="8vcpu-32gb",
+            k8s_version="1.34",
+            subnet_id="subnet-a",
+            created_at="2026-01-01T00:00:00Z",
+        )
+    )
+    state_module.metadata_file("selected-cluster").write_text(json.dumps(metadata))
+
+
+def test_down_fails_closed_on_unreadable_present_ownership_metadata(
+    monkeypatch, tmp_path: Path
+) -> None:
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfstate").write_text("{}")
+    (tf_dir / "terraform.tfvars").write_text(
+        'parent_id = "project-a"\ncluster_name = "selected-cluster"\n'
+    )
+    _save_legacy_cluster_ownership(monkeypatch, tmp_path, metadata={})
+    from npa.cluster import state as state_module
+
+    state_module.metadata_file("selected-cluster").write_text("not-json")
+    monkeypatch.setattr(
+        tf_mod,
+        "_run_stream",
+        lambda *_args, **_kwargs: pytest.fail("Terraform must not run"),
+    )
+
+    result = runner.invoke(app, ["down", "--terraform-dir", str(tf_dir), "--force"])
+
+    assert result.exit_code != 0
+    assert "ownership metadata is unreadable" in result.output
+
+
+def test_down_requires_legacy_terraform_state_to_match_exact_cluster_id(
+    monkeypatch, tmp_path: Path
+) -> None:
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfstate").write_text("{}")
+    (tf_dir / "terraform.tfvars").write_text(
+        'parent_id = "project-a"\ncluster_name = "selected-cluster"\n'
+    )
+    _save_legacy_cluster_ownership(
+        monkeypatch,
+        tmp_path,
+        metadata={"managed_by": "npa cluster terraform"},
+    )
+    stream_calls: list[list[str]] = []
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(tf_mod, "_preflight_terraform_version", lambda *_args: None)
+    monkeypatch.setattr(tf_mod, "_terraform_env", lambda _binary: {})
+
+    def fake_capture(args, **_kwargs):
+        if args[:3] == ["terraform", "state", "pull"]:
+            return _completed(
+                json.dumps(
+                    {"outputs": {"kube_cluster": {"value": {"id": "cluster-b"}}}}
+                )
+            )
+        return _completed()
+
+    def fake_stream(args, **_kwargs):
+        stream_calls.append(args)
+        if args[:2] == ["terraform", "destroy"]:
+            pytest.fail("mismatched Terraform state must not be destroyed")
+        return _completed()
+
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
+    monkeypatch.setattr(tf_mod, "_run_stream", fake_stream)
+
+    result = runner.invoke(
+        app,
+        ["down", "--terraform-dir", str(tf_dir), "--force"],
+        terminal_width=200,
+    )
+
+    assert result.exit_code != 0
+    output = " ".join(result.output.replace("│", " ").split())
+    assert "does not own exactly the persisted cluster ID" in output
+    assert not _find_call(stream_calls, "terraform", "destroy")
+
+
+@pytest.mark.parametrize(
+    "state_text, expected",
+    [
+        ("", "requires readable retained Terraform state"),
+        ("not-json", "Terraform state is malformed"),
+        (json.dumps({"resources": []}), "lacks valid lineage/resource ownership"),
+    ],
+)
+def test_residual_recovery_rejects_missing_or_malformed_state(
+    monkeypatch, tmp_path: Path, state_text: str, expected: str
+) -> None:
+    monkeypatch.setattr(
+        tf_mod,
+        "_run_capture",
+        lambda *_args, **_kwargs: _completed(state_text),
+    )
+
+    with pytest.raises(tf_mod.typer.BadParameter, match=expected):
+        tf_mod._verify_residual_terraform_ownership(
+            "terraform",
+            tmp_path,
+            {},
+            project_id="project-a",
+            cluster_id="cluster-a",
+        )
+
+
+def test_residual_recovery_rejects_foreign_project_evidence(
+    monkeypatch, tmp_path: Path
+) -> None:
+    state = {
+        "lineage": "lineage-a",
+        "serial": 4,
+        "resources": [
+            {
+                "mode": "managed",
+                "type": "nebius_vpc_v1_subnet",
+                "instances": [
+                    {"attributes": {"id": "subnet-a", "parent_id": "project-b"}}
+                ],
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        tf_mod,
+        "_run_capture",
+        lambda *_args, **_kwargs: _completed(json.dumps(state)),
+    )
+
+    with pytest.raises(
+        tf_mod.typer.BadParameter, match="do not match the requested project"
+    ):
+        tf_mod._verify_residual_terraform_ownership(
+            "terraform",
+            tmp_path,
+            {},
+            project_id="project-a",
+            cluster_id="cluster-a",
+        )
+
+
+def test_residual_recovery_accepts_exact_cluster_scoped_node_group(
+    monkeypatch, tmp_path: Path
+) -> None:
+    state = {
+        "lineage": "lineage-a",
+        "serial": 5,
+        "resources": [
+            {
+                "mode": "managed",
+                "type": "nebius_mk8s_v1_node_group",
+                "instances": [
+                    {
+                        "attributes": {
+                            "id": "node-group-a",
+                            "parent_id": "cluster-a",
+                        }
+                    }
+                ],
+            },
+            {
+                "mode": "managed",
+                "type": "nebius_applications_v1alpha1_k8s_release",
+                "instances": [
+                    {
+                        "attributes": {
+                            "id": "release-a",
+                            "parent_id": "project-a",
+                            "cluster_id": "cluster-a",
+                        }
+                    }
+                ],
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        tf_mod,
+        "_run_capture",
+        lambda *_args, **_kwargs: _completed(json.dumps(state)),
+    )
+
+    assert tf_mod._verify_residual_terraform_ownership(
+        "terraform",
+        tmp_path,
+        {},
+        project_id="project-a",
+        cluster_id="cluster-a",
+    ) == [
+        "nebius_applications_v1alpha1_k8s_release",
+        "nebius_mk8s_v1_node_group",
+    ]
+
+
+def test_residual_recovery_ignores_zero_instance_cluster_block(
+    monkeypatch, tmp_path: Path
+) -> None:
+    state = {
+        "lineage": "lineage-a",
+        "serial": 6,
+        "resources": [
+            {
+                "mode": "managed",
+                "type": "nebius_mk8s_v1_cluster",
+                "instances": [],
+            },
+            {
+                "mode": "managed",
+                "type": "nebius_mk8s_v1_node_group",
+                "instances": [
+                    {
+                        "attributes": {
+                            "id": "node-group-a",
+                            "parent_id": "cluster-a",
+                        }
+                    }
+                ],
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        tf_mod,
+        "_run_capture",
+        lambda *_args, **_kwargs: _completed(json.dumps(state)),
+    )
+
+    assert tf_mod._verify_residual_terraform_ownership(
+        "terraform",
+        tmp_path,
+        {},
+        project_id="project-a",
+        cluster_id="cluster-a",
+    ) == ["nebius_mk8s_v1_node_group"]
+
+
+@pytest.mark.parametrize(
+    "resource_type, attributes, expected",
+    [
+        (
+            "nebius_mk8s_v1_node_group",
+            {"id": "node-group-a", "parent_id": "cluster-other"},
+            "exact persisted cluster",
+        ),
+        (
+            "nebius_vpc_v1_network",
+            {"id": "network-a"},
+            "requested project",
+        ),
+        (
+            "nebius_unknown_v1_resource",
+            {"id": "unknown-a", "parent_id": "project-a"},
+            "does not recognize Nebius residual type",
+        ),
+        (
+            "nebius_applications_v1alpha1_k8s_release",
+            {
+                "id": "release-a",
+                "parent_id": "project-a",
+                "cluster_id": "cluster-other",
+            },
+            "application-release ownership",
+        ),
+    ],
+)
+def test_residual_recovery_rejects_wrong_missing_or_unknown_nebius_evidence(
+    monkeypatch,
+    tmp_path: Path,
+    resource_type: str,
+    attributes: dict[str, str],
+    expected: str,
+) -> None:
+    state = {
+        "lineage": "lineage-a",
+        "serial": 6,
+        "resources": [
+            {
+                "mode": "managed",
+                "type": resource_type,
+                "instances": [{"attributes": attributes}],
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        tf_mod,
+        "_run_capture",
+        lambda *_args, **_kwargs: _completed(json.dumps(state)),
+    )
+
+    with pytest.raises(tf_mod.typer.BadParameter, match=expected):
+        tf_mod._verify_residual_terraform_ownership(
+            "terraform",
+            tmp_path,
+            {},
+            project_id="project-a",
+            cluster_id="cluster-a",
+        )
+
+
+@pytest.mark.parametrize("destroy_fails", [False, True])
+def test_down_recovers_provider_absent_cluster_residuals_and_retains_on_failure(
+    monkeypatch, tmp_path: Path, destroy_fails: bool
+) -> None:
+    from npa.cluster import api as api_module
+    from npa.cluster import state as state_module
+    from npa.cluster.exceptions import ClusterNotFoundError
+
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfstate").write_text("{}")
+    (tf_dir / "terraform.tfvars").write_text(
+        'parent_id = "project-a"\ncluster_name = "selected-cluster"\n'
+    )
+    _save_legacy_cluster_ownership(
+        monkeypatch,
+        tmp_path,
+        metadata={"managed_by": "npa cluster terraform"},
+    )
+    residual_state = {
+        "lineage": "lineage-a",
+        "serial": 8,
+        "resources": [
+            {
+                "mode": "managed",
+                "type": "nebius_vpc_v1_network",
+                "instances": [
+                    {"attributes": {"id": "network-a", "parent_id": "project-a"}}
+                ],
+            },
+            {
+                "mode": "managed",
+                "type": "nebius_vpc_v1_subnet",
+                "instances": [
+                    {"attributes": {"id": "subnet-a", "parent_id": "project-a"}}
+                ],
+            },
+            {
+                "mode": "managed",
+                "type": "nebius_mk8s_v1_node_group",
+                "instances": [
+                    {
+                        "attributes": {
+                            "id": "node-group-a",
+                            "parent_id": "cluster-a",
+                        }
+                    }
+                ],
+            },
+        ],
+    }
+    calls: list[list[str]] = []
+
+    class MissingClusterClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def get_cluster(self, *_args, **_kwargs):
+            raise ClusterNotFoundError("absent")
+
+    monkeypatch.setattr(api_module, "MK8sClient", MissingClusterClient)
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(tf_mod, "_preflight_terraform_version", lambda *_args: None)
+    monkeypatch.setattr(tf_mod, "_terraform_env", lambda _binary: {})
+    monkeypatch.setattr(
+        tf_mod,
+        "_run_capture",
+        lambda args, **_kwargs: (
+            _completed(json.dumps(residual_state))
+            if args[:3] == ["terraform", "state", "pull"]
+            else _completed()
+        ),
+    )
+
+    def stream(args, **_kwargs):
+        calls.append(args)
+        if destroy_fails and args[:2] == ["terraform", "destroy"]:
+            raise RuntimeError("retained residual destroy failed")
+        return _completed()
+
+    monkeypatch.setattr(tf_mod, "_run_stream", stream)
+    result = runner.invoke(
+        app,
+        ["down", "--terraform-dir", str(tf_dir), "--force"],
+        terminal_width=200,
+    )
+
+    if destroy_fails:
+        assert result.exit_code != 0
+        assert state_module.cluster_dir("selected-cluster").exists()
+    else:
+        assert result.exit_code == 0, result.output
+        assert not state_module.cluster_dir("selected-cluster").exists()
+    assert _find_call(calls, "terraform", "destroy", "-auto-approve")
+
+
 def test_down_preview_uses_the_selected_npa_cluster_kubeconfig(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -1301,6 +1719,68 @@ def test_down_with_no_cluster_is_a_true_local_noop(monkeypatch, tmp_path: Path) 
     assert "Nothing to do" in result.output
     assert "authentication" in result.output
     assert "Kubernetes/RBAC" in result.output
+    assert not (tf_dir / ".terraform").exists()
+
+
+def test_down_terminalizes_pre_mutation_operation_without_provider_calls(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.provisioning_journal import ProvisioningOperation
+
+    journal_dir = tmp_path / "operations"
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(journal_dir))
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    operation = ProvisioningOperation.prepare(
+        command="npa cluster up",
+        project_alias="demo",
+        project_id="project-demo",
+        tenant_id="tenant-demo",
+        region="eu-test1",
+        backend={"kind": "local-state", "terraform_dir": str(tf_dir)},
+        resource_type="cluster",
+        requested_name="never-mutated",
+        ownership_source="cluster-terraform",
+        resume_command="npa cluster up --project demo --context never-mutated",
+        destroy_command="npa cluster down --project demo --context never-mutated --force",
+    )
+
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("pre-mutation recovery crossed an external boundary")
+
+    monkeypatch.setattr(tf_mod, "_require_bin", unexpected)
+    monkeypatch.setattr(tf_mod, "_terraform_env", unexpected)
+    monkeypatch.setattr(tf_mod, "_report_drain_blockers", unexpected)
+    monkeypatch.setattr(tf_mod, "_run_stream", unexpected)
+    monkeypatch.setattr(tf_mod, "_run_capture", unexpected)
+
+    result = runner.invoke(
+        app,
+        [
+            "down",
+            "--terraform-dir",
+            str(tf_dir),
+            "--project-id",
+            "project-demo",
+            "--tenant-id",
+            "tenant-demo",
+            "--region",
+            "eu-test1",
+            "--context",
+            "never-mutated",
+            "--operation-id",
+            operation.operation_id,
+            "--force",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["outcome"] == "already_absent"
+    assert payload["no_op"] is True
+    assert payload["resources_removed"] == []
+    assert operation.read()["phase"] == "destroyed"
     assert not (tf_dir / ".terraform").exists()
 
 
@@ -1649,6 +2129,8 @@ def test_kubeconfig_cmd_adopts_a_running_cluster(monkeypatch, tmp_path: Path) ->
     assert "mk8scluster-live" in credentials
     assert str(kubeconfig) in credentials
     assert saved and saved[-1].cluster_id == "mk8scluster-live"
+    assert saved[-1].name == "npa-cluster"
+    assert saved[-1].provider_name == "npa-cluster"
 
 
 def test_kubeconfig_cmd_names_what_exists_when_the_cluster_is_absent(
@@ -2259,3 +2741,165 @@ def test_terraform_env_mints_when_no_token_present(monkeypatch) -> None:
     env = tf_mod._terraform_env("nebius")
 
     assert env["TF_VAR_iam_token"] == "minted-token"
+
+
+def test_fresh_shared_up_resolves_subnet_and_uses_id_backed_project(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.cluster_backends.base import MaterializedPlan
+    from npa.fleet import lifecycle
+
+    tf_dir = tmp_path / "deploy" / "cluster"
+    recipe = tf_dir / "vendor" / "nebius-solutions-library" / "k8s-training"
+    recipe.mkdir(parents=True)
+    (recipe / "variables.tf").write_text('variable "cluster_name" { type = string }\n')
+    (recipe.parent / "modules").mkdir()
+    (tf_dir / "terraform.tfvars").write_text(
+        "\n".join(
+            [
+                'tenant_id = "tenant-test"',
+                'parent_id = "project-test"',
+                'region = "region-test"',
+                'cluster_name = "fresh"',
+                "cpu_nodes_count = 1",
+                "gpu_nodes_count = 0",
+            ]
+        )
+    )
+    kubeconfig = tmp_path / "fresh-kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n")
+    applied = {}
+    apply_requests = []
+    preflight_requests = []
+    network_calls = []
+    events = []
+
+    class Adapter:
+        def preflight(self, desired, request):
+            events.append("preflight")
+            preflight_requests.append(request)
+            return {"backend": "mk8s"}
+
+        def materialize(self, desired, request):
+            return MaterializedPlan("mk8s", {}, {})
+
+        def apply(self, desired, request):
+            events.append("apply")
+            applied["desired"] = desired
+            applied["request"] = request
+            apply_requests.append(request)
+            return {
+                "status": "deployed",
+                "cluster_id": "cluster-test",
+                "kubeconfig": str(kubeconfig),
+            }
+
+    monkeypatch.setattr(tf_mod, "get_backend", lambda _name: Adapter())
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda value: value)
+    monkeypatch.setattr(tf_mod, "_preflight_terraform_version", lambda *_args: None)
+    monkeypatch.setattr(
+        tf_mod,
+        "_terraform_env",
+        lambda _bin: {
+            "TF_VAR_tenant_id": "tenant-test",
+            "TF_VAR_parent_id": "project-test",
+            "TF_VAR_region": "region-test",
+        },
+    )
+
+    def ensure(*_args, **kwargs):
+        events.append("ensure-subnet")
+        network_calls.append(kwargs)
+        return "subnet-created", "network-created"
+
+    monkeypatch.setattr(lifecycle, "ensure_subnet", ensure)
+
+    result = runner.invoke(
+        app,
+        ["up", "--terraform-dir", str(tf_dir), "--skip-sky-smoke"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert applied["desired"].subnet_id == "subnet-created"
+    assert applied["request"].subnet_id == "subnet-created"
+    assert applied["request"].project.name == ""
+    assert applied["request"].project.project_id == "project-test"
+    assert applied["request"].post_deploy_validation == "standalone-full"
+    assert preflight_requests[0].provider_preflight is True
+    assert network_calls[0]["network_state_path"].name == ".npa-fleet-network.json"
+    assert events == ["preflight", "ensure-subnet", "apply"]
+
+    skipped = runner.invoke(
+        app,
+        [
+            "up",
+            "--terraform-dir",
+            str(tf_dir),
+            "--skip-validate",
+            "--skip-sky-smoke",
+        ],
+    )
+    assert skipped.exit_code == 0, skipped.output
+    assert apply_requests[-1].post_deploy_validation == "skip"
+    assert "Post-deploy validation skipped" in skipped.output
+
+
+def test_fresh_shared_up_does_not_create_network_when_capacity_preflight_fails(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.cluster_backends.base import MaterializedPlan
+    from npa.fleet import lifecycle
+
+    tf_dir = tmp_path / "deploy" / "cluster"
+    recipe = tf_dir / "vendor" / "nebius-solutions-library" / "k8s-training"
+    recipe.mkdir(parents=True)
+    (recipe / "variables.tf").write_text('variable "cluster_name" { type = string }\n')
+    (recipe.parent / "modules").mkdir()
+    (tf_dir / "terraform.tfvars").write_text(
+        'tenant_id = "tenant-test"\n'
+        'parent_id = "project-test"\n'
+        'region = "region-test"\n'
+        'cluster_name = "fresh"\n'
+        "cpu_nodes_count = 1\n"
+        "gpu_nodes_count = 0\n"
+    )
+
+    class Adapter:
+        def preflight(self, desired, request):
+            return {"backend": "mk8s"}
+
+        def materialize(self, desired, request):
+            return MaterializedPlan("mk8s", {}, {})
+
+    monkeypatch.setattr(tf_mod, "get_backend", lambda _name: Adapter())
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda value: value)
+    monkeypatch.setattr(tf_mod, "_preflight_terraform_version", lambda *_args: None)
+    monkeypatch.setattr(
+        tf_mod,
+        "_terraform_env",
+        lambda _bin: {
+            "TF_VAR_tenant_id": "tenant-test",
+            "TF_VAR_parent_id": "project-test",
+            "TF_VAR_region": "region-test",
+        },
+    )
+    monkeypatch.setattr(
+        tf_mod,
+        "_preflight_whole_path_capacity",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("quota blocked")),
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "ensure_subnet",
+        lambda *_args, **_kwargs: pytest.fail(
+            "network mutation must follow successful capacity preflight"
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        ["up", "--terraform-dir", str(tf_dir), "--skip-sky-smoke"],
+    )
+
+    assert result.exit_code != 0
+    assert "quota blocked" in result.output

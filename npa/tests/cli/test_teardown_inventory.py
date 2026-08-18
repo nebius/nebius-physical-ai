@@ -42,6 +42,10 @@ def _terraform_stubs(
     def fake_capture(args, **kwargs):
         if args[:2] == ["terraform", "version"]:
             return _completed(json.dumps({"terraform_version": "1.12.2"}))
+        if args[:3] == ["terraform", "state", "pull"]:
+            return _completed(
+                json.dumps({"outputs": {"kube_cluster": {"value": {"id": "c1"}}}})
+            )
         if args[:3] == ["nebius", "iam", "get-access-token"]:
             return _completed("token-a\n")
         if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
@@ -74,6 +78,30 @@ def _terraform_stubs(
     return calls
 
 
+def _write_legacy_cluster_ownership(state_dir: Path, *, context: str) -> None:
+    """Write valid legacy ownership evidence for teardown behavior tests."""
+
+    (state_dir / "cluster.json").write_text(
+        json.dumps(
+            {
+                "name": context,
+                "cluster_id": "c1",
+                "project_id": "p",
+                "region": "r",
+                "node_count": 1,
+                "node_platform": "cpu-d3",
+                "node_preset": "4vcpu-16gb",
+                "k8s_version": "1.30",
+                "subnet_id": "",
+                "created_at": "2026-01-01T00:00:00Z",
+            }
+        )
+    )
+    (state_dir / "metadata.json").write_text(
+        json.dumps({"managed_by": "npa cluster terraform"})
+    )
+
+
 # ── `cluster down` finishes the job ──────────────────────────────────────────
 
 
@@ -82,7 +110,7 @@ def test_down_removes_the_local_cluster_state(monkeypatch, tmp_path: Path) -> No
     state_dir = clusters / "npa-cluster"
     state_dir.mkdir(parents=True)
     (state_dir / "kubeconfig").write_text("apiVersion: v1\n")
-    (state_dir / "cluster.json").write_text("{}")
+    _write_legacy_cluster_ownership(state_dir, context="npa-cluster")
     monkeypatch.setattr(state_module, "CLUSTERS_DIR", clusters)
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
@@ -104,7 +132,7 @@ def test_down_keeps_local_state_when_asked(monkeypatch, tmp_path: Path) -> None:
     clusters = tmp_path / "clusters"
     state_dir = clusters / "npa-cluster"
     state_dir.mkdir(parents=True)
-    (state_dir / "cluster.json").write_text("{}")
+    _write_legacy_cluster_ownership(state_dir, context="npa-cluster")
     monkeypatch.setattr(state_module, "CLUSTERS_DIR", clusters)
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
@@ -140,7 +168,7 @@ def test_down_removes_state_for_an_explicit_context(
     (clusters / "npa-cluster").mkdir(parents=True)
     (clusters / "npa-cluster" / "cluster.json").write_text("{}")
     (clusters / "custom-ctx").mkdir(parents=True)
-    (clusters / "custom-ctx" / "cluster.json").write_text("{}")
+    _write_legacy_cluster_ownership(clusters / "custom-ctx", context="custom-ctx")
     monkeypatch.setattr(state_module, "CLUSTERS_DIR", clusters)
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)

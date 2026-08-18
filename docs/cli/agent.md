@@ -10,6 +10,7 @@ Deploy and operate a public NPA chat agent VM.
 Options
 --help  Show this message and exit.
 Commands
+auth-profile  Complete a human Nebius CLI profile on this operator/dev VM.
 list  List agent deployments recorded in ~/.npa/config.yaml.
 preflight  Check Route C prerequisites before `npa agent deploy` / `fresh-setup`.
 deploy  Provision VM + bootstrap the public NPA agent stack.
@@ -31,6 +32,7 @@ verify-live  Exit 0 only when live infra checks and tests pass.
 
 | Command | Description |
 | --- | --- |
+| `auth-profile` | Complete a human Nebius CLI profile on this operator/dev VM. |
 | `list` | List agent deployments recorded in ~/.npa/config.yaml. |
 | `preflight` | Check Route C prerequisites before `npa agent deploy` / `fresh-setup`. |
 | `deploy` | Provision VM + bootstrap the public NPA agent stack. |
@@ -45,7 +47,7 @@ verify-live  Exit 0 only when live infra checks and tests pass.
 
 ```bash
 npa agent --help
-npa agent list --help
+npa agent auth-profile --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `agent`.

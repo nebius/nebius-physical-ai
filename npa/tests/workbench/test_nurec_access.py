@@ -693,6 +693,10 @@ def test_renderer_installs_the_nurec_runtime_deps_the_vendor_image_lacks() -> No
     assert "/tmp/npa-python" in setup
     # PEP 668 fallbacks, because the image is Ubuntu 24.04.
     assert "--break-system-packages" in setup
+    # The public Cosmos image has uv/uvx but deliberately omits pip from the
+    # interpreter into which NPA is installed.
+    assert 'uv pip install -q --python "$npa_nurec_py"' in setup
+    assert 'uvx --from uv uv pip install -q --python "$npa_nurec_py"' in setup
     # And the install is verified rather than assumed.
     assert "import ncore, rerun" in setup
 

@@ -122,6 +122,23 @@ skills:
       - type: workflow_yaml
         paths:
           - npa/workflows/workbench/npa-workflows/cosmos-fetch.yaml
+  - name: debug-failed-run
+    category: atomic
+    when_to_use: "Triage a workflow run that failed, hung, or produced no artifacts: status and pod-level reason, stage logs, S3 artifact evidence, image pullability, scheduling, and the resume-vs-cancel decision."
+    path: skills/atomic/debug-failed-run/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "workflow", "status", "--help"]
+        contains: "watch"
+      - type: cli_help
+        args: ["workbench", "workflow", "logs", "--help"]
+        contains: "follow"
+      - type: cli_help
+        args: ["workbench", "workflow", "artifacts", "--help"]
+        contains: "stage"
+      - type: cli_help
+        args: ["workbench", "workflow", "load-artifact", "--help"]
+        contains: "run_id"
   - name: gpu-selection
     category: atomic
     when_to_use: "Choose or review GPU targets for training, rendering, inference, and workflow YAML resources."
@@ -133,6 +150,31 @@ skills:
       - type: cli_help
         args: ["workbench", "sonic", "train", "--help"]
         contains: "gpu"
+  - name: gpu-allocation-fallback
+    category: atomic
+    when_to_use: "Track typed on-demand GPU placement failures and offer an action-digest-confirmed switch to an identical preemptible allocation."
+    path: skills/atomic/gpu-allocation-fallback/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/src/npa/agent_backend/gpu_allocation_fallback.py
+      - type: file_exists
+        path: npa/tests/cli/test_agent_gpu_allocation_fallback.py
+      - type: cli_help
+        args: ["provision-if-absent", "--help"]
+        contains: "--preemptible"
+  - name: health-preflight
+    category: atomic
+    when_to_use: "Before any deploy, image build, or GPU submit: prove HF/NGC/S3/Token Factory credentials and gated-model access with `npa workbench health preflight` and `npa workbench health access` instead of failing mid-run."
+    path: skills/atomic/health-preflight/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "health", "preflight", "--help"]
+        contains: "warn-only"
+      - type: cli_help
+        args: ["workbench", "health", "access", "--help"]
+        contains: "capability"
+      - type: file_exists
+        path: scripts/accept-model-access.sh
   - name: physical-ai-context
     category: atomic
     when_to_use: "Robotics, simulation, GPU routing, sim-to-real, or BDD100K domain context."
@@ -172,6 +214,20 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml
+  - name: teardown-and-cost
+    category: atomic
+    when_to_use: "Stop spend safely and audit orphaned resources: the mandatory cancel-before-destroy ordering, which commands touch cloud versus local state, finding leaked clusters/agent VMs/controllers/buckets, and choosing the cheapest tier that proves the point."
+    path: skills/atomic/teardown-and-cost/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["cleanup", "--help"]
+        contains: "list-receipts"
+      - type: cli_help
+        args: ["destroy", "--help"]
+        contains: "delete-project"
+      - type: cli_help
+        args: ["workbench", "workflow", "cancel", "--help"]
+        contains: "repeat-safe"
   - name: super-prompt-patterns
     category: atomic
     when_to_use: "Draft, execute, or review Codex super-prompts for this repository."
@@ -187,6 +243,16 @@ skills:
       - type: cli_help
         args: ["--help"]
         contains: "Nebius Physical AI"
+  - name: vm-nebius-auth
+    category: atomic
+    when_to_use: "Start, recover, or verify no-browser human Nebius CLI profile authentication on a remote operator/dev VM with a safe SSH loopback callback forward."
+    path: skills/atomic/vm-nebius-auth/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/src/npa/clients/nebius_vm_auth.py
+      - type: cli_help
+        args: ["agent", "auth-profile", "--help"]
+        contains: "ssh-host"
   - name: third-party-eula-preflight
     category: atomic
     when_to_use: "Before provisioning, building, downloading, or submitting workloads whose images, software, models, or data require third-party terms: apply the documented product policy (including Isaac default/opt-out and OpenPI scoped opt-in), verify real upstream credential access for gated runtime fetches, and keep privacy and redistribution controls separate."
@@ -196,6 +262,78 @@ skills:
         path: npa/tests/guardrails/test_third_party_eula_preflight_skill.py
       - type: file_exists
         path: npa/docker/workbench/common/isaac_bootstrap.sh
+  - name: npa-cli-conventions
+    category: atomic
+    when_to_use: "Write or modify an npa CLI command or SDK function: registration, the --input-path/--output-path contract, output format, error handling and exit codes, the resolve_typer_defaults/json_stdout_contract/intent_boundary decorators, and config/credential access."
+    path: skills/atomic/npa-cli-conventions/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/src/npa/cli/path_contract.py
+      - type: file_exists
+        path: npa/src/npa/lifecycle_intent.py
+      - type: file_exists
+        path: npa/src/npa/cli/_typer_defaults.py
+  - name: toolref-argv-contract
+    category: atomic
+    when_to_use: "Add or change an npa.workflow toolRef argv template, or change a CLI option a toolRef already passes: the contract that stops a stage rendering cleanly and then crashing in the pod."
+    path: skills/atomic/toolref-argv-contract/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/src/npa/orchestration/npa_workflow/catalog.py
+      - type: file_exists
+        path: npa/tests/guardrails/test_tool_catalog_argv.py
+      - type: file_exists
+        path: npa/tests/guardrails/test_module_toolref_argv.py
+  - name: guardrail-failures
+    category: atomic
+    when_to_use: "A guardrail test or CI gate failed and you need the cause and fix rather than reverse-engineering the assertion."
+    path: skills/atomic/guardrail-failures/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/tests/guardrails/test_develop_skills.py
+      - type: file_exists
+        path: npa/tests/guardrails/test_three_tier_contract.py
+  - name: pre-pr-validation
+    category: atomic
+    when_to_use: "Before pushing an npa change: which of the six PR gates apply, and the exact local command for each, in cheapest-first order."
+    path: skills/atomic/pre-pr-validation/SKILL.md
+    smoke:
+      - type: file_exists
+        path: Makefile
+      - type: file_exists
+        path: scripts/build_docs.sh
+      - type: file_exists
+        path: npa/src/npa/guardrails/confidentiality.py
+  - name: artifact-viz-share
+    category: tools
+    when_to_use: "Turn run outputs into something a human can look at and hand it to someone else: `npa adapter convert` (sim demos to LeRobotDataset), `npa convert lerobot-to-rrd|lerobot-to-mp4`, and `npa rerun host|share|list-shares|revoke` time-boxed presigned links."
+    path: skills/tools/artifact-viz-share/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["adapter", "convert", "--help"]
+        contains: "fps"
+      - type: cli_help
+        args: ["convert", "lerobot-to-mp4", "--help"]
+        contains: "renderer"
+      - type: cli_help
+        args: ["convert", "lerobot-to-rrd", "--help"]
+        contains: "predictions-path"
+      - type: cli_help
+        args: ["rerun", "share", "--help"]
+        contains: "ttl-hours"
+  - name: burst
+    category: tools
+    when_to_use: "Run one gang-scheduled multi-node GPU job through SkyPilot without authoring a workflow: `npa burst submit` wires torchrun rendezvous across nodes, `submit-yaml` submits a single-task YAML with `${VAR}` substitution and Nebius registry login."
+    path: skills/tools/burst/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["burst", "submit", "--help"]
+        contains: "gpu-per-node"
+      - type: cli_help
+        args: ["burst", "logs", "--help"]
+        contains: "follow"
+      - type: file_exists
+        path: npa/src/npa/burst/examples/isaac-lab-cosmos-sdg-burst-smoke.yaml
   - name: cosmos
     category: tools
     when_to_use: "Cosmos world model serving, inference, serverless training smoke, backend selection, or rendering limits."
@@ -218,6 +356,20 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - npa/workflows/workbench/npa-workflows/dataset-ingest-curate.yaml
+  - name: detection-training
+    category: tools
+    when_to_use: "Train and evaluate Faster R-CNN detectors from LanceDB materialized views (BDD100K failure-mode slices): direct versus deployed-service execution, the label map required for string categories, and checkpoint discovery at eval time."
+    path: skills/tools/detection-training/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "detection-training", "train", "--help"]
+        contains: "label-map"
+      - type: cli_help
+        args: ["workbench", "detection-training", "deploy", "--help"]
+        contains: "gpu-type"
+      - type: npa_workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml
   - name: foxglove
     category: tools
     when_to_use: "Embed, operate, or debug the Foxglove viewer in the NPA agent: the @foxglove/embed TypeScript SDK, MCAP recordings, the npa-foxglove-embed container, and /api/foxglove/* endpoints."
@@ -277,6 +429,39 @@ skills:
       - type: cli_help
         args: ["workbench", "genesis", "train-teacher", "--help"]
         contains: "serverless"
+  - name: golden-eval
+    category: tools
+    when_to_use: "Prove a workbench container image actually works: the per-container hello-world manifest, dry-run/local/serverless execution tiers, batch runs across every image, and the offline manifest validation that gates CI."
+    path: skills/tools/golden-eval/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "golden-eval", "run", "--help"]
+        contains: "serverless"
+      - type: cli_help
+        args: ["workbench", "golden-eval", "run-all", "--help"]
+        contains: "include-blocked"
+      - type: file_exists
+        path: npa/src/npa/smoke/golden_evals.yaml
+      - type: file_exists
+        path: npa/tests/smoke/test_golden_eval_manifest.py
+  - name: gpu-cluster-provisioning
+    category: tools
+    when_to_use: "Create or repair a GPU Kubernetes cluster for npa: the managed-image vs GPU-Operator driver decision, why operator mode is unsafe on NVSwitch, the post-apply health gates (fabric, CUDA vectorAdd, stability window), accelerator-name discovery, and triage for nodes whose GPUs do not work."
+    path: skills/tools/gpu-cluster-provisioning/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["cluster", "up", "--help"]
+        contains: "gpu-driver-mode"
+      - type: cli_help
+        args: ["cluster", "node-group", "--help"]
+        contains: "add-cpu"
+      - type: cli_help
+        args: ["workbench", "workflow", "gpus", "--help"]
+        contains: "cluster"
+      - type: file_exists
+        path: docs/workbench/mk8s-gpu-driver-strategy.md
+      - type: file_exists
+        path: docs/workbench/image-gpu-compatibility-matrix.md
   - name: groot
     category: tools
     when_to_use: "GR00T model download, finetuning, evaluation, serving, inference, conversion, status, and routing."
@@ -321,6 +506,18 @@ skills:
       - type: cli_help
         args: ["workbench", "lerobot", "train", "--help"]
         contains: "policy"
+  - name: leisaac
+    category: tools
+    when_to_use: "Build, launch, operate, review, or live-test LeIsaac browser teleoperation, secure agent-relay transport, immutable demonstrations, custom bundles, or PAIDF materialization."
+    path: skills/tools/leisaac/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "leisaac", "launch", "--help"]
+        contains: "agent-relay"
+      - type: file_exists
+        path: docs/workbench/leisaac-teleoperation.md
+      - type: file_exists
+        path: npa/docker/workbench/leisaac/REDISTRIBUTION.md
   - name: mjlab
     category: tools
     when_to_use: "MJLab locomotion evaluation, SONIC checkpoint scoring, SkyPilot MJLab YAMLs, or CLI behavior."
@@ -441,6 +638,40 @@ skills:
       - type: cli_help
         args: ["workbench", "sonic", "serve", "--help"]
         contains: "model-repo"
+  - name: token-factory
+    category: tools
+    when_to_use: "Zero-GPU hosted inference through Nebius Token Factory: captioning, batch text generation, and Cosmos physical-AI reasoning, plus key setup, model availability, and the CPU-only npa.workflow toolRefs that need no cluster."
+    path: skills/tools/token-factory/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "token-factory", "verify", "--help"]
+        contains: "Token Factory"
+      - type: cli_help
+        args: ["workbench", "token-factory", "caption", "--help"]
+        contains: "input-path"
+      - type: file_exists
+        path: docs/workbench/token-factory.md
+      - type: npa_workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/token-factory-caption.yaml
+          - npa/workflows/workbench/npa-workflows/token-factory-generate.yaml
+          - npa/workflows/workbench/npa-workflows/token-factory-cosmos-reason.yaml
+  - name: vlm-eval
+    category: tools
+    when_to_use: "Score rollouts with a vision-language model and turn the score into a pipeline gate: single rollout versus prefix-wide loop, rubric/threshold benchmark sweeps, backend selection (self-hosted, api, stub), and judging against a plan an earlier stage wrote."
+    path: skills/tools/vlm-eval/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "vlm-eval", "run", "--help"]
+        contains: "success-threshold"
+      - type: cli_help
+        args: ["workbench", "vlm-eval", "loop", "--help"]
+        contains: "input-path"
+      - type: npa_workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml
+          - npa/workflows/workbench/npa-workflows/vlm-eval-loop.yaml
+          - npa/workflows/workbench/npa-workflows/vlm-eval-benchmark.yaml
   - name: workbench-tool
     category: tools
     when_to_use: "Add, change, deploy, or call any NPA workbench tool."
@@ -449,6 +680,20 @@ skills:
       - type: cli_help
         args: ["workbench", "--help"]
         contains: "Physical AI"
+  - name: first-run-setup
+    category: workflows
+    when_to_use: "Get from zero to a first verified result on a fresh machine or a new Nebius project: an ordered, gated path through install, configure, credential preflight, cheapest-proof workload, spec validation, provisioning, image pullability, and submit."
+    path: skills/workflows/first-run-setup/SKILL.md
+    smoke:
+      - type: configure_provision_dry_run
+      - type: cli_help
+        args: ["workbench", "workflow", "validate-spec", "--help"]
+        contains: "npa.workflow"
+      - type: cli_help
+        args: ["workbench", "health", "preflight", "--help"]
+        contains: "token_factory"
+      - type: file_exists
+        path: docs/quickstart.md
   - name: cosmos3-inference
     category: workflows
     when_to_use: "Run or modify Cosmos3 inference: the containerized npa-cosmos3 generate path (image/video) or the public text-to-image SkyPilot workflow."
@@ -599,6 +844,20 @@ skills:
       - type: cli_help
         args: ["agent", "destroy", "--help"]
         contains: "Destroy agent VM"
+  - name: add-workbench-tool
+    category: workflows
+    when_to_use: "Add a new workbench tool to npa end to end: implementation, CLI, SDK, toolRef catalog, container, tests, docs, and skill, in the order that keeps every CI gate green."
+    path: skills/workflows/add-workbench-tool/SKILL.md
+    smoke:
+      - type: file_exists
+        path: CONTRIBUTING.md
+      - type: file_exists
+        path: npa/src/npa/workbench/detection_training/service.py
+      - type: file_exists
+        path: npa/src/npa/cli/workbench/__init__.py
+      - type: cli_help
+        args: ["workbench", "--help"]
+        contains: "Physical AI"
   - name: author-npa-workflow
     category: workflows
     when_to_use: "Author, validate, or review NPA workflow specs (apiVersion npa.workflow/v0.0.1) and toolRef catalogs."

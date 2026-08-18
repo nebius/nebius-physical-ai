@@ -8,6 +8,7 @@ import pytest
 
 from npa.cli.agent import (
     AGENT_FOXGLOVE_CONTRACT,
+    AGENT_LEISAAC_CONTRACT,
     AGENT_MEDIA_PREVIEW_CONTRACT,
     AGENT_UI_VERSION,
     rendered_agent_ui_html,
@@ -59,8 +60,21 @@ def test_agent_bootstrap_source_smoke() -> None:
         REPO_ROOT / "npa" / "src" / "npa" / "cli" / "agent_artifact_content.py"
     ).read_text(encoding="utf-8")
     ui_source = AGENT_UI_MODULE.read_text(encoding="utf-8")
+    contract_source = (
+        REPO_ROOT / "npa" / "src" / "npa" / "cli" / "agent_contracts.py"
+    ).read_text(encoding="utf-8")
     ui = rendered_agent_ui_html()
-    bundled = source + "\n" + artifact_content_source + "\n" + ui_source + "\n" + ui
+    bundled = (
+        source
+        + "\n"
+        + artifact_content_source
+        + "\n"
+        + ui_source
+        + "\n"
+        + contract_source
+        + "\n"
+        + ui
+    )
     assert '@app.get("/sim-viz/rrd")' in source
     assert '@app.post("/sim-viz/load-franka-demo")' in source
     assert '@app.post("/sim-viz/camera-preview")' in source
@@ -75,6 +89,10 @@ def test_agent_bootstrap_source_smoke() -> None:
         assert marker in bundled, f"missing media-preview contract marker: {marker!r}"
     for marker in AGENT_FOXGLOVE_CONTRACT:
         assert marker in bundled, f"missing Foxglove viewer contract marker: {marker!r}"
+    for marker in AGENT_LEISAAC_CONTRACT:
+        assert marker in bundled, (
+            f"missing LeIsaac teleoperation contract marker: {marker!r}"
+        )
     # The Foxglove SDK must be loaded on demand (dynamic import), never eagerly:
     # opening the agent must not pay for an embed the operator did not ask for.
     assert "await import(moduleUrl)" in ui_source

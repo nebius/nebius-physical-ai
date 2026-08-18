@@ -10,6 +10,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import json
+import re
+import shlex
 from click.utils import strip_ansi
 from typer.testing import CliRunner
 
@@ -219,7 +222,42 @@ def test_dockerfile_provides_golden_eval_entrypoint(name: str) -> None:
             f"{script_path} into the image"
         )
     else:  # pragma: no cover - guards against an unhandled command shape.
-        raise AssertionError(f"{name}: unexpected in-image smoke command: {command!r}")
+        if name != "leisaac":
+            raise AssertionError(
+                f"{name}: unexpected in-image smoke command: {command!r}"
+            )
+        assert command == "golden-smoke"
+
+
+@pytest.mark.parametrize(
+    "name",
+    sorted(
+        n
+        for n, s in load_manifest().items()
+        if s.golden_eval.kind in _IN_IMAGE_SMOKE_KINDS and not s.external_build
+    ),
+)
+def test_golden_eval_composes_with_dockerfile_entrypoint(name: str) -> None:
+    """Model Kubernetes args semantics instead of testing the command alone."""
+
+    spec = load_manifest()[name]
+    dockerfile = (REPO_ROOT / spec.dockerfile).read_text(encoding="utf-8")
+    matches = re.findall(r"^ENTRYPOINT\s+(\[[^\n]+\])", dockerfile, re.MULTILINE)
+    # No declared entrypoint composes as an empty argv prefix; the supplied
+    # container command is then the executable. Images with an entrypoint must
+    # prove the appended argument vector remains meaningful.
+    entrypoint = json.loads(matches[-1]) if matches else []
+    composed = [*entrypoint, *shlex.split(spec.golden_eval.command)]
+    assert composed[: len(entrypoint)] == entrypoint
+    if name == "leisaac":
+        assert composed == [
+            "/opt/npa/sim/venv/bin/python",
+            "/opt/npa/leisaac/session_server.py",
+            "golden-smoke",
+        ]
+        assert 'sys.argv[1:] == ["golden-smoke"]' in (
+            REPO_ROOT / "npa/docker/workbench/leisaac/session_server.py"
+        ).read_text(encoding="utf-8")
 
 
 def test_serverless_gpu_values_are_known() -> None:
