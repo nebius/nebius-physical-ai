@@ -24,7 +24,6 @@ LABEL org.opencontainers.image.title="NPA NVIDIA Content Agents" \
       org.opencontainers.image.licenses="Apache-2.0 AND LicenseRef-NVIDIA-Proprietary-OVRTX" \
       npa.tool="content-agents" \
       npa.redistribution="restricted" \
-      npa.source_revision="${NPA_SOURCE_SHA}" \
       org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -127,6 +126,12 @@ COPY docker/workbench/content-agents/REDISTRIBUTION.md \
     /usr/share/doc/npa-content-agents/REDISTRIBUTION.md
 COPY docker/workbench/content-agents/npa-content-agents-entrypoint \
     /usr/local/bin/npa-content-agents-entrypoint
+
+# Keep changing NPA provenance after the pinned NVIDIA/OVRTX layers so an
+# adapter-only checkpoint does not invalidate the multi-gigabyte restricted
+# runtime cache.  The scanner still requires this exact full SHA from the
+# finished image.
+LABEL npa.source_revision="${NPA_SOURCE_SHA}"
 
 # The workflow renderer invokes the first-party ``npa`` console entry point in
 # every toolRef stage.  Copying the package source makes module imports work but

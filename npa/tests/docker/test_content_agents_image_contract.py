@@ -95,3 +95,11 @@ def test_image_installs_the_npa_workflow_console_without_dynamic_dependencies() 
     assert "--no-deps --no-config --no-sources" in dockerfile
     assert "command -v npa" in dockerfile
     assert "npa --version" in dockerfile
+
+
+def test_npa_provenance_does_not_invalidate_the_pinned_ovrtx_layer() -> None:
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    upstream_install = dockerfile.index("pylock.ovrtx-runtime.toml")
+    npa_copy = dockerfile.index("COPY --chown=1000:1000 src/npa")
+    source_label = dockerfile.index('LABEL npa.source_revision="${NPA_SOURCE_SHA}"')
+    assert upstream_install < npa_copy < source_label
