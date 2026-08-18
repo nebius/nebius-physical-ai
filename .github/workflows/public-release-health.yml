@@ -26,7 +26,7 @@ jobs:
         id: verify
         run: |
           python -m npa.deploy.publish_public \
-            --target "ghcr.io/${GITHUB_REPOSITORY,,}" \
+            --target "ghcr.io/nebius/nebius-physical-ai" \
             --verify-public 2>&1 | tee "$RUNNER_TEMP/public-release-health.txt"
 
       - name: Summarise

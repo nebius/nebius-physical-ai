@@ -579,6 +579,12 @@ class ServerlessClient:
         password = os.environ.get("NPA_REGISTRY_PASSWORD", "").strip()
         if not configured_server and not username and not password:
             return []
+        # Pre-GHCR configurations commonly left a username behind after their
+        # server/token fields were removed. A username alone cannot authenticate
+        # anything, so preserve anonymous public pulls instead of treating that
+        # harmless migration residue as an incomplete private-registry request.
+        if username and not configured_server and not password:
+            return []
         if not configured_server or not username or not password:
             raise ServerlessClientError(
                 "private registry auth requires NPA_REGISTRY_SERVER, "

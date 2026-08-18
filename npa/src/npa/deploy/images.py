@@ -173,7 +173,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "isaac-lab": "2.3.2.post1",
     "leisaac": "0.4.0-20260817T231825Z",
     "cosmos": "cu128-torch27-sm100-1.0.9-20260803T002017Z",
-    "cosmos2-transfer": "2.5.1-skypilot-v1-ghcr-20260817",
+    "cosmos2-transfer": "2.5.1-skypilot-ready-20260801T053000Z",
     # Additive r2 release of cosmos-framework 1.2.2 (pinned commit 5e67049c) +
     # torch cu130. The immutable 1.2.2-cu130 tag remains rollback provenance.
     # No weights baked; gated Cosmos3 checkpoints download at runtime.
@@ -408,10 +408,7 @@ def container_image_for_tool(
         image_name = CONTAINER_IMAGE_NAMES[tool]
         resolved_tag = tag or supported_tool_version(tool)
     resolved_registry = registry or execution_container_registry()
-    if not is_publicly_redistributable(tool) and (
-        is_public_registry(resolved_registry)
-        or is_official_container_registry(resolved_registry)
-    ):
+    if not is_publicly_redistributable(tool) and is_public_registry(resolved_registry):
         raise ValueError(
             f"{tool!r} is not publicly redistributable and is never distributed from a "
             f"public registry, so {resolved_registry!r} cannot serve it. Build it into "
@@ -576,15 +573,17 @@ def development_image_for_tool(
 def is_public_registry(registry: str) -> bool:
     """Whether a registry serves anonymous/public pulls.
 
-    True for conservative public-only hosts and the configured public release
-    namespace. GHCR is package-scoped, so an arbitrary operator GHCR namespace
-    is not assumed public.
+    True for conservative public-only hosts, the immutable default official
+    namespace, and the configured public release namespace. GHCR is package-
+    scoped, so an arbitrary operator GHCR namespace is not assumed public.
     """
     candidate = registry.strip().rstrip("/")
     if not candidate:
         return False
     host = candidate.split("/", 1)[0].lower()
     if host in PUBLIC_REGISTRY_HOSTS:
+        return True
+    if candidate.lower() == DEFAULT_PUBLIC_CONTAINER_REGISTRY.lower():
         return True
     mirror = public_container_registry().strip().rstrip("/")
     return bool(mirror) and candidate.lower() == mirror.lower()
@@ -593,7 +592,10 @@ def is_public_registry(registry: str) -> bool:
 def is_official_container_registry(registry: str) -> bool:
     """Whether ``registry`` is the official NPA public GHCR namespace."""
     candidate = str(registry or "").strip().rstrip("/").lower()
-    return candidate == public_container_registry().rstrip("/").lower()
+    return candidate in {
+        DEFAULT_PUBLIC_CONTAINER_REGISTRY.lower(),
+        public_container_registry().rstrip("/").lower(),
+    }
 
 
 def is_publicly_redistributable(tool: str) -> bool:

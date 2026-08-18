@@ -205,8 +205,11 @@ def test_published_tags_are_additive_and_arch_labelled(entries: list[dict]) -> N
         assert re.fullmatch(r"sha256:[0-9a-f]{64}", entry["published_digest"]), (
             f"{name} has a malformed digest"
         )
-        assert set(entry["published_registries"]) == {"public-development", "public-release"}, (
-            f"{name} must preserve candidate and release provenance"
+        expected_registries = {"public-release"}
+        if entry.get("publication_model") == "exact-digest-promoted":
+            expected_registries.add("public-development")
+        assert set(entry["published_registries"]) == expected_registries, (
+            f"{name} must record only registries where this exact artifact was published"
         )
 
 

@@ -15,12 +15,9 @@ LTX-specific.
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import re
-import shutil
 import sys
-import tarfile
 import tempfile
 from dataclasses import asdict
 from pathlib import Path
@@ -275,44 +272,7 @@ def scan_tars(tars: list[Path], config: dict[str, Any]) -> list[walker.Finding]:
         return walker.scan_tars(tars, config)
 
 
-def docker_save_material(
-    archive_path: Path, temp_dir: Path
-) -> tuple[list[Path], dict[str, Any]]:
-    """Read every layer and the OCI config from one ``docker save`` archive.
-
-    Reading layers independently is intentional: a merged rootfs would hide a
-    credential or gated payload that a later whiteout deleted.
-    """
-
-    with tarfile.open(archive_path, "r:*") as archive:
-        manifest_member = archive.getmember("manifest.json")
-        manifest_stream = archive.extractfile(manifest_member)
-        if manifest_stream is None:
-            raise RuntimeError("docker save archive has no readable manifest.json")
-        manifests = json.load(io.TextIOWrapper(manifest_stream, encoding="utf-8"))
-        if not isinstance(manifests, list) or len(manifests) != 1:
-            raise RuntimeError("docker save archive must contain exactly one image")
-        manifest = manifests[0]
-        config_name = str(manifest.get("Config") or "")
-        layer_names = manifest.get("Layers") or []
-        if not config_name or not layer_names:
-            raise RuntimeError("docker save manifest has no config or layers")
-
-        config_stream = archive.extractfile(archive.getmember(config_name))
-        if config_stream is None:
-            raise RuntimeError("docker save archive has no readable image config")
-        config = json.load(io.TextIOWrapper(config_stream, encoding="utf-8"))
-
-        layers: list[Path] = []
-        for index, layer_name in enumerate(layer_names):
-            layer_stream = archive.extractfile(archive.getmember(str(layer_name)))
-            if layer_stream is None:
-                raise RuntimeError(f"docker save layer {index} is not readable")
-            layer_path = temp_dir / f"layer-{index:03d}.tar"
-            with layer_path.open("wb") as output:
-                shutil.copyfileobj(layer_stream, output)
-            layers.append(layer_path)
-    return layers, config
+docker_save_material = walker.docker_save_material
 
 
 def main(argv: list[str] | None = None) -> int:

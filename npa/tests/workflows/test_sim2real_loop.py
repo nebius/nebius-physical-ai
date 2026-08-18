@@ -220,7 +220,7 @@ def test_full_loop_writes_stage_artifacts_and_candidate(tmp_path: Path) -> None:
     assert augment["status"] in {"executed_reference", "executed", "contract_ready"}
     assert (
         augment.get("image")
-        == "npa-cosmos2-transfer:2.5.1-skypilot-v1-ghcr-20260817"
+        == "npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z"
     )
     assert (
         trigger["trigger_dataset_uri"] == "s3://bucket/sim2real-triggers/lerobot-pusht/"
@@ -1267,14 +1267,14 @@ def test_default_augment_image_uses_cosmos2_transfer_contract(monkeypatch) -> No
 
     assert (
         default_augment_image()
-        == "npa-cosmos2-transfer:2.5.1-skypilot-v1-ghcr-20260817"
+        == "npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z"
     )
 
     config = build_config_from_env(run_id="sim2real-images")
 
     assert (
         config.augment_image
-        == "npa-cosmos2-transfer:2.5.1-skypilot-v1-ghcr-20260817"
+        == "npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z"
     )
     assert config.vlm_image == (
         "npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
@@ -1290,7 +1290,7 @@ def test_default_augment_image_uses_first_party_cosmos2_registry(monkeypatch) ->
 
     assert (
         config.augment_image
-        == "registry.example/workbench/npa-cosmos2-transfer:2.5.1-skypilot-v1-ghcr-20260817"
+        == "registry.example/workbench/npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z"
     )
     assert (
         config.vlm_image
@@ -2544,7 +2544,7 @@ def test_cosmos_split_sdk_and_raw_yaml_contracts() -> None:
     transfer = cosmos2.transfer(
         input_uri="s3://bucket/input/",
         output_uri="s3://bucket/augment/",
-        image="npa-cosmos2-transfer:2.5.1-skypilot-v1-ghcr-20260817",
+        image="npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z",
     )
     reason = cosmos3.reason(
         input_uri="s3://bucket/rollouts/",
@@ -2556,7 +2556,7 @@ def test_cosmos_split_sdk_and_raw_yaml_contracts() -> None:
     assert reason["schema"] == "npa.cosmos3.reason.v1"
     assert (
         transfer["image"]
-        == "npa-cosmos2-transfer:2.5.1-skypilot-v1-ghcr-20260817"
+        == "npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z"
     )
     assert reason["image"] == "npa-cosmos3-reason:3.0.0"
     assert transfer["image"] != reason["image"]

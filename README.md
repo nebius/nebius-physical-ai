@@ -679,10 +679,6 @@ npa storage service-account reconcile --project <alias> --id <exact-id> \
   --reason '<legacy NPA setup evidence>' --attest-npa-created --yes
 npa storage service-account delete --project <alias> --dry-run
 npa storage service-account delete --project <alias> --yes
-# If validation created a project-local registry, delete its exact artifact DAG
-# and registry using the immutable ID/name recorded at creation:
-npa registry delete --project <alias> --project-id <project-id> \
-  --tenant-id <tenant-id> --id <registry-id> --name <registry-name> --yes
 # NPA-created disposable projects may contain one provider-created default
 # topology. This command refuses any extra, shared, or non-default topology:
 npa network delete-project-default --project <alias> --project-id <project-id> \

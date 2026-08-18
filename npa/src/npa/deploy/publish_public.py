@@ -878,30 +878,6 @@ def _crane_digest(
     return False, detail[-1] if detail else f"crane exited {completed.returncode}"
 
 
-def _pin_wan_publication_sources(
-    plan: list[PublishItem],
-) -> tuple[list[PublishItem], list[tuple[PublishItem, str]]]:
-    """Resolve Wan tags once and return a plan that can only copy those bytes."""
-
-    pinned: list[PublishItem] = []
-    failures: list[tuple[PublishItem, str]] = []
-    for item in plan:
-        if item.tool != "wan2-2":
-            pinned.append(item)
-            continue
-        ok, detail = _crane_digest(item.source_ref)
-        if not ok:
-            failures.append((item, detail))
-            continue
-        if re.fullmatch(r"sha256:[0-9a-f]{64}", detail) is None:
-            failures.append((item, f"registry returned invalid digest {detail!r}"))
-            continue
-        pinned.append(
-            replace(item, source_ref=f"{_repository(item.source_ref)}@{detail}")
-        )
-    return pinned, failures
-
-
 def _pin_publication_sources(
     plan: list[PublishItem],
 ) -> tuple[list[PublishItem], list[tuple[PublishItem, str]]]:

@@ -68,7 +68,6 @@
       "published_tag": "cuda13-b300-sm80-sm90-sm100-sm103-sm120-20260803T032705Z",
       "published_digest": "sha256:6a493973bf8a92a9a33ad0c301a1b3c9ef1d4ba9e7e8364318d041e1b10285f1",
       "published_registries": [
-        "public-development",
         "public-release"
       ],
       "observed_wheel_arch_list": [
@@ -125,7 +124,6 @@
       "published_tag": "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:14a2e0dfe61fb2c46c6e4b8d75f1a06f2f68f9cfa4a6428a175411afaf93749e",
       "published_registries": [
-        "public-development",
         "public-release"
       ]
     },
@@ -161,7 +159,6 @@
       "published_tag": "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z",
       "published_digest": "sha256:a303b53d0769e612101d468ba957656997838f4b8e6a03430f2b5a2c89e3f8b5",
       "published_registries": [
-        "public-development",
         "public-release"
       ],
       "measured_torch": "2.12.1+cu130",
@@ -252,7 +249,6 @@
       "published_tag": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:e708aa32b9247eaedf1a7a5b0d82adbe65b95a9af50721b9d09fddbfd508bbc9",
       "published_registries": [
-        "public-development",
         "public-release"
       ]
     },
@@ -286,7 +282,6 @@
       "published_tag": "cu128-torch27-sm100-1.0.9-20260803T002017Z",
       "published_digest": "sha256:a7d2ba85ea4ad2d2036f6f8575b4e7a801d3f98ff202f6eb575329f1af9a41dd",
       "published_registries": [
-        "public-development",
         "public-release"
       ],
       "measured_torch": "2.7.0+cu128",
@@ -326,7 +321,6 @@
       "published_tag": "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:80cd1c4c7f7a5466533de29ee5cad1213202f348545346fea9ed6746fa03b1ca",
       "published_registries": [
-        "public-development",
         "public-release"
       ]
     },
@@ -357,7 +351,7 @@
       ],
       "published_tag": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:8e0ea40c064a15409233efdd036a369b36e1c04e713bcf81440d9d4372cae376",
-      "published_registries": ["public-development", "public-release"]
+      "published_registries": ["public-release"]
     },
     {
       "name": "npa-reference-policy",
@@ -378,7 +372,7 @@
       ],
       "published_tag": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:58eb0d714f9d57fbae7fc8dfc56caf7f98f84699146c820dce18f2aaa2313cb6",
-      "published_registries": ["public-development", "public-release"]
+      "published_registries": ["public-release"]
     },
     {
       "name": "npa-loop-eval",
@@ -399,7 +393,7 @@
       ],
       "published_tag": "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:9cb111c56d9c1db8357b04f43e46790f6853213ff1a78fd0b2dae5ad337eb75a",
-      "published_registries": ["public-development", "public-release"]
+      "published_registries": ["public-release"]
     },
     {
       "name": "npa-lerobot-vlm-rl",
@@ -420,7 +414,7 @@
       ],
       "published_tag": "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:7bd5b21d487f3ab6614197b8a8af81fe3ed001247b4501740615540cb55998e5",
-      "published_registries": ["public-development", "public-release"]
+      "published_registries": ["public-release"]
     },
     {
       "name": "npa-isaac-lab",
@@ -464,7 +458,7 @@
       ],
       "published_tag": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "published_digest": "sha256:c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb",
-      "published_registries": ["public-development", "public-release"]
+      "published_registries": ["public-release"]
     },
     {
       "name": "npa-sonic-mujoco",

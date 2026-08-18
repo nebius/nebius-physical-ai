@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[3]
 WORKFLOWS = ROOT / ".github" / "workflows"
 PUBLISH = WORKFLOWS / "publish-public-images.yml"
 HEALTH = WORKFLOWS / "public-release-health.yml"
+SECURITY_SCAN = WORKFLOWS / "image-security-scan.yml"
 
 
 def _spec(path: Path) -> dict:
@@ -45,6 +46,30 @@ def test_public_publisher_builds_only_immutable_public_development_refs() -> Non
     assert "ghcr.io/nebius/nebius-physical-ai" in text
     assert "nebius-physical-ai-private" not in text
     assert "NPA_PRIVATE" not in text
+    for stale_variable in (
+        "NPA_PUBLIC_IMAGE_TARGET",
+        "NPA_DEVELOPMENT_SHA",
+        "NPA_BUILD_DEVELOPMENT_TOOLS",
+        "NPA_CLEANUP_DEVELOPMENT_TOOLS",
+        "NPA_PUBLISH_TOOL",
+    ):
+        assert stale_variable not in text
+
+
+def test_public_channel_workflows_do_not_restore_retired_channel_language() -> None:
+    combined = "\n".join(
+        path.read_text(encoding="utf-8").lower()
+        for path in (PUBLISH, HEALTH, SECURITY_SCAN)
+    )
+    for retired in (
+        "private candidate",
+        "private-package",
+        "operator candidate",
+        "candidate payload",
+        "candidate push",
+        "nebius-physical-ai-private",
+    ):
+        assert retired not in combined
 
 
 def test_prepublication_gates_run_before_the_public_dev_push() -> None:
@@ -114,5 +139,7 @@ def test_public_health_is_anonymous_and_read_only() -> None:
     assert spec["permissions"] == {"contents": "read"}
     run = _runs(HEALTH)
     assert "--verify-public" in run
+    assert "ghcr.io/nebius/nebius-physical-ai" in run
+    assert "GITHUB_REPOSITORY" not in run
     assert "auth login" not in run
     assert "--preflight" not in run

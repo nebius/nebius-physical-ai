@@ -829,6 +829,29 @@ def test_create_endpoint_adds_explicit_registry_auth(monkeypatch) -> None:
     assert args[args.index("--registry-password") + 1] == "endpoint-registry-token"
 
 
+def test_stale_registry_username_preserves_anonymous_public_ghcr(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("NPA_REGISTRY_USERNAME", "stale-legacy-user")
+    monkeypatch.delenv("NPA_REGISTRY_SERVER", raising=False)
+    monkeypatch.delenv("NPA_REGISTRY_PASSWORD", raising=False)
+    client = ServerlessClient(nebius_bin="nebius")
+
+    assert client._registry_auth_args(
+        "ghcr.io/nebius/nebius-physical-ai/npa-cosmos:1.0.0"
+    ) == []
+
+
+def test_intentional_partial_registry_auth_still_fails_closed(monkeypatch) -> None:
+    monkeypatch.setenv("NPA_REGISTRY_SERVER", "registry.example")
+    monkeypatch.setenv("NPA_REGISTRY_USERNAME", "operator")
+    monkeypatch.delenv("NPA_REGISTRY_PASSWORD", raising=False)
+    client = ServerlessClient(nebius_bin="nebius")
+
+    with pytest.raises(ServerlessClientError, match="private registry auth requires"):
+        client._registry_auth_args("registry.example/example/npa-cosmos:1.0.0")
+
+
 def test_create_job_parser_fallback_resolves_by_name_and_ner_raises() -> None:
     calls: list[list[str]] = []
 

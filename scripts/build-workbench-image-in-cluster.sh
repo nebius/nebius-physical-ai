@@ -58,7 +58,7 @@ if [[ -z "$TAG" ]]; then
   exit 2
 fi
 if [[ -z "$PULL_SECRET" ]]; then
-  echo "ERROR: --pull-secret <operator-managed GHCR secret> is required for candidate push" >&2
+  echo "ERROR: --pull-secret <registry secret> is required to push the requested image" >&2
   exit 2
 fi
 if ! [[ "$TIMEOUT_SECONDS" =~ ^[0-9]+$ ]]; then

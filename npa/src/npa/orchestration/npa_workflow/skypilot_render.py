@@ -1848,7 +1848,16 @@ def _inject_operator_registry_docker_secrets(
 
     server = image_id.removeprefix("docker:").split("/", 1)[0]
     creds_server = str(os.environ.get("SKYPILOT_DOCKER_SERVER") or "").strip()
+    if not creds_server:
+        return
     if creds_server != server:
+        if materialize:
+            raise NpaWorkflowRenderError(
+                f"registry mismatch: task image is in {server!r} but the Docker "
+                "credentials (SKYPILOT_DOCKER_SERVER) authenticate to "
+                f"{creds_server!r}. Set SKYPILOT_DOCKER_* for {server!r}, or "
+                f"select an image from {creds_server!r}."
+            )
         return
 
     from npa.orchestration.skypilot.registry_preflight import (
@@ -1856,10 +1865,13 @@ def _inject_operator_registry_docker_secrets(
     )
 
     username, password = resolve_registry_credentials(server)
-    if not materialize:
-        password = "<SKYPILOT_DOCKER_PASSWORD>"
-    elif not password:
+    if not username:
         return
+    if materialize:
+        if not password:
+            return
+    else:
+        password = "<SKYPILOT_DOCKER_PASSWORD>"
 
     secrets = doc.setdefault("secrets", {})
     if not isinstance(secrets, dict):

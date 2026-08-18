@@ -389,21 +389,26 @@ def _nebius_gpu_spec():
     return spec, build_plan(spec, run_id="demo")
 
 
-def test_public_or_other_registry_ignores_unrelated_credentials(
+def test_render_errors_on_registry_credentials_mismatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "test-token")
     monkeypatch.setenv("SKYPILOT_DOCKER_USERNAME", "iam")
     monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "registry.example")
     spec, plan = _nebius_gpu_spec()
-    rendered = render_skypilot_yaml(
-        spec,
-        plan,
-        run_id="demo",
-        options=SkypilotRenderOptions(registry="registry-us.example/reg"),
-    )
-    task = [doc for doc in yaml.safe_load_all(rendered) if doc is not None][1]
-    assert "secrets" not in task
+    with pytest.raises(NpaWorkflowRenderError) as exc_info:
+        render_skypilot_yaml(
+            spec,
+            plan,
+            run_id="demo",
+            options=SkypilotRenderOptions(registry="registry-us.example/reg"),
+        )
+
+    message = str(exc_info.value)
+    assert "registry mismatch" in message
+    assert "registry-us.example" in message
+    assert "registry.example" in message
+    assert "test-token" not in message
 
 
 def test_render_ok_when_registry_matches_credentials(
@@ -719,6 +724,30 @@ def test_plan_only_registry_secrets_use_placeholder(
     task = docs[1]
     assert task["secrets"]["SKYPILOT_DOCKER_PASSWORD"] == "<SKYPILOT_DOCKER_PASSWORD>"
     assert "live-should-not-appear" not in rendered
+
+
+def test_plan_only_anonymous_public_registry_omits_empty_username(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "ghcr.io")
+    monkeypatch.delenv("SKYPILOT_DOCKER_USERNAME", raising=False)
+    monkeypatch.delenv("SKYPILOT_DOCKER_PASSWORD", raising=False)
+    monkeypatch.delenv("NPA_REGISTRY_USERNAME", raising=False)
+    monkeypatch.delenv("NPA_REGISTRY_PASSWORD", raising=False)
+    spec, plan = _nebius_gpu_spec()
+
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="demo",
+        options=SkypilotRenderOptions(
+            registry="ghcr.io/nebius/nebius-physical-ai",
+            materialize_registry_secrets=False,
+        ),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc is not None][1]
+    assert "secrets" not in task
+    assert "SKYPILOT_DOCKER_USERNAME: ''" not in rendered
 
 
 def test_render_bdd100k_task_count() -> None:

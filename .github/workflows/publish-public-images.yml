@@ -70,16 +70,13 @@ jobs:
           python -m venv npa/.venv
           npa/.venv/bin/pip install -e "npa[dev]"
 
-      # Repository-variable fallbacks allow this branch implementation to be used through
-      # the workflow_dispatch file already present on origin/main. Remove one-off variables
-      # after the run; explicit inputs take precedence after this workflow merges.
       - name: Resolve immutable public development plan
         id: plan
         env:
-          TARGET: ${{ inputs.target || vars.NPA_PUBLIC_IMAGE_TARGET || 'ghcr.io/nebius/nebius-physical-ai' }}
-          DEVELOPMENT_SHA: ${{ inputs.development_sha || vars.NPA_DEVELOPMENT_SHA || github.sha }}
-          BUILD_TOOLS: ${{ inputs.build_development_tools || vars.NPA_BUILD_DEVELOPMENT_TOOLS }}
-          CLEANUP_TOOLS: ${{ inputs.cleanup_development_tools || vars.NPA_CLEANUP_DEVELOPMENT_TOOLS }}
+          TARGET: ${{ inputs.target || 'ghcr.io/nebius/nebius-physical-ai' }}
+          DEVELOPMENT_SHA: ${{ inputs.development_sha || github.sha }}
+          BUILD_TOOLS: ${{ inputs.build_development_tools }}
+          CLEANUP_TOOLS: ${{ inputs.cleanup_development_tools }}
         run: |
           NPA_PUBLIC_REGISTRY="$TARGET" npa/.venv/bin/python - <<'PY' >> "$GITHUB_OUTPUT"
           import json
@@ -509,7 +506,7 @@ jobs:
     env:
       TARGET: ${{ needs.resolve.outputs.target }}
       DEVELOPMENT_SHA: ${{ needs.resolve.outputs.development_sha }}
-      SELECTED_TOOLS: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
+      SELECTED_TOOLS: ${{ inputs.tool }}
       NPA_PUBLIC_REGISTRY: ${{ needs.resolve.outputs.target }}
     steps:
       - uses: actions/checkout@v6

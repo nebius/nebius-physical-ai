@@ -802,14 +802,14 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
         plan_only=True,
         plan_only_justification=(
-            "the zero-payload image is byte-scanned but has no accepted public "
-            "development digest or real GPU result yet"
+            "the shared submit harness cannot establish that its HF token has the "
+            "operator-specific gated Lightricks entitlement required at runtime"
         ),
         notes=(
-            "BYOF LTX-2.5 stays plan-only in the shared matrix until an entitled "
-            "operator validates an immutable public development digest. Both "
-            "fetches refuse without that operator's access to the gated "
-            "Lightricks/LTX-2.5 repository; test_ltx2_live_e2e.py owns the live path."
+            "The accepted zero-payload digest has passed a real RTX PRO 6000 "
+            "text-to-video run. This shared matrix remains plan-only because both "
+            "runtime fetches require the submitting operator's gated "
+            "Lightricks/LTX-2.5 entitlement; test_ltx2_live_e2e.py owns that live path."
         ),
     ),
     SubmitLiveCase(

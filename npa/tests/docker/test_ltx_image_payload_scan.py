@@ -124,6 +124,7 @@ class TestCleanImagePasses:
         assert scanner.scan(_tar(tmp_path / "r.tar", rootfs), CLEAN_CONFIG) == []
 
     def test_docker_save_scans_every_layer_and_history(self, tmp_path: Path) -> None:
+        assert scanner.docker_save_material is scanner.walker.docker_save_material
         archive = _docker_save(
             tmp_path / "image.tar",
             layers=[CLEAN_ROOTFS, {"workspace/.wh.deleted": b""}],

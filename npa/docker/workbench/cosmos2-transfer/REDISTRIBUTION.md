@@ -7,7 +7,7 @@ is mandatory before the packaging contract may classify the image `public`.
 
 ## Immutable provenance
 
-- Image tag: `npa-cosmos2-transfer:2.5.1-skypilot-v1-ghcr-20260817`
+- Image tag: `npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z`
 - Upstream source: `https://github.com/nvidia-cosmos/cosmos-transfer2.5`
 - Upstream revision: `67d56b7d550a3911024a32dc23ae0bae5258e633`
 - CUDA build base: `nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04`

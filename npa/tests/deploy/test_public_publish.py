@@ -41,7 +41,6 @@ from npa.deploy.images import (
 from npa.deploy.publish_public import (
     PublishItem,
     _pin_publication_sources as REAL_PUBLICATION_SOURCE_PIN,
-    _pin_wan_publication_sources as REAL_WAN_SOURCE_PIN,
     build_publish_plan,
     verify_bootstrap_publication_source as REAL_BOOTSTRAP_PUBLICATION_GATE,
     verify_gpu_accepted_publication_source as REAL_GPU_ACCEPTANCE_GATE,
@@ -67,11 +66,6 @@ def _avoid_registry_attestation_reads_in_unrelated_publish_tests(monkeypatch) ->
         publish_public,
         "verify_ltx_publication_source",
         lambda item: (True, "test fixture: LTX gate verified"),
-    )
-    monkeypatch.setattr(
-        publish_public,
-        "_pin_wan_publication_sources",
-        lambda plan: (list(plan), []),
     )
     monkeypatch.setattr(
         publish_public,
@@ -126,7 +120,7 @@ def test_wan_source_tag_is_frozen_before_preflight_and_copy(monkeypatch) -> None
     monkeypatch.setattr(
         publish_public, "_crane_digest", lambda ref, **_: (True, digest)
     )
-    plan, failures = REAL_WAN_SOURCE_PIN(
+    plan, failures = REAL_PUBLICATION_SOURCE_PIN(
         [
             PublishItem(
                 tool="wan2-2",
@@ -573,7 +567,32 @@ def test_public_release_override_is_treated_as_public(monkeypatch) -> None:
     """The configured GHCR release namespace is public; other GHCR packages are not."""
     monkeypatch.setenv("NPA_PUBLIC_REGISTRY", "ghcr.io/example/workbench")
     assert is_public_registry("ghcr.io/example/workbench")
+    assert is_public_registry(DEFAULT_PUBLIC_CONTAINER_REGISTRY)
     assert not is_public_registry("ghcr.io/example/private")
+
+
+def test_restricted_tool_refuses_default_official_namespace_after_override(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("NPA_PUBLIC_REGISTRY", "ghcr.io/example/workbench")
+    monkeypatch.setattr(images, "RESTRICTED_PUBLICATION_TOOLS", frozenset({"genesis"}))
+
+    with pytest.raises(ValueError, match="not publicly redistributable"):
+        container_image_for_tool(
+            "genesis", registry=DEFAULT_PUBLIC_CONTAINER_REGISTRY
+        )
+
+
+def test_restricted_tool_allows_deliberate_operator_ghcr_namespace(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("NPA_PUBLIC_REGISTRY", "ghcr.io/example/workbench")
+    monkeypatch.setattr(images, "RESTRICTED_PUBLICATION_TOOLS", frozenset({"genesis"}))
+
+    ref = container_image_for_tool(
+        "genesis", registry="ghcr.io/operator/build-your-own"
+    )
+    assert ref.startswith("ghcr.io/operator/build-your-own/npa-genesis:")
 
 
 def test_oss_tools_resolve_from_the_public_release_normally() -> None:

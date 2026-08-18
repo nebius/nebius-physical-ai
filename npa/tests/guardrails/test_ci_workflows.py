@@ -68,23 +68,5 @@ def test_advisory_mypy_is_manual_only() -> None:
 
     assert "mypy" not in lint["jobs"]
     assert typecheck["on"] == {"workflow_dispatch": ""}
-    assert set(typecheck["jobs"]) == {"mypy", "private-ghcr-handoff"}
-
-
-def test_private_ghcr_handoff_is_ephemeral_variable_gated_and_exact() -> None:
-    path = WORKFLOW_DIR / "typecheck.yml"
-    text = path.read_text(encoding="utf-8")
-    workflow = _load_workflow("typecheck.yml")
-    handoff = workflow["jobs"]["private-ghcr-handoff"]
-
-    assert workflow["permissions"]["packages"] == "read"
-    assert "NPA_GPU_VALIDATION_ENABLED == 'true'" in handoff["if"]
-    assert "self-hosted" in handoff["runs-on"]
-    assert "NPA_GPU_VALIDATION_RUNNER_LABEL" in text
-    assert "git -C \"$CHECKOUT\" rev-parse HEAD" in text
-    assert "git -C \"$CHECKOUT\" status --short" in text
-    assert "secrets.GITHUB_TOKEN" in text
-    assert "docker --config \"$HANDOFF\" login ghcr.io" in text
-    assert "trap cleanup EXIT INT TERM" in text
-    assert 'rm -f "$HANDOFF/config.json"' in text
-    assert "upload-artifact" not in str(handoff)
+    assert set(typecheck["jobs"]) == {"mypy"}
+    assert typecheck["permissions"] == {"contents": "read"}
