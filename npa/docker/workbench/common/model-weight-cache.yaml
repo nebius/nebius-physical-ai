@@ -32,19 +32,32 @@
 #   them or fail to attach. On Nebius mk8s that is `csi-mounted-fs-path-sc`, the
 #   same shared-filesystem class the Isaac cache uses.
 #
-#   It is not present on every cluster. A cluster provisioned with only the block
-#   driver (`compute.csi.nebius.com`) has no ReadWriteMany class at all, and this
-#   claim then sits Pending with `storageclass.storage.k8s.io "..." not found`
-#   while the pods that want it stay ContainerCreating. Look before applying:
+#   It is not present on every cluster, and -- this is the part that misleads --
+#   its presence proves nothing. Check that the driver is REGISTERED ON A NODE:
 #
-#     kubectl get storageclass
-#     kubectl get csidrivers
+#     kubectl get csinode -o custom-columns=NODE:.metadata.name,DRIVERS:.spec.drivers[*].name
 #
-#   If `mounted-fs-path.csi.nebius.ai` is missing, either add the shared
-#   filesystem to the cluster, or fall back to ReadWriteOnce: swap `accessModes`
-#   to `[ReadWriteOnce]` and `storageClassName` to the block class. That trades
-#   away multi-node use -- every consumer must then land on the volume's node --
-#   so it fits a single-GPU-node cluster and not a parallel workflow.
+#   `mounted-fs-path.csi.nebius.ai` must appear there. Two ways it does not:
+#
+#   * The class does not exist (a cluster with only `compute.csi.nebius.com`).
+#     The claim sits Pending on `storageclass.storage.k8s.io "..." not found`.
+#   * The class exists, is even the cluster default, and the node plugin is
+#     installed but refuses to start, because the node group has no Nebius shared
+#     filesystem attached. The plugin says so in its own log and is right to:
+#       Failed to initialize driver: mounted on ext4 fs, data loss may occur, aborting
+#     (`kubectl -n kube-system logs -l app=csi-mounted-fs-path-plugin
+#       -c mounted-fs-path-provisioner`). The claim then sits Pending on the far
+#     less pointed `Waiting for a volume to be created either by the external
+#     provisioner ... or manually by the system administrator`, and pods that want
+#     it stay ContainerCreating -- which reads like a scheduling problem.
+#
+#   Fix it by attaching a shared filesystem to the node group, or fall back to
+#   ReadWriteOnce: set `accessModes: [ReadWriteOnce]` and `storageClassName:
+#   compute-csi-default-sc`. Then pin the init Job below to the node the consumers
+#   will run on (`nodeSelector: {kubernetes.io/hostname: <node>}`), because a
+#   ReadWriteOnce volume binds to whichever node touches it first and every later
+#   consumer must land there too. That fits a single-GPU-node cluster and not a
+#   parallel workflow.
 #
 # SIZING
 #   40 Gi holds the Cosmos Transfer + guardrail set with room for one more model

@@ -42,15 +42,55 @@ cache](container-packaging.md#runtime-fetched-isaac-sim-why-the-isaac-images-are
 uses. The one-shot init Job exists because a freshly provisioned volume is owned by
 root while NPA never runs a workload container as UID 0.
 
-**Check the storage class before applying.** Not every mk8s cluster has the
-shared-filesystem driver: one provisioned with only `compute.csi.nebius.com` has no
-ReadWriteMany class, and the claim then sits `Pending` with
-`storageclass.storage.k8s.io "csi-mounted-fs-path-sc" not found` while the pods that
-want it stay `ContainerCreating` — a failure that reads like a scheduling problem
-rather than a storage one. On such a cluster either add the shared filesystem, or
-switch the manifest to `[ReadWriteOnce]` on the block class and accept that every
-consumer must land on the volume's node (fine for a single-GPU-node cluster, not for
-a parallel workflow).
+**Check the driver, not the storage class.** The class existing proves nothing — it
+can be present, and even be the cluster default, while no claim on it can ever bind.
+What discriminates is whether a node registers the driver:
+
+```bash
+kubectl get csinode -o custom-columns=NODE:.metadata.name,DRIVERS:.spec.drivers[*].name
+```
+
+`mounted-fs-path.csi.nebius.ai` has to be in that list. It is missing in two
+different situations, and only the first is obvious:
+
+- The class does not exist, because the cluster was provisioned with only
+  `compute.csi.nebius.com`. The claim sits `Pending` on
+  `storageclass.storage.k8s.io "csi-mounted-fs-path-sc" not found`.
+- The class exists and the node plugin is installed, but the plugin **deliberately
+  refuses to start** because the node group has no Nebius shared filesystem
+  attached: `Failed to initialize driver: mounted on ext4 fs, data loss may occur,
+  aborting`. Backing a supposedly-shared volume with node-local disk would lose
+  data, so aborting is correct. The claim then sits `Pending` on the far vaguer
+  `Waiting for a volume to be created either by the external provisioner ... or
+  manually by the system administrator`, and every pod that wants it stays
+  `ContainerCreating`, which reads like a scheduling problem. Confirm with:
+
+```bash
+kubectl -n kube-system logs -l app=csi-mounted-fs-path-plugin -c mounted-fs-path-provisioner --tail=5
+```
+
+Either attach a shared filesystem to the node group, or take the ReadWriteOnce
+fallback: `accessModes: [ReadWriteOnce]` with `storageClassName:
+compute-csi-default-sc`, and pin the init Job to the node your consumers will use,
+since a ReadWriteOnce volume binds to whichever node touches it first. That fits a
+single-GPU-node cluster, not a parallel workflow.
+
+### Concurrent consumers
+
+`huggingface_hub` serialises concurrent downloads with `filelock`, taking an
+advisory lock per blob under `<cache>/.locks`, so sharing one cache between stages
+that start together depends on locking working on the volume. Measured with four
+pods contending on one claim: locks were strictly mutually exclusive (each holder
+waited for the previous one, no overlap), four simultaneous `snapshot_download`
+calls for the same repository produced exactly one copy — 12 blobs, one snapshot,
+no leftover `.incomplete` files — and the result re-resolved offline afterwards with
+the expected content hash.
+
+That was on a block volume, so it covers the library's coordination but not
+cross-node lock propagation on the shared-filesystem class. If you run parallel
+waves across nodes against one claim, expect correctness (downloads are
+content-addressed and published by atomic rename) but treat "no duplicated
+download" as unverified.
 
 Every task NPA renders then gets the cache variables in its `envs` and the claim
 mounted at `/opt/npa-model-cache` in its `kubernetes.pod_config`. A spec that
