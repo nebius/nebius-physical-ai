@@ -36,6 +36,6 @@ fi
 env -u HF_TOKEN -u NGC_API_KEY -u NEBIUS_IAM_TOKEN docker buildx build "${ARGS[@]}" "$NPA_ROOT"
 if [[ "$PUSH" == 0 ]]; then
   "${NPA_ROOT}/.venv/bin/python" \
-    "${NPA_ROOT}/scripts/scan_image_alpamayo2_payload.py" --image "$IMAGE"
+    "${NPA_ROOT}/scripts/scan_image_alpamayo2_payload.py" "$IMAGE"
 fi
 echo "Built: $IMAGE"

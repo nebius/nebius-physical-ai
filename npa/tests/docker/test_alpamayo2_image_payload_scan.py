@@ -70,6 +70,16 @@ def test_clean_source_and_empty_cache_pass(tmp_path: Path) -> None:
     assert findings == []
 
 
+def test_symlink_under_runtime_tree_is_not_read_as_file(tmp_path: Path) -> None:
+    layer_path = tmp_path / "layer.tar"
+    with tarfile.open(layer_path, "w") as archive:
+        link = tarfile.TarInfo("opt/alpamayo2/.venv/bin/python")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "/usr/bin/python3.12"
+        archive.addfile(link)
+    assert scanner.scan_layer(layer_path, layer="layer.tar") == []
+
+
 def test_weight_and_dataset_payload_fail_even_in_lower_layer(tmp_path: Path) -> None:
     findings, _ = scanner.scan_saved_image(
         _saved_image(

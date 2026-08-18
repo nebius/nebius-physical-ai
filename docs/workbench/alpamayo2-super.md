@@ -61,7 +61,7 @@ credential is a release blocker.
 
 ```bash
 bash npa/docker/workbench/alpamayo2-super/build.sh
-npa/.venv/bin/python npa/scripts/scan_image_alpamayo2_payload.py --image npa-alpamayo2-super:0.1.0-cu128-unbuilt
+npa/.venv/bin/python npa/scripts/scan_image_alpamayo2_payload.py npa-alpamayo2-super:0.1.0-cu128-unbuilt
 ```
 
 Build and scan prove redistribution hygiene only. A release also requires real

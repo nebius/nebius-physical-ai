@@ -51,26 +51,31 @@ SECRET_CONTENT = (
 )
 
 
+def _scan_layer_archive(archive: tarfile.TarFile, *, layer: str) -> list[Finding]:
+    findings: list[Finding] = []
+    for member in archive:
+        name = member.name.lstrip("./")
+        if not member.isdir():
+            for kind, pattern in FORBIDDEN_PATHS:
+                if pattern.search(name):
+                    findings.append(Finding(kind, layer, name))
+            if (
+                member.isfile()
+                and name.startswith(("opt/alpamayo2/", "opt/npa-src/"))
+                and member.size <= 16 * 1024**2
+            ):
+                stream = archive.extractfile(member)
+                payload = stream.read() if stream is not None else b""
+                if any(pattern.search(payload) for pattern in SECRET_CONTENT):
+                    findings.append(Finding("credential_content", layer, name))
+    return findings
+
+
 def scan_layer(path: Path, *, layer: str) -> list[Finding]:
     """Scan one Docker layer including bytes later hidden by whiteouts."""
 
-    findings: list[Finding] = []
     with tarfile.open(path) as archive:
-        for member in archive:
-            name = member.name.lstrip("./")
-            if not member.isdir():
-                for kind, pattern in FORBIDDEN_PATHS:
-                    if pattern.search(name):
-                        findings.append(Finding(kind, layer, name))
-                if (
-                    name.startswith(("opt/alpamayo2/", "opt/npa-src/"))
-                    and member.size <= 16 * 1024**2
-                ):
-                    stream = archive.extractfile(member)
-                    payload = stream.read() if stream is not None else b""
-                    if any(pattern.search(payload) for pattern in SECRET_CONTENT):
-                        findings.append(Finding("credential_content", layer, name))
-    return findings
+        return _scan_layer_archive(archive, layer=layer)
 
 
 def scan_saved_image(image_tar: Path) -> tuple[list[Finding], int]:
@@ -78,16 +83,20 @@ def scan_saved_image(image_tar: Path) -> tuple[list[Finding], int]:
 
     findings: list[Finding] = []
     layers = 0
-    with tempfile.TemporaryDirectory(prefix="npa-alpamayo2-scan-") as scratch:
-        root = Path(scratch)
-        with tarfile.open(image_tar) as archive:
-            archive.extractall(root)
-        manifests = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    with tarfile.open(image_tar) as archive:
+        manifest_stream = archive.extractfile("manifest.json")
+        if manifest_stream is None:
+            raise RuntimeError("docker-save archive has no manifest.json")
+        manifests = json.loads(manifest_stream.read())
         if len(manifests) != 1:
             raise RuntimeError("expected exactly one image manifest")
         for relative in manifests[0]["Layers"]:
             layers += 1
-            findings.extend(scan_layer(root / relative, layer=relative))
+            layer_stream = archive.extractfile(relative)
+            if layer_stream is None:
+                raise RuntimeError(f"docker-save archive has no layer {relative}")
+            with tarfile.open(fileobj=layer_stream, mode="r|*") as layer_archive:
+                findings.extend(_scan_layer_archive(layer_archive, layer=relative))
     return findings, layers
 
 

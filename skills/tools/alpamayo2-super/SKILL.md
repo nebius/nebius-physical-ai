@@ -40,7 +40,7 @@ or populate `/workspace/.cache/huggingface` during a build.
 ```bash
 bash npa/docker/workbench/alpamayo2-super/build.sh
 npa/.venv/bin/python npa/scripts/scan_image_alpamayo2_payload.py \
-  --image <exact-local-image>
+  <exact-local-image>
 ```
 
 Require a complete clean scan over every layer for checkpoints, PhysicalAI-AV
