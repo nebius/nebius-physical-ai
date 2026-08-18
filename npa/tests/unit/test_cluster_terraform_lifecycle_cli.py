@@ -93,6 +93,14 @@ def test_run_stream_capture_output_is_visible_and_retained(capsys) -> None:
     assert "check-detail" in result.stderr
 
 
+def test_cluster_failure_message_redacts_provider_secret() -> None:
+    message = tf_mod._redacted_exception_message(
+        "cluster up failed", RuntimeError("iam_token=provider-secret")
+    )
+    assert "provider-secret" not in message
+    assert "<redacted>" in message
+
+
 def test_skypilot_smoke_scopes_check_and_uses_explicit_binary(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -55,6 +55,47 @@ def test_stream_capture_redacts_returned_output(capsys) -> None:
     assert "private-material" not in emitted
 
 
+def test_default_stream_redacts_environment_secret_and_private_key(capsys) -> None:
+    env = {**os.environ, "TF_VAR_iam_token": "environment-secret"}
+    result = run_stream(
+        [
+            "/bin/sh",
+            "-c",
+            "printf 'environment-secret\\n"
+            "-----BEGIN PRIVATE KEY-----\\nprivate-material\\n"
+            "-----END PRIVATE KEY-----\\n'",
+        ],
+        env=env,
+    )
+    assert result.stdout == ""
+    assert result.stderr == ""
+    emitted = capsys.readouterr().out
+    assert "environment-secret" not in emitted
+    assert "private-material" not in emitted
+    assert "<redacted>" in emitted
+    assert "<redacted-private-key>" in emitted
+
+
+def test_cancellable_default_stream_is_also_redacted(capsys) -> None:
+    env = {**os.environ, "TF_VAR_iam_token": "cancellable-secret"}
+    run_stream(
+        [
+            "/bin/sh",
+            "-c",
+            "printf 'cancellable-secret\\n"
+            "-----BEGIN PRIVATE KEY-----\\nprivate-material\\n"
+            "-----END PRIVATE KEY-----\\n'",
+        ],
+        env=env,
+        cancel=lambda: None,
+    )
+    emitted = capsys.readouterr().out
+    assert "cancellable-secret" not in emitted
+    assert "private-material" not in emitted
+    assert "<redacted>" in emitted
+    assert "<redacted-private-key>" in emitted
+
+
 def test_capture_normalizes_launch_and_timeout_errors(tmp_path: Path) -> None:
     with pytest.raises(BackendCommandError, match="Could not start executable"):
         run_capture([str(tmp_path / "absent")])

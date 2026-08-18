@@ -219,6 +219,9 @@ or provider/auth verification failure is partial cleanup and exits 2.
   operator's short-lived IAM token onto the VM (it would go stale). S3 access keys
   stay staged (object storage is HMAC-based; a bearer IAM token cannot replace
   them).
+- For human authentication on a remote operator/dev VM, use
+  `skills/atomic/vm-nebius-auth/SKILL.md`; the callback completes a CLI profile,
+  after which IAM mints access tokens. Never transfer those tokens through chat.
 - Nebius IAM registry tokens expire. If Kubernetes image pulls fail with `401
   Unauthorized` / `403 Forbidden` / `ErrImagePull`, refresh the registry pull
   secret in the namespace that owns the pod. **Do not hand-mint or hand-test the

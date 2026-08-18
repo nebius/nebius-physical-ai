@@ -175,88 +175,68 @@ def run_stream(
 ) -> subprocess.CompletedProcess[str]:
     sensitive_values = _sensitive_values(env)
     if cancel is None:
-        if not capture_output and output_sink is None:
-            try:
-                result = subprocess.run(
-                    args,
-                    cwd=cwd,
-                    env=env,
-                    text=True,
-                    timeout=timeout,
-                    check=False,
-                )
-            except OSError as exc:
-                raise BackendCommandError(
-                    f"Could not start executable {args[0]}: "
-                    f"{exc.strerror or type(exc).__name__}"
-                ) from exc
-            except subprocess.TimeoutExpired as exc:
-                raise BackendCommandError(
-                    f"Command timed out after {timeout} seconds: {_command_text(args)}"
-                ) from exc
-        else:
-            try:
-                process = subprocess.Popen(
-                    args,
-                    cwd=cwd,
-                    env=env,
-                    text=True,
-                    bufsize=1,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                )
-            except OSError as exc:
-                raise BackendCommandError(
-                    f"Could not start executable {args[0]}: "
-                    f"{exc.strerror or type(exc).__name__}"
-                ) from exc
-            captured_stdout: list[str] = []
-            captured_stderr: list[str] = []
-            write_lock = threading.Lock()
-
-            def drain(pipe, captured: list[str], target) -> None:
-                if pipe is None:
-                    return
-                redact_line = _stream_redactor(sensitive_values)
-                for line in iter(pipe.readline, ""):
-                    safe = redact_line(line)
-                    if capture_output:
-                        captured.append(safe)
-                    with write_lock:
-                        target.write(safe)
-                        target.flush()
-                pipe.close()
-
-            readers = [
-                threading.Thread(
-                    target=drain,
-                    args=(process.stdout, captured_stdout, output_sink or sys.stdout),
-                    daemon=True,
-                ),
-                threading.Thread(
-                    target=drain,
-                    args=(process.stderr, captured_stderr, output_sink or sys.stderr),
-                    daemon=True,
-                ),
-            ]
-            for reader in readers:
-                reader.start()
-            try:
-                returncode = process.wait(timeout=timeout)
-            except subprocess.TimeoutExpired as exc:
-                _stop_process(process)
-                raise BackendCommandError(
-                    f"Command timed out after {timeout} seconds: {_command_text(args)}"
-                ) from exc
-            finally:
-                for reader in readers:
-                    reader.join(timeout=5)
-            result = subprocess.CompletedProcess(
-                args=args,
-                returncode=returncode,
-                stdout="".join(captured_stdout),
-                stderr="".join(captured_stderr),
+        try:
+            process = subprocess.Popen(
+                args,
+                cwd=cwd,
+                env=env,
+                text=True,
+                bufsize=1,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
+        except OSError as exc:
+            raise BackendCommandError(
+                f"Could not start executable {args[0]}: "
+                f"{exc.strerror or type(exc).__name__}"
+            ) from exc
+        captured_stdout: list[str] = []
+        captured_stderr: list[str] = []
+        write_lock = threading.Lock()
+
+        def drain(pipe, captured: list[str], target) -> None:
+            if pipe is None:
+                return
+            redact_line = _stream_redactor(sensitive_values)
+            for line in iter(pipe.readline, ""):
+                safe = redact_line(line)
+                if capture_output:
+                    captured.append(safe)
+                with write_lock:
+                    target.write(safe)
+                    target.flush()
+            pipe.close()
+
+        readers = [
+            threading.Thread(
+                target=drain,
+                args=(process.stdout, captured_stdout, output_sink or sys.stdout),
+                daemon=True,
+            ),
+            threading.Thread(
+                target=drain,
+                args=(process.stderr, captured_stderr, output_sink or sys.stderr),
+                daemon=True,
+            ),
+        ]
+        for reader in readers:
+            reader.start()
+        try:
+            returncode = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            _stop_process(process)
+            raise BackendCommandError(
+                f"Command timed out after {timeout} seconds: {_command_text(args)}"
+            ) from exc
+        finally:
+            for reader in readers:
+                reader.join(timeout=5)
+        result = subprocess.CompletedProcess(
+            args=args,
+            returncode=returncode,
+            stdout="".join(captured_stdout),
+            stderr="".join(captured_stderr),
+        )
         if result.returncode != 0:
             detail = "\n".join(
                 part for part in (result.stderr or "", result.stdout or "") if part
@@ -274,12 +254,8 @@ def run_stream(
             cwd=cwd,
             env=env,
             text=True,
-            stdout=subprocess.PIPE
-            if capture_output or output_sink is not None
-            else None,
-            stderr=subprocess.PIPE
-            if capture_output or output_sink is not None
-            else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
     except OSError as exc:
         raise BackendCommandError(
@@ -287,37 +263,35 @@ def run_stream(
         ) from exc
     captured_stdout: list[str] = []
     captured_stderr: list[str] = []
-    readers: list[threading.Thread] = []
-    if capture_output or output_sink is not None:
-        write_lock = threading.Lock()
+    write_lock = threading.Lock()
 
-        def drain_cancel(pipe, captured: list[str], target) -> None:
-            if pipe is None:
-                return
-            redact_line = _stream_redactor(sensitive_values)
-            for line in iter(pipe.readline, ""):
-                safe = redact_line(line)
-                if capture_output:
-                    captured.append(safe)
-                with write_lock:
-                    target.write(safe)
-                    target.flush()
-            pipe.close()
+    def drain_cancel(pipe, captured: list[str], target) -> None:
+        if pipe is None:
+            return
+        redact_line = _stream_redactor(sensitive_values)
+        for line in iter(pipe.readline, ""):
+            safe = redact_line(line)
+            if capture_output:
+                captured.append(safe)
+            with write_lock:
+                target.write(safe)
+                target.flush()
+        pipe.close()
 
-        readers = [
-            threading.Thread(
-                target=drain_cancel,
-                args=(process.stdout, captured_stdout, output_sink or sys.stdout),
-                daemon=True,
-            ),
-            threading.Thread(
-                target=drain_cancel,
-                args=(process.stderr, captured_stderr, output_sink or sys.stderr),
-                daemon=True,
-            ),
-        ]
-        for reader in readers:
-            reader.start()
+    readers = [
+        threading.Thread(
+            target=drain_cancel,
+            args=(process.stdout, captured_stdout, output_sink or sys.stdout),
+            daemon=True,
+        ),
+        threading.Thread(
+            target=drain_cancel,
+            args=(process.stderr, captured_stderr, output_sink or sys.stderr),
+            daemon=True,
+        ),
+    ]
+    for reader in readers:
+        reader.start()
     deadline = None if timeout is None else time.monotonic() + timeout
     try:
         while process.poll() is None:

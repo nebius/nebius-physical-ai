@@ -80,6 +80,12 @@ _GIB = 1024**3
 _MIN_TERRAFORM_VERSION = (1, 12, 0)
 
 
+def _redacted_exception_message(prefix: str, exc: BaseException) -> str:
+    from npa.clients.nebius import redact_nebius_output
+
+    return redact_nebius_output(f"{prefix}: {type(exc).__name__}: {exc}")
+
+
 def _transactional_cluster_up(function):
     signature = inspect.signature(function)
 
@@ -156,7 +162,9 @@ def _transactional_cluster_up(function):
             try:
                 result = function(*args, **kwargs)
             except BaseException as exc:
-                typer.echo(f"cluster up failed: {type(exc).__name__}: {exc}", err=True)
+                typer.echo(
+                    _redacted_exception_message("cluster up failed", exc), err=True
+                )
                 operation.record_failure(exc)
                 for candidate in (
                     tf_dir / "errored.tfstate",
@@ -853,7 +861,9 @@ def up_cmd(
             )
         except BaseException as exc:
             watcher.stop()
-            typer.echo(f"terraform apply error: {exc}", err=True)
+            typer.echo(
+                _redacted_exception_message("terraform apply error", exc), err=True
+            )
             operation = current_operation()
             rolled_back = False
             if operation is not None:
