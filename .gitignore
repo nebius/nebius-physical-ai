@@ -60,8 +60,10 @@ build/
 venv/
 # Also match a venv symlinked in from elsewhere: a trailing slash matches only
 # directories, so `npa/.venv -> /path/to/venv` would otherwise be committable.
-.venv
-venv
+# Scoped to the two paths the repo actually uses, rather than any `venv` at any
+# depth.
+/.venv
+/npa/.venv
 .coverage
 htmlcov/
 .pytest_cache/

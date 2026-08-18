@@ -25,12 +25,18 @@ NPA_BIN="${NPA_BIN:-npa}"
 # must show the stable public command name rather than leaking that checkout.
 NPA_DISPLAY_BIN="${NPA_DOCS_DISPLAY_BIN:-$(basename "$NPA_BIN")}"
 
+# Typer/Rich reads COLUMNS when rendering help. Do not inherit a shell or tmux
+# width: the generated Markdown must be identical in CI and an interactive TTY.
+# Set before the probe below so one width governs every invocation.
+DOCS_COLUMNS="${NPA_DOCS_COLUMNS:-200}"
+export NO_COLOR=1
+
 # Every help fetch below tolerates a non-zero exit, because a leaf command may
 # legitimately fail --help. That tolerance used to hide a missing interpreter
 # entirely: with no `npa` on PATH the walk documented nothing, `--check` reported
 # every page as drifted, and an in-place run deleted docs/cli/ and wrote nothing
 # back. Resolve the binary once, up front, and fail with a usable message.
-if ! env COLUMNS=200 NO_COLOR=1 "$NPA_BIN" --help >/dev/null 2>&1; then
+if ! env COLUMNS="$DOCS_COLUMNS" NO_COLOR=1 "$NPA_BIN" --help >/dev/null 2>&1; then
   cat >&2 <<EOF
 ERROR: cannot run '${NPA_BIN}'.
 
@@ -46,10 +52,6 @@ console script:
 EOF
   exit 1
 fi
-# Typer/Rich reads COLUMNS when rendering help. Do not inherit a shell or tmux
-# width: the generated Markdown must be identical in CI and an interactive TTY.
-DOCS_COLUMNS="${NPA_DOCS_COLUMNS:-200}"
-export NO_COLOR=1
 
 run_with_docs_width() {
   # Bash treats COLUMNS specially and can reset an exported value to the TTY's
@@ -234,14 +236,17 @@ for group in $groups; do
   fi
 done
 
-python3 scripts/_generate_docs_index.py "$DOCS_DIR/" > "$DOCS_DIR/README.md"
-
-# Belt and braces behind the empty-groups guard: never install a tree with no pages.
+# Belt and braces behind the empty-groups guard: never install a tree with no
+# pages. This has to run BEFORE the index is generated -- the index is itself a
+# .md file in this directory, so checking afterwards always finds one page and the
+# guard never fires.
 staged_pages=("$DOCS_DIR"/*.md)
 if [ ! -e "${staged_pages[0]}" ]; then
   echo "ERROR: generated no pages for groups: $groups. docs/cli was left untouched." >&2
   exit 1
 fi
+
+python3 scripts/_generate_docs_index.py "$DOCS_DIR/" > "$DOCS_DIR/README.md"
 
 if [ "$CHECK" -eq 1 ]; then
   if ! diff -ruN docs/cli "$DOCS_DIR" > "$tmp" 2>&1; then

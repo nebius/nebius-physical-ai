@@ -46,7 +46,8 @@ help:
 	@echo "  format           Ruff autofix + format"
 	@echo "  docs             Regenerate the CLI reference under docs/cli/"
 	@echo "  docs-check       Fail if docs/cli/ has drifted from 'npa --help'"
-	@echo "  check            Everything the PR gates block on: lint, docs-check, test"
+	@echo "  check            The reproducible PR gates: lint, docs-check, test"
+	@echo "                   (no coverage floor; see CONTRIBUTING.md)"
 	@echo "Interpreter: $(PYTHON)"
 	@echo "Override it with: make test PYTHON=/path/to/venv/bin/python"
 

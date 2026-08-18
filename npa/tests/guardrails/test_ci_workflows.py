@@ -102,7 +102,18 @@ def _make_prereqs(target: str) -> list[str]:
 
 def _step(workflow: str, job: str, name_fragment: str) -> dict:
     steps = _load_workflow(workflow)["jobs"][job]["steps"]
-    return next(step for step in steps if name_fragment in step.get("name", ""))
+    matches = [step for step in steps if name_fragment in step.get("name", "")]
+    # A renamed step should read as a renamed step, not as StopIteration from a
+    # generator, in a file whose whole job is to explain what drifted.
+    assert matches, (
+        f"no step matching {name_fragment!r} in {workflow} job {job!r}; "
+        f"steps are {[step.get('name') for step in steps]}"
+    )
+    assert len(matches) == 1, (
+        f"{name_fragment!r} matches {len(matches)} steps in {workflow} job {job!r}: "
+        f"{[step.get('name') for step in matches]}"
+    )
+    return matches[0]
 
 
 def test_ci_lints_the_same_tree_as_make_lint() -> None:
@@ -154,7 +165,9 @@ def _npa_bin_chosen_by_docs_target(python: str) -> str:
         text=True,
         check=True,
     ).stdout
-    line = next(line for line in recipe.splitlines() if "scripts/build_docs.sh" in line)
+    lines = [line for line in recipe.splitlines() if "scripts/build_docs.sh" in line]
+    assert lines, f"docs-check recipe no longer invokes build_docs.sh:\n{recipe}"
+    line = lines[0]
     assignment = line.split("bash scripts/build_docs.sh", 1)[0]
     # `printenv` rather than `printf "$NPA_BIN"`: the recipe sets NPA_BIN as a
     # command prefix, which reaches the child's environment but not an argument the
