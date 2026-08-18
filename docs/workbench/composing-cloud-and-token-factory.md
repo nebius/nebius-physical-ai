@@ -225,7 +225,7 @@ workflow.submit(
     "npa/workflows/workbench/npa-workflows/tokenfactory-rollout-judge-combo.yaml",
     run_id="rollout-judge",
     var=[
-        "NPA_LEROBOT_IMAGE=cr.eu-north1.nebius.cloud/<registry>/npa-lerobot:0.5.1",
+        "NPA_LEROBOT_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-lerobot:0.5.1",
         "ROLLOUTS_URI=s3://your-bucket/tokenfactory/run-1/rollouts/",
         "JUDGE_URI=s3://your-bucket/tokenfactory/run-1/vlm-judge/",
     ],

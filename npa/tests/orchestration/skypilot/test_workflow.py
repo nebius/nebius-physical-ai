@@ -1072,8 +1072,8 @@ def test_launch_failure_pod_config_kubernetes_bug_gets_a_fix_hint() -> None:
 def test_submission_dir_and_secret_files_are_owner_only(tmp_path) -> None:
     """The submission dir + its secret-bearing files must not be world-readable.
 
-    The rendered task YAML / generated SkyPilot config can carry a registry IAM
-    token (SKYPILOT_DOCKER_PASSWORD) and S3 creds; write_text/mkdir honor the
+    The rendered task YAML / generated SkyPilot config can carry an operator's
+    registry password and S3 creds; write_text/mkdir honor the
     umask, so submit tightens them explicitly (security bug 9).
     """
     import shutil

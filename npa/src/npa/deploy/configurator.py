@@ -201,7 +201,6 @@ def deploy_workbench_container(
     command: str = "-lc 'tail -f /dev/null'",
     ssh_user: str = "ubuntu",
     gpu: bool = True,
-    registry_token: str = "",
 ) -> None:
     """Install Docker and run a Workbench image as a long-lived container."""
     install_container_runtime(ssh, ssh_user=ssh_user, gpu=gpu)
@@ -212,14 +211,6 @@ def deploy_workbench_container(
             f"sudo mkdir -p {dirs} && sudo chown -R "
             f"{shlex.quote(ssh_user)}:{shlex.quote(ssh_user)} {dirs}"
         )
-
-    registry = image_ref.split("/", 1)[0]
-    if registry_token:
-        login_cmd = (
-            f"printf %s {shlex.quote(registry_token)} | "
-            f"sudo docker login {shlex.quote(registry)} -u iam --password-stdin || true"
-        )
-        ssh.run_or_raise(f"bash -lc {shlex.quote(login_cmd)}", label="Docker registry login")
 
     ssh.run_or_raise(
         f"sudo docker pull {shlex.quote(image_ref)}", label="Docker image pull"
@@ -353,7 +344,6 @@ def deploy_lerobot_container(
     server_config: dict[str, Any],
     ssh_user: str = "ubuntu",
     container_name: str = "npa-lerobot",
-    registry_token: str = "",
 ) -> None:
     """Install Docker/NVIDIA runtime and run the LeRobot server container."""
     install_cmd = f"""
@@ -406,14 +396,6 @@ sudo usermod -aG docker {shlex.quote(ssh_user)} || true
     ssh.run_or_raise(
         f"bash -lc {shlex.quote(install_cmd)}", label="LeRobot runtime install"
     )
-
-    if registry_token:
-        registry = image_ref.split("/", 1)[0]
-        login_cmd = (
-            f"printf %s {shlex.quote(registry_token)} | "
-            f"sudo docker login {shlex.quote(registry)} -u iam --password-stdin || true"
-        )
-        ssh.run_or_raise(f"bash -lc {shlex.quote(login_cmd)}", label="Docker registry login")
 
     ssh.run_or_raise(
         f"sudo docker pull {shlex.quote(image_ref)}", label="Docker image pull"

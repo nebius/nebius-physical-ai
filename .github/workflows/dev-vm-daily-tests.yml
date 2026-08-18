@@ -155,7 +155,7 @@ jobs:
           NPA_E2E_AGENT_NAME: ${{ vars.NPA_E2E_AGENT_NAME }}
           NPA_E2E_CONTROLLER_TRANSACTION_RUN_ID: ${{ vars.NPA_E2E_CONTROLLER_TRANSACTION_RUN_ID }}
           # Registry id enables the daily all-image reachability check on the dev VM.
-          NPA_REGISTRY_ID: ${{ vars.NPA_REGISTRY_ID }}
+          NPA_REGISTRY: ${{ vars.NPA_REGISTRY }}
           NPA_DAILY_E2E_SHARDS: ${{ vars.NPA_DAILY_E2E_SHARDS }}
           # Set the NPA_DAILY_ENABLE_GPU repo variable to "1" to have the daily
           # e2e-daily tier also run ONE rotating, self-cleaning real-GPU workflow
@@ -173,7 +173,7 @@ jobs:
                       "NPA_E2E_CLUSTER_CONTEXT=$NPA_E2E_CLUSTER_CONTEXT" \
                       "NPA_E2E_AGENT_NAME=$NPA_E2E_AGENT_NAME" \
                       "NPA_E2E_CONTROLLER_TRANSACTION_RUN_ID=$NPA_E2E_CONTROLLER_TRANSACTION_RUN_ID" \
-                      "NPA_REGISTRY_ID=$NPA_REGISTRY_ID" \
+                      "NPA_REGISTRY=$NPA_REGISTRY" \
                       "NPA_DAILY_E2E_SHARDS=$NPA_DAILY_E2E_SHARDS" \
                       "NPA_DAILY_ENABLE_GPU=$NPA_DAILY_ENABLE_GPU"; do
             name="${pair%%=*}"; val="${pair#*=}"
@@ -198,7 +198,7 @@ jobs:
             NPA_E2E_CLUSTER_CONTEXT='${NPA_E2E_CLUSTER_CONTEXT}' \
             NPA_E2E_AGENT_NAME='${NPA_E2E_AGENT_NAME}' \
             NPA_E2E_CONTROLLER_TRANSACTION_RUN_ID='${NPA_E2E_CONTROLLER_TRANSACTION_RUN_ID}' \
-            NPA_REGISTRY_ID='${NPA_REGISTRY_ID}' \
+            NPA_REGISTRY='${NPA_REGISTRY}' \
             NPA_DAILY_E2E_SHARDS='${NPA_DAILY_E2E_SHARDS}' \
             NPA_DAILY_ENABLE_GPU='${NPA_DAILY_ENABLE_GPU}' \
             bash /tmp/npa-dev-vm-daily-tests.sh '${TIER}' '${REF}'"

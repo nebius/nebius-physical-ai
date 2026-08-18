@@ -600,15 +600,11 @@ first GPU submit.
   *requestable quantity per node*: SkyPilot puts all GPUs of one task on one
   node, so `NAME:2` cannot be scheduled on a fleet of 1-GPU nodes no matter how
   many nodes you add.
-- **Registry pull secrets expire silently.** A `401` on image pull usually
-  means the `npa-nebius-registry` pull secret needs refreshing; a `403` means the
-  credentials are valid but not permitted to pull that repository — and being able
-  to list its tags does not rule that out. Kubernetes retries image pulls forever,
-  so either one leaves the job in `PENDING`/`ImagePullBackOff` instead of failing.
-  Run `npa workbench workflow preflight-images <spec.yaml>` to reproduce the pull
-  with the run's own credentials before spending GPU time (`submit` runs it by
-  default). See
-  [known-footguns.md § Registry Pull Secret](docs/workbench/troubleshooting/known-footguns.md#registry-pull-secret-expires-silently).
+- **Public NPA releases need no pull secret.** A `401`/`403` from an optional
+  operator-owned BYOF registry means that registry's explicitly configured
+  credential is missing or lacks access. Run
+  `npa workbench workflow preflight-images <spec.yaml>` before spending GPU time
+  (`submit` runs it by default).
 - **Bootstrap SkyPilot with `npa skypilot bootstrap`.** It pins a kubernetes
   client SkyPilot can actually use; a newer one makes the managed-jobs controller
   reject every `pod_config` and retry forever, which looks like a hung submit.
@@ -683,10 +679,6 @@ npa storage service-account reconcile --project <alias> --id <exact-id> \
   --reason '<legacy NPA setup evidence>' --attest-npa-created --yes
 npa storage service-account delete --project <alias> --dry-run
 npa storage service-account delete --project <alias> --yes
-# If validation created a project-local registry, delete its exact artifact DAG
-# and registry using the immutable ID/name recorded at creation:
-npa registry delete --project <alias> --project-id <project-id> \
-  --tenant-id <tenant-id> --id <registry-id> --name <registry-name> --yes
 # NPA-created disposable projects may contain one provider-created default
 # topology. This command refuses any extra, shared, or non-default topology:
 npa network delete-project-default --project <alias> --project-id <project-id> \
@@ -900,7 +892,7 @@ npa workbench workflow plan-spec     npa/workflows/workbench/npa-workflows/vlm-e
 
 # Launch on Nebius (after npa configure)
 npa workbench workflow submit npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml \
-  --run-id demo --registry cr.eu-north1.nebius.cloud/<your-registry-id>
+  --run-id demo --registry ghcr.io/nebius/nebius-physical-ai
 
 # Inspect the plan without launching
 npa workbench workflow submit npa/workflows/workbench/npa-workflows/token-factory-caption.yaml \
@@ -930,41 +922,34 @@ Architecture context:
 
 ## Container registry
 
-Every Workbench tool ships as a container image in a Nebius container registry —
-a primary in `eu-north1` and a mirror in `us-central1`. Resolve the registry
-through `npa configure` or `npa.deploy.images`; never hardcode a registry id.
-The publicly redistributable subset is also mirrored to GHCR for anonymous
-external pulls.
+Official redistributable Workbench images ship in the public GHCR namespace
+`ghcr.io/nebius/nebius-physical-ai`. Resolve the registry through
+`npa configure` or `npa.deploy.images`; restricted images remain build-your-own
+in an operator-controlled registry.
 
 ```bash
-# Log Docker into the registry (tokens expire; a 401 on pull means refresh)
-REGISTRY_HOST=cr.eu-north1.nebius.cloud npa/scripts/nebius_registry_docker_login.sh
-
-# Build and push an image with the canonical tag for its tool
-npa/docker/workbench/lerobot/build.sh --registry "$NPA_REGISTRY" --push
-
-# Pull a published image without Nebius registry credentials
+# Pull a published image anonymously
 export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
 docker pull "${NPA_REGISTRY}/npa-retargeting:0.1.1"
 ```
 
 | Reference | What it tells you |
 | --- | --- |
-| [Public Workbench image catalog](docs/workbench/container-image-catalog.md) | Exact GHCR image names, published tags, pull command, build dates, and intentional exclusions |
-| [Image ↔ GPU compatibility matrix](docs/workbench/image-gpu-compatibility-matrix.md) | Every image against every Nebius GPU platform, and which cells are verified on real hardware |
-| [Container packaging contract](docs/workbench/container-packaging.md) | Tiers, non-root users, ports, and redistribution classes each image must satisfy |
-| [Container golden evals](docs/security/container-golden-evals.md) | The real capability test each image must pass — not an import probe |
-| [Blackwell datacenter compatibility](docs/workbench/blackwell-datacenter-image-compatibility.md) | B200 / B300 build, tag, and validation runbook |
-| [SONIC image catalog](docs/workbench/sonic-image-catalog.md) | Manifest-driven SONIC variant routing per GPU |
-| [Image reproducibility](docs/security/image-reproducibility.md) | The two-tag strategy (`cuda12`, `cuda13-b300`) and how tags are pinned |
+| Nebius CLI version is rejected | Install tested version `0.12.254`; `0.12.227` is also accepted with a warning. |
+| Unsure whether credentials are ready | Run `npa workbench health preflight`. Add `--offline` to check presence only or `--json` for structured output. |
+| Choosing a GPU | Check the [image/GPU compatibility matrix](docs/workbench/image-gpu-compatibility-matrix.md). Isaac Lab requires an RT-core GPU such as L40S or RTX Pro 6000. |
+| `401` while pulling a private image | Refresh the explicit exact-host GHCR credential or operator-managed pull secret. Public GHCR releases need neither; see the [image catalog](docs/workbench/container-image-catalog.md). |
+| Token Factory authentication fails | Use `NEBIUS_TOKEN_FACTORY_KEY`; Token Factory keys start with `v1.` and are not Nebius IAM tokens. |
+| `status` reaches a stale endpoint | Pass `-p PROJECT -n NAME` to the tool's `status` command. |
+| Submitting a multi-stage job | Use `npa workbench workflow submit`; avoid hand-editing scheduler YAML. |
 
 Every image declares a `redistribution` class in the packaging contract, which
-decides whether it may leave the owning org. Public images may be mirrored to
-GHCR; restricted images remain build-your-own in an operator-owned registry.
-`cosmos3-serving` is currently restricted because its pinned base embeds a
-runtime under NVIDIA's Deep Learning Container License. Set the class when you
-add an image — the packaging-contract test fails a build that bakes a
-non-redistributable runtime while claiming `public`.
+decides whether it may enter the official public GHCR namespace. Restricted
+images remain build-your-own in an operator-owned registry. `cosmos3-serving`
+is a public zero-payload bootstrap: its pinned vLLM-Omni/CUDA serving closure,
+models, and guardrails are fetched directly for the operator at runtime after
+the required access and terms checks. The packaging and built-image gates fail
+if the former NVIDIA container runtime or any gated payload returns.
 
 ---
 

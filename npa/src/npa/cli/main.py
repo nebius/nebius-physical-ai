@@ -30,7 +30,6 @@ from npa.cli.fleet import app as fleet_app
 from npa.cli.network import app as network_app
 from npa.cli.provision import app as provision_app
 from npa.cli.rerun import app as rerun_app
-from npa.cli.registry import app as registry_app
 from npa.cli.skypilot import app as skypilot_app
 from npa.cli.cleanup import cleanup_cmd as _cleanup_cmd
 from npa.cli.uninstall import uninstall_cmd as _uninstall_cmd
@@ -127,7 +126,6 @@ app.add_typer(fleet_app, name="fleet", rich_help_panel="Platform utilities")
 app.add_typer(network_app, name="network", rich_help_panel="Platform utilities")
 app.add_typer(provision_app, name="provision-if-absent", rich_help_panel="Setup")
 app.add_typer(rerun_app, name="rerun", rich_help_panel="Platform utilities")
-app.add_typer(registry_app, name="registry", rich_help_panel="Platform utilities")
 app.add_typer(skypilot_app, name="skypilot", rich_help_panel="Platform utilities")
 app.add_typer(storage_app, name="storage", rich_help_panel="Platform utilities")
 app.command("cleanup", rich_help_panel="Platform utilities")(_cleanup_cmd)
@@ -508,35 +506,11 @@ def _list_nebius_profiles(
     return profiles
 
 
-def _region_from_registry_host(registry: str) -> str:
-    """Best-effort region from a container registry host such as cr.eu-north1.nebius.cloud."""
-
-    host = (registry or "").split("/", 1)[0].strip()
-    parts = host.split(".")
-    if len(parts) >= 4 and parts[0] == "cr" and parts[2] == "nebius":
-        return parts[1]
-    return ""
-
-
 def _preferred_container_registry(nebius_client, project_id: str) -> str:
-    """Return the container registry to configure for *project_id*.
-
-    Prefer a discovered registry ONLY when it is in ``DEFAULT_REGION``
-    (eu-north1), where the first-party workbench images live; otherwise use the
-    first-party default. A project whose only registry is in another region
-    (e.g. a us-central1-only project) does NOT hold the ``npa-*`` workbench
-    images, so pinning that project-local registry would break later workbench
-    deploys with image-not-found. Both configure paths (manual entry and project
-    discovery) share this so they never diverge on which registry gets saved.
-    """
+    """Return the public GHCR release channel for newly configured projects."""
     from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY
 
-    try:
-        discovered = nebius_client.discover_container_registry(project_id)
-    except Exception:  # noqa: BLE001 - registry discovery is best-effort
-        discovered = ""
-    if discovered and _region_from_registry_host(discovered) == DEFAULT_REGION:
-        return discovered
+    del nebius_client, project_id
     return DEFAULT_CONTAINER_REGISTRY
 
 
@@ -1065,8 +1039,8 @@ def _select_discovered_projects(
 ) -> tuple[list[tuple[str, dict[str, str]]], str]:
     """Present discovered projects and return ``([(alias, stanza)...], default_alias)``.
 
-    Auto-derives tenant/project/region from each pick and best-effort discovers
-    the container registry. npa is multi-project: the user may select several.
+    Auto-derives tenant/project/region from each pick and records the public
+    GHCR release registry. npa is multi-project: the user may select several.
     Aliases reuse the stanza a project already has in ``~/.npa/config.yaml`` so a
     re-run updates it in place instead of stranding the workbench endpoints and
     Terraform state saved under the old alias.
@@ -1109,7 +1083,7 @@ def _select_discovered_projects(
             f"({region})  [{proj['id']}]"
         )
     # Default to the current project (never 'all', which would configure every
-    # discovered project and run per-project registry discovery).
+    # discovered project).
     default_pick = "1"
     for i, proj in enumerate(shown, start=1):
         if proj["id"] == current_project_id:
@@ -1137,9 +1111,8 @@ def _select_discovered_projects(
             used_aliases,
         )
         used_aliases.add(alias)
-        # Prefer an eu-north1 registry (workbench images live there); a
-        # project-local registry in another region lacks the npa-* images and
-        # would break later workbench deploys. Mirrors the manual-entry path.
+        # NPA releases are global GHCR packages; project region affects compute
+        # placement only.
         registry = _preferred_container_registry(nebius_client, proj["id"])
         stanza = {
             "project_id": proj["id"],
@@ -1437,26 +1410,14 @@ def _run_interactive_configure(
             "Nebius project id", default=str(existing_stanza.get("project_id", ""))
         )
         existing_registry = str(existing_stanza.get("container_registry", ""))
-        # The main NPA registry (workbench images) is in eu-north1, and registries
-        # are readable cross-region, so default to eu-north1: keep a saved registry,
-        # else use the project's own eu-north1 registry if it has one, else the
-        # eu-north1 first-party default. A discovered non-eu-north1 registry is not
-        # auto-selected as the default (the operator can still type it). Only hit
-        # Nebius for discovery when nothing is saved (idempotent re-runs stay offline).
+        # Keep an explicit operator override; otherwise use the public GHCR
+        # release namespace. Registry selection is independent of compute region.
         if existing_registry:
             registry_default = existing_registry
         else:
             registry_default = _preferred_container_registry(nebius_client, project_id)
-        region_default = (
-            str(existing_stanza.get("region", ""))
-            or _region_from_registry_host(registry_default)
-            or DEFAULT_REGION
-        )
+        region_default = str(existing_stanza.get("region", "")) or DEFAULT_REGION
         region = ask("Region", default=region_default)
-        # The registry host region is only used as a sensible default guess for the
-        # region above; it is not a constraint. Container registries are readable
-        # cross-region and a project can hold registries in several regions, so we do
-        # not warn when the chosen region differs from the registry's region.
         registry = ask("Container registry", default=registry_default)
 
     operation = current_operation()

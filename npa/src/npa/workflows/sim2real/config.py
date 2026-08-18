@@ -389,7 +389,7 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
         k8s_image_pull_secrets=str(
             overrides.get("k8s_image_pull_secrets")
             or os.environ.get("NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS")
-            or "agent-sa,ngc-nvcr-imagepullsecret,npa-nebius-registry"
+            or "ngc-nvcr-imagepullsecret"
         ),
         k8s_env_secret_names=str(
             overrides.get("k8s_env_secret_names")

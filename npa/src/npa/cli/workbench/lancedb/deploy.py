@@ -258,14 +258,11 @@ def deploy_cmd(
 
     if runtime == LanceDBRuntime.kubernetes:
         from npa.workbench.service_kubernetes import (
-            MANAGED_PULL_SECRET,
             ServiceKubernetesError,
             apply,
             build_manifests,
             destroy as destroy_kubernetes,
-            ensure_registry_secret,
             ensure_storage_secret,
-            registry_host,
             service_endpoint,
             wait_available,
         )
@@ -297,12 +294,9 @@ def deploy_cmd(
         secret_name = ""
         if resolved_storage.startswith("s3://"):
             secret_name = f"{service_name}-storage"
-        # A private registry needs a pull secret the kubelet can use on every restart, not just
-        # at deploy time. Mint one rather than borrowing a shared secret whose token expires.
+        # Public releases need no pull secret. Private images use an explicitly
+        # pre-created, operator-managed Kubernetes secret.
         pull_secrets = tuple(ref.strip() for ref in pull_secret.split(",") if ref.strip())
-        host = registry_host(image_ref)
-        if host and not pull_secrets:
-            pull_secrets = (MANAGED_PULL_SECRET,)
         manifests = build_manifests(
             name=service_name,
             namespace=target_namespace,
@@ -342,8 +336,6 @@ def deploy_cmd(
                 "--auth-mode none for a ClusterIP service that is not reachable off-cluster."
             )
         try:
-            if host and pull_secrets == (MANAGED_PULL_SECRET,):
-                ensure_registry_secret(MANAGED_PULL_SECRET, target_namespace, host)
             if secret_name:
                 ensure_storage_secret(secret_name, target_namespace, dict(storage_env()))
             apply(manifests)

@@ -238,7 +238,7 @@ run: echo second
         core.submit_yaml(source)
 
 
-def test_submit_yaml_injects_nebius_registry_login(
+def test_submit_yaml_injects_explicit_exact_host_registry_login(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -252,16 +252,15 @@ name: private-nebius
 resources:
   cloud: nebius
   accelerators: L40S:1
-  image_id: docker:cr.eu-north1.nebius.cloud/example-registry/npa-isaac-lab:tag
+  image_id: docker:registry.example/example-registry/npa-isaac-lab:tag
 run: echo should-not-submit
 """,
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(
-        "npa.workflows.sim2real.registry_auth.mint_nebius_registry_token",
-        lambda: "token-abc",
-    )
+    monkeypatch.setenv("NPA_REGISTRY_SERVER", "registry.example")
+    monkeypatch.setenv("NPA_REGISTRY_USERNAME", "operator")
+    monkeypatch.setenv("NPA_REGISTRY_PASSWORD", "token-abc")
 
     def fake_run(cmd, **kwargs):
         if cmd == [str(sky_python), "-c", "import sky; print(getattr(sky, '__version__', 'unknown'))"]:
@@ -270,8 +269,8 @@ run: echo should-not-submit
         payload = json.loads(kwargs["input"])
         task = yaml.safe_load(Path(payload["yaml_path"]).read_text(encoding="utf-8"))
         assert task["secrets"] == {
-            "SKYPILOT_DOCKER_SERVER": "cr.eu-north1.nebius.cloud",
-            "SKYPILOT_DOCKER_USERNAME": "iam",
+            "SKYPILOT_DOCKER_SERVER": "registry.example",
+            "SKYPILOT_DOCKER_USERNAME": "operator",
             "SKYPILOT_DOCKER_PASSWORD": "token-abc",
         }
         return core.subprocess.CompletedProcess(
@@ -290,3 +289,38 @@ run: echo should-not-submit
     )
 
     assert handle.job_id == "456"
+
+
+def test_burst_public_image_ignores_unrelated_private_registry_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_REGISTRY_SERVER", "registry.example")
+    monkeypatch.setenv("NPA_REGISTRY_USERNAME", "operator")
+    monkeypatch.setenv("NPA_REGISTRY_PASSWORD", "private-token")
+    task = {
+        "resources": {
+            "image_id": (
+                "docker:ghcr.io/nebius/nebius-physical-ai/npa-cosmos:1.0.0"
+            )
+        }
+    }
+
+    core._inject_registry_login(task)
+
+    assert "secrets" not in task
+
+
+def test_burst_private_image_with_mismatched_registry_credentials_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_REGISTRY_SERVER", "registry.example")
+    monkeypatch.setenv("NPA_REGISTRY_USERNAME", "operator")
+    monkeypatch.setenv("NPA_REGISTRY_PASSWORD", "private-token")
+    task = {
+        "resources": {
+            "image_id": "docker:registry-other.example/example/npa-cosmos:1.0.0"
+        }
+    }
+
+    with pytest.raises(BurstConfigError, match="registry mismatch"):
+        core._inject_registry_login(task)

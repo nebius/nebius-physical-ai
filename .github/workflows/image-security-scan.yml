@@ -20,13 +20,14 @@ on:
       omniverse_payload_scan_image:
         description: >-
           Image reference to scan for a baked NVIDIA Omniverse Kit payload, e.g.
-          cr.eu-north1.nebius.cloud/<registry-id>/npa-isaac-lab:2.3.2.post1. Needs pull
-          access to that registry. Leave blank to skip.
+          ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab:dev-<full-git-sha>.
+          The reference must be anonymously readable. Leave blank to skip.
         required: false
         default: ""
 
 permissions:
   contents: read
+  packages: read
   security-events: write
 
 concurrency:
@@ -100,7 +101,7 @@ jobs:
       - name: Install crane
         uses: imjasonh/setup-crane@v0.4
 
-      - name: Scan the built image for a baked Omniverse Kit payload
+      - name: Scan the public development image for a baked Omniverse Kit payload
         run: |
           python npa/scripts/scan_image_omniverse_payload.py \
             "${{ inputs.omniverse_payload_scan_image }}" \

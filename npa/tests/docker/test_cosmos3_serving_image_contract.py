@@ -1,28 +1,14 @@
-"""Guard the npa-cosmos3-serving image's contract and its preflight behavior.
-
-Two halves, and the second is the point of the file.
-
-The static half is the same shape as ``test_cosmos3_image_contract.py``: the
-image is redistributable only because it carries no model weights, and the base
-runtime is pinned by digest because every measured claim in the docs was taken
-against that digest.
-
-The behavioral half **runs the real entrypoint**. It puts a recording ``vllm``
-and a configurable ``nvidia-smi`` on PATH and reads the argv the script actually
-built, so the preflight branches and the serve-command assembly are executed
-rather than restated. Asserting against a copy of the expected command would
-pass while the script produced something else, which is exactly the gap the
-review of the access-preflight change called out.
-"""
+"""Static and behavioral guards for the public OSS Cosmos3 serving image."""
 
 from __future__ import annotations
 
 import importlib.util
-import os
+import json
 import re
-import shutil
 import subprocess
 import sys
+import tarfile
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -33,29 +19,19 @@ NPA_ROOT = REPO_ROOT / "npa"
 IMAGE_DIR = NPA_ROOT / "docker/workbench/cosmos3-serving"
 DOCKERFILE = IMAGE_DIR / "Dockerfile"
 ENTRYPOINT = IMAGE_DIR / "entrypoint.sh"
-VERIFY_ENV = IMAGE_DIR / "verify_env.py"
+ACCESS_PREFLIGHT = IMAGE_DIR / "access_preflight.py"
+LOCK = IMAGE_DIR / "requirements.lock"
+RUNTIME_BOOTSTRAP = IMAGE_DIR / "runtime_bootstrap.sh"
+SERVING_SMOKE = IMAGE_DIR / "smoke_serving.sh"
+GUARDRAIL_PREP = IMAGE_DIR / "prepare_guardrail_runtime.py"
+HF_SNAPSHOT_PIN = IMAGE_DIR / "hf_snapshot_pin.py"
 CONTRACT = NPA_ROOT / "docker/workbench/packaging-contract.yaml"
-
-# The digest the serving numbers in docs/workbench/cosmos3-super-serving.md were
-# measured against.
-PINNED_DIGEST = "sha256:6d2630c7d637b699557573f2c3fee8df5d4d0cd718977aa22549ed6a6ef30587"
-
-# Anything that would pull weight bytes into a build layer.
-WEIGHT_FETCH_PATTERNS = (
-    r"hf\s+download",
-    r"huggingface-cli\s+download",
-    r"snapshot_download",
-    r"git\s+lfs\s+pull",
-)
+SOURCE_REVISION = "a4ea67a21b20054dacc6e83952f9bd407e8ee4e7"
+SOURCE_SHA256 = "2a4ca4d3d83417a88717767fcdfdc5cb214200c6957d26d70625f17f58954800"
 
 
-def _load_verify_env():
-    """Import the in-image build gate so its constants cannot drift from these tests.
-
-    Bytecode writing is suppressed for the duration: the gate lives in the image's
-    build context, and a ``__pycache__`` left beside it would ship into a layer.
-    """
-    spec = importlib.util.spec_from_file_location("cosmos3_serving_verify_env", VERIFY_ENV)
+def _module(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     previous = sys.dont_write_bytecode
@@ -67,257 +43,285 @@ def _load_verify_env():
     return module
 
 
-def _dockerfile_instructions() -> str:
-    lines = [
+def _instructions() -> str:
+    return "\n".join(
         line
         for line in DOCKERFILE.read_text(encoding="utf-8").splitlines()
         if not line.lstrip().startswith("#")
-    ]
-    return "\n".join(lines)
-
-
-# ---------------------------------------------------------------------------
-# Static contract
-# ---------------------------------------------------------------------------
-
-
-def test_image_files_exist_and_the_entrypoint_is_executable() -> None:
-    assert DOCKERFILE.is_file()
-    assert ENTRYPOINT.is_file()
-    assert VERIFY_ENV.is_file()
-    assert os.access(ENTRYPOINT, os.X_OK), "entrypoint.sh must be committed executable"
-
-
-def test_base_runtime_is_pinned_by_digest() -> None:
-    instructions = _dockerfile_instructions()
-
-    assert PINNED_DIGEST in instructions, (
-        "the base runtime must stay pinned to the digest the serving numbers were "
-        "measured against; `vllm/vllm-omni:cosmos3` is a moving tag"
-    )
-    assert re.search(r"ARG BASE_IMAGE=\S+@sha256:[0-9a-f]{64}", instructions)
-
-
-def test_dockerfile_never_downloads_model_weights() -> None:
-    instructions = _dockerfile_instructions()
-
-    for pattern in WEIGHT_FETCH_PATTERNS:
-        assert not re.search(pattern, instructions, flags=re.IGNORECASE), (
-            f"npa-cosmos3-serving Dockerfile matches {pattern!r}: weights must "
-            "download at runtime with the operator's own credentials, never into a layer."
-        )
-
-
-def test_dockerfile_runs_the_build_gate_and_drops_to_a_non_root_user() -> None:
-    instructions = _dockerfile_instructions()
-
-    assert "verify_env.py" in instructions, "the build must run its own gate"
-    users = re.findall(r"(?im)^\s*USER\s+(\S+)\s*$", instructions)
-    assert users and users[-1] == "ubuntu"
-    assert "EXPOSE 8000" in instructions
-
-
-def test_dockerfile_sets_the_xet_workaround_this_base_image_needs() -> None:
-    """Setting it here is correct precisely because the pins are baked in.
-
-    `npa workbench cosmos3 generate` only warns, because it runs in whatever
-    environment the operator built. This Dockerfile chose the base image, so it
-    owns the pins, and verify_env.py fails the build once a bump moves off them.
-    """
-    instructions = _dockerfile_instructions()
-
-    assert "HF_HUB_DISABLE_XET=1" in instructions
-    verify_env = _load_verify_env()
-    assert verify_env.XET_AFFECTED_PINS == {"hf-xet": "1.5.1", "huggingface_hub": "1.23.0"}
-
-
-def test_healthcheck_allows_for_the_real_startup_time() -> None:
-    """HSDP-sharded configs need minutes. A tight probe restarts healthy boots."""
-    instructions = _dockerfile_instructions()
-
-    match = re.search(r"--start-period=(\d+)s", instructions)
-    assert match, "the healthcheck must declare a start-period"
-    assert int(match.group(1)) >= 900, (
-        "start-period must cover a cold-cache startup: HSDP configs reached ready "
-        "in roughly 280-290 s warm and about 320 s longer cold"
     )
 
 
-def test_the_image_is_contracted_restricted_and_not_publicly_resolved() -> None:
-    """The thin wrapper does not satisfy the pinned base's distribution terms."""
-    from npa.deploy.images import CONTAINER_IMAGE_NAMES, OMNIVERSE_RESTRICTED_TOOLS
+def test_source_base_and_dependency_closure_are_immutable() -> None:
+    text = _instructions()
+    assert re.search(r"ARG BASE_IMAGE=python:[^\s]+@sha256:[0-9a-f]{64}", text)
+    assert "ARG DEBIAN_SNAPSHOT=20260817T000000Z" in text
+    assert "gcc g++ libgl1" in text
+    assert "libgnutls30 libssl3 openssl" in text
+    assert "snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}" in text
+    assert SOURCE_REVISION in text
+    assert SOURCE_SHA256 in text
+    assert "e0262be9d8f7586bc24c069a2aed2b665bdff266" in text
+    assert "cf03c0395fac8c4de386c0bdab12cc4fc8d66362" in text
+    bootstrap = RUNTIME_BOOTSTRAP.read_text(encoding="utf-8")
+    assert "sha256sum -c" in bootstrap
+    assert "--require-hashes" in bootstrap
+    assert 'python -m venv "${VENV}"' in bootstrap
+    assert 'mv "${work}/venv" "${VENV}"' not in bootstrap
+    assert "prepare_guardrail_runtime.py" in bootstrap
+    assert "sitecustomize.py" in bootstrap
+    assert "vllm/vllm-omni" not in text
+    assert "nvcr.io" not in text
+    assert "vllm==0.26.0" in LOCK.read_text(encoding="utf-8")
+    assert "torch==2.11.0" in LOCK.read_text(encoding="utf-8")
+    assert "COPY --chmod=0644" in text
+    assert "su -s /bin/sh -c 'test -r" in text
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "FROM vllm/vllm-omni:cosmos3",
+        "FROM nvcr.io/nvidia/pytorch:latest",
+        "RUN hf download nvidia/Cosmos3-Super",
+        "ENV HF_TOKEN=secret",
+        "ENV HF_HUB_DISABLE_XET=1",
+        "ENV ACCEPT_EULA=YES",
+    ],
+)
+def test_forbidden_vendor_payload_and_build_fetch_mutations(mutation: str) -> None:
+    forbidden = re.compile(
+        r"(?i)(vllm/vllm-omni|nvcr\.io|hf\s+download|HF_TOKEN=|"
+        r"HF_HUB_DISABLE_XET|ACCEPT_EULA=YES)"
+    )
+    assert forbidden.search(mutation)
+    assert not forbidden.search(_instructions())
+
+
+def test_public_contract_nonroot_health_and_inventory() -> None:
+    from npa.deploy.images import (
+        CONTAINER_IMAGE_NAMES,
+        GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS,
+        RESTRICTED_PUBLICATION_TOOLS,
+        UNVALIDATED_PUBLICATION_TOOLS,
+    )
 
     contract = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
-    assert contract["images"]["cosmos3-serving"]["redistribution"] == "restricted"
-    assert contract["images"]["cosmos3-serving"]["tier"] == "service"
-    assert "cosmos3-serving" not in CONTAINER_IMAGE_NAMES
-    assert "cosmos3-serving" in OMNIVERSE_RESTRICTED_TOOLS
+    entry = contract["images"]["cosmos3-serving"]
+    assert entry["redistribution"] == "public"
+    assert entry["tier"] == "service"
+    assert CONTAINER_IMAGE_NAMES["cosmos3-serving"] == "npa-cosmos3-serving"
+    assert "cosmos3-serving" not in RESTRICTED_PUBLICATION_TOOLS
+    assert "cosmos3-serving" not in UNVALIDATED_PUBLICATION_TOOLS
+    assert GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS["cosmos3-serving"] == (
+        "sha256:3342bbe44bd1c00ebf05ab4c9d7286058a94bb5ce90b49b164b23604d3acf180"
+    )
+    users = re.findall(r"(?im)^USER\s+(\S+)$", _instructions())
+    assert users[-1] == "ubuntu"
+    assert "--start-period=1800s" in _instructions()
 
 
-# ---------------------------------------------------------------------------
-# Behavioral: run the real entrypoint
-# ---------------------------------------------------------------------------
+def test_runtime_bootstrap_requires_operator_license_acceptance() -> None:
+    bootstrap = RUNTIME_BOOTSTRAP.read_text(encoding="utf-8")
+    assert "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE" in bootstrap
+    assert "cuda-bindings" in bootstrap
+    assert "exit 78" in bootstrap
+    assert "ACCEPT_NVIDIA_SOFTWARE_LICENSE=YES" not in _instructions()
 
-RECORDING_VLLM = """#!/usr/bin/env bash
-printf '%s\\n' "$*" > "${NPA_TEST_ARGV_FILE}"
-exit 0
-"""
+    env = {"PATH": "/usr/bin:/bin"}
+    refused = subprocess.run(
+        ["bash", RUNTIME_BOOTSTRAP],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert refused.returncode == 78
+    assert "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE=YES" in refused.stderr
 
-FAKE_NVIDIA_SMI = """#!/usr/bin/env bash
-seq 0 $(( {gpus} - 1 ))
-"""
+
+def test_access_preflight_requires_token_and_probes_both_repositories(
+    monkeypatch,
+) -> None:
+    module = _module("cosmos3_access_preflight", ACCESS_PREFLIGHT)
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.delenv("HUGGING_FACE_HUB_TOKEN", raising=False)
+    assert module.main() == 2
+
+    probed: list[str] = []
+
+    def model_info(repo_id, _token):
+        probed.append(repo_id)
+        return {"sha": "abc123"}
+
+    monkeypatch.setenv("HF_TOKEN", "test-only-placeholder")
+    monkeypatch.setattr(module, "_model_info", model_info)
+    assert module.main() == 0
+    assert probed == ["nvidia/Cosmos3-Super", "nvidia/Cosmos-1.0-Guardrail"]
+
+
+def test_access_preflight_preserves_repository_path_separator(monkeypatch) -> None:
+    module = _module("cosmos3_access_preflight_url", ACCESS_PREFLIGHT)
+    requested: list[str] = []
+
+    class Response(BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+    def urlopen(request, timeout):
+        requested.append(request.full_url)
+        assert timeout == 30
+        return Response(b'{"sha":"abc123"}')
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", urlopen)
+    assert module._model_info("nvidia/Cosmos3-Super", "placeholder") == {
+        "sha": "abc123"
+    }
+    assert requested == ["https://huggingface.co/api/models/nvidia/Cosmos3-Super"]
+
+
+def test_access_preflight_refuses_pinned_revision_drift(monkeypatch) -> None:
+    module = _module("cosmos3_access_preflight_revision", ACCESS_PREFLIGHT)
+    monkeypatch.setenv("HF_TOKEN", "test-only-placeholder")
+    monkeypatch.setenv("NPA_COSMOS3_SERVE_MODEL_REVISION", "expected-model")
+    monkeypatch.setattr(module, "_model_info", lambda *_: {"sha": "other-model"})
+    assert module.main() == 5
+
+
+def test_guardrail_runtime_materializes_snapshot_symlinks(tmp_path: Path) -> None:
+    module = _module("cosmos3_guardrail_prep", GUARDRAIL_PREP)
+    blob = tmp_path / "blob"
+    blob.write_text("runtime-only data", encoding="utf-8")
+    blocklist = tmp_path / "blocklist"
+    blocklist.mkdir()
+    link = blocklist / "data.txt"
+    link.symlink_to(blob)
+
+    assert module.materialize_symlinks(blocklist) == 1
+    assert not link.is_symlink()
+    assert link.read_text(encoding="utf-8") == "runtime-only data"
+    assert module.materialize_symlinks(blocklist) == 0
+    assert link.is_file()
+    assert not link.is_symlink()
+    pin = HF_SNAPSHOT_PIN.read_text(encoding="utf-8")
+    assert "NPA_COSMOS3_SERVE_GUARDRAIL_REVISION" in pin
+    assert "refusing unpinned guardrail revision" in pin
 
 
 @pytest.fixture
-def harness(tmp_path):
-    """PATH with a recording ``vllm``, plus a knob for the visible GPU count."""
-    if shutil.which("bash") is None:  # pragma: no cover - bash is present everywhere we run
-        pytest.skip("bash is required to execute the entrypoint")
-
+def harness(tmp_path: Path):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    argv_file = tmp_path / "argv.txt"
-
-    vllm = bin_dir / "vllm"
-    vllm.write_text(RECORDING_VLLM, encoding="utf-8")
-    vllm.chmod(0o755)
-
-    cache = tmp_path / "hf-cache"
+    argv_file = tmp_path / "argv"
+    (bin_dir / "python").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    (bin_dir / "nvidia-smi").write_text(
+        "#!/bin/sh\nseq 0 $(( ${NPA_TEST_GPUS:-8} - 1 ))\n", encoding="utf-8"
+    )
+    (bin_dir / "vllm").write_text(
+        f"#!/bin/sh\nprintf '%s\\n' \"$*\" > {argv_file}\n", encoding="utf-8"
+    )
+    for executable in bin_dir.iterdir():
+        executable.chmod(0o755)
+    cache = tmp_path / "cache"
     cache.mkdir()
 
-    def run(gpus: int | None = 8, **env_overrides):
-        if gpus is not None:
-            smi = bin_dir / "nvidia-smi"
-            smi.write_text(FAKE_NVIDIA_SMI.format(gpus=gpus), encoding="utf-8")
-            smi.chmod(0o755)
-        else:
-            (bin_dir / "nvidia-smi").unlink(missing_ok=True)
-
+    def run(gpus: int = 8, **overrides):
         env = {
             "PATH": f"{bin_dir}:/usr/bin:/bin",
-            "HOME": str(tmp_path),
             "HF_HOME": str(cache),
-            "NPA_TEST_ARGV_FILE": str(argv_file),
+            "HF_TOKEN": "test-only-placeholder",
+            "NPA_TEST_GPUS": str(gpus),
         }
-        env.update({key: str(value) for key, value in env_overrides.items()})
+        env.update({key: str(value) for key, value in overrides.items()})
         argv_file.unlink(missing_ok=True)
         result = subprocess.run(
-            [str(ENTRYPOINT)],
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=60,
-            check=False,
+            [ENTRYPOINT], capture_output=True, text=True, env=env, check=False
         )
-        served = argv_file.read_text(encoding="utf-8").strip() if argv_file.exists() else None
-        return result, served
+        command = argv_file.read_text().strip() if argv_file.exists() else ""
+        return result, command
 
     return run
 
 
-def test_entrypoint_execs_the_pinned_eight_gpu_config(harness) -> None:
-    result, served = harness(gpus=8, HF_TOKEN="hf_fake_token_for_test")
-
+def test_entrypoint_enforces_eight_gpus_and_guardrails_on(harness) -> None:
+    result, command = harness(8)
     assert result.returncode == 0, result.stderr
-    assert served is not None, "the entrypoint never reached vllm"
-    verify_env = _load_verify_env()
-    for flag in verify_env.REQUIRED_SERVE_FLAGS:
-        assert flag in served, f"{flag!r} missing from: {served}"
-    assert served.startswith("serve nvidia/Cosmos3-Super")
-    # Guardrails default to on, which means the flag that disables them is absent.
-    assert "--no-guardrails" not in served
-    assert "--init-timeout 1800" in served
+    assert command.startswith("serve nvidia/Cosmos3-Super --revision ")
+    assert " --omni " in command
+    assert "--cfg-parallel-size 2" in command
+    assert "--ulysses-degree 4" in command
+    assert "--hsdp-shard-size 8" in command
+    assert "--no-guardrails" not in command
 
-
-def test_guardrails_off_passes_the_flag_and_needs_no_token(harness) -> None:
-    result, served = harness(gpus=8, NPA_COSMOS3_SERVE_GUARDRAILS="off")
-
-    assert result.returncode == 0, result.stderr
-    assert served is not None
-    assert "--no-guardrails" in served
-
-
-def test_guardrails_on_without_a_token_fails_before_the_server_starts(harness) -> None:
-    result, served = harness(gpus=8)
-
+    result, command = harness(7)
     assert result.returncode != 0
-    assert served is None, "the server must not start when the guardrail fetch will 401"
-    assert "nvidia/Cosmos-1.0-Guardrail" in result.stderr
-    # The 401-vs-403 split is what tells an operator whether the token or the
-    # license acceptance is the problem, so the message has to carry both.
-    assert "401" in result.stderr and "403" in result.stderr
+    assert not command
+    assert "needs 8 GPUs, found 7" in result.stderr
 
 
-def test_a_gpu_count_that_does_not_fit_the_pinned_config_fails_fast(harness) -> None:
-    result, served = harness(gpus=4, HF_TOKEN="hf_fake_token_for_test")
+def test_serving_smoke_requires_real_video_and_release_topology() -> None:
+    smoke = SERVING_SMOKE.read_text(encoding="utf-8")
+    assert "/v1/videos/sync" in smoke
+    assert "ffprobe" in smoke
+    assert 'codec_name") != "h264"' in smoke
+    assert 'result["guardrails"] != "on"' in smoke
+    assert 'result["gpu_count"] != 8' in smoke
 
-    assert result.returncode != 0
-    assert served is None
-    assert "found 4" in result.stderr
-    assert "8 GPUs" in result.stderr
+
+def _docker_save(path: Path, *, layer_paths: list[str], created_by: str = "") -> None:
+    layer_data = BytesIO()
+    with tarfile.open(fileobj=layer_data, mode="w") as layer:
+        for name in layer_paths:
+            info = tarfile.TarInfo(name)
+            info.size = 0
+            layer.addfile(info, BytesIO())
+    config = json.dumps(
+        {"config": {}, "history": [{"created_by": created_by}]}
+    ).encode()
+    manifest = json.dumps(
+        [
+            {
+                "Config": "config.json",
+                "RepoTags": ["test:latest"],
+                "Layers": ["layer.tar"],
+            }
+        ]
+    ).encode()
+    with tarfile.open(path, mode="w") as outer:
+        for name, data in (
+            ("config.json", config),
+            ("manifest.json", manifest),
+            ("layer.tar", layer_data.getvalue()),
+        ):
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            outer.addfile(info, BytesIO(data))
 
 
-def test_a_matching_override_lets_a_different_gpu_count_through(harness) -> None:
-    result, served = harness(
-        gpus=4,
-        HF_TOKEN="hf_fake_token_for_test",
-        NPA_COSMOS3_SERVE_GPUS=4,
-        NPA_COSMOS3_SERVE_EXTRA_ARGS="--tensor-parallel-size 4",
+def test_built_payload_scanner_rejects_old_vendor_base_and_license(
+    tmp_path: Path,
+) -> None:
+    scanner = _module(
+        "cosmos3_payload_scanner",
+        NPA_ROOT / "scripts/scan_image_cosmos3_serving_payload.py",
     )
+    clean = tmp_path / "clean.tar"
+    _docker_save(clean, layer_paths=["usr/local/bin/curl"])
+    assert scanner.scan_tarball(clean)["verdict"] == "clean"
 
-    assert result.returncode == 0, result.stderr
-    assert served is not None
-    assert "--tensor-parallel-size 4" in served
-
-
-def test_missing_nvidia_smi_fails_rather_than_starting_on_cpu(harness) -> None:
-    result, served = harness(gpus=None, HF_TOKEN="hf_fake_token_for_test")
-
-    assert result.returncode != 0
-    assert served is None
-    assert "nvidia-smi not found" in result.stderr
-
-
-def test_an_unwritable_cache_mount_is_caught_before_the_download(harness, tmp_path) -> None:
-    if os.geteuid() == 0:  # pragma: no cover - root ignores the mode bits
-        pytest.skip("root can write to a read-only directory")
-    locked = tmp_path / "locked-cache"
-    locked.mkdir()
-    locked.chmod(0o500)
-    try:
-        result, served = harness(gpus=8, HF_TOKEN="hf_fake_token_for_test", HF_HOME=str(locked))
-    finally:
-        locked.chmod(0o700)
-
-    assert result.returncode != 0
-    assert served is None
-    assert "not writable" in result.stderr
-
-
-def test_an_invalid_guardrail_value_is_rejected_rather_than_treated_as_off(harness) -> None:
-    result, served = harness(gpus=8, NPA_COSMOS3_SERVE_GUARDRAILS="false")
-
-    assert result.returncode != 0
-    assert served is None
-    assert "must be 'on' or 'off'" in result.stderr
-
-
-def test_dry_run_prints_the_command_without_starting_the_server(harness) -> None:
-    result, served = harness(
-        gpus=None,
-        NPA_COSMOS3_SERVE_GUARDRAILS="off",
-        NPA_COSMOS3_SERVE_DRY_RUN=1,
-        NPA_COSMOS3_SERVE_SKIP_GPU_CHECK=1,
+    dirty = tmp_path / "dirty.tar"
+    _docker_save(
+        dirty,
+        layer_paths=["NGC-DL-CONTAINER-LICENSE"],
+        created_by="FROM vllm/vllm-omni:cosmos3",
     )
+    assert scanner.scan_tarball(dirty)["verdict"] == "restricted-payload-detected"
 
-    assert result.returncode == 0, result.stderr
-    assert served is None, "a dry run must not exec the server"
-    assert "vllm serve nvidia/Cosmos3-Super" in result.stdout
-
-
-def test_the_token_never_reaches_the_logs(harness) -> None:
-    secret = "hf_do_not_log_this_value"
-    result, _ = harness(gpus=8, HF_TOKEN=secret)
-
-    assert secret not in result.stdout
-    assert secret not in result.stderr
+    baked_closure = tmp_path / "baked-closure.tar"
+    _docker_save(baked_closure, layer_paths=["usr/local/bin/vllm"])
+    assert (
+        scanner.scan_tarball(baked_closure)["verdict"]
+        == "restricted-payload-detected"
+    )

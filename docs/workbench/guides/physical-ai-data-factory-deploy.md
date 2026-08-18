@@ -79,7 +79,7 @@ python -m pip install -e npa
 # S3 keys, Token Factory key, and optional HF/NGC tokens under ~/.npa/.
 npa configure
 eval "$(npa configure --show --env)"   # emits non-secret NPA_* assignments only
-# Force the public mirror after eval; configure --env may restore a saved
+# Force the public release channel after eval; configure --env may restore a saved
 # project registry.
 export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
 
@@ -110,7 +110,7 @@ npa workbench workflow plan-spec "$SPEC" --run-id "$RUN_ID" \
   --var bucket="$BUCKET" \
   --var n_augmentations=1 --json
 
-# Proves manifest pulls. GHCR is anonymous; for a private Nebius registry,
+# Proves manifest pulls. Public GHCR is anonymous; for a private registry,
 # submit also refreshes the Kubernetes imagePullSecret before launch.
 npa workbench workflow preflight-images "$SPEC" \
   --project "$PROJECT" --registry "$REGISTRY"
@@ -145,7 +145,7 @@ The sequence has five fail-fast gates:
 | Credentials | S3 and Token Factory checks pass |
 | Model terms | Cosmos Transfer reports `HF access ok` |
 | Cluster | one CPU node fits the controller plus a PAIDF CPU stage; one GPU node fits Transfer |
-| Images | every manifest is pullable; private Nebius credentials refresh `npa-nebius-registry` |
+| Images | every public GHCR release is anonymously pullable; private overrides have explicit exact-host credentials |
 | Submit secrets | Token Factory, S3, and `HF_TOKEN` are forwarded without entering YAML |
 
 Stop at the first nonzero command; it prints the remedy. Detailed recovery is
@@ -372,7 +372,7 @@ export HF_TOKEN=<...>                # optional
 
 ### 2b. `~/.npa/config.yaml` (machine-managed project config)
 
-Project/tenant/registry/cluster metadata (IDs are yours; nothing is baked into
+Project/tenant/cluster metadata (IDs are yours; nothing is baked into
 the repo):
 
 ```yaml
@@ -382,7 +382,7 @@ projects:
     project_id: <nebius-project-id>
     tenant_id: <nebius-tenant-id>
     region: <region>                # e.g. us-central1
-    registry_id: <container-registry-id>
+    container_registry: ghcr.io/nebius/nebius-physical-ai
     storage:
       checkpoint_bucket: s3://<your-artifact-bucket>/checkpoints/
       endpoint_url: https://storage.<region>.nebius.cloud
@@ -423,9 +423,10 @@ The documented path uses on-demand nodes. If that capacity is unavailable,
 replace `--on-demand` with `--preemptible`; Nebius may reclaim a preemptible GPU
 node mid-stage, so rely on PAIDF's durable S3 manifests and resume the run.
 
-The container registry must be reachable for the workbench images. Point
-`NPA_REGISTRY` (or the project `registry_id`) at your registry, e.g.
-`cr.<region>.nebius.cloud/<registry-id>`.
+Public workbench releases resolve anonymously from
+`ghcr.io/nebius/nebius-physical-ai`. Point `NPA_REGISTRY` (or the project
+`container_registry`) at a full operator registry prefix only when overriding
+that channel.
 
 ---
 
@@ -516,15 +517,15 @@ NPA_AGENT_CHAT_LIVE=1 npa agent verify-live --project <alias> --name <agent-name
 
 ---
 
-## 4. Choose the public mirror or build into a private registry
+## 4. Choose the public release channel or an operator-owned registry
 
 Three stages pull a workbench image: `augment` needs `npa-cosmos2-transfer`,
 `evaluate` needs `npa-cosmos-evaluator`, and `curate` needs `npa-cosmos-curate`.
 
-The public `ghcr.io/nebius/nebius-physical-ai` mirror is anonymously pullable.
-A new private project registry starts empty: `npa configure` selects or creates
-it, but does not mirror images into it. Pick one path and preflight the same
-registry submit will use:
+The supported NPA-owned images are anonymously pullable from
+`ghcr.io/nebius/nebius-physical-ai`. An operator may instead use a
+standards-compatible registry for independently built BYOF images. Pick one
+path and preflight the same registry submit will use:
 
 ```bash
 REGISTRY=ghcr.io/nebius/nebius-physical-ai    # or the configured NPA_REGISTRY
@@ -540,25 +541,32 @@ For a validation registry containing distinct images, repeat
 resolved and attested independently and takes precedence over `--image`; pass
 immutable digest references in recorded/live acceptance commands.
 
-For the public mirror, an attested `ok` needs no login or build. Reachability
+For the public release channel, an attested `ok` needs no login or build. Reachability
 alone is insufficient: preflight resolves the tag once, verifies the bootstrap
 contract against that immutable digest, and submits that digest. A historical
 tag that predates the contract is rejected even when `docker manifest inspect`
-succeeds. For a private registry, build and push what preflight reports missing
-or incompatible (tags below track
-`npa/src/npa/deploy/images.py`, which is what submit pulls):
+succeeds. NPA-owned images are published only by the guarded repository workflow
+as immutable `dev-<full-git-sha>` images, followed by digest-identical supported
+release tags after live validation. Do not rebuild or mirror those images as an
+NPA release.
+
+For an independently maintained BYOF image, authenticate directly to the exact
+operator-owned registry host by its documented standards-based mechanism, then
+build and push an immutable reference. The example host below is intentionally
+non-operative:
 
 ```bash
-REGISTRY="$(npa configure --show 2>/dev/null | grep -o 'cr\.[^ ]*' | head -1)"   # or your NPA_REGISTRY
-printf '%s' "$(nebius iam get-access-token)" \
-  | docker login "${REGISTRY%%/*}" -u iam --password-stdin
+BYOF_REGISTRY=registry.example.invalid/operator
+BYOF_TAG=operator-build
+# Authenticate to registry.example.invalid using that registry's own instructions.
 
 docker buildx create --name npa-cosmos-oss --driver docker-container   # scoped cache
 for tool in cosmos-evaluator cosmos-curate; do
-  # Tag must match npa/src/npa/deploy/images.py; submit pulls exactly that tag.
+  # Use only for operator-owned variants; pass each resulting immutable digest
+  # with --image-override during preflight and submit.
   docker buildx build --builder npa-cosmos-oss --push \
     -f "npa/docker/workbench/$tool/Dockerfile" \
-    -t "$REGISTRY/npa-$tool:0.1.2-skypilot-v1-20260813T164700Z" npa
+    -t "$BYOF_REGISTRY/npa-$tool:${BYOF_TAG}" npa
 done
 docker buildx rm npa-cosmos-oss
 ```
@@ -567,8 +575,10 @@ Neither image carries model weights. The evaluator needs none; the curator's GPU
 stages fetch theirs at run time with your Hugging Face token:
 
 ```bash
+CURATOR_TOOL=cosmos-curate
+CURATOR_BYOF_IMAGE="${BYOF_REGISTRY}/npa-${CURATOR_TOOL}:${BYOF_TAG}"
 docker run --rm -e HF_TOKEN="$HF_TOKEN" -v curator-weights:/config/models \
-  "$REGISTRY/npa-cosmos-curate:0.1.2-skypilot-v1-20260813T164700Z" fetch-models --models split-annotate
+  "$CURATOR_BYOF_IMAGE" fetch-models --models split-annotate
 ```
 
 The loop below is only a registry reachability diagnostic. The mandatory
@@ -577,6 +587,7 @@ results to immutable digests and refuses a missing, stale, or wrong-digest
 bootstrap attestation before spending GPU time:
 
 ```bash
+REGISTRY=ghcr.io/nebius/nebius-physical-ai
 for ref in npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z \
            npa-cosmos-evaluator:0.1.2-skypilot-v1-20260813T164700Z \
            npa-cosmos-curate:0.1.2-skypilot-v1-20260813T164700Z; do
@@ -998,12 +1009,8 @@ npa storage service-account reconcile --project "$PROJECT" --id <exact-id> \
 npa storage service-account delete --project "$PROJECT" --dry-run
 npa storage service-account delete --project "$PROJECT" --yes
 
-# 7. If this validation created a private image registry, delete its exact
-#    immutable artifact DAG and registry. For an NPA-created disposable project,
-#    remove only its unique provider default topology; either command refuses
-#    mixed/shared evidence.
-npa registry delete --project "$PROJECT" --project-id <project-id> \
-  --tenant-id <tenant-id> --id <registry-id> --name <registry-name> --yes
+# 7. For an NPA-created disposable project, remove only its unique provider
+#    default topology; the command refuses mixed/shared evidence.
 npa network delete-project-default --project "$PROJECT" \
   --project-id <project-id> --tenant-id <tenant-id> --yes
 

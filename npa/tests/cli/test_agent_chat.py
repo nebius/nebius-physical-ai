@@ -234,9 +234,9 @@ def test_onboard_solution_reply_is_generic_and_runnable() -> None:
 def test_onboard_solution_reply_uses_npa_registry_env(monkeypatch) -> None:
     from npa.cli.agent_chat import format_onboard_solution
 
-    monkeypatch.setenv("NPA_REGISTRY", "cr.eu-north1.nebius.cloud/example/project")
+    monkeypatch.setenv("NPA_REGISTRY", "registry.example/example/project")
     reply = format_onboard_solution()
-    assert "cr.eu-north1.nebius.cloud/example/project" in reply
+    assert "registry.example/example/project" in reply
     assert "<resolved-from-~/.npa/config.yaml>" not in reply
 
 
@@ -328,7 +328,7 @@ def test_live_infra_loop_reply_mentions_registry_and_gpu_checks() -> None:
     state = {"sim_viz": {}, "selection": {}, "latest_submit": {}}
     reply = build_grounded_reply("live_infra_loop", state, ["workbench.cosmos2.transfer"])
     assert "Live infra loop guidance" in reply
-    assert "never `<your-registry-id>` placeholders" in reply or "no placeholders" in reply
+    assert "public GHCR releases" in reply or "no placeholders" in reply
     assert "sky gpus list" in reply
     assert "FAILED_PRECHECKS" in reply
 

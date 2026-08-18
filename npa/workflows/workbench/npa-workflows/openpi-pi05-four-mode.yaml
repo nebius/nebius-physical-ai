@@ -61,7 +61,6 @@ config:
   # it after the controller reaches terminal state. Kubernetes leaves only the
   # documented create and controller-generated pod-list residuals namespace-wide.
   service_account: npa-openpi-controller
-  service_image_pull_secret: npa-nebius-registry
   service_gpu_node_selector_key: nebius.com/gpu-name
   service_gpu_node_selector_value: B200
   service_server_cpus: "16"
@@ -108,8 +107,6 @@ resources:
     kubernetes:
       pod_config:
         spec:
-          imagePullSecrets:
-            - name: "{{config.service_image_pull_secret}}"
           containers:
             - name: ray-node
               volumeMounts:

@@ -250,7 +250,7 @@ def _service_manifests() -> dict[str, dict]:
         server_memory="96Gi",
         client_cpu="2",
         client_memory="8Gi",
-        pull_secret="npa-nebius-registry",
+        pull_secret="operator-byof-pull-secret",
         liveness_initial_delay_seconds=600,
         gpu_node_selector_key="nebius.com/gpu-name",
         gpu_node_selector_value="B200",
