@@ -58,6 +58,20 @@ def test_cosmos3_cache_dir_falls_back_to_the_durable_model_cache() -> None:
     assert cfg.resolved_cache_dir == _Path("/opt/npa-model-cache/cosmos3")
 
 
+def test_cosmos3_a_literal_dot_cache_dir_says_it_is_being_ignored(capsys) -> None:
+    from pathlib import Path as _Path
+
+    # `.` and a blank value are the same argument by the time this sees it, so the
+    # working directory cannot be requested that way. An operator who typed it
+    # deliberately should be told, not silently redirected.
+    cfg = Cosmos3AccessConfig.from_env(
+        cache_dir=_Path("."), environ={"NPA_COSMOS3_CACHE": "/cache/cosmos3"}
+    )
+
+    assert cfg.resolved_cache_dir == _Path("/cache/cosmos3")
+    assert "treated as unset" in capsys.readouterr().err
+
+
 def test_cosmos3_blank_cache_dir_means_use_the_configured_cache() -> None:
     from pathlib import Path as _Path
 

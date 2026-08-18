@@ -43,11 +43,24 @@ def _resolve_cache_dir(
     model cache), then the operator's configured cache, then the ephemeral
     default. A blank ``--cache-dir`` -- which Typer hands over as ``Path(".")`` --
     means "use the configured cache", not "cache into the working directory".
+
+    The cost of that rule is that ``--cache-dir .`` cannot ask for the working
+    directory, because it is indistinguishable from the blank spelling (``Path``
+    collapses ``./`` to ``.`` too). Say so when it happens rather than silently
+    resolving elsewhere; an absolute path is the way to mean it.
     """
 
     explicit = str(cache_dir or "").strip()
     if explicit and explicit != ".":
         return cache_dir  # type: ignore[return-value]
+    if explicit == ".":
+        import sys
+
+        print(
+            "npa: --cache-dir '.' is treated as unset, because a blank value arrives "
+            "the same way; pass an absolute path to cache into a specific directory",
+            file=sys.stderr,
+        )
     from npa.workbench.model_cache import (
         RUNTIME_PREMOUNTED,
         model_cache_env,
