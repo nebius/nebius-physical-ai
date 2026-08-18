@@ -34,6 +34,32 @@
 format: npa_golden_evals_v1
 
 containers:
+  antioch:
+    image: npa-antioch
+    dockerfile: npa/docker/workbench/antioch/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        CPU-only control plane for durable Antioch simulation submission,
+        reconciliation, cancellation, collection, and offline policy-data export.
+    safety:
+      runs_as: "10001"
+      base_image: python:3.12-slim-bookworm
+      network: authenticated FastAPI control plane on :8789
+      external_fetch: ["operator-authorized digest-pinned Antioch CLI at runtime"]
+      notes: >-
+        Contains no simulator engine, proprietary Antioch wheel, credentials, or
+        customer data. The smoke proves the token boundary, system-info route,
+        CPU-only classification, and absence of the proprietary distribution;
+        authenticated vendor health is covered by the separate live integration.
+    golden_eval:
+      kind: container-smoke
+      module: npa.smoke.test_antioch_functional
+      command: python -m npa.smoke.test_antioch_functional
+      gpu: none
+      timeout_seconds: 60
+      status: ready
+
   base-cuda13-b300:
     image: npa-base
     foundation: true

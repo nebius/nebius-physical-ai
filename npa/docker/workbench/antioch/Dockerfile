@@ -15,11 +15,12 @@ RUN pip install --no-cache-dir -r /app/requirements.txt \
     && python -c "import importlib.metadata as m; assert not any(d.metadata.get('Name','').lower() == 'antioch-sim' for d in m.distributions())" \
     && mkdir -p /workspace/.cache/npa/antioch \
     && chown -R npa:npa /workspace /app
-RUN mkdir -p /app/npa/workbench /app/npa/clients /app/npa/adapter \
-    && touch /app/npa/__init__.py /app/npa/workbench/__init__.py /app/npa/clients/__init__.py /app/npa/adapter/__init__.py
+RUN mkdir -p /app/npa/workbench /app/npa/clients /app/npa/adapter /app/npa/smoke \
+    && touch /app/npa/__init__.py /app/npa/workbench/__init__.py /app/npa/clients/__init__.py /app/npa/adapter/__init__.py /app/npa/smoke/__init__.py
 COPY src/npa/workbench/antioch /app/npa/workbench/antioch
 COPY src/npa/clients/storage.py /app/npa/clients/storage.py
 COPY src/npa/adapter/sim_to_lerobot.py /app/npa/adapter/sim_to_lerobot.py
+COPY src/npa/smoke/test_antioch_functional.py /app/npa/smoke/test_antioch_functional.py
 RUN chown -R npa:npa /app
 
 USER 10001

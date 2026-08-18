@@ -9,6 +9,11 @@ from __future__ import annotations
 
 # Each value is an ordered list of concrete checks the golden eval runs.
 GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
+    "antioch": [
+        "FastAPI service authentication boundary",
+        "CPU-only system-info contract",
+        "proprietary antioch-sim distribution absent",
+    ],
     "base-cuda13-b300": [
         "torch import + CUDA device available",
         "flash_attn import (Blackwell/CUDA13 stack)",
