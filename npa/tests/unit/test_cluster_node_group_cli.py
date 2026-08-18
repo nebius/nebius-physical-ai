@@ -111,8 +111,49 @@ def test_add_node_group_saves_state(monkeypatch) -> None:
     assert result.exit_code == 0
     assert seen_configs[0].public_ip is False
     assert seen_configs[0].capacity_block_group == "capacityblockgroup-test"
+    assert seen_configs[0].driver_preset == "cuda13.0"
     assert saved[-1].last_seen_state == "RUNNING"
     assert "Node group ID: mk8snodegroup-gpu" in result.output
+
+
+def test_add_node_group_operator_mode_omits_managed_driver_preset(monkeypatch) -> None:
+    seen_configs: list[NodeGroupConfig] = []
+
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def get_cluster(self, name, *, project_id=""):
+            return _cluster()
+
+        def create_gpu_node_group(self, config, cluster_id):
+            seen_configs.append(config)
+            return _node_group(state="RUNNING")
+
+    monkeypatch.setattr(node_group_mod, "MK8sClient", FakeClient)
+    monkeypatch.setattr(
+        node_group_mod, "load_cluster_state", lambda name: _cluster_state()
+    )
+    monkeypatch.setattr(node_group_mod, "save_node_group_state", lambda state: None)
+
+    result = runner.invoke(
+        app,
+        [
+            "node-group",
+            "add",
+            "--cluster-name",
+            "cluster-a",
+            "--gpu-type",
+            "h100",
+            "--gpu-driver-mode",
+            "operator",
+            "--no-wait",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen_configs[0].driver_preset == ""
+    assert "GPU driver mode: operator" in result.output
 
 
 def test_add_node_group_normalizes_live_provider_k8s_version(monkeypatch) -> None:

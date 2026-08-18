@@ -13,6 +13,7 @@ from npa.cli.cluster.scope import CLUSTER_SCOPE_EPILOG
 from npa.cluster.api import ClusterInfo, MK8sClient, NodeGroupInfo, cluster_subnet_id
 from npa.cluster.config import (
     DEFAULT_CPU_NODE_GROUP_PRESET,
+    DEFAULT_GPU_DRIVER_PRESET,
     DEFAULT_K8S_VERSION,
     DEFAULT_NODE_PLATFORM,
     CpuNodeGroupConfig,
@@ -20,6 +21,7 @@ from npa.cluster.config import (
     normalize_provider_k8s_version,
     resolve_project_id,
 )
+from npa.cluster.gpu_driver import GpuDriverStrategyError, resolve_gpu_driver_strategy
 from npa.cluster.exceptions import (
     ClusterConfigError,
     ClusterError,
@@ -76,6 +78,20 @@ def add_cmd(
         "",
         "--capacity-block-group",
         help="Optional private capacity block group ID for strict reservation selection.",
+    ),
+    gpu_driver_mode: str = typer.Option(
+        "auto",
+        "--gpu-driver-mode",
+        help=(
+            "GPU driver source: auto/managed-image uses the Nebius driver-full "
+            "node image; operator leaves GPU settings unset for the cluster's "
+            "NVIDIA GPU Operator."
+        ),
+    ),
+    managed_driver_preset: str = typer.Option(
+        DEFAULT_GPU_DRIVER_PRESET,
+        "--managed-driver-preset",
+        help="Nebius driver preset used only with --gpu-driver-mode managed-image.",
     ),
     autoscaling_min: int | None = typer.Option(
         None,
@@ -141,6 +157,19 @@ def add_cmd(
             ),
             capacity_block_group=capacity_block_group,
         )
+        driver = resolve_gpu_driver_strategy(
+            gpu_nodes=config.node_count,
+            platform=config.platform,
+            preset=config.node_preset,
+            mode=gpu_driver_mode,
+            managed_driver_preset=managed_driver_preset,
+        )
+        config = replace(
+            config,
+            driver_preset=(
+                driver.managed_driver_preset if driver.uses_managed_image else ""
+            ),
+        )
         if not config.subnet_id:
             raise ClusterConfigError(
                 "subnet ID is required for GPU node groups. Pass --subnet-id or deploy the "
@@ -180,9 +209,10 @@ def add_cmd(
         typer.echo(f"Node group ID: {state.node_group_id}")
         typer.echo(f"State: {state.last_seen_state}")
         typer.echo(f"GPU type: {state.gpu_type}")
+        typer.echo(f"GPU driver mode: {driver.effective_mode}")
         typer.echo(f"Platform/preset: {state.platform}/{state.preset}")
         typer.echo(f"Nodes: {state.node_count}")
-    except ClusterError as exc:
+    except (ClusterError, GpuDriverStrategyError) as exc:
         typer.echo(f"Node-group add failed: {exc}", err=True)
         raise typer.Exit(1) from exc
 
