@@ -90,9 +90,13 @@ DEFAULT_POD_CONTAINER_NAME = "ray-node"
 RUNTIME_KUBERNETES = "kubernetes"
 #: A caller that runs ``docker`` on a host: it can bind-mount a host directory.
 RUNTIME_DOCKER = "docker"
-#: A caller that mounts nothing, and so can only use a cache that already exists at
-#: a path someone else mounted. Workbench Serverless Jobs (no volume concept) and
-#: in-container code reading its own environment are both this.
+#: A caller that mounts nothing itself, and so can only use a cache that already
+#: exists at a path someone else mounted: in-container code reading its own
+#: environment, and Workbench Serverless Jobs, whose NPA client does not pass a
+#: volume today. Nebius Serverless Jobs do accept one (`nebius ai job create
+#: --volume SOURCE:CONTAINER_PATH`), so that is a gap in our client rather than a
+#: property of the platform -- with the caveat that the `s3://` form cannot host
+#: this cache, for the symlink reason in the module docstring.
 RUNTIME_PREMOUNTED = "premounted"
 
 #: Which configured signal each runtime is allowed to act on. ``NPA_MODEL_CACHE_DIR``

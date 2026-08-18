@@ -32,8 +32,11 @@ On by default wherever the answer is not "invent storage nobody asked for":
   manifest below is the entire opt-in — there is nothing to export afterwards, and
   no shell that forgets. A Pending claim is deliberately not adopted: it has no
   volume behind it, so mounting it would leave pods in `ContainerCreating`.
-- **Serverless Jobs cannot have a default**, because they mount nothing at all. Only
-  `NPA_MODEL_CACHE_DIR`, naming a path already mounted in that runtime, reaches them.
+- **Serverless Jobs have no default yet.** NPA's job client does not pass a volume,
+  so only `NPA_MODEL_CACHE_DIR` — naming a path something else mounted — reaches
+  them. That is a gap in the client, not the platform: `nebius ai job create` accepts
+  `--volume SOURCE:CONTAINER_PATH`, so attaching a filesystem there is a follow-up.
+  The `s3://` form of that flag cannot host this cache, for the symlink reason above.
 
 Nothing here provisions storage. NPA will not create a claim, guess a class, or bill
 an operator for a volume they did not ask for — the Kubernetes side stays off until
@@ -150,13 +153,13 @@ first `mkdir` fails and the stage dies where it used to work.
 | SkyPilot stage on any other cloud | yes | ignored | ignored | off |
 | sim2real sibling GPU Job | yes | yes | yes | the claim, if it exists |
 | `npa deploy` container on a VM | yes | ignored | yes | `/var/lib/npa/model-cache` |
-| Workbench Serverless Job | yes | ignored | ignored | off |
+| Workbench Serverless Job | yes | ignored | ignored | off (no volume passed yet) |
 
 So an operator can export `NPA_MODEL_CACHE_PVC` for their Kubernetes workflows
 without changing anything about their VM deploys or Serverless Jobs, which have no
-way to reach a claim. Serverless Jobs mount nothing at all, so `NPA_MODEL_CACHE_DIR`
-is the only way to give them a durable cache — and only if the path is already
-mounted in that runtime.
+way to reach a claim. NPA does not attach a volume to a Serverless Job today, so
+`NPA_MODEL_CACHE_DIR` is the only way to give one a durable cache, and only if
+something else already mounted that path.
 
 `NPA_MODEL_CACHE_HOST_PATH` on Kubernetes produces a `hostPath` volume on the
 *cluster nodes*, which is node-local rather than shared: a stage that lands on
@@ -258,9 +261,15 @@ resolves the same paths.
 Two exceptions, both about code that is *baked*:
 
 - **`npa-ltx2`** carries `ltx-runtime` in its layers, and its refusal proof changed.
-  An older build asserts its caches are empty after the gated fetches refuse, which
-  is false on the second run against a durable cache — so LTX and this cache do not
-  mix until the image is rebuilt from current source.
+  The cache itself works on an older build — it honours `NPA_LTX_MODEL_CACHE` like
+  everything else, and nothing about the licence objects to reusing weights the
+  operator already fetched under their own entitlement. What breaks is the image's
+  own self-test: it asserts its caches are *empty* after the gated fetches refuse,
+  which is true on a cold run and false on every run after the first. Rebuilding
+  from current source, where the proof uses private directories, fixes it; until
+  then a caller can get the same effect by pointing `NPA_LTX_MODEL_CACHE` and
+  `NPA_LTX_RUNTIME_CACHE` at a temporary directory for the `assert-refusal` step
+  alone.
 - **The sim2real controller image** creates the sibling GPU Jobs from inside the
   container, so the code that mounts the claim onto them is the copy in its layers.
   Rebuild it to get the cache on sibling Jobs. The task images it launches
