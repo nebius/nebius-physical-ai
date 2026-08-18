@@ -192,9 +192,10 @@ def destroy_cmd(
         payload=identity.to_dict(),
     )
     selected_operation = load_operation(exact_operation) if exact_operation else None
-    if selected_operation is not None and str(
-        selected_operation.read().get("phase") or ""
-    ) not in TERMINAL_PHASES:
+    if (
+        selected_operation is not None
+        and str(selected_operation.read().get("phase") or "") not in TERMINAL_PHASES
+    ):
         # Supplying the exact nonterminal setup operation is the explicit safe
         # recovery path: teardown resumes under that operation's project lease.
         teardown_operation = selected_operation
@@ -378,6 +379,12 @@ def destroy_cmd(
                 identity_source=identity.source,
                 terraform_graph_absent=True,
             )
+    # The exact agent's infrastructure has already been provider-verified absent.
+    # Shared project IAM may intentionally remain while other agents depend on it;
+    # that degraded cleanup result must not leave the project lifecycle lease open
+    # and prevent a fresh deployment of this agent name.
+    if str(teardown_operation.read().get("phase") or "") not in TERMINAL_PHASES:
+        teardown_operation.transition("destroyed")
     if iam_error:
         _emit(
             {
@@ -391,8 +398,6 @@ def destroy_cmd(
             output_json=output_json,
         )
         raise typer.Exit(code=2)
-    if str(teardown_operation.read().get("phase") or "") not in TERMINAL_PHASES:
-        teardown_operation.transition("destroyed")
     _emit(
         {
             **identity.to_dict(),

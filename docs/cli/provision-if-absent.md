@@ -27,9 +27,14 @@ Options
 --managed-driver-preset  <str>  Nebius managed driver preset, matching `npa cluster up`.
 --allow-unsafe-nvswitch-operator  --deny-unsafe-nvswitch-operator  Explicit diagnostic acknowledgement for operator mode on NVSwitch systems.
 --gpu-health-stabilization-seconds  <int>  Required stable GPU-health interval, matching `npa cluster up`. [default: 120]
+--gpu-health-timeout-minutes  <int>  GPU/MIG health deadline, matching `npa cluster up`. [default: 60]
 --gpu-cuda-smoke  --skip-gpu-cuda-smoke  Run CUDA vectorAdd on every requested GPU node. [default: gpu-cuda-smoke]
 --gpu-cuda-smoke-image  <str>  Container image for CUDA vectorAdd validation.
     [default: nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0-ubuntu22.04]
+--mig  --no-mig  Enable the same pinned RTX PRO 6000 MIG policy as fleet. [default: no-mig]
+--mig-strategy  <str>  [default: mixed]
+--mig-config  <str>  [default: all-balanced]
+--capacity-block-group  <str>  Runtime-only strict GPU capacity block selector.
 --preemptible  --on-demand  Run the GPU node group as preemptible, matching `npa cluster up`. This changes the capacity pool but not hard
     instance/disk/IP quotas; a reclaim stops the node mid-run.
 --dry-run  Resolve settings and print intended actions only.
@@ -65,8 +70,13 @@ Options
 | `--managed-driver-preset` | <str>  Nebius managed driver preset, matching `npa cluster up`. |
 | `--allow-unsafe-nvswitch-operator` | --deny-unsafe-nvswitch-operator  Explicit diagnostic acknowledgement for operator mode on NVSwitch systems. |
 | `--gpu-health-stabilization-seconds` | <int>  Required stable GPU-health interval, matching `npa cluster up`. [default: 120] |
+| `--gpu-health-timeout-minutes` | <int>  GPU/MIG health deadline, matching `npa cluster up`. [default: 60] |
 | `--gpu-cuda-smoke` | --skip-gpu-cuda-smoke  Run CUDA vectorAdd on every requested GPU node. [default: gpu-cuda-smoke] |
 | `--gpu-cuda-smoke-image` | <str>  Container image for CUDA vectorAdd validation. [default: nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0-ubuntu22.04] |
+| `--mig` | --no-mig  Enable the same pinned RTX PRO 6000 MIG policy as fleet. [default: no-mig] |
+| `--mig-strategy` | <str>  [default: mixed] |
+| `--mig-config` | <str>  [default: all-balanced] |
+| `--capacity-block-group` | <str>  Runtime-only strict GPU capacity block selector. |
 | `--preemptible` | --on-demand  Run the GPU node group as preemptible, matching `npa cluster up`. This changes the capacity pool but not hard instance/disk/IP quotas; a reclaim stops the node mid-run. |
 | `--dry-run` | Resolve settings and print intended actions only. |
 | `--timeout` | <int>  Terraform apply timeout in minutes. [default: 120] |

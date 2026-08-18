@@ -712,6 +712,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.curator_min_clip_len_s}}",
             "--motion-filter",
             "{{config.curator_motion_filter}}",
+            "--require-curator",
             "--output",
             "json",
         ],

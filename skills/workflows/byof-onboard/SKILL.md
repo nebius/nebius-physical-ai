@@ -191,7 +191,7 @@ npa/.venv/bin/python -m pytest npa/tests/e2e/test_byof_onboarding_live_e2e.py -q
 | Path | Role |
 | --- | --- |
 | `npa/scripts/run_byof_repo.py` | Build/push + workload dispatch |
-| `npa/workflows/byof/live.py` | Project/kubeconfig/YAML resolution |
+| `npa/src/npa/workflows/byof/live.py` | Project/kubeconfig/YAML resolution |
 | `npa/workflows/workbench/npa-workflows/byof.yaml` | Golden workflow spec |
 | `npa/src/npa/cli/agent_chat.py` | `onboard_solution` intent |
 | `skills/tools/npa-agent/SKILL.md` | Agent VM bootstrap + API reference |

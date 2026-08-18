@@ -504,9 +504,10 @@ npa workbench cosmos-curate curate-videos --input-dir ./clips --output-dir ./cur
   `compute_visualization(method="pca")`. The report gains `curation_engine:
   fiftyone-brain`, per-variant `uniqueness`, near-duplicate clusters, and a
   kept/dropped `selection` (schema stays `npa.fiftyone.curation.v1` — new fields
-  are additive). If Brain or its database is unavailable, PAIDF fails this stage;
-  it never calls a report-only summary FiftyOne review. Standalone callers may
-  omit `--require-fiftyone` to obtain a clearly labeled report-only fallback.
+  are additive). A completed real Cosmos Curator report is required, and if
+  Curator, Brain, or its database is unavailable, every caller fails this stage;
+  no report-only success mode remains. `--require-fiftyone` is retained as an
+  explicit workflow contract marker.
   The agent's Dataset & provenance tab surfaces uniqueness + kept/dropped per
   card, curation stats, original-versus-synthetic grouping, and source metadata
   (`build_fiftyone_dataset`).

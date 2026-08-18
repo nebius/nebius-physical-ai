@@ -898,11 +898,12 @@ npa workbench fiftyone curate-augmented \
 This writes an additive `fiftyone` block into `curation/report.json` (schema stays
 `npa.fiftyone.curation.v1`; adds `curation_engine`, `curated_kept/dropped`, and a
 `fiftyone.{brain,selection,visualization,samples}` block). This happens
-automatically in the shipped PAIDF workflow. Standalone callers may omit
-`--require-fiftyone` to request a clearly labeled report-only fallback, but the
-agent will state that FiftyOne did not run rather than marketing that fallback as
-FiftyOne review. See the [FiftyOne](../../../skills/tools/fiftyone/SKILL.md)
-skill and the conceptual guide's curation section.
+automatically in the shipped PAIDF workflow. The Curator report URI is now a
+required CLI input, and standalone callers fail closed when either real Cosmos
+Curator or FiftyOne Brain did not complete. `--require-fiftyone` remains an
+explicit workflow assertion; there is no report-only success mode. See the
+[FiftyOne](../../../skills/tools/fiftyone/SKILL.md) skill and the conceptual
+guide's curation section.
 
 ---
 

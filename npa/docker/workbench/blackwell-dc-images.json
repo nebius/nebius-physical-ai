@@ -444,6 +444,16 @@
       "notes": "Isaac Sim is fetched at first run under the operator's own EULA acceptance rather than baked, so the image is redistributable. Keep render workloads on L40S / RTX PRO 6000 regardless of what CUDA the vendor ships."
     },
     {
+      "name": "npa-leisaac",
+      "dockerfile": "leisaac/Dockerfile",
+      "verdict": "blocked",
+      "validation": "pending-hardware",
+      "blocked_reason": "LeIsaac teleoperation requires Isaac Sim rasterized WebRTC rendering. B200/B300 have no RT cores, and the NVIDIA Isaac runtime is not aligned for this datacenter path.",
+      "upstream_tracking": "NVIDIA Isaac Sim rendering support; LeIsaac v0.4.0 compatibility",
+      "smoke": "real LeIsaac-SO101-PickOrange-v0 environment with SO101Keyboard and WebRTC signaling",
+      "notes": "Run only on L40S or RTX PRO 6000. The NPA Kubernetes launcher hard-selects RTX PRO 6000 and never routes this rendering workload to H100/H200/B200/B300. Isaac, task assets, and NVIDIA's browser client are runtime fetches after explicit operator EULA acceptance."
+    },
+    {
       "name": "npa-sonic",
       "dockerfile": "sonic/Dockerfile",
       "build_script": "sonic/build.sh",

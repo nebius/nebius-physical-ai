@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import math
 import shlex
 import sys
 import threading
+import time
 import uuid
 from typing import Callable
 
@@ -18,6 +20,10 @@ from npa.clients.env import render_shell_env_file, validate_env_name
 
 class SSHError(Exception):
     pass
+
+
+class SSHTimeoutError(SSHError):
+    """An aggregate SSH connection/command deadline expired."""
 
 
 NPA_DEBUG_ENV_VAR = "NPA_DEBUG"
@@ -82,18 +88,31 @@ class SSHClient:
     def __init__(self, config: SSHConfig) -> None:
         self._config = config
 
-    def _connect(self) -> paramiko.SSHClient:
-        client = paramiko.SSHClient()
+    def _connect(
+        self,
+        *,
+        timeout_seconds: float | None = None,
+        client: paramiko.SSHClient | None = None,
+    ) -> paramiko.SSHClient:
+        client = client or paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         key_path = os.path.expanduser(self._config.key_path)
-        try:
-            client.connect(
-                hostname=self._config.host,
-                username=self._config.user,
-                key_filename=key_path,
-                timeout=15,
-                look_for_keys=False,
+        connect_options: dict[str, object] = {
+            "hostname": self._config.host,
+            "username": self._config.user,
+            "key_filename": key_path,
+            "timeout": 15,
+            "look_for_keys": False,
+        }
+        if timeout_seconds is not None:
+            connect_options.update(
+                timeout=min(15.0, timeout_seconds),
+                banner_timeout=timeout_seconds,
+                auth_timeout=timeout_seconds,
+                channel_timeout=timeout_seconds,
             )
+        try:
+            client.connect(**connect_options)
         except Exception as exc:
             raise SSHError(
                 f"SSH connection to {self._config.user}@{self._config.host} failed: {exc}\n"
@@ -128,13 +147,7 @@ class SSHClient:
         if not env_file:
             raise SSHError("Token env file was not prepared")
         env_file_q = shlex.quote(env_file)
-        script = (
-            "set -a\n"
-            f". {env_file_q}\n"
-            "set +a\n"
-            f"rm -f {env_file_q}\n"
-            f"{command}"
-        )
+        script = f"set -a\n. {env_file_q}\nset +a\nrm -f {env_file_q}\n{command}"
         return f"bash -lc {shlex.quote(script)}"
 
     def run(
@@ -143,6 +156,7 @@ class SSHClient:
         *,
         stream: bool = False,
         on_stdout: Callable[[str], None] | None = None,
+        timeout: float | None = None,
     ) -> tuple[int, str, str]:
         """Execute a command over SSH.
 
@@ -150,13 +164,37 @@ class SSHClient:
             command: Shell command to run on the remote host.
             stream: If True, forward stdout to the local terminal in real time.
             on_stdout: Optional callback for each stdout line (called regardless of stream).
+            timeout: Optional aggregate connection-and-command deadline in seconds.
 
         Returns:
             (exit_code, stdout_text, stderr_text)
         """
-        client = self._connect()
+        if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
+            raise ValueError("SSH command timeout must be finite and greater than 0")
+        deadline = time.monotonic() + timeout if timeout is not None else None
+        deadline_expired = threading.Event()
+        client = paramiko.SSHClient() if timeout is not None else None
+        watchdog: threading.Timer | None = None
+        if timeout is not None and client is not None:
+            watchdog_client = client
+
+            def abort() -> None:
+                deadline_expired.set()
+                watchdog_client.close()
+
+            watchdog = threading.Timer(timeout, abort)
+            watchdog.daemon = True
+            watchdog.start()
         try:
-            token_env_file = self._write_token_env_file(client) if self._config.tokens else None
+            client = self._connect(
+                timeout_seconds=timeout,
+                client=client,
+            )
+            if deadline_expired.is_set():
+                raise SSHTimeoutError(f"SSH command timed out after {timeout:g}s")
+            token_env_file = (
+                self._write_token_env_file(client) if self._config.tokens else None
+            )
             transport = client.get_transport()
             if transport is None:
                 raise SSHError("SSH transport is not available")
@@ -195,11 +233,31 @@ class SSHClient:
                         if on_stdout:
                             on_stdout(line)
 
-            stderr_thread.join(timeout=5)
+            stderr_join_timeout = 5.0
+            if deadline is not None:
+                stderr_join_timeout = min(
+                    stderr_join_timeout, max(0.0, deadline - time.monotonic())
+                )
+            stderr_thread.join(timeout=stderr_join_timeout)
+            if deadline_expired.is_set() or (
+                deadline is not None and time.monotonic() >= deadline
+            ):
+                raise SSHTimeoutError(f"SSH command timed out after {timeout:g}s")
             exit_code = channel.recv_exit_status()
+            if deadline_expired.is_set():
+                raise SSHTimeoutError(f"SSH command timed out after {timeout:g}s")
             return exit_code, "".join(stdout_chunks), "".join(stderr_chunks)
+        except BaseException as exc:
+            if deadline_expired.is_set():
+                raise SSHTimeoutError(
+                    f"SSH command timed out after {timeout:g}s"
+                ) from exc
+            raise
         finally:
-            client.close()
+            if watchdog is not None:
+                watchdog.cancel()
+            if client is not None:
+                client.close()
 
     def run_or_raise(
         self, command: str, *, label: str | None = None, **kwargs
@@ -230,7 +288,9 @@ class SSHClient:
             sftp.get(remote_path, str(local))
             return str(local)
         except Exception as exc:
-            raise SSHError(f"SFTP download failed: {remote_path} -> {local_path}: {exc}") from exc
+            raise SSHError(
+                f"SFTP download failed: {remote_path} -> {local_path}: {exc}"
+            ) from exc
         finally:
             if sftp is not None:
                 sftp.close()
@@ -248,7 +308,9 @@ class SSHClient:
             sftp.put(str(local), remote_path)
             return remote_path
         except Exception as exc:
-            raise SSHError(f"SFTP upload failed: {local_path} -> {remote_path}: {exc}") from exc
+            raise SSHError(
+                f"SFTP upload failed: {local_path} -> {remote_path}: {exc}"
+            ) from exc
         finally:
             if sftp is not None:
                 sftp.close()
@@ -269,7 +331,9 @@ class SSHClient:
                 remote_file.flush()
             return remote_path
         except Exception as exc:
-            raise SSHError(f"Private SFTP upload failed for {remote_path}: {exc}") from exc
+            raise SSHError(
+                f"Private SFTP upload failed for {remote_path}: {exc}"
+            ) from exc
         finally:
             if sftp is not None:
                 sftp.close()

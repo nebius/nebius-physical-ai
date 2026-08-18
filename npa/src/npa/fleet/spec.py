@@ -51,8 +51,37 @@ from npa.fleet.mig import (
     MigSpecError,
     mig_spec_from_mapping,
 )
+from npa.soperator.spec import (
+    SoperatorSpec,
+    SoperatorSpecError,
+    spec_from_mapping as soperator_spec_from_mapping,
+)
 
 API_VERSION = "npa.fleet/v0.0.1"
+
+_MK8S_ENVELOPE_FIELDS = {
+    "name",
+    "k8s_version",
+    "cpu_nodes",
+    "gpu_nodes",
+    "enable_gpu_cluster",
+    "infiniband_fabric",
+    "enable_filestore",
+    "existing_filestore",
+    "filestore_disk_size_gibibytes",
+    "gpu_disk_size_gib",
+    "subnet_id",
+    "filestore_mount_path",
+    "filestore_mount_tag",
+    "gpu_driver_mode",
+    "managed_driver_preset",
+    "allow_unsafe_nvswitch_operator",
+    "gpu_health_stabilization_seconds",
+    "gpu_health_timeout_minutes",
+    "gpu_cuda_smoke",
+    "gpu_cuda_smoke_image",
+    "mig",
+}
 
 
 class FleetSpecError(ValueError):
@@ -90,6 +119,7 @@ class NodePoolSpec:
     # STRICT reservation policy, so the node group can never fall back to
     # ordinary on-demand capacity when the reservation is unavailable.
     capacity_block_group: str = ""
+    preemptible: bool = False
 
     def is_gpu(self) -> bool:
         return self.platform.startswith("gpu-")
@@ -133,6 +163,21 @@ class ClusterSpec:
     # None (or an explicitly disabled block) retains the historical whole-GPU
     # behavior; enabled MIG is validated against the pinned RTX PRO tuple.
     mig: MigSpec | None = None
+    # Backend selection is additive and declared last for positional SDK
+    # compatibility. Missing/empty retains the historical mk8s meaning.
+    backend: str = "mk8s"
+    # Only populated for ``backend: soperator`` targets. Keeping the native
+    # SoperatorSpec preserves that backend's complete, independently validated
+    # desired-state contract instead of flattening both backends into one blob.
+    soperator: SoperatorSpec | None = None
+    # Parsing provenance used only to keep legacy plan JSON byte-compatible.
+    backend_explicit: bool = field(default=False, repr=False, compare=False)
+    # Standalone cluster up historically permits a control-plane-only topology;
+    # fleet-created clusters remain required to have workers.
+    allow_control_plane_only: bool = field(default=False, repr=False, compare=False)
+
+    def backend_name(self) -> str:
+        return self.backend.strip().lower() or "mk8s"
 
     def resolved_k8s_version(self) -> str:
         """Pin the tested Kubernetes version whenever hardware MIG is enabled."""
@@ -173,12 +218,44 @@ class ClusterSpec:
         return self.cpu_nodes.count if self.cpu_nodes else 0
 
     def validate(self) -> None:
+        backend = self.backend_name()
+        if backend not in {"mk8s", "soperator"}:
+            raise FleetSpecError(
+                f"cluster {self.name!r}: unsupported backend {self.backend!r}; "
+                "expected 'mk8s' or 'soperator'"
+            )
+        if backend == "soperator":
+            if self.soperator is None:
+                raise FleetSpecError(
+                    f"cluster {self.name!r}: backend 'soperator' requires a "
+                    "'soperator' configuration mapping"
+                )
+            if self.soperator.name != self.name:
+                raise FleetSpecError(
+                    f"cluster {self.name!r}: soperator.name must match the fleet "
+                    "target name"
+                )
+            try:
+                self.soperator.validate()
+            except SoperatorSpecError as exc:
+                raise FleetSpecError(f"cluster {self.name!r}: {exc}") from exc
+            return
+        if self.soperator is not None:
+            raise FleetSpecError(
+                f"cluster {self.name!r}: 'soperator' configuration is unsupported "
+                "for backend 'mk8s'"
+            )
         if not _is_dns_name(self.name):
             raise FleetSpecError(
                 f"cluster name must be a lowercase DNS-1123 label: {self.name!r}"
             )
         mig_enabled = bool(self.mig and self.mig.enabled)
-        if self.cpu_count() <= 0 and self.gpu_count() <= 0 and not mig_enabled:
+        if (
+            self.cpu_count() <= 0
+            and self.gpu_count() <= 0
+            and not mig_enabled
+            and not self.allow_control_plane_only
+        ):
             raise FleetSpecError(
                 f"cluster {self.name!r}: needs at least one CPU or GPU node"
             )
@@ -218,6 +295,10 @@ class ClusterSpec:
                 raise FleetSpecError(
                     f"cluster {self.name!r}: capacity_block_group requires a GPU-count preset"
                 )
+        if gpu and gpu.capacity_block_group and gpu.preemptible:
+            raise FleetSpecError(
+                f"cluster {self.name!r}: strict reserved gpu_nodes cannot also be preemptible"
+            )
         if self.resolved_enable_gpu_cluster():
             gpu = self.gpu_nodes
             if not (gpu and gpu.preset.startswith("8gpu-")):
@@ -373,12 +454,22 @@ class FleetSpec:
         if not self.projects:
             raise FleetSpecError("at least one project is required")
         keys: set[str] = set()
+        soperator_names: set[str] = set()
         for project in self.projects:
             project.validate()
             key = project.key()
             if key in keys:
                 raise FleetSpecError(f"duplicate project key: {key!r}")
             keys.add(key)
+            for cluster in project.clusters:
+                if cluster.backend_name() != "soperator":
+                    continue
+                if cluster.name in soperator_names:
+                    raise FleetSpecError(
+                        f"duplicate soperator cluster name {cluster.name!r} across fleet; "
+                        "soperator physical/context identity must be fleet-wide unique"
+                    )
+                soperator_names.add(cluster.name)
 
     def cluster_targets(self) -> list[tuple[ProjectSpec, ClusterSpec]]:
         """Flatten the fleet into ``(project, cluster)`` deployment targets."""
@@ -416,10 +507,13 @@ def _node_pool_from(
         preset=str(data.get("preset", "")),
         disk_size_gib=int(data.get("disk_size_gib", 0) or 0),
         capacity_block_group=str(data.get("capacity_block_group", "") or "").strip(),
+        preemptible=bool(data.get("preemptible", False)),
     )
 
 
-def _cluster_from(data: dict[str, Any]) -> ClusterSpec:
+def _cluster_from(
+    data: dict[str, Any], *, backend_explicit: bool = False
+) -> ClusterSpec:
     enable_gpu = data.get("enable_gpu_cluster", None)
     try:
         mig = mig_spec_from_mapping(data.get("mig"))
@@ -461,6 +555,122 @@ def _cluster_from(data: dict[str, Any]) -> ClusterSpec:
             or DEFAULT_CUDA_SMOKE_IMAGE
         ),
         mig=mig,
+        backend="mk8s",
+        backend_explicit=backend_explicit,
+    )
+
+
+def _soperator_cluster_from(data: dict[str, Any]) -> ClusterSpec:
+    """Build one fleet target around the native Soperator desired state."""
+
+    name = _slug(str(data.get("name", "cluster"))) or "cluster"
+    raw = data.get("soperator")
+    if not isinstance(raw, dict):
+        raise FleetSpecError(
+            f"cluster {name!r}: backend 'soperator' requires a 'soperator' mapping"
+        )
+    mapping = copy.deepcopy(raw)
+    # Fleet, not a backend payload, owns target identity. Allowing an embedded
+    # identity to win would deploy into one project while recording another.
+    identity_fields = sorted(
+        key
+        for key in ("tenant_id", "project_id", "region", "subnet_id")
+        if str(mapping.get(key, "") or "").strip()
+    )
+    if identity_fields:
+        raise FleetSpecError(
+            f"cluster {name!r}: fleet soperator configuration must not set "
+            f"target identity field(s) {', '.join(identity_fields)}; use the "
+            "fleet/project envelope"
+        )
+    allowed = {
+        "name",
+        "workers",
+        "control_plane",
+        "root_login_ssh_public_key",
+        "ssh_public_keys",
+        "accounting",
+        "slurm_rest_enabled",
+        "telemetry",
+        "use_default_apparmor_profile",
+        "jail_size_gib",
+        "slurm_operator_version",
+        "k8s_version",
+        "node_group_version",
+    }
+    unknown = sorted(set(mapping) - allowed)
+    if unknown:
+        raise FleetSpecError(
+            f"cluster {name!r}: unsupported soperator field(s): {', '.join(unknown)}"
+        )
+    worker_allowed = {
+        "name",
+        "platform",
+        "preset",
+        "size",
+        "boot_disk_gib",
+        "fabric",
+        "preemptible",
+        "docker_cache",
+        "docker_cache_gib",
+        "docker_cache_disk_type",
+        "capacity_block_group",
+        "capacity_block_group_name",
+    }
+    workers = mapping.get("workers") or []
+    if isinstance(workers, list):
+        for index, worker in enumerate(workers):
+            if isinstance(worker, dict):
+                unknown_worker = sorted(set(worker) - worker_allowed)
+                if unknown_worker:
+                    raise FleetSpecError(
+                        f"cluster {name!r}: soperator.workers[{index}] has "
+                        f"unsupported field(s): {', '.join(unknown_worker)}"
+                    )
+    control = mapping.get("control_plane") or {}
+    if not isinstance(control, dict):
+        raise FleetSpecError(
+            f"cluster {name!r}: soperator.control_plane must be a mapping"
+        )
+    unknown_control = sorted(
+        set(control) - {"system", "controller", "accounting", "login"}
+    )
+    if unknown_control:
+        raise FleetSpecError(
+            f"cluster {name!r}: soperator.control_plane has unsupported field(s): "
+            f"{', '.join(unknown_control)}"
+        )
+    for role, role_config in control.items():
+        if not isinstance(role_config, dict):
+            raise FleetSpecError(
+                f"cluster {name!r}: soperator.control_plane.{role} must be a mapping"
+            )
+        role_allowed = {"preset"}
+        if role == "system":
+            role_allowed |= {"min_size", "max_size"}
+        unknown_role = sorted(set(role_config) - role_allowed)
+        if unknown_role:
+            raise FleetSpecError(
+                f"cluster {name!r}: soperator.control_plane.{role} has unsupported "
+                f"field(s): {', '.join(unknown_role)}"
+            )
+    embedded_name = str(mapping.get("name", "") or "")
+    if embedded_name and embedded_name != name:
+        raise FleetSpecError(
+            f"cluster {name!r}: soperator.name {embedded_name!r} must match the "
+            "fleet target name"
+        )
+    mapping["name"] = name
+    mapping["apiVersion"] = "npa.soperator/v0.0.1"
+    try:
+        desired = soperator_spec_from_mapping(mapping)
+    except SoperatorSpecError as exc:
+        raise FleetSpecError(f"cluster {name!r}: {exc}") from exc
+    return ClusterSpec(
+        name=name,
+        backend="soperator",
+        soperator=desired,
+        backend_explicit=True,
     )
 
 
@@ -502,11 +712,106 @@ def spec_from_mapping(data: dict[str, Any]) -> FleetSpec:
         clusters: list[ClusterSpec] = []
         multi = len(cluster_mappings) > 1
         for idx, raw in enumerate(cluster_mappings):
-            merged = _deep_merge(defaults, raw)
+            requested_backend = (
+                str(raw.get("backend", defaults.get("backend", "mk8s")) or "mk8s")
+                .strip()
+                .lower()
+            )
+            if requested_backend == "soperator":
+                # Backend envelopes are deliberately strict. Legacy flat fields
+                # remain accepted only for the implicit mk8s path; accepting
+                # them beside a soperator block would silently ignore a typo or
+                # apply an option to the wrong backend.
+                unexpected = sorted(set(raw) - {"name", "backend", "soperator"})
+                if unexpected:
+                    raise FleetSpecError(
+                        f"soperator fleet cluster has unsupported mk8s/flat field(s): "
+                        f"{', '.join(unexpected)}; place backend-specific settings "
+                        "under 'soperator'"
+                    )
+                default_soperator = defaults.get("soperator") or {}
+                if not isinstance(default_soperator, dict):
+                    raise FleetSpecError("defaults.soperator must be a mapping")
+                raw_soperator = raw.get("soperator") or {}
+                if not isinstance(raw_soperator, dict):
+                    raise FleetSpecError("cluster.soperator must be a mapping")
+                merged = {
+                    "backend": "soperator",
+                    "name": raw.get("name") or defaults.get("name"),
+                    "soperator": _deep_merge(default_soperator, raw_soperator),
+                }
+            elif requested_backend == "mk8s":
+                raw_mk8s = raw.get("mk8s")
+                if raw_mk8s is not None:
+                    if not isinstance(raw_mk8s, dict):
+                        raise FleetSpecError("cluster.mk8s must be a mapping")
+                    unknown_mk8s = sorted(set(raw_mk8s) - _MK8S_ENVELOPE_FIELDS)
+                    if unknown_mk8s:
+                        raise FleetSpecError(
+                            "cluster.mk8s has unsupported field(s): "
+                            + ", ".join(unknown_mk8s)
+                        )
+                    for pool_name in ("cpu_nodes", "gpu_nodes"):
+                        pool = raw_mk8s.get(pool_name)
+                        if pool is not None and not isinstance(pool, dict):
+                            raise FleetSpecError(
+                                f"cluster.mk8s.{pool_name} must be a mapping"
+                            )
+                        unknown_pool = sorted(
+                            set(pool or {})
+                            - {
+                                "count",
+                                "platform",
+                                "preset",
+                                "disk_size_gib",
+                                "capacity_block_group",
+                                "preemptible",
+                            }
+                        )
+                        if unknown_pool:
+                            raise FleetSpecError(
+                                f"cluster.mk8s.{pool_name} has unsupported field(s): "
+                                + ", ".join(unknown_pool)
+                            )
+                    unexpected = sorted(set(raw) - {"name", "backend", "mk8s"})
+                    if unexpected:
+                        raise FleetSpecError(
+                            f"mk8s fleet cluster mixes the 'mk8s' envelope with "
+                            f"flat field(s): {', '.join(unexpected)}"
+                        )
+                    default_mk8s = defaults.get("mk8s") or {
+                        key: value
+                        for key, value in defaults.items()
+                        if key not in {"backend", "soperator", "mk8s"}
+                    }
+                    if not isinstance(default_mk8s, dict):
+                        raise FleetSpecError("defaults.mk8s must be a mapping")
+                    merged = _deep_merge(default_mk8s, raw_mk8s)
+                    merged["name"] = raw.get("name") or merged.get("name")
+                else:
+                    # Historical v0.0.1 mapping: preserve its normalized
+                    # semantic resolution and permissive forward fields.
+                    legacy_defaults = {
+                        key: value
+                        for key, value in defaults.items()
+                        if key not in {"backend", "soperator", "mk8s"}
+                    }
+                    merged = _deep_merge(legacy_defaults, raw)
+            else:
+                raise FleetSpecError(
+                    f"unsupported cluster backend {requested_backend!r}; expected "
+                    "'mk8s' or 'soperator'"
+                )
             # Derive a stable default cluster name when unset.
             if not merged.get("name"):
                 merged["name"] = f"cluster-{idx}" if multi else "cluster"
-            clusters.append(_cluster_from(merged))
+            clusters.append(
+                _soperator_cluster_from(merged)
+                if requested_backend == "soperator"
+                else _cluster_from(
+                    merged, backend_explicit=("backend" in raw or "mk8s" in raw)
+                )
+            )
 
         projects.append(
             ProjectSpec(

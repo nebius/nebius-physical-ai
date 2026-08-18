@@ -145,6 +145,57 @@ def test_provision_if_absent_dry_run_reports_actions(
     assert result.storage_bucket == "s3://bucket/checkpoints/"
 
 
+def test_provision_dry_run_from_installed_package_ignores_cached_cluster(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_runtime(tmp_path, monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    from npa import cluster_backends
+
+    real = cluster_backends.get_backend("mk8s")
+    monkeypatch.setattr(provisioning, "_has_cached_kubeconfig", lambda *_args: True)
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle._validate_cluster",
+        lambda *_args, **_kwargs: pytest.fail(
+            "dry-run must not validate a cached live cluster"
+        ),
+    )
+
+    class PlanOnlyBackend:
+        def plan(self, desired):
+            assert desired.cpu_nodes.count == 1
+            assert desired.cpu_nodes.platform == "cpu-d3"
+            assert desired.cpu_nodes.preset == "8vcpu-32gb"
+            assert desired.gpu_nodes.count == 1
+            assert desired.gpu_nodes.platform == "gpu-rtx6000"
+            assert desired.gpu_nodes.preset == "1gpu-24vcpu-218gb"
+            return real.plan(desired)
+
+        def preflight(self, desired, request):
+            return real.preflight(desired, request)
+
+        def materialize(self, *_args, **_kwargs):
+            pytest.fail("dry-run must not materialize a Terraform deployment")
+
+    monkeypatch.setattr(
+        cluster_backends,
+        "get_backend",
+        lambda name: PlanOnlyBackend() if name == "mk8s" else real,
+    )
+    result = provisioning.provision_if_absent(
+        project="proj",
+        kubeconfig=tmp_path / "missing-kubeconfig",
+        terraform_dir=tmp_path / "does-not-exist",
+        dry_run=True,
+        skip_s3=True,
+    )
+    assert result.status == "ready"
+    assert any(
+        "cpu_nodes=1 gpu_nodes=1 provider_mutation=false" in action
+        for action in result.actions
+    )
+
+
 def test_provisioning_normalizes_uri_bucket_for_probe_and_runtime_env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -257,8 +308,7 @@ def test_reused_cluster_runs_requested_skypilot_smoke(
         lambda *args, **kwargs: seen.append(("smoke", *args, kwargs)),
     )
     monkeypatch.setattr(
-        "npa.orchestration.skypilot.k8s_gpu_catalog."
-        "wait_for_kubernetes_accelerators",
+        "npa.orchestration.skypilot.k8s_gpu_catalog.wait_for_kubernetes_accelerators",
         lambda *args, **kwargs: seen.append(("readiness", *args, kwargs)) or {},
     )
 
@@ -301,8 +351,7 @@ def test_fresh_cluster_uses_the_same_readiness_then_smoke_boundary(
 
     monkeypatch.setattr("npa.cli.cluster.terraform_lifecycle.up_cmd", up)
     monkeypatch.setattr(
-        "npa.orchestration.skypilot.k8s_gpu_catalog."
-        "wait_for_kubernetes_accelerators",
+        "npa.orchestration.skypilot.k8s_gpu_catalog.wait_for_kubernetes_accelerators",
         lambda *_args, **kwargs: seen.append(("readiness", kwargs)) or {},
     )
     monkeypatch.setattr(
@@ -337,10 +386,8 @@ def test_cached_smoke_without_accelerator_keeps_auto_detection(
     kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
     seen: list[tuple[str, object]] = []
     monkeypatch.setattr(
-        "npa.orchestration.skypilot.k8s_gpu_catalog."
-        "wait_for_kubernetes_accelerators",
-        lambda accelerators, **_kwargs: seen.append(("readiness", accelerators))
-        or {},
+        "npa.orchestration.skypilot.k8s_gpu_catalog.wait_for_kubernetes_accelerators",
+        lambda accelerators, **_kwargs: seen.append(("readiness", accelerators)) or {},
     )
     monkeypatch.setattr(
         "npa.cli.cluster.terraform_lifecycle._run_skypilot_smoke",

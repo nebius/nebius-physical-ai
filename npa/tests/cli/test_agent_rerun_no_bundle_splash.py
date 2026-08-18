@@ -84,6 +84,9 @@ def test_boot_page_warms_before_mount() -> None:
         "await Promise.all([refreshPromise, artifactsPromise, accessPromise, warmPromise])"
         not in boot
     )
+    assert "refreshLeIsaacCapability().catch(() => null)" in boot
+    assert "refreshLeIsaacCapability(activeRunId).catch(() => null)" not in boot
+    assert "leisaacPromise" not in boot
     assert "await ensureFrankaRerunLoaded()" in boot
     # A restored run can require an expensive exact lookup across tenant S3.
     # Desktop first paint stays independent of that background discovery.
@@ -104,6 +107,16 @@ def test_boot_page_warms_before_mount() -> None:
         "Promise.all([refreshPromise, artifactsPromise, warmPromise, mountPromise])"
         not in boot
     )
+
+
+def test_loading_an_artifact_run_does_not_probe_it_as_leisaac() -> None:
+    source = AGENT_MODULE.read_text(encoding="utf-8")
+    ui_html = _embedded_ui_html(source)
+    loader = ui_html.split("async function loadWorkflowHistoryRun")[1].split(
+        "async function loadRunData"
+    )[0]
+    assert "await refreshLeIsaacCapability();" in loader
+    assert "refreshLeIsaacCapability(targetRunId)" not in loader
 
 
 def test_no_loading_application_bundle_without_mount_latency() -> None:

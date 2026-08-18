@@ -196,6 +196,16 @@ PROJECT="$NPA_PROJECT_ALIAS"
 export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
 REGISTRY="$NPA_REGISTRY"
 npa workbench health preflight
+
+# Reserve the exact run identity, then complete deterministic validation,
+# planning, and image gates before provisioning or source upload.
+BUCKET="$NPA_BUCKET"
+RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project "$PROJECT")"
+npa workbench workflow validate-spec "$SPEC" --json
+npa workbench workflow plan-spec "$SPEC" --run-id "$RUN_ID" \
+  --assume-decision promote_checkpoint --var bucket="$BUCKET" \
+  --var n_augmentations=1 --json
+npa workbench workflow preflight-images "$SPEC" --registry "$REGISTRY"
 npa provision-if-absent --project "$PROJECT" --cluster-name "$CONTEXT" \
   --cpu-nodes 1 --cpu-platform cpu-d3 --cpu-preset 8vcpu-32gb \
   --gpu-nodes 1 --gpu-platform gpu-rtx6000 \
@@ -207,16 +217,7 @@ npa provision-if-absent --project "$PROJECT" --skip-k8s
 eval "$(npa configure --show --env)"
 export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
 REGISTRY="$NPA_REGISTRY"
-BUCKET="$NPA_BUCKET"
 npa skypilot bootstrap
-RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project "$PROJECT")"
-npa workbench workflow validate-spec "$SPEC" --json
-npa workbench workflow plan-spec "$SPEC" --run-id "$RUN_ID" \
-  --assume-decision promote_checkpoint --var bucket="$BUCKET" \
-  --var n_augmentations=1 --json
-# Complete every deterministic, read-only workflow gate before provisioning
-# resources or allowing submit to stage the repository source.
-npa workbench workflow preflight-images "$SPEC" --registry "$REGISTRY"
 npa provision-if-absent --project "$PROJECT" --cluster-name "$CONTEXT" \
   --cpu-nodes 1 --cpu-platform cpu-d3 --cpu-preset 8vcpu-32gb \
   --gpu-nodes 1 --gpu-platform gpu-rtx6000 \
@@ -871,7 +872,7 @@ Workbench is the main product surface. Every tool lives under `npa workbench`
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Data curation    | `npa workbench fiftyone curate`, `eval`, `load-dataset`, `datasets list`; `npa workbench lancedb deploy`, `create-table`, `import-lerobot`, `import-bdd100k`, `backfill`, `create-mv`, `refresh-mv`, `query-table`, `query`; `npa workbench detection-training train`, `eval`, `status`, `list`         |
 | Synthetic data   | `npa workbench cosmos infer`, `train`, `serve`, `status`; `npa workbench cosmos2 transfer`; `npa workbench cosmos3 reason`; `npa workbench genesis generate-demos`; specs such as [`bdd100k-pipeline.yaml`](npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml) |
-| Simulation      | `npa workbench isaac-lab train`, `eval`, `export-lerobot`, `export-onnx`; `npa workbench genesis train-teacher`, `generate-demos`, `eval-teacher`, `eval-student`, `diagnose`, `tune`; `npa workbench sonic retargeting run`, `workflow`                                                                    |
+| Simulation      | `npa workbench isaac-lab train`, `eval`, `export-lerobot`, `export-onnx`; `npa workbench leisaac launch`, `status`, `destroy` (browser teleoperation); `npa workbench genesis train-teacher`, `generate-demos`, `eval-teacher`, `eval-student`, `diagnose`, `tune`; `npa workbench sonic retargeting run`, `workflow`                                                                    |
 | Eval            | `npa workbench vlm-eval run`, `benchmark`, `workflow`, `status`, `list`; `npa workbench mjlab eval`, `workflow`; `npa workbench sonic eval`; `npa workbench fiftyone eval`; `npa workbench isaac-lab eval`; `npa workbench genesis eval-student`; `npa workbench golden-eval run`, `run-all`, `validate` |
 | Robot policy    | `npa workbench lerobot train`, `eval`, `serve`, `infer`, `list-checkpoints`, `benchmark`, `profile-train`, `train-student`; `npa workbench groot download`, `finetune`, `eval`, `serve`, `infer`, `convert`; `npa workbench sonic train`, `serve`, `export`, `eval`, `status`, `list`                    |
 | World models    | `npa workbench cosmos deploy`, `serve`, `infer`, `train`, `finetune`, `optimize`, `autoscale`, `status`, `system-info`                                                                                                                                                                                   |

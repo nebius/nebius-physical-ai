@@ -48,6 +48,15 @@ target branch to the dev VM before live tests.
    export NPA_SSH_KEY="${NPA_SSH_KEY:-$HOME/.ssh/id_ed25519}"
    ```
 
+   `NPA_SSH_KEY` is the SSH **private-key path** used after provisioning. It is
+   not cloud-init key content and must never be passed as
+   `--ssh-public-key-path`. That option defaults to the matching
+   `~/.ssh/id_ed25519.pub` and accepts exactly one OpenSSH public-key record.
+   For a non-default private key, pass its existing matching `.pub` file. If it
+   is absent, derive only the public record with `ssh-keygen -y -f "$NPA_SSH_KEY"`
+   into an owner-controlled `.pub` file, verify the two fingerprints match, and
+   pass that `.pub` path; never log either key's contents.
+
 2. **Teardown (npa-driven — no manual `nebius vpc` edits).**
    ```bash
    npa/.venv/bin/npa agent destroy --project <alias> --name agent

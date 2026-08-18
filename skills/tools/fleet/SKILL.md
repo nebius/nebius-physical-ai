@@ -34,6 +34,14 @@ and zero whole-GPU capacity/allocatable. See
 
 ## Spec (npa.fleet/v0.0.1)
 
+The version remains additive. A cluster without `backend` is the historical
+mk8s shape. Explicit targets use `backend: mk8s` plus `mk8s: {...}` or
+`backend: soperator` plus `soperator: {...}`; both may appear in one project or
+fleet. Fleet owns target identity and shared-network inventory, while the
+selected backend owns one target's plan, materialization, apply, native status,
+verification, and destroy. See `docs/cluster-backends.md` for one-entry and
+mixed examples and the fail-closed state rules.
+
 A `defaults` cluster profile is deep-merged under every cluster, so **identical**
 fleets are just project entries with no overrides. Projects may declare custom
 `clusters` (overrides and/or several clusters), and identical + custom may be

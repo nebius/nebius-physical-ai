@@ -59,7 +59,12 @@ def test_select_curated_deterministic_tiebreak() -> None:
 
 
 def test_uniqueness_summary_empty_and_populated() -> None:
-    assert dfc.uniqueness_summary({}) == {"count": 0, "min": 0.0, "max": 0.0, "mean": 0.0}
+    assert dfc.uniqueness_summary({}) == {
+        "count": 0,
+        "min": 0.0,
+        "max": 0.0,
+        "mean": 0.0,
+    }
     summ = dfc.uniqueness_summary({"a": 0.2, "b": 0.8})
     assert summ["count"] == 2
     assert summ["min"] == 0.2

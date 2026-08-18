@@ -11,6 +11,7 @@ workflows, and operational runbooks.
 | [container-image-catalog.md](container-image-catalog.md) | Verified public GHCR image names, exact published tags, build dates, and capabilities |
 | [container-packaging.md](container-packaging.md) | Container packaging tiers, security baseline, and feature exposure contract |
 | [cosmos3-b200-checkpoint-evaluation-20260814.md](cosmos3-b200-checkpoint-evaluation-20260814.md) | Reserved-B200, 72-image Cosmos3 checkpoint evaluation and three-seed investment decision |
+| [leisaac-teleoperation.md](leisaac-teleoperation.md) | Capability-gated LeIsaac agent tab, RT-core launch, keyboard teleoperation, and cleanup |
 | [../architecture/oss-onboarding-ladder.md](../architecture/oss-onboarding-ladder.md) | OSS → BYOF → workflow → first-class tool promotion ladder |
 | [npa-workflow-tool-catalog.md](npa-workflow-tool-catalog.md) | `toolRef` catalog for declarative `npa.workflow` specs |
 | [kubernetes.md](kubernetes.md) | User setup and operational checklist for running Workbench services and SkyPilot workflows on Kubernetes |

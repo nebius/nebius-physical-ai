@@ -1,12 +1,12 @@
-# Public Workbench Container Images
+# Public Workbench Container Image Catalog
 
-These public images are published under:
+Repository-selected public-mirror images use:
 
 ```text
 ghcr.io/nebius/nebius-physical-ai/<image>:<tag>
 ```
 
-External consumers can pull them anonymously from GHCR:
+External consumers can pull published entries anonymously from GHCR:
 
 ```bash
 export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
@@ -14,10 +14,13 @@ docker pull "${NPA_REGISTRY}/npa-retargeting:0.1.1"
 ```
 
 The catalog was verified against the public GHCR tag and OCI manifest APIs on
-2026-08-14. Every repository and tag below resolved anonymously. **Built** is
-the UTC build date of the newest listed variant; reproducible images that
-intentionally zero their OCI `created` field use the timestamp in the immutable
-tag and `npa.build_ts` label.
+2026-08-15. Of the 25 images selected by the repository's public publishing
+plan, 24 resolved anonymously. The configured `npa-leisaac` tag returned HTTP
+403 from GHCR's anonymous token endpoint and is marked publication-pending
+below; repository redistribution eligibility and publishing intent do not prove
+current registry visibility. **Built** is the UTC build date of the newest
+listed variant; reproducible images that intentionally zero their OCI `created`
+field use the timestamp in the immutable tag and `npa.build_ts` label.
 
 Prefer a full timestamped tag when selecting a hardware-specific variant. OCI
 tags can be moved, so resolve and retain the manifest digest as well when strict
@@ -47,6 +50,7 @@ Rows are ordered by **Built** date, then by friendly name.
 | Sim2Real Loop Eval 0.1.3 | `npa-loop-eval` | `0.1.3-genuine-sm120`, `cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | 2026-08-03 | Batched closed-loop policy evaluation in Genesis (default 16 environments and 240 steps), providing the scoring stage of the Sim2Real loop. Exact-source workflow builds bake the same snapshot-pinned non-root SkyPilot Kubernetes bootstrap closure as EnvGen so Stage 14 can start without a privileged or moving bootstrap image. Built from `sim2real-eval/Dockerfile`; the tool key is `loop-eval`. |
 | Sim2Real Reference Policy 0.1.2 | `npa-reference-policy` | `0.1.2`, `cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | 2026-08-03 | Reference BYO-compatible Sim2Real action policy and worked example of the policy-container contract. Includes the policy functional smoke for comparison with custom images. |
 | SONIC (GR00T-WholeBodyControl) | `npa-sonic` | `cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` (active RTX PRO Kubernetes); `0.1.2` (quarantined L40S) | 2026-08-03 | Whole-body humanoid locomotion training and evaluation using `gear_sonic` (Apache-2.0 at a pinned commit). The public active image runtime-fetches Isaac and requires GPU Operator driver mounts. The old L40S and combined H100/H200 MuJoCo images are restricted and rejected; compute-only serverless use requires a separately validated custom image. |
+| LeIsaac 0.4.0 | `npa-leisaac` | `0.4.0-20260817T231825Z` (publication-pending public mirror) | 2026-08-17 | Browser teleoperation for the real upstream SO-101 LiftCube and PickOrange tasks, with secure agent-relay transport and immutable LeRobot episode recording. The image contains Apache-2.0 LeIsaac source and OSS dependencies only; Isaac Sim/Lab, NVIDIA's browser client, and task assets are runtime-fetched under the shared `ACCEPT_EULA` contract and are never baked into the image. Revalidate a digest before use. |
 | Cosmos 3 (`cosmos-framework` 1.2.2) | `npa-cosmos3` | `1.2.2-cu130`, `1.2.2-cu130-r2` | 2026-08-08 | Cosmos 3 omni-model generation: text-to-image, image-to-image, text-to-video, image-to-video, and video-to-video. Contains OpenMDW-1.1 source and a CUDA 13 venv only; checkpoints, Wan VAE, and guardrails download at runtime. |
 | Wan 2.2 TI2V-5B | `npa-wan2-2` | historical accepted tag: `2.2-ti2v5b-rtfetch-cu128-20260809T011658Z-r7`; current unpublished closure: Torch 2.13.0/CUDA 13.0/NCCL 2.29.7 | 2026-08-09 | Wan 2.2 text/image-to-video generation from Apache-2.0 source on an OSS dependency base. CUDA PyTorch and `nvidia-*` wheels are runtime-fetched under their upstream package terms, while public models and tokenizers download anonymously. The listed tag carries prior live evidence; the security-fixed closure requires new single- and four-GPU qualification before publication or promotion. |
 | Cosmos Curator 0.1.2 | `npa-cosmos-curate` | `0.1.2-skypilot-v1-20260813T164700Z` | 2026-08-13 | Runs real `cosmos-curate` stages in process: download, fixed-stride extraction, clip transcode, motion-vector decode, motion filtering, and clip writing. GPU-stage models are fetched at runtime with the operator's Hugging Face token. |

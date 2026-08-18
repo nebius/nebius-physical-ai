@@ -74,9 +74,10 @@ def run_kubectl(
     *,
     context: str = "",
     kubeconfig: str = "",
-    timeout: float = 30.0,
+    timeout: float | None = 30.0,
     binary: str | None = None,
     env: Mapping[str, str] | None = None,
+    stdin: str | None = None,
     runner: Callable[..., subprocess.CompletedProcess] | None = None,
 ) -> KubectlResult:
     """Run ``kubectl <args>``, retrying once without a stale ambient IAM token.
@@ -105,6 +106,7 @@ def run_kubectl(
             proc = run(
                 cmd,
                 env=proc_env,
+                input=stdin,
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -124,7 +126,9 @@ def run_kubectl(
         return result
 
     combined = f"{result.stderr}\n{result.stdout}"
-    if ambient_iam_token_present(base_env) and looks_like_stale_iam_token_error(combined):
+    if ambient_iam_token_present(base_env) and looks_like_stale_iam_token_error(
+        combined
+    ):
         retry = _invoke(strip_iam_token_env(base_env))
         return KubectlResult(
             returncode=retry.returncode,

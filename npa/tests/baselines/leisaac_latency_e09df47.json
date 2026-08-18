@@ -1,0 +1,14 @@
+{
+  "schema": "npa.leisaac.latency-baseline.v1",
+  "source_commit": "e09df478d96e5cb79a6bf71d09e4a46f2e4f7e5b",
+  "method": "median retained fresh-browser trial; no outlier filtering",
+  "single_fast": {
+    "causal_p50_ms": 90.600,
+    "causal_p95_ms": 179.710
+  },
+  "dual_slow": {
+    "causal_p50_ms": 126.900,
+    "causal_p95_ms": 226.843
+  },
+  "maximum_regression_fraction": 0.10
+}

@@ -71,6 +71,11 @@ def test_skills_index_covers_every_skill(skills_index: dict) -> None:
             assert name in names
 
 
+def test_root_claude_skill_index_names_leisaac() -> None:
+    root_index = (REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "`skills/tools/leisaac/SKILL.md`" in root_index
+
+
 def test_skill_smoke_examples_run(
     skills_index: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

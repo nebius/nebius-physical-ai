@@ -1665,10 +1665,9 @@ def _data_factory_spec() -> dict[str, Any]:
                 "curate": OrderedDict(
                     {
                         "description": (
-                            "Stage 4 - Curation (Voxel51 / FiftyOne). Run real FiftyOne Brain "
-                            "curation over the augmented + graded variants (uniqueness + "
-                            "near-duplicate detection + keep/drop) when run in the npa-fiftyone "
-                            "image, else degrade to the report-only counts path."
+                            "Stage 4b - Real Voxel51 / FiftyOne Brain curation over the Cosmos "
+                            "Curator output (uniqueness + near-duplicate detection + keep/drop). "
+                            "Missing dependencies or invalid curator output fail hard."
                         ),
                         "needs": ["cosmos-curate"],
                         "toolRef": "workbench.fiftyone.curate_augmented",
@@ -2766,6 +2765,10 @@ _AUTHOR_STOPWORDS = frozenset(
         "simple",
         "minimal",
         "example",
+        # Domain-only words select the canonical Sim2Real template. Treating
+        # ``sim2real`` as a concrete catalog-tool keyword otherwise ranks every
+        # ``workbench.sim2real.*`` tool equally and can compose arbitrary stages.
+        "sim2real",
     }
 )
 

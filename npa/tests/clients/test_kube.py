@@ -28,9 +28,11 @@ class _Recorder:
     def __init__(self, results: list[_FakeProc]) -> None:
         self._results = results
         self.calls: list[dict[str, str]] = []
+        self.inputs: list[str | None] = []
 
     def __call__(self, cmd, *, env, **kwargs):  # noqa: ANN001 - test double
         self.calls.append(dict(env))
+        self.inputs.append(kwargs.get("input"))
         return self._results[len(self.calls) - 1]
 
 
@@ -80,10 +82,35 @@ def test_first_call_success_no_retry() -> None:
     assert rec.calls[0].get("NEBIUS_IAM_TOKEN") == "stale"
 
 
+def test_stdin_and_both_valid_token_aliases_are_preserved() -> None:
+    rec = _Recorder([_FakeProc(0, "applied")])
+    result = run_kubectl(
+        ["apply", "-f", "-"],
+        binary="kubectl",
+        env={
+            "NEBIUS_IAM_TOKEN": "primary-token",
+            "NPA_NEBIUS_IAM_TOKEN": "alias-token",
+        },
+        stdin='{"kind":"List"}',
+        runner=rec,
+    )
+
+    assert result.returncode == 0
+    assert rec.calls == [
+        {
+            "NEBIUS_IAM_TOKEN": "primary-token",
+            "NPA_NEBIUS_IAM_TOKEN": "alias-token",
+        }
+    ]
+    assert rec.inputs == ['{"kind":"List"}']
+
+
 def test_retries_without_token_on_stale_auth_error() -> None:
     rec = _Recorder(
         [
-            _FakeProc(1, "", "Service iam error Unauthenticated; failed with exit code 7"),
+            _FakeProc(
+                1, "", "Service iam error Unauthenticated; failed with exit code 7"
+            ),
             _FakeProc(0, "16"),
         ]
     )
@@ -105,7 +132,9 @@ def test_retries_without_token_on_stale_auth_error() -> None:
 
 def test_no_retry_when_no_ambient_token() -> None:
     rec = _Recorder([_FakeProc(1, "", "Unauthenticated")])
-    result = run_kubectl(["get", "nodes"], binary="kubectl", env={"PATH": "/bin"}, runner=rec)
+    result = run_kubectl(
+        ["get", "nodes"], binary="kubectl", env={"PATH": "/bin"}, runner=rec
+    )
     assert result.returncode == 1
     assert result.retried_without_iam_token is False
     assert len(rec.calls) == 1

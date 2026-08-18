@@ -1,64 +1,196 @@
 """Deploy / destroy / plan / status for npa-managed **fleets** of clusters.
 
-A fleet is many k8s-training clusters across many projects in one tenant. This
-module orchestrates, per ``(project, cluster)`` target:
+A fleet is many backend-selected clusters across many projects in one tenant.
+This module owns only fleet-level orchestration, per ``(project, cluster)``
+target:
 
 1. Resolving (or creating) the project under the tenant via the ``nebius`` CLI.
-2. Materializing a self-contained Terraform wrapper that sources the
-   ``k8s-training`` recipe (repo-vendored by default, or a freshly cloned
-   upstream ``main``/ref so the fleet can consume the latest recipe changes).
-3. Rendering ``terraform.tfvars`` and running ``terraform apply`` with the
-   tenant/project/region/iam_token/ssh passed as ``TF_VAR_*`` env.
-4. Writing an admin kubeconfig context and an env sidecar so ``destroy`` can
-   reconstruct the required variables.
+2. Selecting targets, scheduling concurrency, and aggregating results.
+3. Persisting backend-discriminated inventory and shared-project network
+   ownership.
+4. Dispatching each target to its mk8s or soperator backend adapter.
 
-Reuses the terraform subprocess helpers from
-``npa.cli.cluster.terraform_lifecycle`` and Nebius-CLI env hygiene mirroring
-``npa.soperator.lifecycle``.
+Backend modules own desired state, rendering, apply, native status,
+verification/reconciliation, and exact-identity destroy for one target.
 """
 
 from __future__ import annotations
 
 import concurrent.futures
-import codecs
+from dataclasses import replace
 import json
 import logging
 import os
 import re
-import selectors
 import shutil
-import stat
 import subprocess
-import tempfile
-import time
+import threading
 from pathlib import Path
 from typing import Any, Callable
 
 import yaml  # type: ignore[import-untyped]
 
-from npa.cli.cluster.terraform_lifecycle import (
-    _require_bin,
-    _run_capture,
-    _run_stream,
-    _terraform_env,
+from npa.cluster_backends.process import (
+    require_bin as _require_bin,
+    run_capture as _run_capture,
+    run_stream as _run_stream,
+    terraform_env as _terraform_env,
 )
-from npa.cluster.gpu_driver import resolve_gpu_driver_strategy
-from npa.cluster.gpu_health import GpuHealthConfig, validate_gpu_health
-from npa.fleet.quotas import preflight_region, shortfall_message
-from npa.fleet.mig import MigVerificationError, wait_for_mig_ready
-from npa.fleet.spec import ClusterSpec, FleetSpec, NodePoolSpec, ProjectSpec
-from npa.fleet.tfvars import (
-    patch_provider_domain,
-    provider_domain,
-    render_tfvars,
+from npa.cluster_backends import (
+    BackendOwnershipError,
+    get_backend,
+    require_backend_ownership,
+)
+from npa.cluster_backends.mk8s import (
+    MK8sApplyRequest,
+    MK8sDestroyRequest,
+    MK8sExecutionScope,
+    MK8sProjectIdentity,
+    MK8sStatusRequest,
+)
+from npa.cluster_backends.mk8s_execution import (
+    _PROVIDER_FIELD_MISSING,
+    _ensure_private_directory,
+    _get_project,
+    _is_not_found_result,
+    _load_env_sidecar,
+    _load_json_file,
+    _log,
+    _nebius_argv,
+    _prepare_install_dir,
+    _provider_field,
+    _tf_run,
+    _write_json_file,
+)
+from npa.cluster_backends import mk8s_execution as _mk8s_execution
+from npa.cluster_backends.soperator import (
+    SoperatorApplyRequest,
+    SoperatorDestroyRequest,
+    SoperatorStatusRequest,
+)
+from npa.soperator.lifecycle import (
+    SoperatorDeploymentValidationError,
+    SoperatorStateCaptureError,
+)
+from npa.cluster_backends.quotas import preflight_region, shortfall_message
+from npa.fleet.spec import ClusterSpec, FleetSpec, ProjectSpec
+from npa.cluster_backends.mk8s_render import (
     validate_recipe_mig_compatibility,
 )
+
+# Deprecated test/developer compatibility names. Production orchestration calls
+# the public backend adapter; these aliases keep direct helper consumers working
+# while ownership remains in ``cluster_backends.mk8s_execution``.
+_cluster_tf_env = _mk8s_execution._cluster_tf_env
+_BACKEND_DEPLOY_CLUSTER = _mk8s_execution.deploy_cluster
+_BACKEND_DESTROY_CLUSTER = _mk8s_execution.destroy_cluster
+_BACKEND_IS_VERIFIED_UNCHANGED = _mk8s_execution.is_verified_unchanged_target
+_persist_npa_cluster_identity = _mk8s_execution._persist_npa_cluster_identity
+_remove_npa_cluster_identity = _mk8s_execution._remove_npa_cluster_identity
+_provider_node_group_matches_pool = _mk8s_execution._provider_node_group_matches_pool
+_run_to_log = _mk8s_execution._run_to_log
+_terraform_managed_ids = _mk8s_execution._terraform_managed_ids
+_terraform_outputs = _mk8s_execution._terraform_outputs
+_write_env_sidecar = _mk8s_execution._write_env_sidecar
+validate_gpu_health = _mk8s_execution.validate_gpu_health
+wait_for_mig_ready = _mk8s_execution.wait_for_mig_ready
+_LEGACY_EXECUTION_LOCK = threading.RLock()
+
+
+def _write_kubeconfig(*args: Any, **kwargs: Any) -> None:
+    # This compatibility seam temporarily forwards a formerly fleet-private
+    # helper into the backend module. Keep the swap atomic: parallel fleet tests
+    # and legacy embedders may patch different helpers at the same time.
+    with _LEGACY_EXECUTION_LOCK:
+        saved = _mk8s_execution._run_capture
+        try:
+            _mk8s_execution._run_capture = _run_capture
+            _mk8s_execution._write_kubeconfig(*args, **kwargs)
+        finally:
+            _mk8s_execution._run_capture = saved
+
+
+_LEGACY_HELPER_DEFAULTS = {
+    name: globals()[name]
+    for name in (
+        "_cluster_tf_env",
+        "_require_bin",
+        "_terraform_env",
+        "_prepare_install_dir",
+        "_run_stream",
+        "_terraform_managed_ids",
+        "_terraform_outputs",
+        "_write_kubeconfig",
+        "_persist_npa_cluster_identity",
+        "_tf_run",
+        "_run_capture",
+        "_get_project",
+        "validate_gpu_health",
+        "wait_for_mig_ready",
+    )
+}
+
+
+def _call_legacy_execution(function: Callable[..., dict[str, Any]], **kwargs: Any):
+    """Compatibility seam for callers that patched former fleet-private helpers."""
+
+    names = (
+        "_cluster_tf_env",
+        "_require_bin",
+        "_terraform_env",
+        "_prepare_install_dir",
+        "_run_stream",
+        "_terraform_managed_ids",
+        "_terraform_outputs",
+        "_write_kubeconfig",
+        "_persist_npa_cluster_identity",
+        "_tf_run",
+        "_run_capture",
+        "_get_project",
+        "validate_gpu_health",
+        "wait_for_mig_ready",
+    )
+    with _LEGACY_EXECUTION_LOCK:
+        saved = {name: getattr(_mk8s_execution, name) for name in names}
+        try:
+            for name in names:
+                if globals()[name] is not _LEGACY_HELPER_DEFAULTS[name]:
+                    setattr(_mk8s_execution, name, globals()[name])
+            return function(**kwargs)
+        finally:
+            for name, value in saved.items():
+                setattr(_mk8s_execution, name, value)
+
+
+def _deploy_one_cluster(**kwargs: Any) -> dict[str, Any]:
+    return _call_legacy_execution(_BACKEND_DEPLOY_CLUSTER, **kwargs)
+
+
+def _destroy_one_cluster(**kwargs: Any) -> dict[str, Any]:
+    return _call_legacy_execution(_BACKEND_DESTROY_CLUSTER, **kwargs)
+
+
+def _is_verified_unchanged_target(**kwargs: Any) -> bool:
+    return bool(_call_legacy_execution(_BACKEND_IS_VERIFIED_UNCHANGED, **kwargs))
+
+
+_LEGACY_DEPLOY_COMPAT = _deploy_one_cluster
+_LEGACY_DESTROY_COMPAT = _destroy_one_cluster
+
+
+def _legacy_helpers_patched() -> bool:
+    return any(
+        globals()[name] is not default
+        for name, default in _LEGACY_HELPER_DEFAULTS.items()
+    )
+
 
 logger = logging.getLogger(__name__)
 
 _SOLUTIONS_LIBRARY_REPO = "https://github.com/nebius/nebius-solutions-library.git"
 _K8S_TRAINING_SUBDIR = "k8s-training"
 _MODULES_SUBDIR = "modules"
+_TARGET_BACKEND_OWNER = ".npa-backend-owner.json"
 # Pinned ref cloned when no local recipe is available, matching the repo-vendored
 # copy (deploy/cluster/vendor + the single-cluster wrapper) so a fleet run from an
 # installed package doesn't silently drift onto upstream ``main`` HEAD.
@@ -70,11 +202,6 @@ _ENV_SIDECAR = ".npa-fleet-env.json"
 _PROJECT_NETWORK_STATE = ".npa-fleet-network.json"
 _FLEET_STATE = "fleet-state.json"
 _MIN_TERRAFORM_VERSION = (1, 12, 0)
-
-
-def _log(on_status: Callable[[str], None] | None, message: str) -> None:
-    if on_status is not None:
-        on_status(message)
 
 
 def _project_in_scope(
@@ -109,18 +236,6 @@ def _nebius_cli_env() -> dict[str, str]:
     if not reuse:
         env.pop("NEBIUS_IAM_TOKEN", None)
     return env
-
-
-def _nebius_argv(nebius_bin: str, profile: str = "") -> list[str]:
-    """Base argv for a ``nebius`` CLI call, pinned to *profile* when given.
-
-    A Nebius service account belongs to exactly one tenant, so a fleet targeting
-    another tenant must authenticate as that tenant's profile. Passing
-    ``--profile`` per call keeps the machine's active profile untouched (and
-    keeps concurrent runs against different tenants independent).
-    """
-
-    return [nebius_bin, "--profile", profile] if profile else [nebius_bin]
 
 
 def _nebius_config() -> dict[str, Any]:
@@ -369,56 +484,6 @@ def _find_project_id(projects: list[dict[str, Any]], name: str) -> str:
             "use an explicit project_id"
         )
     return matches[0] if matches else ""
-
-
-def _get_project(
-    nebius_bin: str, project_id: str, env: dict[str, str], profile: str = ""
-) -> dict[str, Any]:
-    """Return one exact provider project without exposing provider output."""
-
-    result = _run_capture(
-        [
-            *_nebius_argv(nebius_bin, profile),
-            "iam",
-            "project",
-            "get",
-            "--id",
-            project_id,
-            "--format",
-            "json",
-        ],
-        env=env,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"could not verify existing project (nebius exited {result.returncode})"
-        )
-    try:
-        payload = json.loads(result.stdout or "{}")
-    except json.JSONDecodeError as exc:
-        raise ValueError("could not parse existing project JSON") from exc
-    if not isinstance(payload, dict):
-        raise ValueError("existing project JSON is not an object")
-    return payload
-
-
-_PROVIDER_FIELD_MISSING = object()
-
-
-def _provider_field(payload: object, *spellings: str) -> object:
-    """Read one provider field defensively across wire-format spellings.
-
-    Multiple spellings are accepted only when their values agree. Missing or
-    contradictory evidence stays unknown so identity/shape checks fail closed.
-    """
-
-    if not isinstance(payload, dict):
-        return _PROVIDER_FIELD_MISSING
-    values = [payload[key] for key in spellings if key in payload]
-    if not values or any(value != values[0] for value in values[1:]):
-        return _PROVIDER_FIELD_MISSING
-    return values[0]
 
 
 def _verify_existing_project(
@@ -732,457 +797,6 @@ def resolve_project_id(
 # --------------------------------------------------------------------------- #
 # Per-cluster terraform materialization
 # --------------------------------------------------------------------------- #
-def _write_json_file(path: Path, data: dict[str, Any]) -> None:
-    """Atomically write non-secret local recovery metadata."""
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            delete=False,
-        ) as handle:
-            json.dump(data, handle, indent=2)
-            handle.write("\n")
-            temporary = Path(handle.name)
-        os.replace(temporary, path)
-        temporary = None
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
-
-
-def _load_json_file(path: Path | None) -> dict[str, Any]:
-    if path is None or not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.warning(
-            "could not load fleet recovery metadata %s (%s)", path, type(exc).__name__
-        )
-        return {}
-    if not isinstance(data, dict):
-        logger.warning(
-            "ignoring fleet recovery metadata %s because it is not a mapping", path
-        )
-        return {}
-    return data
-
-
-def _write_env_sidecar(install_dir: Path, data: dict[str, Any]) -> None:
-    _write_json_file(install_dir / _ENV_SIDECAR, data)
-
-
-def _persist_npa_cluster_identity(
-    *,
-    context: str,
-    cluster_id: str,
-    project_id: str,
-    region: str,
-    cluster: ClusterSpec,
-    subnet_id: str,
-    kubeconfig_path: Path,
-    fleet_name: str,
-    project_key: str,
-    base_dir: Path | None = None,
-) -> None:
-    """Register a fleet cluster for project-scoped workflow/controller use."""
-
-    from npa.cluster.state import (
-        ClusterState,
-        kubeconfig_file,
-        load_cluster_state,
-        save_cluster_state,
-        utc_now_iso,
-    )
-
-    existing = load_cluster_state(context, base_dir=base_dir)
-    if existing is not None and (
-        existing.cluster_id != cluster_id or existing.project_id != project_id
-    ):
-        raise RuntimeError(
-            f"NPA cluster context {context!r} already records a different immutable "
-            "project/cluster identity; refusing to overwrite it"
-        )
-    if not kubeconfig_path.is_file():
-        raise RuntimeError(
-            "Fleet kubeconfig is unavailable; refusing to register incomplete "
-            "NPA cluster identity"
-        )
-    installed_kubeconfig = kubeconfig_file(context, base_dir=base_dir)
-    installed_kubeconfig.parent.mkdir(parents=True, exist_ok=True)
-    if kubeconfig_path.resolve() != installed_kubeconfig.resolve():
-        temporary: Path | None = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="wb",
-                dir=installed_kubeconfig.parent,
-                prefix=f".{installed_kubeconfig.name}.",
-                delete=False,
-            ) as handle:
-                with kubeconfig_path.open("rb") as source:
-                    shutil.copyfileobj(source, handle)
-                temporary = Path(handle.name)
-            temporary.chmod(stat.S_IRUSR | stat.S_IWUSR)
-            os.replace(temporary, installed_kubeconfig)
-            temporary = None
-        finally:
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
-    else:
-        installed_kubeconfig.chmod(stat.S_IRUSR | stat.S_IWUSR)
-    primary_pool = (
-        cluster.gpu_nodes
-        if cluster.gpu_nodes and cluster.gpu_nodes.count > 0
-        else cluster.cpu_nodes
-    )
-    state = ClusterState(
-        name=context,
-        cluster_id=cluster_id,
-        project_id=project_id,
-        region=region,
-        node_count=cluster.cpu_count() + cluster.gpu_count(),
-        node_platform=str(primary_pool.platform if primary_pool else ""),
-        node_preset=str(primary_pool.preset if primary_pool else ""),
-        k8s_version=cluster.k8s_version,
-        subnet_id=subnet_id,
-        created_at=existing.created_at if existing else utc_now_iso(),
-        last_seen_state="RUNNING",
-        last_seen_at=utc_now_iso(),
-        node_group_id=existing.node_group_id if existing else "",
-        endpoint=existing.endpoint if existing else "",
-        kubeconfig_path=str(installed_kubeconfig),
-        provider_name=cluster.name,
-    )
-    save_cluster_state(
-        state,
-        base_dir=base_dir,
-        metadata={
-            "managed_by": "npa fleet",
-            "fleet": fleet_name,
-            "project_key": project_key,
-            "event": "kubeconfig_written",
-            "updated_at": utc_now_iso(),
-            "teardown": (
-                "Run `npa fleet destroy --spec <fleet-spec.yaml> "
-                f"--only-projects {project_key} --only-clusters {cluster.name} --yes`."
-            ),
-        },
-    )
-
-
-def _remove_npa_cluster_identity(
-    *,
-    context: str,
-    cluster_id: str,
-    project_id: str,
-    base_dir: Path | None = None,
-) -> None:
-    """Remove only the exact fleet identity after authoritative cloud teardown."""
-
-    if not context:
-        return
-    from npa.cluster.state import delete_cluster_state, load_cluster_state
-
-    existing = load_cluster_state(context, base_dir=base_dir)
-    if existing is None:
-        return
-    if existing.cluster_id != cluster_id or existing.project_id != project_id:
-        raise RuntimeError(
-            f"NPA cluster context {context!r} no longer matches the fleet's immutable "
-            "project/cluster identity; local identity was preserved"
-        )
-    delete_cluster_state(context, base_dir=base_dir)
-
-
-def _load_env_sidecar(install_dir: Path) -> dict[str, str] | None:
-    path = install_dir / _ENV_SIDECAR
-    if not path.exists():
-        return None
-    data = _load_json_file(path)
-    return data or None
-
-
-def _prepare_install_dir(
-    install_dir: Path,
-    *,
-    recipe_root: Path,
-    region: str,
-    cluster: ClusterSpec,
-    ssh_public_key: str,
-    on_status: Callable[[str], None] | None = None,
-) -> Path:
-    """Materialize a per-cluster copy of the recipe and return the terraform workdir.
-
-    Copies ``<recipe_root>/k8s-training`` and ``<recipe_root>/modules`` into the
-    install dir (preserving the ``../modules`` relationship), patches the recipe
-    provider domain for the region, and writes ``terraform.tfvars``. Returns the
-    ``k8s-training`` copy where terraform must run.
-    """
-
-    install_dir.mkdir(parents=True, exist_ok=True)
-    workdir = install_dir / _K8S_TRAINING_SUBDIR
-    modules_dst = install_dir / _MODULES_SUBDIR
-    # Refresh recipe files but preserve any existing terraform state/plugins.
-    if workdir.exists():
-        for item in workdir.iterdir():
-            if item.name.startswith("terraform.tfstate") or item.name == ".terraform":
-                continue
-            if item.is_dir():
-                shutil.rmtree(item, ignore_errors=True)
-            else:
-                item.unlink()
-    shutil.copytree(recipe_root / _K8S_TRAINING_SUBDIR, workdir, dirs_exist_ok=True)
-    if modules_dst.exists():
-        shutil.rmtree(modules_dst, ignore_errors=True)
-    shutil.copytree(recipe_root / _MODULES_SUBDIR, modules_dst)
-
-    # kubectl 1.36's `debug --quiet` suppresses both attached verifier output and
-    # the generated debugger-pod name. That defeats success-evidence checking and
-    # cleanup. Apply this compatibility shim to the materialized recipe so local,
-    # ref-cloned, package-fallback, and vendored sources all receive the fix.
-    verifier = workdir / _FILESYSTEM_VERIFIER
-    if verifier.is_file():
-        original = verifier.read_text()
-        patched = re.sub(r"(?m)^[ \t]*--quiet[ \t]*\\\n", "", original)
-        patched = patched.replace("kubectl debug --quiet ", "kubectl debug ")
-        if patched != original:
-            verifier.write_text(patched)
-            _log(on_status, "patched filesystem verifier for kubectl debug output")
-
-    provider_tf = workdir / "provider.tf"
-    if provider_tf.exists():
-        original = provider_tf.read_text()
-        patched = patch_provider_domain(original, region)
-        # Loud no-op guard: if the recipe drifts (renamed file, moved/renamed
-        # provider block, or changed default domain) the literal replace silently
-        # matches nothing and terraform would talk to the EU endpoint from a
-        # non-EU region, failing confusingly at apply. Surface it here instead.
-        target = provider_domain(region)
-        if patched == original and target not in original:
-            _log(
-                on_status,
-                f"WARNING: provider.tf domain not patched to {target} for region "
-                f"{region!r} (recipe may have changed); check {provider_tf}",
-            )
-        provider_tf.write_text(patched)
-    elif not region.startswith("eu"):
-        _log(
-            on_status,
-            f"WARNING: no provider.tf in recipe copy at {workdir}; cannot patch "
-            f"provider domain for region {region!r}",
-        )
-
-    (workdir / "terraform.tfvars").write_text(
-        render_tfvars(cluster, ssh_public_key=ssh_public_key, recipe_dir=workdir)
-    )
-    return workdir
-
-
-def _ensure_private_directory(path: Path) -> None:
-    """Create/open one directory without following a final symlink and set 0700."""
-
-    try:
-        path.mkdir(mode=0o700, exist_ok=True)
-        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
-        fd = os.open(path, flags)
-    except OSError as exc:
-        raise RuntimeError(
-            f"could not securely prepare Terraform diagnostics directory {path}: "
-            f"{type(exc).__name__}"
-        ) from exc
-    try:
-        os.fchmod(fd, 0o700)
-    finally:
-        os.close(fd)
-
-
-def _open_private_log(log_path: Path):
-    """Open an append-only 0600 regular file without following a final symlink."""
-
-    _ensure_private_directory(log_path.parent)
-    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
-    flags = (
-        os.O_WRONLY
-        | os.O_APPEND
-        | os.O_CREAT
-        | os.O_CLOEXEC
-        | os.O_NOFOLLOW
-        | os.O_NONBLOCK
-    )
-    try:
-        parent_fd = os.open(log_path.parent, directory_flags)
-        try:
-            fd = os.open(log_path.name, flags, 0o600, dir_fd=parent_fd)
-        finally:
-            os.close(parent_fd)
-    except OSError as exc:
-        raise RuntimeError(
-            f"could not securely open Terraform diagnostics log {log_path}: "
-            f"{type(exc).__name__}"
-        ) from exc
-    try:
-        target_stat = os.fstat(fd)
-        if not stat.S_ISREG(target_stat.st_mode):
-            raise RuntimeError(
-                f"Terraform diagnostics log target is not a regular file: {log_path}"
-            )
-        if target_stat.st_nlink != 1:
-            raise RuntimeError(
-                f"Terraform diagnostics log target has multiple hard links: {log_path}"
-            )
-        # A pre-existing file may have been created under a permissive umask.
-        os.fchmod(fd, 0o600)
-        return os.fdopen(fd, "a", encoding="utf-8")
-    except BaseException:
-        os.close(fd)
-        raise
-
-
-def _ensure_private_log_parent(log_path: Path, fleet_root: Path) -> None:
-    """Prepare every diagnostics directory below *fleet_root* as 0700."""
-
-    try:
-        relative_parent = log_path.parent.relative_to(fleet_root)
-    except ValueError as exc:
-        raise RuntimeError(
-            f"Terraform diagnostics log escapes the fleet run directory: {log_path}"
-        ) from exc
-    _ensure_private_directory(fleet_root)
-    current = fleet_root
-    for part in relative_parent.parts:
-        current /= part
-        _ensure_private_directory(current)
-
-
-def _run_to_log(
-    args: list[str], *, cwd: Path, env: dict[str, str], timeout: int, log_path: Path
-) -> None:
-    """Run *args*, streaming redacted stdout/stderr to a private log.
-
-    Terraform credentials remain environment-only. If provider output
-    accidentally prints a token, exact known credential values are redacted
-    before the bytes reach disk. The subprocess remains list-form and human
-    sequential mode continues to use ``_run_stream`` directly.
-    """
-
-    sensitive_values = sorted(
-        {
-            env[key]
-            for key in (
-                "TF_VAR_iam_token",
-                "NEBIUS_IAM_TOKEN",
-                "NPA_NEBIUS_IAM_TOKEN",
-            )
-            if env.get(key)
-        },
-        key=len,
-        reverse=True,
-    )
-    max_sensitive_length = max((len(value) for value in sensitive_values), default=0)
-    pending = ""
-
-    with _open_private_log(log_path) as fh:
-        fh.write(f"\n$ {' '.join(args)}\n")
-        fh.flush()
-        proc = subprocess.Popen(
-            args, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
-        )
-        if proc.stdout is None:  # pragma: no cover - guaranteed by stdout=PIPE
-            proc.kill()
-            proc.wait()
-            raise RuntimeError("could not capture Terraform diagnostics")
-
-        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
-
-        def write_redacted(chunk: str, *, final: bool = False) -> None:
-            nonlocal pending
-            pending += chunk
-            if final or max_sensitive_length == 0:
-                cutoff = len(pending)
-            else:
-                # Retain enough trailing characters for a credential split
-                # across OS pipe reads to be recognized on the next read.
-                cutoff = max(0, len(pending) - max_sensitive_length + 1)
-                changed = True
-                while changed:
-                    changed = False
-                    for value in sensitive_values:
-                        start = 0
-                        while True:
-                            index = pending.find(value, start)
-                            if index < 0:
-                                break
-                            if index < cutoff < index + len(value):
-                                cutoff = index
-                                changed = True
-                            start = index + 1
-            prefix, pending = pending[:cutoff], pending[cutoff:]
-            for value in sensitive_values:
-                prefix = prefix.replace(value, "<redacted>")
-            if prefix:
-                fh.write(prefix)
-                fh.flush()
-
-        selector = selectors.DefaultSelector()
-        selector.register(proc.stdout, selectors.EVENT_READ)
-        deadline = time.monotonic() + timeout
-        try:
-            while True:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    proc.kill()
-                    remainder, _ = proc.communicate()
-                    write_redacted(
-                        decoder.decode(remainder or b"", final=True), final=True
-                    )
-                    raise subprocess.TimeoutExpired(args, timeout)
-                events = selector.select(timeout=min(1.0, remaining))
-                if not events:
-                    continue
-                chunk = os.read(proc.stdout.fileno(), 65536)
-                if not chunk:
-                    break
-                write_redacted(decoder.decode(chunk))
-            write_redacted(decoder.decode(b"", final=True), final=True)
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                proc.kill()
-                proc.wait()
-                raise subprocess.TimeoutExpired(args, timeout)
-            returncode = proc.wait(timeout=remaining)
-        except BaseException:
-            if proc.poll() is None:
-                proc.kill()
-                proc.wait()
-            raise
-        finally:
-            selector.close()
-            proc.stdout.close()
-    if returncode != 0:
-        raise RuntimeError(
-            f"command failed ({returncode}): {' '.join(args)} (see {log_path})"
-        )
-
-
-def _tf_run(
-    args: list[str],
-    *,
-    cwd: Path,
-    env: dict[str, str],
-    timeout: int,
-    log_path: Path | None,
-) -> None:
-    """terraform runner: stream to stdout (sequential) or to a per-cluster log."""
-
-    if log_path is not None:
-        _run_to_log(args, cwd=cwd, env=env, timeout=timeout, log_path=log_path)
-    else:
-        _run_stream(args, cwd=cwd, env=env, timeout=timeout)
 
 
 def _assert_terraform_version(terraform_bin: str) -> str:
@@ -1264,44 +878,6 @@ def _prewarm_plugin_cache(
     )
 
 
-def _cluster_tf_env(
-    nebius_bin: str,
-    *,
-    tenant_id: str,
-    project_id: str,
-    region: str,
-    subnet_id: str,
-    profile: str = "",
-) -> dict[str, str]:
-    env = _terraform_env(nebius_bin, profile=profile)
-    env["TF_VAR_tenant_id"] = tenant_id
-    env["TF_VAR_parent_id"] = project_id
-    env["TF_VAR_region"] = region
-    env["TF_VAR_subnet_id"] = subnet_id
-    return env
-
-
-def _terraform_outputs(
-    terraform_bin: str, install_dir: Path, env: dict[str, str]
-) -> dict[str, Any]:
-    result = _run_capture(
-        [terraform_bin, "output", "-json"], cwd=install_dir, env=env, check=False
-    )
-    if result.returncode != 0 or not result.stdout.strip():
-        return {}
-    try:
-        return json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return {}
-
-
-def _cluster_id_from_outputs(outputs: dict[str, Any]) -> str:
-    value = outputs.get("kube_cluster", {}).get("value")
-    if isinstance(value, dict) and value.get("id"):
-        return str(value["id"])
-    return ""
-
-
 def _find_cluster_id_by_name(
     nebius_bin: str,
     project_id: str,
@@ -1351,75 +927,6 @@ def _find_cluster_id_by_name(
     return ""
 
 
-def _write_kubeconfig(
-    nebius_bin: str,
-    cluster_id: str,
-    kubeconfig_path: Path,
-    context: str,
-    env: dict[str, str],
-    profile: str = "",
-) -> None:
-    """Write an admin kubeconfig for *cluster_id*.
-
-    When a profile is given the nebius CLI bakes ``--profile`` into the
-    kubeconfig's exec-credential args, so ``kubectl`` keeps authenticating as
-    that tenant's principal rather than the machine's active profile.
-    """
-
-    kubeconfig_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = kubeconfig_path.with_name(f".{kubeconfig_path.name}.{os.getpid()}.tmp")
-    temporary.unlink(missing_ok=True)
-    try:
-        command_env = env.copy()
-        configured_kubectl = os.environ.get("NPA_KUBECTL_BIN", "").strip()
-        with tempfile.TemporaryDirectory(prefix="npa-kube-bin-") as shim_dir:
-            if configured_kubectl and not shutil.which(
-                "kubectl", path=command_env.get("PATH", "")
-            ):
-                resolved_kubectl = (
-                    shutil.which(configured_kubectl) or configured_kubectl
-                )
-                shim = Path(shim_dir) / "kubectl"
-                shim.symlink_to(Path(resolved_kubectl).expanduser().resolve())
-                command_env["PATH"] = os.pathsep.join(
-                    (shim_dir, command_env.get("PATH", ""))
-                )
-            result = _run_capture(
-                [
-                    *_nebius_argv(nebius_bin, profile),
-                    "mk8s",
-                    "cluster",
-                    "get-credentials",
-                    "--id",
-                    cluster_id,
-                    "--external",
-                    "--force",
-                    "--kubeconfig",
-                    str(temporary),
-                    "--context-name",
-                    context,
-                ],
-                env=command_env,
-                check=False,
-                timeout=180,
-            )
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"credential generation failed (nebius exited {result.returncode})"
-            )
-        if not temporary.is_file() or temporary.stat().st_size == 0:
-            raise RuntimeError(
-                "credential generation completed without a kubeconfig file"
-            )
-        os.replace(temporary, kubeconfig_path)
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
-def _context_name(fleet_name: str, project_key: str, cluster_name: str) -> str:
-    return f"fleet-{fleet_name}-{project_key}-{cluster_name}"
-
-
 # --------------------------------------------------------------------------- #
 # Public lifecycle
 # --------------------------------------------------------------------------- #
@@ -1449,60 +956,50 @@ def plan_fleet(
     for project in spec.projects:
         clusters = []
         for cluster in project.clusters:
-            gpu = cluster.gpu_nodes
-            driver = resolve_gpu_driver_strategy(
-                gpu_nodes=cluster.gpu_count(),
-                platform=gpu.platform if gpu else "",
-                preset=gpu.preset if gpu else "",
-                mode=cluster.resolved_gpu_driver_mode(),
-                managed_driver_preset=cluster.managed_driver_preset,
-                enable_gpu_cluster=cluster.resolved_enable_gpu_cluster(),
-                allow_unsafe_nvswitch_operator=(cluster.allow_unsafe_nvswitch_operator),
-            )
-            clusters.append(
-                {
-                    "name": cluster.name,
-                    "cpu_nodes": cluster.cpu_count(),
-                    "cpu_preset": cluster.cpu_nodes.preset if cluster.cpu_nodes else "",
-                    "gpu_nodes": cluster.gpu_count(),
-                    "gpu_platform": cluster.gpu_nodes.platform
-                    if cluster.gpu_nodes
-                    else "",
-                    "gpu_preset": cluster.gpu_nodes.preset if cluster.gpu_nodes else "",
-                    "gpu_reservation": (
-                        "strict"
-                        if cluster.gpu_nodes and cluster.gpu_nodes.capacity_block_group
-                        else "on-demand"
-                    ),
-                    "enable_gpu_cluster": cluster.resolved_enable_gpu_cluster(),
-                    "gpu_driver_mode": driver.effective_mode,
-                    "managed_driver_preset": (
-                        driver.managed_driver_preset
-                        if driver.uses_managed_image
-                        else None
-                    ),
-                    "unsafe_nvswitch_operator": (driver.unsafe_operator_acknowledged),
-                    "gpu_health_stabilization_seconds": (
-                        cluster.gpu_health_stabilization_seconds
-                    ),
-                    "gpu_cuda_smoke": cluster.gpu_cuda_smoke,
-                    "enable_filestore": cluster.enable_filestore,
-                    "filestore_disk_size_gibibytes": cluster.filestore_disk_size_gibibytes,
-                    "filestore_mount_path": cluster.filestore_mount_path,
-                    "filestore_mount_tag": cluster.filestore_mount_tag,
-                    "k8s_version": (
-                        cluster.resolved_k8s_version() or "backend-default"
-                    ),
-                    "mig": (
-                        {
-                            "strategy": cluster.mig.strategy,
-                            "config": cluster.mig.config,
-                        }
-                        if cluster.mig and cluster.mig.enabled
-                        else None
-                    ),
-                }
-            )
+            if cluster.backend_name() == "soperator":
+                assert cluster.soperator is not None
+                resolved_soperator = replace(
+                    cluster.soperator,
+                    tenant_id=tenant or "",
+                    project_id=project.project_id,
+                    region=project.region or reg,
+                )
+                clusters.append(
+                    {
+                        "backend": "soperator",
+                        **get_backend("soperator").plan(resolved_soperator),
+                    }
+                )
+                continue
+            backend_plan = get_backend("mk8s").plan(cluster)
+            planned_cluster = {
+                "name": backend_plan["name"],
+                "cpu_nodes": backend_plan["cpu_nodes"],
+                "cpu_preset": cluster.cpu_nodes.preset if cluster.cpu_nodes else "",
+                "gpu_nodes": backend_plan["gpu_nodes"],
+                "gpu_platform": backend_plan["gpu_platform"],
+                "gpu_preset": backend_plan["gpu_preset"],
+                "gpu_reservation": backend_plan["gpu_reservation"],
+                "enable_gpu_cluster": backend_plan["enable_gpu_cluster"],
+                "gpu_driver_mode": backend_plan["gpu_driver_mode"],
+                "managed_driver_preset": backend_plan["managed_driver_preset"],
+                "unsafe_nvswitch_operator": backend_plan["unsafe_nvswitch_operator"],
+                "gpu_health_stabilization_seconds": backend_plan[
+                    "gpu_health_stabilization_seconds"
+                ],
+                "gpu_cuda_smoke": backend_plan["gpu_cuda_smoke"],
+                "enable_filestore": backend_plan["enable_filestore"],
+                "filestore_disk_size_gibibytes": backend_plan[
+                    "filestore_disk_size_gibibytes"
+                ],
+                "filestore_mount_path": backend_plan["filestore_mount_path"],
+                "filestore_mount_tag": backend_plan["filestore_mount_tag"],
+                "k8s_version": backend_plan["k8s_version"],
+                "mig": backend_plan["mig"],
+            }
+            if cluster.backend_explicit:
+                planned_cluster["backend"] = "mk8s"
+            clusters.append(planned_cluster)
         plan_projects.append(
             {
                 "project_id": project.project_id or None,
@@ -1511,6 +1008,14 @@ def plan_fleet(
                 "clusters": clusters,
             }
         )
+    backend_counts = {
+        backend: sum(
+            1
+            for _project, cluster in spec.cluster_targets()
+            if cluster.backend_name() == backend
+        )
+        for backend in ("mk8s", "soperator")
+    }
     return {
         "name": spec.name,
         "tenant_id": tenant or "(resolve-at-deploy)",
@@ -1519,11 +1024,354 @@ def plan_fleet(
         "profile": plan_profile or "(active)",
         "project_count": len(spec.projects),
         "cluster_count": len(spec.cluster_targets()),
+        "backend_counts": backend_counts,
         "projects": plan_projects,
     }
 
 
+def _persist_target_backend_owner(
+    fleet_root: Path,
+    *,
+    fleet_name: str,
+    project_key: str,
+    cluster_name: str,
+    expected_backend: str,
+) -> None:
+    """Fail closed on crash-residual backend evidence, then persist ownership."""
+
+    target_root = fleet_root / project_key / cluster_name
+    marker = target_root / _TARGET_BACKEND_OWNER
+    evidence: list[dict[str, Any]] = []
+    if marker.exists():
+        try:
+            payload = json.loads(marker.read_text())
+        except (json.JSONDecodeError, OSError) as exc:
+            raise BackendOwnershipError(
+                f"backend owner marker for {project_key}/{cluster_name} is unreadable"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise BackendOwnershipError(
+                f"backend owner marker for {project_key}/{cluster_name} is malformed"
+            )
+        evidence.append(payload)
+    mk8s_sidecar = target_root / ".npa-fleet-env.json"
+    if mk8s_sidecar.exists():
+        evidence.append({"backend": "mk8s"})
+    soperator_sidecars = sorted(
+        (target_root / "soperator").glob(
+            "nebius-solutions-library*/soperator/installations/"
+            + cluster_name
+            + "/.npa-soperator-env.json"
+        )
+    )
+    if len(soperator_sidecars) > 1:
+        raise BackendOwnershipError(
+            f"multiple soperator ownership sidecars exist for {project_key}/{cluster_name}"
+        )
+    if soperator_sidecars:
+        evidence.append({"backend": "soperator"})
+    discovered = {str(item.get("backend") or "mk8s") for item in evidence}
+    if len(discovered) > 1 or (discovered and discovered != {expected_backend}):
+        raise BackendOwnershipError(
+            f"crash-residual state for {project_key}/{cluster_name} belongs to "
+            f"backend(s) {sorted(discovered)}, but the spec selects {expected_backend!r}"
+        )
+    for item in evidence:
+        for key, expected in (
+            ("fleet_name", fleet_name),
+            ("project_key", project_key),
+            ("cluster_name", cluster_name),
+        ):
+            recorded = str(item.get(key) or "")
+            if recorded and recorded != expected:
+                raise BackendOwnershipError(
+                    f"backend owner marker {key} does not match requested target"
+                )
+    _ensure_private_directory(fleet_root.parent)
+    _ensure_private_directory(fleet_root)
+    _ensure_private_directory(fleet_root / project_key)
+    _ensure_private_directory(target_root)
+    _write_json_file(
+        marker,
+        {
+            "fleet_name": fleet_name,
+            "project_key": project_key,
+            "cluster_name": cluster_name,
+            "backend": expected_backend,
+        },
+    )
+
+
 def deploy_fleet(
+    spec: FleetSpec,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Dispatch fleet targets through their shared backend adapters."""
+
+    spec.validate()
+    # Fail closed on every selected target's persisted owner before resolving
+    # projects, creating shared networks, or invoking either backend.
+    work_root = Path(kwargs.get("work_root") or _default_work_root()).expanduser()
+    fleet_root = work_root / spec.name
+    state = _load_fleet_state(fleet_root)
+    prior = {
+        (str(item.get("project_key", "")), str(item.get("cluster_name", ""))): item
+        for item in state.get("clusters", [])
+        if isinstance(item, dict)
+    }
+    selected_prefix = kwargs.get("project_prefix")
+    selected_prefix = (
+        spec.project_prefix if selected_prefix is None else selected_prefix
+    )
+    selected_projects = kwargs.get("only_projects")
+    selected_clusters = kwargs.get("only_clusters")
+    for project, cluster in spec.cluster_targets():
+        if not _project_in_scope(project, selected_projects, selected_prefix):
+            continue
+        if selected_clusters and cluster.name not in selected_clusters:
+            continue
+        saved = prior.get((project.key(), cluster.name))
+        if saved is not None:
+            require_backend_ownership(saved, cluster.backend_name())
+        _persist_target_backend_owner(
+            fleet_root,
+            fleet_name=spec.name,
+            project_key=project.key(),
+            cluster_name=cluster.name,
+            expected_backend=cluster.backend_name(),
+        )
+    mk8s_projects: list[ProjectSpec] = []
+    soperator_targets: list[tuple[ProjectSpec, ClusterSpec]] = []
+    for project in spec.projects:
+        mk8s_clusters = [
+            cluster for cluster in project.clusters if cluster.backend_name() == "mk8s"
+        ]
+        if mk8s_clusters:
+            mk8s_projects.append(replace(project, clusters=mk8s_clusters))
+        soperator_targets.extend(
+            (project, cluster)
+            for cluster in project.clusters
+            if cluster.backend_name() == "soperator"
+        )
+
+    result: dict[str, Any] | None = None
+    if mk8s_projects:
+        result = _deploy_mk8s_fleet(replace(spec, projects=mk8s_projects), **kwargs)
+    if not soperator_targets:
+        assert result is not None
+        result["backend_counts"] = _backend_counts(result.get("clusters", []))
+        return result
+
+    only_projects = kwargs.get("only_projects")
+    only_clusters = kwargs.get("only_clusters")
+    prefix = kwargs.get("project_prefix")
+    prefix = spec.project_prefix if prefix is None else prefix
+    profile = kwargs.get("profile")
+    profile = spec.profile if profile is None else profile
+    on_status = kwargs.get("on_status")
+    create_projects = bool(kwargs.get("create_projects", True))
+    continue_on_error = bool(kwargs.get("continue_on_error", True))
+    timeout_minutes = int(kwargs.get("timeout_minutes", 120))
+    stream_terraform = bool(kwargs.get("stream_terraform", True))
+    _ensure_private_directory(fleet_root)
+    nebius_bin = _require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius")
+    tenant_id = _resolve_tenant_id(nebius_bin, spec.tenant_id, profile)
+    fleet_region = _resolve_region(spec.region)
+    cli_env = _nebius_cli_env()
+    if profile:
+        cli_env["NEBIUS_PROFILE"] = profile
+        cli_env["NPA_NEBIUS_PROFILE"] = profile
+    soperator_results: list[dict[str, Any]] = []
+    prepared: list[tuple[ProjectSpec, ClusterSpec, Any, str, str, Path]] = []
+    for project, cluster in soperator_targets:
+        if not _project_in_scope(project, only_projects, prefix):
+            continue
+        if only_clusters and cluster.name not in only_clusters:
+            continue
+        desired = cluster.soperator
+        assert desired is not None
+        key = (project.key(), cluster.name)
+        if key in prior:
+            require_backend_ownership(prior[key], "soperator")
+        region = project.region or fleet_region
+        try:
+            project_id, _created = resolve_project_id(
+                nebius_bin,
+                tenant_id,
+                project,
+                prefix=prefix,
+                create=create_projects,
+                env=cli_env,
+                region=region,
+                profile=profile,
+                on_status=on_status,
+            )
+            resolved = replace(
+                desired,
+                region=region,
+                tenant_id=tenant_id,
+                project_id=project_id,
+                subnet_id="",
+            )
+            backend_root = fleet_root / project.key() / cluster.name / "soperator"
+            if any(pool.capacity_mode() == "reserved" for pool in resolved.workers):
+                preflight = get_backend("soperator").preflight(
+                    resolved,
+                    SoperatorApplyRequest(
+                        provider_preflight=True,
+                        provider_nebius_bin=nebius_bin,
+                        provider_tenant_id=tenant_id,
+                        provider_project_id=project_id,
+                        provider_region=region,
+                        provider_install_dir=backend_root
+                        / "installations"
+                        / cluster.name,
+                        provider_work_root=backend_root,
+                        provider_env=cli_env,
+                        on_status=on_status,
+                    ),
+                )
+                resolved = preflight.get("resolved_desired", resolved)
+            subnet_id = desired.subnet_id
+            if not subnet_id:
+                subnet_id, _network = ensure_subnet(
+                    nebius_bin,
+                    project_id,
+                    name_stem=project.key(),
+                    env=cli_env,
+                    profile=profile,
+                    network_state_path=fleet_root
+                    / project.key()
+                    / _PROJECT_NETWORK_STATE,
+                    on_status=on_status,
+                )
+            resolved = replace(resolved, subnet_id=subnet_id)
+            prepared.append(
+                (project, cluster, resolved, project_id, region, backend_root)
+            )
+        except Exception as exc:  # noqa: BLE001 - aggregate target preparation
+            if not continue_on_error:
+                raise
+            soperator_results.append(
+                {
+                    "backend": "soperator",
+                    "project_key": project.key(),
+                    "cluster_name": cluster.name,
+                    "region": region,
+                    "status": "error",
+                    "error": str(exc),
+                }
+            )
+
+    def _apply_soperator_target(
+        target: tuple[ProjectSpec, ClusterSpec, Any, str, str, Path],
+    ) -> dict[str, Any]:
+        project, cluster, resolved, project_id, region, backend_root = target
+        try:
+            deployed = get_backend("soperator").apply(
+                resolved,
+                SoperatorApplyRequest(
+                    work_root=backend_root,
+                    timeout_minutes=timeout_minutes,
+                    stream_terraform_output=stream_terraform,
+                    on_status=on_status,
+                    profile=profile,
+                ),
+            )
+            return {
+                **deployed,
+                "backend": "soperator",
+                "project_key": project.key(),
+                "project_id": project_id,
+                "cluster_name": cluster.name,
+                "region": region,
+                "backend_state_root": str(backend_root),
+            }
+        except (SoperatorDeploymentValidationError, SoperatorStateCaptureError) as exc:
+            # Terraform applied, but a real post-deploy validation gate failed.
+            # Preserve the native degraded result and canonical recovery root.
+            item = {
+                **exc.result,
+                "backend": "soperator",
+                "project_key": project.key(),
+                "cluster_name": cluster.name,
+                "region": region,
+                "backend_state_root": str(
+                    fleet_root / project.key() / cluster.name / "soperator"
+                ),
+            }
+            if not continue_on_error:
+                raise
+            return item
+        except Exception as exc:  # noqa: BLE001 - aggregate per-target failure
+            if not continue_on_error:
+                raise
+            return {
+                "backend": "soperator",
+                "project_key": project.key(),
+                "cluster_name": cluster.name,
+                "region": region,
+                "status": "error",
+                "error": str(exc),
+            }
+
+    concurrency = max(1, int(kwargs.get("concurrency", 1)))
+    if concurrency > 1 and len(prepared) > 1 and continue_on_error:
+        _log(
+            on_status,
+            f"deploying {len(prepared)} soperator target(s) with concurrency={concurrency}",
+        )
+        with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
+            soperator_results.extend(
+                future.result()
+                for future in concurrent.futures.as_completed(
+                    [
+                        pool.submit(_apply_soperator_target, target)
+                        for target in prepared
+                    ]
+                )
+            )
+    else:
+        for target in prepared:
+            try:
+                soperator_results.append(_apply_soperator_target(target))
+            except (
+                SoperatorDeploymentValidationError,
+                SoperatorStateCaptureError,
+            ) as exc:
+                item = {
+                    **exc.result,
+                    "backend": "soperator",
+                    "project_key": target[0].key(),
+                    "cluster_name": target[1].name,
+                    "region": target[4],
+                    "backend_state_root": str(target[5]),
+                }
+                soperator_results.append(item)
+                _upsert_fleet_state(fleet_root, {}, soperator_results)
+                raise
+
+    if result is None:
+        result = {
+            "name": spec.name,
+            "tenant_id": tenant_id,
+            "region": fleet_region,
+            "project_prefix": prefix,
+            "profile": profile,
+            "clusters": [],
+        }
+    result["clusters"] = [*result.get("clusters", []), *soperator_results]
+    result.update(_recount(result["clusters"]))
+    result["backend_counts"] = _backend_counts(result["clusters"])
+    _upsert_fleet_state(
+        fleet_root,
+        {key: value for key, value in result.items() if key != "clusters"},
+        soperator_results,
+    )
+    return result
+
+
+def _deploy_mk8s_fleet(
     spec: FleetSpec,
     *,
     k8s_training_dir: Path | None = None,
@@ -1774,24 +1622,59 @@ def deploy_fleet(
             log_path = (
                 fleet_root / t["project"].key() / t["cluster"].name / "deploy.log"
             )
-        return _deploy_one_cluster(
-            spec=spec,
-            project=t["project"],
-            cluster=t["cluster"],
-            project_id=t["project_id"],
-            project_created=t["created"],
-            subnet_id=t["subnet_id"],
-            region=t["region"],
-            tenant_id=tenant_id,
-            ssh_public_key=ssh_public_key,
-            fleet_root=fleet_root,
-            recipe_root=recipe_root,
-            terraform_bin=terraform_bin,
-            nebius_bin=nebius_bin,
-            profile=nebius_profile,
-            timeout_minutes=timeout_minutes,
-            on_status=on_status,
-            log_path=log_path,
+        if (
+            _deploy_one_cluster is not _LEGACY_DEPLOY_COMPAT
+            or _legacy_helpers_patched()
+        ):
+            return _deploy_one_cluster(
+                spec=spec,
+                project=t["project"],
+                cluster=t["cluster"],
+                project_id=t["project_id"],
+                project_created=t["created"],
+                subnet_id=t["subnet_id"],
+                region=t["region"],
+                tenant_id=tenant_id,
+                ssh_public_key=ssh_public_key,
+                fleet_root=fleet_root,
+                recipe_root=recipe_root,
+                terraform_bin=terraform_bin,
+                nebius_bin=nebius_bin,
+                profile=nebius_profile,
+                timeout_minutes=timeout_minutes,
+                on_status=on_status,
+                log_path=log_path,
+            )
+        return get_backend("mk8s").apply(
+            t["cluster"],
+            MK8sApplyRequest(
+                scope=MK8sExecutionScope(
+                    fleet_name=spec.name,
+                    tenant_id=tenant_id,
+                    region=t["region"],
+                    project_prefix=prefix,
+                ),
+                project=MK8sProjectIdentity(
+                    project_key=t["project"].key(),
+                    project_id=t["project_id"],
+                    project_name=t["project"].name,
+                    expected_provider_name=t["project"].display_name(prefix),
+                ),
+                project_id=t["project_id"],
+                project_created=t["created"],
+                subnet_id=t["subnet_id"],
+                region=t["region"],
+                tenant_id=tenant_id,
+                ssh_public_key=ssh_public_key,
+                fleet_root=fleet_root,
+                recipe_root=recipe_root,
+                terraform_bin=terraform_bin,
+                nebius_bin=nebius_bin,
+                profile=nebius_profile,
+                timeout_minutes=timeout_minutes,
+                on_status=on_status,
+                log_path=log_path,
+            ),
         )
 
     # Phase 2: apply -- sequentially (live stdout) or in a bounded thread pool.
@@ -1821,203 +1704,6 @@ def deploy_fleet(
     if not continue_on_error and result["failed"]:
         raise RuntimeError(f"{result['failed']} cluster(s) failed")
     return result
-
-
-def _is_verified_unchanged_target(
-    *,
-    project: ProjectSpec,
-    cluster: ClusterSpec,
-    prefix: str,
-    tenant_id: str,
-    region: str,
-    ssh_public_key: str,
-    fleet_root: Path,
-    nebius_bin: str,
-    profile: str,
-    env: dict[str, str],
-) -> bool:
-    """Prove that a target consumes no *additional* quota on this deploy."""
-
-    install_dir = fleet_root / project.key() / cluster.name
-    saved = _load_env_sidecar(install_dir) or {}
-    project_id = str(saved.get("project_id") or "")
-    cluster_id = str(saved.get("cluster_id") or "")
-    if (
-        str(saved.get("status") or "") != "deployed"
-        or not project_id
-        or not cluster_id
-        or str(saved.get("tenant_id") or "") != tenant_id
-        or str(saved.get("region") or "") != region
-        or str(saved.get("cluster_name") or "") != cluster.name
-    ):
-        return False
-    if project.project_id and project.project_id != project_id:
-        return False
-    tfvars_path = install_dir / _K8S_TRAINING_SUBDIR / "terraform.tfvars"
-    try:
-        if tfvars_path.read_text(encoding="utf-8") != render_tfvars(
-            cluster, ssh_public_key=ssh_public_key
-        ):
-            return False
-        provider_project = _get_project(nebius_bin, project_id, env, profile)
-    except (OSError, RuntimeError, ValueError):
-        return False
-    metadata = provider_project.get("metadata", {}) or {}
-    project_spec = provider_project.get("spec", {}) or {}
-    project_status = provider_project.get("status", {}) or {}
-    provider_region = str(
-        project_spec.get("region")
-        or project_status.get("region")
-        or metadata.get("region")
-        or ""
-    )
-    expected_name = project.display_name(prefix) if project.name else ""
-    provider_parent_id = _provider_field(metadata, "parent_id", "parentId")
-    if (
-        str(metadata.get("id") or "") != project_id
-        or str(
-            provider_parent_id
-            if provider_parent_id is not _PROVIDER_FIELD_MISSING
-            else ""
-        )
-        != tenant_id
-        or provider_region != region
-        or (expected_name and str(metadata.get("name") or "") != expected_name)
-    ):
-        return False
-
-    cluster_result = _run_capture(
-        [
-            *_nebius_argv(nebius_bin, profile),
-            "mk8s",
-            "cluster",
-            "get",
-            "--id",
-            cluster_id,
-            "--format",
-            "json",
-        ],
-        env=env,
-        check=False,
-    )
-    groups_result = _run_capture(
-        [
-            *_nebius_argv(nebius_bin, profile),
-            "mk8s",
-            "node-group",
-            "list",
-            "--parent-id",
-            cluster_id,
-            "--format",
-            "json",
-        ],
-        env=env,
-        check=False,
-    )
-    if cluster_result.returncode != 0 or groups_result.returncode != 0:
-        return False
-    try:
-        provider_cluster = json.loads(cluster_result.stdout or "{}")
-        groups_payload = json.loads(groups_result.stdout or "{}")
-    except json.JSONDecodeError:
-        return False
-    if not isinstance(provider_cluster, dict) or not isinstance(groups_payload, dict):
-        return False
-    cluster_metadata = provider_cluster.get("metadata", {}) or {}
-    cluster_status = provider_cluster.get("status", {}) or {}
-    cluster_parent_id = _provider_field(cluster_metadata, "parent_id", "parentId")
-    if (
-        str(cluster_metadata.get("id") or "") != cluster_id
-        or str(
-            cluster_parent_id
-            if cluster_parent_id is not _PROVIDER_FIELD_MISSING
-            else ""
-        )
-        != project_id
-        or str(cluster_metadata.get("name") or "") != cluster.name
-        or str(cluster_status.get("state") or "") != "RUNNING"
-    ):
-        return False
-    groups = groups_payload.get("items", [])
-    if not isinstance(groups, list):
-        return False
-    expected_pools = [
-        pool
-        for pool in (cluster.cpu_nodes, cluster.gpu_nodes)
-        if pool is not None and pool.count > 0
-    ]
-    if len(groups) != len(expected_pools):
-        return False
-
-    unmatched = [item for item in groups if isinstance(item, dict)]
-    if len(unmatched) != len(groups):
-        return False
-    for pool in expected_pools:
-        match_index = next(
-            (
-                index
-                for index, item in enumerate(unmatched)
-                if _provider_node_group_matches_pool(item, pool)
-            ),
-            None,
-        )
-        if match_index is None:
-            return False
-        unmatched.pop(match_index)
-    return not unmatched
-
-
-def _provider_node_group_matches_pool(
-    payload: dict[str, Any], pool: NodePoolSpec
-) -> bool:
-    """Compare one provider node-group payload with one desired pool."""
-
-    spec = payload.get("spec", {}) or {}
-    status = payload.get("status", {}) or {}
-    template = spec.get("template", {}) or {}
-    resources = template.get("resources", {}) or {}
-    reservation_value = _provider_field(
-        template, "reservation_policy", "reservationPolicy"
-    )
-    if reservation_value is _PROVIDER_FIELD_MISSING:
-        reservation: dict[str, Any] = {}
-    elif isinstance(reservation_value, dict):
-        reservation = reservation_value
-    else:
-        return False
-    reservation_ids_value = _provider_field(
-        reservation, "reservation_ids", "reservationIds"
-    )
-    reservation_ids = (
-        []
-        if reservation_ids_value is _PROVIDER_FIELD_MISSING
-        else reservation_ids_value
-    )
-    fixed_node_count_value = _provider_field(spec, "fixed_node_count", "fixedNodeCount")
-    preemptible = _provider_field(template, "preemptible")
-    try:
-        fixed_node_count = int(fixed_node_count_value)
-    except (TypeError, ValueError):
-        return False
-    if (
-        str(status.get("state") or "") != "RUNNING"
-        or fixed_node_count != pool.count
-        or str(resources.get("platform") or "") != pool.platform
-        or str(resources.get("preset") or "") != pool.preset
-        # Absence, relocation, or non-boolean data cannot prove an on-demand
-        # pool. Only an explicit provider boolean false is sufficient.
-        or preemptible is not False
-    ):
-        return False
-    if pool.capacity_block_group:
-        return (
-            isinstance(reservation, dict)
-            and str(reservation.get("policy") or "") == "STRICT"
-            and reservation_ids == [pool.capacity_block_group]
-        )
-    return not reservation_ids and not (
-        isinstance(reservation, dict) and reservation.get("policy")
-    )
 
 
 def _preflight_quotas(
@@ -2054,347 +1740,8 @@ def _preflight_quotas(
         raise ValueError(shortfall_message(shortfalls, tenant_id))
 
 
-def _deploy_one_cluster(
-    *,
-    spec: FleetSpec,
-    project: ProjectSpec,
-    cluster: ClusterSpec,
-    project_id: str,
-    project_created: bool,
-    subnet_id: str,
-    region: str,
-    tenant_id: str,
-    ssh_public_key: str,
-    fleet_root: Path,
-    recipe_root: Path,
-    terraform_bin: str,
-    nebius_bin: str,
-    profile: str = "",
-    timeout_minutes: int,
-    on_status: Callable[[str], None] | None,
-    log_path: Path | None = None,
-) -> dict[str, Any]:
-    project_key = project.key()
-    install_dir = fleet_root / project_key / cluster.name
-    context = _context_name(spec.name, project_key, cluster.name)
-    label = f"{project_key}/{cluster.name}"
-    log_metadata = {"terraform_log": str(log_path)} if log_path is not None else {}
-    try:
-        gpu = cluster.gpu_nodes
-        driver = resolve_gpu_driver_strategy(
-            gpu_nodes=cluster.gpu_count(),
-            platform=gpu.platform if gpu else "",
-            preset=gpu.preset if gpu else "",
-            mode=cluster.resolved_gpu_driver_mode(),
-            managed_driver_preset=cluster.managed_driver_preset,
-            enable_gpu_cluster=cluster.resolved_enable_gpu_cluster(),
-            allow_unsafe_nvswitch_operator=cluster.allow_unsafe_nvswitch_operator,
-        )
-        if driver.unsafe_operator_acknowledged:
-            _log(
-                on_status,
-                f"[{label}] WARNING: explicitly acknowledged unsafe operator-mode "
-                "driver/Fabric Manager ordering on an NVSwitch topology",
-            )
-        _ensure_private_directory(fleet_root)
-        _ensure_private_directory(install_dir.parent)
-        _ensure_private_directory(install_dir)
-        workdir = _prepare_install_dir(
-            install_dir,
-            recipe_root=recipe_root,
-            region=region,
-            cluster=cluster,
-            ssh_public_key=ssh_public_key,
-            on_status=on_status,
-        )
-        env = _cluster_tf_env(
-            nebius_bin,
-            tenant_id=tenant_id,
-            project_id=project_id,
-            region=region,
-            subnet_id=subnet_id,
-            profile=profile,
-        )
-        # Written before apply so ``destroy`` can reconstruct TF_VAR_* even if
-        # apply fails midway. Project network ownership is recorded separately.
-        # ``status`` starts as "provisioning" and becomes "deployed" only after
-        # both apply and kubeconfig generation succeed.
-        sidecar = {
-            "tenant_id": tenant_id,
-            "project_id": project_id,
-            "region": region,
-            "subnet_id": subnet_id,
-            "cluster_name": cluster.name,
-            "context": context,
-            "profile": profile,
-            "gpu_driver_mode": driver.effective_mode,
-            "managed_driver_preset": (
-                driver.managed_driver_preset if driver.uses_managed_image else ""
-            ),
-            "status": "provisioning",
-        }
-        _write_env_sidecar(install_dir, sidecar)
-        _log(
-            on_status,
-            f"[{label}] terraform init" + (f" (-> {log_path})" if log_path else ""),
-        )
-        _tf_run(
-            [terraform_bin, "init", "-input=false"],
-            cwd=workdir,
-            env=env,
-            timeout=900,
-            log_path=log_path,
-        )
-        _log(
-            on_status,
-            f"[{label}] terraform apply (cpu={cluster.cpu_count()} gpu={cluster.gpu_count()} "
-            f"{cluster.gpu_nodes.preset if cluster.gpu_nodes else ''})",
-        )
-        _tf_run(
-            [terraform_bin, "apply", "-auto-approve", "-input=false"],
-            cwd=workdir,
-            env=env,
-            timeout=timeout_minutes * 60,
-            log_path=log_path,
-        )
-        outputs = _terraform_outputs(terraform_bin, workdir, env)
-        cluster_id = _cluster_id_from_outputs(outputs)
-        kubeconfig_path = install_dir / "kubeconfig"
-        if not cluster_id:
-            message = "terraform apply succeeded but returned no Managed Kubernetes cluster id"
-            _write_env_sidecar(
-                install_dir,
-                {
-                    **sidecar,
-                    "cluster_id": "",
-                    "status": "deployed-credentials-failed",
-                    "error": message,
-                },
-            )
-            return {
-                "project_key": project_key,
-                "project_id": project_id,
-                "cluster_name": cluster.name,
-                "region": region,
-                "install_dir": str(install_dir),
-                "status": "deployed-credentials-failed",
-                "error": message,
-                **log_metadata,
-            }
-        _log(on_status, f"[{label}] writing kubeconfig context {context}")
-        try:
-            _write_kubeconfig(
-                nebius_bin, cluster_id, kubeconfig_path, context, env, profile
-            )
-            _persist_npa_cluster_identity(
-                context=context,
-                cluster_id=cluster_id,
-                project_id=project_id,
-                region=region,
-                cluster=cluster,
-                subnet_id=subnet_id,
-                kubeconfig_path=kubeconfig_path,
-                fleet_name=spec.name,
-                project_key=project_key,
-            )
-        except Exception as exc:  # noqa: BLE001 - retain applied state for credential retry
-            message = str(exc)
-            _write_env_sidecar(
-                install_dir,
-                {
-                    **sidecar,
-                    "cluster_id": cluster_id,
-                    "status": "deployed-credentials-failed",
-                    "error": message,
-                },
-            )
-            _log(on_status, f"[{label}] credentials FAILED: {message}")
-            return {
-                "project_key": project_key,
-                "project_id": project_id,
-                "cluster_name": cluster.name,
-                "region": region,
-                "cluster_id": cluster_id,
-                "kube_context": context,
-                "kubeconfig": "",
-                "install_dir": str(install_dir),
-                "status": "deployed-credentials-failed",
-                "error": message,
-                **log_metadata,
-            }
-        gpu_health: dict[str, Any] | None = None
-        mig_report = None
-        gpu_health_path = install_dir / "gpu-health.json"
-        if cluster.mig and cluster.mig.enabled:
-            kubectl_bin = _require_bin(os.environ.get("NPA_KUBECTL_BIN") or "kubectl")
-            _log(
-                on_status,
-                f"[{label}] waiting for exact two-snapshot MIG convergence",
-            )
-            try:
-                mig_report = wait_for_mig_ready(
-                    kubectl_bin=kubectl_bin,
-                    kubeconfig=kubeconfig_path,
-                    expected_nodes=cluster.gpu_count(),
-                    reconcile=True,
-                    timeout_seconds=cluster.gpu_health_timeout_minutes * 60,
-                    cuda_smoke_image=cluster.gpu_cuda_smoke_image,
-                    on_status=(
-                        (lambda message: _log(on_status, f"[{label}] {message}"))
-                        if on_status
-                        else None
-                    ),
-                )
-            except MigVerificationError as exc:
-                message = f"MIG verification failed: {exc}"
-                _write_env_sidecar(
-                    install_dir,
-                    {
-                        **sidecar,
-                        "cluster_id": cluster_id,
-                        "status": "deployed-mig-not-ready",
-                        "error": message,
-                    },
-                )
-                _log(on_status, f"[{label}] {message}")
-                return {
-                    "project_key": project_key,
-                    "project_id": project_id,
-                    "cluster_name": cluster.name,
-                    "region": region,
-                    "cluster_id": cluster_id,
-                    "kube_context": context,
-                    "kubeconfig": str(kubeconfig_path),
-                    "install_dir": str(install_dir),
-                    "status": "deployed-mig-not-ready",
-                    "error": message,
-                    **log_metadata,
-                }
-        elif cluster.gpu_count() > 0:
-            _write_env_sidecar(
-                install_dir,
-                {
-                    **sidecar,
-                    "cluster_id": cluster_id,
-                    "status": "validating-gpu-health",
-                    "gpu_health_evidence": str(gpu_health_path),
-                },
-            )
-            _log(
-                on_status,
-                f"[{label}] validating {cluster.gpu_count()} GPU node(s) in "
-                f"{driver.effective_mode} mode",
-            )
-            try:
-                kubectl_bin = _require_bin(
-                    os.environ.get("NPA_KUBECTL_BIN") or "kubectl"
-                )
-                gpu_health = validate_gpu_health(
-                    _run_capture,
-                    kubectl_bin=kubectl_bin,
-                    kubeconfig_path=kubeconfig_path,
-                    config=GpuHealthConfig(
-                        expected_nodes=cluster.cpu_count() + cluster.gpu_count(),
-                        expected_gpu_nodes=cluster.gpu_count(),
-                        gpu_preset=gpu.preset if gpu else "",
-                        gpu_platform=gpu.platform if gpu else "",
-                        driver_mode=driver.effective_mode,
-                        nvswitch=driver.nvswitch,
-                        stabilization_seconds=(
-                            cluster.gpu_health_stabilization_seconds
-                        ),
-                        timeout_seconds=cluster.gpu_health_timeout_minutes * 60,
-                        cuda_smoke=cluster.gpu_cuda_smoke,
-                        cuda_smoke_image=cluster.gpu_cuda_smoke_image,
-                    ),
-                    evidence_path=gpu_health_path,
-                    on_status=lambda message: _log(on_status, f"[{label}] {message}"),
-                )
-            except Exception as exc:  # noqa: BLE001 - retain applied state/evidence
-                message = str(exc)
-                _write_env_sidecar(
-                    install_dir,
-                    {
-                        **sidecar,
-                        "cluster_id": cluster_id,
-                        "status": "deployed-validation-failed",
-                        "gpu_health_evidence": str(gpu_health_path),
-                        "error": message,
-                    },
-                )
-                _log(on_status, f"[{label}] GPU validation FAILED: {message}")
-                return {
-                    "project_key": project_key,
-                    "project_id": project_id,
-                    "cluster_name": cluster.name,
-                    "region": region,
-                    "cluster_id": cluster_id,
-                    "kube_context": context,
-                    "kubeconfig": str(kubeconfig_path),
-                    "install_dir": str(install_dir),
-                    "status": "deployed-validation-failed",
-                    "gpu_health_evidence": str(gpu_health_path),
-                    "error": message,
-                    **log_metadata,
-                }
-        _write_env_sidecar(
-            install_dir,
-            {
-                **sidecar,
-                "cluster_id": cluster_id,
-                "status": "deployed",
-                **(
-                    {"gpu_health_evidence": str(gpu_health_path)}
-                    if gpu_health is not None
-                    else {}
-                ),
-            },
-        )
-        return {
-            "project_key": project_key,
-            "project_id": project_id,
-            "project_created": project_created,
-            "cluster_name": cluster.name,
-            "region": region,
-            "cluster_id": cluster_id,
-            "kube_context": context,
-            "kubeconfig": str(kubeconfig_path) if cluster_id else "",
-            "install_dir": str(install_dir),
-            "status": "deployed",
-            **(
-                {
-                    "gpu_health": gpu_health,
-                    "gpu_health_evidence": str(gpu_health_path),
-                }
-                if gpu_health is not None
-                else {}
-            ),
-            **({"mig": mig_report.as_dict()} if mig_report is not None else {}),
-            **log_metadata,
-        }
-    except Exception as exc:  # noqa: BLE001 - capture per-cluster failure
-        _log(on_status, f"[{label}] FAILED: {exc}")
-        return {
-            "project_key": project_key,
-            "project_id": project_id,
-            "cluster_name": cluster.name,
-            "region": region,
-            "install_dir": str(install_dir),
-            "status": "error",
-            "error": str(exc),
-            **log_metadata,
-        }
-
-
 def _write_fleet_state(fleet_root: Path, result: dict[str, Any]) -> None:
-    try:
-        _write_json_file(fleet_root / _FLEET_STATE, result)
-    except OSError as exc:
-        logger.warning(
-            "could not persist fleet summary at %s (%s); per-cluster recovery state is unchanged",
-            fleet_root / _FLEET_STATE,
-            type(exc).__name__,
-        )
+    _write_json_file(fleet_root / _FLEET_STATE, result)
 
 
 def _load_fleet_state(fleet_root: Path) -> dict[str, Any]:
@@ -2403,10 +1750,15 @@ def _load_fleet_state(fleet_root: Path) -> dict[str, Any]:
         return {}
     try:
         data = json.loads(path.read_text())
-        return data if isinstance(data, dict) else {}
+        if not isinstance(data, dict):
+            raise RuntimeError(
+                f"persisted fleet inventory at {path} is not an object; refusing lifecycle action"
+            )
+        return data
     except (json.JSONDecodeError, OSError) as exc:
-        logger.warning("could not load fleet summary %s (%s)", path, type(exc).__name__)
-        return {}
+        raise RuntimeError(
+            f"persisted fleet inventory at {path} is unreadable; refusing lifecycle action"
+        ) from exc
 
 
 def _recount(clusters: list[dict[str, Any]]) -> dict[str, int]:
@@ -2417,6 +1769,15 @@ def _recount(clusters: list[dict[str, Any]]) -> dict[str, int]:
             for c in clusters
             if c.get("status") not in {"deployed", "destroyed", "absent"}
         ),
+    }
+
+
+def _backend_counts(clusters: list[dict[str, Any]]) -> dict[str, int]:
+    """Return stable backend keys for pure and mixed fleet results."""
+
+    return {
+        backend: sum(1 for item in clusters if item.get("backend", "mk8s") == backend)
+        for backend in ("mk8s", "soperator")
     }
 
 
@@ -2438,22 +1799,34 @@ def _upsert_fleet_state(
         (c.get("project_key"), c.get("cluster_name")): i for i, c in enumerate(clusters)
     }
     for entry in results:
+        entry = {"backend": str(entry.get("backend") or "mk8s"), **entry}
         key = (entry.get("project_key"), entry.get("cluster_name"))
         if key[1] is None:  # project-level failure (no cluster) -- don't persist
             continue
         if key in index:
+            require_backend_ownership(clusters[index[key]], entry["backend"])
             clusters[index[key]] = entry
         else:
             index[key] = len(clusters)
             clusters.append(entry)
     _write_fleet_state(
-        fleet_root, {**base_meta, "clusters": clusters, **_recount(clusters)}
+        fleet_root,
+        {
+            **base_meta,
+            "clusters": clusters,
+            **_recount(clusters),
+            "backend_counts": _backend_counts(clusters),
+        },
     )
 
 
 def _prune_fleet_state(fleet_root: Path, removed_keys: set[tuple[str, str]]) -> None:
     """Drop destroyed ``(project_key, cluster_name)`` entries from the summary."""
 
+    for project_key, cluster_name in removed_keys:
+        (fleet_root / project_key / cluster_name / _TARGET_BACKEND_OWNER).unlink(
+            missing_ok=True
+        )
     state = _load_fleet_state(fleet_root)
     clusters = (
         state.get("clusters", []) if isinstance(state.get("clusters"), list) else []
@@ -2463,10 +1836,301 @@ def _prune_fleet_state(fleet_root: Path, removed_keys: set[tuple[str, str]]) -> 
         for c in clusters
         if (c.get("project_key"), c.get("cluster_name")) not in removed_keys
     ]
-    _write_fleet_state(fleet_root, {**state, "clusters": kept, **_recount(kept)})
+    _write_fleet_state(
+        fleet_root,
+        {
+            **state,
+            "clusters": kept,
+            **_recount(kept),
+            "backend_counts": _backend_counts(kept),
+        },
+    )
+
+
+def _project_has_persisted_targets(fleet_root: Path, project_key: str) -> bool:
+    """Return whether inventory proves any backend still owns this project network."""
+
+    state = _load_fleet_state(fleet_root)
+    return any(
+        isinstance(item, dict) and str(item.get("project_key") or "") == project_key
+        for item in state.get("clusters", [])
+    )
+
+
+def _reclaim_unused_project_networks(
+    spec: FleetSpec,
+    *,
+    fleet_root: Path,
+    nebius_bin: str,
+    prefix: str,
+    only_projects: list[str] | None,
+    profile: str | None,
+    on_status: Callable[[str], None] | None,
+) -> list[dict[str, Any]]:
+    """Reclaim fleet-owned networks only after every backend target is absent.
+
+    Inventory is authoritative across backend-specific directory layouts. Local
+    sidecars are an additional fail-closed recovery check, never a substitute
+    for the fleet ownership record.
+    """
+
+    network_results: list[dict[str, Any]] = []
+    for project in spec.projects:
+        if not _project_in_scope(project, only_projects, prefix):
+            continue
+        if _project_has_persisted_targets(fleet_root, project.key()):
+            continue
+        project_root = fleet_root / project.key()
+        if project_root.exists() or project_root.is_symlink():
+            try:
+                _ensure_private_directory(project_root)
+                has_backend_state = any(
+                    child.is_dir()
+                    and (
+                        (child / _ENV_SIDECAR).exists()
+                        or (child / "soperator").exists()
+                    )
+                    for child in project_root.iterdir()
+                )
+            except (OSError, RuntimeError) as exc:
+                network_results.append(
+                    {
+                        "project_key": project.key(),
+                        "status": "destroy-incomplete",
+                        "errors": [
+                            "could not safely inspect project recovery state: "
+                            f"{type(exc).__name__}"
+                        ],
+                    }
+                )
+                continue
+        else:
+            has_backend_state = False
+        if has_backend_state:
+            continue
+        network_state_path = project_root / _PROJECT_NETWORK_STATE
+        network_state = _load_json_file(network_state_path)
+        network_id = str(network_state.get("created_network_id") or "")
+        project_id = str(network_state.get("project_id") or project.project_id)
+        if not network_id or not project_id:
+            continue
+        cleanup_profile = (spec.profile if profile is None else profile) or str(
+            network_state.get("profile") or ""
+        )
+        errors = _reclaim_created_network(
+            nebius_bin,
+            project_id,
+            network_id,
+            str(network_state.get("subnet_id") or ""),
+            _nebius_cli_env(),
+            on_status,
+            project.key(),
+            profile=cleanup_profile,
+        )
+        if errors:
+            network_results.append(
+                {
+                    "project_key": project.key(),
+                    "status": "destroy-incomplete",
+                    "errors": errors,
+                }
+            )
+            continue
+        try:
+            network_state_path.unlink(missing_ok=True)
+        except OSError as exc:
+            network_results.append(
+                {
+                    "project_key": project.key(),
+                    "status": "destroy-incomplete",
+                    "errors": [
+                        "cloud network teardown succeeded but local ownership "
+                        f"cleanup failed: {type(exc).__name__}"
+                    ],
+                }
+            )
+        else:
+            network_results.append(
+                {"project_key": project.key(), "status": "destroyed"}
+            )
+    return network_results
 
 
 def destroy_fleet(
+    spec: FleetSpec,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Destroy each target only through the backend recorded in inventory."""
+
+    spec.validate()
+    work_root = Path(kwargs.get("work_root") or _default_work_root()).expanduser()
+    fleet_root = work_root / spec.name
+    state = _load_fleet_state(fleet_root)
+    persisted = {
+        (str(item.get("project_key", "")), str(item.get("cluster_name", ""))): item
+        for item in state.get("clusters", [])
+        if isinstance(item, dict)
+    }
+    prefix = kwargs.get("project_prefix")
+    prefix = spec.project_prefix if prefix is None else prefix
+    only_projects = kwargs.get("only_projects")
+    only_clusters = kwargs.get("only_clusters")
+    mk8s_projects: list[ProjectSpec] = []
+    sop_targets: list[tuple[ProjectSpec, ClusterSpec]] = []
+    for project in spec.projects:
+        selected = [
+            cluster
+            for cluster in project.clusters
+            if _project_in_scope(project, only_projects, prefix)
+            and not (only_clusters and cluster.name not in only_clusters)
+        ]
+        for cluster in selected:
+            saved = persisted.get((project.key(), cluster.name))
+            if saved is not None:
+                require_backend_ownership(saved, cluster.backend_name())
+        mk8s = [cluster for cluster in selected if cluster.backend_name() == "mk8s"]
+        if mk8s:
+            mk8s_projects.append(replace(project, clusters=mk8s))
+        sop_targets.extend(
+            (project, cluster)
+            for cluster in selected
+            if cluster.backend_name() == "soperator"
+        )
+
+    results: list[dict[str, Any]] = []
+    if mk8s_projects:
+        mk8s_kwargs = dict(kwargs)
+        # Selection is already represented by the subset spec.
+        mk8s_kwargs["only_projects"] = None
+        mk8s_kwargs["only_clusters"] = None
+        mk_result = _destroy_mk8s_fleet(
+            replace(spec, projects=mk8s_projects), **mk8s_kwargs
+        )
+        if not sop_targets:
+            return mk_result
+        results.extend(mk_result.get("clusters", []))
+
+    def _destroy_soperator_target(
+        target: tuple[ProjectSpec, ClusterSpec],
+    ) -> tuple[dict[str, Any], tuple[str, str] | None]:
+        project, cluster = target
+        desired = cluster.soperator
+        assert desired is not None
+        saved = persisted.get((project.key(), cluster.name), {})
+        canonical_root = fleet_root / project.key() / cluster.name / "soperator"
+        backend_root_text = str(saved.get("backend_state_root") or "")
+        if (
+            backend_root_text
+            and Path(backend_root_text).expanduser().resolve()
+            != canonical_root.resolve()
+        ):
+            raise ValueError(
+                "persisted soperator backend_state_root does not match the "
+                f"canonical fleet-owned root for {project.key()}/{cluster.name}"
+            )
+        backend_root = canonical_root
+        try:
+            native = get_backend("soperator").destroy(
+                desired,
+                SoperatorDestroyRequest(
+                    work_root=backend_root,
+                    timeout_minutes=int(kwargs.get("timeout_minutes", 120)),
+                    on_status=kwargs.get("on_status"),
+                    profile=(
+                        spec.profile
+                        if kwargs.get("profile") is None
+                        else str(kwargs.get("profile") or "")
+                    ),
+                ),
+            )
+            if not native or native.get("status") != "destroyed":
+                return (
+                    {
+                        "backend": "soperator",
+                        "project_key": project.key(),
+                        "cluster_name": cluster.name,
+                        "status": "destroy-incomplete",
+                        "error": str(
+                            (native or {}).get("errors")
+                            or "native destroy did not prove exact provider absence"
+                        ),
+                    },
+                    None,
+                )
+            # Native destroy deliberately retains its source/install tree for
+            # standalone recovery. Fleet inventory is the recovery authority;
+            # after an authoritative successful destroy, remove only this
+            # canonical target root so shared-network cleanup can prove absence.
+            if backend_root.exists():
+                shutil.rmtree(backend_root)
+            cluster_root = backend_root.parent
+            if cluster_root.exists() and not any(cluster_root.iterdir()):
+                cluster_root.rmdir()
+            item = {
+                "backend": "soperator",
+                "project_key": project.key(),
+                "cluster_name": cluster.name,
+                "status": "destroyed",
+            }
+            removed_key: tuple[str, str] | None = (project.key(), cluster.name)
+        except Exception as exc:  # noqa: BLE001 - best-effort fleet aggregation
+            item = {
+                "backend": "soperator",
+                "project_key": project.key(),
+                "cluster_name": cluster.name,
+                "status": "destroy-incomplete",
+                "error": str(exc),
+            }
+            removed_key = None
+        return item, removed_key
+
+    removed: set[tuple[str, str]] = set()
+    concurrency = max(1, int(kwargs.get("concurrency", 1)))
+    if concurrency > 1 and len(sop_targets) > 1:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
+            outcomes = [
+                future.result()
+                for future in concurrent.futures.as_completed(
+                    [
+                        pool.submit(_destroy_soperator_target, target)
+                        for target in sop_targets
+                    ]
+                )
+            ]
+    else:
+        outcomes = [_destroy_soperator_target(target) for target in sop_targets]
+    for item, removed_key in outcomes:
+        results.append(item)
+        if removed_key is not None:
+            removed.add(removed_key)
+    if removed:
+        _prune_fleet_state(fleet_root, removed)
+    nebius_bin = _require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius")
+    network_results = _reclaim_unused_project_networks(
+        spec,
+        fleet_root=fleet_root,
+        nebius_bin=nebius_bin,
+        prefix=prefix,
+        only_projects=only_projects,
+        profile=kwargs.get("profile"),
+        on_status=kwargs.get("on_status"),
+    )
+    failed = sum(
+        1 for entry in results if entry.get("status") == "destroy-incomplete"
+    ) + sum(
+        1 for entry in network_results if entry.get("status") == "destroy-incomplete"
+    )
+    return {
+        "name": spec.name,
+        "clusters": results,
+        "networks": network_results,
+        **_recount(results),
+        "backend_counts": _backend_counts(results),
+        "failed": failed,
+    }
+
+
+def _destroy_mk8s_fleet(
     spec: FleetSpec,
     *,
     work_root: Path | None = None,
@@ -2554,18 +2218,52 @@ def destroy_fleet(
             log_path = (
                 fleet_root / ".logs" / project.key() / cluster.name / "destroy.log"
             )
-        return _destroy_one_cluster(
-            spec=spec,
-            project=project,
-            cluster=cluster,
-            fleet_root=fleet_root,
-            terraform_bin=terraform_bin,
-            nebius_bin=nebius_bin,
-            profile=spec.profile if profile is None else profile,
-            timeout_minutes=timeout_minutes,
-            on_status=on_status,
-            log_path=log_path,
+        if (
+            _destroy_one_cluster is not _LEGACY_DESTROY_COMPAT
+            or _legacy_helpers_patched()
+        ):
+            return _destroy_one_cluster(
+                spec=spec,
+                project=project,
+                cluster=cluster,
+                fleet_root=fleet_root,
+                terraform_bin=terraform_bin,
+                nebius_bin=nebius_bin,
+                profile=spec.profile if profile is None else profile,
+                timeout_minutes=timeout_minutes,
+                on_status=on_status,
+                log_path=log_path,
+            )
+        result = get_backend("mk8s").destroy(
+            cluster,
+            MK8sDestroyRequest(
+                scope=MK8sExecutionScope(
+                    fleet_name=spec.name,
+                    tenant_id=spec.tenant_id,
+                    region=spec.region,
+                    project_prefix=prefix,
+                ),
+                project=MK8sProjectIdentity(
+                    project_key=project.key(),
+                    project_id=project.project_id,
+                    project_name=project.name,
+                    expected_provider_name=project.display_name(prefix),
+                ),
+                fleet_root=fleet_root,
+                terraform_bin=terraform_bin,
+                nebius_bin=nebius_bin,
+                profile=spec.profile if profile is None else profile,
+                timeout_minutes=timeout_minutes,
+                on_status=on_status,
+                log_path=log_path,
+            ),
         )
+        return result or {
+            "backend": "mk8s",
+            "project_key": project.key(),
+            "cluster_name": cluster.name,
+            "status": "absent",
+        }
 
     if parallel:
         _log(
@@ -2598,79 +2296,15 @@ def destroy_fleet(
         base_meta.setdefault("name", spec.name)
         _upsert_fleet_state(fleet_root, base_meta, incomplete)
 
-    network_results: list[dict[str, Any]] = []
-    for project in spec.projects:
-        if not _project_in_scope(project, only_projects, prefix):
-            continue
-        project_root = fleet_root / project.key()
-        if project_root.exists() or project_root.is_symlink():
-            try:
-                _ensure_private_directory(project_root)
-                has_cluster_state = any(
-                    child.is_dir() and (child / _ENV_SIDECAR).exists()
-                    for child in project_root.iterdir()
-                )
-            except (OSError, RuntimeError) as exc:
-                network_results.append(
-                    {
-                        "project_key": project.key(),
-                        "status": "destroy-incomplete",
-                        "errors": [
-                            f"could not safely inspect project recovery state: "
-                            f"{type(exc).__name__}"
-                        ],
-                    }
-                )
-                continue
-        else:
-            has_cluster_state = False
-        if has_cluster_state:
-            continue
-        network_state_path = project_root / _PROJECT_NETWORK_STATE
-        network_state = _load_json_file(network_state_path)
-        network_id = str(network_state.get("created_network_id") or "")
-        project_id = str(network_state.get("project_id") or project.project_id)
-        if not network_id or not project_id:
-            continue
-        cleanup_profile = (spec.profile if profile is None else profile) or str(
-            network_state.get("profile") or ""
-        )
-        errors = _reclaim_created_network(
-            nebius_bin,
-            project_id,
-            network_id,
-            str(network_state.get("subnet_id") or ""),
-            _nebius_cli_env(),
-            on_status,
-            project.key(),
-            profile=cleanup_profile,
-        )
-        if errors:
-            network_results.append(
-                {
-                    "project_key": project.key(),
-                    "status": "destroy-incomplete",
-                    "errors": errors,
-                }
-            )
-        else:
-            try:
-                network_state_path.unlink(missing_ok=True)
-            except OSError as exc:
-                network_results.append(
-                    {
-                        "project_key": project.key(),
-                        "status": "destroy-incomplete",
-                        "errors": [
-                            f"cloud network teardown succeeded but local ownership cleanup "
-                            f"failed: {type(exc).__name__}"
-                        ],
-                    }
-                )
-            else:
-                network_results.append(
-                    {"project_key": project.key(), "status": "destroyed"}
-                )
+    network_results = _reclaim_unused_project_networks(
+        spec,
+        fleet_root=fleet_root,
+        nebius_bin=nebius_bin,
+        prefix=prefix,
+        only_projects=only_projects,
+        profile=profile,
+        on_status=on_status,
+    )
     failed = sum(
         1 for entry in destroyed if entry.get("status") == "destroy-incomplete"
     )
@@ -2681,201 +2315,9 @@ def destroy_fleet(
         "name": spec.name,
         "clusters": destroyed,
         "networks": network_results,
+        "backend_counts": _backend_counts(destroyed),
         "failed": failed,
     }
-
-
-def _destroy_one_cluster(
-    *,
-    spec: FleetSpec,
-    project: ProjectSpec,
-    cluster: ClusterSpec,
-    fleet_root: Path,
-    terraform_bin: str,
-    nebius_bin: str,
-    profile: str = "",
-    timeout_minutes: int,
-    on_status: Callable[[str], None] | None,
-    log_path: Path | None = None,
-) -> dict[str, Any]:
-    install_dir = fleet_root / project.key() / cluster.name
-    label = f"{project.key()}/{cluster.name}"
-    if not install_dir.exists() and not install_dir.is_symlink():
-        _log(on_status, f"[{label}] no install dir; skipping")
-        return {
-            "project_key": project.key(),
-            "cluster_name": cluster.name,
-            "status": "absent",
-        }
-    retry_command = (
-        "npa fleet destroy --spec <fleet-spec.yaml> "
-        f"--only-projects {project.key()} --only-clusters {cluster.name} --yes"
-    )
-    log_metadata = {"terraform_log": str(log_path)} if log_path is not None else {}
-    try:
-        _ensure_private_directory(fleet_root)
-        _ensure_private_directory(install_dir.parent)
-        _ensure_private_directory(install_dir)
-    except RuntimeError as exc:
-        return {
-            "project_key": project.key(),
-            "cluster_name": cluster.name,
-            "status": "destroy-incomplete",
-            "errors": [str(exc)],
-            "retry_command": retry_command,
-            "install_dir": str(install_dir),
-            **log_metadata,
-        }
-    saved = _load_env_sidecar(install_dir) or {}
-    project_id = str(saved.get("project_id") or "")
-    subnet_id = str(saved.get("subnet_id") or "")
-    # Fall back to the profile the cluster was deployed with so a teardown never
-    # authenticates as the wrong tenant's principal.
-    profile = profile or str(saved.get("profile") or "")
-    workdir = install_dir / _K8S_TRAINING_SUBDIR
-    env = _cluster_tf_env(
-        nebius_bin,
-        tenant_id=str(saved.get("tenant_id") or spec.tenant_id),
-        project_id=project_id,
-        region=str(saved.get("region") or spec.region),
-        subnet_id=subnet_id,
-        profile=profile,
-    )
-    _log(
-        on_status,
-        f"[{label}] terraform destroy" + (f" (-> {log_path})" if log_path else ""),
-    )
-    errors: list[str] = []
-    try:
-        if log_path is not None:
-            _ensure_private_log_parent(log_path, fleet_root)
-        _tf_run(
-            [terraform_bin, "init", "-input=false"],
-            cwd=workdir,
-            env=env,
-            timeout=900,
-            log_path=log_path,
-        )
-        _tf_run(
-            [terraform_bin, "destroy", "-auto-approve", "-input=false"],
-            cwd=workdir,
-            env=env,
-            timeout=timeout_minutes * 60,
-            log_path=log_path,
-        )
-    except Exception as exc:  # noqa: BLE001 - preserve state and try scoped fallback
-        errors.append(f"terraform teardown failed: {exc}")
-        logger.warning(
-            "[%s] terraform teardown incomplete (%s)", label, type(exc).__name__
-        )
-        _log(
-            on_status,
-            f"[{label}] terraform teardown incomplete; trying cluster fallback",
-        )
-        if project_id:
-            try:
-                cid = _find_cluster_id_by_name(
-                    nebius_bin,
-                    project_id,
-                    str(saved.get("cluster_name") or cluster.name),
-                    env,
-                    profile,
-                )
-                if cid:
-                    fallback = _run_capture(
-                        [
-                            *_nebius_argv(nebius_bin, profile),
-                            "mk8s",
-                            "cluster",
-                            "delete",
-                            "--id",
-                            cid,
-                        ],
-                        env=env,
-                        check=False,
-                        timeout=timeout_minutes * 60,
-                    )
-                    if fallback.returncode != 0 and not _is_not_found_result(fallback):
-                        errors.append(
-                            f"Managed Kubernetes fallback delete failed (nebius exited "
-                            f"{fallback.returncode})"
-                        )
-            except Exception as fallback_exc:  # noqa: BLE001 - report every fallback failure
-                errors.append(f"Managed Kubernetes fallback failed: {fallback_exc}")
-        try:
-            _write_env_sidecar(
-                install_dir,
-                {
-                    **saved,
-                    "status": "destroy-incomplete",
-                    "errors": errors,
-                    "retry_command": retry_command,
-                },
-            )
-        except OSError as state_exc:
-            errors.append(
-                f"could not update recovery metadata: {type(state_exc).__name__}"
-            )
-        _log(on_status, f"[{label}] state retained; retry with: {retry_command}")
-        return {
-            "project_key": project.key(),
-            "cluster_name": cluster.name,
-            "status": "destroy-incomplete",
-            "errors": errors,
-            "retry_command": retry_command,
-            "install_dir": str(install_dir),
-            **log_metadata,
-        }
-
-    # Terraform is the authoritative owner of all recipe resources. Only after
-    # its successful destroy may the exact global cluster identity and local
-    # fleet state be removed.
-    try:
-        _remove_npa_cluster_identity(
-            context=str(saved.get("context") or ""),
-            cluster_id=str(saved.get("cluster_id") or ""),
-            project_id=project_id,
-        )
-    except (OSError, RuntimeError, ValueError) as exc:
-        errors.append(
-            f"cloud teardown succeeded but NPA cluster identity cleanup failed: "
-            f"{type(exc).__name__}"
-        )
-        return {
-            "project_key": project.key(),
-            "cluster_name": cluster.name,
-            "status": "destroy-incomplete",
-            "errors": errors,
-            "retry_command": retry_command,
-            "install_dir": str(install_dir),
-            **log_metadata,
-        }
-    try:
-        shutil.rmtree(install_dir)
-    except OSError as exc:
-        errors.append(
-            f"cloud teardown succeeded but local state cleanup failed: {type(exc).__name__}"
-        )
-        return {
-            "project_key": project.key(),
-            "cluster_name": cluster.name,
-            "status": "destroy-incomplete",
-            "errors": errors,
-            "retry_command": retry_command,
-            "install_dir": str(install_dir),
-            **log_metadata,
-        }
-    return {
-        "project_key": project.key(),
-        "cluster_name": cluster.name,
-        "status": "destroyed",
-        **log_metadata,
-    }
-
-
-def _is_not_found_result(result: Any) -> bool:
-    text = f"{getattr(result, 'stdout', '')} {getattr(result, 'stderr', '')}".casefold()
-    return "not found" in text or "not_found" in text or "does not exist" in text
 
 
 def _reclaim_created_network(
@@ -2947,13 +2389,137 @@ def fleet_status(
     state_path = fleet_root / _FLEET_STATE
     if state_path.exists():
         try:
-            return json.loads(state_path.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
+            state = json.loads(state_path.read_text())
+            entries = {
+                (
+                    str(item.get("project_key", "")),
+                    str(item.get("cluster_name", "")),
+                ): item
+                for item in state.get("clusters", [])
+                if isinstance(item, dict)
+            }
+            for project, cluster in spec.cluster_targets():
+                saved = entries.get((project.key(), cluster.name))
+                if saved is not None:
+                    require_backend_ownership(saved, cluster.backend_name())
+                if cluster.backend_name() == "soperator":
+                    assert cluster.soperator is not None
+                    backend_root = (
+                        fleet_root / project.key() / cluster.name / "soperator"
+                    )
+                    persisted_root = str((saved or {}).get("backend_state_root") or "")
+                    if (
+                        persisted_root
+                        and Path(persisted_root).expanduser().resolve()
+                        != backend_root.resolve()
+                    ):
+                        raise ValueError(
+                            "persisted soperator backend_state_root does not match "
+                            f"the canonical fleet-owned root for {project.key()}/"
+                            f"{cluster.name}"
+                        )
+                    try:
+                        live = get_backend("soperator").status(
+                            cluster.soperator,
+                            SoperatorStatusRequest(work_root=backend_root),
+                        )
+                    except Exception as exc:  # noqa: BLE001 - aggregate target health
+                        live = {
+                            "backend": "soperator",
+                            "status": "status-error",
+                            "error": str(exc),
+                        }
+                    merged = {
+                        **(saved or {}),
+                        **live,
+                        "backend": "soperator",
+                        "project_key": project.key(),
+                        "cluster_name": cluster.name,
+                        "backend_state_root": str(backend_root),
+                    }
+                    entries[(project.key(), cluster.name)] = merged
+                elif saved is not None:
+                    try:
+                        live = get_backend("mk8s").status(
+                            cluster,
+                            MK8sStatusRequest(
+                                state=saved,
+                                install_dir=fleet_root / project.key() / cluster.name,
+                            ),
+                        )
+                    except Exception as exc:  # noqa: BLE001 - aggregate backend status
+                        live = {
+                            "backend": "mk8s",
+                            "status": "status-error",
+                            "error": str(exc),
+                        }
+                    entries[(project.key(), cluster.name)] = {
+                        **saved,
+                        **live,
+                        "backend": "mk8s",
+                        "project_key": project.key(),
+                        "cluster_name": cluster.name,
+                    }
+            if isinstance(state.get("clusters"), list):
+                persisted_keys = {
+                    (
+                        str(item.get("project_key", "")),
+                        str(item.get("cluster_name", "")),
+                    )
+                    for item in state["clusters"]
+                    if isinstance(item, dict)
+                }
+                state["clusters"] = [
+                    entries.get(
+                        (
+                            str(item.get("project_key", "")),
+                            str(item.get("cluster_name", "")),
+                        ),
+                        item,
+                    )
+                    if isinstance(item, dict)
+                    else item
+                    for item in state["clusters"]
+                ]
+                state["clusters"].extend(
+                    item for key, item in entries.items() if key not in persisted_keys
+                )
+                state.update(_recount(state["clusters"]))
+            state["backend_counts"] = _backend_counts(state.get("clusters", []))
+            return state
+        except (json.JSONDecodeError, OSError) as exc:
+            raise RuntimeError(
+                f"persisted fleet inventory at {state_path} is unreadable; "
+                "refusing status without backend ownership proof"
+            ) from exc
     # Reconstruct from per-cluster sidecars if the summary is missing.
     clusters: list[dict[str, Any]] = []
     for project in spec.projects:
         for cluster in project.clusters:
+            if cluster.backend_name() == "soperator":
+                assert cluster.soperator is not None
+                backend_root = fleet_root / project.key() / cluster.name / "soperator"
+                try:
+                    status = get_backend("soperator").status(
+                        cluster.soperator,
+                        SoperatorStatusRequest(work_root=backend_root),
+                    )
+                except Exception as exc:  # noqa: BLE001 - aggregate target health
+                    status = {
+                        "backend": "soperator",
+                        "status": "status-error",
+                        "error": str(exc),
+                    }
+                clusters.append(
+                    {
+                        **status,
+                        "backend": "soperator",
+                        "project_key": project.key(),
+                        "cluster_name": cluster.name,
+                        "backend_state_root": str(backend_root),
+                    }
+                )
+                continue
             install_dir = fleet_root / project.key() / cluster.name
             saved = _load_env_sidecar(install_dir)
             # Trust the sidecar's own status ("provisioning"/"deployed"); a
@@ -2962,10 +2528,16 @@ def fleet_status(
             status = str(saved.get("status") or "unknown") if saved else "unknown"
             clusters.append(
                 {
+                    "backend": "mk8s",
                     "project_key": project.key(),
                     "cluster_name": cluster.name,
                     "status": status,
                     **({k: v for k, v in saved.items()} if saved else {}),
                 }
             )
-    return {"name": spec.name, "clusters": clusters}
+    return {
+        "name": spec.name,
+        "clusters": clusters,
+        **_recount(clusters),
+        "backend_counts": _backend_counts(clusters),
+    }

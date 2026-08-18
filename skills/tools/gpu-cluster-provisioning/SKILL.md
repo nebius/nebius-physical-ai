@@ -96,6 +96,11 @@ npa cluster node-group add-cpu --project <alias> ...
 npa cluster node-group remove --project <alias> ...
 ```
 
+GPU additions accept the same `--gpu-driver-mode auto|managed-image|operator`
+and `--managed-driver-preset` contract as initial provisioning. Use `operator`
+only when the workload needs an operator-managed capability absent from the
+managed image and the selected topology is not NVSwitch-class.
+
 Add a CPU pool rather than running CPU stages on GPU nodes: it is cheaper and it
 keeps preemptible GPU reclaims from killing coordination work.
 

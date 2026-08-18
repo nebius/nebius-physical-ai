@@ -3,9 +3,12 @@
   "private": true,
   "description": "Cypress browser coverage for the generated NPA agent UI.",
   "scripts": {
-    "cy:mock": "cypress run --spec cypress/e2e/agent_mocked.cy.js && cypress run --spec cypress/e2e/agent_foxglove.cy.js",
-    "cy:live": "cypress run --spec cypress/e2e/agent_foxglove_live.cy.js",
-    "cy:live-all": "cypress run --spec cypress/e2e/agent_live.cy.js,cypress/e2e/lichtblick_mcap_live.cy.js,cypress/e2e/agent_foxglove_live.cy.js",
+    "cy:mock": "cypress run --spec cypress/e2e/agent_mocked.cy.js,cypress/e2e/agent_leisaac.cy.js && cypress run --spec cypress/e2e/agent_foxglove.cy.js",
+    "cy:live": "cypress run --spec cypress/e2e/agent_leisaac_live.cy.js && cypress run --spec cypress/e2e/agent_foxglove_live.cy.js",
+    "cy:live-all": "cypress run --spec cypress/e2e/agent_live.cy.js,cypress/e2e/lichtblick_mcap_live.cy.js,cypress/e2e/agent_foxglove_live.cy.js,cypress/e2e/agent_leisaac_live.cy.js",
+    "cy:live-leisaac": "cypress run --spec cypress/e2e/agent_leisaac_live.cy.js,cypress/e2e/agent_leisaac_latency_live.cy.js,cypress/e2e/agent_leisaac_performance_live.cy.js",
+    "cy:live-leisaac-latency": "cypress run --spec cypress/e2e/agent_leisaac_latency_live.cy.js",
+    "cy:live-leisaac-performance": "cypress run --spec cypress/e2e/agent_leisaac_performance_live.cy.js",
     "cy:live-rrd": "cypress run --spec cypress/e2e/agent_live_rrd_artifact.cy.js",
     "cy:foxglove": "cypress run --spec cypress/e2e/agent_foxglove.cy.js"
   },

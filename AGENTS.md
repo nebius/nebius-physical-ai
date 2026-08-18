@@ -15,6 +15,11 @@ The source of truth is `skills/index.yaml`. The tree is organized as:
 - `skills/workflows/`: workflow-level procedures such as sim-to-real, policy training, Cosmos3 inference, and reference SkyPilot workflows.
 - `skills/atomic/`: reusable actions and review conventions such as GPU selection, workflow submission, testing conventions, image build/push, Cosmos3 setup/troubleshooting, and agent visual feedback (Describe this).
 - `skills/atomic/agent-visual-feedback/SKILL.md`: Describe-this multimodal feedback for Rerun / video / image / data viewers.
+- `skills/workflows/add-workbench-tool/SKILL.md`: add a new workbench tool end to end — implementation, CLI, SDK, toolRef catalog, container, tests, docs, and skill, in the order that keeps every CI gate green.
+- `skills/atomic/npa-cli-conventions/SKILL.md`: write or modify an npa CLI command or SDK function — registration, the `--input-path`/`--output-path` contract, output format, error handling and exit codes, the `resolve_typer_defaults`/`json_stdout_contract`/`intent_boundary` decorators, and config/credential access.
+- `skills/atomic/toolref-argv-contract/SKILL.md`: the contract that stops a workflow stage from rendering cleanly and then crashing in the pod — real flag names, literal-value rules, reachability, image routing.
+- `skills/atomic/pre-pr-validation/SKILL.md`: which of the six PR gates apply to a change, and the exact local command for each, cheapest first.
+- `skills/atomic/guardrail-failures/SKILL.md`: map a failing guardrail or CI gate to its cause and fix.
 - `skills/tools/`: concrete workbench and platform tools such as LeRobot, FiftyOne, Genesis, Isaac Lab, Cosmos, LanceDB, GR00T, SONIC, MJLab, Retargeting, SkyPilot, Scenario Gen, Dataset-of-record, Fleet, and Nebius infra.
 - `skills/workflows/first-run-setup/SKILL.md`: zero to a first verified result on a fresh machine or new project — an ordered, gated path (install → configure → credential preflight → cheapest-proof workload → validate spec → provision → image pullability → submit) with a stop condition at every step.
 - `skills/atomic/health-preflight/SKILL.md`: there is no `npa doctor` — prove HF/NGC/S3/Token Factory credentials and gated-model access with `npa workbench health preflight` / `access` before spending GPU time.

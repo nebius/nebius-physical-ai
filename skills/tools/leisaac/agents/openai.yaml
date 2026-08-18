@@ -1,0 +1,4 @@
+interface:
+  display_name: "LeIsaac"
+  short_description: "Operate secure LeIsaac teleoperation sessions"
+  default_prompt: "Use $leisaac to deploy and validate a secure LeIsaac teleoperation session."

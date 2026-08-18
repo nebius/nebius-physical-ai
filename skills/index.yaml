@@ -150,6 +150,18 @@ skills:
       - type: cli_help
         args: ["workbench", "sonic", "train", "--help"]
         contains: "gpu"
+  - name: gpu-allocation-fallback
+    category: atomic
+    when_to_use: "Track typed on-demand GPU placement failures and offer an action-digest-confirmed switch to an identical preemptible allocation."
+    path: skills/atomic/gpu-allocation-fallback/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/src/npa/agent_backend/gpu_allocation_fallback.py
+      - type: file_exists
+        path: npa/tests/cli/test_agent_gpu_allocation_fallback.py
+      - type: cli_help
+        args: ["provision-if-absent", "--help"]
+        contains: "--preemptible"
   - name: health-preflight
     category: atomic
     when_to_use: "Before any deploy, image build, or GPU submit: prove HF/NGC/S3/Token Factory credentials and gated-model access with `npa workbench health preflight` and `npa workbench health access` instead of failing mid-run."
@@ -231,6 +243,16 @@ skills:
       - type: cli_help
         args: ["--help"]
         contains: "Nebius Physical AI"
+  - name: vm-nebius-auth
+    category: atomic
+    when_to_use: "Start, recover, or verify no-browser human Nebius CLI profile authentication on a remote operator/dev VM with a safe SSH loopback callback forward."
+    path: skills/atomic/vm-nebius-auth/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/src/npa/clients/nebius_vm_auth.py
+      - type: cli_help
+        args: ["agent", "auth-profile", "--help"]
+        contains: "ssh-host"
   - name: third-party-eula-preflight
     category: atomic
     when_to_use: "Before provisioning, building, downloading, or submitting workloads whose images, software, models, or data require third-party terms: apply the documented product policy (including Isaac default/opt-out and OpenPI scoped opt-in), verify real upstream credential access for gated runtime fetches, and keep privacy and redistribution controls separate."
@@ -240,6 +262,48 @@ skills:
         path: npa/tests/guardrails/test_third_party_eula_preflight_skill.py
       - type: file_exists
         path: npa/docker/workbench/common/isaac_bootstrap.sh
+  - name: npa-cli-conventions
+    category: atomic
+    when_to_use: "Write or modify an npa CLI command or SDK function: registration, the --input-path/--output-path contract, output format, error handling and exit codes, the resolve_typer_defaults/json_stdout_contract/intent_boundary decorators, and config/credential access."
+    path: skills/atomic/npa-cli-conventions/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/src/npa/cli/path_contract.py
+      - type: file_exists
+        path: npa/src/npa/lifecycle_intent.py
+      - type: file_exists
+        path: npa/src/npa/cli/_typer_defaults.py
+  - name: toolref-argv-contract
+    category: atomic
+    when_to_use: "Add or change an npa.workflow toolRef argv template, or change a CLI option a toolRef already passes: the contract that stops a stage rendering cleanly and then crashing in the pod."
+    path: skills/atomic/toolref-argv-contract/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/src/npa/orchestration/npa_workflow/catalog.py
+      - type: file_exists
+        path: npa/tests/guardrails/test_tool_catalog_argv.py
+      - type: file_exists
+        path: npa/tests/guardrails/test_module_toolref_argv.py
+  - name: guardrail-failures
+    category: atomic
+    when_to_use: "A guardrail test or CI gate failed and you need the cause and fix rather than reverse-engineering the assertion."
+    path: skills/atomic/guardrail-failures/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/tests/guardrails/test_develop_skills.py
+      - type: file_exists
+        path: npa/tests/guardrails/test_three_tier_contract.py
+  - name: pre-pr-validation
+    category: atomic
+    when_to_use: "Before pushing an npa change: which of the six PR gates apply, and the exact local command for each, in cheapest-first order."
+    path: skills/atomic/pre-pr-validation/SKILL.md
+    smoke:
+      - type: file_exists
+        path: Makefile
+      - type: file_exists
+        path: scripts/build_docs.sh
+      - type: file_exists
+        path: npa/src/npa/guardrails/confidentiality.py
   - name: artifact-viz-share
     category: tools
     when_to_use: "Turn run outputs into something a human can look at and hand it to someone else: `npa adapter convert` (sim demos to LeRobotDataset), `npa convert lerobot-to-rrd|lerobot-to-mp4`, and `npa rerun host|share|list-shares|revoke` time-boxed presigned links."
@@ -442,6 +506,18 @@ skills:
       - type: cli_help
         args: ["workbench", "lerobot", "train", "--help"]
         contains: "policy"
+  - name: leisaac
+    category: tools
+    when_to_use: "Build, launch, operate, review, or live-test LeIsaac browser teleoperation, secure agent-relay transport, immutable demonstrations, custom bundles, or PAIDF materialization."
+    path: skills/tools/leisaac/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "leisaac", "launch", "--help"]
+        contains: "agent-relay"
+      - type: file_exists
+        path: docs/workbench/leisaac-teleoperation.md
+      - type: file_exists
+        path: npa/docker/workbench/leisaac/REDISTRIBUTION.md
   - name: mjlab
     category: tools
     when_to_use: "MJLab locomotion evaluation, SONIC checkpoint scoring, SkyPilot MJLab YAMLs, or CLI behavior."
@@ -768,6 +844,20 @@ skills:
       - type: cli_help
         args: ["agent", "destroy", "--help"]
         contains: "Destroy agent VM"
+  - name: add-workbench-tool
+    category: workflows
+    when_to_use: "Add a new workbench tool to npa end to end: implementation, CLI, SDK, toolRef catalog, container, tests, docs, and skill, in the order that keeps every CI gate green."
+    path: skills/workflows/add-workbench-tool/SKILL.md
+    smoke:
+      - type: file_exists
+        path: CONTRIBUTING.md
+      - type: file_exists
+        path: npa/src/npa/workbench/detection_training/service.py
+      - type: file_exists
+        path: npa/src/npa/cli/workbench/__init__.py
+      - type: cli_help
+        args: ["workbench", "--help"]
+        contains: "Physical AI"
   - name: author-npa-workflow
     category: workflows
     when_to_use: "Author, validate, or review NPA workflow specs (apiVersion npa.workflow/v0.0.1) and toolRef catalogs."
