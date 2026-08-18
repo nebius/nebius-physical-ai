@@ -1168,3 +1168,44 @@ def test_openpi_gpu_stages_use_pinned_vendor_python_only() -> None:
 
     assert TOOL_CATALOG["workbench.openpi.prepare_data"].argv_template[0] == "python3"
     assert TOOL_CATALOG["workbench.openpi.serve"].argv_template[0] == "python3"
+
+
+def test_policy_checkpoint_lands_on_the_durable_cache_when_configured(
+    monkeypatch,
+) -> None:
+    """A Deployment replaces its pod on every rollout, drain and image change.
+
+    With the checkpoint on an emptyDir, each of those re-downloaded the gated
+    Gemma-derived weights onto a GPU that is already running.
+    """
+
+    monkeypatch.setenv("NPA_MODEL_CACHE_PVC", "npa-model-cache")
+
+    pod = _service_manifests()["deployment"]["spec"]["template"]["spec"]
+
+    assert {
+        "name": "npa-model-cache",
+        "persistentVolumeClaim": {"claimName": "npa-model-cache"},
+    } in pod["volumes"]
+    server = next(c for c in pod["containers"] if c["name"] == "openpi-policy")
+    assert {
+        "name": "npa-model-cache",
+        "mountPath": "/opt/npa-model-cache",
+    } in server["volumeMounts"]
+    env = {item["name"]: item["value"] for item in server["env"] if "value" in item}
+    assert env["OPENPI_DATA_HOME"] == "/opt/npa-model-cache/openpi"
+    assert env["HF_HOME"] == "/opt/npa-model-cache/huggingface"
+
+
+def test_policy_checkpoint_keeps_its_ephemeral_volume_without_a_cache(
+    monkeypatch,
+) -> None:
+    for name in ("NPA_MODEL_CACHE_PVC", "NPA_MODEL_CACHE_HOST_PATH", "NPA_MODEL_CACHE_DIR"):
+        monkeypatch.delenv(name, raising=False)
+
+    pod = _service_manifests()["deployment"]["spec"]["template"]["spec"]
+
+    assert [volume["name"] for volume in pod["volumes"]] == ["openpi-cache"]
+    server = next(c for c in pod["containers"] if c["name"] == "openpi-policy")
+    env = {item["name"]: item["value"] for item in server["env"] if "value" in item}
+    assert env["OPENPI_DATA_HOME"] == "/workspace/openpi-server-cache"

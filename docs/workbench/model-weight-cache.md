@@ -156,6 +156,8 @@ first `mkdir` fails and the stage dies where it used to work.
 | sim2real sibling GPU Job | `_PVC`, `_HOST_PATH` | the claim, if it exists |
 | `npa deploy` container on a VM | `_HOST_PATH` | `/var/lib/npa/model-cache` |
 | Workbench Serverless Job | `_FILESYSTEM` | off |
+| OpenPI policy server (Deployment) | `_PVC`, `_HOST_PATH` | pod-local `emptyDir` |
+| LeRobot server on a VM | `_HOST_PATH` | `/var/lib/npa/model-cache` |
 | In-container code reading its own env | none | off |
 
 `NPA_MODEL_CACHE_DIR` is honored by every row: it is the operator asserting the path

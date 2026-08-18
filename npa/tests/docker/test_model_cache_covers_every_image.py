@@ -105,3 +105,38 @@ def test_the_excuse_list_does_not_rot() -> None:
 @pytest.mark.parametrize("name", sorted(MODEL_CACHE_ENV_NAMES))
 def test_no_variable_is_both_redirected_and_excused(name: str) -> None:
     assert name not in EXCUSED, f"{name} is redirected; the excuse contradicts it"
+
+
+# Pod-local volumes are how the original bug looked in a manifest: a cache mount
+# that dies with the pod. Each one still in the tree has to say why it is not
+# runtime-fetched model weights.
+EXCUSED_EMPTY_DIRS = {
+    "rrd-data": "Rerun recordings written by the run, not downloaded weights",
+    "fiftyone-data": "dataset app state",
+    "openpi-cache": "fallback when no durable cache is configured; redirected when one is",
+}
+
+SRC_ROOT = Path(__file__).resolve().parents[2] / "src" / "npa"
+
+
+def test_no_new_pod_local_cache_volume_appears_unnoticed() -> None:
+    named = re.compile(r'\{\s*"name":\s*"([\w.-]+)",\s*\n?\s*"emptyDir"', re.M)
+    found: dict[str, str] = {}
+    for source in SRC_ROOT.rglob("*.py"):
+        text = source.read_text(encoding="utf-8")
+        if '"emptyDir"' not in text:
+            continue
+        for name in named.findall(text):
+            found[name] = source.relative_to(SRC_ROOT).as_posix()
+        if not named.findall(text):
+            found[f"<unnamed in {source.name}>"] = source.relative_to(SRC_ROOT).as_posix()
+
+    unaccounted = {
+        name: where for name, where in found.items() if name not in EXCUSED_EMPTY_DIRS
+    }
+
+    assert not unaccounted, (
+        f"pod-local volumes with no stated purpose: {unaccounted}. If one holds "
+        "runtime-fetched weights, point it at the durable cache instead; if not, "
+        "excuse it in EXCUSED_EMPTY_DIRS with the reason."
+    )

@@ -1021,6 +1021,40 @@ def test_deploy_workbench_container_without_a_cache_is_unchanged(
     assert " -e " not in run_cmd
 
 
+def test_deploy_lerobot_container_joins_the_shared_weight_cache(
+    mocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """LeRobot has its own `docker run`, so it has to opt in explicitly.
+
+    Its own datasets were already covered by HF_LEROBOT_HOME, but a policy that
+    pulls a transformers backbone or a torch checkpoint had nowhere durable to put
+    it -- which would have left one tool on the box still re-downloading.
+    """
+
+    for name in ("NPA_MODEL_CACHE_HOST_PATH", "NPA_MODEL_CACHE_PVC", "NPA_MODEL_CACHE_DIR"):
+        monkeypatch.delenv(name, raising=False)
+    mocker.patch("npa.deploy.configurator.install_container_runtime")
+    ssh = mocker.MagicMock()
+
+    configurator.deploy_lerobot_container(
+        ssh,
+        image_ref="registry.example/npa-lerobot:1",
+        server_config={"hf_cache_dir": "/opt/lerobot/hf_cache"},
+    )
+
+    commands = [call.args[0] for call in ssh.run_or_raise.call_args_list]
+    install_cmd = commands[0]
+    run_cmd = commands[-1]
+    assert "/var/lib/npa/model-cache" in install_cmd
+    assert "-v /var/lib/npa/model-cache:/opt/npa-model-cache" in run_cmd
+    assert "HF_HOME=/opt/npa-model-cache/huggingface" in run_cmd
+    assert "TORCH_HOME=/opt/npa-model-cache/torch" in run_cmd
+    # The per-deploy directory stays authoritative for LeRobot's own datasets: it
+    # may already hold them, and a deploy is not the place to move them silently.
+    assert "HF_LEROBOT_HOME=/opt/lerobot/hf_cache" in run_cmd
+    assert "-v /opt/lerobot/hf_cache:/opt/lerobot/hf_cache" in run_cmd
+
+
 def test_deploy_lerobot_container_persists_the_hugging_face_cache(mocker) -> None:
     # HF_LEROBOT_HOME pointed at a directory that was never bind-mounted, and this
     # deploy runs `docker rm -f` first, so every deploy re-downloaded the datasets

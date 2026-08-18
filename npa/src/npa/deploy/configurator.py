@@ -390,6 +390,18 @@ def deploy_lerobot_container(
 ) -> None:
     """Install Docker/NVIDIA runtime and run the LeRobot server container."""
     hf_cache_dir = str(server_config.get("hf_cache_dir") or "/opt/lerobot/hf_cache")
+    # This deploy predates the shared cache and has its own `docker run`, so it has
+    # to opt in explicitly or it would be the one tool on the box still discarding
+    # everything except its LeRobot datasets: HF_LEROBOT_HOME covers those, but the
+    # transformers and torch downloads a policy pulls in have nowhere to go.
+    cache_root = resolve_model_cache_root(runtime=RUNTIME_DOCKER)
+    cache_volumes = docker_model_cache_volumes(root=cache_root)
+    cache_env = model_cache_env(cache_root)
+    # The per-deploy directory stays mounted and stays authoritative for LeRobot's
+    # own datasets: it may already hold them, and this deploy is not the place to
+    # silently move an operator's data to a new path.
+    cache_env.pop("HF_LEROBOT_HOME", None)
+    cache_env.pop("LEROBOT_HF_HOME", None)
     install_cmd = f"""
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -402,6 +414,7 @@ sudo install -d -m 0755 -o {shlex.quote(ssh_user)} -g {shlex.quote(ssh_user)} \
   /opt/lerobot/checkpoint_cache \
   {shlex.quote(hf_cache_dir)} \
   /opt/lerobot/benchmarks \
+  {" ".join(shlex.quote(v.split(":", 1)[0]) for v in cache_volumes)} \
   /var/log/npa-lerobot
 sudo touch /opt/lerobot/.env
 sudo chown {shlex.quote(ssh_user)}:{shlex.quote(ssh_user)} /opt/lerobot/.env
@@ -474,6 +487,7 @@ sudo usermod -aG docker {shlex.quote(ssh_user)} || true
         env_args["CUDA_VISIBLE_DEVICES"] = server_config["cuda_visible_devices"]
     if server_config.get("gpu_count"):
         env_args["NPA_GPU_COUNT"] = str(server_config["gpu_count"])
+    env_args.update(cache_env)
     env_flags = " ".join(
         f"--env {shlex.quote(key + '=' + str(value))}"
         for key, value in env_args.items()
@@ -492,6 +506,7 @@ sudo usermod -aG docker {shlex.quote(ssh_user)} || true
             f"-v {shlex.quote(hf_cache_dir)}:{shlex.quote(hf_cache_dir)}",
             "-v /opt/lerobot/benchmarks:/opt/lerobot/benchmarks",
             "-v /var/log/npa-lerobot:/var/log/npa-lerobot",
+            *(f"-v {shlex.quote(volume)}" for volume in cache_volumes),
         ]
     )
     run_cmd = (

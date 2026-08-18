@@ -162,6 +162,9 @@ MODEL_CACHE_LAYOUT: tuple[tuple[str, str], ...] = (
     ("NPA_COSMOS_CURATE_WEIGHTS_DIR", "cosmos-curate/models"),
     ("HF_LEROBOT_HOME", "lerobot"),
     ("LEROBOT_HF_HOME", "lerobot"),
+    # OpenPI's policy server keeps its gated checkpoint here; its Deployment used
+    # an emptyDir, so a rollout re-downloaded it on an already-running GPU.
+    ("OPENPI_DATA_HOME", "openpi"),
     ("WAN22_CACHE_DIR", "wan2.2"),
     ("NPA_LTX_MODEL_CACHE", "ltx-2.5"),
 )
