@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -497,7 +498,19 @@ def test_sky_environment_preserves_nebius_exec_auth_without_copying(
     provider_config = operator_home / ".nebius"
     provider_config.mkdir(parents=True)
     (provider_config / "config.yaml").write_text("profiles: {}\n", encoding="utf-8")
+    selected_kubeconfig = tmp_path / "selected-kubeconfig"
+    selected_kubeconfig.write_text(
+        "apiVersion: v1\nkind: Config\ncontexts: []\n", encoding="utf-8"
+    )
+    fallback_kubeconfig = tmp_path / "fallback-kubeconfig"
+    fallback_kubeconfig.write_text(
+        "apiVersion: v1\nkind: Config\ncontexts: []\n", encoding="utf-8"
+    )
     monkeypatch.setenv("HOME", str(operator_home))
+    monkeypatch.setenv(
+        "KUBECONFIG",
+        f"{selected_kubeconfig}{os.pathsep}{fallback_kubeconfig}",
+    )
 
     isolated = tmp_path / "isolated"
     env = sky_environment(isolated)
@@ -505,6 +518,9 @@ def test_sky_environment_preserves_nebius_exec_auth_without_copying(
     linked = isolated / "home" / ".nebius"
     assert linked.is_symlink()
     assert linked.resolve() == provider_config.resolve()
+    isolated_kubeconfig = isolated / "home" / ".kube" / "config"
+    assert isolated_kubeconfig.is_symlink()
+    assert isolated_kubeconfig.resolve() == selected_kubeconfig.resolve()
     assert env["HOME"] == str(isolated / "home")
 
 
