@@ -46,6 +46,8 @@ WORKFLOW_IMAGE_TOOLS: frozenset[str] = frozenset(TOOL_REF_IMAGE_TOOL.values())
 #:
 #:   sonic / retargeting : only appear in the 3-step SONIC locomotion chain.
 #:   cosmos3-reason      : single-step reason spec only.
+#:   alpamayo2-super     : dedicated single-step inference spec; covered by its
+#:                         own B200 and RTX PRO 6000 workflow validation.
 #:   lerobot / genesis : component/tool images with no comprehensive workflow
 #:                       toolRef chain yet (covered by their own tool + serverless
 #:                       E2Es and by the daily registry-reachability check).
@@ -59,6 +61,7 @@ EXEMPT_IMAGE_TOOLS: frozenset[str] = frozenset(
         "sonic",
         "retargeting",
         "cosmos3-reason",
+        "alpamayo2-super",
         "genesis",
         "lerobot",
     }
