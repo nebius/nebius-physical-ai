@@ -245,7 +245,11 @@ class StateStore:
         )
         head = self.client.s3.head_object(Bucket=bucket, Key=key)
         size = int(head.get("ContentLength") or 0)
-        metadata_sha = str((head.get("Metadata") or {}).get("sha256") or "")
+        metadata = {
+            str(key).lower(): str(value)
+            for key, value in (head.get("Metadata") or {}).items()
+        }
+        metadata_sha = metadata.get("sha256", "")
         if size != path.stat().st_size or metadata_sha != digest:
             raise AntiochStorageError(
                 "uploaded artifact failed size/checksum verification"

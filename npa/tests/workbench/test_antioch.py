@@ -383,6 +383,35 @@ def test_atomic_immutable_completion_conflict() -> None:
         states.put_immutable_json(uri, {"schema": "v1", "ok": False})
 
 
+def test_artifact_verification_accepts_s3_metadata_header_casing(
+    tmp_path: Path,
+) -> None:
+    artifact = tmp_path / "result.bin"
+    artifact.write_bytes(b"verified")
+
+    class S3:
+        def upload_file(
+            self, path: str, bucket: str, key: str, ExtraArgs: dict[str, Any]
+        ) -> None:  # noqa: N803
+            self.path = Path(path)
+            self.metadata = ExtraArgs["Metadata"]
+
+        def head_object(self, **kwargs):  # noqa: ANN003, ANN201
+            return {
+                "ContentLength": self.path.stat().st_size,
+                "Metadata": {
+                    "Sha256": self.metadata["sha256"],
+                    "Npa-Role": "antioch-artifact",
+                },
+            }
+
+    storage = type("Storage", (), {"s3": S3()})()
+    record = StateStore(storage).upload_artifact(
+        artifact, "s3://safe/result.bin", name="result.bin"
+    )
+    assert record.sha256 == sha256_bytes(b"verified")
+
+
 def test_service_auth_fails_closed_without_exposing_token() -> None:
     client = TestClient(
         create_app(manager=object(), auth_mode="token", token="service-secret")

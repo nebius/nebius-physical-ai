@@ -511,8 +511,10 @@ class AntiochManager:
                     "durable Antioch state disappeared during submission"
                 )
             record = current[0]
-            if not record.submission_owner:
-                record = self.submit(request)
+            # ``submit`` is a compare-and-swap operation. Calling it on every
+            # pass lets this runner take over an expired fencing lease after a
+            # submitting process dies; an active owner remains untouched.
+            record = self.submit(request)
         while record.status not in {"completed", "failed", "cancelled"}:
             time.sleep(poll_seconds)
             record = self.reconcile(resume)
