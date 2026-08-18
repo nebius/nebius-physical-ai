@@ -838,6 +838,20 @@ def render_run_preamble_for_tool(tool_ref: str, *, config: Mapping[str, Any]) ->
             'if [ -z "$(printenv DISPLAY 2>/dev/null || true)" ]; then\n'
             "  /usr/local/bin/npa-content-agents-entrypoint /bin/true\n"
             '  export DISPLAY=":$npa_ovrtx_display"\n'
+            '  npa_ovrtx_lock="/tmp/.X$npa_ovrtx_display-lock"\n'
+            '  npa_ovrtx_xvfb_pid="$(tr -d "[:space:]" < "$npa_ovrtx_lock")"\n'
+            '  case "$npa_ovrtx_xvfb_pid" in\n'
+            "    ''|*[!0-9]*) echo 'invalid Xvfb pid file' >&2; exit 1 ;;\n"
+            "  esac\n"
+            "  npa_cleanup_ovrtx_display() {\n"
+            '    if [ -r "/proc/$npa_ovrtx_xvfb_pid/comm" ] &&\n'
+            '       [ "$(cat "/proc/$npa_ovrtx_xvfb_pid/comm")" = Xvfb ] &&\n'
+            '       [ "$(tr -d "[:space:]" < "$npa_ovrtx_lock" 2>/dev/null || true)" = '
+            '"$npa_ovrtx_xvfb_pid" ]; then\n'
+            '      kill "$npa_ovrtx_xvfb_pid" 2>/dev/null || true\n'
+            "    fi\n"
+            "  }\n"
+            "  trap npa_cleanup_ovrtx_display EXIT\n"
             "fi\n"
         )
     if not tool_ref.startswith("workbench.vlm_eval"):

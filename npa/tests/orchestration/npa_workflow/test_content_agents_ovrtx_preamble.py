@@ -17,6 +17,9 @@ def test_render_stages_require_graphics_mounts_and_start_xvfb() -> None:
         assert "GPU Operator graphics driver mounts" in preamble
         assert "/usr/local/bin/npa-content-agents-entrypoint /bin/true" in preamble
         assert 'export DISPLAY=":$npa_ovrtx_display"' in preamble
+        assert 'npa_ovrtx_lock="/tmp/.X$npa_ovrtx_display-lock"' in preamble
+        assert "trap npa_cleanup_ovrtx_display EXIT" in preamble
+        assert 'kill "$npa_ovrtx_xvfb_pid"' in preamble
 
 
 def test_cpu_stages_do_not_start_a_display_or_require_driver_mounts() -> None:
