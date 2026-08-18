@@ -219,6 +219,7 @@ packages = ["src/npa"]
 "src/npa/deploy/sonic_image_manifest.json" = "npa/deploy/sonic_image_manifest.json"
 "src/npa/deploy/wan2_2_image_manifest.json" = "npa/deploy/wan2_2_image_manifest.json"
 "src/npa/deploy/ltx2_image_manifest.json" = "npa/deploy/ltx2_image_manifest.json"
+"src/npa/deploy/public_release_manifest.json" = "npa/deploy/public_release_manifest.json"
 "src/npa/deploy/lerobot_version_manifest.json" = "npa/deploy/lerobot_version_manifest.json"
 "src/npa/deploy/terraform/.terraform.lock.hcl" = "npa/deploy/terraform/.terraform.lock.hcl"
 "src/npa/deploy/terraform/.terraform.lock.npa.json" = "npa/deploy/terraform/.terraform.lock.npa.json"

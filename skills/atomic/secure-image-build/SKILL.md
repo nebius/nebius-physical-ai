@@ -53,7 +53,9 @@ For live validation also load `skills/atomic/gpu-selection/SKILL.md`,
    is not functional evidence.
 8. Promote only the validated digest to the supported public release tag through
    `npa.deploy.publish_public`. Verify anonymous pullability and exact digest
-   identity independently after promotion; record the exact digest identity.
+   identity independently after promotion; record the exact digest identity in
+   `public_release_manifest.json`. Scheduled health must compare the release tag
+   anonymously with that `published_digest`, without depending on dev-tag retention.
 9. On failure, delete only the exact run-owned development version after
    matching package, tag, and digest. Never infer ownership from a name or delete
    a shared/release digest. Record that deletion cannot revoke prior downloads.

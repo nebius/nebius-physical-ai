@@ -411,6 +411,27 @@ def test_render_errors_on_registry_credentials_mismatch(
     assert "test-token" not in message
 
 
+def test_render_public_image_ignores_unrelated_private_registry_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "test-token")
+    monkeypatch.setenv("SKYPILOT_DOCKER_USERNAME", "operator")
+    monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "registry.example")
+    spec, plan = _nebius_gpu_spec()
+
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="demo",
+        options=SkypilotRenderOptions(
+            registry="ghcr.io/nebius/nebius-physical-ai"
+        ),
+    )
+
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc is not None][1]
+    assert "secrets" not in task or "SKYPILOT_DOCKER_PASSWORD" not in task["secrets"]
+
+
 def test_render_ok_when_registry_matches_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -18,7 +18,6 @@ from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import storage_env_for_project
 from npa.deploy.images import (
     container_image_for_tool,
-    is_wan_live_acceptance_candidate,
     wan_accepted_image_manifest,
 )
 from npa.workflows.byof.live import resolve_byof_kubernetes_target
@@ -110,12 +109,30 @@ def _required_postprocess_key(
         return requested if has_registered_postprocess(requested) else None
 
     accepted_digest = str(wan_accepted_image_manifest()["oci_digest"])
+    acceptance_candidate = str(
+        getattr(args, "wan_acceptance_candidate_image", "") or ""
+    ).strip()
+    if acceptance_candidate:
+        if (
+            acceptance_candidate != base_image
+            or not getattr(args, "skip_build", False)
+            or re.fullmatch(
+                r"ghcr\.io/nebius/nebius-physical-ai/"
+                r"npa-wan2-2@sha256:[0-9a-f]{64}",
+                acceptance_candidate,
+            )
+            is None
+        ):
+            raise ValueError(
+                "--wan-acceptance-candidate-image requires --skip-build and must "
+                "exactly match the official digest-pinned Wan --base-image"
+            )
     if (
         not base_is_wan
         or base_profile != "prebuilt"
         or (
             not base_image.endswith(f"@{accepted_digest}")
-            and not is_wan_live_acceptance_candidate(base_image)
+            and base_image != acceptance_candidate
         )
     ):
         raise ValueError(
@@ -453,6 +470,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         default=os.environ.get("NPA_BYOF_SMOKE_ARTIFACT_NAME", ""),
     )
     parser.add_argument(
+        "--wan-acceptance-candidate-image",
+        default="",
+        help=(
+            "Explicit official digest-pinned Wan image permitted only for this "
+            "skip-build acceptance run; never read from ambient environment."
+        ),
+    )
+    parser.add_argument(
         "--num-envs", type=int, default=4, help="Parallel sim envs (datagen workload)."
     )
     parser.add_argument(
@@ -729,6 +754,9 @@ def main(argv: list[str] | None = None) -> int:
                     PostprocessContext(
                         run_prefix_uri=f"{args.output_root.rstrip('/')}/{args.run_id}/",
                         project=args.project or None,
+                        wan_acceptance_candidate_image=(
+                            args.wan_acceptance_candidate_image.strip()
+                        ),
                     ),
                 )
                 if postprocess is None:

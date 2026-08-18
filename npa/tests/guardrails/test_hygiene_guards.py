@@ -32,6 +32,21 @@ def test_no_unsupported_skypilot_down_or_autodown() -> None:
     )
 
 
+def test_debug_skill_does_not_restore_retired_registry_auth_helpers() -> None:
+    skill = (
+        REPO_ROOT / "skills" / "atomic" / "debug-failed-run" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    retired = {
+        "mint_nebius_iam_token",
+        "ensure_registry_pull_secret_for_images",
+        "this project's registry",
+    }
+
+    assert retired.isdisjoint(skill.splitlines())
+    for marker in retired:
+        assert marker not in skill
+
+
 def test_teardown_guard_catches_broken_fixture(tmp_path: Path) -> None:
     bad = tmp_path / "bad.sh"
     bad.write_text("sky launch --down task.yaml\n", encoding="utf-8")

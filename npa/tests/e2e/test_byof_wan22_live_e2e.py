@@ -12,8 +12,10 @@ Live gates (all required):
 * normal NPA project, registry, Kubernetes, and S3 operator configuration
 
 After a build/push succeeds but pre-launch infrastructure validation fails,
-``NPA_BYOF_WAN22_REUSE_IMAGE`` may point at that exact immutable run tag so the
-retry exercises the pushed image without rebuilding it.
+``NPA_BYOF_WAN22_REUSE_IMAGE`` supplies that exact immutable run tag to the E2E
+fixture. The fixture passes it through the explicit
+``--wan-acceptance-candidate-image`` argument; ambient environment state alone
+cannot authorize a nonaccepted digest in normal resolution or publication.
 """
 
 from __future__ import annotations
@@ -307,6 +309,8 @@ def test_wan22_live_rtxpro_candidate_generate_and_decode(
         "--base-profile",
         str(planned["--base-profile"]),
         "--base-image",
+        image,
+        "--wan-acceptance-candidate-image",
         image,
         "--build-command",
         str(planned["--build-command"]),

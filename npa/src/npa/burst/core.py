@@ -410,6 +410,8 @@ def _validate_burst_yaml_runtime(task: Mapping[str, Any], source: Path) -> None:
 
 def _inject_registry_login(task: dict[str, Any]) -> None:
     """Forward only explicit credentials for the image's exact registry host."""
+    from npa.deploy.images import is_public_registry
+
     resources = task.get("resources") or {}
     if not isinstance(resources, Mapping):
         return
@@ -427,7 +429,17 @@ def _inject_registry_login(task: dict[str, Any]) -> None:
     password = os.environ.get("SKYPILOT_DOCKER_PASSWORD", "").strip() or os.environ.get(
         "NPA_REGISTRY_PASSWORD", ""
     ).strip()
-    if configured_server != server or not username or not password:
+    image_registry = image.removeprefix("docker:").rsplit("/", 1)[0]
+    if configured_server != server:
+        if is_public_registry(image_registry):
+            return
+        if configured_server and username and password:
+            raise BurstConfigError(
+                f"registry mismatch: task image is in {server!r} but the configured "
+                f"Docker credentials authenticate to {configured_server!r}"
+            )
+        return
+    if not username or not password:
         return
     secrets = task.setdefault("secrets", {})
     if not isinstance(secrets, dict):

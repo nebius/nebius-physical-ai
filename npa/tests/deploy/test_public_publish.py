@@ -17,6 +17,7 @@ monkeypatch a synthetic restricted catalog tool in, proving the mechanism still 
 from __future__ import annotations
 
 import json
+import copy
 import re
 import subprocess
 from pathlib import Path
@@ -369,12 +370,40 @@ def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
         development_git_sha=sha,
     )
     assert plan
+    accepted_shas = {
+        tool: images.accepted_publication_development_sha(tool)
+        for tool in ("ltx2", "wan2-2", "cosmos3-serving", "sonic-mujoco")
+    }
+    assert len(set(accepted_shas.values())) == 4
     for item in plan:
         source_image = item.source_ref.rsplit("/", 1)[-1]
         target_image = item.target_ref.rsplit("/", 1)[-1]
         assert source_image.split(":", 1)[0] == target_image.split(":", 1)[0], item
-        assert source_image.endswith(f":dev-{sha}"), item
-        assert not target_image.endswith(f":dev-{sha}"), item
+        expected_sha = accepted_shas.get(item.tool) or sha
+        assert source_image.endswith(f":dev-{expected_sha}"), item
+        assert not target_image.endswith(f":dev-{expected_sha}"), item
+
+
+def test_accepted_images_use_distinct_exact_development_sources_and_digests() -> None:
+    plan = build_publish_plan(
+        target_registry="ghcr.io/nebius/nebius-physical-ai",
+        development_git_sha="1" * 40,
+    )
+    by_tool = {item.tool: item for item in plan}
+    manifest = images.public_release_manifest()["releases"]
+
+    for tool in ("ltx2", "wan2-2", "cosmos3-serving", "sonic-mujoco"):
+        entry = manifest[tool]
+        assert by_tool[tool].source_ref.endswith(
+            f":dev-{entry['development_sha']}"
+        )
+        if tool == "ltx2":
+            accepted_digest = images.ltx2_accepted_image_manifest()["oci_digest"]
+        elif tool == "wan2-2":
+            accepted_digest = images.wan_accepted_image_manifest()["oci_digest"]
+        else:
+            accepted_digest = images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS[tool]
+        assert entry["published_digest"] == accepted_digest
 
 
 def test_publish_plan_uses_the_public_sonic_pin_not_the_default_variant() -> None:
@@ -769,6 +798,91 @@ def test_verify_parity_is_read_only(monkeypatch) -> None:
     )
 
 
+def test_accepted_release_plan_partitions_published_and_pending_tools() -> None:
+    from npa.deploy import publish_public
+
+    manifest = images.public_release_manifest()
+    plan = publish_public.accepted_release_plan(
+        target_registry="ghcr.io/nebius/nebius-physical-ai"
+    )
+
+    assert len(plan) == 27
+    assert set(manifest["releases"]) | set(manifest["publication_pending"]) == set(
+        publicly_publishable_tools()
+    )
+    assert set(manifest["publication_pending"]) == {"leisaac"}
+    for item in plan:
+        recorded = manifest["releases"][item.tool]["published_digest"]
+        assert item.source_ref.endswith(f"@{recorded}")
+
+
+def test_verify_accepted_releases_compares_anonymous_live_and_recorded_digests(
+    monkeypatch,
+) -> None:
+    from npa.deploy import publish_public
+
+    plan = publish_public.accepted_release_plan(
+        target_registry="ghcr.io/nebius/nebius-physical-ai"
+    )[:2]
+    expected = {
+        item.target_ref: item.source_ref.rpartition("@")[2] for item in plan
+    }
+    drifted = plan[1]
+
+    def resolve(ref: str, **_: object) -> tuple[bool, str]:
+        if ref == drifted.target_ref:
+            return True, "sha256:" + "f" * 64
+        return True, expected[ref]
+
+    monkeypatch.setattr(publish_public, "anonymous_digest", resolve)
+
+    assert publish_public.verify_accepted_releases(plan) == [
+        (
+            drifted,
+            "published digest mismatch — recorded "
+            + expected[drifted.target_ref]
+            + "; live sha256:"
+            + "f" * 64,
+        )
+    ]
+
+
+def test_verify_accepted_releases_mode_never_reads_development_sources(
+    monkeypatch,
+) -> None:
+    from npa.deploy import publish_public
+
+    monkeypatch.setattr(
+        publish_public,
+        "anonymous_digest",
+        lambda ref, **_: (
+            True,
+            next(
+                item.source_ref.rpartition("@")[2]
+                for item in publish_public.accepted_release_plan(
+                    target_registry="ghcr.io/nebius/nebius-physical-ai"
+                )
+                if item.target_ref == ref
+            ),
+        ),
+    )
+
+    def explode(*_args, **_kwargs):
+        raise AssertionError("accepted release verification must not read dev tags")
+
+    monkeypatch.setattr(publish_public, "_preflight_or_explain", explode)
+    assert (
+        publish_public.main(
+            [
+                "--target",
+                "ghcr.io/nebius/nebius-physical-ai",
+                "--verify-accepted-releases",
+            ]
+        )
+        == 0
+    )
+
+
 def test_anonymous_check_sends_no_credentials_for_a_private_registry(
     monkeypatch,
 ) -> None:
@@ -915,10 +1029,22 @@ def test_the_preflight_flag_never_copies(monkeypatch) -> None:
     )
 
 
-def test_wan_publication_gate_binds_clean_bytes_and_attestations(monkeypatch) -> None:
+@pytest.mark.parametrize("recorded_total", [27, 26, None])
+def test_wan_publication_gate_binds_live_trivy_to_recorded_totals(
+    monkeypatch, recorded_total: int | None
+) -> None:
     from npa.deploy import publish_public
 
-    accepted = images.wan_accepted_image_manifest()
+    accepted = copy.deepcopy(images.wan_accepted_image_manifest())
+    if recorded_total is None:
+        accepted["vulnerability_scan"].pop("critical_total")
+        accepted["vulnerability_scan"].pop("critical_unfixed")
+    else:
+        accepted["vulnerability_scan"]["critical_total"] = recorded_total
+        accepted["vulnerability_scan"]["critical_unfixed"] = recorded_total
+    monkeypatch.setattr(
+        publish_public.images, "wan_accepted_image_manifest", lambda: accepted
+    )
     digest = accepted["oci_digest"]
 
     monkeypatch.setattr(
@@ -959,7 +1085,7 @@ def test_wan_publication_gate_binds_clean_bytes_and_attestations(monkeypatch) ->
                                         "Severity": "CRITICAL",
                                         "FixedVersion": "",
                                     }
-                                    for index in range(3)
+                                    for index in range(27)
                                 ]
                             }
                         ]
@@ -982,9 +1108,16 @@ def test_wan_publication_gate_binds_clean_bytes_and_attestations(monkeypatch) ->
         )
     )
 
-    assert ok, detail
-    assert digest in detail
-    assert "residual unfixed CRITICAL findings disclosed: 3" in detail
+    if recorded_total == 27:
+        assert ok, detail
+        assert digest in detail
+        assert "residual unfixed CRITICAL findings disclosed: 27" in detail
+    else:
+        assert not ok
+        assert (
+            "differs from the accepted manifest" in detail
+            or "totals are missing or inconsistent" in detail
+        )
 
 
 @pytest.mark.parametrize(
@@ -1055,7 +1188,12 @@ def test_wan_live_trivy_gate_uses_digest_pinned_container_fallback(
         "source.example/npa-wan2-2@sha256:" + "1" * 64
     )
 
-    assert result == {"critical_total": 0, "critical_with_fix": 0, "secrets": 0}
+    assert result == {
+        "critical_total": 0,
+        "critical_with_fix": 0,
+        "critical_unfixed": 0,
+        "secrets": 0,
+    }
     assert invoked[:3] == ["/usr/bin/docker", "run", "--rm"]
     assert f"{docker_config.resolve()}:/root/.docker:ro" in invoked
     assert publish_public._TRIVY_CONTAINER_IMAGE in invoked
@@ -1127,7 +1265,12 @@ def test_ltx_publication_gate_binds_zero_payload_gpu_and_attestation_proofs(
     monkeypatch.setattr(
         publish_public,
         "_scan_wan_trivy_exact_digest",
-        lambda ref: {"critical_total": 0, "critical_with_fix": 0, "secrets": 0},
+        lambda ref: {
+            "critical_total": 0,
+            "critical_with_fix": 0,
+            "critical_unfixed": 0,
+            "secrets": 0,
+        },
     )
     monkeypatch.setattr(
         publish_public.subprocess,

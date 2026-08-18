@@ -123,9 +123,9 @@ image (`public` | `restricted`), enforced by
   delivery at runtime under operator credentials and explicit terms. SONIC
   MuJoCo now builds independently from a digest-pinned public Python base and
   contains only SONIC source, MuJoCo, and the CUDA Toolkit runtime libraries
-  expressly listed as redistributable by their included SDK terms. Both remain
-  release-gated until their exact public development digests pass real GPU
-  acceptance.
+  expressly listed as redistributable by their included SDK terms. Both current
+  releases are bound to exact public development digests with accepted real-GPU
+  evidence.
 
 ## Manual gate audit (2026-08-16)
 
@@ -351,8 +351,14 @@ export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai   # OSS images, any tenant
 Both development and release tags must pass the unauthenticated check:
 
 ```bash
-npa/.venv/bin/python -m npa.deploy.publish_public --verify-public
+npa/.venv/bin/python -m npa.deploy.publish_public --verify-accepted-releases
 ```
+
+This read-only health check resolves every accepted release tag anonymously and
+compares it with `public_release_manifest.json`'s `published_digest`. Use
+`--verify-parity` separately when a retained development source tag exists and
+source-to-release parity is the question; a missing historical dev tag is not a
+release-byte verdict.
 
 Never add a `restricted` image to official GHCR.
 `publish_public` and `development_image_for_tool` refuse every member of the

@@ -341,7 +341,9 @@ def test_wan_validation_is_bound_to_an_immutable_accepted_tuple(
     assert proof["record"] == wan["validation_run"]
     assert accepted["payload_scan"]["archives_scanned"] == 21
     assert accepted["payload_scan"]["findings"] == 0
+    assert accepted["vulnerability_scan"]["critical_total"] == 27
     assert accepted["vulnerability_scan"]["critical_with_fix"] == 0
+    assert accepted["vulnerability_scan"]["critical_unfixed"] == 27
     assert accepted["vulnerability_scan"]["secrets"] == 0
 
 

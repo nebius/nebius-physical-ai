@@ -49,6 +49,7 @@ def test_skill_names_each_authoritative_inventory_layer() -> None:
         "npa/src/npa/deploy/images.py",
         "npa/pyproject.toml",
         "npa/src/npa/deploy/*_image_manifest.json",
+        "npa/src/npa/deploy/public_release_manifest.json",
         "npa/src/npa/deploy/publish_public.py",
         "publicly_publishable_tools()",
         "docker buildx imagetools inspect",

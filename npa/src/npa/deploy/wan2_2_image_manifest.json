@@ -67,9 +67,11 @@
     "credentials_baked": false
   },
   "vulnerability_scan": {
+    "critical_total": 27,
     "critical_with_fix": 0,
+    "critical_unfixed": 27,
     "secrets": 0,
-    "policy": "Publication reruns Trivy on the exact digest and fails on fixed CRITICAL or secret findings; unfixed CRITICAL findings are disclosed at promotion."
+    "policy": "Publication reruns Trivy on the exact digest, fails on fixed CRITICAL or secret findings, and requires the live total of residual unfixed CRITICAL findings to equal this accepted record. Any count change requires refreshed review evidence."
   },
   "not_claimed": [
     "wan2.2_ti2v_5b_image_to_video",

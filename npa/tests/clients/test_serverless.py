@@ -842,6 +842,33 @@ def test_stale_registry_username_preserves_anonymous_public_ghcr(
     ) == []
 
 
+def test_public_image_ignores_complete_unrelated_private_registry_auth(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("NPA_REGISTRY_SERVER", "registry.example")
+    monkeypatch.setenv("NPA_REGISTRY_USERNAME", "operator")
+    monkeypatch.setenv("NPA_REGISTRY_PASSWORD", "private-token")
+    client = ServerlessClient(nebius_bin="nebius")
+
+    assert client._registry_auth_args(
+        "ghcr.io/nebius/nebius-physical-ai/npa-cosmos:1.0.0"
+    ) == []
+
+
+def test_private_image_with_mismatched_complete_registry_auth_still_fails(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("NPA_REGISTRY_SERVER", "registry.example")
+    monkeypatch.setenv("NPA_REGISTRY_USERNAME", "operator")
+    monkeypatch.setenv("NPA_REGISTRY_PASSWORD", "private-token")
+    client = ServerlessClient(nebius_bin="nebius")
+
+    with pytest.raises(ServerlessClientError, match="does not match"):
+        client._registry_auth_args(
+            "registry-other.example/example/npa-cosmos:1.0.0"
+        )
+
+
 def test_intentional_partial_registry_auth_still_fails_closed(monkeypatch) -> None:
     monkeypatch.setenv("NPA_REGISTRY_SERVER", "registry.example")
     monkeypatch.setenv("NPA_REGISTRY_USERNAME", "operator")

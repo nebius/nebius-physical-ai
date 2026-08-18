@@ -743,10 +743,6 @@ def submit_cmd(
         return
 
     prepared_npa = None
-    # The runtime registry-auth render has its own temporary directory.  Keep
-    # the cleanup sentinel in the enclosing submit scope: fully image-pinned
-    # workflows with --no-stage-src never enter the source-staging branch
-    # below, but their fail-fast render errors must still cleanly reach the
     deploy_targets = []
     resolved_deploy_plans: dict[str, Any] = {}
     paidf_placement_prechecked = False

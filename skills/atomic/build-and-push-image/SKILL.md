@@ -24,7 +24,8 @@ refusal conditions; this skill records NPA-specific build and GPU details.
 5. After push, resolve the immutable digest, repeat exact-digest checks, and
    verify anonymous pullability. Use that digest for functional GPU validation.
 6. Promote only the real-GPU-validated digest to the supported release tag with
-   `npa.deploy.publish_public`; verify digest parity and anonymous pull afterward.
+   `npa.deploy.publish_public`; verify digest parity and anonymous pull afterward,
+   then record the accepted release digest for anonymous read-only health checks.
 
 Use `NPA_PUBLIC_REGISTRY` only to select the configured official namespace.
 `NPA_REGISTRY` remains the generic execution override. Do not introduce a second

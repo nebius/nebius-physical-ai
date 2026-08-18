@@ -138,7 +138,8 @@ def test_public_health_is_anonymous_and_read_only() -> None:
     assert "workflow_dispatch" in triggers
     assert spec["permissions"] == {"contents": "read"}
     run = _runs(HEALTH)
-    assert "--verify-public" in run
+    assert "--verify-accepted-releases" in run
+    assert "--verify-public" not in run
     assert "ghcr.io/nebius/nebius-physical-ai" in run
     assert "GITHUB_REPOSITORY" not in run
     assert "auth login" not in run

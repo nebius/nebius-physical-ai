@@ -18,7 +18,9 @@ The catalog was verified against the public GHCR tag and OCI manifest APIs on
 plan, 27 resolved anonymously. The configured `npa-leisaac` tag returned HTTP
 403 from GHCR's anonymous token endpoint and is marked publication-pending
 below; repository redistribution eligibility and publishing intent do not prove
-current registry visibility. **Built** is the UTC build date of the newest
+current registry visibility. Each of the 27 accepted release tags also matched
+the exact `published_digest` in `public_release_manifest.json`; that check did
+not depend on historical development-tag retention. **Built** is the UTC build date of the newest
 listed variant; reproducible images that intentionally zero their OCI `created`
 field use the timestamp in the immutable tag and `npa.build_ts` label.
 

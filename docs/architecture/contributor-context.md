@@ -150,9 +150,9 @@ historical baseline.
 
 SONIC image selection is manifest-driven. The old baked `npa-sonic:0.1.2` and
 inherited MuJoCo variants are quarantined as restricted. The independently
-rebuilt public MuJoCo candidate remains release-gated pending exact-digest GPU
-evidence; only the scanned,
-host-mounted runtime-fetch variant is active for RTX PRO 6000 Blackwell Kubernetes
+rebuilt public MuJoCo image has exact-digest security and B200 GPU acceptance
+evidence and is released as `0.2.0-runtime`. The scanned, host-mounted
+runtime-fetch SONIC variant remains active for RTX PRO 6000 Blackwell Kubernetes
 targets with NVIDIA GPU Operator mounted drivers. The source of truth is
 `npa/src/npa/deploy/sonic_image_manifest.json`.
 

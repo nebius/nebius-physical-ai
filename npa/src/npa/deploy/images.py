@@ -28,28 +28,7 @@ DEFAULT_WORKBENCH_IMAGE_ENV = "NPA_WORKBENCH_IMAGE"
 SONIC_IMAGE_MANIFEST_RESOURCE = "sonic_image_manifest.json"
 WAN_IMAGE_MANIFEST_RESOURCE = "wan2_2_image_manifest.json"
 LTX2_IMAGE_MANIFEST_RESOURCE = "ltx2_image_manifest.json"
-
-
-def is_wan_live_acceptance_candidate(reference: str) -> bool:
-    """Allow one explicit digest only inside the gated Wan live acceptance run.
-
-    Normal execution remains bound to the accepted-image manifest. A new image
-    cannot enter that manifest until it has run, so the operator-only E2E path
-    needs a narrow bootstrap: both live gates, the exact reuse reference, the
-    official Wan repository, and an immutable digest must all agree.
-    """
-
-    candidate = os.environ.get("NPA_BYOF_WAN22_REUSE_IMAGE", "").strip()
-    return (
-        os.environ.get("NPA_INTEGRATION_E2E") == "1"
-        and os.environ.get("NPA_BYOF_WAN22_LIVE_GPU") == "1"
-        and reference == candidate
-        and re.fullmatch(
-            r"ghcr\.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:[0-9a-f]{64}",
-            reference,
-        )
-        is not None
-    )
+PUBLIC_RELEASE_MANIFEST_RESOURCE = "public_release_manifest.json"
 
 CONTAINER_IMAGE_NAMES = {
     "lerobot": "npa-lerobot",
@@ -144,9 +123,19 @@ UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset()
 # Release promotion for the rebuilt surfaces is bound to the exact manifests
 # whose filesystem/layers were scanned and whose advertised GPU capability ran.
 # A newly built dev tag must earn fresh evidence before this mapping changes.
+GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES: dict[str, dict[str, str]] = {
+    "cosmos3-serving": {
+        "development_sha": "d854f6a76cd87ec05ad97ccde6d596f3329efa0e",
+        "oci_digest": "sha256:3342bbe44bd1c00ebf05ab4c9d7286058a94bb5ce90b49b164b23604d3acf180",
+    },
+    "sonic-mujoco": {
+        "development_sha": "5b5b5e69e9e686f8d5f305fd735a02f402f6da4b",
+        "oci_digest": "sha256:2388d9e97269afaa414966e83a27f676a3f44d4271e9828c57bc13fbdce80f57",
+    },
+}
 GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS: dict[str, str] = {
-    "cosmos3-serving": "sha256:3342bbe44bd1c00ebf05ab4c9d7286058a94bb5ce90b49b164b23604d3acf180",
-    "sonic-mujoco": "sha256:2388d9e97269afaa414966e83a27f676a3f44d4271e9828c57bc13fbdce80f57",
+    tool: source["oci_digest"]
+    for tool, source in GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES.items()
 }
 
 # Registry hosts that serve anonymous/public pulls. Resolving a restricted image
@@ -263,6 +252,45 @@ def ltx2_accepted_image_manifest() -> dict[str, Any]:
         raise RuntimeError(
             "LTX accepted image manifest tag drifted from the supported tag"
         )
+    return payload
+
+
+@lru_cache(maxsize=1)
+def public_release_manifest() -> dict[str, Any]:
+    """Load exact anonymously verified release-digest claims."""
+
+    payload = json.loads(
+        resources.files("npa.deploy")
+        .joinpath(PUBLIC_RELEASE_MANIFEST_RESOURCE)
+        .read_text(encoding="utf-8")
+    )
+    if not isinstance(payload, dict):
+        raise RuntimeError("Public release manifest must be a JSON object")
+    if payload.get("format") != "npa_public_release_manifest_v1":
+        raise RuntimeError("Unsupported public release manifest format")
+    if payload.get("registry") != DEFAULT_PUBLIC_CONTAINER_REGISTRY:
+        raise RuntimeError("Public release manifest registry drifted from official GHCR")
+    releases = payload.get("releases")
+    pending = payload.get("publication_pending")
+    if not isinstance(releases, dict) or not isinstance(pending, dict):
+        raise RuntimeError("Public release manifest inventories must be objects")
+    if set(releases) | set(pending) != set(publicly_publishable_tools()):
+        raise RuntimeError(
+            "Public release manifest must partition every publishable tool into "
+            "published or publication-pending"
+        )
+    for tool, entry in releases.items():
+        if not isinstance(entry, dict):
+            raise RuntimeError(f"Public release manifest entry {tool!r} must be an object")
+        if entry.get("tag") != public_release_tag_for_tool(tool):
+            raise RuntimeError(f"Public release tag drifted for {tool!r}")
+        if re.fullmatch(
+            r"sha256:[0-9a-f]{64}", str(entry.get("published_digest") or "")
+        ) is None:
+            raise RuntimeError(f"Public release digest is invalid for {tool!r}")
+        development_sha = entry.get("development_sha")
+        if development_sha is not None:
+            development_tag(str(development_sha))
     return payload
 
 
@@ -623,12 +651,34 @@ def publicly_publishable_tools() -> list[str]:
 
     Excludes anything in ``RESTRICTED_PUBLICATION_TOOLS``. The Isaac images now
     fetch Isaac Sim / Isaac Lab at run time under the operator's own EULA
-    acceptance. Cosmos3 serving and SONIC MuJoCo are licence-eligible public
-    candidates but remain separately blocked from release until GPU acceptance.
+    acceptance. Cosmos3 serving and SONIC MuJoCo have exact accepted public
+    development digests and GPU evidence recorded for their current releases.
     """
     return sorted(
         tool for tool in CONTAINER_IMAGE_NAMES if is_publicly_redistributable(tool)
     )
+
+
+def accepted_publication_development_sha(tool: str) -> str | None:
+    """Return a tool's exact accepted development SHA when one is recorded."""
+
+    entry = (public_release_manifest().get("releases") or {}).get(tool) or {}
+    value = entry.get("development_sha")
+    if value is None:
+        return None
+    normalized = development_tag(str(value)).removeprefix("dev-")
+    if tool == "wan2-2" and normalized != wan_accepted_image_manifest().get(
+        "development_sha"
+    ):
+        raise RuntimeError("Wan release and accepted-image development SHAs disagree")
+    if tool == "ltx2" and normalized != ltx2_accepted_image_manifest().get(
+        "development_sha"
+    ):
+        raise RuntimeError("LTX release and accepted-image development SHAs disagree")
+    gpu_source = GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES.get(tool)
+    if gpu_source and normalized != gpu_source.get("development_sha"):
+        raise RuntimeError(f"{tool} release and GPU-accepted development SHAs disagree")
+    return normalized
 
 
 def default_vlm_image(*, registry: str | None = None) -> str:

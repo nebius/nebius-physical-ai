@@ -572,12 +572,17 @@ class ServerlessClient:
     def _registry_auth_args(self, image: str) -> list[str]:
         """CLI flags for explicitly configured private-registry credentials."""
 
+        from npa.deploy.images import is_public_registry
+
         if os.environ.get("NPA_SERVERLESS_SKIP_REGISTRY_AUTH", "").strip() == "1":
             return []
         configured_server = os.environ.get("NPA_REGISTRY_SERVER", "").strip()
         username = os.environ.get("NPA_REGISTRY_USERNAME", "").strip()
         password = os.environ.get("NPA_REGISTRY_PASSWORD", "").strip()
         if not configured_server and not username and not password:
+            return []
+        image_registry = image.removeprefix("docker:").rsplit("/", 1)[0]
+        if is_public_registry(image_registry):
             return []
         # Pre-GHCR configurations commonly left a username behind after their
         # server/token fields were removed. A username alone cannot authenticate

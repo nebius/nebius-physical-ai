@@ -289,3 +289,38 @@ run: echo should-not-submit
     )
 
     assert handle.job_id == "456"
+
+
+def test_burst_public_image_ignores_unrelated_private_registry_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_REGISTRY_SERVER", "registry.example")
+    monkeypatch.setenv("NPA_REGISTRY_USERNAME", "operator")
+    monkeypatch.setenv("NPA_REGISTRY_PASSWORD", "private-token")
+    task = {
+        "resources": {
+            "image_id": (
+                "docker:ghcr.io/nebius/nebius-physical-ai/npa-cosmos:1.0.0"
+            )
+        }
+    }
+
+    core._inject_registry_login(task)
+
+    assert "secrets" not in task
+
+
+def test_burst_private_image_with_mismatched_registry_credentials_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_REGISTRY_SERVER", "registry.example")
+    monkeypatch.setenv("NPA_REGISTRY_USERNAME", "operator")
+    monkeypatch.setenv("NPA_REGISTRY_PASSWORD", "private-token")
+    task = {
+        "resources": {
+            "image_id": "docker:registry-other.example/example/npa-cosmos:1.0.0"
+        }
+    }
+
+    with pytest.raises(BurstConfigError, match="registry mismatch"):
+        core._inject_registry_login(task)

@@ -1851,6 +1851,11 @@ def _inject_operator_registry_docker_secrets(
     if not creds_server:
         return
     if creds_server != server:
+        from npa.deploy.images import is_public_registry
+
+        image_registry = image_id.removeprefix("docker:").rsplit("/", 1)[0]
+        if is_public_registry(image_registry):
+            return
         if materialize:
             raise NpaWorkflowRenderError(
                 f"registry mismatch: task image is in {server!r} but the Docker "

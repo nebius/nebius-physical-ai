@@ -24,6 +24,10 @@ preflight and then requires every target tag to resolve to the exact same OCI di
 is deliberately stronger than ``--verify-public``, because an anonymously pullable tag can
 still serve stale bytes.
 
+``--verify-accepted-releases`` is the historical release-byte check. It resolves every
+recorded release tag anonymously and compares it directly with the accepted manifest's
+``published_digest``. It does not depend on retention of the development tag.
+
 ``--skip-missing`` publishes the images that exist when some pin refers to an image nobody
 has built yet. The plan comes from the packaging contract (what the repo BUILDS) while the
 registry holds what was pushed, so that gap is routine for a young tool; a denial is never
@@ -34,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 import re
@@ -93,7 +98,7 @@ def build_publish_plan(
         target_registry, channel="public release"
     )
     target = target_registry.rstrip("/")
-    source_sha = _development_git_sha(development_git_sha)
+    default_source_sha = _development_git_sha(development_git_sha)
 
     plan: list[PublishItem] = []
     for tool in publicly_publishable_tools():
@@ -116,6 +121,10 @@ def build_publish_plan(
             raise ValueError(
                 f"refusing to publish restricted tool {tool!r} to a public registry"
             )
+        source_sha = (
+            images.accepted_publication_development_sha(tool)
+            or default_source_sha
+        )
         source_ref = images.development_image_for_tool(
             tool, registry=target, git_sha=source_sha
         )
@@ -371,6 +380,7 @@ def _scan_wan_trivy_exact_digest(image_ref: str) -> dict[str, int]:
     return {
         "critical_total": len(vulnerabilities),
         "critical_with_fix": len(fixed),
+        "critical_unfixed": len(vulnerabilities) - len(fixed),
         "secrets": len(secrets),
     }
 
@@ -471,6 +481,16 @@ def verify_wan_publication_source(item: PublishItem) -> tuple[bool, str]:
         vulnerability_scan = accepted.get("vulnerability_scan")
         if not isinstance(vulnerability_scan, dict):
             raise RuntimeError("Wan accepted manifest has no vulnerability scan")
+        accepted_total = vulnerability_scan.get("critical_total")
+        accepted_unfixed = vulnerability_scan.get("critical_unfixed")
+        if (
+            not isinstance(accepted_total, int)
+            or accepted_total < 0
+            or accepted_unfixed != accepted_total
+        ):
+            raise RuntimeError(
+                "Wan accepted vulnerability totals are missing or inconsistent"
+            )
         if vulnerability_scan.get("critical_with_fix") != 0:
             raise RuntimeError("Wan accepted image has fixed CRITICAL vulnerabilities")
         if vulnerability_scan.get("secrets") != 0:
@@ -509,6 +529,13 @@ def verify_wan_publication_source(item: PublishItem) -> tuple[bool, str]:
         if scan_result.get("status") != "pass" or scan_result.get("findings"):
             raise RuntimeError("Wan exact-digest payload scan did not pass cleanly")
         live_vulnerability_scan = _scan_wan_trivy_exact_digest(digest_ref)
+        for field in ("critical_total", "critical_with_fix", "critical_unfixed", "secrets"):
+            if live_vulnerability_scan[field] != vulnerability_scan.get(field):
+                raise RuntimeError(
+                    "Wan live Trivy result differs from the accepted manifest: "
+                    f"{field} recorded {vulnerability_scan.get(field)!r}, "
+                    f"live {live_vulnerability_scan[field]!r}"
+                )
         return (
             True,
             f"exact accepted digest {digest}; payload and live Trivy clean; "
@@ -813,6 +840,96 @@ def verify_public(plan: list[PublishItem]) -> list[tuple[PublishItem, str]]:
     return failures
 
 
+def anonymous_digest(
+    ref: str, *, timeout: float = _ANON_TIMEOUT_SECONDS
+) -> tuple[bool, str]:
+    """Resolve an OCI manifest digest without consulting ambient credentials."""
+
+    host = _registry_host(ref)
+    remainder = ref[len(host) + 1 :]
+    repository, _, reference = remainder.rpartition(":")
+    if not repository:
+        return False, "release reference must use a tag"
+
+    token = ""
+    if host == "ghcr.io":
+        try:
+            url = f"https://ghcr.io/token?scope=repository:{repository}:pull&service=ghcr.io"
+            with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310
+                token = json.loads(response.read()).get("token", "")
+        except urllib.error.HTTPError as exc:
+            return False, f"anonymous token request failed: HTTP {exc.code}"
+        except (urllib.error.URLError, json.JSONDecodeError, TimeoutError) as exc:
+            return False, f"anonymous token request failed: {exc}"
+
+    request = urllib.request.Request(  # noqa: S310 - https registry API
+        f"https://{host}/v2/{repository}/manifests/{reference}",
+        method="GET",
+        headers={
+            "Accept": (
+                "application/vnd.oci.image.index.v1+json,"
+                "application/vnd.oci.image.manifest.v1+json,"
+                "application/vnd.docker.distribution.manifest.list.v2+json,"
+                "application/vnd.docker.distribution.manifest.v2+json"
+            ),
+            **({"Authorization": f"Bearer {token}"} if token else {}),
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+            body = response.read()
+            digest = str(response.headers.get("Docker-Content-Digest") or "").strip()
+            if not digest:
+                digest = "sha256:" + hashlib.sha256(body).hexdigest()
+            if re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
+                return False, f"registry returned invalid digest {digest!r}"
+            return True, digest
+    except urllib.error.HTTPError as exc:
+        return False, f"HTTP {exc.code}"
+    except (urllib.error.URLError, TimeoutError) as exc:
+        return False, f"unreachable: {exc}"
+
+
+def accepted_release_plan(*, target_registry: str) -> list[PublishItem]:
+    """Return exact accepted release claims, independent of development tags."""
+
+    target = images._ghcr_namespace(
+        target_registry, channel="accepted public release verification"
+    ).rstrip("/")
+    releases = images.public_release_manifest()["releases"]
+    return [
+        PublishItem(
+            tool=tool,
+            source_ref=(
+                f"{target}/{CONTAINER_IMAGE_NAMES[tool]}@{entry['published_digest']}"
+            ),
+            target_ref=f"{target}/{CONTAINER_IMAGE_NAMES[tool]}:{entry['tag']}",
+        )
+        for tool, entry in sorted(releases.items())
+    ]
+
+
+def verify_accepted_releases(
+    plan: list[PublishItem],
+) -> list[tuple[PublishItem, str]]:
+    """Compare each anonymous release digest with its recorded published digest."""
+
+    failures: list[tuple[PublishItem, str]] = []
+    for item in plan:
+        expected = item.source_ref.rpartition("@")[2]
+        ok, detail = anonymous_digest(item.target_ref)
+        if not ok:
+            failure = f"anonymous release digest unreadable — {detail}"
+        elif detail != expected:
+            failure = f"published digest mismatch — recorded {expected}; live {detail}"
+        else:
+            print(f"  {item.target_ref}  accepted ({detail})")
+            continue
+        print(f"  {item.target_ref}  DRIFTED — {failure}")
+        failures.append((item, failure))
+    return failures
+
+
 def verify_parity(plan: list[PublishItem]) -> list[tuple[PublishItem, str]]:
     """Return items whose source and target do not resolve to identical OCI bytes.
 
@@ -993,6 +1110,15 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--verify-accepted-releases",
+        action="store_true",
+        help=(
+            "Do not copy. Resolve every recorded release tag anonymously and compare "
+            "it directly with its accepted published_digest. This does not require "
+            "historical development tags."
+        ),
+    )
+    parser.add_argument(
         "--preflight",
         action="store_true",
         help=(
@@ -1018,6 +1144,19 @@ def main(argv: list[str] | None = None) -> int:
     if not (args.target or "").strip():
         parser.error("no target registry; pass --target or set NPA_PUBLIC_REGISTRY")
 
+    if args.verify_accepted_releases:
+        expected = accepted_release_plan(target_registry=args.target)
+        print(f"Verifying {len(expected)} accepted public release digest(s):")
+        failures = verify_accepted_releases(expected)
+        if failures:
+            print(
+                f"\n{len(failures)} of {len(expected)} accepted release(s) drifted.",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"\nAll {len(expected)} accepted release digest(s) match anonymously.")
+        return 0
+
     plan = build_publish_plan(
         target_registry=args.target,
         development_git_sha=args.development_sha,
@@ -1034,9 +1173,10 @@ def main(argv: list[str] | None = None) -> int:
         # list is empty — an operator reading this needs to know that the Isaac images
         # being absent from the exclusion list is intended, not an oversight.
         print(
-            "Excluded: none — every workbench image is publicly redistributable. The "
-            "Isaac images fetch Isaac Sim / Isaac Lab at first run under the operator's "
-            "own EULA acceptance rather than baking it."
+            "Excluded: none — every current workbench image is classified for public "
+            "redistribution. Vendor runtimes and gated assets use verified runtime-fetch "
+            "boundaries where required; rebuilt standalone images contain only their "
+            "recorded redistributable payloads."
         )
     for item in plan:
         print(f"  {item.source_ref}  ->  {item.target_ref}")

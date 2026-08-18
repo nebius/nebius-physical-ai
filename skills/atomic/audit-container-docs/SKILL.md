@@ -21,6 +21,8 @@ Use these sources for distinct facts:
 - `npa/pyproject.toml` `[tool.npa.supported-tools]`: default immutable image pins.
 - `npa/src/npa/deploy/*_image_manifest.json`: variant-specific pins and evidence
   for SONIC, Wan, LeRobot, and any future manifest-backed tool.
+- `npa/src/npa/deploy/public_release_manifest.json`: accepted public-release
+  tags and exact anonymously verified `published_digest` values.
 - `npa/docker/workbench/<image>/Dockerfile*`, build scripts, lock files, and
   redistribution records: what an image actually contains and does.
 - `npa/src/npa/deploy/publish_public.py`: exact public source-to-target plan.
@@ -62,11 +64,13 @@ the intersection selected by `publicly_publishable_tools()` and its resolved pin
 
    ```bash
    npa/.venv/bin/python -m npa.deploy.publish_public \
-     --target ghcr.io/nebius/nebius-physical-ai --verify-public
+     --target ghcr.io/nebius/nebius-physical-ai --verify-accepted-releases
    docker buildx imagetools inspect \
      ghcr.io/nebius/nebius-physical-ai/<image>:<tag>
    ```
 
+   This compares anonymous live release bytes with each accepted
+   `published_digest`; it does not require a retained historical development tag.
    Record the UTC verification date only after all retained rows resolve. A 401 or
    403 is not proof that a tag is absent; it proves anonymous pull was not verified.
    Describe that limitation precisely.
