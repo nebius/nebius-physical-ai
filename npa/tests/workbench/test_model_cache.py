@@ -16,6 +16,7 @@ from npa.workbench.model_cache import (
     RUNTIME_DOCKER,
     RUNTIME_KUBERNETES,
     RUNTIME_PREMOUNTED,
+    RUNTIME_SERVERLESS,
     ModelCacheError,
     docker_model_cache_volumes,
     model_cache_dirs,
@@ -24,11 +25,18 @@ from npa.workbench.model_cache import (
     model_cache_pvc,
     pod_config_with_model_cache,
     render_model_cache_shell,
+    model_cache_filesystem,
     resolve_model_cache_root,
+    serverless_model_cache_volume,
 )
 
 
-ALL_RUNTIMES = [RUNTIME_KUBERNETES, RUNTIME_DOCKER, RUNTIME_PREMOUNTED]
+ALL_RUNTIMES = [
+    RUNTIME_KUBERNETES,
+    RUNTIME_DOCKER,
+    RUNTIME_SERVERLESS,
+    RUNTIME_PREMOUNTED,
+]
 
 
 # Docker is excluded: it can create its own storage, so it defaults to caching
@@ -348,3 +356,41 @@ def test_an_explicit_host_path_still_wins_over_the_default() -> None:
     assert docker_model_cache_volumes(environ=environ) == (
         f"/mnt/weights:{DEFAULT_MODEL_CACHE_MOUNT}",
     )
+
+
+def test_a_serverless_job_mounts_the_filesystem_it_was_given() -> None:
+    # A Serverless Job has no cluster and no host to borrow storage from, so a
+    # Nebius filesystem is the only thing it can mount.
+    environ = {"NPA_MODEL_CACHE_FILESYSTEM": "npa-weights"}
+
+    assert (
+        resolve_model_cache_root(environ, runtime=RUNTIME_SERVERLESS)
+        == DEFAULT_MODEL_CACHE_MOUNT
+    )
+    assert serverless_model_cache_volume(environ) == (
+        f"npa-weights:{DEFAULT_MODEL_CACHE_MOUNT}:rw",
+    )
+
+
+def test_a_serverless_job_without_a_filesystem_keeps_its_ephemeral_default() -> None:
+    assert resolve_model_cache_root({}, runtime=RUNTIME_SERVERLESS) == ""
+    assert serverless_model_cache_volume({}) == ()
+
+
+def test_a_bucket_cannot_host_the_cache_and_is_refused() -> None:
+    """`--volume` accepts s3://, and it would corrupt the cache on the second run.
+
+    The hub cache is a blobs/snapshots tree held together by symlinks, which an
+    object-store mount does not implement. Failing at configuration time beats
+    failing halfway through a warm run.
+    """
+
+    with pytest.raises(ModelCacheError, match="symlinked"):
+        model_cache_filesystem({"NPA_MODEL_CACHE_FILESYSTEM": "s3://weights-bucket"})
+
+
+def test_the_filesystem_variable_names_a_source_not_a_mount_pair() -> None:
+    # NPA owns the container-side path; accepting "fs:/somewhere" would let the two
+    # halves disagree with the env family pointing into the mount.
+    with pytest.raises(ModelCacheError, match="mount path"):
+        model_cache_filesystem({"NPA_MODEL_CACHE_FILESYSTEM": "npa-weights:/mnt/w"})

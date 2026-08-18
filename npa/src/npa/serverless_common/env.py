@@ -153,7 +153,7 @@ def build_serverless_job_env(
     """
 
     from npa.workbench.model_cache import (
-        RUNTIME_PREMOUNTED,
+        RUNTIME_SERVERLESS,
         model_cache_env,
         resolve_model_cache_root,
     )
@@ -164,7 +164,7 @@ def build_serverless_job_env(
         "HF_HOME": "/tmp/hf_home",
         "LEROBOT_HF_HOME": "/tmp/hf_home",
     }
-    env.update(model_cache_env(resolve_model_cache_root(runtime=RUNTIME_PREMOUNTED)))
+    env.update(model_cache_env(resolve_model_cache_root(runtime=RUNTIME_SERVERLESS)))
     if hf_token:
         env["HF_TOKEN"] = hf_token
         env["HUGGING_FACE_HUB_TOKEN"] = hf_token

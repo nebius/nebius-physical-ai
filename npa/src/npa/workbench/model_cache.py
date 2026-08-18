@@ -59,6 +59,10 @@ MODEL_CACHE_DIR_ENV = "NPA_MODEL_CACHE_DIR"
 MODEL_CACHE_PVC_ENV = "NPA_MODEL_CACHE_PVC"
 #: Host directory holding the cache for Docker-scheduled work on a VM.
 MODEL_CACHE_HOST_PATH_ENV = "NPA_MODEL_CACHE_HOST_PATH"
+#: Nebius filesystem to attach to Serverless Jobs, as ``nebius ai job create
+#: --volume`` names it. A Serverless Job has no cluster and no host to borrow
+#: storage from, so this is the only thing it can mount.
+MODEL_CACHE_FILESYSTEM_ENV = "NPA_MODEL_CACHE_FILESYSTEM"
 #: Turn the cache off everywhere, including the defaults below.
 MODEL_CACHE_DISABLED_ENV = "NPA_MODEL_CACHE_DISABLED"
 
@@ -90,13 +94,12 @@ DEFAULT_POD_CONTAINER_NAME = "ray-node"
 RUNTIME_KUBERNETES = "kubernetes"
 #: A caller that runs ``docker`` on a host: it can bind-mount a host directory.
 RUNTIME_DOCKER = "docker"
+#: A Serverless Job: no cluster, no host, but `nebius ai job create --volume` can
+#: attach a Nebius filesystem to it.
+RUNTIME_SERVERLESS = "serverless"
 #: A caller that mounts nothing itself, and so can only use a cache that already
-#: exists at a path someone else mounted: in-container code reading its own
-#: environment, and Workbench Serverless Jobs, whose NPA client does not pass a
-#: volume today. Nebius Serverless Jobs do accept one (`nebius ai job create
-#: --volume SOURCE:CONTAINER_PATH`), so that is a gap in our client rather than a
-#: property of the platform -- with the caveat that the `s3://` form cannot host
-#: this cache, for the symlink reason in the module docstring.
+#: exists at a path someone else mounted -- in-container code reading the
+#: environment a renderer set for it.
 RUNTIME_PREMOUNTED = "premounted"
 
 #: Which configured signal each runtime is allowed to act on. ``NPA_MODEL_CACHE_DIR``
@@ -105,6 +108,7 @@ RUNTIME_PREMOUNTED = "premounted"
 _RUNTIME_BACKING: dict[str, tuple[str, ...]] = {
     RUNTIME_KUBERNETES: (MODEL_CACHE_PVC_ENV, MODEL_CACHE_HOST_PATH_ENV),
     RUNTIME_DOCKER: (MODEL_CACHE_HOST_PATH_ENV,),
+    RUNTIME_SERVERLESS: (MODEL_CACHE_FILESYSTEM_ENV,),
     RUNTIME_PREMOUNTED: (),
 }
 
@@ -282,6 +286,8 @@ def resolve_model_cache_root(
         return DEFAULT_MODEL_CACHE_MOUNT
     if MODEL_CACHE_HOST_PATH_ENV in backing and model_cache_host_path(source):
         return DEFAULT_MODEL_CACHE_MOUNT
+    if MODEL_CACHE_FILESYSTEM_ENV in backing and model_cache_filesystem(source):
+        return DEFAULT_MODEL_CACHE_MOUNT
     return ""
 
 
@@ -428,6 +434,48 @@ def pod_config_with_model_cache(
     return base
 
 
+def model_cache_filesystem(environ: Mapping[str, str] | None = None) -> str:
+    """Return the Nebius filesystem a Serverless Job should mount, or ``""``.
+
+    An ``s3://`` source is refused rather than accepted and quietly broken. The
+    Hugging Face hub cache is a blobs/snapshots tree held together by symlinks,
+    which a bucket mount does not implement, so it would corrupt exactly the cache
+    it was asked to preserve -- and it would do so on the second run, not the first.
+    """
+
+    source = _source(environ)
+    if model_cache_disabled(source):
+        return ""
+    value = str(source.get(MODEL_CACHE_FILESYSTEM_ENV, "") or "").strip()
+    if not value:
+        return ""
+    if value.lower().startswith("s3://"):
+        raise ModelCacheError(
+            f"{MODEL_CACHE_FILESYSTEM_ENV} must name a filesystem, not a bucket: an "
+            "S3 mount cannot represent the symlinked blobs/snapshots tree the "
+            f"Hugging Face cache is made of, got {value!r}"
+        )
+    if ":" in value:
+        raise ModelCacheError(
+            f"{MODEL_CACHE_FILESYSTEM_ENV} is the volume source only; NPA supplies "
+            f"the mount path ({DEFAULT_MODEL_CACHE_MOUNT}), got {value!r}"
+        )
+    return value
+
+
+def serverless_model_cache_volume(
+    environ: Mapping[str, str] | None = None,
+) -> tuple[str, ...]:
+    """Return ``nebius ai job create --volume`` arguments for the cache."""
+
+    source = _source(environ)
+    filesystem = model_cache_filesystem(source)
+    root = resolve_model_cache_root(source, runtime=RUNTIME_SERVERLESS)
+    if not filesystem or not root:
+        return ()
+    return (f"{filesystem}:{root}:rw",)
+
+
 def docker_model_cache_volumes(
     *, root: str = "", host_path: str = "", environ: Mapping[str, str] | None = None
 ) -> tuple[str, ...]:
@@ -455,6 +503,7 @@ __all__ = [
     "MODEL_CACHE_DIR_ENV",
     "MODEL_CACHE_DISABLED_ENV",
     "MODEL_CACHE_ENV_NAMES",
+    "MODEL_CACHE_FILESYSTEM_ENV",
     "MODEL_CACHE_HOST_PATH_ENV",
     "MODEL_CACHE_LAYOUT",
     "MODEL_CACHE_PVC_ENV",
@@ -462,15 +511,18 @@ __all__ = [
     "RUNTIME_DOCKER",
     "RUNTIME_KUBERNETES",
     "RUNTIME_PREMOUNTED",
+    "RUNTIME_SERVERLESS",
     "ModelCacheError",
     "docker_model_cache_host_path",
     "docker_model_cache_volumes",
     "model_cache_dirs",
     "model_cache_disabled",
     "model_cache_env",
+    "model_cache_filesystem",
     "model_cache_host_path",
     "model_cache_pvc",
     "pod_config_with_model_cache",
     "render_model_cache_shell",
     "resolve_model_cache_root",
+    "serverless_model_cache_volume",
 ]

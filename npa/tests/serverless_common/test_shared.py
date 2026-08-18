@@ -100,6 +100,19 @@ def test_build_serverless_job_env_uses_a_cache_the_operator_already_mounted(
     assert env["LEROBOT_HF_HOME"] == "/mnt/weights/lerobot"
 
 
+def test_build_serverless_job_env_uses_a_mounted_weight_filesystem(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The job client attaches this filesystem with `--volume`, so the env must name
+    # the path it lands on rather than the ephemeral default.
+    monkeypatch.setenv("NPA_MODEL_CACHE_FILESYSTEM", "npa-weights")
+
+    env = build_serverless_job_env(output_path="s3://bucket/prefix")
+
+    assert env["NPA_MODEL_CACHE_DIR"] == "/opt/npa-model-cache"
+    assert env["HF_HOME"] == "/opt/npa-model-cache/huggingface"
+
+
 @pytest.mark.parametrize(
     "configured", ["NPA_MODEL_CACHE_PVC", "NPA_MODEL_CACHE_HOST_PATH"]
 )

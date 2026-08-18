@@ -827,6 +827,20 @@ class ServerlessClient:
         args += ["--image", image, "--container-command", command, "--platform", gpu_type]
         args += ["--preset", preset or f"{gpu_count}gpu-16vcpu-200gb"]
         args += self._registry_auth_args(image)
+        # A Serverless Job allocates its GPU before the container starts, so a gated
+        # checkpoint that has to be downloaded again is billed GPU time on every
+        # submission. Attach the operator's weight filesystem here rather than at
+        # each of the call sites, so every job gets it on the same terms.
+        from npa.workbench.model_cache import (
+            RUNTIME_SERVERLESS,
+            model_cache_env,
+            resolve_model_cache_root,
+            serverless_model_cache_volume,
+        )
+
+        cache_volumes = serverless_model_cache_volume()
+        for volume in cache_volumes:
+            args.extend(["--volume", volume])
         job_env: dict[str, str] = {"NPA_OUTPUT_PATH": output_path}
         for key, value in (env or {}).items():
             if _is_secret_env_key(key):
@@ -836,6 +850,13 @@ class ServerlessClient:
         for key, value in (extra_env or {}).items():
             if value:
                 job_env[key] = value
+        if cache_volumes:
+            # Applied after the caller's env: the mount is the fact, and a stale
+            # `/tmp/hf_home` default carried in from a call site would send the
+            # download somewhere the volume is not.
+            job_env.update(
+                model_cache_env(resolve_model_cache_root(runtime=RUNTIME_SERVERLESS))
+            )
         for key, value in job_env.items():
             if value:
                 args.extend(["--env", f"{key}={value}"])

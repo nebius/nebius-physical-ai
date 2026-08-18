@@ -32,11 +32,13 @@ On by default wherever the answer is not "invent storage nobody asked for":
   manifest below is the entire opt-in — there is nothing to export afterwards, and
   no shell that forgets. A Pending claim is deliberately not adopted: it has no
   volume behind it, so mounting it would leave pods in `ContainerCreating`.
-- **Serverless Jobs have no default yet.** NPA's job client does not pass a volume,
-  so only `NPA_MODEL_CACHE_DIR` — naming a path something else mounted — reaches
-  them. That is a gap in the client, not the platform: `nebius ai job create` accepts
-  `--volume SOURCE:CONTAINER_PATH`, so attaching a filesystem there is a follow-up.
-  The `s3://` form of that flag cannot host this cache, for the symlink reason above.
+- **Serverless Jobs mount the filesystem you name.** They have no cluster and no
+  host to borrow storage from, so there is nothing to detect and nothing sensible to
+  default to; name a Nebius filesystem and every job attaches it:
+
+  ```bash
+  export NPA_MODEL_CACHE_FILESYSTEM=<filesystem>   # not an s3:// bucket
+  ```
 
 Nothing here provisions storage. NPA will not create a claim, guess a class, or bill
 an operator for a volume they did not ask for — the Kubernetes side stays off until
@@ -147,19 +149,26 @@ environment without the storage behind it is *worse* than exporting nothing:
 `/opt` is root-owned in every workbench image and they all run unprivileged, so the
 first `mkdir` fails and the stage dies where it used to work.
 
-| Runtime | `NPA_MODEL_CACHE_DIR` | `NPA_MODEL_CACHE_PVC` | `NPA_MODEL_CACHE_HOST_PATH` | Default with none set |
-| --- | --- | --- | --- | --- |
-| SkyPilot stage on Kubernetes | yes | yes | yes (node-local; see below) | the claim, if it exists |
-| SkyPilot stage on any other cloud | yes | ignored | ignored | off |
-| sim2real sibling GPU Job | yes | yes | yes | the claim, if it exists |
-| `npa deploy` container on a VM | yes | ignored | yes | `/var/lib/npa/model-cache` |
-| Workbench Serverless Job | yes | ignored | ignored | off (no volume passed yet) |
+| Runtime | Storage it can mount | Default with none set |
+| --- | --- | --- |
+| SkyPilot stage on Kubernetes | `_PVC`, `_HOST_PATH` (node-local; see below) | the claim, if it exists |
+| SkyPilot stage on any other cloud | none | off |
+| sim2real sibling GPU Job | `_PVC`, `_HOST_PATH` | the claim, if it exists |
+| `npa deploy` container on a VM | `_HOST_PATH` | `/var/lib/npa/model-cache` |
+| Workbench Serverless Job | `_FILESYSTEM` | off |
+| In-container code reading its own env | none | off |
+
+`NPA_MODEL_CACHE_DIR` is honored by every row: it is the operator asserting the path
+is already mounted, which is the only claim a runtime cannot check for itself.
 
 So an operator can export `NPA_MODEL_CACHE_PVC` for their Kubernetes workflows
 without changing anything about their VM deploys or Serverless Jobs, which have no
-way to reach a claim. NPA does not attach a volume to a Serverless Job today, so
-`NPA_MODEL_CACHE_DIR` is the only way to give one a durable cache, and only if
-something else already mounted that path.
+way to reach a claim.
+
+`NPA_MODEL_CACHE_FILESYSTEM` must name a filesystem, not a bucket. `nebius ai job
+create --volume` also accepts an `s3://` source, and NPA refuses it here: an object
+mount cannot represent the symlinked `blobs/`+`snapshots/` tree, so it would corrupt
+the cache on the second run rather than fail on the first.
 
 `NPA_MODEL_CACHE_HOST_PATH` on Kubernetes produces a `hostPath` volume on the
 *cluster nodes*, which is node-local rather than shared: a stage that lands on
