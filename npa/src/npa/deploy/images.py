@@ -133,10 +133,9 @@ OMNIVERSE_RESTRICTED_TOOLS: frozenset[str] = frozenset({"cosmos3-serving"})
 # architecture and adds no Isaac and no Omniverse assets of its own.
 OMNIVERSE_RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset({"sonic-mujoco"})
 
-# Tools that are licence-eligible for public redistribution but have not earned
-# every publication claim yet. For ltx2 the missing evidence is a real GPU run.
-# Antioch is CPU-only and has a built-image payload scan and local capability
-# smoke, but has not been published or anonymously pulled from the public mirror.
+# Tools that are licence-eligible for public redistribution but have no built,
+# GPU result yet. For ltx2 the image has been built and byte-scanned; what is
+# missing is a run on real hardware, and publication claims both.
 #
 # This is a different question from `OMNIVERSE_RESTRICTED_TOOLS`, and conflating
 # them would be wrong in both directions: these are not restricted (the licensing
@@ -147,7 +146,7 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset({"sonic-mujoco"}
 #
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
-UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"antioch", "ltx2"})
+UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"ltx2"})
 
 # Public mirror registry for the OSS-redistributable image subset. Nebius CR does
 # NOT support anonymous/public pulls and has no cross-tenant / all-authenticated

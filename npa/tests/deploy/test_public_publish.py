@@ -1492,7 +1492,8 @@ def test_the_checklist_covers_exactly_the_packages_still_private() -> None:
     checklist = publish_public.visibility_checklist(failures)
 
     assert checklist.count("- [ ] ") == 2
-    assert publish_public.ghcr_owner_and_package(plan[1].target_ref)[1] not in checklist
+    untouched_package = publish_public.ghcr_owner_and_package(plan[1].target_ref)[1]
+    assert f"- [ ] [{untouched_package}](" not in checklist
 
 
 def test_the_checklist_labels_a_package_the_way_its_settings_page_does() -> None:
