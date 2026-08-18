@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
@@ -26,6 +27,14 @@ class ToolEntry:
     # reuses a multi-node resource profile.
     shard_activation_config: str = ""
     shard_output_config: str = ""
+    # Flags to leave out entirely when their config value resolves to empty,
+    # rather than passing the flag with an empty argument. Only for flags whose
+    # CLI default means "decide this from the environment": a spec that leaves the
+    # value blank is asking for that default, and passing `--flag ''` denies it --
+    # Typer turns an empty Path argument into Path("."), which is a real directory.
+    # Leaving the flag out also keeps a blank value working on already-published
+    # images, whose older CLI has no way to recognize the empty spelling.
+    omit_flags_when_empty: tuple[str, ...] = ()
 
 
 # Public composable entries intentionally available to customer-authored specs,
@@ -500,6 +509,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             # off too (NPA_COSMOS3_NO_GUARDRAILS).
             "--no-guardrails",
         ],
+        omit_flags_when_empty=("--cache-dir",),
     ),
     "workbench.cosmos.check": ToolEntry(
         name="workbench.cosmos.check",
@@ -524,6 +534,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--output",
             "json",
         ],
+        omit_flags_when_empty=("--cache-dir",),
     ),
     "workbench.cosmos_evaluator.evaluate": ToolEntry(
         name="workbench.cosmos_evaluator.evaluate",
@@ -606,6 +617,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--output",
             "json",
         ],
+        omit_flags_when_empty=("--cache-dir",),
     ),
     "workbench.cosmos_curate.curate": ToolEntry(
         name="workbench.cosmos_curate.curate",
@@ -2366,3 +2378,30 @@ def validate_tool_ref(tool_ref: str) -> ToolEntry:
 
 def argv_for_tool(tool_ref: str) -> list[str]:
     return list(validate_tool_ref(tool_ref).argv_template)
+
+
+def drop_empty_optional_flags(tool_ref: str, argv: Sequence[str]) -> list[str]:
+    """Remove ``--flag ''`` pairs the entry declared droppable, after resolution.
+
+    Applied to the resolved argv rather than the template, because whether the
+    value is empty is a property of the spec's config, not of the catalog.
+    """
+
+    droppable = set(validate_tool_ref(tool_ref).omit_flags_when_empty)
+    if not droppable:
+        return list(argv)
+    kept: list[str] = []
+    index = 0
+    tokens = list(argv)
+    while index < len(tokens):
+        token = tokens[index]
+        if (
+            token in droppable
+            and index + 1 < len(tokens)
+            and not str(tokens[index + 1]).strip()
+        ):
+            index += 2
+            continue
+        kept.append(token)
+        index += 1
+    return kept

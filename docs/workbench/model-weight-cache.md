@@ -223,6 +223,30 @@ per revision, so a stale entry is not a correctness problem, only a space one. D
 the PVC (or the host directory) to reclaim space; the next run re-downloads what it
 needs.
 
+## Does this need rebuilt images?
+
+Mostly no, and that is by design: the mechanism is environment variables that
+`huggingface_hub`, `transformers`, and `torch` already read, injected by a renderer
+that runs outside the image. The live validation above ran on a `npa-cosmos3-reason`
+image published months before this existed, and the weights landed in the durable
+cache. The in-container code paths were already environment-first, so an older image
+resolves the same paths.
+
+Two exceptions, both about code that is *baked*:
+
+- **`npa-ltx2`** carries `ltx-runtime` in its layers, and its refusal proof changed.
+  An older build asserts its caches are empty after the gated fetches refuse, which
+  is false on the second run against a durable cache — so LTX and this cache do not
+  mix until the image is rebuilt from current source.
+- **The sim2real controller image** creates the sibling GPU Jobs from inside the
+  container, so the code that mounts the claim onto them is the copy in its layers.
+  Rebuild it to get the cache on sibling Jobs. The task images it launches
+  (transfer, envgen, reason, Isaac) need nothing: they receive the env and the mount.
+
+Everything rendered operator-side — SkyPilot task envs and pod volumes, Serverless
+Job envs, VM deploys — takes effect as soon as the operator's `npa` is current,
+whatever image the stage pulls.
+
 ## What this does not cover
 
 Model *weights* only. The BYOF video images also fetch a CUDA PyTorch runtime into

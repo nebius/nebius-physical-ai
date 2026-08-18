@@ -7,7 +7,10 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from npa.orchestration.npa_workflow.artifacts import require_input_artifacts
-from npa.orchestration.npa_workflow.catalog import argv_for_tool
+from npa.orchestration.npa_workflow.catalog import (
+    argv_for_tool,
+    drop_empty_optional_flags,
+)
 from npa.orchestration.npa_workflow.decisions import (
     normalize_decision,
     refresh_context_decision,
@@ -1004,7 +1007,7 @@ def _resolved_run(state: StateSpec, ctx: RunContext) -> tuple[list[str], str, st
             )
             for token in argv_for_tool(state.tool_ref)
         ]
-        return argv, "", state.tool_ref
+        return drop_empty_optional_flags(state.tool_ref, argv), "", state.tool_ref
     if state.run is None:
         return [], "", ""
     shell = resolve_tokens(

@@ -157,9 +157,12 @@ def test_a_cosmos3_stage_gets_the_framework_download_cache_too(
         == "/opt/npa-model-cache/cosmos3/downloads"
     )
     # The spec no longer pins an ephemeral --cache-dir, so the env decides where
-    # the framework checkout and the Cosmos3-Nano checkpoint land.
+    # the framework checkout and the Cosmos3-Nano checkpoint land. The flag is
+    # dropped rather than passed empty: Typer turns an empty Path into Path("."),
+    # which an already-published image would cache a multi-gigabyte checkpoint
+    # into. Absent, every image version falls back to NPA_COSMOS3_CACHE.
     assert "/tmp/npa-cosmos3-cache" not in task["run"]
-    assert "--cache-dir ''" in task["run"]
+    assert "--cache-dir" not in task["run"]
 
 
 def test_an_explicit_root_without_backing_storage_sets_env_but_mounts_nothing(
@@ -215,3 +218,30 @@ def test_a_vm_stage_still_honors_a_root_the_operator_says_is_mounted(
     task = _last_task_from_text(VM_CLOUD_SPEC, tmp_path)
 
     assert task["envs"]["HF_HOME"] == "/mnt/data/weights/huggingface"
+
+
+def test_a_pinned_cache_dir_is_still_passed_through(tmp_path: Path) -> None:
+    """Dropping the empty spelling must not drop a value the operator set."""
+
+    from npa.orchestration.npa_workflow.catalog import drop_empty_optional_flags
+
+    argv = ["npa", "workbench", "cosmos3", "text-to-image", "--cache-dir", "/mnt/pinned"]
+
+    assert drop_empty_optional_flags("workbench.cosmos3.text_to_image", argv) == argv
+
+
+def test_only_the_declared_flags_are_dropped_when_empty() -> None:
+    from npa.orchestration.npa_workflow.catalog import drop_empty_optional_flags
+
+    argv = ["npa", "x", "--cache-dir", "", "--prompt", "", "--seed", "0"]
+
+    # --prompt is not declared droppable, so an empty prompt still reaches the CLI
+    # and fails there rather than silently becoming the tool's default.
+    assert drop_empty_optional_flags("workbench.cosmos3.text_to_image", argv) == [
+        "npa",
+        "x",
+        "--prompt",
+        "",
+        "--seed",
+        "0",
+    ]
