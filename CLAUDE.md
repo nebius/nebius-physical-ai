@@ -25,6 +25,19 @@ making architecture, review, or domain judgments.
 - `skills/atomic/teardown-and-cost/SKILL.md`: stop spend safely — the mandatory
  cancel-before-destroy ordering, cloud versus local state, and the orphan audit
  for leaked clusters, agent VMs, controllers, buckets, and cross-project fleets.
+- `skills/workflows/add-workbench-tool/SKILL.md`: add a new workbench tool end to
+ end — implementation, CLI, SDK, toolRef catalog, container, tests, docs, and
+ skill, in the order that keeps every CI gate green.
+- `skills/atomic/npa-cli-conventions/SKILL.md`: write or modify an npa CLI
+ command or SDK function — registration, the `--input-path`/`--output-path`
+ contract, output format, error handling and exit codes, the decorators that are
+ easy to forget, and config/credential access.
+- `skills/atomic/toolref-argv-contract/SKILL.md`: the contract that stops a
+ workflow stage from rendering cleanly and then crashing in the pod.
+- `skills/atomic/pre-pr-validation/SKILL.md`: which of the six PR gates apply to
+ a change, and the exact local command for each, cheapest first.
+- `skills/atomic/guardrail-failures/SKILL.md`: map a failing guardrail or CI gate
+ to its cause and fix.
 - `skills/atomic/agent-development/SKILL.md`: build, enhance, or test the NPA
  chat agent backend (grounded-first routing, cost-aware Token Factory model
  selection, embedded-backend mechanism, cheap-token test tiers).
