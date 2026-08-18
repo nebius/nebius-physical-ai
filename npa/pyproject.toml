@@ -154,6 +154,7 @@ dev = [
 npa = "npa.cli.entry:main"
 
 [tool.npa.supported-tools]
+antioch = "0.1.0-cli0.3.47"
 # Default LeRobot image release. Selectable package versions and their image tags
 # live in npa/src/npa/deploy/lerobot_version_manifest.json (0.5.1 + 0.6.0).
 lerobot = "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"

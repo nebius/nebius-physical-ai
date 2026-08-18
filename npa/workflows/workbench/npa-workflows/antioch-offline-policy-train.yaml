@@ -1,0 +1,62 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: antioch-offline-policy-train
+  description: >
+    Run an immutable Antioch simulation suite through the deployed CPU control
+    plane, validate its explicit offline trajectory contract, and train a real
+    LeRobot ACT policy. This is offline imitation learning, not online PPO/RSL-RL.
+
+config:
+  bucket: example-bucket
+  prefix: "antioch-offline-policy-train/{{run.id}}"
+  antioch_project_uri: "s3://{{config.bucket}}/antioch-inputs/cartpole-v1"
+  antioch_run_uri: "s3://{{config.bucket}}/{{config.prefix}}/simulation"
+  antioch_endpoint: "http://npa-antioch.default.svc.cluster.local:8789"
+  antioch_suite: npa_cartpole_offline_smoke
+  lerobot_dataset: "{{config.antioch_run_uri}}/dataset"
+  lerobot_output_dir: /tmp/antioch-policy
+  artifacts_uri: "s3://{{config.bucket}}/{{config.prefix}}/training"
+  train_steps: "1"
+  train_batch_size: "2"
+  policy_type: act
+  policy_device: cuda
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 2
+    memory: 4Gi
+  trainer-gpu:
+    cloud: kubernetes
+    accelerators: H100:1
+    cpus: 16
+    memory: 64Gi
+
+initial: antioch-simulate
+
+states:
+  antioch-simulate:
+    description: Run queued Antioch simulation and publish a validated offline dataset.
+    toolRef: workbench.antioch.run
+    resources: cpu
+    outputs:
+      - uri: "{{config.antioch_run_uri}}/dataset"
+        schema: npa.lerobot.dataset.v3
+      - uri: "{{config.antioch_run_uri}}/_SUCCESS.json"
+        schema: npa.antioch.completion.v1
+    next: train-offline-policy
+
+  train-offline-policy:
+    description: Train a genuine LeRobot ACT checkpoint from the static trajectory export.
+    needs: [antioch-simulate]
+    toolRef: workbench.lerobot.policy_train
+    resources: trainer-gpu
+    inputs:
+      - uri: "{{config.antioch_run_uri}}/dataset"
+        schema: npa.lerobot.dataset.v3
+    outputs:
+      - uri: "{{config.artifacts_uri}}"
+        schema: npa.lerobot.training_run.v1
+    terminal: true

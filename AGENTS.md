@@ -21,6 +21,7 @@ The source of truth is `skills/index.yaml`. The tree is organized as:
 - `skills/atomic/pre-pr-validation/SKILL.md`: which of the six PR gates apply to a change, and the exact local command for each, cheapest first.
 - `skills/atomic/guardrail-failures/SKILL.md`: map a failing guardrail or CI gate to its cause and fix.
 - `skills/tools/`: concrete workbench and platform tools such as LeRobot, FiftyOne, Genesis, Isaac Lab, Cosmos, LanceDB, GR00T, SONIC, MJLab, Retargeting, SkyPilot, Scenario Gen, Dataset-of-record, Fleet, and Nebius infra.
+- `skills/tools/antioch/SKILL.md`: CPU-only Antioch control-plane operation, durable queued-run reconciliation, verified artifact collection, and strict offline policy-data conversion.
 - `skills/workflows/first-run-setup/SKILL.md`: zero to a first verified result on a fresh machine or new project — an ordered, gated path (install → configure → credential preflight → cheapest-proof workload → validate spec → provision → image pullability → submit) with a stop condition at every step.
 - `skills/atomic/health-preflight/SKILL.md`: there is no `npa doctor` — prove HF/NGC/S3/Token Factory credentials and gated-model access with `npa workbench health preflight` / `access` before spending GPU time.
 - `skills/atomic/debug-failed-run/SKILL.md`: triage a run that failed, hung, or produced no artifacts — status and pod-level reason, stage logs, S3 evidence, image pullability, scheduling, and the resume-vs-cancel decision.

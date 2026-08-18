@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import typer
 
+from npa.cli.workbench.antioch import app as antioch_app
 from npa.clients.credentials import load_credentials
 from npa.cli.workbench.byof import app as byof_app
 from npa.cli.workbench.cosmos2 import app as cosmos2_app
@@ -54,6 +55,7 @@ def main() -> None:
 
 
 app.add_typer(lerobot_app, name="lerobot")
+app.add_typer(antioch_app, name="antioch")
 app.add_typer(cosmos_app, name="cosmos")
 app.add_typer(cosmos2_app, name="cosmos2")
 app.add_typer(cosmos3_app, name="cosmos3")

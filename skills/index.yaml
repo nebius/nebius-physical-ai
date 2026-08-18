@@ -29,6 +29,17 @@ licenses:
     applies_to:
       - physical-ai-data-factory
 skills:
+  - name: antioch
+    category: tools
+    when_to_use: "Deploy, operate, debug, or compose Antioch simulation and strict offline policy-data collection."
+    path: skills/tools/antioch/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "antioch", "run", "--help"]
+        contains: "input-path"
+      - type: npa_workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/antioch-offline-policy-train.yaml
   - name: agent-development
     category: atomic
     when_to_use: "Build, enhance, or test the NPA chat agent backend: grounded-first routing, cost-aware Token Factory model selection, the embedded-backend mechanism, and cheap-token test tiers."

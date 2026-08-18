@@ -17,6 +17,7 @@ except the explicitly public composition primitives `infra.fleet.deploy`,
 
 | toolRef | CLI / module | Typical inputs | Typical outputs | Stub? |
 | --- | --- | --- | --- | --- |
+| `workbench.antioch.run` | `npa workbench antioch run` | immutable Antioch project at `config.antioch_project_uri`, deployed adapter endpoint | verified artifacts, manifest, completion marker, and strict offline LeRobotDataset under `config.antioch_run_uri` | no |
 | `infra.fleet.deploy` | `npa fleet deploy` | `config.fleet_spec` | fleet deploy JSON | no |
 | `infra.soperator.deploy` | `npa soperator deploy` | `config.soperator_spec` | cluster deploy JSON | no |
 | `workbench.nurec.check` | `npa workbench nurec check` | `config.nurec_image`, `config.dataset_id` | access-check JSON (NGC pullability, HF rights, RT-core GPU) | no |
