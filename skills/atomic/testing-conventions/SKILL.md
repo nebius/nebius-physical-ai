@@ -52,11 +52,17 @@ npa/.venv/bin/python -m ruff check <files>
 - Pipeline E2E tests use the `e2e_pipeline` pytest marker.
 - Live Nebius Token Factory tests use the `token_factory_e2e` marker (in `npa/tests/e2e/test_token_factory_e2e.py`). They self-skip without a real `NEBIUS_TOKEN_FACTORY_KEY`; the marker is in conftest `_LIVE_MARKERS` so the key is not scrubbed. Run with `NEBIUS_TOKEN_FACTORY_KEY=... pytest npa/tests/e2e/test_token_factory_e2e.py`.
 
-Expected baseline for `make test`: 10385 passed, 37 skipped, 12 deselected,
-1 xpassed, 0 failures, ~12 min serial (measured 2026-08-17 at `70b00405`). A few
-tests self-skip without `node`, `tmux`, or `docker`, moving them from passed to
-skipped without changing the total (`10383 passed, 39 skipped` where `node` is
-absent), so assert on `passed + skipped = 10422` and zero failures.
+The gate for `make test` is **0 failures**. Most recent measurement:
+`10836 passed, 37 skipped, 12 deselected, 1 xpassed`, ~14 min serial (2026-08-18 at
+`1b89b3ba`).
+
+Treat that pass count as a floor, never as an equality. It is stale by
+construction — it rises whenever tests land, and it was previously recorded as a
+closed total that went wrong at the next merge. A higher number is normal; only a
+count that has *fallen* indicates tests stopped being collected, and the reliable
+comparison is against your own merge base. Two things move it legitimately: a few
+tests self-skip without `node`, `tmux`, or `docker`, and `make test` deselects the
+live/GPU markers so it collects a different tree from `test.yml`.
 
 The suite is hermetic: it needs no `kubectl`, no cluster, and no venv at a
 particular path. A failure that names a missing binary or `ModuleNotFoundError:

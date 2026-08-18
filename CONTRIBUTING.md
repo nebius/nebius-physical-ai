@@ -467,8 +467,9 @@ make test PYTEST_ADDOPTS="--cov=npa --cov-fail-under=60"
 
 The two also report different counts, so do not compare them directly: `make test`
 deselects the live/GPU markers described below, while `test.yml` runs the whole
-tree and lets those tests self-skip. A green CI run reports roughly
-`10597 passed, 352 skipped` against the local `10385 passed, 37 skipped`.
+tree and lets those tests self-skip. Both numbers rise as tests land; the shape of
+the difference, several hundred more collected and skipped in CI, is the part that
+stays true.
 
 `test.yml` runs a Python matrix of 3.10, 3.12, and 3.14 on `main` and 3.12 alone on
 a pull request; `requires-python` is `>=3.10`.
@@ -576,17 +577,23 @@ Smoke tests live under `npa/tests/smoke/` or tool-specific CLI test files. Heavy
 smoke tests must skip unless their environment variable is set. See
 `docs/testing/smoke-tests.md`.
 
-The current expected `make test` baseline from
-`skills/atomic/testing-conventions/SKILL.md` is:
+The gate for `make test` is **0 failures**. The pass count is a reference point,
+not an assertion — the most recent measurement, on `1b89b3ba`, was:
 
 ```text
-10385 passed, 37 skipped, 12 deselected, 1 xpassed, 0 failures
+10836 passed, 37 skipped, 12 deselected, 1 xpassed, 0 failures
 ```
 
-A few tests self-skip without `node`, `tmux`, or `docker`, which moves them from
-passed to skipped without changing the total: the same tree reports
-`10383 passed, 39 skipped` where `node` is absent. Hold to `passed + skipped =
-10422` and zero failures rather than to the split.
+Read that as a floor that rises whenever tests land: it is stale by construction
+between measurements, and a run reporting more than it is normal rather than
+suspicious. Only a count that has *fallen* is worth chasing, and the reliable
+comparison is against your own merge base rather than against this line. Two things
+move it without anything being wrong:
+
+- A few tests self-skip without `node`, `tmux`, or `docker`, moving them from
+  passed to skipped.
+- `make test` deselects the live/GPU markers, so it collects a different tree from
+  `test.yml`, which runs everything and lets those tests self-skip.
 
 The default suite is hermetic. It needs no `kubectl`, no cluster, and no venv at a
 particular path, so a failure naming a missing executable or an unimportable `npa`
