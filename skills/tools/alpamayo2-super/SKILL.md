@@ -58,7 +58,9 @@ npa workbench workflow validate-spec \
   npa/workflows/workbench/npa-workflows/alpamayo2-super-inference.yaml
 npa workbench workflow submit \
   npa/workflows/workbench/npa-workflows/alpamayo2-super-inference.yaml \
-  --infra <configured-infra-target> --var bucket=<operator-bucket>
+  --infra <configured-infra-target> --var bucket=<operator-bucket> \
+  --secret-env HF_TOKEN --secret-env AWS_ACCESS_KEY_ID \
+  --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
 The run must publish non-empty `trajectory.json`, `trajectory.png`, and
@@ -80,6 +82,21 @@ tier. Treat success without all three artifacts as failure.
 
 Cancel the exact run before teardown. Never delete shared operator resources
 merely because a validation job finished.
+
+## Accepted release baseline
+
+`0.1.0-cu128` is the accepted runtime-fetch baseline. Its OCI index digest is
+`sha256:2164450f8baf57d8798f64063ea27bf11611f5b695c467de0c2e319e3134ebd5`.
+On 2026-08-18 the exact digest completed the real upstream workflow on B200
+(`sm_100`) and, independently, RTX PRO 6000 (`sm_120`). The 26-layer payload
+scan was clean. RTX peak allocation was 71,447 MiB; the B200 run completed but
+was not sampled for peak memory, so retain NVIDIA's 72,115 MiB H100 measurement
+as the conservative documented reference rather than inventing a B200 number.
+
+For RTX qualification, preserve the committed B200 default and override the
+submitted accelerator with `NPA_WORKFLOW_GPU_ACCELERATOR=RTXPRO6000:1`. Require
+the same three artifacts and provenance checks; do not infer RTX support from a
+B200 result.
 
 ## Verify changes
 

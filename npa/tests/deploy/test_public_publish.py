@@ -1494,7 +1494,14 @@ def test_the_checklist_covers_exactly_the_packages_still_private() -> None:
     checklist = publish_public.visibility_checklist(failures)
 
     assert checklist.count("- [ ] ") == 2
-    assert publish_public.ghcr_owner_and_package(plan[1].target_ref)[1] not in checklist
+    listed_packages = {
+        line.removeprefix("- [ ] [").split("](", 1)[0]
+        for line in checklist.splitlines()
+        if line.startswith("- [ ] [")
+    }
+    assert publish_public.ghcr_owner_and_package(plan[1].target_ref)[1] not in (
+        listed_packages
+    )
 
 
 def test_the_checklist_labels_a_package_the_way_its_settings_page_does() -> None:
@@ -1808,7 +1815,7 @@ def test_unbuilt_images_block_the_publish_by_default(monkeypatch, capsys) -> Non
     err = capsys.readouterr().err
 
     assert rc == 1
-    assert "5 of 24" in err
+    assert f"5 of {len(plan)}" in err
     # Both codes must survive into the explanation: they need different fixes, and an
     # operator greps for the registry's own wording.
     assert "NAME_UNKNOWN" in err and "never been pushed" in err
@@ -1851,7 +1858,7 @@ def test_skip_missing_publishes_the_ready_images_and_names_the_skipped(
     assert any("/npa-lerobot:" in ref for ref in copied), (
         "ready images must still publish"
     )
-    assert "Copied 19 image(s)." in captured.out
+    assert f"Copied {len(plan) - 5} image(s)." in captured.out
 
 
 def test_skip_missing_never_skips_past_a_denial(monkeypatch, capsys) -> None:

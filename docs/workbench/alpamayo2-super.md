@@ -1,7 +1,7 @@
 # Alpamayo 2 Super
 
 NPA runs NVIDIA Alpamayo 2 Super through the upstream VLM-plus-diffusion-expert
-inference entrypoint. The public `npa-alpamayo2-super` image contains the pinned
+inference entrypoint. The redistributable `npa-alpamayo2-super` image contains the pinned
 Apache-2.0 source and CUDA runtime, but no model weights, dataset bytes,
 Hugging Face token, or populated model cache.
 
@@ -39,7 +39,10 @@ deployment, then validate and plan before submission:
 ```bash
 npa workbench workflow validate-spec alpamayo2-super-inference.yaml --json
 npa workbench workflow plan-spec alpamayo2-super-inference.yaml --json
-npa workbench workflow submit alpamayo2-super-inference.yaml --var bucket=OPERATOR_BUCKET
+npa workbench workflow submit alpamayo2-super-inference.yaml \
+  --var bucket=OPERATOR_BUCKET \
+  --secret-env HF_TOKEN --secret-env AWS_ACCESS_KEY_ID \
+  --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
 `us-central1` maps to the configured Nebius target alias for that region;
@@ -61,10 +64,35 @@ credential is a release blocker.
 
 ```bash
 bash npa/docker/workbench/alpamayo2-super/build.sh
-npa/.venv/bin/python npa/scripts/scan_image_alpamayo2_payload.py npa-alpamayo2-super:0.1.0-cu128-unbuilt
+npa/.venv/bin/python npa/scripts/scan_image_alpamayo2_payload.py npa-alpamayo2-super:0.1.0-cu128
 ```
 
 Build and scan prove redistribution hygiene only. A release also requires real
 upstream inference on B200 and a separate result on RTX PRO 6000, with non-empty
 JSON and PNG artifacts. Do not describe dry-run, image import, or CUDA import
 checks as model validation.
+
+## Accepted release evidence
+
+Release `0.1.0-cu128` (OCI index digest
+`sha256:2164450f8baf57d8798f64063ea27bf11611f5b695c467de0c2e319e3134ebd5`)
+was validated on 2026-08-18 in operator-owned `us-central1` resources:
+
+- The scanner inspected all 26 image layers and found no checkpoint, dataset,
+  populated Hugging Face cache, credential, or token payload.
+- One B200 (`sm_100`, 183,359 MiB) completed real upstream inference and wrote
+  valid result JSON, trajectory JSON, and calibrated-camera PNG artifacts.
+- One RTX PRO 6000 (`sm_120`, 97,887 MiB) independently completed the same
+  workflow. Its observed peak was 71,447 MiB at 100% GPU utilization.
+- Both runs used the exact pinned source, model, and dataset revisions above,
+  produced projected trajectories of shape `[1, 1, 1, 64, 3]`, and required no
+  recovery wave. Small floating-point metric differences across architectures
+  are expected; cross-GPU bitwise identity is not a release criterion.
+
+The first run downloads approximately 67 GB of operator-entitled model assets.
+Neither the model cache nor the non-transferable dataset is part of the image or
+published artifacts.
+
+The accepted tag is available from the operator registry configured in NPA.
+Anonymous GHCR mirroring is a separate maintainer publication step; lack of a
+public mirror does not authorize copying the gated dataset or runtime cache.

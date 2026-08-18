@@ -68,6 +68,9 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     # before it will generate anything. Live job 286 got all the way into examples/inference.py
     # and died on `hf download nvidia/Cosmos-Guardrail1` with no token.
     "workbench.cosmos2": ("HF_TOKEN",),
+    # Alpamayo2-Super fetches both its OpenMDW checkpoint and the separately
+    # gated PhysicalAI-AV sample under the operator's accepted HF identity.
+    "workbench.alpamayo2_super": ("HF_TOKEN",),
     # The default GEAR-SONIC and GR00T-N1.7 assets are public. Callers may still
     # pass HF_TOKEN for rate limits or private overrides, but it is not a preflight.
     "workbench.sonic": (),

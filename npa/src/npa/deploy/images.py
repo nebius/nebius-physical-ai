@@ -145,9 +145,7 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset({"sonic-mujoco"}
 #
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
-UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
-    {"ltx2", "alpamayo2-super"}
-)
+UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"ltx2"})
 
 # Public mirror registry for the OSS-redistributable image subset. Nebius CR does
 # NOT support anonymous/public pulls and has no cross-tenant / all-authenticated
@@ -217,7 +215,7 @@ SUPPORTED_TOOL_VERSIONS = {
     # has been scanned. It stays until the GPU run, because renaming it would
     # imply the whole claim is earned, and re-tagging is part of that change.
     "ltx2": "2.5-rtfetch-unbuilt",
-    "alpamayo2-super": "0.1.0-cu128-unbuilt",
+    "alpamayo2-super": "0.1.0-cu128",
     "nebius-cli": "0.12.254",
     "terraform": "~> 0.5.201",
     "terraform-cli": "1.13.3",

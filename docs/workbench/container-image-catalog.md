@@ -19,6 +19,11 @@ the UTC build date of the newest listed variant; reproducible images that
 intentionally zero their OCI `created` field use the timestamp in the immutable
 tag and `npa.build_ts` label.
 
+The Alpamayo row is a later, explicitly marked operator-registry release. Its
+public-eligible bytes passed the full release gate, but the GHCR mirror remains
+pending a maintainer identity with package-publish permission; it is not part of
+the 2026-08-14 anonymous-resolution claim.
+
 Prefer a full timestamped tag when selecting a hardware-specific variant. OCI
 tags can be moved, so resolve and retain the manifest digest as well when strict
 reproducibility is required.
@@ -27,7 +32,7 @@ Rows are ordered by **Built** date, then by friendly name.
 
 | Friendly name | Image (`ghcr.io/nebius/nebius-physical-ai/...`) | Published tag(s) | Built | What it does |
 | --- | --- | --- | --- | --- |
-| Alpamayo 2 Super 34B | `npa-alpamayo2-super` | `0.1.0-cu128-unbuilt` | not yet published | Real surround-view VLA trajectory inference through NVIDIA's Apache-2.0 source. OpenMDW-1.1 weights and the separately gated/non-transferable PhysicalAI-AV sample data are fetched only at runtime under the operator's Hugging Face identity. Publication waits for built-byte scans and real B200 plus RTX PRO 6000 results. See the [operator guide](alpamayo2-super.md). |
+| Alpamayo 2 Super 34B | `npa-alpamayo2-super` | `0.1.0-cu128` (validated operator-registry release; public mirror pending maintainer publication) | 2026-08-18 | Real surround-view VLA trajectory inference through NVIDIA's Apache-2.0 source. OpenMDW-1.1 weights and the separately gated/non-transferable PhysicalAI-AV sample data are fetched only at runtime under the operator's Hugging Face identity. The payload-clean image and real workflow were validated independently on B200 and RTX PRO 6000. See the [operator guide](alpamayo2-super.md). |
 | SONIC Retargeting 0.1.1 | `npa-retargeting` | `0.1.1` | 2026-06-16 | CPU-only motion retargeting and motion-library conversion feeding SONIC locomotion training. A slim `python:3.11` image for the inexpensive preprocessing stage before GPU work. |
 | Rerun 0.31.4 | `npa-rerun-viewer` | `0.31.4` | 2026-07-01 | Rerun viewer/server on port 9090 for `.rrd` robotics traces produced by workflow stages. Uses `python:3.11-slim` and runs as `nobody`. |
 | LeRobot Policy Server 0.1.1 | `npa-lerobot-policy` | `0.1.1` | 2026-07-10 | Serves a trained LeRobot policy over HTTP for closed-loop inference (default `lerobot/diffusion_pusht`). This is the BYO-policy contract endpoint called by other workflow stages. |

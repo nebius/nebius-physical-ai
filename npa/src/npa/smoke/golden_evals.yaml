@@ -671,7 +671,7 @@ containers:
       serverless_gpu: b200
       gpu: required
       timeout_seconds: 3600
-      status: needs-image-update
+      status: gpu-gated
 
   sim2real-control:
     image: npa-sim2real-control
