@@ -35,6 +35,7 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.cosmos_evaluator": "cosmos-evaluator",
     "workbench.lancedb": "lancedb",
     "workbench.detection_training": "detection-training",
+    "workbench.alpamayo2_super": "alpamayo2-super",
     "workbench.fiftyone": "fiftyone",
     "workbench.rl": "isaac-lab",
     "workbench.isaac_lab": "isaac-lab",

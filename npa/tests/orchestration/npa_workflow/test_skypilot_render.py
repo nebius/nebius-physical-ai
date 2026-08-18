@@ -477,6 +477,17 @@ def test_tool_image_key_prefix_match() -> None:
     assert tool_image_key("unknown.tool") is None
 
 
+def test_alpamayo2_super_resolves_configured_image() -> None:
+    tool_ref = "workbench.alpamayo2_super.infer"
+
+    assert tool_image_key(tool_ref) == "alpamayo2-super"
+    assert resolve_task_image(
+        tool_ref,
+        {},
+        options=SkypilotRenderOptions(registry="cr.example.invalid/reg"),
+    ) == "cr.example.invalid/reg/npa-alpamayo2-super:0.1.0-cu128"
+
+
 def test_cosmos3_generate_and_reason_resolve_to_different_images() -> None:
     """Generation runs in the framework image, reasoning in the Reason VLM image.
 
