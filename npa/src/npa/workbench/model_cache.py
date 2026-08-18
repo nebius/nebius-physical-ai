@@ -19,26 +19,28 @@ for every runtime NPA drives:
 * Workbench Serverless Jobs (:mod:`npa.serverless_common.env`)
 * long-lived workbench containers on a VM (:mod:`npa.deploy.configurator`)
 
-The cache root is *opt-in infrastructure*, because durability is a property of
-storage that only the operator can supply: a ReadWriteMany PVC on Kubernetes, or
-a data disk on a VM. Until one is configured, :func:`resolve_model_cache_root`
-returns ``""`` and every caller keeps the ephemeral default it has always used,
-so nothing changes implicitly. Once ``NPA_MODEL_CACHE_PVC`` (Kubernetes),
-``NPA_MODEL_CACHE_HOST_PATH`` (VM/Docker), or an explicit
-``NPA_MODEL_CACHE_DIR`` is set, every runtime that can reach that storage
-redirects *all* of its weight caches into one tree and the second run of an image
-is a cache hit.
+Caching is on wherever turning it on does not mean inventing storage. A VM deploy
+can create a directory on its own disk, so it does
+(:data:`DEFAULT_DOCKER_HOST_CACHE`); on Kubernetes, submit adopts a Bound claim
+named :data:`DEFAULT_MODEL_CACHE_CLAIM` if the operator applied the shipped
+manifest. What stays off is anything that would conjure storage nobody asked for:
+this module never creates a claim, chooses a storage class, or bills anyone for a
+volume, so Kubernetes is inert until the claim exists and a Serverless Job caches
+only once ``NPA_MODEL_CACHE_FILESYSTEM`` names one.
+``NPA_MODEL_CACHE_DISABLED=1`` switches all of it off, and an explicit
+``NPA_MODEL_CACHE_DIR`` overrides all of it.
 
 Which runtime is asking matters, and callers must say. The variables name storage
-in three different worlds -- a claim exists only inside a cluster, a host path
-only on the machine holding it -- so a runtime that cannot mount the thing the
-operator configured must not export the environment either. Exporting
+in different worlds -- a claim exists only inside a cluster, a host path only on
+the machine holding it, a Nebius filesystem only where the platform attaches it --
+so a runtime that cannot mount the thing the operator configured must not export
+the environment either. Exporting
 ``HF_HOME=/opt/npa-model-cache/huggingface`` at a runtime with nothing mounted
 there does not produce a slow run, it produces a broken one: ``/opt`` is
 root-owned in every workbench image and they all run unprivileged, so the first
 ``mkdir`` fails. That is how one operator exporting ``NPA_MODEL_CACHE_PVC`` for
 their Kubernetes workflows would have broken their working Serverless Jobs. Hence
-:data:`RUNTIME_KUBERNETES`, :data:`RUNTIME_DOCKER`, and
+:data:`RUNTIME_KUBERNETES`, :data:`RUNTIME_DOCKER`, :data:`RUNTIME_SERVERLESS`,
 :data:`RUNTIME_PREMOUNTED`, and no default for the ``runtime`` argument.
 
 Object storage is intentionally not an option here. The Hugging Face hub cache is
@@ -63,6 +65,9 @@ MODEL_CACHE_HOST_PATH_ENV = "NPA_MODEL_CACHE_HOST_PATH"
 #: --volume`` names it. A Serverless Job has no cluster and no host to borrow
 #: storage from, so this is the only thing it can mount.
 MODEL_CACHE_FILESYSTEM_ENV = "NPA_MODEL_CACHE_FILESYSTEM"
+#: Namespace to look in for the shipped claim, when the operator's SkyPilot pods do
+#: not land in `default`.
+MODEL_CACHE_NAMESPACE_ENV = "NPA_MODEL_CACHE_NAMESPACE"
 #: Turn the cache off everywhere, including the defaults below.
 MODEL_CACHE_DISABLED_ENV = "NPA_MODEL_CACHE_DISABLED"
 
@@ -165,6 +170,11 @@ MODEL_CACHE_LAYOUT: tuple[tuple[str, str], ...] = (
     # OpenPI's policy server keeps its gated checkpoint here; its Deployment used
     # an emptyDir, so a rollout re-downloaded it on an already-running GPU.
     ("OPENPI_DATA_HOME", "openpi"),
+    # LeIsaac stages NVIDIA USD scenes and the streaming client into these. Every
+    # fetch is hash-verified and skipped when the file is already present, so a warm
+    # cache turns the download into a checksum and nothing else changes.
+    ("NPA_LEISAAC_CACHE_DIR", "leisaac"),
+    ("LEISAAC_ASSETS_ROOT", "leisaac/assets/runtime"),
     ("WAN22_CACHE_DIR", "wan2.2"),
     ("NPA_LTX_MODEL_CACHE", "ltx-2.5"),
 )
@@ -508,6 +518,7 @@ __all__ = [
     "MODEL_CACHE_ENV_NAMES",
     "MODEL_CACHE_FILESYSTEM_ENV",
     "MODEL_CACHE_HOST_PATH_ENV",
+    "MODEL_CACHE_NAMESPACE_ENV",
     "MODEL_CACHE_LAYOUT",
     "MODEL_CACHE_PVC_ENV",
     "MODEL_CACHE_VOLUME_NAME",

@@ -20,10 +20,10 @@ from npa.workbench.model_cache import MODEL_CACHE_ENV_NAMES
 DOCKER_DIR = Path(__file__).resolve().parents[2] / "docker" / "workbench"
 
 # Anything whose name looks like it could point at downloaded model bytes.
-CANDIDATE = re.compile(
-    r"^\s*(?:ENV\s+)?([A-Z][A-Z0-9_]*(?:CACHE|_HOME|MODEL_DIR|MODELS|WEIGHTS)[A-Z0-9_]*)=(\S+)",
-    re.M,
-)
+_CACHEISH = r"[A-Z][A-Z0-9_]*(?:CACHE|_HOME|MODEL_DIR|MODELS|WEIGHTS)[A-Z0-9_]*"
+CANDIDATE = re.compile(rf"^\s*(?:ENV\s+)?({_CACHEISH})=(\S+)", re.M)
+# `ENV NAME value`, the other spelling Docker accepts.
+CANDIDATE_SPACE_FORM = re.compile(rf"^\s*ENV\s+({_CACHEISH})\s+(\S+)", re.M)
 
 # Excused, with the reason each one is not a weight cache. Keep this specific:
 # a bare "it is fine" entry is how the next real cache gets missed.
@@ -65,9 +65,13 @@ EXCUSED: dict[str, str] = {
 
 def _declared_cache_variables() -> dict[str, set[str]]:
     found: dict[str, set[str]] = {}
-    for dockerfile in sorted(DOCKER_DIR.glob("*/Dockerfile")):
-        for name, _value in CANDIDATE.findall(dockerfile.read_text(encoding="utf-8")):
-            found.setdefault(name, set()).add(dockerfile.parent.name)
+    # Dockerfile.* too: an image can split its build across several, and a cache
+    # declared in the one this did not read would be exactly as invisible.
+    for dockerfile in sorted(DOCKER_DIR.glob("*/Dockerfile*")):
+        text = dockerfile.read_text(encoding="utf-8")
+        for pattern in (CANDIDATE, CANDIDATE_SPACE_FORM):
+            for name, _value in pattern.findall(text):
+                found.setdefault(name, set()).add(dockerfile.parent.name)
     return found
 
 
@@ -114,6 +118,10 @@ EXCUSED_EMPTY_DIRS = {
     "rrd-data": "Rerun recordings written by the run, not downloaded weights",
     "fiftyone-data": "dataset app state",
     "openpi-cache": "fallback when no durable cache is configured; redirected when one is",
+    "leisaac-cache": "fallback when no durable cache is configured; redirected when one is",
+    "isaac-cache": "Isaac wheel closure; warm-isaac-cache.yaml is its shared volume",
+    "tmp": "scratch space",
+    "shm": "/dev/shm, sized for the renderer",
 }
 
 SRC_ROOT = Path(__file__).resolve().parents[2] / "src" / "npa"
