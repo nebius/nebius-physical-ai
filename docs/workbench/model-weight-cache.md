@@ -20,19 +20,39 @@ tree, so the second run of an image is a cache hit.
 
 ## Turn it on
 
-Durability is a property of storage that only the operator can supply, so the cache
-is **opt-in**. With nothing configured, `resolve_model_cache_root()` returns `""`
-and every caller keeps the ephemeral default it has always used — nothing changes
-implicitly.
+On by default wherever the answer is not "invent storage nobody asked for":
+
+- **VM deploys cache without being told.** `npa deploy` creates
+  `/var/lib/npa/model-cache` on the host and binds it. A directory needs no
+  provisioning and costs nothing to create, so there is no reason to make an
+  operator ask; the alternative default is discarding every gated download on the
+  next `docker rm -f`, which this deploy runs every time.
+- **Kubernetes turns itself on once the claim exists.** Submit looks for a Bound
+  claim named `npa-model-cache` in the target namespace and uses it, so applying the
+  manifest below is the entire opt-in — there is nothing to export afterwards, and
+  no shell that forgets. A Pending claim is deliberately not adopted: it has no
+  volume behind it, so mounting it would leave pods in `ContainerCreating`.
+- **Serverless Jobs cannot have a default**, because they mount nothing at all. Only
+  `NPA_MODEL_CACHE_DIR`, naming a path already mounted in that runtime, reaches them.
+
+Nothing here provisions storage. NPA will not create a claim, guess a class, or bill
+an operator for a volume they did not ask for — the Kubernetes side stays off until
+the claim exists, which is the one step only they can take.
+
+`NPA_MODEL_CACHE_DISABLED=1` switches all of it off, everywhere, including the
+defaults.
 
 ### Kubernetes (SkyPilot tasks, sim2real sibling GPU Jobs)
 
 ```bash
-kubectl get storageclass                       # confirm a ReadWriteMany class exists
+kubectl get csinode -o custom-columns=NODE:.metadata.name,DRIVERS:.spec.drivers[*].name
 kubectl apply -f npa/docker/workbench/common/model-weight-cache.yaml
 kubectl wait --for=condition=complete job/npa-init-model-cache --timeout=5m
-export NPA_MODEL_CACHE_PVC=npa-model-cache
 ```
+
+That is the whole setup: submit finds the claim by name and reports
+`model weight cache: using claim 'npa-model-cache'`. Export
+`NPA_MODEL_CACHE_PVC=<name>` only to point at a claim you named something else.
 
 The claim is `ReadWriteMany` on purpose: stages of one workflow land on different
 nodes and parallel waves run at the same time, so a `ReadWriteOnce` volume would
@@ -98,6 +118,9 @@ already mounts something at that path keeps its own mount.
 
 ### VM / Docker (`npa deploy`, long-lived workbench containers)
 
+Already on, using `/var/lib/npa/model-cache`. Point it at a different disk when the
+root filesystem is not where tens of gigabytes of weights should go:
+
 ```bash
 export NPA_MODEL_CACHE_HOST_PATH=/mnt/data/npa-model-cache
 ```
@@ -121,13 +144,13 @@ environment without the storage behind it is *worse* than exporting nothing:
 `/opt` is root-owned in every workbench image and they all run unprivileged, so the
 first `mkdir` fails and the stage dies where it used to work.
 
-| Runtime | `NPA_MODEL_CACHE_DIR` | `NPA_MODEL_CACHE_PVC` | `NPA_MODEL_CACHE_HOST_PATH` |
-| --- | --- | --- | --- |
-| SkyPilot stage on Kubernetes | yes | yes | yes (node-local; see below) |
-| SkyPilot stage on any other cloud | yes | ignored | ignored |
-| sim2real sibling GPU Job | yes | yes | yes |
-| `npa deploy` container on a VM | yes | ignored | yes |
-| Workbench Serverless Job | yes | ignored | ignored |
+| Runtime | `NPA_MODEL_CACHE_DIR` | `NPA_MODEL_CACHE_PVC` | `NPA_MODEL_CACHE_HOST_PATH` | Default with none set |
+| --- | --- | --- | --- | --- |
+| SkyPilot stage on Kubernetes | yes | yes | yes (node-local; see below) | the claim, if it exists |
+| SkyPilot stage on any other cloud | yes | ignored | ignored | off |
+| sim2real sibling GPU Job | yes | yes | yes | the claim, if it exists |
+| `npa deploy` container on a VM | yes | ignored | yes | `/var/lib/npa/model-cache` |
+| Workbench Serverless Job | yes | ignored | ignored | off |
 
 So an operator can export `NPA_MODEL_CACHE_PVC` for their Kubernetes workflows
 without changing anything about their VM deploys or Serverless Jobs, which have no

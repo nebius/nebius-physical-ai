@@ -59,6 +59,18 @@ MODEL_CACHE_DIR_ENV = "NPA_MODEL_CACHE_DIR"
 MODEL_CACHE_PVC_ENV = "NPA_MODEL_CACHE_PVC"
 #: Host directory holding the cache for Docker-scheduled work on a VM.
 MODEL_CACHE_HOST_PATH_ENV = "NPA_MODEL_CACHE_HOST_PATH"
+#: Turn the cache off everywhere, including the defaults below.
+MODEL_CACHE_DISABLED_ENV = "NPA_MODEL_CACHE_DISABLED"
+
+#: The claim the shipped manifest creates. Submit looks for this name so that
+#: applying the manifest is the whole opt-in: nothing to remember afterwards.
+DEFAULT_MODEL_CACHE_CLAIM = "npa-model-cache"
+#: Where a VM deploy keeps the cache when the operator names no other path.
+#: Unlike a claim, a host directory needs no provisioning and costs nothing to
+#: create, so a Docker deploy can default to caching instead of re-downloading
+#: gated weights on every `docker rm -f` cycle. FHS-conventional, and on the same
+#: disk the images it pulls already occupy.
+DEFAULT_DOCKER_HOST_CACHE = "/var/lib/npa/model-cache"
 
 #: Where the cache is mounted inside a container when a PVC or host path is
 #: configured without an explicit ``NPA_MODEL_CACHE_DIR``. Deliberately outside
@@ -188,13 +200,46 @@ def model_cache_pvc(environ: Mapping[str, str] | None = None) -> str:
     return pvc
 
 
-def model_cache_host_path(environ: Mapping[str, str] | None = None) -> str:
-    """Return the host directory holding the cache for Docker runs, or ``""``."""
+def model_cache_disabled(environ: Mapping[str, str] | None = None) -> bool:
+    """Return whether the operator switched the cache off entirely."""
 
+    value = str(_source(environ).get(MODEL_CACHE_DISABLED_ENV, "") or "").strip()
+    return value.lower() in {"1", "true", "yes", "on"}
+
+
+def model_cache_host_path(environ: Mapping[str, str] | None = None) -> str:
+    """Return the host directory the operator configured, or ``""``.
+
+    No default here on purpose. Kubernetes accepts a host path too, and turning an
+    unset variable into one there would silently mount a node directory into every
+    pod -- node-local rather than shared, and refused outright under a
+    ``restricted`` PodSecurity policy. The Docker default lives in
+    :func:`docker_model_cache_host_path`, where it is the caller's own disk.
+    """
+
+    source = _source(environ)
+    if model_cache_disabled(source):
+        return ""
     return _require_absolute(
-        str(_source(environ).get(MODEL_CACHE_HOST_PATH_ENV, "") or ""),
+        str(source.get(MODEL_CACHE_HOST_PATH_ENV, "") or ""),
         name=MODEL_CACHE_HOST_PATH_ENV,
     )
+
+
+def docker_model_cache_host_path(environ: Mapping[str, str] | None = None) -> str:
+    """Return the host directory a VM deploy should bind, defaulting to a real one.
+
+    A host directory is storage the deploy can always create -- it needs no
+    provisioning and costs nothing -- so there is no reason to make an operator ask
+    for it by name. The alternative default, discarding every gated download when
+    the container is replaced (and this deploy runs ``docker rm -f`` every time),
+    is not one anybody would choose deliberately.
+    """
+
+    source = _source(environ)
+    if model_cache_disabled(source):
+        return ""
+    return model_cache_host_path(source) or DEFAULT_DOCKER_HOST_CACHE
 
 
 def resolve_model_cache_root(
@@ -220,12 +265,16 @@ def resolve_model_cache_root(
             f"{sorted(_RUNTIME_BACKING)}"
         )
     source = _source(environ)
+    if model_cache_disabled(source):
+        return ""
     explicit = _require_absolute(
         str(source.get(MODEL_CACHE_DIR_ENV, "") or ""), name=MODEL_CACHE_DIR_ENV
     )
     if explicit:
         return explicit
     if MODEL_CACHE_PVC_ENV in backing and model_cache_pvc(source):
+        return DEFAULT_MODEL_CACHE_MOUNT
+    if runtime == RUNTIME_DOCKER and docker_model_cache_host_path(source):
         return DEFAULT_MODEL_CACHE_MOUNT
     if MODEL_CACHE_HOST_PATH_ENV in backing and model_cache_host_path(source):
         return DEFAULT_MODEL_CACHE_MOUNT
@@ -382,7 +431,7 @@ def docker_model_cache_volumes(
 
     source = _source(environ)
     host = _require_absolute(
-        str(host_path or "") or model_cache_host_path(source),
+        str(host_path or "") or docker_model_cache_host_path(source),
         name=MODEL_CACHE_HOST_PATH_ENV,
     )
     mount_root = _require_absolute(
@@ -395,9 +444,12 @@ def docker_model_cache_volumes(
 
 
 __all__ = [
+    "DEFAULT_DOCKER_HOST_CACHE",
+    "DEFAULT_MODEL_CACHE_CLAIM",
     "DEFAULT_MODEL_CACHE_MOUNT",
     "DEFAULT_POD_CONTAINER_NAME",
     "MODEL_CACHE_DIR_ENV",
+    "MODEL_CACHE_DISABLED_ENV",
     "MODEL_CACHE_ENV_NAMES",
     "MODEL_CACHE_HOST_PATH_ENV",
     "MODEL_CACHE_LAYOUT",
@@ -407,8 +459,10 @@ __all__ = [
     "RUNTIME_KUBERNETES",
     "RUNTIME_PREMOUNTED",
     "ModelCacheError",
+    "docker_model_cache_host_path",
     "docker_model_cache_volumes",
     "model_cache_dirs",
+    "model_cache_disabled",
     "model_cache_env",
     "model_cache_host_path",
     "model_cache_pvc",

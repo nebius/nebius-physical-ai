@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from npa.workbench.model_cache import (
+    DEFAULT_DOCKER_HOST_CACHE,
     DEFAULT_MODEL_CACHE_MOUNT,
     MODEL_CACHE_DIR_ENV,
     MODEL_CACHE_ENV_NAMES,
@@ -30,10 +31,12 @@ from npa.workbench.model_cache import (
 ALL_RUNTIMES = [RUNTIME_KUBERNETES, RUNTIME_DOCKER, RUNTIME_PREMOUNTED]
 
 
-@pytest.mark.parametrize("runtime", ALL_RUNTIMES)
+# Docker is excluded: it can create its own storage, so it defaults to caching
+# rather than to nothing. See test_a_vm_deploy_caches_by_default...
+@pytest.mark.parametrize("runtime", [RUNTIME_KUBERNETES, RUNTIME_PREMOUNTED])
 def test_no_configured_storage_resolves_to_no_cache_root(runtime: str) -> None:
-    # Guessing a path would put gated multi-gigabyte downloads somewhere the
-    # operator never agreed to, and still lose them at the end of the run.
+    # Guessing a claim would name storage the operator never created, and every pod
+    # that wanted it would sit unschedulable instead of running without a cache.
     assert resolve_model_cache_root({}, runtime=runtime) == ""
     assert model_cache_env("") == {}
     assert model_cache_dirs("") == ()
@@ -62,24 +65,30 @@ def test_a_kubernetes_claim_or_host_path_selects_the_default_mount() -> None:
 
 
 @pytest.mark.parametrize(
-    ("runtime", "configured"),
+    "configured",
     [
-        # A claim exists only inside a cluster: a docker deploy cannot bind it, and
-        # exporting HF_HOME at a path with nothing mounted turns a working run into
-        # a failing one -- /opt is root-owned and the images run unprivileged.
-        (RUNTIME_DOCKER, {MODEL_CACHE_PVC_ENV: "npa-model-cache"}),
         # A Serverless Job has no volume concept at all, so neither signal reaches
         # it. This is the case that would have broken working jobs the moment an
         # operator configured a claim for their Kubernetes workflows.
-        (RUNTIME_PREMOUNTED, {MODEL_CACHE_PVC_ENV: "npa-model-cache"}),
-        (RUNTIME_PREMOUNTED, {MODEL_CACHE_HOST_PATH_ENV: "/mnt/weights"}),
+        {MODEL_CACHE_PVC_ENV: "npa-model-cache"},
+        {MODEL_CACHE_HOST_PATH_ENV: "/mnt/weights"},
     ],
 )
-def test_a_runtime_ignores_storage_it_cannot_reach(
-    runtime: str, configured: dict[str, str]
-) -> None:
-    assert resolve_model_cache_root(configured, runtime=runtime) == ""
-    assert model_cache_env(resolve_model_cache_root(configured, runtime=runtime)) == {}
+def test_a_runtime_ignores_storage_it_cannot_reach(configured: dict[str, str]) -> None:
+    root = resolve_model_cache_root(configured, runtime=RUNTIME_PREMOUNTED)
+
+    assert root == ""
+    assert model_cache_env(root) == {}
+
+
+def test_a_docker_deploy_binds_its_own_disk_rather_than_a_cluster_claim() -> None:
+    # A claim exists only inside a cluster, so a deploy cannot bind it. It falls
+    # back to the host directory it can create, never to a path nothing mounts.
+    environ = {MODEL_CACHE_PVC_ENV: "npa-model-cache"}
+
+    assert docker_model_cache_volumes(environ=environ) == (
+        f"{DEFAULT_DOCKER_HOST_CACHE}:{DEFAULT_MODEL_CACHE_MOUNT}",
+    )
 
 
 @pytest.mark.parametrize("runtime", ALL_RUNTIMES)
@@ -301,4 +310,41 @@ def test_docker_volume_args_bind_the_host_cache_at_the_shared_root() -> None:
     assert docker_model_cache_volumes(environ=environ) == (
         f"/mnt/weights:{DEFAULT_MODEL_CACHE_MOUNT}",
     )
-    assert docker_model_cache_volumes(environ={}) == ()
+    assert docker_model_cache_volumes(environ={"NPA_MODEL_CACHE_DISABLED": "1"}) == ()
+
+
+def test_a_vm_deploy_caches_by_default_without_being_configured() -> None:
+    # A host directory needs no provisioning and costs nothing to create, so the
+    # deploy should not need to be told: the alternative default is discarding
+    # every gated download on the next `docker rm -f`.
+    assert resolve_model_cache_root({}, runtime=RUNTIME_DOCKER) == DEFAULT_MODEL_CACHE_MOUNT
+    assert docker_model_cache_volumes(environ={}) == (
+        f"{DEFAULT_DOCKER_HOST_CACHE}:{DEFAULT_MODEL_CACHE_MOUNT}",
+    )
+
+
+def test_the_docker_default_does_not_leak_into_kubernetes() -> None:
+    """Defaulting a host path on Kubernetes would mount a node directory everywhere.
+
+    That is node-local rather than shared, and rejected outright by a `restricted`
+    PodSecurity policy -- so the cluster keeps requiring a real claim.
+    """
+
+    assert resolve_model_cache_root({}, runtime=RUNTIME_KUBERNETES) == ""
+    assert model_cache_host_path({}) == ""
+
+
+def test_the_operator_can_switch_the_cache_off_everywhere() -> None:
+    off = {"NPA_MODEL_CACHE_DISABLED": "1", MODEL_CACHE_PVC_ENV: "npa-model-cache"}
+
+    for runtime in ALL_RUNTIMES:
+        assert resolve_model_cache_root(off, runtime=runtime) == ""
+    assert docker_model_cache_volumes(environ=off) == ()
+
+
+def test_an_explicit_host_path_still_wins_over_the_default() -> None:
+    environ = {MODEL_CACHE_HOST_PATH_ENV: "/mnt/weights"}
+
+    assert docker_model_cache_volumes(environ=environ) == (
+        f"/mnt/weights:{DEFAULT_MODEL_CACHE_MOUNT}",
+    )

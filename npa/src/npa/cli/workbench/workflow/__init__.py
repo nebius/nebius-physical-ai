@@ -882,6 +882,22 @@ def submit_cmd(
             infra = f"k8s/{infra_context}"
         if infra_context and not plan_only:
             _adopt_npa_kubeconfig(infra_context)
+            # Applying the shipped claim is the whole opt-in for durable weights:
+            # look for it here rather than making every submitting shell remember
+            # to export its name. Read-only and best-effort -- a cluster without
+            # the claim renders exactly as before.
+            from npa.orchestration.npa_workflow.model_cache_preflight import (
+                adopt_model_cache_claim,
+            )
+
+            adopted = adopt_model_cache_claim(
+                context=infra_context, kubeconfig=os.environ.get("KUBECONFIG", "")
+            )
+            if adopted:
+                typer.echo(
+                    f"model weight cache: using claim {adopted!r}; "
+                    "runtime-downloaded weights persist across runs"
+                )
         image_value_for_source = str(image or "").strip().lower()
         image_pins_all_tasks = bool(
             image_value_for_source

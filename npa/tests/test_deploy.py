@@ -938,15 +938,15 @@ def test_deploy_workbench_container_binds_and_exports_the_durable_cache(
     assert "-e HF_HOME=/opt/npa-model-cache/huggingface" in run_cmd
 
 
-def test_deploy_workbench_container_ignores_a_claim_it_cannot_bind(
+def test_deploy_workbench_container_binds_its_own_disk_not_a_cluster_claim(
     mocker, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A PVC names storage inside a cluster; this deploy runs `docker` on a host.
 
-    Exporting the cache env anyway would set HF_HOME to a path with nothing mounted
-    there, and `/opt` is root-owned in every workbench image while the container
-    runs as ubuntu -- so the tool's first mkdir fails and the deploy is worse than
-    if the operator had configured nothing.
+    Binding the claim is impossible, and exporting the cache env for it anyway would
+    set HF_HOME to a path with nothing mounted there -- `/opt` is root-owned in every
+    workbench image while the container runs as ubuntu, so the tool's first mkdir
+    fails. The deploy falls back to the host directory it can always create.
     """
 
     monkeypatch.delenv("NPA_MODEL_CACHE_HOST_PATH", raising=False)
@@ -962,19 +962,51 @@ def test_deploy_workbench_container_ignores_a_claim_it_cannot_bind(
     )
 
     run_cmd = [call.args[0] for call in ssh.run_or_raise.call_args_list][-1]
-    assert "/opt/npa-model-cache" not in run_cmd
-    assert "HF_HOME" not in run_cmd
+    assert "-v /var/lib/npa/model-cache:/opt/npa-model-cache" in run_cmd
+    # Not bound as a docker volume named after the claim, which is what treating a
+    # Kubernetes claim as a host-side name would produce.
+    assert "-v npa-model-cache:" not in run_cmd
+    assert "-e HF_HOME=/opt/npa-model-cache/huggingface" in run_cmd
+
+
+def test_deploy_workbench_container_caches_by_default(
+    mocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing configured is not a reason to throw the weights away.
+
+    The deploy can create a host directory itself, and it runs `docker rm -f` on
+    every deploy, so the default without one is re-downloading gated weights each
+    time.
+    """
+
+    for name in ("NPA_MODEL_CACHE_HOST_PATH", "NPA_MODEL_CACHE_PVC", "NPA_MODEL_CACHE_DIR"):
+        monkeypatch.delenv(name, raising=False)
+    mocker.patch("npa.deploy.configurator.install_container_runtime")
+    ssh = mocker.MagicMock()
+
+    configurator.deploy_workbench_container(
+        ssh,
+        image_ref="registry.example/npa-cosmos:1",
+        container_name="npa-cosmos",
+    )
+
+    commands = [call.args[0] for call in ssh.run_or_raise.call_args_list]
+    assert any("install -d" in c and "/var/lib/npa/model-cache" in c for c in commands)
+    assert "-v /var/lib/npa/model-cache:/opt/npa-model-cache" in commands[-1]
 
 
 def test_deploy_workbench_container_without_a_cache_is_unchanged(
     mocker, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The operator can still turn it off, and then the deploy is exactly what it
+    # was before any of this existed.
     for name in (
         "NPA_MODEL_CACHE_HOST_PATH",
         "NPA_MODEL_CACHE_PVC",
         "NPA_MODEL_CACHE_DIR",
     ):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("NPA_MODEL_CACHE_DISABLED", "1")
     mocker.patch("npa.deploy.configurator.install_container_runtime")
     ssh = mocker.MagicMock()
 
