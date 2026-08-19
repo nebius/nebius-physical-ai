@@ -112,13 +112,27 @@ reports it, and also surfaces `request_counts` (`total`, `completed`, `failed`,
 `invalid`) as the only genuine progress signal a pending batch offers.
 
 **Distinguish a degraded platform from your own bug.** A batch that is accepted,
-reports `in_progress`, and holds `completed: 0` for hours is usually not your
-job's fault. Batch execution has been observed unavailable platform-wide while
-submissions were still accepted through the datasets/operations route. The
-cheapest way to tell: `POST /v1/batches` (the OpenAI-compatible submit) returned
-`403 Creating new batch job is temporarily unavailable` during exactly such a
-window. If you see that, stop debugging your spec, cancel what you queued
-(`POST /batches/{id}/cancel`), and use `generate` until batch recovers.
+reports `in_progress` with rows validated (`total: 2, invalid: 0`), and holds
+`completed: 0` is usually not your job's fault. Batch execution has been observed
+unavailable while submissions were still accepted through the datasets/operations
+route. The cheapest tell is `POST /v1/batches`, the OpenAI-compatible submit,
+returning `403 Creating new batch job is temporarily unavailable`. Confirm it is a
+server-side switch rather than your request by checking where the 403 lands: an
+empty body returns `422` naming the missing fields, but a *valid* payload with a
+genuinely uploaded `input_file_id` still returns `403`, so the gate sits ahead of
+resource validation. Meanwhile the rest of the key stays healthy — real-time chat
+on the same model, `POST /v1/files` with `purpose=batch`, `GET /v1/batches`, and
+dataset create/delete all succeed — which rules out the key, the balance, the
+model, and the payload. When you see this, stop debugging your spec, cancel what
+you queued (`POST /batches/{id}/cancel`), and use `generate` until batch recovers.
+
+**That 403 is not the quota rejection**, and conflating the two sends you down the
+wrong path. The documented limits are 10 active batches per customer and 100
+submissions per hour, a batch counts as active only until its processing
+finishes, and rate limiting surfaces as `429`. So before blaming a limit, list
+your batches (`GET /v1/batches?limit=100` — the default page is 10, which makes a
+long history look artificially short) and count the non-terminal ones. All
+terminal plus a 403 with no `x-ratelimit-*` headers means availability, not quota.
 
 **Physical-AI reasoning over a scene** — default model
 `nvidia/Cosmos3-Super-Reasoner`. Point it at scene images and ask what a robot
