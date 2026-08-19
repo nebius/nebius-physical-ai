@@ -273,7 +273,7 @@ and lineage in `input/provenance.json`, and invokes Cosmos with mandatory
 | status reports `EVIDENCE_INCONSISTENT` | exact current-ledger, S3, or immutable-job evidence conflicts | preserve the run and inspect the reported identities; do not force `NOT_SUBMITTED` or rerun succeeded waves |
 | `Kube context '<name>' ... is not available` | no cluster for that context: neither your kubeconfig nor `~/.npa/clusters/<name>/` has it | provision one (`npa provision-if-absent --project <alias>`, and read its warnings — it now exits non-zero when it could not) or point `KUBECONFIG` at the cluster you want; `kubectl config get-contexts` lists what is resolvable |
 | A cluster is RUNNING in the console but npa has no kubeconfig for it (interrupted provision) | `up` writes the kubeconfig only after apply finishes | `npa cluster kubeconfig --cluster-name <name> --project <alias>` adopts it (writes the kubeconfig + cluster state), or `npa cluster up` again to resume, or `npa cluster down --force` to remove it |
-| `blocked` quota rows before apply | one or more exact hard quotas (instance, disk count, `compute.disk.size.network-ssd` bytes, public IP, or GPU) cannot cover the cumulative topology | read each row's exact `required`, `available`, and `shortfall` (disk capacity is also rendered in GiB), reduce the topology, or ask the tenant operator to resolve the named allowance; the default cluster needs 1,151 GiB (128 + 1,023), and the README agent+cluster path needs 1,251 GiB; preemptible nodes consume exactly the same disk bytes |
+| `blocked` quota rows before apply | one or more exact hard quotas (instance, disk count, `compute.disk.size.network-ssd` bytes, public IP, or GPU) cannot cover the cumulative topology | read each row's exact `required`, `available`, and `shortfall` (disk capacity is also rendered in GiB), reduce the topology, or ask the tenant operator to resolve the named allowance; the default cluster needs 1,151 GiB (128 + 1,023), and the agent+cluster path needs 1,251 GiB (see [Run lifecycle](../../run-lifecycle.md)); preemptible nodes consume exactly the same disk bytes |
 | `Nebius refused node group ...` mid-apply | the provider changed after the green preflight or rejected a create | NPA rolls back only this operation's newly created Terraform stack. If the journal says `rollback-incomplete`, use its exact recovery command; pre-existing clusters/storage/credentials are preserved. |
 | `npa cluster status` reports `DEGRADED` with `provider_state: RUNNING` and a non-ready node group | the control plane is up while that node group was never provisioned | the same quota/capacity fix; the cluster bills while it exists, so tear it down (`npa cluster down --force`) if you cannot get the nodes |
 | `npa cluster status` reports `VERIFICATION_UNAVAILABLE` and a DNS/RBAC/auth code | the configured cluster's current provider/API state could not be verified | run the printed NPA retry command after fixing the typed cause; `npa cluster status --cached` is an explicit last-known-only view, not evidence the cluster is healthy |
@@ -290,6 +290,110 @@ and lineage in `input/provenance.json`, and invokes Cosmos with mandatory
 | cancel reports `VERIFICATION_UNAVAILABLE` after local S3/SkyPilot removal | durable evidence says submission began, but no terminal receipt exists and the exact provider dependency is unavailable | restore the receipt-recorded provider context/dependency and retry; missing local tools are never treated as proof of absence |
 | provider package does not match lock checksums | the tracked lock lacks/cannot verify this operator package or a registry mirror/cache is inconsistent | upgrade NPA first. Maintainers regenerate with `terraform providers lock` for the recorded Linux/macOS platforms and review the lock diff; never delete the lock or bypass checksums |
 | agent setup reaches `access-key list` after configure already reports writable S3 | stale NPA version is redundantly reprovisioning storage credentials | upgrade NPA: setup/preflight now share the deployment credential decision and reuse the health-verified configured key without listing/creating/rotating access keys |
+
+### Variant: run PAIDF without the browser agent
+
+The browser agent is optional. PAIDF needs writable storage, a cluster, an
+orchestrator, and a copy of `npa` the workers can install — nothing else. Use
+this variant when you want the workload first and the viewer later, or in CI
+where no VM should be deployed.
+
+It differs from the quick start in two ways: it reads the immutable topology
+plan and the exact teardown plan *before* provisioning anything, and it never
+touches `npa agent`. It stops at the first failed core prerequisite and defaults
+to on-demand capacity.
+
+```bash
+set -eu
+set -o pipefail
+CONTEXT=npa-cluster
+SPEC=npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
+
+npa configure
+# For prompt-free setup, export supported credential variables first and use:
+# npa configure --no-interactive --save-env-credentials ...known project flags...
+eval "$(npa configure --show --env)"
+PROJECT="$NPA_PROJECT_ALIAS"
+# Keep this public override after configure --env; eval may restore the saved
+# project registry.
+export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
+REGISTRY="$NPA_REGISTRY"
+npa workbench health preflight
+
+# Reserve the exact run identity, then complete deterministic validation,
+# planning, and image gates before provisioning or source upload.
+BUCKET="$NPA_BUCKET"
+RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project "$PROJECT")"
+npa workbench workflow validate-spec "$SPEC" --json
+npa workbench workflow plan-spec "$SPEC" --run-id "$RUN_ID" \
+  --assume-decision promote_checkpoint --var bucket="$BUCKET" \
+  --var n_augmentations=1 --json
+npa workbench workflow preflight-images "$SPEC" --registry "$REGISTRY"
+npa provision-if-absent --project "$PROJECT" --cluster-name "$CONTEXT" \
+  --cpu-nodes 1 --cpu-platform cpu-d3 --cpu-preset 8vcpu-32gb \
+  --gpu-nodes 1 --gpu-platform gpu-rtx6000 \
+  --gpu-preset 1gpu-24vcpu-218gb --on-demand \
+  --accelerator RTXPRO6000:1 --dry-run --output-format json
+npa destroy --project "$PROJECT" --all --json
+
+npa provision-if-absent --project "$PROJECT" --skip-k8s
+eval "$(npa configure --show --env)"
+export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
+REGISTRY="$NPA_REGISTRY"
+npa skypilot bootstrap
+npa provision-if-absent --project "$PROJECT" --cluster-name "$CONTEXT" \
+  --cpu-nodes 1 --cpu-platform cpu-d3 --cpu-preset 8vcpu-32gb \
+  --gpu-nodes 1 --gpu-platform gpu-rtx6000 \
+  --gpu-preset 1gpu-24vcpu-218gb --on-demand \
+  --accelerator RTXPRO6000:1 --gpu-readiness-timeout 900
+# The accelerator-gated provisioning transaction verifies the exact
+# project/context/provider cluster identity and atomically binds the shared
+# jobs-controller owner before waiting for GPU readiness. No separate bind is
+# needed, and an incompatible/stale owner fails the earlier dry-run/preflight
+# before Terraform or source staging.
+
+npa workbench workflow submit "$SPEC" --project "$PROJECT" \
+  --registry "$REGISTRY" \
+  --run-id "$RUN_ID" --runtime --var bucket="$BUCKET" \
+  --var n_augmentations=1 \
+  --assume-decision promote_checkpoint --infra "k8s/$CONTEXT" \
+  --secret-env NEBIUS_TOKEN_FACTORY_KEY --secret-env AWS_ACCESS_KEY_ID \
+  --secret-env AWS_SECRET_ACCESS_KEY --secret-env HF_TOKEN
+
+npa cluster status --project "$PROJECT"
+npa workbench workflow status "$RUN_ID" --project "$PROJECT"
+```
+
+This script performs **no teardown**. When the run is done, the exact commands
+are `npa workflow cancel "$RUN_ID" --project "$PROJECT"`,
+`npa cluster down --project "$PROJECT" --context "$CONTEXT" --force`,
+`npa storage bucket delete --project "$PROJECT" --yes`, and then
+`npa storage service-account delete --project "$PROJECT" --yes`. Ordering
+matters — see [Tear it all down](../../teardown.md).
+
+Add the agent afterwards if you want to look at the results in a browser. Its
+failure neither cancels nor blocks the submitted run:
+
+```bash
+PROJECT="configured-alias"
+RUN_ID="existing-paidf-run-id"
+
+if ! npa agent status --project "$PROJECT" --name agent --json >/dev/null 2>&1; then
+  npa agent preflight --project "$PROJECT" \
+    && npa agent setup --project "$PROJECT" --name agent
+fi
+if npa agent status --project "$PROJECT" --name agent --json >/dev/null 2>&1; then
+  npa workbench workflow load-artifact "$RUN_ID" --project "$PROJECT"
+else
+  printf '%s\n' \
+    "Optional agent is not healthy; PAIDF remains submitted." \
+    "Later, after agent recovery: npa workbench workflow load-artifact $RUN_ID --project $PROJECT"
+fi
+```
+
+For what the gates in this sequence are checking — quota arithmetic, image
+digests, run identity, and restart safety — see
+[Run lifecycle](../../run-lifecycle.md).
 
 ---
 
