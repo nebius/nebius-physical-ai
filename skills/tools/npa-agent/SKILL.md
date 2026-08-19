@@ -56,9 +56,37 @@ Use the served tier when the question is "would this work on a VM", because it
 is the only tier that exercises import-time and lifespan behavior under the real
 server and the real websocket flags. It needs `uvicorn` and `websockets` in the
 venv (bootstrap installs both on the VM; a repo venv may not have them). The two
-tiers should report identical route counts and outcomes — a divergence is itself
-the finding. Neither tier binds a public port, so both are safe on a shared
+offline tiers should report identical route counts and outcomes — a divergence is
+itself the finding. Neither binds a public port, so both are safe on a shared
 machine.
+
+Point `--base-url` at a **deployed** agent to audit the VM itself. Routes are
+then enumerated from the deployment's own `/openapi.json`, and the report diffs
+that against the local render, which is how you find a VM running older code:
+
+```bash
+npa/.venv/bin/python npa/scripts/audit_agent_capabilities.py \
+  --base-url https://<agent-ip>/api \
+  --auth-env ~/.npa/agents/<project>/<name>/auth.env \
+  --insecure --allow-mutations
+```
+
+`--insecure` is normal — the ingress uses a self-signed certificate. The
+capability probes POST to `/chat`, run memory, and retrieval, so they need
+`--allow-mutations` against a real deployment; route probing is read-only and
+always runs. `routes_missing_on_deployment` and `routes_absent_from_render`
+should both be `0`.
+
+A deployed agent legitimately reports *better* outcomes than the sandbox, and
+the difference tells you what the sandbox could not know: `/artifacts/runs`
+answers `200` once S3 is staged (sandbox: `400`), `/sim-viz/rrd` and
+`/sim-viz/rrd-blob` answer `200` once the stock demo recording exists (sandbox:
+`404`), and the LeIsaac routes return `404 "No LeIsaac runtime is registered"`
+rather than the sandbox's `403` transport refusal because real public HTTPS
+satisfies that guard. Most important: chat workflow authoring emits a **runnable
+YAML** on a configured deployment where the sandbox correctly declines with
+unresolved placeholders — the fail-closed refusal is a configuration state, not
+a capability ceiling.
 
 Read the outcome classes rather than a pass/fail count:
 

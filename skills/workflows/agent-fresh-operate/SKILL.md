@@ -145,6 +145,45 @@ required, used, limit, and shortfall. Two facts make it confusing:
   looks like it came from a different region than you expected, trust npa and
   re-check the project's actual region before assuming a bug.
 
+### Deploying Into A Tenant That Needs A Non-Default Profile
+
+Quota reads are profile-scoped, and the profile comes from `NPA_NEBIUS_PROFILE` /
+`NEBIUS_PROFILE` — **not** from the target project's `nebius_profile` config
+field, which npa stores but does not load into the environment for you. Export it
+before preflight or deploy:
+
+```bash
+NPA_NEBIUS_PROFILE=<profile> npa agent preflight --project <alias> --name <name> --agent-only
+```
+
+Without it, the CLI queries whichever profile is active, and a tenant that
+profile cannot read answers `PermissionDenied`. Because the quota API fails
+closed by design, that denial surfaces as `unverified mutation prerequisite:
+compute.instance.count: provider/RBAC query failed` — which reads like a quota
+problem but is an identity problem. Distinguish the two in one command: if
+
+```bash
+nebius quotas quota-allowance list --parent-id <tenant> --all --profile <profile>
+```
+
+succeeds while the same call without `--profile` is denied, the profile is the
+issue, not capacity. `nebius profile list` plus a `nebius iam project get --id
+<project> --profile <p>` confirms which profile actually reaches the tenant.
+
+## Verifying A Deployed Agent
+
+`npa agent verify-live --project <alias> --name <name>` runs the smoke, CLI, and
+live e2e tiers against the real VM and prints `verify-live: ok`.
+
+Expect skips, not failures, on an `--agent-only` agent. Chat returns workflow
+YAML only after validation *and* planning succeed, and the Sim2Real template
+cannot plan a submit with no Kubernetes backend, so it declines with `a
+configured Kubernetes backend is required before Sim2Real submit`. That is
+correct behavior; templates that need no cluster (PAIDF, the generic
+`create_workflow` shapes) still emit runnable YAML on the same agent. Confirm the
+precondition with `GET /api/infra/backends` — `has_infra: false` and an empty
+`configured` list means cluster-backed templates cannot be exercised there.
+
 Preflight fails closed when it cannot *read* a quota (`PermissionDenied` on
 `list_quota_allowances` reports an unverified mutation prerequisite). This is
 deliberate spend safety, not a bug: an operator with create rights but no
