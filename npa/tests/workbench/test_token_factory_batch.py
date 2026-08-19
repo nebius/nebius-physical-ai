@@ -2,10 +2,13 @@
 
 The fake transport mirrors the request/response sequence observed against the
 live API: a dataset upload that returns ``current_version``, an operation that
-reports ``queued`` before ``succeeded``, and a destination dataset exported as
-JSONL. The instant-failure case reproduces the real shape of a model that serves
-real-time chat but is not enabled for batch: ``status: failed`` with
-``in_progress_at: null`` and a single empty error string.
+reports ``queued`` before ``succeeded``, results served as an OpenAI-standard
+batch output file, and a destination dataset export as the fallback.
+
+The failure case reproduces the real shape exactly: the operations endpoint
+returns a single empty error string while the batch record's error file holds the
+per-row reason (``not a known batch endpoint routing key``) and
+``request_counts`` reports the rows as invalid.
 """
 
 from __future__ import annotations
@@ -32,6 +35,14 @@ DATASET_ID = "ds-source-0001"
 DATASET_VERSION = "ver-0001"
 RESULT_DATASET_ID = "ds-result-0001"
 OPERATION_ID = "batch__test-0001"
+OUTPUT_FILE_ID = "file-output-0001"
+ERROR_FILE_ID = "file-error-0001"
+# Verbatim from a live failed batch's error file.
+ROUTING_KEY_ERROR = (
+    "Invalid request rows 3 of 3 exceed the 10% limit.\n"
+    'Line:1 custom_id:p1 model "meta-llama/Llama-3.3-70B-Instruct" is not a known '
+    "batch endpoint routing key\n"
+)
 
 
 class FakeBatchApi:
@@ -45,16 +56,24 @@ class FakeBatchApi:
         errors: list[str] | None = None,
         in_progress: bool = True,
         result_row_key: str = "response",
+        error_file_text: str = "",
+        serve_batch_view: bool = True,
+        serve_output_file: bool = True,
     ) -> None:
         self.statuses = statuses or ["queued", "succeeded"]
         self.completions = completions if completions is not None else {}
         self.errors = errors if errors is not None else []
         self.in_progress = in_progress
         self.result_row_key = result_row_key
+        self.error_file_text = error_file_text
+        self.serve_batch_view = serve_batch_view
+        self.serve_output_file = serve_output_file
         self.uploaded_rows: list[dict] = []
         self.operation_payload: dict = {}
         self.deleted: list[str] = []
         self.poll_count = 0
+        self.exported_datasets: list[str] = []
+        self.downloaded_files: list[str] = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -81,13 +100,46 @@ class FakeBatchApi:
             return httpx.Response(200, json=self._operation(status))
         if method == "GET" and path.endswith("/errors"):
             return httpx.Response(200, json={"object": "list", "data": self.errors})
+        if method == "GET" and f"/batches/{OPERATION_ID}" in path:
+            if not self.serve_batch_view:
+                return httpx.Response(404, json={"detail": "no batch view"})
+            return httpx.Response(200, json=self._batch())
+        if method == "GET" and "/files/" in path and path.endswith("/content"):
+            file_id = path.split("/files/")[1].split("/")[0]
+            self.downloaded_files.append(file_id)
+            if file_id == ERROR_FILE_ID:
+                return httpx.Response(200, text=self.error_file_text)
+            return httpx.Response(200, text=self._results_jsonl())
         if method == "GET" and path.endswith("/export"):
             dataset_id = path.split("/datasets/")[1].split("/")[0]
+            self.exported_datasets.append(dataset_id)
             return httpx.Response(200, text=self._export(dataset_id))
         if method == "DELETE" and "/datasets/" in path:
             self.deleted.append(path.rsplit("/", 1)[1])
             return httpx.Response(200, json={})
         return httpx.Response(404, json={"detail": f"unexpected {method} {path}"})
+
+    def _batch(self) -> dict:
+        status = self.statuses[min(max(self.poll_count - 1, 0), len(self.statuses) - 1)]
+        failed = status == "failed"
+        total = max(len(self.uploaded_rows), len(self.completions))
+        return {
+            "id": OPERATION_ID,
+            "object": "batch",
+            "endpoint": "/v1/chat/completions",
+            "status": "failed" if failed else status,
+            "completion_window": "24h",
+            "request_counts": {
+                "total": total,
+                "completed": 0 if failed else len(self.completions),
+                "failed": 0,
+                "invalid": total if failed else 0,
+            },
+            "output_file_id": (
+                OUTPUT_FILE_ID if status == "succeeded" and self.serve_output_file else None
+            ),
+            "error_file_id": ERROR_FILE_ID if failed and self.error_file_text else None,
+        }
 
     def _operation(self, status: str) -> dict:
         return {
@@ -103,6 +155,9 @@ class FakeBatchApi:
     def _export(self, dataset_id: str) -> str:
         if dataset_id == DATASET_ID:
             return "".join(json.dumps(row) + "\n" for row in self.uploaded_rows)
+        return self._results_jsonl()
+
+    def _results_jsonl(self) -> str:
         lines = []
         for custom_id, completion in self.completions.items():
             body = {
@@ -240,8 +295,15 @@ def test_batch_generate_no_wait_returns_operation_handle(tmp_path: Path) -> None
     assert api.poll_count == 0
 
 
-def test_batch_generate_explains_model_not_enabled_for_batch(tmp_path: Path) -> None:
-    api = FakeBatchApi(statuses=["failed"], errors=[""], in_progress=False)
+def test_batch_generate_reports_the_error_file_reason_and_a_model_hint(tmp_path: Path) -> None:
+    # The live failure shape: the operations endpoint says nothing useful, and the
+    # batch record's error file carries the real per-row reason.
+    api = FakeBatchApi(
+        statuses=["failed"],
+        errors=[""],
+        in_progress=False,
+        error_file_text=ROUTING_KEY_ERROR,
+    )
 
     with pytest.raises(TokenFactoryToolError) as excinfo:
         batch_generate(
@@ -252,8 +314,72 @@ def test_batch_generate_explains_model_not_enabled_for_batch(tmp_path: Path) -> 
         )
 
     message = str(excinfo.value)
-    assert "not enabled for batch inference" in message
+    assert "not a known batch endpoint routing key" in message
+    assert "2/2 rows rejected" in message
+    assert "not available for batch inference" in message
     assert DEFAULT_BATCH_MODEL in message
+    assert ERROR_FILE_ID in api.downloaded_files
+
+
+def test_batch_generate_without_a_batch_view_still_reports_the_failure(tmp_path: Path) -> None:
+    api = FakeBatchApi(statuses=["failed"], errors=[""], serve_batch_view=False)
+
+    with pytest.raises(TokenFactoryToolError) as excinfo:
+        batch_generate(
+            input_path=str(_prompts(tmp_path)),
+            output_path=str(tmp_path / "out"),
+            poll_interval_s=0.01,
+            client=_client(api),
+        )
+
+    assert "reported no error detail" in str(excinfo.value)
+
+
+def test_batch_generate_prefers_the_batch_output_file_over_a_dataset_export(
+    tmp_path: Path,
+) -> None:
+    api = FakeBatchApi(completions={"p1": "from the output file", "p2": "b"})
+
+    result = batch_generate(
+        input_path=str(_prompts(tmp_path)),
+        output_path=str(tmp_path / "out"),
+        poll_interval_s=0.01,
+        client=_client(api),
+    )
+
+    assert result.generations[0].completion == "from the output file"
+    assert OUTPUT_FILE_ID in api.downloaded_files
+    # The result dataset is never exported when the standard output file is there.
+    assert RESULT_DATASET_ID not in api.exported_datasets
+
+
+def test_batch_generate_falls_back_to_the_dataset_export(tmp_path: Path) -> None:
+    api = FakeBatchApi(completions={"p1": "from the export", "p2": "b"}, serve_output_file=False)
+
+    result = batch_generate(
+        input_path=str(_prompts(tmp_path)),
+        output_path=str(tmp_path / "out"),
+        poll_interval_s=0.01,
+        client=_client(api),
+    )
+
+    assert result.generations[0].completion == "from the export"
+    assert RESULT_DATASET_ID in api.exported_datasets
+
+
+def test_batch_generate_reports_request_counts(tmp_path: Path) -> None:
+    api = FakeBatchApi(completions={"p1": "a", "p2": "b"})
+
+    result = batch_generate(
+        input_path=str(_prompts(tmp_path)),
+        output_path=str(tmp_path / "out"),
+        poll_interval_s=0.01,
+        client=_client(api),
+    )
+
+    assert result.request_counts["total"] == 2
+    assert result.request_counts["completed"] == 2
+    assert result.request_counts["invalid"] == 0
 
 
 def test_batch_generate_cleans_up_after_a_failed_operation(tmp_path: Path) -> None:

@@ -79,6 +79,14 @@ class TokenFactoryConfig:
     def operations_url(self) -> str:
         return _join_path(self.base_url, "operations")
 
+    @property
+    def batches_url(self) -> str:
+        return _join_path(self.base_url, "batches")
+
+    @property
+    def files_url(self) -> str:
+        return _join_path(self.base_url, "files")
+
 
 def resolve_config(
     *,
@@ -358,6 +366,24 @@ class TokenFactoryClient:
             return []
         return [str(item).strip() for item in items if str(item).strip()]
 
+    def get_batch(self, batch_id: str) -> dict[str, Any]:
+        """Return the OpenAI-compatible batch record for an operation.
+
+        A batch-inference operation id doubles as a batch id, and this view
+        carries what the operations endpoint omits: ``request_counts``, and the
+        ``output_file_id`` / ``error_file_id`` that hold the real per-row results
+        and errors.
+        """
+
+        url = f"{self._config.batches_url}/{batch_id}"
+        return _expect_object(self._get_json(url), "batch")
+
+    def download_file(self, file_id: str) -> str:
+        """Return the contents of a file, following the redirect it serves."""
+
+        url = f"{self._config.files_url}/{file_id}/content"
+        return self._request_text("GET", url, follow_redirects=True)
+
     def cancel_operation(self, operation_id: str) -> dict[str, Any]:
         url = f"{self._config.operations_url}/{operation_id}/cancel"
         return _expect_object(self._post_json(url, {}), "operation")
@@ -411,7 +437,9 @@ class TokenFactoryClient:
         json_body: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
     ) -> Any:
-        return self._send(method, url, json_body=json_body, params=params, decode_json=True)
+        return self._send(
+            method, url, json_body=json_body, params=params, decode_json=True
+        )
 
     def _request_text(
         self,
@@ -419,8 +447,16 @@ class TokenFactoryClient:
         url: str,
         *,
         params: dict[str, Any] | None = None,
+        follow_redirects: bool = False,
     ) -> str:
-        return self._send(method, url, json_body=None, params=params, decode_json=False)
+        return self._send(
+            method,
+            url,
+            json_body=None,
+            params=params,
+            decode_json=False,
+            follow_redirects=follow_redirects,
+        )
 
     def _send(
         self,
@@ -430,6 +466,7 @@ class TokenFactoryClient:
         json_body: dict[str, Any] | None,
         params: dict[str, Any] | None,
         decode_json: bool,
+        follow_redirects: bool = False,
     ) -> Any:
         owns_client = self._http_client is None
         client = self._http_client or httpx.Client(timeout=self._config.timeout_s)
@@ -437,7 +474,12 @@ class TokenFactoryClient:
             for attempt in range(1, self._retry_attempts + 1):
                 try:
                     response = client.request(
-                        method, url, headers=self._headers(), json=json_body, params=params
+                        method,
+                        url,
+                        headers=self._headers(),
+                        json=json_body,
+                        params=params,
+                        follow_redirects=follow_redirects,
                     )
                 except httpx.TransportError as exc:
                     if attempt == self._retry_attempts:

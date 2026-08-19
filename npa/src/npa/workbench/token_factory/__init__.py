@@ -159,6 +159,9 @@ class BatchResult:
     prompt_count: int
     generation_count: int
     generated_at: str
+    #: ``request_counts`` from the batch record: total, completed, failed, and
+    #: invalid rows. The only real progress signal while a batch is pending.
+    request_counts: dict[str, int] = field(default_factory=dict)
     usage: BatchUsage = field(default_factory=BatchUsage)
     generations: list[GenerationItem] = field(default_factory=list)
     failures: list[dict[str, Any]] = field(default_factory=list)
@@ -515,6 +518,7 @@ def batch_collect(
             prompt_count=len(prompt_lookup),
             generation_count=0,
             generated_at=_now(),
+            request_counts=_request_counts(_batch_record(active, operation_id)),
         )
 
     return _await_and_collect(
@@ -572,16 +576,9 @@ def _await_and_collect(
             _cleanup_datasets(client, [_destination_dataset_id(operation), source_dataset_id])
         raise TokenFactoryToolError(explanation)
 
+    batch = _batch_record(client, operation_id)
     destination_id = _destination_dataset_id(operation)
-    if not destination_id:
-        raise TokenFactoryToolError(
-            f"batch operation {operation_id} succeeded but reported no destination dataset"
-        )
-
-    try:
-        exported = client.export_dataset(destination_id, output_format="jsonl")
-    except TokenFactoryError as exc:
-        raise TokenFactoryToolError(f"exporting batch results failed: {exc}") from exc
+    exported = _read_results(client, batch, destination_id, operation_id=operation_id)
 
     generations, failures, usage = _parse_batch_export(exported, prompt_lookup)
     if not generations and not failures:
@@ -605,6 +602,7 @@ def _await_and_collect(
         prompt_count=prompt_count or len(generations) + len(failures),
         generation_count=len(generations),
         generated_at=_now(),
+        request_counts=_request_counts(batch),
         usage=usage,
         generations=generations,
         failures=failures,
@@ -618,24 +616,98 @@ def _explain_failed_operation(
     model: str,
     operation_id: str,
 ) -> str:
+    """Build the most specific failure message the API will give up.
+
+    The operations endpoint is the least informative source here: a failed batch
+    reports a single empty error string. The per-row reason lives in the batch
+    record's error file, so that is tried first.
+    """
+
     status = str(operation.get("status") or "unknown")
-    errors = client.operation_errors(operation_id)
-    detail = "; ".join(errors) if errors else ""
     message = f"batch operation {operation_id} ended with status {status!r}"
+
+    batch = _batch_record(client, operation_id)
+    detail = _batch_error_text(client, batch)
     if detail:
-        return f"{message}: {detail}"
-    if status == "failed" and not operation.get("in_progress_at"):
-        # Observed shape: the operation fails before it ever starts and the
-        # errors endpoint returns a single empty string. In every case seen so
-        # far the model served real-time chat but was not enabled for batch.
-        return (
-            f"{message} before it started, and Token Factory reported no error "
-            f"detail. The usual cause is that model {model!r} is not enabled for "
-            "batch inference on this project, even though it may serve real-time "
-            "requests. Try another model, or run the same prompts through "
-            "`npa workbench token-factory generate`."
+        counts = _request_counts(batch)
+        invalid = counts.get("invalid") or 0
+        total = counts.get("total") or 0
+        if invalid and total:
+            message = f"{message} with {invalid}/{total} rows rejected"
+        hint = ""
+        if "not a known batch endpoint routing key" in detail:
+            hint = (
+                f" Model {model!r} is not available for batch inference, even "
+                "though it may serve real-time requests. Try another model, or "
+                "run the same prompts through `npa workbench token-factory generate`."
+            )
+        return f"{message}: {detail}{hint}"
+
+    errors = client.operation_errors(operation_id)
+    if errors:
+        return f"{message}: {'; '.join(errors)}"
+    return f"{message}, and Token Factory reported no error detail"
+
+
+def _read_results(
+    client: TokenFactoryClient,
+    batch: dict[str, Any],
+    destination_id: str,
+    *,
+    operation_id: str,
+) -> str:
+    """Return the raw result rows for a succeeded batch.
+
+    The batch record's output file is the OpenAI-standard batch result JSONL, so
+    it is preferred; exporting the destination dataset is the fallback for when
+    the batch view is unavailable.
+    """
+
+    file_id = str(batch.get("output_file_id") or "")
+    if file_id:
+        try:
+            return client.download_file(file_id)
+        except TokenFactoryError:
+            pass
+    if not destination_id:
+        raise TokenFactoryToolError(
+            f"batch operation {operation_id} succeeded but exposed neither an "
+            "output file nor a destination dataset to read results from"
         )
-    return f"{message} with no error detail reported"
+    try:
+        return client.export_dataset(destination_id, output_format="jsonl")
+    except TokenFactoryError as exc:
+        raise TokenFactoryToolError(f"reading batch results failed: {exc}") from exc
+
+
+def _batch_record(client: TokenFactoryClient, operation_id: str) -> dict[str, Any]:
+    """Return the OpenAI-compatible batch view of an operation, or an empty dict.
+
+    Only ever used to enrich a result or a failure message, so an unavailable
+    batch view must not turn into the error the caller sees.
+    """
+
+    try:
+        return client.get_batch(operation_id)
+    except TokenFactoryError:
+        return {}
+
+
+def _request_counts(batch: dict[str, Any]) -> dict[str, int]:
+    counts = batch.get("request_counts")
+    if not isinstance(counts, dict):
+        return {}
+    return {key: int(value) for key, value in counts.items() if isinstance(value, int)}
+
+
+def _batch_error_text(client: TokenFactoryClient, batch: dict[str, Any]) -> str:
+    file_id = str(batch.get("error_file_id") or "")
+    if not file_id:
+        return ""
+    try:
+        return " ".join(client.download_file(file_id).split())[:800]
+    except TokenFactoryError:
+        return ""
 
 
 def _parse_batch_export(
