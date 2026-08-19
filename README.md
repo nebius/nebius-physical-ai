@@ -35,7 +35,7 @@ and GPU clusters (H100 · H200 · L40S · B300 · RTX PRO 6000).
 
 You bring a robot, a dataset, or a pipeline idea. `npa` brings the containers,
 the orchestration, and the preflight checks that catch a missing token before it
-becomes a wasted GPU-hour.
+stalls your run.
 
 |                       |                                                                                                              |
 | --------------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -101,20 +101,22 @@ each setup guide inline: [Hugging Face](docs/workbench/huggingface-token.md) ·
 > automation, and the full credential model live in
 > **[docs/quickstart.md](docs/quickstart.md)**.
 
-### 3. Prove the path works
+### 3. Run your first workload
+
+Check your credentials, then put them to work:
 
 ```bash
 npa workbench health preflight
 ```
 
 One PASS/WARN/FAIL/SKIP sweep over the credentials nearly every job needs —
-Hugging Face, NVIDIA NGC, Nebius object storage, and Token Factory. Add
-`--offline` to check presence only, or `--json` for machine-readable output.
+Hugging Face, NVIDIA NGC, Nebius object storage, and Token Factory. Add `--json`
+for machine-readable output.
 
-Want a real artifact before you provision anything?
-[Nebius Token Factory](docs/workbench/token-factory.md) hosted inference needs
-only a `NEBIUS_TOKEN_FACTORY_KEY` — no cluster, no GPU. Treat it as a cheap proof
-that your credentials work; the real destination is Nebius AI Cloud GPUs.
+Once it comes back green, launch something real on Nebius GPUs. The flagship is
+[NVIDIA Cosmos](docs/quickstart.md#7-flagship-gpu-workload-nvidia-cosmos), and
+any robot guide below will take you from a public dataset to a trained and
+evaluated policy.
 
 ---
 
@@ -124,7 +126,6 @@ Short, copy-paste walkthroughs. Pick whichever sounds fun — they are independe
 
 | I want to…                                     | Go here                                                                                | Needs                    |
 | ------------------------------------------------ | ---------------------------------------------------------------------------------------- | -------------------------- |
-| Score a robot without touching a GPU             | [Score a robot, no GPU](docs/workbench/guides/score-a-robot-no-gpu.md)                    | Token Factory key          |
 | Pick and place with a Franka arm                 | [Franka + Genesis](docs/workbench/guides/franka-pick-and-place-genesis.md)                | GPU cluster                |
 | Teach a robot to push a T                        | [PushT sim-to-real](docs/workbench/guides/pusht-sim-to-real.md)                           | GPU cluster                |
 | Train a Reachy 2 humanoid policy                 | [Reachy 2 + LeRobot](docs/workbench/guides/reachy2-lerobot-policy.md)                     | GPU cluster                |
@@ -146,8 +147,8 @@ benchmarks): [cookbooks](docs/workbench/cookbooks/README.md).
 Every tool lives under `npa workbench` (there is no `solutions` namespace).
 A few highlights:
 
-- **`token-factory`** — zero-GPU hosted inference, captioning, and reasoning
-  against your own frames.
+- **`token-factory`** — hosted inference, captioning, and reasoning against your
+  own frames.
 - **`vlm-eval`** — scores rollouts with API or self-hosted vLLM backends; see
   [`vlm-eval-single.yaml`](npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml).
 - **`health preflight`** — validates HF / NGC / S3 / Token Factory before a
@@ -170,7 +171,7 @@ A few highlights:
 | Eval            | `npa workbench vlm-eval run`, `benchmark`, `workflow`, `status`, `list`; `npa workbench mjlab eval`, `workflow`; `npa workbench sonic eval`; `npa workbench fiftyone eval`; `npa workbench isaac-lab eval`; `npa workbench genesis eval-student`; `npa workbench golden-eval run`, `run-all`, `validate` |
 | Robot policy    | `npa workbench lerobot train`, `eval`, `serve`, `infer`, `list-checkpoints`, `benchmark`, `profile-train`, `train-student`; `npa workbench groot download`, `finetune`, `eval`, `serve`, `infer`, `convert`; `npa workbench sonic train`, `serve`, `export`, `eval`, `status`, `list`                    |
 | World models    | `npa workbench cosmos deploy`, `serve`, `infer`, `train`, `finetune`, `optimize`, `autoscale`, `status`, `system-info`                                                                                                                                                                                   |
-| Zero-GPU LLM    | `npa workbench token-factory caption`, `generate`, `reason`, `verify`, `models`, `workflow`, `status`                                                                                                                                                                                                    |
+| Hosted LLM      | `npa workbench token-factory caption`, `generate`, `reason`, `verify`, `models`, `workflow`, `status`                                                                                                                                                                                                    |
 | Workflows       | `npa workbench workflow validate-spec`, `plan-spec`, `run-spec`, `submit`; workbench workflows under [`npa-workflows/`](npa/workflows/workbench/npa-workflows/)                                                                                                                                           |
 | Observability   | Tool-level `status`, `list`, and `system-info` commands; `npa workbench workflow status`, `logs`; `npa workbench health preflight`; `npa workbench foxglove convert-run`, `inspect`, `install-sdk`, `config`; `npa rerun host`, `share`, `list-shares`, `revoke`; `npa cluster status`, `list`                                                                                       |
 | Platform utils  | `npa configure` / `init`, `npa provision-if-absent`; `npa agent`, `npa skypilot bootstrap/status/verify`, `npa soperator`, `npa burst`, `npa cluster`, `npa network`, `npa adapter convert`, `npa convert lerobot-to-rrd/-mp4`, `npa viz`, `npa demo`                                                    |
@@ -215,37 +216,6 @@ paths remain outside `v0.0.1` scope — see the catalog README for exceptions. T
 **Sim2Real 14-stage engine** is a separate path
 ([skill](skills/workbench/sim2real-engine/SKILL.md)) using `sim2real/runbook.yaml`
 plus Python stage glue.
-
----
-
-## Before you burn GPU-hours
-
-The short list of things that catch first-time users mid-run. Skim it once.
-
-- **Run `npa workbench health preflight` first.** It is the cheapest check you
-  will ever run.
-- **GPU routing matters.** Isaac Lab needs an **RT-core** GPU (L40S / RTX PRO
-  6000), not an H100.
-- **Ask the cluster what its GPUs are called.** The same card can be `RTXPRO6000`
-  in a spec and `RTXPRO-6000-BLACKWELL-SERVER-EDITION` on the cluster. Run
-  `npa workbench workflow gpus --cluster <name>` once; note the *requestable
-  quantity per node*, because `NAME:2` cannot schedule on 1-GPU nodes no matter
-  how many you add.
-- **Registry pull secrets expire silently.** A `401` means the pull secret needs
-  refreshing, a `403` means valid-but-not-permitted. Kubernetes retries pulls
-  forever, so both look like a hung job. `npa workbench workflow preflight-images
-  <spec.yaml>` reproduces the pull before you pay for it.
-- **Bootstrap SkyPilot with `npa skypilot bootstrap`.** It pins a Kubernetes
-  client SkyPilot can actually use; a newer one makes the managed-jobs controller
-  reject every `pod_config` forever, which looks exactly like a hung submit.
-- **Token Factory keys are not Nebius IAM tokens.** They start with `v1.` and
-  live in `NEBIUS_TOKEN_FACTORY_KEY`.
-- **Pass `-p PROJECT -n NAME` to any `<tool> status`.** Bare `status` may hit a
-  stale endpoint ([FIXME.md](FIXME.md)).
-
-Full known-issues surface:
-[known-footguns.md](docs/workbench/troubleshooting/known-footguns.md) ·
-[active backlog](FIXME.md) · [FTUE audit](FTUE-AUDIT.md).
 
 ---
 

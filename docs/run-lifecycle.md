@@ -1,23 +1,22 @@
 # Run lifecycle: identity, gates, and status
 
-What `npa workbench workflow submit` actually does before it spends a GPU-hour,
-how a run keeps its identity across interruptions, and how to read the status it
-reports back.
+What `npa workbench workflow submit` verifies before it launches, how a run keeps
+its identity across interruptions, and how to read the status it reports back.
 
 If you just want to launch something, start with
 [the quickstart](quickstart.md) or the
 [Physical AI Data Factory runbook](workbench/guides/physical-ai-data-factory-deploy.md).
 This page is the reference for what those paths are doing underneath.
 
-## Everything is checked before anything is paid for
+## Everything is verified before the run starts
 
 `submit` repeats its deterministic checks **before** input or source staging, so
-a missing image or an identity mismatch cannot upload the ~1,225-file source
-tree or start a paid cluster first. It prints **everything** still missing in one
-list, each with the command that fixes it, so you are not discovering
-prerequisites one failed run at a time.
+a missing image or an identity mismatch is caught locally rather than after the
+~1,225-file source tree has been uploaded and a cluster is waiting. It prints
+**everything** still missing in one list, each with the command that fixes it, so
+you are not discovering prerequisites one failed run at a time.
 
-The cheap, read-only gates are meant to be run in this order:
+The read-only gates are meant to be run in this order:
 
 ```bash
 npa workbench workflow validate-spec    <spec.yaml>
@@ -27,7 +26,8 @@ npa workbench workflow preflight-images <spec.yaml> --registry "$REGISTRY"
 
 `preflight-images` reports each image as `ok` / `not_found` / `forbidden` and
 prints the exact build command for anything missing. `submit` runs the same
-check by default, so a registry without the images costs no GPU time.
+check by default, so a missing image surfaces on your machine instead of as an
+`ImagePullBackOff` on the cluster.
 
 ### Quota is arithmetic, and it is checked first
 
