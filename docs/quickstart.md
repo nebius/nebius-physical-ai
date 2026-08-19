@@ -155,11 +155,76 @@ optional — `npa configure` creates a default bucket named `npa-bucket-<hash>`
 (a short hash of your tenant and project ids, e.g. `npa-bucket-1a2b3c4d`) with
 **standard** storage and a size cap when you press Enter at the bucket prompt
 (you can choose `enhanced` storage or a custom size for new buckets). To reuse
-your own bucket, create one first; see the README **Nebius AI Cloud account**
-section,
+your own bucket, create one first; see
 [Creating a tenant](https://docs.nebius.com/iam/create-tenants),
 [Manage projects](https://docs.nebius.com/iam/manage-projects), and
 [Manage buckets](https://docs.nebius.com/object-storage/buckets/manage).
+
+#### Creating a project from the CLI (tenant administrator)
+
+Creating a project is a privileged action outside NPA. A tenant administrator
+(or another principal permitted to create projects under the tenant) can use the
+pinned CLI's official `iam v2 project` surface instead of the web console. The
+list and get commands are read-only and safe verification steps; the console
+path linked above remains equivalent.
+
+```bash
+TENANT_ID="tenant-id"
+PROJECT_NAME="project-name"
+REGION=eu-north1
+command -v jq >/dev/null
+
+# Optional read-only parent verification before creating anything.
+nebius iam v2 project list --parent-id "$TENANT_ID" --all --format json
+
+# Creates the external project and captures its immutable ID from structured
+# output (no parsing of a human table). Review tenant/name/region first.
+PROJECT_JSON="$(nebius iam v2 project create --parent-id "$TENANT_ID" \
+  --name "$PROJECT_NAME" --region "$REGION" --format json)"
+PROJECT_ID="$(printf '%s' "$PROJECT_JSON" | jq -er '.metadata.id')"
+export PROJECT_ID
+test -n "$PROJECT_ID"
+
+# Read-only identity verification.
+nebius iam v2 project get --id "$PROJECT_ID" --format json
+
+# Bind the active CLI profile, then continue with NPA under a local alias.
+nebius config set tenant-id "$TENANT_ID"
+nebius config set parent-id "$PROJECT_ID"
+PROJECT_ALIAS="local-npa-alias"
+npa configure --no-interactive --tenant-id "$TENANT_ID" \
+  --project-id "$PROJECT_ID" --region "$REGION" \
+  --project-alias "$PROJECT_ALIAS"
+```
+
+#### Federation or SSO profiles with many tenants
+
+If your Nebius CLI profile has no `tenant-id` / `parent-id` set — common for
+SSO and federation logins — bind it to the project you want **before**
+`npa configure`, so discovery targets the right place instead of listing every
+tenant:
+
+```bash
+nebius config set tenant-id <id>
+nebius config set parent-id <project-id>
+```
+
+Say **yes** to the object-storage prompt: the agent VM and the Physical AI Data
+Factory both need an S3 bucket and access key.
+
+#### Non-interactive setup
+
+If you already know the ids and have a valid non-interactive Nebius profile or
+service-account credential active, skip the browser flow and the tenant picker
+with `npa configure --no-interactive` (shown above).
+
+**No secret-value flags are accepted or shown by `npa configure --help`.**
+Automation supplies values through protected environment variables and adds the
+boolean `--save-env-credentials`; NPA atomically persists only supported
+variables in its owner-only credential store. The command reuses existing S3
+only when project provenance *and* a write/read/delete probe both verify it;
+otherwise it proposes a fresh project-scoped bucket, without listing or rotating
+unrelated access keys.
 
 Run interactive setup in a terminal. `npa configure` creates or reuses your
 Nebius CLI profile first, then prompts for your tenant id and project id, your
