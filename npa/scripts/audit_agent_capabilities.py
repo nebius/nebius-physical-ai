@@ -160,6 +160,11 @@ def probe_routes(app: Any) -> list[dict[str, Any]]:
                     payload = None
                 if isinstance(payload, dict):
                     entry["keys"] = sorted(payload.keys())[:12]
+                    # The FastAPI error text says *why* a route declined, which
+                    # is the difference between "needs an argument" and "this
+                    # deployment is missing a dependency".
+                    if "detail" in payload:
+                        entry["detail"] = str(payload["detail"])[:200]
                     # Namespace body signals so a payload `status` cannot be
                     # mistaken for the HTTP status this probe recorded.
                     for signal in ("ok", "error", "status", "scope", "grounded"):
@@ -324,9 +329,10 @@ def main() -> int:
     print(json.dumps(report["summary"], indent=2))
     print("\n-- route probes --")
     for probe in probes:
+        note = probe.get("error") or probe.get("detail") or ""
         print(
             f"  [{probe['outcome']:17s}] {probe['method']:4s} {probe['path']:44s} "
-            f"{probe.get('status')} {probe.get('error', '')[:80]}"
+            f"{probe.get('status')} {note[:80]}"
         )
     print("\n-- chat intents --")
     for probe in report["chat_probes"]:

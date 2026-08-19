@@ -86,6 +86,30 @@ def test_match_sim2real_status_intent() -> None:
     assert match_chat_intent("what resources can I access in this project?") == "tenant_resources"
 
 
+def test_every_intent_declares_its_apis() -> None:
+    """Each routed intent needs an `INTENT_APIS` entry, not just a regex.
+
+    `INTENT_APIS` is not only reply metadata: `_semantic_route` derives the
+    semantic fallthrough's `known_intents` from its keys, so an intent missing
+    here can never be reached by a paraphrase the regex misses, and its grounded
+    replies report an empty `apis_used`. `foxglove_viewer` was in that state.
+    """
+    from npa.cli.agent_chat import _INTENT_RULES, INTENT_APIS
+
+    routed = [intent for intent, _pattern in _INTENT_RULES]
+    missing = sorted(set(routed) - set(INTENT_APIS))
+    assert not missing, f"intents missing an INTENT_APIS entry: {missing}"
+    orphaned = sorted(set(INTENT_APIS) - set(routed))
+    assert not orphaned, f"INTENT_APIS entries with no routing rule: {orphaned}"
+
+
+def test_foxglove_viewer_reports_its_grounded_apis() -> None:
+    from npa.cli.agent_chat import apis_for_intent, match_chat_intent
+
+    assert match_chat_intent("open foxglove") == "foxglove_viewer"
+    assert "foxglove/status" in apis_for_intent("foxglove_viewer")
+
+
 def test_tool_capability_questions_route_consistently() -> None:
     """"what can <tool> do" reaches the tool's own grounded reply.
 

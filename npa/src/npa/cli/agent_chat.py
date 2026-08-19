@@ -556,6 +556,12 @@ INTENT_APIS: dict[str, list[str]] = {
     "soperator": ["infra/soperator/validate", "infra/soperator/deploy", "infra/soperator/status/{name}", "tools"],
     "load_franka": ["sim-viz/load-franka-demo", "sim-viz/status"],
     "workflow_execute_guidance": ["workflows/validate", "workflows/plan", "workflows/submit", "tools"],
+    "foxglove_viewer": [
+        "foxglove/status",
+        "foxglove/config",
+        "foxglove/load-artifact",
+        "foxglove/convert-run",
+    ],
 }
 
 _DEFAULT_TOOL_IMAGE_TAGS: dict[str, tuple[str, str]] = {
