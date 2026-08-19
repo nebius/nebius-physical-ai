@@ -18,6 +18,7 @@ Nebius Physical AI.
 | [../npa/workflows/workbench/npa-workflows/README.md](../npa/workflows/workbench/npa-workflows/README.md) | **Workflow catalog** — find the right `npa.workflow` spec by what you want to do |
 | [architecture/solutions-model.md](architecture/solutions-model.md) | Platform model for adding and maintaining solutions |
 | [architecture/cli-namespaces.md](architecture/cli-namespaces.md) | CLI namespace conventions |
+| [architecture/antioch-integration-audit-20260819.md](architecture/antioch-integration-audit-20260819.md) | Audit of how to integrate the Antioch hosted simulation platform with Workbench — overlap map, integration tiers, hard constraints, and open questions |
 | [cluster-backends.md](cluster-backends.md) | Shared Managed Kubernetes and soperator backend architecture, fleet specs, state ownership, and safe teardown |
 | [quickstart.md](quickstart.md) | Full `npa` CLI quickstart (macOS, Linux, WSL2 install blocks) |
 | [cli/README.md](cli/README.md) | CLI command reference index |

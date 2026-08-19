@@ -125,6 +125,10 @@ cross-tool reference architectures. Most are engine-agnostic:
 | Rerun | SDK/viewer/data stack for multimodal robotics data |
 | Antioch | Insufficient credible public evidence in this pass |
 
+The Antioch row was reassessed on 2026-08-19 against a now-public product
+surface; see
+[antioch-integration-audit-20260819.md](antioch-integration-audit-20260819.md).
+
 Partner implication: use Argo to compose containers, services, and APIs without
 forcing each partner into a Ray programming model.
 
