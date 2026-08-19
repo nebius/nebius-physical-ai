@@ -111,6 +111,15 @@ redirects, so redirects must be followed). `batch-generate` reads that file and
 reports it, and also surfaces `request_counts` (`total`, `completed`, `failed`,
 `invalid`) as the only genuine progress signal a pending batch offers.
 
+**Distinguish a degraded platform from your own bug.** A batch that is accepted,
+reports `in_progress`, and holds `completed: 0` for hours is usually not your
+job's fault. Batch execution has been observed unavailable platform-wide while
+submissions were still accepted through the datasets/operations route. The
+cheapest way to tell: `POST /v1/batches` (the OpenAI-compatible submit) returned
+`403 Creating new batch job is temporarily unavailable` during exactly such a
+window. If you see that, stop debugging your spec, cancel what you queued
+(`POST /batches/{id}/cancel`), and use `generate` until batch recovers.
+
 **Physical-AI reasoning over a scene** — default model
 `nvidia/Cosmos3-Super-Reasoner`. Point it at scene images and ask what a robot
 should do:

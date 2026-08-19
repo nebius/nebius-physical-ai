@@ -182,6 +182,11 @@ in the batch record's error file, and `batch-generate` reads it and reports it
 verbatim, so a rejected model produces a message naming the model and the reason
 rather than an empty failure.
 
+A batch that is accepted and then sits at `completed: 0` for hours is usually a
+degraded platform rather than a bad job — batch execution has been observed
+unavailable while submissions were still accepted. Cancel what you queued and
+fall back to `generate` until it recovers.
+
 The request and response datasets Token Factory creates server-side are scratch
 state: they are deleted once results are collected, unless `--keep-datasets` is
 passed. A `--no-wait` run deliberately leaves its request dataset in place,
