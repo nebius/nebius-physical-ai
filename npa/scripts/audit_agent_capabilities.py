@@ -2,26 +2,41 @@
 """Audit which agent-backend capabilities are real on the code under test.
 
 Renders the exact ``backend.py`` that ``npa agent bootstrap`` installs, runs it
-in-process against a sandbox state root, and exercises every registered route
-plus the grounded chat router. The report separates capabilities that answer
-from ones that only exist as a route, so "the agent supports X" can be checked
-instead of assumed.
+against a sandbox state root, and exercises every registered route plus the
+grounded chat router. The report separates capabilities that answer from ones
+that only exist as a route, so "the agent supports X" can be checked instead of
+assumed.
 
-Zero-cost and offline by default: no Token Factory call, no cluster, no VM. Any
-route that needs cloud credentials is reported as its real outcome rather than
-being skipped, because "this needs credentials" is itself an audit finding.
+Two tiers, same probes:
+
+* in-process (default) drives the ASGI app directly -- fastest, no ports;
+* ``--serve-live`` starts ``uvicorn backend:app`` from the rendered runtime
+  directory with the same arguments as the deployed ``npa-agent-backend``
+  systemd unit and probes it over real HTTP on loopback. This catches what
+  in-process probing cannot: import-time and lifespan failures under the real
+  server, and any route that only works because the test client bypasses it.
+
+Zero-cost and offline in both tiers: no Token Factory call, no cluster, no VM,
+no public port. Any route that needs cloud credentials is reported as its real
+outcome rather than being skipped, because "this needs credentials" is itself an
+audit finding.
 
 Usage:
     npa/.venv/bin/python npa/scripts/audit_agent_capabilities.py [--json out.json]
+    npa/.venv/bin/python npa/scripts/audit_agent_capabilities.py --serve-live
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import re
+import socket
+import subprocess
 import sys
 import tempfile
+import time
 import traceback
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -96,11 +111,14 @@ def render_backend_body() -> str:
     return match.group("body")
 
 
-def load_backend_app(body: str, sandbox: Path) -> Any:
-    """Exec the rendered backend against a sandbox state root and return its app."""
+def materialize_runtime(body: str, sandbox: Path) -> str:
+    """Lay out the sandbox the way ``/opt/npa-agent`` looks on a deployed VM.
 
-    # The rendered backend hardcodes /opt/npa-agent. Redirect it so the audit
-    # never touches a real deployment's state on a shared machine.
+    Returns the sandboxed backend source. The rendered backend hardcodes
+    ``/opt/npa-agent``; redirecting it is what keeps the audit from touching a
+    real deployment's state on a shared machine.
+    """
+
     sandboxed = body.replace(SANDBOX_MARKER, str(sandbox))
     for child in ("recordings", "runs", "reports", "retrieval", "trace", "foxglove"):
         (sandbox / child).mkdir(parents=True, exist_ok=True)
@@ -114,6 +132,14 @@ def load_backend_app(body: str, sandbox: Path) -> Any:
     link = sandbox / "agent_backend"
     if not link.exists():
         link.symlink_to(shipped_root, target_is_directory=True)
+    (sandbox / "backend.py").write_text(sandboxed, encoding="utf-8")
+    return sandboxed
+
+
+def load_backend_app(body: str, sandbox: Path) -> Any:
+    """Exec the rendered backend against a sandbox state root and return its app."""
+
+    sandboxed = materialize_runtime(body, sandbox)
     if str(sandbox) not in sys.path:
         sys.path.insert(0, str(sandbox))
 
@@ -129,6 +155,87 @@ def load_backend_app(body: str, sandbox: Path) -> Any:
     return app, module.__dict__
 
 
+def _free_loopback_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+@contextlib.contextmanager
+def serve_live(sandbox: Path, *, timeout: float = 90.0):
+    """Run the rendered backend under uvicorn as the systemd unit does.
+
+    Yields an ``httpx.Client`` bound to the loopback port. The argument list
+    mirrors ``ExecStart`` of ``npa-agent-backend.service`` so a flag that breaks
+    the real service also breaks here. Binding to 127.0.0.1 keeps the audit off
+    the network on a shared machine.
+    """
+
+    import httpx
+
+    port = _free_loopback_port()
+    log_path = sandbox / "uvicorn.log"
+    argv = [
+        sys.executable,
+        "-m",
+        "uvicorn",
+        "backend:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+        "--log-level",
+        "warning",
+        "--no-access-log",
+        "--ws",
+        "websockets",
+        "--ws-max-size",
+        "4194304",
+        "--ws-max-queue",
+        "4",
+        "--ws-ping-interval",
+        "10",
+        "--ws-ping-timeout",
+        "10",
+        "--ws-per-message-deflate",
+        "false",
+    ]
+    with log_path.open("wb") as log_file:
+        process = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
+            argv, cwd=str(sandbox), stdout=log_file, stderr=subprocess.STDOUT
+        )
+        client = httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=30.0)
+        try:
+            deadline = time.monotonic() + timeout
+            while True:
+                if process.poll() is not None:
+                    raise SystemExit(
+                        "uvicorn exited before serving; log:\n"
+                        + log_path.read_text(encoding="utf-8", errors="replace")[-4000:]
+                    )
+                try:
+                    client.get("/health")
+                    break
+                except Exception:  # noqa: BLE001 - not up yet
+                    if time.monotonic() >= deadline:
+                        raise SystemExit(
+                            f"uvicorn did not answer /health within {timeout:.0f}s; log:\n"
+                            + log_path.read_text(encoding="utf-8", errors="replace")[
+                                -4000:
+                            ]
+                        ) from None
+                    time.sleep(0.5)
+            yield client
+        finally:
+            client.close()
+            process.terminate()
+            try:
+                process.wait(timeout=20)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=10)
+
+
 def iter_routes(app: Any) -> list[tuple[str, str]]:
     routes: list[tuple[str, str]] = []
     for route in app.routes:
@@ -140,40 +247,37 @@ def iter_routes(app: Any) -> list[tuple[str, str]]:
     return sorted(set(routes))
 
 
-def probe_routes(app: Any) -> list[dict[str, Any]]:
+def probe_routes(client: Any, routes: list[tuple[str, str]]) -> list[dict[str, Any]]:
     """GET every parameterless read route and record its real outcome."""
 
-    from fastapi.testclient import TestClient
-
     results: list[dict[str, Any]] = []
-    with TestClient(app, raise_server_exceptions=False) as client:
-        for method, path in iter_routes(app):
-            if method != "GET" or "{" in path:
-                continue
-            entry: dict[str, Any] = {"method": method, "path": path}
+    for method, path in routes:
+        if method != "GET" or "{" in path:
+            continue
+        entry: dict[str, Any] = {"method": method, "path": path}
+        try:
+            response = client.get(path)
+            entry["status"] = response.status_code
             try:
-                response = client.get(path)
-                entry["status"] = response.status_code
-                try:
-                    payload = response.json()
-                except ValueError:
-                    payload = None
-                if isinstance(payload, dict):
-                    entry["keys"] = sorted(payload.keys())[:12]
-                    # The FastAPI error text says *why* a route declined, which
-                    # is the difference between "needs an argument" and "this
-                    # deployment is missing a dependency".
-                    if "detail" in payload:
-                        entry["detail"] = str(payload["detail"])[:200]
-                    # Namespace body signals so a payload `status` cannot be
-                    # mistaken for the HTTP status this probe recorded.
-                    for signal in ("ok", "error", "status", "scope", "grounded"):
-                        if signal in payload:
-                            entry[f"body_{signal}"] = payload[signal]
-            except Exception as exc:  # noqa: BLE001 - the failure is the finding
-                entry["status"] = "exception"
-                entry["error"] = f"{type(exc).__name__}: {exc}"
-            results.append(entry)
+                payload = response.json()
+            except ValueError:
+                payload = None
+            if isinstance(payload, dict):
+                entry["keys"] = sorted(payload.keys())[:12]
+                # The FastAPI error text says *why* a route declined, which
+                # is the difference between "needs an argument" and "this
+                # deployment is missing a dependency".
+                if "detail" in payload:
+                    entry["detail"] = str(payload["detail"])[:200]
+                # Namespace body signals so a payload `status` cannot be
+                # mistaken for the HTTP status this probe recorded.
+                for signal in ("ok", "error", "status", "scope", "grounded"):
+                    if signal in payload:
+                        entry[f"body_{signal}"] = payload[signal]
+        except Exception as exc:  # noqa: BLE001 - the failure is the finding
+            entry["status"] = "exception"
+            entry["error"] = f"{type(exc).__name__}: {exc}"
+        results.append(entry)
     return results
 
 
@@ -218,7 +322,7 @@ CHAT_PROBES: tuple[tuple[str, str], ...] = (
 )
 
 
-def probe_capabilities(app: Any) -> list[dict[str, Any]]:
+def probe_capabilities(client: Any) -> list[dict[str, Any]]:
     """Exercise the advertised capabilities end to end, not just their routes.
 
     A registered route proves nothing about whether the capability works. Each
@@ -227,8 +331,6 @@ def probe_capabilities(app: Any) -> list[dict[str, Any]]:
     reachability check. Anything requiring Token Factory is deliberately absent:
     it would cost tokens and turn the audit into a network test.
     """
-
-    from fastapi.testclient import TestClient
 
     probes: list[dict[str, Any]] = []
 
@@ -243,152 +345,148 @@ def probe_capabilities(app: Any) -> list[dict[str, Any]]:
             )
         probes.append(entry)
 
-    with TestClient(app, raise_server_exceptions=False) as client:
-
-        def grounded_chat():
-            response = client.post(
-                "/chat",
-                json={
-                    "messages": [
-                        {"role": "user", "content": "what is the current sim2real status"}
-                    ]
-                },
-            )
-            body = response.json() if response.status_code == 200 else {}
-            grounded = bool(body.get("grounded"))
-            apis = body.get("apis_used") or []
-            return (
-                response.status_code,
-                f"grounded={grounded} apis_used={apis} reply_chars={len(str(body.get('reply') or ''))}",
-                response.status_code == 200 and grounded and bool(apis),
-            )
-
-        record(
-            "grounded chat (zero tokens)",
-            "200, grounded=true, non-empty apis_used, no model call",
-            grounded_chat,
+    def grounded_chat():
+        response = client.post(
+            "/chat",
+            json={
+                "messages": [
+                    {"role": "user", "content": "what is the current sim2real status"}
+                ]
+            },
+        )
+        body = response.json() if response.status_code == 200 else {}
+        grounded = bool(body.get("grounded"))
+        apis = body.get("apis_used") or []
+        return (
+            response.status_code,
+            f"grounded={grounded} apis_used={apis} reply_chars={len(str(body.get('reply') or ''))}",
+            response.status_code == 200 and grounded and bool(apis),
         )
 
-        def retrieval_corpus_discovery():
-            # Indexing for real needs a Token Factory embedding call, so assert
-            # the invariant that costs nothing and matters most: the corpus
-            # scanner reports an empty corpus honestly instead of claiming a
-            # successful index over zero documents.
-            with tempfile.TemporaryDirectory(prefix="npa-audit-corpus-") as empty:
-                response = client.post(
-                    "/agent/retrieval/index", json={"roots": [empty]}
-                )
-            body = response.json() if response.status_code == 200 else {}
-            declined = body.get("ok") is False and "no corpus documents" in str(
-                body.get("error", "")
-            )
-            return (
-                response.status_code,
-                f"empty_corpus_declined={declined}",
-                declined,
-            )
+    record(
+        "grounded chat (zero tokens)",
+        "200, grounded=true, non-empty apis_used, no model call",
+        grounded_chat,
+    )
 
-        record(
-            "retrieval corpus discovery",
-            "an empty corpus is refused, never reported as a successful index",
-            retrieval_corpus_discovery,
+    def retrieval_corpus_discovery():
+        # Indexing for real needs a Token Factory embedding call, so assert
+        # the invariant that costs nothing and matters most: the corpus
+        # scanner reports an empty corpus honestly instead of claiming a
+        # successful index over zero documents.
+        with tempfile.TemporaryDirectory(prefix="npa-audit-corpus-") as empty:
+            response = client.post("/agent/retrieval/index", json={"roots": [empty]})
+        body = response.json() if response.status_code == 200 else {}
+        declined = body.get("ok") is False and "no corpus documents" in str(
+            body.get("error", "")
+        )
+        return (
+            response.status_code,
+            f"empty_corpus_declined={declined}",
+            declined,
         )
 
-        def memory_roundtrip():
-            record_response = client.post(
-                "/agent/memory/record",
-                json={"run_id": "audit-run", "metrics": {"success_rate": 0.5}},
-            )
-            listing = client.get("/agent/memory/runs")
-            body = listing.json() if listing.status_code == 200 else {}
-            runs = body.get("runs") or []
-            return (
-                f"record={record_response.status_code} list={listing.status_code}",
-                f"runs={len(runs)}",
-                listing.status_code == 200,
-            )
+    record(
+        "retrieval corpus discovery",
+        "an empty corpus is refused, never reported as a successful index",
+        retrieval_corpus_discovery,
+    )
 
-        record(
-            "run memory record + list",
-            "a recorded run is listed back",
-            memory_roundtrip,
+    def memory_roundtrip():
+        record_response = client.post(
+            "/agent/memory/record",
+            json={"run_id": "audit-run", "metrics": {"success_rate": 0.5}},
+        )
+        listing = client.get("/agent/memory/runs")
+        body = listing.json() if listing.status_code == 200 else {}
+        runs = body.get("runs") or []
+        return (
+            f"record={record_response.status_code} list={listing.status_code}",
+            f"runs={len(runs)}",
+            listing.status_code == 200,
         )
 
-        def trace_analyze():
-            response = client.post("/agent/trace/analyze", json={"spans": []})
-            return (
-                response.status_code,
-                str(response.json())[:120],
-                response.status_code < 500,
-            )
+    record(
+        "run memory record + list",
+        "a recorded run is listed back",
+        memory_roundtrip,
+    )
 
-        record(
-            "trace analyze",
-            "analyzes spans without a tracer backend installed",
-            trace_analyze,
+    def trace_analyze():
+        response = client.post("/agent/trace/analyze", json={"spans": []})
+        return (
+            response.status_code,
+            str(response.json())[:120],
+            response.status_code < 500,
         )
 
-        def action_loop_requires_a_goal():
-            missing = client.post("/agent/act", json={})
-            detail = str((missing.json() or {}).get("detail", ""))
-            return (
-                missing.status_code,
-                f"detail={detail!r}",
-                missing.status_code == 400 and "goal" in detail,
-            )
+    record(
+        "trace analyze",
+        "analyzes spans without a tracer backend installed",
+        trace_analyze,
+    )
 
-        record(
-            "bounded action loop contract",
-            "refuses a goal-less request instead of planning against nothing",
-            action_loop_requires_a_goal,
+    def action_loop_requires_a_goal():
+        missing = client.post("/agent/act", json={})
+        detail = str((missing.json() or {}).get("detail", ""))
+        return (
+            missing.status_code,
+            f"detail={detail!r}",
+            missing.status_code == 400 and "goal" in detail,
         )
 
-        def chat_workflow_authoring():
-            # Chat emits YAML only after validation *and* planning succeed, so
-            # without a staged bucket/accelerator the correct outcome is a named
-            # placeholder refusal. Either branch is a pass; emitting YAML that
-            # does not validate is the failure this guards.
-            chat = client.post(
-                "/chat",
-                json={
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": (
-                                "create 2-step sim2real workflow with 5000 "
-                                "environments, seed 9, an RTX PRO 6000 "
-                                "accelerator, and 1 GPU"
-                            ),
-                        }
-                    ]
-                },
-            )
-            body = chat.json() if chat.status_code == 200 else {}
-            yaml_text = str(body.get("workflow_yaml") or "")
-            reply = str(body.get("reply") or "")
-            if not yaml_text:
-                refused = "could not generate runnable workflow yaml" in reply.lower()
-                named = "placeholder" in reply.lower() or "configure-" in reply
-                return (
-                    chat.status_code,
-                    f"declined_with_reason={refused and named}",
-                    refused and named,
-                )
-            validate = client.post("/workflows/validate", json={"yaml": yaml_text})
-            result = validate.json() if validate.status_code == 200 else {}
-            return (
-                f"chat={chat.status_code} validate={validate.status_code}",
-                f"yaml_chars={len(yaml_text)} validate_ok={result.get('ok')} "
-                f"runnable={result.get('runnable')}",
-                bool(result.get("ok")),
-            )
+    record(
+        "bounded action loop contract",
+        "refuses a goal-less request instead of planning against nothing",
+        action_loop_requires_a_goal,
+    )
 
-        record(
-            "chat workflow authoring",
-            "emits YAML only when it validates and plans; otherwise names the "
-            "unresolved placeholders",
-            chat_workflow_authoring,
+    def chat_workflow_authoring():
+        # Chat emits YAML only after validation *and* planning succeed, so
+        # without a staged bucket/accelerator the correct outcome is a named
+        # placeholder refusal. Either branch is a pass; emitting YAML that
+        # does not validate is the failure this guards.
+        chat = client.post(
+            "/chat",
+            json={
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": (
+                            "create 2-step sim2real workflow with 5000 "
+                            "environments, seed 9, an RTX PRO 6000 "
+                            "accelerator, and 1 GPU"
+                        ),
+                    }
+                ]
+            },
         )
+        body = chat.json() if chat.status_code == 200 else {}
+        yaml_text = str(body.get("workflow_yaml") or "")
+        reply = str(body.get("reply") or "")
+        if not yaml_text:
+            refused = "could not generate runnable workflow yaml" in reply.lower()
+            named = "placeholder" in reply.lower() or "configure-" in reply
+            return (
+                chat.status_code,
+                f"declined_with_reason={refused and named}",
+                refused and named,
+            )
+        validate = client.post("/workflows/validate", json={"yaml": yaml_text})
+        result = validate.json() if validate.status_code == 200 else {}
+        return (
+            f"chat={chat.status_code} validate={validate.status_code}",
+            f"yaml_chars={len(yaml_text)} validate_ok={result.get('ok')} "
+            f"runnable={result.get('runnable')}",
+            bool(result.get("ok")),
+        )
+
+    record(
+        "chat workflow authoring",
+        "emits YAML only when it validates and plans; otherwise names the "
+        "unresolved placeholders",
+        chat_workflow_authoring,
+    )
 
     return probes
 
@@ -459,9 +557,19 @@ def probe_chat_router() -> list[dict[str, Any]]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", dest="json_path", default="", help="Write the report as JSON.")
+    parser.add_argument(
+        "--serve-live",
+        action="store_true",
+        help=(
+            "Probe a real uvicorn process on loopback, started with the same "
+            "arguments as the deployed npa-agent-backend systemd unit, instead "
+            "of driving the ASGI app in-process."
+        ),
+    )
     args = parser.parse_args()
 
     report: dict[str, Any] = {"apiVersion": "npa.agent.capability-audit/v1"}
+    report["tier"] = "served-uvicorn-loopback" if args.serve_live else "in-process-asgi"
 
     body = render_backend_body()
     report["backend_render"] = {
@@ -471,6 +579,8 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="npa-agent-audit-") as tmp:
         sandbox = Path(tmp)
+        # Route enumeration needs the app object either way; it only reads the
+        # routing table, so it stays valid for the served tier too.
         app, _globals = load_backend_app(body, sandbox)
         routes = iter_routes(app)
         report["routes"] = {
@@ -480,8 +590,22 @@ def main() -> int:
             ),
             "all": [f"{method} {path}" for method, path in routes],
         }
-        report["route_probes"] = probe_routes(app)
-        report["capability_probes"] = probe_capabilities(app)
+
+        if args.serve_live:
+            # A separate root keeps the served process's state off the one the
+            # in-process import already touched.
+            served = Path(tmp) / "served"
+            served.mkdir()
+            materialize_runtime(body, served)
+            with serve_live(served) as client:
+                report["route_probes"] = probe_routes(client, routes)
+                report["capability_probes"] = probe_capabilities(client)
+        else:
+            from fastapi.testclient import TestClient
+
+            with TestClient(app, raise_server_exceptions=False) as client:
+                report["route_probes"] = probe_routes(client, routes)
+                report["capability_probes"] = probe_capabilities(client)
 
     report["chat_probes"] = probe_chat_router()
 
@@ -492,6 +616,7 @@ def main() -> int:
     for probe in probes:
         counts[probe["outcome"]] = counts.get(probe["outcome"], 0) + 1
     report["summary"] = {
+        "tier": report["tier"],
         "routes_total": report["routes"]["total"],
         "routes_probed": len(probes),
         "route_outcomes": dict(sorted(counts.items())),
