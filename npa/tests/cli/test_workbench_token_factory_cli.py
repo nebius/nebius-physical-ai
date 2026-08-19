@@ -7,6 +7,7 @@ import httpx
 from PIL import Image
 from typer.testing import CliRunner
 
+import npa.cli.workbench.token_factory as cli_token_factory
 from npa.cli.main import app
 from npa.clients.token_factory import TokenFactoryClient, resolve_config
 import npa.workbench.token_factory as tool
@@ -196,7 +197,7 @@ def test_token_factory_batch_generate_no_wait_writes_operation_handle(
 ) -> None:
     output = tmp_path / "batch"
     monkeypatch.setattr(
-        tool,
+        cli_token_factory,
         "batch_generate",
         lambda **kwargs: _batch_result(
             "pending",
@@ -237,7 +238,7 @@ def test_token_factory_batch_generate_completed_writes_generations(
 ) -> None:
     output = tmp_path / "batch"
     monkeypatch.setattr(
-        tool,
+        cli_token_factory,
         "batch_generate",
         lambda **kwargs: _batch_result(
             "completed",
@@ -274,7 +275,7 @@ def test_token_factory_batch_status_reports_failure_as_exit_one(monkeypatch, tmp
     def _raise(**kwargs):
         raise tool.TokenFactoryToolError("model 'x' is not enabled for batch inference")
 
-    monkeypatch.setattr(tool, "batch_collect", _raise)
+    monkeypatch.setattr(cli_token_factory, "batch_collect", _raise)
 
     result = runner.invoke(
         app,
