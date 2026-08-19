@@ -25,6 +25,7 @@ from npa.clients.token_factory import (
 )
 from npa.workbench.token_factory import (
     DEFAULT_CAPTION_INSTRUCTION,
+    BatchResult,
     DEFAULT_GENERATE_SYSTEM_PROMPT,
     DEFAULT_MAX_IMAGES,
     DEFAULT_MAX_TOKENS,
@@ -239,7 +240,7 @@ def batch_status_cmd(
     _emit(payload, output)
 
 
-def _batch_payload(result: Any, *, dry_run: bool) -> dict[str, Any]:
+def _batch_payload(result: BatchResult, *, dry_run: bool) -> dict[str, Any]:
     """Shape a BatchResult for output, writing whichever artifact it warrants.
 
     A completed run writes generations.jsonl; a pending one writes only the

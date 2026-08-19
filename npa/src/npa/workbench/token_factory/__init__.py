@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 import tempfile
-from typing import TYPE_CHECKING, Any, Iterator, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Iterator, Sequence
 from uuid import uuid4
 
 from PIL import Image
@@ -85,6 +85,10 @@ BATCH_DATASET_FOLDER = "/npa-batch"
 BATCH_CUSTOM_ID_COLUMN = "custom_id"
 BATCH_MESSAGES_COLUMN = "messages"
 IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".ppm", ".webp"}
+
+
+#: Callback invoked with each operation record while polling a batch.
+OperationObserver = Callable[[dict[str, Any]], None] | None
 
 
 class TokenFactoryToolError(ValueError):
@@ -353,7 +357,7 @@ def batch_generate(
     timeout_s: float = DEFAULT_BATCH_TIMEOUT_S,
     keep_datasets: bool = False,
     client: TokenFactoryClient | None = None,
-    on_poll: Any = None,
+    on_poll: OperationObserver = None,
 ) -> BatchResult:
     """Generate a completion for every prompt through Token Factory batch inference.
 
@@ -491,7 +495,7 @@ def batch_collect(
     timeout_s: float = DEFAULT_BATCH_TIMEOUT_S,
     keep_datasets: bool = False,
     client: TokenFactoryClient | None = None,
-    on_poll: Any = None,
+    on_poll: OperationObserver = None,
 ) -> BatchResult:
     """Collect the results of a batch operation started earlier.
 
@@ -561,7 +565,7 @@ def _await_and_collect(
     poll_interval_s: float,
     timeout_s: float,
     keep_datasets: bool,
-    on_poll: Any,
+    on_poll: OperationObserver,
 ) -> BatchResult:
     try:
         operation = client.wait_for_operation(
