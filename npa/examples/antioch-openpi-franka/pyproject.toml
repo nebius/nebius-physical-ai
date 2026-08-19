@@ -1,0 +1,5 @@
+[project]
+name = "npa-antioch-openpi-franka"
+version = "0.1.0"
+requires-python = ">=3.10,<3.13"
+dependencies = ["antioch-sim[isaac-lab]==0.3.47"]

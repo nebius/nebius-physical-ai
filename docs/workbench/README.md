@@ -13,6 +13,7 @@ workflows, and operational runbooks.
 | [model-weight-cache.md](model-weight-cache.md) | Durable cache for the model weights the images are not allowed to bake, so a second run is a cache hit |
 | [cosmos3-b200-checkpoint-evaluation-20260814.md](cosmos3-b200-checkpoint-evaluation-20260814.md) | Reserved-B200, 72-image Cosmos3 checkpoint evaluation and three-seed investment decision |
 | [leisaac-teleoperation.md](leisaac-teleoperation.md) | Capability-gated LeIsaac agent tab, RT-core launch, keyboard teleoperation, and cleanup |
+| [antioch-openpi-franka.md](antioch-openpi-franka.md) | Private RTX PRO 6000 Isaac/Antioch Franka camera bridge to a B200 OpenPI pi0.5-DROID policy service |
 | [../architecture/oss-onboarding-ladder.md](../architecture/oss-onboarding-ladder.md) | OSS → BYOF → workflow → first-class tool promotion ladder |
 | [npa-workflow-tool-catalog.md](npa-workflow-tool-catalog.md) | `toolRef` catalog for declarative `npa.workflow` specs |
 | [kubernetes.md](kubernetes.md) | User setup and operational checklist for running Workbench services and SkyPilot workflows on Kubernetes |

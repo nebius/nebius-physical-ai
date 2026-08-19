@@ -531,6 +531,25 @@
       "notes": "cu128 already carries sm_100, so a headless compute-only finetune variant may be reasonable ahead of full vendor alignment - validate compute-only first."
     },
     {
+      "name": "npa-antioch",
+      "dockerfile": "antioch/Dockerfile",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "smoke": "FastAPI service import, non-root runtime, and proprietary-payload image scan",
+      "notes": "CPU-only control-plane adapter. Antioch-managed simulation capacity is remote; this image contains no CUDA, simulator engine, Antioch wheel, credentials, or customer payloads."
+    },
+    {
+      "name": "npa-openpi-policy",
+      "dockerfile": "openpi-policy/Dockerfile",
+      "verdict": "ready",
+      "validation": "validated",
+      "torch": "JAX CUDA 12.8 runtime",
+      "torch_cuda_arch_list": "10.0",
+      "source_compiled_extensions": [],
+      "smoke": "native sm_100 CUDA probe plus real pi0.5-DROID server inference returning finite [15,8] actions from a verified runtime cache",
+      "notes": "Validated on a physical B200. The image contains no checkpoint or model credential; the pinned checkpoint is populated by a credential-scoped warmer and mounted read-only into the server. B200 is compute-only and never hosts the RTX rendering side."
+    },
+    {
       "name": "npa-fiftyone",
       "dockerfile": "fiftyone/Dockerfile",
       "verdict": "not-applicable",

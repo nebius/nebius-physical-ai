@@ -29,6 +29,8 @@ SONIC_IMAGE_MANIFEST_RESOURCE = "sonic_image_manifest.json"
 WAN_IMAGE_MANIFEST_RESOURCE = "wan2_2_image_manifest.json"
 
 CONTAINER_IMAGE_NAMES = {
+    "antioch": "npa-antioch",
+    "openpi-policy": "npa-openpi-policy",
     "lerobot": "npa-lerobot",
     "lerobot-policy": "npa-lerobot-policy",
     "genesis": "npa-genesis",
@@ -176,12 +178,16 @@ PUBLIC_REGISTRY_HOSTS = frozenset(
 )
 
 SUPPORTED_TOOL_VERSIONS = {
+    "antioch": "0.1.1-cli0.3.47-streaming-20260819-r1",
+    "openpi-policy": "pi05-polaris-runtime-cache-20260819-r9",
     # Default LeRobot image release. Selectable package versions and their
     # image tags live in lerobot_version_manifest.json.
     "lerobot": "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "lerobot-policy": "0.1.1",
     "genesis": "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
-    "isaac-lab": "2.3.2.post1",
+    # Additive clean-runtime-fetch release: Antioch/OpenPI bridge dependencies,
+    # distro FFmpeg, and no Isaac/Kit/Antioch/checkpoint bytes in image layers.
+    "isaac-lab": "2.3.2.post1-antioch-openpi-20260819-r15",
     "leisaac": "0.4.0-20260817T231825Z",
     "cosmos": "cu128-torch27-sm100-1.0.9-20260803T002017Z",
     "cosmos2-transfer": "2.5.1-skypilot-ready-20260801T053000Z",

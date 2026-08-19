@@ -363,6 +363,32 @@ def test_derived_bootstrap_contract_cannot_be_redirected_to_canonical_source() -
         _validate_derived_bootstrap_source("groot", entry)
 
 
+def test_isaac_lab_excludes_wheel_bundled_static_ffmpeg() -> None:
+    text = (WORKBENCH_DOCKER / "isaac-lab" / "Dockerfile").read_text(encoding="utf-8")
+    assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in text
+    assert "apt-get install -y --no-install-recommends ffmpeg" in text
+    assert "imageio_ffmpeg/binaries/ffmpeg*' -delete" in text
+    assert "THIRD_PARTY_NOTICES.md" in text
+
+
+def test_isaac_lab_build_separates_release_tag_from_runtime_version() -> None:
+    build = (WORKBENCH_DOCKER / "isaac-lab" / "build.sh").read_text(encoding="utf-8")
+
+    assert 'IMAGE_TAG="${IMAGE_TAG_OVERRIDE:-$VERSION}"' in build
+    assert 'ISAAC_LAB_RUNTIME_VERSION="$(sed -n' in build
+    assert '--build-arg "ISAAC_LAB_VERSION=${ISAAC_LAB_RUNTIME_VERSION}"' in build
+    assert '--build-arg "ISAAC_LAB_VERSION=${VERSION}"' not in build
+
+
+def test_isaac_lab_source_copy_uses_builder_portable_numeric_ownership() -> None:
+    dockerfile = (WORKBENCH_DOCKER / "isaac-lab" / "Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    assert "COPY --chown=ubuntu:ubuntu" not in dockerfile
+    for source in ("pyproject.toml", "src/npa", "workflows"):
+        assert f"COPY --chown=1000:1000 {source} " in dockerfile
+
+
 def test_fiftyone_image_has_skypilot_kubernetes_prerequisites() -> None:
     """The workflow image must survive SkyPilot's non-root pod bootstrap."""
     text = (WORKBENCH_DOCKER / "fiftyone" / "Dockerfile").read_text(encoding="utf-8")

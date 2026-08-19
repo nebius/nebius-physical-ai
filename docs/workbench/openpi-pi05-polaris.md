@@ -26,12 +26,14 @@ capability, compiled-kernel proof, timings, and available peak-memory counters.
   joint-position targets in radians; dimension 7 is the gripper target. They
   are not joint velocities.
 
-The checkpoint is fetched only after the workload starts, into ephemeral
-operator/project-controlled storage. It is never copied into the distributable
-image or uploaded with the inference evidence. Provenance includes a SHA-256
-over a canonical manifest of GCS object names, generations, sizes, MD5 values,
-and CRC32C values. The public GCS source is opened anonymously; the workload
-does not probe or require Google application credentials.
+The checkpoint and PaliGemma tokenizer are fetched only after the workload
+starts, into operator/project-controlled runtime storage. They are never copied
+into the distributable image or uploaded with inference evidence. Provenance
+includes a SHA-256 over the checkpoint's canonical manifest of GCS object names,
+generations, sizes, MD5 values, and CRC32C values, plus the tokenizer's exact GCS
+generation, size, MD5, and CRC32C. The public GCS sources are opened
+anonymously; the workload does not probe or require Google application
+credentials.
 
 OpenPI source is Apache-2.0. The CUDA base/runtime retains NVIDIA's upstream
 license terms. This BYOF result stays in the operator's private project registry
@@ -92,6 +94,12 @@ from a private in-cluster diagnostic endpoint—not pod-log access.
 
 A robot consumer should execute about five position targets at 15 Hz, observe
 again, and re-query the policy.
+
+The production consumer for that contract is the
+[Antioch / Isaac Sim Franka bridge](antioch-openpi-franka.md). It places the
+renderer on RTX PRO 6000, retains this B200 service and wire protocol, and
+fails to no-action on timeout, reconnect exhaustion, malformed responses, or
+unsafe absolute targets.
 
 ## Tiny training and held-out evaluation contract
 

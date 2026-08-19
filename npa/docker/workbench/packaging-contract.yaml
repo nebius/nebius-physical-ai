@@ -134,6 +134,25 @@ redistribution:
 
 # Relative to npa/docker/workbench/
 images:
+  antioch:
+    dockerfile: antioch/Dockerfile
+    tier: service
+    ports: [8789]
+    redistribution: public
+    notes: >-
+      CPU-only control-plane wrapper. The proprietary antioch-sim CLI and all
+      operator credentials are runtime-only in mounted volumes; neither is baked.
+  openpi-policy:
+    dockerfile: openpi-policy/Dockerfile
+    tier: service
+    ports: [8000]
+    redistribution: public
+    notes: >-
+      Immutable Apache-2.0 OpenPI source and lock-resolved dependencies only.
+      The pi0.5-DROID/Gemma-derived checkpoint is fetched at runtime by a run-scoped cache
+      warmer, verified against the pinned GCS object-generation manifest, and
+      mounted read-only into the server. Built-image layer, credential, model,
+      and cache scans are mandatory before publication.
   lerobot:
     dockerfile: lerobot/Dockerfile
     tier: service
@@ -329,6 +348,12 @@ images:
     isaac_runtime_fetch: true
     tier: interactive
     redistribution: public
+    notes: >-
+      Also carries the OSS Antioch-compatible OpenPI Franka bridge and its
+      MessagePack/WebSocket client. Isaac/Omniverse, Antioch SDK, OpenPI weights,
+      runtime caches, and credentials remain absent from built layers. The
+      imageio-ffmpeg wrapper uses distro FFmpeg; its wheel-bundled static
+      executable is removed in the installation layer and guarded from returning.
   leisaac:
     dockerfile: leisaac/Dockerfile
     isaac_runtime_fetch: true

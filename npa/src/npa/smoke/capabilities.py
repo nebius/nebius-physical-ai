@@ -9,6 +9,17 @@ from __future__ import annotations
 
 # Each value is an ordered list of concrete checks the golden eval runs.
 GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
+    "antioch": [
+        "FastAPI service authentication boundary",
+        "CPU-only system-info contract",
+        "proprietary antioch-sim distribution absent",
+    ],
+    "openpi-policy": [
+        "native sm_100 CUDA probe on B200",
+        "verified read-only pi0.5-DROID runtime cache",
+        "healthy private policy server",
+        "real inference returns finite [15,8] actions",
+    ],
     "base-cuda13-b300": [
         "torch import + CUDA device available",
         "flash_attn import (Blackwell/CUDA13 stack)",
@@ -50,6 +61,7 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "headless runtime launch",
         "manipulation env create",
         "env step loop",
+        "Antioch-compatible two-camera Franka to OpenPI position-target bridge",
     ],
     "leisaac": [
         "real LeIsaac-SO101-PickOrange-v0 environment starts",

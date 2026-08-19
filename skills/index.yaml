@@ -29,6 +29,28 @@ licenses:
     applies_to:
       - physical-ai-data-factory
 skills:
+  - name: antioch
+    category: tools
+    when_to_use: "Deploy, operate, debug, or compose Antioch simulation, strict offline policy-data collection, or the RTX Isaac-to-B200 OpenPI Franka bridge."
+    path: skills/tools/antioch/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "antioch", "run", "--help"]
+        contains: "input-path"
+      - type: cli_help
+        args: ["workbench", "antioch", "openpi-stack", "--help"]
+        contains: "policy-image"
+      - type: npa_workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/antioch-offline-policy-train.yaml
+      - type: file_exists
+        path: skills/tools/antioch/references/authentication-and-lifecycle.md
+      - type: file_exists
+        path: skills/tools/antioch/references/openpi-franka-operation.md
+      - type: file_exists
+        path: skills/tools/antioch/references/release-and-recovery.md
+      - type: file_exists
+        path: skills/tools/antioch/references/contracts.yaml
   - name: agent-development
     category: atomic
     when_to_use: "Build, enhance, or test the NPA chat agent backend: grounded-first routing, cost-aware Token Factory model selection, the embedded-backend mechanism, and cheap-token test tiers."

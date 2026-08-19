@@ -55,6 +55,8 @@ EXCUSED: dict[str, str] = {
     "NPA_ISAAC_CACHE_DIR": "Isaac wheel closure (warm-isaac-cache.yaml)",
     "NPA_LTX_RUNTIME_CACHE": "CUDA wheel closure",
     "NPA_WAN_RUNTIME_CACHE": "CUDA wheel closure",
+    "NPA_ANTIOCH_RUNTIME_CACHE": "runtime-fetched Antioch CLI dependency closure",
+    "JAX_COMPILATION_CACHE_DIR": "generated JAX compilation artifacts, not weights",
     # Per-tool data mounts that the VM deploy already bind-mounts from the host,
     # so they outlive the container by their own mechanism.
     "COSMOS_DATA_HOME": "host-mounted data dir (deploy_cosmos)",
@@ -120,6 +122,7 @@ EXCUSED_EMPTY_DIRS = {
     "openpi-cache": "fallback when no durable cache is configured; redirected when one is",
     "leisaac-cache": "fallback when no durable cache is configured; redirected when one is",
     "isaac-cache": "Isaac wheel closure; warm-isaac-cache.yaml is its shared volume",
+    "runtime-cache": "Antioch CLI dependency closure, not model weights",
     "tmp": "scratch space",
     "shm": "/dev/shm, sized for the renderer",
 }

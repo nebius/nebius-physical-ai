@@ -66,6 +66,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     OMNI_LOG_DIR=/tmp/isaac-sim-cache/logs \
     XDG_RUNTIME_DIR=/tmp/xdg-runtime \
     NVIDIA_DRIVER_CAPABILITIES=all \
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/opt/npa/src
 
@@ -77,9 +78,12 @@ COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh \
     /usr/local/bin/npa-workflow-entrypoint
 COPY docker/workbench/isaac-lab/smoke_env.py /opt/npa/docker/workbench/isaac-lab/smoke_env.py
 COPY docker/workbench/isaac-lab/smoke_functional.py /opt/npa/docker/workbench/isaac-lab/smoke_functional.py
-COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
-COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
-COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
+COPY docker/workbench/isaac-lab/THIRD_PARTY_NOTICES.md /opt/npa/licenses/isaac-lab/THIRD_PARTY_NOTICES.md
+# Numeric ownership is portable across BuildKit and rootless/Kubernetes-native
+# builders, which may snapshot before resolving the base image's passwd names.
+COPY --chown=1000:1000 pyproject.toml /opt/npa/pyproject.toml
+COPY --chown=1000:1000 src/npa /opt/npa/src/npa
+COPY --chown=1000:1000 workflows /opt/npa/workflows
 
 # Prepared checkouts can materialize scripts as 0700 and data files as 0600.
 # Normalize this copied bootstrap directory before executing any of its scripts.
@@ -96,7 +100,16 @@ RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && NPA_RUNTIME_USER="${NPA_RUNTIME_USER}" \
        NPA_ISAAC_VENV=/opt/npa/sim/venv \
-       /opt/npa/docker/workbench/common/install_isaac_runtime_base.sh
+       /opt/npa/docker/workbench/common/install_isaac_runtime_base.sh \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/* \
+    && find /opt/npa/sim/venv -type f \
+      -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
+    && test -z "$(find /opt/npa/sim/venv -type f \
+      -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
+    && IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg /opt/npa/sim/venv/bin/python -c \
+      'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"'
 
 COPY --chmod=0755 docker/workbench/isaac-lab/npa_cli.sh /usr/local/bin/npa
 
@@ -122,7 +135,16 @@ RUN find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
     && /opt/npa/sim/venv/bin/python -c \
       "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-exact-source.pth').write_text('/opt/npa/src\\n', encoding='utf-8')" \
     && env -u PYTHONPATH /opt/npa/sim/venv/bin/python -c \
-      'import boto3, kubernetes, mcap, npa.workflows.sim2real.runtime_attestation'
+      'import boto3, kubernetes, mcap; import npa.workbench.antioch.openpi_bridge; import npa.workbench.antioch.openpi_isaac; import npa.workbench.antioch.openpi_streaming; import npa.workflows.sim2real.runtime_attestation'
+
+# The CUDA development base carries profiler tooling and kernel headers that this
+# runtime-fetch image does not use.  Keeping them would retain fixed CRITICAL findings
+# in the public artifact.  OpenSSH's package install also generates host private keys;
+# those are machine identity and must be created in the writable container layer at
+# runtime, never shared by every pull of an immutable image.
+RUN rm -rf /opt/nvidia/nsight-compute \
+    && dpkg --purge --force-depends linux-libc-dev \
+    && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub
 
 RUN /opt/npa/sim/venv/bin/python -m \
       npa.workflows.sim2real.install_isaac_runtime /opt/npa/isaac-runtime \

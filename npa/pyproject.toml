@@ -25,6 +25,11 @@ dependencies = [
     # depends on click, so it must be declared here.
     "click>=8.0",
     "httpx>=0.27",
+    # OpenPI's supported cross-process protocol is MessagePack over WebSocket.
+    # Keep both direct dependencies explicit: kubernetes also happens to depend
+    # on websocket-client, but the Franka bridge must not rely on that accident.
+    "msgpack==1.1.2",
+    "websocket-client==1.9.0",
     "paramiko>=4.0",
     "pyyaml>=6.0",
     "rich>=13.0",
@@ -154,12 +159,14 @@ dev = [
 npa = "npa.cli.entry:main"
 
 [tool.npa.supported-tools]
+antioch = "0.1.1-cli0.3.47-streaming-20260819-r1"
+openpi-policy = "pi05-polaris-runtime-cache-20260819-r9"
 # Default LeRobot image release. Selectable package versions and their image tags
 # live in npa/src/npa/deploy/lerobot_version_manifest.json (0.5.1 + 0.6.0).
 lerobot = "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 lerobot-policy = "0.1.1"
 genesis = "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
-isaac-lab = "2.3.2.post1"
+isaac-lab = "2.3.2.post1-antioch-openpi-20260819-r15"
 leisaac = "0.4.0-20260817T231825Z"
 cosmos = "cu128-torch27-sm100-1.0.9-20260803T002017Z"
 cosmos2-transfer = "2.5.1-skypilot-ready-20260801T053000Z"

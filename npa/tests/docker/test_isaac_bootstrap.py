@@ -256,9 +256,7 @@ def test_refusal_links_the_terms_the_operator_is_accepting(tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize("value", ["Y", "YES", "yes", "y", "1", "true"])
-def test_bootstrap_migrates_affirmative_values(
-    tmp_path: Path, value: str
-) -> None:
+def test_bootstrap_migrates_affirmative_values(tmp_path: Path, value: str) -> None:
     harness = Harness(tmp_path)
     result = harness.run("ensure", ACCEPT_EULA=value)
     assert result.returncode == 0, result.stderr
@@ -649,7 +647,10 @@ def test_isaac_image_installs_a_cli_for_skypilot_setup() -> None:
 
     assert "npa_cli.sh /usr/local/bin/npa" in dockerfile
     assert "env -u PYTHONPATH python3 -c 'import npa'" in dockerfile
-    assert 'exec "${NPA_BAKED_PYTHON:-/opt/npa/sim/venv/bin/python}" -m npa "$@"' in launcher
+    assert (
+        'exec "${NPA_BAKED_PYTHON:-/opt/npa/sim/venv/bin/python}" -m npa "$@"'
+        in launcher
+    )
 
 
 def test_readonly_runtime_redirects_kit_portable_state_to_scratch() -> None:
@@ -682,7 +683,9 @@ def test_shim_derives_internal_kit_acceptance_only_after_shared_parser() -> None
     assert "PRIVACY_CONSENT" not in shim
 
 
-def test_shim_defaults_internal_kit_acceptance_without_manual_env(tmp_path: Path) -> None:
+def test_shim_defaults_internal_kit_acceptance_without_manual_env(
+    tmp_path: Path,
+) -> None:
     harness = Harness(tmp_path)
     result = subprocess.run(
         [
@@ -740,6 +743,18 @@ def test_base_installer_proves_the_refusal_at_build_time() -> None:
     assert "NPA_ISAAC_BOOTSTRAP_REFUSES_WITHOUT_EULA_OK" in text
     assert "NPA_NO_BAKED_ISAAC_OK" in text
     assert "-ne 78" in text, "the build must require the documented EX_CONFIG exit code"
+
+
+def test_base_installer_never_snapshots_ssh_host_private_keys() -> None:
+    """Package installation must not create one host identity for every image pull."""
+
+    text = BASE_INSTALLER.read_text(encoding="utf-8")
+    sentinel = "touch \\\n    /etc/ssh/ssh_host_rsa_key"
+    cleanup = "rm -f /etc/ssh/ssh_host_*_key"
+    install = "openssh-client openssh-server"
+    assert sentinel in text
+    assert cleanup in text
+    assert text.index(sentinel) < text.index(install) < text.index(cleanup)
 
 
 def test_base_installer_uses_immutable_system_and_bootstrap_inputs() -> None:

@@ -103,6 +103,10 @@ commits = [
     # prose `authentication, Kubernetes/RBAC calls...` as an assignment. The
     # source contains no credential; the pushed PR commit cannot be rewritten.
     '''adee7e5a24dbb9215f12ed54227a8aee27b65deb''',
+    # Historical false positive: generic-api-key interpreted a public SHA-256
+    # tokenizer-manifest integrity pin as credential material. The pushed commit
+    # contains no secret; exempt that immutable commit rather than weakening the rule.
+    '''9c2ad3d4d110defa0b93506a525b271b0f073ca0''',
     # Historical LeIsaac validation evidence used a dated operational run name.
     # HEAD removes the stale record; PR #287 forbids rewriting or force-pushing
     # its already-pushed first commit, so exempt that immutable commit only.

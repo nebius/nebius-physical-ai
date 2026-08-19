@@ -14,7 +14,7 @@ docker pull "${NPA_REGISTRY}/npa-retargeting:0.1.1"
 ```
 
 The catalog was verified against the public GHCR tag and OCI manifest APIs on
-2026-08-19. All 26 images selected by the repository's public publishing plan
+2026-08-19. All 29 images selected by the repository's public publishing plan
 resolved anonymously. **Built** is the UTC build date of the newest listed
 variant; reproducible images that intentionally zero their OCI `created` field
 use the timestamp in the immutable tag and `npa.build_ts` label.
@@ -24,6 +24,24 @@ tags can be moved, so resolve and retain the manifest digest as well when strict
 reproducibility is required.
 
 Rows are ordered by **Built** date, then by friendly name.
+
+## 2026-08-19 Antioch/OpenPI publication audit
+
+Three additive runtime-fetch images were copied from their trusted build source
+and independently exported in full without registry credentials. Source and
+public OCI index and `linux/amd64` digests matched:
+
+- `npa-antioch:0.1.1-cli0.3.47-streaming-20260819-r1` —
+  `sha256:2435ebca40b838d0e27ffef2aad5a8b836ec4d8defa8ed57452c5ab0de4cc721`.
+- `npa-openpi-policy:pi05-polaris-runtime-cache-20260819-r9` —
+  `sha256:a227756b3d86286406e3464f400e7312df032f192375168975c062cca4a3e79b`.
+- `npa-isaac-lab:2.3.2.post1-antioch-openpi-20260819-r15` —
+  `sha256:9a8fa86790972ea65c82d93ceebf9152a36640400731eee90bd5ec4df9b778d9`.
+
+Full-layer payload scans found no restricted Antioch, OpenPI checkpoint, Isaac,
+Omniverse Kit, or driver-userspace bytes. The split B200 policy and RTX bridge
+were validated through sustained continuous observation/inference/control, and
+the auxiliary Antioch control-plane service passed its non-root service smoke.
 
 ## 2026-08-19 main publication audit
 
@@ -44,6 +62,9 @@ guard.
 
 | Friendly name | Image (`ghcr.io/nebius/nebius-physical-ai/...`) | Published tag(s) | Built | What it does |
 | --- | --- | --- | --- | --- |
+| Antioch control plane | `npa-antioch` | `0.1.1-cli0.3.47-streaming-20260819-r1` | 2026-08-19 | CPU-only service on port 8789. Contains no Antioch engine, proprietary CLI, credentials, or customer data; the operator fetches the digest-pinned CLI into a runtime cache under direct vendor terms. Its built layers passed the Antioch, OpenPI, and Omniverse payload scans plus a non-root service smoke. |
+| Isaac Lab 2.3.2 (Isaac Sim 5.1) | `npa-isaac-lab` | `2.3.2.post1-antioch-openpi-20260819-r15` | 2026-08-19 | Isaac Lab RL simulation plus the Antioch-compatible continuous soft-real-time RTX Franka/two-camera bridge to a private OpenPI service; finite one-chunk operation is an explicit smoke only. Contains no NVIDIA Isaac, driver userspace, Antioch SDK, or OpenPI checkpoint bytes: Isaac Sim/Lab and driver-matched Vulkan userspace are fetched directly from NVIDIA into runtime volumes under the operator's acceptance. Isaac startup defaults the documented run-scoped `ACCEPT_EULA` value to `Y` and preserves explicit opt-out; expect an approximately 4.5 GB first-run Isaac download. |
+| OpenPI pi0.5-DROID policy server | `npa-openpi-policy` | `pi05-polaris-runtime-cache-20260819-r9` | 2026-08-19 | B200 `sm_100` policy service on port 8000. The public image contains pinned OpenPI source and dependencies but no checkpoint, tokenizer/model payload, credential, or populated cache. A run-scoped warmer verifies the pinned checkpoint generation manifest and PaliGemma-tokenizer generation, then atomically publishes either node-local ephemeral or durable PVC state; the server receives a read-only cache without the acceptance secret. The paired clean Isaac bridge fetches driver-matched Vulkan userspace from NVIDIA into a runtime-only read-only volume when a managed RTX node exposes compute but not graphics libraries. |
 | Alpamayo 2 Super 34B | `npa-alpamayo2-super` | `0.1.0-cu128` | 2026-08-18 | Real surround-view VLA trajectory inference through NVIDIA's Apache-2.0 source. OpenMDW-1.1 weights and the separately gated/non-transferable PhysicalAI-AV sample data are fetched only at runtime under the operator's Hugging Face identity. The payload-clean image and real workflow were validated independently on B200 and RTX PRO 6000. See the [operator guide](alpamayo2-super.md). |
 | SONIC Retargeting 0.1.1 | `npa-retargeting` | `0.1.1` | 2026-06-16 | CPU-only motion retargeting and motion-library conversion feeding SONIC locomotion training. A slim `python:3.11` image for the inexpensive preprocessing stage before GPU work. |
 | Rerun 0.31.4 | `npa-rerun-viewer` | `0.31.4` | 2026-07-01 | Rerun viewer/server on port 9090 for `.rrd` robotics traces produced by workflow stages. Uses `python:3.11-slim` and runs as `nobody`. |
@@ -51,7 +72,6 @@ guard.
 | BDD100K Detection Training | `npa-detection-training` | `bdd100k-golden-eval-smoke-20260614T210000Z` | 2026-07-22 | Object-detector train/eval service on port 8790 with torchvision detectors and COCO metrics. It provides the re-label and measurement stage in the data-factory loop. |
 | Lichtblick 1.26.0 | `npa-lichtblick` | `1.26.0` | 2026-07-23 | Fully open-source (MPL-2.0), Foxglove-compatible MCAP/ROS log viewer served by Caddy on port 8080. No account or proprietary component is required. |
 | GR00T N1.7-3B | `npa-groot` | `0.1.0` | 2026-08-01 | NVIDIA Isaac-GR00T humanoid foundation-model inference using public `nvidia/GR00T-N1.7-3B`; weights are pulled anonymously at runtime by default, with an optional Hugging Face token for rate limits or private overrides. GR00T inference itself does not require Isaac or EULA acceptance. |
-| Isaac Lab 2.3.2 (Isaac Sim 5.1) | `npa-isaac-lab` | `2.3.2.post1` | 2026-08-01 | Isaac Lab RL simulation. Contains no NVIDIA Isaac bytes: Isaac Sim and Isaac Lab are fetched from `pypi.nvidia.com` on first use. Isaac startup defaults the documented run-scoped `ACCEPT_EULA` value to `Y` and preserves explicit opt-out; expect an approximately 4.5 GB first-run download. |
 | Cosmos 1.0 Diffusion 7B (Predict) | `npa-cosmos` | `1.0.9`, `cu128-torch27-sm100-1.0.9-20260803T002017Z` | 2026-08-03 | Cosmos world-model generation with `Cosmos-1.0-Diffusion-7B-Text2World`, plus the default self-hosted VLM image for workflows. Uses Torch 2.7 and CUDA 12.8 with flash-attn, NATTEN, and Transformer Engine. |
 | Cosmos Reason 2 / Predict 2.5 (3.0.1) | `npa-cosmos3-reason` | `3.0.1-genuine-sm120`, `cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | 2026-08-03 | VLM reasoning over video/images with `Cosmos-Reason2-8B` or `Cosmos-Reason2-2B`, serving as a judge/critic stage. Also wires Predict 2.5, Transfer 2.5, and Cosmos-Guardrail1 model IDs on a Blackwell-capable CUDA 13 base. |
 | Cosmos Transfer 2.5 | `npa-cosmos2-transfer` | `2.5.1-skypilot-ready-20260801T053000Z` | 2026-08-03 | Cosmos Transfer 2.5 Sim2Real video augmentation, built from source at an immutable commit with hash-locked dependencies. Gated weights are fetched at runtime with `HF_TOKEN`; baked-byte scans are a release gate. |

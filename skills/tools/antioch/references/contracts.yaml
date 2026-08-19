@@ -1,0 +1,90 @@
+version: 1
+host_authority:
+  mutation_requires: explicit_authorization
+  read_only_host:
+    build: forbidden
+    runtime: forbidden
+    relay: forbidden
+    cleanup: forbidden
+  build_fallback:
+    - trusted_registry
+    - authorized_kubernetes
+readiness:
+  required_evidence:
+    - supported_api_state
+    - application_health
+    - camera_frames
+    - advancing_camera_sequence
+    - repeated_finite_action_chunks
+    - repeated_safe_target_application
+    - sustained_interval
+  insufficient_evidence:
+    - process_exists
+    - pid_exists
+    - tcp_listener_exists
+    - tunnel_connected
+    - gpu_assigned
+policy_boundary:
+  service:
+    exposure: cluster_ip
+    port: 8000
+  action_shape: [15, 8]
+  finite: true
+  production_mode: continuous_soft_real_time
+  smoke_mode: finite_one_observation
+  hard_real_time: false
+  maximum_in_flight_requests: 1
+  observation_queue_capacity: 1
+  response_queue_capacity: 1
+  backpressure: replace_superseded_observation
+  reconnect_behavior: reset_control_epoch
+  control: receding_horizon
+  fail_closed: true
+  no_action_on:
+    - timeout
+    - malformed_response
+    - wrong_shape
+    - non_finite
+    - joint_limit
+    - rate_limit
+    - reconnect_exhausted
+    - stale_response
+    - control_epoch_mismatch
+    - chunk_underrun
+secret_scopes:
+  model_entitlement: cache_warmer_only
+  model_cache_writer: cache_warmer_only
+  model_cache_reader: policy_server_read_only
+  antioch_session: simulator_only
+  isaac_acceptance: simulator_only
+  simulator_model_entitlement: forbidden
+  policy_antioch_session: forbidden
+  nvidia_graphics_acceptance: simulator_init_only
+runtime_fetch:
+  nvidia_graphics:
+    source: vendor_direct
+    identity: running_driver_version
+    checksum: upstream_sha256
+    publication: atomic_ready_tree
+    inference_mount: read_only
+    host_mutation: forbidden
+public_artifacts:
+  prohibited_payloads:
+    - credentials
+    - customer_data
+    - live_infrastructure_identifiers
+    - ssh_identity
+    - antioch_local_state
+    - model_weights
+    - populated_model_cache
+    - nvidia_isaac
+    - proprietary_isaac_lab
+    - omniverse_kit
+    - driver_userspace
+cleanup:
+  scope: exact_run_resources_only
+  order:
+    - cancel_exact_run
+    - wait_terminal
+    - stop_exact_services
+    - release_exact_machine

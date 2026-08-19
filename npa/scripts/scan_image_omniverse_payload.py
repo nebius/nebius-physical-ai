@@ -6,7 +6,7 @@ Dockerfile is not enough: the claim is about bytes in layers, so this inspects t
 image's filesystem and its layer history.
 
     npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
-        cr.eu-north1.nebius.cloud/<registry-id>/npa-isaac-lab:2.3.2.post1
+        cr.eu-north1.nebius.cloud/<registry-id>/npa-isaac-lab:2.3.2.post1-antioch-openpi-20260819-r15
 
     # or from a local docker save tarball, with no registry access
     docker save npa-isaac-lab:rc1 -o /tmp/img.tar
@@ -271,7 +271,7 @@ def _iter_tarball(tarball: Path):
         for member in archive:
             name = member.name
             if not (
-                name.endswith(("/layer.tar", ".tar"))
+                name.endswith(("/layer.tar", ".tar", ".tar.gz", ".tgz"))
                 or name.startswith("blobs/")
                 or "/blobs/" in name
             ):

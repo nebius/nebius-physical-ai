@@ -262,6 +262,28 @@ def test_oci_layout_tarball_scans_root_level_blob_layers(tmp_path: Path) -> None
     assert scanner.classify_path(paths[0])
 
 
+def test_crane_pull_tarball_scans_compressed_layer_members(tmp_path: Path) -> None:
+    """``crane pull`` stores Docker-save layers as digest-named ``.tar.gz`` files."""
+
+    layer_stream = io.BytesIO()
+    with tarfile.open(fileobj=layer_stream, mode="w:gz") as layer:
+        payload = b"kit"
+        member = tarfile.TarInfo("isaac-sim/kit/libcarb.so")
+        member.size = len(payload)
+        layer.addfile(member, io.BytesIO(payload))
+    outer_path = tmp_path / "image.tar"
+    with tarfile.open(outer_path, mode="w") as outer:
+        payload = layer_stream.getvalue()
+        member = tarfile.TarInfo(f"{'a' * 64}.tar.gz")
+        member.size = len(payload)
+        outer.addfile(member, io.BytesIO(payload))
+
+    paths = list(scanner._iter_tarball(outer_path))
+
+    assert paths == ["isaac-sim/kit/libcarb.so"]
+    assert scanner.classify_path(paths[0])
+
+
 # --------------------------------------------------------------------------------------
 # Gated model weights are a separate licence axis from Omniverse Kit, and the workbench
 # rule is the same: never baked. The distinction that matters is a git-LFS POINTER (a

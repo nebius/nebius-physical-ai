@@ -20,11 +20,10 @@
 #   * any NVIDIA Isaac Sim / Isaac Lab wheel (proprietary; fetched on first run under the
 #     operator's own EULA acceptance - see isaac_bootstrap.sh)
 #   * any EULA acceptance variable (that refusal is the legal mechanism)
-#   * NVIDIA driver userspace libraries. Verified on an RTX PRO 6000 pod: with
-#     NVIDIA_DRIVER_CAPABILITIES=all the container runtime injects libEGL_nvidia,
-#     libGLX_nvidia, libnvidia-glcore AND /etc/vulkan/icd.d/nvidia_icd.json, and
-#     `vulkaninfo --summary` reports the discrete GPU with driverInfo 580.95.05. Baking
-#     driver libs is therefore unnecessary as well as a separate redistribution question.
+#   * NVIDIA driver userspace libraries. A graphics-capable container runtime may inject
+#     them. The Antioch/OpenPI stack also supports checksum-verified, driver-matched
+#     runtime delivery into an operator-owned volume for managed compute-only nodes.
+#     Either path keeps those third-party bytes out of the public image.
 #
 # Baking the OSS closure is what lets the runtime fetch use --no-deps --require-hashes:
 # pip needs no dependency resolution at run time, so every byte it downloads is pinned to
@@ -121,8 +120,17 @@ if [ "$INSTALL_SKYPILOT_PREREQS" = "1" ]; then
   # client/server, and passwordless sudo; without all of them provisioning fails with
   # `container not found ("ray-node")`. Guarded by
   # npa/tests/guardrails/test_workbench_image_k8s_prereqs.py.
+  # Pre-create empty sentinels so openssh-server's post-install keygen skips host
+  # identity generation.  Delete them in this same image layer; real keys are
+  # generated only in the running container by workflow_runtime_entrypoint.sh.
+  install -d -m 0755 /etc/ssh
+  touch \
+    /etc/ssh/ssh_host_rsa_key \
+    /etc/ssh/ssh_host_ecdsa_key \
+    /etc/ssh/ssh_host_ed25519_key
   apt-get install -y --no-install-recommends \
     python3 python3-venv python3-pip rsync openssh-client openssh-server sudo netcat-openbsd
+  rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub
   printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/99-npa-runtime-user
   chmod 0440 /etc/sudoers.d/99-npa-runtime-user
   install -d -m 0755 /run/sshd

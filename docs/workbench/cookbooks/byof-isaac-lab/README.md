@@ -108,7 +108,7 @@ docker build \
 
 The example base image digest is
 `sha256:dc1dd94e64c1e970ec74dccf152180f739cfd457125996100069f688b7911fca`,
-the validated `npa-isaac-lab:2.3.2.post1` Workbench image used by W10. Refresh
+the validated `npa-isaac-lab:2.3.2.post1-antioch-openpi-20260819-r15` Workbench image used by W10. Refresh
 it only when the platform base image is intentionally rebuilt.
 
 Common customizations:

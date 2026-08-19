@@ -60,6 +60,7 @@ change hits most.
 |---|---|
 | `test_skills_index` | A `SKILL.md` exists without an `skills/index.yaml` entry (or the reverse), frontmatter `name` disagrees with the index, or a smoke does not run. Register the skill with a passing smoke. |
 | `test_develop_skills` | A development skill names a repo path or guardrail that does not exist, or a new guardrail file is undocumented. Update the skill. |
+| `test_antioch_skill` | Antioch references are undiscoverable, its machine-readable readiness/control/security contract drifted from the rendered two-GPU stack, or public payload and exact-cleanup invariants weakened. Update the skill resources and implementation together. |
 | `test_no_dangling_workflow_references` | A doc, skill, or script names a workflow YAML that does not exist. Repoint or remove the reference. |
 | `test_docs_green_path` | The documented path from README to a real submit is no longer runnable end to end. Update the quickstart with the new step. |
 | `test_audit_container_docs_skill` | The public container catalog disagrees with the publish inventory. Update `docs/workbench/container-image-catalog.md`. |

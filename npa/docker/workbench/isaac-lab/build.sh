@@ -109,8 +109,9 @@ LOCAL_IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"
 # defaults. Reading them here means the build cannot drift from what runs.
 BOOTSTRAP="$SCRIPT_DIR/../common/isaac_bootstrap.sh"
 ISAAC_SIM_VERSION="$(sed -n 's/^ISAAC_SIM_VERSION="${ISAAC_SIM_VERSION:-\(.*\)}"$/\1/p' "$BOOTSTRAP")"
+ISAAC_LAB_RUNTIME_VERSION="$(sed -n 's/^ISAAC_LAB_VERSION="${ISAAC_LAB_VERSION:-\(.*\)}"$/\1/p' "$BOOTSTRAP")"
 ISAAC_LAB_SRC_COMMIT="$(sed -n 's/^ISAAC_LAB_SRC_COMMIT="${NPA_ISAAC_LAB_SRC_COMMIT:-\(.*\)}"$/\1/p' "$BOOTSTRAP")"
-if [ -z "$ISAAC_SIM_VERSION" ] || [ -z "$ISAAC_LAB_SRC_COMMIT" ]; then
+if [ -z "$ISAAC_SIM_VERSION" ] || [ -z "$ISAAC_LAB_RUNTIME_VERSION" ] || [ -z "$ISAAC_LAB_SRC_COMMIT" ]; then
   echo "ERROR: could not read the Isaac pins out of $BOOTSTRAP" >&2
   exit 1
 fi
@@ -118,7 +119,7 @@ fi
 BUILD_ARGS=(
   --platform linux/amd64
   -f "$SCRIPT_DIR/Dockerfile"
-  --build-arg "ISAAC_LAB_VERSION=${VERSION}"
+  --build-arg "ISAAC_LAB_VERSION=${ISAAC_LAB_RUNTIME_VERSION}"
   --build-arg "ISAAC_SIM_VERSION=${ISAAC_SIM_VERSION}"
   --build-arg "ISAAC_LAB_SRC_COMMIT=${ISAAC_LAB_SRC_COMMIT}"
   --build-arg "NPA_SOURCE_SHA=${NPA_SOURCE_SHA}"
@@ -130,7 +131,8 @@ else
 fi
 
 echo "Building ${LOCAL_IMAGE}"
-echo "  isaac-lab      ${VERSION}"
+echo "  image release  ${VERSION}"
+echo "  isaac-lab      ${ISAAC_LAB_RUNTIME_VERSION}"
 echo "  isaacsim pin   ${ISAAC_SIM_VERSION}   (fetched at first RUN, not baked)"
 echo "  isaaclab src   ${ISAAC_LAB_SRC_COMMIT}"
 

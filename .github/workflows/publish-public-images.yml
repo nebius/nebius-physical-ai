@@ -122,6 +122,12 @@ jobs:
           SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
           SELECTED_TOOLS: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
         run: |
+          # A one-off private source override is operational metadata, not public
+          # release metadata. Mask it before the publisher prints source refs so a
+          # public Actions log exposes only the intended GHCR targets.
+          if [ -n "$SOURCE_REGISTRY" ]; then
+            echo "::add-mask::$SOURCE_REGISTRY"
+          fi
           args=(--target "${{ steps.target.outputs.value }}")
           if [ -n "$SOURCE_REGISTRY" ]; then
             args+=(--source-registry "$SOURCE_REGISTRY")

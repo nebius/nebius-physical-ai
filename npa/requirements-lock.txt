@@ -22,6 +22,7 @@ jmespath==1.1.0
 markdown-it-py==4.0.0
 MarkupSafe==3.0.3
 mdurl==0.1.2
+msgpack==1.1.2
 -e git+ssh://git@github.com/nebius/nebius-physical-ai.git@42375a088cdafb96700ceecd8d14a94b2363bcf7#egg=npa&subdirectory=npa
 numpy==2.4.4
 packaging==26.1
@@ -49,3 +50,4 @@ typer==0.24.1
 typing-inspection==0.4.2
 typing_extensions==4.15.0
 urllib3==2.7.0
+websocket-client==1.9.0

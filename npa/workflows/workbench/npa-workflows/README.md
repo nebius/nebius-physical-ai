@@ -102,6 +102,7 @@ below (see `npa/src/npa/orchestration/npa_workflow/blueprints.py`). Deploy guide
 | `byof-robocasa.yaml` | OSS registry: RoboCasa pinned image + headless kitchen-task smoke |
 | `byof-openpi.yaml` | OSS registry: OpenPI pi0.5 Polaris direct + WebSocket-served Franka joint-position inference on `B200:1`; runtime-only checkpoint and scoped Gemma gate ([guide](../../../../docs/workbench/openpi-pi05-polaris.md)) |
 | `openpi-pi05-four-mode.yaml` | Connected OpenPI runtime graph: live negative gate, direct inference, private cross-pod ClusterIP serving, real pi0.5 LoRA optimizer/checkpoint smoke, and disjoint held-out evaluation; consumes the immutable digest built by `byof-openpi.yaml` ([guide](../../../../docs/workbench/openpi-pi05-polaris.md)) |
+| Kubernetes stack rendered by `npa workbench antioch openpi-stack` | Production two-workload bridge: native Isaac Franka/two-camera control on RTX PRO 6000 calls the private OpenPI pi0.5-DROID service on B200 and applies fail-closed, rate-limited absolute position targets ([guide](../../../../docs/workbench/antioch-openpi-franka.md)) |
 | `byof-droid-policy-learning.yaml` | OSS registry: DROID policy learning pinned image + RLDS config smoke |
 | `rl-policy-training-sim-success.yaml` | Isaac Lab RL train (partial) |
 | `sim2real-two-step.yaml` / `sim2real-two-step-agent.yaml` | **DEMO ONLY** two-state DSL fixtures |

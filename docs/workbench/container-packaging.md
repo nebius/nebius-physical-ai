@@ -42,7 +42,7 @@ All first-class images live under `npa/docker/workbench/`:
 | `npa-lerobot` | `lerobot/Dockerfile` | FastAPI server `:8080` |
 | `npa-lerobot-policy` | `lerobot-policy/Dockerfile` | entrypoint modes (serve/train/eval) |
 | `npa-genesis` | `genesis/Dockerfile` | job shell (CLI supplies command) |
-| `npa-isaac-lab` | `isaac-lab/Dockerfile` | job shell |
+| `npa-isaac-lab` | `isaac-lab/Dockerfile` | job shell; includes the OSS Antioch-compatible Franka/OpenPI bridge, with all vendor runtimes and weights fetched only at run time; uses distro FFmpeg and excludes the static executable bundled by the `imageio-ffmpeg` wheel |
 | `npa-leisaac` | `leisaac/Dockerfile` | teleoperation/status service `:8080`, WebRTC TCP `:49100`, UDP `:47998` |
 | `npa-cosmos` | `cosmos/Dockerfile` | job shell; server built but not default CMD |
 | `npa-groot` | `groot/Dockerfile` | job shell; `EXPOSE 8080` |
@@ -50,6 +50,7 @@ All first-class images live under `npa/docker/workbench/`:
 | `npa-lancedb` | `lancedb/Dockerfile` | uvicorn `:8686` |
 | `npa-sonic` | `sonic/Dockerfile` | `/entrypoint.sh` modes |
 | `npa-detection-training` | `detection-training/Dockerfile` | uvicorn `:8790` |
+| `npa-antioch` | `antioch/Dockerfile` | CPU-only uvicorn `:8789`; proprietary CLI is verified runtime-fetch only |
 | `npa-retargeting` | `retargeting/Dockerfile` | job shell |
 | `npa-foxglove-embed` | `foxglove-embed/Dockerfile` | static host `:8099` (Foxglove embed SDK + MCAP data) |
 | Sim2Real stack | `sim2real-*/`, `cosmos3-reason/`, `lerobot-vlm-rl/` | workflow modules |
@@ -69,7 +70,7 @@ Every Dockerfile must declare one of:
 
 | Tier | `kind` | ENTRYPOINT expectation | Examples |
 | --- | --- | --- | --- |
-| **Service** | `service` | Starts the HTTP service (or entrypoint that does) | lerobot, lancedb, detection-training, lerobot-policy, leisaac |
+| **Service** | `service` | Starts the HTTP service (or entrypoint that does) | antioch, lerobot, lancedb, detection-training, lerobot-policy, leisaac |
 | **Job** | `job` | Runs a workflow/CLI module with explicit CMD or an exec-only command-passthrough entrypoint | sonic, fiftyone, sim2real-eval, cosmos3-reason, lerobot-vlm-rl |
 | **Interactive** | `interactive` | `/bin/bash` allowed only when CLI always overrides CMD | genesis, isaac-lab, cosmos, groot, retargeting |
 
@@ -214,7 +215,7 @@ reading the Dockerfile:
 
 ```bash
 npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
-    cr.<region>.nebius.cloud/<registry-id>/npa-isaac-lab:2.3.2.post1
+    cr.<region>.nebius.cloud/<registry-id>/npa-isaac-lab:2.3.2.post1-antioch-openpi-20260819-r15
 ```
 
 The scanner streams the image's flattened filesystem and its layer history, matching Kit
@@ -225,7 +226,11 @@ grep for "isaac": the images deliberately keep a `/isaac-sim/python.sh` **shim**
 `ENTRYPOINT`, making the shim the only reliable bootstrap trigger. On
 `npa-isaac-lab` it scans 83,043 entries and reports 21 allowlisted paths — the shim, the
 bootstrap, the pinned manifests, two smoke scripts and two empty mount points — and
-`VERDICT: clean`.
+`VERDICT: clean`. The scan also rejects wheel-bundled static FFmpeg. The image
+keeps the BSD-2-Clause `imageio-ffmpeg` wrapper for MoviePy compatibility but
+forces it to the distro `/usr/bin/ffmpeg`; the bundled executable is removed in
+the same layer that installs the dependency and is recorded in
+`isaac-lab/THIRD_PARTY_NOTICES.md`.
 
 **Build-your-own still works, and no longer needs NGC credentials at all**, because there
 is nothing credentialed left to pull:

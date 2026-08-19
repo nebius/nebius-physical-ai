@@ -48,6 +48,13 @@ DEFAULT_YAML = (
 DEFAULT_IMAGE_PULL_SECRETS = ("agent-sa",)
 
 
+def _sky_environment() -> dict[str, str]:
+    """Use the same optional isolated SkyPilot state as NPA workflow submits."""
+
+    isolated = os.environ.get("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", "").strip()
+    return sky_environment(Path(isolated) if isolated else None)
+
+
 #: Credentials every BYOF resource profile needs, because each one uploads its summary
 #: and artifacts to S3. Forwarded as SkyPilot task secrets (never written into the
 #: rendered YAML). Without this a run provisions, pulls the image, executes the profile
@@ -564,7 +571,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
             if os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") != "0":
                 subprocess.run(
                     [sky_bin, "api", "stop"],
-                    env=sky_environment(None),
+                    env=_sky_environment(),
                     text=True,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -600,7 +607,7 @@ def _direct_launch(
         cmd.extend(["--infra", infra])
     if config_path:
         cmd.extend(["--config", config_path])
-    launch_env = sky_environment(None)
+    launch_env = _sky_environment()
     for secret_name in secret_envs or ():
         if launch_env.get(secret_name):
             cmd.extend(["--secret", secret_name])
@@ -800,7 +807,7 @@ def _ensure_infra_enabled(*, sky_bin: str, infra: str, config_path: str = "") ->
     if os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") != "0":
         subprocess.run(
             [sky_bin, "api", "stop"],
-            env=sky_environment(None),
+            env=_sky_environment(),
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -811,7 +818,7 @@ def _ensure_infra_enabled(*, sky_bin: str, infra: str, config_path: str = "") ->
         cmd.extend(["--config", config_path])
     result = subprocess.run(
         cmd,
-        env=sky_environment(None),
+        env=_sky_environment(),
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

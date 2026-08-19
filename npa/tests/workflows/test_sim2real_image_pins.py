@@ -114,10 +114,16 @@ def test_isaac_exact_source_image_uses_light_package_imports() -> None:
     assert "NPA_BAKED_PYTHON=/opt/npa/sim/venv/bin/python" in dockerfile
     assert "npa-exact-source.pth" in dockerfile
     assert "env -u PYTHONPATH /opt/npa/sim/venv/bin/python -c" in dockerfile
-    assert (
-        "import boto3, kubernetes, mcap, npa.workflows.sim2real.runtime_attestation"
-        in (dockerfile)
-    )
+    import_probe = dockerfile.split(
+        "env -u PYTHONPATH /opt/npa/sim/venv/bin/python -c", 1
+    )[1]
+    for required_import in (
+        "boto3",
+        "kubernetes",
+        "mcap",
+        "npa.workflows.sim2real.runtime_attestation",
+    ):
+        assert required_import in import_probe
 
 
 def test_cpu_controller_is_small_pinned_and_resolver_closed() -> None:

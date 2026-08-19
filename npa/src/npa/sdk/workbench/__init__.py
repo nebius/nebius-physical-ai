@@ -5,6 +5,7 @@ from __future__ import annotations
 from npa.workbench import lancedb, training_config
 
 from . import (
+    antioch,
     alpamayo2_super,
     byof,
     cosmos,
@@ -30,6 +31,7 @@ from . import (
 )
 
 __all__ = [
+    "antioch",
     "alpamayo2_super",
     "byof",
     "cosmos",

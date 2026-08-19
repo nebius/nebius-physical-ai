@@ -8,6 +8,7 @@ google-auth==2.56.3
 kubernetes==33.1.0
 lz4==4.4.5
 mcap==1.4.0
+msgpack==1.1.2
 oauthlib==3.3.1
 pyasn1==0.6.4
 pyasn1-modules==0.4.2

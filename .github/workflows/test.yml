@@ -50,9 +50,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
-
-      - name: Install ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+        with:
+          # Hosted scenario manifests pin reviewed ancestor commits. Keep the
+          # provenance test meaningful instead of weakening it for a shallow clone.
+          fetch-depth: 0
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v6
@@ -61,6 +62,29 @@ jobs:
 
       - name: Install npa
         run: cd npa && pip install -e ".[dev,adapter]"
+
+      - name: Configure test ffmpeg
+        run: |
+          test_bin="$RUNNER_TEMP/npa-bin"
+          mkdir -p "$test_bin"
+
+          ffmpeg_bin="$(python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')"
+          test -x "$ffmpeg_bin"
+          ln -s "$ffmpeg_bin" "$test_bin/ffmpeg"
+
+          # imageio-ffmpeg's pinned development wheel carries ffmpeg but not
+          # ffprobe. Fetch the matching test utility from an immutable upstream
+          # source commit and verify the bytes instead of mutating the runner OS.
+          curl -fsSL \
+            https://raw.githubusercontent.com/imageio/imageio-binaries/f8f64710ea88e7e4a352c0f7d8c0deac9f5fd685/ffmpeg/ffprobe-linux64-v4.1 \
+            -o "$test_bin/ffprobe"
+          echo "8082ededa51d5da1524bf77094870951c0202a8de1a6203bfca9dfef718d73b2  $test_bin/ffprobe" \
+            | sha256sum --check --strict
+          chmod 0755 "$test_bin/ffprobe"
+
+          echo "$test_bin" >> "$GITHUB_PATH"
+          "$test_bin/ffmpeg" -version
+          "$test_bin/ffprobe" -version
 
       - name: Verify checked-out CLI flags
         run: |

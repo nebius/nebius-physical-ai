@@ -328,10 +328,13 @@ def _dockerfile_text() -> str:
         "ARG OSS_REPO_REF\n"
         "ARG BYOF_BUILD_COMMAND\n"
         "USER root\n"
-        "RUN apt-get update && apt-get install -y --no-install-recommends \\\n"
+        "RUN install -d -m 0755 /etc/ssh \\\n"
+        "  && touch /etc/ssh/ssh_host_rsa_key /etc/ssh/ssh_host_ecdsa_key /etc/ssh/ssh_host_ed25519_key \\\n"
+        "  && apt-get update && apt-get install -y --no-install-recommends \\\n"
         "      git ca-certificates python3 python3-pip sudo rsync \\\n"
         "      openssh-client openssh-server netcat-openbsd \\\n"
-        "  && rm -rf /var/lib/apt/lists/*\n"
+        "  && rm -rf /var/lib/apt/lists/* \\\n"
+        "  && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub\n"
         "RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu\n"
         "RUN install -d -m 0755 /run/sshd \\\n"
         "  && (grep -q 'ssh-keygen -A' /etc/init.d/ssh \\\n"
@@ -358,6 +361,9 @@ def _dockerfile_text() -> str:
         f'RUN printf \'{{\\n  "source": "oss-byof",\\n  "repo": "%s",\\n  "ref": "%s"\\n}}\\n\' \\\n'
         f'  "${{OSS_REPO_URL}}" "${{OSS_REPO_REF}}" > {BYOF_REPO_MOUNT}/npa_source_metadata.json \\\n'
         f"  && chown ubuntu:ubuntu {BYOF_REPO_MOUNT}/npa_source_metadata.json {BYOF_REPO_MOUNT}/npa_build_metadata.json\n"
+        "RUN rm -rf /opt/nvidia/nsight-compute \\\n"
+        "  && dpkg --purge --force-depends linux-libc-dev \\\n"
+        "  && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub\n"
         'LABEL npa.byof.repo="${OSS_REPO_URL}" npa.byof.ref="${OSS_REPO_REF}" '
         'npa.packaging.tier="interactive" '
         'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"\n'

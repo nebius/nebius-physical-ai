@@ -35,6 +35,21 @@ def _load_module():
     return module
 
 
+def test_sky_environment_honors_task_isolation(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    isolated = tmp_path / "sky-state"
+    calls = []
+    monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(isolated))
+    monkeypatch.setattr(
+        module,
+        "sky_environment",
+        lambda value: calls.append(value) or {"HOME": str(value / "home")},
+    )
+
+    assert module._sky_environment() == {"HOME": str(isolated / "home")}
+    assert calls == [isolated]
+
+
 def test_render_workflow_injects_solution_smoke_metadata(monkeypatch) -> None:
     module = _load_module()
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.example")

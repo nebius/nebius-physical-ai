@@ -1069,6 +1069,9 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     assert "netcat-openbsd" in text
     assert "ssh-keygen -A" in text
     assert "rm -f /etc/ssh/ssh_host_*" in text
+    assert "touch /etc/ssh/ssh_host_rsa_key" in text
+    assert "rm -rf /opt/nvidia/nsight-compute" in text
+    assert "dpkg --purge --force-depends linux-libc-dev" in text
     assert "ENV HOME=/home/ubuntu" in text
     assert 'exec \\"$@\\"' in text
     assert 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in text

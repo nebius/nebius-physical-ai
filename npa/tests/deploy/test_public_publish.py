@@ -45,12 +45,24 @@ from npa.deploy.publish_public import (
     _pin_publication_sources as REAL_PUBLICATION_SOURCE_PIN,
     _pin_wan_publication_sources as REAL_WAN_SOURCE_PIN,
     build_publish_plan,
+    filter_publish_plan,
     verify_bootstrap_publication_source as REAL_BOOTSTRAP_PUBLICATION_GATE,
     verify_wan_publication_source as REAL_WAN_PUBLICATION_GATE,
 )
 
 ROOT = Path(__file__).resolve().parents[3]
 CONTRACT_PATH = ROOT / "npa" / "docker" / "workbench" / "packaging-contract.yaml"
+
+
+def test_targeted_publication_can_only_narrow_the_guarded_plan() -> None:
+    plan = [
+        PublishItem("openpi-policy", "private/openpi:r1", "public/openpi:r1"),
+        PublishItem("isaac-lab", "private/isaac:r1", "public/isaac:r1"),
+    ]
+    assert filter_publish_plan(plan, ["openpi-policy"]) == [plan[0]]
+    assert filter_publish_plan(plan, []) == plan
+    with pytest.raises(ValueError, match="not in the eligible public plan"):
+        filter_publish_plan(plan, ["arbitrary-image"])
 
 
 @pytest.fixture(autouse=True)

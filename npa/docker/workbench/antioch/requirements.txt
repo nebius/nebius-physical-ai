@@ -1,0 +1,6 @@
+boto3==1.42.91
+fastapi==0.136.1
+numpy==2.4.4
+pyarrow==24.0.0
+pydantic==2.13.4
+uvicorn==0.38.0

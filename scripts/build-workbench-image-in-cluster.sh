@@ -14,8 +14,8 @@
 #      membership) that let SkyPilot host a task in a heavy vendor image.
 #
 #        scripts/build-workbench-image-in-cluster.sh \
-#          --base <registry>/npa-isaac-lab:2.3.2.post1 \
-#          --tag  <registry>/npa-isaac-lab:2.3.2.post1-sky1 \
+#          --base <registry>/npa-isaac-lab:2.3.2.post1-antioch-openpi-20260819-r15 \
+#          --tag  <registry>/npa-isaac-lab:2.3.2.post1-antioch-openpi-20260819-r15-sky1 \
 #          --dockerfile npa/docker/workbench/isaac-lab/Dockerfile.k8s-prereqs
 #
 #   2. Inline snippet: pass --run "apt-get update && ..." instead of --dockerfile.

@@ -143,6 +143,23 @@ def build_publish_plan(
     return plan
 
 
+def filter_publish_plan(
+    plan: list[PublishItem], selected_tools: list[str]
+) -> list[PublishItem]:
+    """Narrow a guarded plan without permitting arbitrary image references."""
+
+    if not selected_tools:
+        return plan
+    requested = {value.strip() for value in selected_tools if value.strip()}
+    available = {item.tool for item in plan}
+    unknown = sorted(requested - available)
+    if unknown:
+        raise ValueError(
+            "selected tool is not in the eligible public plan: " + ", ".join(unknown)
+        )
+    return [item for item in plan if item.tool in requested]
+
+
 # --------------------------------------------------------------------------------------
 # Source preflight
 #
@@ -1038,6 +1055,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Source registry to copy from (defaults to the primary Nebius registry).",
     )
     parser.add_argument(
+        "--tool",
+        action="append",
+        default=[],
+        help=(
+            "Operate only on this eligible tool; repeat for multiple tools. The value "
+            "must already be in the guarded public plan and cannot name an arbitrary image."
+        ),
+    )
+    parser.add_argument(
         "--dry-run", action="store_true", help="Print the plan without copying."
     )
     parser.add_argument(
@@ -1115,9 +1141,15 @@ def main(argv: list[str] | None = None) -> int:
     if not (args.target or "").strip():
         parser.error("no target registry; pass --target or set NPA_PUBLIC_REGISTRY")
 
-    plan = build_publish_plan(
-        target_registry=args.target, source_registry=args.source_registry
-    )
+    try:
+        plan = filter_publish_plan(
+            build_publish_plan(
+                target_registry=args.target, source_registry=args.source_registry
+            ),
+            args.tool,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     restricted = omniverse_restricted_image_names()
     print(f"Publishing {len(plan)} OSS image(s) to {args.target.rstrip('/')}")
     if restricted:

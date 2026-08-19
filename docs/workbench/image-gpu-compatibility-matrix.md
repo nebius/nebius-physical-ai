@@ -60,6 +60,7 @@ The old `npa-cosmos:1.0.9` cu126 image stopped at Hopper. Its additive cu128/tor
 | `npa-workbench-cuda-base` | supported | supported | supported | supported | supported |
 | `npa-lerobot` | supported | **verified** [41] | **verified** [42] | **verified** [39] | **verified** [40] |
 | `npa-lerobot-policy` | supported | supported | supported | supported | supported |
+| `npa-openpi-policy` | supported | supported | supported | **verified** | supported (sm_100 forward compatibility) |
 | `npa-lancedb` | supported | **verified** [26] | **verified** [27] | **verified** [24] | **verified** [25] |
 | `npa-detection-training` | supported | **verified** [29] | **verified** [30] | **verified** [28] | **verified** [31] |
 | `npa-cosmos3` | supported | supported | **verified** [59] | supported | supported |
@@ -83,6 +84,7 @@ The old `npa-cosmos:1.0.9` cu126 image stopped at Hopper. Its additive cu128/tor
 | `npa-cosmos-curate` | CPU | CPU | CPU | CPU | CPU |
 | `npa-cosmos-evaluator` | CPU | CPU | CPU | CPU | CPU |
 | `npa-sim2real-control` | CPU | CPU | CPU | CPU | CPU |
+| `npa-antioch` | CPU | CPU | CPU | CPU | CPU |
 | `npa-fiftyone` | CPU | CPU | CPU | CPU | CPU |
 | `npa-retargeting` | CPU | CPU | CPU | CPU | CPU |
 | `npa-rerun-viewer` | CPU | CPU | CPU | CPU | CPU |
@@ -100,6 +102,12 @@ The old `npa-cosmos:1.0.9` cu126 image stopped at Hopper. Its additive cu128/tor
 ### Rendering is not portable across these columns
 
 Isaac Lab and SONIC rasterized rendering needs RT cores. L40S and RTX PRO 6000 have them; H100, H200, B200, and B300 do not. The "supported (headless)" cells above mean state-based training only. `npa.workbench.sonic.routing` enforces this and rejects a render workload routed to a datacenter part.
+
+The [Antioch/OpenPI Franka path](antioch-openpi-franka.md) deliberately splits
+these incompatible requirements: `npa-isaac-lab` renders and controls on RTX
+PRO 6000 (`sm_120`), while its private OpenPI policy service runs on B200
+(`sm_100`). A successful policy inference is not evidence for rendering, and a
+successful camera smoke is not evidence for the policy image.
 
 ### Blackwell datacenter hardware status
 

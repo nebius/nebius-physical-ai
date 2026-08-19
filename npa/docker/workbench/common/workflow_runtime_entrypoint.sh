@@ -8,6 +8,16 @@
 # eventual workflow command run in the immutable image that was requested.
 set -euo pipefail
 
+# Images that include OpenSSH deliberately remove package-generated host keys from
+# their layers.  Recreate machine identity only in this container's writable runtime
+# layer before SkyPilot asks the service to start.  Non-SSH images pass through.
+if command -v ssh-keygen >/dev/null 2>&1 \
+  && command -v sudo >/dev/null 2>&1 \
+  && sudo -n true >/dev/null 2>&1 \
+  && ! compgen -G '/etc/ssh/ssh_host_*_key' >/dev/null; then
+  sudo -n ssh-keygen -A >/dev/null
+fi
+
 if [ "$#" -eq 0 ]; then
   exec /bin/bash
 fi

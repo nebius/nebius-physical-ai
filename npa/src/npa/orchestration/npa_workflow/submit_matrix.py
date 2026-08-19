@@ -70,6 +70,20 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
+        "antioch-offline-policy-train.yaml",
+        "gpu",
+        secret_envs=(
+            "ANTIOCH_WORKBENCH_TOKEN",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        image_overrides=(("workbench.lerobot.policy_train", "lerobot"),),
+        notes=(
+            "Requires the operator's separately deployed Antioch adapter and a synthetic "
+            "immutable project; trains an offline ACT checkpoint from the collected dataset."
+        ),
+    ),
+    SubmitLiveCase(
         "alpamayo2-super-inference.yaml",
         "gpu",
         secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
