@@ -343,27 +343,36 @@ def probe_capabilities(app: Any) -> list[dict[str, Any]]:
             action_loop_requires_a_goal,
         )
 
-        def chat_drafts_then_validates():
-            # The real authoring path: chat renders a spec, then the same
-            # deployment validates and plans it in-process.
+        def chat_workflow_authoring():
+            # Chat emits YAML only after validation *and* planning succeed, so
+            # without a staged bucket/accelerator the correct outcome is a named
+            # placeholder refusal. Either branch is a pass; emitting YAML that
+            # does not validate is the failure this guards.
             chat = client.post(
                 "/chat",
                 json={
                     "messages": [
                         {
                             "role": "user",
-                            "content": "create a 2-step sim2real npa.workflow yaml",
+                            "content": (
+                                "create 2-step sim2real workflow with 5000 "
+                                "environments, seed 9, an RTX PRO 6000 "
+                                "accelerator, and 1 GPU"
+                            ),
                         }
                     ]
                 },
             )
             body = chat.json() if chat.status_code == 200 else {}
             yaml_text = str(body.get("workflow_yaml") or "")
+            reply = str(body.get("reply") or "")
             if not yaml_text:
+                refused = "could not generate runnable workflow yaml" in reply.lower()
+                named = "placeholder" in reply.lower() or "configure-" in reply
                 return (
                     chat.status_code,
-                    "chat returned no workflow_yaml",
-                    False,
+                    f"declined_with_reason={refused and named}",
+                    refused and named,
                 )
             validate = client.post("/workflows/validate", json={"yaml": yaml_text})
             result = validate.json() if validate.status_code == 200 else {}
@@ -375,9 +384,10 @@ def probe_capabilities(app: Any) -> list[dict[str, Any]]:
             )
 
         record(
-            "chat drafts a valid workflow",
-            "chat-generated YAML passes the agent's own validate + plan",
-            chat_drafts_then_validates,
+            "chat workflow authoring",
+            "emits YAML only when it validates and plans; otherwise names the "
+            "unresolved placeholders",
+            chat_workflow_authoring,
         )
 
     return probes

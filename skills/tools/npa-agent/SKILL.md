@@ -233,6 +233,19 @@ npa/.venv/bin/npa workbench workflow plan-spec <spec.yaml> --run-id <run_id> --j
 npa/.venv/bin/npa workbench workflow run-spec <spec.yaml> --plan-only --scheduler-plan --json
 ```
 
+`POST /api/workflows/draft` **saves** a draft (it requires a `yaml` body and
+returns validation + plan); it does not generate one. Chat is the generator.
+
+Chat emits `workflow_yaml` **only after validation and planning both succeed**.
+Without a staged bucket and configured accelerator it returns
+`Could not generate runnable workflow YAML yet.` and names the unresolved
+placeholders (`<configure-s3-bucket>`, `<configure-gpu-accelerator>`). That is
+the fail-closed contract working, not a defect — do not "fix" it by relaxing the
+gate, and do not report a placeholder refusal as a broken drafting path. It also
+means workflow authoring cannot be fully exercised on an agent with no staged
+infrastructure; `npa agent verify-live` asserts the YAML branch, so run it
+against a bootstrapped VM.
+
 Guidance:
 
 - Keep config grouped: runtime knobs first, then `*_uri` keys under prefix paths.
