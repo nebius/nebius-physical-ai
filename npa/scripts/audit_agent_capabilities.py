@@ -24,7 +24,7 @@ import sys
 import tempfile
 import traceback
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 SANDBOX_MARKER = "/opt/npa-agent"
@@ -117,12 +117,16 @@ def load_backend_app(body: str, sandbox: Path) -> Any:
     if str(sandbox) not in sys.path:
         sys.path.insert(0, str(sandbox))
 
-    module_globals: dict[str, Any] = {"__name__": "npa_audit_backend", "__file__": str(sandbox / "backend.py")}
-    exec(compile(sandboxed, "backend.py", "exec"), module_globals)  # noqa: S102
-    app = module_globals.get("app")
+    # Register a real module before exec: dataclasses resolve their annotations
+    # through sys.modules[cls.__module__].
+    module = ModuleType("npa_audit_backend")
+    module.__file__ = str(sandbox / "backend.py")
+    sys.modules[module.__name__] = module
+    exec(compile(sandboxed, "backend.py", "exec"), module.__dict__)  # noqa: S102
+    app = getattr(module, "app", None)
     if app is None:
         raise SystemExit("rendered backend exposed no FastAPI app")
-    return app, module_globals
+    return app, module.__dict__
 
 
 def iter_routes(app: Any) -> list[tuple[str, str]]:
