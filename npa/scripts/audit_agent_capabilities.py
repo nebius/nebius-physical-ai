@@ -247,6 +247,27 @@ def iter_routes(app: Any) -> list[tuple[str, str]]:
     return sorted(set(routes))
 
 
+def shadowed_routes(app: Any) -> list[str]:
+    """Return method+path pairs registered more than once.
+
+    Starlette resolves the first match, so every later registration is
+    unreachable. Probing cannot find these -- both copies answer the same URL --
+    and de-duplicating the route list hides them, so report them explicitly.
+    """
+
+    counts: dict[tuple[str, str], int] = {}
+    for route in app.routes:
+        path = getattr(route, "path", "")
+        for method in sorted(getattr(route, "methods", set()) or set()):
+            key = (method, path)
+            counts[key] = counts.get(key, 0) + 1
+    return sorted(
+        f"{method} {path} (x{count})"
+        for (method, path), count in counts.items()
+        if count > 1
+    )
+
+
 def probe_routes(client: Any, routes: list[tuple[str, str]]) -> list[dict[str, Any]]:
     """GET every parameterless read route and record its real outcome."""
 
@@ -583,11 +604,13 @@ def main() -> int:
         # routing table, so it stays valid for the served tier too.
         app, _globals = load_backend_app(body, sandbox)
         routes = iter_routes(app)
+        shadowed = shadowed_routes(app)
         report["routes"] = {
             "total": len(routes),
             "parameterless_get": sum(
                 1 for method, path in routes if method == "GET" and "{" not in path
             ),
+            "shadowed": shadowed,
             "all": [f"{method} {path}" for method, path in routes],
         }
 
@@ -618,6 +641,7 @@ def main() -> int:
     report["summary"] = {
         "tier": report["tier"],
         "routes_total": report["routes"]["total"],
+        "routes_shadowed": len(report["routes"]["shadowed"]),
         "routes_probed": len(probes),
         "route_outcomes": dict(sorted(counts.items())),
         "chat_intents_probed": len(report["chat_probes"]),
@@ -632,6 +656,10 @@ def main() -> int:
     }
 
     print(json.dumps(report["summary"], indent=2))
+    if report["routes"]["shadowed"]:
+        print("\n-- shadowed routes (registered twice; only the first serves) --")
+        for entry in report["routes"]["shadowed"]:
+            print(f"  [SHADOWED] {entry}")
     print("\n-- route probes --")
     for probe in probes:
         note = probe.get("error") or probe.get("detail") or ""
