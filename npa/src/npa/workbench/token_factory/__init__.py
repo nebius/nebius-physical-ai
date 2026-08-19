@@ -429,7 +429,16 @@ def batch_generate(
         )
     except TokenFactoryError as exc:
         _cleanup_datasets(active, [dataset_id])
-        raise TokenFactoryToolError(f"starting batch inference failed: {exc}") from exc
+        hint = ""
+        if "text2text" in str(exc):
+            # Batch inference accepts text models only, so a vision model is
+            # rejected outright rather than failing per row later.
+            hint = (
+                f" Model {effective_model!r} is not a text model. Batch inference "
+                "accepts text-to-text models only; caption images with "
+                "`npa workbench token-factory caption` instead."
+            )
+        raise TokenFactoryToolError(f"starting batch inference failed: {exc}{hint}") from exc
 
     operation_id = str(operation.get("id") or "")
     if not operation_id:

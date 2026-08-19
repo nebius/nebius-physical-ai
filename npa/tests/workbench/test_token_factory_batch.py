@@ -440,6 +440,39 @@ def test_batch_generate_times_out_without_losing_operation_id(tmp_path: Path) ->
     assert "keeps running" in str(excinfo.value)
 
 
+def test_batch_generate_hints_when_the_model_is_not_text_to_text(tmp_path: Path) -> None:
+    api = FakeBatchApi()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path.endswith("/operations"):
+            # Verbatim from the live API when handed a vision model.
+            return httpx.Response(
+                400, json={"detail": "Batch inference is only supported for text2text models"}
+            )
+        return api.handler(request)
+
+    config = resolve_config(api_key="test-key", environ={})
+    client = TokenFactoryClient(
+        config,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+        sleeper=lambda _seconds: None,
+    )
+
+    with pytest.raises(TokenFactoryToolError) as excinfo:
+        batch_generate(
+            input_path=str(_prompts(tmp_path)),
+            output_path=str(tmp_path / "out"),
+            model="Qwen/Qwen2.5-VL-72B-Instruct",
+            client=client,
+        )
+
+    message = str(excinfo.value)
+    assert "is not a text model" in message
+    assert "token-factory caption" in message
+    # The scratch dataset must not survive a rejected submit.
+    assert api.deleted == [DATASET_ID]
+
+
 def test_batch_generate_rejects_empty_prompt_file(tmp_path: Path) -> None:
     empty = tmp_path / "prompts.jsonl"
     empty.write_text("\n", encoding="utf-8")

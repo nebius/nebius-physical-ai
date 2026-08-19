@@ -144,19 +144,23 @@ npa workbench token-factory batch-generate \
   --output json
 ```
 
-Two things differ from every other command in this tool, and both matter:
+Three things differ from every other command in this tool, and all of them
+matter:
 
-**Batch inference is a separate entitlement from real-time chat.** A model can
-serve `/chat/completions` and still be rejected for batch. When that happens the
-operation fails before it starts and Token Factory reports no error text at all,
-so `batch-generate` names the likely cause itself rather than passing an empty
-failure up. Confirm a model on a few prompts before pointing a large run at it.
+**Batch routing is a per-model entitlement, unrelated to real-time chat.** Most
+models that serve `/chat/completions` are rejected for batch: measured across
+eight text models on one key, only `openai/gpt-oss-120b` was batch routable.
+That is why the default here is not the default text model. Confirm a model on a
+few prompts before pointing a large run at it.
+
+**Batch is text-to-text only.** A vision model is rejected at submit, so there is
+no batch captioning path — `caption` is real-time by necessity.
 
 **It is asynchronous.** The completion window is a deadline, not an expected
-latency: a three-prompt batch has been observed queued for over ten minutes.
-Use `--no-wait` when you do not want to hold the process open. That writes a
-`batch_operation.json` handle next to the eventual output and exits, and the run
-is collected later:
+latency: batches of a few prompts have been observed still running after an hour
+against a 24h window. Use `--no-wait` when you do not want to hold the process
+open. That writes a `batch_operation.json` handle next to the eventual output and
+exits, and the run is collected later:
 
 ```bash
 npa workbench token-factory batch-generate \
@@ -167,8 +171,16 @@ npa workbench token-factory batch-status \
 ```
 
 `batch-status` without `--wait` reports the current status and exits, so a caller
-can poll on its own schedule. Prompts are recovered from the operation's own
-source dataset, so collecting does not need the original prompt file.
+can poll on its own schedule. It reports `request_counts` (`total`, `completed`,
+`failed`, `invalid`) — the only real progress signal a pending batch offers — and
+recovers prompts from the operation's own source dataset, so collecting does not
+need the original prompt file.
+
+When a batch does fail, the reason is not where the operations API suggests:
+`/operations/{id}/errors` returns a single empty string. The per-row reason lives
+in the batch record's error file, and `batch-generate` reads it and reports it
+verbatim, so a rejected model produces a message naming the model and the reason
+rather than an empty failure.
 
 The request and response datasets Token Factory creates server-side are scratch
 state: they are deleted once results are collected, unless `--keep-datasets` is

@@ -82,19 +82,34 @@ npa workbench token-factory batch-status --operation-id <id> --output-path <same
 ```
 
 Reach for `batch-generate` over `generate` whenever nothing is waiting on the
-answer, which is most bulk stages. Two properties are unique to it and both bite:
+answer, which is most bulk stages. Three properties are unique to it, and each
+one has already cost real debugging time:
 
-- **Batch is a separate entitlement from real-time chat.** A model that answers
-  `generate` can be rejected for batch. The operation then fails *before it
-  starts* and the errors endpoint returns a single empty string — no message at
-  all. `batch-generate` detects that shape (`status: failed` with
-  `in_progress_at: null` and no error text) and names the likely cause. Verified
-  live: `meta-llama/Llama-3.3-70B-Instruct` served real-time chat and failed
-  instantly for batch on the same key, while `openai/gpt-oss-120b` ran. This is
-  why `DEFAULT_BATCH_MODEL` is not `DEFAULT_TEXT_MODEL`.
-- **The completion window is a deadline, not a latency.** A three-prompt batch
-  has been observed queued past ten minutes. Do not treat a slow batch as a hung
-  one, and do not put `--wait` on a path where something is timing out.
+- **Batch routing is a per-model entitlement, unrelated to real-time chat.** Most
+  models that serve `generate` are rejected for batch. Measured live across eight
+  text models on one key, exactly one — `openai/gpt-oss-120b` — was batch
+  routable; `meta-llama/Llama-3.3-70B-Instruct`, `Qwen/Qwen3-32B`,
+  `Qwen/Qwen3-30B-A3B-Instruct-2507`, `Qwen/Qwen3-235B-A22B-Instruct-2507`,
+  `google/gemma-3-27b-it`, `deepseek-ai/DeepSeek-V4-Flash`,
+  `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B`, and `zai-org/GLM-5.1` were not. That
+  is why `DEFAULT_BATCH_MODEL` is `openai/gpt-oss-120b` and not
+  `DEFAULT_TEXT_MODEL`. Treat the routable set as per-key and verify on a couple
+  of prompts before pointing a large run at a new model.
+- **Batch is text-to-text only.** A vision model is rejected at submit with
+  `Batch inference is only supported for text2text models`, so there is no batch
+  captioning path; use `caption`, which is real-time.
+- **The completion window is a deadline, not a latency.** Observed live: batches
+  of one and three prompts sat `in_progress` with `completed: 0` for over an hour
+  against a 24h window. Do not read a slow batch as a hung one, and never put
+  `--wait` on a path that has its own timeout.
+
+Where the failure reason actually lives matters. `GET /operations/{id}/errors`
+returns a single empty string for a failed batch — useless. The real per-row
+reason is in the batch record's error file
+(`GET /batches/{id}` → `error_file_id` → `GET /files/{id}/content`, which
+redirects, so redirects must be followed). `batch-generate` reads that file and
+reports it, and also surfaces `request_counts` (`total`, `completed`, `failed`,
+`invalid`) as the only genuine progress signal a pending batch offers.
 
 **Physical-AI reasoning over a scene** — default model
 `nvidia/Cosmos3-Super-Reasoner`. Point it at scene images and ask what a robot

@@ -13,9 +13,10 @@ config:
   bucket: example-bucket
   prefix: "runs/{{run.id}}/token-factory-batch"
 
-  # Batch inference is a separate entitlement from real-time chat: a model that
-  # serves `token-factory generate` can still be rejected here. Confirm a
-  # candidate on a handful of prompts before pointing a large run at it.
+  # Batch routing is a per-model entitlement unrelated to real-time chat, and the
+  # routable set is small: of eight text models measured on one key, only this one
+  # was routable. Batch is also text-to-text only, so a vision model is rejected
+  # at submit. Confirm a candidate on a handful of prompts first.
   batch_model: "openai/gpt-oss-120b"
   max_tokens: "512"
   # Deadline the batch must finish within, not an expected latency. Batches
