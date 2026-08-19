@@ -189,6 +189,27 @@ def read_auth_env(path: Path) -> tuple[str, str]:
     return user, password
 
 
+# FastAPI serves these itself and never lists them in the OpenAPI document, so
+# comparing a rendered routing table against a deployment's /openapi.json would
+# always report them as missing.
+_OPENAPI_UNLISTED_PATHS = frozenset(
+    {"/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json"}
+)
+
+_PATH_CONVERTER = re.compile(r"\{([^{}:]+):[^{}]+\}")
+
+
+def comparable_route(method: str, path: str) -> tuple[str, str]:
+    """Normalize a route for cross-source comparison.
+
+    Starlette keeps the converter in ``route.path`` (``{run_id:path}``) while
+    OpenAPI emits the bare name (``{run_id}``). Comparing the two raw forms
+    reports every path-converter route as drift in both directions.
+    """
+
+    return method, _PATH_CONVERTER.sub(r"{\1}", path)
+
+
 def live_routes(client: Any) -> list[tuple[str, str]]:
     """Enumerate routes from the deployment's own OpenAPI document.
 
@@ -721,13 +742,18 @@ def main() -> int:
                 follow_redirects=True,
             ) as client:
                 deployed = live_routes(client)
-                rendered = set(routes)
+                deployed_keys = {comparable_route(m, p) for m, p in deployed}
+                rendered_keys = {
+                    comparable_route(m, p)
+                    for m, p in routes
+                    if p not in _OPENAPI_UNLISTED_PATHS
+                }
                 report["routes"]["deployed_total"] = len(deployed)
                 report["routes"]["missing_on_deployment"] = [
-                    f"{m} {p}" for m, p in sorted(rendered - set(deployed))
+                    f"{m} {p}" for m, p in sorted(rendered_keys - deployed_keys)
                 ]
                 report["routes"]["absent_from_render"] = [
-                    f"{m} {p}" for m, p in sorted(set(deployed) - rendered)
+                    f"{m} {p}" for m, p in sorted(deployed_keys - rendered_keys)
                 ]
                 report["route_probes"] = probe_routes(client, deployed)
                 report["capability_probes"] = (
