@@ -213,6 +213,28 @@ CHAT_PROBES: tuple[tuple[str, str], ...] = (
 )
 
 
+def classify_outcome(probe: dict[str, Any]) -> str:
+    """Separate a real defect from a route that simply needs arguments.
+
+    A bare GET against a route with required query parameters answers 422/400 by
+    design, and a disabled feature answers 403. Counting those as failures would
+    hide the outcomes that matter: a 5xx or an unhandled exception.
+    """
+
+    status = probe.get("status")
+    if not isinstance(status, int):
+        return "error"
+    if status < 400:
+        return "answered"
+    if status in {400, 422}:
+        return "needs_arguments"
+    if status in {401, 403}:
+        return "gated"
+    if status == 404:
+        return "absent_in_sandbox"
+    return "error"
+
+
 def probe_chat_router() -> list[dict[str, Any]]:
     """Check every advertised intent matches and produces a grounded reply."""
 
@@ -283,12 +305,15 @@ def main() -> int:
     report["chat_probes"] = probe_chat_router()
 
     probes = report["route_probes"]
-    ok = [p for p in probes if isinstance(p.get("status"), int) and p["status"] < 400]
+    for probe in probes:
+        probe["outcome"] = classify_outcome(probe)
+    counts: dict[str, int] = {}
+    for probe in probes:
+        counts[probe["outcome"]] = counts.get(probe["outcome"], 0) + 1
     report["summary"] = {
         "routes_total": report["routes"]["total"],
         "routes_probed": len(probes),
-        "routes_2xx_3xx": len(ok),
-        "routes_failed": len(probes) - len(ok),
+        "route_outcomes": dict(sorted(counts.items())),
         "chat_intents_probed": len(report["chat_probes"]),
         "chat_intents_matched": sum(
             1 for p in report["chat_probes"] if p.get("intent_ok")
@@ -299,9 +324,10 @@ def main() -> int:
     print(json.dumps(report["summary"], indent=2))
     print("\n-- route probes --")
     for probe in probes:
-        status = probe.get("status")
-        flag = "ok " if isinstance(status, int) and status < 400 else "BAD"
-        print(f"  [{flag}] {probe['method']:4s} {probe['path']:44s} {status} {probe.get('error', '')[:90]}")
+        print(
+            f"  [{probe['outcome']:17s}] {probe['method']:4s} {probe['path']:44s} "
+            f"{probe.get('status')} {probe.get('error', '')[:80]}"
+        )
     print("\n-- chat intents --")
     for probe in report["chat_probes"]:
         flag = "ok " if probe.get("intent_ok") and probe.get("reply_ok") else "BAD"
