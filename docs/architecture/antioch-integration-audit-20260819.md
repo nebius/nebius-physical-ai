@@ -56,7 +56,7 @@ coverage from 2026-04 through 2026-08.
 | Authoring unit | `@antioch.scenario` functions with declared `cases` (singleton / grid / correlated combinations), grouped into immutable `suites` |
 | Outcome model | `run.check(criterion, passed, detail)` — every check recorded; a run failing any check finishes `FAILED`. Plus `run.add_result(name, value)` and `run.add_artifact(path)` |
 | Telemetry | A Rerun recording per scenario run (`rerun-sdk==0.36.0`), including a platform-sampled viewport entity at `/antioch/viewport` |
-| Retrieval | `antioch scenario show|download|list`, `antioch suite show --follow`; every finite history command supports `--json` with cursor paging and microsecond timestamps |
+| Retrieval | `antioch scenario show` / `download` / `list`, `antioch suite show --follow`; every finite history command supports `--json` with cursor paging and microsecond timestamps |
 | Reproducibility | `--queue` freezes a digest-pinned environment and bakes the submitted project tree; `scenario rerun` / `suite rerun` replay it |
 | Assets | An organization-scoped immutable versioned asset library: `antioch assets push/pull`, `save_asset()` / `load_asset()` |
 | Agent surface | Apache-2.0 plugin for Claude Code and Codex: skills for the Antioch platform, scenario design, Isaac Sim 6, Isaac Lab 3, plus an `antioch-research-mcp` MCP server for versioned doc/source grounding |
@@ -86,7 +86,7 @@ same job.
 | Capability | Workbench today | Antioch | Assessment |
 | --- | --- | --- | --- |
 | Isaac Sim / Isaac Lab execution | `npa workbench isaac-lab`, the `isaac` backend of the Sim2Real held-out eval (`docs/architecture/sim-backend-selection.md`) | Native, and the whole product | **Direct overlap.** Antioch's interactive loop (warm machines, kernel reuse, streamed viewport) is better for authoring; ours is better for batch stages already wired into a durable workflow |
-| Scenario definition + ranking | `npa workbench scenario-gen generate|rank` (RL adversary mining policy failures) | `@antioch.scenario` + cases + suites (human/agent-authored regression sets) | **Complementary.** Ours generates hard scenarios; theirs is the repeatable regression harness. Mined scenarios are a natural input to an Antioch suite |
+| Scenario definition + ranking | `npa workbench scenario-gen generate` / `rank` (RL adversary mining policy failures) | `@antioch.scenario` + cases + suites (human/agent-authored regression sets) | **Complementary.** Ours generates hard scenarios; theirs is the repeatable regression harness. Mined scenarios are a natural input to an Antioch suite |
 | Per-run evaluation gate | `npa workbench vlm-eval`, Sim2Real Stage-11 threshold decision | `run.check(...)` named checks; run FAILS on any failed check | **Complementary and directly adaptable.** Their checks are a cheaper, more deterministic gate signal than a VLM score |
 | Multi-tool pipeline composition | `npa.workflow/v0.0.1`, durable S3 resume, loops, gates, 14-stage Sim2Real | Suites and queued fan-out inside Antioch only | **Ours.** Antioch has no Cosmos/GR00T/LeRobot/FiftyOne/LanceDB composition story |
 | Dataset of record + lineage | `npa workbench dataset`, `npa workbench insights` (lineage graph + metrics store) | Scenario run history, results, artifacts | **Ours.** Antioch is a run store, not a dataset-of-record or a cross-tool lineage graph |
@@ -107,8 +107,9 @@ same job.
   push` → Antioch suite run → scenario report + telemetry → Workbench S3 →
   `insights ingest-run` + workflow gate.
 
-That closed loop is credible today and does not require Antioch to change
-anything except how we authenticate.
+That closed loop is credible today at the evidence tier below, where a human or
+CI operator drives the Antioch side. Automating it *inside* an `npa.workflow`
+run is the part that needs a credential Antioch does not currently offer.
 
 ## Integration tiers
 
