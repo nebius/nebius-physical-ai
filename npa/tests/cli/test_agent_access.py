@@ -124,6 +124,40 @@ def test_partial_access_keeps_accessible_project_and_reports_denied_project() ->
     assert any(error["code"] == "permission_denied" for error in payload["errors"])
 
 
+def test_bucket_probe_denials_are_resource_scoped_and_fail_closed() -> None:
+    def probe(bucket_name: str) -> BucketProbe:
+        if bucket_name == "bucket-b":
+            raise AccessProbeError("denied", "probe selected object storage bucket")
+        return _available_probe(bucket_name)
+
+    report = _discover(probe_bucket=probe)
+    payload = report.to_dict()
+    resources = {
+        resource["name"]: resource
+        for project in payload["projects"]
+        for resource in project["resources"]
+    }
+
+    assert payload["status"] == "partial"
+    assert payload["errors"] == []
+    assert (
+        resources["bucket-b"]["capabilities"]["artifact_discovery"]["status"]
+        == "denied"
+    )
+    assert resources["bucket-b"]["capabilities"]["artifact_read"]["status"] == "denied"
+    assert (
+        "Permission denied"
+        in resources["bucket-b"]["capabilities"]["artifact_read"]["reason"]
+    )
+    assert accessible_artifact_buckets(report) == ["bucket-a"]
+    with pytest.raises(ValueError, match="outside effective agent access"):
+        scoped_artifact_buckets(
+            report,
+            project_id="project-b",
+            resource_bucket="bucket-b",
+        )
+
+
 def test_denied_access_has_no_searchable_storage() -> None:
     def denied(_value: str):
         raise AccessProbeError("denied", "access resource")
