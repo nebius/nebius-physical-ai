@@ -113,8 +113,8 @@ Hugging Face, NVIDIA NGC, Nebius object storage, and Token Factory. Add
 
 Want a real artifact before you provision anything?
 [Nebius Token Factory](docs/workbench/token-factory.md) hosted inference needs
-only a `NEBIUS_TOKEN_FACTORY_KEY` — no cluster, no GPU. It is a cheap proof that
-your credentials work, not the destination. Nebius AI Cloud GPUs are.
+only a `NEBIUS_TOKEN_FACTORY_KEY` — no cluster, no GPU. Treat it as a cheap proof
+that your credentials work; the real destination is Nebius AI Cloud GPUs.
 
 ---
 
