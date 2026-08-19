@@ -169,23 +169,30 @@ npa/.venv/bin/npa agent bootstrap --project <alias> --name <name>   # NotFound =
 A `Resource not found ... service compute` from bootstrap means the record is an
 orphan to clean up, not a VM to repair.
 
-## Pinned Nebius CLI
+## Pinned Nebius CLI On A Shared Dev VM
 
 NPA accepts only the CLI versions it has tested (`_TESTED_NEBIUS_CLI_VERSIONS` in
 `npa/src/npa/clients/nebius.py`, plus `nebius-cli` in
-`npa/src/npa/deploy/images.py`). Any other version fails every provider call
-with `Unsupported Nebius CLI <actual>`, which surfaces as unrelated-looking
-preflight failures across quota, RBAC, and profile checks at once. The CLI is
-resolved from `PATH`, so on a shared machine install the tested version into a
-private prefix instead of overwriting the host's copy:
+`npa/src/npa/deploy/images.py`). Any other version fails every provider call with
+`Unsupported Nebius CLI <actual>`, which surfaces as several unrelated-looking
+preflight failures at once — quota, RBAC, and profile checks all report the same
+underlying refusal. Read the version line, not the individual checks.
+
+`npa/scripts/dev_vm_isolated_session.sh` isolates the worktree, venv, and tmux
+session, but **not** the Nebius CLI: it is resolved from `PATH` and the host copy
+is shared. When the host version is untested, install the tested one into a
+private prefix rather than overwriting the shared binary other runs depend on:
 
 ```bash
 curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh \
   -o /tmp/nebius-install.sh
 NEBIUS_INSTALL_FOLDER="$PWD/.tools/bin" NEBIUS_CLI_VERSION=<tested> \
   bash /tmp/nebius-install.sh
-export PATH="$PWD/.tools/bin:$PATH"
+export PATH="$PWD/.tools/bin:$PATH"   # confirm with `nebius version`
 ```
+
+The CLI reads the shared `~/.nebius/config.yaml`, so an existing authenticated
+profile keeps working through the private binary.
 
 ## Verify Tiers
 
