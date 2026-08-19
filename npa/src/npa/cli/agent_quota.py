@@ -61,6 +61,7 @@ def _agent_check_whole_path_capacity(
 
     from npa.clients.nebius import get_project_region
     from npa.provisioning_preflight import (
+        ExistingCapacity,
         build_whole_path_plan,
         discover_existing_capacity,
         resolve_topology,
@@ -73,15 +74,23 @@ def _agent_check_whole_path_capacity(
         cpu_nodes=-1 if include_paidf else 0,
         gpu_nodes=-1 if include_paidf else 0,
     )
-    cluster_name = _exact_owned_cluster_name(project_id, requested.cluster_name)
-    existing = discover_existing_capacity(
-        project_id=project_id,
-        cluster_name=cluster_name,
-        cpu_platform=requested.cpu_platform,
-        cpu_preset=requested.cpu_preset,
-        gpu_platform=requested.gpu_platform,
-        gpu_preset=requested.gpu_preset,
-    )
+    # An agent-only plan reserves no cluster nodes, so there is nothing for the
+    # existing-cluster inventory to deduct. Probing mk8s anyway turns an
+    # unrelated `resource.mk8scluster.list` denial into an unverified mutation
+    # prerequisite that blocks a CPU-only agent VM the operator can create.
+    reserves_cluster_nodes = requested.cpu_nodes > 0 or requested.gpu_nodes > 0
+    if reserves_cluster_nodes:
+        cluster_name = _exact_owned_cluster_name(project_id, requested.cluster_name)
+        existing = discover_existing_capacity(
+            project_id=project_id,
+            cluster_name=cluster_name,
+            cpu_platform=requested.cpu_platform,
+            cpu_preset=requested.cpu_preset,
+            gpu_platform=requested.gpu_platform,
+            gpu_preset=requested.gpu_preset,
+        )
+    else:
+        existing = ExistingCapacity()
     plan = build_whole_path_plan(
         project_alias="",
         project_id=project_id,
