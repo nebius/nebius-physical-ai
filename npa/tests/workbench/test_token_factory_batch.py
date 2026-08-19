@@ -26,6 +26,7 @@ from npa.clients.token_factory import (
 )
 from npa.workbench.token_factory import (
     TokenFactoryToolError,
+    _parse_batch_export,
     batch_collect,
     batch_generate,
     batch_operation_uri_for,
@@ -529,6 +530,59 @@ def test_batch_collect_reports_pending_without_blocking(tmp_path: Path) -> None:
     assert result.status == "pending"
     assert result.operation_status == "running"
     assert api.deleted == []
+
+
+def test_parse_batch_export_reads_the_standard_batch_row() -> None:
+    # The documented OpenAI-compatible batch output row, wrapper fields included.
+    row = {
+        "id": "batch_req_0001",
+        "custom_id": "p1",
+        "response": {
+            "status_code": 200,
+            "request_id": "req-0001",
+            "body": {
+                "id": "chatcmpl-0001",
+                "object": "chat.completion",
+                "model": DEFAULT_BATCH_MODEL,
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": "a standard answer"},
+                    }
+                ],
+                "usage": {"prompt_tokens": 9, "completion_tokens": 3, "total_tokens": 12},
+            },
+        },
+        "error": None,
+    }
+
+    generations, failures, usage = _parse_batch_export(
+        json.dumps(row) + "\n", {"p1": "the prompt"}
+    )
+
+    assert failures == []
+    assert [(g.id, g.prompt, g.completion) for g in generations] == [
+        ("p1", "the prompt", "a standard answer")
+    ]
+    assert usage.total_tokens == 12
+
+
+def test_parse_batch_export_records_a_per_row_error_with_its_message() -> None:
+    row = {
+        "custom_id": "p1",
+        "response": {
+            "status_code": 400,
+            "body": {"error": {"message": "context length exceeded", "type": "invalid_request"}},
+        },
+        "error": None,
+    }
+
+    generations, failures, _usage = _parse_batch_export(json.dumps(row) + "\n", {})
+
+    assert generations == []
+    assert failures[0]["id"] == "p1"
+    assert "context length exceeded" in failures[0]["error"]
 
 
 def test_batch_operation_uri_sits_beside_generations() -> None:

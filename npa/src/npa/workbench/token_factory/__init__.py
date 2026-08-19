@@ -807,14 +807,15 @@ def _response_body(row: dict[str, Any]) -> dict[str, Any] | None:
             except json.JSONDecodeError:
                 continue
         if isinstance(value, dict):
-            # Some wrappers nest the completion one level deeper under "body".
+            # The standard batch row nests the completion one level deeper under
+            # "body", and a per-row failure puts its "error" in the same place.
             inner = value.get("body")
             if isinstance(inner, str):
                 try:
                     inner = json.loads(inner)
                 except json.JSONDecodeError:
                     inner = None
-            if isinstance(inner, dict) and "choices" in inner:
+            if isinstance(inner, dict) and ("choices" in inner or "error" in inner):
                 return inner
             return value
     if "choices" in row:
