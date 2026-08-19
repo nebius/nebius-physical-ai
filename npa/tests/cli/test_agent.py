@@ -5211,7 +5211,7 @@ def test_agent_preflight_capacity_follows_requested_agent_name(
         agent_module,
         "_agent_record",
         lambda _project, name: (
-            {"public_ip": "203.0.113.10"} if name == "agent" else {}
+            {"public_ip": "203.0.113.50"} if name == "agent" else {}
         ),
     )
 
