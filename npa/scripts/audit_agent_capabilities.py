@@ -269,24 +269,29 @@ def probe_capabilities(app: Any) -> list[dict[str, Any]]:
             grounded_chat,
         )
 
-        def retrieval_roundtrip():
-            index = client.post(
-                "/agent/retrieval/index",
-                json={"corpus": [{"id": "doc-1", "text": "Sim2Real promotes a checkpoint when the gate passes."}]},
+        def retrieval_corpus_discovery():
+            # Indexing for real needs a Token Factory embedding call, so assert
+            # the invariant that costs nothing and matters most: the corpus
+            # scanner reports an empty corpus honestly instead of claiming a
+            # successful index over zero documents.
+            with tempfile.TemporaryDirectory(prefix="npa-audit-corpus-") as empty:
+                response = client.post(
+                    "/agent/retrieval/index", json={"roots": [empty]}
+                )
+            body = response.json() if response.status_code == 200 else {}
+            declined = body.get("ok") is False and "no corpus documents" in str(
+                body.get("error", "")
             )
-            search = client.get("/agent/retrieval/search", params={"q": "checkpoint"})
-            body = search.json() if search.status_code == 200 else {}
-            hits = body.get("results") or body.get("citations") or []
             return (
-                f"index={index.status_code} search={search.status_code}",
-                f"hits={len(hits)}",
-                search.status_code == 200,
+                response.status_code,
+                f"empty_corpus_declined={declined}",
+                declined,
             )
 
         record(
-            "retrieval index + search",
-            "index accepts a corpus and search returns citations",
-            retrieval_roundtrip,
+            "retrieval corpus discovery",
+            "an empty corpus is refused, never reported as a successful index",
+            retrieval_corpus_discovery,
         )
 
         def memory_roundtrip():
@@ -323,44 +328,56 @@ def probe_capabilities(app: Any) -> list[dict[str, Any]]:
             trace_analyze,
         )
 
-        def confirmation_gate():
-            response = client.post(
-                "/agent/act",
-                json={"message": "provision a GPU cluster right now"},
-            )
-            body = response.json() if response.status_code == 200 else {}
-            text = json.dumps(body)
-            gated = "confirm" in text.lower() or "consent" in text.lower()
+        def action_loop_requires_a_goal():
+            missing = client.post("/agent/act", json={})
+            detail = str((missing.json() or {}).get("detail", ""))
             return (
-                response.status_code,
-                f"confirmation_required={gated}",
-                response.status_code < 500,
+                missing.status_code,
+                f"detail={detail!r}",
+                missing.status_code == 400 and "goal" in detail,
             )
 
         record(
-            "bounded action loop",
-            "a destructive request is answered without silently acting",
-            confirmation_gate,
+            "bounded action loop contract",
+            "refuses a goal-less request instead of planning against nothing",
+            action_loop_requires_a_goal,
         )
 
-        def workflow_draft_validate():
-            draft = client.post(
-                "/workflows/draft", json={"intent": "sim2real", "prompt": "two step sim2real"}
+        def chat_drafts_then_validates():
+            # The real authoring path: chat renders a spec, then the same
+            # deployment validates and plans it in-process.
+            chat = client.post(
+                "/chat",
+                json={
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": "create a 2-step sim2real npa.workflow yaml",
+                        }
+                    ]
+                },
             )
-            body = draft.json() if draft.status_code == 200 else {}
-            yaml_text = str(body.get("yaml") or "")
+            body = chat.json() if chat.status_code == 200 else {}
+            yaml_text = str(body.get("workflow_yaml") or "")
+            if not yaml_text:
+                return (
+                    chat.status_code,
+                    "chat returned no workflow_yaml",
+                    False,
+                )
             validate = client.post("/workflows/validate", json={"yaml": yaml_text})
-            valid = (validate.json() or {}).get("ok") if validate.status_code == 200 else None
+            result = validate.json() if validate.status_code == 200 else {}
             return (
-                f"draft={draft.status_code} validate={validate.status_code}",
-                f"yaml_chars={len(yaml_text)} validate_ok={valid}",
-                draft.status_code == 200 and bool(yaml_text),
+                f"chat={chat.status_code} validate={validate.status_code}",
+                f"yaml_chars={len(yaml_text)} validate_ok={result.get('ok')} "
+                f"runnable={result.get('runnable')}",
+                bool(result.get("ok")),
             )
 
         record(
-            "workflow draft + validate",
-            "the agent drafts a spec and validates it in-process",
-            workflow_draft_validate,
+            "chat drafts a valid workflow",
+            "chat-generated YAML passes the agent's own validate + plan",
+            chat_drafts_then_validates,
         )
 
     return probes
