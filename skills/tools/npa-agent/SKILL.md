@@ -42,7 +42,25 @@ npa/.venv/bin/python npa/scripts/audit_agent_capabilities.py --json audit.json
 
 It reports the registered route count, each parameterless `GET`'s real outcome,
 and whether every advertised chat intent still matches and produces a grounded
-reply. Read the outcome classes rather than a pass/fail count:
+reply.
+
+Add `--serve-live` to probe a real `uvicorn backend:app` process on loopback,
+started with the same argument list as the deployed `npa-agent-backend` systemd
+unit, instead of driving the ASGI app in-process:
+
+```bash
+npa/.venv/bin/python npa/scripts/audit_agent_capabilities.py --serve-live
+```
+
+Use the served tier when the question is "would this work on a VM", because it
+is the only tier that exercises import-time and lifespan behavior under the real
+server and the real websocket flags. It needs `uvicorn` and `websockets` in the
+venv (bootstrap installs both on the VM; a repo venv may not have them). The two
+tiers should report identical route counts and outcomes — a divergence is itself
+the finding. Neither tier binds a public port, so both are safe on a shared
+machine.
+
+Read the outcome classes rather than a pass/fail count:
 
 - `answered` — the capability responded.
 - `needs_arguments` — required query parameters missing (by design).

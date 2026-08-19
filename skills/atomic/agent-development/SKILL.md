@@ -49,6 +49,17 @@ Rules:
   and newlines in strings as `\\n`; substitutions use single `{var}`.
 - After editing the template, **validate the rendered backend compiles** (see
   Testing). A stray brace is a `SyntaxError` at import of `agent.py`.
+- **Embedded routes register before the template's own routes.** The
+  `_AGENT_*_EMBED` placeholders sit earlier in the f-string than most `@app.*`
+  blocks, and Starlette resolves the **first** matching route, so an embedded
+  module silently wins over a same-path handler written further down in
+  `agent.py`. `/artifacts/file/{filename}` and `/artifacts/download` each carried
+  two definitions this way, and the shadowed copies in `agent.py` were the weaker
+  ones — no `Content-Disposition`/`nosniff` headers, no run-scoped inventory
+  authorization — so the file a maintainer would open described a contract the
+  deployment did not serve. Before adding a route, grep the embedded modules for
+  its path; `test_rendered_backend_registers_no_shadowed_routes` fails the build
+  on any method+path registered twice.
 
 ## Cost-tier routing (`agent_routing.py`)
 
@@ -134,7 +145,9 @@ Follow `skills/atomic/testing-conventions/SKILL.md`; use `npa/.venv/bin/python`.
   a change did not silently unregister a route or re-route an intent, and to
   answer "does the agent really support X" without a VM. Compiling is not
   running: an import-time failure in a shipped `agent_backend` module passes the
-  compile check and fails here.
+  compile check and fails here. `--serve-live` runs the same probes against a
+  real `uvicorn` process on loopback with the deployed systemd unit's arguments,
+  which is the only tier that covers lifespan and websocket-flag behavior.
 - **Tier 2 — live e2e (bounded tokens):** gate behind `NPA_AGENT_CHAT_LIVE=1` /
   `NPA_INTEGRATION_E2E=1`; pin the cheapest model; assert `grounded: true` where
   possible so most turns cost 0 tokens.
