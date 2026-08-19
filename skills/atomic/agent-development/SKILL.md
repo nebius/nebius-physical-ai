@@ -75,6 +75,21 @@ explicit model override, and returns `tier` + `usage` + `input_budget_ok`.
 1. **Grounded intent** — can a regex intent + grounded state reply answer it?
    (0 tokens) Add to `_INTENT_RULES` / `build_grounded_reply` in `agent_chat.py`
    and cover it in `test_agent_chat.py`. Prefer this for anything high-frequency.
+   Three invariants apply to every new or edited rule:
+   - **Add an `INTENT_APIS` entry.** It is not only reply metadata:
+     `_semantic_route` builds the semantic fallthrough's `known_intents` from its
+     keys, so an intent missing from it is unreachable by any paraphrase the
+     regex misses and its grounded replies report an empty `apis_used`.
+     `test_every_intent_declares_its_apis` fails the build otherwise.
+   - **Earlier rules win**, and `match_chat_intent` applies several hard-coded
+     checks before the list at all. Adding a phrasing an earlier rule already
+     claims silently changes nothing; check what currently matches first.
+   - **Keep sibling rules symmetric.** The tool-capability rules are near
+     copies, so a verb added to one belongs in all of them. "what can lancedb
+     do" degraded to the generic component reply for exactly this reason while
+     the identical Sonic/LeRobot/Genesis wording stayed tool-specific.
+   A phrasing that matches nothing is not neutral — it falls through to a paid
+   model call for an answer the grounded layer already had.
 2. **Cheap model** — if it needs generation, let routing pick the cheap tier;
    only add reasoning/vision signals to `classify_tier` when the turn truly
    needs them.
@@ -112,6 +127,14 @@ Follow `skills/atomic/testing-conventions/SKILL.md`; use `npa/.venv/bin/python`.
 - **Rendered-backend check:** confirm the embedded backend compiles with all
   wiring inlined — render `setup_script` with mocked SSH, extract the
   `backend.py` heredoc body, and `ast.parse` + `compile` it. Guards the f-string.
+- **Whole-surface audit (0 tokens):**
+  `npa/scripts/audit_agent_capabilities.py` goes one step further than the
+  compile check — it *runs* the rendered backend against a sandbox state root and
+  probes every parameterless `GET` plus every advertised intent. Use it to prove
+  a change did not silently unregister a route or re-route an intent, and to
+  answer "does the agent really support X" without a VM. Compiling is not
+  running: an import-time failure in a shipped `agent_backend` module passes the
+  compile check and fails here.
 - **Tier 2 — live e2e (bounded tokens):** gate behind `NPA_AGENT_CHAT_LIVE=1` /
   `NPA_INTEGRATION_E2E=1`; pin the cheapest model; assert `grounded: true` where
   possible so most turns cost 0 tokens.

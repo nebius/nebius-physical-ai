@@ -114,6 +114,79 @@ target branch to the dev VM before live tests.
    bash npa/scripts/agent_fresh_setup_loop.sh
    ```
 
+## Preflight Before You Spend
+
+```bash
+npa/.venv/bin/npa agent preflight --project <alias> --name <name> [--agent-only]
+```
+
+Pass the **same `--name`** you will deploy. Capacity depends on it: an existing
+agent of that name already holds its public IP and needs no headroom, while a new
+name needs a free one. Preflighting the default `agent` and then deploying
+`--name something-else` is how a "capacity ready" report is followed immediately
+by a public-IP shortfall.
+
+`--agent-only` drops the reserved PAIDF cluster shape, so it reserves no cluster
+nodes and does not inspect mk8s. Use it when the operator can create a VM but
+cannot `resource.mk8scluster.list` in the target project.
+
+Read the `whole_path_capacity` diagnostic literally — it names the exact quota,
+required, used, limit, and shortfall. Two facts make it confusing:
+
+- **Public-IPv4 quota is tenant + region scoped, not per project.** Several
+  project aliases pointing into one tenant/region share one allowance, so
+  freeing capacity in "your" project may be impossible while a sibling project
+  holds the addresses. Audit with `nebius vpc allocation list --parent-id
+  <project-id>` and look for `state=ALLOCATED` with `used_by=null` — an
+  unattached public allocation is a leaked address still consuming quota.
+- **Placement follows the project's real region, not the stanza's `region`
+  field or `--region`.** A config stanza can claim `eu-north1` for a project that
+  actually lives in `us-central1`; npa resolves the real one. If a quota number
+  looks like it came from a different region than you expected, trust npa and
+  re-check the project's actual region before assuming a bug.
+
+Preflight fails closed when it cannot *read* a quota (`PermissionDenied` on
+`list_quota_allowances` reports an unverified mutation prerequisite). This is
+deliberate spend safety, not a bug: an operator with create rights but no
+quota-read grant in that tenant cannot deploy until the read grant exists.
+
+`ssh_egress` is a generic heuristic that probes the first public IP found in
+*any* saved agent record, so its "your Nebius agent VM" wording can name an
+unrelated — even deleted — VM. It never FAILs; do not read it as project-scoped
+evidence.
+
+## Stale Records vs Live VMs
+
+`npa agent list` and `npa agent status` render saved records. A record can
+survive its VM, so a listed `public_ip` and `https://<ip>/` URL are not proof the
+deployment exists. Confirm liveness before reusing or reporting one:
+
+```bash
+curl -sk -o /dev/null -w '%{http_code}\n' --max-time 8 "https://<ip>/healthz"
+npa/.venv/bin/npa agent bootstrap --project <alias> --name <name>   # NotFound => record only
+```
+
+A `Resource not found ... service compute` from bootstrap means the record is an
+orphan to clean up, not a VM to repair.
+
+## Pinned Nebius CLI
+
+NPA accepts only the CLI versions it has tested (`_TESTED_NEBIUS_CLI_VERSIONS` in
+`npa/src/npa/clients/nebius.py`, plus `nebius-cli` in
+`npa/src/npa/deploy/images.py`). Any other version fails every provider call
+with `Unsupported Nebius CLI <actual>`, which surfaces as unrelated-looking
+preflight failures across quota, RBAC, and profile checks at once. The CLI is
+resolved from `PATH`, so on a shared machine install the tested version into a
+private prefix instead of overwriting the host's copy:
+
+```bash
+curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh \
+  -o /tmp/nebius-install.sh
+NEBIUS_INSTALL_FOLDER="$PWD/.tools/bin" NEBIUS_CLI_VERSION=<tested> \
+  bash /tmp/nebius-install.sh
+export PATH="$PWD/.tools/bin:$PATH"
+```
+
 ## Verify Tiers
 
 | Tier | Checks | Use when |

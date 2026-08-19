@@ -30,6 +30,33 @@ bash npa/scripts/verify_agent_rerun_bundle.sh
 bash npa/scripts/verify_byof_onboarding_live.sh
 ```
 
+### Audit the capability surface without a VM
+
+Before claiming the agent does or does not support something, render the exact
+`backend.py` that bootstrap installs, run it against a sandbox state root, and
+probe it. No cluster, no VM, no Token Factory call, no quota:
+
+```bash
+npa/.venv/bin/python npa/scripts/audit_agent_capabilities.py --json audit.json
+```
+
+It reports the registered route count, each parameterless `GET`'s real outcome,
+and whether every advertised chat intent still matches and produces a grounded
+reply. Read the outcome classes rather than a pass/fail count:
+
+- `answered` — the capability responded.
+- `needs_arguments` — required query parameters missing (by design).
+- `gated` — refused by a transport/auth guard (LeIsaac requires same-origin
+  authenticated HTTPS, so `403` off a real deployment is correct).
+- `absent_in_sandbox` — depends on staged state a sandbox has no reason to have
+  (`.rrd` recordings, the LeIsaac client bundle).
+- `error` — the only class that indicates a defect.
+
+Routes that need a staged dependency say so instead of returning empty success:
+`GET /api/artifacts/runs` answers `400` with "S3 discovery is not configured on
+this agent" when no bucket/credentials are staged. Treat that as the honest
+answer it is, not as a broken route — and never report it as "no runs found".
+
 `npa agent deploy` provisions a dedicated long-lived **`npa-agent`** service account when
 IAM allows it; otherwise bootstrap reuses existing terraform_state / saved credentials.
 Persists `ssh_key_path` and non-secret deployment identity on the agent record;
@@ -107,21 +134,68 @@ Typed GPU placement failures and consented preemptible fallback use
 `skills/atomic/gpu-allocation-fallback/SKILL.md` and the grounded
 `/api/agent/gpu-allocation/*` routes.
 
-Intent router in `npa/src/npa/cli/agent_chat.py` (embedded in remote `backend.py` at bootstrap):
+Intent router in `npa/src/npa/cli/agent_chat.py` (embedded in remote `backend.py` at bootstrap).
 
-| Intent | Example triggers | APIs |
+All 35 routed intents are listed below with a trigger phrase verified to match
+(`npa/scripts/audit_agent_capabilities.py` exercises exactly these). Do not
+assume an unlisted capability is missing without re-running that audit, and do
+not add a rule for one of these without checking which existing intent already
+claims the phrasing — earlier rules win.
+
+**Run / viewer state**
+
+| Intent | Verified trigger | APIs |
 |--------|------------------|------|
-| `sim2real_status` | "current status", "workflow status" | sim-viz/status, workflows/sim2real/status |
-| `sim_assets` | "sim assets", "selection" | sim-assets, sim-assets/selection |
-| `cameras` | "cameras", "workspace camera" | sim-assets/cameras |
-| `tools_catalog` | "tools", "toolRef" | tools |
-| `configure_s3` | "configure S3", "bucket" | tools (nebius-infra) |
-| `cosmos3` | "cosmos3", "setup cosmos" | skill steps (operator machine) |
-| `load_franka` | "load franka", "show demo" | sim-viz/load-franka-demo |
-| `find_artifacts` | "what can I view?", "browse artifacts" | artifacts/runs, artifacts/run/{id}, sim-viz/load-artifact |
-| `onboard_solution` | "containerize github repo", "onboard workbench solution" | tools, workflows/validate, workflows/plan |
-| `create_data_factory_workflow` | "create PAIDF YAML", "fan out augmented variants" | workflows/draft, workflows/validate, workflows/plan |
-| `create_vlm_rl_workflow` | "create sim-to-real YAML", "VLM-RL workflow" | workflows/draft, workflows/validate, workflows/plan |
+| `sim2real_status` | "what is the current sim2real status" | sim-viz/status, workflows/sim2real/status |
+| `watch_sim` | "watch the sim until the blob and iframe both report success" | sim-viz/status, sim-viz/rrd, sim-viz/rrd-blob |
+| `start_sim2real` | "start the sim2real pipeline" | workflows/sim2real/submit |
+| `drive_sim2real` | "autonomously drive the sim2real outer loop" | agent/sim2real/drive, workflows/sim2real/{submit,status} |
+| `load_franka` | "load the franka demo" | sim-viz/load-franka-demo, sim-viz/status |
+| `list_recordings` | "list the available recordings" | sim-viz/recordings, sim-viz/runs |
+| `find_artifacts` | "what can I view?" | artifacts/runs, artifacts/run/{run_id}, sim-viz/load-artifact |
+| `foxglove_viewer` | "open foxglove" | foxglove/status, foxglove/config, foxglove/load-artifact |
+| `sim_assets` | "show me the sim assets" | sim-assets, sim-assets/selection |
+| `cameras` | "which cameras are selected" | sim-assets/cameras |
+
+**Workflow authoring** — all four templates share
+`workflows/draft`, `workflows/validate`, `workflows/plan`. Picking the wrong one
+is the common failure, so match the qualifier, not just the word "workflow":
+
+| Intent | Verified trigger | Picked when |
+|--------|------------------|-------------|
+| `create_vlm_rl_workflow` | "create a sim-to-real workflow yaml" | sim-to-real authoring, **or** any "quality gate" / "policy rollout" / "heldout eval" / "vlm critic" phrasing |
+| `create_gate_workflow` | "create a token factory gate workflow" | Token Factory / Cosmos scene-reasoning gate |
+| `create_loop_gate_workflow` | "create a sim2real workflow with a loop gate" | explicit "loop gate" / "decision gate" |
+| `create_data_factory_workflow` | "create a PAIDF workflow yaml" | PAIDF / video augmentation / scenario fan-out |
+| `create_rl_policy_workflow` | "create an RL policy training workflow" | RL policy training |
+| `create_workflow` | "create a 2-step sim2real npa.workflow" | explicit two-step, or generic `npa.workflow` |
+| `workflow_execute_guidance` | "how do I actually run this workflow" | validate/plan/submit + tools |
+
+`create_vlm_rl_workflow` is matched **before** `create_gate_workflow` and claims
+"quality gate", so reach the Token Factory gate through its own wording.
+
+**Infrastructure**
+
+| Intent | Verified trigger | APIs |
+|--------|------------------|------|
+| `infra_backends` | "which infra backends are available" | infra/k8s, infra/provision, workflows/submit |
+| `mk8s_provision` | "provision an mk8s cluster" | infra/mk8s, infra/mk8s/provision, infra/k8s |
+| `live_infra_loop` | "run the live infra loop" | infra/k8s, infra/provision, workflows/*, tools |
+| `soperator` | "deploy a slurm cluster" | infra/soperator/{validate,deploy,status/{name}} |
+| `tenant_resources` | "what tenant resources do I have" | resources |
+| `configure_s3` | "configure S3 bucket access" | tools (nebius-infra) |
+| `onboard_solution` | "containerize this github repo as a workbench solution" | tools, workflows/validate, workflows/plan |
+| `cosmos3` | "set up cosmos3" | tools (skill steps run on the operator machine) |
+
+**Tool capability questions** — all answer from `tools`. "what can `<tool>` do"
+is a verified trigger for each of `cosmos`, `lancedb`, `sonic`, `lerobot`,
+`groot`, `genesis`, `mjlab`, `isaac lab` (`*_capabilities`), and
+`component_capabilities` answers the generic "what components are available".
+
+Every routed intent must have an `INTENT_APIS` entry. That map is not just reply
+metadata: `_semantic_route` derives the semantic fallthrough's `known_intents`
+from its keys, so an intent absent from it can never be reached by a paraphrase
+the regex misses. `test_every_intent_declares_its_apis` enforces this.
 
 **BYOF onboarding:** load `skills/workflows/byof-onboard/SKILL.md` (source of truth for base profiles, workloads, live verify). Chat replies reference this skill path — do not paste the full procedure into `agent_chat.py`.
 
