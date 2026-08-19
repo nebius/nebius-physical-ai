@@ -67,6 +67,35 @@ npa workbench token-factory generate \
 `--max-prompts 0` means all of them. Set a small non-zero value first: this is
 the command that turns a typo into a large token bill.
 
+**Batch text generation** — same prompt file, same `generations.jsonl`, batch
+token rates, default model `openai/gpt-oss-120b`:
+
+```bash
+npa workbench token-factory batch-generate \
+  --input-path prompts.jsonl \
+  --output-path s3://<bucket>/generations.jsonl \
+  --model openai/gpt-oss-120b --completion-window 24h
+
+# or submit now, collect later
+npa workbench token-factory batch-generate ... --no-wait
+npa workbench token-factory batch-status --operation-id <id> --output-path <same> --wait
+```
+
+Reach for `batch-generate` over `generate` whenever nothing is waiting on the
+answer, which is most bulk stages. Two properties are unique to it and both bite:
+
+- **Batch is a separate entitlement from real-time chat.** A model that answers
+  `generate` can be rejected for batch. The operation then fails *before it
+  starts* and the errors endpoint returns a single empty string — no message at
+  all. `batch-generate` detects that shape (`status: failed` with
+  `in_progress_at: null` and no error text) and names the likely cause. Verified
+  live: `meta-llama/Llama-3.3-70B-Instruct` served real-time chat and failed
+  instantly for batch on the same key, while `openai/gpt-oss-120b` ran. This is
+  why `DEFAULT_BATCH_MODEL` is not `DEFAULT_TEXT_MODEL`.
+- **The completion window is a deadline, not a latency.** A three-prompt batch
+  has been observed queued past ten minutes. Do not treat a slow batch as a hung
+  one, and do not put `--wait` on a path where something is timing out.
+
 **Physical-AI reasoning over a scene** — default model
 `nvidia/Cosmos3-Super-Reasoner`. Point it at scene images and ask what a robot
 should do:
@@ -89,8 +118,8 @@ steps, so pass it as a secret at submit time and never in the YAML:
 npa workbench workflow submit <spec.yaml> --secret-env NEBIUS_TOKEN_FACTORY_KEY
 ```
 
-toolRefs: `workbench.token_factory.caption`, `.generate`, `.reason`, `.triage`
-(digest a run's textual artifacts into a triage report).
+toolRefs: `workbench.token_factory.caption`, `.generate`, `.batch_generate`,
+`.reason`, `.triage` (digest a run's textual artifacts into a triage report).
 
 `npa workbench token-factory workflow` prints exactly four:
 `token-factory-caption.yaml`, `token-factory-generate.yaml`,
@@ -98,6 +127,8 @@ toolRefs: `workbench.token_factory.caption`, `.generate`, `.reason`, `.triage`
 more are checked in but not listed by that command, so do not treat its output as
 the full inventory:
 
+- `token-factory-batch-generate.yaml` — the batch-inference twin of
+  `token-factory-generate.yaml`.
 - `token-factory-parallel-fanout.yaml` — parallel batches.
 - `token-factory-gate-loop.yaml`, `tokenfactory-cosmos-gate.yaml` — a hosted
   model as a gate that decides whether the pipeline continues.
