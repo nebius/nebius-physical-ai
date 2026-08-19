@@ -160,9 +160,11 @@ def probe_routes(app: Any) -> list[dict[str, Any]]:
                     payload = None
                 if isinstance(payload, dict):
                     entry["keys"] = sorted(payload.keys())[:12]
+                    # Namespace body signals so a payload `status` cannot be
+                    # mistaken for the HTTP status this probe recorded.
                     for signal in ("ok", "error", "status", "scope", "grounded"):
                         if signal in payload:
-                            entry[signal] = payload[signal]
+                            entry[f"body_{signal}"] = payload[signal]
             except Exception as exc:  # noqa: BLE001 - the failure is the finding
                 entry["status"] = "exception"
                 entry["error"] = f"{type(exc).__name__}: {exc}"
