@@ -144,6 +144,12 @@ scope. Live coverage is not optional for workflow-facing changes — see
 19. Write `skills/tools/<tool>/SKILL.md` and register it in `skills/index.yaml`
     with at least one smoke. Update `AGENTS.md` and `CLAUDE.md` only if the root
     index lists the skill.
+20. For a containerized tool, load
+    `skills/atomic/audit-container-docs/SKILL.md` and reconcile
+    `docs/workbench/container-image-catalog.md` after the image pin and
+    redistribution/publication classification are final. Public-plan images
+    must have their exact resolved pin in the table; restricted, internal, or
+    unpublished images must not be represented as publicly available.
 
 ## Phase F — Optional Integrations
 

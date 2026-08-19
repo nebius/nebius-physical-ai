@@ -13,6 +13,11 @@ from npa.deploy.images import (
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CATALOG = REPO_ROOT / "docs/workbench/container-image-catalog.md"
 SKILL = REPO_ROOT / "skills/atomic/audit-container-docs/SKILL.md"
+ONBOARDING_SKILLS = (
+    REPO_ROOT / "skills/workflows/contribute-workbench-image/SKILL.md",
+    REPO_ROOT / "skills/workflows/add-workbench-tool/SKILL.md",
+    REPO_ROOT / "skills/workflows/oss-solution-registry-onboard/SKILL.md",
+)
 
 
 def _catalog_rows() -> dict[str, str]:
@@ -54,3 +59,10 @@ def test_skill_names_each_authoritative_inventory_layer() -> None:
         "docker buildx imagetools inspect",
     ):
         assert required in text
+
+
+def test_image_and_solution_onboarding_requires_catalog_reconciliation() -> None:
+    for onboarding_skill in ONBOARDING_SKILLS:
+        text = onboarding_skill.read_text()
+        assert "skills/atomic/audit-container-docs/SKILL.md" in text, onboarding_skill
+        assert "docs/workbench/container-image-catalog.md" in text, onboarding_skill

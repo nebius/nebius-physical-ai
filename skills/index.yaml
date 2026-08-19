@@ -66,7 +66,7 @@ skills:
         path: npa/docker/workbench/packaging-contract.yaml
   - name: audit-container-docs
     category: atomic
-    when_to_use: "Audit or update container-image catalogs and related container documentation after images are added, removed, renamed, retagged, republished, reclassified, or materially changed."
+    when_to_use: "Reconcile the public container-image catalog when a workbench image or solution is added, removed, renamed, retagged, republished, reclassified, or materially changed, including onboarding flows that may intentionally remain outside the public mirror."
     path: skills/atomic/audit-container-docs/SKILL.md
     smoke:
       - type: file_exists

@@ -36,6 +36,10 @@ making architecture, review, or domain judgments.
  workflow stage from rendering cleanly and then crashing in the pod.
 - `skills/atomic/pre-pr-validation/SKILL.md`: which of the six PR gates apply to
  a change, and the exact local command for each, cheapest first.
+- `skills/atomic/audit-container-docs/SKILL.md`: required catalog reconciliation
+ when a workbench image or solution is added, removed, retagged, reclassified,
+ published, or otherwise changed; it keeps the public-image table aligned with
+ repository intent and anonymous GHCR state.
 - `skills/atomic/guardrail-failures/SKILL.md`: map a failing guardrail or CI gate
  to its cause and fix.
 - `skills/atomic/agent-development/SKILL.md`: build, enhance, or test the NPA

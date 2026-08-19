@@ -1,6 +1,6 @@
 ---
 name: audit-container-docs
-description: Audit and update NPA container-image catalogs and related container documentation when images are added, removed, renamed, retagged, republished, reclassified, or materially changed. Use for docs/workbench/container-image-catalog.md drift, public-mirror inventory checks, and container documentation reviews.
+description: Reconcile NPA container-image catalogs and related documentation whenever a workbench image or solution is added, removed, renamed, retagged, republished, reclassified, or materially changed. Use for docs/workbench/container-image-catalog.md drift, public-mirror inventory checks, and image or solution onboarding.
 ---
 
 # Audit Container Documentation
@@ -8,6 +8,28 @@ description: Audit and update NPA container-image catalogs and related container
 Separate repository intent from registry state. An image can have a Dockerfile,
 be eligible for redistribution, or exist in a private registry without being in
 the public mirror inventory. State only the layer that the evidence proves.
+
+## Required Onboarding Hook
+
+Load this skill before finishing any change that introduces or changes a
+workbench image or an image-backed solution. This includes work performed through
+`contribute-workbench-image`, `add-workbench-tool`, and
+`oss-solution-registry-onboard`.
+
+Reconcile `docs/workbench/container-image-catalog.md` after the image name, pin,
+packaging classification, and publication intent are stable:
+
+- Add or update a table row only when the image is selected by
+  `publicly_publishable_tools()` and its exact resolved tag is anonymously
+  pullable. Do not list a build, private-registry artifact, or merely
+  redistribution-eligible image as published.
+- For a new solution that remains BYOF-only, restricted, internal, deferred, or
+  otherwise outside the public plan, do not force it into the public table.
+  Confirm the exclusion against repository sources and document it in the
+  appropriate solution or container documentation when the distinction would
+  otherwise be misleading.
+- Treat the catalog audit and its guardrail as part of the originating image or
+  solution change, not as optional follow-up work.
 
 ## Read The Authoritative Sources
 
@@ -37,7 +59,9 @@ the intersection selected by `publicly_publishable_tools()` and its resolved pin
 
 1. Preserve unrelated dirty-tree changes and inspect the diff from the relevant
    base. Search recent changes to Dockerfiles, packaging contracts, image maps,
-   manifests, supported-tool pins, workflows, and container docs.
+   manifests, supported-tool pins, workflows, solution metadata, and container
+   docs. If this audit was loaded by an onboarding skill, identify the new or
+   changed image/solution explicitly before reconciling the catalog.
 2. Print the repository's current public plan from the installed checkout:
 
    ```bash
