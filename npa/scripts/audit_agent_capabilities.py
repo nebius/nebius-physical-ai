@@ -7,7 +7,7 @@ grounded chat router. The report separates capabilities that answer from ones
 that only exist as a route, so "the agent supports X" can be checked instead of
 assumed.
 
-Two tiers, same probes:
+Three tiers, same probes:
 
 * in-process (default) drives the ASGI app directly -- fastest, no ports;
 * ``--serve-live`` starts ``uvicorn backend:app`` from the rendered runtime
@@ -15,15 +15,26 @@ Two tiers, same probes:
   systemd unit and probes it over real HTTP on loopback. This catches what
   in-process probing cannot: import-time and lifespan failures under the real
   server, and any route that only works because the test client bypasses it.
+* ``--base-url`` probes a **deployed** agent VM through its authenticated
+  HTTPS ingress. Route enumeration then comes from the deployment's own
+  ``/openapi.json``, and the report includes the drift against the locally
+  rendered backend -- which is how you learn the VM is running older code.
 
-Zero-cost and offline in both tiers: no Token Factory call, no cluster, no VM,
-no public port. Any route that needs cloud credentials is reported as its real
-outcome rather than being skipped, because "this needs credentials" is itself an
-audit finding.
+The first two tiers are offline and free: no Token Factory call, no cluster, no
+VM, no public port. Any route that needs cloud credentials is reported as its
+real outcome rather than being skipped, because "this needs credentials" is
+itself an audit finding.
+
+The live tier talks to a real deployment, so the capability probes -- which POST
+to ``/chat``, run memory, and retrieval -- are skipped unless
+``--allow-mutations`` is passed. Route probing is read-only and always runs.
 
 Usage:
     npa/.venv/bin/python npa/scripts/audit_agent_capabilities.py [--json out.json]
     npa/.venv/bin/python npa/scripts/audit_agent_capabilities.py --serve-live
+    npa/.venv/bin/python npa/scripts/audit_agent_capabilities.py \\
+        --base-url https://<agent-ip>/api --auth-env ~/.npa/agents/<p>/<n>/auth.env \\
+        --insecure --allow-mutations
 """
 
 from __future__ import annotations
@@ -153,6 +164,53 @@ def load_backend_app(body: str, sandbox: Path) -> Any:
     if app is None:
         raise SystemExit("rendered backend exposed no FastAPI app")
     return app, module.__dict__
+
+
+def read_auth_env(path: Path) -> tuple[str, str]:
+    """Return ``(user, password)`` from an agent's ``auth.env``.
+
+    `npa agent deploy` writes the shell-style file this parses. The values are
+    never printed by this script; only their presence is reported.
+    """
+
+    user = password = ""
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip().removeprefix("export ").strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        value = value.strip().strip("'\"")
+        if key.strip() == "AGENT_USER":
+            user = value
+        elif key.strip() == "AGENT_PASSWORD":
+            password = value
+    if not user or not password:
+        raise SystemExit(f"{path} did not define AGENT_USER and AGENT_PASSWORD")
+    return user, password
+
+
+def live_routes(client: Any) -> list[tuple[str, str]]:
+    """Enumerate routes from the deployment's own OpenAPI document.
+
+    Auditing a VM against the local checkout's routing table would report the
+    code under test, not the code deployed. Ask the deployment instead.
+    """
+
+    response = client.get("/openapi.json")
+    if response.status_code != 200:
+        raise SystemExit(
+            f"GET /openapi.json returned {response.status_code}; cannot enumerate "
+            "the deployment's routes"
+        )
+    paths = (response.json() or {}).get("paths") or {}
+    routes: list[tuple[str, str]] = []
+    for path, operations in paths.items():
+        for method in operations or {}:
+            upper = str(method).upper()
+            if upper in {"HEAD", "OPTIONS", "PARAMETERS"}:
+                continue
+            routes.append((upper, str(path)))
+    return sorted(set(routes))
 
 
 def _free_loopback_port() -> int:
@@ -587,10 +645,45 @@ def main() -> int:
             "of driving the ASGI app in-process."
         ),
     )
+    parser.add_argument(
+        "--base-url",
+        default="",
+        help=(
+            "Probe a deployed agent through its authenticated ingress, e.g. "
+            "https://<agent-ip>/api. Routes are enumerated from the "
+            "deployment's own /openapi.json."
+        ),
+    )
+    parser.add_argument(
+        "--auth-env",
+        default="",
+        help="Path to the agent's auth.env (AGENT_USER / AGENT_PASSWORD).",
+    )
+    parser.add_argument(
+        "--insecure",
+        action="store_true",
+        help="Skip TLS verification (agent ingress uses a self-signed cert).",
+    )
+    parser.add_argument(
+        "--allow-mutations",
+        action="store_true",
+        help=(
+            "Run the capability probes against a deployed agent. They POST to "
+            "/chat, run memory, and retrieval, so they touch its state."
+        ),
+    )
     args = parser.parse_args()
 
+    if args.base_url and args.serve_live:
+        raise SystemExit("--base-url and --serve-live are mutually exclusive")
+
     report: dict[str, Any] = {"apiVersion": "npa.agent.capability-audit/v1"}
-    report["tier"] = "served-uvicorn-loopback" if args.serve_live else "in-process-asgi"
+    if args.base_url:
+        report["tier"] = "deployed-agent-https"
+    elif args.serve_live:
+        report["tier"] = "served-uvicorn-loopback"
+    else:
+        report["tier"] = "in-process-asgi"
 
     body = render_backend_body()
     report["backend_render"] = {
@@ -614,7 +707,33 @@ def main() -> int:
             "all": [f"{method} {path}" for method, path in routes],
         }
 
-        if args.serve_live:
+        if args.base_url:
+            import httpx
+
+            auth = None
+            if args.auth_env:
+                auth = read_auth_env(Path(args.auth_env).expanduser())
+            with httpx.Client(
+                base_url=args.base_url.rstrip("/"),
+                auth=auth,
+                verify=not args.insecure,
+                timeout=60.0,
+                follow_redirects=True,
+            ) as client:
+                deployed = live_routes(client)
+                rendered = set(routes)
+                report["routes"]["deployed_total"] = len(deployed)
+                report["routes"]["missing_on_deployment"] = [
+                    f"{m} {p}" for m, p in sorted(rendered - set(deployed))
+                ]
+                report["routes"]["absent_from_render"] = [
+                    f"{m} {p}" for m, p in sorted(set(deployed) - rendered)
+                ]
+                report["route_probes"] = probe_routes(client, deployed)
+                report["capability_probes"] = (
+                    probe_capabilities(client) if args.allow_mutations else []
+                )
+        elif args.serve_live:
             # A separate root keeps the served process's state off the one the
             # in-process import already touched.
             served = Path(tmp) / "served"
@@ -655,7 +774,19 @@ def main() -> int:
         ),
     }
 
+    if "deployed_total" in report["routes"]:
+        report["summary"]["routes_deployed"] = report["routes"]["deployed_total"]
+        report["summary"]["routes_missing_on_deployment"] = len(
+            report["routes"]["missing_on_deployment"]
+        )
+        report["summary"]["routes_absent_from_render"] = len(
+            report["routes"]["absent_from_render"]
+        )
+
     print(json.dumps(report["summary"], indent=2))
+    for label in ("missing_on_deployment", "absent_from_render"):
+        for entry in report["routes"].get(label, []):
+            print(f"  [{label}] {entry}")
     if report["routes"]["shadowed"]:
         print("\n-- shadowed routes (registered twice; only the first serves) --")
         for entry in report["routes"]["shadowed"]:
