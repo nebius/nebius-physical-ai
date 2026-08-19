@@ -232,6 +232,7 @@ def probe_chat_router() -> list[dict[str, Any]]:
         "chat_history": [],
     }
 
+    tool_refs = ["workbench.genesis.train", "workbench.lerobot.train", "workbench.vlm-eval.run"]
     results: list[dict[str, Any]] = []
     for expected, prompt in CHAT_PROBES:
         entry: dict[str, Any] = {"expected_intent": expected, "prompt": prompt}
@@ -239,7 +240,7 @@ def probe_chat_router() -> list[dict[str, Any]]:
         entry["matched_intent"] = matched
         entry["intent_ok"] = matched == expected
         try:
-            reply = build_grounded_reply(matched or expected, state)
+            reply = build_grounded_reply(matched or expected, state, tool_refs)
             entry["reply_chars"] = len(reply or "")
             entry["reply_ok"] = bool(reply and reply.strip())
         except Exception as exc:  # noqa: BLE001 - the failure is the finding
