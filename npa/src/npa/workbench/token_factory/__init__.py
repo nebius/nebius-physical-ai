@@ -562,9 +562,15 @@ def _await_and_collect(
 
     status = str(operation.get("status") or "unknown")
     if status != "succeeded":
-        raise TokenFactoryToolError(
-            _explain_failed_operation(client, operation, model=model, operation_id=operation_id)
+        explanation = _explain_failed_operation(
+            client, operation, model=model, operation_id=operation_id
         )
+        # The operation is terminal, so its scratch datasets are dead weight. A
+        # timeout does not reach here: that operation is still running and still
+        # needs its source rows.
+        if not keep_datasets:
+            _cleanup_datasets(client, [_destination_dataset_id(operation), source_dataset_id])
+        raise TokenFactoryToolError(explanation)
 
     destination_id = _destination_dataset_id(operation)
     if not destination_id:

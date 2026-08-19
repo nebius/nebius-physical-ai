@@ -256,6 +256,36 @@ def test_batch_generate_explains_model_not_enabled_for_batch(tmp_path: Path) -> 
     assert DEFAULT_BATCH_MODEL in message
 
 
+def test_batch_generate_cleans_up_after_a_failed_operation(tmp_path: Path) -> None:
+    api = FakeBatchApi(statuses=["failed"], errors=["quota exceeded"], in_progress=False)
+
+    with pytest.raises(TokenFactoryToolError):
+        batch_generate(
+            input_path=str(_prompts(tmp_path)),
+            output_path=str(tmp_path / "out"),
+            poll_interval_s=0.01,
+            client=_client(api),
+        )
+
+    assert set(api.deleted) == {DATASET_ID, RESULT_DATASET_ID}
+
+
+def test_batch_generate_timeout_keeps_datasets_for_the_running_operation(tmp_path: Path) -> None:
+    api = FakeBatchApi(statuses=["running"])
+
+    with pytest.raises(TokenFactoryToolError):
+        batch_generate(
+            input_path=str(_prompts(tmp_path)),
+            output_path=str(tmp_path / "out"),
+            poll_interval_s=0.01,
+            timeout_s=0.0,
+            client=_client(api),
+        )
+
+    # The operation is still running server-side and still reads its source rows.
+    assert api.deleted == []
+
+
 def test_batch_generate_surfaces_reported_error_detail(tmp_path: Path) -> None:
     api = FakeBatchApi(statuses=["failed"], errors=["quota exceeded"], in_progress=False)
 
