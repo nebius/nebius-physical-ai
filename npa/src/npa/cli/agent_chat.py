@@ -400,7 +400,10 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
         "lancedb_capabilities",
         re.compile(
             r"\blancedb\b.{0,120}\b(?:support|supports|capabilit(?:y|ies)|expose|offers|import|backfill|view|query)\b"
-            r"|\b(?:support|supports|capabilit(?:y|ies)|expose|offers)\b.{0,120}\blancedb\b",
+            r"|\b(?:support|supports|capabilit(?:y|ies)|expose|offers)\b.{0,120}\blancedb\b"
+            # Same "what can <tool> do" phrasing the sibling tool rules accept;
+            # without it this turn fell through to the generic component reply.
+            r"|\b(?:can|could)\b.{0,80}\blancedb\b.{0,120}\b(?:do|run|import|query|backfill|view)\b",
             re.IGNORECASE,
         ),
     ),
@@ -462,7 +465,12 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
         "component_capabilities",
         re.compile(
             r"\b(?:component|tool|workbench)\b.{0,120}\b(?:support|supports|capabilit(?:y|ies)|expose|offers)\b"
-            r"|\bwhat\b.{0,80}\b(?:does|can)\b.{0,80}\b(?:cosmos|lancedb|sonic|isaac(?:\s|-)?lab|lerobot|groot|token(?:\s|-)?factory|genesis|mjlab)\b.{0,80}\b(?:support|do|expose)\b",
+            r"|\bwhat\b.{0,80}\b(?:does|can)\b.{0,80}\b(?:cosmos|lancedb|sonic|isaac(?:\s|-)?lab|lerobot|groot|token(?:\s|-)?factory|genesis|mjlab)\b.{0,80}\b(?:support|do|expose)\b"
+            # "what components are available" answered from state instead of
+            # falling through to a paid model call. Scoped to the word
+            # "component" so tool-catalog turns still reach `tools_catalog`.
+            r"|\b(?:what|which|list|show)\b.{0,60}\bcomponents?\b"
+            r"|\bcomponents?\b.{0,80}\b(?:available|exist|offered)\b",
             re.IGNORECASE,
         ),
     ),
@@ -478,7 +486,9 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
     (
         "tools_catalog",
         re.compile(
-            r"\b(tools?|toolref|tool refs?|workbench catalog|what can workbench do)\b",
+            # `toolRefs` is the repo's own plural, so it must match too: the
+            # bare `toolref` alternative failed the trailing word boundary.
+            r"\b(tools?|toolrefs?|tool refs?|workbench catalog|what can workbench do)\b",
             re.IGNORECASE,
         ),
     ),
@@ -546,6 +556,12 @@ INTENT_APIS: dict[str, list[str]] = {
     "soperator": ["infra/soperator/validate", "infra/soperator/deploy", "infra/soperator/status/{name}", "tools"],
     "load_franka": ["sim-viz/load-franka-demo", "sim-viz/status"],
     "workflow_execute_guidance": ["workflows/validate", "workflows/plan", "workflows/submit", "tools"],
+    "foxglove_viewer": [
+        "foxglove/status",
+        "foxglove/config",
+        "foxglove/load-artifact",
+        "foxglove/convert-run",
+    ],
 }
 
 _DEFAULT_TOOL_IMAGE_TAGS: dict[str, tuple[str, str]] = {

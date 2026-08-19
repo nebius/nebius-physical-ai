@@ -49,6 +49,17 @@ Rules:
   and newlines in strings as `\\n`; substitutions use single `{var}`.
 - After editing the template, **validate the rendered backend compiles** (see
   Testing). A stray brace is a `SyntaxError` at import of `agent.py`.
+- **Embedded routes register before the template's own routes.** The
+  `_AGENT_*_EMBED` placeholders sit earlier in the f-string than most `@app.*`
+  blocks, and Starlette resolves the **first** matching route, so an embedded
+  module silently wins over a same-path handler written further down in
+  `agent.py`. `/artifacts/file/{filename}` and `/artifacts/download` each carried
+  two definitions this way, and the shadowed copies in `agent.py` were the weaker
+  ones — no `Content-Disposition`/`nosniff` headers, no run-scoped inventory
+  authorization — so the file a maintainer would open described a contract the
+  deployment did not serve. Before adding a route, grep the embedded modules for
+  its path; `test_rendered_backend_registers_no_shadowed_routes` fails the build
+  on any method+path registered twice.
 
 ## Cost-tier routing (`agent_routing.py`)
 
@@ -75,6 +86,21 @@ explicit model override, and returns `tier` + `usage` + `input_budget_ok`.
 1. **Grounded intent** — can a regex intent + grounded state reply answer it?
    (0 tokens) Add to `_INTENT_RULES` / `build_grounded_reply` in `agent_chat.py`
    and cover it in `test_agent_chat.py`. Prefer this for anything high-frequency.
+   Three invariants apply to every new or edited rule:
+   - **Add an `INTENT_APIS` entry.** It is not only reply metadata:
+     `_semantic_route` builds the semantic fallthrough's `known_intents` from its
+     keys, so an intent missing from it is unreachable by any paraphrase the
+     regex misses and its grounded replies report an empty `apis_used`.
+     `test_every_intent_declares_its_apis` fails the build otherwise.
+   - **Earlier rules win**, and `match_chat_intent` applies several hard-coded
+     checks before the list at all. Adding a phrasing an earlier rule already
+     claims silently changes nothing; check what currently matches first.
+   - **Keep sibling rules symmetric.** The tool-capability rules are near
+     copies, so a verb added to one belongs in all of them. "what can lancedb
+     do" degraded to the generic component reply for exactly this reason while
+     the identical Sonic/LeRobot/Genesis wording stayed tool-specific.
+   A phrasing that matches nothing is not neutral — it falls through to a paid
+   model call for an answer the grounded layer already had.
 2. **Cheap model** — if it needs generation, let routing pick the cheap tier;
    only add reasoning/vision signals to `classify_tier` when the turn truly
    needs them.
@@ -112,6 +138,16 @@ Follow `skills/atomic/testing-conventions/SKILL.md`; use `npa/.venv/bin/python`.
 - **Rendered-backend check:** confirm the embedded backend compiles with all
   wiring inlined — render `setup_script` with mocked SSH, extract the
   `backend.py` heredoc body, and `ast.parse` + `compile` it. Guards the f-string.
+- **Whole-surface audit (0 tokens):**
+  `npa/scripts/audit_agent_capabilities.py` goes one step further than the
+  compile check — it *runs* the rendered backend against a sandbox state root and
+  probes every parameterless `GET` plus every advertised intent. Use it to prove
+  a change did not silently unregister a route or re-route an intent, and to
+  answer "does the agent really support X" without a VM. Compiling is not
+  running: an import-time failure in a shipped `agent_backend` module passes the
+  compile check and fails here. `--serve-live` runs the same probes against a
+  real `uvicorn` process on loopback with the deployed systemd unit's arguments,
+  which is the only tier that covers lifespan and websocket-flag behavior.
 - **Tier 2 — live e2e (bounded tokens):** gate behind `NPA_AGENT_CHAT_LIVE=1` /
   `NPA_INTEGRATION_E2E=1`; pin the cheapest model; assert `grounded: true` where
   possible so most turns cost 0 tokens.
