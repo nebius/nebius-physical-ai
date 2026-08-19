@@ -188,7 +188,9 @@ CHAT_PROBES: tuple[tuple[str, str], ...] = (
     ("create_data_factory_workflow", "create a PAIDF workflow yaml"),
     ("create_vlm_rl_workflow", "create a sim-to-real workflow yaml"),
     ("create_workflow", "create a 2-step sim2real npa.workflow"),
-    ("create_gate_workflow", "create a workflow with a quality gate"),
+    # "quality gate" alone is claimed by the earlier VLM-RL rule by design, so
+    # probe this template through its own Token Factory / Cosmos-gate wording.
+    ("create_gate_workflow", "create a token factory gate workflow"),
     ("create_loop_gate_workflow", "create a sim2real workflow with a loop gate"),
     ("create_rl_policy_workflow", "create an RL policy training workflow"),
     ("workflow_execute_guidance", "how do I actually run this workflow"),

@@ -400,7 +400,10 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
         "lancedb_capabilities",
         re.compile(
             r"\blancedb\b.{0,120}\b(?:support|supports|capabilit(?:y|ies)|expose|offers|import|backfill|view|query)\b"
-            r"|\b(?:support|supports|capabilit(?:y|ies)|expose|offers)\b.{0,120}\blancedb\b",
+            r"|\b(?:support|supports|capabilit(?:y|ies)|expose|offers)\b.{0,120}\blancedb\b"
+            # Same "what can <tool> do" phrasing the sibling tool rules accept;
+            # without it this turn fell through to the generic component reply.
+            r"|\b(?:can|could)\b.{0,80}\blancedb\b.{0,120}\b(?:do|run|import|query|backfill|view)\b",
             re.IGNORECASE,
         ),
     ),
@@ -462,7 +465,12 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
         "component_capabilities",
         re.compile(
             r"\b(?:component|tool|workbench)\b.{0,120}\b(?:support|supports|capabilit(?:y|ies)|expose|offers)\b"
-            r"|\bwhat\b.{0,80}\b(?:does|can)\b.{0,80}\b(?:cosmos|lancedb|sonic|isaac(?:\s|-)?lab|lerobot|groot|token(?:\s|-)?factory|genesis|mjlab)\b.{0,80}\b(?:support|do|expose)\b",
+            r"|\bwhat\b.{0,80}\b(?:does|can)\b.{0,80}\b(?:cosmos|lancedb|sonic|isaac(?:\s|-)?lab|lerobot|groot|token(?:\s|-)?factory|genesis|mjlab)\b.{0,80}\b(?:support|do|expose)\b"
+            # "what components are available" answered from state instead of
+            # falling through to a paid model call. Scoped to the word
+            # "component" so tool-catalog turns still reach `tools_catalog`.
+            r"|\b(?:what|which|list|show)\b.{0,60}\bcomponents?\b"
+            r"|\bcomponents?\b.{0,80}\b(?:available|exist|offered)\b",
             re.IGNORECASE,
         ),
     ),
