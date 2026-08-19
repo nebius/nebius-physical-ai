@@ -105,6 +105,18 @@ def load_backend_app(body: str, sandbox: Path) -> Any:
     for child in ("recordings", "runs", "reports", "retrieval", "trace", "foxglove"):
         (sandbox / child).mkdir(parents=True, exist_ok=True)
 
+    # On the VM, backend.py sits in /opt/npa-agent next to the shipped
+    # agent_backend package, so its own directory supplies the import root.
+    # Reproduce that layout from the repo copy.
+    import npa.agent_backend as shipped
+
+    shipped_root = Path(shipped.__file__).resolve().parent
+    link = sandbox / "agent_backend"
+    if not link.exists():
+        link.symlink_to(shipped_root, target_is_directory=True)
+    if str(sandbox) not in sys.path:
+        sys.path.insert(0, str(sandbox))
+
     module_globals: dict[str, Any] = {"__name__": "npa_audit_backend", "__file__": str(sandbox / "backend.py")}
     exec(compile(sandboxed, "backend.py", "exec"), module_globals)  # noqa: S102
     app = module_globals.get("app")
