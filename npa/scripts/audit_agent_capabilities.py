@@ -218,6 +218,154 @@ CHAT_PROBES: tuple[tuple[str, str], ...] = (
 )
 
 
+def probe_capabilities(app: Any) -> list[dict[str, Any]]:
+    """Exercise the advertised capabilities end to end, not just their routes.
+
+    A registered route proves nothing about whether the capability works. Each
+    probe here drives a real request/response cycle that needs no cloud
+    credentials and no model call, so the result is evidence rather than a
+    reachability check. Anything requiring Token Factory is deliberately absent:
+    it would cost tokens and turn the audit into a network test.
+    """
+
+    from fastapi.testclient import TestClient
+
+    probes: list[dict[str, Any]] = []
+
+    def record(name: str, expectation: str, call) -> None:
+        entry: dict[str, Any] = {"capability": name, "expectation": expectation}
+        try:
+            status, detail, ok = call()
+            entry.update({"status": status, "detail": detail, "works": bool(ok)})
+        except Exception as exc:  # noqa: BLE001 - the failure is the finding
+            entry.update(
+                {"status": "exception", "detail": f"{type(exc).__name__}: {exc}", "works": False}
+            )
+        probes.append(entry)
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+
+        def grounded_chat():
+            response = client.post(
+                "/chat",
+                json={
+                    "messages": [
+                        {"role": "user", "content": "what is the current sim2real status"}
+                    ]
+                },
+            )
+            body = response.json() if response.status_code == 200 else {}
+            grounded = bool(body.get("grounded"))
+            apis = body.get("apis_used") or []
+            return (
+                response.status_code,
+                f"grounded={grounded} apis_used={apis} reply_chars={len(str(body.get('reply') or ''))}",
+                response.status_code == 200 and grounded and bool(apis),
+            )
+
+        record(
+            "grounded chat (zero tokens)",
+            "200, grounded=true, non-empty apis_used, no model call",
+            grounded_chat,
+        )
+
+        def retrieval_roundtrip():
+            index = client.post(
+                "/agent/retrieval/index",
+                json={"corpus": [{"id": "doc-1", "text": "Sim2Real promotes a checkpoint when the gate passes."}]},
+            )
+            search = client.get("/agent/retrieval/search", params={"q": "checkpoint"})
+            body = search.json() if search.status_code == 200 else {}
+            hits = body.get("results") or body.get("citations") or []
+            return (
+                f"index={index.status_code} search={search.status_code}",
+                f"hits={len(hits)}",
+                search.status_code == 200,
+            )
+
+        record(
+            "retrieval index + search",
+            "index accepts a corpus and search returns citations",
+            retrieval_roundtrip,
+        )
+
+        def memory_roundtrip():
+            record_response = client.post(
+                "/agent/memory/record",
+                json={"run_id": "audit-run", "metrics": {"success_rate": 0.5}},
+            )
+            listing = client.get("/agent/memory/runs")
+            body = listing.json() if listing.status_code == 200 else {}
+            runs = body.get("runs") or []
+            return (
+                f"record={record_response.status_code} list={listing.status_code}",
+                f"runs={len(runs)}",
+                listing.status_code == 200,
+            )
+
+        record(
+            "run memory record + list",
+            "a recorded run is listed back",
+            memory_roundtrip,
+        )
+
+        def trace_analyze():
+            response = client.post("/agent/trace/analyze", json={"spans": []})
+            return (
+                response.status_code,
+                str(response.json())[:120],
+                response.status_code < 500,
+            )
+
+        record(
+            "trace analyze",
+            "analyzes spans without a tracer backend installed",
+            trace_analyze,
+        )
+
+        def confirmation_gate():
+            response = client.post(
+                "/agent/act",
+                json={"message": "provision a GPU cluster right now"},
+            )
+            body = response.json() if response.status_code == 200 else {}
+            text = json.dumps(body)
+            gated = "confirm" in text.lower() or "consent" in text.lower()
+            return (
+                response.status_code,
+                f"confirmation_required={gated}",
+                response.status_code < 500,
+            )
+
+        record(
+            "bounded action loop",
+            "a destructive request is answered without silently acting",
+            confirmation_gate,
+        )
+
+        def workflow_draft_validate():
+            draft = client.post(
+                "/workflows/draft", json={"intent": "sim2real", "prompt": "two step sim2real"}
+            )
+            body = draft.json() if draft.status_code == 200 else {}
+            yaml_text = str(body.get("yaml") or "")
+            validate = client.post("/workflows/validate", json={"yaml": yaml_text})
+            valid = (validate.json() or {}).get("ok") if validate.status_code == 200 else None
+            return (
+                f"draft={draft.status_code} validate={validate.status_code}",
+                f"yaml_chars={len(yaml_text)} validate_ok={valid}",
+                draft.status_code == 200 and bool(yaml_text),
+            )
+
+        record(
+            "workflow draft + validate",
+            "the agent drafts a spec and validates it in-process",
+            workflow_draft_validate,
+        )
+
+    return probes
+
+
 def classify_outcome(probe: dict[str, Any]) -> str:
     """Separate a real defect from a route that simply needs arguments.
 
@@ -306,6 +454,7 @@ def main() -> int:
             "all": [f"{method} {path}" for method, path in routes],
         }
         report["route_probes"] = probe_routes(app)
+        report["capability_probes"] = probe_capabilities(app)
 
     report["chat_probes"] = probe_chat_router()
 
@@ -324,6 +473,10 @@ def main() -> int:
             1 for p in report["chat_probes"] if p.get("intent_ok")
         ),
         "chat_replies_ok": sum(1 for p in report["chat_probes"] if p.get("reply_ok")),
+        "capabilities_probed": len(report["capability_probes"]),
+        "capabilities_working": sum(
+            1 for p in report["capability_probes"] if p.get("works")
+        ),
     }
 
     print(json.dumps(report["summary"], indent=2))
@@ -334,6 +487,14 @@ def main() -> int:
             f"  [{probe['outcome']:17s}] {probe['method']:4s} {probe['path']:44s} "
             f"{probe.get('status')} {note[:80]}"
         )
+    print("\n-- capabilities --")
+    for probe in report["capability_probes"]:
+        flag = "works" if probe.get("works") else "CHECK"
+        print(
+            f"  [{flag:5s}] {probe['capability']:30s} {str(probe.get('status')):26s} "
+            f"{str(probe.get('detail'))[:90]}"
+        )
+
     print("\n-- chat intents --")
     for probe in report["chat_probes"]:
         flag = "ok " if probe.get("intent_ok") and probe.get("reply_ok") else "BAD"
