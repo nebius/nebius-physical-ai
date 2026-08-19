@@ -486,7 +486,9 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
     (
         "tools_catalog",
         re.compile(
-            r"\b(tools?|toolref|tool refs?|workbench catalog|what can workbench do)\b",
+            # `toolRefs` is the repo's own plural, so it must match too: the
+            # bare `toolref` alternative failed the trailing word boundary.
+            r"\b(tools?|toolrefs?|tool refs?|workbench catalog|what can workbench do)\b",
             re.IGNORECASE,
         ),
     ),
