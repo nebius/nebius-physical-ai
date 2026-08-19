@@ -72,6 +72,42 @@ guard.
 | Cosmos Evaluator 0.1.2 | `npa-cosmos-evaluator` | `0.1.2-skypilot-v1-20260813T164700Z` | 2026-08-13 | Runs the upstream `HallucinationProcessor` quality gate on generated video using classical computer vision and no weights. Attribute verification calls an OpenAI-compatible endpoint; the LFS/EULA-gated obstacle checker is deliberately not fetched. |
 | FiftyOne 1.15.0.post1 (Voxel51) | `npa-fiftyone` | `1.15.0.post1` | 2026-08-13 | Dataset curation and visualization UI on port 5151, including uniqueness, similarity, and embedding visualization. Bundles a `mongod` binary so FiftyOne can launch its own metadata database. |
 
+## GPU coverage of the published set
+
+Publication is not GPU support. Nebius offers six x86_64 GPU platforms — L40S
+(`sm_89`), H100 and H200 (both `sm_90`), RTX PRO 6000 Blackwell (`sm_120`), B200
+(`sm_100`), and B300 (`sm_103`) — plus aarch64 `gpu-gb300`. Per-image verdicts and
+the run-level evidence behind them are in
+[Image ↔ Nebius GPU compatibility matrix](image-gpu-compatibility-matrix.md). Of
+the 26 published entries above — the table's 27th row, `npa-ltx2`, is listed but
+not published and has no GPU result on any platform:
+
+- Seven are CPU-only and GPU-agnostic (`npa-cosmos-curate`,
+  `npa-cosmos-evaluator`, `npa-fiftyone`, `npa-foxglove-embed`, `npa-lichtblick`,
+  `npa-rerun-viewer`, `npa-retargeting`). Only node-pool scheduling matters.
+- Thirteen GPU images have no blocked platform: `npa-alpamayo2-super`,
+  `npa-cosmos3`, `npa-cosmos3-reason`, `npa-detection-training`, `npa-envgen`,
+  `npa-genesis`, `npa-lancedb`, `npa-lerobot`, `npa-lerobot-policy`,
+  `npa-lerobot-vlm-rl`, `npa-loop-eval`, `npa-reference-policy`, and
+  `npa-wan2-2`. Cells within them still range from a real capability run to
+  toolchain-level support, and the `npa-wan2-2` Blackwell cells carry historical
+  evidence from an earlier candidate rather than the current closure.
+- Six GPU images are blocked on at least one platform. `npa-cosmos` runs only on
+  H100/H200 and B200, because the Predict2 v1.0.9 NATTEN allowlist rejects
+  capability 8.9, 12.0, and 10.3 in software. `npa-cosmos2-transfer` is blocked on
+  B300, where CUDA 12.8 NVRTC will not JIT `sm_103`. `npa-groot`, `npa-isaac-lab`,
+  and `npa-sonic` are blocked on B200 and B300 by the NVIDIA vendor stack, and
+  their render paths additionally require an RT-core part. `npa-leisaac` is routed
+  only to RTX PRO 6000.
+- No published image runs on `gpu-gb300`: each tag above resolved to a single
+  `linux/amd64` manifest on 2026-08-19, and that platform is aarch64.
+
+Two evidence gaps are worth stating plainly, because "supported" is a toolchain
+claim rather than a run. No published image has a recorded L40S or H200 capability
+run: every L40S cell is toolchain-level support, and the only 8×H200 result
+belongs to the unpublished build-your-own `npa-cosmos3-serving`. Real capability
+runs exist on H100, RTX PRO 6000, B200, and B300.
+
 ## Intentionally not published as separate images
 
 - **`npa-sim2real-control`** is an internal workflow artifact, not a public-mirror
@@ -103,7 +139,9 @@ Maintainers should use `skills/atomic/audit-container-docs/SKILL.md` to repeat
 the repository-inventory and anonymous-registry audit after container changes.
 
 This catalog does not imply that every image supports every GPU. Use the
-[B300 validation matrix](../b300-validation-matrix.md) when choosing a
-hardware-specific variant, and use the
+[image ↔ Nebius GPU compatibility matrix](image-gpu-compatibility-matrix.md) when
+choosing a hardware-specific variant, the
+[B300 validation matrix](../b300-validation-matrix.md) for the earlier B300-only
+run record, and the
 [container packaging contract](container-packaging.md) for security and
 redistribution requirements.

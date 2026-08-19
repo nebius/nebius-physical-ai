@@ -24,7 +24,9 @@ Machine-readable source of record: [`npa/docker/workbench/blackwell-dc-images.js
 
 H100 and H200 are both `sm_90`, so they share a column below.
 
-Also offered: `gpu-gb300` (Grace-Blackwell Ultra). Its GPU is the same `sm_103`, but the host is aarch64, and the x86_64 workbench images do not run there.
+Also offered: `gpu-gb300` (Grace-Blackwell Ultra). Its GPU is the same `sm_103`, but the host is aarch64, and the x86_64 workbench images do not run there. Every tag in the [public container catalog](container-image-catalog.md) resolved to a single `linux/amd64` manifest on 2026-08-19, so that platform is uncovered across the published set rather than per image.
+
+Two columns below carry no run at all for a published image. Every L40S cell is toolchain-level **supported**, and the only H200 result is the 8×H200 run of the unpublished build-your-own `npa-cosmos3-serving`. The recorded capability runs are on H100, RTX PRO 6000, B200, and B300.
 
 Two compatibility rules govern every cell:
 
