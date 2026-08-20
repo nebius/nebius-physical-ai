@@ -159,3 +159,4 @@ def test_glm_catalog_disables_unsupported_startup_kernel_paths() -> None:
     arguments = catalog["models"][0]["server_arguments"]
     assert "--disable-flashinfer-autotune" in arguments
     assert "--disable-cuda-graph" in arguments
+    assert "--disable-piecewise-cuda-graph" in arguments

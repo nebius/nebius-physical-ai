@@ -43,8 +43,9 @@ server receipt. Qwen uses `qwen3_coder`; vLLM exposes gpt-oss Harmony tool calls
 through its `openai` parser; GLM uses SGLang's `glm47` tool parser with `glm45`
 reasoning parsing. The pinned SGLang/FlashInfer build lacks one GLM-5.2 DSA
 TRTLLM-GEN specialization used only by startup autotuning/CUDA-graph capture,
-so those two optimizations are explicitly disabled; eager inference still runs
-the real immutable checkpoint and avoids a deterministic pre-serving crash.
+so autotuning plus ordinary and piecewise CUDA graphs are explicitly disabled;
+eager inference still runs the real immutable checkpoint and avoids a
+deterministic pre-serving crash.
 
 Render the model-specific Kubernetes resources into private evidence, create the
 `model-access` secret without putting its value on the command line, then apply

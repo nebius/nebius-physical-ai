@@ -19,6 +19,7 @@
         "--mem-fraction-static=0.9",
         "--disable-flashinfer-autotune",
         "--disable-cuda-graph",
+        "--disable-piecewise-cuda-graph",
         "--random-seed=20260820"
       ]
     },
