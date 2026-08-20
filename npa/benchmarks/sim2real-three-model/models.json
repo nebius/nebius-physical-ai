@@ -17,6 +17,8 @@
       "server_arguments": [
         "--trust-remote-code",
         "--mem-fraction-static=0.9",
+        "--disable-flashinfer-autotune",
+        "--disable-cuda-graph",
         "--random-seed=20260820"
       ]
     },

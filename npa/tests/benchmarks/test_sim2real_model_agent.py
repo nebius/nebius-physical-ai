@@ -149,3 +149,13 @@ def test_model_server_renderer_pins_image_and_isolates_multinode_endpoint() -> N
     pod_spec = statefulset["spec"]["template"]["spec"]
     assert pod_spec["hostNetwork"] is True
     assert any(volume["name"] == "infiniband" for volume in pod_spec["volumes"])
+
+
+def test_glm_catalog_disables_unsupported_startup_kernel_paths() -> None:
+    npa_root = Path(__file__).resolve().parents[2]
+    catalog = json.loads(
+        (npa_root / "benchmarks/sim2real-three-model/models.json").read_text()
+    )
+    arguments = catalog["models"][0]["server_arguments"]
+    assert "--disable-flashinfer-autotune" in arguments
+    assert "--disable-cuda-graph" in arguments
