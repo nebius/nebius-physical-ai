@@ -149,8 +149,11 @@ chmod 600 ~/.npa/credentials.yaml
 Nebius account authentication is handled by the `nebius` CLI profile, not by a
 long-lived `NEBIUS_TOKEN` in `~/.npa/credentials.yaml`.
 
-Before running `npa configure`, sign up for Nebius AI Cloud, note your tenant
-id, and create a project in the target region. An Object Storage bucket is
+Before running `npa configure`, sign up for Nebius AI Cloud, note your tenant ID
+and exact `project-...` ID, and create a project in the target region. Supplying
+the project ID when NPA creates the CLI profile avoids tenant-wide project
+discovery, so profiles authorized through a project-scoped IAM group work
+without broader tenant permissions. An Object Storage bucket is
 optional — `npa configure` creates a default bucket named `npa-bucket-<hash>`
 (a short hash of your tenant and project ids, e.g. `npa-bucket-1a2b3c4d`) with
 **standard** storage and a size cap when you press Enter at the bucket prompt
@@ -227,8 +230,10 @@ otherwise it proposes a fresh project-scoped bucket, without listing or rotating
 unrelated access keys.
 
 Run interactive setup in a terminal. `npa configure` creates or reuses your
-Nebius CLI profile first, then prompts for your tenant id and project id, your
-region and container registry (defaults are discovered from the project), guides
+Nebius CLI profile first. When creating one, it asks for the project ID before
+browser authentication. It then prompts for your tenant ID and confirms the
+project ID, your region and container registry (defaults are discovered from the
+project), guides
 you to reuse an existing bucket or create a default `npa-bucket-<hash>` bucket
 (standard storage, size limit in GB), and asks for a local **project alias**
 (default = region; used later as `-p <alias>`).
