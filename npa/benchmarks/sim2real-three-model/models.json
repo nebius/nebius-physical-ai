@@ -20,7 +20,7 @@
         "--disable-flashinfer-autotune",
         "--disable-cuda-graph",
         "--disable-piecewise-cuda-graph",
-        "--dsa-decode-backend=flashmla_kv",
+        "--dsa-decode-backend=flashmla_sparse",
         "--random-seed=20260820"
       ]
     },
