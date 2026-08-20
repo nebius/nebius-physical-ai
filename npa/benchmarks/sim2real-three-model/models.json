@@ -11,7 +11,7 @@
       "server_image": "docker.io/lmsysorg/sglang@sha256:1c64fde976bdf0d56474a30bccbcfc19667e5b3ab34c826a534c9d6aaca41212",
       "tool_call_parser": "glm47",
       "reasoning_parser": "glm45",
-      "context_limit": 1048576,
+      "context_limit": 262144,
       "tensor_parallel_size": 16,
       "pipeline_parallel_size": 1,
       "server_arguments": [
@@ -20,7 +20,9 @@
         "--disable-flashinfer-autotune",
         "--disable-cuda-graph",
         "--disable-piecewise-cuda-graph",
-        "--dsa-decode-backend=flashmla_sparse",
+        "--kv-cache-dtype=bfloat16",
+        "--dsa-prefill-backend=flashmla_sparse",
+        "--dsa-decode-backend=fa3",
         "--random-seed=20260820"
       ]
     },

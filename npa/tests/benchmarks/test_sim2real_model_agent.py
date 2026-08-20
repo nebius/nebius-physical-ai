@@ -160,4 +160,7 @@ def test_glm_catalog_disables_unsupported_startup_kernel_paths() -> None:
     assert "--disable-flashinfer-autotune" in arguments
     assert "--disable-cuda-graph" in arguments
     assert "--disable-piecewise-cuda-graph" in arguments
-    assert "--dsa-decode-backend=flashmla_sparse" in arguments
+    assert "--kv-cache-dtype=bfloat16" in arguments
+    assert "--dsa-prefill-backend=flashmla_sparse" in arguments
+    assert "--dsa-decode-backend=fa3" in arguments
+    assert catalog["models"][0]["context_limit"] == 262144

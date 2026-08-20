@@ -44,10 +44,10 @@ through its `openai` parser; GLM uses SGLang's `glm47` tool parser with `glm45`
 reasoning parsing. The pinned SGLang/FlashInfer build lacks one GLM-5.2 DSA
 TRTLLM-GEN specialization used only by startup autotuning/CUDA-graph capture,
 so autotuning plus ordinary and piecewise CUDA graphs are explicitly disabled;
-the affected DSA decode path uses SGLang's sparse FlashMLA backend with its FP8
-cache-dequantization path. Eager inference still runs the real immutable
-checkpoint and avoids a deterministic missing-kernel crash in the pinned
-TRTLLM backend.
+the affected DSA path uses BF16 KV with sparse FlashMLA prefill and FA3 decode.
+Its 262k serving window retains ample benchmark context while fitting BF16 KV
+beside the exact BF16 checkpoint. Eager inference avoids a deterministic
+missing-kernel crash in the pinned TRTLLM backend.
 
 Render the model-specific Kubernetes resources into private evidence, create the
 `model-access` secret without putting its value on the command line, then apply
