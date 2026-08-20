@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import urllib.request
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from npa.benchmarks.sim2real_model_agent import (
     _load_transcript,
     _run_tool,
     _stream_chat,
+    _workspace_preflight,
 )
 from npa.benchmarks.sim2real_model_server import render_server_resources
 from npa.benchmarks.sim2real_success import VerificationError, _lift_evidence
@@ -196,6 +198,37 @@ def test_context_checkpoint_is_bounded_and_becomes_resume_boundary(
     )
     loaded = _load_transcript(transcript)
     assert loaded == [checkpoint, {"role": "assistant", "content": "after"}]
+
+
+def test_workspace_resume_preserves_dirty_detached_checkout(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    tracked = tmp_path / "tracked.txt"
+    tracked.write_text("initial\n")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Benchmark Test",
+            "-c",
+            "user.email=benchmark@example.invalid",
+            "commit",
+            "-qm",
+            "initial",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True
+    ).strip()
+    subprocess.run(["git", "checkout", "--detach", "-q"], cwd=tmp_path, check=True)
+    tracked.write_text("model change\n")
+
+    with pytest.raises(ValueError, match="and clean"):
+        _workspace_preflight(tmp_path, commit, require_clean=True)
+    status = _workspace_preflight(tmp_path, commit, require_clean=False)
+    assert "tracked.txt" in status
 
 
 def test_model_server_renderer_pins_image_and_isolates_multinode_endpoint() -> None:

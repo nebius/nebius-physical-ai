@@ -115,6 +115,9 @@ tmux new-session -d -s sim2real-model-trial \
 The controller is restart-safe. Repeating the same command with unchanged
 metadata resumes from the existing transcript and request sequence; a mismatch
 in the recorded model, prompt, tool, or serving configuration is rejected.
+The first launch requires a clean detached checkout. A restart requires the
+same detached commit but preserves model-authored changes, recording a hash and
+line count of the workspace status in private `resumes.jsonl` evidence.
 When prompt telemetry reaches 85% of the configured context window, the
 controller appends a deterministic, hash-linked checkpoint and continues from
 that checkpoint plus a bounded verbatim tail. The complete append-only

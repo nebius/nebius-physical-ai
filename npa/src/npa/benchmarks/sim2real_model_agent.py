@@ -422,7 +422,9 @@ def _maybe_checkpoint(
     return compacted
 
 
-def _workspace_preflight(workspace: Path, expected_commit: str) -> None:
+def _workspace_preflight(
+    workspace: Path, expected_commit: str, *, require_clean: bool
+) -> str:
     if not workspace.is_dir():
         raise ValueError(f"workspace is missing: {workspace}")
     head = subprocess.check_output(
@@ -434,10 +436,12 @@ def _workspace_preflight(workspace: Path, expected_commit: str) -> None:
     status = subprocess.check_output(
         ["git", "status", "--porcelain"], cwd=workspace, text=True
     )
-    if head != expected_commit or branch or status:
+    if head != expected_commit or branch or (require_clean and status):
         raise ValueError(
-            "trial workspace must be clean, detached HEAD at the recorded origin/main commit"
+            "trial workspace must be detached at the recorded origin/main commit"
+            + (" and clean" if require_clean else "")
         )
+    return status
 
 
 def _require_descendant(path: Path, parent: Path, label: str) -> None:
@@ -457,7 +461,13 @@ def run(config_path: Path) -> int:
     _require_descendant(evidence, private_root, "evidence directory")
     evidence.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(evidence, 0o700)
-    _workspace_preflight(workspace, str(config["origin_main_commit"]))
+    meta_path = evidence / "run.json"
+    is_resume = meta_path.exists()
+    workspace_status = _workspace_preflight(
+        workspace,
+        str(config["origin_main_commit"]),
+        require_clean=not is_resume,
+    )
     system_prompt_path = Path(config["system_prompt_file"]).resolve()
     system = system_prompt_path.read_text(encoding="utf-8")
     messages: list[dict[str, Any]] = [
@@ -485,7 +495,6 @@ def run(config_path: Path) -> int:
         "serving": config["serving"],
         "started_at": _utc(),
     }
-    meta_path = evidence / "run.json"
     if meta_path.exists():
         existing_meta = json.loads(meta_path.read_text(encoding="utf-8"))
         for key in (
@@ -503,6 +512,22 @@ def run(config_path: Path) -> int:
         meta = existing_meta
     else:
         meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    if is_resume:
+        with (evidence / "resumes.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "at": _utc(),
+                        "request_index": request_index,
+                        "workspace_status_sha256": hashlib.sha256(
+                            workspace_status.encode()
+                        ).hexdigest(),
+                        "workspace_status_lines": len(workspace_status.splitlines()),
+                    },
+                    sort_keys=True,
+                )
+                + "\n"
+            )
     isolation = {
         "evidence": evidence,
         "private_root": private_root,
