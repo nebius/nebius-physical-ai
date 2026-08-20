@@ -90,7 +90,7 @@ def render_server_resources(
     replicas = 2 if tp == 16 else 1
     gpus_per_pod = 8 if tp >= 8 else tp
     argv = _server_argv(model, service_name=service_name)
-    command = "ORDINAL=${HOSTNAME##*-}; exec " + " ".join(
+    command = "ORDINAL=${POD_NAME##*-}; exec " + " ".join(
         "${ORDINAL}" if value == "${ORDINAL}" else shlex.quote(value) for value in argv
     )
     labels = {"app.kubernetes.io/name": service_name}
@@ -120,6 +120,10 @@ def render_server_resources(
                     {"name": "distributed", "containerPort": 5000},
                 ],
                 "env": [
+                    {
+                        "name": "POD_NAME",
+                        "valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}},
+                    },
                     {
                         "name": "HF_TOKEN",
                         "valueFrom": {
