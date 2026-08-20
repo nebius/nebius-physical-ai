@@ -139,7 +139,7 @@ def render_server_resources(
                 "securityContext": {"capabilities": {"add": ["IPC_LOCK"]}},
                 "volumeMounts": [
                     {"name": "model-cache", "mountPath": "/mnt/data"},
-                    {"name": "shared-memory", "mountPath": "/dev/shm"},
+                    {"name": "shm", "mountPath": "/dev/shm"},
                 ],
             }
         ],
@@ -149,7 +149,7 @@ def render_server_resources(
                 "hostPath": {"path": "/mnt/data", "type": "Directory"},
             },
             {
-                "name": "shared-memory",
+                "name": "shm",
                 "emptyDir": {"medium": "Memory", "sizeLimit": "64Gi"},
             },
         ],
