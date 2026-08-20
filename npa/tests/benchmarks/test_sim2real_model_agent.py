@@ -143,6 +143,9 @@ def test_model_server_renderer_pins_image_and_isolates_multinode_endpoint() -> N
     }
     assert cache_env["HF_HUB_CACHE"].startswith("/mnt/data/model-cache/")
     assert cache_env["TRANSFORMERS_CACHE"] == cache_env["HF_HUB_CACHE"]
+    network_env = {item["name"]: item.get("value") for item in container["env"]}
+    assert network_env["GLOO_SOCKET_IFNAME"] == "eth0"
+    assert network_env["NCCL_SOCKET_IFNAME"] == "eth0"
     pod_spec = statefulset["spec"]["template"]["spec"]
     assert pod_spec["hostNetwork"] is True
     assert any(volume["name"] == "infiniband" for volume in pod_spec["volumes"])

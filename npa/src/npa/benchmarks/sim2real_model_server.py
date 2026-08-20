@@ -156,6 +156,12 @@ def render_server_resources(
                     },
                     {"name": "NCCL_DEBUG", "value": "INFO"},
                     {"name": "NCCL_IB_DISABLE", "value": "0"},
+                    # With host networking these nodes resolve their hostname
+                    # to 127.0.1.1.  Pin the bootstrap/control sockets to the
+                    # routable interface so multi-node Gloo/NCCL ranks do not
+                    # advertise loopback to one another.
+                    {"name": "GLOO_SOCKET_IFNAME", "value": "eth0"},
+                    {"name": "NCCL_SOCKET_IFNAME", "value": "eth0"},
                 ],
                 "resources": {
                     "requests": {"nvidia.com/gpu": gpus_per_pod},
