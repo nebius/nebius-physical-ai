@@ -151,16 +151,15 @@ def test_model_server_renderer_pins_image_and_isolates_multinode_endpoint() -> N
     assert any(volume["name"] == "infiniband" for volume in pod_spec["volumes"])
 
 
-def test_glm_catalog_disables_unsupported_startup_kernel_paths() -> None:
+def test_glm_catalog_uses_release_with_blackwell_glm_support() -> None:
     npa_root = Path(__file__).resolve().parents[2]
     catalog = json.loads(
         (npa_root / "benchmarks/sim2real-three-model/models.json").read_text()
     )
     arguments = catalog["models"][0]["server_arguments"]
-    assert "--disable-flashinfer-autotune" in arguments
-    assert "--disable-cuda-graph" in arguments
-    assert "--disable-piecewise-cuda-graph" in arguments
-    assert "--kv-cache-dtype=bfloat16" in arguments
-    assert "--dsa-prefill-backend=flashmla_sparse" in arguments
-    assert "--dsa-decode-backend=tilelang" in arguments
+    assert catalog["models"][0]["server_image"].endswith(
+        "@sha256:16aba8925507e631e1dc1e23d95d026533602591775f6a8db68b74ee99746155"
+    )
+    assert not any(argument.startswith("--dsa-") for argument in arguments)
+    assert not any(argument.startswith("--kv-cache-dtype") for argument in arguments)
     assert catalog["models"][0]["context_limit"] == 262144

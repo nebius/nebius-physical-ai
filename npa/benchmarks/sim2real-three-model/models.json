@@ -7,8 +7,8 @@
       "license": "MIT",
       "quantization": "repository checkpoint",
       "server": "sglang",
-      "server_version": "0.5.13.post1-cu130",
-      "server_image": "docker.io/lmsysorg/sglang@sha256:1c64fde976bdf0d56474a30bccbcfc19667e5b3ab34c826a534c9d6aaca41212",
+      "server_version": "0.5.17-cu130",
+      "server_image": "docker.io/lmsysorg/sglang@sha256:16aba8925507e631e1dc1e23d95d026533602591775f6a8db68b74ee99746155",
       "tool_call_parser": "glm47",
       "reasoning_parser": "glm45",
       "context_limit": 262144,
@@ -17,12 +17,6 @@
       "server_arguments": [
         "--trust-remote-code",
         "--mem-fraction-static=0.9",
-        "--disable-flashinfer-autotune",
-        "--disable-cuda-graph",
-        "--disable-piecewise-cuda-graph",
-        "--kv-cache-dtype=bfloat16",
-        "--dsa-prefill-backend=flashmla_sparse",
-        "--dsa-decode-backend=tilelang",
         "--random-seed=20260820"
       ]
     },

@@ -41,13 +41,10 @@ revisions, container-image digests, parser choices, and serving parameters used
 by this benchmark. Verify each resolved image digest again in the private live
 server receipt. Qwen uses `qwen3_coder`; vLLM exposes gpt-oss Harmony tool calls
 through its `openai` parser; GLM uses SGLang's `glm47` tool parser with `glm45`
-reasoning parsing. The pinned SGLang/FlashInfer build lacks one GLM-5.2 DSA
-TRTLLM-GEN specialization used only by startup autotuning/CUDA-graph capture,
-so autotuning plus ordinary and piecewise CUDA graphs are explicitly disabled;
-the affected DSA path uses BF16 KV with sparse FlashMLA prefill and the pinned
-image's CUDA TileLang sparse decode. Its 262k serving window retains ample
-benchmark context while fitting BF16 KV beside the exact BF16 checkpoint and
-avoiding the unavailable TRTLLM specialization.
+reasoning parsing. GLM is pinned to the official SGLang v0.5.17 CUDA 13.0 image,
+whose release includes GLM-5.2 support on B200. SGLang selects its validated
+Blackwell DSA and KV-cache defaults; the 262k serving window retains ample
+benchmark context beside the exact BF16 checkpoint.
 
 Render the model-specific Kubernetes resources into private evidence, create the
 `model-access` secret without putting its value on the command line, then apply
