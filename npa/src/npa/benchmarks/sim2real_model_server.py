@@ -134,6 +134,26 @@ def render_server_resources(
                         "name": "HF_HOME",
                         "value": f"/mnt/data/model-cache/{service_name}",
                     },
+                    {
+                        "name": "HF_HUB_CACHE",
+                        "value": f"/mnt/data/model-cache/{service_name}/hub",
+                    },
+                    {
+                        "name": "HUGGINGFACE_HUB_CACHE",
+                        "value": f"/mnt/data/model-cache/{service_name}/hub",
+                    },
+                    {
+                        "name": "TRANSFORMERS_CACHE",
+                        "value": f"/mnt/data/model-cache/{service_name}/hub",
+                    },
+                    {
+                        "name": "HF_XET_CACHE",
+                        "value": f"/mnt/data/model-cache/{service_name}/xet",
+                    },
+                    {
+                        "name": "TORCH_HOME",
+                        "value": f"/mnt/data/model-cache/{service_name}/torch",
+                    },
                     {"name": "NCCL_DEBUG", "value": "INFO"},
                     {"name": "NCCL_IB_DISABLE", "value": "0"},
                 ],

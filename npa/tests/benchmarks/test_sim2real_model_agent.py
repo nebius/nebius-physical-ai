@@ -136,6 +136,13 @@ def test_model_server_renderer_pins_image_and_isolates_multinode_endpoint() -> N
     assert container["resources"]["limits"]["nvidia.com/gpu"] == 8
     assert "ORDINAL=${POD_NAME##*-}" in container["command"][-1]
     assert "--node-rank ${ORDINAL}" in container["command"][-1]
+    cache_env = {
+        item["name"]: item.get("value")
+        for item in container["env"]
+        if item["name"].endswith(("CACHE", "HOME"))
+    }
+    assert cache_env["HF_HUB_CACHE"].startswith("/mnt/data/model-cache/")
+    assert cache_env["TRANSFORMERS_CACHE"] == cache_env["HF_HUB_CACHE"]
     pod_spec = statefulset["spec"]["template"]["spec"]
     assert pod_spec["hostNetwork"] is True
     assert any(volume["name"] == "infiniband" for volume in pod_spec["volumes"])
