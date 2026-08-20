@@ -162,4 +162,5 @@ def test_glm_catalog_uses_release_with_blackwell_glm_support() -> None:
     )
     assert not any(argument.startswith("--dsa-") for argument in arguments)
     assert not any(argument.startswith("--kv-cache-dtype") for argument in arguments)
+    assert "--enforce-disable-flashinfer-allreduce-fusion" in arguments
     assert catalog["models"][0]["context_limit"] == 262144

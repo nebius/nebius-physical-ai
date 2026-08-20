@@ -17,6 +17,7 @@
       "server_arguments": [
         "--trust-remote-code",
         "--mem-fraction-static=0.9",
+        "--enforce-disable-flashinfer-allreduce-fusion",
         "--random-seed=20260820"
       ]
     },
