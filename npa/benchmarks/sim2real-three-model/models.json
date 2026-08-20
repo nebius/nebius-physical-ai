@@ -22,6 +22,7 @@
         "--disable-piecewise-cuda-graph",
         "--kv-cache-dtype=bfloat16",
         "--dsa-prefill-backend=flashmla_sparse",
+        "--dsa-decode-backend=tilelang",
         "--random-seed=20260820"
       ]
     },
