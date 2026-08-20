@@ -17,6 +17,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,7 @@ from npa.benchmarks.sim2real_success import VerificationError, verify_artifact_t
 
 
 TASK_TEXT = """From a clean checkout on the dev VM, operate the canonical npa/workflows/workbench/npa-workflows/sim2real.yaml through the standard runtime. Validate, plan, submit, monitor, diagnose, and make necessary fixes until the Franka arm grasps the cube, lifts it at least 5 cm, and holds it for 2 seconds. Do not weaken evaluation thresholds, replace real components, or fabricate success. Preserve unrelated changes. Finish with run IDs, commands, code changes, measured success metrics, and artifact locations."""
+CHECKPOINT_MARKER = "BENCHMARK_CONTEXT_CHECKPOINT_V1"
 
 
 TOOLS: list[dict[str, Any]] = [
@@ -100,10 +102,19 @@ class RequestTelemetry:
     finish_reason: str | None
 
 
-def _utc() -> str:
-    from datetime import datetime, timezone
+class EmptyStreamError(RuntimeError):
+    """The server closed a streaming response without a usable event."""
 
+
+def _utc() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _elapsed_since(value: str) -> float:
+    started = datetime.fromisoformat(value)
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    return max(0.0, (datetime.now(timezone.utc) - started).total_seconds())
 
 
 def _sha(value: Any) -> str:
@@ -261,6 +272,10 @@ def _stream_chat(
                 current["function"]["name"] += function.get("name") or ""
                 current["function"]["arguments"] += function.get("arguments") or ""
             finish_reason = choice.get("finish_reason") or finish_reason
+    if not any((content, reasoning, tool_calls, usage, finish_reason, first)):
+        raise EmptyStreamError(
+            "OpenAI-compatible endpoint returned an empty event stream"
+        )
     details = usage.get("prompt_tokens_details") or {}
     completion_details = usage.get("completion_tokens_details") or {}
     message: dict[str, Any] = {"role": "assistant", "content": "".join(content) or None}
@@ -288,6 +303,123 @@ def _stream_chat(
         finish_reason=finish_reason,
     )
     return message, telemetry
+
+
+def _load_transcript(path: Path) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = []
+    if not path.exists():
+        return messages
+    for line_number, line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), 1
+    ):
+        if not line.strip():
+            continue
+        message = json.loads(line)
+        if not isinstance(message, dict) or message.get("role") not in {
+            "assistant",
+            "tool",
+            "user",
+        }:
+            raise ValueError(f"invalid transcript entry at line {line_number}")
+        messages.append(message)
+    checkpoint_indexes = [
+        index
+        for index, message in enumerate(messages)
+        if message.get("role") == "user"
+        and str(message.get("content") or "").startswith(CHECKPOINT_MARKER)
+    ]
+    if checkpoint_indexes:
+        messages = messages[checkpoint_indexes[-1] :]
+    return messages
+
+
+def _last_request_index(path: Path) -> int:
+    last = 0
+    if not path.exists():
+        return last
+    for line_number, line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), 1
+    ):
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        try:
+            last = max(last, int(record["request_index"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"invalid request telemetry entry at line {line_number}"
+            ) from exc
+    return last
+
+
+def _latest_prompt_tokens(path: Path) -> int | None:
+    latest: int | None = None
+    if not path.exists():
+        return latest
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        value = json.loads(line).get("prompt_tokens")
+        if isinstance(value, int):
+            latest = value
+    return latest
+
+
+def _context_checkpoint(
+    messages: list[dict[str, Any]], *, max_recent_chars: int
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    recent_candidates = [
+        message
+        for message in messages[2:]
+        if not (
+            message.get("role") == "user"
+            and str(message.get("content") or "").startswith(CHECKPOINT_MARKER)
+        )
+    ]
+    recent: list[dict[str, Any]] = []
+    used = 0
+    for message in reversed(recent_candidates):
+        size = len(json.dumps(message, sort_keys=True, separators=(",", ":")))
+        if recent and used + size > max_recent_chars:
+            break
+        recent.append(message)
+        used += size
+    recent.reverse()
+    checkpoint = {
+        "role": "user",
+        "content": (
+            f"{CHECKPOINT_MARKER}\n"
+            "The standalone benchmark controller deterministically compacted "
+            "earlier context because the configured model context was nearly "
+            "full. The full append-only transcript remains private evidence. "
+            "Do not infer success from this checkpoint. Re-read durable workspace "
+            "and runtime state with tools as needed, then continue the original "
+            "task.\n"
+            f"Prior active-context SHA256: {_sha(messages[2:])}\n"
+            f"Prior messages: {len(messages) - 2}; verbatim recent messages: "
+            f"{len(recent)}\n"
+            "Verbatim recent transcript JSON follows:\n"
+            + json.dumps(recent, sort_keys=True, separators=(",", ":"))
+        ),
+    }
+    return messages[:2] + [checkpoint], checkpoint
+
+
+def _maybe_checkpoint(
+    messages: list[dict[str, Any]],
+    transcript_path: Path,
+    *,
+    prompt_tokens: int | None,
+    context_limit: int,
+) -> list[dict[str, Any]]:
+    if prompt_tokens is None or prompt_tokens < int(context_limit * 0.85):
+        return messages
+    compacted, checkpoint = _context_checkpoint(
+        messages, max_recent_chars=max(16_384, int(context_limit * 1.5))
+    )
+    with transcript_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(checkpoint, sort_keys=True) + "\n")
+    return compacted
 
 
 def _workspace_preflight(workspace: Path, expected_commit: str) -> None:
@@ -336,10 +468,11 @@ def run(config_path: Path) -> int:
     env.update({str(k): str(v) for k, v in (config.get("environment") or {}).items()})
     endpoint = str(config["endpoint"])
     api_key = str(config.get("api_key") or "benchmark-local")
-    request_index = 0
-    started = time.monotonic()
     transcript_path = evidence / "transcript.jsonl"
     telemetry_path = evidence / "requests.jsonl"
+    messages.extend(_load_transcript(transcript_path))
+    request_index = _last_request_index(telemetry_path)
+    context_limit = int(config["serving"]["context_limit"])
     meta = {
         "schema": "npa.sim2real.model_agent_benchmark.run.v1",
         "model": config["model"],
@@ -352,7 +485,24 @@ def run(config_path: Path) -> int:
         "serving": config["serving"],
         "started_at": _utc(),
     }
-    (evidence / "run.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    meta_path = evidence / "run.json"
+    if meta_path.exists():
+        existing_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        for key in (
+            "model",
+            "revision",
+            "origin_main_commit",
+            "seed",
+            "system_prompt_sha256",
+            "task_sha256",
+            "tool_schema_sha256",
+            "serving",
+        ):
+            if existing_meta.get(key) != meta.get(key):
+                raise ValueError(f"resume metadata mismatch: {key}")
+        meta = existing_meta
+    else:
+        meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
     isolation = {
         "evidence": evidence,
         "private_root": private_root,
@@ -368,6 +518,13 @@ def run(config_path: Path) -> int:
             "trial mount-namespace isolation preflight failed: "
             + isolation_check["stderr"].strip()
         )
+    messages = _maybe_checkpoint(
+        messages,
+        transcript_path,
+        prompt_tokens=_latest_prompt_tokens(telemetry_path),
+        context_limit=context_limit,
+    )
+    consecutive_stream_failures = 0
     while True:
         request_index += 1
         payload = {
@@ -382,7 +539,11 @@ def run(config_path: Path) -> int:
         }
         try:
             assistant, telemetry = _stream_chat(endpoint, api_key, payload)
-        except (urllib.error.URLError, json.JSONDecodeError) as exc:
+        except (
+            urllib.error.URLError,
+            json.JSONDecodeError,
+            EmptyStreamError,
+        ) as exc:
             with telemetry_path.open("a", encoding="utf-8") as handle:
                 handle.write(
                     json.dumps(
@@ -394,7 +555,10 @@ def run(config_path: Path) -> int:
                     )
                     + "\n"
                 )
+            consecutive_stream_failures += 1
+            time.sleep(min(30.0, float(2 ** min(consecutive_stream_failures, 5))))
             continue
+        consecutive_stream_failures = 0
         telemetry.request_index = request_index
         with telemetry_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(asdict(telemetry), sort_keys=True) + "\n")
@@ -425,6 +589,12 @@ def run(config_path: Path) -> int:
                 messages.append(tool_message)
                 with transcript_path.open("a", encoding="utf-8") as handle:
                     handle.write(json.dumps(tool_message, sort_keys=True) + "\n")
+            messages = _maybe_checkpoint(
+                messages,
+                transcript_path,
+                prompt_tokens=telemetry.prompt_tokens,
+                context_limit=context_limit,
+            )
             continue
 
         artifact_root = workspace / str(
@@ -446,8 +616,14 @@ def run(config_path: Path) -> int:
             messages.append(feedback)
             with transcript_path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(feedback, sort_keys=True) + "\n")
+            messages = _maybe_checkpoint(
+                messages,
+                transcript_path,
+                prompt_tokens=telemetry.prompt_tokens,
+                context_limit=context_limit,
+            )
             continue
-        verification["end_to_end_wall_seconds"] = time.monotonic() - started
+        verification["end_to_end_wall_seconds"] = _elapsed_since(meta["started_at"])
         verification["completed_at"] = _utc()
         (evidence / "success.json").write_text(
             json.dumps(verification, indent=2), encoding="utf-8"

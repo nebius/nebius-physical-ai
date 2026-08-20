@@ -112,6 +112,18 @@ tmux new-session -d -s sim2real-model-trial \
   'npa/.venv/bin/python -m npa.benchmarks.sim2real_model_agent run --config /private/trial.json'
 ```
 
+The controller is restart-safe. Repeating the same command with unchanged
+metadata resumes from the existing transcript and request sequence; a mismatch
+in the recorded model, prompt, tool, or serving configuration is rejected.
+When prompt telemetry reaches 85% of the configured context window, the
+controller appends a deterministic, hash-linked checkpoint and continues from
+that checkpoint plus a bounded verbatim tail. The complete append-only
+transcript remains in private evidence. A checkpoint is continuity evidence,
+not success evidence: it explicitly requires the model to re-read durable state
+and forbids inferring success. Transport and empty-stream failures use capped
+exponential retry backoff without imposing a completion, time, token, or job
+limit.
+
 The evidence directory receives `run.json`, append-only `transcript.jsonl`,
 per-request telemetry in `requests.jsonl`, and `success.json` only after strict
 verification passes. Capture server `/metrics`, GPU samples, provider billing,

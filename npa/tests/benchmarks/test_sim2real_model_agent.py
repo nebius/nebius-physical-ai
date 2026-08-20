@@ -1,11 +1,21 @@
 from __future__ import annotations
 
 import json
+import urllib.request
 from pathlib import Path
 
 import pytest
 
-from npa.benchmarks.sim2real_model_agent import _inside, _run_tool
+from npa.benchmarks.sim2real_model_agent import (
+    CHECKPOINT_MARKER,
+    EmptyStreamError,
+    _context_checkpoint,
+    _inside,
+    _last_request_index,
+    _load_transcript,
+    _run_tool,
+    _stream_chat,
+)
 from npa.benchmarks.sim2real_model_server import render_server_resources
 from npa.benchmarks.sim2real_success import VerificationError, _lift_evidence
 
@@ -113,6 +123,79 @@ def test_tool_schema_round_trips_json_arguments(tmp_path: Path) -> None:
     path.write_text(json.dumps({"ok": True}))
     result = _run_tool("read_file", {"path": "data.json"}, tmp_path, {})
     assert json.loads(result["content"]) == {"ok": True}
+
+
+def test_empty_stream_is_a_retryable_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    class EmptyResponse:
+        def __enter__(self) -> EmptyResponse:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def __iter__(self):
+            return iter(())
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda _request: EmptyResponse())
+    with pytest.raises(EmptyStreamError, match="empty event stream"):
+        _stream_chat("http://model.example/v1", "key", {"messages": []})
+
+
+def test_resume_loads_transcript_and_request_index(tmp_path: Path) -> None:
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text(
+        "\n".join(
+            json.dumps(item)
+            for item in (
+                {"role": "assistant", "content": None, "tool_calls": []},
+                {"role": "user", "content": "continue"},
+            )
+        )
+        + "\n"
+    )
+    requests = tmp_path / "requests.jsonl"
+    requests.write_text(
+        json.dumps({"request_index": 3})
+        + "\n"
+        + json.dumps({"request_index": 8, "transport_error": "empty"})
+        + "\n"
+    )
+
+    assert [item["role"] for item in _load_transcript(transcript)] == [
+        "assistant",
+        "user",
+    ]
+    assert _last_request_index(requests) == 8
+
+
+def test_context_checkpoint_is_bounded_and_becomes_resume_boundary(
+    tmp_path: Path,
+) -> None:
+    messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "task"},
+        {"role": "assistant", "content": "old-" + "x" * 100},
+        {"role": "user", "content": "recent-1"},
+        {"role": "assistant", "content": "recent-2"},
+    ]
+    compacted, checkpoint = _context_checkpoint(messages, max_recent_chars=80)
+    assert compacted[:2] == messages[:2]
+    assert compacted[2] == checkpoint
+    assert checkpoint["content"].startswith(CHECKPOINT_MARKER)
+    assert "recent-2" in checkpoint["content"]
+    assert "old-" not in checkpoint["content"]
+
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text(
+        json.dumps(messages[2])
+        + "\n"
+        + json.dumps(checkpoint)
+        + "\n"
+        + json.dumps({"role": "assistant", "content": "after"})
+        + "\n"
+    )
+    loaded = _load_transcript(transcript)
+    assert loaded == [checkpoint, {"role": "assistant", "content": "after"}]
 
 
 def test_model_server_renderer_pins_image_and_isolates_multinode_endpoint() -> None:
