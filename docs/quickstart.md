@@ -257,7 +257,11 @@ Storage is committed after its declared write/read capability probe succeeds.
 Delete is best-effort probe cleanup and is reported independently. The declared
 runtime actions are `GetObject`, `HeadObject`, `PutObject`, `DeleteObject`, and
 `ListObjectsV2`; NPA binds `storage.object-editor` to a project-scoped NPA group
-at the exact bucket. A provider-verified existing `editors` membership is
+at the exact bucket. Initial auto-provisioning therefore requires the active
+profile to have `admin` permission on the target project so it can manage that
+project's IAM group, membership, and access permit. Tenant-wide project listing
+and tenant-wide `admin` permission are not required. A provider-verified existing
+`editors` membership is
 accepted for older installations. Creating `editors` is an explicit compatibility
 fallback only when Nebius reports the narrow role unsupported. Unknown,
 unreadable, or insufficient IAM stops before key creation and probing. Newly

@@ -129,7 +129,13 @@ def test_narrow_binding_existing_is_accepted_without_mutation(monkeypatch) -> No
             {"memberships": [{"spec": {"member_id": "serviceaccount-a"}}]},
         )
     )
-    monkeypatch.setattr(nebius, "_run_json", lambda *_a, **_k: next(responses))
+    calls: list[list[str]] = []
+
+    def run_json(argv, **_kwargs):
+        calls.append(argv)
+        return next(responses)
+
+    monkeypatch.setattr(nebius, "_run_json", run_json)
     mutations: list[list[str]] = []
     monkeypatch.setattr(nebius, "_run", lambda argv, **_k: mutations.append(argv))
     evidence = nebius.ensure_storage_capability_binding(
@@ -140,6 +146,15 @@ def test_narrow_binding_existing_is_accepted_without_mutation(monkeypatch) -> No
     )
     assert evidence.state is nebius.IamBindingState.EXISTING
     assert evidence.role == "storage.object-editor"
+    assert calls[0] == [
+        "iam",
+        "group",
+        "get-by-name",
+        "--parent-id",
+        "project-a",
+        "--name",
+        nebius.storage_binding_group_name("project-a"),
+    ]
     assert mutations == []
 
 
@@ -206,6 +221,44 @@ def test_bootstrap_reused_key_and_new_binding_reports_typed_propagation(
     assert result["iam_binding_role"] == nebius.STORAGE_RUNTIME_ROLE
 
 
+def test_tenant_editors_denial_falls_through_to_project_binding(monkeypatch) -> None:
+    monkeypatch.setattr(nebius, "get_iam_token", lambda: "iam")
+    monkeypatch.setattr(nebius, "ensure_service_account", lambda *_a, **_k: "sa-a")
+    monkeypatch.setattr(nebius, "ensure_bucket", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        nebius,
+        "get_bucket_by_name",
+        lambda *_a, **_k: {"metadata": {"id": "bucket-a"}},
+    )
+    monkeypatch.setattr(
+        nebius,
+        "_existing_editors_binding",
+        lambda *_a: (_ for _ in ()).throw(
+            nebius.NebiusError("PermissionDenied: tenant group inventory")
+        ),
+    )
+    narrow_calls: list[dict[str, object]] = []
+
+    def ensure_narrow(**kwargs):
+        narrow_calls.append(kwargs)
+        return _binding(nebius.IamBindingState.CREATED)
+
+    monkeypatch.setattr(nebius, "ensure_storage_capability_binding", ensure_narrow)
+    monkeypatch.setattr(
+        nebius, "ensure_access_key", lambda *_a, **_k: ("key", "secret")
+    )
+    statuses: list[str] = []
+
+    result = nebius.bootstrap_environment(
+        "project-a", "tenant-a", "eu-test1", on_status=statuses.append
+    )
+
+    assert result["iam_binding_state"] == "created"
+    assert narrow_calls[0]["project_id"] == "project-a"
+    assert narrow_calls[0]["tenant_id"] == "tenant-a"
+    assert any("exact-project storage binding" in status for status in statuses)
+
+
 def test_failed_editors_grant_has_typed_failed_evidence(monkeypatch) -> None:
     monkeypatch.setattr(
         nebius,
@@ -264,7 +317,7 @@ def test_editors_fallback_only_for_provider_unsupported_role(monkeypatch) -> Non
 
     assert result.compatibility_fallback is True
     create_group = calls[1]
-    assert create_group[create_group.index("--parent-id") + 1] == "tenant-a"
+    assert create_group[create_group.index("--parent-id") + 1] == "project-a"
     assert create_group[
         create_group.index("--name") + 1
     ] == nebius.storage_binding_group_name("project-a")
@@ -296,6 +349,7 @@ def test_insufficient_binding_rejected_before_key(monkeypatch) -> None:
         nebius.bootstrap_environment("project-a", "tenant-a", "eu-test1")
 
     assert raised.value.evidence.state is nebius.IamBindingState.FAILED
+    assert "project-scoped admin permission" in str(raised.value)
     assert key_calls == []
 
 

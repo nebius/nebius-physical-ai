@@ -692,7 +692,12 @@ def test_nebius_bootstrap_returns_verifiable_storage_account_ownership(mocker) -
         "npa.clients.nebius.get_bucket_by_name",
         return_value={"metadata": {"id": "bucket-id"}},
     )
-    mocker.patch("npa.clients.nebius._existing_editors_binding", return_value=None)
+    mocker.patch(
+        "npa.clients.nebius._existing_editors_binding",
+        side_effect=nebius.NebiusError(
+            "PermissionDenied: tenant-wide editors inventory"
+        ),
+    )
     mocker.patch(
         "npa.clients.nebius.ensure_storage_capability_binding",
         return_value=nebius.StorageIamBindingEvidence(
@@ -754,13 +759,18 @@ def test_nebius_bootstrap_stops_before_bucket_or_key_when_required_iam_fails(
         "npa.clients.nebius.get_bucket_by_name",
         return_value={"metadata": {"id": "bucket-id"}},
     )
-    mocker.patch("npa.clients.nebius._existing_editors_binding", return_value=None)
+    mocker.patch(
+        "npa.clients.nebius._existing_editors_binding",
+        side_effect=nebius.NebiusError(
+            "PermissionDenied: tenant-wide editors inventory"
+        ),
+    )
     key = mocker.patch(
         "npa.clients.nebius.ensure_access_key", return_value=("key", "secret")
     )
 
     messages: list[str] = []
-    with pytest.raises(nebius.NebiusError, match="Required storage IAM capability"):
+    with pytest.raises(nebius.NebiusError, match="project-scoped admin permission"):
         nebius.bootstrap_environment(
             "project", "tenant", "eu-north1", on_status=messages.append
         )
