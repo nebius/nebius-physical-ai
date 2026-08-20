@@ -43,10 +43,11 @@ server receipt. Qwen uses `qwen3_coder`; vLLM exposes gpt-oss Harmony tool calls
 through its `openai` parser; GLM uses SGLang's `glm47` tool parser with `glm45`
 reasoning parsing. GLM is pinned to the official SGLang v0.5.17 CUDA 13.0 image,
 whose release includes GLM-5.2 support on B200. SGLang selects its validated
-Blackwell DSA and KV-cache defaults; the 262k serving window retains ample
-benchmark context beside the exact BF16 checkpoint. FlashInfer all-reduce
-fusion is force-disabled for a two-node serving fabric without MNNVL, leaving
-the validated NCCL/RDMA path to carry tensor-parallel collectives.
+FlashMLA sparse prefill and KV decode with BF16 KV; the 262k serving window
+retains ample benchmark context beside the exact BF16 checkpoint. FlashInfer
+all-reduce fusion is force-disabled for a two-node serving fabric without
+MNNVL, leaving the validated NCCL/RDMA path to carry tensor-parallel
+collectives.
 
 Render the model-specific Kubernetes resources into private evidence, create the
 `model-access` secret without putting its value on the command line, then apply

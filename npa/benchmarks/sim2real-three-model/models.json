@@ -18,6 +18,9 @@
         "--trust-remote-code",
         "--mem-fraction-static=0.9",
         "--enforce-disable-flashinfer-allreduce-fusion",
+        "--kv-cache-dtype=bfloat16",
+        "--dsa-prefill-backend=flashmla_sparse",
+        "--dsa-decode-backend=flashmla_kv",
         "--random-seed=20260820"
       ]
     },

@@ -160,7 +160,8 @@ def test_glm_catalog_uses_release_with_blackwell_glm_support() -> None:
     assert catalog["models"][0]["server_image"].endswith(
         "@sha256:16aba8925507e631e1dc1e23d95d026533602591775f6a8db68b74ee99746155"
     )
-    assert not any(argument.startswith("--dsa-") for argument in arguments)
-    assert not any(argument.startswith("--kv-cache-dtype") for argument in arguments)
+    assert "--kv-cache-dtype=bfloat16" in arguments
+    assert "--dsa-prefill-backend=flashmla_sparse" in arguments
+    assert "--dsa-decode-backend=flashmla_kv" in arguments
     assert "--enforce-disable-flashinfer-allreduce-fusion" in arguments
     assert catalog["models"][0]["context_limit"] == 262144
