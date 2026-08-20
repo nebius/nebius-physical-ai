@@ -135,3 +135,6 @@ def test_model_server_renderer_pins_image_and_isolates_multinode_endpoint() -> N
     assert container["image"].startswith("registry/server@sha256:")
     assert container["resources"]["limits"]["nvidia.com/gpu"] == 8
     assert "--node-rank ${ORDINAL}" in container["command"][-1]
+    pod_spec = statefulset["spec"]["template"]["spec"]
+    assert pod_spec["hostNetwork"] is True
+    assert any(volume["name"] == "infiniband" for volume in pod_spec["volumes"])

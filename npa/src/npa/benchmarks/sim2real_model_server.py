@@ -131,6 +131,7 @@ def render_server_resources(
                         "value": f"/mnt/data/model-cache/{service_name}",
                     },
                     {"name": "NCCL_DEBUG", "value": "INFO"},
+                    {"name": "NCCL_IB_DISABLE", "value": "0"},
                 ],
                 "resources": {
                     "requests": {"nvidia.com/gpu": gpus_per_pod},
@@ -140,6 +141,7 @@ def render_server_resources(
                 "volumeMounts": [
                     {"name": "model-cache", "mountPath": "/mnt/data"},
                     {"name": "shm", "mountPath": "/dev/shm"},
+                    {"name": "infiniband", "mountPath": "/dev/infiniband"},
                 ],
             }
         ],
@@ -151,6 +153,10 @@ def render_server_resources(
             {
                 "name": "shm",
                 "emptyDir": {"medium": "Memory", "sizeLimit": "64Gi"},
+            },
+            {
+                "name": "infiniband",
+                "hostPath": {"path": "/dev/infiniband", "type": "Directory"},
             },
         ],
     }
