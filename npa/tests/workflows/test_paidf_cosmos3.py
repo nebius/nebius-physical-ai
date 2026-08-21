@@ -241,6 +241,7 @@ def test_generate_variants_runs_real_runner_contract_and_changes_retry(
     assert metadata["engine"] == c3.ENGINE
     assert metadata["conditioned_input"] == "source.mp4"
     assert metadata["weights_baked"] is False
+    assert metadata["motion_preservation"] is None
 
     (paths["scores"] / "cosmos_evaluator.json").write_text(
         json.dumps({"status": "completed", "passed": False, "score": 0.4}),
@@ -257,6 +258,61 @@ def test_generate_variants_runs_real_runner_contract_and_changes_retry(
     assert {call["seed"] for call in calls} == {110, 111}
     assert {call["guidance"] for call in calls} == {4.5}
     assert {call["num_steps"] for call in calls} == {22}
+
+
+@requires_ffmpeg
+def test_generate_variants_preserves_raw_cosmos_and_source_motion(tmp_path: Path) -> None:
+    paths = _generation_inputs(tmp_path)
+    storage = _MemoryStorage()
+
+    def fake_generator(**kwargs):
+        artifact = Path(kwargs["output_path"]) / kwargs["name"] / "vision.mp4"
+        _tiny_video(artifact, color="red")
+        return {"output_path": str(artifact), "output_bytes": artifact.stat().st_size}
+
+    manifest = c3.generate_variants(
+        str(paths["source"]),
+        str(paths["provenance"]),
+        str(paths["captions"]),
+        str(paths["configs"]),
+        "s3://example-bucket/run/cosmos_augmented/",
+        str(paths["scores"]),
+        str(paths["attempt"]),
+        "video2video",
+        "Cosmos3-Nano",
+        "Preserve the robot motion.",
+        "distortion",
+        10,
+        5.0,
+        20,
+        1,
+        1,
+        100,
+        -0.5,
+        2,
+        "latency",
+        True,
+        "test-run",
+        0.8,
+        storage=storage,
+        environ={"CUDA_VISIBLE_DEVICES": "0"},
+        generator=fake_generator,
+    )
+
+    variant = manifest["variants"][0]
+    motion = variant["motion_preservation"]
+    assert motion["engine"] == "ffmpeg-source-motion-composite"
+    assert motion["source_weight"] == 0.8
+    assert motion["cosmos_weight"] == pytest.approx(0.2)
+    assert motion["raw_cosmos_video_bytes"] > 0
+    assert len(motion["raw_cosmos_video_sha256"]) == 64
+    assert len(motion["published_video_sha256"]) == 64
+    assert motion["raw_cosmos_video_uri"] in storage.objects
+    assert variant["augmented_video_uri"] in storage.objects
+    assert (
+        storage.objects[motion["raw_cosmos_video_uri"]]
+        != storage.objects[variant["augmented_video_uri"]]
+    )
 
 
 @requires_ffmpeg

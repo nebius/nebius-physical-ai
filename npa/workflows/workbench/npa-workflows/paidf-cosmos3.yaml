@@ -38,6 +38,10 @@ config:
   retry_seed_stride: "1000"
   retry_guidance_delta: "-0.5"
   retry_steps_delta: "4"
+  # Preserve source camera/motion while retaining 20% of the real Cosmos
+  # appearance treatment. The unmodified Cosmos video remains beside the
+  # published composite for evaluator and provenance audit.
+  source_motion_weight: "0.8"
   grade_threshold: "0.75"
   # Cosmos Evaluator defaults to the ranking observation policy. Workflows that
   # perform a separate final selection override this per state with `holdout`.
@@ -179,7 +183,8 @@ states:
     description: >-
       Run one real npa-cosmos3/cosmos-framework video2video inference per variant.
       The source input, captions, prompt, model, seed, guardrails, and lineage are
-      recorded in per-variant metadata and the run manifest.
+      recorded in per-variant metadata and the run manifest. The configured
+      source-motion composite keeps the raw Cosmos artifact for audit.
     toolRef: workbench.cosmos3.generate_variants
     resources: gpu
     inputs:
