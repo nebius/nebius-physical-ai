@@ -9184,6 +9184,25 @@ def _health(
     return response.status_code == 200, response.status_code
 
 
+def _basic_auth_protects_endpoint(
+    url: str,
+    *,
+    timeout: float = 5.0,
+    verify: bool = True,
+) -> tuple[bool, int]:
+    """Prove that an unauthenticated request cannot reach the agent UI."""
+    try:
+        response = httpx.get(
+            url,
+            timeout=timeout,
+            verify=verify,
+            follow_redirects=False,
+        )
+    except httpx.HTTPError:
+        return False, 0
+    return response.status_code == 401, response.status_code
+
+
 _artifact_only_http_probe = agent_resources.artifact_only_http_probe
 
 
@@ -10804,22 +10823,32 @@ def status_cmd(
     ui_ok, ui_code = _health(
         agent_url, user=auth_user, password=auth_password, verify=tls_verify
     )
+    basic_auth_enforced, unauthenticated_ui_code = _basic_auth_protects_endpoint(
+        agent_url,
+        verify=tls_verify,
+    )
     rerun_ok, rerun_code = _health(
         sim_viz_url, user=auth_user, password=auth_password, verify=tls_verify
     )
+    endpoint_disclosure_allowed = bool(ui_ok and basic_auth_enforced)
     payload = {
         "project": project,
         "name": name,
-        "public_ip": record.get("public_ip", ""),
-        "public_url": public_url,
+        "public_ip": record.get("public_ip", "") if endpoint_disclosure_allowed else "",
+        "public_url": public_url if endpoint_disclosure_allowed else "",
         "public_https": _record_public_https(record),
-        "direct_url": record.get("direct_url", ""),
-        "ui_url": agent_url,
-        "rerun_url": rerun_url,
-        "sim_viz_url": sim_viz_url,
-        "sim_assets_url": sim_assets_url,
-        "cameras_api_url": cameras_api_url,
-        "health": bool(ui_ok and rerun_ok),
+        # The direct service URL is not covered by the public HTTPS Basic Auth
+        # proof and is intentionally never part of status handoffs.
+        "direct_url": "",
+        "ui_url": agent_url if endpoint_disclosure_allowed else "",
+        "rerun_url": rerun_url if endpoint_disclosure_allowed else "",
+        "sim_viz_url": sim_viz_url if endpoint_disclosure_allowed else "",
+        "sim_assets_url": sim_assets_url if endpoint_disclosure_allowed else "",
+        "cameras_api_url": cameras_api_url if endpoint_disclosure_allowed else "",
+        "health": bool(ui_ok and rerun_ok and basic_auth_enforced),
+        "basic_auth_enforced": basic_auth_enforced,
+        "unauthenticated_ui_status_code": unauthenticated_ui_code,
+        "endpoint_disclosure_allowed": endpoint_disclosure_allowed,
         "ui_status_code": ui_code,
         "rerun_status_code": rerun_code,
         "llm": record.get("llm", {}),
