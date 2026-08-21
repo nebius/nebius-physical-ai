@@ -33,6 +33,9 @@ config:
   steps: "24"
   variant_count: "2"
   variant_parallelism: "1"
+  # Optional stable seed for appearance-profile sampling. Leave empty to retain
+  # run-ID sampling; set it for reproducible quality comparisons.
+  augmentation_seed: ""
   parallelism_preset: latency
   refinement_iterations: "2"
   retry_seed_stride: "1000"
@@ -143,6 +146,7 @@ states:
         - "false"
         - "false"
         - "{{config.augment_subject}}"
+        - "{{config.augmentation_seed}}"
     outputs:
       - uri: "{{config.configs_uri}}manifest.json"
         schema: npa.data_factory.configs.v1

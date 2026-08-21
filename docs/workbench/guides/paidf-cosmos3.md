@@ -38,7 +38,9 @@ infrastructure identifier is embedded.
 
 Generation behavior is configuration-driven through `cosmos3_checkpoint`,
 `cosmos3_mode`, `seed`, `guidance`, `steps`, `variant_count`,
-`variant_parallelism`, and `parallelism_preset`. Quality and retries use
+`variant_parallelism`, and `parallelism_preset`. `augmentation_seed` optionally
+decouples appearance-profile sampling from the run ID for reproducible quality
+comparisons. Quality and retries use
 `grade_threshold`, `refinement_iterations`, `retry_seed_stride`,
 `retry_guidance_delta`, and `retry_steps_delta`. `source_motion_weight` controls
 the source-motion-preserving composite used for publication (the workflow uses
