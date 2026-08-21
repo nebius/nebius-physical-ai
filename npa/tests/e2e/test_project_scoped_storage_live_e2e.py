@@ -1,9 +1,9 @@
-"""Live proof of project-scoped Nebius profile and storage IAM behavior.
+"""Live proof of tenant-wide and project-only Nebius storage IAM behavior.
 
-This test creates a disposable project-scoped operator identity inside an
-explicitly selected non-production project, drives the real Nebius CLI and NPA
-storage bootstrap, verifies all declared S3 actions, and removes every resource
-it creates.
+This test first runs the real NPA storage bootstrap through a tenant-wide setup
+identity, then creates a disposable project-only operator identity and repeats
+the same bootstrap. Each scope verifies all declared S3 actions and removes
+every resource it creates before the test advances or exits.
 
 Run only with explicit live target variables::
 
@@ -15,9 +15,9 @@ Run only with explicit live target variables::
       npa/.venv/bin/python -m pytest \
       npa/tests/e2e/test_project_scoped_storage_live_e2e.py -q -s
 
-The admin profile must be able to create project IAM identities and must be
-able to read the tenant ``editors`` group. Live identifiers and credentials are
-never printed by the test.
+The admin profile must be able to create project IAM identities, list tenant
+projects, and read the tenant ``editors`` group. Live identifiers and
+credentials are never printed by the test.
 """
 
 from __future__ import annotations
@@ -191,7 +191,281 @@ def _assert_all_s3_actions(
     )
 
 
-def test_project_scoped_profile_storage_binding_and_actions(tmp_path: Path) -> None:
+def _exercise_storage_scope(
+    *,
+    scope: str,
+    active_profile: str,
+    admin_profile: str,
+    project_id: str,
+    tenant_id: str,
+    region: str,
+) -> tuple[str, ...]:
+    """Run and clean one complete production storage bootstrap."""
+    assert scope in {"tenant", "project"}
+    suffix = uuid.uuid4().hex[:10]
+    bucket_name = f"npa-{scope}-scope-{uuid.uuid4().hex[:14]}"
+    storage_sa_name = f"npa-{scope}-scope-storage-{suffix}"
+    access_key_name = f"npa-{scope}-scope-storage-key-{suffix}"
+    fixed_storage_group = nebius.storage_binding_group_name(project_id)
+
+    storage_bucket_id = ""
+    storage_access_key_id = ""
+    storage_permit_id = ""
+    storage_group_id = ""
+    storage_sa_id = ""
+    s3_client: Any | None = None
+    statuses: list[str] = []
+    actions: tuple[str, ...] = ()
+    cleanup_errors: list[str] = []
+
+    def cleanup_cli(args: list[str], label: str) -> None:
+        result = _run_cli(args, profile=admin_profile, check=False)
+        if result.returncode != 0 and _error_category(result) != "not_found":
+            cleanup_errors.append(f"{label}:{_error_category(result)}")
+
+    def record_created(kind: str, payload: dict[str, str]) -> None:
+        nonlocal storage_access_key_id
+        nonlocal storage_group_id
+        nonlocal storage_permit_id
+        nonlocal storage_sa_id
+        if kind == "service_account":
+            storage_sa_id = payload.get("id", "")
+        elif kind == "access_key":
+            storage_access_key_id = payload.get("id", "")
+        elif kind == "iam_permit":
+            storage_permit_id = payload.get("id", "")
+        elif kind == "iam_group":
+            storage_group_id = payload.get("id", "")
+
+    try:
+        _run_cli(["profile", "activate", active_profile])
+        assert _run_cli(["profile", "current"]).stdout.strip() == active_profile
+
+        legacy_editors = _run_cli(
+            [
+                "iam",
+                "group",
+                "get-by-name",
+                "--parent-id",
+                tenant_id,
+                "--name",
+                "editors",
+            ],
+            profile=active_profile,
+            check=False,
+            json_output=True,
+        )
+        if scope == "tenant":
+            assert legacy_editors.returncode == 0
+        else:
+            assert _error_category(legacy_editors) == "permission_denied"
+
+        bootstrap = nebius.bootstrap_environment(
+            project_id,
+            tenant_id,
+            region,
+            bucket_name=bucket_name,
+            service_account_name=storage_sa_name,
+            access_key_name=access_key_name,
+            service_account_description=f"Disposable {scope}-scope storage live E2E",
+            access_key_description=f"Disposable {scope}-scope storage live E2E",
+            on_status=statuses.append,
+            on_resource_created=record_created,
+        )
+
+        bucket = _bucket_by_name(
+            project_id=project_id,
+            bucket_name=bucket_name,
+            admin_profile=admin_profile,
+        )
+        assert bucket is not None
+        storage_bucket_id = str((bucket.get("metadata") or {}).get("id") or "")
+        assert all(
+            (
+                storage_bucket_id,
+                storage_access_key_id,
+                storage_permit_id,
+                storage_group_id,
+                storage_sa_id,
+            )
+        )
+        assert bootstrap["iam_binding_role"] == nebius.STORAGE_RUNTIME_ROLE
+        assert bootstrap["iam_binding_compatibility_fallback"] == "false"
+        unreadable_status = any(
+            "Tenant-wide editors membership is not readable" in message
+            for message in statuses
+        )
+        assert unreadable_status is (scope == "project")
+
+        s3_client = boto3.client(
+            "s3",
+            endpoint_url=bootstrap["s3_endpoint"],
+            aws_access_key_id=bootstrap["nebius_api_key"],
+            aws_secret_access_key=bootstrap["nebius_secret_key"],
+            region_name=region,
+            config=Config(s3={"addressing_style": "path"}),
+        )
+        last_s3_error: Exception | None = None
+        for _ in range(18):
+            try:
+                actions = _assert_all_s3_actions(
+                    client=s3_client,
+                    bucket_name=bucket_name,
+                    key=f"live-e2e/{uuid.uuid4().hex}.txt",
+                )
+                last_s3_error = None
+                break
+            except ClientError as exc:
+                last_s3_error = exc
+                if str(exc.response.get("Error", {}).get("Code", "")) not in {
+                    "403",
+                    "AccessDenied",
+                    "SlowDown",
+                }:
+                    raise
+                time.sleep(5)
+        if last_s3_error is not None:
+            raise AssertionError("S3 IAM binding did not converge") from last_s3_error
+        assert actions == nebius.STORAGE_REQUIRED_S3_ACTIONS
+
+        product_probe = probe_storage_write(
+            bucket=bucket_name,
+            endpoint_url=bootstrap["s3_endpoint"],
+            access_key_id=bootstrap["nebius_api_key"],
+            secret_access_key=bootstrap["nebius_secret_key"],
+            region=region,
+            client=s3_client,
+            credential_context=StorageCredentialContext.NEWLY_CREATED,
+        )
+        assert product_probe.ok, product_probe.summary
+        print(f"live_{scope}_scope_storage=passed")
+        print(f"live_{scope}_scope_s3_actions=" + ",".join(actions))
+        return actions
+    finally:
+        if not storage_bucket_id:
+            try:
+                partial_bucket = _bucket_by_name(
+                    project_id=project_id,
+                    bucket_name=bucket_name,
+                    admin_profile=admin_profile,
+                )
+                storage_bucket_id = str(
+                    ((partial_bucket or {}).get("metadata") or {}).get("id") or ""
+                )
+            except Exception:  # noqa: BLE001 - preserve cleanup of other exact IDs
+                cleanup_errors.append("bucket_inventory:failed")
+        if s3_client is not None:
+            try:
+                _purge_bucket_versions(s3_client, bucket_name)
+            except Exception:  # noqa: BLE001 - cleanup continues through provider path
+                cleanup_errors.append("bucket_object_purge:failed")
+
+        if storage_bucket_id:
+            delete_bucket = _run_cli(
+                ["storage", "bucket", "delete", "--id", storage_bucket_id],
+                profile=admin_profile,
+                check=False,
+            )
+            if delete_bucket.returncode != 0:
+                scheduled = _run_cli(
+                    [
+                        "storage",
+                        "bucket",
+                        "delete",
+                        "--id",
+                        storage_bucket_id,
+                        "--ttl",
+                        "1m",
+                    ],
+                    profile=admin_profile,
+                    check=False,
+                )
+                if scheduled.returncode != 0 and _error_category(scheduled) != "not_found":
+                    cleanup_errors.append(
+                        f"bucket_delete:{_error_category(scheduled)}"
+                    )
+
+        if storage_access_key_id:
+            cleanup_cli(
+                ["iam", "v2", "access-key", "delete", "--id", storage_access_key_id],
+                "storage_access_key",
+            )
+        if storage_permit_id:
+            cleanup_cli(
+                ["iam", "access-permit", "delete", "--id", storage_permit_id],
+                "storage_permit",
+            )
+        if storage_group_id:
+            cleanup_cli(
+                ["iam", "group", "delete", "--id", storage_group_id],
+                "storage_group",
+            )
+        if storage_sa_id:
+            cleanup_cli(
+                ["iam", "service-account", "delete", "--id", storage_sa_id],
+                "storage_service_account",
+            )
+
+        audit_targets = [
+            (["storage", "bucket", "get", "--id", storage_bucket_id], storage_bucket_id),
+            (
+                ["iam", "v2", "access-key", "get", "--id", storage_access_key_id],
+                storage_access_key_id,
+            ),
+            (
+                ["iam", "access-permit", "get", "--id", storage_permit_id],
+                storage_permit_id,
+            ),
+            (["iam", "group", "get", "--id", storage_group_id], storage_group_id),
+            (
+                ["iam", "service-account", "get", "--id", storage_sa_id],
+                storage_sa_id,
+            ),
+        ]
+        for audit_args, resource_id in audit_targets:
+            if not resource_id:
+                continue
+            absent = _wait_until(
+                lambda args=audit_args: _run_cli(
+                    args,
+                    profile=admin_profile,
+                    check=False,
+                    json_output=True,
+                ),
+                expected="not_found",
+            )
+            assert _error_category(absent) == "not_found"
+        named_bucket = _bucket_by_name(
+            project_id=project_id,
+            bucket_name=bucket_name,
+            admin_profile=admin_profile,
+        )
+        assert named_bucket is None
+        group_absent = _wait_until(
+            lambda: _run_cli(
+                [
+                    "iam",
+                    "group",
+                    "get-by-name",
+                    "--parent-id",
+                    project_id,
+                    "--name",
+                    fixed_storage_group,
+                ],
+                profile=admin_profile,
+                check=False,
+                json_output=True,
+            ),
+            expected="not_found",
+        )
+        assert _error_category(group_absent) == "not_found"
+        assert not cleanup_errors, ", ".join(cleanup_errors)
+        print(f"live_{scope}_scope_cleanup_audit=passed")
+
+
+def test_tenant_and_project_scoped_storage_binding_and_actions(
+    tmp_path: Path,
+) -> None:
     if os.environ.get("NPA_PROJECT_SCOPED_STORAGE_E2E") != "1":
         pytest.skip("set NPA_PROJECT_SCOPED_STORAGE_E2E=1 to run live")
 
@@ -217,7 +491,7 @@ def test_project_scoped_profile_storage_binding_and_actions(tmp_path: Path) -> N
     region = str(status.get("region") or spec.get("region") or "")
     assert region
 
-    # The setup profile is the tenant-wide half of the comparison.
+    # Prove the setup identity has tenant-wide IAM visibility, not merely project access.
     _run_json(
         [
             "iam",
@@ -257,9 +531,6 @@ def test_project_scoped_profile_storage_binding_and_actions(tmp_path: Path) -> N
     suffix = uuid.uuid4().hex[:10]
     operator_name = f"npa-project-scope-operator-{suffix}"
     admin_group_name = f"npa-project-scope-admins-{suffix}"
-    storage_sa_name = f"npa-project-scope-storage-{suffix}"
-    access_key_name = f"npa-project-scope-storage-key-{suffix}"
-    bucket_name = f"npa-project-scope-{uuid.uuid4().hex[:14]}"
     temporary_profile = f"npa-project-scope-{suffix}"
     credentials_file = tmp_path / "operator-service-account.json"
     original_profile = _run_cli(["profile", "current"], check=False).stdout.strip()
@@ -268,15 +539,7 @@ def test_project_scoped_profile_storage_binding_and_actions(tmp_path: Path) -> N
     operator_public_key_id = ""
     admin_group_id = ""
     admin_permit_id = ""
-    storage_bucket_id = ""
-    storage_access_key_id = ""
-    storage_permit_id = ""
-    storage_group_id = ""
-    storage_sa_id = ""
     temporary_profile_created = False
-    s3_client: Any | None = None
-    statuses: list[str] = []
-    actions: tuple[str, ...] = ()
     cleanup_errors: list[str] = []
 
     def cleanup_cli(args: list[str], label: str) -> None:
@@ -284,21 +547,16 @@ def test_project_scoped_profile_storage_binding_and_actions(tmp_path: Path) -> N
         if result.returncode != 0 and _error_category(result) != "not_found":
             cleanup_errors.append(f"{label}:{_error_category(result)}")
 
-    def record_created(kind: str, payload: dict[str, str]) -> None:
-        nonlocal storage_access_key_id
-        nonlocal storage_group_id
-        nonlocal storage_permit_id
-        nonlocal storage_sa_id
-        if kind == "service_account":
-            storage_sa_id = payload.get("id", "")
-        elif kind == "access_key":
-            storage_access_key_id = payload.get("id", "")
-        elif kind == "iam_permit":
-            storage_permit_id = payload.get("id", "")
-        elif kind == "iam_group":
-            storage_group_id = payload.get("id", "")
-
     try:
+        tenant_actions = _exercise_storage_scope(
+            scope="tenant",
+            active_profile=admin_profile,
+            admin_profile=admin_profile,
+            project_id=project_id,
+            tenant_id=tenant_id,
+            region=region,
+        )
+
         operator_sa_id = _resource_id(
             _run_json(
                 [
@@ -406,7 +664,6 @@ def test_project_scoped_profile_storage_binding_and_actions(tmp_path: Path) -> N
         )
         temporary_profile_created = True
         assert _profile_parent(temporary_profile) == project_id
-        _run_cli(["profile", "activate", temporary_profile])
 
         _wait_until(
             lambda: _run_cli(
@@ -424,177 +681,28 @@ def test_project_scoped_profile_storage_binding_and_actions(tmp_path: Path) -> N
             json_output=True,
         )
         assert _error_category(tenant_projects) == "permission_denied"
-        legacy_editors = _run_cli(
-            [
-                "iam",
-                "group",
-                "get-by-name",
-                "--parent-id",
-                tenant_id,
-                "--name",
-                "editors",
-            ],
-            profile=temporary_profile,
-            check=False,
-            json_output=True,
-        )
-        assert _error_category(legacy_editors) == "permission_denied"
 
-        bootstrap = nebius.bootstrap_environment(
-            project_id,
-            tenant_id,
-            region,
-            bucket_name=bucket_name,
-            service_account_name=storage_sa_name,
-            access_key_name=access_key_name,
-            service_account_description="Disposable project-scoped storage live E2E",
-            access_key_description="Disposable project-scoped storage live E2E",
-            on_status=statuses.append,
-            on_resource_created=record_created,
-        )
-
-        bucket = _bucket_by_name(
-            project_id=project_id,
-            bucket_name=bucket_name,
+        project_actions = _exercise_storage_scope(
+            scope="project",
+            active_profile=temporary_profile,
             admin_profile=admin_profile,
-        )
-        assert bucket is not None
-        storage_bucket_id = str((bucket.get("metadata") or {}).get("id") or "")
-        assert all(
-            (
-                storage_bucket_id,
-                storage_access_key_id,
-                storage_permit_id,
-                storage_group_id,
-                storage_sa_id,
-            )
-        )
-        assert bootstrap["iam_binding_role"] == nebius.STORAGE_RUNTIME_ROLE
-        assert bootstrap["iam_binding_compatibility_fallback"] == "false"
-        assert any(
-            "Tenant-wide editors membership is not readable" in message
-            for message in statuses
-        )
-
-        s3_client = boto3.client(
-            "s3",
-            endpoint_url=bootstrap["s3_endpoint"],
-            aws_access_key_id=bootstrap["nebius_api_key"],
-            aws_secret_access_key=bootstrap["nebius_secret_key"],
-            region_name=region,
-            config=Config(s3={"addressing_style": "path"}),
-        )
-        last_s3_error: Exception | None = None
-        for _ in range(18):
-            try:
-                actions = _assert_all_s3_actions(
-                    client=s3_client,
-                    bucket_name=bucket_name,
-                    key=f"live-e2e/{uuid.uuid4().hex}.txt",
-                )
-                last_s3_error = None
-                break
-            except ClientError as exc:
-                last_s3_error = exc
-                if str(exc.response.get("Error", {}).get("Code", "")) not in {
-                    "403",
-                    "AccessDenied",
-                    "SlowDown",
-                }:
-                    raise
-                time.sleep(5)
-        if last_s3_error is not None:
-            raise AssertionError("S3 IAM binding did not converge") from last_s3_error
-        assert actions == nebius.STORAGE_REQUIRED_S3_ACTIONS
-
-        product_probe = probe_storage_write(
-            bucket=bucket_name,
-            endpoint_url=bootstrap["s3_endpoint"],
-            access_key_id=bootstrap["nebius_api_key"],
-            secret_access_key=bootstrap["nebius_secret_key"],
+            project_id=project_id,
+            tenant_id=tenant_id,
             region=region,
-            client=s3_client,
-            credential_context=StorageCredentialContext.NEWLY_CREATED,
         )
-        assert product_probe.ok, product_probe.summary
-        print("live_profile_parent=project")
-        print("live_tenant_inventory=permission_denied")
-        print("live_legacy_editors_fallthrough=passed")
-        print("live_project_group_binding=passed")
-        print("live_s3_actions=" + ",".join(actions))
+        assert tenant_actions == project_actions == nebius.STORAGE_REQUIRED_S3_ACTIONS
+        print("live_tenant_and_project_scope_matrix=passed")
     finally:
-        if not storage_bucket_id:
-            try:
-                partial_bucket = _bucket_by_name(
-                    project_id=project_id,
-                    bucket_name=bucket_name,
-                    admin_profile=admin_profile,
-                )
-                storage_bucket_id = str(
-                    ((partial_bucket or {}).get("metadata") or {}).get("id") or ""
-                )
-            except Exception:  # noqa: BLE001 - preserve cleanup of other exact IDs
-                cleanup_errors.append("bucket_inventory:failed")
-        if s3_client is not None:
-            try:
-                _purge_bucket_versions(s3_client, bucket_name)
-            except Exception:  # noqa: BLE001 - cleanup continues through provider path
-                cleanup_errors.append("bucket_object_purge:failed")
-
-        if storage_bucket_id:
-            delete_bucket = _run_cli(
-                ["storage", "bucket", "delete", "--id", storage_bucket_id],
-                profile=admin_profile,
-                check=False,
-            )
-            if delete_bucket.returncode != 0:
-                scheduled = _run_cli(
-                    [
-                        "storage",
-                        "bucket",
-                        "delete",
-                        "--id",
-                        storage_bucket_id,
-                        "--ttl",
-                        "1m",
-                    ],
-                    profile=admin_profile,
-                    check=False,
-                )
-                if scheduled.returncode != 0 and _error_category(scheduled) != "not_found":
-                    cleanup_errors.append(
-                        f"bucket_delete:{_error_category(scheduled)}"
-                    )
-
-        if storage_access_key_id:
-            cleanup_cli(
-                ["iam", "v2", "access-key", "delete", "--id", storage_access_key_id],
-                "storage_access_key",
-            )
-        if storage_permit_id:
-            cleanup_cli(
-                ["iam", "access-permit", "delete", "--id", storage_permit_id],
-                "storage_permit",
-            )
-        if storage_group_id:
-            cleanup_cli(
-                ["iam", "group", "delete", "--id", storage_group_id],
-                "storage_group",
-            )
-        if storage_sa_id:
-            cleanup_cli(
-                ["iam", "service-account", "delete", "--id", storage_sa_id],
-                "storage_service_account",
-            )
-
         if original_profile:
             restored = _run_cli(
                 ["profile", "activate", original_profile], check=False
             )
             if restored.returncode != 0:
                 cleanup_errors.append("profile_restore:failed")
-        elif admin_profile:
-            _run_cli(["profile", "activate", admin_profile], check=False)
+        else:
+            restored = _run_cli(["profile", "activate", admin_profile], check=False)
+            if restored.returncode != 0:
+                cleanup_errors.append("profile_restore:failed")
         local_profiles = {
             line.strip() for line in _run_cli(["profile", "list"]).stdout.splitlines()
         }
@@ -634,44 +742,21 @@ def test_project_scoped_profile_storage_binding_and_actions(tmp_path: Path) -> N
 
         audit_targets = [
             (
-                ["storage", "bucket", "get", "--id", storage_bucket_id],
-                bool(storage_bucket_id),
-            ),
-            (
-                ["iam", "v2", "access-key", "get", "--id", storage_access_key_id],
-                bool(storage_access_key_id),
-            ),
-            (
-                ["iam", "access-permit", "get", "--id", storage_permit_id],
-                bool(storage_permit_id),
-            ),
-            (
-                ["iam", "group", "get", "--id", storage_group_id],
-                bool(storage_group_id),
-            ),
-            (
-                ["iam", "service-account", "get", "--id", storage_sa_id],
-                bool(storage_sa_id),
-            ),
-            (
                 ["iam", "auth-public-key", "get", "--id", operator_public_key_id],
-                bool(operator_public_key_id),
+                operator_public_key_id,
             ),
             (
                 ["iam", "access-permit", "get", "--id", admin_permit_id],
-                bool(admin_permit_id),
+                admin_permit_id,
             ),
-            (
-                ["iam", "group", "get", "--id", admin_group_id],
-                bool(admin_group_id),
-            ),
+            (["iam", "group", "get", "--id", admin_group_id], admin_group_id),
             (
                 ["iam", "service-account", "get", "--id", operator_sa_id],
-                bool(operator_sa_id),
+                operator_sa_id,
             ),
         ]
-        for audit_args, enabled in audit_targets:
-            if not enabled:
+        for audit_args, resource_id in audit_targets:
+            if not resource_id:
                 continue
             absent = _wait_until(
                 lambda args=audit_args: _run_cli(
@@ -690,4 +775,4 @@ def test_project_scoped_profile_storage_binding_and_actions(tmp_path: Path) -> N
         if original_profile:
             assert _run_cli(["profile", "current"]).stdout.strip() == original_profile
         assert not cleanup_errors, ", ".join(cleanup_errors)
-        print("live_cleanup_audit=passed")
+        print("live_operator_cleanup_audit=passed")
