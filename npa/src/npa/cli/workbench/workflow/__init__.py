@@ -633,7 +633,9 @@ def submit_cmd(
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
     from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
     from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
-    from npa.orchestration.npa_workflow.run_state import PAIDF_WORKFLOW_NAME
+    from npa.orchestration.npa_workflow.run_state import (
+        is_paidf_input_workflow_name,
+    )
     from npa.orchestration.skypilot.workflow import (
         SkyPilotSubmitError,
         WorkflowResult,
@@ -678,7 +680,8 @@ def submit_cmd(
         )
         return
     is_paidf_spec = bool(
-        merged_npa_spec is not None and merged_npa_spec.name == PAIDF_WORKFLOW_NAME
+        merged_npa_spec is not None
+        and is_paidf_input_workflow_name(merged_npa_spec.name)
     )
     legacy_fixture = _is_truthy_submit_value(
         substitutions.get("seed_fixture")
@@ -714,7 +717,7 @@ def submit_cmd(
     ) and not is_paidf_spec:
         _fail(
             "--input-video, --input-uri, --lerobot-uri, and --seed-fixture are "
-            "supported only by the physical-ai-data-factory workflow"
+            "supported only by a Physical AI Data Factory workflow"
         )
         return
     materializer = _resolve_materializer(tool, yaml_path)
@@ -1409,7 +1412,37 @@ def submit_cmd(
             except PaidfInputError as exc:
                 _fail(str(exc))
                 return
-            substitutions.update(prepared_input.config_overrides())
+            prepared_overrides = prepared_input.config_overrides()
+            from npa.orchestration.npa_workflow.run_state import (
+                PAIDF_COSMOS3_WORKFLOW_NAME,
+            )
+
+            if workflow_identity == PAIDF_COSMOS3_WORKFLOW_NAME:
+                # The independent Cosmos3 spec owns its run-local provenance URI.
+                # The shared preparer still validates/stages the selected media,
+                # but must not redirect the Cosmos3 worker onto the original
+                # PAIDF schema's immutable provenance object.
+                prepared_overrides.pop("input_provenance_uri", None)
+                if prepared_input.selection == "lerobot_dataset":
+                    prepared_overrides.update(
+                        {
+                            "input_kind": "lerobot",
+                            "lerobot_dataset_uri": lerobot_uri.strip(),
+                            "input_episode": str(resolved_lerobot_episode),
+                            "input_camera": lerobot_camera.strip(),
+                        }
+                    )
+                else:
+                    prepared_overrides.update(
+                        {
+                            "input_kind": "video",
+                            "input_video_uri": str(
+                                prepared_input.provenance.get("staged_source_uri")
+                                or ""
+                            ),
+                        }
+                    )
+            substitutions.update(prepared_overrides)
             substitutions["seed_fixture"] = (
                 "true" if prepared_input.selection == "synthetic_fixture" else "false"
             )
@@ -3133,14 +3166,16 @@ def _npa_spec_config(yaml_path: Path, substitutions: dict[str, str]) -> dict:
 
 
 def _is_paidf_workflow_spec(yaml_path: Path) -> bool:
-    """Identify the one workflow whose submit command owns starter preparation."""
+    """Identify workflows whose submit command owns starter preparation."""
 
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
-    from npa.orchestration.npa_workflow.run_state import PAIDF_WORKFLOW_NAME
+    from npa.orchestration.npa_workflow.run_state import (
+        is_paidf_input_workflow_name,
+    )
     from npa.orchestration.npa_workflow.spec import load_spec
 
     try:
-        return load_spec(yaml_path).name == PAIDF_WORKFLOW_NAME
+        return is_paidf_input_workflow_name(load_spec(yaml_path).name)
     except NpaWorkflowError:
         return False
 
