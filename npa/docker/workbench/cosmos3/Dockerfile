@@ -149,4 +149,4 @@ RUN baked="$(find /opt/cosmos3 /opt/npa /tmp/hf_home -type f \
 WORKDIR /workspace
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD ["generate", "--help"]
+CMD ["sleep", "infinity"]

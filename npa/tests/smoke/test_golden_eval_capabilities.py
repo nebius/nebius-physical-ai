@@ -60,7 +60,7 @@ def test_cosmos3_stale_tag_audit_distinguishes_rollback_from_runtime_refs(
     stale.write_text("image_id: npa-cosmos3:1.2.2-cu130\n", encoding="utf-8")
     assert audit._scan_file(stale) == [
         "npa/workflows/cosmos3.yaml: npa-cosmos3:1.2.2-cu130 "
-        "(use npa-cosmos3:1.2.2-cu130-r4)"
+        "(use npa-cosmos3:1.2.2-cu130-r5)"
     ]
 
     rollback = tmp_path / "docs/workbench/cosmos3-generate.md"

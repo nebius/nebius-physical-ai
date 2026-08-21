@@ -163,10 +163,11 @@ isaac-lab = "2.3.2.post1"
 leisaac = "0.4.0-20260817T231825Z"
 cosmos = "cu128-torch27-sm100-1.0.9-20260803T002017Z"
 cosmos2-transfer = "2.5.1-sam2-multigpu-20260817-r2"
-# Additive r4 image release for cosmos-framework 1.2.2 (pinned commit) + torch
+# Additive r5 image release for cosmos-framework 1.2.2 (pinned commit) + torch
 # cu130 with the attested SkyPilot bootstrap closure. The immutable
-# earlier tags remain provenance; r4 excludes wheel-bundled FFmpeg; weights stay out.
-cosmos3 = "1.2.2-cu130-r4"
+# earlier tags remain provenance; r5 excludes wheel-bundled FFmpeg and keeps the
+# no-argv worker pod alive for SkyPilot bootstrap; weights stay out.
+cosmos3 = "1.2.2-cu130-r5"
 cosmos3-reason = "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 # Cosmos Curator: NVIDIA upstream checkout + GPU-free curation stage deps.
 cosmos-curate = "0.1.2-skypilot-v1-20260813T164700Z"
