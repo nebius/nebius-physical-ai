@@ -82,7 +82,9 @@ npa workbench health preflight --offline
 
 `health access` reports `HF access ok: <repo>` for each model your token can
 reach and, for anything still gated, the exact **Agree and access repository**
-URL to open.
+URL to open. Interactive `npa configure` runs the same repository-aware probe
+(including the dataset API for gated datasets) and prints a bounded advisory
+summary; use `health access` when you need an enforcing PASS/FAIL gate.
 
 ## Troubleshooting
 

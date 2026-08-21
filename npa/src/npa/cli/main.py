@@ -1823,42 +1823,54 @@ def _run_interactive_configure(
     # the resumable prerequisite succeeds.
 
 
-def _probe_hf_repos_parallel(
+def _probe_hf_assets_parallel(
     validator: Callable[..., Any],
     token: str,
-    repos: Iterable[str],
+    assets: Iterable[Any],
     *,
     per_probe_timeout: float = 2.0,
     total_budget: float = 5.0,
-) -> dict[str, Any]:
-    """Probe HF access for *repos* concurrently within a wall-clock budget.
+) -> dict[tuple[str, str], Any]:
+    """Probe HF access for *assets* concurrently within a wall-clock budget.
 
-    Returns ``{repo: result}``. Repos that do not finish inside ``total_budget``
-    (or whose probe raises) are omitted, so the caller treats them as unverified
-    rather than stalling the primary onboarding command.
+    Cache keys include ``repo_type`` so datasets are never accidentally checked
+    through the model API. Assets that do not finish inside ``total_budget`` (or
+    whose probe raises) are omitted, so the caller treats them as unverified
+    rather than stalling the primary onboarding command. Exception messages are
+    deliberately not logged because an injected client may echo its credential.
     """
 
     from concurrent.futures import ThreadPoolExecutor
     from concurrent.futures import TimeoutError as FuturesTimeout
     from concurrent.futures import as_completed
 
-    repo_list = list(repos)
-    results: dict[str, Any] = {}
-    if not repo_list:
+    asset_list = list(assets)
+    results: dict[tuple[str, str], Any] = {}
+    if not asset_list:
         return results
-    pool = ThreadPoolExecutor(max_workers=min(8, len(repo_list)))
+    pool = ThreadPoolExecutor(max_workers=min(8, len(asset_list)))
     try:
         futures = {
-            pool.submit(validator, token, repo, timeout=per_probe_timeout): repo
-            for repo in repo_list
+            pool.submit(
+                validator,
+                token,
+                asset.repo,
+                asset.repo_type,
+                timeout=per_probe_timeout,
+            ): (asset.repo, asset.repo_type)
+            for asset in asset_list
         }
         try:
             for fut in as_completed(futures, timeout=total_budget):
-                repo = futures[fut]
+                cache_key = futures[fut]
                 try:
-                    results[repo] = fut.result()
-                except Exception:  # noqa: BLE001 - a failed probe -> unverified
-                    logger.debug("HF access probe failed for %s", repo, exc_info=True)
+                    results[cache_key] = fut.result()
+                except Exception as exc:  # noqa: BLE001 - failed probe -> unverified
+                    logger.debug(
+                        "HF access probe failed for %s (%s)",
+                        cache_key[0],
+                        type(exc).__name__,
+                    )
         except FuturesTimeout:
             # Budget exceeded: keep whatever finished; the rest stay unverified.
             logger.debug("HF access probe budget of %.1fs exceeded", total_budget)
@@ -1870,11 +1882,12 @@ def _probe_hf_repos_parallel(
 def _model_access_note(hf_token: str, ngc_key: str) -> str:
     """Return a one-line ``[NOTE]`` on which gated workbench models the tokens can access.
 
-    Runs a live Hugging Face access check for each license-gated model the
-    workbench uses and a presence/format check for the NGC key, then summarizes
-    the models without access on a single line. HF probes run in parallel under a
-    total wall-clock budget, and any failure is swallowed, so a preflight note
-    can never stall or break `npa configure`.
+    Runs the same repository-aware checks as ``npa workbench health access``:
+    each license-gated Hugging Face model or dataset is probed through the right
+    API, and NGC performs a real token-exchange/tag-listing entitlement probe.
+    Configure keeps these advisory: HF probes run in parallel under a wall-clock
+    budget, NGC uses the same short per-probe timeout, and failures never break
+    setup. The health command remains the authoritative enforcement gate.
     """
 
     try:
@@ -1883,24 +1896,29 @@ def _model_access_note(hf_token: str, ngc_key: str) -> str:
         from npa.workbench.model_access import (
             access_note,
             check_workbench_access,
-            gated_hf_repos,
+            gated_hf_assets,
         )
+        from npa.workbench.nurec.nurec import check_ngc_image_access
 
-        cache: dict[str, Any] = {}
+        cache: dict[tuple[str, str], Any] = {}
         if hf_token:
-            cache = _probe_hf_repos_parallel(
-                huggingface.validate_hf_access, hf_token, gated_hf_repos()
+            cache = _probe_hf_assets_parallel(
+                huggingface.validate_hf_access, hf_token, gated_hf_assets()
             )
 
         def _validator(token: str, repo: str, repo_type: str = "model"):
-            return cache.get(repo) or HFAccessResult(
+            return cache.get((repo, repo_type)) or HFAccessResult(
                 repo=repo, ok=False, error="not verified (timed out)"
             )
+
+        def _ngc_validator(api_key: str) -> str:
+            return check_ngc_image_access(api_key, timeout=2.0)
 
         results = check_workbench_access(
             hf_token=hf_token,
             ngc_key=ngc_key,
             hf_validator=_validator if hf_token else None,
+            ngc_validator=_ngc_validator,
             gated_only=True,
         )
         return access_note(results)

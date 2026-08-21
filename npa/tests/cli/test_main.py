@@ -17,21 +17,25 @@ runner = CliRunner()
 
 
 @pytest.fixture(autouse=True)
-def _stub_hf_model_access(monkeypatch):
-    """Keep `npa configure`'s model-access NOTE off the real Hugging Face API.
+def _stub_model_access(monkeypatch):
+    """Keep `npa configure`'s model-access NOTE off real HF and NGC APIs.
 
-    `configure` runs a live HF access check for the gated workbench models after
-    collecting tokens. Default every probe to "accessible" so unrelated tests
-    stay hermetic; individual tests override this to exercise the NOTE.
+    `configure` runs live access checks after collecting tokens. Default every
+    probe to "accessible" so unrelated tests stay hermetic; individual tests
+    override these fakes to exercise the NOTE.
     """
 
     from npa.clients import huggingface
     from npa.clients.huggingface import HFAccessResult
 
-    def _ok(token, repo, *, timeout=10.0):
+    def _ok(token, repo, repo_type="model", *, timeout=10.0):
         return HFAccessResult(repo=repo, ok=True, status_code=200)
 
     monkeypatch.setattr(huggingface, "validate_hf_access", _ok)
+    monkeypatch.setattr(
+        "npa.workbench.nurec.nurec.check_ngc_image_access",
+        lambda key, *, timeout=30.0: "reachable",
+    )
 
     from npa.clients import storage_setup, storage_validation
     from npa.clients.storage_validation import StorageProbeResult
@@ -1364,14 +1368,33 @@ def _note_line(output: str) -> str:
 
 
 def test_configure_prints_model_access_note_all_ok(monkeypatch, tmp_path) -> None:
-    # Autouse fixture makes every HF probe succeed. Configure does not pull an
-    # NGC image, so a well-formed key cannot prove repository entitlement here.
+    # The autouse fixture makes both canonical live access probes succeed.
     result = _run_reuse_bucket_configure(
         monkeypatch, tmp_path, hf_token="hf_good", ngc_key="nvapi-good"
     )
     assert result.exit_code == 0, result.output
     note = _note_line(result.output)
-    assert note == "[NOTE] NGC repository entitlement unverified for: nurec."
+    assert note == "[NOTE] HF and NGC tokens can access all checked workbench models."
+
+
+def test_configure_hf_probe_preserves_gated_dataset_type(monkeypatch, tmp_path) -> None:
+    from npa.clients import huggingface
+    from npa.clients.huggingface import HFAccessResult
+
+    observed: dict[str, str] = {}
+
+    def _record(token, repo, repo_type="model", *, timeout=10.0):
+        observed[repo] = repo_type
+        return HFAccessResult(repo=repo, ok=True, status_code=200)
+
+    monkeypatch.setattr(huggingface, "validate_hf_access", _record)
+
+    result = _run_reuse_bucket_configure(
+        monkeypatch, tmp_path, hf_token="hf_synthetic", ngc_key="nvapi-synthetic"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert observed["nvidia/PhysicalAI-Autonomous-Vehicles"] == "dataset"
 
 
 def test_configure_note_lists_inaccessible_hf_models(monkeypatch, tmp_path) -> None:
@@ -1380,7 +1403,7 @@ def test_configure_note_lists_inaccessible_hf_models(monkeypatch, tmp_path) -> N
 
     denied = "nvidia/Cosmos-Reason2-2B"
 
-    def _deny_one(token, repo, *, timeout=10.0):
+    def _deny_one(token, repo, repo_type="model", *, timeout=10.0):
         if repo == denied:
             return HFAccessResult(
                 repo=repo, ok=False, status_code=403, error="no access"
@@ -1399,6 +1422,26 @@ def test_configure_note_lists_inaccessible_hf_models(monkeypatch, tmp_path) -> N
     assert "huggingface.co" in note
 
 
+def test_configure_note_reports_ngc_entitlement_rejection(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setattr(
+        "npa.workbench.nurec.nurec.check_ngc_image_access",
+        lambda key, *, timeout=30.0: "entitlement-required",
+    )
+    secret = "nvapi-synthetic-rejected"
+
+    result = _run_reuse_bucket_configure(
+        monkeypatch, tmp_path, hf_token="hf_synthetic", ngc_key=secret
+    )
+
+    assert result.exit_code == 0, result.output
+    note = _note_line(result.output)
+    assert "NGC repository entitlement denied for: nurec" in note
+    assert "npa workbench health access" in note
+    assert secret not in note
+
+
 def test_configure_note_lists_ngc_blocked_when_key_missing(
     monkeypatch, tmp_path
 ) -> None:
@@ -1413,16 +1456,35 @@ def test_configure_note_lists_ngc_blocked_when_key_missing(
     assert "groot" not in note and "cosmos" not in note
 
 
-def test_configure_note_never_breaks_on_probe_error(monkeypatch, tmp_path) -> None:
+def test_configure_note_keeps_optional_hf_and_ngc_credentials_non_blocking(
+    monkeypatch, tmp_path
+) -> None:
+    result = _run_reuse_bucket_configure(
+        monkeypatch, tmp_path, hf_token="", ngc_key=""
+    )
+
+    assert result.exit_code == 0, result.output
+    note = _note_line(result.output)
+    assert "NGC not configured" in note
+    assert "model(s) unverified" in note
+    assert "npa workbench health access" in note
+
+
+def test_configure_note_never_breaks_on_probe_error(
+    monkeypatch, tmp_path, caplog
+) -> None:
     from npa.clients import huggingface
 
-    def _boom(token, repo, *, timeout=10.0):
-        raise RuntimeError("network exploded")
+    secret = "hf_synthetic_not_for_logs"
+
+    def _boom(token, repo, repo_type="model", *, timeout=10.0):
+        raise RuntimeError(f"network exploded for {token}")
 
     monkeypatch.setattr(huggingface, "validate_hf_access", _boom)
+    caplog.set_level("DEBUG", logger="npa.cli.main")
 
     result = _run_reuse_bucket_configure(
-        monkeypatch, tmp_path, hf_token="hf_good", ngc_key="nvapi-good"
+        monkeypatch, tmp_path, hf_token=secret, ngc_key="nvapi-good"
     )
     # A probe blowing up must not break configure; each affected model is simply
     # reported as unverified on the single NOTE line.
@@ -1430,6 +1492,8 @@ def test_configure_note_never_breaks_on_probe_error(monkeypatch, tmp_path) -> No
     note = _note_line(result.output)
     assert note.startswith("[NOTE]")
     assert "unverified" in note
+    assert secret not in note
+    assert secret not in caplog.text
 
 
 def _prepopulate_config(monkeypatch, tmp_path):
