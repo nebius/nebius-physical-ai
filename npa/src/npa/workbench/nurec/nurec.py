@@ -1068,31 +1068,24 @@ def _check_hf_dataset(
     A gated dataset returns 200 for ``/api/datasets/<id>`` even when the token
     cannot pull a byte, so this asks for one byte of the target archive.
     """
-    import httpx
+    from npa.clients.huggingface import validate_hf_file_access
 
     token = env.get(config.hf_token_env, "")
-    headers = {"Range": "bytes=0-0"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    url = (
-        f"https://huggingface.co/datasets/{config.dataset_id}"
-        f"/resolve/main/{config.ncore_member}"
+    result = validate_hf_file_access(
+        token,
+        config.dataset_id,
+        "main",
+        config.ncore_member,
+        repo_type="dataset",
+        timeout=timeout,
     )
-    try:
-        response = httpx.get(
-            url, headers=headers, timeout=timeout, follow_redirects=True
-        )
-    except Exception:  # noqa: BLE001
-        return "unreachable"
-    if response.status_code in {401, 403}:
+    if result.ok:
+        return "reachable"
+    if result.error_kind in {"authentication", "entitlement", "missing_token"}:
         return "gated"
-    if response.status_code == 404:
+    if result.status_code == 404:
         return "member-not-found"
-    return (
-        "reachable"
-        if 200 <= response.status_code < 300
-        else f"http-{response.status_code}"
-    )
+    return f"http-{result.status_code}" if result.status_code else "unreachable"
 
 
 def _check_gpu(

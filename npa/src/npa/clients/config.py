@@ -1502,7 +1502,9 @@ def resolve_project_storage(
             migrate_legacy=not read_only,
         )
         saved_storage = record.get("storage")
-        if isinstance(saved_storage, dict):
+        if record.get("storage_selected") is not False and isinstance(
+            saved_storage, dict
+        ):
             project_storage_credentials = saved_storage
 
     def source_value(source: dict[str, Any], *keys: str) -> str:

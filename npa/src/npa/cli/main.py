@@ -14,8 +14,10 @@ import shutil
 import subprocess
 import sys
 import traceback
+from enum import Enum
 from typing import Any, Callable, Iterable, Optional
 
+import click
 import typer
 
 from npa.cli._error_formatting import format_error_for_user
@@ -722,6 +724,64 @@ def _storage_relationship_verified(credentials: Any, project_id: str) -> bool:
     )
 
 
+def _credentials_for_exact_project(
+    project_id: str,
+    *,
+    allow_provable_legacy: bool = False,
+) -> Any:
+    """Load shared tokens plus storage from exactly one project record.
+
+    Top-level storage in ``credentials.yaml`` is only a compatibility view. It
+    is never retained for a selected project unless a legacy ownership record
+    proves that exact project and the caller explicitly permits migration.
+    """
+
+    from npa.clients.credentials import load_credentials
+    from npa.clients.project_credential_store import read_project_credential_record
+
+    credentials = load_credentials(environ={})
+    exact = str(project_id or "").strip()
+    record = read_project_credential_record(exact) if exact else None
+    storage = record.get("storage") if isinstance(record, dict) else None
+    if isinstance(storage, dict) and record.get("storage_selected") is not False:
+        credentials.s3_access_key_id = str(
+            storage.get("aws_access_key_id")
+            or storage.get("access_key")
+            or storage.get("nebius_api_key")
+            or ""
+        )
+        credentials.s3_secret_access_key = str(
+            storage.get("aws_secret_access_key")
+            or storage.get("secret_key")
+            or storage.get("nebius_secret_key")
+            or ""
+        )
+        credentials.s3_endpoint = str(
+            storage.get("endpoint_url")
+            or storage.get("endpoint")
+            or storage.get("s3_endpoint")
+            or ""
+        )
+        credentials.s3_bucket = str(
+            storage.get("checkpoint_bucket")
+            or storage.get("bucket")
+            or storage.get("s3_bucket")
+            or ""
+        )
+        credentials.s3_project_id = exact
+        credentials.s3_ownership = "exact-project-record"
+        return credentials
+    if allow_provable_legacy and _storage_relationship_verified(credentials, exact):
+        return credentials
+    credentials.s3_access_key_id = ""
+    credentials.s3_secret_access_key = ""
+    credentials.s3_endpoint = ""
+    credentials.s3_bucket = ""
+    credentials.s3_project_id = exact
+    credentials.s3_ownership = ""
+    return credentials
+
+
 def _provision_object_storage(
     nebius_client,
     ask: Callable[..., str],
@@ -881,48 +941,35 @@ def _provision_object_storage(
 def _prompt_setup_tokens(
     ask: Callable[..., str],
     existing_credentials: Any,
-    *,
-    skip: set[str] = frozenset(),  # type: ignore[assignment]
 ) -> tuple[str, str, str]:
-    """Prompt for the optional HF / Token Factory / NGC keys. Returns the trio.
+    """Prompt for the optional HF / Token Factory / NGC keys. Returns the trio."""
 
-    A token env-key in ``skip`` was already persisted from the environment; keep
-    the existing value instead of re-prompting.
-    """
-    if "HF_TOKEN" in skip:
-        typer.echo("\nHugging Face token: kept from the credential store.")
-        hf_token = existing_credentials.hf_token
-    else:
-        typer.echo(
-            "\nHugging Face token: create a Read token at "
-            "https://huggingface.co/settings/tokens (it starts with 'hf_'). "
-            "For gated models, also click 'Agree and access repository' on each "
-            "model page while signed in. Guide: docs/workbench/huggingface-token.md."
+    typer.echo(
+        "\nHugging Face token: create a Read token at "
+        "https://huggingface.co/settings/tokens (it starts with 'hf_'). "
+        "For gated models, also click 'Agree and access repository' on each "
+        "model page while signed in. Guide: docs/workbench/huggingface-token.md."
+    )
+    hf_token = _normalize_pasted_secret(
+        ask(
+            "Hugging Face token (HF_TOKEN)",
+            default=existing_credentials.hf_token,
+            secret=True,
         )
-        hf_token = _normalize_pasted_secret(
-            ask(
-                "Hugging Face token (HF_TOKEN)",
-                default=existing_credentials.hf_token,
-                secret=True,
-            )
+    )
+    typer.echo(
+        "\nNebius Token Factory API key (optional): OpenAI-compatible hosted "
+        "inference, zero GPU. Create one at https://tokenfactory.nebius.com/ -> "
+        "API keys. It starts with 'v1.' and is NOT your Nebius IAM/CLI token. "
+        "Guide: docs/workbench/token-factory-key.md."
+    )
+    token_factory_api_key = _normalize_pasted_secret(
+        ask(
+            "Nebius Token Factory API key (NEBIUS_TOKEN_FACTORY_KEY, optional)",
+            default=existing_credentials.token_factory_api_key,
+            secret=True,
         )
-    if "NEBIUS_TOKEN_FACTORY_KEY" in skip:
-        typer.echo("Nebius Token Factory API key: kept from the credential store.")
-        token_factory_api_key = existing_credentials.token_factory_api_key
-    else:
-        typer.echo(
-            "\nNebius Token Factory API key (optional): OpenAI-compatible hosted "
-            "inference, zero GPU. Create one at https://tokenfactory.nebius.com/ -> "
-            "API keys. It starts with 'v1.' and is NOT your Nebius IAM/CLI token. "
-            "Guide: docs/workbench/token-factory-key.md."
-        )
-        token_factory_api_key = _normalize_pasted_secret(
-            ask(
-                "Nebius Token Factory API key (NEBIUS_TOKEN_FACTORY_KEY, optional)",
-                default=existing_credentials.token_factory_api_key,
-                secret=True,
-            )
-        )
+    )
     if token_factory_api_key and not token_factory_api_key.startswith("v1."):
         typer.echo(
             "  Warning: that does not look like a Token Factory key (they start "
@@ -931,23 +978,19 @@ def _prompt_setup_tokens(
             "`npa workbench token-factory verify`; see "
             "docs/workbench/token-factory-key.md."
         )
-    if "NGC_API_KEY" in skip:
-        typer.echo("NVIDIA NGC API key: kept from the credential store.")
-        ngc_api_key = existing_credentials.ngc_api_key
-    else:
-        typer.echo(
-            "\nNVIDIA NGC API key (for entitlement-controlled NGC artifact pulls): create one at "
-            "https://org.ngc.nvidia.com/setup/api-key (sign in or make a free NGC "
-            "account first). The key starts with 'nvapi-'. "
-            "Guide: docs/workbench/ngc-api-key.md."
+    typer.echo(
+        "\nNVIDIA NGC API key (for entitlement-controlled NGC artifact pulls): create one at "
+        "https://org.ngc.nvidia.com/setup/api-key (sign in or make a free NGC "
+        "account first). The key starts with 'nvapi-'. "
+        "Guide: docs/workbench/ngc-api-key.md."
+    )
+    ngc_api_key = _normalize_pasted_secret(
+        ask(
+            "NVIDIA NGC API key (NGC_API_KEY)",
+            default=existing_credentials.ngc_api_key,
+            secret=True,
         )
-        ngc_api_key = _normalize_pasted_secret(
-            ask(
-                "NVIDIA NGC API key (NGC_API_KEY)",
-                default=existing_credentials.ngc_api_key,
-                secret=True,
-            )
-        )
+    )
     return hf_token, token_factory_api_key, ngc_api_key
 
 
@@ -1030,30 +1073,21 @@ def _alias_holds_other_project(
     return bool(existing_id) and existing_id != project_id
 
 
-def _warn_repointed_alias(alias: str, stanza: dict[str, Any], project_id: str) -> None:
-    """Warn when an alias is repointed at a new project but keeps per-project state.
+def _validate_alias_project_identity(
+    alias: str, stanza: dict[str, Any], project_id: str
+) -> None:
+    """Refuse to repoint an existing alias at a different exact project."""
 
-    Config is deep-merged, so ``terraform_state`` (the old project's remote-state
-    bucket and access key) and ``workbenches`` (endpoints of VMs in the old
-    project) survive under the alias and would be used for the new project.
-    """
-    previous = str((stanza or {}).get("project_id", "") or "")
-    if not previous or previous == project_id:
+    if not stanza:
         return
-    stale = [
-        key for key in ("terraform_state", "workbenches") if (stanza or {}).get(key)
-    ]
-    typer.echo(
-        f"\nWarning: project alias '{alias}' pointed at {previous} and now points at "
-        f"{project_id}."
-        + (
-            f" Its saved {' and '.join(stale)} still describe {previous}; remove those "
-            f"keys from ~/.npa/config.yaml (or use a new alias) unless they apply to "
-            f"{project_id} too."
-            if stale
-            else ""
-        ),
-        err=True,
+    previous = str((stanza or {}).get("project_id", "") or "")
+    if previous == project_id:
+        return
+    identity = previous or "an unreadable/legacy project"
+    raise typer.BadParameter(
+        f"Project alias '{alias}' already belongs to {identity}; refusing to repoint "
+        f"it at {project_id} because project-scoped state must never be merged across "
+        "projects. Choose a new --project-alias."
     )
 
 
@@ -1280,17 +1314,9 @@ def _offer_profile_binding(
 def _run_interactive_configure(
     *,
     provision: bool = True,
-    already_written: str = "",
-    preset_tokens: set[str] | None = None,
+    allow_visible_secret_input: bool = False,
 ) -> None:
-    """Prompt for credentials/config and write the NPA dotfiles.
-
-    ``already_written`` names what a caller persisted before this flow started
-    (currently ``--save-env-credentials``), so the bail-out paths below never claim
-    that nothing was saved. ``preset_tokens`` names token env-keys already stored
-    via a flag (``HF_TOKEN`` / ``NEBIUS_TOKEN_FACTORY_KEY`` / ``NGC_API_KEY``) so
-    the interactive flow keeps them instead of re-prompting (and risking a wipe).
-    """
+    """Prompt for credentials/config and write the NPA dotfiles."""
 
     from npa.clients.config import (
         CONFIG_PATH,
@@ -1322,26 +1348,24 @@ def _run_interactive_configure(
             "  - Re-run `npa configure --no-provision` to enter existing S3 "
             "credentials manually."
         )
-        if already_written:
-            # The requested write succeeded; only the rest of setup is pending.
-            typer.echo(
-                f"{already_written} was saved; nothing else was written under ~/.npa."
-            )
-            raise typer.Exit(code=0)
         typer.echo("Nothing was written under ~/.npa.")
         raise typer.Exit(code=1)
 
-    # Hidden input needs a controlling terminal. On piped stdin (scripted setup,
-    # `printf ... | npa configure --interactive`) getpass cannot turn the echo
-    # off and emits `GetPassWarning: Can not control echo on the terminal`,
-    # after which the value it reads is easy to mis-bind. Fall back to a visible
-    # prompt there and say so once, instead of warning per secret.
+    # Hidden input needs a controlling terminal.  The mode resolver rejects
+    # forced interactive use on a pipe unless the operator explicitly accepts
+    # visible secret entry.
     stdin_is_tty = sys.stdin.isatty()
     echo_notice_shown = False
 
     def ask(label: str, *, default: str = "", secret: bool = False) -> str:
         nonlocal echo_notice_shown
         hide_input = secret and stdin_is_tty
+        if secret and not hide_input and not allow_visible_secret_input:
+            raise typer.BadParameter(
+                "Refusing visible secret input on non-TTY stdin. Use environment "
+                "credential import for automation, or explicitly pass "
+                "--allow-visible-secret-input."
+            )
         if secret and not hide_input and not echo_notice_shown:
             echo_notice_shown = True
             typer.echo(
@@ -1442,11 +1466,13 @@ def _run_interactive_configure(
             default=str(existing_stanza.get("project_id", ""))
             or current_profile_project,
         )
-        region_default = (
-            str(existing_stanza.get("region", ""))
-            or DEFAULT_REGION
-        )
+        region_default = str(existing_stanza.get("region", "")) or DEFAULT_REGION
         region = ask("Region", default=region_default)
+
+    if project_id:
+        existing_credentials = _credentials_for_exact_project(
+            project_id, allow_provable_legacy=True
+        )
 
     operation = current_operation()
     if operation is not None:
@@ -1631,7 +1657,7 @@ def _run_interactive_configure(
             provisioning_failed = True
 
     hf_token, token_factory_api_key, ngc_api_key = _prompt_setup_tokens(
-        ask, existing_credentials, skip=preset_tokens or set()
+        ask, existing_credentials
     )
 
     service_account_keys = {
@@ -1732,12 +1758,6 @@ def _run_interactive_configure(
         alias = _existing_alias_for_project(
             existing_projects, existing_default_alias, project_id
         )
-        if not alias and existing_default_alias not in ("", "default"):
-            # Typing a new project id at the prompt (its default is the saved one)
-            # is an explicit request to repoint this alias, so keep the alias — but
-            # say which of its saved values still describe the previous project.
-            alias = existing_default_alias
-            _warn_repointed_alias(alias, existing_projects.get(alias) or {}, project_id)
         if not alias:
             project_name = ""
             try:
@@ -1755,18 +1775,24 @@ def _run_interactive_configure(
         write_config({"projects": {alias: project_stanza}, "default_project": alias})
         wrote_config = True
 
-    if project_id and storage:
-        from npa.clients.project_credential_store import write_project_credentials
-
-        write_project_credentials(
-            project_id,
-            {
-                key: value
-                for key, value in credentials_payload.items()
-                if key in {"storage", "storage_iam", "nebius"}
-            },
-            alias=alias,
+    if project_id:
+        from npa.clients.project_credential_store import (
+            select_project_credentials,
+            write_project_credentials,
         )
+
+        if storage:
+            write_project_credentials(
+                project_id,
+                {
+                    key: value
+                    for key, value in credentials_payload.items()
+                    if key in {"storage", "storage_iam", "nebius"}
+                },
+                alias=alias,
+            )
+        else:
+            select_project_credentials(project_id, alias=alias, select_storage=False)
 
     if permissions_warning:
         note = (
@@ -1818,11 +1844,12 @@ def _probe_hf_assets_parallel(
     *,
     per_probe_timeout: float = 2.0,
     total_budget: float = 5.0,
-) -> dict[tuple[str, str], Any]:
+) -> dict[tuple[str, str, str, str], Any]:
     """Probe HF access for *assets* concurrently within a wall-clock budget.
 
-    Cache keys include ``repo_type`` so datasets are never accidentally checked
-    through the model API. Assets that do not finish inside ``total_budget`` (or
+    Cache keys include the repository type and representative artifact so a
+    stale catalog entry cannot borrow another probe's success. Assets that do
+    not finish inside ``total_budget`` (or
     whose probe raises) are omitted, so the caller treats them as unverified
     rather than stalling the primary onboarding command. Exception messages are
     deliberately not logged because an injected client may echo its credential.
@@ -1833,7 +1860,7 @@ def _probe_hf_assets_parallel(
     from concurrent.futures import as_completed
 
     asset_list = list(assets)
-    results: dict[tuple[str, str], Any] = {}
+    results: dict[tuple[str, str, str, str], Any] = {}
     if not asset_list:
         return results
     pool = ThreadPoolExecutor(max_workers=min(8, len(asset_list)))
@@ -1844,8 +1871,10 @@ def _probe_hf_assets_parallel(
                 token,
                 asset.repo,
                 asset.repo_type,
+                revision=asset.revision,
+                filename=asset.filename,
                 timeout=per_probe_timeout,
-            ): (asset.repo, asset.repo_type)
+            ): (asset.repo, asset.repo_type, asset.revision, asset.filename)
             for asset in asset_list
         }
         try:
@@ -1870,9 +1899,10 @@ def _probe_hf_assets_parallel(
 def _model_access_note(hf_token: str, ngc_key: str) -> str:
     """Return a one-line ``[NOTE]`` on which gated workbench models the tokens can access.
 
-    Runs the same repository-aware checks as ``npa workbench health access``:
-    each license-gated Hugging Face model or dataset is probed through the right
-    API, and NGC performs a real token-exchange/tag-listing entitlement probe.
+    Runs the same artifact-aware checks as ``npa workbench health access``:
+    each license-gated Hugging Face model or dataset probes one representative
+    revision/file, and NGC performs a real token-exchange/tag-listing entitlement
+    probe.
     Configure keeps these advisory: HF probes run in parallel under a wall-clock
     budget, NGC uses the same short per-probe timeout, and failures never break
     setup. The health command remains the authoritative enforcement gate.
@@ -1888,14 +1918,21 @@ def _model_access_note(hf_token: str, ngc_key: str) -> str:
         )
         from npa.workbench.nurec.nurec import check_ngc_image_access
 
-        cache: dict[tuple[str, str], Any] = {}
+        cache: dict[tuple[str, str, str, str], Any] = {}
         if hf_token:
             cache = _probe_hf_assets_parallel(
                 huggingface.validate_hf_access, hf_token, gated_hf_assets()
             )
 
-        def _validator(token: str, repo: str, repo_type: str = "model"):
-            return cache.get((repo, repo_type)) or HFAccessResult(
+        def _validator(
+            token: str,
+            repo: str,
+            repo_type: str = "model",
+            *,
+            revision: str = "",
+            filename: str = "",
+        ):
+            return cache.get((repo, repo_type, revision, filename)) or HFAccessResult(
                 repo=repo, ok=False, error="not verified (timed out)"
             )
 
@@ -1914,32 +1951,19 @@ def _model_access_note(hf_token: str, ngc_key: str) -> str:
         return "[NOTE] Skipped model-access check (verify later with `npa workbench health access`)."
 
 
-def _store_token_factory_key(api_key: str) -> None:
-    from npa.clients.credentials import set_token_factory_api_key
+def _saved_model_access_note() -> str:
+    """Return the advisory using only persisted, redacted credential state."""
 
-    path = set_token_factory_api_key(api_key)
-    typer.echo(
-        f"Stored Nebius Token Factory API key in {path} under tokens.NEBIUS_TOKEN_FACTORY_KEY."
-    )
+    try:
+        from npa.clients.credentials import load_credentials
 
-
-def _store_tokens(hf_token: str, ngc_api_key: str) -> list[str]:
-    """Persist non-interactive token flags; return what was written."""
-    from npa.clients.credentials import write_credentials_file
-
-    payload: dict[str, object] = {}
-    written: list[str] = []
-    if hf_token:
-        payload["tokens"] = {"HF_TOKEN": hf_token}
-        written.append("The Hugging Face token")
-    if ngc_api_key:
-        payload["ngc"] = {"api_key": ngc_api_key}
-        written.append("The NGC API key")
-    if not payload:
-        return []
-    path = write_credentials_file(payload)
-    typer.echo(f"Stored {' and '.join(written).lower()} in {path}.")
-    return written
+        credentials = load_credentials(environ={})
+        return _model_access_note(credentials.hf_token, credentials.ngc_api_key)
+    except Exception:  # noqa: BLE001 - advisory state never gates configure
+        return (
+            "[NOTE] Skipped model-access check "
+            "(verify later with `npa workbench health access`)."
+        )
 
 
 def _configured_env_lines() -> str:
@@ -1950,29 +1974,20 @@ def _configured_env_lines() -> str:
     included; workflow submit resolves requested ``--secret-env`` names directly
     from credentials.yaml without printing them.
     """
-    from npa.clients.config import default_project_name, list_projects
-    from npa.clients.credentials import load_credentials
-
-    try:
-        projects = list_projects()
-        alias = default_project_name()
-    except Exception:  # noqa: BLE001 - emit whatever is readable
-        projects, alias = {}, ""
+    alias, stanza = _configured_display_project(required=True)
+    project_id = str(stanza.get("project_id", "") or "")
     lines: list[str] = []
-    if projects:
-        resolved = alias if alias in projects else next(iter(projects))
-        stanza = projects.get(resolved) or {}
-        lines.append(f"NPA_PROJECT_ALIAS={shlex.quote(resolved)}")
-        for name, key in (
-            ("NPA_PROJECT_ID", "project_id"),
-            ("NPA_TENANT_ID", "tenant_id"),
-            ("NPA_REGION", "region"),
-        ):
-            value = str((stanza or {}).get(key, "") or "")
-            if value:
-                lines.append(f"{name}={shlex.quote(value)}")
+    lines.append(f"NPA_PROJECT_ALIAS={shlex.quote(alias)}")
+    for name, key in (
+        ("NPA_PROJECT_ID", "project_id"),
+        ("NPA_TENANT_ID", "tenant_id"),
+        ("NPA_REGION", "region"),
+    ):
+        value = str(stanza.get(key, "") or "")
+        if value:
+            lines.append(f"{name}={shlex.quote(value)}")
     try:
-        credentials = load_credentials(environ={})
+        credentials = _credentials_for_exact_project(project_id)
     except Exception:  # noqa: BLE001
         credentials = None
     if credentials is not None:
@@ -1987,19 +2002,60 @@ def _configured_env_lines() -> str:
             )
         if credentials.s3_endpoint:
             lines.append(f"NPA_S3_ENDPOINT={shlex.quote(credentials.s3_endpoint)}")
-    context = _saved_kube_context()
+    context = _saved_kube_context(project_id)
     if context:
         lines.append(f"NPA_KUBE_CONTEXT={shlex.quote(context)}")
     return "\n".join(lines)
 
 
-def _saved_kube_context() -> str:
+def _configured_display_project(*, required: bool) -> tuple[str, dict[str, Any]]:
+    """Return the exact selected project, failing closed for machine output."""
+
+    from npa.clients.config import default_project_name, list_projects
+
+    try:
+        projects = list_projects()
+        alias = str(default_project_name() or "")
+    except Exception as exc:
+        if required:
+            raise typer.BadParameter(
+                "Saved project configuration is unreadable; refusing machine output."
+            ) from exc
+        return "", {}
+    if not projects:
+        if required:
+            raise typer.BadParameter(
+                "No saved project identity; refusing machine-evaluated --env output."
+            )
+        return "", {}
+    if alias in projects:
+        resolved = alias
+    elif len(projects) == 1:
+        resolved = next(iter(projects))
+    else:
+        if required:
+            raise typer.BadParameter(
+                "default_project does not select an exact saved project; refusing "
+                "machine output."
+            )
+        return "", {}
+    stanza = projects.get(resolved)
+    if not isinstance(stanza, dict) or not str(stanza.get("project_id") or "").strip():
+        if required:
+            raise typer.BadParameter(
+                "Selected project has no readable exact project_id; refusing "
+                "machine output."
+            )
+        return "", {}
+    return resolved, stanza
+
+
+def _saved_kube_context(project_id: str) -> str:
     """Return the most recently saved local cluster context, or "".
 
-    Scoped to the configured project when its ``project_id`` is resolvable, so
+    Scoped to the configured exact project, so
     ``configure --show --env`` never emits an unrelated project's cluster context
-    (which would point a runbook / PAIDF submit at the wrong infra). Falls back to
-    the most recent cluster of any project when no scoped match exists.
+    (which would point a runbook / PAIDF submit at the wrong infra).
     """
     try:
         from npa.cluster.state import list_local_clusters
@@ -2007,34 +2063,17 @@ def _saved_kube_context() -> str:
         clusters = list(list_local_clusters() or [])
     except Exception:  # noqa: BLE001 - no cluster cache is normal before provisioning
         return ""
-    configured_pid = _configured_project_id()
     scoped = [
         state
         for state in clusters
-        if configured_pid
-        and str(getattr(state, "project_id", "") or "") == configured_pid
+        if project_id and str(getattr(state, "project_id", "") or "") == project_id
     ]
-    for state in reversed(scoped or clusters):
+    for state in reversed(scoped):
         # `cluster up` names the kubeconfig context after the cluster by default.
         context = str(getattr(state, "name", "") or "")
         if context:
             return context
     return ""
-
-
-def _configured_project_id() -> str:
-    """Return the configured default project's Nebius project id, or ""."""
-    try:
-        from npa.clients.config import default_project_name, list_projects
-
-        projects = list_projects() or {}
-        if not projects:
-            return ""
-        alias = default_project_name()
-        stanza = projects.get(alias) or next(iter(projects.values()))
-        return str((stanza or {}).get("project_id", "") or "")
-    except Exception:  # noqa: BLE001 - unreadable config scopes nothing
-        return ""
 
 
 def _configured_summary() -> str:
@@ -2056,28 +2095,51 @@ def _configured_summary() -> str:
         alias = default_project_name()
     except Exception:  # noqa: BLE001 - a broken config must still print the layout
         projects = {}
+    stanza: dict[str, Any] = {}
+    resolved_alias = ""
     if not projects:
         lines.append(f"  (no projects in {CONFIG_PATH} — run `npa configure`)")
-        return "\n".join(lines)
-
-    stanza = projects.get(alias) or next(iter(projects.values()))
-    resolved_alias = alias if alias in projects else next(iter(projects))
-    lines.append(f"  config file:        {CONFIG_PATH}")
-    lines.append(f"  project alias:      {resolved_alias}  (use with -p)")
-    if len(projects) > 1:
-        lines.append(
-            f"  other aliases:      {', '.join(a for a in projects if a != resolved_alias)}"
-        )
-    for label, key in (
-        ("project id", "project_id"),
-        ("tenant id", "tenant_id"),
-        ("region", "region"),
-    ):
-        value = str((stanza or {}).get(key, "") or "")
-        lines.append(f"  {label + ':':<19} {value or '(unset)'}")
+    else:
+        lines.append(f"  config file:        {CONFIG_PATH}")
+        if alias in projects:
+            resolved_alias = alias
+        elif len(projects) == 1:
+            resolved_alias = next(iter(projects))
+        if resolved_alias:
+            candidate = projects.get(resolved_alias)
+            stanza = candidate if isinstance(candidate, dict) else {}
+            lines.append(f"  project alias:      {resolved_alias}  (use with -p)")
+        else:
+            lines.append(
+                "  project alias:      (no exact default selected; storage hidden)"
+            )
+        if len(projects) > 1 and resolved_alias:
+            lines.append(
+                f"  other aliases:      {', '.join(a for a in projects if a != resolved_alias)}"
+            )
+        elif not resolved_alias:
+            lines.append(f"  available aliases:  {', '.join(projects)}")
+        if resolved_alias:
+            for label, key in (
+                ("project id", "project_id"),
+                ("tenant id", "tenant_id"),
+                ("region", "region"),
+            ):
+                value = str(stanza.get(key, "") or "")
+                lines.append(f"  {label + ':':<19} {value or '(unset)'}")
 
     try:
+        project_id = str(stanza.get("project_id", "") or "")
         credentials = load_credentials(environ={})
+        if project_id:
+            credentials = _credentials_for_exact_project(project_id)
+        else:
+            # Tokens are host-scoped and still useful without a project. S3 is
+            # project-scoped, so never display an unselected compatibility view.
+            credentials.s3_access_key_id = ""
+            credentials.s3_secret_access_key = ""
+            credentials.s3_endpoint = ""
+            credentials.s3_bucket = ""
     except Exception:  # noqa: BLE001 - report what is readable
         credentials = None
     if credentials is not None:
@@ -2215,7 +2277,6 @@ def _run_known_project_configure(
 
     from npa.clients import nebius as nebius_client
     from npa.clients.config import CONFIG_PATH, list_projects, write_config
-    from npa.clients.credentials import load_credentials
 
     values = {
         "--tenant-id": str(tenant_id or "").strip(),
@@ -2236,24 +2297,28 @@ def _run_known_project_configure(
             "letters, digits, '.', '_', or '-' (maximum 64 characters)"
         )
 
+    existing_projects = list_projects()
+    _validate_alias_project_identity(
+        alias, existing_projects.get(alias) or {}, values["--project-id"]
+    )
+
     # This path consumes existing local profile/credential material only. It
     # never invokes profile creation or tenant/project discovery, so a valid
     # federation/service-account profile cannot fall into a browser flow or a
     # large tenant picker.
-    try:
-        nebius_client.get_iam_token()
-    except nebius_client.NebiusError as exc:
-        raise typer.BadParameter(
-            "The active Nebius CLI profile cannot authenticate non-interactively. "
-            "Activate or refresh a profile/service-account credential outside this "
-            f"command, then retry. Diagnostic: {exc}"
-        ) from exc
+    if provision:
+        try:
+            nebius_client.get_iam_token()
+        except nebius_client.NebiusError as exc:
+            raise typer.BadParameter(
+                "The active Nebius CLI profile cannot authenticate non-interactively. "
+                "Activate or refresh a profile/service-account credential outside "
+                "this command, then retry."
+            ) from exc
 
-    existing_projects = list_projects()
-    _warn_repointed_alias(
-        alias, existing_projects.get(alias) or {}, values["--project-id"]
+    existing = _credentials_for_exact_project(
+        values["--project-id"], allow_provable_legacy=True
     )
-    existing = load_credentials(environ={})
     storage: dict[str, str] = {}
     existing_complete = bool(
         existing.s3_access_key_id
@@ -2263,7 +2328,7 @@ def _run_known_project_configure(
     existing_relationship_verified = _storage_relationship_verified(
         existing, values["--project-id"]
     )
-    if existing_complete and existing_relationship_verified:
+    if provision and existing_complete and existing_relationship_verified:
         from npa.clients.storage_validation import probe_storage_write
 
         probe = probe_storage_write(
@@ -2287,15 +2352,16 @@ def _run_known_project_configure(
                 "Reusing health-verified configured object-storage credentials; "
                 "no access keys were listed, created, or rotated."
             )
-        elif not provision:
-            raise typer.BadParameter(
-                f"Existing object-storage credentials are not writable: {probe.summary}"
-            )
-
-    elif existing_complete:
+    elif provision and existing_complete:
         typer.echo(
             "Ignoring saved object storage for this non-interactive configure: "
             "its durable ownership record does not match the selected project."
+        )
+    elif not provision and existing_complete:
+        typer.echo(
+            "Warning: saved object storage was not selected or probed because "
+            "--no-provision performs project-only setup.",
+            err=True,
         )
 
     if provision and not storage:
@@ -2326,6 +2392,11 @@ def _run_known_project_configure(
             )
         storage = provisioned
 
+    from npa.clients.project_credential_store import (
+        select_project_credentials,
+        write_project_credentials,
+    )
+
     if storage:
         service_account_keys = {
             key: str(storage.get(key, "") or "").strip()
@@ -2351,14 +2422,16 @@ def _run_known_project_configure(
             credentials_payload["nebius"] = {"service_account_id": account_id}
         if len(service_account_keys) == 4:
             credentials_payload["storage_iam"] = service_account_keys
-        from npa.clients.project_credential_store import write_project_credentials
-
         credentials_path = write_project_credentials(
             values["--project-id"],
             credentials_payload,
             alias=alias,
         )
         typer.echo(f"Wrote {credentials_path} (chmod 600).")
+    else:
+        select_project_credentials(
+            values["--project-id"], alias=alias, select_storage=False
+        )
 
     write_config(
         {
@@ -2372,7 +2445,7 @@ def _run_known_project_configure(
             "default_project": alias,
         }
     )
-    if not nebius_client.set_profile_project(
+    if provision and not nebius_client.set_profile_project(
         values["--project-id"], values["--tenant-id"]
     ):
         typer.echo(
@@ -2391,6 +2464,132 @@ def _run_known_project_configure(
             "Project setup complete without object storage (--no-provision). "
             "Configure writable storage before agent or workflow submission."
         )
+    typer.echo(_saved_model_access_note())
+
+
+class ConfigureMode(str, Enum):
+    DISPLAY = "display"
+    GUIDANCE = "guidance"
+    SOURCE_URI = "source-uri"
+    FORGET_PROJECT = "forget-project"
+    IMPORT_CREDENTIALS = "import-credentials"
+    KNOWN_PROJECT = "known-project"
+    INTERACTIVE = "interactive"
+
+
+def _click_parameter_was_explicit(name: str) -> bool:
+    """Return whether Click received *name* on argv (False for direct calls)."""
+
+    context = click.get_current_context(silent=True)
+    if context is None:
+        return False
+    return context.get_parameter_source(name) == click.core.ParameterSource.COMMANDLINE
+
+
+def _configure_mode(arguments: dict[str, Any]) -> ConfigureMode:
+    """Resolve and validate one unambiguous configure mode before any write."""
+
+    show = bool(arguments.get("show"))
+    env_output = bool(arguments.get("env_output"))
+    source_uri = str(arguments.get("src_s3_uri") or "").strip()
+    forget = str(arguments.get("forget_project") or "").strip()
+    save_env = bool(arguments.get("save_env_credentials"))
+    known_names = ("tenant_id", "project_id", "region", "project_alias")
+    known = {
+        name: str(arguments.get(name) or "").strip()
+        for name in known_names
+        if str(arguments.get(name) or "").strip()
+    }
+    requested: list[ConfigureMode] = []
+    if show or env_output:
+        requested.append(ConfigureMode.DISPLAY)
+    if source_uri:
+        requested.append(ConfigureMode.SOURCE_URI)
+    if forget:
+        requested.append(ConfigureMode.FORGET_PROJECT)
+    if save_env:
+        requested.append(ConfigureMode.IMPORT_CREDENTIALS)
+    if known:
+        requested.append(ConfigureMode.KNOWN_PROJECT)
+    if len(requested) > 1:
+        raise typer.BadParameter(
+            "Configure modes cannot be combined: choose exactly one of display "
+            "(--show/--env), --src-s3-uri, --forget-project, "
+            "--save-env-credentials, or known-project setup."
+        )
+    interactive = arguments.get("interactive")
+    mode = (
+        requested[0]
+        if requested
+        else (
+            ConfigureMode.INTERACTIVE
+            if interactive is True or (interactive is None and sys.stdin.isatty())
+            else ConfigureMode.GUIDANCE
+        )
+    )
+    allow_visible_flag = bool(arguments.get("allow_visible_secret_input"))
+    allow_visible = (
+        allow_visible_flag or os.environ.get("NPA_ALLOW_VISIBLE_SECRET_INPUT") == "1"
+    )
+    provision_explicit = _click_parameter_was_explicit("provision") or (
+        mode != ConfigureMode.INTERACTIVE and arguments.get("provision") is False
+    )
+    if mode in {
+        ConfigureMode.DISPLAY,
+        ConfigureMode.SOURCE_URI,
+        ConfigureMode.FORGET_PROJECT,
+    } and (interactive is not None or provision_explicit or allow_visible_flag):
+        raise typer.BadParameter(
+            f"{mode.value} mode is read-only or self-contained and cannot be "
+            "combined with interactive/provisioning options."
+        )
+    if mode == ConfigureMode.IMPORT_CREDENTIALS:
+        if interactive is True or provision_explicit or allow_visible_flag:
+            raise typer.BadParameter(
+                "--save-env-credentials is a prompt-free import mode and cannot "
+                "be combined with interactive/provisioning options."
+            )
+    if mode == ConfigureMode.KNOWN_PROJECT:
+        missing = [name for name in known_names if name not in known]
+        if missing:
+            flags = ", ".join("--" + name.replace("_", "-") for name in missing)
+            raise typer.BadParameter(
+                "Known-project non-interactive configure requires all of "
+                "--tenant-id, --project-id, --region, and --project-alias; "
+                f"missing {flags}"
+            )
+        if interactive is True or allow_visible_flag:
+            raise typer.BadParameter(
+                "Known-project flags select the prompt-free configure path; use "
+                "--no-interactive (or omit --interactive)."
+            )
+        import re
+
+        alias = known["project_alias"]
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", alias):
+            raise typer.BadParameter(
+                "--project-alias must start with a letter or digit and contain "
+                "only letters, digits, '.', '_', or '-' (maximum 64 characters)"
+            )
+        from npa.clients.config import list_projects
+
+        projects = list_projects()
+        _validate_alias_project_identity(
+            alias, projects.get(alias) or {}, known["project_id"]
+        )
+    if source_uri and not source_uri.startswith("s3://"):
+        raise typer.BadParameter("--src-s3-uri must be an s3:// URI")
+    if allow_visible_flag and interactive is not True:
+        raise typer.BadParameter(
+            "Visible-secret input opt-in is valid only with --interactive."
+        )
+    if interactive is True and not sys.stdin.isatty() and not allow_visible:
+        raise typer.BadParameter(
+            "Refusing forced interactive setup on non-TTY stdin because secret "
+            "input would be visible. Prefer --save-env-credentials for automation, "
+            "or explicitly pass --allow-visible-secret-input."
+        )
+    return mode
 
 
 def _configure_impl(
@@ -2406,11 +2605,15 @@ def _configure_impl(
     project_id: str = "",
     region: str = "",
     project_alias: str = "",
+    allow_visible_secret_input: bool = False,
 ) -> None:
-    if src_s3_uri.strip():
+    arguments = locals()
+    mode = _configure_mode(arguments)
+    if mode == ConfigureMode.SOURCE_URI:
         _store_src_s3_uri(src_s3_uri.strip())
+        typer.echo(_saved_model_access_note())
         return
-    if forget_project.strip():
+    if mode == ConfigureMode.FORGET_PROJECT:
         # Deconfigure a single project: the inverse of the stanza configure
         # writes. Storage credentials (host-scoped) and a deleted bucket's
         # remote-state keys are handled by `npa storage bucket delete`.
@@ -2422,59 +2625,30 @@ def _configure_impl(
         persist_supported_env_credentials,
     )
 
-    detected = [name for name in SUPPORTED_ENV_CREDENTIALS if os.environ.get(name)]
-    persisted: list[str] = []
-    if save_env_credentials:
+    if mode == ConfigureMode.DISPLAY:
+        if env_output:
+            typer.echo(_configured_env_lines())
+        else:
+            typer.echo(_configured_summary())
+            typer.echo("")
+            typer.echo(_SETUP_GUIDANCE)
+        return
+    if mode == ConfigureMode.IMPORT_CREDENTIALS:
         report = persist_supported_env_credentials()
-        persisted = list(report["persisted"])
         typer.echo(
             "Credential environment sources detected: "
             + (", ".join(report["detected"]) if report["detected"] else "none"),
-            err=env_output,
         )
         typer.echo(
             "Credential fields persisted (values redacted): "
-            + (", ".join(persisted) if persisted else "none")
+            + (", ".join(report["persisted"]) if report["persisted"] else "none")
             + f"; store={CREDENTIALS_PATH}",
-            err=env_output,
         )
         for warning in report["warnings"]:
             typer.echo(f"Credential warning: {warning}", err=True)
-    elif detected and interactive is not True:
-        typer.echo(
-            f"Credential environment sources detected: {', '.join(detected)}",
-            err=env_output,
-        )
-        typer.echo(
-            "Credential persistence: skipped. These values remain process-only; "
-            "use --save-env-credentials to make later agent/workflow commands durable.",
-            err=env_output,
-        )
-    elif interactive is False:
-        typer.echo(
-            "Credential environment sources detected: none; persistence: none.",
-            err=env_output,
-        )
-    already_written = "Environment credentials (values redacted)" if persisted else ""
-    if env_output:
-        # Machine-readable form first: runbooks eval this instead of asking the
-        # operator to hand-substitute the alias, bucket and kube context.
-        typer.echo(_configured_env_lines())
+        typer.echo(_saved_model_access_note())
         return
-    if show:
-        # What is actually saved first: leading with the blank template made an
-        # operator read `hf_REPLACE_ME` and conclude nothing was configured.
-        typer.echo(_configured_summary())
-        typer.echo("")
-        typer.echo(_SETUP_GUIDANCE)
-        return
-    known_project_values = (tenant_id, project_id, region, project_alias)
-    if any(str(value or "").strip() for value in known_project_values):
-        if interactive is True:
-            raise typer.BadParameter(
-                "Known-project flags select the non-interactive configure path; "
-                "use --no-interactive (or omit --interactive)."
-            )
+    if mode == ConfigureMode.KNOWN_PROJECT:
         _run_known_project_configure(
             tenant_id=tenant_id,
             project_id=project_id,
@@ -2483,39 +2657,39 @@ def _configure_impl(
             provision=provision,
         )
         return
-    preset_tokens: set[str] = set()
+
+    detected = [name for name in SUPPORTED_ENV_CREDENTIALS if os.environ.get(name)]
+    if detected and interactive is not True:
+        typer.echo(
+            f"Credential environment sources detected: {', '.join(detected)}",
+        )
+        typer.echo(
+            "Credential persistence: skipped. These values remain process-only; "
+            "use --save-env-credentials to make later agent/workflow commands durable.",
+        )
+    elif interactive is False:
+        typer.echo(
+            "Credential environment sources detected: none; persistence: none.",
+        )
 
     should_prompt = interactive if interactive is not None else sys.stdin.isatty()
     if not should_prompt:
-        if already_written:
-            # We DID persist the token flags; dumping the whole setup template as
-            # if nothing happened made scripted `--token-* --no-interactive` runs
-            # look like they failed. Confirm what landed and how to finish the rest.
-            typer.echo(f"{already_written} saved to {CREDENTIALS_PATH}.")
-            typer.echo(
-                "Run `npa configure` in a terminal (or `npa configure --show` for "
-                "the file layout) to set up the project, bucket and cluster."
-            )
-            return
         typer.echo(_SETUP_GUIDANCE)
         return
     try:
         _run_interactive_configure(
             provision=provision,
-            already_written=already_written,
-            preset_tokens=preset_tokens,
+            allow_visible_secret_input=(
+                allow_visible_secret_input
+                or os.environ.get("NPA_ALLOW_VISIBLE_SECRET_INPUT") == "1"
+            ),
         )
     except (EOFError, typer.Abort):
         # Cancelling mid-flow (Ctrl-C / Ctrl-D / no more input) previously exited
         # 0 having written nothing under ~/.npa, so the next cloud command failed
         # mysteriously. Fail loudly instead so the missing setup is obvious.
         typer.echo("")
-        written = (
-            f"{already_written} was saved, but setup was cancelled before the rest "
-            "of ~/.npa was written."
-            if already_written
-            else "Setup was cancelled before anything was written under ~/.npa."
-        )
+        written = "Setup was cancelled before anything was written under ~/.npa."
         typer.echo(
             f"{written} Re-run `npa configure` in a terminal to finish, or run "
             "`npa configure --show` for the file layout to create it by hand."
@@ -2532,26 +2706,24 @@ def _transactional_configure(function):
     def wrapped(*args, **kwargs):
         bound = signature.bind_partial(*args, **kwargs)
         bound.apply_defaults()
+        mode = _configure_mode(bound.arguments)
         if current_operation() is not None:
-            nested_forget = str(bound.arguments.get("forget_project") or "").strip()
             from npa.lifecycle_intent import operation_intent
 
             with operation_intent(
                 OperationIntent.DESTROY
-                if nested_forget
+                if mode == ConfigureMode.FORGET_PROJECT
                 else OperationIntent.ENSURE_PRESENT
             ):
                 return function(*args, **kwargs)
-        if (
-            bool(bound.arguments.get("show")) or bool(bound.arguments.get("env_output"))
-        ) and not bool(bound.arguments.get("save_env_credentials")):
+        if mode in {ConfigureMode.DISPLAY, ConfigureMode.GUIDANCE}:
             return function(*args, **kwargs)
         forget = str(bound.arguments.get("forget_project") or "").strip()
         alias = str(bound.arguments.get("project_alias") or "").strip()
         project_id = str(bound.arguments.get("project_id") or "").strip()
         tenant_id = str(bound.arguments.get("tenant_id") or "").strip()
         region = str(bound.arguments.get("region") or "").strip()
-        if forget:
+        if mode == ConfigureMode.FORGET_PROJECT:
             from npa.clients.config import resolve_environment
 
             environment = resolve_environment(forget)
@@ -2560,7 +2732,7 @@ def _transactional_configure(function):
                 project_id = str(environment.project_id or "")
                 tenant_id = str(environment.tenant_id or "")
                 region = str(environment.region or "")
-        requested_name = alias or project_id or "interactive"
+        requested_name = alias or project_id or mode.value
         resume = (
             f"npa configure --forget-project {forget}" if forget else "npa configure"
         )
@@ -2570,12 +2742,23 @@ def _transactional_configure(function):
                 f" --region {region} --project-alias {alias}"
             )
         operation = ProvisioningOperation.prepare(
-            command=("npa configure --forget-project" if forget else "npa configure"),
+            command=(
+                "npa configure --forget-project"
+                if mode == ConfigureMode.FORGET_PROJECT
+                else "npa configure"
+            ),
             project_alias=alias,
             project_id=project_id,
             tenant_id=tenant_id,
             region=region,
-            resource_type=("forget-project" if forget else "configure"),
+            resource_type=(
+                "forget-project"
+                if mode == ConfigureMode.FORGET_PROJECT
+                # "configure" owns the bootstrap lease until an interactive
+                # setup has discovered its exact project identity. The
+                # selected mode remains available in requested_name.
+                else "configure"
+            ),
             requested_name=requested_name,
             ownership_source="configure-cli",
             resume_command=resume,
@@ -2583,19 +2766,32 @@ def _transactional_configure(function):
         from npa.clients.credentials import SUPPORTED_ENV_CREDENTIALS
 
         detected = [name for name in SUPPORTED_ENV_CREDENTIALS if os.environ.get(name)]
-        operation.record_config_mutation(
-            store="credentials.yaml",
-            fields=detected,
-            secret_fields=detected,
-        )
-        operation.record_config_mutation(
-            store="config.yaml",
-            fields=(
-                ["default_project", f"projects.{alias}"]
-                if alias
-                else ["interactive-selected-project"]
-            ),
-        )
+        writes_credentials = mode in {
+            ConfigureMode.IMPORT_CREDENTIALS,
+            ConfigureMode.KNOWN_PROJECT,
+            ConfigureMode.INTERACTIVE,
+        }
+        writes_config = mode in {
+            ConfigureMode.SOURCE_URI,
+            ConfigureMode.FORGET_PROJECT,
+            ConfigureMode.KNOWN_PROJECT,
+            ConfigureMode.INTERACTIVE,
+        }
+        if writes_credentials:
+            operation.record_config_mutation(
+                store="credentials.yaml",
+                fields=(detected if mode == ConfigureMode.IMPORT_CREDENTIALS else []),
+                secret_fields=(
+                    detected if mode == ConfigureMode.IMPORT_CREDENTIALS else []
+                ),
+            )
+        if writes_config:
+            operation.record_config_mutation(
+                store="config.yaml",
+                fields=(
+                    ["default_project", f"projects.{alias}"] if alias else [mode.value]
+                ),
+            )
         with operation_context(operation):
             from npa.clients.config import CONFIG_PATH
             from npa.clients.credentials import (
@@ -2606,19 +2802,43 @@ def _transactional_configure(function):
             # Configuration durability is a prerequisite, not a cleanup task:
             # prove both protected stores can be atomically replaced before any
             # profile, storage, or other provider mutation is attempted.
-            preflight_private_yaml_store(CONFIG_PATH)
-            preflight_private_yaml_store(CREDENTIALS_PATH)
+            if writes_config:
+                preflight_private_yaml_store(CONFIG_PATH)
+            if writes_credentials:
+                preflight_private_yaml_store(CREDENTIALS_PATH)
             operation.transition("mutating")
+
+            def finish_success() -> None:
+                phase = str(operation.read().get("phase") or "")
+                if phase in {"mutating", "resource-created"}:
+                    operation.transition(
+                        "state-durable", details={"private_stores": "fsynced"}
+                    )
+                operation.commit()
+
             try:
                 intent = (
                     OperationIntent.DESTROY
-                    if forget
+                    if mode == ConfigureMode.FORGET_PROJECT
                     else OperationIntent.ENSURE_PRESENT
                 )
                 from npa.lifecycle_intent import operation_intent
 
                 with operation_intent(intent):
                     result = function(*args, **kwargs)
+            except typer.Exit as exc:
+                if exc.exit_code == 0:
+                    finish_success()
+                    raise
+                phase = str(operation.read().get("phase") or "")
+                if phase not in {
+                    "recovery-required",
+                    "rolled-back",
+                    "rollback-incomplete",
+                }:
+                    operation.transition("recovery-required", error=type(exc).__name__)
+                typer.echo(emit_recovery_summary(operation), err=True)
+                raise
             except BaseException as exc:
                 phase = str(operation.read().get("phase") or "")
                 if phase not in {
@@ -2626,20 +2846,20 @@ def _transactional_configure(function):
                     "rolled-back",
                     "rollback-incomplete",
                 }:
-                    operation.transition("recovery-required", error=str(exc))
+                    operation.transition("recovery-required", error=type(exc).__name__)
                 typer.echo(emit_recovery_summary(operation), err=True)
                 raise
-            phase = str(operation.read().get("phase") or "")
-            if phase in {"mutating", "resource-created"}:
-                operation.transition(
-                    "state-durable", details={"private_stores": "fsynced"}
-                )
-            operation.commit()
+            finish_success()
             return result
 
     return wrapped
 
 
+@app.command(
+    "init",
+    help="Deprecated alias for interactive credential and config setup guidance.",
+    rich_help_panel="Setup",
+)
 @app.command(
     "configure",
     help="Interactive credential and config setup guidance.",
@@ -2723,6 +2943,15 @@ def configure(
         "--project-alias",
         help="Local NPA alias to write for the known project (prompt-free configure).",
     ),
+    allow_visible_secret_input: bool = typer.Option(
+        False,
+        "--allow-visible-secret-input",
+        help=(
+            "Explicitly allow --interactive secret prompts on non-TTY stdin. "
+            "Values may be visible; prefer --save-env-credentials for automation. "
+            "Equivalent explicit opt-in: NPA_ALLOW_VISIBLE_SECRET_INPUT=1."
+        ),
+    ),
 ) -> None:
     """Interactively write ~/.npa credentials and config, or show guidance."""
     _configure_impl(
@@ -2737,84 +2966,7 @@ def configure(
         project_id=project_id,
         region=region,
         project_alias=project_alias,
-    )
-
-
-@app.command(
-    "init",
-    help="Interactive credential and config setup guidance.",
-    rich_help_panel="Setup",
-)
-@_transactional_configure
-def init(
-    show: bool = typer.Option(
-        False,
-        "--show",
-        help="Print the credential/config file layout instead of prompting.",
-    ),
-    interactive: Optional[bool] = typer.Option(
-        None,
-        "--interactive/--no-interactive",
-        help="Force or disable interactive prompting (defaults to auto-detect TTY).",
-    ),
-    provision: bool = typer.Option(
-        True,
-        "--provision/--no-provision",
-        help=(
-            "Auto-create a Nebius S3 bucket (when missing) and an access key "
-            "(default). Reuse an existing bucket by name, or press Enter to "
-            "create a default npa-bucket with standard storage and a size cap. "
-            "Use --no-provision to enter existing S3 credentials."
-        ),
-    ),
-    save_env_credentials: bool = typer.Option(
-        False,
-        "--save-env-credentials",
-        help="Persist supported environment credentials atomically with mode 0600.",
-    ),
-    env_output: bool = typer.Option(
-        False,
-        "--env",
-        help=(
-            "Print the saved project/bucket/kube-context values as NPA_* shell "
-            "assignments (no secrets) instead of prompting: "
-            'eval "$(npa configure --show --env)".'
-        ),
-    ),
-    src_s3_uri: str = typer.Option(
-        "",
-        "--src-s3-uri",
-        help=(
-            "Persist the staged npa source prefix (s3://bucket/prefix/npa) in "
-            "~/.npa/config.yaml so workflow submits resolve NPA_SRC_S3_URI without "
-            "re-exporting it in every shell (skips interactive setup)."
-        ),
-    ),
-    tenant_id: str = typer.Option(
-        "", "--tenant-id", help="Known Nebius tenant ID for prompt-free configure."
-    ),
-    project_id: str = typer.Option(
-        "", "--project-id", help="Known Nebius project ID for prompt-free configure."
-    ),
-    region: str = typer.Option(
-        "", "--region", help="Known Nebius project region for prompt-free configure."
-    ),
-    project_alias: str = typer.Option(
-        "", "--project-alias", help="Local NPA alias for prompt-free configure."
-    ),
-) -> None:
-    """Interactively write ~/.npa credentials and config, or show guidance."""
-    _configure_impl(
-        show=show,
-        interactive=interactive,
-        provision=provision,
-        save_env_credentials=save_env_credentials,
-        env_output=env_output,
-        src_s3_uri=src_s3_uri,
-        tenant_id=tenant_id,
-        project_id=project_id,
-        region=region,
-        project_alias=project_alias,
+        allow_visible_secret_input=allow_visible_secret_input,
     )
 
 
