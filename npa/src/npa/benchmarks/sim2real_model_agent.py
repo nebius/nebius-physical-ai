@@ -11,6 +11,8 @@ import argparse
 import hashlib
 import json
 import os
+import re
+import shlex
 import subprocess
 import sys
 import time
@@ -84,7 +86,27 @@ TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "complete_workflow",
+            "description": (
+                "Ask the benchmark controller to independently verify that an NPA "
+                "workflow run reached a terminal state. Use only after monitoring "
+                "the submitted run to completion."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"run_id": {"type": "string"}},
+                "required": ["run_id"],
+                "additionalProperties": False,
+            },
+        },
+    },
 ]
+
+
+_RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 @dataclass
@@ -139,6 +161,51 @@ def _run_tool(
     isolation: dict[str, Path] | None = None,
 ) -> dict[str, Any]:
     started = time.monotonic()
+    if name == "complete_workflow":
+        run_id = str(arguments.get("run_id") or "").strip()
+        project = str(env.get("NPA_PROJECT") or "").strip()
+        if not _RUN_ID_RE.fullmatch(run_id):
+            raise ValueError("run_id has an invalid format")
+        if not project:
+            raise ValueError("NPA_PROJECT is required for terminal verification")
+        command = (
+            "npa/.venv/bin/python -m npa workbench workflow status "
+            f"{shlex.quote(run_id)} --project {shlex.quote(project)} --json"
+        )
+        observed = _run_tool(
+            "run_command",
+            {"command": command},
+            workspace,
+            env,
+            isolation,
+        )
+        if int(observed.get("exit_code") or 0) != 0:
+            return {
+                "run_id": run_id,
+                "terminal": False,
+                "error": "authoritative workflow status lookup failed",
+                "exit_code": observed.get("exit_code"),
+                "stderr": str(observed.get("stderr") or "")[-1000:],
+            }
+        try:
+            payload = json.loads(str(observed.get("stdout") or ""))
+        except json.JSONDecodeError:
+            return {
+                "run_id": run_id,
+                "terminal": False,
+                "error": "authoritative workflow status was not valid JSON",
+            }
+        status = str(payload.get("status") or "").strip().upper()
+        from npa.orchestration.npa_workflow.runtime import is_terminal
+
+        return {
+            "run_id": run_id,
+            "status": status,
+            "terminal": is_terminal(status),
+            "workflow_succeeded": status
+            in {"SUCCEEDED", "SUCCESS", "COMPLETED", "DONE"},
+            "duration_seconds": time.monotonic() - started,
+        }
     if name == "run_command":
         command = ["bash", "-lc", str(arguments["command"])]
         if isolation:
@@ -470,9 +537,13 @@ def run(config_path: Path) -> int:
     )
     system_prompt_path = Path(config["system_prompt_file"]).resolve()
     system = system_prompt_path.read_text(encoding="utf-8")
+    task_text = str(config.get("task_text") or TASK_TEXT).strip()
+    completion_mode = str(config.get("completion_mode") or "strict_grasp").strip()
+    if completion_mode not in {"strict_grasp", "workflow_terminal"}:
+        raise ValueError("completion_mode must be strict_grasp or workflow_terminal")
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system},
-        {"role": "user", "content": TASK_TEXT},
+        {"role": "user", "content": task_text},
     ]
     env = os.environ.copy()
     env.update({str(k): str(v) for k, v in (config.get("environment") or {}).items()})
@@ -490,8 +561,9 @@ def run(config_path: Path) -> int:
         "origin_main_commit": config["origin_main_commit"],
         "seed": config["seed"],
         "system_prompt_sha256": hashlib.sha256(system.encode()).hexdigest(),
-        "task_sha256": hashlib.sha256(TASK_TEXT.encode()).hexdigest(),
+        "task_sha256": hashlib.sha256(task_text.encode()).hexdigest(),
         "tool_schema_sha256": _sha(TOOLS),
+        "completion_mode": completion_mode,
         "serving": config["serving"],
         "started_at": _utc(),
     }
@@ -505,6 +577,7 @@ def run(config_path: Path) -> int:
             "system_prompt_sha256",
             "task_sha256",
             "tool_schema_sha256",
+            "completion_mode",
             "serving",
         ):
             if existing_meta.get(key) != meta.get(key):
@@ -592,6 +665,7 @@ def run(config_path: Path) -> int:
             handle.write(json.dumps(assistant, sort_keys=True) + "\n")
         calls = assistant.get("tool_calls") or []
         if calls:
+            terminal_completion: dict[str, Any] | None = None
             for call in calls:
                 try:
                     arguments = json.loads(call["function"]["arguments"] or "{}")
@@ -614,6 +688,24 @@ def run(config_path: Path) -> int:
                 messages.append(tool_message)
                 with transcript_path.open("a", encoding="utf-8") as handle:
                     handle.write(json.dumps(tool_message, sort_keys=True) + "\n")
+                if (
+                    completion_mode == "workflow_terminal"
+                    and call["function"]["name"] == "complete_workflow"
+                    and result.get("terminal") is True
+                ):
+                    terminal_completion = result
+            if terminal_completion is not None:
+                verification = {
+                    "schema": "npa.sim2real.model_agent_benchmark.workflow_terminal.v1",
+                    "completion_mode": completion_mode,
+                    **terminal_completion,
+                    "end_to_end_wall_seconds": _elapsed_since(meta["started_at"]),
+                    "completed_at": _utc(),
+                }
+                (evidence / "success.json").write_text(
+                    json.dumps(verification, indent=2), encoding="utf-8"
+                )
+                return 0
             messages = _maybe_checkpoint(
                 messages,
                 transcript_path,

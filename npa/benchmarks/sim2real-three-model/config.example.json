@@ -12,6 +12,7 @@
   "seed": 20260820,
   "system_prompt_file": "npa/benchmarks/sim2real-three-model/system-prompt.txt",
   "artifact_root": "benchmark-artifacts",
+  "completion_mode": "strict_grasp",
   "minimum_lift_m": 0.05,
   "minimum_hold_seconds": 2.0,
   "rerun_bin": "/path/to/npa/.venv/bin/rerun",

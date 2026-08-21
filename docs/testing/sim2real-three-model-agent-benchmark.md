@@ -143,6 +143,15 @@ workflow status/logs, commands, diffs, run IDs, artifact hashes, and teardown
 receipts beside these files. Publish only generic roles, non-identifying
 measurements, and hashes.
 
+For the narrower submission/monitoring benchmark, set `completion_mode` to
+`workflow_terminal` and provide the identical shortened `task_text` in every
+private trial config. The model finishes through the `complete_workflow` tool:
+the controller queries authoritative NPA durable status using the configured
+project and accepts only a terminal workflow state. A model-authored status file
+or prose claim is never sufficient. The resulting `success.json` records both
+terminal completion and whether the workflow itself succeeded, so operational
+completion is not confused with policy efficacy.
+
 Before provisioning, run the repository health, gated-access, image-pull, GPU,
 and third-party EULA preflights. Teardown is cancel-before-destroy and applies
 only to resources whose creation receipt belongs to this benchmark.

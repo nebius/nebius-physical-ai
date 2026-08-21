@@ -127,6 +127,37 @@ def test_tool_schema_round_trips_json_arguments(tmp_path: Path) -> None:
     assert json.loads(result["content"]) == {"ok": True}
 
 
+def test_complete_workflow_uses_authoritative_terminal_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 0, json.dumps({"status": "SUCCEEDED"}), ""
+        ),
+    )
+    result = _run_tool(
+        "complete_workflow",
+        {"run_id": "sim2real-run-1"},
+        tmp_path,
+        {"NPA_PROJECT": "private-alias"},
+    )
+    assert result["terminal"] is True
+    assert result["workflow_succeeded"] is True
+    assert result["status"] == "SUCCEEDED"
+
+
+def test_complete_workflow_rejects_untrusted_run_id(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="invalid format"):
+        _run_tool(
+            "complete_workflow",
+            {"run_id": "run; touch escaped"},
+            tmp_path,
+            {"NPA_PROJECT": "private-alias"},
+        )
+
+
 def test_empty_stream_is_a_retryable_error(monkeypatch: pytest.MonkeyPatch) -> None:
     class EmptyResponse:
         def __enter__(self) -> EmptyResponse:
