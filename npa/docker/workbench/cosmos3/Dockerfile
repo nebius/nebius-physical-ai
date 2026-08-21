@@ -130,7 +130,7 @@ RUN UV_CACHE_DIR=/tmp/uv-cache uv venv --python 3.12 /opt/npa/.venv \
     && rm -rf /tmp/uv-cache
 
 COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/cosmos3/smoke_functional.sh /opt/cosmos3/smoke_functional.sh
-COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/cosmos3/entrypoint.sh /usr/local/bin/npa-cosmos3-entrypoint
+COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/cosmos3/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 # Distribution guard: fail the build if any model weight was baked into a layer.
 RUN baked="$(find /opt/cosmos3 /opt/npa /tmp/hf_home -type f \
@@ -144,5 +144,5 @@ RUN baked="$(find /opt/cosmos3 /opt/npa /tmp/hf_home -type f \
 
 WORKDIR /workspace
 
-ENTRYPOINT ["/usr/local/bin/npa-cosmos3-entrypoint"]
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["generate", "--help"]
