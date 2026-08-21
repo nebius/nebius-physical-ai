@@ -18,6 +18,15 @@ outside its working directory. `HOME` is also redirected to that trial's private
 evidence. Seed each private home with identical minimal NPA, Nebius, Kubernetes,
 and SkyPilot configuration before the trial; never share mutable client state.
 
+Run each trial's SkyPilot API server outside the tool-call PID namespace, on a
+loopback-only endpoint with a restrictive trial-scoped HOME. Put that endpoint
+in the trial's `SKYPILOT_API_SERVER_ENDPOINT` environment. The server HOME must
+contain the same minimal Kubernetes/Nebius authentication material as the trial,
+and its Kubernetes jobs-controller resources must omit `disk_size`. Before the
+model starts, require `npa skypilot verify` plus workflow GPU discovery to
+complete through that endpoint; `/api/health` alone does not prove executor
+workers are functional. The model must not manage this benchmark-owned server.
+
 ## Fairness contract
 
 - Use the checked-in `system-prompt.txt` unchanged for every model. Record
