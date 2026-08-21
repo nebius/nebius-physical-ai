@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 import yaml
 
@@ -73,9 +74,14 @@ def test_image_runs_non_root_and_uses_a_forwarding_xvfb_wrapper() -> None:
     assert "USER ubuntu" in text
     assert 'ENTRYPOINT ["/usr/local/bin/npa-content-agents-entrypoint"]' in text
     assert "docker/workbench/content-agents/npa-content-agents-entrypoint" in text
-    assert "NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics" in text
+    env_match = re.search(r"\bNVIDIA_DRIVER_CAPABILITIES=([^\s\\]+)", text)
+    label_match = re.search(r'npa\.driver_capabilities="([^"]+)"', text)
+    assert env_match is not None
+    assert label_match is not None
+    capabilities = "compute,utility,graphics,display"
+    assert env_match.group(1) == capabilities
     assert 'npa.driver_provisioning="gpu-operator-host-mounted"' in text
-    assert 'npa.driver_capabilities="compute,utility,graphics,display"' in text
+    assert label_match.group(1) == env_match.group(1)
     assert "EXPOSE" not in text
 
 

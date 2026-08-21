@@ -13,6 +13,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
+from numbers import Real
 import os
 from pathlib import Path
 import shutil
@@ -39,6 +41,8 @@ SCENE_SPEC_SCHEMA = "npa.sim2real.manip_scene_spec.v1"
 DEFAULT_MODEL = "Qwen/Qwen2.5-VL-72B-Instruct"
 DEFAULT_BASE_URL = "https://api.tokenfactory.nebius.com/v1/"
 SUPPORTED_USD_SUFFIXES = frozenset({".usd", ".usda", ".usdc", ".usdz"})
+FRICTION_MIN = 0.1
+FRICTION_MAX = 2.0
 PHYSICS_SYSTEM_PROMPT = """\
 Identify the rendered component and estimate simulation physics from its geometry,
 appearance, material, and role in the complete asset. Use SI units. Compute mass as
@@ -509,8 +513,34 @@ def inspect_physics(path: Path) -> dict[str, Any]:
     rigid: list[str] = []
     colliders: list[str] = []
     masses: list[dict[str, Any]] = []
+    physics_material_prims: list[str] = []
     physics_materials: list[dict[str, Any]] = []
     visual_bindings: list[str] = []
+
+    def authored_value(attribute: Any) -> Any:
+        return attribute.Get() if attribute.HasAuthoredValueOpinion() else None
+
+    def finite_number(
+        value: Any,
+        *,
+        label: str,
+        minimum: float,
+        maximum: float | None = None,
+    ) -> float:
+        if isinstance(value, bool) or not isinstance(value, Real):
+            raise ContentAgentsError(f"{label} must be an authored numeric value")
+        parsed = float(value)
+        if not math.isfinite(parsed):
+            raise ContentAgentsError(f"{label} must be finite")
+        if parsed < minimum or (maximum is not None and parsed > maximum):
+            expected = (
+                f"between {minimum} and {maximum}"
+                if maximum is not None
+                else f"at least {minimum}"
+            )
+            raise ContentAgentsError(f"{label} must be {expected}, got {parsed}")
+        return parsed
+
     for prim in stage.Traverse():
         prim_path = str(prim.GetPath())
         if prim.HasAPI(UsdPhysics.RigidBodyAPI):
@@ -523,22 +553,84 @@ def inspect_physics(path: Path) -> dict[str, Any]:
                 colliders.append(prim_path)
         if prim.HasAPI(UsdPhysics.MassAPI):
             api = UsdPhysics.MassAPI(prim)
-            mass = api.GetMassAttr().Get()
-            density = api.GetDensityAttr().Get()
-            if (mass is not None and float(mass) > 0) or (
-                density is not None and float(density) > 0
-            ):
-                masses.append({"prim": prim_path, "mass": mass, "density": density})
-        if prim.HasAPI(UsdPhysics.MaterialAPI):
-            api = UsdPhysics.MaterialAPI(prim)
-            physics_materials.append(
-                {
-                    "prim": prim_path,
-                    "static_friction": api.GetStaticFrictionAttr().Get(),
-                    "dynamic_friction": api.GetDynamicFrictionAttr().Get(),
-                    "restitution": api.GetRestitutionAttr().Get(),
-                }
+            mass = authored_value(api.GetMassAttr())
+            density = authored_value(api.GetDensityAttr())
+            parsed_mass = (
+                finite_number(mass, label=f"{prim_path} mass", minimum=0.0)
+                if mass is not None
+                else None
             )
+            parsed_density = (
+                finite_number(
+                    density, label=f"{prim_path} density", minimum=0.0
+                )
+                if density is not None
+                else None
+            )
+            if parsed_mass == 0.0:
+                raise ContentAgentsError(f"{prim_path} mass must be greater than zero")
+            if parsed_density == 0.0:
+                raise ContentAgentsError(
+                    f"{prim_path} density must be greater than zero"
+                )
+            if parsed_mass is not None or parsed_density is not None:
+                authored_property = "mass" if parsed_mass is not None else "density"
+                authored_value_number = (
+                    parsed_mass if parsed_mass is not None else parsed_density
+                )
+                masses.append(
+                    {
+                        "prim": prim_path,
+                        "mass": parsed_mass,
+                        "density": parsed_density,
+                        "authored_property": authored_property,
+                        "authored_value": authored_value_number,
+                    }
+                )
+        if prim.HasAPI(UsdPhysics.MaterialAPI):
+            physics_material_prims.append(prim_path)
+            api = UsdPhysics.MaterialAPI(prim)
+            static_friction = authored_value(api.GetStaticFrictionAttr())
+            dynamic_friction = authored_value(api.GetDynamicFrictionAttr())
+            parsed_static = (
+                finite_number(
+                    static_friction,
+                    label=f"{prim_path} static friction",
+                    minimum=FRICTION_MIN,
+                    maximum=FRICTION_MAX,
+                )
+                if static_friction is not None
+                else None
+            )
+            parsed_dynamic = (
+                finite_number(
+                    dynamic_friction,
+                    label=f"{prim_path} dynamic friction",
+                    minimum=FRICTION_MIN,
+                    maximum=FRICTION_MAX,
+                )
+                if dynamic_friction is not None
+                else None
+            )
+            if parsed_static is not None or parsed_dynamic is not None:
+                authored_property = (
+                    "static_friction"
+                    if parsed_static is not None
+                    else "dynamic_friction"
+                )
+                authored_value_number = (
+                    parsed_static if parsed_static is not None else parsed_dynamic
+                )
+                physics_materials.append(
+                    {
+                        "prim": prim_path,
+                        "static_friction": parsed_static,
+                        "dynamic_friction": parsed_dynamic,
+                        "restitution": authored_value(api.GetRestitutionAttr()),
+                        "authored_property": authored_property,
+                        "authored_value": authored_value_number,
+                    }
+                )
         for rel in prim.GetRelationships():
             if (
                 rel.GetName().startswith("material:binding")
@@ -550,7 +642,8 @@ def inspect_physics(path: Path) -> dict[str, Any]:
         "rigid_body": bool(rigid),
         "collision": bool(colliders),
         "mass_or_density": bool(masses),
-        "physics_material": bool(physics_materials),
+        "physics_material": bool(physics_material_prims),
+        "friction": bool(physics_materials),
         "visual_material_binding": bool(visual_bindings),
     }
     if not all(checks.values()):
@@ -561,6 +654,7 @@ def inspect_physics(path: Path) -> dict[str, Any]:
         "rigid_body_prims": rigid,
         "collision_prims": colliders,
         "mass_properties": masses,
+        "physics_material_prims": physics_material_prims,
         "physics_materials": physics_materials,
         "visual_material_binding_prims": sorted(set(visual_bindings)),
     }
@@ -848,25 +942,44 @@ def package_stage(*, run_uri: str) -> dict[str, Any]:
         scene_spec_uri = _s3_join(run_uri, "package", "scene_spec.json")
         first_mass = inspection["mass_properties"][0]
         first_material = inspection["physics_materials"][0]
+        mass_property = first_mass.get("authored_property")
+        mass_value = first_mass.get("authored_value")
+        if mass_property not in {"mass", "density"} or mass_value is None:
+            raise ContentAgentsError(
+                "physics inspection did not select an authored mass or density"
+            )
+        friction_property = first_material.get("authored_property")
+        friction_value = first_material.get("authored_value")
+        if (
+            friction_property not in {"static_friction", "dynamic_friction"}
+            or friction_value is None
+        ):
+            raise ContentAgentsError(
+                "physics inspection did not select an authored friction coefficient"
+            )
+        object_spec = {
+            "name": "content_agents_rigid_object",
+            "asset_source": "byo_mesh",
+            "role": "manipuland",
+            "uri": asset_uri,
+            "scale": 1.0,
+            "pos": [0.5, 0.0, 0.05],
+            "color": [0.32, 0.35, 0.38],
+            mass_property: mass_value,
+            "friction": friction_value,
+            "friction_source": friction_property,
+            "fixed": False,
+        }
+        for coefficient in ("static_friction", "dynamic_friction"):
+            value = first_material.get(coefficient)
+            if value is not None:
+                object_spec[coefficient] = value
         scene_spec = {
             "schema": SCENE_SPEC_SCHEMA,
             "source_uri": asset_uri,
             "goal_pos": [0.5, 0.3, 0.04],
             "goal_threshold": 0.05,
-            "objects": [
-                {
-                    "name": "content_agents_rigid_object",
-                    "asset_source": "byo_mesh",
-                    "role": "manipuland",
-                    "uri": asset_uri,
-                    "scale": 1.0,
-                    "pos": [0.5, 0.0, 0.05],
-                    "color": [0.32, 0.35, 0.38],
-                    "mass": first_mass.get("mass"),
-                    "friction": first_material.get("static_friction"),
-                    "fixed": False,
-                }
-            ],
+            "objects": [object_spec],
             "consumer_contract": {
                 "accepted": "isaac_lab_rigid_object",
                 "genesis_direct_usd": False,

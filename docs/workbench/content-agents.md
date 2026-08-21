@@ -36,6 +36,14 @@ objects under `s3://<configured-bucket>/content-agents/<run-id>/`:
    self-contained USDZ, and emits provenance, reports, `scene_spec.json`, and
    `sim_asset_manifest.json`.
 
+The packaged SceneSpec preserves the authored USD mass choice without inventing
+one: it contains either a positive `mass` or a positive `density`, never an
+accepted null mass. The legacy `friction` scalar is always a finite authored
+static or dynamic coefficient in the Isaac handoff range (`0.1` through `2.0`);
+`friction_source` records which USD attribute supplied it, and any authored
+`static_friction` and `dynamic_friction` values are preserved separately.
+Restitution without either friction attribute is not rigid-ready.
+
 The accepted consumer is one Isaac rigid object. Arbitrary scenes, articulated
 robots, joints, and generated textures are not claimed. Genesis does not consume
 USD directly through this handoff, so no Genesis compatibility is claimed.

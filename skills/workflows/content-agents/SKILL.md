@@ -70,7 +70,9 @@ caches must remain absent from the image.
    `NEBIUS_TOKEN_FACTORY_KEY` and S3 credentials through `--secret-env`.
 7. Require non-empty material/physics/validation renders, a passing upstream
    `validation_result.json`, a reopenable USD/USDZ, and all rigid/collision/
-   mass-or-density/friction/material-binding checks in the manifest.
+   non-null authored mass-or-density/material-binding checks in the manifest.
+   Friction requires at least one authored static or dynamic coefficient in the
+   Isaac handoff range; restitution alone is not friction.
 
 All render-bearing states must use `RTXPRO6000:1`. B200/B300 lack RT cores and
 are invalid OVRTX targets. Hosted VLM inference is already zero-GPU from NPA's
