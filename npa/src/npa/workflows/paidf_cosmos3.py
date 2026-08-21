@@ -911,7 +911,17 @@ def route_quality_disposition(disposition_uri: str, decision_uri: str) -> str:
     expected = (
         "promote_checkpoint" if quality_status == "accepted" else "loop_back"
     )
-    if quality_status not in {"accepted", "rejected"} or recorded_decision != expected:
+    if quality_status not in {"accepted", "rejected"}:
+        raise PaidfCosmos3Error("quality disposition has an inconsistent decision")
+    if recorded_decision is None:
+        # Runs started by the pre-decision disposition writer can reach this state
+        # after an operator repairs and resumes the driver.  Persist the uniquely
+        # derivable route before continuing so downstream acceptance checks still
+        # consume one durable, self-consistent disposition.  A present conflicting
+        # value remains a hard failure below.
+        disposition["decision"] = expected
+        _write_json(disposition, disposition_uri)
+    elif recorded_decision != expected:
         raise PaidfCosmos3Error("quality disposition has an inconsistent decision")
     write_decision(decision_uri, expected)
     return expected

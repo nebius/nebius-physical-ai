@@ -543,6 +543,36 @@ def test_quality_route_and_promotion_guard_require_durable_acceptance(
         c3.require_accepted_quality(str(disposition))
 
 
+def test_quality_route_repairs_pre_decision_disposition_before_promotion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    disposition = tmp_path / "quality_disposition.json"
+    decision = tmp_path / "decision.json"
+    disposition.write_text(
+        json.dumps(
+            {
+                "quality_status": "accepted",
+                "evaluator_status": "completed",
+                "hard_checks_passed": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.decisions.write_decision",
+        lambda uri, value: Path(uri).write_text(
+            json.dumps({"decision": value}), encoding="utf-8"
+        ),
+    )
+
+    assert (
+        c3.route_quality_disposition(str(disposition), str(decision))
+        == "promote_checkpoint"
+    )
+    assert json.loads(disposition.read_text())["decision"] == "promote_checkpoint"
+    c3.require_accepted_quality(str(disposition))
+
+
 def test_finalize_non_object_manifest_raises_domain_error(tmp_path: Path) -> None:
     root = tmp_path / "run"
     (root / "cosmos_augmented").mkdir(parents=True)
