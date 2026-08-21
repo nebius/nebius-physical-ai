@@ -38,7 +38,7 @@ CONTRACT = NPA_ROOT / "docker/workbench/packaging-contract.yaml"
 # an independent literal makes a one-sided tag edit fail instead of teaching the
 # test the same mistake; this is safer than coupling packaging tests to another
 # mutable tag source.
-COSMOS3_RELEASE_TAG = "1.2.2-cu130-r5"
+COSMOS3_RELEASE_TAG = "1.2.2-cu130-r6"
 
 # Anything that would pull weight bytes into a build layer.
 WEIGHT_FETCH_PATTERNS = (

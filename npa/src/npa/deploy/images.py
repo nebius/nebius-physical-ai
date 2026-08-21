@@ -209,7 +209,7 @@ SUPPORTED_TOOL_VERSIONS = {
     # imageio-ffmpeg's redundant bundled binary.
     # Earlier tags remain immutable provenance. No weights are baked; gated
     # Cosmos3 checkpoints download at runtime.
-    "cosmos3": "1.2.2-cu130-r5",
+    "cosmos3": "1.2.2-cu130-r6",
     "cosmos3-reason": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     # Additive image releases that preserve the tool versions while including
     # the immutable SkyPilot 0.12.2 Kubernetes bootstrap closure. The original
