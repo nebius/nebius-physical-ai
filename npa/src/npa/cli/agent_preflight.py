@@ -316,8 +316,10 @@ def agent_token_factory_result(tf_key: str | None = None) -> CheckResult:
         status=WARN,
         summary="Token Factory API key not found; agent chat will return 503 until it is set.",
         remedy=(
-            "Get a key (starts with 'v1.') at https://tokenfactory.nebius.com/ and run "
-            "`npa configure --token-factory-key <key>`, then re-run `npa agent bootstrap`."
+            "Get a key (starts with 'v1.') at https://tokenfactory.nebius.com/, "
+            "export NEBIUS_TOKEN_FACTORY_KEY, run "
+            "`npa configure --save-env-credentials`, then re-run "
+            "`npa agent bootstrap`."
         ),
     )
 

@@ -1228,7 +1228,7 @@ def format_configure_s3() -> str:
         [
             "**Configure S3 storage** for NPA workflows:",
             "1. Ensure credentials in `~/.npa/credentials.yaml` on your operator machine.",
-            "2. Run `npa configure provision` (or `npa workbench` deploy with `--storage-endpoint`).",
+            "2. Run `npa configure` and complete project and writable-storage setup.",
             "3. Use **storage.eu-north1.nebius.cloud** for the primary cluster (not uk-south1 default).",
             "4. Pass `--input-path` / `--output-path` as `s3://…` URIs between pipeline stages.",
             "- **workbench toolRef**: `workbench.nebius-infra` for cluster/storage provisioning.",

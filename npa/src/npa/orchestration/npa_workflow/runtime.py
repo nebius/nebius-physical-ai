@@ -1288,9 +1288,9 @@ class SkyPilotWaveExecutor:
             raise NpaWorkflowError(
                 "Required project-scoped workflow credential(s) are unavailable: "
                 + ", ".join(missing)
-                + ". Restore them with `npa configure --project "
+                + ". Re-run `npa configure` and select project alias "
                 + self.options.project
-                + "` and resume the same run; no job was launched."
+                + ", then resume the same run; no job was launched."
             )
         attempt.credential_names = sorted(secret_values)
         attempt.credential_fingerprint = hashlib.sha256(
