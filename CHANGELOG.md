@@ -19,6 +19,14 @@ a versioned heading when a release is cut.
   ranking and holdout evaluator stages. This prevents a real workflow from
   reaching evaluation and failing at CLI argument parsing.
 
+### PAIDF supports reproducible appearance sampling
+
+- Cosmos3 PAIDF runs can use an appearance seed independent of the run ID for
+  controlled comparisons. The coherent sampler now also includes a low-key,
+  dark-matte profile suited to wrist-mounted manipulation footage. Reused
+  attributes are de-duplicated before evaluator question generation so a
+  multiple-choice check cannot contain indistinguishable answer letters.
+
 ### PAIDF can condition augmentation on segmentation, not just edges
 
 Cosmos Transfer 2.5 accepts four control modalities and NPA only ever used two.

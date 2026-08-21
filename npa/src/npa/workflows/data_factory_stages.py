@@ -63,7 +63,7 @@ APPEARANCE_PROFILES: tuple[dict[str, str], ...] = (
     },
     {
         "lighting": "dim soft evening illumination",
-        "background": "solid charcoal backdrop",
+        "background": "solid dark-gray backdrop",
         "color_grade": "high-contrast color palette",
         "surface_finish": "matte uniform backdrop finish",
     },
@@ -91,9 +91,21 @@ APPEARANCE_PROFILES: tuple[dict[str, str], ...] = (
         "color_grade": "muted neutral color palette",
         "surface_finish": "satin uniform backdrop finish",
     },
+    {
+        # A coherent low-key treatment for wrist-mounted manipulation cameras:
+        # dark matte work surfaces commonly read warm from the foreground task
+        # object while retaining dim, even scene illumination.
+        "lighting": "dim soft evening illumination",
+        "background": "solid dark-gray backdrop",
+        "color_grade": "warm amber color palette",
+        "surface_finish": "matte uniform backdrop finish",
+    },
 )
 APPEARANCE_VARIABLES = {
-    key: [profile[key] for profile in APPEARANCE_PROFILES]
+    # A coherent profile may intentionally reuse one attribute from another.
+    # Keep the evaluator's multiple-choice pool unique so equivalent profiles
+    # cannot produce two indistinguishable correct-answer letters.
+    key: list(dict.fromkeys(profile[key] for profile in APPEARANCE_PROFILES))
     for key in APPEARANCE_PROFILES[0]
 }
 
