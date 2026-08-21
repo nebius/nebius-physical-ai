@@ -794,10 +794,10 @@ def test_a_missing_workbench_image_carries_its_build_command(
     assert "docker login" in check.remedy
 
 
-def test_submit_checks_the_project_registry_not_the_first_party_default(
+def test_submit_preserves_an_existing_project_registry_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`npa configure` saves a project registry; the image pins must use it.
+    """Legacy saved registry overrides remain effective without new configure writes.
 
     Without this, preflight checked one registry while the run pulled from
     another, and the build command it printed named the wrong destination.

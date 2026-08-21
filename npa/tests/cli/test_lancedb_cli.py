@@ -388,7 +388,7 @@ def test_lancedb_import_bdd100k_service_calls_endpoint(monkeypatch: pytest.Monke
 def test_lancedb_container_image_name_resolves() -> None:
     assert (
         DEFAULT_CONTAINER_IMAGE
-        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-lancedb:"
+        == "ghcr.io/nebius/nebius-physical-ai/npa-lancedb:"
         "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z"
     )
 

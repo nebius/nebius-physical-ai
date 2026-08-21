@@ -370,6 +370,60 @@ def test_access_pass_when_validator_ok(monkeypatch) -> None:
     assert "ngc" in {c["name"] for c in payload["checks"]}
 
 
+def test_access_fails_on_ngc_auth_rejection(monkeypatch) -> None:
+    from npa.cli.workbench import health as health_module
+
+    monkeypatch.setattr(
+        health_module, "load_credentials", lambda *a, **k: _AccessCreds()
+    )
+    monkeypatch.setattr(
+        health_module,
+        "validate_hf_access",
+        lambda token, repo, repo_type: _HFOK(ok=True),
+    )
+    monkeypatch.setattr(
+        "npa.workbench.nurec.nurec.check_ngc_image_access",
+        lambda key: "auth-401",
+    )
+
+    result = runner.invoke(
+        app,
+        ["workbench", "health", "access", "--capability", "nurec"],
+    )
+
+    assert result.exit_code == 1
+    assert "FAIL" in result.output
+    assert "NGC Catalog access" in result.output
+
+
+def test_access_warns_on_transient_ngc_failure_without_rejecting_key(
+    monkeypatch,
+) -> None:
+    from npa.cli.workbench import health as health_module
+
+    monkeypatch.setattr(
+        health_module, "load_credentials", lambda *a, **k: _AccessCreds()
+    )
+    monkeypatch.setattr(
+        health_module,
+        "validate_hf_access",
+        lambda token, repo, repo_type: _HFOK(ok=True),
+    )
+    monkeypatch.setattr(
+        "npa.workbench.nurec.nurec.check_ngc_image_access",
+        lambda key: "unreachable",
+    )
+
+    result = runner.invoke(
+        app,
+        ["workbench", "health", "access", "--capability", "nurec"],
+    )
+
+    assert result.exit_code == 0
+    assert "WARN" in result.output
+    assert "credential presence alone does not prove pull access" in result.output
+
+
 def test_access_rejects_unknown_capability(monkeypatch) -> None:
     from npa.cli.workbench import health as health_module
 

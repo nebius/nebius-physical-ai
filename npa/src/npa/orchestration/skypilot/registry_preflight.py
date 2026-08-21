@@ -484,14 +484,17 @@ def _server_side_copy_hint(reference: ImageReference) -> str:
 
     try:
         from npa.deploy.images import (
+            DEFAULT_SOURCE_CONTAINER_REGISTRY,
             backup_container_registry,
-            primary_container_registry,
         )
     except Exception:  # noqa: BLE001 - the hint must never be what fails
         return ""
     target = f"{reference.registry}/{reference.repository}:{reference.reference}"
     sources = []
-    for candidate in (primary_container_registry(), backup_container_registry()):
+    for candidate in (
+        DEFAULT_SOURCE_CONTAINER_REGISTRY,
+        backup_container_registry(),
+    ):
         source_registry = str(candidate or "").rstrip("/")
         if not source_registry:
             continue

@@ -1,20 +1,23 @@
 # Public Workbench Container Image Catalog
 
-Repository-selected public-mirror images use:
+Repository-selected runtime images use the public mirror by default:
 
 ```text
 ghcr.io/nebius/nebius-physical-ai/<image>:<tag>
 ```
 
-External consumers can pull published entries anonymously from GHCR:
+Consumers can pull published entries anonymously from GHCR without configuring
+a registry in NPA:
 
 ```bash
-export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
-docker pull "${NPA_REGISTRY}/npa-retargeting:0.1.1"
+docker pull ghcr.io/nebius/nebius-physical-ai/npa-retargeting:0.1.1
 ```
 
+`NPA_REGISTRY` remains available for private or locally modified images, and
+existing saved `container_registry` overrides remain compatible.
+
 The catalog was verified against the public GHCR tag and OCI manifest APIs on
-2026-08-19. All 26 images selected by the repository's public publishing plan
+2026-08-21. All 26 images selected by the repository's public publishing plan
 resolved anonymously. **Built** is the UTC build date of the newest listed
 variant; reproducible images that intentionally zero their OCI `created` field
 use the timestamp in the immutable tag and `npa.build_ts` label.

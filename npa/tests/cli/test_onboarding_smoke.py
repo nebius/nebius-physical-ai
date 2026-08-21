@@ -132,7 +132,10 @@ def test_known_project_configure_is_non_interactive_and_reuses_storage(
     assert project["project_id"] == "project-known"
     assert project["tenant_id"] == "tenant-known"
     assert project["region"] == "eu-north1"
-    assert project["container_registry"]
+    assert "container_registry" not in project
+    assert config_module.resolve_container_registry("paidf-prod") == (
+        "ghcr.io/nebius/nebius-physical-ai"
+    )
 
 
 def test_known_project_configure_requires_complete_identity_flags() -> None:

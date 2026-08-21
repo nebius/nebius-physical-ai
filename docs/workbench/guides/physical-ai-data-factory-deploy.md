@@ -79,8 +79,8 @@ python -m pip install -e npa
 # S3 keys, Token Factory key, and optional HF/NGC tokens under ~/.npa/.
 npa configure
 eval "$(npa configure --show --env)"   # emits non-secret NPA_* assignments only
-# Force the public mirror after eval; configure --env may restore a saved
-# project registry.
+# Optional for a legacy config with a saved private-registry override: force the
+# public default explicitly.
 export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
 
 SPEC=npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
@@ -165,10 +165,10 @@ Only non-secret IDs are arguments. Keep all credential material in the active
 Nebius profile and `~/.npa/credentials.yaml`, never shell history.
 
 The configured S3 endpoint is selected automatically; `--s3-endpoint` is only an
-explicit override. `NPA_REGISTRY` has the same precedence in `preflight-images`
-and submit: an explicit `--registry` wins, then `NPA_REGISTRY`, then the selected
-project's registry. Set `REGISTRY=ghcr.io/nebius/nebius-physical-ai` explicitly
-to choose the public anonymous mirror even when the project has a private one.
+explicit override. Workbench images default to the anonymous GHCR mirror.
+`NPA_REGISTRY` remains a custom-image override in `preflight-images` and submit:
+an explicit `--registry` wins, then `NPA_REGISTRY`, then a saved project
+override, then GHCR.
 The quick start requests one real augmentation variant for a decisive first run;
 omit `--var n_augmentations=1` to use the spec's default two-variant multiply, or
 raise it together with the requested GPU count for a larger batch.
@@ -327,8 +327,8 @@ npa configure
 # npa configure --no-interactive --save-env-credentials ...known project flags...
 eval "$(npa configure --show --env)"
 PROJECT="$NPA_PROJECT_ALIAS"
-# Keep this public override after configure --env; eval may restore the saved
-# project registry.
+# Optional for a legacy config with a saved private-registry override: force the
+# public default explicitly.
 export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
 REGISTRY="$NPA_REGISTRY"
 npa workbench health preflight
@@ -540,9 +540,9 @@ The documented path uses on-demand nodes. If that capacity is unavailable,
 replace `--on-demand` with `--preemptible`; Nebius may reclaim a preemptible GPU
 node mid-stage, so rely on PAIDF's durable S3 manifests and resume the run.
 
-The container registry must be reachable for the workbench images. Point
-`NPA_REGISTRY` (or the project `registry_id`) at your registry, e.g.
-`cr.<region>.nebius.cloud/<registry-id>`.
+The default GHCR images must be reachable anonymously. For a private or modified
+image, point `NPA_REGISTRY` at its registry, e.g.
+`cr.<region>.nebius.cloud/<registry-id>`, and configure pull credentials.
 
 ---
 
@@ -638,13 +638,13 @@ NPA_AGENT_CHAT_LIVE=1 npa agent verify-live --project <alias> --name <agent-name
 Three stages pull a workbench image: `augment` needs `npa-cosmos2-transfer`,
 `evaluate` needs `npa-cosmos-evaluator`, and `curate` needs `npa-cosmos-curate`.
 
-The public `ghcr.io/nebius/nebius-physical-ai` mirror is anonymously pullable.
-A new private project registry starts empty: `npa configure` selects or creates
-it, but does not mirror images into it. Pick one path and preflight the same
-registry submit will use:
+The public `ghcr.io/nebius/nebius-physical-ai` mirror is anonymously pullable
+and is the runtime default. A private project registry starts empty and is only
+used when you select it explicitly. Pick one path and preflight the same registry
+submit will use:
 
 ```bash
-REGISTRY=ghcr.io/nebius/nebius-physical-ai    # or the configured NPA_REGISTRY
+REGISTRY=ghcr.io/nebius/nebius-physical-ai    # or your explicit NPA_REGISTRY
 npa workbench workflow preflight-images npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml \
   --project "$PROJECT" --registry "$REGISTRY"
 ```
@@ -666,7 +666,7 @@ or incompatible (tags below track
 `npa/src/npa/deploy/images.py`, which is what submit pulls):
 
 ```bash
-REGISTRY="$(npa configure --show 2>/dev/null | grep -o 'cr\.[^ ]*' | head -1)"   # or your NPA_REGISTRY
+REGISTRY="$NPA_REGISTRY"
 printf '%s' "$(nebius iam get-access-token)" \
   | docker login "${REGISTRY%%/*}" -u iam --password-stdin
 

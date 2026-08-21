@@ -9,10 +9,10 @@ account authorization upstream. NPA checks repository access with the supplied
 token and does not invent another acceptance flag. NGC access likewise requires
 both a key and a successful repository entitlement probe.
 
-Every check is a pure function that takes the resolved tokens plus an injectable
-Hugging Face validator; the CLI wires the real probe, tests inject fakes.
-Nothing here imports GPU-heavy packages or touches infrastructure at import
-time.
+Every check is a pure function that takes the resolved tokens plus injectable
+Hugging Face and NGC validators; the CLI wires the real probes, tests inject
+fakes. Nothing here imports GPU-heavy packages or touches infrastructure at
+import time.
 """
 
 from __future__ import annotations
@@ -135,8 +135,16 @@ def assets_for(capabilities: Iterable[str] | None) -> tuple[GatedAsset, ...]:
 
 def gated_hf_repos(capabilities: Iterable[str] | None = None) -> tuple[str, ...]:
     """Return the license-gated Hugging Face repos for *capabilities*."""
+    return tuple(asset.repo for asset in gated_hf_assets(capabilities))
+
+
+def gated_hf_assets(
+    capabilities: Iterable[str] | None = None,
+) -> tuple[GatedAsset, ...]:
+    """Return gated HF assets with the repository type needed by live probes."""
+
     return tuple(
-        asset.repo
+        asset
         for asset in assets_for(capabilities)
         if asset.provider == HF and asset.gated
     )
@@ -153,6 +161,13 @@ def _ngc_needed(capabilities: Iterable[str] | None) -> bool:
 
 def _cap_suffix(asset: GatedAsset) -> str:
     return f" [{', '.join(asset.capabilities)}]"
+
+
+def _redact_secret(text: Any, secret: str) -> str:
+    """Keep validator diagnostics useful without ever returning a credential."""
+
+    rendered = str(text or "")
+    return rendered.replace(secret, "<redacted>") if secret else rendered
 
 
 def check_hf_asset(
@@ -192,7 +207,16 @@ def check_hf_asset(
             status=PASS,
             summary=f"HF token present; {asset.repo} access not verified (offline).{caps}",
         )
-    result = hf_validator(token, asset.repo, asset.repo_type)
+    try:
+        result = hf_validator(token, asset.repo, asset.repo_type)
+    except Exception as exc:  # noqa: BLE001 - a probe exception is transient
+        return CheckResult(
+            name=name,
+            status=WARN,
+            summary=f"Could not verify HF access to {asset.repo} (transient).{caps}",
+            remedy="Retry when the network is available.",
+            details=(f"probe failed ({type(exc).__name__})",),
+        )
     if getattr(result, "ok", False):
         return CheckResult(
             name=name,
@@ -203,7 +227,10 @@ def check_hf_asset(
             ),
         )
     status_code = getattr(result, "status_code", None)
-    error = getattr(result, "error", "") or "unknown error"
+    error = _redact_secret(
+        getattr(result, "error", "") or "unknown error",
+        token,
+    )
     if status_code in {401, 403}:
         if asset.gated:
             return CheckResult(
@@ -281,20 +308,49 @@ def check_ngc_key(
                 "was not probed in offline mode."
             ),
         )
-    outcome = str(ngc_validator(key) or "unreachable")
+    try:
+        outcome = _redact_secret(ngc_validator(key) or "unreachable", key)
+    except Exception as exc:  # noqa: BLE001 - a probe exception is transient
+        return CheckResult(
+            name="ngc",
+            status=WARN,
+            summary="Could not verify NGC repository access (transient).",
+            remedy="Retry `npa workbench health access` when the network is available.",
+            details=(f"probe failed ({type(exc).__name__})",),
+        )
     if outcome == "reachable":
         return CheckResult(
             name="ngc",
             status=PASS,
             summary="NGC_API_KEY can pull the selected NuRec NRE repository.",
         )
+    credential_rejected = outcome in {
+        "auth-no-token",
+        "auth-401",
+        "auth-403",
+    }
+    entitlement_rejected = outcome in {
+        "entitlement-required",
+        "tags-401",
+        "tags-403",
+    }
+    rejected = credential_rejected or entitlement_rejected
+    if credential_rejected:
+        summary = f"NGC credential rejected during repository auth: {outcome}."
+    elif entitlement_rejected:
+        summary = f"NGC repository entitlement denied: {outcome}."
+    else:
+        summary = f"NGC repository pull preflight failed: {outcome}."
     return CheckResult(
         name="ngc",
-        status=FAIL if outcome == "entitlement-required" else WARN,
-        summary=f"NGC repository pull preflight failed: {outcome}.",
+        status=FAIL if rejected else WARN,
+        summary=summary,
         remedy=(
-            "Verify NGC_API_KEY and repository entitlement. The credential alone "
-            "does not grant pull access."
+            "Regenerate NGC_API_KEY with NGC Catalog access if needed, verify the "
+            "repository entitlement, then re-run `npa workbench health access`."
+            if rejected
+            else "Retry when the NGC registry is reachable; credential presence "
+            "alone does not prove pull access."
         ),
     )
 
@@ -338,9 +394,9 @@ def access_note(results: list[CheckResult]) -> str:
     """Return a one-line ``[NOTE]`` naming the models HF/NGC cannot access.
 
     HF entries with a definitive rejection (401/403) are listed as "no access";
-    entries that could not be reached are counted as "unverified". NGC access is
-    a key presence/format check (there is no offline NGC probe), so a missing or
-    malformed key lists the NVIDIA models its absence blocks.
+    entries that could not be reached are counted as "unverified". NGC separates
+    missing/malformed keys, transient probe failures, credential rejection, and
+    repository-entitlement denial.
     """
 
     hf_no = [r.name for r in results if r.name != "ngc" and r.status == FAIL]
@@ -353,6 +409,11 @@ def access_note(results: list[CheckResult]) -> str:
         and ("not set" in ngc.summary or "does not look" in ngc.summary)
     )
     ngc_unverified = bool(ngc is not None and ngc.status == WARN and not ngc_missing)
+    ngc_credential_rejected = bool(
+        ngc is not None
+        and ngc.status == FAIL
+        and "credential rejected" in ngc.summary
+    )
 
     if not hf_no and ngc_ok and not hf_unverified:
         return "[NOTE] HF and NGC tokens can access all checked workbench models."
@@ -373,6 +434,10 @@ def access_note(results: list[CheckResult]) -> str:
             "NGC repository entitlement unverified for: "
             + ", ".join(NGC_CAPABILITIES)
         )
+    elif ngc_credential_rejected:
+        parts.append(
+            "NGC credential rejected for: " + ", ".join(NGC_CAPABILITIES)
+        )
     elif not ngc_ok:
         parts.append(
             "NGC repository entitlement denied for: "
@@ -384,6 +449,7 @@ def access_note(results: list[CheckResult]) -> str:
     note = "[NOTE] " + "; ".join(parts) + "."
     if hf_no:
         note += " Accept gated licenses at https://huggingface.co/<model>."
+    note += " Re-run `npa workbench health access` for full remediation."
     return note
 
 
@@ -400,6 +466,7 @@ __all__ = [
     "check_hf_asset",
     "check_ngc_key",
     "check_workbench_access",
+    "gated_hf_assets",
     "gated_hf_repos",
     "has_failure",
     "hf_model_url",

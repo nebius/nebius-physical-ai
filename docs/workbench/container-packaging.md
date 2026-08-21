@@ -431,8 +431,9 @@ image lands without republishing every existing image. A second run after the on
 visibility flips likewise skips all matching copies and only re-verifies anonymous pulls.
 
 or the `Publish public images` GitHub Actions workflow (manual dispatch,
-dry-run by default). **Consumers in any tenant** then pull the OSS images by
-pointing the resolver at the public mirror:
+dry-run by default). **Consumers in any tenant** then pull the OSS images from
+the default public mirror. An explicit export is only needed to override a
+legacy saved private-registry value:
 
 ```bash
 export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai   # OSS images, any tenant

@@ -835,13 +835,15 @@ def test_resolve_container_registry_honors_registry_id(
     )
 
 
-def test_resolve_container_registry_prefers_project_override(
+def test_resolve_container_registry_prefers_environment_override(
     isolated_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _write_full_config(isolated_config)
-    monkeypatch.setenv("NPA_REGISTRY_ID", "myregid123")
-    # proj-a has an explicit container_registry, which wins over env.
-    assert config.resolve_container_registry("proj-a") == "registry.example/npa"
+    monkeypatch.setenv("NPA_REGISTRY", "registry.example/environment")
+    assert (
+        config.resolve_container_registry("proj-a")
+        == "registry.example/environment"
+    )
 
 
 def test_write_config_locks_down_file_and_directory(tmp_path, monkeypatch) -> None:

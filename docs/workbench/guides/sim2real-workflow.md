@@ -152,10 +152,10 @@ image pull failures are handled in the next gate. See
 
 ## 5. Build/push once and prove the exact image pulls
 
-The workflow does not copy images into the configured registry. Build/push the
-runtime images using the repository scripts, or use already validated images
-from your private registry. Never submit tags: resolve and retain immutable
-`@sha256:` references for these six config keys:
+The workflow does not copy images between registries. Use the public GHCR
+defaults, or build/push modified runtime images to an explicitly selected private
+registry. Never submit tags: resolve and retain immutable `@sha256:` references
+for these six config keys:
 
 | Config key | Required image |
 | --- | --- |

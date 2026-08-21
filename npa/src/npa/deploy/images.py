@@ -9,19 +9,24 @@ import os
 from pathlib import Path
 from typing import Any
 
-# Primary public Workbench registry (eu-north1). A registry path is a public
-# locator, not a credential: pulls are still gated by the registry pull secret /
-# IAM token, which are never committed. Operators can override it with NPA_REGISTRY
-# or `container_registry` in ~/.npa/config.yaml.
+# The runtime default is the anonymous GHCR mirror. Operators still override it
+# with NPA_REGISTRY (or a legacy ``container_registry`` value in config) when
+# they need private or locally modified images.
+DEFAULT_PUBLIC_CONTAINER_REGISTRY = "ghcr.io/nebius/nebius-physical-ai"
+DEFAULT_CONTAINER_REGISTRY = DEFAULT_PUBLIC_CONTAINER_REGISTRY
+
+# Maintainer builds and the public-image publisher use the private Nebius source
+# registry. Keep this separate from the runtime default: changing what users pull
+# must never make the mirror publisher read its source from its own target.
+# DEFAULT_CONTAINER_REGISTRY_ID retains its public API name for compatibility.
 DEFAULT_CONTAINER_REGISTRY_ID = "e00cm0vc6t09m0z5gw"
-DEFAULT_CONTAINER_REGISTRY = (
+DEFAULT_SOURCE_CONTAINER_REGISTRY = (
     f"cr.eu-north1.nebius.cloud/{DEFAULT_CONTAINER_REGISTRY_ID}"
 )
-# Mirror registry (us-central1) used for region-agnostic failover: every tool
-# image is mirrored to both this and the primary (eu-north1) registry, so a pull
-# succeeds regardless of the caller's region — e.g. an in-cluster us-central1 pull
-# cannot reach the cross-region eu-north1 registry, and vice versa. A registry
-# path is a public locator, not a credential. Override with NPA_BACKUP_REGISTRY.
+# Private source-registry mirror (us-central1) used for region-aware failover by
+# maintainers and operators who explicitly select a private registry. The public
+# GHCR runtime default is global and needs no regional fallback. Override with
+# NPA_BACKUP_REGISTRY.
 BACKUP_CONTAINER_REGISTRY = "cr.us-central1.nebius.cloud/u00j7q4jjkahvsx0jy"
 DEFAULT_VLM_IMAGE_ENV = "NPA_VLM_IMAGE"
 DEFAULT_WORKBENCH_IMAGE_ENV = "NPA_WORKBENCH_IMAGE"
@@ -154,11 +159,10 @@ UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"ltx2"})
 # grant, so making images pullable by any Nebius tenant (or anyone) means
 # mirroring the publicly_publishable_tools() set to a public-capable registry.
 # GHCR is the default (public, anonymous pull, native to the GitHub org). A
-# registry path is a public locator, not a credential. Override with
-# NPA_PUBLIC_REGISTRY; consumers in any tenant pull the OSS images by setting
-# NPA_REGISTRY to this value.
+# registry path is a public locator, not a credential. Override publication with
+# NPA_PUBLIC_REGISTRY; runtime consumers use this canonical mirror by default and
+# set NPA_REGISTRY only for a custom/private registry.
 PUBLIC_CONTAINER_REGISTRY_ENV = "NPA_PUBLIC_REGISTRY"
-DEFAULT_PUBLIC_CONTAINER_REGISTRY = "ghcr.io/nebius/nebius-physical-ai"
 
 # A supported worker release can be available in the maintainer source registry
 # before an authorized human publishes it to the anonymous mirror. Keep public
@@ -511,7 +515,7 @@ def registry_from_env() -> str:
 
 
 def primary_container_registry() -> str:
-    """Resolve the primary registry: NPA_REGISTRY, then NPA_REGISTRY_ID, then default."""
+    """Resolve the runtime registry: explicit env override, then public default."""
     return registry_from_env() or DEFAULT_CONTAINER_REGISTRY
 
 
@@ -534,23 +538,26 @@ def container_image_candidates(
     image_variant: str | None = None,
     preferred_region: str | None = None,
 ) -> list[str]:
-    """Return image refs to try in order across both mirror registries.
+    """Return image refs to try in order for the selected registry.
 
-    Callers that support pull failover should iterate these so a pull works
-    region-agnostically: every image is mirrored to both registries, and a caller
-    that cannot reach one region (cross-region 403, or an identity without read on
-    the other project's registry) falls through to the other. ``preferred_region``
-    reorders so the caller's local-region registry (``cr.<region>.nebius.cloud``)
-    is tried first, avoiding a guaranteed-denied cross-region attempt.
+    The anonymous GHCR default is a single global candidate. Private-registry
+    callers retain the historical regional failover, and an explicit
+    NPA_BACKUP_REGISTRY enables it for any custom primary. ``preferred_region``
+    reorders private Nebius candidates so the local region is tried first.
     """
+    resolved_registry = registry or primary_container_registry()
     primary = container_image_for_tool(
         tool,
-        registry=registry,
+        registry=resolved_registry,
         tag=tag,
         gpu_target=gpu_target,
         image_variant=image_variant,
     )
     candidates = [primary]
+    if is_public_registry(resolved_registry) and not os.environ.get(
+        "NPA_BACKUP_REGISTRY", ""
+    ).strip():
+        return candidates
     backup_registry = backup_container_registry()
     if backup_registry:
         backup = container_image_for_tool(

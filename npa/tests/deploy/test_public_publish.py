@@ -383,6 +383,9 @@ def test_publish_plan_targets_public_registry_by_default() -> None:
     )
     for item in plan:
         assert item.target_ref.startswith(DEFAULT_PUBLIC_CONTAINER_REGISTRY + "/npa-")
+        assert item.source_ref.startswith(
+            images.DEFAULT_SOURCE_CONTAINER_REGISTRY + "/npa-"
+        )
     # npa-foxglove-embed carries only MIT (@foxglove/embed) + Apache-2.0 (Caddy)
     # content plus our own assets, so it belongs in the public set.
     assert "foxglove-embed" in {item.tool for item in plan}

@@ -245,12 +245,13 @@ export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
 docker pull "${NPA_REGISTRY}/npa-retargeting:0.1.1"
 ```
 
-Use your own Nebius registry when you need private or locally modified images —
-`npa configure` selects one, but it does **not** mirror workbench images into it,
-so a spec that pins them needs them built and pushed once:
+The GHCR mirror is the runtime default; no registry setup is required in
+`npa configure`. Use your own Nebius registry only when you need private or
+locally modified images, and select it with `NPA_REGISTRY` or an explicit image:
 
 ```bash
 REGISTRY_HOST=cr.eu-north1.nebius.cloud npa/scripts/nebius_registry_docker_login.sh
+export NPA_REGISTRY=cr.eu-north1.nebius.cloud/<your-registry-id>
 npa/docker/workbench/lerobot/build.sh --registry "$NPA_REGISTRY" --push
 ```
 

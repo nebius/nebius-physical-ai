@@ -2560,11 +2560,10 @@ def _emit_compact_submit_plan(plan, *, infrastructure: Mapping[str, object]) -> 
 def _resolve_submit_registry(registry: str, project: str) -> str:
     """Return the registry a submit should pull from.
 
-    An explicit --registry wins. Otherwise use the registry `npa configure` saved
-    for the project: the image pins otherwise resolved against the first-party
-    default even when the operator had selected (or been given) a project
-    registry, so preflight checked one registry while the run pulled from another
-    and the printed build command targeted the wrong place.
+    An explicit --registry wins, followed by NPA_REGISTRY and a legacy saved
+    project override. With none of those, image resolution uses the anonymous
+    GHCR default. Keeping saved overrides in this chain preserves existing custom
+    registry configurations without requiring registry setup for new projects.
     """
 
     explicit = str(registry or "").strip()
@@ -6482,7 +6481,7 @@ def preflight_images_cmd(
         "",
         "--project",
         "-p",
-        help="Project alias whose configured registry to check. Defaults to the configured project.",
+        help="Project alias whose image registry override/default to check. Defaults to the configured project.",
     ),
     image: str = typer.Option("", "--image", help="Pin every step to this image."),
     image_override: list[str] = typer.Option(

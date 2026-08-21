@@ -62,10 +62,10 @@ from typing import Any
 
 from npa.deploy import images
 from npa.deploy.images import (
+    DEFAULT_SOURCE_CONTAINER_REGISTRY,
     container_image_for_tool,
     is_publicly_redistributable,
     omniverse_restricted_image_names,
-    primary_container_registry,
     public_container_registry,
     publicly_publishable_tools,
 )
@@ -105,7 +105,7 @@ def build_publish_plan(
     """
     if not target_registry.strip():
         raise ValueError("target_registry is required")
-    source_registry = source_registry or primary_container_registry()
+    source_registry = source_registry or DEFAULT_SOURCE_CONTAINER_REGISTRY
     target = target_registry.rstrip("/")
 
     plan: list[PublishItem] = []
@@ -1035,7 +1035,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--source-registry",
         default=None,
-        help="Source registry to copy from (defaults to the primary Nebius registry).",
+        help="Source registry to copy from (defaults to the maintainer Nebius source registry).",
     )
     parser.add_argument(
         "--dry-run", action="store_true", help="Print the plan without copying."
