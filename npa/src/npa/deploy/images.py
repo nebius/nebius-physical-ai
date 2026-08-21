@@ -216,7 +216,10 @@ SUPPORTED_TOOL_VERSIONS = {
     # semantic-version tags remain valid for direct container use, but cannot be
     # workflow-worker defaults because their published bytes predate that closure.
     "cosmos-curate": "0.1.2-skypilot-v1-20260813T164700Z",
-    "cosmos-evaluator": "0.1.2-skypilot-v1-20260813T164700Z",
+    # Additive r2 release includes the evaluator CLI's deterministic
+    # --attribute-sample-policy contract used by PAIDF ranking/holdout stages.
+    # The original tag remains immutable provenance.
+    "cosmos-evaluator": "0.1.2-skypilot-v1-20260813T164700Z-r2",
     "groot": "0.1.0",
     "fiftyone": "1.15.0-post1-skypilot-v1-20260815-review5",
     "sonic": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",

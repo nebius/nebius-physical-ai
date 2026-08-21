@@ -12,6 +12,13 @@ a versioned heading when a release is cut.
   `npa.agent.api_error/v1` (`run_id_required_for_s3_uri`) instead of reading an
   arbitrary object.
 
+### PAIDF evaluator images match the workflow CLI contract
+
+- The Cosmos Evaluator image advances additively to an r2 tag containing the
+  deterministic `--attribute-sample-policy` option already rendered by PAIDF's
+  ranking and holdout evaluator stages. This prevents a real workflow from
+  reaching evaluation and failing at CLI argument parsing.
+
 ### PAIDF can condition augmentation on segmentation, not just edges
 
 Cosmos Transfer 2.5 accepts four control modalities and NPA only ever used two.
