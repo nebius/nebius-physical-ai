@@ -220,7 +220,7 @@ def test_full_loop_writes_stage_artifacts_and_candidate(tmp_path: Path) -> None:
     assert augment["status"] in {"executed_reference", "executed", "contract_ready"}
     assert (
         augment.get("image")
-        == "npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z"
+        == "npa-cosmos2-transfer:2.5.1-sam2-multigpu-20260817-r2"
     )
     assert (
         trigger["trigger_dataset_uri"] == "s3://bucket/sim2real-triggers/lerobot-pusht/"
@@ -1272,14 +1272,14 @@ def test_default_augment_image_uses_cosmos2_transfer_contract(monkeypatch) -> No
 
     assert (
         default_augment_image()
-        == "npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z"
+        == "npa-cosmos2-transfer:2.5.1-sam2-multigpu-20260817-r2"
     )
 
     config = build_config_from_env(run_id="sim2real-images")
 
     assert (
         config.augment_image
-        == "npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z"
+        == "npa-cosmos2-transfer:2.5.1-sam2-multigpu-20260817-r2"
     )
     assert config.vlm_image == (
         "npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
@@ -1295,7 +1295,7 @@ def test_default_augment_image_uses_first_party_cosmos2_registry(monkeypatch) ->
 
     assert (
         config.augment_image
-        == "registry.example/workbench/npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z"
+        == "registry.example/workbench/npa-cosmos2-transfer:2.5.1-sam2-multigpu-20260817-r2"
     )
     assert (
         config.vlm_image
@@ -2549,7 +2549,7 @@ def test_cosmos_split_sdk_and_raw_yaml_contracts() -> None:
     transfer = cosmos2.transfer(
         input_uri="s3://bucket/input/",
         output_uri="s3://bucket/augment/",
-        image="npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z",
+        image="npa-cosmos2-transfer:2.5.1-sam2-multigpu-20260817-r2",
     )
     reason = cosmos3.reason(
         input_uri="s3://bucket/rollouts/",
@@ -2561,7 +2561,7 @@ def test_cosmos_split_sdk_and_raw_yaml_contracts() -> None:
     assert reason["schema"] == "npa.cosmos3.reason.v1"
     assert (
         transfer["image"]
-        == "npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z"
+        == "npa-cosmos2-transfer:2.5.1-sam2-multigpu-20260817-r2"
     )
     assert reason["image"] == "npa-cosmos3-reason:3.0.0"
     assert transfer["image"] != reason["image"]
@@ -2777,6 +2777,21 @@ def test_engine_kubernetes_component_env_forwards_writable_model_caches() -> Non
     )
 
     assert {key: safe[key] for key in cache_env} == cache_env
+
+
+def test_engine_kubernetes_component_env_forwards_the_durable_model_cache() -> None:
+    import npa.workflows.sim2real.engine as engine_module
+    from npa.workbench.model_cache import model_cache_env
+
+    durable = model_cache_env("/opt/npa-model-cache")
+
+    safe = engine_module._kubernetes_component_env(
+        durable, Sim2RealLoopConfig(run_id="cache-env")
+    )
+
+    # A single dropped variable sends that tool's download back to the pod's own
+    # filesystem while the rest of the stage reads the shared cache.
+    assert {key: safe[key] for key in durable} == durable
 
 
 def test_byo_policy_rollout_passes_component(monkeypatch, tmp_path) -> None:

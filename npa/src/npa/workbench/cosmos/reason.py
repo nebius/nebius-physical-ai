@@ -65,18 +65,34 @@ _VLM_K8S_COMPONENTS = frozenset({"vlm_eval", "vlm_eval_reason2", "vlm_eval_reaso
 
 
 def cosmos_reason_runtime_env() -> dict[str, str]:
-    """Writable Hugging Face cache env for Cosmos Reason sibling Jobs."""
+    """Writable Hugging Face cache env for Cosmos Reason sibling Jobs.
 
-    hf_home = os.environ.get("HF_HOME", "/tmp/hf_home")
+    The Reason checkpoints are gated, so no image may bake them and every Job has
+    to download them. When the operator configured durable weight storage that is
+    where they land; otherwise the writable-but-ephemeral ``/tmp`` defaults apply,
+    exactly as before.
+    """
+
+    from npa.workbench.model_cache import (
+        RUNTIME_PREMOUNTED,
+        model_cache_env,
+        resolve_model_cache_root,
+    )
+
+    durable = model_cache_env(resolve_model_cache_root(runtime=RUNTIME_PREMOUNTED))
+
+    def resolved(name: str, fallback: str) -> str:
+        return os.environ.get(name) or durable.get(name) or fallback
+
     return {
-        "HF_HOME": hf_home,
-        "NPA_COSMOS_REASON2_CACHE": os.environ.get(
+        "HF_HOME": resolved("HF_HOME", "/tmp/hf_home"),
+        "NPA_COSMOS_REASON2_CACHE": resolved(
             "NPA_COSMOS_REASON2_CACHE", DEFAULT_REASON2_CACHE
         ),
-        "NPA_COSMOS_REASON3_CACHE": os.environ.get(
+        "NPA_COSMOS_REASON3_CACHE": resolved(
             "NPA_COSMOS_REASON3_CACHE", DEFAULT_REASON3_CACHE
         ),
-        "NPA_COSMOS_REASON_CACHE": os.environ.get(
+        "NPA_COSMOS_REASON_CACHE": resolved(
             "NPA_COSMOS_REASON_CACHE", DEFAULT_REASON2_CACHE
         ),
     }

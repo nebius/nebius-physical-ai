@@ -31,7 +31,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PATH=/opt/fiftyone/venv/bin:$PATH \
     PYTHONUNBUFFERED=1
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends \
       ca-certificates \
       curl \
       ffmpeg \

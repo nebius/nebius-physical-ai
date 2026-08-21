@@ -20,6 +20,7 @@ deploy  Deploy or destroy a FiftyOne dataset curation VM.
 launch  Start the FiftyOne app over SSH and print the browser URL.
 curate  Curate a dataset and export a LeRobotDataset on Nebius Serverless.
 curate-augmented  Run REAL FiftyOne Brain curation over a Physical AI Data Factory run.
+review-augmented  Export all accepted or rejected PAIDF candidates for real FiftyOne review.
 eval  Evaluate checkpoint outputs and write FiftyOne curation metrics.
 load-dataset  Load a dataset into FiftyOne on the VM.
 restart  Restart the FiftyOne app or container without redeploying.
@@ -49,6 +50,7 @@ datasets  Inspect datasets through the FiftyOne GraphQL API.
 | `launch` | Start the FiftyOne app over SSH and print the browser URL. |
 | `curate` | Curate a dataset and export a LeRobotDataset on Nebius Serverless. |
 | `curate-augmented` | Run REAL FiftyOne Brain curation over a Physical AI Data Factory run. |
+| `review-augmented` | Export all accepted or rejected PAIDF candidates for real FiftyOne review. |
 | `eval` | Evaluate checkpoint outputs and write FiftyOne curation metrics. |
 | `load-dataset` | Load a dataset into FiftyOne on the VM. |
 | `restart` | Restart the FiftyOne app or container without redeploying. |

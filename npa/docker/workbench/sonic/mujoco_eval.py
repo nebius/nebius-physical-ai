@@ -9,7 +9,6 @@ physics proof that a fine-tuned checkpoint can drive a real rollout surface.
 from __future__ import annotations
 
 import json
-import math
 import os
 from pathlib import Path
 import subprocess

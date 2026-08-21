@@ -66,7 +66,7 @@ skills:
         path: npa/docker/workbench/packaging-contract.yaml
   - name: audit-container-docs
     category: atomic
-    when_to_use: "Audit or update container-image catalogs and related container documentation after images are added, removed, renamed, retagged, republished, reclassified, or materially changed."
+    when_to_use: "Reconcile the public container-image catalog when a workbench image or solution is added, removed, renamed, retagged, republished, reclassified, or materially changed, including onboarding flows that may intentionally remain outside the public mirror."
     path: skills/atomic/audit-container-docs/SKILL.md
     smoke:
       - type: file_exists
@@ -150,6 +150,18 @@ skills:
       - type: cli_help
         args: ["workbench", "sonic", "train", "--help"]
         contains: "gpu"
+  - name: gpu-first-guidance
+    category: atomic
+    when_to_use: "Recommend how to run a workload, write user-facing docs, or answer \"what should I run first?\": lead with the Nebius GPU path and describe hosted inference by what it does, without framing GPU time as something to avoid."
+    path: skills/atomic/gpu-first-guidance/SKILL.md
+    smoke:
+      - type: file_exists
+        path: docs/workbench/token-factory.md
+      - type: file_exists
+        path: docs/workbench/preemptible-vms.md
+      - type: cli_help
+        args: ["workbench", "token-factory", "--help"]
+        contains: "caption"
   - name: gpu-allocation-fallback
     category: atomic
     when_to_use: "Track typed on-demand GPU placement failures and offer an action-digest-confirmed switch to an identical preemptible allocation."
@@ -591,6 +603,19 @@ skills:
         paths:
           - npa/workflows/workbench/npa-workflows/byof-wan2.2.yaml
           - npa/workflows/workbench/npa-workflows/byof-wan2.2-multigpu.yaml
+  - name: alpamayo2-super
+    category: tools
+    when_to_use: "Package, preflight, run, validate, or troubleshoot NVIDIA Alpamayo 2 Super 34B VLA inference, its runtime-fetch image, separately gated PhysicalAI-AV data, and B200/RTX PRO 6000 workflow evidence."
+    path: skills/tools/alpamayo2-super/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "alpamayo2-super", "infer", "--help"]
+        contains: "output-path"
+      - type: npa_workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/alpamayo2-super-inference.yaml
+      - type: file_exists
+        path: npa/docker/workbench/alpamayo2-super/REDISTRIBUTION.md
   - name: retargeting
     category: tools
     when_to_use: "Motion retargeting, SONIC retargeted motion artifacts, SkyPilot retargeting YAMLs, or CLI behavior."

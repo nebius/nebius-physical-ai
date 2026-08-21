@@ -18,6 +18,7 @@ Read these before changing an image:
 - `docs/workbench/container-packaging.md`
 - `skills/atomic/solution-licensing/SKILL.md`
 - `skills/atomic/build-and-push-image/SKILL.md`
+- `skills/atomic/audit-container-docs/SKILL.md`
 - `skills/atomic/testing-conventions/SKILL.md`
 
 Use `npa/.venv/bin/python` for repository validation. Keep tenant, project,
@@ -61,6 +62,12 @@ fetch.
    - CLI, SDK, and `npa.workflow` image resolution when behavior changes
    - golden evaluation, focused tests, human documentation, and the relevant
      tool skill
+
+   Before finalizing the contribution, use
+   `skills/atomic/audit-container-docs/SKILL.md` to reconcile
+   `docs/workbench/container-image-catalog.md`. Add a public table row only when
+   the image is actually selected for the public mirror and anonymously
+   pullable; otherwise verify and document why it remains outside the table.
 
 5. Make the final stage non-root, pin resolvable bases by digest, keep secrets
    out of layers, and make service health behavior machine-checkable.

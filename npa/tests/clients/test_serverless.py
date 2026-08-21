@@ -775,6 +775,56 @@ def test_create_job_builds_args_and_masks_extra_env(caplog) -> None:
     assert "HF_TOKEN=<redacted>" in caplog.text
 
 
+def test_create_job_mounts_the_weight_filesystem_when_configured(monkeypatch) -> None:
+    """A Serverless Job pays for its GPU while it downloads.
+
+    The mount is attached here rather than at each call site, so every job that goes
+    through this client gets the cache on the same terms.
+    """
+
+    monkeypatch.setenv("NPA_MODEL_CACHE_FILESYSTEM", "npa-weights")
+    calls: list[list[str]] = []
+
+    def fake_runner(args, **kwargs):
+        calls.append(args)
+        return _result(args, 0, _job_json())
+
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=fake_runner)
+
+    _create_job(client, env={"HF_HOME": "/tmp/hf_home"})
+
+    argv = calls[0]
+    assert "--volume" in argv
+    assert argv[argv.index("--volume") + 1] == "npa-weights:/opt/npa-model-cache:rw"
+    # The mount is the fact: a stale ephemeral default carried in from a call site
+    # must not send the download somewhere the volume is not.
+    assert "HF_HOME=/opt/npa-model-cache/huggingface" in argv
+    assert "HF_HOME=/tmp/hf_home" not in argv
+
+
+def test_create_job_without_a_weight_filesystem_is_unchanged(monkeypatch) -> None:
+    for name in (
+        "NPA_MODEL_CACHE_FILESYSTEM",
+        "NPA_MODEL_CACHE_DIR",
+        "NPA_MODEL_CACHE_PVC",
+        "NPA_MODEL_CACHE_HOST_PATH",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    calls: list[list[str]] = []
+
+    def fake_runner(args, **kwargs):
+        calls.append(args)
+        return _result(args, 0, _job_json())
+
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=fake_runner)
+
+    _create_job(client, env={"HF_HOME": "/tmp/hf_home"})
+
+    argv = calls[0]
+    assert "--volume" not in argv
+    assert "HF_HOME=/tmp/hf_home" in argv
+
+
 def test_create_job_adds_nebius_registry_auth(monkeypatch, caplog) -> None:
     calls: list[list[str]] = []
 

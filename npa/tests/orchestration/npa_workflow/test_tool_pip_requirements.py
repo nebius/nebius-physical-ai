@@ -338,7 +338,7 @@ def test_the_npa_console_script_is_shimmed_to_the_recorded_interpreter(
     # so the recorded source goes in front of it.
     assert 'export PYTHONPATH="$npa_src_path:$PYTHONPATH"' in run_script
     assert "${" not in run_script, "the placeholder guard rejects braced expansions"
-    assert "from npa.cli.main import app_entry" in run_script
+    assert 'exec "%s" -m npa "$@"' in run_script
     # Both shims come from the same recorded interpreter.
     assert run_script.count('"$npa_python"') >= 2
 

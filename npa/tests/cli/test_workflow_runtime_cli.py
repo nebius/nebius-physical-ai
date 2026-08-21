@@ -288,6 +288,7 @@ def test_submit_runtime_passes_options_and_emits_json(
     assert options.poll_seconds == 7
     assert options.max_wait_seconds == 123
     assert options.retries == 2
+    assert options.retry_absent_in_flight is False
     assert options.max_concurrency == 2
     assert options.cancel_on_timeout is False
     # A run without an explicit --resume-run is always fresh.
@@ -307,6 +308,55 @@ def test_submit_runtime_passes_options_and_emits_json(
     assert payload["status"] == "succeeded"
     assert payload["wave_count"] == 2
     assert payload["runtime_state_uri"].endswith("/npa-workflow/runtime.json")
+
+
+def test_retry_absent_in_flight_requires_explicit_resume(tmp_path: Path) -> None:
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--run-id",
+            "rt-not-resumed",
+            "--runtime",
+            "--retry-absent-in-flight",
+            "--var",
+            "bucket=rt-bucket",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "requires an explicit --resume-run ID" in result.output
+
+
+def test_submit_runtime_passes_explicit_absent_recovery_on_resume(
+    fake_runtime,
+) -> None:
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--resume-run",
+            "rt-explicit-recovery",
+            "--runtime",
+            "--retry-absent-in-flight",
+            "--var",
+            "bucket=rt-bucket",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert fake_runtime["options"].resume is True
+    assert fake_runtime["options"].retry_absent_in_flight is True
 
 
 def test_submit_runtime_refreshes_pull_secret_before_driver(

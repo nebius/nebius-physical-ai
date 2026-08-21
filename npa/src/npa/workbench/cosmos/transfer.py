@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import glob
 import hashlib
+import json
 import logging
 import os
 import re
 import secrets
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -135,6 +137,264 @@ def resolve_control_weight(control_weight: float | str) -> float:
     return weight
 
 
+class ProtectedChromaError(RuntimeError):
+    """Raised when configured protected-region color preservation cannot complete."""
+
+
+def _parse_protected_regions(value: str) -> list[tuple[float, float, float, float]]:
+    """Parse normalized protected rectangles for source-chroma restoration."""
+
+    try:
+        raw = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ProtectedChromaError("protected regions must be valid JSON") from exc
+    if not isinstance(raw, list) or not raw:
+        raise ProtectedChromaError("source-chroma mode requires protected regions")
+    regions: list[tuple[float, float, float, float]] = []
+    for index, item in enumerate(raw):
+        bounds: Any = item.get("bounds") if isinstance(item, dict) else item
+        if not isinstance(bounds, (list, tuple)) or len(bounds) != 4:
+            raise ProtectedChromaError(
+                f"protected region {index} must have four normalized bounds"
+            )
+        try:
+            x0, y0, x1, y1 = (float(part) for part in bounds)
+        except (TypeError, ValueError) as exc:
+            raise ProtectedChromaError(
+                f"protected region {index} has non-numeric bounds"
+            ) from exc
+        if not (0.0 <= x0 < x1 <= 1.0 and 0.0 <= y0 < y1 <= 1.0):
+            raise ProtectedChromaError(
+                f"protected region {index} bounds must satisfy "
+                "0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1"
+            )
+        regions.append((x0, y0, x1, y1))
+    return regions
+
+
+def preserve_source_chroma(
+    transfer: dict[str, Any],
+    *,
+    source_video: str,
+    regions_json: str = "",
+    masks_dir: str = "",
+    segmentation: dict[str, Any] | None = None,
+    feather_pixels: int = 12,
+    luma_max_delta: int = 32,
+) -> dict[str, Any]:
+    """Restore source chroma in protected regions while retaining generated light.
+
+    Cosmos still generates every frame. This optional deterministic post-process
+    restores source Cb/Cr per pixel inside feathered normalized rectangles or
+    frame-aligned SAM2 masks;
+    generated luma is retained within a bounded per-pixel distance from source,
+    so mild illumination/exposure augmentation remains visible while extreme
+    darkening or brightening fails to alter protected identity colors. Exact
+    frame-count and geometry alignment are required to avoid color ghosts across
+    moving boundaries.
+    Frame-count or decode mismatches fail closed instead of publishing partially
+    corrected output.
+    """
+
+    if bool(regions_json) == bool(masks_dir):
+        raise ProtectedChromaError(
+            "protected chroma requires exactly one of regions_json or masks_dir"
+        )
+    regions = _parse_protected_regions(regions_json) if regions_json else []
+    mask_root = Path(masks_dir) if masks_dir else None
+    if mask_root is not None and not mask_root.is_dir():
+        raise ProtectedChromaError("protected SAM2 mask directory is missing")
+    if feather_pixels < 1:
+        raise ProtectedChromaError("protected chroma feather must be positive")
+    if not 0 <= luma_max_delta <= 255:
+        raise ProtectedChromaError("protected luma max delta must be within 0..255")
+    source = Path(source_video)
+    augmented = Path(str(transfer.get("video_path") or ""))
+    if not source.is_file() or not augmented.is_file():
+        raise ProtectedChromaError(
+            "protected chroma needs readable source and augmented videos"
+        )
+    output = augmented.with_name(f"{augmented.stem}-source-chroma.mp4")
+    script = r'''
+import av, json, numpy as np, sys
+from pathlib import Path
+source_path, augmented_path, frames_dir_text, regions_text, masks_dir_text, feather_text, luma_delta_text = sys.argv[1:]
+frames_dir = Path(frames_dir_text)
+regions = json.loads(regions_text) if regions_text else []
+regions = [r.get("bounds") if isinstance(r, dict) else r for r in regions]
+masks_dir = Path(masks_dir_text) if masks_dir_text else None
+feather = int(feather_text)
+luma_delta = int(luma_delta_text)
+src_container = av.open(source_path)
+aug_container = av.open(augmented_path)
+aug_stream = aug_container.streams.video[0]
+rate = aug_stream.average_rate or aug_stream.base_rate or 30
+width, height = int(aug_stream.width), int(aug_stream.height)
+masks = []
+for bounds in regions:
+    x0 = max(0, min(width - 1, int(round(float(bounds[0]) * width))))
+    y0 = max(0, min(height - 1, int(round(float(bounds[1]) * height))))
+    x1 = max(x0 + 1, min(width, int(round(float(bounds[2]) * width))))
+    y1 = max(y0 + 1, min(height, int(round(float(bounds[3]) * height))))
+    yy, xx = np.ogrid[y0:y1, x0:x1]
+    distance = np.minimum(
+        np.minimum(xx - x0, x1 - 1 - xx),
+        np.minimum(yy - y0, y1 - 1 - yy),
+    ).astype(np.float32)
+    alpha = np.clip((distance + 1.0) / float(feather), 0.0, 1.0)
+    mask = np.zeros((height, width), dtype=np.float32)
+    mask[y0:y1, x0:x1] = alpha
+    masks.append(mask)
+rect_alpha = np.maximum.reduce(masks) if masks else None
+src_frames = iter(src_container.decode(video=0))
+aug_frames = iter(aug_container.decode(video=0))
+count = 0
+for aug_frame in aug_frames:
+    try:
+        src_frame = next(src_frames)
+    except StopIteration as exc:
+        raise RuntimeError("source has fewer frames than augmented clip") from exc
+    src = src_frame.reformat(width=width, height=height, format="rgb24").to_ndarray()
+    aug = aug_frame.reformat(width=width, height=height, format="rgb24").to_ndarray()
+    srcf, augf = src.astype(np.float32), aug.astype(np.float32)
+    src_cb = 128.0 - 0.168736 * srcf[..., 0] - 0.331264 * srcf[..., 1] + 0.5 * srcf[..., 2]
+    src_cr = 128.0 + 0.5 * srcf[..., 0] - 0.418688 * srcf[..., 1] - 0.081312 * srcf[..., 2]
+    src_y = 0.299 * srcf[..., 0] + 0.587 * srcf[..., 1] + 0.114 * srcf[..., 2]
+    y = 0.299 * augf[..., 0] + 0.587 * augf[..., 1] + 0.114 * augf[..., 2]
+    aug_cb = 128.0 - 0.168736 * augf[..., 0] - 0.331264 * augf[..., 1] + 0.5 * augf[..., 2]
+    aug_cr = 128.0 + 0.5 * augf[..., 0] - 0.418688 * augf[..., 1] - 0.081312 * augf[..., 2]
+    if masks_dir is not None:
+        from PIL import Image, ImageFilter
+        mask_path = masks_dir / f"mask-{count:06d}.png"
+        if not mask_path.is_file():
+            raise RuntimeError(f"missing frame-aligned protected mask {mask_path.name}")
+        with Image.open(mask_path) as opened_mask:
+            mask_image = opened_mask.convert("L").resize((width, height), Image.Resampling.NEAREST)
+        binary_mask = np.asarray(mask_image, dtype=np.float32) / 255.0
+        if feather > 1:
+            mask_image = mask_image.filter(ImageFilter.GaussianBlur(radius=max(0.5, feather / 2.0)))
+            # Feather inward only. Multiplying by the original binary mask keeps
+            # source chroma from bleeding into unprotected augmentation pixels.
+            alpha = (np.asarray(mask_image, dtype=np.float32) / 255.0) * binary_mask
+        else:
+            alpha = binary_mask
+    else:
+        if rect_alpha is None:
+            raise RuntimeError("protected region mask is missing")
+        alpha = rect_alpha
+    bounded_y = np.clip(y, src_y - float(luma_delta), src_y + float(luma_delta))
+    y = y * (1.0 - alpha) + bounded_y * alpha
+    cb = aug_cb * (1.0 - alpha) + src_cb * alpha
+    cr = aug_cr * (1.0 - alpha) + src_cr * alpha
+    rgb = np.stack((
+        y + 1.402 * (cr - 128.0),
+        y - 0.344136 * (cb - 128.0) - 0.714136 * (cr - 128.0),
+        y + 1.772 * (cb - 128.0),
+    ), axis=-1)
+    frame = av.VideoFrame.from_ndarray(np.clip(rgb, 0, 255).astype(np.uint8), format="rgb24")
+    frame.to_image().save(frames_dir / f"frame-{count:06d}.png")
+    count += 1
+try:
+    next(src_frames)
+except StopIteration:
+    pass
+else:
+    raise RuntimeError("source has more frames than augmented clip")
+aug_container.close(); src_container.close()
+if count == 0:
+    raise RuntimeError("no frames decoded")
+if masks_dir is not None:
+    mask_files = sorted(masks_dir.glob("mask-*.png"))
+    if len(mask_files) != count:
+        raise RuntimeError("protected SAM2 mask count differs from video frame count")
+print(json.dumps({"frames": count, "fps": float(rate)}))
+'''
+    try:
+        with tempfile.TemporaryDirectory(
+            prefix="npa-protected-chroma-", dir=str(augmented.parent)
+        ) as frames_dir:
+            completed = subprocess.run(
+                [
+                    str(_venv_python(cosmos_transfer_repo())),
+                    "-c",
+                    script,
+                    str(source),
+                    str(augmented),
+                    frames_dir,
+                    regions_json,
+                    str(mask_root or ""),
+                    str(feather_pixels),
+                    str(luma_max_delta),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            try:
+                decoded = json.loads(str(completed.stdout).strip().splitlines()[-1])
+                frame_count = int(decoded["frames"])
+                fps = float(decoded["fps"])
+            except (IndexError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise ProtectedChromaError(
+                    "protected source-chroma decoder returned invalid metadata"
+                ) from exc
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-y",
+                    "-framerate",
+                    str(fps),
+                    "-i",
+                    str(Path(frames_dir) / "frame-%06d.png"),
+                    "-an",
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-crf",
+                    "18",
+                    "-movflags",
+                    "+faststart",
+                    str(output),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+    except ProtectedChromaError:
+        raise
+    except (OSError, subprocess.CalledProcessError) as exc:
+        detail = str(getattr(exc, "stderr", "") or exc).strip()
+        raise ProtectedChromaError(
+            f"protected source-chroma restoration failed: {detail}"[:300]
+        ) from exc
+    if not output.is_file() or output.stat().st_size <= 0:
+        raise ProtectedChromaError("protected source-chroma restoration wrote no video")
+    result = dict(transfer)
+    result["video_path"] = str(output)
+    result["video_bytes"] = output.stat().st_size
+    result["protected_chroma"] = {
+        "mode": "source-chroma",
+        "method": (
+            "sam2-mask-feathered-per-pixel-source-chroma"
+            if mask_root is not None
+            else "feathered-per-pixel-source-chroma"
+        ),
+        "region_count": len(regions),
+        "feather_pixels": feather_pixels,
+        "luma_max_delta": luma_max_delta,
+        "frame_count": frame_count,
+    }
+    if mask_root is not None:
+        result["protected_chroma"]["segmentation"] = segmentation or {
+            "engine": "meta-sam2-upstream"
+        }
+    return result
+
+
 def _spec_for_input_video(
     repo: Path,
     *,
@@ -144,6 +404,7 @@ def _spec_for_input_video(
     control_weight: float,
     guidance: float,
     name: str,
+    seed: int | None = None,
     control_asset: str = "",
     control_prompt: str = "",
     mask_asset: str = "",
@@ -195,6 +456,8 @@ def _spec_for_input_video(
         "guidance": guidance,
         modality: control_config,
     }
+    if seed is not None:
+        spec["seed"] = int(seed)
     safe = "".join(c if (c.isalnum() or c in "-_") else "_" for c in str(name or "input"))
     spec_path = repo / f"_npa_input_spec_{safe}.json"
     spec_path.write_text(_json.dumps(spec, indent=2), encoding="utf-8")
@@ -364,6 +627,7 @@ def run_cosmos_transfer(
     mask_asset: str = "",
     mask_prompt: str = "",
     guidance: float = 3.0,
+    seed: int | None = None,
     cuda_visible_devices: str | None = None,
     variant_tag: str = "",
     disable_content_guardrails: bool | None = None,
@@ -402,6 +666,7 @@ def run_cosmos_transfer(
             control_weight=control_weight,
             guidance=guidance,
             name=tag,
+            seed=seed,
             control_asset=control_asset,
             control_prompt=control_prompt,
             mask_asset=mask_asset,
@@ -452,12 +717,22 @@ def run_cosmos_transfer(
         # set. Keep the NPA default fail-closed; operators must opt out per run.
         argv.append("--disable-guardrails")
     try:
-        subprocess.run(
-            argv,
-            cwd=repo,
-            env=env,
-            check=True,
-        )
+        # Upstream progress output includes the effective prompt and local input
+        # path. Keep it in an unnamed, process-local file that is destroyed at
+        # completion; the retained task log reports only aggregate NPA evidence.
+        with tempfile.TemporaryFile() as vendor_log:
+            subprocess.run(
+                argv,
+                cwd=repo,
+                env=env,
+                check=True,
+                stdout=vendor_log,
+                stderr=subprocess.STDOUT,
+            )
+    except (OSError, subprocess.CalledProcessError):
+        raise RuntimeError(
+            "Cosmos Transfer inference failed; inspect GPU/model access and retry"
+        ) from None
     finally:
         if temp_spec is not None:
             try:
@@ -489,6 +764,7 @@ def run_cosmos_transfer(
         "mask_prompt": mask_prompt,
         "control_asset": control_asset,
         "mask_asset": mask_asset,
+        "inference_seed": seed,
         "out_dir": str(out_abs),
         "spec": spec,
         "spec_json": spec_json,
@@ -612,6 +888,11 @@ def publish_transfer_clip(
     content_guardrails_enabled = bool(
         transfer.get("content_guardrails_enabled", True)
     )
+    protected_chroma = transfer.get("protected_chroma") or {"mode": "off"}
+    refinement = transfer.get("refinement") or {}
+    effective_control_weight = transfer.get("effective_control_weight")
+    effective_guidance = transfer.get("effective_guidance")
+    inference_seed = transfer.get("inference_seed")
     conditioning_clip_uri = str(transfer.get("conditioning_clip_uri") or "")
 
     control_uris: dict[str, str] = {}
@@ -657,6 +938,11 @@ def publish_transfer_clip(
             "control_uris": control_uris,
             "control_evidence": control_evidence,
             "content_guardrails_enabled": content_guardrails_enabled,
+            "protected_chroma": protected_chroma,
+            "refinement": refinement,
+            "effective_control_weight": effective_control_weight,
+            "effective_guidance": effective_guidance,
+            "inference_seed": inference_seed,
         }
         cm = Path(tmp) / "metadata.json"
 
@@ -728,6 +1014,11 @@ def publish_transfer_clip(
         "control_frames": control_frames,
         "control_evidence": control_evidence,
         "content_guardrails_enabled": content_guardrails_enabled,
+        "protected_chroma": protected_chroma,
+        "refinement": refinement,
+        "effective_control_weight": effective_control_weight,
+        "effective_guidance": effective_guidance,
+        "inference_seed": inference_seed,
         "variables": variables or {},
     }
 
@@ -800,6 +1091,45 @@ def _upload_json(client: Any, document: dict[str, Any], uri: str) -> str:
         return client.upload_file(str(local), uri)
 
 
+def publish_transfer_failure(
+    failure: dict[str, Any],
+    output_uri: str,
+    *,
+    storage_client: Any = None,
+) -> dict[str, Any]:
+    """Persist one failed variant attempt without hiding successful siblings.
+
+    The document deliberately stores a sanitized failure category/type rather
+    than vendor stderr, which can contain the effective prompt or local input
+    path. ``output_uri`` may already be scheduler-attempt scoped; callers pass
+    the same prefix used for successful clip publication so every attempt stays
+    additive and attributable.
+    """
+
+    if not output_uri.startswith("s3://"):
+        raise ValueError(f"output_uri must be an s3:// prefix, got: {output_uri!r}")
+    from npa.clients.storage import StorageClient
+
+    index = int(failure.get("variant_index", -1))
+    if index < 0:
+        raise ValueError("variant failure requires a non-negative variant_index")
+    document = dict(failure)
+    document.update(
+        {
+            "schema": "npa.cosmos2.transfer.variant-failure/v1",
+            "status": "failed",
+            "variant_index": index,
+            "promotion_eligible": False,
+        }
+    )
+    failure_uri = (
+        f"{output_uri.rstrip('/')}/_failures/variant-{index:05d}.json"
+    )
+    _upload_json(storage_client or StorageClient.from_environment(), document, failure_uri)
+    document["failure_uri"] = failure_uri
+    return document
+
+
 def _json_bytes(document: dict[str, Any]) -> bytes:
     import json as _json
 
@@ -861,6 +1191,32 @@ def validate_committed_run_manifest(
         variants
     ):
         raise ValueError("canonical Cosmos augment manifest has inconsistent variants")
+    failed_variants = document.get("failed_variants", [])
+    if not isinstance(failed_variants, list):
+        raise ValueError(
+            "canonical Cosmos augment manifest has inconsistent failed variants"
+        )
+    try:
+        failed_variant_count = int(
+            document.get("failed_variant_count", len(failed_variants))
+        )
+        attempted_variant_count = int(
+            document.get(
+                "attempted_variant_count", len(variants) + len(failed_variants)
+            )
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "canonical Cosmos augment manifest has inconsistent attempt counts"
+        ) from exc
+    if (
+        failed_variant_count != len(failed_variants)
+        or attempted_variant_count != len(variants) + len(failed_variants)
+        or attempted_variant_count < 0
+    ):
+        raise ValueError(
+            "canonical Cosmos augment manifest has inconsistent attempt counts"
+        )
     attempt_id = str(document.get("attempt_id") or "").strip()
     try:
         node_count = int(document.get("node_count", 1) or 1)
@@ -956,7 +1312,31 @@ def validate_committed_run_manifest(
                 "canonical Cosmos augment manifest references control evidence from "
                 "another attempt"
             )
-    if seen_indices != set(range(len(variants))):
+    for failure in failed_variants:
+        if not isinstance(failure, dict):
+            raise ValueError(
+                "canonical Cosmos augment manifest has an invalid failed variant"
+            )
+        try:
+            variant_index = int(failure.get("variant_index", -1))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "canonical Cosmos augment manifest has an invalid failed variant index"
+            ) from exc
+        failure_uri = str(failure.get("failure_uri") or "").strip()
+        if (
+            variant_index < 0
+            or variant_index in seen_indices
+            or failure.get("status") != "failed"
+            or failure.get("promotion_eligible") is not False
+            or not failure_uri.startswith(expected_prefix)
+            or "/_failures/" not in failure_uri
+        ):
+            raise ValueError(
+                "canonical Cosmos augment manifest has invalid failed variant provenance"
+            )
+        seen_indices.add(variant_index)
+    if seen_indices != set(range(attempted_variant_count)):
         raise ValueError("canonical Cosmos augment manifest has incomplete variant indices")
     return variants
 
@@ -1126,6 +1506,7 @@ def build_run_manifest(
     node_count: int = 1,
     shards: list[dict[str, Any]] | None = None,
     attempt_id: str = "",
+    failures: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Return the run-level transfer manifest for ``clips`` (no I/O).
 
@@ -1135,6 +1516,7 @@ def build_run_manifest(
     """
 
     first = clips[0] if clips else {}
+    variant_failures = list(failures or [])
     frames = [f for c in clips for f in c.get("frames", [])]
     manifest = {
         "schema": TRANSFER_MANIFEST_SCHEMA,
@@ -1143,6 +1525,9 @@ def build_run_manifest(
         "run_id": run_id,
         "clips": [c.get("clip", "") for c in clips],
         "variant_count": len(clips),
+        "attempted_variant_count": len(clips) + len(variant_failures),
+        "failed_variant_count": len(variant_failures),
+        "failed_variants": variant_failures,
         # "multiply": one Cosmos Transfer 2.5 inference per sampled appearance
         # combo. >1 clips means the run genuinely amplified across scenarios.
         "multiply_mode": "multi-variant" if len(clips) > 1 else "single-variant",
@@ -1173,6 +1558,11 @@ def build_run_manifest(
         "content_guardrails_enabled": bool(
             first.get("content_guardrails_enabled", True)
         ),
+        "protected_chroma": first.get("protected_chroma", {"mode": "off"}),
+        "refinement": first.get("refinement", {}),
+        "effective_control_weight": first.get("effective_control_weight"),
+        "effective_guidance": first.get("effective_guidance"),
+        "inference_seed": first.get("inference_seed"),
         "variants": [
             {
                 "clip": c.get("clip", ""),
@@ -1182,6 +1572,11 @@ def build_run_manifest(
                 "frame_count": int(c.get("frame_count", 0) or 0),
                 "augmented_video_uri": c.get("augmented_video_uri", ""),
                 "control_uris": c.get("control_uris", {}),
+                "protected_chroma": c.get("protected_chroma", {"mode": "off"}),
+                "refinement": c.get("refinement", {}),
+                "effective_control_weight": c.get("effective_control_weight"),
+                "effective_guidance": c.get("effective_guidance"),
+                "inference_seed": c.get("inference_seed"),
             }
             for index, c in enumerate(clips)
         ],
@@ -1205,6 +1600,7 @@ def write_run_manifest(
     attempt_id: str = "",
     publication_claim_etag: str = "",
     publication_generation: int = 0,
+    failures: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Write the run-level ``cosmos_augmented/manifest.json`` listing every clip
     produced by the (possibly multi-variant) augment stage; return the manifest.
@@ -1241,6 +1637,7 @@ def write_run_manifest(
         node_count=node_count,
         shards=shards,
         attempt_id=attempt_id,
+        failures=failures,
     )
     if publication_claim_etag:
         if not attempt_id or int(publication_generation) < 1:
@@ -1332,6 +1729,7 @@ def write_shard_manifest(
     logical_wave_id: str,
     publication_generation: int,
     storage_client: Any = None,
+    failures: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Publish ONE node's share of a multi-node augment as a shard manifest.
 
@@ -1363,6 +1761,7 @@ def write_shard_manifest(
             "multi-node shard descriptors must point inside their attempt-scoped "
             "output prefix"
         )
+    variant_failures = list(failures or [])
     shard = {
         "schema": SHARD_MANIFEST_SCHEMA,
         "mode": TRANSFER_MANIFEST_MODE,
@@ -1379,6 +1778,9 @@ def write_shard_manifest(
         "variant_parallelism": max(1, int(variant_parallelism or 1)),
         "variant_total": max(0, int(variant_total or 0)),
         "variant_count": len(clips),
+        "attempted_variant_count": len(clips) + len(variant_failures),
+        "failed_variant_count": len(variant_failures),
+        "failed_variants": variant_failures,
         "clips": [c.get("clip", "") for c in clips],
         "clip_descriptors": clips,
     }
@@ -1522,6 +1924,7 @@ def merge_shard_manifests(
         if not isinstance(document, dict):
             return False
         descriptors = document.get("clip_descriptors")
+        failures = document.get("failed_variants", [])
         attempt_prefix = (
             attempt_output_uri_for(output_uri, normalized_attempt_id) + "/"
         )
@@ -1538,13 +1941,23 @@ def merge_shard_manifests(
                 for field, value in expected_shard_identity.items()
             )
             and isinstance(descriptors, list)
+            and isinstance(failures, list)
             and int(document.get("variant_count", -1)) == len(descriptors)
+            and int(document.get("failed_variant_count", -1)) == len(failures)
+            and int(document.get("attempted_variant_count", -1))
+            == len(descriptors) + len(failures)
             and all(
                 isinstance(item, dict)
                 and str(item.get("augmented_video_uri") or "").startswith(
                     attempt_prefix
                 )
                 for item in descriptors
+            )
+            and all(
+                isinstance(item, dict)
+                and int(item.get("variant_index", -1)) >= 0
+                and str(item.get("failure_uri") or "").startswith(attempt_prefix)
+                for item in failures
             )
         )
 
@@ -1621,11 +2034,27 @@ def merge_shard_manifests(
         (clip for shard in shards.values() for clip in shard.get("clip_descriptors", [])),
         key=lambda c: int(c.get("variant_index", 0) or 0),
     )
-    indices = [int(clip.get("variant_index", -1)) for clip in ordered]
+    ordered_failures = sorted(
+        (
+            failure
+            for shard in shards.values()
+            for failure in shard.get("failed_variants", [])
+        ),
+        key=lambda failure: int(failure.get("variant_index", -1)),
+    )
+    indices = sorted(
+        [int(clip.get("variant_index", -1)) for clip in ordered]
+        + [int(failure.get("variant_index", -1)) for failure in ordered_failures]
+    )
     if indices != list(range(variant_total)):
         raise RuntimeError(
             "multi-node augment: shard manifests do not cover every variant exactly "
             f"once for run {run_id!r}; expected 0..{variant_total - 1}, got {indices}"
+        )
+    if not ordered:
+        raise RuntimeError(
+            "multi-node augment: every variant failed independently; failure "
+            "shards were preserved and no empty run manifest was published"
         )
     return write_run_manifest(
         ordered,
@@ -1635,7 +2064,7 @@ def merge_shard_manifests(
         variant_parallelism=sum(
             max(1, int(shard.get("variant_parallelism", 1) or 1))
             for shard in shards.values()
-            if int(shard.get("variant_count", 0) or 0) > 0
+            if int(shard.get("attempted_variant_count", 0) or 0) > 0
         )
         or 1,
         node_count=expected,
@@ -1643,6 +2072,12 @@ def merge_shard_manifests(
             {
                 "rank": int(shard.get("rank", rank) or 0),
                 "variant_count": int(shard.get("variant_count", 0) or 0),
+                "attempted_variant_count": int(
+                    shard.get("attempted_variant_count", 0) or 0
+                ),
+                "failed_variant_count": int(
+                    shard.get("failed_variant_count", 0) or 0
+                ),
                 "variant_parallelism": max(1, int(shard.get("variant_parallelism", 1) or 1)),
                 "clips": list(shard.get("clips", [])),
                 "attempt_id": str(shard.get("attempt_id") or ""),
@@ -1652,6 +2087,7 @@ def merge_shard_manifests(
         attempt_id=normalized_attempt_id,
         publication_claim_etag=publication_claim_etag,
         publication_generation=publication_generation,
+        failures=ordered_failures,
     )
 
 
@@ -1869,6 +2305,7 @@ __all__ = [
     "FrameExtractionError",
     "INPUT_AUTO_CONTROLS",
     "INPUT_CONTROLS",
+    "ProtectedChromaError",
     "REFERENCE_AUGMENT_MODE",
     "REFERENCE_AUGMENT_STATUS",
     "PUBLICATION_CLAIM_STATUS",
@@ -1878,6 +2315,7 @@ __all__ = [
     "TRANSFER_MANIFEST_FILENAME",
     "TRANSFER_MANIFEST_MODE",
     "TRANSFER_MANIFEST_SCHEMA",
+    "preserve_source_chroma",
     "TRANSFER_MANIFEST_STATUS",
     "augmented_frames_index_uri_for",
     "attempt_output_uri_for",
@@ -1889,6 +2327,7 @@ __all__ = [
     "extract_frames",
     "merge_shard_manifests",
     "publish_transfer_clip",
+    "publish_transfer_failure",
     "publish_transfer_to_s3",
     "reference_augment_frames",
     "resolve_control_modality",

@@ -38,6 +38,7 @@ from npa.deploy.images import (
     is_publicly_redistributable,
     omniverse_restricted_image_names,
     public_container_registry,
+    public_mirror_tag_for_tool,
     publicly_publishable_tools,
 )
 from npa.deploy.publish_public import (
@@ -384,6 +385,9 @@ def test_publish_plan_targets_public_registry_by_default() -> None:
     )
     for item in plan:
         assert item.target_ref.startswith(DEFAULT_PUBLIC_CONTAINER_REGISTRY + "/npa-")
+        assert item.source_ref.startswith(
+            images.DEFAULT_SOURCE_CONTAINER_REGISTRY + "/npa-"
+        )
     # npa-foxglove-embed carries only MIT (@foxglove/embed) + Apache-2.0 (Caddy)
     # content plus our own assets, so it belongs in the public set.
     assert "foxglove-embed" in {item.tool for item in plan}
@@ -530,6 +534,38 @@ def test_oss_tools_resolve_from_the_public_mirror_normally() -> None:
         "lerobot", registry=DEFAULT_PUBLIC_CONTAINER_REGISTRY
     )
     assert ref.startswith(DEFAULT_PUBLIC_CONTAINER_REGISTRY + "/npa-lerobot:")
+
+
+@pytest.mark.parametrize(
+    ("tool", "public_tag", "supported_tag"),
+    (
+        (
+            "cosmos2-transfer",
+            "2.5.1-skypilot-ready-20260801T053000Z",
+            "2.5.1-sam2-multigpu-20260817-r2",
+        ),
+        (
+            "fiftyone",
+            "1.15.0.post1",
+            "1.15.0-post1-skypilot-v1-20260815-review5",
+        ),
+        (
+            "rerun-viewer",
+            "0.31.4",
+            "0.31.4-skypilot-v1-20260815-review5-r2",
+        ),
+    ),
+)
+def test_pending_public_release_keeps_anonymous_resolution_on_verified_tag(
+    tool: str, public_tag: str, supported_tag: str
+) -> None:
+    assert public_mirror_tag_for_tool(tool) == public_tag
+    assert container_image_for_tool(
+        tool, registry=DEFAULT_PUBLIC_CONTAINER_REGISTRY
+    ).endswith(f":{public_tag}")
+    assert container_image_for_tool(
+        tool, registry="cr.eu-north1.nebius.cloud/example"
+    ).endswith(f":{supported_tag}")
 
 
 # --------------------------------------------------------------------------------------
@@ -1498,7 +1534,14 @@ def test_the_checklist_covers_exactly_the_packages_still_private() -> None:
     checklist = publish_public.visibility_checklist(failures)
 
     assert checklist.count("- [ ] ") == 2
-    assert publish_public.ghcr_owner_and_package(plan[1].target_ref)[1] not in checklist
+    listed_packages = {
+        line.removeprefix("- [ ] [").split("](", 1)[0]
+        for line in checklist.splitlines()
+        if line.startswith("- [ ] [")
+    }
+    assert publish_public.ghcr_owner_and_package(plan[1].target_ref)[1] not in (
+        listed_packages
+    )
 
 
 def test_the_checklist_labels_a_package_the_way_its_settings_page_does() -> None:

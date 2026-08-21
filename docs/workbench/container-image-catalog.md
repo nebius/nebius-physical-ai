@@ -1,26 +1,26 @@
 # Public Workbench Container Image Catalog
 
-Repository-selected public-mirror images use:
+Repository-selected runtime images use the public mirror by default:
 
 ```text
 ghcr.io/nebius/nebius-physical-ai/<image>:<tag>
 ```
 
-External consumers can pull published entries anonymously from GHCR:
+Consumers can pull published entries anonymously from GHCR without configuring
+a registry in NPA:
 
 ```bash
-export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
-docker pull "${NPA_REGISTRY}/npa-retargeting:0.1.1"
+docker pull ghcr.io/nebius/nebius-physical-ai/npa-retargeting:0.1.1
 ```
 
+`NPA_REGISTRY` remains available for private or locally modified images, and
+existing saved `container_registry` overrides remain compatible.
+
 The catalog was verified against the public GHCR tag and OCI manifest APIs on
-2026-08-15. Of the 25 images selected by the repository's public publishing
-plan, 24 resolved anonymously. The configured `npa-leisaac` tag returned HTTP
-403 from GHCR's anonymous token endpoint and is marked publication-pending
-below; repository redistribution eligibility and publishing intent do not prove
-current registry visibility. **Built** is the UTC build date of the newest
-listed variant; reproducible images that intentionally zero their OCI `created`
-field use the timestamp in the immutable tag and `npa.build_ts` label.
+2026-08-21. All 26 images selected by the repository's public publishing plan
+resolved anonymously. **Built** is the UTC build date of the newest listed
+variant; reproducible images that intentionally zero their OCI `created` field
+use the timestamp in the immutable tag and `npa.build_ts` label.
 
 Prefer a full timestamped tag when selecting a hardware-specific variant. OCI
 tags can be moved, so resolve and retain the manifest digest as well when strict
@@ -28,8 +28,26 @@ reproducibility is required.
 
 Rows are ordered by **Built** date, then by friendly name.
 
+## 2026-08-19 main publication audit
+
+The main-branch publishing plan was compared with GHCR without credentials. Its
+24 existing tags were left unchanged, and the two absent tags were published:
+
+- `npa-alpamayo2-super:0.1.0-cu128` — OCI index
+  `sha256:2164450f8baf57d8798f64063ea27bf11611f5b695c467de0c2e319e3134ebd5`,
+  containing the accepted `linux/amd64` image and its bound attestation.
+- `npa-leisaac:0.4.0-20260817T231825Z` — `linux/amd64` manifest
+  `sha256:82069eb74a18a88f77ad3149b6c5ed220c4eed33b1d550c26d361947805e8280`,
+  rebuilt from main and full-layer scanned before publication.
+
+An independent anonymous verification then resolved all 26 exact plan tags.
+LTX-2.5 remains excluded because its required GPU validation is not complete;
+`cosmos3-serving` and `sonic-mujoco` remain excluded by the redistribution
+guard.
+
 | Friendly name | Image (`ghcr.io/nebius/nebius-physical-ai/...`) | Published tag(s) | Built | What it does |
 | --- | --- | --- | --- | --- |
+| Alpamayo 2 Super 34B | `npa-alpamayo2-super` | `0.1.0-cu128` | 2026-08-18 | Real surround-view VLA trajectory inference through NVIDIA's Apache-2.0 source. OpenMDW-1.1 weights and the separately gated/non-transferable PhysicalAI-AV sample data are fetched only at runtime under the operator's Hugging Face identity. The payload-clean image and real workflow were validated independently on B200 and RTX PRO 6000. See the [operator guide](alpamayo2-super.md). |
 | SONIC Retargeting 0.1.1 | `npa-retargeting` | `0.1.1` | 2026-06-16 | CPU-only motion retargeting and motion-library conversion feeding SONIC locomotion training. A slim `python:3.11` image for the inexpensive preprocessing stage before GPU work. |
 | Rerun 0.31.4 | `npa-rerun-viewer` | `0.31.4` | 2026-07-01 | Rerun viewer/server on port 9090 for `.rrd` robotics traces produced by workflow stages. Uses `python:3.11-slim` and runs as `nobody`. |
 | LeRobot Policy Server 0.1.1 | `npa-lerobot-policy` | `0.1.1` | 2026-07-10 | Serves a trained LeRobot policy over HTTP for closed-loop inference (default `lerobot/diffusion_pusht`). This is the BYO-policy contract endpoint called by other workflow stages. |
@@ -50,12 +68,23 @@ Rows are ordered by **Built** date, then by friendly name.
 | Sim2Real Loop Eval 0.1.3 | `npa-loop-eval` | `0.1.3-genuine-sm120`, `cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | 2026-08-03 | Batched closed-loop policy evaluation in Genesis (default 16 environments and 240 steps), providing the scoring stage of the Sim2Real loop. Exact-source workflow builds bake the same snapshot-pinned non-root SkyPilot Kubernetes bootstrap closure as EnvGen so Stage 14 can start without a privileged or moving bootstrap image. Built from `sim2real-eval/Dockerfile`; the tool key is `loop-eval`. |
 | Sim2Real Reference Policy 0.1.2 | `npa-reference-policy` | `0.1.2`, `cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | 2026-08-03 | Reference BYO-compatible Sim2Real action policy and worked example of the policy-container contract. Includes the policy functional smoke for comparison with custom images. |
 | SONIC (GR00T-WholeBodyControl) | `npa-sonic` | `cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` (active RTX PRO Kubernetes); `0.1.2` (quarantined L40S) | 2026-08-03 | Whole-body humanoid locomotion training and evaluation using `gear_sonic` (Apache-2.0 at a pinned commit). The public active image runtime-fetches Isaac and requires GPU Operator driver mounts. The old L40S and combined H100/H200 MuJoCo images are restricted and rejected; compute-only serverless use requires a separately validated custom image. |
-| LeIsaac 0.4.0 | `npa-leisaac` | `0.4.0-20260817T231825Z` (publication-pending public mirror) | 2026-08-17 | Browser teleoperation for the real upstream SO-101 LiftCube and PickOrange tasks, with secure agent-relay transport and immutable LeRobot episode recording. The image contains Apache-2.0 LeIsaac source and OSS dependencies only; Isaac Sim/Lab, NVIDIA's browser client, and task assets are runtime-fetched under the shared `ACCEPT_EULA` contract and are never baked into the image. Revalidate a digest before use. |
+| LeIsaac 0.4.0 | `npa-leisaac` | `0.4.0-20260817T231825Z` | 2026-08-17 | Browser teleoperation for the real upstream SO-101 LiftCube and PickOrange tasks, with secure agent-relay transport and immutable LeRobot episode recording. The image contains Apache-2.0 LeIsaac source and OSS dependencies only; Isaac Sim/Lab, NVIDIA's browser client, and task assets are runtime-fetched under the shared `ACCEPT_EULA` contract and are never baked into the image. Revalidate a digest before use. |
 | Cosmos 3 (`cosmos-framework` 1.2.2) | `npa-cosmos3` | `1.2.2-cu130`, `1.2.2-cu130-r2` | 2026-08-08 | Cosmos 3 omni-model generation: text-to-image, image-to-image, text-to-video, image-to-video, and video-to-video. Contains OpenMDW-1.1 source and a CUDA 13 venv only; checkpoints, Wan VAE, and guardrails download at runtime. |
 | Wan 2.2 TI2V-5B | `npa-wan2-2` | historical accepted tag: `2.2-ti2v5b-rtfetch-cu128-20260809T011658Z-r7`; current unpublished closure: Torch 2.13.0/CUDA 13.0/NCCL 2.29.7 | 2026-08-09 | Wan 2.2 text/image-to-video generation from Apache-2.0 source on an OSS dependency base. CUDA PyTorch and `nvidia-*` wheels are runtime-fetched under their upstream package terms, while public models and tokenizers download anonymously. The listed tag carries prior live evidence; the security-fixed closure requires new single- and four-GPU qualification before publication or promotion. |
 | Cosmos Curator 0.1.2 | `npa-cosmos-curate` | `0.1.2-skypilot-v1-20260813T164700Z` | 2026-08-13 | Runs real `cosmos-curate` stages in process: download, fixed-stride extraction, clip transcode, motion-vector decode, motion filtering, and clip writing. GPU-stage models are fetched at runtime with the operator's Hugging Face token. |
 | Cosmos Evaluator 0.1.2 | `npa-cosmos-evaluator` | `0.1.2-skypilot-v1-20260813T164700Z` | 2026-08-13 | Runs the upstream `HallucinationProcessor` quality gate on generated video using classical computer vision and no weights. Attribute verification calls an OpenAI-compatible endpoint; the LFS/EULA-gated obstacle checker is deliberately not fetched. |
 | FiftyOne 1.15.0.post1 (Voxel51) | `npa-fiftyone` | `1.15.0.post1` | 2026-08-13 | Dataset curation and visualization UI on port 5151, including uniqueness, similarity, and embedding visualization. Bundles a `mongod` binary so FiftyOne can launch its own metadata database. |
+
+## Validated source-registry candidates pending public release
+
+The supported worker defaults currently select additive Cosmos Transfer,
+FiftyOne, and Rerun releases with the immutable SkyPilot Kubernetes bootstrap
+closure. Those candidate tags are present in the maintainer source registry but
+were not anonymously available in the 2026-08-17 audit. The public resolver and
+publisher therefore retain the prior verified tags shown above. Moving any of
+these candidates to GHCR requires the separately authorized publication workflow
+and a successful unauthenticated manifest check; private availability and
+redistribution eligibility are not evidence of publication.
 
 ## Intentionally not published as separate images
 

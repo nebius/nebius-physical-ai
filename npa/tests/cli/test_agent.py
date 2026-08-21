@@ -29,6 +29,15 @@ from npa.cli.agent import (
 
 runner = CliRunner()
 
+# A few tests evaluate the emitted JavaScript with a real engine, which is the only
+# way to check it rather than pattern-match it. `node` is not a suite prerequisite,
+# so skip rather than fail -- and skip rather than return early, so a machine
+# without it reports the coverage it did not run.
+requires_node = pytest.mark.skipif(
+    shutil.which("node") is None,
+    reason="needs node to evaluate the emitted JavaScript",
+)
+
 
 def test_fail_is_typed_as_non_returning_and_preserves_cli_exit() -> None:
     assert get_type_hints(agent_module._fail)["return"] is NoReturn
@@ -1606,6 +1615,7 @@ def test_lichtblick_nginx_inline_javascript_has_no_nginx_variables_or_controls()
         assert not [char for char in script if ord(char) < 32 or ord(char) == 127]
 
 
+@requires_node
 def test_lichtblick_worker_accepts_only_same_origin_lichtblick_javascript() -> None:
     from npa.cli.agent_site import _lichtblick_worker_script
 
@@ -1742,7 +1752,9 @@ def test_bootstrap_ui_mcap_cards_bind_exact_provenance_in_page() -> None:
     exact_source_handler = source.split("async function loadExactArtifactSource", 1)[
         1
     ].split("function learningStagesFromContract", 1)[0]
-    assert "deferPreferredViewer: true" in exact_source_handler
+    # Exact-source inventory now discovers every page before selecting and
+    # immediately opens the global preferred recording.
+    assert "deferPreferredViewer: false" in exact_source_handler
     assert "loadArtifactsForSelectedRun(runRef" in exact_source_handler
     external_handler = source.split("async function openFoxgloveWeb", 1)[1].split(
         "async function captureFoxgloveContext", 1
@@ -2380,12 +2392,36 @@ def test_direct_run_load_cancels_background_discovery_and_uses_exact_artifacts()
     assert "singlePage: true," in source
     assert "background: true," in source
     assert "Render the authoritative workflow timeline before attempting" in source
-    assert "!context.deferPreferredViewer && preferred" in source
+    assert "!context.deferPreferredViewer && !context.suppressPreferredAutoload && preferred" in source
     assert "deferPreferredViewer: true" in source
     assert 'showToast("Run loaded; preferred viewer failed: "' in source
     assert '"#stageList .stage-physical-job"' in source
     assert (
         "if (!physicalStageCount) await loadRunDetails(runId, detailOptions);" in source
+    )
+
+
+def test_artifact_inventory_autopaginates_before_global_preference_and_selection() -> None:
+    source = _agent_ui_bundle()
+    block = source.split(
+        "async function loadArtifactsForSelectedRun", 1
+    )[1].split("async function loadExactArtifactSource", 1)[0]
+
+    assert "const seenCursors = new Set();" in block
+    assert "while (nextCursor)" in block
+    assert "seenCursors.has(nextCursor)" in block
+    assert "paginationEmptyPageCount" in block
+    assert "paginationDuplicateCount" in block
+    assert "Artifact inventory source changed during pagination" in block
+    assert "Artifact inventory is truncated but the server returned no continuation cursor" in block
+    assert 'continuation.set("project_id", selectedSource.project_id);' in block
+    assert 'continuation.set("resource_bucket", selectedSource.bucket);' in block
+    assert 'continuation.set("resolved_prefix", selectedSource.resolved_prefix);' in block
+    assert 'continuation.set("source_selected", "1");' in block
+    assert "const preferred = selectPreferredArtifact(artifacts);" in block
+    assert block.index("while (nextCursor)") < block.index("setActiveRunId(runId)")
+    assert block.index("selectPreferredArtifact(artifacts)") < block.index(
+        "setActiveRunId(runId)"
     )
 
 
@@ -3373,9 +3409,8 @@ def test_bootstrap_chat_copy_yaml_support_present() -> None:
     assert "copyTextToClipboard" in source
 
 
+@requires_node
 def test_bootstrap_emitted_ui_script_is_valid_javascript(monkeypatch) -> None:
-    if not shutil.which("node"):
-        return
     from npa.cli import agent as agent_module
 
     captured: dict[str, str] = {}

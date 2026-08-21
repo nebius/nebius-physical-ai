@@ -14,6 +14,16 @@ from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.interpreter import ExecutionPlan, PlanStep  # noqa: F401
 from npa.orchestration.npa_workflow.scheduler import build_scheduler_task
 from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec
+from npa.workbench.model_cache import (
+    RUNTIME_KUBERNETES,
+    RUNTIME_PREMOUNTED,
+    model_cache_env,
+    model_cache_host_path,
+    model_cache_pvc,
+    pod_config_with_model_cache,
+    render_model_cache_shell,
+    resolve_model_cache_root,
+)
 
 # Map toolRef prefixes / exact names onto CONTAINER_IMAGE_NAMES keys.
 # Token Factory is a hosted HTTP API client. Do not pin the heavy cosmos image:
@@ -35,6 +45,7 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.cosmos_evaluator": "cosmos-evaluator",
     "workbench.lancedb": "lancedb",
     "workbench.detection_training": "detection-training",
+    "workbench.alpamayo2_super": "alpamayo2-super",
     "workbench.fiftyone": "fiftyone",
     "workbench.rl": "isaac-lab",
     "workbench.isaac_lab": "isaac-lab",
@@ -72,6 +83,9 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     # before it will generate anything. Live job 286 got all the way into examples/inference.py
     # and died on `hf download nvidia/Cosmos-Guardrail1` with no token.
     "workbench.cosmos2": ("HF_TOKEN",),
+    # Alpamayo2-Super fetches both its OpenMDW checkpoint and the separately
+    # gated PhysicalAI-AV sample under the operator's accepted HF identity.
+    "workbench.alpamayo2_super": ("HF_TOKEN",),
     # The default GEAR-SONIC and GR00T-N1.7 assets are public. Callers may still
     # pass HF_TOKEN for rate limits or private overrides, but it is not a preflight.
     "workbench.sonic": (),
@@ -341,6 +355,9 @@ def normalize_resources(
     # operators can retarget without editing the committed blueprint; otherwise
     # submit-time resolution supplies a per-profile remap.
     accel_override = str(_os.environ.get("NPA_WORKFLOW_GPU_ACCELERATOR") or "").strip()
+    gpu_memory_override = str(
+        _os.environ.get("NPA_WORKFLOW_GPU_MEMORY") or ""
+    ).strip()
     overrides = dict(accelerator_overrides or {})
 
     out: dict[str, Any] = {}
@@ -374,12 +391,15 @@ def normalize_resources(
                 value = f"{selected_override}:{declared_count}"
             elif selected_override:
                 value = selected_override
-        if key == "memory" and isinstance(value, str):
-            stripped = value.strip()
-            if stripped.lower().endswith("gi"):
-                value = stripped[:-2]
-            elif stripped.lower().endswith("g"):
-                value = stripped[:-1]
+        if key == "memory":
+            if gpu_memory_override and resources.get("accelerators"):
+                value = gpu_memory_override
+            if isinstance(value, str):
+                stripped = value.strip()
+                if stripped.lower().endswith("gi"):
+                    value = stripped[:-2]
+                elif stripped.lower().endswith("g"):
+                    value = stripped[:-1]
         out[key] = value
 
     cloud = str(out.get("cloud") or "").strip().lower()
@@ -960,8 +980,8 @@ def render_task_run_script(command: Sequence[str], *, preamble: str = "") -> str
         # succeeds), the overlay lands in the vendor interpreter, and the stage runs the stale
         # CLI. Live job 284: `No such command 'cosmos2'. Did you mean 'cosmos'?` — from an npa
         # predating the subcommand, while the recorded interpreter had the current one.
-        '  printf \'#!/bin/sh\\nexec "%s" -c "from npa.cli.main import app_entry; '
-        'app_entry()" "$@"\\n\' "$npa_python" > /tmp/npa-shim/npa\n'
+        '  printf \'#!/bin/sh\\nexec "%s" -m npa "$@"\\n\' '
+        '"$npa_python" > /tmp/npa-shim/npa\n'
         "  chmod +x /tmp/npa-shim/npa\n"
         '  export PATH="/tmp/npa-shim:$PATH"\n'
         # Console scripts installed next to that interpreter must be resolvable by
@@ -1596,10 +1616,13 @@ def plan_image_pull_secrets(
     run_id: str,
     options: SkypilotRenderOptions,
 ) -> dict[str, tuple[str, ...]]:
-    """Return declared Kubernetes pull-secret names for each exact image path.
+    """Return effective Kubernetes pull-secret names for each exact image path.
 
     If an image is also used by a non-Kubernetes step, its mapping is empty: a
     Kubernetes secret cannot prove that VM execution path can pull the image.
+    Nebius registry tasks receive ``npa-nebius-registry`` during rendering, so
+    expose the same implicit authority here even when the source workflow does
+    not repeat that renderer-owned implementation detail.
     """
 
     paths: dict[str, list[tuple[str, ...] | None]] = {}
@@ -1746,8 +1769,10 @@ def build_skypilot_task_doc(
             accepted=options.accept_eula,
         )
     )
-    # Optional tuning passthrough. The first-class transfer_execute toolRef always
-    # conditions on the workflow input; these variables can tune that real path.
+    # Optional tuning passthrough. Cosmos resolves explicit argv first, these env
+    # values second, and a validated run-scoped refinement artifact last. Thus the
+    # env values tune direct/first-pass execution but intentionally cannot override
+    # a committed retry policy.
     import os as _os_cond
 
     for _cond_var in (
@@ -1776,13 +1801,33 @@ def build_skypilot_task_doc(
         if _cond_val:
             envs[_cond_var] = _cond_val
 
+    # Weights this stage has to download (the images bake none) belong in the
+    # operator's durable cache when one exists, so the next run of the same image
+    # is a cache hit instead of another multi-gigabyte pull onto a paid GPU.
+    #
+    # A claim is only mountable where there is a cluster to mount it in. On any
+    # other cloud SkyPilot hands us a fresh VM, so only an explicit
+    # NPA_MODEL_CACHE_DIR -- the operator saying the path is already there --
+    # can be honored, and the env must not name a path nothing backs.
+    cache_on_kubernetes = (
+        str(resources.get("cloud") or "").strip().lower() in {"kubernetes", "k8s"}
+    )
+    cache_root = resolve_model_cache_root(
+        runtime=RUNTIME_KUBERNETES if cache_on_kubernetes else RUNTIME_PREMOUNTED
+    )
+    cache_claim = model_cache_pvc() if cache_on_kubernetes else ""
+    cache_host_path = model_cache_host_path() if cache_on_kubernetes else ""
+    cache_mounted = bool(cache_root and (cache_claim or cache_host_path))
+    envs.update(model_cache_env(cache_root))
+
     doc: dict[str, Any] = {
         "name": scheduler_task["name"],
         "resources": resources,
         "envs": envs,
         "run": render_task_run_script(
             command,
-            preamble=render_run_preamble_for_tool(
+            preamble=render_model_cache_shell(cache_root, mounted=cache_mounted)
+            + render_run_preamble_for_tool(
                 str(scheduler_task.get("tool_ref") or ""), config=spec.config
             ),
         ),
@@ -1811,6 +1856,19 @@ def build_skypilot_task_doc(
                 "first-party workflow images must satisfy the SkyPilot bootstrap "
                 "contract as their declared image user; runAsUser: 0 overrides are forbidden"
             )
+    # A pod is discarded when the stage ends, so on Kubernetes the cache env above
+    # only survives the run if it points at a volume that outlives the pod. Mount
+    # the operator's claim; a profile that already mounts something at the cache
+    # root keeps its own volume (pod_config_with_model_cache leaves it alone).
+    if cache_mounted:
+        task_config.setdefault("kubernetes", {})["pod_config"] = (
+            pod_config_with_model_cache(
+                task_config.get("kubernetes", {}).get("pod_config"),
+                root=cache_root,
+                pvc=cache_claim,
+                host_path=cache_host_path,
+            )
+        )
     if task_config:
         doc["config"] = task_config
     setup = render_setup_for_tool(
@@ -1819,7 +1877,11 @@ def build_skypilot_task_doc(
         options=options,
     )
     if setup.strip():
-        doc["setup"] = setup
+        # setup is where a stage pre-fetches weights (the self-hosted VLM backend
+        # downloads its model here so the eval's readiness window is not spent on
+        # it), and SkyPilot runs it in a different shell than run -- so the cache
+        # tree has to exist in both.
+        doc["setup"] = render_model_cache_shell(cache_root, mounted=cache_mounted) + setup
     # When no workbench image is pinned, point setup at an existing S3 copy of
     # the npa package (SkyPilot local file_mounts create new buckets and fail
     # on Nebius). Operators set NPA_SRC_S3_URI=s3://bucket/prefix/npa, or persist

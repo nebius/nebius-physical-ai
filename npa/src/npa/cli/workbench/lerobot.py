@@ -595,12 +595,21 @@ def _lerobot_serverless_job_env(
     *,
     s3_endpoint: str = "",
 ) -> dict[str, str]:
+    from npa.workbench.model_cache import (
+        RUNTIME_PREMOUNTED,
+        model_cache_env,
+        resolve_model_cache_root,
+    )
+
     env = {
         "NPA_OUTPUT_PATH": output_path,
         "PYTHONUNBUFFERED": "1",
         "HF_HOME": "/tmp/hf_home",
         "LEROBOT_HF_HOME": "/tmp/hf_home",
     }
+    # Durable weight/dataset cache when the operator configured one; otherwise the
+    # ephemeral defaults above, unchanged.
+    env.update(model_cache_env(resolve_model_cache_root(runtime=RUNTIME_PREMOUNTED)))
     if hf_token:
         env["HF_TOKEN"] = hf_token
         env["HUGGING_FACE_HUB_TOKEN"] = hf_token
@@ -779,7 +788,8 @@ def _lerobot_train_container_command(
         "source /opt/lerobot/venv/bin/activate && "
         "if [ -f /opt/lerobot/.env ]; then set -a && source /opt/lerobot/.env && set +a; fi && "
         f"{training_env}"
-        "mkdir -p /tmp/hf_home && "
+        # The job env may point HF_HOME at the durable weight cache instead.
+        'mkdir -p "${HF_HOME:-/tmp/hf_home}" && '
         f"{dataset_setup_cmd}"
         f"lerobot-train "
         f"--policy.type={shlex.quote(policy_type)} "
@@ -849,9 +859,9 @@ source /opt/lerobot/venv/bin/activate
 if [ -f /opt/lerobot/.env ]; then set -a && source /opt/lerobot/.env && set +a; fi
 export MUJOCO_GL=egl
 export PYOPENGL_PLATFORM=egl
-mkdir -p /tmp/hf_home
-export HF_HOME=/tmp/hf_home
-export LEROBOT_HF_HOME=/tmp/hf_home
+export HF_HOME="${{HF_HOME:-/tmp/hf_home}}"
+export LEROBOT_HF_HOME="${{LEROBOT_HF_HOME:-$HF_HOME}}"
+mkdir -p "$HF_HOME" "$LEROBOT_HF_HOME"
 
 OUTPUT_DIR=/tmp/lerobot_profile_$(date +%s)_$$
 mkdir -p "$OUTPUT_DIR"

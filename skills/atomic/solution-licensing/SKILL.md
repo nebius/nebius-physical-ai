@@ -188,6 +188,19 @@ weight cache durable. Name the cache tier in every workflow design:
 | **Node-local ephemeral** | Reuses downloads only on the same surviving node or pod volume. Treat a reschedule, node replacement, or cleanup as a cold cache. |
 | **Shared durable PVC/object storage** | Survives workers only when the workflow explicitly provisions and mounts a PVC or stages objects to configured storage. It is not implied by runtime fetch. |
 
+The workbench ships that third tier: `npa/src/npa/workbench/model_cache.py` is the
+one place that decides where downloaded weights land, and it is wired into the
+SkyPilot renderer, the sim2real sibling GPU Jobs, Serverless Job envs, and VM
+Docker deploys. It stays inert until the operator supplies storage
+(`NPA_MODEL_CACHE_PVC`, `NPA_MODEL_CACHE_HOST_PATH`, or an explicit
+`NPA_MODEL_CACHE_DIR`), then redirects the whole cache family — `HF_*`,
+`TORCH_HOME`, `NPA_COSMOS3_CACHE`, `NPA_COSMOS_CURATE_WEIGHTS_DIR`, the LeRobot,
+Wan and LTX caches — into it. Reach for the claim in
+`npa/docker/workbench/common/model-weight-cache.yaml` and
+`docs/workbench/model-weight-cache.md` before designing a per-workflow cache;
+a new one-off cache path is how the family fragments and one stage silently
+re-downloads.
+
 For a durable cache:
 
 1. Wire the PVC or object-storage location explicitly; do not rely on an image

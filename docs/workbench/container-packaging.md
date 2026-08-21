@@ -273,7 +273,9 @@ GR00T N1, and Cosmos-Reason weights (and VLMs) are downloaded at **runtime**
 using the customer's own HF/NGC token when the upstream repository is gated.
 Every required gated repository is probed before provisioning; there is no NPA
 manual terms flag or access-check bypass. Public repositories work anonymously.
-The upstream license still applies, and we never redistribute weights.
+The upstream license still applies, and we never redistribute weights. Those
+downloads should survive the run that paid for them — see
+[Runtime-fetched model weights](#runtime-fetched-model-weights-and-where-they-land).
 
 Access model today (both regions): each workbench registry
 (`cr.eu-north1.nebius.cloud/…` primary, `cr.us-central1.nebius.cloud/…` mirror)
@@ -429,8 +431,9 @@ image lands without republishing every existing image. A second run after the on
 visibility flips likewise skips all matching copies and only re-verifies anonymous pulls.
 
 or the `Publish public images` GitHub Actions workflow (manual dispatch,
-dry-run by default). **Consumers in any tenant** then pull the OSS images by
-pointing the resolver at the public mirror:
+dry-run by default). **Consumers in any tenant** then pull the OSS images from
+the default public mirror. An explicit export is only needed to override a
+legacy saved private-registry value:
 
 ```bash
 export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai   # OSS images, any tenant
@@ -493,6 +496,38 @@ selector.
 > the images contain no NVIDIA-proprietary bytes, and NVIDIA delivers Isaac to each
 > operator under that operator's own acceptance — but dispatching the workflow with
 > `dry_run=false` should wait on sign-off from someone with the authority to accept it.
+
+## Runtime-fetched model weights (and where they land)
+
+Because no image bakes weights, every run of an image downloads them. Whether that
+happens **once** or **every time** is a property of the storage the operator gives
+the run, and for a long time nothing supplied it: each runtime wrote to whatever
+directory happened to be writable inside its image (`/tmp/hf_home`, a pod-local
+`emptyDir`, a path with no bind mount at all), so the download died with the
+container and the next run re-paid for it on an already-billing GPU.
+
+`npa/src/npa/workbench/model_cache.py` is now the one place that answers "where do
+downloaded weights live", and it is wired into every runtime NPA drives: SkyPilot
+task envs plus a Kubernetes volume at the cache root, sim2real sibling GPU Jobs,
+Serverless Jobs, long-lived workbench containers on a VM, and the OpenPI and LeIsaac
+Deployments. It is on wherever that does not mean inventing storage: a VM deploy
+creates a directory on its own disk, and on Kubernetes applying the shipped manifest
+is the whole of it, because submit finds the claim by name.
+
+```bash
+kubectl apply -f npa/docker/workbench/common/model-weight-cache.yaml
+```
+
+NPA never creates a claim, chooses a storage class, or bills anyone for a volume, so
+Kubernetes stays inert until that claim exists, and a Serverless Job caches only once
+`NPA_MODEL_CACHE_FILESYSTEM` names a filesystem. `NPA_MODEL_CACHE_DISABLED=1` turns
+everything off. See [model-weight-cache.md](model-weight-cache.md) for the full
+variable family, which runtime honors which, sizing, and how to verify a run is
+hitting the cache.
+
+This does not move the redistribution boundary: the bytes still arrive from the
+vendor under the operator's own entitlement, into the operator's own storage. It only
+stops NPA from throwing them away.
 
 ## Feature exposure
 

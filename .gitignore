@@ -58,6 +58,12 @@ dist/
 build/
 .venv/
 venv/
+# Also match a venv symlinked in from elsewhere: a trailing slash matches only
+# directories, so `npa/.venv -> /path/to/venv` would otherwise be committable.
+# Scoped to the two paths the repo actually uses, rather than any `venv` at any
+# depth.
+/.venv
+/npa/.venv
 .coverage
 htmlcov/
 .pytest_cache/
@@ -98,3 +104,8 @@ node_modules/
 # Generated security scan reports
 kingfisher-result*.json
 semgrep-*.json
+
+# build_docs.sh stages the CLI reference beside docs/cli so the swap is a rename.
+# Its cleanup trap removes these; a hard kill cannot, so keep them uncommittable.
+docs/.cli-stage-*/
+docs/.cli-prev-*/

@@ -18,6 +18,12 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "uv available",
         "standalone GR00T inference script runs",
     ],
+    "alpamayo2-super": [
+        "pinned upstream 34B VLM plus diffusion expert loads from the operator cache",
+        "gated PhysicalAI-AV surround-camera sample loads under the operator HF token",
+        "real ego-trajectory inference produces projected trajectory JSON",
+        "calibrated-camera trajectory PNG and immutable result provenance are written",
+    ],
     "lerobot": [
         "LeRobot package version pin",
         "50-step PushT training run",

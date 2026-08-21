@@ -680,6 +680,7 @@ def deployment_manifest(
         )
     if image_pull_secret:
         pod_spec["imagePullSecrets"] = [{"name": image_pull_secret}]
+    _redirect_asset_cache_to_durable_storage(pod_spec)
     return {
         "apiVersion": "apps/v1",
         "kind": "Deployment",
@@ -694,6 +695,51 @@ def deployment_manifest(
             "template": {"metadata": {"labels": labels}, "spec": pod_spec},
         },
     }
+
+
+def _redirect_asset_cache_to_durable_storage(pod_spec: dict[str, Any]) -> None:
+    """Stage the NVIDIA USD scenes and streaming client into the shared cache.
+
+    They arrive at run time -- the image asserts at build time that it ships none of
+    them -- into an ``emptyDir`` that dies with the pod, so every rollout, node drain
+    and restart re-downloads them onto a GPU that is already running. Each fetch is
+    hash-verified and skipped when the file is already there, so pointing the cache
+    at durable storage turns the download into a checksum. Without a configured
+    claim the pod-local volume stays exactly as it was.
+    """
+
+    from npa.workbench.model_cache import (
+        RUNTIME_KUBERNETES,
+        model_cache_env,
+        model_cache_host_path,
+        model_cache_pvc,
+        pod_config_with_model_cache,
+        resolve_model_cache_root,
+    )
+
+    root = resolve_model_cache_root(runtime=RUNTIME_KUBERNETES)
+    claim = model_cache_pvc()
+    host_path = model_cache_host_path()
+    if not root or not (claim or host_path):
+        return
+
+    patched = pod_config_with_model_cache(
+        {"spec": pod_spec},
+        root=root,
+        pvc=claim,
+        host_path=host_path,
+        container_names=("leisaac",),
+    )
+    pod_spec.update(patched["spec"])
+    cache_env = model_cache_env(root)
+    for container in pod_spec["containers"]:
+        if container.get("name") != "leisaac":
+            continue
+        env = [
+            item for item in container.get("env", []) if item.get("name") not in cache_env
+        ]
+        env.extend({"name": key, "value": value} for key, value in sorted(cache_env.items()))
+        container["env"] = env
 
 
 def session_manifest(

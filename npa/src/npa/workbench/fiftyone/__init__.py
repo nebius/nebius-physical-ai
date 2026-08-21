@@ -46,6 +46,11 @@ curate_augmented = make_cli_wrapper(
     "curate_augmented_cmd",
     "Run real FiftyOne Brain curation over a Physical AI Data Factory augmented set.",
 )
+review_augmented = make_cli_wrapper(
+    "npa.cli.fiftyone",
+    "review_augmented_cmd",
+    "Export all terminal PAIDF candidates as a portable real FiftyOneDataset.",
+)
 eval = make_cli_wrapper(
     "npa.cli.fiftyone", "eval_cmd", "Evaluate checkpoint outputs with FiftyOne."
 )
@@ -69,6 +74,7 @@ __all__ = [
     "launch",
     "curate",
     "curate_augmented",
+    "review_augmented",
     "eval",
     "load_dataset",
     "restart",

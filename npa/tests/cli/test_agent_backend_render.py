@@ -14,12 +14,28 @@ import json
 import re
 import secrets
 import symtable
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from npa.cli.agent_embed import embedded_python_source
+
+
+def _clear_rendered_agent_backend_modules() -> None:
+    """Discard the temporary top-level package emitted by render tests."""
+    for module_name in tuple(sys.modules):
+        if module_name == "agent_backend" or module_name.startswith("agent_backend."):
+            sys.modules.pop(module_name, None)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_rendered_agent_backend_package():
+    """Prevent one rendered backend's temporary package leaking into another test."""
+    _clear_rendered_agent_backend_modules()
+    yield
+    _clear_rendered_agent_backend_modules()
 
 
 def test_artifact_route_uses_source_qualified_run_ref() -> None:
@@ -1992,12 +2008,20 @@ def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
                 module._safe_artifact_key(key)
             assert exc_info.value.status_code == 400
 
+        request = module.Request(
+            {"type": "http", "method": "GET", "path": "/artifacts/download", "headers": []}
+        )
         with pytest.raises(module.HTTPException) as exc_info:
-            module.artifacts_download(key="safe.bin", bucket="foreign-bucket")
+            module.artifacts_download(
+                request, key="safe.bin", resource_bucket="foreign-bucket"
+            )
         assert exc_info.value.status_code == 400
+        assert exc_info.value.detail["code"] == "exact_artifact_source_required"
 
         with pytest.raises(module.HTTPException) as exc_info:
-            module.artifacts_download(s3_uri="s3://configured-bucket/../secret.bin")
+            module.artifacts_download(
+                request, s3_uri="s3://configured-bucket/../secret.bin"
+            )
         assert exc_info.value.status_code == 400
 
         allowed_key = "nested/root/category/run-one/reports/run.rrd"
@@ -2085,8 +2109,8 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
         )
         monkeypatch.setattr(
             module,
-            "_resolved_artifact_for_content",
-            lambda *_args, **_kwargs: ("run-one", "bucket", artifact),
+            "_exact_artifact_source",
+            lambda **_kwargs: ("run-one", "bucket", artifact),
         )
         request = module.Request(
             {
@@ -2097,7 +2121,14 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
             }
         )
         response = module._artifact_content_response(
-            request, run_id="run-one", key=artifact.key
+            request,
+            run_id="run-one",
+            run_ref="npa1_exact",
+            key=artifact.key,
+            project_id="project-one",
+            resource_bucket="bucket",
+            resolved_prefix="",
+            source_selected=True,
         )
         assert response.status_code == 206
         assert response.headers["content-range"] == "bytes 0-3/10"
@@ -2109,12 +2140,20 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
         )
         with pytest.raises(module.HTTPException) as exc_info:
             module._artifact_content_response(
-                request, run_id="run-one", key=artifact.key
+                request,
+                run_id="run-one",
+                run_ref="npa1_exact",
+                key=artifact.key,
+                project_id="project-one",
+                resource_bucket="bucket",
+                resolved_prefix="",
+                source_selected=True,
             )
         assert exc_info.value.status_code == 409
         assert "changed since inventory discovery" in exc_info.value.detail
     finally:
         sys.modules.pop(module_name, None)
+
 
     paths = {getattr(route, "path", "") for route in module.app.routes}
     assert callable(module.artifacts_runs)
@@ -3039,6 +3078,138 @@ def test_agent_module_source_has_no_invalid_escape_sequences() -> None:
         compile(source, "agent.py", "exec")
     offenders = [str(w.message) for w in caught if "invalid escape" in str(w.message)]
     assert not offenders, offenders
+
+
+def test_scoped_mp4_content_and_download_stream_real_bytes_for_get_head_and_range(
+    monkeypatch, tmp_path
+) -> None:
+    import io
+    import sys
+
+    from fastapi.testclient import TestClient
+
+    module_name = "npa_rendered_scoped_mp4_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    media = b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2" + b"browser-media-bytes"
+    run_id = "run-video"
+    run_ref = "npa1_scoped_video"
+    project_id = "project-video"
+    bucket = "bucket-video"
+    prefix = "workflow-runs"
+    key = f"{prefix}/{run_id}/cosmos_augmented/variant/augmented_video.mp4"
+
+    class FakeS3:
+        def head_object(self, *, Bucket, Key):
+            assert (Bucket, Key) == (bucket, key)
+            return {"ContentLength": len(media), "LastModified": "2026-08-19T00:00:00Z"}
+
+        def get_object(self, **kwargs):
+            assert (kwargs["Bucket"], kwargs["Key"]) == (bucket, key)
+            range_value = str(kwargs.get("Range") or "")
+            if range_value:
+                match = re.fullmatch(r"bytes=(\d+)-(\d+)", range_value)
+                assert match is not None
+                start, end = (int(value) for value in match.groups())
+                payload = media[start : end + 1]
+                return {
+                    "Body": io.BytesIO(payload),
+                    "ContentLength": len(payload),
+                    "ContentRange": f"bytes {start}-{end}/{len(media)}",
+                }
+            return {"Body": io.BytesIO(media), "ContentLength": len(media)}
+
+    s3 = FakeS3()
+    monkeypatch.setattr(
+        module,
+        "_agent_s3_client",
+        lambda: (s3, {"bucket": bucket, "prefix": prefix}),
+    )
+
+    def _authorize(**kwargs):
+        assert kwargs["run_id"] == run_id
+        assert kwargs["run_ref"] == run_ref
+        assert kwargs["project_id"] == project_id
+        assert kwargs["resource_bucket"] == bucket
+        assert kwargs["resolved_prefix"] == prefix
+        return bucket, project_id, prefix
+
+    monkeypatch.setattr(module, "_authorize_exact_run_ref_source", _authorize)
+    params = {
+        "run_id": run_id,
+        "run_ref": run_ref,
+        "project_id": project_id,
+        "resource_bucket": bucket,
+        "resolved_prefix": prefix,
+        "source_selected": "true",
+        "key": key,
+    }
+    client = TestClient(module.app)
+    try:
+        unscoped = client.get(
+            "/artifacts/content", params={"run_id": run_id, "key": key}
+        )
+        assert unscoped.status_code == 400
+        assert unscoped.json()["detail"]["code"] == "exact_artifact_source_required"
+        unscoped_download = client.get(
+            "/artifacts/download", params={"s3_uri": f"s3://{bucket}/{key}"}
+        )
+        assert unscoped_download.status_code == 400
+        assert (
+            unscoped_download.json()["detail"]["code"]
+            == "exact_artifact_source_required"
+        )
+
+        full = client.get("/artifacts/content", params=params)
+        assert full.status_code == 200
+        assert full.content == media
+        assert full.headers["content-type"].startswith("video/mp4")
+        assert full.headers["content-length"] == str(len(media))
+        assert full.headers["accept-ranges"] == "bytes"
+        assert full.headers["x-npa-source-selected"] == "true"
+
+        head = client.head("/artifacts/content", params=params)
+        assert head.status_code == 200
+        assert head.content == b""
+        assert head.headers["content-type"].startswith("video/mp4")
+        assert head.headers["content-length"] == str(len(media))
+        assert head.headers["accept-ranges"] == "bytes"
+
+        ranged = client.get(
+            "/artifacts/content", params=params, headers={"Range": "bytes=0-7"}
+        )
+        assert ranged.status_code == 206
+        assert ranged.content == media[:8]
+        assert ranged.headers["content-type"].startswith("video/mp4")
+        assert ranged.headers["content-length"] == "8"
+        assert ranged.headers["content-range"] == f"bytes 0-7/{len(media)}"
+        assert ranged.headers["accept-ranges"] == "bytes"
+
+        download = client.get("/artifacts/download", params=params)
+        assert download.status_code == 200
+        assert download.content == media
+        assert download.headers["content-type"].startswith("video/mp4")
+        assert download.headers["content-length"] == str(len(media))
+        assert download.headers["accept-ranges"] == "bytes"
+        assert download.headers["content-disposition"].startswith("attachment;")
+
+        download_head = client.head("/artifacts/download", params=params)
+        assert download_head.status_code == 200
+        assert download_head.content == b""
+        assert download_head.headers["content-type"].startswith("video/mp4")
+        assert download_head.headers["content-length"] == str(len(media))
+        assert download_head.headers["accept-ranges"] == "bytes"
+
+        download_range = client.get(
+            "/artifacts/download", params=params, headers={"Range": "bytes=4-11"}
+        )
+        assert download_range.status_code == 206
+        assert download_range.content == media[4:12]
+        assert download_range.headers["content-type"].startswith("video/mp4")
+        assert download_range.headers["content-length"] == "8"
+        assert download_range.headers["content-range"] == f"bytes 4-11/{len(media)}"
+        assert download_range.headers["accept-ranges"] == "bytes"
+    finally:
+        sys.modules.pop(module_name, None)
 
 
 def test_rendered_backend_labels_nurec_camera_without_inheriting(monkeypatch) -> None:

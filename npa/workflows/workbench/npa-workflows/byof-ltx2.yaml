@@ -50,8 +50,9 @@ config:
 
     # First, and before anything is fetched: prove in this run, on this image,
     # that both fetches refuse when the entitlement is scrubbed. It has to run
-    # first because it also asserts both caches are still empty, which stops a
-    # "refusal" that merely reused an already-populated cache from passing.
+    # first because it also asserts the caches are unchanged by the refusal,
+    # which stops a "refusal" that merely reused what this run had already
+    # fetched from passing.
     ltx-runtime assert-refusal | tee "${LTX2_OUT}/ltx2_5_entitlement_refusal.txt"
 
     # Now the two gated fetches. Each refuses with exit 78 without the

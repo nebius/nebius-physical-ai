@@ -56,8 +56,9 @@ you intend to use. A silent exit or an empty storage section means configure did
 not write what you think it did — resolve it here, because every later command
 resolves credentials through this file.
 
-Do not hardcode project IDs, tenant IDs, registry IDs, or bucket names anywhere
-in the repo; they belong only in `~/.npa/`.
+Do not hardcode project IDs, tenant IDs, private registry IDs, or bucket names
+anywhere in the repo. The project values belong only in `~/.npa/`; private
+registry selection belongs in `NPA_REGISTRY` or an explicit image option.
 
 ## Step 3 — Prove credentials before spending anything
 
@@ -146,11 +147,12 @@ single node, so `NAME:2` never schedules on 1-GPU nodes regardless of node count
 npa workbench workflow preflight-images <spec.yaml> --project <alias> --json
 ```
 
-**Gate:** every image reports `ok`. Nothing mirrors workbench images into the
-registry `npa configure` selected, so `not_found` means the image was never
-pushed to *your* registry. A `403` does not fail a job — Kubernetes retries pulls
-forever — so an unpullable image silently burns cluster time in
-`ImagePullBackOff`. `submit` runs this check before provisioning by default.
+**Gate:** every image reports `ok`. Supported images resolve from the anonymous
+GHCR mirror by default. If you explicitly select a custom/private registry,
+`not_found` means the image was never pushed there. A `403` does not fail a job —
+Kubernetes retries pulls forever — so an unpullable image silently burns cluster
+time in `ImagePullBackOff`. `submit` runs this check before provisioning by
+default.
 
 ## Step 9 — Submit
 

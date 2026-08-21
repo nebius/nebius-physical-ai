@@ -9,19 +9,24 @@ import os
 from pathlib import Path
 from typing import Any
 
-# Primary public Workbench registry (eu-north1). A registry path is a public
-# locator, not a credential: pulls are still gated by the registry pull secret /
-# IAM token, which are never committed. Operators can override it with NPA_REGISTRY
-# or `container_registry` in ~/.npa/config.yaml.
+# The runtime default is the anonymous GHCR mirror. Operators still override it
+# with NPA_REGISTRY (or a legacy ``container_registry`` value in config) when
+# they need private or locally modified images.
+DEFAULT_PUBLIC_CONTAINER_REGISTRY = "ghcr.io/nebius/nebius-physical-ai"
+DEFAULT_CONTAINER_REGISTRY = DEFAULT_PUBLIC_CONTAINER_REGISTRY
+
+# Maintainer builds and the public-image publisher use the private Nebius source
+# registry. Keep this separate from the runtime default: changing what users pull
+# must never make the mirror publisher read its source from its own target.
+# DEFAULT_CONTAINER_REGISTRY_ID retains its public API name for compatibility.
 DEFAULT_CONTAINER_REGISTRY_ID = "e00cm0vc6t09m0z5gw"
-DEFAULT_CONTAINER_REGISTRY = (
+DEFAULT_SOURCE_CONTAINER_REGISTRY = (
     f"cr.eu-north1.nebius.cloud/{DEFAULT_CONTAINER_REGISTRY_ID}"
 )
-# Mirror registry (us-central1) used for region-agnostic failover: every tool
-# image is mirrored to both this and the primary (eu-north1) registry, so a pull
-# succeeds regardless of the caller's region — e.g. an in-cluster us-central1 pull
-# cannot reach the cross-region eu-north1 registry, and vice versa. A registry
-# path is a public locator, not a credential. Override with NPA_BACKUP_REGISTRY.
+# Private source-registry mirror (us-central1) used for region-aware failover by
+# maintainers and operators who explicitly select a private registry. The public
+# GHCR runtime default is global and needs no regional fallback. Override with
+# NPA_BACKUP_REGISTRY.
 BACKUP_CONTAINER_REGISTRY = "cr.us-central1.nebius.cloud/u00j7q4jjkahvsx0jy"
 DEFAULT_VLM_IMAGE_ENV = "NPA_VLM_IMAGE"
 DEFAULT_WORKBENCH_IMAGE_ENV = "NPA_WORKBENCH_IMAGE"
@@ -55,6 +60,7 @@ CONTAINER_IMAGE_NAMES = {
     "detection-training": "npa-detection-training",
     "wan2-2": "npa-wan2-2",
     "ltx2": "npa-ltx2",
+    "alpamayo2-super": "npa-alpamayo2-super",
 }
 
 # Public-image publication must enforce the digest-bound SkyPilot bootstrap
@@ -69,6 +75,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "cosmos-evaluator",
         "content-agents",
         "fiftyone",
+        "rerun-viewer",
     }
 )
 
@@ -154,11 +161,22 @@ UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"ltx2"})
 # grant, so making images pullable by any Nebius tenant (or anyone) means
 # mirroring the publicly_publishable_tools() set to a public-capable registry.
 # GHCR is the default (public, anonymous pull, native to the GitHub org). A
-# registry path is a public locator, not a credential. Override with
-# NPA_PUBLIC_REGISTRY; consumers in any tenant pull the OSS images by setting
-# NPA_REGISTRY to this value.
+# registry path is a public locator, not a credential. Override publication with
+# NPA_PUBLIC_REGISTRY; runtime consumers use this canonical mirror by default and
+# set NPA_REGISTRY only for a custom/private registry.
 PUBLIC_CONTAINER_REGISTRY_ENV = "NPA_PUBLIC_REGISTRY"
-DEFAULT_PUBLIC_CONTAINER_REGISTRY = "ghcr.io/nebius/nebius-physical-ai"
+
+# A supported worker release can be available in the maintainer source registry
+# before an authorized human publishes it to the anonymous mirror. Keep public
+# resolution on the last anonymously verified tag in that interval. Remove an
+# override only after the replacement tag has been copied and an unauthenticated
+# manifest check succeeds; ``contribute-workbench-image`` deliberately makes
+# public publication a separate, explicit decision.
+PUBLIC_MIRROR_TAG_OVERRIDES: dict[str, str] = {
+    "cosmos2-transfer": "2.5.1-skypilot-ready-20260801T053000Z",
+    "fiftyone": "1.15.0.post1",
+    "rerun-viewer": "0.31.4",
+}
 
 # Registry hosts that serve anonymous/public pulls. Resolving a restricted image
 # against one of these is always wrong: either it is not there (we never publish
@@ -185,23 +203,27 @@ SUPPORTED_TOOL_VERSIONS = {
     "isaac-lab": "2.3.2.post1",
     "leisaac": "0.4.0-20260817T231825Z",
     "cosmos": "cu128-torch27-sm100-1.0.9-20260803T002017Z",
-    "cosmos2-transfer": "2.5.1-skypilot-ready-20260801T053000Z",
+    "cosmos2-transfer": "2.5.1-sam2-multigpu-20260817-r2",
     # Additive r2 release of cosmos-framework 1.2.2 (pinned commit 5e67049c) +
     # torch cu130. The immutable 1.2.2-cu130 tag remains rollback provenance.
     # No weights baked; gated Cosmos3 checkpoints download at runtime.
     "cosmos3": "1.2.2-cu130-r2",
     "cosmos3-reason": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+    # Additive image releases that preserve the tool versions while including
+    # the immutable SkyPilot 0.12.2 Kubernetes bootstrap closure. The original
+    # semantic-version tags remain valid for direct container use, but cannot be
+    # workflow-worker defaults because their published bytes predate that closure.
     "cosmos-curate": "0.1.2-skypilot-v1-20260813T164700Z",
     "cosmos-evaluator": "0.1.2-skypilot-v1-20260813T164700Z",
     "groot": "0.1.0",
-    "fiftyone": "1.15.0.post1",
+    "fiftyone": "1.15.0-post1-skypilot-v1-20260815-review5",
     "sonic": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "retargeting": "0.1.1",
     "envgen": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "reference-policy": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "lerobot-vlm-rl": "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "loop-eval": "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
-    "rerun-viewer": "0.31.4",
+    "rerun-viewer": "0.31.4-skypilot-v1-20260815-review5-r2",
     # Tracks the pinned @foxglove/embed SDK release (npa.workbench.foxglove).
     "foxglove-embed": "0.58.0",
     # Lichtblick (MPL-2.0): OSS, Foxglove-compatible static web viewer bundle.
@@ -218,6 +240,7 @@ SUPPORTED_TOOL_VERSIONS = {
     # has been scanned. It stays until the GPU run, because renaming it would
     # imply the whole claim is earned, and re-tagging is part of that change.
     "ltx2": "2.5-rtfetch-unbuilt",
+    "alpamayo2-super": "0.1.0-cu128",
     "nebius-cli": "0.12.254",
     "terraform": "~> 0.5.201",
     "terraform-cli": "1.13.3",
@@ -305,7 +328,7 @@ def public_mirror_tag_for_tool(tool: str) -> str:
     """
     if tool == "sonic":
         return SUPPORTED_TOOL_VERSIONS[tool]
-    return supported_tool_version(tool)
+    return PUBLIC_MIRROR_TAG_OVERRIDES.get(tool, supported_tool_version(tool))
 
 
 def supported_lerobot_versions() -> tuple[str, ...]:
@@ -389,6 +412,7 @@ def container_image_for_tool(
     image_variant: str | None = None,
 ) -> str:
     """Return the fully qualified image ref for a Workbench tool."""
+    resolved_registry = registry or _primary_registry()
     if tool == "sonic":
         entry = sonic_image_entry(gpu_target=gpu_target, image_variant=image_variant)
         image_name = str(entry["name"])
@@ -399,8 +423,11 @@ def container_image_for_tool(
                 f"Image variants are only defined for SONIC, got tool={tool!r}"
             )
         image_name = CONTAINER_IMAGE_NAMES[tool]
-        resolved_tag = tag or supported_tool_version(tool)
-    resolved_registry = registry or _primary_registry()
+        resolved_tag = tag or (
+            public_mirror_tag_for_tool(tool)
+            if is_public_registry(resolved_registry)
+            else supported_tool_version(tool)
+        )
     if not is_publicly_redistributable(tool) and is_public_registry(resolved_registry):
         raise ValueError(
             f"{tool!r} is not publicly redistributable and is never distributed from a "
@@ -490,7 +517,7 @@ def registry_from_env() -> str:
 
 
 def primary_container_registry() -> str:
-    """Resolve the primary registry: NPA_REGISTRY, then NPA_REGISTRY_ID, then default."""
+    """Resolve the runtime registry: explicit env override, then public default."""
     return registry_from_env() or DEFAULT_CONTAINER_REGISTRY
 
 
@@ -513,23 +540,26 @@ def container_image_candidates(
     image_variant: str | None = None,
     preferred_region: str | None = None,
 ) -> list[str]:
-    """Return image refs to try in order across both mirror registries.
+    """Return image refs to try in order for the selected registry.
 
-    Callers that support pull failover should iterate these so a pull works
-    region-agnostically: every image is mirrored to both registries, and a caller
-    that cannot reach one region (cross-region 403, or an identity without read on
-    the other project's registry) falls through to the other. ``preferred_region``
-    reorders so the caller's local-region registry (``cr.<region>.nebius.cloud``)
-    is tried first, avoiding a guaranteed-denied cross-region attempt.
+    The anonymous GHCR default is a single global candidate. Private-registry
+    callers retain the historical regional failover, and an explicit
+    NPA_BACKUP_REGISTRY enables it for any custom primary. ``preferred_region``
+    reorders private Nebius candidates so the local region is tried first.
     """
+    resolved_registry = registry or primary_container_registry()
     primary = container_image_for_tool(
         tool,
-        registry=registry,
+        registry=resolved_registry,
         tag=tag,
         gpu_target=gpu_target,
         image_variant=image_variant,
     )
     candidates = [primary]
+    if is_public_registry(resolved_registry) and not os.environ.get(
+        "NPA_BACKUP_REGISTRY", ""
+    ).strip():
+        return candidates
     backup_registry = backup_container_registry()
     if backup_registry:
         backup = container_image_for_tool(

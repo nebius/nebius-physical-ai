@@ -12,9 +12,14 @@ from npa.clients import config, credentials
 
 runner = CliRunner()
 
+# The external tools provisioning is allowed to resolve. Anything else reaching
+# _require_bin is a new dependency that should be noticed, not silently satisfied.
+PROVISIONING_BINARIES = frozenset({"terraform", "nebius", "kubectl"})
+
 
 @pytest.fixture(autouse=True)
 def _successful_storage_probe(monkeypatch):
+    resolved_binaries: list[str] = []
     from npa.clients import storage_validation
     from npa.clients.storage_validation import StorageProbeResult
 
@@ -78,6 +83,23 @@ def _successful_storage_probe(monkeypatch):
             "default_storage_class": "compute-csi-default-sc",
         },
     )
+    # provision_if_absent resolves kubectl before calling the validator stubbed
+    # above, so without this the cached-cluster tests pass only on a machine that
+    # happens to have kubectl installed. Nothing here ever executes the binary.
+    #
+    # Stand in for the filesystem lookup only, and record what was asked for: a
+    # blanket passthrough would also fake terraform and nebius resolution and let a
+    # regression that stopped resolving anything at all go unnoticed.
+    def _resolve_without_touching_the_filesystem(binary: str) -> str:
+        assert binary in PROVISIONING_BINARIES, f"unexpected binary resolved: {binary}"
+        resolved_binaries.append(binary)
+        return f"/usr/bin/{binary}"
+
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle._require_bin",
+        _resolve_without_touching_the_filesystem,
+    )
+    return resolved_binaries
 
 
 def _write_runtime(tmp_path: Path, monkeypatch) -> None:
@@ -280,6 +302,7 @@ def test_provision_if_absent_reuses_kubeconfig_and_ensures_bucket(
     tmp_path: Path,
     monkeypatch,
     mocker,
+    _successful_storage_probe,
 ) -> None:
     _write_runtime(tmp_path, monkeypatch)
     kubeconfig = tmp_path / "kubeconfig"
@@ -294,6 +317,9 @@ def test_provision_if_absent_reuses_kubeconfig_and_ensures_bucket(
     assert "s3:verified writable bucket bucket" in result.actions
     assert f"k8s:reused kubeconfig {kubeconfig}" in result.actions
     assert "k8s:validated stable GPU health and CUDA vectorAdd" in result.actions
+    # The fixture fakes the lookup, so this is the assertion that keeps the
+    # resolution itself covered: reusing a kubeconfig must still demand kubectl.
+    assert "kubectl" in _successful_storage_probe
 
 
 def test_reused_cluster_runs_requested_skypilot_smoke(

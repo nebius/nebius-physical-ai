@@ -1162,6 +1162,25 @@ def _wait_for_healthy_jobs_controller(
             timeout=min(max(timeout, 1), 300),
             check=False,
         )
+        if result.returncode != 0 and _can_ignore_foreign_controller_refresh(
+            result, env
+        ):
+            # A Kubernetes cloud can expose a controller from another namespace
+            # while this process has an explicit, distinct SkyPilot user ID.  A
+            # global refresh then fails on the foreign controller before the
+            # caller can launch its own isolated controller.  Consult only this
+            # user's cached state; the subsequent jobs launch still reconciles
+            # the explicitly named controller through SkyPilot itself.
+            result = subprocess.run(
+                [sky_executable, "status", "--output", "json"],
+                env=env,
+                cwd=cwd,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=min(max(timeout, 1), 300),
+                check=False,
+            )
         if result.returncode != 0:
             detail = _command_detail(result)
             raise SkyPilotSubmitError(
@@ -1206,6 +1225,27 @@ def _wait_for_healthy_jobs_controller(
                 f"SkyPilot jobs controller not healthy before launch: {last_summary}.{remedy}"
             )
         time.sleep(max(interval, 0.1))
+
+
+_CONTROLLER_NAME_RE = re.compile(
+    r"\bsky-jobs-controller-[A-Za-z0-9][A-Za-z0-9-]*\b"
+)
+
+
+def _can_ignore_foreign_controller_refresh(
+    result: subprocess.CompletedProcess[str], env: Mapping[str, str]
+) -> bool:
+    """Whether a failed refresh names only another explicit user's controller."""
+
+    user_id = str(env.get("SKYPILOT_USER_ID", "")).strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", user_id):
+        return False
+    detail = f"{result.stdout or ''}\n{result.stderr or ''}"
+    if "ClusterOwnerIdentityMismatchError" not in detail:
+        return False
+    referenced = set(_CONTROLLER_NAME_RE.findall(detail))
+    expected = f"{JOBS_CONTROLLER_PREFIX}{user_id}"
+    return bool(referenced) and expected not in referenced
 
 
 # Signals that `sky status` failed because a *cached* controller still points at

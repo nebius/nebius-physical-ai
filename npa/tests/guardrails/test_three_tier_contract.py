@@ -61,6 +61,12 @@ def _p(
 #               the ones worth closing, tool by tool, with a live run each.
 #
 SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
+    "alpamayo2-super/infer": {
+        "manifest": "knob",
+        "require_camera_projection": "boolean",
+        "runtime_image": "infra",
+        "dry_run": "boolean",
+    },
     "workflow/trigger/run": {
         # Where to watch and what has already been seen: driver state, not a stage input.
         "s3_endpoint": "infra",
@@ -138,6 +144,40 @@ VALID_GAP_CATEGORIES = frozenset({"boolean", "infra", "knob"})
 
 
 CONTRACTS: tuple[CapabilityContract, ...] = (
+    CapabilityContract(
+        name="alpamayo2-super/infer",
+        cli_module="npa.cli.workbench.alpamayo2_super",
+        cli_callback="infer_cmd",
+        sdk_module="npa.sdk.workbench.alpamayo2_super",
+        sdk_attr="infer",
+        spec_path=SPECS / "alpamayo2-super-inference.yaml",
+        tool_ref="workbench.alpamayo2_super.infer",
+        spec_gap=(
+            "manifest",
+            "require_camera_projection",
+            "runtime_image",
+            "dry_run",
+        ),
+        params=(
+            _p("output_path", "output_path", "--output-path"),
+            _p("model_id", "model_id", "--model-id"),
+            _p("model_revision", "model_revision", "--model-revision"),
+            _p("dataset_revision", "dataset_revision", "--dataset-revision"),
+            _p("manifest", "manifest", "--manifest"),
+            _p("sample_index", "sample_index", "--sample-index"),
+            _p("diffusion_steps", "diffusion_steps", "--diffusion-steps"),
+            _p("seed", "seed", "--seed"),
+            _p("figure_style", "figure_style", "--figure-style"),
+            _p(
+                "require_camera_projection",
+                "require_camera_projection",
+                "--require-camera-projection",
+            ),
+            _p("run_id", "run_id", "--run-id"),
+            _p("runtime_image", "runtime_image", "--runtime-image"),
+            _p("dry_run", "dry_run", "--dry-run"),
+        ),
+    ),
     CapabilityContract(
         name="sonic/train",
         cli_module="npa.cli.workbench.sonic.train",

@@ -451,6 +451,11 @@ def test_secure_content_endpoint_contract_is_s3_only_and_range_aware() -> None:
     assert 'not request.headers.get("range")' in source
     assert "INLINE_TEXT_MAX_BYTES" in source
     assert 'render in {"json", "text"} and not download' in source
+    assert "def _exact_artifact_source(" in source
+    assert '"code": "exact_artifact_source_required"' in source
+    assert "_authorize_exact_run_ref_source(" in source
+    assert "source_authorized=True" in source
+    assert '"X-NPA-Source-Selected": "true"' in source
     guard = source.split("def _resolved_artifact_for_content", 1)[1].split(
         "def _artifact_stream", 1
     )[0]
@@ -491,4 +496,14 @@ def test_ui_keeps_artifact_list_after_preview_errors_and_never_requires_recordin
     assert "artifactList.replaceChildren" not in source[source.index("async function previewArtifact"):]
     assert "textContent" in source[source.index("async function previewArtifact"):]
     assert "video.controls = true" in source
+    video_block = source.split('} else if (render === "video") {', 1)[1].split(
+        '} else if (render === "json"', 1
+    )[0]
+    assert "await validateVideoPreviewResponse(contentUrl);" in video_block
+    assert video_block.index("await validateVideoPreviewResponse(contentUrl);") < video_block.index(
+        "video.src = contentUrl;"
+    )
+    assert "Video preview response is not browser media" in source
+    assert "Video decode/playback failed after the media route passed HTTP validation" in source
     assert "downloadArtifact" in source
+    assert '(download ? "/api/artifacts/download?" : "/api/artifacts/content?")' in source

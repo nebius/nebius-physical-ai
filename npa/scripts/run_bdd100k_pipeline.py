@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import threading
 import time
@@ -303,6 +304,31 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         prepared.temp_dir.cleanup()
 
 
+def _mock_stage_env() -> dict[str, str]:
+    """Environment for a locally executed plan step.
+
+    A step's argv starts with the bare ``npa`` console script, which resolves in a
+    task pod but not when this runner is driven by an interpreter whose ``bin/``
+    directory is absent from ``PATH`` -- exactly what
+    ``<venv>/bin/python -m pytest`` does. Put the running interpreter's scripts
+    directory first so the stage runs the same ``npa`` that imported this module.
+
+    Handing this to ``subprocess`` is sufficient: it resolves a bare program name
+    against the ``PATH`` in the mapping it is given, not the parent's.
+
+    ``sysconfig`` is the lookup that stays correct for a venv whose ``python`` is a
+    symlink to the system interpreter: resolving ``sys.executable`` there would
+    escape the venv and land in ``/usr/bin``.
+    """
+
+    env = os.environ.copy()
+    scripts_dir = sysconfig.get_path("scripts") or str(Path(sys.executable).parent)
+    path = env.get("PATH", "")
+    if scripts_dir not in path.split(os.pathsep):
+        env["PATH"] = f"{scripts_dir}{os.pathsep}{path}" if path else scripts_dir
+    return env
+
+
 def _run_mock_endpoint_validation(args: argparse.Namespace) -> int:
     run_id = args.run_id or _default_run_id()
     state = _MockState()
@@ -335,13 +361,14 @@ def _run_mock_endpoint_validation(args: argparse.Namespace) -> int:
             # document's `run:` bash with that document's `envs`; a spec has no such bash, so
             # the unit of execution is the stage's resolved command. That is also a stronger
             # check: it is exactly what the engine will run in a pod.
+            stage_env = _mock_stage_env()
             for step in prepared.plan.steps:
                 if not step.argv:
                     continue
                 result = subprocess.run(
                     step.argv,
                     cwd=cwd,
-                    env=os.environ.copy(),
+                    env=stage_env,
                     text=True,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,

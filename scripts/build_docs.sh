@@ -8,14 +8,50 @@
 #
 set -euo pipefail
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Every docs path below is relative, including the staging directory that has to
+# sit beside docs/cli for the swap to be a rename. Anchor them rather than
+# inheriting the caller's directory.
+cd "$REPO_ROOT"
+
+# Prefer the repository venv when NPA_BIN is not set explicitly: `npa` is only on
+# PATH when that venv is activated, and the repo convention (AGENTS.md, the CI
+# guardrail jobs) is npa/.venv.
+if [ -z "${NPA_BIN:-}" ] && [ -x "${REPO_ROOT}/npa/.venv/bin/npa" ]; then
+  NPA_BIN="${REPO_ROOT}/npa/.venv/bin/npa"
+fi
 NPA_BIN="${NPA_BIN:-npa}"
 # Execution may use an absolute path from an isolated venv, but generated docs
 # must show the stable public command name rather than leaking that checkout.
 NPA_DISPLAY_BIN="${NPA_DOCS_DISPLAY_BIN:-$(basename "$NPA_BIN")}"
+
 # Typer/Rich reads COLUMNS when rendering help. Do not inherit a shell or tmux
 # width: the generated Markdown must be identical in CI and an interactive TTY.
+# Set before the probe below so one width governs every invocation.
 DOCS_COLUMNS="${NPA_DOCS_COLUMNS:-200}"
 export NO_COLOR=1
+
+# Every help fetch below tolerates a non-zero exit, because a leaf command may
+# legitimately fail --help. That tolerance used to hide a missing interpreter
+# entirely: with no `npa` on PATH the walk documented nothing, `--check` reported
+# every page as drifted, and an in-place run deleted docs/cli/ and wrote nothing
+# back. Resolve the binary once, up front, and fail with a usable message.
+if ! env COLUMNS="$DOCS_COLUMNS" NO_COLOR=1 "$NPA_BIN" --help >/dev/null 2>&1; then
+  cat >&2 <<EOF
+ERROR: cannot run '${NPA_BIN}'.
+
+The CLI reference is generated from live \`npa --help\` output, so this script
+needs a working npa. Install it and retry, or point NPA_BIN at an interpreter's
+console script:
+
+  python3 -m venv npa/.venv && npa/.venv/bin/pip install -e npa
+  bash scripts/build_docs.sh${1:+ $1}
+
+  # or
+  NPA_BIN=/path/to/venv/bin/npa bash scripts/build_docs.sh${1:+ $1}
+EOF
+  exit 1
+fi
 
 run_with_docs_width() {
   # Bash treats COLUMNS specially and can reset an exported value to the TTY's
@@ -28,14 +64,17 @@ if [ "${1:-}" = "--check" ]; then
   CHECK=1
 fi
 
-# Single cleanup handler: bash keeps only the last `trap ... EXIT`, so both the
-# scratch help file and the --check temp dir must be removed from one place.
+# Single cleanup handler: bash keeps only the last `trap ... EXIT`, so the scratch
+# help file and every staging directory must be removed from one place. A
+# successful in-place swap renames the staging dir away, so removing it is a no-op.
 TMP_FILE=""
 TEMP_DOCS_DIR=""
+PREV_DOCS_DIR=""
 HELP_CACHE_DIR=""
 cleanup() {
   [ -n "$TMP_FILE" ] && rm -f "$TMP_FILE"
   [ -n "$TEMP_DOCS_DIR" ] && rm -rf "$TEMP_DOCS_DIR"
+  [ -n "$PREV_DOCS_DIR" ] && rm -rf "$PREV_DOCS_DIR"
   [ -n "$HELP_CACHE_DIR" ] && rm -rf "$HELP_CACHE_DIR"
   # An EXIT trap's final command can replace an otherwise successful status.
   # Keep normal regeneration successful when TEMP_DOCS_DIR is intentionally empty.
@@ -43,11 +82,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-DOCS_DIR="docs/cli"
-if [ "$CHECK" -eq 1 ]; then
-  TEMP_DOCS_DIR="$(mktemp -d)"
-  DOCS_DIR="$TEMP_DOCS_DIR"
-fi
+# Always generate into a staging directory, including for an in-place run. The
+# generator used to clear docs/cli first and write pages as it walked, so any walk
+# that produced nothing left the reference deleted. Staging means no destructive
+# step happens until a complete, non-empty result exists.
+#
+# Stage inside docs/ so the swap below is a same-filesystem rename.
+TEMP_DOCS_DIR="$(mktemp -d "docs/.cli-stage-XXXXXX")"
+DOCS_DIR="$TEMP_DOCS_DIR"
 
 HELP_CACHE_DIR="$(mktemp -d)"
 
@@ -107,11 +149,9 @@ is_group() {
   esac
 }
 
+# A fresh staging directory is inherently a clean slate, so pages for commands
+# that were hidden or removed from `--help` cannot linger as orphans.
 mkdir -p "$DOCS_DIR"
-# Regenerate from a clean slate so pages for commands that were hidden or
-# removed from `--help` do not linger as orphans (keeps in-place output
-# identical to `--check`).
-rm -f "$DOCS_DIR"/*.md
 
 TMP_FILE="$(mktemp)"
 tmp="$TMP_FILE"
@@ -161,6 +201,25 @@ document_group_recursive() {
 top_help="$(help_for "$NPA_BIN")"
 groups="$(printf "%s" "$top_help" | discover_commands)"
 
+# `discover_commands` scrapes Rich's box-drawing table out of --help text. A Typer
+# or Rich upgrade, or a COLUMNS value that makes Rich wrap differently, can leave
+# that regex matching nothing while npa itself is perfectly healthy. Silently
+# publishing an empty reference is the failure this guards.
+if [ -z "$groups" ]; then
+  cat >&2 <<EOF
+ERROR: found no commands in '${NPA_BIN} --help'.
+
+The command table is parsed out of Rich's help output, so this usually means the
+help rendering changed rather than that the CLI is broken. Compare:
+
+  COLUMNS=${DOCS_COLUMNS} NO_COLOR=1 ${NPA_BIN} --help
+
+against the parser in scripts/build_docs.sh:discover_commands. docs/cli was left
+untouched.
+EOF
+  exit 1
+fi
+
 # The top level is the widest layer of the walk; warming it in parallel turns the
 # dominant cost (one interpreter start per command) into wall-clock we overlap.
 top_paths=()
@@ -177,6 +236,16 @@ for group in $groups; do
   fi
 done
 
+# Belt and braces behind the empty-groups guard: never install a tree with no
+# pages. This has to run BEFORE the index is generated -- the index is itself a
+# .md file in this directory, so checking afterwards always finds one page and the
+# guard never fires.
+staged_pages=("$DOCS_DIR"/*.md)
+if [ ! -e "${staged_pages[0]}" ]; then
+  echo "ERROR: generated no pages for groups: $groups. docs/cli was left untouched." >&2
+  exit 1
+fi
+
 python3 scripts/_generate_docs_index.py "$DOCS_DIR/" > "$DOCS_DIR/README.md"
 
 if [ "$CHECK" -eq 1 ]; then
@@ -188,5 +257,18 @@ if [ "$CHECK" -eq 1 ]; then
   fi
   echo "docs/cli is up to date."
 else
+  # Two same-filesystem renames, so docs/cli is only ever replaced by a complete
+  # tree and an interrupted run cannot leave it half-written.
+  PREV_DOCS_DIR="$(mktemp -d "docs/.cli-prev-XXXXXX")"
+  if [ -d docs/cli ]; then
+    mv docs/cli "$PREV_DOCS_DIR/cli"
+  fi
+  if ! mv "$TEMP_DOCS_DIR" docs/cli; then
+    if [ -d "$PREV_DOCS_DIR/cli" ]; then
+      mv "$PREV_DOCS_DIR/cli" docs/cli
+    fi
+    echo "ERROR: could not install generated docs; docs/cli restored." >&2
+    exit 1
+  fi
   echo "Docs generated for groups: $groups"
 fi

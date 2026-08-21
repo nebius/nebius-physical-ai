@@ -8,6 +8,7 @@ import pytest
 
 from npa.clients.token_factory import (
     DEFAULT_BASE_URL,
+    DEFAULT_TIMEOUT_S,
     TokenFactoryClient,
     TokenFactoryConfig,
     TokenFactoryError,
@@ -81,6 +82,7 @@ def test_auth_failure_is_not_retried() -> None:
 def test_resolve_config_defaults_to_token_factory_base_url() -> None:
     config = resolve_config(api_key="abc", environ={})
     assert config.base_url == DEFAULT_BASE_URL
+    assert config.timeout_s == DEFAULT_TIMEOUT_S == 600.0
     assert config.chat_completions_url == "https://api.tokenfactory.nebius.com/v1/chat/completions"
     assert config.models_url == "https://api.tokenfactory.nebius.com/v1/models"
 

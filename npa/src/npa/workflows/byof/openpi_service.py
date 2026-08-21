@@ -364,6 +364,52 @@ print("NPA_OPENPI_SERVER_HARDWARE=" + encoded, flush=True)
 """.strip()
 
 
+def _redirect_policy_cache_to_durable_storage(deployment: dict[str, Any]) -> None:
+    """Send the policy checkpoint to the operator's weight cache when there is one.
+
+    `OPENPI_DATA_HOME` is where the gated Gemma-derived checkpoint lands, and it was
+    backed by an ``emptyDir``: a Deployment replaces its pod on every rollout, image
+    change and node drain, so the download was paid again each time on a GPU that is
+    already running. With a claim configured it moves to the shared cache like every
+    other runtime-fetched weight; without one the ephemeral volume stays exactly as
+    it was.
+    """
+
+    from npa.workbench.model_cache import (
+        RUNTIME_KUBERNETES,
+        model_cache_env,
+        model_cache_host_path,
+        model_cache_pvc,
+        pod_config_with_model_cache,
+        resolve_model_cache_root,
+    )
+
+    root = resolve_model_cache_root(runtime=RUNTIME_KUBERNETES)
+    claim = model_cache_pvc()
+    host_path = model_cache_host_path()
+    if not root or not (claim or host_path):
+        return
+
+    pod_spec = deployment["spec"]["template"]["spec"]
+    patched = pod_config_with_model_cache(
+        {"spec": pod_spec},
+        root=root,
+        pvc=claim,
+        host_path=host_path,
+        container_names=("openpi-policy",),
+    )
+    pod_spec.update(patched["spec"])
+    cache_env = model_cache_env(root)
+    for container in pod_spec["containers"]:
+        if container.get("name") != "openpi-policy":
+            continue
+        env = [
+            item for item in container.get("env", []) if item.get("name") not in cache_env
+        ]
+        env.extend({"name": key, "value": value} for key, value in sorted(cache_env.items()))
+        container["env"] = env
+
+
 def build_manifests(
     *,
     run_id: str,
@@ -532,6 +578,7 @@ def build_manifests(
             },
         },
     }
+    _redirect_policy_cache_to_durable_storage(deployment)
     service = {
         "apiVersion": "v1",
         "kind": "Service",

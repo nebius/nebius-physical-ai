@@ -1350,3 +1350,57 @@ def test_build_script_supports_repository_python_310() -> None:
     )
     assert "except ModuleNotFoundError:" in script
     assert "import tomli as tomllib" in script
+
+
+def test_asset_cache_moves_to_the_durable_claim_when_one_exists(monkeypatch) -> None:
+    """The USD scenes and streaming client arrive at run time, into an emptyDir.
+
+    A Recreate rollout, a node drain or a restart therefore re-downloads them onto a
+    GPU that is already running. Each fetch is hash-verified and skipped when the
+    file is present, so a warm cache turns the download into a checksum.
+    """
+
+    monkeypatch.setenv("NPA_MODEL_CACHE_PVC", "npa-model-cache")
+
+    deployment = deployment_manifest(
+        run_id="live-1",
+        namespace="default",
+        image=IMAGE,
+        media_host="1.1.1.1",
+        session_nonce=NONCE,
+        recorder_secret=RECORDER_SECRET,
+    )
+
+    pod = deployment["spec"]["template"]["spec"]
+    assert {
+        "name": "npa-model-cache",
+        "persistentVolumeClaim": {"claimName": "npa-model-cache"},
+    } in pod["volumes"]
+    sim = next(c for c in pod["containers"] if c["name"] == "leisaac")
+    assert {
+        "name": "npa-model-cache",
+        "mountPath": "/opt/npa-model-cache",
+    } in sim["volumeMounts"]
+    env = {item["name"]: item["value"] for item in sim["env"] if "value" in item}
+    assert env["NPA_LEISAAC_CACHE_DIR"] == "/opt/npa-model-cache/leisaac"
+    assert env["LEISAAC_ASSETS_ROOT"] == "/opt/npa-model-cache/leisaac/assets/runtime"
+
+
+def test_asset_cache_keeps_its_pod_local_volume_without_a_claim(monkeypatch) -> None:
+    for name in ("NPA_MODEL_CACHE_PVC", "NPA_MODEL_CACHE_HOST_PATH", "NPA_MODEL_CACHE_DIR"):
+        monkeypatch.delenv(name, raising=False)
+
+    deployment = deployment_manifest(
+        run_id="live-1",
+        namespace="default",
+        image=IMAGE,
+        media_host="1.1.1.1",
+        session_nonce=NONCE,
+        recorder_secret=RECORDER_SECRET,
+    )
+
+    pod = deployment["spec"]["template"]["spec"]
+    assert "npa-model-cache" not in [volume["name"] for volume in pod["volumes"]]
+    sim = next(c for c in pod["containers"] if c["name"] == "leisaac")
+    env = {item["name"]: item["value"] for item in sim["env"] if "value" in item}
+    assert "NPA_LEISAAC_CACHE_DIR" not in env

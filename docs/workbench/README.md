@@ -10,6 +10,7 @@ workflows, and operational runbooks.
 | [getting-started.md](getting-started.md) | Fresh-clone onboarding path for install, credentials, and first Workbench runs |
 | [container-image-catalog.md](container-image-catalog.md) | Verified public GHCR image names, exact published tags, build dates, and capabilities |
 | [container-packaging.md](container-packaging.md) | Container packaging tiers, security baseline, and feature exposure contract |
+| [model-weight-cache.md](model-weight-cache.md) | Durable cache for the model weights the images are not allowed to bake, so a second run is a cache hit |
 | [cosmos3-b200-checkpoint-evaluation-20260814.md](cosmos3-b200-checkpoint-evaluation-20260814.md) | Reserved-B200, 72-image Cosmos3 checkpoint evaluation and three-seed investment decision |
 | [leisaac-teleoperation.md](leisaac-teleoperation.md) | Capability-gated LeIsaac agent tab, RT-core launch, keyboard teleoperation, and cleanup |
 | [../architecture/oss-onboarding-ladder.md](../architecture/oss-onboarding-ladder.md) | OSS → BYOF → workflow → first-class tool promotion ladder |
@@ -41,6 +42,7 @@ workflows, and operational runbooks.
 | Anyone choosing between CLI, SDK, and YAML | [cli-sdk-yaml-walkthrough.md](cli-sdk-yaml-walkthrough.md) |
 | Partner onboarding an OSS repo | [../architecture/oss-onboarding-ladder.md](../architecture/oss-onboarding-ladder.md) |
 | Engineer packaging or hardening a container | [container-packaging.md](container-packaging.md) |
+| Operator watching the same weights download every run | [model-weight-cache.md](model-weight-cache.md) |
 | Customer running the first H100 sim-to-real proof | [guides/sim2real-workflow.md](guides/sim2real-workflow.md) |
 | Operator reproducing a workload | [cookbooks/README.md](cookbooks/README.md) |
 | SDK integrator or agent author | [../sdk/errors.md](../sdk/errors.md) |

@@ -18,8 +18,10 @@ Keep live-validation tags unique, scan built bytes for restricted payloads, and
 push only to the authorized project registry unless shared publication is
 explicitly requested.
 
-1. Resolve runtime registry settings with `npa configure` or
-   `npa.clients.config.resolve_container_registry` or `npa configure`.
+1. Use the anonymous GHCR default for published images. For a private or locally
+   modified image, select the destination explicitly with `NPA_REGISTRY`, a
+   build-script `--registry`, or the relevant command's image option. Existing
+   saved `container_registry` overrides still resolve for compatibility.
 2. Build from the checked-in Dockerfile for the tool; do not invent a detached
    image source outside the repo.
 3. Tag images with the configured registry prefix and a version that matches the

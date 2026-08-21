@@ -230,6 +230,34 @@
       "notes": "The image itself is CPU-only and carries zero Lightricks bytes, so nothing about datacenter Blackwell has been measured. Built and byte-scanned: payload scan clean over 16 archives at the digest recorded in docs/workbench/ltx2.md. What is missing is a GPU run - one attempt reached real weight downloads and died on node ephemeral storage - so the verdict stays unknown until that produces a result."
     },
     {
+      "name": "npa-alpamayo2-super",
+      "dockerfile": "alpamayo2-super/Dockerfile",
+      "build_script": "alpamayo2-super/build.sh",
+      "verdict": "ready",
+      "validation": "validated",
+      "redistribution": "public",
+      "torch": "upstream-locked and measured 2.8.0+cu128",
+      "torch_cuda_arch_list": "9.0 10.0 12.0",
+      "source_compiled_extensions": [
+        "flash-attn 2.8.x"
+      ],
+      "smoke": "Pinned upstream Alpamayo2-Super inference_smoke loads the real 34B VLM plus diffusion expert, reads a gated PhysicalAI-AV sample, predicts an ego trajectory, and writes non-empty JSON and calibrated-camera PNG artifacts.",
+      "notes": "The public-eligible image contains pinned Apache-2.0 source/runtime only. OpenMDW model weights and non-transferable PhysicalAI-AV bytes are fetched into the operator-owned runtime cache. The exact release completed independent real inference on B200 sm_100 and RTX PRO 6000 sm_120; neither result was inferred from the other.",
+      "measured_torch": "2.8.0+cu128",
+      "measured_arch_list": [
+        "sm_70",
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ],
+      "validated_tag": "0.1.0-cu128",
+      "validated_digest": "sha256:2164450f8baf57d8798f64063ea27bf11611f5b695c467de0c2e319e3134ebd5",
+      "validated_registry_scope": "operator"
+    },
+    {
       "name": "npa-cosmos3-reason",
       "dockerfile": "cosmos3-reason/Dockerfile",
       "verdict": "ready",
@@ -602,6 +630,27 @@
     }
   ],
   "validation_evidence": {
+    "npa-alpamayo2-super": {
+      "built": true,
+      "payload_scan": "passed all 26 OCI layers; no model checkpoint, PhysicalAI-AV media, populated Hugging Face cache, token, or credential payload was found",
+      "hardware_run": "The exact release index completed real pinned upstream inference independently on physical B200 and RTX PRO 6000 on 2026-08-18. Both runs fetched the OpenMDW checkpoint and separately gated PhysicalAI-AV sample only at runtime, produced a projected trajectory of shape [1,1,1,64,3], and uploaded non-empty result JSON, trajectory JSON, and calibrated-camera PNG artifacts in one wave with no recovery. RTX telemetry observed 71,447 MiB peak allocation and 100% utilization. B200 peak allocation was not sampled and is not claimed.",
+      "validated_gpus": {
+        "B200": {
+          "platform": "gpu-b200-sxm",
+          "capability": "10.0",
+          "result": "REAL_ALPAMAYO2_INFERENCE_PASSED"
+        },
+        "RTX PRO 6000": {
+          "platform": "gpu-rtx6000",
+          "capability": "12.0",
+          "result": "REAL_ALPAMAYO2_INFERENCE_PASSED",
+          "peak_memory_mib": 71447
+        }
+      },
+      "validated_tag": "0.1.0-cu128",
+      "validated_digest": "sha256:2164450f8baf57d8798f64063ea27bf11611f5b695c467de0c2e319e3134ebd5",
+      "validated_registry_scope": "operator"
+    },
     "npa-base": {
       "built": true,
       "wheel_arch_check": "passed at image build time (the build asserts sm_80/sm_90/sm_100/sm_120)",

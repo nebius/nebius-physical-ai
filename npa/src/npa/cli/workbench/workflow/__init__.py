@@ -317,6 +317,15 @@ def submit_cmd(
             "(disabled by default; prefer the explicit --resume-run ID contract)."
         ),
     ),
+    retry_absent_in_flight: bool = typer.Option(
+        False,
+        "--retry-absent-in-flight/--no-retry-absent-in-flight",
+        help=(
+            "With --runtime and explicit resume: authorize a new attempt only when "
+            "the exact previously reconciled managed job and every declared durable "
+            "output are proven absent. Disabled by default."
+        ),
+    ),
     poll_seconds: int = typer.Option(
         30,
         "--poll-seconds",
@@ -557,6 +566,39 @@ def submit_cmd(
         "--input-uri",
         help="PAIDF only: replace the pinned starter with one readable s3://... MP4 object.",
     ),
+    lerobot_uri: str = typer.Option(
+        "",
+        "--lerobot-uri",
+        help=(
+            "PAIDF only: use an S3 LeRobotDataset prefix without downloading the "
+            "whole dataset; one episode/camera video is selected before provisioning."
+        ),
+    ),
+    lerobot_camera: str = typer.Option(
+        "",
+        "--lerobot-camera",
+        help=(
+            "PAIDF LeRobot input only: exact observation camera feature/path segment; "
+            "the lexically first camera is used when omitted unless strict selection "
+            "is requested."
+        ),
+    ),
+    lerobot_episode: int | None = typer.Option(
+        None,
+        "--lerobot-episode",
+        help=(
+            "PAIDF LeRobot input only: non-negative episode index (compatibility "
+            "default: 0)."
+        ),
+    ),
+    require_explicit_lerobot_selection: bool = typer.Option(
+        False,
+        "--require-explicit-lerobot-selection",
+        help=(
+            "PAIDF LeRobot input only: fail before object-store access unless both "
+            "--lerobot-camera and --lerobot-episode were explicitly supplied."
+        ),
+    ),
     seed_fixture: bool = typer.Option(
         False,
         "--seed-fixture",
@@ -642,23 +684,37 @@ def submit_cmd(
         substitutions.get("seed_fixture")
     ) or _is_truthy_submit_value(substitutions.get("seed_default_input"))
     fixture_requested = seed_fixture or legacy_fixture
+    resolved_lerobot_episode = 0 if lerobot_episode is None else lerobot_episode
     try:
         from npa.workflows.data_factory_input import select_paidf_input
 
-        select_paidf_input(
+        input_selection = select_paidf_input(
             input_video=input_video,
             input_uri=input_uri,
+            lerobot_uri=lerobot_uri,
             seed_fixture=fixture_requested,
+        )
+        from npa.workflows.data_factory_input import validate_lerobot_selector
+
+        validate_lerobot_selector(
+            selection=input_selection,
+            camera=lerobot_camera,
+            episode=resolved_lerobot_episode,
+            require_explicit_selection=require_explicit_lerobot_selection,
+            episode_was_explicit=lerobot_episode is not None,
         )
     except RuntimeError as exc:
         _fail(str(exc))
         return
     if (
-        input_video is not None or input_uri.strip() or fixture_requested
+        input_video is not None
+        or input_uri.strip()
+        or lerobot_uri.strip()
+        or fixture_requested
     ) and not is_paidf_spec:
         _fail(
-            "--input-video, --input-uri, and --seed-fixture are supported only by "
-            "the physical-ai-data-factory workflow"
+            "--input-video, --input-uri, --lerobot-uri, and --seed-fixture are "
+            "supported only by the physical-ai-data-factory workflow"
         )
         return
     materializer = _resolve_materializer(tool, yaml_path)
@@ -667,6 +723,9 @@ def submit_cmd(
         return
     if resume and not (run_id or resume_run):
         _fail("--resume requires an explicit --resume-run ID (or legacy --run-id)")
+        return
+    if retry_absent_in_flight and not (resume_run or (resume and run_id)):
+        _fail("--retry-absent-in-flight requires an explicit --resume-run ID")
         return
     workflow_identity = ""
     if is_npa_spec:
@@ -882,6 +941,22 @@ def submit_cmd(
             infra = f"k8s/{infra_context}"
         if infra_context and not plan_only:
             _adopt_npa_kubeconfig(infra_context)
+            # Applying the shipped claim is the whole opt-in for durable weights:
+            # look for it here rather than making every submitting shell remember
+            # to export its name. Read-only and best-effort -- a cluster without
+            # the claim renders exactly as before.
+            from npa.orchestration.npa_workflow.model_cache_preflight import (
+                adopt_model_cache_claim,
+            )
+
+            adopted = adopt_model_cache_claim(
+                context=infra_context, kubeconfig=os.environ.get("KUBECONFIG", "")
+            )
+            if adopted:
+                typer.echo(
+                    f"model weight cache: using claim {adopted!r}; "
+                    "runtime-downloaded weights persist across runs"
+                )
         image_value_for_source = str(image or "").strip().lower()
         image_pins_all_tasks = bool(
             image_value_for_source
@@ -1301,6 +1376,13 @@ def submit_cmd(
                         bucket=bucket_for_source,
                         input_video=input_video,
                         input_uri=input_uri,
+                        lerobot_uri=lerobot_uri,
+                        lerobot_camera=lerobot_camera,
+                        lerobot_episode=resolved_lerobot_episode,
+                        require_explicit_lerobot_selection=(
+                            require_explicit_lerobot_selection
+                        ),
+                        lerobot_episode_was_explicit=lerobot_episode is not None,
                         seed_fixture=fixture_requested,
                     )
                 else:
@@ -1309,6 +1391,13 @@ def submit_cmd(
                         bucket=bucket_for_source,
                         input_video=input_video,
                         input_uri=input_uri,
+                        lerobot_uri=lerobot_uri,
+                        lerobot_camera=lerobot_camera,
+                        lerobot_episode=resolved_lerobot_episode,
+                        require_explicit_lerobot_selection=(
+                            require_explicit_lerobot_selection
+                        ),
+                        lerobot_episode_was_explicit=lerobot_episode is not None,
                         seed_fixture=fixture_requested,
                         endpoint_url=s3_endpoint,
                         aws_access_key_id=extra_env.get("AWS_ACCESS_KEY_ID", ""),
@@ -1472,6 +1561,7 @@ def submit_cmd(
                 max_concurrency=max_concurrency,
                 resume=resume,
                 refresh_registry_secret=refresh_registry_secret,
+                retry_absent_in_flight=retry_absent_in_flight,
                 output_format=output_format,
                 project=project,
                 auto_load=auto_load,
@@ -2041,6 +2131,7 @@ def _run_npa_workflow_runtime(
     max_concurrency: int,
     resume: bool,
     refresh_registry_secret: bool,
+    retry_absent_in_flight: bool,
     output_format: "OutputFormat",
     project: str = "",
     auto_load: bool = True,
@@ -2123,6 +2214,7 @@ def _run_npa_workflow_runtime(
         isolated_config_dir=isolated_config_dir,
         config_path=config_path,
         resume=resume,
+        retry_absent_in_flight=retry_absent_in_flight,
         project=project or "default",
         sky_bin=sky_bin,
         credential_resolver=lambda: _resolve_runtime_secret_values(
@@ -2468,11 +2560,10 @@ def _emit_compact_submit_plan(plan, *, infrastructure: Mapping[str, object]) -> 
 def _resolve_submit_registry(registry: str, project: str) -> str:
     """Return the registry a submit should pull from.
 
-    An explicit --registry wins. Otherwise use the registry `npa configure` saved
-    for the project: the image pins otherwise resolved against the first-party
-    default even when the operator had selected (or been given) a project
-    registry, so preflight checked one registry while the run pulled from another
-    and the printed build command targeted the wrong place.
+    An explicit --registry wins, followed by NPA_REGISTRY and a legacy saved
+    project override. With none of those, image resolution uses the anonymous
+    GHCR default. Keeping saved overrides in this chain preserves existing custom
+    registry configurations without requiring registry setup for new projects.
     """
 
     explicit = str(registry or "").strip()
@@ -2883,6 +2974,9 @@ def _transfer_control_modalities(spec, *, run_id: str) -> set[str]:
         "workbench.cosmos2.transfer_conditioned_execute",
     }
     modalities: set[str] = set()
+    loop_iterations = {
+        state.name: 1 for state in spec.states.values() if state.loop is not None
+    }
     for state in spec.states.values():
         if state.tool_ref not in tool_refs:
             continue
@@ -2893,6 +2987,7 @@ def _transfer_control_modalities(spec, *, run_id: str) -> set[str]:
                     value,
                     config=spec.config,
                     run={"id": run_id},
+                    loop_iterations=loop_iterations,
                 )
                 if isinstance(value, str)
                 else value
@@ -6386,7 +6481,7 @@ def preflight_images_cmd(
         "",
         "--project",
         "-p",
-        help="Project alias whose configured registry to check. Defaults to the configured project.",
+        help="Project alias whose image registry override/default to check. Defaults to the configured project.",
     ),
     image: str = typer.Option("", "--image", help="Pin every step to this image."),
     image_override: list[str] = typer.Option(

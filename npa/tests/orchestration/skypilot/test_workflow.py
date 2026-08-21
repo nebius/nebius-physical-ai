@@ -857,6 +857,59 @@ def test_wait_for_controller_proceeds_when_up(monkeypatch) -> None:
     )
 
 
+def test_wait_for_controller_ignores_only_foreign_explicit_identity(
+    monkeypatch,
+) -> None:
+    calls = []
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        if "--refresh" in cmd:
+            detail = (
+                "ClusterOwnerIdentityMismatchError: "
+                "sky-jobs-controller-otheruser is owned elsewhere"
+            )
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr=detail)
+        return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(workflow_module.subprocess, "run", fake_run)
+    workflow_module._wait_for_healthy_jobs_controller(
+        "sky",
+        env={"SKYPILOT_USER_ID": "isolated-user"},
+        timeout=0,
+        interval=0.01,
+    )
+
+    assert calls == [
+        ["sky", "status", "--refresh", "--output", "json"],
+        ["sky", "status", "--output", "json"],
+    ]
+
+
+def test_wait_for_controller_does_not_ignore_current_identity_mismatch(
+    monkeypatch,
+) -> None:
+    detail = (
+        "ClusterOwnerIdentityMismatchError: "
+        "sky-jobs-controller-isolated-user is owned elsewhere"
+    )
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 1, stdout="", stderr=detail
+        ),
+    )
+
+    with pytest.raises(SkyPilotSubmitError, match="ClusterOwnerIdentityMismatchError"):
+        workflow_module._wait_for_healthy_jobs_controller(
+            "sky",
+            env={"SKYPILOT_USER_ID": "isolated-user"},
+            timeout=0,
+            interval=0.01,
+        )
+
+
 def test_wait_for_controller_blocks_on_transient_init(monkeypatch) -> None:
     # A transient INIT/provisioning controller is still treated as not-ready.
     monkeypatch.setattr(

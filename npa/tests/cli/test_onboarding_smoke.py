@@ -132,7 +132,10 @@ def test_known_project_configure_is_non_interactive_and_reuses_storage(
     assert project["project_id"] == "project-known"
     assert project["tenant_id"] == "tenant-known"
     assert project["region"] == "eu-north1"
-    assert project["container_registry"]
+    assert "container_registry" not in project
+    assert config_module.resolve_container_registry("paidf-prod") == (
+        "ghcr.io/nebius/nebius-physical-ai"
+    )
 
 
 def test_known_project_configure_requires_complete_identity_flags() -> None:
@@ -274,6 +277,93 @@ def test_npa_version_fast_path_skips_heavy_imports() -> None:
     assert "HEAVY:\n" in proc.stdout or proc.stdout.rstrip().endswith("HEAVY:"), (
         "npa --version fast path imported heavy modules: " + proc.stdout
     )
+
+
+def test_cosmos2_capability_path_skips_the_platform_command_tree() -> None:
+    """The purpose-built Cosmos image can run its CLI without platform extras."""
+
+    probe = """
+import importlib.abc
+import os
+import sys
+
+blocked = {"httpx", "kubernetes", "paramiko", "rerun"}
+
+class BlockPlatformExtras(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.partition(".")[0] in blocked:
+            raise RuntimeError(f"platform-only import attempted: {fullname}")
+        return None
+
+os.environ["NPA_SKIP_EAGER_IMPORTS"] = "1"
+sys.meta_path.insert(0, BlockPlatformExtras())
+sys.argv = ["npa", "workbench", "cosmos2", "transfer", "--help"]
+from npa.cli.entry import main
+main()
+"""
+    proc = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "--segmentation-mode" in proc.stdout
+
+
+def test_cosmos2_capability_module_entry_dispatches_the_mounted_path() -> None:
+    """The image-authored ``python -m`` wrapper must execute the fast entry."""
+
+    env = dict(os.environ)
+    env["NPA_SKIP_EAGER_IMPORTS"] = "1"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "npa.cli.entry",
+            "workbench",
+            "cosmos2",
+            "transfer",
+            "--help",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "--control-asset" in proc.stdout
+    assert "--segmentation-mode" in proc.stdout
+
+
+def test_cosmos2_capability_path_consumes_mounted_command_name() -> None:
+    """The standalone image entrypoint must parse options after ``transfer``."""
+
+    probe = """
+import sys
+from npa.cli.workbench import cosmos2 as cli
+
+captured = {}
+
+def fake_app(*, args, prog_name):
+    captured["args"] = args
+    captured["prog_name"] = prog_name
+
+cli.app = fake_app
+sys.argv = [
+    "npa", "workbench", "cosmos2", "transfer",
+    "--input-uri", "local:///input", "--output-uri", "local:///output",
+]
+from npa.cli.entry import main
+main()
+print(captured)
+"""
+    proc = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "'args': ['--input-uri', 'local:///input'" in proc.stdout
+    assert "'prog_name': 'npa workbench cosmos2 transfer'" in proc.stdout
 
 
 def test_quickstart_first_success_fixture_is_packaged() -> None:

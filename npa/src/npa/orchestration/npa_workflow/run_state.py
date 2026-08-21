@@ -189,6 +189,9 @@ class RuntimeRunState:
                 "block_after_uncertain_success",
                 "recovery_deadline_exhausted_verified_absent",
                 "interrupted_verified_absent",
+                "resume_block_terminal_or_legacy_absence",
+                "resume_block_output_present",
+                "resume_block_output_indeterminate",
             }
             return dict(record) if status == "running" or unresolved else None
         return None

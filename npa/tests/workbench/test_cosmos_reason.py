@@ -64,6 +64,33 @@ def test_cosmos_reason_runtime_env_defaults_to_writable_cache() -> None:
     assert runtime["NPA_COSMOS_REASON2_CACHE"] == DEFAULT_REASON2_CACHE
 
 
+def test_cosmos_reason_runtime_env_prefers_the_durable_cache(monkeypatch) -> None:
+    # The Reason checkpoints are gated, so no image may bake them and every Job
+    # downloads them; /tmp means paying for that download once per Job.
+    for name in (
+        "HF_HOME",
+        "NPA_COSMOS_REASON_CACHE",
+        "NPA_COSMOS_REASON2_CACHE",
+        "NPA_COSMOS_REASON3_CACHE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    # The renderer exports the resolved root into the container; a claim name is
+    # meaningless to code that cannot mount anything itself.
+    monkeypatch.setenv("NPA_MODEL_CACHE_DIR", "/opt/npa-model-cache")
+
+    runtime = cosmos_reason_runtime_env()
+
+    assert runtime["HF_HOME"] == "/opt/npa-model-cache/huggingface"
+    assert (
+        runtime["NPA_COSMOS_REASON2_CACHE"]
+        == "/opt/npa-model-cache/huggingface/cosmos-reason2"
+    )
+    assert (
+        runtime["NPA_COSMOS_REASON3_CACHE"]
+        == "/opt/npa-model-cache/huggingface/cosmos-reason2-2b"
+    )
+
+
 def test_reason_defaults_cover_every_canonical_decision_event() -> None:
     assert DEFAULT_REASON_EVENT_FRAMES == 32
     assert DEFAULT_REASON_MAX_NEW_TOKENS >= 8192

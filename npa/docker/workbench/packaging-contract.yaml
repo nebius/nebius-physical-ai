@@ -1,6 +1,11 @@
 # Machine-readable packaging contract for workbench containers.
 # Enforced by npa/tests/docker/test_packaging_contract.py
 # Human companion: docs/workbench/container-packaging.md
+#
+# This file says which bytes may not be BAKED, which makes them run-time
+# downloads. Where those downloads land, so the operator pays for them once
+# instead of once per run, is npa/src/npa/workbench/model_cache.py and
+# docs/workbench/model-weight-cache.md.
 
 version: 1
 
@@ -192,6 +197,21 @@ images:
       certifies. Byte/layer scanning
       with scripts/scan_image_ltx_payload.py is mandatory before publication.
       NOT YET BUILT OR GPU-VALIDATED; see ltx2/REDISTRIBUTION.md.
+  alpamayo2-super:
+    dockerfile: alpamayo2-super/Dockerfile
+    tier: service
+    ports: [8080]
+    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; the final runtime user is non-root, no sshd service is enabled by default, and no credentials are baked into the image."
+    redistribution: public
+    notes: >-
+      Bakes immutable Apache-2.0 Alpamayo 2 source and its CUDA/PyTorch
+      inference runtime. The OpenMDW-1.1 checkpoint, separately restricted
+      PhysicalAI-AV dataset, operator credentials, and populated caches are
+      absent and fetched only at runtime. Built-image byte/layer scanning and
+      real B200 plus RTX PRO 6000 inference are publication gates. Release
+      0.1.0-cu128 passed the complete 26-layer payload scan and both independent
+      real-inference gates on 2026-08-18; the accepted OCI index digest is
+      sha256:2164450f8baf57d8798f64063ea27bf11611f5b695c467de0c2e319e3134ebd5.
   sonic:
     dockerfile: sonic/Dockerfile
     isaac_runtime_fetch: true
@@ -240,7 +260,11 @@ images:
       CUDA build/runtime bases. Git LFS smudging is disabled; upstream assets, example media,
       checkpoints, caches, and Git metadata are removed and build-guarded. Gated
       NVIDIA Open Model License weights are fetched only at runtime with the
-      operator's HF_TOKEN into a mounted cache. PAIDF's CC-BY-4.0 RoboPro starter
+      operator's HF_TOKEN into a mounted cache. Optional SAM2 removes the
+      lockfile's unaffiliated PyPI repackaging and installs Meta's official
+      Apache-2.0 source at immutable commit
+      2b90b9f5ceec907a1c18123530e92e794ad901a4; its public Apache-2.0 checkpoint
+      is runtime-fetched and never baked. PAIDF's CC-BY-4.0 RoboPro starter
       is likewise not baked into this or any image: the operator-side NPA CLI
       fetches the immutable object, enforces its SHA-256, and stages it to the
       run. The upstream Cosmos repository's ambiguously licensed example media
@@ -417,8 +441,16 @@ images:
     dockerfile: rerun-viewer/Dockerfile
     tier: job
     ports: [9090]
-    final_user: nobody
+    notes: >-
+      Command-passthrough entrypoint supports SkyPilot Kubernetes setup as the
+      non-root ubuntu user; an empty argv starts the interactive Rerun server.
+    passwordless_root_exemption: >-
+      SkyPilot's Kubernetes bootstrap installs and starts its in-pod SSH runtime
+      as the non-root ubuntu user. The image deletes all build-time SSH host keys,
+      disables password and root login, starts no SSH service by default, and
+      uses the grant only inside an explicitly orchestrated ephemeral worker.
     redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
   foxglove-embed:
     dockerfile: foxglove-embed/Dockerfile
     tier: service

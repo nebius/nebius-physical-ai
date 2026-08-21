@@ -1147,12 +1147,11 @@ def discover_container_registry(
 ) -> str:
     """Best-effort container registry URL for *project_id*, or "".
 
-    Returns ``<registry_fqdn>/<registry-id>`` (matching the
-    ``DEFAULT_CONTAINER_REGISTRY`` format). A project can hold registries in
+    Returns ``<registry_fqdn>/<registry-id>``. A project can hold registries in
     several regions, and the API list order is not stable, so prefer a registry
-    in *preferred_region* (``eu-north1``, the main registry region) and fall back
-    to the first registry otherwise. Any failure resolves to "" so callers fall
-    back to the default registry.
+    in *preferred_region* (``eu-north1``, the maintainer source-registry region)
+    and fall back to the first registry otherwise. Any failure resolves to "" so
+    callers can choose their own fallback.
     """
     if not project_id:
         return ""

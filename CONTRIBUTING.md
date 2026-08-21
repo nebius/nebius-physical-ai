@@ -443,32 +443,74 @@ Committed examples should use placeholders such as:
 Secrets belong in the user credentials file described by
 `docs/credentials.yaml.example`, not in source, docs, tests, or workflow YAMLs.
 
-CI currently verifies tests, image security, and secret regression through:
+These workflows block a pull request:
 
-- `.github/workflows/test.yml`
-- `.github/workflows/image-security-scan.yml`
-- `.github/workflows/gitleaks.yml`
+| Workflow | What it runs | Reproduce locally |
+| --- | --- | --- |
+| `.github/workflows/test.yml` | `pytest tests/` with `--cov-fail-under=60`, plus `tests/integration/test_cli_install.sh` | `make test` |
+| `.github/workflows/lint.yml` | `ruff check .`, and `scripts/build_docs.sh --check` for `docs/cli/` drift | `make lint`, `make docs-check` |
+| `.github/workflows/harness-guardrails.yml` | `pytest npa/tests/guardrails` | `make test-guardrails` |
+| `.github/workflows/confidentiality-scan.yml` | `npa.guardrails.confidentiality` over the diff and tree | needs the denylist secrets; see `skills/atomic/protect-nebius-infra-details/SKILL.md` |
+| `.github/workflows/gitleaks.yml` | the custom Nebius-pattern rules in `.gitleaks.toml` | `gitleaks detect` |
+| `.github/workflows/image-security-scan.yml` | Trivy against built images | `npa/tests/docker/` for the contract checks |
 
-Gitleaks runs the custom Nebius-pattern rules in `.gitleaks.toml` on pull
-requests and pushes to `main`.
-## Testing Requirements
-
-Install the dev tooling into your virtualenv once (this pulls in `pytest`,
-`pytest-mock`, `pytest-cov`, `pytest-timeout`, `ruff`, and the `server` extra so
-the suite collects):
+`make check` runs the reproducible subset in one command: `lint`, `docs-check`,
+`test`. It is not a full stand-in for `test.yml`, which additionally enforces
+`--cov-fail-under=60` and runs `tests/integration/test_cli_install.sh` and
+`scripts/check-source-drift.sh`. `make test` runs no coverage, so `make check` can
+pass while `test.yml` fails the 60% floor. Add coverage locally when a change moves
+a lot of untested code:
 
 ```bash
-pip install -e "npa[dev]"
+make test PYTEST_ADDOPTS="--cov=npa --cov-fail-under=60"
 ```
+
+The two also report different counts, so do not compare them directly: `make test`
+deselects the live/GPU markers described below, while `test.yml` runs the whole
+tree and lets those tests self-skip. Both numbers rise as tests land; the shape of
+the difference, several hundred more collected and skipped in CI, is the part that
+stays true.
+
+`test.yml` runs a Python matrix of 3.10, 3.12, and 3.14 on `main` and 3.12 alone on
+a pull request; `requires-python` is `>=3.10`.
+
+## Testing Requirements
+
+Create the virtualenv at `npa/.venv` and install the dev tooling once (this pulls
+in `pytest`, `pytest-mock`, `pytest-cov`, `pytest-timeout`, `pytest-xdist`,
+`ruff`, and the `server` extra so the suite collects):
+
+```bash
+python3 -m venv npa/.venv
+npa/.venv/bin/pip install -e "npa[dev]"
+```
+
+`npa/.venv` is the repo convention, not a preference: `AGENTS.md`, the guardrail
+CI jobs, and helper scripts such as `npa/scripts/start_golden_evals_tmux.sh` and
+`scripts/build_docs.sh` all look there by default. Any other location works, but
+you must then point the tooling at it — `make test PYTHON=...`,
+`NPA_BIN=.../bin/npa`, `GOLDEN_EVAL_PYTHON=.../bin/python`.
 
 Then use the `make` targets from the repo root:
 
 ```bash
-make test         # fast default: full unit suite, no live/GPU/network (PR gate)
-make test-smoke   # quickest: onboarding CLI smoke tests only
-make lint         # ruff
-make test-e2e     # opt-in: real Nebius infrastructure, NPA_INTEGRATION_E2E=1
+make check            # everything the PR gates block on: lint, docs-check, test
+make test             # full unit suite, no live/GPU/network (~11 min)
+make test-smoke       # quickest: onboarding CLI smoke tests only
+make test-guardrails  # repo guardrails: catalogs, specs, skills, docs, hygiene
+make lint             # ruff
+make docs             # regenerate docs/cli/ after any CLI change
+make docs-check       # the docs/cli/ drift gate
+make test-e2e         # opt-in: real Nebius infrastructure, NPA_INTEGRATION_E2E=1
 ```
+
+`docs/cli/` is generated from live `npa --help` and drift-gated in CI, so
+`make docs` and a commit of its output are part of any change to a command, flag,
+or help string.
+
+The suite is xdist-safe; `make test PYTEST_ADDOPTS=-nauto` cuts the serial run to
+a few minutes with an identical pass count. CI still runs serially with coverage,
+so treat a parallel pass as the fast signal rather than the gate.
 
 `make test` deselects the live/GPU/e2e markers (`gpu`, `multi_gpu`, `e2e`,
 `e2e_serverless`, `e2e_skypilot`, `e2e_pipeline`, `byovm_live`, `ngc_e2e`) by
@@ -477,8 +519,7 @@ tests live under `tests/workbench/` and will try to launch real infrastructure
 if your shell has Nebius creds/SkyPilot configured, so the marker filter — not
 just `--ignore=tests/e2e` — is what keeps the default suite hermetic.
 
-Override the interpreter with `make test PYTHON=/path/to/venv/bin/python`. The
-equivalent raw command is:
+The equivalent raw command is:
 
 ```bash
 cd npa && python -m pytest tests/ --ignore=tests/e2e \
@@ -536,12 +577,27 @@ Smoke tests live under `npa/tests/smoke/` or tool-specific CLI test files. Heavy
 smoke tests must skip unless their environment variable is set. See
 `docs/testing/smoke-tests.md`.
 
-The current expected non-e2e baseline from
-`skills/atomic/testing-conventions/SKILL.md` is:
+The gate for `make test` is **0 failures**. The pass count is a reference point,
+not an assertion — the most recent measurement, on `1b89b3ba`, was:
 
 ```text
-1242+ passed, 21 skipped, 1 xpassed, 0 failures
+10836 passed, 37 skipped, 12 deselected, 1 xpassed, 0 failures
 ```
+
+Read that as a floor that rises whenever tests land: it is stale by construction
+between measurements, and a run reporting more than it is normal rather than
+suspicious. Only a count that has *fallen* is worth chasing, and the reliable
+comparison is against your own merge base rather than against this line. Two things
+move it without anything being wrong:
+
+- A few tests self-skip without `node`, `tmux`, or `docker`, moving them from
+  passed to skipped.
+- `make test` deselects the live/GPU markers, so it collects a different tree from
+  `test.yml`, which runs everything and lets those tests self-skip.
+
+The default suite is hermetic. It needs no `kubectl`, no cluster, and no venv at a
+particular path, so a failure naming a missing executable or an unimportable `npa`
+is a bug to fix rather than a prerequisite to install.
 
 Promotion criteria must be evidence-based. Use numeric thresholds,
 programmatic assertions, emitted JSON, artifact checks, and exact error messages.
@@ -595,6 +651,12 @@ input and output data contract, GPU routing, runtime modes, known issues,
 validation status, and integration patterns with other tools. Write direct
 instructions, not broad prose an agent must reinterpret.
 
+Register the skill in `skills/index.yaml` with a `smoke` block. That manifest is
+the source of truth, and `npa/tests/guardrails/test_skills_index.py` checks both
+that every skill is covered by it and that each declared smoke actually runs, so
+an unregistered skill fails `harness-guardrails.yml`. Run `make test-guardrails`
+after adding one.
+
 Update `AGENTS.md` only if the skill list or root index changes.
 ## Commit And PR Conventions
 Keep commits small and logical.
@@ -611,10 +673,10 @@ Fix CLIP GPU dispatch batch size
 Update BDD100K label map for real data
 ```
 
-Before review, a PR should pass the non-e2e test suite:
+Before review, a PR should pass the reproducible PR gates:
 
 ```bash
-make test
+make check
 ```
 
 Run focused tests for the touched surface as well. Documentation-only changes

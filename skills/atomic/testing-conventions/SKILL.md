@@ -52,7 +52,27 @@ npa/.venv/bin/python -m ruff check <files>
 - Pipeline E2E tests use the `e2e_pipeline` pytest marker.
 - Live Nebius Token Factory tests use the `token_factory_e2e` marker (in `npa/tests/e2e/test_token_factory_e2e.py`). They self-skip without a real `NEBIUS_TOKEN_FACTORY_KEY`; the marker is in conftest `_LIVE_MARKERS` so the key is not scrubbed. Run with `NEBIUS_TOKEN_FACTORY_KEY=... pytest npa/tests/e2e/test_token_factory_e2e.py`.
 
-Expected baseline: 1242+ passed, 21 skipped, 1 xpassed, 0 failures.
+The gate for `make test` is **0 failures**. Most recent measurement:
+`10836 passed, 37 skipped, 12 deselected, 1 xpassed`, ~14 min serial (2026-08-18 at
+`1b89b3ba`).
+
+Treat that pass count as a floor, never as an equality. It is stale by
+construction — it rises whenever tests land, and it was previously recorded as a
+closed total that went wrong at the next merge. A higher number is normal; only a
+count that has *fallen* indicates tests stopped being collected, and the reliable
+comparison is against your own merge base. Two things move it legitimately: a few
+tests self-skip without `node`, `tmux`, or `docker`, and `make test` deselects the
+live/GPU markers so it collects a different tree from `test.yml`.
+
+The suite is hermetic: it needs no `kubectl`, no cluster, and no venv at a
+particular path. A failure that names a missing binary or `ModuleNotFoundError:
+No module named 'npa'` is a bug in the test or the script it drives, not a
+missing prerequisite — three of those were fixed in `516396ec`.
+
+A hermeticity fix needs a test that fails without it in *any* environment. CI
+pip-installs the package, so a fix that only matters when the `npa` console script
+is absent from `PATH` cannot regress-fail there: prune `PATH` inside the test, or
+assert on the helper directly, rather than relying on the ambient environment.
 
 Use evidence-based convergence: report numeric pass counts and exact failure messages, not subjective assessment.
 

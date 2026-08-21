@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import stat
 import sys
+import sysconfig
 from pathlib import Path
 
 import pytest
@@ -237,12 +239,66 @@ def test_wrapper_yaml_flag_is_still_accepted(monkeypatch, capsys) -> None:
     assert "npa workbench lancedb import-bdd100k" in payload["rendered_skypilot"]
 
 
+def _path_without_scripts_dir() -> str:
+    """PATH as an unactivated venv leaves it: no `npa` console script on it.
+
+    The mock stages below run each step's real argv, which starts with a bare
+    `npa`. Both CI and an activated venv have that on PATH, so those tests pass
+    whether or not the runner resolves the program itself; the failure only shows up
+    for a contributor running `<venv>/bin/python -m pytest`. Pruning PATH inside the
+    tests is what makes them fail everywhere instead.
+    """
+
+    scripts_dir = sysconfig.get_path("scripts")
+    return os.pathsep.join(
+        entry
+        for entry in os.environ.get("PATH", "").split(os.pathsep)
+        if entry and Path(entry) != Path(scripts_dir)
+    )
+
+
+class TestMockStageEnv:
+    """The environment that makes a step's bare `npa` resolvable."""
+
+    def test_env_prepends_the_scripts_dir(self, monkeypatch) -> None:
+        wrapper = _load_wrapper_module()
+        monkeypatch.setenv("PATH", "/usr/bin:/bin")
+
+        path = wrapper._mock_stage_env()["PATH"].split(os.pathsep)
+
+        assert path[0] == sysconfig.get_path("scripts")
+        # Prepend, never replace: stages also call git, aws and other real binaries.
+        assert path[1:] == ["/usr/bin", "/bin"]
+
+    def test_env_is_a_no_op_when_the_dir_is_already_on_path(self, monkeypatch) -> None:
+        wrapper = _load_wrapper_module()
+        scripts_dir = sysconfig.get_path("scripts")
+        monkeypatch.setenv("PATH", f"/usr/bin{os.pathsep}{scripts_dir}")
+
+        # An activated venv already has it, and duplicating entries on every call
+        # would grow PATH without changing which npa is found.
+        assert wrapper._mock_stage_env()["PATH"] == f"/usr/bin{os.pathsep}{scripts_dir}"
+
+    def test_env_carries_the_rest_of_the_environment(self, monkeypatch) -> None:
+        wrapper = _load_wrapper_module()
+        monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/prefix/npa")
+
+        # Stages read credentials and run config from the ambient environment, so
+        # this must stay a PATH edit rather than a constructed environment.
+        assert wrapper._mock_stage_env()["NPA_SRC_S3_URI"] == (
+            "s3://example-bucket/prefix/npa"
+        )
+
+
 @pytest.mark.timeout(300)
 def test_mock_endpoint_validation_drives_every_stage(capsys, tmp_path, monkeypatch) -> None:
     """The offline proof: every stage's real argv against stand-in services."""
 
     wrapper = _load_wrapper_module()
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/prefix/npa")
+    # Prove the stages resolve their own program rather than inheriting a PATH that
+    # happens to carry npa, which is what CI and an activated venv both provide.
+    monkeypatch.setenv("PATH", _path_without_scripts_dir())
     output = tmp_path / "mock.json"
 
     rc = wrapper.main(
@@ -289,6 +345,7 @@ def test_mock_run_awaits_training_and_resolves_the_real_checkpoint(
 
     wrapper = _load_wrapper_module()
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/prefix/npa")
+    monkeypatch.setenv("PATH", _path_without_scripts_dir())
     output = tmp_path / "mock.json"
 
     assert wrapper.main(

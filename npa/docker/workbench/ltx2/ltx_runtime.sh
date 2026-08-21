@@ -214,11 +214,30 @@ fetch_weights() {
   : > "$MODEL_CACHE/.complete"
 }
 
+# Set by assert_refusal so the gates it exercises write into directories only this
+# proof can see. Empty everywhere else, leaving normal runs untouched. Global
+# rather than local because the EXIT trap that cleans up runs after the function
+# that created them has returned.
+PROBE_DIR=""
+PROBE_RUNTIME_CACHE=""
+PROBE_MODEL_CACHE=""
+
+cleanup_probe() {
+  [[ -n "$PROBE_DIR" ]] && rm -rf "$PROBE_DIR"
+  return 0
+}
+
 unentitled() {
   # Run a command with every entitlement variable scrubbed, so a refusal holds
   # regardless of what leaked into the builder or the operator's shell.
   local args=() name
   for name in "${ENTITLEMENT_ENVS[@]}"; do args+=(-u "$name"); done
+  if [[ -n "$PROBE_RUNTIME_CACHE" ]]; then
+    args+=(
+      "NPA_LTX_RUNTIME_CACHE=$PROBE_RUNTIME_CACHE"
+      "NPA_LTX_MODEL_CACHE=$PROBE_MODEL_CACHE"
+    )
+  fi
   env "${args[@]}" "$@"
 }
 
@@ -251,6 +270,20 @@ assert_refusal() {
   # the payload scanner treats as a baked fetch precisely because it normally is
   # one.
 
+  # The gates run against private directories, so "the refusal downloaded
+  # nothing" stays an emptiness check on a tree nothing else can touch. Watching
+  # the real caches instead cannot express the invariant once they are durable
+  # and shared (docs/workbench/model-weight-cache.md): at build time they are
+  # empty, but on the second run they legitimately hold what the first run
+  # fetched, and a concurrent LTX stage can be writing to them the whole time
+  # this proof runs. A write that appears there is not attributable to us; a
+  # write that appears here is.
+  PROBE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/npa-ltx-refusal.XXXXXX")"
+  trap cleanup_probe EXIT
+  PROBE_RUNTIME_CACHE="$PROBE_DIR/runtime"
+  PROBE_MODEL_CACHE="$PROBE_DIR/weights"
+  mkdir -p "$PROBE_RUNTIME_CACHE" "$PROBE_MODEL_CACHE"
+
   # The wired-up paths, through the real entry point. Both must stop on the
   # Hugging Face entitlement specifically: the source is licensed material too,
   # so it is the gate that must run first on either path.
@@ -264,10 +297,10 @@ assert_refusal() {
   assert_gate "the NVIDIA runtime gate" "$NVIDIA_ACCEPT_ENV" \
     nvidia_gate_without_acceptance
 
-  [[ -z "$(find "$CACHE_ROOT" -mindepth 1 -print -quit 2>/dev/null)" ]] \
-    || die "$EX_SOFTWARE" "refusal wrote to ${CACHE_ROOT}"
-  [[ -z "$(find "$MODEL_CACHE" -mindepth 1 -print -quit 2>/dev/null)" ]] \
-    || die "$EX_SOFTWARE" "refusal wrote to ${MODEL_CACHE}"
+  [[ -z "$(find "$PROBE_RUNTIME_CACHE" -mindepth 1 -print -quit 2>/dev/null)" ]] \
+    || die "$EX_SOFTWARE" "refusal wrote to the runtime cache"
+  [[ -z "$(find "$PROBE_MODEL_CACHE" -mindepth 1 -print -quit 2>/dev/null)" ]] \
+    || die "$EX_SOFTWARE" "refusal wrote to the model cache"
   printf 'NPA_LTX_BOOTSTRAP_REFUSES_WITHOUT_ENTITLEMENT_OK\n'
 }
 

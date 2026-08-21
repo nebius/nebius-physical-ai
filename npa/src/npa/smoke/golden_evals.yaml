@@ -675,6 +675,32 @@ containers:
       # docs/workbench/ltx2.md, not something to assume here.
       status: needs-image-update
 
+  alpamayo2-super:
+    image: npa-alpamayo2-super
+    dockerfile: npa/docker/workbench/alpamayo2-super/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        NVIDIA's 34B vision-language-action driving model predicts an ego
+        trajectory from synchronized surround-camera history and route context.
+    safety:
+      runs_as: ubuntu
+      base_image: nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04 (digest pinned)
+      network: runtime-only Hugging Face model/dataset fetch and S3 artifact upload
+      external_fetch: [huggingface-openmdw-model, huggingface-gated-physicalai-av, s3]
+      notes: >-
+        Ships pinned Apache-2.0 source/runtime, but no weights, dataset bytes,
+        credentials, or populated Hugging Face cache. PhysicalAI-AV is fetched
+        only under the operator's accepted NVIDIA AV Dataset License.
+    golden_eval:
+      kind: container-smoke
+      module: npa.smoke.test_alpamayo2_super_functional
+      command: python -m npa.smoke.test_alpamayo2_super_functional
+      serverless_gpu: b200
+      gpu: required
+      timeout_seconds: 3600
+      status: gpu-gated
+
   sim2real-control:
     image: npa-sim2real-control
     internal: true
@@ -778,13 +804,13 @@ containers:
       role: >-
         Generic Rerun log viewer server used by Sim2Real and agent visualization paths.
     safety:
-      runs_as: nobody
-      base_image: python:3.11-slim-bookworm
+      runs_as: ubuntu
+      base_image: python:3.11-slim-trixie (digest-pinned)
       network: internal (viewer port 9090)
       external_fetch: [pypi]
       notes: >-
-        Minimal rerun-sdk image; no persistent storage or outbound calls at
-        runtime beyond the viewer bind.
+        Rerun SDK image and non-root SkyPilot visualization worker; no persistent
+        storage or outbound calls at runtime beyond the viewer bind.
     golden_eval:
       kind: build-import
       command: 'python -c "import rerun; assert rerun.__version__"'

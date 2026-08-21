@@ -90,7 +90,7 @@ DEFAULT_HALLUCINATION_WEIGHT = 0.5
 
 # Sampled appearance combos carry a `prompt` alongside the attributes; it is an
 # instruction, not a visual attribute, so it is never turned into a question.
-NON_ATTRIBUTE_KEYS = frozenset({"prompt"})
+NON_ATTRIBUTE_KEYS = frozenset({"prompt", "inference_seed"})
 
 
 @dataclass(frozen=True)
@@ -132,6 +132,7 @@ class EvaluateRunResult:
     batch_policy: str = "all-variants"
     temporal_mode: str = "advisory"
     appearance_mode: str = "advisory"
+    attribute_sample_policy: str = "ranking"
     engines: list[str] = field(default_factory=list)
     clips: list[ClipEvaluation] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -176,6 +177,7 @@ def evaluate_run(
     question_model: str = "",
     vlm_model: str = "",
     max_clips: int = 0,
+    attribute_sample_policy: str = "ranking",
     client: Any | None = None,
     storage: Any | None = None,
 ) -> EvaluateRunResult:
@@ -185,6 +187,10 @@ def evaluate_run(
         raise CosmosEvaluatorError("--augment-uri is required")
     if not output_uri:
         raise CosmosEvaluatorError("--output-uri is required")
+    if attribute_sample_policy not in {"ranking", "holdout"}:
+        raise CosmosEvaluatorError(
+            "--attribute-sample-policy must be ranking or holdout"
+        )
     if not 0.0 <= hallucination_weight <= 1.0:
         raise CosmosEvaluatorError("--hallucination-weight must be between 0.0 and 1.0")
     if not 0.0 < temporal_threshold <= 1.0:
@@ -231,8 +237,27 @@ def evaluate_run(
         workdir = Path(tmp)
         clip_targets = _list_clip_targets(augment_uri, store=store)
         if not clip_targets:
-            raise CosmosEvaluatorError(
-                f"no augmented variant directories found under {augment_uri}"
+            selection = _selection_manifest(augment_uri, store=store)
+            if selection is None:
+                raise CosmosEvaluatorError(
+                    f"no augmented variant directories found under {augment_uri}"
+                )
+            return EvaluateRunResult(
+                status="completed",
+                score=0.0,
+                passed=False,
+                augment_uri=augment_uri,
+                output_uri=output_uri,
+                result_uri=report_uri_for(output_uri),
+                clip_count=0,
+                passed_clips=0,
+                threshold=threshold,
+                generated_at=datetime.now(timezone.utc).isoformat(),
+                batch_policy="independent-hard-pass-selection",
+                temporal_mode=temporal_mode,
+                appearance_mode=appearance_mode,
+                attribute_sample_policy=attribute_sample_policy,
+                warnings=["ranking produced no independently hard-passing candidate"],
             )
         if max_clips and max_clips > 0:
             clip_targets = clip_targets[:max_clips]
@@ -276,6 +301,7 @@ def evaluate_run(
                         appearance_max_dimension=appearance_max_dimension,
                         question_model=question_model,
                         vlm_model=vlm_model,
+                        attribute_sample_policy=attribute_sample_policy,
                         warnings=warnings,
                     )
                 )
@@ -327,8 +353,14 @@ def evaluate_run(
         passed_clips=passed_clips,
         threshold=threshold,
         generated_at=datetime.now(timezone.utc).isoformat(),
+        batch_policy=(
+            "independent-hard-pass-final-validation"
+            if attribute_sample_policy == "holdout"
+            else "all-variants"
+        ),
         temporal_mode=temporal_mode,
         appearance_mode=appearance_mode,
+        attribute_sample_policy=attribute_sample_policy,
         engines=engines,
         clips=evaluations,
         warnings=warnings,
@@ -362,6 +394,7 @@ def _evaluate_clip(
     appearance_max_dimension: int,
     question_model: str,
     vlm_model: str,
+    attribute_sample_policy: str,
     warnings: list[str],
 ) -> ClipEvaluation:
     workdir.mkdir(parents=True, exist_ok=True)
@@ -420,6 +453,7 @@ def _evaluate_clip(
                 question_model=question_model,
                 vlm_model=vlm_model,
                 client=client,
+                sample_policy=attribute_sample_policy,
             )
         except Exception as exc:  # noqa: BLE001 - keep grading the remaining variants
             message = f"attribute verification failed for {clip_id}: {exc}"[:300]
@@ -671,6 +705,30 @@ def _list_clip_dirs(augment_uri: str, *, store: Any) -> list[str]:
         if tail and head and head != "_attempts":
             names.add(head)
     return sorted(names)
+
+
+def _selection_manifest(augment_uri: str, *, store: Any) -> dict[str, Any] | None:
+    """Return a truthful empty hard-pass selection, never an absent augment."""
+
+    manifest = _download_json(
+        augment_uri.rstrip("/") + "/manifest.json", store=store
+    )
+    if not isinstance(manifest, dict):
+        return None
+    if (
+        manifest.get("selection_policy")
+        != "independent-hard-pass-only"
+        or manifest.get("variant_count") != 0
+        or manifest.get("variants") != []
+    ):
+        return None
+    from npa.workbench.cosmos.transfer import validate_committed_run_manifest
+
+    try:
+        validate_committed_run_manifest(manifest, augment_uri)
+    except (TypeError, ValueError) as exc:
+        raise CosmosEvaluatorError(str(exc)) from exc
+    return manifest
 
 
 def _list_clip_targets(augment_uri: str, *, store: Any) -> list[tuple[str, str]]:

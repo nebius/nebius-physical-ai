@@ -1,0 +1,4 @@
+interface:
+  display_name: "Alpamayo 2 Super"
+  short_description: "Run and validate NVIDIA Alpamayo 2 Super on Nebius GPUs"
+  default_prompt: "Use $alpamayo2-super to package, preflight, run, or troubleshoot real Alpamayo 2 Super inference and its NPA workflow."

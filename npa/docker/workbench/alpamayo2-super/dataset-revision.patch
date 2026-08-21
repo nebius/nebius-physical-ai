@@ -1,0 +1,13 @@
+diff --git a/src/alpamayo2_super/load_physical_aiavdataset.py b/src/alpamayo2_super/load_physical_aiavdataset.py
+index 7895b89..f0eb61d 100644
+--- a/src/alpamayo2_super/load_physical_aiavdataset.py
++++ b/src/alpamayo2_super/load_physical_aiavdataset.py
+@@ -18,0 +19 @@ import logging
++import os
+@@ -82 +83,5 @@ def load_physical_aiavdataset(
+-        avdi = physical_ai_av.PhysicalAIAVDatasetInterface()
++        # Modified by Nebius: pin the separately licensed dataset revision so
++        # provenance never records a commit different from the fetched bytes.
++        avdi = physical_ai_av.PhysicalAIAVDatasetInterface(
++            revision=os.environ.get("ALPAMAYO2_SUPER_DATASET_REVISION") or None
++        )

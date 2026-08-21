@@ -33,13 +33,14 @@ Operator-required prerequisites:
 - H100 capacity for the headless sim-to-real quickstart.
 - Provisioned RT-core GPU capacity for Isaac Lab, normally L40S in
   `eu-north1`. H100 and H200 do not satisfy Isaac Lab rendering requirements.
-- A current registry pull secret in the Kubernetes namespace that SkyPilot will
-  use, normally `default`.
+- A registry pull secret is needed only when you select a private image. The
+  default GHCR workbench images are anonymously pullable.
 - An S3 bucket in `eu-north1`. The access keys for that bucket should already be
   in `~/.npa/credentials.yaml` under `storage.aws_access_key_id`,
   `storage.aws_secret_access_key`, `storage.endpoint_url`, and `storage.bucket`
   if the workflow needs explicit storage credentials.
-- A Nebius container registry namespace that can push and pull workbench images.
+- Optional: a private container registry namespace for locally modified or
+  non-public images.
 
 Partner-specific values to collect before starting:
 
@@ -47,7 +48,6 @@ Partner-specific values to collect before starting:
 <your-project-id>
 <your-tenant-id>
 <your-bucket>
-<your-registry-id>
 <your-nebius-mk8s-context>
 ```
 
@@ -119,8 +119,6 @@ Export the non-secret resource identifiers used by commands and examples:
 export NEBIUS_PROJECT_ID=<your-project-id>
 export NEBIUS_TENANT_ID=<your-tenant-id>
 export NPA_S3_BUCKET=<your-bucket>
-export NPA_REGISTRY_ID=e00cm0vc6t09m0z5gw
-export NPA_REGISTRY=cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}
 export AWS_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud
 export NPA_STORAGE_ENDPOINT=storage.eu-north1.nebius.cloud
 ```
@@ -146,24 +144,25 @@ Gate: the command lists the bucket or exits successfully with an empty listing.
 `NoSuchBucket` usually means the bucket name, endpoint, or region is wrong.
 `AccessDenied` means the access key lacks bucket access.
 
-## Verify Docker Registry Access
+## Choose the Default or a Custom Registry
 
-`NPA_REGISTRY_ID` is the registry namespace only. The first-party default is
-`e00cm0vc6t09m0z5gw` (`npa-workbench`), which resolves to
-`cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw`. The active image-resolution
-paths still prefer `projects.<alias>.container_registry`, then `NPA_REGISTRY`,
-then top-level config before falling back to that default. Build and push
-commands should therefore tag images as `${NPA_REGISTRY}/<image>:<tag>`, not as
-a value derived from `NPA_REGISTRY_ID` alone.
+Workbench images resolve from the anonymously pullable
+`ghcr.io/nebius/nebius-physical-ai` mirror by default. No registry export,
+login, or Kubernetes pull secret is needed for those images.
 
-Verify Docker registry access:
+When you need private or locally modified images, select your own registry
+explicitly and verify its login:
 
 ```bash
-docker login cr.eu-north1.nebius.cloud
+export NPA_REGISTRY=cr.<region>.nebius.cloud/<your-registry-id>
+printf '%s' "$(nebius iam get-access-token)" | \
+  docker login "${NPA_REGISTRY%%/*}" -u iam --password-stdin
 ```
 
-Gate: Docker stores a login for `cr.eu-north1.nebius.cloud`. If login fails,
-refresh your registry credentials before building BYOF images.
+Existing `projects.<alias>.container_registry` values remain supported for
+compatibility. `NPA_REGISTRY` is the recommended new override; explicit image
+options take precedence where a command offers one. If private login fails,
+refresh the registry credential before building or submitting that image.
 
 ## Verify Kubernetes Access
 
@@ -184,13 +183,14 @@ Verify the account can create SkyPilot pods in `default`:
 kubectl auth can-i create pods -n default
 kubectl get nodes
 kubectl get namespace workbench
-kubectl get secret npa-nebius-registry -n default
+kubectl get secret npa-nebius-registry -n default  # private images only
 ```
 
 Gate: `kubectl auth can-i` prints `yes`, `kubectl get nodes` lists the cluster
-nodes, the `workbench` namespace exists for deployed services, and the registry
-secret exists in the SkyPilot namespace. If SkyPilot later reports HTTP 403 as
-an anonymous user, the kube context is not authenticated for the cluster.
+nodes, and the `workbench` namespace exists for deployed services. When using a
+private image, the registry secret must also exist in the SkyPilot namespace. If
+SkyPilot later reports HTTP 403 as an anonymous user, the kube context is not
+authenticated for the cluster.
 
 ## Bootstrap SkyPilot
 

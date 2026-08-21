@@ -22,7 +22,6 @@ Options
 --project-id  <str>  Known Nebius project ID for prompt-free configure.
 --region  <str>  Known Nebius project region for prompt-free configure.
 --project-alias  <str>  Local NPA alias for prompt-free configure.
---container-registry  <str>  Optional non-secret registry override.
 --help  Show this message and exit.
 ```
 
@@ -40,7 +39,6 @@ Options
 | `--project-id` | <str>  Known Nebius project ID for prompt-free configure. |
 | `--region` | <str>  Known Nebius project region for prompt-free configure. |
 | `--project-alias` | <str>  Local NPA alias for prompt-free configure. |
-| `--container-registry` | <str>  Optional non-secret registry override. |
 | `--help` | Show this message and exit. |
 
 ## Subcommands

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 
@@ -26,6 +27,17 @@ class ToolEntry:
     # reuses a multi-node resource profile.
     shard_activation_config: str = ""
     shard_output_config: str = ""
+    # Flags to leave out entirely when their config value resolves to empty,
+    # rather than passing the flag with an empty argument. Only for flags whose
+    # CLI default means "decide this from the environment": a spec that leaves the
+    # value blank is asking for that default, and passing `--flag ''` denies it --
+    # Typer turns an empty Path argument into Path("."), which is a real directory.
+    # Leaving the flag out also keeps a blank value working on already-published
+    # images, whose older CLI has no way to recognize the empty spelling.
+    omit_flags_when_empty: tuple[str, ...] = ()
+    # Additive defaults keep an existing external spec renderable when a public
+    # toolRef gains optional CLI flags. Explicit spec config always wins.
+    config_defaults: dict[str, str] = field(default_factory=dict)
 
 
 # Public composable entries intentionally available to customer-authored specs,
@@ -102,6 +114,38 @@ _CONTENT_AGENTS_PIPELINE = [
 ]
 
 TOOL_CATALOG: dict[str, ToolEntry] = {
+    "workbench.alpamayo2_super.infer": ToolEntry(
+        name="workbench.alpamayo2_super.infer",
+        description=(
+            "Run NVIDIA Alpamayo 2 Super's genuine VLM + diffusion-expert "
+            "trajectory inference. Model weights and gated PhysicalAI-AV data "
+            "are fetched at runtime under the operator's Hugging Face identity."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "alpamayo2-super",
+            "infer",
+            "--output-path",
+            "{{config.output_uri}}",
+            "--model-id",
+            "{{config.model_id}}",
+            "--model-revision",
+            "{{config.model_revision}}",
+            "--dataset-revision",
+            "{{config.dataset_revision}}",
+            "--sample-index",
+            "{{config.sample_index}}",
+            "--diffusion-steps",
+            "{{config.diffusion_steps}}",
+            "--seed",
+            "{{config.seed}}",
+            "--figure-style",
+            "{{config.figure_style}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
     "infra.fleet.deploy": ToolEntry(
         name="infra.fleet.deploy",
         description=(
@@ -498,6 +542,31 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         variant_count_config="n_augmentations",
         shard_activation_config="configs_uri",
         shard_output_config="augment_uri",
+        config_defaults={
+            "augment_control": "edge",
+            "augment_control_weight": "1.0",
+            "augment_control_asset_uri": "",
+            "augment_control_prompt": "",
+            "augment_mask_asset_uri": "",
+            "augment_mask_prompt": "",
+            "augment_control_uri": "",
+            "augment_guidance": "3.0",
+            "refinement_uri": "",
+            "protected_chroma_mode": "off",
+            "protected_chroma_regions_json": "",
+            "protected_luma_max_delta": "32",
+            "protected_feather_pixels": "12",
+            "segmentation_mode": "off",
+            "segmentation_uri": "",
+            "sam2_model": "facebook/sam2.1-hiera-tiny",
+            "sam2_model_revision": "de431c4043854a71d8101e17995dfe596bf101a5",
+            "sam2_points_per_side": "16",
+            "sam2_predicted_iou_threshold": "0.86",
+            "sam2_stability_threshold": "0.92",
+            "sam2_min_area_fraction": "0.002",
+            "sam2_max_area_fraction": "0.65",
+            "sam2_max_objects": "6",
+        },
         argv_template=[
             "npa",
             "workbench",
@@ -529,6 +598,38 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.augment_mask_prompt}}",
             "--control-output-uri",
             "{{config.augment_control_uri}}",
+            "--guidance",
+            "{{config.augment_guidance}}",
+            "--refinement-uri",
+            "{{config.refinement_uri}}",
+            "--protected-chroma-mode",
+            "{{config.protected_chroma_mode}}",
+            "--protected-regions-json",
+            "{{config.protected_chroma_regions_json}}",
+            "--protected-luma-max-delta",
+            "{{config.protected_luma_max_delta}}",
+            "--protected-feather-pixels",
+            "{{config.protected_feather_pixels}}",
+            "--segmentation-mode",
+            "{{config.segmentation_mode}}",
+            "--segmentation-uri",
+            "{{config.segmentation_uri}}",
+            "--sam2-model",
+            "{{config.sam2_model}}",
+            "--sam2-model-revision",
+            "{{config.sam2_model_revision}}",
+            "--sam2-points-per-side",
+            "{{config.sam2_points_per_side}}",
+            "--sam2-predicted-iou-threshold",
+            "{{config.sam2_predicted_iou_threshold}}",
+            "--sam2-stability-threshold",
+            "{{config.sam2_stability_threshold}}",
+            "--sam2-min-area-fraction",
+            "{{config.sam2_min_area_fraction}}",
+            "--sam2-max-area-fraction",
+            "{{config.sam2_max_area_fraction}}",
+            "--sam2-max-objects",
+            "{{config.sam2_max_objects}}",
             "--condition-on-input",
             "--execute",
         ],
@@ -582,6 +683,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             # off too (NPA_COSMOS3_NO_GUARDRAILS).
             "--no-guardrails",
         ],
+        omit_flags_when_empty=("--cache-dir",),
     ),
     "workbench.cosmos.check": ToolEntry(
         name="workbench.cosmos.check",
@@ -606,6 +708,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--output",
             "json",
         ],
+        omit_flags_when_empty=("--cache-dir",),
     ),
     "workbench.cosmos_evaluator.evaluate": ToolEntry(
         name="workbench.cosmos_evaluator.evaluate",
@@ -661,6 +764,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.appearance_max_dimension}}",
             "--vlm-model",
             "{{config.caption_model}}",
+            "--attribute-sample-policy",
+            "{{config.attribute_sample_policy}}",
             "--output",
             "json",
         ],
@@ -688,6 +793,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--output",
             "json",
         ],
+        omit_flags_when_empty=("--cache-dir",),
     ),
     "workbench.cosmos_curate.curate": ToolEntry(
         name="workbench.cosmos_curate.curate",
@@ -1757,6 +1863,32 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "json",
         ],
     ),
+    "workbench.fiftyone.review_augmented": ToolEntry(
+        name="workbench.fiftyone.review_augmented",
+        description=(
+            "Export every terminal PAIDF candidate as a portable real "
+            "FiftyOneDataset, preserving rejected review-only semantics and "
+            "verifying that pre-existing canonical artifacts are unchanged."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "fiftyone",
+            "review-augmented",
+            "--run-root-uri",
+            "{{config.run_root_uri}}",
+            "--quality-disposition-uri",
+            "{{config.quality_disposition_uri}}",
+            "--dataset-uri",
+            "{{config.terminal_review_dataset_uri}}",
+            "--report-uri",
+            "{{config.terminal_review_report_uri}}",
+            "--dataset-name",
+            "{{config.terminal_review_dataset_name}}",
+            "--output",
+            "json",
+        ],
+    ),
     "workbench.token_factory.caption": ToolEntry(
         name="workbench.token_factory.caption",
         description="Caption images with Nebius Token Factory (zero-GPU).",
@@ -2542,3 +2674,36 @@ def validate_tool_ref(tool_ref: str) -> ToolEntry:
 
 def argv_for_tool(tool_ref: str) -> list[str]:
     return list(validate_tool_ref(tool_ref).argv_template)
+
+
+def drop_empty_optional_flags(tool_ref: str, argv: Sequence[str]) -> list[str]:
+    """Remove ``--flag ''`` pairs the entry declared droppable, after resolution.
+
+    Applied to the resolved argv rather than the template, because whether the
+    value is empty is a property of the spec's config, not of the catalog.
+    """
+
+    droppable = set(validate_tool_ref(tool_ref).omit_flags_when_empty)
+    if not droppable:
+        return list(argv)
+    kept: list[str] = []
+    index = 0
+    tokens = list(argv)
+    while index < len(tokens):
+        token = tokens[index]
+        if (
+            token in droppable
+            and index + 1 < len(tokens)
+            and not str(tokens[index + 1]).strip()
+        ):
+            index += 2
+            continue
+        kept.append(token)
+        index += 1
+    return kept
+
+
+def config_defaults_for_tool(tool_ref: str) -> dict[str, str]:
+    """Return a copy of additive defaults for an existing public toolRef."""
+
+    return dict(validate_tool_ref(tool_ref).config_defaults)

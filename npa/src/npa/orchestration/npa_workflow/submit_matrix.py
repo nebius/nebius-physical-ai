@@ -69,6 +69,17 @@ class SubmitLiveCase:
 
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
+    SubmitLiveCase(
+        "alpamayo2-super-inference.yaml",
+        "gpu",
+        secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="alpamayo2-super",
+        notes=(
+            "Real single-B200 Alpamayo 2 Super VLM + diffusion-expert inference; "
+            "publishes calibrated trajectory JSON/PNG and provenance. Requires "
+            "operator-side PhysicalAI-AV dataset acceptance."
+        ),
+    ),
     # --- CPU / zero-GPU (Token Factory hosted) ---
     SubmitLiveCase(
         "token-factory-caption.yaml",

@@ -43,6 +43,10 @@ Load these as needed before making decisions:
 - `skills/atomic/solution-licensing/SKILL.md` — satisfy the License admission
   gate below: classify what the image actually bakes, decide whether it may be
   redistributed, and record it in the packaging contract.
+- `skills/atomic/audit-container-docs/SKILL.md` — reconcile
+  `docs/workbench/container-image-catalog.md` for every new or changed
+  image-backed solution without confusing registry admission with public-mirror
+  publication.
 - Relevant tool skill (`skills/tools/isaac-lab`, `lerobot`, `genesis`,
   `cosmos`, `groot`, `sonic`, `fiftyone`, `lancedb`, `mjlab`, or
   `retargeting`) when the upstream repo depends on that stack.
@@ -173,6 +177,13 @@ Registry admission requires all of:
 Update `docs/workbench/oss-solution-catalog.md` with **this solution's**
 capability table. Mark only live-passing capabilities as accepted. Keep deferred
 blockers explicit (assets, Vulkan, GCS, dataset size, VRAM).
+
+Then load `skills/atomic/audit-container-docs/SKILL.md` and reconcile
+`docs/workbench/container-image-catalog.md`. Add the solution's image to the
+public table only if repository publication policy selects its resolved pin and
+anonymous registry inspection proves that exact tag is available. A BYOF-only,
+restricted, deferred, private-registry, or not-yet-published solution belongs in
+its solution documentation, not in the public-image table.
 
 ## Current Onboarded Solutions
 

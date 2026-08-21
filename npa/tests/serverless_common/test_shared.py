@@ -83,6 +83,70 @@ def test_build_serverless_job_env_basic() -> None:
     assert env["HF_HOME"] == "/tmp/hf_home"
 
 
+def test_build_serverless_job_env_uses_a_cache_the_operator_already_mounted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A serverless job allocates a GPU before the container starts, so a gated
+    # checkpoint re-downloaded into /tmp is billed GPU time on every submission.
+    # NPA_MODEL_CACHE_DIR is the only signal that applies: the operator is saying
+    # the path is already there, which is the one thing a runtime that mounts
+    # nothing can act on.
+    monkeypatch.setenv("NPA_MODEL_CACHE_DIR", "/mnt/weights")
+
+    env = build_serverless_job_env(output_path="s3://bucket/prefix")
+
+    assert env["NPA_MODEL_CACHE_DIR"] == "/mnt/weights"
+    assert env["HF_HOME"] == "/mnt/weights/huggingface"
+    assert env["LEROBOT_HF_HOME"] == "/mnt/weights/lerobot"
+
+
+def test_build_serverless_job_env_uses_a_mounted_weight_filesystem(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The job client attaches this filesystem with `--volume`, so the env must name
+    # the path it lands on rather than the ephemeral default.
+    monkeypatch.setenv("NPA_MODEL_CACHE_FILESYSTEM", "npa-weights")
+
+    env = build_serverless_job_env(output_path="s3://bucket/prefix")
+
+    assert env["NPA_MODEL_CACHE_DIR"] == "/opt/npa-model-cache"
+    assert env["HF_HOME"] == "/opt/npa-model-cache/huggingface"
+
+
+@pytest.mark.parametrize(
+    "configured", ["NPA_MODEL_CACHE_PVC", "NPA_MODEL_CACHE_HOST_PATH"]
+)
+def test_build_serverless_job_env_ignores_storage_it_cannot_mount(
+    monkeypatch: pytest.MonkeyPatch, configured: str
+) -> None:
+    """A Serverless Job has no volumes, so neither signal can reach it.
+
+    Acting on them anyway would point HF_HOME at `/opt/npa-model-cache`, which is
+    root-owned in every workbench image while the job runs unprivileged: the first
+    mkdir fails and the job dies. That is how configuring a claim for Kubernetes
+    workflows would have broken previously-working Serverless Jobs.
+    """
+
+    monkeypatch.setenv(
+        configured,
+        "npa-model-cache" if configured.endswith("PVC") else "/mnt/weights",
+    )
+
+    env = build_serverless_job_env(output_path="s3://bucket/prefix")
+
+    assert "NPA_MODEL_CACHE_DIR" not in env
+    assert env["HF_HOME"] == "/tmp/hf_home"
+    assert env["LEROBOT_HF_HOME"] == "/tmp/hf_home"
+
+
+def test_build_serverless_job_env_lets_the_caller_override_the_cache() -> None:
+    env = build_serverless_job_env(
+        output_path="s3://bucket/prefix", extra_env={"HF_HOME": "/scratch/hf"}
+    )
+
+    assert env["HF_HOME"] == "/scratch/hf"
+
+
 def test_build_serverless_job_env_with_hf_token() -> None:
     env = build_serverless_job_env(output_path="s3://bucket/prefix", hf_token="PLACEHOLDER_HF_TOKEN")
 

@@ -283,11 +283,17 @@ Body: `{"camera": "workspace"}` → generates `.rrd`, restarts Rerun service, re
   presenting it as a global total. Lightweight rows preserve
   `summary_complete=false` and unknown viewability/count fields until enriched.
 - `GET /api/artifacts/run/{run_id}` returns an S3-native artifact page with
-  `render` hints. Follow `next_cursor` with the returned `resolved_prefix` and
-  `bucket` (as `resource_bucket`) until `truncated=false`; the UI exposes this
-  as **Load next artifact page** so large runs do not block the backend.
+  `render` hints. The UI follows every opaque `next_cursor` with the returned
+  `run_ref`, `project_id`, `resolved_prefix`, and `bucket` (as
+  `resource_bucket`), merges/deduplicates the pages, then computes the global
+  preferred recording. A page-1 video therefore cannot auto-open while a
+  later-page RRD/MCAP is still undiscovered. Repeated cursors, incomplete pages,
+  source changes, cancellation, and authorization failures stop selection
+  rather than leaving a partial page presented as the complete run.
 - `POST /api/sim-viz/load-artifact` loads only a discovered inventory object. Send
-  `run_id` (or server-issued `run_ref`) with `s3_uri`, or send `run_id` + `key`.
+  the server-issued `run_id`, `run_ref`, `project_id`, `resource_bucket`,
+  `resolved_prefix`, `source_selected=true`, and exact `key`. `s3_uri` may be
+  displayed as provenance but is not a browser authorization selector.
   URI-only requests return versioned error `npa.agent.api_error/v1` with code
   `run_id_required_for_s3_uri`; this deliberately prevents arbitrary S3 reads.
 - Unknown types are still listed and selectable (`render="download"` fallback).
@@ -305,11 +311,18 @@ customer artifact storage merely to make them searchable.
 
 `artifacts/run` returns exactly one native S3 page per request, capped at 1,000
 objects. Its `count`, `artifacts`, and `preferred` fields are page-local. Clients
-that previously treated the first response as the complete run must follow
-`next_cursor` with the same `resolved_prefix` and `resource_bucket`; cursors are
-opaque and stable only for the S3 listing they came from. The UI does this via
-**Load next artifact page**. A run that changes while pages are being followed
-inherits native S3 listing consistency and may require a fresh first-page load.
+must follow every `next_cursor` with the same exact source tuple before selecting
+a viewer; cursors are opaque and stable only for the S3 listing they came from.
+The shipped UI does this automatically and labels the merged page count. A run
+that changes while pages are being followed inherits native S3 listing
+consistency and requires a fresh first-page load when source identity or cursor
+continuity changes.
+
+`GET|HEAD /api/artifacts/content` and `/api/artifacts/download` require that same
+exact source tuple plus `key`. MP4 GET/HEAD/Range responses stream the object with
+truthful `Content-Type`, `Content-Length`, `Accept-Ranges`, and `Content-Range`;
+the UI HEAD-checks those facts and surfaces JSON/authorization errors before it
+creates a video element.
 
 ### Stage evidence contract
 

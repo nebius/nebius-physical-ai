@@ -71,6 +71,7 @@ below (see `npa/src/npa/orchestration/npa_workflow/blueprints.py`). Deploy guide
 
 | Spec | Notes |
 | --- | --- |
+| `alpamayo2-super-inference.yaml` | Real Alpamayo 2 Super 34B trajectory inference on `B200:1`; runtime-only OpenMDW weights and separately gated PhysicalAI-AV sample data ([guide](../../../../docs/workbench/alpamayo2-super.md)) |
 | `vlm-eval-single.yaml` | Self-hosted VLM eval |
 | `vlm-eval-benchmark.yaml` | VLM benchmark |
 | `token-factory-caption.yaml` | Zero-GPU; needs `NPA_SRC_S3_URI` (or `--image`) + `--secret-env NEBIUS_TOKEN_FACTORY_KEY` |

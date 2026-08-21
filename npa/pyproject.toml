@@ -162,7 +162,7 @@ genesis = "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 isaac-lab = "2.3.2.post1"
 leisaac = "0.4.0-20260817T231825Z"
 cosmos = "cu128-torch27-sm100-1.0.9-20260803T002017Z"
-cosmos2-transfer = "2.5.1-skypilot-ready-20260801T053000Z"
+cosmos2-transfer = "2.5.1-sam2-multigpu-20260817-r2"
 # Additive r2 image release for cosmos-framework 1.2.2 (pinned commit) + torch
 # cu130. The immutable 1.2.2-cu130 tag remains available for rollback; weights
 # stay out of both images.
@@ -173,14 +173,14 @@ cosmos-curate = "0.1.2-skypilot-v1-20260813T164700Z"
 # Cosmos Evaluator: NVIDIA upstream checkout; no model weights (CV + hosted VLM).
 cosmos-evaluator = "0.1.2-skypilot-v1-20260813T164700Z"
 groot = "0.1.0"
-fiftyone = "1.15.0.post1"
+fiftyone = "1.15.0-post1-skypilot-v1-20260815-review5"
 sonic = "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 retargeting = "0.1.1"
 envgen = "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 reference-policy = "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 lerobot-vlm-rl = "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 loop-eval = "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
-rerun-viewer = "0.31.4"
+rerun-viewer = "0.31.4-skypilot-v1-20260815-review5-r2"
 # Tracks the pinned @foxglove/embed SDK release (npa.workbench.foxglove).
 foxglove-embed = "0.58.0"
 # Lichtblick (MPL-2.0): OSS, Foxglove-compatible static web viewer bundle tag.
@@ -189,6 +189,7 @@ lancedb = "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z"
 detection-training = "bdd100k-golden-eval-smoke-20260614T210000Z"
 wan2-2 = "2.2-ti2v5b-rtfetch-cu128-20260809T011658Z-r7"
 ltx2 = "2.5-rtfetch-unbuilt"
+alpamayo2-super = "0.1.0-cu128"
 nebius-cli = "0.12.254"
 terraform = "~> 0.5.201"
 terraform-cli = "1.13.3"

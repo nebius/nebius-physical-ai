@@ -507,24 +507,22 @@ def resolve_credentials() -> CredentialsConfig:
 
 
 def resolve_container_registry(project: str | None = None) -> str:
-    """Return the project-level container registry override, or the default."""
+    """Resolve an image registry override, then fall back to public GHCR."""
     yml = _load_yaml()
     try:
         proj = _resolve_project_section(yml, project)
     except ConfigError:
         proj = {}
 
-    value = ""
-    if isinstance(proj, dict):
-        value = str(proj.get("container_registry", "") or "")
-    if not value:
-        # Honor both NPA_REGISTRY and NPA_REGISTRY_ID here, matching
-        # deploy.images.primary_container_registry, so exporting only
-        # NPA_REGISTRY_ID does not silently fall back to the default registry
-        # on tool-deploy paths (lerobot/fiftyone/sonic/detection-training/sim2real).
-        from npa.deploy.images import registry_from_env
+    # Explicit environment configuration wins over legacy saved values, matching
+    # the repository-wide explicit > env > config precedence contract. Honor both
+    # supported registry env vars so NPA_REGISTRY_ID behaves consistently across
+    # tool-deploy paths (lerobot/fiftyone/sonic/detection-training/sim2real).
+    from npa.deploy.images import registry_from_env
 
-        value = registry_from_env()
+    value = registry_from_env()
+    if not value and isinstance(proj, dict):
+        value = str(proj.get("container_registry", "") or "")
     if not value:
         value = str(yml.get("container_registry", "") or "")
     return value.rstrip("/") if value else DEFAULT_CONTAINER_REGISTRY

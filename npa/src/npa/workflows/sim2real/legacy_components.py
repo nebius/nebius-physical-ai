@@ -21,6 +21,11 @@ from npa.workflows.sim2real.artifact_upload import (
 from npa.workbench.cosmos.reason import (
     merge_dual_reason_evaluations,
 )
+from npa.workbench.model_cache import (
+    RUNTIME_KUBERNETES,
+    model_cache_env,
+    resolve_model_cache_root,
+)
 from npa.workflows.sim2real.constants import (
     CORRECTIVE_TARGETS,
     ERROR_SEVERITY,
@@ -575,6 +580,11 @@ def run_cosmos2_transfer_component(
         "UV_CACHE_DIR": "/tmp/uv_cache",
         "XDG_CACHE_HOME": "/tmp/xdg_cache",
     }
+    # Cosmos Transfer downloads its gated guardrail and transfer checkpoints on
+    # every Job, because the image is forbidden from baking them. Redirect them
+    # into the operator's durable cache when there is one, so the second Job of a
+    # run (and every later run) starts from local bytes.
+    env.update(model_cache_env(resolve_model_cache_root(runtime=RUNTIME_KUBERNETES)))
     output_json = local_dir / "cosmos2-transfer-result.json"
     invocation = _run_image_component(
         config.augment_image,

@@ -7,6 +7,13 @@ import os
 import re
 from typing import Any
 
+from npa.workbench.model_cache import (
+    RUNTIME_KUBERNETES,
+    model_cache_host_path,
+    model_cache_pvc,
+    pod_config_with_model_cache,
+    resolve_model_cache_root,
+)
 from npa.workflows.sim2real.k8s_client import QUEUE_LABEL
 from npa.workflows.sim2real.models import Sim2RealLoopError
 
@@ -143,6 +150,38 @@ def _configure_isaac_runtime_cache(
     }
 
 
+def _configure_model_weight_cache(manifest: dict[str, Any]) -> dict[str, str]:
+    """Mount the operator's durable weight cache read-write on a GPU Job.
+
+    Sibling Jobs run images that are forbidden from baking gated NVIDIA weights,
+    so each one downloads them. Without a volume that outlives the pod, every Job
+    of every run repeats that download on an already-billing GPU. Unlike the Isaac
+    closure — which one CPU Job warms and everything else consumes read-only —
+    weights arrive lazily from whichever stage needs them first, so this mount is
+    writable and simply accumulates.
+    """
+
+    root = resolve_model_cache_root(runtime=RUNTIME_KUBERNETES)
+    pvc = model_cache_pvc()
+    host_path = model_cache_host_path()
+    if not root or not (pvc or host_path):
+        return {}
+    pod_spec = manifest["spec"]["template"]["spec"]
+    containers = [item for item in (pod_spec.get("containers") or []) if isinstance(item, dict)]
+    patched = pod_config_with_model_cache(
+        {"spec": {"containers": containers, "volumes": list(pod_spec.get("volumes") or [])}},
+        root=root,
+        pvc=pvc,
+        host_path=host_path,
+        container_names=[str(item.get("name") or "") for item in containers[:1]],
+    )
+    pod_spec["containers"] = patched["spec"]["containers"]
+    pod_spec["volumes"] = patched["spec"]["volumes"]
+    annotations = manifest.setdefault("metadata", {}).setdefault("annotations", {})
+    annotations["sim2real.npa.dev/model-cache"] = pvc or host_path
+    return {"claim": pvc, "host_path": host_path, "mount_path": root}
+
+
 def configure_gpu_job(
     manifest: dict[str, Any],
     *,
@@ -173,6 +212,7 @@ def configure_gpu_job(
         immutable_image=immutable,
         cache_pvc=isaac_cache_pvc,
     )
+    _configure_model_weight_cache(configured)
     pod_spec["restartPolicy"] = "Never"
     pod_spec["nodeSelector"] = {"nvidia.com/gpu.product": product}
     priority = priority_class or os.environ.get(
