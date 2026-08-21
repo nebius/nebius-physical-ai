@@ -167,6 +167,26 @@ def test_provision_if_absent_dry_run_reports_actions(
     assert result.storage_bucket == "s3://bucket/checkpoints/"
 
 
+def test_provision_if_absent_preflight_uses_terraform_disk_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_runtime(tmp_path, monkeypatch)
+    monkeypatch.setenv("TF_VAR_cpu_disk_size", "96")
+    monkeypatch.setenv("TF_VAR_gpu_disk_size", "600")
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        kubeconfig=tmp_path / "missing-kubeconfig",
+        dry_run=True,
+        skip_s3=True,
+    )
+
+    topology = result.preflight["topology"]
+    assert topology["cpu_disk_gib"] == 96
+    assert topology["gpu_disk_gib"] == 600
+    assert topology["required_network_ssd_gib"] == "696"
+
+
 def test_provision_dry_run_from_installed_package_ignores_cached_cluster(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

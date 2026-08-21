@@ -124,6 +124,12 @@ Workbench setup even though the PAIDF + Cosmos 3 path below currently obtains
 its model weights from Hugging Face. Token Factory is required by that path for
 captioning and evaluation.
 
+The active Nebius CLI identity must also be allowed to administer tenant IAM
+during first-time storage setup. `npa configure` creates a project service
+account and access key plus a tenant IAM group and bucket-scoped permit; project
+admin alone is not sufficient. Remove any temporary broad role after setup and
+teardown are complete.
+
 Then give your agent this prompt:
 
 ```text
@@ -139,7 +145,8 @@ Use NPA_PROJECT_ALIAS if it is set; otherwise use "workbench" as the local alias
 Install or verify npa, verify the active Nebius CLI identity, and configure the
 known tenant, project, and region non-interactively. Persist supported environment
 credentials with npa configure --save-env-credentials and provision or reuse
-writable project object storage. Then run npa configure --show,
+writable project object storage. Confirm the active identity can create the
+tenant IAM objects that secure that storage. Then run npa configure --show,
 npa workbench health preflight --json, and
 npa workbench health access --capability paidf,cosmos3 --json.
 
@@ -187,10 +194,14 @@ artifact locations private.
 
 Re-run the credential and model-access gates for paidf,cosmos3. Validate and
 plan the spec with the real bucket and input, starting with one variant and one
-supported GPU. Bootstrap and verify SkyPilot, discover the accelerator name the
-target cluster advertises, and provision the required CPU/GPU resources if they
-are absent. Show me the validated plan and explain the resources it will create,
-then stage the input, preflight the selected images, and submit with --runtime.
+supported GPU. Honor configured TF_VAR_* topology and reserved-capacity settings.
+Bootstrap and verify SkyPilot, discover the accelerator name the target cluster
+advertises, and provision the required CPU/GPU resources if they are absent.
+Show me the validated plan and explain the resources it will create, then stage
+the input and preflight the selected images. If a selected image fails the
+SkyPilot bootstrap contract, build the repository's current compliant image,
+push it to an authorized private project registry at an immutable digest, and
+repeat preflight. Then submit with --runtime.
 Forward only secret names through --secret-env: HF_TOKEN,
 NEBIUS_TOKEN_FACTORY_KEY, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY; never put
 secret values in YAML or command arguments.

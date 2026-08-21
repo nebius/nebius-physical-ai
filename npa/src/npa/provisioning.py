@@ -532,6 +532,7 @@ def provision_if_absent(
                     count=desired_cpu_count,
                     platform=cpu_platform,
                     preset=cpu_preset,
+                    disk_size_gib=topology.cpu_disk_gib,
                 )
                 if desired_cpu_count
                 else None
@@ -541,7 +542,9 @@ def provision_if_absent(
                     count=desired_gpu_count,
                     platform=gpu_platform,
                     preset=gpu_preset,
-                    disk_size_gib=128 if mig_enabled else 0,
+                    disk_size_gib=(
+                        128 if mig_enabled else topology.gpu_disk_gib
+                    ),
                     capacity_block_group=capacity_block_group,
                     preemptible=bool(preemptible),
                 )
@@ -769,6 +772,8 @@ def _build_provision_plan(
     )
 
     cluster_exists = skip_k8s or _has_cached_kubeconfig(context, kubeconfig)
+    cpu_disk_gib = _terraform_disk_size_gib("TF_VAR_cpu_disk_size", 128)
+    gpu_disk_gib = _terraform_disk_size_gib("TF_VAR_gpu_disk_size", 1023)
     requested = resolve_topology(
         cluster_name=cluster_name,
         accelerator=accelerator,
@@ -780,6 +785,8 @@ def _build_provision_plan(
         gpu_platform=gpu_platform,
         gpu_preset=gpu_preset,
         preemptible=preemptible,
+        cpu_disk_gib=cpu_disk_gib,
+        gpu_disk_gib=gpu_disk_gib,
     )
     checks = []
     if skip_k8s:
@@ -825,6 +832,8 @@ def _build_provision_plan(
         gpu_platform=requested.gpu_platform,
         gpu_preset=requested.gpu_preset,
         preemptible=requested.gpu_preemptible,
+        cpu_disk_gib=requested.cpu_disk_gib,
+        gpu_disk_gib=requested.gpu_disk_gib,
     )
     return build_whole_path_plan(
         project_alias=alias,
@@ -835,6 +844,27 @@ def _build_provision_plan(
         checks=checks,
         mutation=not dry_run,
     )
+
+
+def _terraform_disk_size_gib(name: str, default: int) -> int:
+    """Resolve the Terraform worker-disk override used by ``cluster up``.
+
+    ``provision-if-absent`` delegates the real apply to ``cluster up``, which
+    already honors ``TF_VAR_cpu_disk_size`` and ``TF_VAR_gpu_disk_size``. The
+    immutable outer preflight must account for those same values or it can
+    reject an otherwise valid topology before Terraform sees it.
+    """
+
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a positive integer GiB value") from exc
+    if value <= 0:
+        raise ValueError(f"{name} must be a positive integer GiB value")
+    return value
 
 
 def resolve_provision_plan(
