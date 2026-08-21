@@ -190,7 +190,7 @@ def test_generate_configs_includes_coherent_low_key_wrist_camera_profile(
     candidate = result["augmentations"][0]
     assert {key: candidate[key] for key in dfs.APPEARANCE_VARIABLES} == {
         "lighting": "dim soft evening illumination",
-        "background": "solid dark-gray backdrop",
+        "background": "neutral gray backdrop",
         "color_grade": "warm amber color palette",
         "surface_finish": "matte uniform backdrop finish",
     }
