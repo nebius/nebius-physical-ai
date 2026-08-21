@@ -203,11 +203,12 @@ SUPPORTED_TOOL_VERSIONS = {
     "leisaac": "0.4.0-20260817T231825Z",
     "cosmos": "cu128-torch27-sm100-1.0.9-20260803T002017Z",
     "cosmos2-transfer": "2.5.1-sam2-multigpu-20260817-r2",
-    # Additive r3 release of cosmos-framework 1.2.2 (pinned commit 5e67049c) +
+    # Additive r4 release of cosmos-framework 1.2.2 (pinned commit 5e67049c) +
     # torch cu130 with the attested SkyPilot 0.12.2 Kubernetes bootstrap closure.
-    # The immutable 1.2.2-cu130 and r2 tags remain rollback provenance. No weights
-    # are baked; gated Cosmos3 checkpoints download at runtime.
-    "cosmos3": "1.2.2-cu130-r3",
+    # It uses distro FFmpeg instead of imageio-ffmpeg's redundant bundled binary.
+    # Earlier tags remain immutable provenance. No weights are baked; gated
+    # Cosmos3 checkpoints download at runtime.
+    "cosmos3": "1.2.2-cu130-r4",
     "cosmos3-reason": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     # Additive image releases that preserve the tool versions while including
     # the immutable SkyPilot 0.12.2 Kubernetes bootstrap closure. The original

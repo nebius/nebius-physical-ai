@@ -56,6 +56,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     COSMOS_TRAINING=0 \
     HF_HOME=/tmp/hf_home \
     COSMOS_DOWNLOAD_CACHE_DIR=/tmp/hf_home/cosmos-downloads \
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
     TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas \
     PATH=/opt/npa/.venv/bin:${PATH}
 
@@ -114,6 +115,9 @@ RUN cd "${COSMOS3_REPO}" \
        --extra "${COSMOS3_UV_EXTRA}" --group "${COSMOS3_UV_GROUP}" \
     && UV_CACHE_DIR=/tmp/uv-cache uv pip install --python .venv/bin/python \
        ${COSMOS3_INFERENCE_DEPS} \
+    && find .venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
+    && test "$(.venv/bin/python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')" = /usr/bin/ffmpeg \
+    && test -z "$(find .venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
     && COSMOS_DEVICE=cpu .venv/bin/python /opt/cosmos3/verify_env.py \
     && rm -rf /tmp/uv-cache
 
