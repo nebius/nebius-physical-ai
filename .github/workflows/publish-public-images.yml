@@ -116,10 +116,12 @@ jobs:
 
       - name: Plan (dry run — always)
         env:
-          # Repository-variable fallbacks let a branch add these inputs before the
-          # workflow-dispatch schema reaches the default branch. Operators must remove
-          # one-off variables after the run; explicit inputs always win once available.
-          SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
+          # A secret fallback keeps a one-off private source registry out of public
+          # dispatch metadata and masks it if a copier prints a source reference.
+          # Operators must remove the temporary secret after the run. Explicit inputs
+          # remain available for non-confidential sources; the repository variable is
+          # the standing non-secret fallback.
+          SOURCE_REGISTRY: ${{ inputs.source_registry || secrets.NEBIUS_OVERRIDE_SOURCE_REGISTRY || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
           SELECTED_TOOLS: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
         run: |
           args=(--target "${{ steps.target.outputs.value }}")
@@ -155,7 +157,7 @@ jobs:
           # It is deliberately separate so a release never overwrites the standing CI
           # credential, and must be removed immediately after the dispatch.
           NEBIUS_OVERRIDE_CR_TOKEN: ${{ secrets.NEBIUS_OVERRIDE_CR_TOKEN }}
-          SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
+          SOURCE_REGISTRY: ${{ inputs.source_registry || secrets.NEBIUS_OVERRIDE_SOURCE_REGISTRY || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
           # A dry run without secrets still reports the plan and says what it could not check.
           REQUIRE_CREDENTIAL: ${{ inputs.dry_run == false }}
         run: |
@@ -174,7 +176,7 @@ jobs:
       - name: Preflight the source registry credential and every pinned tag
         if: ${{ steps.source-login.outputs.available == 'true' }}
         env:
-          SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
+          SOURCE_REGISTRY: ${{ inputs.source_registry || secrets.NEBIUS_OVERRIDE_SOURCE_REGISTRY || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
           SELECTED_TOOLS: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
         run: |
           args=(--target "${{ steps.target.outputs.value }}")
@@ -241,7 +243,7 @@ jobs:
         id: publish
         if: ${{ inputs.dry_run == false }}
         env:
-          SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
+          SOURCE_REGISTRY: ${{ inputs.source_registry || secrets.NEBIUS_OVERRIDE_SOURCE_REGISTRY || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
           SELECTED_TOOLS: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
         run: |
           args=(--target "${{ steps.target.outputs.value }}")
@@ -260,7 +262,7 @@ jobs:
       - name: Write the visibility checklist to the job summary
         if: ${{ failure() && inputs.dry_run == false && steps.publish.outputs.copy_phase_completed == 'true' }}
         env:
-          SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
+          SOURCE_REGISTRY: ${{ inputs.source_registry || secrets.NEBIUS_OVERRIDE_SOURCE_REGISTRY || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
           SELECTED_TOOLS: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
         run: |
           cat >> "$GITHUB_STEP_SUMMARY" <<'MD'

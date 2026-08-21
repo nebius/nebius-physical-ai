@@ -59,7 +59,10 @@ def test_scoped_branch_publication_has_dispatch_schema_fallbacks() -> None:
     adding the selector must also support temporary repository variables until merged.
     """
     text = PUBLISH.read_text(encoding="utf-8")
-    assert "inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY" in text
+    assert (
+        "inputs.source_registry || secrets.NEBIUS_OVERRIDE_SOURCE_REGISTRY || "
+        "vars.NPA_PUBLISH_SOURCE_REGISTRY"
+    ) in text
     assert "inputs.tool || vars.NPA_PUBLISH_TOOL" in text
     assert "(inputs.tool || vars.NPA_PUBLISH_TOOL) == ''" in text
     assert "comma/space-separated workbench tools" in text
