@@ -12,6 +12,8 @@ Options
 Commands
 caption  Caption a folder of images with a hosted Token Factory vision model.
 generate  Generate completions for each prompt in a JSONL/text file.
+batch-generate  Generate completions for a prompt file through batch inference.
+batch-status  Check a batch operation and collect its generations once it has finished.
 reason  Reason over scene images for physical understanding and a plan of action.
 models  List models available to the configured Token Factory API key.
 verify  Verify Token Factory authentication with a live models call.
@@ -32,6 +34,8 @@ workflow  Show the checked-in Token Factory npa.workflow specs.
 | --- | --- |
 | `caption` | Caption a folder of images with a hosted Token Factory vision model. |
 | `generate` | Generate completions for each prompt in a JSONL/text file. |
+| `batch-generate` | Generate completions for a prompt file through batch inference. |
+| `batch-status` | Check a batch operation and collect its generations once it has finished. |
 | `reason` | Reason over scene images for physical understanding and a plan of action. |
 | `models` | List models available to the configured Token Factory API key. |
 | `verify` | Verify Token Factory authentication with a live models call. |

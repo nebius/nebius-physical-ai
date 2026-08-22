@@ -13,6 +13,10 @@ from rich.console import Console
 
 from npa.clients.token_factory import (
     DEFAULT_BASE_URL,
+    DEFAULT_BATCH_MODEL,
+    DEFAULT_BATCH_POLL_INTERVAL_S,
+    DEFAULT_BATCH_TIMEOUT_S,
+    DEFAULT_COMPLETION_WINDOW,
     DEFAULT_REASONER_MODEL,
     DEFAULT_TEXT_MODEL,
     DEFAULT_VISION_MODEL,
@@ -21,6 +25,7 @@ from npa.clients.token_factory import (
 )
 from npa.workbench.token_factory import (
     DEFAULT_CAPTION_INSTRUCTION,
+    BatchResult,
     DEFAULT_GENERATE_SYSTEM_PROMPT,
     DEFAULT_MAX_IMAGES,
     DEFAULT_MAX_TOKENS,
@@ -29,10 +34,14 @@ from npa.workbench.token_factory import (
     DEFAULT_REASON_SYSTEM_PROMPT,
     DEFAULT_REASON_TASK,
     TokenFactoryToolError,
+    batch_collect,
+    batch_generate,
+    batch_operation_uri_for,
     caption_images,
     generate_text,
     list_models,
     reason_scene,
+    write_batch_operation,
     write_captions,
     write_generations,
     write_reason,
@@ -132,6 +141,135 @@ def generate_cmd(
         _fail(str(exc))
         return
     _emit(payload, output)
+
+
+@app.command("batch-generate")
+def batch_generate_cmd(
+    input_path: str = typer.Option(..., "--input-path", help="S3 or local JSONL/text prompt file."),
+    output_path: str = typer.Option(..., "--output-path", help="S3 or local path for generations JSONL."),
+    model: str = typer.Option(DEFAULT_BATCH_MODEL, "--model", help="Batch-enabled Token Factory model."),
+    system_prompt: str = typer.Option(
+        DEFAULT_GENERATE_SYSTEM_PROMPT, "--system-prompt", help="System prompt applied to every request."
+    ),
+    max_prompts: int = typer.Option(0, "--max-prompts", help="Limit prompts submitted (0 = all)."),
+    max_tokens: int = typer.Option(DEFAULT_MAX_TOKENS, "--max-tokens", help="Max tokens per completion."),
+    completion_window: str = typer.Option(
+        DEFAULT_COMPLETION_WINDOW, "--completion-window", help="Deadline the batch must finish within."
+    ),
+    wait: bool = typer.Option(
+        True, "--wait/--no-wait", help="Block until results are ready, or return the operation id."
+    ),
+    poll_interval: float = typer.Option(
+        DEFAULT_BATCH_POLL_INTERVAL_S, "--poll-interval", help="Seconds between status polls."
+    ),
+    timeout: float = typer.Option(
+        DEFAULT_BATCH_TIMEOUT_S, "--timeout", help="Seconds to wait before giving up on the poll."
+    ),
+    keep_datasets: bool = typer.Option(
+        False, "--keep-datasets", help="Keep the server-side request/response datasets."
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Do not write the result artifact."),
+    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+) -> None:
+    """Generate completions for a prompt file through batch inference.
+
+    Same prompt file and same generations.jsonl as `generate`, at batch token
+    rates and with no per-request loop, but asynchronous: results arrive within
+    the completion window. Use --no-wait in a pipeline and collect the operation
+    later with `batch-status`.
+
+    Batch inference is a separate entitlement from real-time chat, so a model
+    that works with `generate` may still be rejected here.
+    """
+
+    try:
+        result = batch_generate(
+            input_path=input_path,
+            output_path=output_path,
+            model=model,
+            system_prompt=system_prompt,
+            max_prompts=max_prompts,
+            max_tokens=max_tokens,
+            completion_window=completion_window,
+            wait=wait,
+            poll_interval_s=poll_interval,
+            timeout_s=timeout,
+            keep_datasets=keep_datasets,
+        )
+        payload = _batch_payload(result, dry_run=dry_run)
+    except (TokenFactoryToolError, TokenFactoryError) as exc:
+        _fail(str(exc))
+        return
+    _emit(payload, output)
+
+
+@app.command("batch-status")
+def batch_status_cmd(
+    operation_id: str = typer.Option(..., "--operation-id", help="Batch operation id to collect."),
+    output_path: str = typer.Option(..., "--output-path", help="S3 or local path for generations JSONL."),
+    wait: bool = typer.Option(
+        False, "--wait/--no-wait", help="Block until the operation finishes, or report status now."
+    ),
+    poll_interval: float = typer.Option(
+        DEFAULT_BATCH_POLL_INTERVAL_S, "--poll-interval", help="Seconds between status polls."
+    ),
+    timeout: float = typer.Option(
+        DEFAULT_BATCH_TIMEOUT_S, "--timeout", help="Seconds to wait before giving up on the poll."
+    ),
+    keep_datasets: bool = typer.Option(
+        False, "--keep-datasets", help="Keep the server-side request/response datasets."
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Do not write the result artifact."),
+    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+) -> None:
+    """Check a batch operation and collect its generations once it has finished."""
+
+    try:
+        result = batch_collect(
+            operation_id=operation_id,
+            output_path=output_path,
+            wait=wait,
+            poll_interval_s=poll_interval,
+            timeout_s=timeout,
+            keep_datasets=keep_datasets,
+        )
+        payload = _batch_payload(result, dry_run=dry_run)
+    except (TokenFactoryToolError, TokenFactoryError) as exc:
+        _fail(str(exc))
+        return
+    _emit(payload, output)
+
+
+def _batch_payload(result: BatchResult, *, dry_run: bool) -> dict[str, Any]:
+    """Shape a BatchResult for output, writing whichever artifact it warrants.
+
+    A completed run writes generations.jsonl; a pending one writes only the
+    operation handle, so nothing downstream mistakes an unfinished batch for an
+    empty result.
+    """
+
+    payload = asdict(result)
+    payload["dry_run"] = dry_run
+    if dry_run:
+        return payload
+    if result.status == "completed":
+        rows = [asdict(item) for item in result.generations]
+        payload["written_uri"] = write_generations(rows, result_uri=result.result_uri)
+        return payload
+    handle = {
+        "status": result.status,
+        "operation_id": result.operation_id,
+        "operation_status": result.operation_status,
+        "model": result.model,
+        "completion_window": result.completion_window,
+        "prompt_count": result.prompt_count,
+        "result_uri": result.result_uri,
+        "generated_at": result.generated_at,
+    }
+    payload["written_uri"] = write_batch_operation(
+        handle, result_uri=batch_operation_uri_for(result.output_path)
+    )
+    return payload
 
 
 @app.command("reason")
@@ -241,6 +379,7 @@ def status_cmd(
             "default_text_model": DEFAULT_TEXT_MODEL,
             "default_vision_model": DEFAULT_VISION_MODEL,
             "default_reasoner_model": DEFAULT_REASONER_MODEL,
+            "default_batch_model": DEFAULT_BATCH_MODEL,
             "caption_workflow": str(CAPTION_WORKFLOW_PATH),
             "generate_workflow": str(GENERATE_WORKFLOW_PATH),
             "reason_workflow": str(REASON_WORKFLOW_PATH),
@@ -262,6 +401,12 @@ def list_cmd(
             "capabilities": [
                 {"name": "caption", "kind": "vision", "default_model": DEFAULT_VISION_MODEL},
                 {"name": "generate", "kind": "text", "default_model": DEFAULT_TEXT_MODEL},
+                {
+                    "name": "batch-generate",
+                    "kind": "text-batch",
+                    "default_model": DEFAULT_BATCH_MODEL,
+                },
+                {"name": "batch-status", "kind": "text-batch"},
                 {"name": "reason", "kind": "physical-reasoning", "default_model": DEFAULT_REASONER_MODEL},
                 {"name": "models", "kind": "discovery"},
             ],
