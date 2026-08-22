@@ -218,7 +218,11 @@ secret values in YAML or command arguments.
 Stay with the run until it reaches a terminal state. If it fails, diagnose the
 recorded stage and resume safely rather than starting an unrelated run. If it
 succeeds, show me the generated and curated artifacts and load the final Rerun
-recording when an agent viewer is available.
+recording when an agent viewer is available. A terminal quality rejection after
+the workflow's bounded refinement loop is a valid fail-closed result: do not
+lower the threshold or force promotion. Show me the generated video, evaluator
+report, quality disposition, and Rerun evidence, and explain that labeling and
+curation were intentionally skipped.
 ```
 
 The workflow uses the independent
