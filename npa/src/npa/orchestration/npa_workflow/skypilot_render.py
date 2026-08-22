@@ -1382,6 +1382,7 @@ def render_setup_for_tool(
     *,
     config: Mapping[str, Any],
     options: SkypilotRenderOptions,
+    command: Sequence[str] = (),
 ) -> str:
     """Return a SkyPilot ``setup:`` block for a toolRef."""
 
@@ -1389,6 +1390,18 @@ def render_setup_for_tool(
         return ""
     require_baked = str(config.get("require_baked_npa") or "").strip().lower()
     if require_baked in {"1", "true", "yes", "on"}:
+        probe_module = "npa.cli.main"
+        if (
+            not tool_ref
+            and len(command) >= 3
+            and str(command[0]).rsplit("/", 1)[-1].startswith("python")
+            and command[1] == "-m"
+            and re.fullmatch(r"npa(?:\.[A-Za-z_][A-Za-z0-9_]*)+", command[2])
+        ):
+            # Raw module stages never invoke the generated ``npa`` CLI shim.
+            # Probe the exact module they execute so a purpose-built image can
+            # remain dependency-minimal without passing setup on a broken stage.
+            probe_module = command[2]
         return (
             "set -e\n"
             'npa_baked_python="${NPA_BAKED_PYTHON:-}"\n'
@@ -1404,12 +1417,13 @@ def render_setup_for_tool(
             "  exit 69\n"
             "fi\n"
             "\"$npa_baked_python\" - <<'PY'\n"
+            "import importlib\n"
             "import os\n"
-            # The stage shim imports npa.cli.main, not merely the intentionally
-            # lazy package root.  Probing the same path prevents an immutable
-            # image from passing setup and then failing after scheduling because
-            # a CLI dependency (as seen live with Typer) was omitted.
-            "import npa.cli.main\n"
+            # toolRef stages use the generated npa shim and therefore probe the
+            # complete command tree. Raw ``python -m`` stages probe their exact
+            # module instead; importing the unrelated CLI would reject thin,
+            # purpose-built stage images even when their actual payload is sound.
+            f"importlib.import_module({probe_module!r})\n"
             "actual = os.environ.get('NPA_IMAGE_SOURCE_SHA', '').strip().lower()\n"
             "expected = os.environ.get('NPA_SIM2REAL_SOURCE_SHA', '').strip().lower()\n"
             "if len(actual) != 40 or actual != expected:\n"
@@ -1822,6 +1836,7 @@ def build_skypilot_task_doc(
         str(scheduler_task.get("tool_ref") or ""),
         config=spec.config,
         options=options,
+        command=command,
     )
     if setup.strip():
         # setup is where a stage pre-fetches weights (the self-hosted VLM backend
