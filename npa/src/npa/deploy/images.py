@@ -161,9 +161,11 @@ UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"ltx2"})
 # keeping the states separate prevents the latter's mandatory ``-unbuilt`` tag
 # from colliding with a product-approved additive candidate tag.
 #
-# Remove a tool only in the evidence commit that records its accepted digest,
-# byte-scan counts, live GPU result, and anonymous-public verification.
-VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"content-agents"})
+# Remove a tool only in the coherent accepted-evidence change that records its
+# immutable digest, byte-scan counts, and live hardware result. The public catalog
+# remains a separate post-copy claim and must not change until anonymous resolution
+# of that exact digest succeeds.
+VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset()
 PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = frozenset(
     UNVALIDATED_PUBLICATION_TOOLS | VALIDATION_CANDIDATE_TOOLS
 )

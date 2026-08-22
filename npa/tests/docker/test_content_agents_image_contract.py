@@ -10,6 +10,7 @@ from npa.deploy.images import (
     OMNIVERSE_RESTRICTED_TOOLS,
     SUPPORTED_TOOL_VERSIONS,
     PUBLICATION_QUARANTINE_TOOLS,
+    content_agents_accepted_image_manifest,
 )
 from npa.workflows.content_agents import (
     CONTENT_AGENTS_REVISION,
@@ -43,7 +44,7 @@ def test_source_and_runtime_download_description_are_immutable() -> None:
     assert "@sha256:" in text.splitlines()[6]
 
 
-def test_public_image_is_catalogued_but_quarantined_until_live_evidence() -> None:
+def test_public_image_has_immutable_accepted_live_evidence() -> None:
     contract = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
     entry = contract["images"]["content-agents"]
     assert entry["tier"] == "job"
@@ -52,7 +53,13 @@ def test_public_image_is_catalogued_but_quarantined_until_live_evidence() -> Non
     assert "content-agents" not in OMNIVERSE_RESTRICTED_TOOLS
     assert CONTAINER_IMAGE_NAMES["content-agents"] == "npa-content-agents"
     assert SUPPORTED_TOOL_VERSIONS["content-agents"] == "0.5.2-npa2"
-    assert "content-agents" in PUBLICATION_QUARANTINE_TOOLS
+    assert "content-agents" not in PUBLICATION_QUARANTINE_TOOLS
+    accepted = content_agents_accepted_image_manifest()
+    assert accepted["tag"] == SUPPORTED_TOOL_VERSIONS["content-agents"]
+    assert accepted["rtx_proof"]["observed_image_id_digest"] == accepted["oci_digest"]
+    assert accepted["payload_scan"]["findings"] == 0
+    assert accepted["general_payload_scan"]["payload_hits"] == 0
+    assert accepted["general_payload_scan"]["history_hits"] == 0
     assert 'npa.redistribution="public"' in DOCKERFILE.read_text(encoding="utf-8")
 
 
