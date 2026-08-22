@@ -741,6 +741,21 @@ def test_deploy_yes_flag_skips_prompt_and_runs(tmp_path, monkeypatch) -> None:
     )
     assert result.exit_code == 0, result.output
     assert "2 deployed" in result.output
+    assert captured["repair_stopped_placeholder"] is False
+
+    result = runner.invoke(
+        app,
+        [
+            "fleet",
+            "deploy",
+            "--spec",
+            str(_spec_file(tmp_path)),
+            "--yes",
+            "--repair-stopped-placeholder",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["repair_stopped_placeholder"] is True
 
 
 def test_destroy_aborts_on_declined_confirmation(tmp_path, monkeypatch) -> None:
@@ -1603,6 +1618,165 @@ def test_tainted_node_group_mismatch_refuses_before_untaint(
         )
 
     assert all("untaint" not in call for call in calls)
+
+
+def _stopped_placeholder_workers(provider: dict) -> tuple[dict, dict]:
+    template = provider["spec"]["template"]
+
+    def worker(worker_id: str, state: str) -> dict:
+        boot = template["boot_disk"]
+        return {
+            "metadata": {
+                "id": worker_id,
+                "parent_id": "project-test",
+                "labels": {
+                    "mk8s-cluster-id": "mk8scluster-test",
+                    "mk8s-node-group-id": "mk8snodegroup-test",
+                },
+            },
+            "spec": {
+                "resources": template["resources"],
+                "boot_disk": {
+                    "managed_disk": {
+                        "spec": {
+                            "type": boot["type"],
+                            "size_gibibytes": boot["size_gibibytes"],
+                        }
+                    }
+                },
+                "reservation_policy": template["reservation_policy"],
+                "network_interfaces": template["network_interfaces"],
+                "filesystems": template["filesystems"],
+                "gpu_cluster": {},
+            },
+            "status": {"state": state},
+        }
+
+    running = worker("computeinstance-running", "RUNNING")
+    running["status"].update(
+        {"reservation_id": "reservation-test", "disk_attachments": [{}]}
+    )
+    return running, worker("computeinstance-stopped", "STOPPED")
+
+
+def test_explicit_stopped_placeholder_repair_is_exact_and_cas_guarded(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, provider, cluster = _tainted_gpu_reconciliation_fixture()
+    state["resources"][1]["instances"][0].pop("status")
+    provider["metadata"]["resource_version"] = 10
+    running, stopped = _stopped_placeholder_workers(provider)
+    calls: list[list[str]] = []
+    inventory_reads = 0
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        nonlocal inventory_reads
+        calls.append(args)
+        if args[1:3] == ["state", "pull"]:
+            return _Cap(json.dumps(state), 0)
+        if "operation" in args and "list" in args:
+            return _Cap(json.dumps({"items": []}), 0)
+        if "compute" in args and ["compute", "instance", "list"] == args[
+            args.index("compute") :
+        ][:3]:
+            inventory_reads += 1
+            items = [running, stopped] if inventory_reads == 1 else [running]
+            return _Cap(json.dumps({"items": items}), 0)
+        if "compute" in args and ["compute", "instance", "get"] == args[
+            args.index("compute") :
+        ][:3]:
+            return _Cap(json.dumps(stopped), 0)
+        if "compute" in args and ["compute", "instance", "delete"] == args[
+            args.index("compute") :
+        ][:3]:
+            return _Cap("{}", 0)
+        if "node-group" in args and "get" in args:
+            return _Cap(json.dumps(provider), 0)
+        if "node-group" in args and "update" in args:
+            count = args[args.index("--fixed-node-count") + 1]
+            revision = 11 if count == "1" else 12
+            return _Cap(json.dumps({"metadata": {"resource_version": revision}}), 0)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(execution, "_run_capture", run)
+    result = execution._repair_exact_stopped_placeholder(
+        terraform_bin="terraform",
+        workdir=tmp_path,
+        env={},
+        cluster=as_mk8s_desired(cluster),
+        project_id="project-test",
+        subnet_id="vpcsubnet-test",
+        nebius_bin="nebius",
+        profile="tenant-profile",
+        on_status=None,
+    )
+
+    assert result == {"status": "reconciled"}
+    deletes = [call for call in calls if "delete" in call]
+    assert deletes == [
+        [
+            "nebius",
+            "--profile",
+            "tenant-profile",
+            "compute",
+            "instance",
+            "delete",
+            "--id",
+            "computeinstance-stopped",
+            "--format",
+            "json",
+        ]
+    ]
+    updates = [call for call in calls if "update" in call]
+    assert [call[call.index("--fixed-node-count") + 1] for call in updates] == [
+        "1",
+        "2",
+    ]
+    assert updates[0][updates[0].index("--resource-version") + 1] == "10"
+    assert updates[1][updates[1].index("--resource-version") + 1] == "11"
+    assert "--async" not in updates[0]
+    assert "--async" in updates[1]
+
+
+def test_stopped_placeholder_with_disk_fails_before_delete(monkeypatch, tmp_path) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, provider, cluster = _tainted_gpu_reconciliation_fixture()
+    state["resources"][1]["instances"][0].pop("status")
+    running, stopped = _stopped_placeholder_workers(provider)
+    stopped["status"]["disk_attachments"] = [{}]
+    calls: list[list[str]] = []
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        calls.append(args)
+        if args[1:3] == ["state", "pull"]:
+            return _Cap(json.dumps(state), 0)
+        if "operation" in args:
+            return _Cap(json.dumps({"items": []}), 0)
+        if args[1:4] == ["compute", "instance", "list"]:
+            return _Cap(json.dumps({"items": [running, stopped]}), 0)
+        if "node-group" in args and "get" in args:
+            return _Cap(json.dumps(provider), 0)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(execution, "_run_capture", run)
+    with pytest.raises(RuntimeError, match="reservation or disk evidence is unsafe"):
+        execution._repair_exact_stopped_placeholder(
+            terraform_bin="terraform",
+            workdir=tmp_path,
+            env={},
+            cluster=as_mk8s_desired(cluster),
+            project_id="project-test",
+            subnet_id="vpcsubnet-test",
+            nebius_bin="nebius",
+            profile="",
+            on_status=None,
+        )
+    assert all("delete" not in call for call in calls)
 
 
 def test_existing_terraform_state_audit_failure_refuses_apply(

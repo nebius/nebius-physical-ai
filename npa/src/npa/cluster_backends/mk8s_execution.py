@@ -1085,6 +1085,294 @@ def _reconcile_tainted_node_groups(
     }
 
 
+def _instance_matches_node_group(
+    payload: dict[str, Any],
+    *,
+    project_id: str,
+    cluster_id: str,
+    node_group_id: str,
+    template: dict[str, Any],
+) -> bool:
+    """Prove that one compute instance is owned by an exact node-group template."""
+
+    metadata = payload.get("metadata") or {}
+    spec = payload.get("spec") or {}
+    labels = metadata.get("labels") or {}
+    interfaces = spec.get("network_interfaces") or []
+    expected_interfaces = template.get("network_interfaces") or []
+    disk = ((spec.get("boot_disk") or {}).get("managed_disk") or {}).get("spec") or {}
+    expected_disk = template.get("boot_disk") or {}
+    return bool(
+        isinstance(metadata, dict)
+        and isinstance(spec, dict)
+        and isinstance(labels, dict)
+        and metadata.get("id")
+        and _provider_field(metadata, "parent_id", "parentId") == project_id
+        and labels.get("mk8s-cluster-id") == cluster_id
+        and labels.get("mk8s-node-group-id") == node_group_id
+        and spec.get("resources") == template.get("resources")
+        and spec.get("reservation_policy") == template.get("reservation_policy")
+        and not bool(spec.get("preemptible", False))
+        and len(interfaces) == len(expected_interfaces) == 1
+        and interfaces[0].get("subnet_id") == expected_interfaces[0].get("subnet_id")
+        and spec.get("filesystems", []) == template.get("filesystems", [])
+        and spec.get("gpu_cluster") == (template.get("gpu_cluster") or {})
+        and disk.get("type") == expected_disk.get("type")
+        and disk.get("size_gibibytes") == expected_disk.get("size_gibibytes")
+    )
+
+
+def _repair_exact_stopped_placeholder(
+    *,
+    terraform_bin: str,
+    workdir: Path,
+    env: dict[str, str],
+    cluster: MK8sDesired,
+    project_id: str,
+    subnet_id: str,
+    nebius_bin: str,
+    profile: str,
+    on_status: Callable[[str], None] | None,
+) -> dict[str, Any]:
+    """Replace one exact stopped strict-reserved worker, only when opted in.
+
+    Managed Kubernetes can retain an unbound, diskless STOPPED compute
+    placeholder after a reservation scheduling timeout. Terraform sees the
+    node group itself as unchanged and therefore cannot repair that element.
+    This deliberately narrow recovery path proves state, ownership, topology,
+    and the absence of an active node-group operation before deleting only the
+    failed placeholder. It then uses resource-version guarded node-count
+    updates to make the controller reconcile a replacement.
+    """
+
+    pool = cluster.gpu_nodes
+    if (
+        pool is None
+        or pool.count != 2
+        or not pool.capacity_block_group
+        or pool.preemptible
+    ):
+        raise RuntimeError(
+            "stopped-placeholder repair requires exactly two strict-reserved, "
+            "non-preemptible GPU workers"
+        )
+    pulled = _run_capture(
+        [terraform_bin, "state", "pull"], cwd=workdir, env=env, check=False
+    )
+    if pulled.returncode != 0 or not pulled.stdout.strip():
+        raise RuntimeError("could not audit Terraform state before placeholder repair")
+    try:
+        state = json.loads(pulled.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Terraform state is unreadable before placeholder repair") from exc
+    resources = state.get("resources") if isinstance(state, dict) else None
+    if not isinstance(resources, list):
+        raise RuntimeError("Terraform state has no valid resource inventory")
+    cluster_instances = [
+        item
+        for resource in resources
+        if isinstance(resource, dict)
+        and resource.get("mode", "managed") == "managed"
+        and resource.get("type") == "nebius_mk8s_v1_cluster"
+        for item in resource.get("instances", [])
+        if isinstance(item, dict) and isinstance(item.get("attributes"), dict)
+    ]
+    group_instances = [
+        item
+        for resource in resources
+        if isinstance(resource, dict)
+        and resource.get("mode", "managed") == "managed"
+        and resource.get("type") == "nebius_mk8s_v1_node_group"
+        and resource.get("name") == "gpu"
+        for item in resource.get("instances", [])
+        if isinstance(item, dict) and isinstance(item.get("attributes"), dict)
+    ]
+    if len(cluster_instances) != 1 or len(group_instances) != 1:
+        raise RuntimeError(
+            "placeholder repair requires one exact Terraform cluster and GPU node group"
+        )
+    cluster_id = str(cluster_instances[0]["attributes"].get("id") or "")
+    attributes = group_instances[0]["attributes"]
+    node_group_id = str(attributes.get("id") or "")
+    if not cluster_id or not node_group_id:
+        raise RuntimeError("placeholder repair requires exact Terraform resource IDs")
+    cli = _nebius_argv(nebius_bin, profile)
+
+    def provider_json(args: list[str], message: str) -> dict[str, Any]:
+        result = _run_capture([*cli, *args, "--format", "json"], env=env, check=False)
+        try:
+            payload = json.loads(result.stdout or "{}")
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(message) from exc
+        if result.returncode != 0 or not isinstance(payload, dict):
+            raise RuntimeError(message)
+        return payload
+
+    live_group = provider_json(
+        ["mk8s", "node-group", "get", "--id", node_group_id],
+        "could not read the exact node group before placeholder repair",
+    )
+    if not _tainted_node_group_matches_desired(
+        provider_payload=live_group,
+        state_attributes=attributes,
+        pool=pool,
+        cluster=cluster,
+        cluster_id=cluster_id,
+        subnet_id=subnet_id,
+    ):
+        raise RuntimeError("refusing placeholder repair: live node group does not match state")
+    status = live_group.get("status") or {}
+    if (
+        status.get("state") != "PROVISIONING"
+        or int(status.get("target_node_count", -1)) != 2
+        or int(status.get("ready_node_count", -1)) != 1
+    ):
+        raise RuntimeError("refusing placeholder repair: node-group readiness is not 1 of 2")
+    operations = provider_json(
+        [
+            "mk8s",
+            "node-group",
+            "operation",
+            "list",
+            "--resource-id",
+            node_group_id,
+            "--all",
+        ],
+        "could not audit node-group operations before placeholder repair",
+    )
+    if operations.get("items"):
+        raise RuntimeError("refusing placeholder repair while a node-group operation exists")
+    inventory = provider_json(
+        ["compute", "instance", "list", "--parent-id", project_id, "--all"],
+        "could not audit compute inventory before placeholder repair",
+    )
+    template = (live_group.get("spec") or {}).get("template") or {}
+    workers = [
+        item
+        for item in inventory.get("items", [])
+        if isinstance(item, dict)
+        and ((item.get("metadata") or {}).get("labels") or {}).get(
+            "mk8s-node-group-id"
+        )
+        == node_group_id
+    ]
+    if len(workers) != 2 or not all(
+        _instance_matches_node_group(
+            item,
+            project_id=project_id,
+            cluster_id=cluster_id,
+            node_group_id=node_group_id,
+            template=template,
+        )
+        for item in workers
+    ):
+        raise RuntimeError("refusing placeholder repair: worker inventory is not exact")
+    running = [item for item in workers if (item.get("status") or {}).get("state") == "RUNNING"]
+    stopped = [item for item in workers if (item.get("status") or {}).get("state") == "STOPPED"]
+    if len(running) != 1 or len(stopped) != 1:
+        raise RuntimeError("refusing placeholder repair: expected one RUNNING and one STOPPED worker")
+    running_status = running[0].get("status") or {}
+    stopped_status = stopped[0].get("status") or {}
+    if (
+        not running_status.get("reservation_id")
+        or not running_status.get("disk_attachments")
+        or stopped_status.get("reservation_id")
+        or stopped_status.get("disk_attachments")
+    ):
+        raise RuntimeError("refusing placeholder repair: reservation or disk evidence is unsafe")
+    failed_id = str((stopped[0].get("metadata") or {}).get("id") or "")
+    refreshed = provider_json(
+        ["compute", "instance", "get", "--id", failed_id],
+        "could not refetch the stopped placeholder before deletion",
+    )
+    if refreshed != stopped[0]:
+        raise RuntimeError("refusing placeholder repair: stopped placeholder changed before deletion")
+    deleted = _run_capture(
+        [*cli, "compute", "instance", "delete", "--id", failed_id, "--format", "json"],
+        env=env,
+        check=False,
+    )
+    if deleted.returncode != 0:
+        raise RuntimeError("provider could not delete the exact stopped placeholder")
+    after = provider_json(
+        ["compute", "instance", "list", "--parent-id", project_id, "--all"],
+        "could not verify compute inventory after placeholder deletion",
+    )
+    remaining = [
+        item
+        for item in after.get("items", [])
+        if isinstance(item, dict)
+        and ((item.get("metadata") or {}).get("labels") or {}).get(
+            "mk8s-node-group-id"
+        )
+        == node_group_id
+    ]
+    running_id = str((running[0].get("metadata") or {}).get("id") or "")
+    if len(remaining) == 2 and any(
+        str((item.get("metadata") or {}).get("id") or "") == running_id
+        for item in remaining
+    ):
+        _log(on_status, "controller created a replacement after exact placeholder deletion")
+        return {"status": "replacement-created"}
+    if len(remaining) != 1 or str(
+        (remaining[0].get("metadata") or {}).get("id") or ""
+    ) != running_id:
+        raise RuntimeError("placeholder repair changed unexpected worker inventory")
+    current = provider_json(
+        ["mk8s", "node-group", "get", "--id", node_group_id],
+        "could not refetch node group for guarded reconciliation",
+    )
+    resource_version = (current.get("metadata") or {}).get("resource_version")
+    if not resource_version:
+        raise RuntimeError("node group has no resource version for guarded reconciliation")
+    updated = provider_json(
+        [
+            "mk8s",
+            "node-group",
+            "update",
+            "--id",
+            node_group_id,
+            "--resource-version",
+            str(resource_version),
+            "--fixed-node-count",
+            "1",
+        ],
+        "node-group guarded update to 1 failed during placeholder repair",
+    )
+    resource_version = (updated.get("metadata") or {}).get("resource_version")
+    if not resource_version:
+        raise RuntimeError("node-group update returned no revision for desired-count restore")
+    # Restoring two is intentionally asynchronous. A synchronous provider call
+    # waits for physical placement and can exit nonzero after the desired count
+    # was already accepted, making a safe retry indistinguishable from a CAS
+    # conflict. Terraform apply and the normal health gates own convergence.
+    restored = _run_capture(
+        [
+            *cli,
+            "mk8s",
+            "node-group",
+            "update",
+            "--id",
+            node_group_id,
+            "--resource-version",
+            str(resource_version),
+            "--fixed-node-count",
+            "2",
+            "--async",
+            "--format",
+            "json",
+        ],
+        env=env,
+        check=False,
+    )
+    if restored.returncode != 0:
+        raise RuntimeError(
+            "node-group guarded asynchronous restore to 2 failed during placeholder repair"
+        )
+    _log(on_status, "repaired one exact stopped strict-reserved worker placeholder")
+    return {"status": "reconciled"}
+
+
 def _write_kubeconfig(
     nebius_bin: str,
     cluster_id: str,
@@ -1431,6 +1719,7 @@ def _deploy_one_cluster(
     validation_policy: str = "fleet",
     basic_validation_timeout_minutes: int = 30,
     kubectl_bin: str = "",
+    repair_stopped_placeholder: bool = False,
 ) -> dict[str, Any]:
     project_key = project.key()
     install_dir = fleet_root / project_key / cluster.name
@@ -1525,6 +1814,22 @@ def _deploy_one_cluster(
                 "status": "reconciling",
             }
             _write_env_sidecar(install_dir, sidecar)
+        if repair_stopped_placeholder:
+            _repair_exact_stopped_placeholder(
+                terraform_bin=terraform_bin,
+                workdir=workdir,
+                env=env,
+                cluster=cluster,
+                project_id=project_id,
+                subnet_id=subnet_id,
+                nebius_bin=nebius_bin,
+                profile=profile,
+                on_status=(
+                    (lambda message: _log(on_status, f"[{label}] {message}"))
+                    if on_status
+                    else None
+                ),
+            )
         _log(
             on_status,
             f"[{label}] terraform apply (cpu={cluster.cpu_count()} gpu={cluster.gpu_count()} "

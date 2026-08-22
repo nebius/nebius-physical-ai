@@ -43,6 +43,7 @@ class MK8sApplyRequest:
     log_path: Path | None = None
     provider_env: dict[str, str] | None = None
     provider_preflight: bool = False
+    repair_stopped_placeholder: bool = False
     # Legacy-state compatibility only. New standalone targets use the native
     # one-target request below; existing deploy/cluster state must continue to
     # reconcile in place rather than being silently orphaned.
@@ -296,6 +297,7 @@ class MK8sBackend:
             validation_policy=request.post_deploy_validation,
             basic_validation_timeout_minutes=request.basic_validation_timeout_minutes,
             kubectl_bin=request.kubectl_bin,
+            repair_stopped_placeholder=request.repair_stopped_placeholder,
         )
         if request.standalone_context and result.get("status") == "deployed":
             result = self._adopt_standalone_result(desired, request, result)
