@@ -124,12 +124,16 @@ FORBIDDEN_HISTORY: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 SECRET_CONTENT: tuple[re.Pattern[bytes], ...] = (
-    re.compile(rb"AKIA[0-9A-Z]{16}"),
-    re.compile(rb"hf_[A-Za-z0-9]{24,}"),
-    re.compile(rb"nvapi[-_][A-Za-z0-9_-]{24,}", re.I),
+    re.compile(rb"(?<![0-9A-Z])AKIA[0-9A-Z]{16}(?![0-9A-Z])"),
+    re.compile(rb"(?<![A-Za-z0-9_])hf_[A-Za-z0-9]{34}(?![A-Za-z0-9_])"),
     re.compile(
-        rb"(?i)(?:aws_secret_access_key|nebius_token_factory_key)\s*[=:]\s*"
-        rb"[^$<\s][^\s]{15,}"
+        rb"(?<![A-Za-z0-9_-])nvapi-[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-])",
+        re.I,
+    ),
+    re.compile(rb"(?<![A-Za-z0-9_.-])v1\.[A-Za-z0-9_-]{24,}(?![A-Za-z0-9_-])"),
+    re.compile(
+        rb"(?i)aws_secret_access_key\s*[=:]\s*"
+        rb"[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])"
     ),
 )
 

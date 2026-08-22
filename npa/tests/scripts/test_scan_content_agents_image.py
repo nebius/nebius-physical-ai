@@ -124,14 +124,40 @@ def test_build_time_bootstrap_and_acceptance_mutations_are_detected(
     assert {"ovrtx_bootstrap_at_build", "content_agents_acceptance_gate"} <= kinds
 
 
-def test_secret_bytes_mutation_is_detected(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "secret",
+    [
+        b"AK" + b"IA" + b"ABCDEFGHIJKLMNOP",
+        b"h" + b"f_" + b"0123456789abcdefghijklmnopqrstuvwx",
+        b"nva" + b"pi-" + b"0123456789abcdefghijklmnopqrstuvwxyz",
+        b"v" + b"1." + b"0123456789abcdefghijklmnopqrstuvwxyz",
+        b"AWS_SECRET_ACCESS_" + b"KEY=" + b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcd",
+    ],
+)
+def test_secret_bytes_mutation_is_detected(tmp_path: Path, secret: bytes) -> None:
     image = _tar(
         tmp_path / "rootfs.tar",
-        {"opt/npa/config.txt": b"HF_TOKEN=hf_abcdefghijklmnopqrstuvwxyz123456"},
+        {"opt/npa/config.txt": secret},
     )
     assert "credential_content" in {
         item.kind for item in scanner.scan(image, _config())
     }
+
+
+def test_sdk_symbol_and_placeholder_shapes_do_not_false_positive(
+    tmp_path: Path,
+) -> None:
+    image = _tar(
+        tmp_path / "rootfs.tar",
+        {
+            "usr/lib/sdk.so": b"hf_xet_internal_symbol nvapi_QueryInterface",
+            "opt/npa/code.py": (
+                b'os.environ.get("AWS_SECRET_ACCESS_KEY", "")\n'
+                b'example = "NEBIUS_TOKEN_FACTORY_KEY=<token>"\n'
+            ),
+        },
+    )
+    assert scanner.scan(image, _config()) == []
 
 
 def test_cli_offline_scan_reports_numeric_archive_count(tmp_path: Path, capsys) -> None:

@@ -70,8 +70,11 @@ def test_no_local_acceptance_or_consent_plumbing_exists() -> None:
 
 def test_image_excludes_optional_restricted_payloads_and_samples() -> None:
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
-    assert "apps/*/tests apps/*/examples docs tests" in dockerfile
-    assert "apps/material_agent/data apps/physics_agent/data" in dockerfile
+    assert "apps/*/tests apps/*/examples apps/*/data" in dockerfile
+    assert "-iname '*.usdz'" in dockerfile
+    assert "FROM scratch AS public-image" in dockerfile
+    assert "COPY --from=assembled / /" in dockerfile
+    assert "rm -rf /usr/local/cuda-*/compat" in dockerfile
     assert 'find_spec("ovphysx") is None' in dockerfile
     assert 'find_spec("ovrtx") is None' in dockerfile
     assert "test ! -e .build-resources/scene_optimizer_core" in dockerfile
@@ -112,12 +115,20 @@ def test_only_real_upstream_agent_entrypoints_are_installed_and_invoked() -> Non
     assert "echo" not in adapter.lower()
 
 
-def test_image_installs_the_npa_workflow_console_without_dynamic_dependencies() -> None:
+def test_image_carries_only_the_npa_modules_reached_by_its_toolrefs() -> None:
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
-    assert "uv pip install --python /opt/venv/bin/python /opt/npa" in dockerfile
-    assert "--no-deps --no-config --no-sources" in dockerfile
-    assert "command -v npa" in dockerfile
-    assert "npa --version" in dockerfile
+    assert "COPY src/npa/workflows/content_agents.py" in dockerfile
+    assert "COPY src/npa/workflows/content_agents_runtime.py" in dockerfile
+    assert "COPY src/npa/clients/storage.py" in dockerfile
+    assert "COPY --chown=1000:1000 src/npa" not in dockerfile
+    assert "uv pip install --python /opt/venv/bin/python /opt/npa" not in dockerfile
+    catalog = (
+        ROOT / "npa" / "src" / "npa" / "orchestration" / "npa_workflow" / "catalog.py"
+    ).read_text(encoding="utf-8")
+    assert (
+        '_CONTENT_AGENTS_PIPELINE = [\n    "python3",\n    "-m",\n    "npa.workflows.content_agents",\n]'
+        in catalog
+    )
 
 
 def test_build_inspection_proves_ovrtx_is_absent() -> None:
