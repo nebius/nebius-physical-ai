@@ -393,6 +393,7 @@ def test_sim2real_submit_propagates_explicit_kubernetes_target(
         return CompletedProcess(args, 1, stdout="", stderr="NotFound")
 
     monkeypatch.setenv("KUBECONFIG", "/tmp/sim2real-kubeconfig")
+    monkeypatch.setenv("NPA_SIM2REAL_K8S_NAMESPACE", "sim2real-benchmark")
     monkeypatch.setattr(
         "npa.cli.workbench.workflow._adopt_npa_kubeconfig", lambda _context: True
     )
@@ -424,6 +425,19 @@ def test_sim2real_submit_propagates_explicit_kubernetes_target(
     assert all(call[1]["context"] == "sim2real-review" for call in calls)
     assert all(
         call[1]["kubeconfig"] == "/tmp/sim2real-kubeconfig" for call in calls
+    )
+    namespaced_calls = [
+        call[0]
+        for call in calls
+        if call[0][:2] in (
+            ["get", "pvc"],
+            ["get", "localqueue.kueue.x-k8s.io"],
+        )
+    ]
+    assert namespaced_calls
+    assert all(
+        args[args.index("-n") + 1] == "sim2real-benchmark"
+        for args in namespaced_calls
     )
 
 

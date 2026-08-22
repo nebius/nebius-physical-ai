@@ -1085,6 +1085,10 @@ def submit_cmd(
                     kubernetes_prerequisites(
                         spec_config,
                         runner=_run_sim2real_kubectl,
+                        namespace=(
+                            os.environ.get("NPA_SIM2REAL_K8S_NAMESPACE", "").strip()
+                            or "default"
+                        ),
                     )
                 )
             if missing:
