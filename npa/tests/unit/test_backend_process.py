@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import time
 
 import pytest
 
@@ -101,6 +102,31 @@ def test_capture_normalizes_launch_and_timeout_errors(tmp_path: Path) -> None:
         run_capture([str(tmp_path / "absent")])
     with pytest.raises(BackendCommandError, match="timed out"):
         run_capture(["/bin/sh", "-c", "sleep 2"], timeout=0.01)
+
+
+def test_stream_timeout_stops_descendant_process_group(tmp_path: Path) -> None:
+    pid_path = tmp_path / "child.pid"
+    with pytest.raises(BackendCommandError, match="timed out"):
+        run_stream(
+            [
+                "/bin/sh",
+                "-c",
+                f"sleep 30 & echo $! > {pid_path}; wait",
+            ],
+            timeout=0.2,
+        )
+    child_pid = int(pid_path.read_text())
+    for _ in range(50):
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            break
+        stat_path = Path(f"/proc/{child_pid}/stat")
+        if stat_path.is_file() and stat_path.read_text().split()[2] == "Z":
+            break
+        time.sleep(0.02)
+    else:
+        pytest.fail("stream timeout left a descendant process running")
 
 
 def test_explicit_executable_path_wins_over_path_lookup(tmp_path: Path) -> None:
