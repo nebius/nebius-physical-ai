@@ -130,7 +130,10 @@ SECRET_CONTENT: tuple[re.Pattern[bytes], ...] = (
         rb"(?<![A-Za-z0-9_-])nvapi-[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-])",
         re.I,
     ),
-    re.compile(rb"(?<![A-Za-z0-9_.-])v1\.[A-Za-z0-9_-]{24,}(?![A-Za-z0-9_-])"),
+    re.compile(
+        rb"(?<![A-Za-z0-9_.-])v1\.[A-Za-z0-9_-]{100,}\."
+        rb"[A-Za-z0-9_-]{80,}(?![A-Za-z0-9_.-])"
+    ),
     re.compile(
         rb"(?i)aws_secret_access_key\s*[=:]\s*"
         rb"[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])"

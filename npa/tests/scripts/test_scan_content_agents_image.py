@@ -130,7 +130,7 @@ def test_build_time_bootstrap_and_acceptance_mutations_are_detected(
         b"AK" + b"IA" + b"ABCDEFGHIJKLMNOP",
         b"h" + b"f_" + b"0123456789abcdefghijklmnopqrstuvwx",
         b"nva" + b"pi-" + b"0123456789abcdefghijklmnopqrstuvwxyz",
-        b"v" + b"1." + b"0123456789abcdefghijklmnopqrstuvwxyz",
+        b"v" + b"1." + b"a" * 136 + b"." + b"b" * 96,
         b"AWS_SECRET_ACCESS_" + b"KEY=" + b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcd",
     ],
 )
@@ -151,6 +151,7 @@ def test_sdk_symbol_and_placeholder_shapes_do_not_false_positive(
         tmp_path / "rootfs.tar",
         {
             "usr/lib/sdk.so": b"hf_xet_internal_symbol nvapi_QueryInterface",
+            "usr/bin/build-tool": b"internal version v1.0123456789abcdefghijklmnopqrstuvwxyz",
             "opt/npa/code.py": (
                 b'os.environ.get("AWS_SECRET_ACCESS_KEY", "")\n'
                 b'example = "NEBIUS_TOKEN_FACTORY_KEY=<token>"\n'

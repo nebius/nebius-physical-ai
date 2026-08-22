@@ -114,6 +114,10 @@ RUN set -eux; \
       -name examples -prune -exec rm -rf -- {} +; \
     find /opt/venv/lib/python3.12/site-packages/botocore/data \
       -type f -name 'examples-1.json' -delete; \
+    find /opt/venv/lib/python3.12/site-packages/botocore/data \
+      -mindepth 1 -maxdepth 1 -type d ! -name s3 -exec rm -rf -- {} +; \
+    /opt/venv/bin/python -c \
+      'import boto3; client = boto3.client("s3", endpoint_url="https://127.0.0.1", aws_access_key_id="x", aws_secret_access_key="x"); assert client.meta.service_model.service_name == "s3"'; \
     test ! -e .build-resources/scene_optimizer_core
 
 COPY src/npa/__init__.py /opt/npa-runtime/npa/__init__.py
@@ -158,7 +162,8 @@ RUN set -eux; \
     test ! -e /opt/content-agents/.ovrtx_venv; \
     find /opt/content-agents /opt/npa-runtime -type d -name __pycache__ \
       -prune -exec rm -rf -- {} +; \
-    rm -rf /usr/local/cuda-*/compat /root/.cache /home/ubuntu/.cache/*
+    rm -rf /usr/local/cuda-*/compat /root/.cache /home/ubuntu/.cache/*; \
+    rm -f /usr/local/bin/uv
 
 # The CUDA base's driver-compatibility directory is useful on unmanaged hosts,
 # but NPA GPU pods receive their graphics/display stack from the host. Assemble
