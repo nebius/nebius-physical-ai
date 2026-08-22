@@ -37,6 +37,13 @@ You bring a robot, a dataset, or a pipeline idea. `npa` brings the containers,
 the orchestration, and the preflight checks that catch a missing token before it
 stalls your run.
 
+Workbench is meant to be operated by **your own coding agent**. Connect the
+agent to this checkout with terminal access, attach your cloud and model
+credentials through its private environment or secret manager, and ask it to
+configure, validate, provision, submit, and inspect workflows with you. The
+prompts below are a starting point; you do not need to learn every `npa` command
+before running something real.
+
 |                       |                                                                                                              |
 | --------------------- | ------------------------------------------------------------------------------------------------------------ |
 | **What you can do**   | Curate datasets · train and evaluate policies · render synthetic data · run sim-to-real loops · serve models  |
@@ -97,6 +104,64 @@ each setup guide inline: [Hugging Face](docs/workbench/huggingface-token.md) ·
 [NVIDIA NGC](docs/workbench/ngc-api-key.md) ·
 [Nebius Token Factory](docs/workbench/token-factory-key.md).
 
+If an agent is operating the checkout, attach these values to its **private
+environment** instead of pasting token values into chat:
+
+```bash
+NEBIUS_TENANT_ID=<your-tenant-id>
+NEBIUS_PROJECT_ID=<your-project-id>
+NEBIUS_REGION=<your-project-region>
+HF_TOKEN=<your-hugging-face-read-token>
+NGC_API_KEY=<your-ngc-api-key>
+NEBIUS_TOKEN_FACTORY_KEY=<your-token-factory-key>
+```
+
+The Hugging Face account behind `HF_TOKEN` must already have access to the
+models used by the workflow. A fine-grained token must include those repos.
+Gated terms can only be accepted by you on Hugging Face; the access check below
+prints every exact page still requiring action. NGC is part of the general
+Workbench setup even though the PAIDF + Cosmos 3 path below currently obtains
+its model weights from Hugging Face. Token Factory is required by that path for
+captioning and evaluation.
+
+The active Nebius CLI identity must also be allowed to administer tenant IAM
+during first-time storage setup. `npa configure` creates a project service
+account and access key plus a tenant IAM group and bucket-scoped permit; project
+admin alone is not sufficient. Remove any temporary broad role after setup and
+teardown are complete.
+
+Then give your agent this prompt:
+
+```text
+Set up Nebius Physical AI Workbench in this checkout. Read AGENTS.md and
+skills/index.yaml first and follow the relevant first-run, credential-preflight,
+and GPU guidance.
+
+Use NEBIUS_TENANT_ID, NEBIUS_PROJECT_ID, NEBIUS_REGION, HF_TOKEN, NGC_API_KEY,
+and NEBIUS_TOKEN_FACTORY_KEY from the private process environment. Never print
+secret values, put them in command arguments, or write them into the repository.
+Never run `env`, `printenv`, `set`, `export -p`, or another command that dumps
+the process environment; inspect only allowlisted names and report present or
+missing. Do not read credential files except through npa's credential APIs.
+Use NPA_PROJECT_ALIAS if it is set; otherwise use "workbench" as the local alias.
+
+Install or verify npa and its reported host prerequisites, including Terraform
+and, for SkyPilot Kubernetes on Debian/Ubuntu, socat. Verify the active Nebius
+CLI identity and configure the known tenant, project, and region
+non-interactively. Persist supported environment credentials with npa configure
+--save-env-credentials and provision or reuse writable project object storage.
+Confirm the active identity can create the tenant IAM objects that secure that
+storage. Then run npa configure --show,
+npa workbench health preflight --json, and
+npa workbench health access --capability paidf,cosmos3 --json.
+
+Do not bypass a failed gate or provision GPU resources yet. If Hugging Face
+access is missing, give me the exact model-page links, wait for me to accept the
+terms, and rerun the check. Finish only when project storage, credentials, and
+the PAIDF/Cosmos 3 model access checks pass, then guide me straight into my first
+workflow.
+```
+
 > Creating projects from the CLI, SSO/federation profiles, non-interactive
 > automation, and the full credential model live in
 > **[docs/quickstart.md](docs/quickstart.md)**.
@@ -118,6 +183,53 @@ Once it comes back green, launch something real on Nebius GPUs. The flagship is
 any robot guide below will take you from a public dataset to a trained and
 evaluated policy.
 
+**Do not stop at setup.** Keep the same agent in the loop and have it guide the
+first workflow from input selection through the final artifact. For the
+Physical AI Data Factory with real source-video-conditioned Cosmos 3, attach a
+local H.264 MP4 or set `PAIDF_INPUT_URI` to one private `s3://` MP4, then paste:
+
+```text
+Run my first Workbench workflow with me: the PAIDF Cosmos 3 video-conditioning
+workflow at npa/workflows/workbench/npa-workflows/paidf-cosmos3.yaml. Follow
+docs/workbench/guides/paidf-cosmos3.md and the repository skills. Use the
+configured Nebius project, region, writable bucket, and credentials. Use the
+attached local H.264 MP4, or PAIDF_INPUT_URI if it is set; if neither is
+available, ask me only for the input video before continuing. Keep all input and
+artifact locations private.
+
+Never run `env`, `printenv`, `set`, `export -p`, or another command that dumps
+the process environment. Inspect only allowlisted variable names and report
+present or missing; do not print secret values or read credential files directly.
+
+Re-run the credential and model-access gates for paidf,cosmos3. Validate and
+plan the spec with the real bucket and input, starting with one variant and one
+supported GPU. Honor configured TF_VAR_* topology and reserved-capacity settings.
+Bootstrap and verify SkyPilot, discover the accelerator name the target cluster
+advertises, and provision the required CPU/GPU resources if they are absent.
+Show me the validated plan and explain the resources it will create, then stage
+the input and preflight the selected images. If a selected image fails the
+SkyPilot bootstrap contract, build the repository's current compliant image,
+push it to an authorized private project registry at an immutable digest, and
+repeat preflight. Then submit with --runtime.
+Forward only secret names through --secret-env: HF_TOKEN,
+NEBIUS_TOKEN_FACTORY_KEY, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY; never put
+secret values in YAML or command arguments.
+
+Stay with the run until it reaches a terminal state. If it fails, diagnose the
+recorded stage and resume safely rather than starting an unrelated run. If it
+succeeds, show me the generated and curated artifacts and load the final Rerun
+recording when an agent viewer is available. A terminal quality rejection after
+the workflow's bounded refinement loop is a valid fail-closed result: do not
+lower the threshold or force promotion. Show me the generated video, evaluator
+report, quality disposition, and Rerun evidence, and explain that labeling and
+curation were intentionally skipped.
+```
+
+The workflow uses the independent
+[`paidf-cosmos3.yaml`](docs/workbench/guides/paidf-cosmos3.md) composition; the
+original Physical AI Data Factory workflow continues to use Cosmos Transfer
+2.5.
+
 ---
 
 ## Pick your first win
@@ -132,6 +244,7 @@ Short, copy-paste walkthroughs. Pick whichever sounds fun — they are independe
 | Make a Unitree G1 walk                           | [G1 + SONIC](docs/workbench/guides/g1-humanoid-walk-sonic.md)                             | GPU cluster                |
 | Train a quadruped to run                         | [Quadruped + Isaac Lab](docs/workbench/guides/quadruped-isaac-lab.md)                     | RT-core GPU                |
 | Run the flagship GPU workload                    | [NVIDIA Cosmos](docs/quickstart.md#7-flagship-gpu-workload-nvidia-cosmos)                 | GPU cluster                |
+| Augment robot video with PAIDF + Cosmos 3        | [PAIDF with Cosmos 3](docs/workbench/guides/paidf-cosmos3.md)                             | GPU cluster + S3           |
 | Run a real data pipeline, not a robot            | [Physical AI Data Factory](docs/workbench/guides/physical-ai-data-factory-deploy.md)      | GPU cluster + S3           |
 | Rebuild a real scene in 3D                       | [Neural reconstruction](docs/workbench/guides/neural-reconstruction.md)                   | RT-core GPU                |
 | Get a browser workbench with a Rerun viewer      | [Deploy the `npa` agent](docs/agent.md)                                                  | Terraform + S3 (~20 min)   |

@@ -929,6 +929,9 @@ describe("NPA agent UI with mocked APIs", () => {
   });
 
   it("disables denied and unavailable access actions with visible reasons", () => {
+    // Expected sibling-bucket capability gaps stay on the selected resource;
+    // they must not appear as repeated report-wide fatal-looking errors.
+    cy.get("#agentAccessErrors").should("have.text", "");
     for (const bucket of ["denied-artifacts", "unavailable-artifacts"]) {
       cy.get("#agentAccessBucketSelect").select(bucket);
       cy.get(`#agentAccessProjects [data-resource-bucket="${bucket}"]`).each(($button) => {

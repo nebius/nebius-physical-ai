@@ -628,6 +628,10 @@ MUST_DETECT = {
     "bootstrap warm at build time": "RUN isaac_bootstrap.sh warm\n",
     "isaac shim invoked at build time": 'RUN /isaac-sim/python.sh -c "import isaaclab"\n',
     "isaac-python invoked at build time": "RUN isaac-python -m pip install foo\n",
+    "hash-locked OVRTX wheel install": (
+        "RUN uv pip install --python /opt/ovrtx/bin/python "
+        "-r pylock.ovrtx-runtime.toml --require-hashes --no-deps\n"
+    ),
 }
 
 MUST_NOT_DETECT = {

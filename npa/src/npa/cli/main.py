@@ -510,11 +510,24 @@ def _list_nebius_profiles(
     return profiles
 
 
-def _create_nebius_profile(*, runner: Callable[..., object] = subprocess.run) -> bool:
-    """Run the interactive `nebius profile create` flow."""
+def _create_nebius_profile(
+    *, project_id: str = "", runner: Callable[..., object] = subprocess.run
+) -> bool:
+    """Run the interactive ``nebius profile create`` flow.
+
+    Supplying a project ID makes the provider CLI project-scoped from the start.
+    Without it, the CLI tries to enumerate projects through the tenant resource,
+    which correctly fails for operators whose custom group has access only to a
+    specific project.
+    """
+
+    command = ["nebius", "profile", "create"]
+    project = str(project_id or "").strip()
+    if project:
+        command.extend(["--parent-id", project])
 
     try:
-        result = runner(["nebius", "profile", "create"], check=False)
+        result = runner(command, check=False)
     except (OSError, subprocess.SubprocessError):
         return False
     return getattr(result, "returncode", 1) == 0
@@ -560,7 +573,27 @@ def _ensure_nebius_profile() -> bool:
             "to create or refresh a profile."
         )
         return False
-    if _create_nebius_profile() and _nebius_profile_ready():
+    typer.echo(
+        "A Nebius CLI profile should point at one project. Supplying the exact "
+        "project ID avoids tenant-wide project discovery, which project-scoped "
+        "IAM groups cannot perform."
+    )
+    profile_project_id = str(
+        typer.prompt(
+            "Nebius project ID (project-...; leave blank to use CLI discovery)",
+            default="",
+            show_default=False,
+        )
+    ).strip()
+    if not profile_project_id:
+        typer.echo(
+            "No project ID supplied. If the Nebius CLI reports PermissionDenied "
+            "while fetching projects, enter the exact project ID at `Set Parent ID`."
+        )
+    if (
+        _create_nebius_profile(project_id=profile_project_id)
+        and _nebius_profile_ready()
+    ):
         typer.echo("Nebius CLI profile is ready.")
         return True
     typer.echo(
@@ -1351,8 +1384,10 @@ def _run_interactive_configure(
     # tenant holds the projects the operator actually deploys into; other tenants
     # are reachable by switching the Nebius profile and re-running configure.
     current_tenant = ""
+    current_profile_project = ""
     tenant_skip_reason = "no authenticated Nebius CLI profile"
     if profile_ready:
+        current_profile_project = str(nebius_client.current_project_id() or "").strip()
         current_tenant, tenant_skip_reason = _resolve_discovery_tenant(
             nebius_client, ask
         )
@@ -1370,11 +1405,17 @@ def _run_interactive_configure(
             "tenant-id <id>` / `nebius config set parent-id <project-id>` and "
             "re-run `npa configure`.\n"
         )
+    elif profile_ready and not discovered_projects and current_profile_project:
+        typer.echo(
+            "Tenant-wide project discovery returned no projects. This is expected "
+            "for project-scoped IAM access; continuing with the active profile's "
+            "parent-id as the project default.\n"
+        )
     if discovered_projects:
         discovered_selection, discovered_default_alias = _select_discovered_projects(
             discovered_projects,
             ask,
-            current_project_id=nebius_client.current_project_id(),
+            current_project_id=current_profile_project,
             existing_projects=existing_projects,
             existing_default_alias=existing_default_alias,
         )
@@ -1393,10 +1434,13 @@ def _run_interactive_configure(
     else:
         # Tenant is the parent of the project, so ask for it first.
         tenant_id = ask(
-            "Nebius tenant id", default=str(existing_stanza.get("tenant_id", ""))
+            "Nebius tenant id",
+            default=str(existing_stanza.get("tenant_id", "")) or current_tenant,
         )
         project_id = ask(
-            "Nebius project id", default=str(existing_stanza.get("project_id", ""))
+            "Nebius project id",
+            default=str(existing_stanza.get("project_id", ""))
+            or current_profile_project,
         )
         region_default = (
             str(existing_stanza.get("region", ""))

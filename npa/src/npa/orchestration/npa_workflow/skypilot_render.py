@@ -71,6 +71,10 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     "workbench.vlm_eval": (),
     # Attribute verification generates and answers its questions on Token Factory.
     "workbench.cosmos_evaluator": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    # Material and physics classification call a real hosted vision model. The
+    # acquire/validate/package actions do not consume the key, but one prefix
+    # hint makes the complete shipped workflow's credential requirement clear.
+    "workbench.content_agents": ("NEBIUS_TOKEN_FACTORY_KEY",),
     # This entry explicitly disables the parent Cosmos3 hint: the public Nano
     # checkpoint is downloaded anonymously and this toolRef passes --no-guardrails.
     "workbench.cosmos3.text_to_image": (),
@@ -832,6 +836,44 @@ def render_run_preamble_for_tool(tool_ref: str, *, config: Mapping[str, Any]) ->
     shells — a server started in setup is gone by the time the command runs.
     """
 
+    if tool_ref in {
+        "workbench.content_agents.materials",
+        "workbench.content_agents.physics",
+        "workbench.content_agents.validate",
+    }:
+        # SkyPilot's Kubernetes bootstrap replaces an image ENTRYPOINT with its
+        # own bash command. Content Agents therefore restores the local Xvfb
+        # process in the shell that actually invokes OVRTX. Fail before the
+        # expensive upstream pipeline if the node exposes CUDA devices without
+        # the host-mounted graphics userspace OVRTX requires.
+        return (
+            "if ! python3 -c 'import ctypes; "
+            'ctypes.CDLL("libGLX_nvidia.so.0")' "' >/dev/null 2>&1; then\n"
+            "  echo 'OVRTX requires NVIDIA GPU Operator graphics driver mounts; "
+            "libGLX_nvidia.so.0 is unavailable' >&2\n"
+            "  exit 1\n"
+            "fi\n"
+            'npa_ovrtx_display="$(printenv OVRTX_XVFB_DISPLAY 2>/dev/null || true)"\n'
+            'if [ -z "$npa_ovrtx_display" ]; then npa_ovrtx_display=99; fi\n'
+            'if [ -z "$(printenv DISPLAY 2>/dev/null || true)" ]; then\n'
+            "  /usr/local/bin/npa-content-agents-entrypoint /bin/true\n"
+            '  export DISPLAY=":$npa_ovrtx_display"\n'
+            '  npa_ovrtx_lock="/tmp/.X$npa_ovrtx_display-lock"\n'
+            '  npa_ovrtx_xvfb_pid="$(tr -d "[:space:]" < "$npa_ovrtx_lock")"\n'
+            '  case "$npa_ovrtx_xvfb_pid" in\n'
+            "    ''|*[!0-9]*) echo 'invalid Xvfb pid file' >&2; exit 1 ;;\n"
+            "  esac\n"
+            "  npa_cleanup_ovrtx_display() {\n"
+            '    if [ -r "/proc/$npa_ovrtx_xvfb_pid/comm" ] &&\n'
+            '       [ "$(cat "/proc/$npa_ovrtx_xvfb_pid/comm")" = Xvfb ] &&\n'
+            '       [ "$(tr -d "[:space:]" < "$npa_ovrtx_lock" 2>/dev/null || true)" = '
+            '"$npa_ovrtx_xvfb_pid" ]; then\n'
+            '      kill "$npa_ovrtx_xvfb_pid" 2>/dev/null || true\n'
+            "    fi\n"
+            "  }\n"
+            "  trap npa_cleanup_ovrtx_display EXIT\n"
+            "fi\n"
+        )
     if not tool_ref.startswith("workbench.vlm_eval"):
         return ""
     # #236 skipped the benchmark toolRef here, correctly for the twin it had: a `sample`
@@ -938,7 +980,15 @@ def render_task_run_script(command: Sequence[str], *, preamble: str = "") -> str
         # succeeds), the overlay lands in the vendor interpreter, and the stage runs the stale
         # CLI. Live job 284: `No such command 'cosmos2'. Did you mean 'cosmos'?` — from an npa
         # predating the subcommand, while the recorded interpreter had the current one.
-        '  printf \'#!/bin/sh\\nexec "%s" -m npa "$@"\\n\' '
+        # The distribution intentionally has no top-level ``npa.__main__``.
+        # Import and CALL the same lightweight entry function used by the
+        # installed console script so the shim stays bound to the recorded
+        # interpreter without relying on a scripts directory that may be
+        # outside PATH.  Calling it explicitly also supports older baked NPA
+        # images whose entry module defines ``main`` but has no ``__main__``
+        # guard: ``python -m npa.cli.entry`` silently exited 0 in a live Cosmos
+        # Evaluator stage and therefore produced no declared report.
+        '  printf \'#!/bin/sh\\nexec "%s" -c "from npa.cli.entry import main; main()" "$@"\\n\' '
         '"$npa_python" > /tmp/npa-shim/npa\n'
         "  chmod +x /tmp/npa-shim/npa\n"
         '  export PATH="/tmp/npa-shim:$PATH"\n'

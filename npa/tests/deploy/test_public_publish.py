@@ -249,7 +249,9 @@ def test_isaac_tools_are_public_while_cosmos3_serving_is_restricted() -> None:
     visible in the Dockerfile. The scan that clears it:
     npa-sonic:0.1.2-rtfetch-rc5, 125,655 entries, 16 allowlisted paths, VERDICT clean.
     """
-    assert OMNIVERSE_RESTRICTED_TOOLS == frozenset({"cosmos3-serving"})
+    assert OMNIVERSE_RESTRICTED_TOOLS == frozenset(
+        {"content-agents", "cosmos3-serving"}
+    )
     assert OMNIVERSE_RESTRICTED_DERIVED_IMAGES == frozenset({"sonic-mujoco"})
     for tool in ("isaac-lab", "sonic", "groot"):
         assert is_publicly_redistributable(tool), tool
@@ -433,7 +435,11 @@ def test_the_restriction_mechanism_still_exists() -> None:
     """The build-your-own Cosmos3 serving image exercises this boundary."""
     assert hasattr(images, "OMNIVERSE_RESTRICTED_TOOLS")
     assert hasattr(images, "OMNIVERSE_RESTRICTED_DERIVED_IMAGES")
-    assert omniverse_restricted_image_names() == ["cosmos3-serving", "sonic-mujoco"]
+    assert omniverse_restricted_image_names() == [
+        "content-agents",
+        "cosmos3-serving",
+        "sonic-mujoco",
+    ]
     for symbol in (
         "is_publicly_redistributable",
         "omniverse_restricted_image_names",

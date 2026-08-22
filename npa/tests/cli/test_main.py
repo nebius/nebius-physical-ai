@@ -888,6 +888,41 @@ def test_configure_discovery_recovers_tenant_from_profile_project(
     assert creds_path.exists()
 
 
+def test_configure_project_scoped_profile_uses_profile_defaults(
+    monkeypatch, tmp_path
+) -> None:
+    """A tenant-list denial must not strand a project-scoped profile."""
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    import npa.clients.nebius as nebius_module
+
+    config_path = tmp_path / "config.yaml"
+    monkeypatch.setattr(
+        credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml"
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
+    _stub_nebius_defaults(monkeypatch, project="project-scoped", tenant="tenant-scoped")
+    # list_projects_in_tenant is best-effort and returns [] when the profile has
+    # no tenant-wide list permission.
+    monkeypatch.setattr(nebius_module, "list_projects_in_tenant", lambda _tenant: [])
+
+    result = runner.invoke(
+        app,
+        ["configure", "--interactive", "--no-provision"],
+        input="\n".join([""] * 12) + "\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "expected for project-scoped IAM access" in result.output
+    config = yaml.safe_load(config_path.read_text())
+    stanza = next(iter(config["projects"].values()))
+    assert stanza["tenant_id"] == "tenant-scoped"
+    assert stanza["project_id"] == "project-scoped"
+
+
 def test_configure_discovery_prompts_when_several_tenants(
     monkeypatch, tmp_path
 ) -> None:
@@ -2336,10 +2371,10 @@ def test_configure_creates_nebius_profile_when_missing(monkeypatch, tmp_path) ->
     readiness = iter([False, True])
     monkeypatch.setattr(cli_main, "_nebius_profile_ready", lambda **_: next(readiness))
     monkeypatch.setattr(cli_main, "_list_nebius_profiles", lambda **_: [])
-    created: list[bool] = []
+    created: list[str] = []
 
-    def fake_create(**_):
-        created.append(True)
+    def fake_create(*, project_id="", **_):
+        created.append(project_id)
         return True
 
     monkeypatch.setattr(cli_main, "_create_nebius_profile", fake_create)
@@ -2347,12 +2382,37 @@ def test_configure_creates_nebius_profile_when_missing(monkeypatch, tmp_path) ->
 
     # confirm profile, then skip all interactive fields (empty project => the
     # manual object-storage prompts run, so 12 fields follow the confirm).
-    answers = "y\n" + "\n".join([""] * 12) + "\n"
+    answers = "y\nproject-scoped\n" + "\n".join([""] * 12) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
-    assert created == [True]
+    assert created == ["project-scoped"]
     assert "Nebius CLI profile is ready." in result.output
+
+
+@pytest.mark.parametrize(
+    ("project_id", "expected"),
+    [
+        (
+            "project-scoped",
+            ["nebius", "profile", "create", "--parent-id", "project-scoped"],
+        ),
+        ("  ", ["nebius", "profile", "create"]),
+    ],
+)
+def test_create_nebius_profile_scopes_known_project(project_id, expected) -> None:
+    calls: list[list[str]] = []
+
+    class _Result:
+        returncode = 0
+
+    def fake_runner(command, **kwargs):
+        calls.append(command)
+        assert kwargs == {"check": False}
+        return _Result()
+
+    assert cli_main._create_nebius_profile(project_id=project_id, runner=fake_runner)
+    assert calls == [expected]
 
 
 def test_configure_detects_existing_nebius_profile(monkeypatch, tmp_path) -> None:
@@ -2617,10 +2677,10 @@ def test_configure_full_interactive_bootstraps_profile_and_provisions(
     readiness = iter([False, True])
     monkeypatch.setattr(cli_main, "_nebius_profile_ready", lambda **_: next(readiness))
     monkeypatch.setattr(cli_main, "_list_nebius_profiles", lambda **_: [])
-    created: list[bool] = []
+    created: list[str] = []
 
-    def fake_create(**_):
-        created.append(True)
+    def fake_create(*, project_id="", **_):
+        created.append(project_id)
         return True
 
     monkeypatch.setattr(cli_main, "_create_nebius_profile", fake_create)
@@ -2641,6 +2701,7 @@ def test_configure_full_interactive_bootstraps_profile_and_provisions(
         "\n".join(
             [
                 "y",  # create Nebius profile
+                "project-12345",  # bind profile before browser auth/discovery
                 "tenant-abcde",  # tenant id
                 "project-12345",  # project id
                 "",  # region (default eu-north1)
@@ -2657,7 +2718,7 @@ def test_configure_full_interactive_bootstraps_profile_and_provisions(
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
-    assert created == [True]
+    assert created == ["project-12345"]
     assert "Nebius CLI profile is ready." in result.output
     assert "No bucket name provided" in result.output
     assert "project alias: eu-north1" in result.output

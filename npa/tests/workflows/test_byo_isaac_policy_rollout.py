@@ -49,6 +49,7 @@ def test_build_rollout_manifest_keeps_primary_compatibility_and_named_views():
         checkpoint_uri="s3://bucket/model_latest.pt",
         checkpoint_sha256="b" * 64,
         checkpoint_size_bytes=12345,
+        simulation_device="cpu",
         is_trained=True,
         capture={"width": 640, "height": 480, "fps": 10.0},
         camera_metadata_items=[
@@ -80,6 +81,7 @@ def test_build_rollout_manifest_keeps_primary_compatibility_and_named_views():
     )
     assert manifest["policy_checkpoint_sha256"] == "b" * 64
     assert manifest["policy_checkpoint_size_bytes"] == 12345
+    assert manifest["simulation_device"] == "cpu"
 
 
 def test_latest_checkpoint_uri_empty_inputs():
@@ -157,6 +159,7 @@ def test_build_isaac_rollout_job_manifest_shape():
     assert "ROLLOUT_CAMERA_VIEWS_JSON=" in script
     assert 'ROLLOUT_CAPTURE_WIDTH="640"' in script
     assert 'ROLLOUT_CAPTURE_HEIGHT="480"' in script
+    assert "ROLLOUT_SIM_DEVICE=cuda:0" in script
     assert '"name":"side"' in script
     assert '"name":"overhead"' in script
     assert "/opt/npa/isaac-runtime/isaac_rollout.py" in script
@@ -166,6 +169,67 @@ def test_build_isaac_rollout_job_manifest_shape():
     assert m["spec"]["backoffLimit"] == 1
     assert "--portable-root /tmp/npa-isaac-kit" in pr.ISAAC_ROLLOUT_SCRIPT
     assert "kit_args=os.environ.get(" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert "device=SIM_DEVICE" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert "OnPolicyRunner(env, acfg, log_dir=None, device=SIM_DEVICE)" in (
+        pr.ISAAC_ROLLOUT_SCRIPT
+    )
+    assert "get_inference_policy(device=SIM_DEVICE)" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert 'OnPolicyRunner(env, acfg, log_dir=None, device="cuda:0")' not in (
+        pr.ISAAC_ROLLOUT_SCRIPT
+    )
+    assert 'CameraType = CameraCfg if SIM_DEVICE == "cpu" else TiledCameraCfg' in (
+        pr.ISAAC_ROLLOUT_SCRIPT
+    )
+    assert "env_cfg.sim.use_fabric = False" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert "CPU physics camera fallback requires ROLLOUT_COUNT=1" in (
+        pr.ISAAC_ROLLOUT_SCRIPT
+    )
+    assert "def _write_rgb_png(path, rgb):" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert "from PIL import" not in pr.ISAAC_ROLLOUT_SCRIPT
+    assert '"/rtx/dataWindowNDC/2", 1.0' in pr.ISAAC_ROLLOUT_SCRIPT
+    assert '"/rtx/dataWindow/fitOutputToDataWindow", False' in (
+        pr.ISAAC_ROLLOUT_SCRIPT
+    )
+    assert "if arr.ndim == 3:" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert "arr = arr[None, ...]" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert 'get_annotator("rgb", device="cuda:0")' in pr.ISAAC_ROLLOUT_SCRIPT
+    assert "annotator.attach(sensor.render_product_paths)" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert "arr = arr.view(np.uint8)" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert pr.ISAAC_ROLLOUT_SCRIPT.index("obs, _, dones, extras = env.step(actions)") < (
+        pr.ISAAC_ROLLOUT_SCRIPT.index("capture(_step)")
+    )
+    assert "_write_rgb_png(os.path.join(d, name), arr[i])" in (
+        pr.ISAAC_ROLLOUT_SCRIPT
+    )
+    assert '"simulation_device": SIM_DEVICE' in pr.ISAAC_ROLLOUT_SCRIPT
+
+
+def test_rollout_job_can_select_cpu_physics_without_releasing_gpu(
+    monkeypatch,
+):
+    monkeypatch.setenv("NPA_SIM2REAL_ISAAC_DEVICE", "cpu")
+    manifest = pr.build_isaac_rollout_job_manifest(
+        job_name="s2r-byo-isaac-roll-run1-cpu",
+        run_id="run1",
+        image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0",
+        rollout_count=1,
+        steps_per_rollout=1,
+        checkpoint_uri="",
+        out_s3_prefix="s3://b/sim2real-b/run1/byo-rollouts/cpu",
+        s3_endpoint="",
+        namespace="default",
+        service_account="agent-sa",
+        gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+    )
+
+    script = _manifest_script(manifest)
+    assert "ROLLOUT_SIM_DEVICE=cpu" in script
+    resources = manifest["spec"]["template"]["spec"]["containers"][0][
+        "resources"
+    ]
+    assert resources["requests"]["nvidia.com/gpu"] == "1"
+    assert resources["limits"]["nvidia.com/gpu"] == "1"
 
 
 def test_untrained_job_manifest_skips_download():

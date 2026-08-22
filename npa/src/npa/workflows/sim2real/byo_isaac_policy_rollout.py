@@ -72,6 +72,7 @@ def build_rollout_manifest(
     checkpoint_sha256: str = "",
     checkpoint_size_bytes: int = 0,
     scenario: dict[str, Any] | None = None,
+    simulation_device: str = "cuda:0",
 ) -> dict[str, Any]:
     """Build an ``npa.sim2real.action_rollout.v1`` manifest for one rollout.
 
@@ -98,6 +99,7 @@ def build_rollout_manifest(
         # Provenance: distinguishes a real policy rollout from the synthetic stub.
         "source": "byo_isaac_policy_rollout",
         "sim_backend": "isaac",
+        "simulation_device": simulation_device,
         "policy_checkpoint": checkpoint_uri,
         "policy_checkpoint_sha256": checkpoint_sha256,
         "policy_checkpoint_size_bytes": int(checkpoint_size_bytes),
@@ -268,6 +270,11 @@ CAPTURE_HEIGHT = int(os.environ.get("ROLLOUT_CAPTURE_HEIGHT", "480"))
 CAPTURE_STRIDE = max(1, int(os.environ.get("ROLLOUT_CAPTURE_STRIDE", "1")))
 PNG_COMPRESS_LEVEL = int(os.environ.get("ROLLOUT_PNG_COMPRESS_LEVEL", "3"))
 CAPTURE_FPS = float(os.environ.get("ROLLOUT_CAPTURE_FPS", "10"))
+SIM_DEVICE = os.environ.get("ROLLOUT_SIM_DEVICE", "cuda:0").strip() or "cuda:0"
+if SIM_DEVICE != "cpu" and not (
+    SIM_DEVICE.startswith("cuda:") and SIM_DEVICE.removeprefix("cuda:").isdigit()
+):
+    raise RuntimeError("ROLLOUT_SIM_DEVICE must be cpu or cuda:<index>")
 CKPT_URI = os.environ.get("ROLLOUT_CKPT_URI", "").strip()
 trained = False
 def checkpoint_provenance():
@@ -285,6 +292,7 @@ def upload_and_exit(rollouts, note, applied=None):
             "applied_scenarios": applied or {},
             "policy_checkpoint": checkpoint,
             "camera_metadata": CAMERA_VIEWS,
+            "simulation_device": SIM_DEVICE,
             "capture": {"width": CAPTURE_WIDTH, "height": CAPTURE_HEIGHT,
                         "rollout_stride": CAPTURE_STRIDE,
                         "decision_points": STEPS, "horizon_steps": HORIZON_STEPS,
@@ -316,6 +324,17 @@ try:
             "NPA_ISAAC_KIT_ARGS", "--portable-root /tmp/npa-isaac-kit"
         ),
     ).app
+    # Isaac Sim 5.1 may leave the RTX data-window settings unset under a
+    # portable root. Replicator treats those ``None`` values as overscan and
+    # then subtracts them while reading RGB. Initialize the standard full-frame
+    # window so Replicator preserves exact WxH output without fake overscan.
+    import carb
+    rtx_settings = carb.settings.get_settings()
+    rtx_settings.set_float("/rtx/dataWindowNDC/0", 0.0)
+    rtx_settings.set_float("/rtx/dataWindowNDC/1", 0.0)
+    rtx_settings.set_float("/rtx/dataWindowNDC/2", 1.0)
+    rtx_settings.set_float("/rtx/dataWindowNDC/3", 1.0)
+    rtx_settings.set_bool("/rtx/dataWindow/fitOutputToDataWindow", False)
     import gymnasium as gym, torch
     import isaaclab_tasks  # noqa: F401
     _scenarios = None
@@ -332,13 +351,18 @@ try:
         print("ROLLOUT_SCENARIO_TASK", TASK, flush=True)
     from isaaclab_tasks.utils import parse_env_cfg
     import isaaclab.sim as sim_utils
-    from isaaclab.sensors import TiledCameraCfg
+    from isaaclab.sensors import CameraCfg, TiledCameraCfg
     try:
         from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
     except Exception:
         from omni.isaac.lab_rl.rsl_rl import RslRlVecEnvWrapper
     from rsl_rl.runners import OnPolicyRunner
-    env_cfg = parse_env_cfg(TASK, device="cuda:0", num_envs=N)
+    env_cfg = parse_env_cfg(TASK, device=SIM_DEVICE, num_envs=N)
+    if SIM_DEVICE == "cpu":
+        if N != 1:
+            raise RuntimeError("CPU physics camera fallback requires ROLLOUT_COUNT=1")
+        env_cfg.sim.use_fabric = False
+    print("ROLLOUT_SIM_DEVICE", SIM_DEVICE, flush=True)
     OBJECT_USD = os.environ.get("ROLLOUT_OBJECT_USD", "").strip()
     if OBJECT_USD:
         try:
@@ -348,13 +372,14 @@ try:
             raise RuntimeError("could not apply task-contract object USD: %r" % (e,)) from e
     def _camera_key(name):
         return "rollout_cam" if name == "primary" else "rollout_cam_" + name
+    CameraType = CameraCfg if SIM_DEVICE == "cpu" else TiledCameraCfg
     for view in CAMERA_VIEWS:
         setattr(
             env_cfg.scene,
             _camera_key(view["name"]),
-            TiledCameraCfg(
+            CameraType(
                 prim_path="{ENV_REGEX_NS}/rollout_cam_" + view["name"],
-                offset=TiledCameraCfg.OffsetCfg(
+                offset=CameraType.OffsetCfg(
                     pos=tuple(view["position"]),
                     rot=tuple(view["rotation"]),
                     convention="world",
@@ -370,6 +395,19 @@ try:
         )
     print("ROLLOUT_CAMERA_VIEWS", [view["name"] for view in CAMERA_VIEWS], flush=True)
     env = gym.make(TASK, cfg=env_cfg)
+    capture_annotators = {}
+    if SIM_DEVICE == "cpu":
+        # Physics remains on CPU for the compatibility route, but rendering is
+        # backed by the reserved RTX device. A CUDA annotator avoids Isaac
+        # Replicator's empty CPU render buffers while leaving simulation state
+        # and policy inference on the explicitly selected device.
+        import omni.replicator.core as rep
+        for view in CAMERA_VIEWS:
+            view_name = view["name"]
+            sensor = env.unwrapped.scene[_camera_key(view_name)]
+            annotator = rep.AnnotatorRegistry.get_annotator("rgb", device="cuda:0")
+            annotator.attach(sensor.render_product_paths)
+            capture_annotators[view_name] = annotator
     if OBJECT_USD:
         got_object_usd = getattr(env.unwrapped.scene["object"].cfg.spawn, "usd_path", None)
         if got_object_usd != OBJECT_USD:
@@ -392,7 +430,7 @@ try:
     if agent_cfg is None:
         raise RuntimeError("could not load rsl_rl_cfg_entry_point for task")
     acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
-    runner = OnPolicyRunner(env, acfg, log_dir=None, device="cuda:0")
+    runner = OnPolicyRunner(env, acfg, log_dir=None, device=SIM_DEVICE)
     trained = False
     if CKPT and os.path.isfile(CKPT):
         try:
@@ -402,7 +440,7 @@ try:
             raise RuntimeError("trained checkpoint failed to load: %r" % (e,)) from e
     else:
         print("ROLLOUT_UNTRAINED_POLICY (no checkpoint yet)", flush=True)
-    policy = runner.get_inference_policy(device="cuda:0")
+    policy = runner.get_inference_policy(device=SIM_DEVICE)
     realN = int(getattr(env.unwrapped, "num_envs", N) or N)
     try:
         reset_out = env.reset()
@@ -431,11 +469,32 @@ try:
         "ROLLOUT realN", realN, "DECISION_POINTS", STEPS,
         "HORIZON_STEPS", HORIZON_STEPS, flush=True,
     )
-    try:
-        from PIL import Image as _PILImage
-        _have_pil = True
-    except Exception:
-        _have_pil = False
+    def _write_rgb_png(path, rgb):
+        # Isaac runtime images do not guarantee Pillow.  Keep capture independent
+        # of optional packages so a valid sensor stream cannot be silently lost.
+        import binascii, struct, zlib
+        pixels = np.asarray(rgb, dtype=np.uint8)
+        if pixels.ndim != 3 or pixels.shape[2] < 3:
+            raise RuntimeError(
+                "camera rgb output must be HxWxC with at least three channels; "
+                "got shape=%r dtype=%s" % (pixels.shape, pixels.dtype)
+            )
+        pixels = np.ascontiguousarray(pixels[:, :, :3])
+        height, width = pixels.shape[:2]
+        raw = b"".join(b"\x00" + row.tobytes() for row in pixels)
+        def chunk(kind, payload):
+            body = kind + payload
+            return struct.pack(">I", len(payload)) + body + struct.pack(
+                ">I", binascii.crc32(body) & 0xFFFFFFFF
+            )
+        encoded = (
+            b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw, PNG_COMPRESS_LEVEL))
+            + chunk(b"IEND", b"")
+        )
+        with open(path, "wb") as handle:
+            handle.write(encoded)
     rollout_ids = [f"rollout-{i:04d}" for i in range(N)]
     frame_names = {
         i: {view["name"]: [] for view in CAMERA_VIEWS}
@@ -460,15 +519,39 @@ try:
     stable_grasp_steps = np.zeros(N, dtype=np.int64)
     stable_place_steps = np.zeros(N, dtype=np.int64)
     def capture(step):
-        if not _have_pil:
-            return
         if step % CAPTURE_STRIDE != 0 and step != HORIZON_STEPS:
             return
         for view in CAMERA_VIEWS:
             view_name = view["name"]
             try:
-                rgb = env.unwrapped.scene[_camera_key(view_name)].data.output["rgb"]
-                arr = rgb.detach().cpu().numpy()
+                sensor = env.unwrapped.scene[_camera_key(view_name)]
+                if SIM_DEVICE == "cpu":
+                    output = capture_annotators[view_name].get_data()
+                    raw = output["data"] if isinstance(output, dict) else output
+                    if hasattr(raw, "detach"):
+                        arr = raw.detach().cpu().numpy()
+                    elif isinstance(raw, np.ndarray):
+                        arr = raw
+                    else:
+                        import warp as wp
+                        arr = wp.to_torch(raw).cpu().numpy()
+                    pixels = CAPTURE_HEIGHT * CAPTURE_WIDTH
+                    if arr.size == pixels and arr.dtype.itemsize >= 4:
+                        # Replicator may expose packed RGBA pixels as uint32.
+                        arr = arr.view(np.uint8)
+                    if arr.size % pixels:
+                        raise RuntimeError("camera rgb buffer size is not image-shaped")
+                    arr = arr.reshape(1, CAPTURE_HEIGHT, CAPTURE_WIDTH, arr.size // pixels)
+                else:
+                    rgb = sensor.data.output["rgb"]
+                    arr = rgb.detach().cpu().numpy()
+                # A single non-tiled Camera returns HxWxC, while TiledCamera
+                # returns NxHxWxC. Normalize both sensor contracts before the
+                # per-environment writer loop.
+                if arr.ndim == 3:
+                    arr = arr[None, ...]
+                if arr.ndim != 4:
+                    raise RuntimeError("camera rgb output must be HxWxC or NxHxWxC")
                 for i in range(min(N, arr.shape[0])):
                     d = os.path.join(FRAMES_DIR, rollout_ids[i]); os.makedirs(d, exist_ok=True)
                     index = len(frame_names[i][view_name])
@@ -477,9 +560,7 @@ try:
                         if view_name == "primary"
                         else "camera-%s-%03d.png" % (view_name, index)
                     )
-                    _PILImage.fromarray(arr[i, :, :, :3].astype(np.uint8)).save(
-                        os.path.join(d, name), compress_level=PNG_COMPRESS_LEVEL
-                    )
+                    _write_rgb_png(os.path.join(d, name), arr[i])
                     frame_names[i][view_name].append(name)
                     frame_metadata[i][view_name].append({
                         "path": name,
@@ -502,10 +583,13 @@ try:
             print("STEP0 act_shape", tuple(getattr(actions, "shape", ())), flush=True)
         if hasattr(actions, "ndim") and actions.ndim == 1:
             actions = actions.reshape(N, -1)
-        if _step in SAMPLE_INDEX:
-            capture(_step)
         a_np = actions.detach().cpu().numpy()
         obs, _, dones, extras = env.step(actions)
+        # TiledCamera annotators need the first rendered simulation step before
+        # their initial read. Capture the post-action state, which also aligns
+        # each image with the simulator ground truth recorded below.
+        if _step in SAMPLE_INDEX:
+            capture(_step)
         done_np = dones.detach().cpu().numpy().astype(bool)
         obj = uenv.scene["object"].data.root_pos_w[:, :3]
         cmd = uenv.command_manager.get_command("object_pose")
@@ -716,6 +800,7 @@ def build_isaac_rollout_job_manifest(
         f'ROLLOUT_CAPTURE_STRIDE="{capture["rollout_stride"]}" '
         f'ROLLOUT_PNG_COMPRESS_LEVEL="{capture["png_compress_level"]}" '
         f'ROLLOUT_CAPTURE_FPS="{capture["fps"]}" '
+        f"ROLLOUT_SIM_DEVICE={_shlex.quote(_env('NPA_SIM2REAL_ISAAC_DEVICE', 'cuda:0'))} "
         f"ROLLOUT_CKPT_URI={_shlex.quote(checkpoint_uri)} "
         f'ROLLOUT_CKPT_LOCAL="{ckpt_local}" '
         f"ROLLOUT_OUT_S3={_shlex.quote(out_s3_prefix)} "
@@ -875,6 +960,31 @@ def materialize_rollout_dirs(
         }
         if not view_frames:
             view_frames = {"primary": [str(name) for name in roll.get("frames", [])]}
+        expected_views = {
+            str(item.get("name") or "") for item in camera_meta if item.get("name")
+        }
+        horizon_steps = int(capture.get("horizon_steps") or 0)
+        capture_stride = max(1, int(capture.get("rollout_stride") or 1))
+        expected_frame_count = (
+            len(range(0, horizon_steps, capture_stride)) + 1
+            if horizon_steps > 0
+            else 0
+        )
+        missing_views = sorted(
+            name for name in expected_views if not view_frames.get(name)
+        )
+        wrong_counts = {
+            name: len(view_frames.get(name) or [])
+            for name in expected_views
+            if expected_frame_count
+            and len(view_frames.get(name) or []) != expected_frame_count
+        }
+        if missing_views or wrong_counts:
+            raise RuntimeError(
+                "real Isaac rollout camera coverage mismatch: "
+                f"missing={missing_views} counts={wrong_counts} "
+                f"expected_per_view={expected_frame_count}"
+            )
         all_frames = list(
             dict.fromkeys(frame for frames in view_frames.values() for frame in frames)
         )
@@ -899,6 +1009,7 @@ def materialize_rollout_dirs(
             checkpoint_sha256=str(checkpoint.get("sha256") or ""),
             checkpoint_size_bytes=int(checkpoint.get("size_bytes") or 0),
             scenario=dict(roll.get("scenario") or {}),
+            simulation_device=str(meta.get("simulation_device") or "cuda:0"),
         )
         (rdir / "manifest.json").write_text(
             json.dumps(manifest, indent=2), encoding="utf-8"

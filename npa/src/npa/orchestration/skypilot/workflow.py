@@ -256,11 +256,29 @@ def submit_workflow(
         # The task YAML can carry registry/docker auth + S3 creds; keep it owner-only.
         _chmod_owner_only(prepared_yaml)
         sky_executable = str(ensure_skypilot_version(runtime_config.sky_bin))
+        controller_context = _controller_region_from_infra(
+            infra, controller_backend
+        )
         global_config = apply_controller_override(
             _load_base_config(runtime_config.global_config_path),
             controller_backend=controller_backend,
-            controller_region=_controller_region_from_infra(infra, controller_backend),
+            controller_region=controller_context,
         )
+        if controller_context:
+            # ``--infra k8s/<context>`` is an exact target, not merely a
+            # controller placement hint.  A pre-existing SkyPilot config may
+            # carry an allowlist from an older cluster; leaving it intact makes
+            # ``sky jobs launch`` reject the requested context even when the
+            # selected kubeconfig contains it.  Bind the generated, owner-only
+            # per-submit config to the same immutable context used by the task
+            # and controller.  Preserve all other Kubernetes settings (notably
+            # pod_config / registry pull secrets).
+            kubernetes = global_config.setdefault("kubernetes", {})
+            if not isinstance(kubernetes, dict):
+                raise ValueError(
+                    "SkyPilot global config kubernetes section must be a mapping"
+                )
+            kubernetes["allowed_contexts"] = [controller_context]
         generated_config_path = submission_dir / "skypilot-config.yaml"
         generated_config_path.write_text(
             yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8"

@@ -904,6 +904,18 @@ skills:
           - npa/workflows/workbench/npa-workflows/token-factory-parallel-fanout.yaml
           - npa/workflows/workbench/npa-workflows/token-factory-gate-loop.yaml
           - npa/workflows/workbench/npa-workflows/isaac-lab-rl-sweep.yaml
+  - name: content-agents
+    category: workflows
+    when_to_use: "Package, validate, or operate NVIDIA Content Agents for real material/physics enrichment and OVRTX validation of a self-contained USD object, producing a narrow Isaac rigid-object handoff."
+    path: skills/workflows/content-agents/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/docker/workbench/content-agents/Dockerfile
+      - type: file_exists
+        path: npa/src/npa/workflows/content_agents.py
+      - type: npa_workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/content-agents-rigid-object.yaml
   - name: neural-reconstruction
     category: workflows
     when_to_use: "Reconstruct real sensor captures into renderable 3D scenes with NVIDIA Omniverse NuRec / NRE on Nebius: NCore V4 input, 3DGUT Gaussian training, renderable USDZ, novel-view rendering, and the Rerun recording the NPA agent displays. Also for NCore sequences that will not load in NRE and for RT-core GPU routing."

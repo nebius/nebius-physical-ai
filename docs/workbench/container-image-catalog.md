@@ -98,6 +98,12 @@ redistribution eligibility are not evidence of publication.
   the thin wrapper and anonymous GHCR distribution do not establish that
   license's derived-distribution conditions. Operators build it into their own
   registry; see [Cosmos3-Super serving](cosmos3-super-serving.md).
+- **`npa-content-agents`** is `restricted` and build-your-own only. The pinned
+  Content Agents source is Apache-2.0, but the image contains hash-locked OVRTX
+  0.3.0.312915 under NVIDIA proprietary terms. Operators must explicitly accept
+  the named NVIDIA terms and build it only into their private registry. It
+  contains no Scene Optimizer Core, OvPhysX, model weights, material library,
+  customer data, or credentials; see [Content Agents](content-agents.md).
 - **`npa-sonic-mujoco`** is a SONIC variant, not a separate public-publish tool.
   It ships through the `sonic` tool and SONIC image manifest rather than getting
   an independent row in the public publishing plan.

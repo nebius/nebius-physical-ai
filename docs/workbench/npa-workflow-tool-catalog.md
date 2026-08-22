@@ -26,6 +26,11 @@ except the explicitly public composition primitives `infra.fleet.deploy`,
 | `workbench.nurec.render` | `npa workbench nurec render` | `config.reconstruction_uri`, `config.rig_translation_offset` | `config.novel_views_uri` (novel-view PNGs + mp4) | no |
 | `workbench.nurec.visualize` | `npa workbench nurec visualize` | `config.run_root_uri` | `config.rrd_uri` (`reports/sim2real.rrd`) | no |
 | `workbench.nurec.finalize` | `npa workbench nurec finalize` | `config.run_root_uri` | `config.final_report_uri` | no |
+| `workbench.content_agents.acquire` | `python -m npa.workflows.content_agents acquire` | generated or customer-owned self-contained USD/USDZ | normalized USDA + stage report in `config.run_uri` | no |
+| `workbench.content_agents.materials` | `python -m npa.workflows.content_agents materials` | acquired USDA, generated material library, hosted VLM | Material Agent-enriched USDA + real OVRTX renders/report | yes (real upstream `material-agent run`; no echo/stub path) |
+| `workbench.content_agents.physics` | `python -m npa.workflows.content_agents physics` | materialized USDA + hosted VLM | Physics Agent rigid/collider/mass/friction USDA + OVRTX renders/report | yes (real upstream `physics-agent run`) |
+| `workbench.content_agents.validate` | `python -m npa.workflows.content_agents validate` | rigid-ready USDA | upstream `render_valid` + `physics_sane` result and fresh OVRTX evidence | yes (real upstream `validation-agent validate`) |
+| `workbench.content_agents.package` | `python -m npa.workflows.content_agents package` | validated physics USDA | self-contained USD/USDZ, provenance, reports, narrow Isaac Stage 2 adapter | no |
 | `workbench.vlm_eval.run` | `npa workbench vlm-eval run` | `config.rollouts_uri` | `config.scores_uri` | no |
 | `workbench.vlm_eval.benchmark` | `npa workbench vlm-eval benchmark` | `config.benchmark_dataset` | `config.benchmark_output` | no |
 | `workbench.vlm_eval.judge_against_plan` | `npa workbench vlm-eval run --task-from` | `config.rollouts_uri`, `config.plan_uri` | `<scores_uri>/vlm_eval_stub.json` | no |

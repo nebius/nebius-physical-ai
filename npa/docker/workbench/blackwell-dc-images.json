@@ -600,6 +600,19 @@
       "notes": "Build-your-own restricted image, never a public mirror candidate. The pinned amd64 base declares CUDA 13.0 and TORCH_CUDA_ARCH_LIST including 10.0. The serving stack passed a real guardrails-on generation on 8xH200, but has not run on B200 or B300."
     },
     {
+      "name": "npa-content-agents",
+      "dockerfile": "content-agents/Dockerfile",
+      "build_script": "content-agents/build.sh",
+      "redistribution": "restricted",
+      "verdict": "blocked",
+      "validation": "pending-build",
+      "source_compiled_extensions": [],
+      "smoke": "real Material Agent and Physics Agent inference followed by OVRTX rendering and Validation Agent render_valid/physics_sane on an authored rigid USD",
+      "blocked_reason": "The accepted workflow requires OVRTX path tracing; B200 and B300 are datacenter Blackwell parts without RT cores and are not substitutes for RTX rendering.",
+      "upstream_tracking": "NVIDIA Blackwell data-center and RTX workstation product specifications; route this rendering workload to RTX PRO 6000.",
+      "notes": "Build-your-own restricted image, never a public mirror candidate. Headless hosted VLM inference needs no local model GPU; OVRTX and all USD render evidence stay on an RT-core worker."
+    },
+    {
       "name": "npa-cosmos-curate",
       "dockerfile": "cosmos-curate/Dockerfile",
       "verdict": "not-applicable",

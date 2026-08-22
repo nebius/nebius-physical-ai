@@ -108,6 +108,13 @@ redistribution:
         must use the image's own venv python (see Dockerfile.mujoco's
         ARG NPA_IMAGE_PYTHON, which exists exactly because this was a live trap).
       pattern: '(?im)^\s*RUN\b[^\n]*(/isaac-sim/python\.sh|\bisaac-python\b)'
+    - kind: ovrtx_wheel_install
+      why: >-
+        OVRTX declares NVIDIA Proprietary Software. Installing its reviewed
+        hash lock puts the native renderer in the image and makes that complete
+        image private-registry-only unless redistribution rights are separately
+        established.
+      pattern: '(?is)\bRUN\b[^\n]*\b(?:uv\s+)?pip\s+install\b[^\n]*pylock\.ovrtx-runtime'
   classes:
     public:
       description: >
@@ -304,6 +311,27 @@ images:
       establish those conditions. Operators build into their own registry and
       fetch gated weights at runtime using a token whose account has upstream access.
     redistribution: restricted
+  content-agents:
+    dockerfile: content-agents/Dockerfile
+    tier: job
+    passwordless_root_exemption: >-
+      SkyPilot Kubernetes bootstrap only; the final task process is uid 1000,
+      no service or public ingress is enabled, host keys are generated only at
+      run time, and no credentials or license acceptance are baked.
+    notes: >-
+      Build-your-own only. NVIDIA Content Agents v0.5.2 source is Apache-2.0
+      and fetched at immutable commit 36dbf3f274f8e256637230a05a085853f65cc175.
+      The image also installs hash-locked OVRTX 0.3.0.312915 in an isolated
+      environment. OVRTX declares NVIDIA Proprietary Software and the available
+      terms do not conclusively establish anonymous-image redistribution rights,
+      so the complete image stays in the accepting operator's private registry.
+      Scene Optimizer Core, OvPhysX, upstream material/sample assets, model
+      weights, credentials, and customer data are excluded. Hosted VLM inference
+      and customer assets enter only at run time. NVIDIA driver userspace is not
+      baked; OVRTX requires an RTX Kubernetes node whose GPU Operator mounts
+      compute, utility, graphics, and display capabilities.
+    redistribution: restricted
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
   cosmos3-reason:
     dockerfile: cosmos3-reason/Dockerfile
     tier: job

@@ -107,6 +107,12 @@ _OPENPI_VENDOR_PIPELINE = [
     "npa.workflows.byof.openpi_pipeline",
 ]
 
+_CONTENT_AGENTS_PIPELINE = [
+    "python3",
+    "-m",
+    "npa.workflows.content_agents",
+]
+
 TOOL_CATALOG: dict[str, ToolEntry] = {
     "workbench.alpamayo2_super.infer": ToolEntry(
         name="workbench.alpamayo2_super.infer",
@@ -344,6 +350,82 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{run.id}}",
             "--output",
             "json",
+        ],
+    ),
+    # --- NVIDIA Content Agents rigid-object enrichment ----------------------
+    # These adapters invoke the real v0.5.2 material-agent, physics-agent, and
+    # validation-agent entrypoints in the restricted operator-built image. NPA
+    # owns only the object-store handoff and the narrow Isaac Stage-2 manifest.
+    "workbench.content_agents.acquire": ToolEntry(
+        name="workbench.content_agents.acquire",
+        description="Acquire/generate and normalize one self-contained USD object.",
+        argv_template=[
+            *_CONTENT_AGENTS_PIPELINE,
+            "acquire",
+            "--source-uri",
+            "{{config.source_uri}}",
+            "--run-uri",
+            "{{config.run_uri}}",
+        ],
+    ),
+    "workbench.content_agents.materials": ToolEntry(
+        name="workbench.content_agents.materials",
+        description=(
+            "Run NVIDIA Material Agent with real OVRTX renders and hosted VLM "
+            "classification, then publish the enriched USD and render evidence."
+        ),
+        argv_template=[
+            *_CONTENT_AGENTS_PIPELINE,
+            "materials",
+            "--run-uri",
+            "{{config.run_uri}}",
+            "--model",
+            "{{config.vlm_model}}",
+            "--base-url",
+            "{{config.vlm_base_url}}",
+        ],
+    ),
+    "workbench.content_agents.physics": ToolEntry(
+        name="workbench.content_agents.physics",
+        description=(
+            "Run NVIDIA Physics Agent with real OVRTX/VLM evidence and author "
+            "RigidBody, Collision, Mass, and physics-material schemas."
+        ),
+        argv_template=[
+            *_CONTENT_AGENTS_PIPELINE,
+            "physics",
+            "--run-uri",
+            "{{config.run_uri}}",
+            "--model",
+            "{{config.vlm_model}}",
+            "--base-url",
+            "{{config.vlm_base_url}}",
+        ],
+    ),
+    "workbench.content_agents.validate": ToolEntry(
+        name="workbench.content_agents.validate",
+        description=(
+            "Run NVIDIA Validation Agent render_valid and physics_sane profiles "
+            "with fresh OVRTX render evidence."
+        ),
+        argv_template=[
+            *_CONTENT_AGENTS_PIPELINE,
+            "validate",
+            "--run-uri",
+            "{{config.run_uri}}",
+        ],
+    ),
+    "workbench.content_agents.package": ToolEntry(
+        name="workbench.content_agents.package",
+        description=(
+            "Package a readable self-contained USDZ plus provenance and the "
+            "narrow Isaac rigid-object Stage-2 adapter manifest."
+        ),
+        argv_template=[
+            *_CONTENT_AGENTS_PIPELINE,
+            "package",
+            "--run-uri",
+            "{{config.run_uri}}",
         ],
     ),
     "workbench.vlm_eval.run": ToolEntry(

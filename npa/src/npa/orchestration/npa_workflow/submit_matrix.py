@@ -507,6 +507,20 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "content-agents-rigid-object.yaml",
+        "gpu",
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        notes=(
+            "Operator-built restricted NVIDIA Content Agents v0.5.2 runtime: "
+            "generated/customer USD -> real OVRTX material + physics pipelines -> "
+            "Validation Agent profiles -> rigid-ready USD/USDZ and Isaac Stage-2 manifest."
+        ),
+    ),
+    SubmitLiveCase(
         "tokenfactory-rollout-judge.yaml",
         "gpu",
         secret_envs=(

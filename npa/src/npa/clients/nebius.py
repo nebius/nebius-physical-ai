@@ -120,7 +120,7 @@ STORAGE_BINDING_GROUP_NAME = STORAGE_BINDING_GROUP_PREFIX
 
 
 def storage_binding_group_name(project_id: str) -> str:
-    """Give each exact project a distinct tenant IAM group capability boundary."""
+    """Give each exact project a distinct project IAM group capability boundary."""
 
     suffix = re.sub(r"[^a-z0-9-]", "-", str(project_id).lower()).strip("-")
     return f"{STORAGE_BINDING_GROUP_PREFIX}-{suffix}"
@@ -1649,7 +1649,7 @@ def ensure_storage_capability_binding(
                 "group",
                 "get-by-name",
                 "--parent-id",
-                tenant_id,
+                project_id,
                 "--name",
                 group_name,
             ]
@@ -1666,7 +1666,7 @@ def ensure_storage_capability_binding(
                 "group",
                 "create",
                 "--parent-id",
-                tenant_id,
+                project_id,
                 "--name",
                 group_name,
             ]
@@ -2433,7 +2433,18 @@ def bootstrap_environment(
 
     _status("Verifying least-privilege storage capability binding...")
     try:
-        binding = _existing_editors_binding(tenant_id, sa_id)
+        try:
+            binding = _existing_editors_binding(tenant_id, sa_id)
+        except NebiusError:
+            # A project-scoped administrator does not need tenant-wide group
+            # inventory. Failure to read the legacy compatibility binding is not
+            # evidence of capability, so continue to the exact-project binding
+            # and still fail closed unless that narrower path is verified.
+            binding = None
+            _status(
+                "Tenant-wide editors membership is not readable; verifying the "
+                "exact-project storage binding instead."
+            )
         if binding is None:
             binding = ensure_storage_capability_binding(
                 project_id=project_id,
@@ -2457,7 +2468,10 @@ def bootstrap_environment(
             f"{', '.join(STORAGE_REQUIRED_S3_ACTIONS)}. Supported binding choices: "
             f"bucket-scoped {STORAGE_RUNTIME_ROLE}; verified existing editors "
             "membership; or explicit editors compatibility fallback only when the "
-            "provider reports the narrow role unsupported.",
+            "provider reports the narrow role unsupported. The active profile needs "
+            "project-scoped admin permission to manage the storage IAM group and its "
+            "access permit; tenant-wide project listing or tenant-wide admin is not "
+            "required.",
             failed,
         ) from exc
 

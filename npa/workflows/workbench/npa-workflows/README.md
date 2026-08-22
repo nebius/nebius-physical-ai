@@ -96,6 +96,7 @@ below (see `npa/src/npa/orchestration/npa_workflow/blueprints.py`). Deploy guide
 | `cosmos3-reason.yaml` | Cosmos3 reason |
 | `cosmos3-checkpoint-eval.yaml` | B200-only guarded Cosmos3 still-image checkpoint evaluation |
 | `paidf-cosmos3.yaml` | Independent dynamic PAIDF: generic LeRobot/video input → real Cosmos 3 video2video variants → evaluator gate/refinement → real Curator + FiftyOne Brain + Rerun |
+| `content-agents-rigid-object.yaml` | Restricted operator-built NVIDIA Content Agents: source USD → real Material/Physics Agents + OVRTX → upstream validation → rigid Isaac object USDZ/adapter ([guide](../../../../docs/workbench/content-agents.md)) |
 | `byof.yaml` | BYOF via `run_byof_repo.py` |
 | `byof-maniskill.yaml` | OSS registry: ManiSkill pinned image + PickCube smoke |
 | `byof-mujoco-playground.yaml` | OSS registry: MuJoCo Playground pinned image + Cartpole smoke |
