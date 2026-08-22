@@ -83,6 +83,7 @@ def _subprocess_environment(home: Path) -> dict[str, str]:
             "project-b",
         ],
         ["configure", "--show", "--interactive"],
+        ["configure", "--show", "--provision"],
         ["configure", "--env", "--no-provision"],
         [
             "configure",

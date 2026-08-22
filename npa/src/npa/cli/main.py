@@ -2477,13 +2477,18 @@ class ConfigureMode(str, Enum):
     INTERACTIVE = "interactive"
 
 
-def _click_parameter_was_explicit(name: str) -> bool:
+def _click_parameter_was_explicit(
+    name: str, context: Any | None = None
+) -> bool:
     """Return whether Click received *name* on argv (False for direct calls)."""
 
-    context = click.get_current_context(silent=True)
+    context = context or click.get_current_context(silent=True)
     if context is None:
         return False
-    return context.get_parameter_source(name) == click.core.ParameterSource.COMMANDLINE
+    source = context.get_parameter_source(name)
+    # Typer 0.21 may provide its vendored Click context/enum here, so compare
+    # the stable enum name rather than relying on cross-package identity.
+    return getattr(source, "name", "") == "COMMANDLINE"
 
 
 def _configure_mode(arguments: dict[str, Any]) -> ConfigureMode:
@@ -2531,7 +2536,11 @@ def _configure_mode(arguments: dict[str, Any]) -> ConfigureMode:
     allow_visible = (
         allow_visible_flag or os.environ.get("NPA_ALLOW_VISIBLE_SECRET_INPUT") == "1"
     )
-    provision_explicit = _click_parameter_was_explicit("provision") or (
+    context = arguments.get("context")
+    provision_explicit = _click_parameter_was_explicit(
+        "provision",
+        context if callable(getattr(context, "get_parameter_source", None)) else None,
+    ) or (
         mode != ConfigureMode.INTERACTIVE and arguments.get("provision") is False
     )
     if mode in {
@@ -2867,6 +2876,7 @@ def _transactional_configure(function):
 )
 @_transactional_configure
 def configure(
+    context: typer.Context,
     show: bool = typer.Option(
         False,
         "--show",
