@@ -1653,6 +1653,63 @@ def test_tainted_node_group_mismatch_refuses_before_untaint(
     assert all("untaint" not in call for call in calls)
 
 
+def test_failed_split_one_node_group_retains_taint_for_exact_replacement(
+    monkeypatch, tmp_path
+) -> None:
+    from copy import deepcopy
+
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, provider, cluster = _tainted_gpu_reconciliation_fixture()
+    first = state["resources"][1]["instances"][0]
+    first.pop("status")
+    first["attributes"]["fixed_node_count"] = 1
+    failed = deepcopy(first)
+    failed["index_key"] = 1
+    failed["status"] = "tainted"
+    failed["attributes"]["id"] = "mk8snodegroup-failed"
+    failed["attributes"]["name"] = "cluster-test-gpu-1"
+    state["resources"][1]["instances"].append(failed)
+    provider["metadata"]["id"] = "mk8snodegroup-failed"
+    provider["metadata"]["name"] = "cluster-test-gpu-1"
+    provider["spec"]["fixed_node_count"] = 1
+    provider["status"] = {"state": "PROVISIONING", "target_node_count": 1}
+    stopped = {
+        "metadata": {
+            "id": "computeinstance-failed",
+            "parent_id": "project-test",
+            "labels": {"mk8s-node-group-id": "mk8snodegroup-failed"},
+        },
+        "status": {"state": "STOPPED"},
+    }
+    calls: list[list[str]] = []
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        calls.append(args)
+        if args[1:3] == ["state", "pull"]:
+            return _Cap(json.dumps(state), 0)
+        if "node-group" in args and "get" in args:
+            return _Cap(json.dumps(provider), 0)
+        if "compute" in args and "list" in args:
+            return _Cap(json.dumps({"items": [stopped]}), 0)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(execution, "_run_capture", run)
+    assert execution._reconcile_tainted_node_groups(
+        terraform_bin="terraform",
+        workdir=tmp_path,
+        env={},
+        cluster=as_mk8s_desired(cluster),
+        project_id="project-test",
+        subnet_id="vpcsubnet-test",
+        nebius_bin="nebius",
+        profile="tenant-profile",
+        on_status=None,
+    ) == {}
+    assert all("untaint" not in call for call in calls)
+
+
 def _stopped_placeholder_workers(provider: dict) -> tuple[dict, dict]:
     template = provider["spec"]["template"]
 

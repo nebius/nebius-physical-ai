@@ -963,6 +963,7 @@ def _reconcile_tainted_node_groups(
     workdir: Path,
     env: dict[str, str],
     cluster: MK8sDesired,
+    project_id: str = "",
     subnet_id: str,
     nebius_bin: str,
     profile: str,
@@ -1047,6 +1048,7 @@ def _reconcile_tainted_node_groups(
     )
     cli_env = env.copy()
     gpu_nodes_per_group, _gpu_group_count = gpu_node_group_layout(cluster)
+    adopted_ids: list[str] = []
     for address, attributes, pool in tainted:
         result = _run_capture(
             [
@@ -1068,6 +1070,11 @@ def _reconcile_tainted_node_groups(
             raise RuntimeError(
                 "refusing to reconcile a tainted node group with unreadable provider state"
             ) from exc
+        expected_node_count = (
+            pool.count
+            if pool.is_gpu() and gpu_state_instance_count == 1
+            else (gpu_nodes_per_group if pool.is_gpu() else pool.count)
+        )
         if result.returncode != 0 or not isinstance(payload, dict) or not (
             _tainted_node_group_matches_desired(
                 provider_payload=payload,
@@ -1076,17 +1083,72 @@ def _reconcile_tainted_node_groups(
                 cluster=cluster,
                 cluster_id=cluster_id,
                 subnet_id=subnet_id,
-                expected_node_count=(
-                    pool.count
-                    if pool.is_gpu() and gpu_state_instance_count == 1
-                    else (gpu_nodes_per_group if pool.is_gpu() else pool.count)
-                ),
+                expected_node_count=expected_node_count,
             )
         ):
             raise RuntimeError(
                 "refusing to reconcile a tainted node group because live identity or "
                 "desired topology does not match exact Terraform state"
             )
+        status = payload.get("status") or {}
+        ready = status.get("ready_node_count")
+        target = status.get("target_node_count")
+        if (
+            pool.is_gpu()
+            and expected_node_count == 1
+            and status.get("state") == "PROVISIONING"
+            and str(target) == "1"
+            and ready in (None, 0, "0")
+        ):
+            if not project_id:
+                raise RuntimeError(
+                    "refusing to retain a failed split node-group taint without "
+                    "exact project identity"
+                )
+            inventory = _run_capture(
+                [
+                    *_nebius_argv(nebius_bin, profile),
+                    "compute",
+                    "instance",
+                    "list",
+                    "--parent-id",
+                    project_id,
+                    "--all",
+                    "--format",
+                    "json",
+                ],
+                env=cli_env,
+                check=False,
+            )
+            try:
+                instances = json.loads(inventory.stdout or "{}")
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(
+                    "refusing split node-group replacement with unreadable worker inventory"
+                ) from exc
+            workers = [
+                item
+                for item in instances.get("items", [])
+                if isinstance(item, dict)
+                and ((item.get("metadata") or {}).get("labels") or {}).get(
+                    "mk8s-node-group-id"
+                )
+                == str(attributes["id"])
+            ]
+            failed_worker = len(workers) == 1 and (
+                (workers[0].get("status") or {}).get("state") == "STOPPED"
+                and not (workers[0].get("status") or {}).get("reservation_id")
+                and not (workers[0].get("status") or {}).get("disk_attachments")
+            )
+            if inventory.returncode != 0 or (workers and not failed_worker):
+                raise RuntimeError(
+                    "refusing split node-group replacement without exact failed-worker evidence"
+                )
+            _log(
+                on_status,
+                f"retained exact failed one-node group taint at {address} for replacement",
+            )
+            continue
         untaint = _run_capture(
             [terraform_bin, "untaint", address],
             cwd=workdir,
@@ -1096,9 +1158,12 @@ def _reconcile_tainted_node_groups(
         if untaint.returncode != 0:
             raise RuntimeError("Terraform could not safely clear an exact node-group taint")
         _log(on_status, f"reconciled exact tainted node-group state at {address}")
+        adopted_ids.append(str(attributes["id"]))
+    if not adopted_ids:
+        return {}
     return {
         "cluster_id": cluster_id,
-        "node_group_ids": sorted(str(attributes["id"]) for _, attributes, _ in tainted),
+        "node_group_ids": sorted(adopted_ids),
     }
 
 
@@ -1820,6 +1885,7 @@ def _deploy_one_cluster(
             workdir=workdir,
             env=env,
             cluster=cluster,
+            project_id=project_id,
             subnet_id=subnet_id,
             nebius_bin=nebius_bin,
             profile=profile,
