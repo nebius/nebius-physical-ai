@@ -842,11 +842,12 @@ def render_run_preamble_for_tool(tool_ref: str, *, config: Mapping[str, Any]) ->
         "workbench.content_agents.validate",
     }:
         # SkyPilot's Kubernetes bootstrap replaces an image ENTRYPOINT with its
-        # own bash command. Content Agents therefore restores the local Xvfb
-        # process in the shell that actually invokes OVRTX. Fail before the
-        # expensive upstream pipeline if the node exposes CUDA devices without
+        # own bash command. Bootstrap the immutable operator-owned runtime cache,
+        # then restore Xvfb in the shell that actually invokes OVRTX. Fail before
+        # the expensive upstream pipeline if the node exposes CUDA devices without
         # the host-mounted graphics userspace OVRTX requires.
         return (
+            "/opt/venv/bin/python -m npa.workflows.content_agents bootstrap-runtime\n"
             "if ! python3 -c 'import ctypes; "
             'ctypes.CDLL("libGLX_nvidia.so.0")' "' >/dev/null 2>&1; then\n"
             "  echo 'OVRTX requires NVIDIA GPU Operator graphics driver mounts; "

@@ -52,6 +52,12 @@ PAYLOAD_SIGNATURES: tuple[tuple[str, str], ...] = (
     (r"(?i)site-packages/isaacsim/", "the isaacsim wheel's installed package tree"),
     (r"(?i)site-packages/isaaclab/", "the isaaclab wheel's installed package tree"),
     (
+        r"(?i)(?:^|/)site-packages/ovrtx(?:/|-.*\.(?:dist-info|egg-info)/)",
+        "the proprietary OVRTX installed package tree",
+    ),
+    (r"(?i)(?:^|/)\.ovrtx_venv/", "a baked isolated OVRTX runtime"),
+    (r"(?i)(?:^|/)libovrtx[^/]*\.so", "an OVRTX native runtime library"),
+    (
         r"(?i)(^|/)isaac-sim/(kit|exts|extscache|extsPhysics|apps)/",
         "an Isaac Sim install tree",
     ),
@@ -130,6 +136,11 @@ ALLOWED_DIRS: frozenset[str] = frozenset(
 HISTORY_BAKE_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"(?i)pip[^\n]*install[^\n]*\bisaacsim\b", "a build layer pip-installed isaacsim"),
     (r"(?i)pip[^\n]*install[^\n]*\bisaaclab\b", "a build layer pip-installed isaaclab"),
+    (
+        r"(?i)(?:pip[^\n]*install[^\n]*(?:\bovrtx\b|pylock\.ovrtx-runtime)|"
+        r"render_ovrtx[^\n]*--provision-only)",
+        "a build layer installed or provisioned OVRTX",
+    ),
     (
         r"(?i)nvcr\.io/nvidia/(isaac-lab|isaac-sim|omniverse)",
         "a layer references an NVIDIA vendor image",

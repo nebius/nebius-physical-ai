@@ -174,6 +174,7 @@ def test_the_whole_hugging_face_cache_family_lands_under_one_root() -> None:
         "LEROBOT_HF_HOME",
         "WAN22_CACHE_DIR",
         "NPA_LTX_MODEL_CACHE",
+        "NPA_CONTENT_AGENTS_RUNTIME_CACHE",
     ],
 )
 def test_every_tool_specific_weight_directory_is_redirected(name: str) -> None:
@@ -195,7 +196,7 @@ def test_the_cache_shell_creates_every_directory_and_says_it_is_durable() -> Non
     assert shell.startswith("mkdir -p ")
     for path in model_cache_dirs("/cache"):
         assert path in shell
-    assert "weights persist across runs" in shell
+    assert "cached artifacts persist across runs" in shell
 
 
 def test_the_cache_shell_does_not_promise_persistence_it_cannot_vouch_for() -> None:
@@ -206,7 +207,7 @@ def test_the_cache_shell_does_not_promise_persistence_it_cannot_vouch_for() -> N
     shell = render_model_cache_shell("/cache", mounted=False)
 
     assert "mkdir -p " in shell
-    assert "weights persist across runs" not in shell
+    assert "cached artifacts persist across runs" not in shell
     assert "not mounted by npa" in shell
 
 

@@ -632,6 +632,10 @@ MUST_DETECT = {
         "RUN uv pip install --python /opt/ovrtx/bin/python "
         "-r pylock.ovrtx-runtime.toml --require-hashes --no-deps\n"
     ),
+    "OVRTX provision-only bootstrap at build time": (
+        "RUN python -m world_understanding.functions.graphics.render_ovrtx "
+        "--provision-only\n"
+    ),
 }
 
 MUST_NOT_DETECT = {
@@ -707,6 +711,23 @@ def test_reintroducing_a_baked_install_fails_the_guard(image_name: str) -> None:
         assert _bake_matches(text + mutation, patterns), (
             f"{image_name}: re-adding {mutation.strip()!r} must trip the bake guard"
         )
+
+
+def test_content_agents_runtime_fetch_guard_is_mutation_tested() -> None:
+    contract = _load_contract()
+    entry = contract["images"]["content-agents"]
+    assert entry["ovrtx_runtime_fetch"] is True
+    patterns = contract["redistribution"]["omniverse_bake_patterns"]
+    text = (WORKBENCH_DOCKER / entry["dockerfile"]).read_text(encoding="utf-8")
+    assert not _bake_matches(text, patterns)
+
+    mutations = (
+        "RUN uv pip install -r pylock.ovrtx-runtime.toml --require-hashes\n",
+        "RUN python -m world_understanding.functions.graphics.render_ovrtx "
+        "--provision-only\n",
+    )
+    for mutation in mutations:
+        assert _bake_matches(text + mutation, patterns), mutation
 
 
 @pytest.mark.parametrize(

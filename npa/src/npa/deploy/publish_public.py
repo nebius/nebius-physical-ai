@@ -115,7 +115,7 @@ def build_publish_plan(
         # are excluded from the plan rather than failed during preflight,
         # because the plan is meant to read as "what we would hand to the
         # public" — and something that does not exist is not that.
-        if tool in images.UNVALIDATED_PUBLICATION_TOOLS:
+        if tool in images.PUBLICATION_QUARANTINE_TOOLS:
             continue
         # Read the restricted set through the module, never a from-import: a
         # defence-in-depth check that holds a stale copy of the thing it is defending is
@@ -301,12 +301,12 @@ def verify_validated_publication(item: PublishItem) -> tuple[bool, str]:
     left to fail incidentally when the tag turns out not to exist.
     """
 
-    if item.tool not in images.UNVALIDATED_PUBLICATION_TOOLS:
+    if item.tool not in images.PUBLICATION_QUARANTINE_TOOLS:
         return True, "not applicable"
     return False, (
         f"{item.tool} has no accepted image: it has not been built, payload "
         "scanned, or GPU validated. Publication is blocked until that evidence "
-        "exists and the tool leaves images.UNVALIDATED_PUBLICATION_TOOLS."
+        "exists and the tool leaves images.PUBLICATION_QUARANTINE_TOOLS."
     )
 
 

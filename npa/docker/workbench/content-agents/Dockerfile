@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1.7
 
-# Restricted, build-your-own NVIDIA Content Agents runtime.  The Content Agents
-# source is Apache-2.0, but the isolated OVRTX wheel installed below is NVIDIA
-# Proprietary Software.  This image must remain in the operator's private
-# registry and is never eligible for the public mirror.
+# Public NVIDIA Content Agents adapter image. The reviewed Apache-2.0 source and
+# immutable upstream OVRTX lock are included; the proprietary OVRTX SDK is not.
+# Render stages fetch the exact SDK directly from NVIDIA into operator-owned
+# runtime-cache storage on first use.
 ARG CUDA_BASE_IMAGE=nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04@sha256:9175fa92f96de35a8cfb9493f0dfcf9435c7a597e9d95ad41d2cae382a95e3f9
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.8.12@sha256:e1d7fa999ae39871fc2fd6c9c572d970cc877a239d2a16238a204c23772d1c0e
 ARG UBUNTU_SNAPSHOT=20260801T053000Z
@@ -13,17 +13,21 @@ FROM ${CUDA_BASE_IMAGE}
 
 ARG CONTENT_AGENTS_REVISION=36dbf3f274f8e256637230a05a085853f65cc175
 ARG CONTENT_AGENTS_VERSION=0.5.2
+ARG NPA_IMAGE_VERSION=0.5.2-npa2
 ARG NPA_SOURCE_SHA
 ARG UBUNTU_SNAPSHOT
 
 LABEL org.opencontainers.image.title="NPA NVIDIA Content Agents" \
-      org.opencontainers.image.description="Restricted RTX USD material, physics, and validation job runtime" \
+      org.opencontainers.image.description="Public zero-vendor-payload RTX USD material, physics, and validation adapter" \
       org.opencontainers.image.source="https://github.com/NVIDIA-Omniverse/content-agents" \
       org.opencontainers.image.revision="${CONTENT_AGENTS_REVISION}" \
-      org.opencontainers.image.version="${CONTENT_AGENTS_VERSION}" \
-      org.opencontainers.image.licenses="Apache-2.0 AND LicenseRef-NVIDIA-Proprietary-OVRTX" \
+      org.opencontainers.image.version="${NPA_IMAGE_VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0" \
       npa.tool="content-agents" \
-      npa.redistribution="restricted" \
+      npa.content_agents.version="${CONTENT_AGENTS_VERSION}" \
+      npa.ovrtx.delivery="runtime-fetch-from-nvidia" \
+      npa.ovrtx.version="0.3.0.312915" \
+      npa.redistribution="public" \
       org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -33,8 +37,11 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     NPA_SKIP_EAGER_IMPORTS=1 \
     NPA_CONTENT_AGENTS_REVISION=${CONTENT_AGENTS_REVISION} \
-    WU_OVRTX_VENV_DIR=/opt/content-agents/.ovrtx_venv \
     WU_OVRTX_AUTO_PROVISION=0 \
+    OTEL_SDK_DISABLED=true \
+    OTEL_TRACES_EXPORTER=none \
+    OTEL_METRICS_EXPORTER=none \
+    OTEL_LOGS_EXPORTER=none \
     OVRTX_LOG_LEVEL=warn \
     OVRTX_NUM_SENSOR_UPDATES=500 \
     OVRTX_RENDER_MODE=pt \
@@ -88,14 +95,14 @@ RUN set -eux; \
     rm -rf .git .github .build-resources; \
     find . -type d -name __pycache__ -prune -exec rm -rf -- {} +
 
-# Follow the upstream v0.5.2 service installation path.  Scene Optimizer Core,
-# optional backend wheels, model weights, sample assets, and OvPhysX are not
-# installed.  OVRTX is installed separately from its upstream hash lock because
-# its bundled OpenUSD conflicts with the parent process by design.
+# Follow the upstream v0.5.2 service installation path. Scene Optimizer Core,
+# optional telemetry exporters, backend wheels, model weights, sample assets,
+# OvPhysX, and OVRTX are not installed. The upstream OVRTX lock remains as the
+# reviewed runtime download description only.
 RUN set -eux; \
     SETUPTOOLS_SCM_PRETEND_VERSION="${CONTENT_AGENTS_VERSION}" \
       UV_DYNAMIC_VERSIONING_BYPASS="${CONTENT_AGENTS_VERSION}" \
-      uv pip install --python /opt/venv/bin/python -e '.[telemetry]' \
+      uv pip install --python /opt/venv/bin/python -e . \
       --no-config --no-sources; \
     for package in material_agent physics_agent validation_agent; do \
       cd "/opt/content-agents/apps/${package}"; \
@@ -105,16 +112,11 @@ RUN set -eux; \
     cd /opt/content-agents; \
     uv pip install --python /opt/venv/bin/python 'boto3>=1.34' 'pyyaml>=6.0' \
       --no-config --no-sources; \
-    uv venv "${WU_OVRTX_VENV_DIR}" --python /opt/venv/bin/python; \
-    uv pip install --python "${WU_OVRTX_VENV_DIR}/bin/python" \
-      -r world_understanding/functions/graphics/pylock.ovrtx-runtime.toml \
-      --require-hashes --no-deps --no-config --no-sources; \
-    WU_OVRTX_LOCK_DIR=/tmp/wu-ovrtx-locks \
-      /opt/venv/bin/python -m world_understanding.functions.graphics.render_ovrtx \
-      --provision-only; \
     /opt/venv/bin/python -c \
       'import importlib.util; assert importlib.util.find_spec("ovphysx") is None'; \
-    rm -rf /tmp/wu-ovrtx-locks /root/.cache/uv \
+    /opt/venv/bin/python -c \
+      'import importlib.util; assert importlib.util.find_spec("ovrtx") is None'; \
+    rm -rf /root/.cache/uv \
       apps/*/tests apps/*/examples docs tests; \
     rm -rf apps/material_agent/data apps/physics_agent/data; \
     test ! -e .build-resources/scene_optimizer_core
@@ -127,10 +129,7 @@ COPY docker/workbench/content-agents/REDISTRIBUTION.md \
 COPY docker/workbench/content-agents/npa-content-agents-entrypoint \
     /usr/local/bin/npa-content-agents-entrypoint
 
-# Keep changing NPA provenance after the pinned NVIDIA/OVRTX layers so an
-# adapter-only checkpoint does not invalidate the multi-gigabyte restricted
-# runtime cache.  The scanner still requires this exact full SHA from the
-# finished image.
+# The scanner requires this exact full NPA source SHA from the finished image.
 LABEL npa.source_revision="${NPA_SOURCE_SHA}" \
       npa.driver_provisioning="gpu-operator-host-mounted" \
       npa.driver_capabilities="compute,utility,graphics,display"
@@ -147,7 +146,6 @@ RUN uv pip install --python /opt/venv/bin/python /opt/npa \
 
 # SkyPilot currently performs privileged SSH/bootstrap setup in each ephemeral
 # task pod.  The final process is uid 1000, host keys are generated only at run
-# time, and neither sshd nor a network service is started by this image.
 RUN set -eux; \
     test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40; \
     id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu; \
@@ -155,17 +153,13 @@ RUN set -eux; \
     chmod 0440 /etc/sudoers.d/ubuntu; \
     chmod 0555 /usr/local/bin/npa-content-agents-entrypoint; \
     rm -f /etc/ssh/ssh_host_*; \
-    install -d -o ubuntu -g ubuntu /workspace /home/ubuntu/.cache/ovrtx-nv-shadercache; \
-    ovrtx_bin="${WU_OVRTX_VENV_DIR}/lib/python3.12/site-packages/ovrtx/bin"; \
-    mkdir -p "${ovrtx_bin}/cache"; \
-    rm -rf "${ovrtx_bin}/cache/nv_shadercache"; \
-    chown -R ubuntu:ubuntu "${ovrtx_bin}/cache"; \
-    ln -s /home/ubuntu/.cache/ovrtx-nv-shadercache "${ovrtx_bin}/cache/nv_shadercache"; \
+    install -d -o ubuntu -g ubuntu /workspace /home/ubuntu/.cache; \
     chmod -R a+rX /opt/content-agents /opt/npa/src; \
     su ubuntu -s /bin/bash -c \
-      '/opt/venv/bin/python -m npa.workflows.content_agents inspect-runtime >/tmp/content-agents-runtime.json'; \
-    grep -q '"status": "ready"' /tmp/content-agents-runtime.json; \
-    rm -f /tmp/content-agents-runtime.json
+      '/opt/venv/bin/python -m npa.workflows.content_agents inspect-image >/tmp/content-agents-image.json'; \
+    grep -q '"status": "image-ready"' /tmp/content-agents-image.json; \
+    rm -f /tmp/content-agents-image.json; \
+    test ! -e /opt/content-agents/.ovrtx_venv
 
 ENV HOME=/home/ubuntu \
     XDG_CACHE_HOME=/home/ubuntu/.cache

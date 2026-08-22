@@ -3,9 +3,10 @@
 This module is a Tier-1 workflow adapter, not a second implementation of the
 vendor pipeline.  The material and physics stages invoke the real
 ``material-agent`` and ``physics-agent`` console scripts from the immutable
-NVIDIA checkout baked into the restricted image.  Validation invokes the real
-``validation-agent`` profiles.  NPA owns only S3 hand-off, provenance, and the
-narrow Isaac rigid-object adapter contract.
+NVIDIA checkout in the public image. Validation invokes the real
+``validation-agent`` profiles. OVRTX is fetched from NVIDIA into the operator's
+runtime cache only for render-bearing stages. NPA owns only that downloader,
+S3 hand-off, provenance, and the narrow Isaac rigid-object adapter contract.
 """
 
 from __future__ import annotations
@@ -67,6 +68,20 @@ PHYSICS_USER_PROMPT = (
 
 class ContentAgentsError(RuntimeError):
     """Raised when a stage cannot prove its artifact contract."""
+
+
+def _bootstrap_ovrtx_runtime() -> dict[str, Any]:
+    """Prepare the exact OVRTX runtime before importing a renderer-bearing agent."""
+
+    from npa.workflows.content_agents_runtime import (
+        ContentAgentsRuntimeError,
+        bootstrap_runtime,
+    )
+
+    try:
+        return bootstrap_runtime()
+    except ContentAgentsRuntimeError as exc:
+        raise ContentAgentsError(str(exc)) from exc
 
 
 def _sha256(path: Path) -> str:
@@ -561,9 +576,7 @@ def inspect_physics(path: Path) -> dict[str, Any]:
                 else None
             )
             parsed_density = (
-                finite_number(
-                    density, label=f"{prim_path} density", minimum=0.0
-                )
+                finite_number(density, label=f"{prim_path} density", minimum=0.0)
                 if density is not None
                 else None
             )
@@ -719,6 +732,7 @@ def materials_stage(*, run_uri: str, model: str, base_url: str) -> dict[str, Any
         raise ContentAgentsError(
             "NEBIUS_TOKEN_FACTORY_KEY is required for real VLM inference"
         )
+    _bootstrap_ovrtx_runtime()
     with tempfile.TemporaryDirectory(prefix="npa-content-agents-materials-") as raw:
         work = Path(raw)
         input_usd = _download(
@@ -747,9 +761,7 @@ def materials_stage(*, run_uri: str, model: str, base_url: str) -> dict[str, Any
             ],
             cwd=work,
             log_path=log_path,
-            failure_log_uri=_s3_join(
-                run_uri, "materials", "material-agent.failed.log"
-            ),
+            failure_log_uri=_s3_join(run_uri, "materials", "material-agent.failed.log"),
         )
         _require_file(output_usd, "Material Agent output")
         metadata = _validate_open_stage(output_usd)
@@ -786,6 +798,7 @@ def physics_stage(*, run_uri: str, model: str, base_url: str) -> dict[str, Any]:
         raise ContentAgentsError(
             "NEBIUS_TOKEN_FACTORY_KEY is required for real VLM inference"
         )
+    _bootstrap_ovrtx_runtime()
     with tempfile.TemporaryDirectory(prefix="npa-content-agents-physics-") as raw:
         work = Path(raw)
         input_usd = _download(
@@ -848,6 +861,7 @@ def physics_stage(*, run_uri: str, model: str, base_url: str) -> dict[str, Any]:
 
 
 def validate_stage(*, run_uri: str) -> dict[str, Any]:
+    _bootstrap_ovrtx_runtime()
     with tempfile.TemporaryDirectory(prefix="npa-content-agents-validate-") as raw:
         work = Path(raw)
         input_usd = _download(
@@ -1026,8 +1040,9 @@ def package_stage(*, run_uri: str) -> dict[str, Any]:
                 ),
             },
             "runtime": {
-                "redistribution": "restricted",
+                "redistribution": "public image; OVRTX delivered by NVIDIA to operator",
                 "ovrtx_version": OVRTX_VERSION,
+                "ovrtx_delivery": "anonymous runtime fetch from immutable upstream lock",
                 "ovphysx": "not installed",
                 "scene_optimizer_core": "not installed",
                 "model_weights": "not baked; hosted Token Factory inference",
@@ -1066,72 +1081,32 @@ def package_stage(*, run_uri: str) -> dict[str, Any]:
         return final
 
 
-def inspect_runtime() -> dict[str, Any]:
-    """Prove the restricted image carries the selected source and isolated OVRTX."""
+def inspect_image() -> dict[str, Any]:
+    """Prove the public image has the pinned source and zero installed OVRTX."""
 
-    import importlib.metadata
+    from npa.workflows.content_agents_runtime import inspect_image as inspect_boundary
 
-    versions = {
-        name: importlib.metadata.version(name)
-        for name in (
-            "world-understanding",
-            "material-agent",
-            "physics-agent",
-            "validation-agent",
-        )
-    }
-    if set(versions.values()) != {CONTENT_AGENTS_VERSION}:
-        raise ContentAgentsError(
-            f"installed Content Agents packages differ from {CONTENT_AGENTS_VERSION}: "
-            f"{versions}"
-        )
-    ovrtx_venv = Path(
-        os.environ.get("WU_OVRTX_VENV_DIR", "/opt/content-agents/.ovrtx_venv")
-    )
-    _require_file(ovrtx_venv / "bin/python", "isolated OVRTX interpreter")
-    ovrtx_probe = subprocess.run(
-        [
-            str(ovrtx_venv / "bin/python"),
-            "-c",
-            "import importlib.metadata; print(importlib.metadata.version('ovrtx'))",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if ovrtx_probe.returncode or ovrtx_probe.stdout.strip() != OVRTX_VERSION:
-        raise ContentAgentsError(
-            "isolated OVRTX runtime differs from the reviewed lock"
-        )
-    try:
-        importlib.metadata.version("ovphysx")
-    except importlib.metadata.PackageNotFoundError:
-        pass
-    else:
-        raise ContentAgentsError(
-            "OvPhysX must not be installed in the accepted object workflow"
-        )
-    payload = {
-        "schema": "npa.content_agents.runtime.v1",
-        "status": "ready",
-        "content_agents_revision": os.environ.get(
-            "NPA_CONTENT_AGENTS_REVISION", CONTENT_AGENTS_REVISION
-        ),
-        "packages": versions,
-        "ovrtx": {"version": ovrtx_probe.stdout.strip(), "isolated_venv": True},
-        "scene_optimizer_core": False,
-        "ovphysx": False,
-    }
-    if payload["content_agents_revision"] != CONTENT_AGENTS_REVISION:
+    payload = inspect_boundary()
+    revision = os.environ.get("NPA_CONTENT_AGENTS_REVISION", CONTENT_AGENTS_REVISION)
+    if revision != CONTENT_AGENTS_REVISION:
         raise ContentAgentsError(
             "runtime source revision differs from the workflow contract"
         )
-    return payload
+    return {**payload, "content_agents_revision": revision}
+
+
+def inspect_runtime() -> dict[str, Any]:
+    """Fail closed unless the exact post-bootstrap OVRTX cache is ready."""
+
+    from npa.workflows.content_agents_runtime import inspect_ready_runtime
+
+    return inspect_ready_runtime()
 
 
 def local_smoke(*, output_dir: Path) -> dict[str, Any]:
     """Exercise real upstream physics authoring plus OVRTX validation on one GPU."""
 
+    _bootstrap_ovrtx_runtime()
     output_dir.mkdir(parents=True, exist_ok=True)
     source = output_dir / "fixture.usda"
     _generate_fixture(source)
@@ -1235,7 +1210,9 @@ def build_parser() -> argparse.ArgumentParser:
         "package", help="Package USD/USDZ and the Isaac Stage-2 adapter"
     )
     package.add_argument("--run-uri", required=True)
-    sub.add_parser("inspect-runtime", help="Inspect immutable source/runtime pins")
+    sub.add_parser("inspect-image", help="Prove the image contains no OVRTX runtime")
+    sub.add_parser("bootstrap-runtime", help="Fetch exact OVRTX into the runtime cache")
+    sub.add_parser("inspect-runtime", help="Inspect an already-bootstrapped runtime")
     smoke = sub.add_parser(
         "local-smoke", help="Run real physics authoring and OVRTX validation"
     )
@@ -1259,6 +1236,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         result = validate_stage(run_uri=args.run_uri)
     elif args.command == "package":
         result = package_stage(run_uri=args.run_uri)
+    elif args.command == "inspect-image":
+        result = inspect_image()
+    elif args.command == "bootstrap-runtime":
+        result = _bootstrap_ovrtx_runtime()
     elif args.command == "inspect-runtime":
         result = inspect_runtime()
     elif args.command == "local-smoke":

@@ -717,6 +717,8 @@ def payload_policy(
     forbidden_history: tuple[tuple[str, re.Pattern[str]], ...] | None = None,
     audited_secret_files: dict[str, str] | None = None,
     audited_libraries: dict[str, str] | None = None,
+    secret_content: tuple[re.Pattern[bytes], ...] | None = None,
+    forbidden_elf_dependency: re.Pattern[bytes] | None = None,
 ) -> Iterator[None]:
     """Scan under a different payload policy, reusing this archive walker.
 
@@ -734,11 +736,14 @@ def payload_policy(
 
     global FORBIDDEN_PATHS, FORBIDDEN_HISTORY
     global AUDITED_SECRET_LITERAL_FILE_SHA256, AUDITED_LITERAL_LIBRARY_SHA256
+    global SECRET_CONTENT, FORBIDDEN_ELF_DEPENDENCY
     previous = (
         FORBIDDEN_PATHS,
         FORBIDDEN_HISTORY,
         AUDITED_SECRET_LITERAL_FILE_SHA256,
         AUDITED_LITERAL_LIBRARY_SHA256,
+        SECRET_CONTENT,
+        FORBIDDEN_ELF_DEPENDENCY,
     )
     if forbidden_paths is not None:
         FORBIDDEN_PATHS = forbidden_paths
@@ -748,6 +753,10 @@ def payload_policy(
         AUDITED_SECRET_LITERAL_FILE_SHA256 = audited_secret_files
     if audited_libraries is not None:
         AUDITED_LITERAL_LIBRARY_SHA256 = audited_libraries
+    if secret_content is not None:
+        SECRET_CONTENT = secret_content
+    if forbidden_elf_dependency is not None:
+        FORBIDDEN_ELF_DEPENDENCY = forbidden_elf_dependency
     try:
         yield
     finally:
@@ -756,6 +765,8 @@ def payload_policy(
             FORBIDDEN_HISTORY,
             AUDITED_SECRET_LITERAL_FILE_SHA256,
             AUDITED_LITERAL_LIBRARY_SHA256,
+            SECRET_CONTENT,
+            FORBIDDEN_ELF_DEPENDENCY,
         ) = previous
 
 

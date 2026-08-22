@@ -13,7 +13,12 @@ def test_render_stages_require_graphics_mounts_and_start_xvfb() -> None:
     ):
         preamble = render_run_preamble_for_tool(tool_ref, config={})
 
+        bootstrap = (
+            "/opt/venv/bin/python -m npa.workflows.content_agents bootstrap-runtime"
+        )
+        assert preamble.startswith(bootstrap)
         assert 'ctypes.CDLL("libGLX_nvidia.so.0")' in preamble
+        assert preamble.index(bootstrap) < preamble.index("libGLX_nvidia.so.0")
         assert "GPU Operator graphics driver mounts" in preamble
         assert "/usr/local/bin/npa-content-agents-entrypoint /bin/true" in preamble
         assert 'export DISPLAY=":$npa_ovrtx_display"' in preamble

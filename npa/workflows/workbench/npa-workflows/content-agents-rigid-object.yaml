@@ -1,18 +1,19 @@
 apiVersion: npa.workflow/v0.0.1
 kind: Workflow
 
-# NVIDIA Content Agents v0.5.2, packaged as a restricted operator-built runtime.
+# NVIDIA Content Agents v0.5.2 in a public zero-vendor-payload adapter image.
 # The accepted handoff is deliberately narrow: one rigid, non-articulated Isaac
 # object.  It does not claim arbitrary scene, robot, joint, texture, or Genesis
 # compatibility.
 #
-# Build the image into the active project's private registry after accepting the
-# named NVIDIA terms, resolve its immutable digest, then submit:
+# OVRTX 0.3.0.312915 is downloaded directly from NVIDIA's anonymous package
+# index into the standard operator-owned runtime cache on first render use.
+# Submit with the public default or override runtime_image with an exact digest:
 #
 #   npa workbench workflow submit content-agents-rigid-object.yaml \
 #     --run-id <id> \
 #     --var bucket=<private-bucket> \
-#     --var runtime_image=<private-registry>/npa-content-agents@sha256:<digest> \
+#     --var runtime_image=<registry>/npa-content-agents@sha256:<digest> \
 #     --secret-env NEBIUS_TOKEN_FACTORY_KEY \
 #     --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 
@@ -30,9 +31,7 @@ config:
   # The default is repository-authored/generated and redistributable. Replace it
   # with an s3:// URI for a customer-owned self-contained USD/USDZ.
   source_uri: "generated://rigid-cube"
-  # Restricted images never resolve through tool:// or the public mirror. The
-  # operator must supply a private registry digest at submit time.
-  runtime_image: "registry.example.invalid/npa-content-agents@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  runtime_image: "tool://content-agents"
   vlm_model: "Qwen/Qwen2.5-VL-72B-Instruct"
   vlm_base_url: "https://api.tokenfactory.nebius.com/v1/"
 

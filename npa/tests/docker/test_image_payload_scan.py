@@ -68,6 +68,10 @@ PAYLOAD_PATHS = [
     "opt/leisaac-cache/assets/runtime/robots/arbitrary-version/robot.usda",
     "opt/leisaac/assets/scenes/future-release/task.usdc",
     "opt/venv/lib/python3.11/site-packages/imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2",
+    "opt/cache/lib/python3.12/site-packages/ovrtx/bin/libovrtx.so",
+    "opt/cache/lib/python3.12/site-packages/ovrtx-0.3.dist-info/METADATA",
+    "opt/content-agents/.ovrtx_venv/bin/python",
+    "opt/vendor/libovrtx-render.so",
 ]
 
 # Paths the re-architected images legitimately DO ship.
@@ -168,6 +172,8 @@ HISTORY_BAKING = [
     "FROM nvcr.io/nvidia/isaac-lab:2.3.2",
     "RUN /opt/npa/bin/isaac-bootstrap ensure",
     "RUN isaac_bootstrap.sh warm",
+    "RUN uv pip install -r pylock.ovrtx-runtime.toml --require-hashes",
+    "RUN python -m world_understanding.functions.graphics.render_ovrtx --provision-only",
     "ENV OMNI_KIT_ACCEPT_EULA=YES",
     "ENV ISAACSIM_ACCEPT_EULA=YES PRIVACY_CONSENT=Y",
 ]

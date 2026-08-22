@@ -32,7 +32,7 @@ from npa.deploy.images import (
     DEFAULT_PUBLIC_CONTAINER_REGISTRY,
     OMNIVERSE_RESTRICTED_DERIVED_IMAGES,
     OMNIVERSE_RESTRICTED_TOOLS,
-    UNVALIDATED_PUBLICATION_TOOLS,
+    PUBLICATION_QUARANTINE_TOOLS,
     container_image_for_tool,
     is_public_registry,
     is_publicly_redistributable,
@@ -240,7 +240,7 @@ def test_isaac_images_are_no_longer_restricted() -> None:
         assert is_publicly_redistributable(tool), tool
 
 
-def test_isaac_tools_are_public_while_cosmos3_serving_is_restricted() -> None:
+def test_runtime_fetch_tools_are_public_while_cosmos3_serving_is_restricted() -> None:
     """The Isaac fixes do not imply an unrelated vendor base may be mirrored.
 
     Omniverse Kit was only the first: sonic also baked gated model weights (git-LFS
@@ -249,11 +249,9 @@ def test_isaac_tools_are_public_while_cosmos3_serving_is_restricted() -> None:
     visible in the Dockerfile. The scan that clears it:
     npa-sonic:0.1.2-rtfetch-rc5, 125,655 entries, 16 allowlisted paths, VERDICT clean.
     """
-    assert OMNIVERSE_RESTRICTED_TOOLS == frozenset(
-        {"content-agents", "cosmos3-serving"}
-    )
+    assert OMNIVERSE_RESTRICTED_TOOLS == frozenset({"cosmos3-serving"})
     assert OMNIVERSE_RESTRICTED_DERIVED_IMAGES == frozenset({"sonic-mujoco"})
-    for tool in ("isaac-lab", "sonic", "groot"):
+    for tool in ("isaac-lab", "sonic", "groot", "content-agents"):
         assert is_publicly_redistributable(tool), tool
 
 
@@ -283,6 +281,8 @@ def test_public_set_includes_the_oss_tools() -> None:
         "isaac-lab",
         "sonic",
         "groot",
+        # OVRTX is delivered directly by NVIDIA into the operator cache.
+        "content-agents",
     ):
         assert tool in public, tool
     assert public == set(CONTAINER_IMAGE_NAMES) - OMNIVERSE_RESTRICTED_TOOLS
@@ -374,14 +374,14 @@ def test_publish_plan_targets_public_registry_by_default() -> None:
     # contract-derived total rather than hardcoded, so adding a freely
     # redistributable image does not silently drift this gate.
     assert len(plan) == len(publicly_publishable_tools()) - len(
-        set(publicly_publishable_tools()) & set(UNVALIDATED_PUBLICATION_TOOLS)
+        set(publicly_publishable_tools()) & set(PUBLICATION_QUARANTINE_TOOLS)
     )
     # And, since the Isaac re-architecture emptied the restricted set: every image the repo
     # builds and has validated is publishable. This is the assertion that would catch a
     # tool silently dropping out of the plan, which the derived equality above cannot.
     assert len(plan) == len(CONTAINER_IMAGE_NAMES) - len(
         set(CONTAINER_IMAGE_NAMES)
-        & (set(OMNIVERSE_RESTRICTED_TOOLS) | set(UNVALIDATED_PUBLICATION_TOOLS))
+        & (set(OMNIVERSE_RESTRICTED_TOOLS) | set(PUBLICATION_QUARANTINE_TOOLS))
     )
     for item in plan:
         assert item.target_ref.startswith(DEFAULT_PUBLIC_CONTAINER_REGISTRY + "/npa-")
@@ -430,13 +430,16 @@ def test_contract_marks_active_isaac_images_public_and_runtime_fetch() -> None:
     assert stale["redistribution"] == "restricted"
     assert stale.get("isaac_runtime_fetch") is not True
 
+    content_agents = contract["images"]["content-agents"]
+    assert content_agents["redistribution"] == "public"
+    assert content_agents["ovrtx_runtime_fetch"] is True
+
 
 def test_the_restriction_mechanism_still_exists() -> None:
     """The build-your-own Cosmos3 serving image exercises this boundary."""
     assert hasattr(images, "OMNIVERSE_RESTRICTED_TOOLS")
     assert hasattr(images, "OMNIVERSE_RESTRICTED_DERIVED_IMAGES")
     assert omniverse_restricted_image_names() == [
-        "content-agents",
         "cosmos3-serving",
         "sonic-mujoco",
     ]

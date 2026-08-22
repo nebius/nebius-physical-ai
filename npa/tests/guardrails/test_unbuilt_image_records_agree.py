@@ -22,7 +22,12 @@ from pathlib import Path
 
 import yaml
 
-from npa.deploy.images import SUPPORTED_TOOL_VERSIONS, UNVALIDATED_PUBLICATION_TOOLS
+from npa.deploy.images import (
+    PUBLICATION_QUARANTINE_TOOLS,
+    SUPPORTED_TOOL_VERSIONS,
+    UNVALIDATED_PUBLICATION_TOOLS,
+    VALIDATION_CANDIDATE_TOOLS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BLACKWELL = REPO_ROOT / "npa" / "docker" / "workbench" / "blackwell-dc-images.json"
@@ -96,6 +101,18 @@ def test_no_built_tool_is_left_carrying_an_unbuilt_tag() -> None:
         f"{stale} still carry an {UNBUILT_TAG_SUFFIX} tag but are no longer listed "
         "as unvalidated for publication"
     )
+
+
+def test_fixed_tag_candidates_remain_in_the_publication_quarantine() -> None:
+    assert PUBLICATION_QUARANTINE_TOOLS == (
+        UNVALIDATED_PUBLICATION_TOOLS | VALIDATION_CANDIDATE_TOOLS
+    )
+    for tool in VALIDATION_CANDIDATE_TOOLS:
+        version = str(SUPPORTED_TOOL_VERSIONS[tool])
+        assert version and not version.endswith(UNBUILT_TAG_SUFFIX), tool
+        build = REPO_ROOT / "npa" / "docker" / "workbench" / tool / "build.sh"
+        assert build.is_file(), tool
+        assert version in build.read_text(encoding="utf-8"), tool
 
 
 def test_pending_build_never_carries_a_confident_verdict() -> None:

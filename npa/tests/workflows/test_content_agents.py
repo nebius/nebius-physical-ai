@@ -554,8 +554,7 @@ def test_workflow_uses_every_real_content_agent_toolref_once() -> None:
         "workbench.content_agents.validate",
         "workbench.content_agents.package",
     ]
-    assert "tool://" not in payload["config"]["runtime_image"]
-    assert "@sha256:" in payload["config"]["runtime_image"]
+    assert payload["config"]["runtime_image"] == "tool://content-agents"
 
 
 def test_capability_smoke_calls_real_upstream_authoring_and_validation() -> None:

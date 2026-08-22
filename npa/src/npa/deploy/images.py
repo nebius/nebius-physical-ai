@@ -61,6 +61,7 @@ CONTAINER_IMAGE_NAMES = {
     "wan2-2": "npa-wan2-2",
     "ltx2": "npa-ltx2",
     "alpamayo2-super": "npa-alpamayo2-super",
+    "content-agents": "npa-content-agents",
 }
 
 # Public-image publication must enforce the digest-bound SkyPilot bootstrap
@@ -103,11 +104,10 @@ def requires_skypilot_bootstrap_runtime_probe(image: str) -> bool:
 # because it bakes a runtime we are not licensed to redistribute.
 #
 # The Isaac-family membership is deliberately empty: those images were
-# re-architected to fetch Isaac at runtime. Cosmos3 serving and Content Agents
-# are separate build-your-own cases. The former embeds an NVIDIA Deep Learning
-# Container base; the latter embeds the proprietary, hash-locked OVRTX wheel.
-# Neither packaging contract establishes anonymous standalone distribution
-# rights, so operators may build them only into their own private registry.
+# re-architected to fetch Isaac at runtime. Cosmos3 serving remains a separate
+# build-your-own case because it embeds an NVIDIA Deep Learning Container base.
+# Content Agents now ships zero OVRTX bytes: NVIDIA delivers its exact locked
+# SDK directly to the operator's runtime cache.
 #
 # It used to hold {"isaac-lab", "sonic", "groot"}, because those images baked NVIDIA
 # Omniverse Kit (Isaac Sim): the Isaac Sim SOURCE is Apache-2.0, but the shipped
@@ -128,9 +128,7 @@ def requires_skypilot_bootstrap_runtime_probe(image: str) -> bool:
 # deliberate API rename; the behavior is the general restricted-runtime guard.
 # Kept in sync with packaging-contract.yaml's `redistribution:` fields by
 # npa/tests/deploy/test_public_publish.py.
-OMNIVERSE_RESTRICTED_TOOLS: frozenset[str] = frozenset(
-    {"content-agents", "cosmos3-serving"}
-)
+OMNIVERSE_RESTRICTED_TOOLS: frozenset[str] = frozenset({"cosmos3-serving"})
 
 # Images built FROM a restricted tool image, so they inherit whatever it bakes and
 # the same no-public-redistribution rule. They are not separate
@@ -155,6 +153,19 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset({"sonic-mujoco"}
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
 UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"ltx2"})
+
+# Fixed additive tags whose source/guardrails are ready to build, but whose exact
+# candidate digest has not yet completed byte scan + hardware validation. These
+# are every bit as blocked from publication as UNVALIDATED_PUBLICATION_TOOLS;
+# keeping the states separate prevents the latter's mandatory ``-unbuilt`` tag
+# from colliding with a product-approved additive candidate tag.
+#
+# Remove a tool only in the evidence commit that records its accepted digest,
+# byte-scan counts, live GPU result, and anonymous-public verification.
+VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"content-agents"})
+PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = frozenset(
+    UNVALIDATED_PUBLICATION_TOOLS | VALIDATION_CANDIDATE_TOOLS
+)
 
 # Public mirror registry for the OSS-redistributable image subset. Nebius CR does
 # NOT support anonymous/public pulls and has no cross-tenant / all-authenticated
@@ -241,6 +252,7 @@ SUPPORTED_TOOL_VERSIONS = {
     # imply the whole claim is earned, and re-tagging is part of that change.
     "ltx2": "2.5-rtfetch-unbuilt",
     "alpamayo2-super": "0.1.0-cu128",
+    "content-agents": "0.5.2-npa2",
     "nebius-cli": "0.12.254",
     "terraform": "~> 0.5.201",
     "terraform-cli": "1.13.3",

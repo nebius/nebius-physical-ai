@@ -48,14 +48,14 @@ def test_hf_present_unverified_when_no_probe() -> None:
 
 
 def test_hf_pass_when_validator_ok() -> None:
-    probes = CredentialProbes(hf_validator=lambda token, repo: _HFResult(ok=True))
+    probes = CredentialProbes(hf_validator=lambda token: _HFResult(ok=True))
     result = check_hf(_Creds(hf_token="hf_x"), probes)
     assert result.status == PASS
 
 
 def test_hf_fail_on_auth_rejection() -> None:
     probes = CredentialProbes(
-        hf_validator=lambda token, repo: _HFResult(ok=False, status_code=401, error="denied")
+        hf_validator=lambda token: _HFResult(ok=False, status_code=401, error="denied")
     )
     result = check_hf(_Creds(hf_token="hf_bad"), probes)
     assert result.status == FAIL
@@ -64,7 +64,9 @@ def test_hf_fail_on_auth_rejection() -> None:
 
 def test_hf_warn_on_network_error_not_fail() -> None:
     probes = CredentialProbes(
-        hf_validator=lambda token, repo: _HFResult(ok=False, status_code=None, error="conn reset")
+        hf_validator=lambda token: _HFResult(
+            ok=False, status_code=None, error="conn reset"
+        )
     )
     result = check_hf(_Creds(hf_token="hf_x"), probes)
     assert result.status == WARN
@@ -76,18 +78,33 @@ def test_ngc_warns_when_missing() -> None:
 
 def test_ngc_warns_on_bad_prefix() -> None:
     result = check_ngc(_Creds(ngc_api_key="not-a-key"), CredentialProbes())
-    assert result.status == WARN
+    assert result.status == FAIL
     assert "nvapi-" in result.remedy
 
 
 def test_ngc_pass_with_hyphen_key() -> None:
     # Real personal NGC keys are prefixed 'nvapi-'.
-    assert check_ngc(_Creds(ngc_api_key="nvapi-abc123"), CredentialProbes()).status == PASS
+    assert (
+        check_ngc(_Creds(ngc_api_key="nvapi-abc123"), CredentialProbes()).status == PASS
+    )
 
 
 def test_ngc_pass_with_underscore_key() -> None:
     # Older docs sometimes show 'nvapi_'; accept it too.
     assert check_ngc(_Creds(ngc_api_key="nvapi_abc"), CredentialProbes()).status == PASS
+
+
+def test_ngc_live_probe_proves_token_exchange_without_implying_entitlement() -> None:
+    probes = CredentialProbes(ngc_validator=lambda key: "entitlement-required")
+    result = check_ngc(_Creds(ngc_api_key="nvapi-abc123"), probes)
+    assert result.status == PASS
+    assert "not implied" in result.summary
+
+
+def test_ngc_live_probe_fails_when_key_is_rejected() -> None:
+    probes = CredentialProbes(ngc_validator=lambda key: "auth-401")
+    result = check_ngc(_Creds(ngc_api_key="nvapi-bad"), probes)
+    assert result.status == FAIL
 
 
 def test_s3_warns_without_keys() -> None:
