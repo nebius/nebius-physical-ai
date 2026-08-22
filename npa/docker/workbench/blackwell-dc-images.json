@@ -986,10 +986,14 @@
       "summary": "Cosmos Predict2 v1.0.9 rejects B300 capability 10.3 before kernel dispatch even though its cu128 torch wheel carries forward-compatible sm_100 SASS.",
       "evidence": "The exact upstream v1.0.9 source at commit 8112a684a3ab589eabd04ed62a2f20ec7df5b96a defines ALLOWED_COMPUTE_CAPS as [90, 100]. B200 custom-kernel validation passed; no B300 Predict2 capability result is claimed.",
       "affects": [
-        "npa-cosmos on sm_103"
+        "npa-cosmos on sm_89",
+        "npa-cosmos on sm_103",
+        "npa-cosmos on sm_120"
       ],
       "upstream_tracking": "https://github.com/nvidia-cosmos/cosmos-predict2",
-      "mitigation": "Route this pinned Predict2 release to B200 or H100. Retest B300 only after upstream admits compute capability 103 and run the same real NATTEN and flash-attn smokes."
+      "mitigation": "Route this pinned Predict2 release to B200 or H100. Retest B300, L40S, and RTX PRO 6000 only after upstream admits their compute capabilities, and then run a real NATTEN forward checked numerically against the base attention op - not an import. The unlisted-architecture path selects the capability-80 performance config, and natten 0.21.0 predates the 0.21.7 fix for an SM120/SM121 config bug in that frontend. Native sm_103 additionally needs a dependency release built from natten >= 0.21.1. Feasibility is evaluated in docs/workbench/blocked-image-gpu-feasibility.md.",
+      "enforcement_site": "cosmos_predict2/module/neighborhood_attn.py: ALLOWED_COMPUTE_CAPS is checked inside NeighborhoodAttention.forward, so the gate fires only when a sparse-attention model variant runs. The image's own text2world server smoke and its default self-hosted VLM role never construct that module.",
+      "measured_dependency_arches": "Not a missing-kernel gap. Read from the pinned release artifacts on 2026-08-22 with npa/scripts/measure_extension_arches.py: natten 0.21.0+cu128.torch27 carries SASS for sm_50 sm_60 sm_61 sm_70 sm_75 sm_80 sm_86 sm_89 sm_90 sm_100 sm_120, and flash_attn 2.7.3+cu128.torch27 carries sm_75 sm_80 sm_86 sm_90 sm_100 sm_120. Neither ships PTX, so nothing depends on driver JIT; sm_86 covers L40S and sm_100 covers B300 by same-major forward compatibility. Upstream NATTEN added SM120 in 0.21.0 and native SM103 in 0.21.1, which is what the upstream comment above the allowlist was waiting for."
     },
     "cosmos_transfer_b300_nvrtc": {
       "summary": "The cu128 Cosmos Transfer 2.5 image reaches B300 with forward-compatible sm_100 wheel SASS, but CUDA 12.8 NVRTC rejects a runtime-generated capability-10.3 kernel before inference.",
@@ -998,7 +1002,7 @@
       "affects": [
         "npa-cosmos2-transfer on sm_103"
       ],
-      "mitigation": "Keep B200 supported. Rebuild the full locked environment on CUDA 13/cu130 and rerun the genuine Video2Video smoke on B300; an arch-only check is insufficient."
+      "mitigation": "Keep B200 supported. Rebuild the full locked environment on CUDA 13/cu130 and rerun the genuine Video2Video smoke on B300; an arch-only check is insufficient, because the failing run already reported capability (10, 3) and sm_100 wheel SASS before dying in NVRTC. No upstream ref bump is required: the pinned commit's pyproject already declares cu130 = [\"cosmos-oss[cu130_torch29]\"] alongside the cu128 extra the Dockerfile selects. Feasibility and the full rebuild surface are evaluated in docs/workbench/blocked-image-gpu-feasibility.md."
     }
   },
   "measurement_note": "measured_arch_list is torch._C._cuda_getArchFlags() read from the published image on 2026-08-02/03. It is the wheel's fixed fat-binary arch set, so it decides which GPUs the image can execute on regardless of TORCH_CUDA_ARCH_LIST. Reproduce with npa/scripts/validate_blackwell_image.sh <image> --target b200."

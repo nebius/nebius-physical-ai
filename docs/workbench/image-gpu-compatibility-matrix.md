@@ -94,7 +94,7 @@ The old `npa-cosmos:1.0.9` cu126 image stopped at Hopper. Its additive cu128/tor
 **verified** — run on that GPU with a real capability smoke; see [Verified runs](#verified-runs).
 **supported** — the toolchain can execute there, but no capability run on that GPU has been recorded.
 **no SASS** — measured wheel does not carry the architecture; the image cannot run there until it is ported.
-**blocked** — an upstream dependency does not support the architecture. Reason and tracking link are in the manifest's per-image fields or `known_gaps`.
+**blocked** — an upstream dependency does not support the architecture. Reason and tracking link are in the manifest's per-image fields or `known_gaps`. Whether a given blocked cell can be closed at all is evaluated in [Can the blocked images support every Nebius GPU?](blocked-image-gpu-feasibility.md) — some are physical (rendering needs RT cores), others are a stale software gate or an unspent GPU hour.
 **CPU** — CPU-only image. It runs on a host with any of these GPUs; only node-pool scheduling matters.
 **not built** — the Dockerfile is in tree but no image has been built, so no cell has any evidence behind it. Reading the Dockerfile is not evidence.
 
