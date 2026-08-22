@@ -40,7 +40,7 @@ def _public_asset():
 
 
 def test_catalog_matches_current_nvidia_hf_gating() -> None:
-    assert HF_GATING_LAST_VERIFIED == "2026-08-21"
+    assert HF_GATING_LAST_VERIFIED == "2026-08-22"
     repos = {a.repo for a in WORKBENCH_ASSETS}
     assert "nvidia/GR00T-N1.7-3B" in repos
     assert "nvidia/Alpamayo2-Super" in repos
@@ -395,6 +395,12 @@ def test_gated_hf_assets_preserve_repository_types() -> None:
 
     assert assets["nvidia/PhysicalAI-Autonomous-Vehicles"].repo_type == "dataset"
     assert assets["nvidia/Cosmos-Reason2-2B"].repo_type == "model"
+
+
+def test_lerobot_access_probe_uses_the_dataset_api() -> None:
+    assets = {asset.repo: asset for asset in assets_for(["lerobot"])}
+
+    assert assets["lerobot/pusht"].repo_type == "dataset"
 
 
 def test_gated_catalog_matches_pinned_capability_artifacts() -> None:

@@ -24,7 +24,7 @@ from npa.workflows.sim2real_health import FAIL, PASS, WARN, CheckResult, has_fai
 
 HF = "huggingface"
 NGC = "ngc"
-HF_GATING_LAST_VERIFIED = "2026-08-21"
+HF_GATING_LAST_VERIFIED = "2026-08-22"
 
 
 @dataclass(frozen=True)
@@ -147,7 +147,13 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
     GatedAsset(
         "Qwen/Qwen2.5-VL-72B-Instruct", HF, ("vlm_eval", "token_factory"), False
     ),
-    GatedAsset("lerobot/pusht", HF, ("lerobot", "sim2real"), False),
+    GatedAsset(
+        "lerobot/pusht",
+        HF,
+        ("lerobot", "sim2real"),
+        False,
+        repo_type="dataset",
+    ),
 )
 
 # Capabilities whose NVIDIA containers/models are pulled from NGC and therefore
