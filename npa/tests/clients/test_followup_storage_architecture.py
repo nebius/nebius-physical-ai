@@ -12,6 +12,8 @@ from npa.clients.project_credential_store import (
     AmbiguousLegacyCredentialError,
     forget_project_credentials,
     project_credential_record,
+    read_project_credential_record,
+    select_project_credentials,
     write_project_credentials,
 )
 from npa.clients.storage_validation import (
@@ -551,6 +553,71 @@ def test_destructive_read_does_not_migrate_legacy_credentials(tmp_path: Path) ->
         )
 
     assert path.read_bytes() == before
+
+
+def test_selecting_empty_exact_project_clears_other_compatibility_view(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "credentials.yaml"
+    write_project_credentials(
+        "project-a",
+        {
+            "storage": {
+                "bucket": "s3://bucket-a/",
+                "endpoint_url": "https://storage.synthetic.invalid",
+                "aws_access_key_id": "access-a",
+                "aws_secret_access_key": "secret-a",
+            },
+            "terraform_state": {"bucket": "state-a", "secret_key": "secret-a"},
+        },
+        alias="a",
+        path=path,
+    )
+
+    select_project_credentials("project-b", alias="b", path=path)
+
+    raw = yaml.safe_load(path.read_text())
+    assert raw["project_credentials"]["current_project_id"] == "project-b"
+    assert "storage" not in raw
+    assert read_project_credential_record("project-b", path=path)["project_id"] == (
+        "project-b"
+    )
+    project_a = read_project_credential_record("project-a", path=path)
+    assert project_a is not None
+    assert project_a["storage"]["bucket"] == "s3://bucket-a/"
+    assert project_a["terraform_state"]["bucket"] == "state-a"
+
+
+def test_read_exact_project_distinguishes_empty_from_missing(tmp_path: Path) -> None:
+    path = tmp_path / "credentials.yaml"
+    select_project_credentials("project-empty", path=path)
+
+    assert read_project_credential_record("project-empty", path=path) is not None
+    assert read_project_credential_record("project-missing", path=path) is None
+
+
+def test_selecting_project_quarantines_ambiguous_legacy_storage(tmp_path: Path) -> None:
+    path = tmp_path / "credentials.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "storage": {
+                    "bucket": "s3://legacy-ambiguous/",
+                    "aws_secret_access_key": "synthetic-secret",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    select_project_credentials("project-new", path=path)
+
+    raw = yaml.safe_load(path.read_text())
+    assert "storage" not in raw
+    root = raw["project_credentials"]
+    assert root["current_project_id"] == "project-new"
+    assert root["legacy_unscoped"]["storage"]["bucket"] == ("s3://legacy-ambiguous/")
+    assert "storage" not in root["projects"]["project-new"]
 
 
 def test_verified_terminal_run_survives_missing_storage_and_alias(

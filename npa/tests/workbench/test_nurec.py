@@ -503,6 +503,66 @@ def _patch_http(monkeypatch: pytest.MonkeyPatch, *, ngc: int = 200, hf: int = 20
         return _Response(hf)
 
     monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr(httpx, "head", lambda url, **kwargs: _Response(hf))
+
+
+@pytest.mark.parametrize(
+    ("auth_status", "auth_payload", "tags_status", "expected"),
+    [
+        (401, {}, None, "auth-401"),
+        (402, {}, None, "entitlement-required"),
+        (200, {}, None, "auth-no-token"),
+        (200, {"token": "registry-synthetic"}, 401, "tags-401"),
+        (200, {"token": "registry-synthetic"}, 403, "tags-403"),
+        (200, {"token": "registry-synthetic"}, 503, "tags-503"),
+        (200, {"token": "registry-synthetic"}, 200, "reachable"),
+    ],
+)
+def test_ngc_probe_classifies_credentials_entitlement_and_transport_status(
+    monkeypatch: pytest.MonkeyPatch,
+    auth_status: int,
+    auth_payload: dict,
+    tags_status: int | None,
+    expected: str,
+) -> None:
+    import httpx
+
+    calls: list[tuple[str, dict]] = []
+
+    def fake_get(url, **kwargs):
+        calls.append((str(url), kwargs))
+        if "proxy_auth" in str(url):
+            return _Response(auth_status, auth_payload)
+        assert tags_status is not None
+        return _Response(tags_status)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    result = mod.check_ngc_image_access("nvapi-synthetic")
+
+    assert result == expected
+    assert calls[0][1]["params"]["scope"].endswith(":pull")
+    if len(calls) == 2:
+        assert calls[1][0].endswith("/tags/list")
+        assert calls[1][1]["headers"] == {
+            "Authorization": "Bearer registry-synthetic"
+        }
+
+
+def test_ngc_probe_sanitizes_transport_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+
+    monkeypatch.setattr(
+        httpx,
+        "get",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            httpx.ReadTimeout("nvapi-synthetic must not escape")
+        ),
+    )
+
+    assert mod.check_ngc_image_access("nvapi-synthetic") == "unreachable"
 
 
 def test_check_is_ok_when_credentials_container_and_gpu_all_resolve(
@@ -1388,19 +1448,9 @@ def test_reconstruct_note_goes_to_stderr_leaving_stdout_pure_json(tmp_path: Path
 
     proc = sp.run(
         [
-            sys.executable,
-            "-m",
-            "npa.cli.main",
-            "workbench",
-            "nurec",
-            "reconstruct",
-            "--ncore-json",
-            str(ncore),
-            "--out-dir",
-            str(tmp_path / "out"),
-            "--dry-run",
-            "--output",
-            "json",
+            sys.executable, "-m", "npa.cli.main", "workbench", "nurec", "reconstruct",
+            "--ncore-json", str(ncore), "--out-dir", str(tmp_path / "out"),
+            "--dry-run", "--output", "json",
         ],
         capture_output=True,
         text=True,
@@ -1427,9 +1477,19 @@ def test_reconstruct_is_silent_when_there_is_nothing_to_drop(tmp_path: Path) -> 
 
     proc = sp.run(
         [
-            sys.executable, "-m", "npa.cli.main", "workbench", "nurec", "reconstruct",
-            "--ncore-json", str(ncore), "--out-dir", str(tmp_path / "out"),
-            "--dry-run", "--output", "json",
+            sys.executable,
+            "-m",
+            "npa.cli.main",
+            "workbench",
+            "nurec",
+            "reconstruct",
+            "--ncore-json",
+            str(ncore),
+            "--out-dir",
+            str(tmp_path / "out"),
+            "--dry-run",
+            "--output",
+            "json",
         ],
         capture_output=True,
         text=True,

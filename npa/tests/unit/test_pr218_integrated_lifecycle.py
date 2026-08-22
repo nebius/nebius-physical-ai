@@ -489,6 +489,64 @@ def test_partial_agent_status_requires_exact_project_and_agent_receipt(
     assert result["project_id"] == "project-new"
 
 
+def test_terminal_agent_receipt_overrides_only_older_successful_operations(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa import agent_status
+    from npa.clients import config
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "demo",
+                "projects": {"demo": {"project_id": "project-demo"}},
+            }
+        )
+    )
+    monkeypatch.setattr(config, "CONFIG_PATH", config_path)
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    old_operation = ProvisioningOperation.prepare(
+        command="npa agent bootstrap",
+        project_alias="demo",
+        project_id="project-demo",
+        resource_type="agent",
+        requested_name="agent",
+        resume_command="npa agent bootstrap --project demo",
+    )
+    old_operation.commit()
+    monkeypatch.setattr(teardown_receipts, "utc_now", lambda: "2099-01-01T00:00:00Z")
+    teardown_receipts.record_teardown_event(
+        phase="agent",
+        resource="agent",
+        terminal_state="verified_deleted",
+        project_alias="demo",
+        project_id="project-demo",
+        verification={"exact_instance_absent": True},
+    )
+
+    terminal = agent_status.partial_agent_status("demo", "agent")
+
+    assert terminal["classification"] == "VERIFIED_ABSENT"
+    assert terminal["current_verification"] == "terminal_exact_agent_receipt"
+
+    monkeypatch.setattr(
+        "npa.provisioning_journal.utc_now", lambda: "2199-01-01T00:00:00Z"
+    )
+    ProvisioningOperation.prepare(
+        command="npa agent deploy",
+        project_alias="demo",
+        project_id="project-demo",
+        resource_type="agent",
+        requested_name="agent",
+        resume_command="npa agent deploy --project demo",
+    )
+
+    newer_operation = agent_status.partial_agent_status("demo", "agent")
+    assert newer_operation["classification"] != "VERIFIED_ABSENT"
+
+
 def test_absent_vm_with_present_owned_service_account_requires_exact_cleanup(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -853,13 +911,12 @@ def test_agent_destroy_no_vm_id_continues_exact_owned_iam_cleanup(
     assert json.loads(result.stdout)["infrastructure_absent"] is True
 
 
-def test_agent_destroy_shared_iam_degradation_terminalizes_teardown_lease(
+def test_agent_destroy_shared_iam_preservation_is_successful_and_terminal(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from npa.cli.main import app
     from npa.clients import config
     from npa.cli import agent as agent_module
-    from npa.cli.agent_iam import AgentIAMCleanupError
     from npa.provisioning_journal import list_operations
 
     config_path = tmp_path / "config.yaml"
@@ -899,10 +956,8 @@ def test_agent_destroy_shared_iam_degradation_terminalizes_teardown_lease(
         agent_module, "_cleanup_agent_local_files", lambda *_a, **_k: None
     )
 
-    def retain_shared_iam(*_args, **_kwargs) -> None:
-        raise AgentIAMCleanupError(
-            "agent IAM remains because exact provider inventory reports dependent VMs"
-        )
+    def retain_shared_iam(*_args, **_kwargs) -> str:
+        return "retained_shared"
 
     monkeypatch.setattr(
         "npa.cli.agent_iam.report_destroyed_agent_iam", retain_shared_iam
@@ -912,17 +967,113 @@ def test_agent_destroy_shared_iam_degradation_terminalizes_teardown_lease(
         app, ["agent", "destroy", "--project", "demo", "--yes", "--json"]
     )
 
-    assert result.exit_code == 2, result.output
+    assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
-    assert payload["outcome"] == "partial_iam_cleanup"
+    assert payload["outcome"] == "verified_deleted"
     assert payload["infrastructure_absent"] is True
     assert payload["iam_cleanup_complete"] is False
+    assert payload["shared_iam_preserved"] is True
+    assert payload["iam_disposition"] == "retained_shared"
     [teardown] = list_operations(
         project_id="project-a",
         resource_type="agent-teardown",
         requested_name="agent",
     )
     assert teardown.read()["phase"] == "destroyed"
+
+
+def test_agent_destroy_receipt_retry_reconciles_iam_without_reopening_terraform(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.cli.main import app
+    from npa.cli import agent as agent_module
+
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    receipt = teardown_receipts.record_teardown_event(
+        phase="agent",
+        resource="agent",
+        terminal_state="verified_deleted",
+        project_alias="demo",
+        project_id="project-a",
+        identity={
+            "project_alias": "demo",
+            "project_id": "project-a",
+            "agent_name": "agent",
+            "instance_id": "instance-a",
+            "service_account_id": "serviceaccount-agent",
+        },
+        action={"kind": "terraform_agent_destroy"},
+        verification={
+            "exact_instance_absent": True,
+            "terraform_destroy_completed": True,
+            "terraform_dependency_graph": [
+                "compute_instance",
+                "boot_disk",
+                "network",
+                "subnet",
+                "security_group",
+                "public_ip",
+            ],
+        },
+    )
+    teardown_receipts.record_teardown_event(
+        phase="agent",
+        resource="agent",
+        terminal_state="partial",
+        project_alias="demo",
+        project_id="project-a",
+        identity={
+            "project_alias": "demo",
+            "project_id": "project-a",
+            "agent_name": "agent",
+            "instance_id": "instance-a",
+            "service_account_id": "serviceaccount-agent",
+        },
+        action={"kind": "terraform_agent_destroy"},
+        errors=["IAM inventory was temporarily unresolved"],
+    )
+    monkeypatch.setattr(agent_module, "_agent_record", lambda *_a: {})
+    # Historical state copies can survive as audit/recovery material even
+    # after the exact graph is terminal. They must not reopen a deleted bucket.
+    monkeypatch.setattr(agent_module, "_agent_terraform_state_exists", lambda *_a: True)
+    monkeypatch.setattr(
+        agent_module,
+        "_destroy_agent_terraform",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("terminal graph recovery must not reopen Terraform")
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent_iam.report_destroyed_agent_iam",
+        lambda *_a, **_k: "retained_shared",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "agent",
+            "destroy",
+            "--receipt",
+            receipt.stem,
+            "--name",
+            "agent",
+            "--yes",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["outcome"] == "verified_deleted"
+    assert payload["shared_iam_preserved"] is True
+    assert payload["iam_cleanup_complete"] is False
+    assert (
+        teardown_receipts.latest_phase_states(project_alias="demo")["agent"][
+            "terminal_state"
+        ]
+        == "verified_deleted"
+    )
 
 
 def test_destroyed_agent_operation_needs_no_deleted_backend_credentials(

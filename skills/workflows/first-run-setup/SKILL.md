@@ -47,9 +47,14 @@ credentials instead.
 For unattended setup, avoid the prompts entirely:
 
 ```bash
-npa configure --no-interactive --save-env-credentials \
+npa configure --save-env-credentials
+npa configure --no-interactive \
   --tenant-id <id> --project-id <id> --region <region> --project-alias <alias>
 ```
+
+Credential import and known-project setup are deliberately separate modes. The
+first command persists supported credential environment variables without
+prompting; the second selects the exact project and provisions its storage.
 
 **Gate:** `npa configure --show` reports the project stanza, bucket, and endpoint
 you intend to use. A silent exit or an empty storage section means configure did

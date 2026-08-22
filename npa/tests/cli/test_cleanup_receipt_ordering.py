@@ -18,6 +18,10 @@ def _home(monkeypatch, tmp_path: Path) -> Path:  # noqa: ANN001
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    monkeypatch.setenv("NPA_CONFIG_DIR", str(home / ".npa"))
+    monkeypatch.setenv(
+        "NPA_OPERATION_JOURNAL_DIR", str(home / ".npa" / "operations")
+    )
     monkeypatch.setenv(
         "NPA_TEARDOWN_RECEIPT_DIR", str(home / ".npa" / "teardown-receipts")
     )

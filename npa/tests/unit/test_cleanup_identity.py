@@ -75,7 +75,62 @@ def test_exact_identity_precedence_is_complementary_but_conflicts_fail(
         )
 
 
-def test_provisioning_cleanup_projection_is_typed_and_never_copies_credentials() -> None:
+def test_exact_agent_generation_ignores_ambiguous_complementary_operations(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    path = record_teardown_event(
+        phase="agent",
+        resource="agent",
+        terminal_state="partial",
+        project_alias="demo",
+        project_id="project-1",
+        identity={
+            "project_alias": "demo",
+            "project_id": "project-1",
+            "agent_name": "agent",
+            "instance_id": "instance-1",
+            "agents": [
+                {
+                    "agent_name": "agent",
+                    "instance_id": "instance-1",
+                    "project_id": "project-1",
+                }
+            ],
+            "operations": [
+                {
+                    "operation_id": "setup-operation",
+                    "requested_name": "agent",
+                    "project_id": "project-1",
+                },
+                {
+                    "operation_id": "teardown-operation",
+                    "requested_name": "agent",
+                    "project_id": "project-1",
+                },
+            ],
+        },
+    )
+
+    identity = resolve_cleanup_identity(
+        receipt_id=path.stem, phase="agent", resource="agent"
+    )
+
+    assert identity.get("instance_id") == "instance-1"
+    assert identity.get("operation_id") == ""
+
+    selected = resolve_cleanup_identity(
+        explicit={"operation_id": "teardown-operation"},
+        receipt_id=path.stem,
+        phase="agent",
+        resource="agent",
+    )
+    assert selected.get("operation_id") == "teardown-operation"
+
+
+def test_provisioning_cleanup_projection_is_typed_and_never_copies_credentials() -> (
+    None
+):
     identity = provisioning_operation_cleanup_identity(
         {
             "operation_id": "operation-a",

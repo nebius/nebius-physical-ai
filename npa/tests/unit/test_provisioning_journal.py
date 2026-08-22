@@ -20,7 +20,18 @@ from npa.provisioning_journal import (
     emit_recovery_summary,
     list_operations,
     operation_context,
+    operation_root,
 )
+
+
+def test_operation_root_follows_isolated_npa_config_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("NPA_OPERATION_JOURNAL_DIR", raising=False)
+    isolated = tmp_path / "isolated-npa"
+    monkeypatch.setenv("NPA_CONFIG_DIR", str(isolated))
+
+    assert operation_root() == isolated / "operations"
 
 
 @pytest.fixture

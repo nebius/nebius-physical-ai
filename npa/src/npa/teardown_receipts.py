@@ -76,11 +76,11 @@ def utc_now() -> str:
 
 def receipt_root() -> Path:
     override = os.environ.get("NPA_TEARDOWN_RECEIPT_DIR", "").strip()
-    return (
-        Path(override).expanduser()
-        if override
-        else Path.home() / ".npa" / "teardown-receipts"
-    )
+    if override:
+        return Path(override).expanduser()
+    config_dir = os.environ.get("NPA_CONFIG_DIR", "").strip()
+    root = Path(config_dir).expanduser() if config_dir else Path.home() / ".npa"
+    return root / "teardown-receipts"
 
 
 def _journal_key(project_alias: str, project_id: str) -> str:
@@ -707,6 +707,17 @@ def latest_phase_states(
         grouped.setdefault(phase, []).append(event)
     states: dict[str, dict[str, Any]] = {}
     for phase, events in grouped.items():
+        if project_id:
+            exact_events = [
+                event
+                for event in events
+                if str(event.get("project_id") or "") == project_id
+            ]
+            if exact_events:
+                # An alias receipt can acquire a project ID from a later event.
+                # That must not retroactively give its older alias-only events
+                # equal authority to events directly scoped to the immutable ID.
+                events = exact_events
         unresolved = [
             event
             for event in events

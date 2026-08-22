@@ -25,10 +25,23 @@ def _stub_model_access(monkeypatch):
     override these fakes to exercise the NOTE.
     """
 
+    # CliRunner supplies piped stdin. Tests that intentionally exercise the
+    # interactive flow opt into visible synthetic fixture entry; dedicated
+    # subprocess coverage below verifies the production refusal without it.
+    monkeypatch.setenv("NPA_ALLOW_VISIBLE_SECRET_INPUT", "1")
+
     from npa.clients import huggingface
     from npa.clients.huggingface import HFAccessResult
 
-    def _ok(token, repo, repo_type="model", *, timeout=10.0):
+    def _ok(
+        token,
+        repo,
+        repo_type="model",
+        *,
+        revision="",
+        filename="",
+        timeout=10.0,
+    ):
         return HFAccessResult(repo=repo, ok=True, status_code=200)
 
     monkeypatch.setattr(huggingface, "validate_hf_access", _ok)
@@ -448,11 +461,20 @@ def test_configure_show_prints_the_saved_configuration(monkeypatch, tmp_path) ->
         yaml.safe_dump(
             {
                 "tokens": {"HF_TOKEN": "hf_secret"},
-                "storage": {
-                    "bucket": "s3://npa-bucket-test/",
-                    "endpoint_url": "https://storage.eu-north1.nebius.cloud",
-                    "access_key_id": "AKTEST",
-                    "secret_access_key": "SKTEST",
+                "project_credentials": {
+                    "schema_version": "npa.project-credentials.v2",
+                    "current_project_id": "project-1",
+                    "projects": {
+                        "project-1": {
+                            "project_id": "project-1",
+                            "storage": {
+                                "bucket": "s3://npa-bucket-test/",
+                                "endpoint_url": "https://storage.synthetic.invalid",
+                                "aws_access_key_id": "AKTEST",
+                                "aws_secret_access_key": "SKTEST",
+                            },
+                        }
+                    },
                 },
             }
         )
@@ -507,11 +529,20 @@ def test_configure_show_env_emits_shell_assignments(monkeypatch, tmp_path) -> No
         yaml.safe_dump(
             {
                 "tokens": {"HF_TOKEN": "hf_secret"},
-                "storage": {
-                    "bucket": "s3://npa-bucket-test/checkpoints/",
-                    "endpoint_url": "https://storage.eu-north1.nebius.cloud",
-                    "access_key_id": "AKTEST",
-                    "secret_access_key": "SKTEST",
+                "project_credentials": {
+                    "schema_version": "npa.project-credentials.v2",
+                    "current_project_id": "project-1",
+                    "projects": {
+                        "project-1": {
+                            "project_id": "project-1",
+                            "storage": {
+                                "bucket": "s3://npa-bucket-test/checkpoints/",
+                                "endpoint_url": "https://storage.synthetic.invalid",
+                                "aws_access_key_id": "AKTEST",
+                                "aws_secret_access_key": "SKTEST",
+                            },
+                        }
+                    },
                 },
             }
         )
@@ -521,7 +552,7 @@ def test_configure_show_env_emits_shell_assignments(monkeypatch, tmp_path) -> No
     monkeypatch.setattr(
         state_module,
         "list_local_clusters",
-        lambda: [SimpleNamespace(name="npa-cluster")],
+        lambda: [SimpleNamespace(name="npa-cluster", project_id="project-1")],
     )
 
     result = runner.invoke(app, ["configure", "--show", "--env"])
@@ -574,9 +605,18 @@ def test_configure_show_env_is_eval_safe_in_clean_subprocess(tmp_path) -> None:
     (npa_dir / "credentials.yaml").write_text(
         yaml.safe_dump(
             {
-                "storage": {
-                    "bucket": "s3://bucket/with-prefix/",
-                    "endpoint_url": "https://storage.eu-north1.nebius.cloud",
+                "project_credentials": {
+                    "schema_version": "npa.project-credentials.v2",
+                    "current_project_id": "project-1",
+                    "projects": {
+                        "project-1": {
+                            "project_id": "project-1",
+                            "storage": {
+                                "bucket": "s3://bucket/with-prefix/",
+                                "endpoint_url": "https://storage.synthetic.invalid",
+                            },
+                        }
+                    },
                 }
             }
         ),
@@ -607,7 +647,7 @@ def test_configure_show_env_is_eval_safe_in_clean_subprocess(tmp_path) -> None:
     assert completed.returncode == 0, completed.stderr
     assert "Credential environment sources detected" not in completed.stdout
     assert "hf_never-print-this" not in completed.stdout
-    assert "Credential environment sources detected" in stderr_path.read_text()
+    assert stderr_path.read_text() == ""
 
 
 def test_configure_show_env_scopes_kube_context_to_configured_project(
@@ -679,12 +719,12 @@ def test_configure_stores_hf_and_ngc_tokens_without_prompting(
         app,
         [
             "configure",
-            "--show",
             "--save-env-credentials",
         ],
     )
 
     assert result.exit_code == 0, result.output
+    assert _note_line(result.output)
     assert all(
         secret not in result.output for secret in ("hf_test", "nvapi-test", "v1.test")
     )
@@ -714,7 +754,8 @@ def test_configure_env_no_interactive_confirms_persistence(
     )
 
     assert result.exit_code == 0, result.output
-    assert "saved to" in result.output
+    assert "Credential fields persisted" in result.output
+    assert _note_line(result.output)
     # The whole "Credential setup" template no longer prints as if nothing happened.
     assert "Credential setup" not in result.output
     assert (
@@ -762,8 +803,8 @@ def test_configure_noninteractive_detected_env_is_truthful_when_not_persisted(
     assert not credentials_path.exists()
 
 
-def test_prompt_setup_tokens_keeps_flagged_tokens_without_reprompting() -> None:
-    """A token passed via flag is kept, not re-prompted (an empty Enter would wipe it) — bug 6."""
+def test_prompt_setup_tokens_uses_saved_values_as_prompt_defaults() -> None:
+    """Interactive setup prompts once and preserves each saved default on Enter."""
     from types import SimpleNamespace
 
     existing = SimpleNamespace(
@@ -773,14 +814,12 @@ def test_prompt_setup_tokens_keeps_flagged_tokens_without_reprompting() -> None:
 
     def ask(prompt, *, default="", secret=False):
         asked.append(prompt)
-        return ""  # a bare Enter — would wipe the key if it reached the store
+        return default
 
-    hf, tf, ngc = cli_main._prompt_setup_tokens(
-        ask, existing, skip={"HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY", "NGC_API_KEY"}
-    )
+    hf, tf, ngc = cli_main._prompt_setup_tokens(ask, existing)
 
     assert (hf, tf, ngc) == ("hf_kept", "v1.kept", "nvapi-kept")
-    assert asked == []  # none of the three were re-prompted
+    assert len(asked) == 3
 
 
 def test_prompt_setup_tokens_still_prompts_for_unflagged_tokens() -> None:
@@ -793,11 +832,11 @@ def test_prompt_setup_tokens_still_prompts_for_unflagged_tokens() -> None:
         asked.append(prompt)
         return "hf_new" if "HF_TOKEN" in prompt else ""
 
-    hf, _tf, _ngc = cli_main._prompt_setup_tokens(ask, existing, skip={"NGC_API_KEY"})
+    hf, _tf, _ngc = cli_main._prompt_setup_tokens(ask, existing)
 
     assert hf == "hf_new"
     assert any("HF_TOKEN" in p for p in asked)
-    assert not any("NGC_API_KEY" in p for p in asked)  # NGC was skipped
+    assert any("NGC_API_KEY" in p for p in asked)
 
 
 def test_configure_token_factory_key_without_a_nebius_profile(
@@ -818,7 +857,7 @@ def test_configure_token_factory_key_without_a_nebius_profile(
 
     result = runner.invoke(
         app,
-        ["configure", "--show", "--save-env-credentials"],
+        ["configure", "--save-env-credentials"],
     )
 
     assert result.exit_code == 0, result.output
@@ -1378,10 +1417,7 @@ def _run_reuse_bucket_configure(monkeypatch, tmp_path, *, hf_token: str, ngc_key
 
     monkeypatch.setattr(nebius_module, "bootstrap_environment", fake_bootstrap)
 
-    answers = (
-        "\n".join(["tenant-1", "project-1", "", "", hf_token, "", ngc_key])
-        + "\n"
-    )
+    answers = "\n".join(["tenant-1", "project-1", "", "", hf_token, "", ngc_key]) + "\n"
     return runner.invoke(app, ["configure", "--interactive"], input=answers)
 
 
@@ -1406,10 +1442,18 @@ def test_configure_hf_probe_preserves_gated_dataset_type(monkeypatch, tmp_path) 
     from npa.clients import huggingface
     from npa.clients.huggingface import HFAccessResult
 
-    observed: dict[str, str] = {}
+    observed: dict[str, tuple[str, str, str]] = {}
 
-    def _record(token, repo, repo_type="model", *, timeout=10.0):
-        observed[repo] = repo_type
+    def _record(
+        token,
+        repo,
+        repo_type="model",
+        *,
+        revision="",
+        filename="",
+        timeout=10.0,
+    ):
+        observed[repo] = (repo_type, revision, filename)
         return HFAccessResult(repo=repo, ok=True, status_code=200)
 
     monkeypatch.setattr(huggingface, "validate_hf_access", _record)
@@ -1419,7 +1463,10 @@ def test_configure_hf_probe_preserves_gated_dataset_type(monkeypatch, tmp_path) 
     )
 
     assert result.exit_code == 0, result.output
-    assert observed["nvidia/PhysicalAI-Autonomous-Vehicles"] == "dataset"
+    repo_type, revision, filename = observed["nvidia/PhysicalAI-Autonomous-Vehicles"]
+    assert repo_type == "dataset"
+    assert revision == "b719eea7f0a63619ef51ec7f54178af0937ef050"
+    assert filename == "clip_index.parquet"
 
 
 def test_configure_note_lists_inaccessible_hf_models(monkeypatch, tmp_path) -> None:
@@ -1428,10 +1475,22 @@ def test_configure_note_lists_inaccessible_hf_models(monkeypatch, tmp_path) -> N
 
     denied = "nvidia/Cosmos-Reason2-2B"
 
-    def _deny_one(token, repo, repo_type="model", *, timeout=10.0):
+    def _deny_one(
+        token,
+        repo,
+        repo_type="model",
+        *,
+        revision="",
+        filename="",
+        timeout=10.0,
+    ):
         if repo == denied:
             return HFAccessResult(
-                repo=repo, ok=False, status_code=403, error="no access"
+                repo=repo,
+                ok=False,
+                status_code=403,
+                error="no access",
+                error_kind="entitlement",
             )
         return HFAccessResult(repo=repo, ok=True, status_code=200)
 
@@ -1484,9 +1543,7 @@ def test_configure_note_lists_ngc_blocked_when_key_missing(
 def test_configure_note_keeps_optional_hf_and_ngc_credentials_non_blocking(
     monkeypatch, tmp_path
 ) -> None:
-    result = _run_reuse_bucket_configure(
-        monkeypatch, tmp_path, hf_token="", ngc_key=""
-    )
+    result = _run_reuse_bucket_configure(monkeypatch, tmp_path, hf_token="", ngc_key="")
 
     assert result.exit_code == 0, result.output
     note = _note_line(result.output)
@@ -1502,7 +1559,7 @@ def test_configure_note_never_breaks_on_probe_error(
 
     secret = "hf_synthetic_not_for_logs"
 
-    def _boom(token, repo, repo_type="model", *, timeout=10.0):
+    def _boom(token, repo, repo_type="model", **kwargs):
         raise RuntimeError(f"network exploded for {token}")
 
     monkeypatch.setattr(huggingface, "validate_hf_access", _boom)
@@ -1875,7 +1932,9 @@ def test_configure_skips_storage_and_still_writes_tokens_on_provision_failure(
     assert not creds.get("storage")
 
 
-def test_configure_accepts_region_without_registry_prompt(monkeypatch, tmp_path) -> None:
+def test_configure_accepts_region_without_registry_prompt(
+    monkeypatch, tmp_path
+) -> None:
     from npa.clients import config as config_module
     from npa.clients import credentials as credentials_module
     import npa.clients.nebius as nebius_module
@@ -2253,7 +2312,7 @@ def test_configure_token_factory_key_stores_under_tokens_nebius_token_factory_ke
 
     result = runner.invoke(
         app,
-        ["configure", "--show", "--save-env-credentials"],
+        ["configure", "--save-env-credentials"],
     )
 
     assert result.exit_code == 0, result.output

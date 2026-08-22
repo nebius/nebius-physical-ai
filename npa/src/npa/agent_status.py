@@ -93,6 +93,50 @@ def partial_agent_status(project: str, name: str) -> dict[str, Any]:
         resource_type="agent",
         requested_name=name,
     )
+    # A completed destroy is newer and more authoritative than the successful
+    # setup/bootstrap journals it intentionally leaves as audit evidence.  Do
+    # not let those older committed operations make an absent agent look
+    # resumable.  Conversely, a genuinely newer deploy operation must win over
+    # an old receipt so alias/name reuse remains safe.
+    try:
+        from npa.clients.config import resolve_environment
+
+        environment = resolve_environment(project)
+        project_id = (
+            str(environment.project_id or "") if environment is not None else ""
+        )
+    except Exception:  # noqa: BLE001 - no immutable identity means no receipt claim
+        project_id = ""
+    newest_operation_at = max(
+        (str(operation.read().get("updated_at") or "") for operation in operations),
+        default="",
+    )
+    if project_id:
+        for receipt in list_teardown_receipts(project_id=project_id, legacy="exclude"):
+            for event in reversed(receipt.get("events") or []):
+                if not isinstance(event, dict):
+                    continue
+                if str(event.get("phase") or "") != "agent":
+                    continue
+                if str(event.get("resource") or "") != name:
+                    continue
+                terminal = str(event.get("terminal_state") or "").lower()
+                recorded_at = str(event.get("recorded_at") or "")
+                if terminal in TERMINAL_STATES and (
+                    not newest_operation_at or recorded_at > newest_operation_at
+                ):
+                    return {
+                        "project": project,
+                        "project_id": project_id,
+                        "name": name,
+                        "classification": "VERIFIED_ABSENT",
+                        "receipt_id": str(receipt.get("receipt_id") or ""),
+                        "phase": terminal,
+                        "lifecycle": "succeeded",
+                        "resources": [],
+                        "recovery": {},
+                        "current_verification": "terminal_exact_agent_receipt",
+                    }
     if operations:
         summary = operations[0].recovery_summary()
         phase = str(summary.get("phase") or "")
@@ -176,38 +220,6 @@ def partial_agent_status(project: str, name: str) -> dict[str, Any]:
     # A project receipt can contain several agents. Match the exact resource,
     # and require the current immutable project ID so alias reuse cannot turn a
     # different project's old teardown into an absence claim.
-    try:
-        from npa.clients.config import resolve_environment
-
-        environment = resolve_environment(project)
-        project_id = (
-            str(environment.project_id or "") if environment is not None else ""
-        )
-    except Exception:  # noqa: BLE001 - no immutable identity means no receipt claim
-        project_id = ""
-    if project_id:
-        for receipt in list_teardown_receipts(project_id=project_id, legacy="exclude"):
-            for event in reversed(receipt.get("events") or []):
-                if not isinstance(event, dict):
-                    continue
-                if str(event.get("phase") or "") != "agent":
-                    continue
-                if str(event.get("resource") or "") != name:
-                    continue
-                terminal = str(event.get("terminal_state") or "").lower()
-                if terminal in TERMINAL_STATES:
-                    return {
-                        "project": project,
-                        "project_id": project_id,
-                        "name": name,
-                        "classification": "VERIFIED_ABSENT",
-                        "receipt_id": str(receipt.get("receipt_id") or ""),
-                        "phase": terminal,
-                        "lifecycle": "succeeded",
-                        "resources": [],
-                        "recovery": {},
-                        "current_verification": "terminal_exact_agent_receipt",
-                    }
     return {
         "project": project,
         "name": name,

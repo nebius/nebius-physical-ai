@@ -5,6 +5,8 @@ from dataclasses import dataclass
 import pytest
 
 from npa.workbench.model_access import (
+    GatedAsset,
+    HF,
     HF_GATING_LAST_VERIFIED,
     WORKBENCH_ASSETS,
     access_note,
@@ -26,6 +28,7 @@ class _HFResult:
     ok: bool
     status_code: int | None = None
     error: str = ""
+    error_kind: str = ""
 
 
 def _gated_asset():
@@ -37,7 +40,7 @@ def _public_asset():
 
 
 def test_catalog_matches_current_nvidia_hf_gating() -> None:
-    assert HF_GATING_LAST_VERIFIED == "2026-08-17"
+    assert HF_GATING_LAST_VERIFIED == "2026-08-22"
     repos = {a.repo for a in WORKBENCH_ASSETS}
     assert "nvidia/GR00T-N1.7-3B" in repos
     assert "nvidia/Alpamayo2-Super" in repos
@@ -50,6 +53,9 @@ def test_catalog_matches_current_nvidia_hf_gating() -> None:
     assert "nvidia/PhysicalAI-NuRec-PPISP" not in gated
     assert "nvidia/Cosmos-Reason2-8B" in gated
     assert "nvidia/Cosmos-Guardrail1" in gated
+    assert all(
+        asset.revision and asset.filename for asset in WORKBENCH_ASSETS if asset.gated
+    )
 
 
 def test_hf_model_url() -> None:
@@ -86,6 +92,18 @@ def test_hf_gated_warns_without_token() -> None:
     assert "Agree and access" in result.remedy or "Accept the license" in result.remedy
 
 
+def test_hf_gated_missing_token_fails_when_online_gate_is_requested() -> None:
+    result = check_hf_asset(
+        _gated_asset(),
+        "",
+        hf_validator=lambda *args, **kwargs: pytest.fail(
+            "missing token must not probe"
+        ),
+    )
+
+    assert result.status == FAIL
+
+
 def test_hf_present_unverified_offline() -> None:
     result = check_hf_asset(_gated_asset(), "hf_x", hf_validator=None)
     assert result.status == PASS
@@ -94,7 +112,7 @@ def test_hf_present_unverified_offline() -> None:
 
 def test_hf_pass_when_validator_ok() -> None:
     result = check_hf_asset(
-        _gated_asset(), "hf_x", hf_validator=lambda t, r, k: _HFResult(ok=True)
+        _gated_asset(), "hf_x", hf_validator=lambda t, r, k, **kw: _HFResult(ok=True)
     )
     assert result.status == PASS
     assert "access ok" in result.summary.lower()
@@ -105,8 +123,11 @@ def test_hf_gated_fail_points_at_acceptance_url() -> None:
     result = check_hf_asset(
         asset,
         "hf_x",
-        hf_validator=lambda t, r, k: _HFResult(
-            ok=False, status_code=403, error="no access"
+        hf_validator=lambda t, r, k, **kw: _HFResult(
+            ok=False,
+            status_code=403,
+            error="no access",
+            error_kind="entitlement",
         ),
     )
     assert result.status == FAIL
@@ -118,17 +139,66 @@ def test_hf_public_401_is_token_problem_not_gating() -> None:
     result = check_hf_asset(
         _public_asset(),
         "hf_bad",
-        hf_validator=lambda t, r, k: _HFResult(ok=False, status_code=401, error="bad"),
+        hf_validator=lambda t, r, k, **kw: _HFResult(
+            ok=False, status_code=401, error="bad", error_kind="authentication"
+        ),
     )
     assert result.status == FAIL
     assert "settings/tokens" in result.remedy
+
+
+def test_hf_gated_invalid_token_is_not_misreported_as_entitlement() -> None:
+    result = check_hf_asset(
+        _gated_asset(),
+        "hf_bad",
+        hf_validator=lambda t, r, k, **kw: _HFResult(
+            ok=False,
+            status_code=401,
+            error="rejected",
+            error_kind="authentication",
+        ),
+    )
+
+    assert result.status == FAIL
+    assert "token rejected" in result.summary
+    assert "settings/tokens" in result.remedy
+    assert "Agree and access" not in result.remedy
+
+
+def test_hf_catalog_drift_is_a_definitive_health_failure() -> None:
+    result = check_hf_asset(
+        _gated_asset(),
+        "hf_valid",
+        hf_validator=lambda t, r, k, **kw: _HFResult(
+            ok=False,
+            status_code=404,
+            error="missing",
+            error_kind="catalog_drift",
+        ),
+    )
+
+    assert result.status == FAIL
+    assert "catalog drift" in result.summary
+    assert "Update NPA" in result.remedy
+
+
+def test_incomplete_gated_catalog_fails_without_calling_validator() -> None:
+    asset = GatedAsset("owner/repo", HF, ("synthetic",), True)
+    result = check_hf_asset(
+        asset,
+        "hf_valid",
+        hf_validator=lambda *args, **kwargs: pytest.fail("must fail before probe"),
+    )
+
+    assert result.status == FAIL
+    assert "catalog is incomplete" in result.summary
 
 
 def test_hf_transient_error_warns() -> None:
     result = check_hf_asset(
         _gated_asset(),
         "hf_x",
-        hf_validator=lambda t, r, k: _HFResult(
+        hf_validator=lambda t, r, k, **kw: _HFResult(
             ok=False, status_code=None, error="timeout"
         ),
     )
@@ -140,8 +210,11 @@ def test_hf_validator_diagnostic_redacts_token() -> None:
     result = check_hf_asset(
         _gated_asset(),
         token,
-        hf_validator=lambda t, r, k: _HFResult(
-            ok=False, status_code=403, error=f"upstream echoed {t}"
+        hf_validator=lambda t, r, k, **kw: _HFResult(
+            ok=False,
+            status_code=403,
+            error=f"upstream echoed {t}",
+            error_kind="entitlement",
         ),
     )
 
@@ -152,7 +225,7 @@ def test_hf_validator_diagnostic_redacts_token() -> None:
 def test_hf_validator_exception_is_sanitized() -> None:
     token = "hf_synthetic_exception_secret"
 
-    def _raise(t, r, k):
+    def _raise(t, r, k, **kwargs):
         raise RuntimeError(f"upstream echoed {t}")
 
     result = check_hf_asset(_gated_asset(), token, hf_validator=_raise)
@@ -164,6 +237,16 @@ def test_hf_validator_exception_is_sanitized() -> None:
 
 def test_ngc_warns_when_needed_and_missing() -> None:
     assert check_ngc_key("", needed=True).status == WARN
+
+
+def test_ngc_missing_fails_when_online_gate_is_requested() -> None:
+    result = check_ngc_key(
+        "",
+        needed=True,
+        ngc_validator=lambda key: pytest.fail("missing key must not probe"),
+    )
+
+    assert result.status == FAIL
 
 
 def test_ngc_skipped_when_not_needed() -> None:
@@ -283,8 +366,11 @@ def test_check_workbench_access_flags_failure_on_gated_denial() -> None:
     results = check_workbench_access(
         hf_token="hf_x",
         ngc_key="nvapi-x",
-        hf_validator=lambda t, r, k: _HFResult(
-            ok=False, status_code=403, error="denied"
+        hf_validator=lambda t, r, k, **kw: _HFResult(
+            ok=False,
+            status_code=403,
+            error="denied",
+            error_kind="entitlement",
         ),
         capabilities=["groot"],
     )
@@ -311,6 +397,30 @@ def test_gated_hf_assets_preserve_repository_types() -> None:
     assert assets["nvidia/Cosmos-Reason2-2B"].repo_type == "model"
 
 
+def test_lerobot_access_probe_uses_the_dataset_api() -> None:
+    assets = {asset.repo: asset for asset in assets_for(["lerobot"])}
+
+    assert assets["lerobot/pusht"].repo_type == "dataset"
+
+
+def test_gated_catalog_matches_pinned_capability_artifacts() -> None:
+    from npa.workbench.alpamayo2_super.runtime import (
+        DEFAULT_DATASET_REPO,
+        DEFAULT_DATASET_REVISION,
+    )
+    from npa.workbench.cosmos.control_contract import COSMOS_TRANSFER_CHECKPOINTS
+
+    assets = {asset.repo: asset for asset in gated_hf_assets()}
+    dataset = assets[DEFAULT_DATASET_REPO]
+    assert dataset.revision == DEFAULT_DATASET_REVISION
+    assert dataset.filename == "clip_index.parquet"
+
+    edge = COSMOS_TRANSFER_CHECKPOINTS["edge"]
+    transfer = assets[edge.repo]
+    assert transfer.revision == edge.revision
+    assert transfer.filename == edge.filename
+
+
 def test_check_workbench_access_gated_only_skips_public() -> None:
     results = check_workbench_access(
         hf_token="hf_x", ngc_key="nvapi-x", hf_validator=None, gated_only=True
@@ -326,7 +436,7 @@ def test_access_note_all_ok_is_one_positive_line() -> None:
     results = check_workbench_access(
         hf_token="hf_x",
         ngc_key="nvapi-x",
-        hf_validator=lambda t, r, k: _HFResult(ok=True),
+        hf_validator=lambda t, r, k, **kw: _HFResult(ok=True),
         ngc_validator=lambda key: "reachable",
         gated_only=True,
     )
@@ -339,9 +449,11 @@ def test_access_note_all_ok_is_one_positive_line() -> None:
 def test_access_note_lists_hf_failures_on_one_line() -> None:
     denied = {"nvidia/Cosmos-Reason2-2B"}
 
-    def _validator(token, repo, repo_type):
+    def _validator(token, repo, repo_type, **kwargs):
         return _HFResult(
-            ok=repo not in denied, status_code=403 if repo in denied else 200
+            ok=repo not in denied,
+            status_code=403 if repo in denied else 200,
+            error_kind="entitlement" if repo in denied else "",
         )
 
     results = check_workbench_access(
@@ -358,7 +470,7 @@ def test_access_note_ngc_missing_names_capabilities() -> None:
     results = check_workbench_access(
         hf_token="hf_x",
         ngc_key="",
-        hf_validator=lambda t, r, k: _HFResult(ok=True),
+        hf_validator=lambda t, r, k, **kw: _HFResult(ok=True),
         gated_only=True,
     )
     note = access_note(results)
@@ -372,7 +484,7 @@ def test_access_note_distinguishes_ngc_credential_rejection() -> None:
     results = check_workbench_access(
         hf_token="hf_synthetic",
         ngc_key="nvapi-synthetic",
-        hf_validator=lambda t, r, k: _HFResult(ok=True),
+        hf_validator=lambda t, r, k, **kw: _HFResult(ok=True),
         ngc_validator=lambda key: "auth-401",
         gated_only=True,
     )

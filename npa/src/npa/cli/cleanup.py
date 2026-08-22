@@ -444,7 +444,11 @@ def _storage_iam_full_check(
         _storage_service_account_record,
         _untrusted_storage_account_ids,
     )
-    from npa.clients.config import ConfigError, storage_iam_residues
+    from npa.clients.config import (
+        ConfigError,
+        storage_iam_residue,
+        storage_iam_residues,
+    )
 
     aliases = [project] if project else list(storage_iam_residues())
     if not aliases:
@@ -462,12 +466,90 @@ def _storage_iam_full_check(
     states: list[str] = []
     ownership_states: list[str] = []
     partial = False
+
+    def retained_access_receipt_is_terminal(
+        exact_project: str, marker: dict[str, Any]
+    ) -> bool:
+        from npa.teardown_receipts import TERMINAL_STATES, list_teardown_receipts
+
+        account_id = str(marker.get("service_account_id") or "").strip()
+        if not account_id:
+            return False
+        matching: list[dict[str, Any]] = []
+        for receipt in list_teardown_receipts(
+            project_id=exact_project, legacy="exclude"
+        ):
+            for event in receipt.get("events") or []:
+                if not isinstance(event, dict) or event.get("phase") != "storage_iam":
+                    continue
+                identity = event.get("identity")
+                identity = identity if isinstance(identity, dict) else {}
+                if str(identity.get("service_account_id") or "").strip() == account_id:
+                    matching.append(event)
+        latest = max(
+            matching,
+            key=lambda event: str(event.get("recorded_at") or ""),
+            default={},
+        )
+        action = latest.get("action")
+        action = action if isinstance(action, dict) else {}
+        return bool(
+            latest
+            and str(latest.get("terminal_state") or "").lower() in TERMINAL_STATES
+            and action.get("kind") == "preserve_unowned_account_remove_npa_access"
+        )
+
     for alias in aliases:
         try:
             if alias.startswith("project-"):
                 context = _resolve_storage_iam_context(project_id=alias)
             else:
                 context = _resolve_storage_iam_context(alias)
+            # Once exact storage lifecycle evidence is terminal and removed, a
+            # project-scoped cleanup must not rediscover a pre-existing/shared
+            # account merely because it has NPA's familiar default name.
+            marker = storage_iam_residue(context.alias) if context.alias else {}
+            record, _note = _storage_service_account_record(
+                project_id=context.project_id
+            )
+            untrusted_ids = _untrusted_storage_account_ids(context.project_id)
+            if (
+                marker
+                and record is None
+                and not untrusted_ids
+                and retained_access_receipt_is_terminal(context.project_id, marker)
+            ):
+                ownership_states.append("retained_shared")
+                if prune_verified_absence and context.alias:
+                    from npa.clients.config import clear_storage_iam_residue
+
+                    clear_storage_iam_residue(
+                        context.alias,
+                        account_id=str(marker.get("service_account_id") or ""),
+                    )
+                    states.append("fully_cleaned")
+                    messages.append(
+                        "Storage IAM: removed a stale local marker after exact terminal "
+                        "access-cleanup receipt verification; the shared account remains."
+                    )
+                else:
+                    states.append("partial_local_cleanup")
+                    partial = True
+                    messages.append(
+                        "Storage IAM: exact access cleanup is terminal and the shared "
+                        "account remains; a stale local marker awaits full local cleanup."
+                    )
+                continue
+            if not marker and record is None and not untrusted_ids:
+                ownership_states.append("verified_terminal")
+                messages.append(
+                    "Storage IAM: no saved identity evidence or unresolved project "
+                    "marker remains; unrelated provider identities were not searched by name."
+                )
+                states.append(
+                    "fully_cleaned" if prune_verified_absence else "fully_clean"
+                )
+                continue
             observation = _observe_storage_iam(context)
             _persist_storage_iam_observation(observation)
         except ConfigError as exc:
@@ -491,6 +573,39 @@ def _storage_iam_full_check(
             )
             states.append("partial_verification_failure")
             partial = True
+            continue
+        if observation.retained_account_access_delete_planned:
+            ownership_states.append("retained_shared")
+            messages.append(
+                "Storage IAM: the pre-existing/shared account was preserved, but "
+                "exact NPA-created access state still requires the guarded storage "
+                "service-account cleanup command."
+            )
+            states.append("locally_clean_cloud_iam_unresolved")
+            partial = True
+            continue
+        if observation.retained_account_access_resolved:
+            ownership_states.append("retained_shared")
+            if prune_verified_absence:
+                from npa.clients.config import clear_storage_iam_residue
+
+                if not _remove_storage_service_account_record(observation.account_id):
+                    messages.append(
+                        "Storage IAM: run-scoped access is absent, but the stale local "
+                        "storage generation could not be retired; fix permissions and retry."
+                    )
+                    states.append("partial_local_cleanup")
+                    partial = True
+                    continue
+                if context.alias:
+                    clear_storage_iam_residue(
+                        context.alias, account_id=observation.account_id
+                    )
+            messages.append(
+                "Storage IAM: exact run-scoped access state is absent; the "
+                "pre-existing/shared service account was preserved."
+            )
+            states.append("fully_cleaned" if prune_verified_absence else "fully_clean")
             continue
         if observation.present:
             ownership_states.append(
@@ -548,11 +663,83 @@ def _storage_iam_full_check(
         if "pending_verification" in ownership_states
         else "owned"
         if "owned" in ownership_states
+        else "retained_shared"
+        if "retained_shared" in ownership_states
         else "unknown"
         if "unknown" in ownership_states
         else "verified_terminal"
     )
     return "\n".join(messages), partial, status, ownership_state
+
+
+_CLOUD_CLEANUP_TERMINAL_STATES = frozenset(
+    {
+        "already_absent",
+        "cancelled",
+        "completed",
+        "deleted",
+        "not_submitted",
+        "operator_attested",
+        "terminal",
+        "verified_absent",
+        "verified_deleted",
+    }
+)
+_CLOUD_CLEANUP_REQUIRED_GROUPS = (
+    ("workflow_audit", "workflow", "project_destroy_workflows"),
+    ("agent", "project_destroy_agents"),
+    ("bucket", "project_destroy_bucket"),
+    ("storage_iam", "project_destroy_storage_iam"),
+)
+_CLOUD_CLEANUP_OPTIONAL_GROUPS = (
+    ("controller", "project_destroy_controller"),
+    ("cluster", "project_destroy_clusters"),
+)
+_CLOUD_CLEANUP_PHASE_GROUPS = (
+    *_CLOUD_CLEANUP_REQUIRED_GROUPS,
+    *_CLOUD_CLEANUP_OPTIONAL_GROUPS,
+)
+
+
+def _phase_group_events(
+    phase_states: dict[str, dict[str, object]], names: tuple[str, ...]
+) -> list[dict[str, object]]:
+    return [phase_states[name] for name in names if phase_states.get(name)]
+
+
+def _newest_phase_group_is_terminal(
+    phase_states: dict[str, dict[str, object]], names: tuple[str, ...]
+) -> bool:
+    events = _phase_group_events(phase_states, names)
+    if not events:
+        return False
+    newest_at = max(str(event.get("recorded_at") or "") for event in events)
+    return any(
+        str(event.get("recorded_at") or "") == newest_at
+        and str(event.get("terminal_state") or "").lower()
+        in _CLOUD_CLEANUP_TERMINAL_STATES
+        for event in events
+    )
+
+
+def _cloud_cleanup_receipts_are_terminal(
+    phase_states: dict[str, dict[str, object]],
+) -> bool:
+    """Accept the newest monolithic or equivalent exact cleanup evidence."""
+
+    if not all(
+        _newest_phase_group_is_terminal(phase_states, names)
+        for names in _CLOUD_CLEANUP_REQUIRED_GROUPS
+    ):
+        return False
+    # Optional controller/cluster phases are not applicable to an agent-only
+    # fresh-config run. If NPA has any such evidence, however, uncertainty must
+    # still block credential and alias retirement.
+    return all(
+        not _phase_group_events(phase_states, names)
+        or _newest_phase_group_is_terminal(phase_states, names)
+        for names in _CLOUD_CLEANUP_OPTIONAL_GROUPS
+    )
 
 
 def cleanup_phase_model(
@@ -1043,14 +1230,31 @@ def cleanup_cmd(
         from npa.teardown_receipts import TERMINAL_STATES
 
         operational_residue = bool(
-            local_state
-            not in {"fully_clean", "fully_cleaned", "preserved_shared_sky"}
+            local_state not in {"fully_clean", "fully_cleaned", "preserved_shared_sky"}
             or project_credential_residue_items
         )
-        unresolved_receipts = any(
-            str(event.get("terminal_state") or "") not in TERMINAL_STATES
-            for event in receipt_phases.values()
-        )
+        if receipt_project_id:
+            cloud_phase_names = {
+                name for group in _CLOUD_CLEANUP_PHASE_GROUPS for name in group
+            }
+            unresolved_receipts = bool(
+                any(
+                    _phase_group_events(receipt_phases, group)
+                    and not _newest_phase_group_is_terminal(receipt_phases, group)
+                    for group in _CLOUD_CLEANUP_PHASE_GROUPS
+                )
+                or any(
+                    name not in cloud_phase_names
+                    and str(event.get("terminal_state") or "")
+                    not in TERMINAL_STATES
+                    for name, event in receipt_phases.items()
+                )
+            )
+        else:
+            unresolved_receipts = any(
+                str(event.get("terminal_state") or "") not in TERMINAL_STATES
+                for event in receipt_phases.values()
+            )
         verification_unresolved = bool(
             iam_partial
             or job_note
@@ -1123,12 +1327,19 @@ def cleanup_cmd(
             receipt_project_id
         )
         if receipt_alias:
-            project_credential_residue_items.append(
-                {
-                    "path": f"config.projects.{receipt_alias}",
-                    "class": "project_alias_or_default",
-                }
-            )
+            from npa.clients.config import resolve_environment
+
+            environment = resolve_environment(receipt_alias)
+            if (
+                environment is not None
+                and str(environment.project_id or "") == receipt_project_id
+            ):
+                project_credential_residue_items.append(
+                    {
+                        "path": f"config.projects.{receipt_alias}",
+                        "class": "project_alias_or_default",
+                    }
+                )
 
     prior_phases = latest_phase_states(
         project_alias=receipt_alias, project_id=receipt_project_id
@@ -1239,8 +1450,9 @@ def cleanup_cmd(
                 if job_ids
                 else "verification_failed"
             ),
-            project_alias=project,
-            project_id=str(getattr(environment, "project_id", "") or ""),
+            project_alias=receipt_alias,
+            project_id=receipt_project_id
+            or str(getattr(environment, "project_id", "") or ""),
             precheck={"skip_requested": skip_jobs},
             action={"kind": "read_only_managed_job_audit"},
             verification={
@@ -1386,7 +1598,8 @@ def cleanup_cmd(
             phase="local_cleanup",
             resource="npa-local-state",
             terminal_state="in_progress",
-            project_alias=project,
+            project_alias=receipt_alias,
+            project_id=receipt_project_id,
             precheck={"managed_jobs_verified_terminal_or_absent": sky_audit_safe},
             action={
                 "kind": "local_cleanup",
@@ -1406,10 +1619,10 @@ def cleanup_cmd(
             emit_json("partial_cleanup", "residue_present", cleanup_failed=True)
         raise typer.Exit(code=1) from exc
     for residue_item in residue:
-        if (
-            project
-            and residue_item.label in {"SkyPilot venv", "Terraform provider cache"}
-        ):
+        if project and residue_item.label in {
+            "SkyPilot venv",
+            "Terraform provider cache",
+        }:
             shared_runtime_preserved = True
             emit(
                 f"Preserved shared {residue_item.label} at {residue_item.path}: "
@@ -1508,47 +1721,47 @@ def cleanup_cmd(
                 "credential data was preserved.",
                 err=True,
             )
-        cloud_terminal_states = {
-            "already_absent",
-            "cancelled",
-            "completed",
-            "deleted",
-            "not_submitted",
-            "terminal",
-            "verified_absent",
-            "verified_deleted",
-        }
-        cloud_phase_names = (
-            "project_destroy_workflows",
-            "project_destroy_agents",
-            "project_destroy_controller",
-            "project_destroy_clusters",
-            "project_destroy_bucket",
-            "project_destroy_storage_iam",
-        )
         phase_states = latest_phase_states(
             project_alias=receipt_alias, project_id=receipt_project_id
         )
         cloud_absent = bool(
-            receipt_project_id
-            and all(
-                str((phase_states.get(name) or {}).get("terminal_state") or "")
-                in cloud_terminal_states
-                for name in cloud_phase_names
-            )
+            receipt_project_id and _cloud_cleanup_receipts_are_terminal(phase_states)
         )
         if project_credential_residue_items and not iam_partial and cloud_absent:
+            from npa.clients.config import forget_project, resolve_environment
             from npa.clients.project_credential_store import (
                 forget_project_credentials,
                 project_credential_residue,
             )
 
-            if forget_project_credentials(receipt_project_id):
-                project_credential_residue_items = project_credential_residue(
-                    receipt_project_id
-                )
+            removed_credentials = forget_project_credentials(receipt_project_id)
+            environment = resolve_environment(receipt_alias) if receipt_alias else None
+            removed_alias = False
+            if (
+                environment is not None
+                and str(environment.project_id or "") == receipt_project_id
+            ):
+                removed_alias = forget_project(receipt_alias)
+            if removed_credentials or removed_alias:
                 emit(
-                    "Removed exact-project operational credentials after complete cloud absence proof."
+                    "Removed exact-project operational credentials/configuration after "
+                    "complete cloud absence proof."
+                )
+            project_credential_residue_items = project_credential_residue(
+                receipt_project_id
+            )
+            remaining_environment = (
+                resolve_environment(receipt_alias) if receipt_alias else None
+            )
+            if (
+                remaining_environment is not None
+                and str(remaining_environment.project_id or "") == receipt_project_id
+            ):
+                project_credential_residue_items.append(
+                    {
+                        "path": f"config.projects.{receipt_alias}",
+                        "class": "project_alias_or_default",
+                    }
                 )
         if project_credential_residue_items:
             cleanup_failed = True
@@ -1569,7 +1782,8 @@ def cleanup_cmd(
             phase="local_cleanup",
             resource="npa-local-state",
             terminal_state="completed" if local_terminal else "partial",
-            project_alias=project,
+            project_alias=receipt_alias,
+            project_id=receipt_project_id,
             precheck={"managed_jobs_verified_terminal_or_absent": sky_audit_safe},
             action={
                 "kind": "local_cleanup",

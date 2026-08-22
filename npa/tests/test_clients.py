@@ -1515,13 +1515,21 @@ def test_nebius_bootstrap_agent_environment_falls_back_on_permission_denied(
 
 
 def test_nebius_bucket_exists(mocker) -> None:
-    mocker.patch(
+    run_json = mocker.patch(
         "npa.clients.nebius._run_json",
-        return_value={"items": [{"metadata": {"name": "npa-bucket-abc"}}]},
+        side_effect=[
+            {"metadata": {"name": "npa-bucket-abc", "parent_id": "project"}},
+            nebius.NebiusError("NotFound: bucket does not exist"),
+        ],
     )
 
     assert nebius.bucket_exists("project", "npa-bucket-abc") is True
     assert nebius.bucket_exists("project", "other") is False
+    assert all(
+        call.args[0][:3] == ["storage", "bucket", "get-by-name"]
+        for call in run_json.call_args_list
+    )
+    assert all("--all" not in call.args[0] for call in run_json.call_args_list)
 
 
 def test_cli_env_strips_stale_iam_token(monkeypatch) -> None:
@@ -1586,23 +1594,41 @@ def test_is_permission_denied_matches_access_denied() -> None:
     assert not nebius.is_permission_denied("NotFound: bucket missing")
 
 
-def test_nebius_bucket_list_paginates_with_all(mocker) -> None:
-    """Bucket existence checks must page past the CLI default.
+def test_nebius_bucket_exact_lookup_does_not_enumerate_project(mocker) -> None:
+    """Existence checks query only the requested bucket name.
 
-    Regression: an unpaged ``storage bucket list`` dropped existing buckets
-    beyond the first page, so ``bucket_exists`` returned False for a real
-    bucket and ``npa configure`` wrongly prompted for new-bucket storage class.
-    Uses ``--all`` (true pagination) for consistency with the other listers.
+    Regression: ``npa configure`` used ``storage bucket list --all`` and filtered
+    locally, exposing unrelated project inventory just to prove a fresh unique
+    name was absent. Nebius provides an exact parent-scoped ``get-by-name`` API;
+    use it so a fresh-user configure never enumerates sibling buckets.
     """
+    run_json = mocker.patch(
+        "npa.clients.nebius._run_json",
+        return_value={
+            "metadata": {"name": "npa-bucket-abc", "parent_id": "project"}
+        },
+    )
+
+    assert nebius.bucket_exists("project", "npa-bucket-abc") is True
+    args = run_json.call_args.args[0]
+    assert args[:3] == ["storage", "bucket", "get-by-name"]
+    assert args[args.index("--parent-id") + 1] == "project"
+    assert args[args.index("--name") + 1] == "npa-bucket-abc"
+    assert "--all" not in args
+
+
+def test_nebius_explicit_bucket_inventory_still_paginates_with_all(mocker) -> None:
     run_json = mocker.patch(
         "npa.clients.nebius._run_json",
         return_value={"items": [{"metadata": {"name": "npa-bucket-abc"}}]},
     )
 
-    assert nebius.bucket_exists("project", "npa-bucket-abc") is True
+    assert nebius._list_project_buckets("project") == [
+        {"metadata": {"name": "npa-bucket-abc"}}
+    ]
     args = run_json.call_args.args[0]
     assert args[:3] == ["storage", "bucket", "list"]
-    assert "--all" in args, args
+    assert "--all" in args
 
 
 def test_nebius_ensure_bucket_reuses_existing_without_create(mocker) -> None:
