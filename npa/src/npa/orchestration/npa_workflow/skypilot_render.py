@@ -938,7 +938,13 @@ def render_task_run_script(command: Sequence[str], *, preamble: str = "") -> str
         # succeeds), the overlay lands in the vendor interpreter, and the stage runs the stale
         # CLI. Live job 284: `No such command 'cosmos2'. Did you mean 'cosmos'?` — from an npa
         # predating the subcommand, while the recorded interpreter had the current one.
-        '  printf \'#!/bin/sh\\nexec "%s" -m npa "$@"\\n\' '
+        # The distribution intentionally has no top-level ``npa.__main__``.
+        # Invoke the same import-light module used by the installed console
+        # script so the shim stays bound to the recorded interpreter without
+        # relying on a scripts directory that may be outside PATH.  A live
+        # PAIDF/Cosmos 3 run reached the stage and failed immediately at
+        # ``python -m npa`` before this was corrected.
+        '  printf \'#!/bin/sh\\nexec "%s" -m npa.cli.entry "$@"\\n\' '
         '"$npa_python" > /tmp/npa-shim/npa\n'
         "  chmod +x /tmp/npa-shim/npa\n"
         '  export PATH="/tmp/npa-shim:$PATH"\n'
