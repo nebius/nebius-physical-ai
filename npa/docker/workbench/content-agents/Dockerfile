@@ -165,7 +165,8 @@ RUN set -eux; \
     # Header-only build input inherited through build-essential. Runtime fetch
     # installs the reviewed prebuilt OVRTX wheel and never compiles native code;
     # retaining linux-libc-dev would only expose an avoidable fixed CVE.
-    dpkg --purge --force-depends linux-libc-dev; \
+    PATH="/usr/local/sbin:/usr/sbin:/sbin:${PATH}" \
+      dpkg --purge --force-depends linux-libc-dev; \
     rm -rf /usr/local/cuda-*/compat /root/.cache /home/ubuntu/.cache/*
 
 # The CUDA base's driver-compatibility directory is useful on unmanaged hosts,
