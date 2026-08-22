@@ -972,8 +972,20 @@ def _reconcile_tainted_node_groups(
     pulled = _run_capture(
         [terraform_bin, "state", "pull"], cwd=workdir, env=env, check=False
     )
-    if pulled.returncode != 0 or not pulled.stdout.strip():
-        return {}
+    local_state = workdir / "terraform.tfstate"
+    if pulled.returncode != 0:
+        stderr = str(getattr(pulled, "stderr", "") or "")
+        if "No state file was found" in stderr and not local_state.exists():
+            return {}
+        raise RuntimeError(
+            "Terraform state could not be audited before node-group reconciliation"
+        )
+    if not pulled.stdout.strip():
+        if not local_state.exists():
+            return {}
+        raise RuntimeError(
+            "Terraform state was empty during node-group reconciliation"
+        )
     try:
         state = json.loads(pulled.stdout)
     except json.JSONDecodeError as exc:

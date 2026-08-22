@@ -1605,6 +1605,54 @@ def test_tainted_node_group_mismatch_refuses_before_untaint(
     assert all("untaint" not in call for call in calls)
 
 
+def test_existing_terraform_state_audit_failure_refuses_apply(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    _state, _provider, cluster = _tainted_gpu_reconciliation_fixture()
+    (tmp_path / "terraform.tfstate").write_text("{}\n")
+    monkeypatch.setattr(execution, "_run_capture", lambda *_a, **_k: _Cap("", 1))
+
+    with pytest.raises(RuntimeError, match="could not be audited"):
+        execution._reconcile_tainted_node_groups(
+            terraform_bin="terraform",
+            workdir=tmp_path,
+            env={},
+            cluster=as_mk8s_desired(cluster),
+            subnet_id="vpcsubnet-test",
+            nebius_bin="nebius",
+            profile="tenant-profile",
+            on_status=None,
+        )
+
+
+def test_absent_terraform_state_is_a_clean_reconciliation_noop(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    _state, _provider, cluster = _tainted_gpu_reconciliation_fixture()
+
+    class NoState(_Cap):
+        stderr = "No state file was found!"
+
+    monkeypatch.setattr(execution, "_run_capture", lambda *_a, **_k: NoState("", 1))
+
+    assert execution._reconcile_tainted_node_groups(
+        terraform_bin="terraform",
+        workdir=tmp_path,
+        env={},
+        cluster=as_mk8s_desired(cluster),
+        subnet_id="vpcsubnet-test",
+        nebius_bin="nebius",
+        profile="tenant-profile",
+        on_status=None,
+    ) == {}
+
+
 def test_deploy_one_cluster_failure_leaves_sidecar_provisioning(
     tmp_path, monkeypatch
 ) -> None:
