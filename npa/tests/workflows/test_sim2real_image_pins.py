@@ -327,6 +327,19 @@ def test_cosmos3_baked_runtime_survives_skypilot_pythonpath_scrubbing() -> None:
     assert "from npa.workflows.sim2real.workflow_stage import main" in dockerfile
 
 
+def test_cosmos3_reason_has_complete_skypilot_bootstrap_runtime() -> None:
+    dockerfile = (
+        Path(__file__).resolve().parents[2]
+        / "docker"
+        / "workbench"
+        / "cosmos3-reason"
+        / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    for package in ("openssh-server", "procps", "rsync", "sudo"):
+        assert package in dockerfile
+    assert "rm -f /etc/ssh/ssh_host_*" in dockerfile
+
+
 def test_sim2real_control_plane_requirement_closure_is_exact() -> None:
     requirements = (
         Path(__file__).resolve().parents[2]

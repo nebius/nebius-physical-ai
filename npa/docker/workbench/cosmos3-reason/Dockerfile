@@ -86,11 +86,13 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-         python3 python3-venv python3-pip rsync curl openssh-client sudo netcat-openbsd \
+         python3 python3-venv python3-pip rsync curl openssh-client openssh-server \
+         procps sudo netcat-openbsd \
     && rm -rf /var/lib/apt/lists/* \
     && printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/99-npa-runtime-user \
     && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
     && mkdir -p /home/ubuntu && chown -R ubuntu:ubuntu /home/ubuntu \
+    && rm -f /etc/ssh/ssh_host_* \
     && python3 --version \
     && dpkg --purge --force-depends linux-libc-dev \
     && rm -rf /var/lib/apt/lists/*
