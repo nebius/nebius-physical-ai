@@ -31,6 +31,7 @@ from npa.cluster_backends.mk8s_model import (
 )
 from npa.cluster_backends.mig import wait_for_mig_ready
 from npa.cluster_backends.mk8s_render import (
+    gpu_node_group_layout,
     patch_provider_domain,
     provider_domain,
     render_tfvars,
@@ -860,6 +861,7 @@ def _tainted_node_group_matches_desired(
     cluster: MK8sDesired,
     cluster_id: str,
     subnet_id: str,
+    expected_node_count: int | None = None,
 ) -> bool:
     """Prove a tainted state entry still owns the exact desired live pool."""
 
@@ -885,7 +887,8 @@ def _tainted_node_group_matches_desired(
         or str(parent_id) != cluster_id
         or str(metadata.get("name") or "") != str(state_attributes.get("name") or "")
         or str(status.get("state") or "") not in {"PROVISIONING", "RUNNING"}
-        or fixed_node_count != pool.count
+        or fixed_node_count
+        != (pool.count if expected_node_count is None else expected_node_count)
         or _node_group_template_fingerprint(template)
         != _node_group_template_fingerprint(state_template)
     ):
@@ -1034,7 +1037,16 @@ def _reconcile_tainted_node_groups(
             "refusing to reconcile tainted node groups without one exact managed cluster"
         )
     cluster_id = next(iter(cluster_ids))
+    gpu_state_instance_count = sum(
+        len(resource.get("instances", []))
+        for resource in resources
+        if isinstance(resource, dict)
+        and resource.get("mode", "managed") == "managed"
+        and resource.get("type") == "nebius_mk8s_v1_node_group"
+        and resource.get("name") == "gpu"
+    )
     cli_env = env.copy()
+    gpu_nodes_per_group, _gpu_group_count = gpu_node_group_layout(cluster)
     for address, attributes, pool in tainted:
         result = _run_capture(
             [
@@ -1064,6 +1076,11 @@ def _reconcile_tainted_node_groups(
                 cluster=cluster,
                 cluster_id=cluster_id,
                 subnet_id=subnet_id,
+                expected_node_count=(
+                    pool.count
+                    if pool.is_gpu() and gpu_state_instance_count == 1
+                    else (gpu_nodes_per_group if pool.is_gpu() else pool.count)
+                ),
             )
         ):
             raise RuntimeError(
@@ -1187,6 +1204,11 @@ def _repair_exact_stopped_placeholder(
         for item in resource.get("instances", [])
         if isinstance(item, dict) and isinstance(item.get("attributes"), dict)
     ]
+    _nodes_per_group, expected_group_count = gpu_node_group_layout(cluster)
+    if len(cluster_instances) == 1 and len(group_instances) == expected_group_count > 1:
+        # The split strict-reserved layout has no multi-node group element for
+        # this legacy repair to touch. Explicit invocation stays idempotent.
+        return {"status": "not-applicable-split-layout"}
     if len(cluster_instances) != 1 or len(group_instances) != 1:
         raise RuntimeError(
             "placeholder repair requires one exact Terraform cluster and GPU node group"

@@ -361,6 +361,39 @@ def test_render_tfvars_capacity_block_is_strict() -> None:
     )
 
 
+def test_render_tfvars_splits_independent_strict_reserved_workers() -> None:
+    cluster = ClusterSpec(
+        name="reserved",
+        gpu_nodes=NodePoolSpec(
+            count=2,
+            platform="gpu-rtx6000",
+            preset="8gpu-192vcpu-1744gb",
+            capacity_block_group="capacityblockgroup-test",
+        ),
+        enable_gpu_cluster=False,
+    )
+    tf = render_tfvars(cluster)
+    assert "gpu_nodes_fixed_count_per_group = 1" in tf
+    assert "gpu_node_groups = 2" in tf
+
+
+def test_render_tfvars_keeps_fabric_gpu_cluster_in_one_group() -> None:
+    cluster = ClusterSpec(
+        name="reserved-fabric",
+        gpu_nodes=NodePoolSpec(
+            count=2,
+            platform="gpu-h200-sxm",
+            preset="8gpu-128vcpu-1600gb",
+            capacity_block_group="capacityblockgroup-test",
+        ),
+        enable_gpu_cluster=True,
+        infiniband_fabric="us-central1-a",
+    )
+    tf = render_tfvars(cluster)
+    assert "gpu_nodes_fixed_count_per_group = 2" in tf
+    assert "gpu_node_groups = 1" in tf
+
+
 def test_render_tfvars_gpu_defaults_managed_and_operator_is_explicit() -> None:
     b200 = render_tfvars(
         ClusterSpec(

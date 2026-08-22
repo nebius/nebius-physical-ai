@@ -61,6 +61,30 @@ def _tfstr(value: str) -> str:
     return f'"{escaped}"'
 
 
+def gpu_node_group_layout(cluster: Any) -> tuple[int, int]:
+    """Return ``(nodes_per_group, group_count)`` for the GPU pool.
+
+    Independent PCIe workers backed by strict reserved capacity use one node
+    per managed node group. This keeps each provider placement in its own
+    reconciliation unit; a scheduling timeout for one reservation slot can no
+    longer strand a healthy sibling behind a no-op group-level Terraform plan.
+    Fabric-coupled GPU clusters retain the single-group topology required for
+    their collective lifecycle.
+    """
+
+    gpu = cluster.gpu_nodes
+    count = gpu.count if gpu else 0
+    if count <= 0:
+        return 0, 0
+    if (
+        gpu.capacity_block_group
+        and count > 1
+        and not cluster.resolved_enable_gpu_cluster()
+    ):
+        return 1, count
+    return count, 1
+
+
 def validate_recipe_mig_compatibility(cluster: Any, recipe_dir: Path) -> None:
     """Fail before Terraform when an alternate recipe would drop MIG pins."""
 
@@ -165,9 +189,9 @@ def render_tfvars(
         cpu_disk = cpu.disk_size_gib if cpu.disk_size_gib > 0 else 128
         lines.append(f"cpu_disk_size = {_tfstr(str(cpu_disk))}")
 
-    gpu_count = gpu.count if gpu else 0
-    lines.append(f"gpu_nodes_fixed_count_per_group = {gpu_count}")
-    lines.append(f"gpu_node_groups = {1 if gpu_count > 0 else 0}")
+    gpu_nodes_per_group, gpu_group_count = gpu_node_group_layout(cluster)
+    lines.append(f"gpu_nodes_fixed_count_per_group = {gpu_nodes_per_group}")
+    lines.append(f"gpu_node_groups = {gpu_group_count}")
     if gpu and gpu.count > 0:
         lines.append(f"gpu_nodes_platform = {_tfstr(gpu.platform)}")
         if gpu.preset:
