@@ -1444,6 +1444,30 @@ def render_setup_for_tool(
 
     if not options.default_setup:
         return ""
+    if tool_ref.startswith("workbench.content_agents."):
+        # The public Content Agents image deliberately carries only the narrow
+        # module adapter used by its five toolRefs. Requiring the full ``npa``
+        # console script here would either force unrelated CLI/dependency bytes
+        # into that image or make SkyPilot overlay source at runtime. Verify the
+        # same zero-OVRTX image boundary used during the build, then record its
+        # exact interpreter for the run-shell shim. This inspection never
+        # downloads OVRTX; render-stage preambles bootstrap it later.
+        return (
+            "set -e\n"
+            'npa_baked_python="/opt/venv/bin/python"\n'
+            'if [ ! -x "$npa_baked_python" ]; then\n'
+            '  echo "Content Agents baked interpreter is unavailable" >&2\n'
+            "  exit 69\n"
+            "fi\n"
+            '"$npa_baked_python" - <<\'PY\'\n'
+            "from npa.workflows.content_agents import inspect_image\n"
+            "payload = inspect_image()\n"
+            "if payload.get('status') != 'image-ready':\n"
+            "    raise SystemExit('Content Agents image boundary is not ready')\n"
+            "print('Content Agents narrow baked runtime verified')\n"
+            "PY\n"
+            'printf \'%s\\n\' "$npa_baked_python" > /tmp/npa-python\n'
+        )
     require_baked = str(config.get("require_baked_npa") or "").strip().lower()
     if require_baked in {"1", "true", "yes", "on"}:
         return (

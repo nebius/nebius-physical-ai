@@ -1,7 +1,9 @@
 """Content Agents render stages restore OVRTX's Kubernetes runtime contract."""
 
 from npa.orchestration.npa_workflow.skypilot_render import (
+    SkypilotRenderOptions,
     render_run_preamble_for_tool,
+    render_setup_for_tool,
 )
 
 
@@ -33,3 +35,24 @@ def test_cpu_stages_do_not_start_a_display_or_require_driver_mounts() -> None:
         "workbench.content_agents.package",
     ):
         assert render_run_preamble_for_tool(tool_ref, config={}) == ""
+
+
+def test_all_content_agent_stages_verify_the_narrow_baked_runtime() -> None:
+    for tool_ref in (
+        "workbench.content_agents.acquire",
+        "workbench.content_agents.materials",
+        "workbench.content_agents.physics",
+        "workbench.content_agents.validate",
+        "workbench.content_agents.package",
+    ):
+        setup = render_setup_for_tool(
+            tool_ref, config={}, options=SkypilotRenderOptions()
+        )
+
+        assert 'npa_baked_python="/opt/venv/bin/python"' in setup
+        assert "from npa.workflows.content_agents import inspect_image" in setup
+        assert "Content Agents narrow baked runtime verified" in setup
+        assert "/tmp/npa-python" in setup
+        assert "command -v npa" not in setup
+        assert "NPA_SRC_S3_URI" not in setup
+        assert "bootstrap-runtime" not in setup
