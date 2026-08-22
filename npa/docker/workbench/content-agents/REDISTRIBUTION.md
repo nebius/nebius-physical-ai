@@ -38,11 +38,3 @@ Artifact classification:
 The accepted consumer is one rigid, non-articulated Isaac object. Texture
 generation, joint authoring, arbitrary scenes, articulated robots, and direct
 Genesis USD consumption remain outside this contract.
-
-The accepted public tag is `0.5.2-npa2`, resolved anonymously as OCI index
-`sha256:c64aaf6201bdaa013f9d16e8497290cf166907932f036297d7abaa430cbad7db`.
-Its exact layers passed both payload scanners and Trivy before a real RTX PRO
-6000 workflow passed. The immutable numeric evidence and independently checked
-OCI config are recorded in
-`npa/src/npa/deploy/content_agents_image_manifest.json`; those claims do not
-extend to a rebuilt or retagged image.
