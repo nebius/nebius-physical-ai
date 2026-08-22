@@ -112,6 +112,21 @@ def test_live_workflow_argv_builders_forward_selected_project_through_lifecycle(
     )
 
 
+def test_plan_submit_argv_forwards_preset_and_config_vars() -> None:
+    argv = _load_live_argv().plan_submit_args(
+        Path("/tmp/sim2real.yaml"),
+        run_id="plan-preset",
+        registry="registry.example/workbench",
+        project=None,
+        preset="public-franka-lift",
+        config_vars=(("controller_image", "registry.example/controller@sha256:00"),),
+    )
+    assert argv[argv.index("--preset") + 1] == "public-franka-lift"
+    assert argv[argv.index("--var") + 1] == (
+        "controller_image=registry.example/controller@sha256:00"
+    )
+
+
 def test_live_workflow_argv_builders_omit_project_only_when_unselected() -> None:
     argv = _load_live_argv()
     path = Path("/tmp/catalog-spec.yaml")

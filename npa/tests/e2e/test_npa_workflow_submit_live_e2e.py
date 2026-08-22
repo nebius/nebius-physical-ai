@@ -224,6 +224,25 @@ def _image_args(case: SubmitLiveCase, registry: str) -> list[str]:
     return []
 
 
+def _plan_only_config_vars(
+    case: SubmitLiveCase, registry: str
+) -> tuple[tuple[str, str], ...]:
+    """Supply non-live immutable pins for render-only cases with operator images."""
+
+    if case.spec != "sim2real.yaml":
+        return case.config_vars
+    digest = "sha256:" + "0" * 64
+    roles = ("controller", "transfer", "envgen", "reason", "isaac", "viewer")
+    return (
+        *(
+            (f"{role}_image", f"{registry}/plan-only/sim2real-{role}@{digest}")
+            for role in roles
+        ),
+        ("source_sha", "0" * 40),
+        ("isaac_cache_pvc", "plan-only-isaac-cache"),
+    )
+
+
 @pytest.mark.parametrize(
     "case",
     one_shot_submit_cases(),
@@ -260,6 +279,7 @@ def test_npa_workflow_submit_live_reaches_terminal(
         project=e2e_project,
         assume_decision=assume,
         preset=case.preset,
+        config_vars=_plan_only_config_vars(case, e2e_registry),
         image_args=_image_args(case, e2e_registry),
         skypilot_config_args=_skypilot_config_args(),
     )
@@ -282,6 +302,7 @@ def test_npa_workflow_submit_live_reaches_terminal(
         project=e2e_project,
         assume_decision=assume,
         preset=case.preset,
+        config_vars=_plan_only_config_vars(case, e2e_registry),
         image_args=_image_args(case, e2e_registry),
         secret_env_args=_secret_env_args(case),
         skypilot_config_args=_skypilot_config_args(),
@@ -825,6 +846,7 @@ def test_npa_workflow_submit_plan_only_matrix_no_leak(
         project=e2e_project,
         assume_decision=assume,
         preset=case.preset,
+        config_vars=_plan_only_config_vars(case, e2e_registry),
     )
     result = RUNNER.invoke(app, args)
     payload = parse_json_payload(result, forbidden_markers)
