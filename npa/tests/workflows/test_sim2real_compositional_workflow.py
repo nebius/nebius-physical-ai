@@ -608,6 +608,20 @@ def test_baked_setup_executes_and_records_the_declared_interpreter(
     assert b"must be an absolute path" in failed.stderr
 
 
+def test_baked_raw_module_setup_probes_the_executed_module() -> None:
+    setup = render_setup_for_tool(
+        "",
+        config={"require_baked_npa": "1"},
+        options=SkypilotRenderOptions(),
+        command=["python3", "-m", "npa.workflows.sim2real.workflow_stage"],
+    )
+
+    assert (
+        "importlib.import_module('npa.workflows.sim2real.workflow_stage')" in setup
+    )
+    assert "npa.cli.main" not in setup
+
+
 def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> None:
     spec = load_spec(SPEC)
     source_sha = "a" * 40
@@ -643,7 +657,10 @@ def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> N
         assert task["envs"]["NPA_SIM2REAL_SOURCE_SHA"] == source_sha
         assert task["envs"]["NPA_TASK_IMAGE"] == image
         assert "immutable baked NPA runtime verified" in task["setup"]
-        assert "import npa.cli.main" in task["setup"]
+        assert (
+            "importlib.import_module('npa.workflows.sim2real.workflow_stage')"
+            in task["setup"]
+        )
         assert "NPA_BAKED_PYTHON" in task["setup"]
         assert "/tmp/npa-python" in task["setup"]
         assert "baked NPA interpreter must be an absolute path" in task["setup"]

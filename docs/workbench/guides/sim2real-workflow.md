@@ -209,6 +209,63 @@ Set a real bucket and task-aligned seed prefix. The trigger prefix and its
 `dataset-manifest.json` must already be readable; customer data contracts are in
 [Sim2Real customer assets](sim2real-customer-assets.md).
 
+### Explicit public Franka-lift seed
+
+`public-franka-lift` is an opt-in seed preset; it is never the silent production
+default. It runtime-fetches the anonymous public Hugging Face dataset
+[`huyyyyan/pi05-Isaac-sim_Franka_lift_cube`](https://huggingface.co/datasets/huyyyyan/pi05-Isaac-sim_Franka_lift_cube)
+at immutable revision `42c181e40a43afb1702c29d6f24d5de25219aff8`. Upstream
+metadata declares Apache-2.0. NPA does not vendor or bake its bytes and does not
+invent a dataset-acceptance flag: the stager verifies anonymous access, the exact
+revision, and the declared license before downloading.
+
+Stage the minimal real subset first, using the same bucket and run ID as the
+workflow. The command uploads one source episode's Parquet actions, both source
+MP4s, four decoded `camera-*.png` frames, `actions.json`, a sample-rollout
+manifest, and `dataset-manifest.json`. Counts, byte sizes, and SHA-256 hashes are
+derived from those objects; `dataset-manifest.json` is uploaded last.
+
+```bash
+export RUN_ID="sim2real-$(date -u +%Y%m%dT%H%M%SZ)"
+export NPA_BUCKET='<bucket-name>'
+
+npa/.venv/bin/npa workbench workflow trigger stage-preset \
+  --preset public-franka-lift \
+  --project "${NPA_PROJECT}" \
+  --bucket "${NPA_BUCKET}" \
+  --run-id "${RUN_ID}" \
+  --output-format json
+
+npa/.venv/bin/npa workbench workflow validate-spec "${SPEC}" \
+  --preset public-franka-lift --json
+npa/.venv/bin/npa workbench workflow plan-spec "${SPEC}" \
+  --preset public-franka-lift --run-id "${RUN_ID}" \
+  --var bucket="${NPA_BUCKET}" --waves \
+  --assume-decision promote_checkpoint
+
+npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
+  --preset public-franka-lift --project "${NPA_PROJECT}" \
+  --infra "k8s/${NPA_CLUSTER}" --runtime --run-id "${RUN_ID}" \
+  --var bucket="${NPA_BUCKET}" \
+  --var controller_image="${CONTROLLER_IMAGE}" \
+  --var transfer_image="${TRANSFER_IMAGE}" \
+  --var envgen_image="${ENVGEN_IMAGE}" \
+  --var reason_image="${REASON_IMAGE}" \
+  --var isaac_image="${ISAAC_IMAGE}" \
+  --var viewer_image="${VIEWER_IMAGE}" \
+  --var isaac_cache_pvc=npa-isaac-cache
+```
+
+The source contract remains `Isaac-Lift-Cube-Franka-IK-Rel-v0`, Franka, two
+cameras (`image`, `wrist_image`), and 7D IK-relative actions. These actions and
+cameras are seed/conditioning evidence only. The manifest separately records the
+canonical workflow boundary: 8D joint-delta-plus-gripper policy actions and
+three evaluation cameras (`primary`, `side`, `overhead`). No source action is
+silently reused as PPO input, and the strict stable-placement metric remains 5
+cm. For a custom/private dataset, omit `--preset` and continue to use the
+existing `--var dataset_id=...`, `trigger_uri=...`, and `seed_manifest_uri=...`
+path.
+
 ```bash
 export RUN_ID="sim2real-$(date -u +%Y%m%dT%H%M%SZ)"
 export NPA_BUCKET='<bucket-name>'

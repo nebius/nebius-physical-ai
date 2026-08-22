@@ -75,13 +75,19 @@ def _stage1(args: argparse.Namespace) -> None:
     objects = list_prefix(args.trigger_uri.rstrip("/") + "/")
     if not objects:
         raise RuntimeError("Stage 1 trigger prefix is empty")
+    trigger_bucket = urlparse(args.trigger_uri).netloc
+    objects_with_bucket = [dict(item, Bucket=trigger_bucket) for item in objects]
     contract = build_task_contract(
         task_id=args.task_id,
         dataset_id=args.dataset_id,
         dataset_uri=args.trigger_uri,
     )
     seed = read_json(args.seed_manifest_uri, directory=work)
-    seed_proof = validate_seed_dataset_manifest(seed, contract=contract)
+    seed_proof = validate_seed_dataset_manifest(
+        seed,
+        contract=contract,
+        trigger_objects=objects_with_bucket,
+    )
     payload = {
         "schema": "npa.sim2real.trigger.v1",
         "stage": 1,
