@@ -939,12 +939,14 @@ def render_task_run_script(command: Sequence[str], *, preamble: str = "") -> str
         # CLI. Live job 284: `No such command 'cosmos2'. Did you mean 'cosmos'?` — from an npa
         # predating the subcommand, while the recorded interpreter had the current one.
         # The distribution intentionally has no top-level ``npa.__main__``.
-        # Invoke the same import-light module used by the installed console
-        # script so the shim stays bound to the recorded interpreter without
-        # relying on a scripts directory that may be outside PATH.  A live
-        # PAIDF/Cosmos 3 run reached the stage and failed immediately at
-        # ``python -m npa`` before this was corrected.
-        '  printf \'#!/bin/sh\\nexec "%s" -m npa.cli.entry "$@"\\n\' '
+        # Import and CALL the same lightweight entry function used by the
+        # installed console script so the shim stays bound to the recorded
+        # interpreter without relying on a scripts directory that may be
+        # outside PATH.  Calling it explicitly also supports older baked NPA
+        # images whose entry module defines ``main`` but has no ``__main__``
+        # guard: ``python -m npa.cli.entry`` silently exited 0 in a live Cosmos
+        # Evaluator stage and therefore produced no declared report.
+        '  printf \'#!/bin/sh\\nexec "%s" -c "from npa.cli.entry import main; main()" "$@"\\n\' '
         '"$npa_python" > /tmp/npa-shim/npa\n'
         "  chmod +x /tmp/npa-shim/npa\n"
         '  export PATH="/tmp/npa-shim:$PATH"\n'
