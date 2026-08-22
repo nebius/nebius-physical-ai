@@ -108,7 +108,7 @@ client. Measured on the affected pair: the 146-file, 17 GB guardrail repo
 that failed under Xet downloaded in 1m52s with `HF_HUB_DISABLE_XET=1` set,
 and the run proceeded normally afterward.
 
-The released `npa-cosmos3:1.2.2-cu130-r2` image keeps Xet enabled because its
+The current `npa-cosmos3:1.2.2-cu130-r6` image keeps Xet enabled because its
 frozen compatible pair is `huggingface_hub==0.36.2` plus `hf-xet==1.3.2`.
 `verify_env.py` records those baked versions and fails the image build if the
 known-bad `1.23.0`/`1.5.1` pair is ever resolved. Outside that frozen image,

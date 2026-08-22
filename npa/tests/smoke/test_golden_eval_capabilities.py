@@ -60,10 +60,60 @@ def test_cosmos3_stale_tag_audit_distinguishes_rollback_from_runtime_refs(
     stale.write_text("image_id: npa-cosmos3:1.2.2-cu130\n", encoding="utf-8")
     assert audit._scan_file(stale) == [
         "npa/workflows/cosmos3.yaml: npa-cosmos3:1.2.2-cu130 "
-        "(use npa-cosmos3:1.2.2-cu130-r2)"
+        "(use npa-cosmos3:1.2.2-cu130-r6)"
     ]
 
     rollback = tmp_path / "docs/workbench/cosmos3-generate.md"
     rollback.parent.mkdir(parents=True)
     rollback.write_text("Rollback: `npa-cosmos3:1.2.2-cu130`.\n", encoding="utf-8")
     assert audit._scan_file(rollback) == []
+
+
+def test_cosmos3_stale_tag_audit_rejects_previous_release_in_current_docs(
+    tmp_path, monkeypatch
+) -> None:
+    import importlib.util
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    script = root / "npa" / "scripts" / "audit_workbench_image_tags.py"
+    spec = importlib.util.spec_from_file_location("tag_audit_current_docs", script)
+    assert spec is not None and spec.loader is not None
+    audit = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(audit)
+
+    monkeypatch.setattr(audit, "REPO_ROOT", tmp_path)
+    current_doc = tmp_path / "docs/security/container-golden-evals.md"
+    current_doc.parent.mkdir(parents=True)
+    current_doc.write_text("Required tag: `1.2.2-cu130-r2`.\n", encoding="utf-8")
+
+    assert audit._scan_file(current_doc) == [
+        "docs/security/container-golden-evals.md: npa-cosmos3:1.2.2-cu130-r2 "
+        "(use npa-cosmos3:1.2.2-cu130-r6)"
+    ]
+
+
+def test_cosmos3_stale_tag_audit_requires_explicit_allowlisted_history(
+    tmp_path, monkeypatch
+) -> None:
+    import importlib.util
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    script = root / "npa" / "scripts" / "audit_workbench_image_tags.py"
+    spec = importlib.util.spec_from_file_location("tag_audit_history", script)
+    assert spec is not None and spec.loader is not None
+    audit = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(audit)
+
+    monkeypatch.setattr(audit, "REPO_ROOT", tmp_path)
+    matrix = tmp_path / "docs/workbench/image-gpu-compatibility-matrix.md"
+    matrix.parent.mkdir(parents=True)
+    matrix.write_text("Historical measurement: `1.2.2-cu130-r2`.\n", encoding="utf-8")
+    assert audit._scan_file(matrix) == []
+
+    matrix.write_text("Measured tag: `1.2.2-cu130-r2`.\n", encoding="utf-8")
+    assert audit._scan_file(matrix) == [
+        "docs/workbench/image-gpu-compatibility-matrix.md: "
+        "npa-cosmos3:1.2.2-cu130-r2 (use npa-cosmos3:1.2.2-cu130-r6)"
+    ]

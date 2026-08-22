@@ -30,6 +30,14 @@ SPEC = (
     / "npa-workflows"
     / "physical-ai-data-factory.yaml"
 )
+COSMOS3_SPEC = (
+    Path(__file__).resolve().parents[3]
+    / "npa"
+    / "workflows"
+    / "workbench"
+    / "npa-workflows"
+    / "paidf-cosmos3.yaml"
+)
 SIM2REAL_SPEC = (
     Path(__file__).resolve().parents[3]
     / "npa"
@@ -71,6 +79,24 @@ def _submit(*args: str):
             str(SPEC),
             "--run-id",
             "preflight-demo",
+            "--assume-decision",
+            "promote_checkpoint",
+            "--no-deploy-if-absent",
+            *args,
+        ],
+    )
+
+
+def _submit_cosmos3(*args: str):
+    return runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(COSMOS3_SPEC),
+            "--run-id",
+            "paidf-cosmos3-preflight-demo",
             "--assume-decision",
             "promote_checkpoint",
             "--no-deploy-if-absent",
@@ -585,6 +611,37 @@ def test_paidf_lerobot_selector_is_planned_without_object_store_access(
     assert payload["lifecycle_state"] == "PLAN_ONLY"
     assert "Operator-supplied LeRobotDataset" not in result.output
     assert "input_source_format" not in result.output  # metadata, not an argv shim
+
+
+def test_cosmos3_paidf_lerobot_selector_uses_the_real_input_preparer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://real-bucket/npa-src/npa")
+
+    result = _submit_cosmos3(
+        "--plan-only",
+        "--infra",
+        "k8s/test-context",
+        "--lerobot-uri",
+        "s3://source-bucket/datasets/robot-run/",
+        "--lerobot-camera",
+        "observation.images.cam_high",
+        "--lerobot-episode",
+        "0",
+        "--require-explicit-lerobot-selection",
+        "--var",
+        "bucket=real-bucket",
+        "--output-format",
+        "json",
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    prepare = next(
+        step for step in payload["plan"]["steps"] if step["state"] == "prepare-input"
+    )
+    assert "s3://source-bucket/datasets/robot-run/" in prepare["argv"]
+    assert "observation.images.cam_high" in prepare["argv"]
 
 
 @pytest.mark.parametrize(

@@ -87,6 +87,14 @@ def generate_variants_cmd(
     parallelism_preset: str = typer.Option("latency", "--parallelism-preset"),
     guardrails: bool = typer.Option(True, "--guardrails/--no-guardrails"),
     run_id: str = typer.Option("", "--run-id"),
+    source_motion_weight: float = typer.Option(
+        0.0,
+        "--source-motion-weight",
+        help=(
+            "Blend this source-video weight into the published variant while "
+            "preserving the unmodified Cosmos output; zero disables compositing."
+        ),
+    ),
 ) -> None:
     """Generate and publish real source-video-conditioned Cosmos 3 variants."""
 
@@ -116,6 +124,7 @@ def generate_variants_cmd(
             parallelism_preset,
             guardrails,
             run_id,
+            source_motion_weight,
         )
     except (PaidfCosmos3Error, Cosmos3GenerateError) as exc:
         typer.echo(f"cosmos3 generate-variants failed: {exc}", err=True)

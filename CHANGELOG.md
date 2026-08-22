@@ -12,6 +12,23 @@ a versioned heading when a release is cut.
   `npa.agent.api_error/v1` (`run_id_required_for_s3_uri`) instead of reading an
   arbitrary object.
 
+### PAIDF evaluator images match the workflow CLI contract
+
+- The Cosmos Evaluator image advances additively to an r2 tag containing the
+  deterministic `--attribute-sample-policy` option already rendered by PAIDF's
+  ranking and holdout evaluator stages. This prevents a real workflow from
+  reaching evaluation and failing at CLI argument parsing.
+
+### PAIDF supports reproducible appearance sampling
+
+- Cosmos3 PAIDF runs can use an appearance seed independent of the run ID for
+  controlled comparisons. The coherent sampler now also includes a low-key,
+  neutral-gray matte profile suited to wrist-mounted manipulation footage. Reused
+  attributes are de-duplicated before evaluator question generation so a
+  multiple-choice check cannot contain indistinguishable answer letters. Gray
+  backgrounds use one illumination-independent label instead of ambiguous
+  light-gray versus dark-gray alternatives.
+
 ### PAIDF can condition augmentation on segmentation, not just edges
 
 Cosmos Transfer 2.5 accepts four control modalities and NPA only ever used two.

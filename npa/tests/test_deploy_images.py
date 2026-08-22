@@ -83,7 +83,7 @@ def test_non_sonic_workbench_images_resolve_from_supported_tools() -> None:
     assert (
         container_image_for_tool("cosmos3")
         == "ghcr.io/nebius/nebius-physical-ai/"
-        "npa-cosmos3:1.2.2-cu130-r2"
+        "npa-cosmos3:1.2.2-cu130-r6"
     )
     assert (
         container_image_for_tool("cosmos3-reason")

@@ -2613,6 +2613,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--parallelism-preset",
             "{{config.parallelism_preset}}",
             "--guardrails",
+            "--source-motion-weight",
+            "{{config.source_motion_weight}}",
             "--run-id",
             "{{run.id}}",
         ],

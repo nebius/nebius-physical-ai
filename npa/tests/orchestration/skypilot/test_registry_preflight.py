@@ -114,6 +114,19 @@ def test_parse_handles_a_docker_prefix_and_a_digest() -> None:
     assert reference.reference == "sha256:abc123"
 
 
+def test_parse_strips_tag_from_tag_and_digest_reference() -> None:
+    reference = parse_image_reference(
+        f"{REGISTRY}/{REPOSITORY}:{TAG}@sha256:abc123"
+    )
+
+    assert reference.repository == REPOSITORY
+    assert reference.reference == "sha256:abc123"
+    assert reference.manifest_url == (
+        f"https://{REGISTRY}/v2/{REPOSITORY}/manifests/sha256:abc123"
+    )
+    assert reference.pull_scope == f"repository:{REPOSITORY}:pull"
+
+
 def test_parse_defaults_a_missing_tag_to_latest() -> None:
     assert parse_image_reference(f"{REGISTRY}/{REPOSITORY}").reference == "latest"
 

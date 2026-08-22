@@ -283,8 +283,13 @@ images:
     tier: job
     passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; non-root runtime user, no default sshd service, and no baked credentials."
     notes: >-
-      Cosmos 3 omni-model generation, released additively as 1.2.2-cu130-r2;
-      the immutable 1.2.2-cu130 image remains rollback provenance. Bakes
+      Cosmos 3 omni-model generation, released additively as 1.2.2-cu130-r6;
+      the immutable 1.2.2-cu130, r2, and unpublished r3/r4 images remain rollback
+      provenance. The r6 image removes imageio-ffmpeg's redundant wheel-bundled
+      executable, uses the attributed distro FFmpeg instead, and keeps a
+      no-argv SkyPilot worker pod alive until bootstrap execs its setup, and
+      publishes auditable source-motion-preserving PAIDF composites beside the
+      unmodified Cosmos outputs. Bakes
       OpenMDW-1.1 cosmos-framework SOURCE at a pinned commit plus its cu130
       inference venv; NO model weights. Gated
       Cosmos3 checkpoints, the Wan VAE, and the guardrail models download at
@@ -297,6 +302,7 @@ images:
       runtime user because the SkyPilot Kubernetes bootstrap installs its SSH runtime in-pod; see
       docs/security/container-golden-evals.md.
     redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
   cosmos3-serving:
     dockerfile: cosmos3-serving/Dockerfile
     tier: service
