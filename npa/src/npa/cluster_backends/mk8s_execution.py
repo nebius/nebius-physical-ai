@@ -797,6 +797,282 @@ def _terraform_managed_ids(
     return sorted(ids)
 
 
+def _terraform_instance_address(
+    resource: dict[str, Any], instance: dict[str, Any]
+) -> str:
+    """Return the exact Terraform address for one state instance."""
+
+    prefix = f"{resource.get('module')}." if resource.get("module") else ""
+    address = f"{prefix}{resource.get('type')}.{resource.get('name')}"
+    if "index_key" in instance:
+        address += f"[{json.dumps(instance['index_key'], separators=(',', ':'))}]"
+    return address
+
+
+def _node_group_template_fingerprint(template: dict[str, Any]) -> dict[str, Any]:
+    """Select identity-bearing node-template fields, excluding computed values."""
+
+    boot_disk = template.get("boot_disk") or {}
+    reservation = template.get("reservation_policy") or {}
+    gpu_settings = template.get("gpu_settings") or {}
+    network_interfaces = template.get("network_interfaces") or []
+    filesystems = template.get("filesystems") or []
+    disk_size = boot_disk.get("size_gibibytes")
+    try:
+        disk_size = int(disk_size) if disk_size is not None else None
+    except (TypeError, ValueError):
+        pass
+    return {
+        "resources": template.get("resources") or {},
+        "boot_disk": {
+            "type": boot_disk.get("type"),
+            "size_gibibytes": disk_size,
+        },
+        "reservation_policy": {
+            "policy": reservation.get("policy"),
+            "reservation_ids": reservation.get("reservation_ids") or [],
+        },
+        "preemptible": bool(template.get("preemptible", False)),
+        "network_interfaces": [
+            {"subnet_id": item.get("subnet_id")}
+            for item in network_interfaces
+            if isinstance(item, dict)
+        ],
+        "filesystems": [
+            {
+                "existing_filesystem": item.get("existing_filesystem"),
+                "mount_tag": item.get("mount_tag"),
+                "attach_mode": item.get("attach_mode"),
+            }
+            for item in filesystems
+            if isinstance(item, dict)
+        ],
+        "gpu_cluster": template.get("gpu_cluster") or None,
+        "gpu_settings": {"drivers_preset": gpu_settings.get("drivers_preset")},
+    }
+
+
+def _tainted_node_group_matches_desired(
+    *,
+    provider_payload: dict[str, Any],
+    state_attributes: dict[str, Any],
+    pool: MK8sNodePool,
+    cluster: MK8sDesired,
+    cluster_id: str,
+    subnet_id: str,
+) -> bool:
+    """Prove a tainted state entry still owns the exact desired live pool."""
+
+    metadata = provider_payload.get("metadata") or {}
+    spec = provider_payload.get("spec") or {}
+    status = provider_payload.get("status") or {}
+    template = spec.get("template") or {}
+    state_template = state_attributes.get("template") or {}
+    if not all(
+        isinstance(value, dict)
+        for value in (metadata, spec, status, template, state_template)
+    ):
+        return False
+    parent_id = _provider_field(metadata, "parent_id", "parentId")
+    if parent_id is _PROVIDER_FIELD_MISSING:
+        return False
+    try:
+        fixed_node_count = int(spec.get("fixed_node_count"))
+    except (TypeError, ValueError):
+        return False
+    if (
+        str(metadata.get("id") or "") != str(state_attributes.get("id") or "")
+        or str(parent_id) != cluster_id
+        or str(metadata.get("name") or "") != str(state_attributes.get("name") or "")
+        or str(status.get("state") or "") not in {"PROVISIONING", "RUNNING"}
+        or fixed_node_count != pool.count
+        or _node_group_template_fingerprint(template)
+        != _node_group_template_fingerprint(state_template)
+    ):
+        return False
+
+    resources = template.get("resources") or {}
+    reservation = template.get("reservation_policy") or {}
+    interfaces = template.get("network_interfaces") or []
+    filesystems = template.get("filesystems") or []
+    gpu_settings = template.get("gpu_settings") or {}
+    expected_disk_size = (
+        cluster.resolved_gpu_disk_size_gib()
+        if pool.is_gpu()
+        else (pool.disk_size_gib or 128)
+    )
+    try:
+        boot_disk_size = int((template.get("boot_disk") or {}).get("size_gibibytes"))
+    except (TypeError, ValueError):
+        return False
+    if (
+        resources.get("platform") != pool.platform
+        or resources.get("preset") != pool.preset
+        or boot_disk_size != expected_disk_size
+        or bool(template.get("preemptible", False)) != pool.preemptible
+        or len(interfaces) != 1
+        or not isinstance(interfaces[0], dict)
+        or interfaces[0].get("subnet_id") != subnet_id
+    ):
+        return False
+    if pool.capacity_block_group:
+        if (
+            reservation.get("policy") != "STRICT"
+            or reservation.get("reservation_ids") != [pool.capacity_block_group]
+        ):
+            return False
+    elif reservation.get("policy") or reservation.get("reservation_ids"):
+        return False
+    if cluster.enable_filestore:
+        if (
+            len(filesystems) != 1
+            or not isinstance(filesystems[0], dict)
+            or filesystems[0].get("mount_tag") != cluster.filestore_mount_tag
+            or filesystems[0].get("attach_mode") != "READ_WRITE"
+            or not filesystems[0].get("existing_filesystem")
+        ):
+            return False
+    elif filesystems:
+        return False
+    if bool(template.get("gpu_cluster")) != cluster.resolved_enable_gpu_cluster():
+        return False
+    if pool.is_gpu():
+        driver = resolve_gpu_driver_strategy(
+            gpu_nodes=cluster.gpu_count(),
+            platform=pool.platform,
+            preset=pool.preset,
+            mode=cluster.resolved_gpu_driver_mode(),
+            managed_driver_preset=cluster.managed_driver_preset,
+            enable_gpu_cluster=cluster.resolved_enable_gpu_cluster(),
+            allow_unsafe_nvswitch_operator=cluster.allow_unsafe_nvswitch_operator,
+        )
+        expected_driver = (
+            driver.managed_driver_preset if driver.uses_managed_image else None
+        )
+        if gpu_settings.get("drivers_preset") != expected_driver:
+            return False
+    return True
+
+
+def _reconcile_tainted_node_groups(
+    *,
+    terraform_bin: str,
+    workdir: Path,
+    env: dict[str, str],
+    cluster: MK8sDesired,
+    subnet_id: str,
+    nebius_bin: str,
+    profile: str,
+    on_status: Callable[[str], None] | None,
+) -> dict[str, Any]:
+    """Safely untaint exact live node groups after an interrupted apply."""
+
+    if not workdir.is_dir():
+        return {}
+    pulled = _run_capture(
+        [terraform_bin, "state", "pull"], cwd=workdir, env=env, check=False
+    )
+    if pulled.returncode != 0 or not pulled.stdout.strip():
+        return {}
+    try:
+        state = json.loads(pulled.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Terraform state is unreadable during taint audit") from exc
+    resources = state.get("resources") if isinstance(state, dict) else None
+    if not isinstance(resources, list):
+        raise RuntimeError("Terraform state has no valid resource inventory")
+
+    cluster_ids = {
+        str(instance.get("attributes", {}).get("id") or "")
+        for resource in resources
+        if isinstance(resource, dict)
+        and resource.get("mode", "managed") == "managed"
+        and resource.get("type") == "nebius_mk8s_v1_cluster"
+        for instance in resource.get("instances", [])
+        if isinstance(instance, dict)
+    }
+    cluster_ids.discard("")
+    tainted: list[tuple[str, dict[str, Any], MK8sNodePool]] = []
+    pools = {"cpu-only": cluster.cpu_nodes, "gpu": cluster.gpu_nodes}
+    for resource in resources:
+        if (
+            not isinstance(resource, dict)
+            or resource.get("mode", "managed") != "managed"
+            or resource.get("type") != "nebius_mk8s_v1_node_group"
+        ):
+            continue
+        pool = pools.get(str(resource.get("name") or ""))
+        for instance in resource.get("instances", []):
+            if not isinstance(instance, dict) or instance.get("status") != "tainted":
+                continue
+            if pool is None or pool.count <= 0:
+                raise RuntimeError(
+                    "refusing to reconcile a tainted node group with no exact desired pool"
+                )
+            attributes = instance.get("attributes")
+            if not isinstance(attributes, dict) or not attributes.get("id"):
+                raise RuntimeError(
+                    "refusing to reconcile a tainted node group without exact state identity"
+                )
+            tainted.append((_terraform_instance_address(resource, instance), attributes, pool))
+    if not tainted:
+        return {}
+    if len(cluster_ids) != 1:
+        raise RuntimeError(
+            "refusing to reconcile tainted node groups without one exact managed cluster"
+        )
+    cluster_id = next(iter(cluster_ids))
+    cli_env = env.copy()
+    for address, attributes, pool in tainted:
+        result = _run_capture(
+            [
+                *_nebius_argv(nebius_bin, profile),
+                "mk8s",
+                "node-group",
+                "get",
+                "--id",
+                str(attributes["id"]),
+                "--format",
+                "json",
+            ],
+            env=cli_env,
+            check=False,
+        )
+        try:
+            payload = json.loads(result.stdout or "{}")
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                "refusing to reconcile a tainted node group with unreadable provider state"
+            ) from exc
+        if result.returncode != 0 or not isinstance(payload, dict) or not (
+            _tainted_node_group_matches_desired(
+                provider_payload=payload,
+                state_attributes=attributes,
+                pool=pool,
+                cluster=cluster,
+                cluster_id=cluster_id,
+                subnet_id=subnet_id,
+            )
+        ):
+            raise RuntimeError(
+                "refusing to reconcile a tainted node group because live identity or "
+                "desired topology does not match exact Terraform state"
+            )
+        untaint = _run_capture(
+            [terraform_bin, "untaint", address],
+            cwd=workdir,
+            env=env,
+            check=False,
+        )
+        if untaint.returncode != 0:
+            raise RuntimeError("Terraform could not safely clear an exact node-group taint")
+        _log(on_status, f"reconciled exact tainted node-group state at {address}")
+    return {
+        "cluster_id": cluster_id,
+        "node_group_ids": sorted(str(attributes["id"]) for _, attributes, _ in tainted),
+    }
+
+
 def _write_kubeconfig(
     nebius_bin: str,
     cluster_id: str,
@@ -1216,6 +1492,27 @@ def _deploy_one_cluster(
             timeout=900,
             log_path=log_path,
         )
+        recovered_identity = _reconcile_tainted_node_groups(
+            terraform_bin=terraform_bin,
+            workdir=workdir,
+            env=env,
+            cluster=cluster,
+            subnet_id=subnet_id,
+            nebius_bin=nebius_bin,
+            profile=profile,
+            on_status=(
+                (lambda message: _log(on_status, f"[{label}] {message}"))
+                if on_status
+                else None
+            ),
+        )
+        if recovered_identity:
+            sidecar = {
+                **sidecar,
+                **recovered_identity,
+                "status": "reconciling",
+            }
+            _write_env_sidecar(install_dir, sidecar)
         _log(
             on_status,
             f"[{label}] terraform apply (cpu={cluster.cpu_count()} gpu={cluster.gpu_count()} "

@@ -1450,6 +1450,161 @@ def test_node_group_match_accepts_camel_case_with_explicit_on_demand_evidence() 
     assert L._provider_node_group_matches_pool(payload, pool) is True
 
 
+def _tainted_gpu_reconciliation_fixture() -> tuple[dict, dict, ClusterSpec]:
+    template = {
+        "resources": {
+            "platform": "gpu-rtx6000",
+            "preset": "8gpu-192vcpu-1744gb",
+        },
+        "boot_disk": {"type": "network_ssd", "size_gibibytes": 256},
+        "reservation_policy": {
+            "policy": "STRICT",
+            "reservation_ids": ["capacityblockgroup-test"],
+        },
+        "network_interfaces": [{"subnet_id": "vpcsubnet-test"}],
+        "filesystems": [
+            {
+                "existing_filesystem": "computefilesystem-test",
+                "mount_tag": "npa-shared-fs",
+                "attach_mode": "READ_WRITE",
+            }
+        ],
+        "gpu_cluster": None,
+        "gpu_settings": {"drivers_preset": "cuda13.0"},
+    }
+    attributes = {
+        "id": "mk8snodegroup-test",
+        "name": "cluster-test-gpu",
+        "fixed_node_count": 2,
+        "template": template,
+    }
+    state = {
+        "resources": [
+            {
+                "mode": "managed",
+                "type": "nebius_mk8s_v1_cluster",
+                "name": "k8s-cluster",
+                "instances": [{"attributes": {"id": "mk8scluster-test"}}],
+            },
+            {
+                "mode": "managed",
+                "type": "nebius_mk8s_v1_node_group",
+                "name": "gpu",
+                "instances": [
+                    {
+                        "index_key": 0,
+                        "status": "tainted",
+                        "attributes": attributes,
+                    }
+                ],
+            },
+        ]
+    }
+    provider = {
+        "metadata": {
+            "id": "mk8snodegroup-test",
+            "name": "cluster-test-gpu",
+            "parent_id": "mk8scluster-test",
+        },
+        "spec": {"fixed_node_count": 2, "template": template},
+        "status": {
+            "state": "PROVISIONING",
+            "target_node_count": 2,
+            "ready_node_count": 1,
+        },
+    }
+    cluster = ClusterSpec(
+        name="cluster-test",
+        cpu_nodes=NodePoolSpec(count=0),
+        gpu_nodes=NodePoolSpec(
+            count=2,
+            platform="gpu-rtx6000",
+            preset="8gpu-192vcpu-1744gb",
+            disk_size_gib=256,
+            capacity_block_group="capacityblockgroup-test",
+        ),
+        enable_filestore=True,
+        filestore_mount_tag="npa-shared-fs",
+    )
+    return state, provider, cluster
+
+
+def test_tainted_exact_node_group_is_safely_adopted(monkeypatch, tmp_path) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, provider, cluster = _tainted_gpu_reconciliation_fixture()
+    calls: list[list[str]] = []
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        calls.append(args)
+        if args[1:3] == ["state", "pull"]:
+            return _Cap(json.dumps(state), 0)
+        if "node-group" in args and "get" in args:
+            return _Cap(json.dumps(provider), 0)
+        if args[1:2] == ["untaint"]:
+            return _Cap("", 0)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(execution, "_run_capture", run)
+    result = execution._reconcile_tainted_node_groups(
+        terraform_bin="terraform",
+        workdir=tmp_path,
+        env={},
+        cluster=as_mk8s_desired(cluster),
+        subnet_id="vpcsubnet-test",
+        nebius_bin="nebius",
+        profile="tenant-profile",
+        on_status=None,
+    )
+
+    assert result == {
+        "cluster_id": "mk8scluster-test",
+        "node_group_ids": ["mk8snodegroup-test"],
+    }
+    assert calls[-1] == [
+        "terraform",
+        "untaint",
+        "nebius_mk8s_v1_node_group.gpu[0]",
+    ]
+
+
+def test_tainted_node_group_mismatch_refuses_before_untaint(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, provider, cluster = _tainted_gpu_reconciliation_fixture()
+    provider["spec"]["template"]["reservation_policy"]["reservation_ids"] = [
+        "capacityblockgroup-other"
+    ]
+    calls: list[list[str]] = []
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        calls.append(args)
+        if args[1:3] == ["state", "pull"]:
+            return _Cap(json.dumps(state), 0)
+        if "node-group" in args and "get" in args:
+            return _Cap(json.dumps(provider), 0)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(execution, "_run_capture", run)
+    with pytest.raises(RuntimeError, match="live identity or desired topology"):
+        execution._reconcile_tainted_node_groups(
+            terraform_bin="terraform",
+            workdir=tmp_path,
+            env={},
+            cluster=as_mk8s_desired(cluster),
+            subnet_id="vpcsubnet-test",
+            nebius_bin="nebius",
+            profile="tenant-profile",
+            on_status=None,
+        )
+
+    assert all("untaint" not in call for call in calls)
+
+
 def test_deploy_one_cluster_failure_leaves_sidecar_provisioning(
     tmp_path, monkeypatch
 ) -> None:
