@@ -123,6 +123,12 @@ image (`public` | `restricted`), enforced by
   `sonic-mujoco` and `groot` used to be restricted, and the re-architecture that made
   those four public is described below.
 
+  **`content-agents` is `public` through a zero-vendor-payload design.** The
+  Apache-2.0 v0.5.2 source and reviewed OVRTX lock are baked, but OVRTX itself is
+  not. The exact SDK is delivered from NVIDIA's anonymous package index into the
+  operator-owned standard runtime cache on first render use. The release scanner
+  examines every layer and nested archive for OVRTX/Omniverse payload.
+
 ## Manual gate audit (2026-08-16)
 
 The image, model, and configuration surfaces below were audited for local
@@ -488,16 +494,16 @@ transfers manifests unchanged, so it cannot add an `org.opencontainers.image.sou
 label; linking every package to the repo automatically would mean rebuilding every
 image, which is deliberately not done here.
 
-Never add a `restricted` image to a public target. Nothing is currently classified
-that way, and `publish_public` refuses anything that is, as defence in depth around the
-selector.
+Never add a `restricted` image to a public target. `cosmos3-serving` and the stale
+`sonic-mujoco` variant remain classified that way, and `publish_public` refuses
+anything restricted as defence in depth around the selector.
 
 > **Publishing is a business decision.** The engineering makes publication defensible —
 > the images contain no NVIDIA-proprietary bytes, and NVIDIA delivers Isaac to each
 > operator under that operator's own acceptance — but dispatching the workflow with
 > `dry_run=false` should wait on sign-off from someone with the authority to accept it.
 
-## Runtime-fetched model weights (and where they land)
+## Runtime-fetched model weights and reviewed SDKs (and where they land)
 
 Because no image bakes weights, every run of an image downloads them. Whether that
 happens **once** or **every time** is a property of the storage the operator gives
@@ -507,7 +513,8 @@ directory happened to be writable inside its image (`/tmp/hf_home`, a pod-local
 container and the next run re-paid for it on an already-billing GPU.
 
 `npa/src/npa/workbench/model_cache.py` is now the one place that answers "where do
-downloaded weights live", and it is wired into every runtime NPA drives: SkyPilot
+downloaded weights and the Content Agents OVRTX SDK live", and it is wired into
+every runtime NPA drives: SkyPilot
 task envs plus a Kubernetes volume at the cache root, sim2real sibling GPU Jobs,
 Serverless Jobs, long-lived workbench containers on a VM, and the OpenPI and LeIsaac
 Deployments. It is on wherever that does not mean inventing storage: a VM deploy
@@ -526,7 +533,7 @@ variable family, which runtime honors which, sizing, and how to verify a run is
 hitting the cache.
 
 This does not move the redistribution boundary: the bytes still arrive from the
-vendor under the operator's own entitlement, into the operator's own storage. It only
+vendor under the operator's own terms/access, into the operator's own storage. It only
 stops NPA from throwing them away.
 
 ## Feature exposure

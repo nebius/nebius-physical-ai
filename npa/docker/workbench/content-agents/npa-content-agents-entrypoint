@@ -3,6 +3,15 @@
 # SPDX-License-Identifier: Apache-2.0
 set -eu
 
+case "${1:-}" in
+  material-agent|physics-agent|validation-agent)
+    # Direct vendor entrypoints bypass the NPA stage adapter, so establish the
+    # same exact runtime boundary here. NPA module stages bootstrap internally;
+    # CPU-only acquire/package commands never reach this branch.
+    /opt/venv/bin/python -m npa.workflows.content_agents bootstrap-runtime
+    ;;
+esac
+
 display_num="${OVRTX_XVFB_DISPLAY:-99}"
 case "$display_num" in
   ''|*[!0-9]*)

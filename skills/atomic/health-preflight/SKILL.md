@@ -33,6 +33,11 @@ npa workbench health preflight --offline    # presence only, no network probes
 Valid `--checks` values are `all`, `hf`, `ngc`, `s3`, `token_factory`; the
 default is `hf,ngc,s3,token_factory`.
 
+Online `hf` authenticates against Hugging Face `whoami-v2`; public repository
+metadata is not sufficient. Online `ngc` performs a registry token exchange;
+that proves the key, not entitlement to every NGC artifact. `access` performs
+the capability-specific repository/artifact probe.
+
 `access` answers the different and more specific question *"is my token actually
 entitled to the gated models this capability pulls?"* Holding an HF token is not
 the same as having accepted a model's license.
@@ -120,7 +125,7 @@ with `npa workbench workflow gpus --cluster <name>`.
 
 ## Gotchas
 
-- **`--offline` proves presence, not validity.** It skips the live HF/S3/Token
+- **`--offline` proves presence, not validity.** It skips the live HF/NGC/S3/Token
   Factory probes. An expired-but-present token passes offline and fails the
   moment a stage pulls. Use offline only where there is genuinely no egress.
 - **A SKIP is not a PASS.** Checks skip when the corresponding capability is not

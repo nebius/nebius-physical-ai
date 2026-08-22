@@ -6,8 +6,8 @@ PASS/WARN/FAIL/SKIP checks, so a customer hits them as a clear preflight
 instead of a mid-pipeline failure.
 
 Every check is a pure function that takes the resolved credentials plus an
-injectable probe. The CLI wires real probes (Hugging Face HEAD, S3 list, Token
-Factory models); unit tests inject fakes. Nothing here imports GPU-heavy
+injectable probe. The CLI wires real probes (Hugging Face identity, NGC token
+exchange, S3 list, Token Factory models); unit tests inject fakes. Nothing here imports GPU-heavy
 packages or touches infrastructure at import time.
 """
 
@@ -24,10 +24,6 @@ from npa.workflows.sim2real_health import (
     has_failure,
 )
 
-# A tiny, always-public HF repo used only to confirm a token is accepted (or
-# that anonymous access works). It never requires access to a gated repo.
-HF_PROBE_REPO = "hf-internal-testing/tiny-random-gpt2"
-
 # Canonical order a customer should reason about credentials in.
 CREDENTIAL_CHECKS: tuple[str, ...] = ("hf", "ngc", "s3", "token_factory")
 
@@ -42,7 +38,8 @@ class CredentialProbes:
     PASS/WARN rather than reaching the network.
     """
 
-    hf_validator: Callable[[str, str], Any] | None = None
+    hf_validator: Callable[[str], Any] | None = None
+    ngc_validator: Callable[[str], str] | None = None
     s3_client_factory: Callable[[], Any] | None = None
     token_factory_verifier: Callable[[], list[str]] | None = None
 
@@ -82,16 +79,12 @@ def check_hf(credentials: Any, probes: CredentialProbes) -> CheckResult:
             status=PASS,
             summary="HF_TOKEN is set (not verified against Hugging Face).",
         )
-    result = probes.hf_validator(token, HF_PROBE_REPO)
+    result = probes.hf_validator(token)
     if getattr(result, "ok", False):
-        # The probe hits a public repo, which confirms presence + connectivity
-        # (and that the token is not outright rejected), but Hugging Face serves
-        # public metadata even for an expired token, so this is not full
-        # validation. Say "reachable", not "accepted".
         return CheckResult(
             name="hf",
             status=PASS,
-            summary="HF_TOKEN is set and Hugging Face is reachable.",
+            summary="HF_TOKEN is authenticated by Hugging Face.",
         )
     status_code = getattr(result, "status_code", None)
     error = getattr(result, "error", "") or "unknown error"
@@ -114,7 +107,7 @@ def check_hf(credentials: Any, probes: CredentialProbes) -> CheckResult:
 
 
 def check_ngc(credentials: Any, probes: CredentialProbes) -> CheckResult:
-    """Check the NVIDIA NGC API key is present and well-formed."""
+    """Check the NVIDIA NGC API key is present and optionally authenticated."""
 
     key = getattr(credentials, "ngc_api_key", "") or ""
     if not key:
@@ -132,11 +125,46 @@ def check_ngc(credentials: Any, probes: CredentialProbes) -> CheckResult:
     if not key.lower().startswith(("nvapi-", "nvapi_")):
         return CheckResult(
             name="ngc",
-            status=WARN,
+            status=FAIL,
             summary="NGC_API_KEY is set but does not look like an NGC key.",
             remedy="NGC keys start with 'nvapi-'. Re-check the value in ~/.npa/credentials.yaml.",
         )
-    return CheckResult(name="ngc", status=PASS, summary="NGC_API_KEY is set.")
+    if probes.ngc_validator is None:
+        return CheckResult(
+            name="ngc",
+            status=PASS,
+            summary="NGC_API_KEY is set (not verified against NGC).",
+        )
+    outcome = probes.ngc_validator(key)
+    if outcome == "reachable":
+        return CheckResult(
+            name="ngc", status=PASS, summary="NGC_API_KEY is authenticated by NGC."
+        )
+    if outcome in {"entitlement-required", "tags-401", "tags-403", "tags-404"}:
+        return CheckResult(
+            name="ngc",
+            status=PASS,
+            summary=(
+                "NGC_API_KEY completed token exchange; access to the probe artifact "
+                "is separate and not implied."
+            ),
+            details=(outcome,),
+        )
+    if outcome in {"auth-401", "auth-403", "auth-no-token"}:
+        return CheckResult(
+            name="ngc",
+            status=FAIL,
+            summary="NGC_API_KEY was rejected by NGC.",
+            remedy="Regenerate the key at https://org.ngc.nvidia.com/setup/api-key.",
+            details=(outcome,),
+        )
+    return CheckResult(
+        name="ngc",
+        status=WARN,
+        summary="NGC_API_KEY is set but could not be authenticated against NGC.",
+        remedy="Retry when NGC is reachable.",
+        details=(outcome,),
+    )
 
 
 def check_s3(credentials: Any, probes: CredentialProbes) -> CheckResult:
@@ -270,7 +298,6 @@ def run_credential_preflight(
 __all__ = [
     "CREDENTIAL_CHECKS",
     "CredentialProbes",
-    "HF_PROBE_REPO",
     "check_hf",
     "check_ngc",
     "check_s3",

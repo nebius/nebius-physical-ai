@@ -53,46 +53,105 @@ dependencies are neither needed nor present.
 ## Licensing and packaging boundary
 
 Content Agents source is Apache-2.0. OVRTX `0.3.0.312915` declares NVIDIA
-Proprietary Software and is installed from upstream's SHA-256-locked wheel list
-in an isolated environment. The operator must accept the current
+Proprietary Software, but it is not in the public image. The image contains only
+the reviewed upstream runtime lock and NPA bootstrap. On the first render use,
+the operator receives the exact architecture-specific SDK directly from
+NVIDIA's anonymous package index into operator-owned cache storage. The complete
+lock SHA-256 is
+`ed582577175e4a5b32f8b69ef9cdbfc3d7337f3786051d8b076e30a2652f6fa5`;
+the x86_64 OVRTX wheel SHA-256 is
+`a6b2b3c357f6487451c8d71e96cc4f83156c08fd9747d10e1b65f3866bed4b8f`.
+
+NVIDIA's current [Omniverse licensing page](https://docs.omniverse.nvidia.com/connect/latest/common/NVIDIA_Omniverse_License_Agreement.html)
+states that downloading or using Omniverse signifies agreement. The governing
 [NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/)
-and the
-[Product Specific Terms for NVIDIA AI Products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/),
-which incorporate the former Omniverse product-specific terms, before building
-or using it. The build gate records that decision only in the invoking shell:
+and [Product Specific Terms for NVIDIA AI Products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/)
+are linked for review. NPA does not add a prompt, acceptance environment
+variable, stored consent record, or self-certification mechanism.
+
+Builds use the additive `0.5.2-npa2` tag and may be published only after the
+exact built digest passes the byte/layer scan and real RTX workflow:
 
 ```bash
-export NPA_CONTENT_AGENTS_ACCEPT_NVIDIA_OMNIVERSE_TERMS=YES
 npa/docker/workbench/content-agents/build.sh --push
+npa/.venv/bin/python npa/scripts/scan_content_agents_image.py \
+  <candidate-image>@sha256:<digest> --expected-npa-source-sha "$(git rev-parse HEAD)"
 ```
 
-The complete image is `restricted`: build it only into the active operator's
-private Nebius registry and retain its immutable digest. Never publish it to
-GHCR or another anonymous registry. Acceptance, credentials, endpoint IDs,
-customer data, and generated assets are not Docker build inputs.
+The accepted public image is
+`ghcr.io/nebius/nebius-physical-ai/npa-content-agents:0.5.2-npa2`, OCI index
+`sha256:c64aaf6201bdaa013f9d16e8497290cf166907932f036297d7abaa430cbad7db`.
+An unauthenticated manifest/config read found one `linux/amd64` manifest, one
+bound attestation manifest, the `ubuntu` user, and the expected `public` and
+`runtime-fetch` labels. The exact digest's specialized scan covered three nested
+archives with zero findings; the general scanner covered 28,471 entries with
+zero payload/history hits; Trivy reported zero critical vulnerabilities and
+zero secrets.
+
+The same digest completed the five-stage workflow on one NVIDIA RTX PRO 6000
+Blackwell Server Edition. It emitted 6 material, 6 physics, and 1 validation
+render plus 37 artifacts (1,808,557 bytes); upstream validation passed, rigid
+body/collision/mass/friction checks were non-null, and both USD and USDZ reopened
+independently. The immutable numeric record lives in
+`npa/src/npa/deploy/content_agents_image_manifest.json`; future image changes
+need a new additive tag and new evidence.
+
+The scanner walks the final root filesystem, every individual image layer,
+nested archives, and OCI history. It fails on OVRTX/Omniverse runtime bytes,
+graphics-driver userspace, model weights, samples, populated caches,
+credentials, customer data, or a build-time runtime fetch. Credentials,
+endpoint IDs, customer data, and generated assets are never Docker build inputs.
 
 The image separately excludes Scene Optimizer Core, OvPhysX, NVIDIA/default
 material libraries, upstream samples, model weights, and caches. The workflow
 generates a minimal PreviewSurface library at run time and calls a hosted
 OpenAI-compatible VLM using `NEBIUS_TOKEN_FACTORY_KEY`; no model bytes are baked.
+Optional telemetry exporters are not installed and OpenTelemetry SDK/exporters
+are disabled by default.
 NVIDIA driver userspace is also not baked. OVRTX requires the host-mounted
 Vulkan/GLX libraries supplied by NVIDIA GPU Operator with `compute`, `utility`,
 `graphics`, and `display` capabilities.
+
+### Runtime cache and credentials
+
+The bootstrap publishes only after exact-lock and import verification, under an
+immutable identity containing the version, architecture, and complete lock
+digest. A filesystem lock gives one writer; installation occurs in a unique
+sibling temporary directory and the ready directory is renamed atomically.
+Invalid content at that identity is never overwritten and render execution
+fails closed.
+
+The standard NPA cache wiring sets `NPA_CONTENT_AGENTS_RUNTIME_CACHE` beneath
+`/opt/npa-model-cache/runtimes/content-agents`. A configured durable PVC is
+shared by the material, physics, and validation jobs: ReadWriteOnce is sufficient
+for this sequential workflow, while a ReadWriteMany claim also supports
+concurrent readers on multiple nodes. The accepted RTX run used one bound
+ReadWriteOnce claim and retained one unchanged ready identity across all three
+jobs. Without a mounted cache, the fallback is beneath
+`$XDG_CACHE_HOME/npa/runtime-cache/content-agents`; in a SkyPilot pod that is
+node/pod-ephemeral, so a later job may download again. NPA never stores a token
+or credential in the ready marker or cache metadata.
+
+OVRTX is anonymous and uses neither `HF_TOKEN` nor `NGC_API_KEY`. Those
+credentials remain relevant only to capabilities that actually fetch gated HF
+or NGC artifacts. This workflow still requires `NEBIUS_TOKEN_FACTORY_KEY` for
+its hosted VLM plus S3 credentials for stage handoff. `npa configure` and
+`npa workbench health preflight` authenticate configured HF/NGC credentials,
+while `health access` probes each selected gated artifact; neither flow grants
+redistribution rights or invents an NPA EULA boolean.
 
 ## Validate and run
 
 ```bash
 SPEC=npa/workflows/workbench/npa-workflows/content-agents-rigid-object.yaml
 npa cluster up ... --gpu-driver-mode operator
-npa workbench health preflight --output json
+npa workbench health preflight --checks s3,token_factory --json
 npa workbench workflow validate-spec "$SPEC"
 npa workbench workflow plan-spec "$SPEC" --run-id content-agents-check \
-  --var bucket=<private-bucket> \
-  --var runtime_image=<private-registry>/npa-content-agents@sha256:<digest>
+  --var bucket=<private-bucket>
 npa workbench workflow submit "$SPEC" --runtime \
   --run-id content-agents-check \
   --var bucket=<private-bucket> \
-  --var runtime_image=<private-registry>/npa-content-agents@sha256:<digest> \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY
@@ -116,6 +175,6 @@ OVRTX path tracing requires RT cores, so the three render-bearing stages request
 render targets. The hosted VLM is zero-GPU from NPA's perspective; there is no
 honest B200 stage in this workflow.
 
-Cancel the workflow before destroying its dedicated cluster. Preserve only the
-private registry digest and run-scoped S3 evidence needed for reproducibility;
-remove transient jobs, services, controllers, and clusters.
+Cancel the workflow before destroying its dedicated cluster. Preserve the exact
+public digest and access-controlled run evidence needed for reproducibility;
+remove transient jobs, services, controllers, and task-created clusters.

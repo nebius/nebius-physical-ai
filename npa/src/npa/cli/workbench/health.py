@@ -15,7 +15,7 @@ from typing import Optional
 import typer
 
 from npa.clients.credentials import load_credentials
-from npa.clients.huggingface import validate_hf_access
+from npa.clients.huggingface import validate_hf_access, validate_hf_identity
 from npa.clients.kube import run_kubectl
 from npa.clients.storage import StorageClient
 from npa.guardrails.skypilot import inspect_image_exists
@@ -102,6 +102,14 @@ def _token_factory_verifier() -> list[str]:
     return TokenFactoryClient(config=config).list_models()
 
 
+def _ngc_auth_verifier(api_key: str) -> str:
+    """Authenticate through NGC token exchange without implying all entitlements."""
+
+    from npa.workbench.nurec.nurec import check_ngc_image_access
+
+    return check_ngc_image_access(api_key)
+
+
 @app.command("preflight")
 def preflight_command(
     checks: str = typer.Option(
@@ -115,7 +123,7 @@ def preflight_command(
     offline: bool = typer.Option(
         False,
         "--offline",
-        help="Skip live network probes (HF/S3/Token Factory); only check presence.",
+        help="Skip live network probes (HF/NGC/S3/Token Factory); only check presence.",
     ),
     warn_only: bool = typer.Option(
         False, "--warn-only", help="Exit 0 even when a check fails."
@@ -143,7 +151,8 @@ def preflight_command(
         probes = CredentialProbes()
     else:
         probes = CredentialProbes(
-            hf_validator=validate_hf_access,
+            hf_validator=validate_hf_identity,
+            ngc_validator=_ngc_auth_verifier,
             # Probe with the resolved credentials (endpoint/keys often live in
             # ~/.npa rather than the process env), not env-only defaults.
             s3_client_factory=lambda: StorageClient.from_environment(

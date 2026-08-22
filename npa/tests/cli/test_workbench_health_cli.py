@@ -195,6 +195,46 @@ def test_preflight_selected_check(monkeypatch) -> None:
     assert "token_factory:" not in result.output
 
 
+def test_preflight_live_hf_uses_authenticated_identity_probe(monkeypatch) -> None:
+    from npa.cli.workbench import health as health_module
+    from npa.clients.huggingface import HFAccessResult
+
+    observed: list[str] = []
+    monkeypatch.setattr(health_module, "load_credentials", lambda: _AccessCreds())
+    monkeypatch.setattr(
+        health_module,
+        "validate_hf_identity",
+        lambda token: (
+            observed.append(token)
+            or HFAccessResult(repo="whoami-v2", ok=True, status_code=200)
+        ),
+    )
+
+    result = runner.invoke(app, ["workbench", "health", "preflight", "--checks", "hf"])
+
+    assert result.exit_code == 0
+    assert "authenticated by Hugging Face" in result.output
+    assert observed == ["hf_from_environment"]
+
+
+def test_preflight_live_ngc_uses_token_exchange_probe(monkeypatch) -> None:
+    from npa.cli.workbench import health as health_module
+
+    observed: list[str] = []
+    monkeypatch.setattr(health_module, "load_credentials", lambda: _AccessCreds())
+    monkeypatch.setattr(
+        health_module,
+        "_ngc_auth_verifier",
+        lambda key: observed.append(key) or "reachable",
+    )
+
+    result = runner.invoke(app, ["workbench", "health", "preflight", "--checks", "ngc"])
+
+    assert result.exit_code == 0
+    assert "authenticated by NGC" in result.output
+    assert observed == ["nvapi-from-environment"]
+
+
 def test_preflight_rejects_unknown_check(monkeypatch) -> None:
     from npa.cli.workbench import health as health_module
 

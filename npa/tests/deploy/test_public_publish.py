@@ -32,7 +32,7 @@ from npa.deploy.images import (
     DEFAULT_PUBLIC_CONTAINER_REGISTRY,
     OMNIVERSE_RESTRICTED_DERIVED_IMAGES,
     OMNIVERSE_RESTRICTED_TOOLS,
-    UNVALIDATED_PUBLICATION_TOOLS,
+    PUBLICATION_QUARANTINE_TOOLS,
     container_image_for_tool,
     is_public_registry,
     is_publicly_redistributable,
@@ -47,6 +47,7 @@ from npa.deploy.publish_public import (
     _pin_wan_publication_sources as REAL_WAN_SOURCE_PIN,
     build_publish_plan,
     verify_bootstrap_publication_source as REAL_BOOTSTRAP_PUBLICATION_GATE,
+    verify_content_agents_publication_source as REAL_CONTENT_AGENTS_PUBLICATION_GATE,
     verify_wan_publication_source as REAL_WAN_PUBLICATION_GATE,
 )
 
@@ -63,6 +64,11 @@ def _avoid_registry_attestation_reads_in_unrelated_publish_tests(monkeypatch) ->
         publish_public,
         "verify_wan_publication_source",
         lambda item: (True, "test fixture: Wan gate verified"),
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "verify_content_agents_publication_source",
+        lambda item: (True, "test fixture: Content Agents gate verified"),
     )
     monkeypatch.setattr(
         publish_public,
@@ -194,7 +200,6 @@ def test_preflight_skips_bootstrap_gate_for_uncontracted_image(
     monkeypatch.setattr(
         publish_public, "_crane_manifest_readable", lambda ref, **_: (True, "ok")
     )
-
     def unexpected_gate(_item):  # pragma: no cover - must not run
         raise AssertionError("uncontracted image reached the bootstrap gate")
 
@@ -240,7 +245,7 @@ def test_isaac_images_are_no_longer_restricted() -> None:
         assert is_publicly_redistributable(tool), tool
 
 
-def test_isaac_tools_are_public_while_cosmos3_serving_is_restricted() -> None:
+def test_runtime_fetch_tools_are_public_while_cosmos3_serving_is_restricted() -> None:
     """The Isaac fixes do not imply an unrelated vendor base may be mirrored.
 
     Omniverse Kit was only the first: sonic also baked gated model weights (git-LFS
@@ -249,11 +254,9 @@ def test_isaac_tools_are_public_while_cosmos3_serving_is_restricted() -> None:
     visible in the Dockerfile. The scan that clears it:
     npa-sonic:0.1.2-rtfetch-rc5, 125,655 entries, 16 allowlisted paths, VERDICT clean.
     """
-    assert OMNIVERSE_RESTRICTED_TOOLS == frozenset(
-        {"content-agents", "cosmos3-serving"}
-    )
+    assert OMNIVERSE_RESTRICTED_TOOLS == frozenset({"cosmos3-serving"})
     assert OMNIVERSE_RESTRICTED_DERIVED_IMAGES == frozenset({"sonic-mujoco"})
-    for tool in ("isaac-lab", "sonic", "groot"):
+    for tool in ("isaac-lab", "sonic", "groot", "content-agents"):
         assert is_publicly_redistributable(tool), tool
 
 
@@ -283,6 +286,8 @@ def test_public_set_includes_the_oss_tools() -> None:
         "isaac-lab",
         "sonic",
         "groot",
+        # OVRTX is delivered directly by NVIDIA into the operator cache.
+        "content-agents",
     ):
         assert tool in public, tool
     assert public == set(CONTAINER_IMAGE_NAMES) - OMNIVERSE_RESTRICTED_TOOLS
@@ -374,14 +379,14 @@ def test_publish_plan_targets_public_registry_by_default() -> None:
     # contract-derived total rather than hardcoded, so adding a freely
     # redistributable image does not silently drift this gate.
     assert len(plan) == len(publicly_publishable_tools()) - len(
-        set(publicly_publishable_tools()) & set(UNVALIDATED_PUBLICATION_TOOLS)
+        set(publicly_publishable_tools()) & set(PUBLICATION_QUARANTINE_TOOLS)
     )
     # And, since the Isaac re-architecture emptied the restricted set: every image the repo
     # builds and has validated is publishable. This is the assertion that would catch a
     # tool silently dropping out of the plan, which the derived equality above cannot.
     assert len(plan) == len(CONTAINER_IMAGE_NAMES) - len(
         set(CONTAINER_IMAGE_NAMES)
-        & (set(OMNIVERSE_RESTRICTED_TOOLS) | set(UNVALIDATED_PUBLICATION_TOOLS))
+        & (set(OMNIVERSE_RESTRICTED_TOOLS) | set(PUBLICATION_QUARANTINE_TOOLS))
     )
     for item in plan:
         assert item.target_ref.startswith(DEFAULT_PUBLIC_CONTAINER_REGISTRY + "/npa-")
@@ -430,13 +435,16 @@ def test_contract_marks_active_isaac_images_public_and_runtime_fetch() -> None:
     assert stale["redistribution"] == "restricted"
     assert stale.get("isaac_runtime_fetch") is not True
 
+    content_agents = contract["images"]["content-agents"]
+    assert content_agents["redistribution"] == "public"
+    assert content_agents["ovrtx_runtime_fetch"] is True
+
 
 def test_the_restriction_mechanism_still_exists() -> None:
     """The build-your-own Cosmos3 serving image exercises this boundary."""
     assert hasattr(images, "OMNIVERSE_RESTRICTED_TOOLS")
     assert hasattr(images, "OMNIVERSE_RESTRICTED_DERIVED_IMAGES")
     assert omniverse_restricted_image_names() == [
-        "content-agents",
         "cosmos3-serving",
         "sonic-mujoco",
     ]
@@ -880,6 +888,291 @@ def test_the_preflight_flag_never_copies(monkeypatch) -> None:
         publish_public.main(["--target", "ghcr.io/example/workbench", "--preflight"])
         == 0
     )
+
+
+def _content_agents_gate_fixture() -> tuple[dict, dict, dict, dict[str, dict]]:
+    platform_digest = "sha256:" + "1" * 64
+    index_digest = "sha256:" + "2" * 64
+    attestation_digest = "sha256:" + "3" * 64
+    accepted = {
+        "oci_digest": index_digest,
+        "amd64_manifest": platform_digest,
+        "implementation_revision": "4" * 40,
+        "runtime": {
+            "version": "0.3.0.312915",
+            "lock_sha256": "5" * 64,
+            "delivery": "anonymous-runtime-fetch-from-nvidia",
+            "cache_tier": "configured-filesystem",
+            "reused_render_stages": 3,
+        },
+        "payload_scan": {
+            "report_sha256": "6" * 64,
+            "archives_scanned": 3,
+            "findings": 0,
+        },
+        "general_payload_scan": {
+            "report_sha256": "7" * 64,
+            "entries_scanned": 28471,
+            "payload_hits": 0,
+            "history_hits": 0,
+            "weight_shaped_paths": 5,
+        },
+        "vulnerability_scan": {
+            "report_sha256": "8" * 64,
+            "critical_total": 0,
+            "critical_with_fix": 0,
+            "secrets": 0,
+        },
+        "attestations": {
+            "manifest_count": 1,
+            "statement_count": 2,
+            "spdx": 1,
+            "slsa_provenance_v0_2": 1,
+            "bound_to_amd64_manifest": True,
+        },
+        "rtx_proof": {
+            "record_id": "private-access-controlled-validation-record",
+            "gpu_model": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+            "gpu_count": 1,
+            "observed_image_id_digest": index_digest,
+            "upstream_validation": "pass",
+            "material_render_count": 6,
+            "physics_render_count": 6,
+            "validation_render_count": 2,
+            "usd_sha256": "9" * 64,
+            "usdz_sha256": "a" * 64,
+            "rigid_physics": {
+                "rigid_body": True,
+                "collision": True,
+                "fixed": False,
+                "mass_or_density": 2.7,
+                "friction": 0.61,
+            },
+        },
+    }
+    index = {
+        "manifests": [
+            {
+                "digest": platform_digest,
+                "platform": {"architecture": "amd64", "os": "linux"},
+            },
+            {
+                "digest": attestation_digest,
+                "annotations": {
+                    "vnd.docker.reference.type": "attestation-manifest",
+                    "vnd.docker.reference.digest": platform_digest,
+                },
+            },
+        ]
+    }
+    attestation = {
+        "layers": [
+            {
+                "digest": "sha256:spdx",
+                "annotations": {
+                    "in-toto.io/predicate-type": "https://spdx.dev/Document"
+                },
+            },
+            {
+                "digest": "sha256:slsa",
+                "annotations": {
+                    "in-toto.io/predicate-type": "https://slsa.dev/provenance/v0.2"
+                },
+            },
+        ]
+    }
+    blobs = {
+        "sha256:spdx": {
+            "subject": [
+                {"name": "pkg", "digest": {"sha256": platform_digest[7:]}}
+            ],
+            "predicateType": "https://spdx.dev/Document",
+            "predicate": {"packages": [{"name": "npa-content-agents"}]},
+        },
+        "sha256:slsa": {
+            "subject": [
+                {"name": "pkg", "digest": {"sha256": platform_digest[7:]}}
+            ],
+            "predicateType": "https://slsa.dev/provenance/v0.2",
+            "predicate": {"buildType": "docker", "materials": [{"uri": "git"}]},
+        },
+    }
+    return accepted, index, attestation, blobs
+
+
+def test_content_agents_publication_gate_binds_clean_bytes_and_rtx_proof(
+    monkeypatch,
+) -> None:
+    from npa.deploy import publish_public
+
+    accepted, index, attestation, blobs = _content_agents_gate_fixture()
+    monkeypatch.setattr(
+        publish_public.images,
+        "content_agents_accepted_image_manifest",
+        lambda: accepted,
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "_crane_digest",
+        lambda ref, **_: (True, accepted["oci_digest"]),
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "_crane_json",
+        lambda args: index if "@" not in args[1] else attestation,
+    )
+    monkeypatch.setattr(
+        publish_public, "_crane_blob_json", lambda repository, digest: blobs[digest]
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "_scan_content_agents_payload_exact_digest",
+        lambda image_ref, **_: {
+            "specialized": {"archives_scanned": 3, "findings": 0},
+            "general": {
+                "entries_scanned": 28471,
+                "payload_hits": 0,
+                "history_hits": 0,
+                "weight_shaped_paths": 5,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "_scan_content_agents_trivy_exact_digest",
+        lambda image_ref: {
+            "critical_total": 0,
+            "critical_with_fix": 0,
+            "secrets": 0,
+        },
+    )
+
+    ok, detail = REAL_CONTENT_AGENTS_PUBLICATION_GATE(
+        PublishItem(
+            tool="content-agents",
+            source_ref="source.example/npa-content-agents:accepted",
+            target_ref="ghcr.io/example/npa-content-agents:accepted",
+        )
+    )
+
+    assert ok, detail
+    assert accepted["oci_digest"] in detail
+    assert "SPDX+SLSA v0.2" in detail
+    assert "RTX renders 6/6/2" in detail
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        ("image_digest", "RTX-accepted digest"),
+        ("payload_count", "live payload scans disagree"),
+        ("rigid_physics", "rigid-physics proof is invalid"),
+        ("extra_manifest", "unscanned/unattested extra manifest"),
+    ],
+)
+def test_content_agents_publication_gate_fails_closed_on_mutated_evidence(
+    monkeypatch, mutation: str, expected: str
+) -> None:
+    from npa.deploy import publish_public
+
+    accepted, index, attestation, blobs = _content_agents_gate_fixture()
+    observed_digest = accepted["oci_digest"]
+    live_entries = 28471
+    if mutation == "image_digest":
+        observed_digest = "sha256:" + "f" * 64
+    elif mutation == "payload_count":
+        live_entries += 1
+    elif mutation == "rigid_physics":
+        accepted["rtx_proof"]["rigid_physics"]["mass_or_density"] = 0
+    elif mutation == "extra_manifest":
+        index["manifests"].append(
+            {
+                "digest": "sha256:" + "e" * 64,
+                "platform": {"architecture": "arm64", "os": "linux"},
+            }
+        )
+    monkeypatch.setattr(
+        publish_public.images,
+        "content_agents_accepted_image_manifest",
+        lambda: accepted,
+    )
+    monkeypatch.setattr(
+        publish_public, "_crane_digest", lambda ref, **_: (True, observed_digest)
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "_crane_json",
+        lambda args: index if "@" not in args[1] else attestation,
+    )
+    monkeypatch.setattr(
+        publish_public, "_crane_blob_json", lambda repository, digest: blobs[digest]
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "_scan_content_agents_payload_exact_digest",
+        lambda image_ref, **_: {
+            "specialized": {"archives_scanned": 3, "findings": 0},
+            "general": {
+                "entries_scanned": live_entries,
+                "payload_hits": 0,
+                "history_hits": 0,
+                "weight_shaped_paths": 5,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "_scan_content_agents_trivy_exact_digest",
+        lambda image_ref: {
+            "critical_total": 0,
+            "critical_with_fix": 0,
+            "secrets": 0,
+        },
+    )
+
+    ok, detail = REAL_CONTENT_AGENTS_PUBLICATION_GATE(
+        PublishItem(
+            tool="content-agents",
+            source_ref="source.example/npa-content-agents:mutated",
+            target_ref="ghcr.io/example/npa-content-agents:accepted",
+        )
+    )
+
+    assert not ok
+    assert expected in detail
+
+
+def test_content_agents_publication_gate_blocks_copy_before_any_write(
+    monkeypatch, capsys
+) -> None:
+    from npa.deploy import publish_public
+
+    monkeypatch.setattr(
+        publish_public, "_crane_manifest_readable", lambda ref, **_: (True, "ok")
+    )
+    monkeypatch.setattr(
+        publish_public.images, "PUBLICATION_QUARANTINE_TOOLS", frozenset()
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "verify_bootstrap_publication_source",
+        lambda item: (True, "attested"),
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "verify_content_agents_publication_source",
+        lambda item: (False, "OVRTX bytes found in an earlier layer"),
+    )
+    item = PublishItem(
+        tool="content-agents",
+        source_ref="source.example/npa-content-agents@sha256:" + "1" * 64,
+        target_ref="ghcr.io/example/npa-content-agents:accepted",
+    )
+
+    failures = publish_public.preflight_sources([item])
+
+    assert failures == [(item, "CONTENT AGENTS GATE — OVRTX bytes found in an earlier layer")]
+    assert "OVRTX bytes found in an earlier layer" in capsys.readouterr().out
 
 
 def test_wan_publication_gate_binds_clean_bytes_and_attestations(monkeypatch) -> None:

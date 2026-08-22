@@ -115,6 +115,11 @@ redistribution:
         image private-registry-only unless redistribution rights are separately
         established.
       pattern: '(?is)\bRUN\b[^\n]*\b(?:uv\s+)?pip\s+install\b[^\n]*pylock\.ovrtx-runtime'
+    - kind: ovrtx_build_bootstrap
+      why: >-
+        Provisioning OVRTX during an image build bakes NVIDIA's proprietary
+        runtime even if the Dockerfile never spells out pip install.
+      pattern: '(?is)\bRUN\b[^\n]*render_ovrtx[^\n]*--provision-only'
   classes:
     public:
       description: >
@@ -307,24 +312,26 @@ images:
     redistribution: restricted
   content-agents:
     dockerfile: content-agents/Dockerfile
+    ovrtx_runtime_fetch: true
+    accepted_image_manifest: npa/src/npa/deploy/content_agents_image_manifest.json
     tier: job
     passwordless_root_exemption: >-
       SkyPilot Kubernetes bootstrap only; the final task process is uid 1000,
       no service or public ingress is enabled, host keys are generated only at
       run time, and no credentials or license acceptance are baked.
     notes: >-
-      Build-your-own only. NVIDIA Content Agents v0.5.2 source is Apache-2.0
-      and fetched at immutable commit 36dbf3f274f8e256637230a05a085853f65cc175.
-      The image also installs hash-locked OVRTX 0.3.0.312915 in an isolated
-      environment. OVRTX declares NVIDIA Proprietary Software and the available
-      terms do not conclusively establish anonymous-image redistribution rights,
-      so the complete image stays in the accepting operator's private registry.
+      NVIDIA Content Agents v0.5.2 source is Apache-2.0 and fetched at immutable
+      commit 36dbf3f274f8e256637230a05a085853f65cc175. The public image contains
+      only source, the NPA downloader, and the reviewed upstream OVRTX lock;
+      it contains zero OVRTX wheel, runtime, or native payload bytes. On first
+      render use, the operator fetches exact OVRTX 0.3.0.312915 directly from
+      NVIDIA's anonymous package index into the standard runtime cache.
       Scene Optimizer Core, OvPhysX, upstream material/sample assets, model
       weights, credentials, and customer data are excluded. Hosted VLM inference
       and customer assets enter only at run time. NVIDIA driver userspace is not
       baked; OVRTX requires an RTX Kubernetes node whose GPU Operator mounts
       compute, utility, graphics, and display capabilities.
-    redistribution: restricted
+    redistribution: public
     skypilot_bootstrap_contract: skypilot-0.12.2-v1
   cosmos3-reason:
     dockerfile: cosmos3-reason/Dockerfile

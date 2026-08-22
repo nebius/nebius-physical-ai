@@ -334,6 +334,51 @@ def test_wan_validation_is_bound_to_an_immutable_accepted_tuple(
     assert accepted["vulnerability_scan"]["secrets"] == 0
 
 
+def test_content_agents_validation_is_bound_to_clean_bytes_and_rtx(
+    entries: list[dict],
+) -> None:
+    item = next(entry for entry in entries if entry["name"] == "npa-content-agents")
+    accepted = json.loads(
+        (ROOT / item["accepted_image_manifest"]).read_text(encoding="utf-8")
+    )
+
+    assert item["redistribution"] == "public"
+    assert item["verdict"] == "blocked", "B200/B300 are not RT-core renderers"
+    assert item["validation"] == "validated"
+    assert accepted["format"] == "npa_content_agents_accepted_image_manifest_v1"
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", accepted["oci_digest"])
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", accepted["amd64_manifest"])
+    assert accepted["runtime"]["version"] == "0.3.0.312915"
+    assert accepted["runtime"]["delivery"] == "anonymous-runtime-fetch-from-nvidia"
+    assert accepted["runtime"]["ready_markers"] == 1
+    assert accepted["runtime"]["reused_render_stages"] == 3
+    assert accepted["payload_scan"]["archives_scanned"] == 3
+    assert accepted["payload_scan"]["findings"] == 0
+    assert accepted["general_payload_scan"]["entries_scanned"] == 28471
+    assert accepted["general_payload_scan"]["payload_hits"] == 0
+    assert accepted["general_payload_scan"]["history_hits"] == 0
+    assert accepted["vulnerability_scan"]["critical_total"] == 0
+    assert accepted["vulnerability_scan"]["secrets"] == 0
+    publication = accepted["anonymous_publication"]
+    assert publication["verified"] is True
+    assert publication["oci_digest"] == accepted["oci_digest"]
+    assert publication["oci_user"] == "ubuntu"
+    proof = accepted["rtx_proof"]
+    assert proof["record_id"] == item["validation_run"]
+    assert proof["observed_image_id_digest"] == accepted["oci_digest"]
+    assert proof["gpu_model"] == "NVIDIA RTX PRO 6000 Blackwell Server Edition"
+    assert proof["gpu_count"] == 1
+    assert proof["upstream_validation"] == "pass"
+    assert [
+        proof["material_render_count"],
+        proof["physics_render_count"],
+        proof["validation_render_count"],
+    ] == [6, 6, 1]
+    assert proof["rigid_physics"]["fixed"] is False
+    assert proof["rigid_physics"]["mass_or_density"] > 0
+    assert 0.1 <= proof["rigid_physics"]["friction"] <= 2.0
+
+
 def test_base_image_covers_both_blackwell_majors(entries: list[dict]) -> None:
     """npa-base gates the tree, so its arch list must span sm_100 and sm_120."""
 

@@ -83,6 +83,7 @@ flowchart TB
     vlm["lerobot-vlm-rl: VLM signal RL step"]
     genesis["genesis: scene build + step"]
     isaac["isaac-lab: headless env + step"]
+    content["content-agents: rigid physics + OVRTX validation"]
     cosmos["cosmos: model load + infer"]
     transfer["cosmos2-transfer: CUDA venv probe"]
     c3["cosmos3: real text2image generation"]
@@ -106,6 +107,7 @@ flowchart TB
 | `lerobot-vlm-rl` | `0.1.1` | container-smoke | CUDA; VLM signal parse + RL step | required | gpu-gated |
 | `genesis` | `0.4.6` | container-smoke | import; Franka scene; step; body state | required | gpu-gated |
 | `isaac-lab` | `2.3.2.post1` | container-smoke | version; runtime; manipulation env; step | required | gpu-gated |
+| `content-agents` | `0.5.2-npa2` | container-smoke | exact OVRTX runtime fetch; real rigid-physics authoring; upstream validation + render | required | gpu-gated |
 | `cosmos` | `cu128-torch27-sm100-1.0.9-20260803T002017Z` | container-smoke | version; model load; single inference (safety on) | required | gpu-gated |
 | `cosmos2-transfer` | `2.5.1-golden-eval-smoke-*` | container-smoke | venv torch; CUDA; GPU matmul probe | required | gpu-gated |
 | `cosmos3` | `1.2.2-cu130-r2` | container-smoke | real Cosmos 3 text2image generation; decodable image; guardrails on | required | gpu-gated |
@@ -228,6 +230,7 @@ pipeline. Key safety notes are condensed below.
 | `lerobot-vlm-rl` | VLM-reward RL step for sim-to-real | `workflow-smoke` | optional | gpu-gated |
 | `genesis` | Genesis physics sim + RL teacher + demos | `container-smoke` | required | gpu-gated |
 | `isaac-lab` | Isaac Lab RL sim (headless train/eval) | `container-smoke` | required | gpu-gated |
+| `content-agents` | rigid-object material/physics/render/validation pipeline | `container-smoke` | required | gpu-gated |
 | `cosmos` | Cosmos world-model serving (text2world) | `container-smoke` | required | gpu-gated |
 | `cosmos2-transfer` | Cosmos-Transfer2 video-to-video for synthetic data | `container-smoke` | required | gpu-gated |
 | `cosmos3` | Cosmos 3 omni-model generation (image/video) | `container-smoke` | required | gpu-gated |

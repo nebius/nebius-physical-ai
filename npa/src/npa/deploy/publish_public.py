@@ -52,6 +52,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -115,7 +116,7 @@ def build_publish_plan(
         # are excluded from the plan rather than failed during preflight,
         # because the plan is meant to read as "what we would hand to the
         # public" — and something that does not exist is not that.
-        if tool in images.UNVALIDATED_PUBLICATION_TOOLS:
+        if tool in images.PUBLICATION_QUARANTINE_TOOLS:
             continue
         # Read the restricted set through the module, never a from-import: a
         # defence-in-depth check that holds a stale copy of the thing it is defending is
@@ -227,8 +228,8 @@ def _trivy_command() -> list[str]:
     return command
 
 
-def _scan_wan_trivy_exact_digest(image_ref: str) -> dict[str, int]:
-    """Rerun Trivy against the immutable Wan source bytes immediately before copy."""
+def _scan_trivy_exact_digest(image_ref: str, *, subject: str) -> dict[str, int]:
+    """Rerun Trivy against immutable source bytes immediately before copy."""
 
     completed = subprocess.run(
         [
@@ -253,10 +254,10 @@ def _scan_wan_trivy_exact_digest(image_ref: str) -> dict[str, int]:
     )
     if completed.returncode:
         detail = (completed.stderr or completed.stdout or "").strip()
-        raise RuntimeError(detail or "Wan exact-digest Trivy scan failed")
+        raise RuntimeError(detail or f"{subject} exact-digest Trivy scan failed")
     payload = json.loads(completed.stdout)
     if not isinstance(payload, dict) or not isinstance(payload.get("Results"), list):
-        raise RuntimeError("Wan exact-digest Trivy scan returned invalid JSON")
+        raise RuntimeError(f"{subject} exact-digest Trivy scan returned invalid JSON")
     vulnerabilities: list[dict[str, Any]] = []
     secrets: list[dict[str, Any]] = []
     for result in payload["Results"]:
@@ -278,17 +279,29 @@ def _scan_wan_trivy_exact_digest(image_ref: str) -> dict[str, int]:
     ]
     if fixed:
         raise RuntimeError(
-            f"Wan exact-digest Trivy scan found {len(fixed)} fixed CRITICAL vulnerabilities"
+            f"{subject} exact-digest Trivy scan found {len(fixed)} fixed CRITICAL vulnerabilities"
         )
     if secrets:
         raise RuntimeError(
-            f"Wan exact-digest Trivy scan found {len(secrets)} secret findings"
+            f"{subject} exact-digest Trivy scan found {len(secrets)} secret findings"
         )
     return {
         "critical_total": len(vulnerabilities),
         "critical_with_fix": len(fixed),
         "secrets": len(secrets),
     }
+
+
+def _scan_wan_trivy_exact_digest(image_ref: str) -> dict[str, int]:
+    """Rerun Trivy against the immutable Wan source bytes immediately before copy."""
+
+    return _scan_trivy_exact_digest(image_ref, subject="Wan")
+
+
+def _scan_content_agents_trivy_exact_digest(image_ref: str) -> dict[str, int]:
+    """Rerun Trivy against immutable Content Agents bytes before public copy."""
+
+    return _scan_trivy_exact_digest(image_ref, subject="Content Agents")
 
 
 def verify_validated_publication(item: PublishItem) -> tuple[bool, str]:
@@ -301,12 +314,12 @@ def verify_validated_publication(item: PublishItem) -> tuple[bool, str]:
     left to fail incidentally when the tag turns out not to exist.
     """
 
-    if item.tool not in images.UNVALIDATED_PUBLICATION_TOOLS:
+    if item.tool not in images.PUBLICATION_QUARANTINE_TOOLS:
         return True, "not applicable"
     return False, (
         f"{item.tool} has no accepted image: it has not been built, payload "
         "scanned, or GPU validated. Publication is blocked until that evidence "
-        "exists and the tool leaves images.UNVALIDATED_PUBLICATION_TOOLS."
+        "exists and the tool leaves images.PUBLICATION_QUARANTINE_TOOLS."
     )
 
 
@@ -514,6 +527,326 @@ def verify_wan_publication_source(item: PublishItem) -> tuple[bool, str]:
         return False, str(exc)
 
 
+def _scan_content_agents_payload_exact_digest(
+    image_ref: str, *, expected_source_sha: str
+) -> dict[str, dict[str, int]]:
+    """Run both byte scanners against the immutable Content Agents source."""
+
+    scripts = Path(__file__).resolve().parents[3] / "scripts"
+    with tempfile.TemporaryDirectory(prefix="npa-content-agents-publication-scan-") as tmp:
+        specialized = subprocess.run(
+            [
+                sys.executable,
+                str(scripts / "scan_content_agents_image.py"),
+                image_ref,
+                "--expected-npa-source-sha",
+                expected_source_sha,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if specialized.returncode:
+            detail = (specialized.stderr or specialized.stdout or "").strip()
+            raise RuntimeError(detail or "Content Agents exact byte scan failed")
+        specialized_result = json.loads(specialized.stdout)
+        if specialized_result.get("status") != "pass" or specialized_result.get(
+            "findings"
+        ):
+            raise RuntimeError("Content Agents exact byte scan did not pass cleanly")
+
+        general_path = Path(tmp) / "general.json"
+        general = subprocess.run(
+            [
+                sys.executable,
+                str(scripts / "scan_image_omniverse_payload.py"),
+                image_ref,
+                "--json",
+                str(general_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if general.returncode:
+            detail = (general.stderr or general.stdout or "").strip()
+            raise RuntimeError(detail or "Content Agents general payload scan failed")
+        general_result = json.loads(general_path.read_text(encoding="utf-8"))
+        if (
+            general_result.get("verdict") != "clean"
+            or not general_result.get("scan_complete")
+            or general_result.get("payload_hits")
+            or general_result.get("history_hits")
+        ):
+            raise RuntimeError(
+                "Content Agents general exact-digest payload scan did not pass cleanly"
+            )
+
+    return {
+        "specialized": {
+            "archives_scanned": int(specialized_result.get("archives_scanned") or 0),
+            "findings": len(specialized_result.get("findings") or []),
+        },
+        "general": {
+            "entries_scanned": int(general_result.get("entries_scanned") or 0),
+            "payload_hits": len(general_result.get("payload_hits") or []),
+            "history_hits": len(general_result.get("history_hits") or []),
+            "weight_shaped_paths": len(
+                general_result.get("weight_shaped_paths") or []
+            ),
+        },
+    }
+
+
+def verify_content_agents_publication_source(item: PublishItem) -> tuple[bool, str]:
+    """Bind Content Agents publication to clean bytes and the accepted RTX run."""
+
+    if item.tool != "content-agents":
+        return True, "not applicable"
+    try:
+        accepted = images.content_agents_accepted_image_manifest()
+        digest_ok, index_digest = _crane_digest(item.source_ref)
+        if not digest_ok:
+            raise RuntimeError(index_digest)
+        accepted_digest = str(accepted.get("oci_digest") or "")
+        if index_digest != accepted_digest:
+            raise RuntimeError(
+                "Content Agents source digest is not the immutable RTX-accepted digest "
+                f"{accepted_digest}"
+            )
+
+        index = _crane_json(["manifest", item.source_ref])
+        manifests = index.get("manifests")
+        if not isinstance(manifests, list):
+            raise RuntimeError("Content Agents source tag is not an attested OCI index")
+        platforms = [
+            entry
+            for entry in manifests
+            if isinstance(entry, dict)
+            and entry.get("platform") == {"architecture": "amd64", "os": "linux"}
+        ]
+        if len(platforms) != 1:
+            raise RuntimeError(
+                "Content Agents OCI index requires exactly one linux/amd64 manifest"
+            )
+        platform_digest = str(platforms[0].get("digest") or "")
+        if platform_digest != accepted.get("amd64_manifest"):
+            raise RuntimeError(
+                "Content Agents linux/amd64 manifest is not the RTX-accepted digest"
+            )
+        bound_attestations = [
+            entry
+            for entry in manifests
+            if isinstance(entry, dict)
+            and (entry.get("annotations") or {}).get("vnd.docker.reference.type")
+            == "attestation-manifest"
+            and (entry.get("annotations") or {}).get("vnd.docker.reference.digest")
+            == platform_digest
+        ]
+        allowed = {
+            platform_digest,
+            *(str(entry.get("digest") or "") for entry in bound_attestations),
+        }
+        if len(bound_attestations) != 1:
+            raise RuntimeError(
+                "Content Agents linux/amd64 manifest requires exactly one bound "
+                "attestation manifest"
+            )
+        if any(
+            not isinstance(entry, dict)
+            or str(entry.get("digest") or "") not in allowed
+            for entry in manifests
+        ):
+            raise RuntimeError(
+                "Content Agents OCI index contains an unscanned/unattested extra manifest"
+            )
+
+        repository = _repository(item.source_ref)
+        attestation_manifest = _crane_json(
+            ["manifest", f"{repository}@{bound_attestations[0]['digest']}"]
+        )
+        layers = attestation_manifest.get("layers")
+        if not isinstance(layers, list):
+            raise RuntimeError("Content Agents attestation manifest has no layers")
+        attestation_proof = accepted.get("attestations")
+        if (
+            not isinstance(attestation_proof, dict)
+            or attestation_proof.get("manifest_count") != 1
+            or attestation_proof.get("statement_count") != 2
+            or attestation_proof.get("spdx") != 1
+            or attestation_proof.get("slsa_provenance_v0_2") != 1
+            or attestation_proof.get("bound_to_amd64_manifest") is not True
+            or len(layers) != 2
+        ):
+            raise RuntimeError("Content Agents accepted attestation proof is invalid")
+        statements: dict[str, dict[str, Any]] = {}
+        for layer in layers:
+            if not isinstance(layer, dict):
+                continue
+            predicate_type = str(
+                (layer.get("annotations") or {}).get("in-toto.io/predicate-type")
+                or ""
+            )
+            if not predicate_type:
+                continue
+            statement = _crane_blob_json(repository, str(layer.get("digest") or ""))
+            subjects = statement.get("subject") or []
+            if not any(
+                isinstance(subject, dict)
+                and (subject.get("digest") or {}).get("sha256")
+                == platform_digest.removeprefix("sha256:")
+                for subject in subjects
+            ):
+                raise RuntimeError(
+                    f"Content Agents {predicate_type} attestation is not bound to "
+                    f"{platform_digest}"
+                )
+            if statement.get("predicateType") != predicate_type:
+                raise RuntimeError(
+                    f"Content Agents {predicate_type} attestation type disagrees"
+                )
+            statements[predicate_type] = statement
+        spdx = statements.get("https://spdx.dev/Document")
+        provenance = statements.get("https://slsa.dev/provenance/v0.2")
+        if (
+            not spdx
+            or not provenance
+            or set(statements)
+            != {
+                "https://spdx.dev/Document",
+                "https://slsa.dev/provenance/v0.2",
+            }
+        ):
+            raise RuntimeError(
+                "Content Agents source requires bound SPDX and SLSA v0.2 attestations"
+            )
+        if not (spdx.get("predicate") or {}).get("packages"):
+            raise RuntimeError("Content Agents SPDX attestation has no package inventory")
+        provenance_predicate = provenance.get("predicate") or {}
+        if not provenance_predicate.get("buildType") or not provenance_predicate.get(
+            "materials"
+        ):
+            raise RuntimeError(
+                "Content Agents SLSA v0.2 provenance has no build type/materials"
+            )
+
+        runtime = accepted.get("runtime")
+        if not isinstance(runtime, dict):
+            raise RuntimeError("Content Agents accepted manifest has no runtime proof")
+        if runtime.get("version") != "0.3.0.312915" or runtime.get(
+            "delivery"
+        ) != "anonymous-runtime-fetch-from-nvidia":
+            raise RuntimeError("Content Agents accepted OVRTX delivery is invalid")
+        if re.fullmatch(r"[0-9a-f]{64}", str(runtime.get("lock_sha256") or "")) is None:
+            raise RuntimeError("Content Agents accepted OVRTX lock hash is invalid")
+        if runtime.get("cache_tier") != "configured-filesystem" or runtime.get(
+            "reused_render_stages"
+        ) != 3:
+            raise RuntimeError("Content Agents accepted runtime-cache proof is invalid")
+
+        proof = accepted.get("rtx_proof")
+        if not isinstance(proof, dict):
+            raise RuntimeError("Content Agents accepted manifest has no RTX proof")
+        if proof.get("gpu_count") != 1 or proof.get("gpu_model") != (
+            "NVIDIA RTX PRO 6000 Blackwell Server Edition"
+        ):
+            raise RuntimeError("Content Agents accepted GPU target is invalid")
+        if proof.get("observed_image_id_digest") != accepted_digest:
+            raise RuntimeError(
+                "Content Agents RTX proof did not observe the accepted image digest"
+            )
+        if proof.get("upstream_validation") != "pass":
+            raise RuntimeError("Content Agents upstream validation did not pass")
+        for count_name in (
+            "material_render_count",
+            "physics_render_count",
+            "validation_render_count",
+        ):
+            if int(proof.get(count_name) or 0) <= 0:
+                raise RuntimeError(f"Content Agents RTX proof has no {count_name}")
+        for artifact_name in ("usd_sha256", "usdz_sha256"):
+            if re.fullmatch(r"[0-9a-f]{64}", str(proof.get(artifact_name) or "")) is None:
+                raise RuntimeError(f"Content Agents RTX proof has no {artifact_name}")
+        rigid = proof.get("rigid_physics")
+        if (
+            not isinstance(rigid, dict)
+            or rigid.get("rigid_body") is not True
+            or rigid.get("collision") is not True
+            or rigid.get("fixed") is not False
+            or float(rigid.get("mass_or_density") or 0) <= 0
+            or not 0.1 <= float(rigid.get("friction") or 0) <= 2.0
+        ):
+            raise RuntimeError("Content Agents accepted rigid-physics proof is invalid")
+
+        specialized = accepted.get("payload_scan")
+        general = accepted.get("general_payload_scan")
+        vulnerability = accepted.get("vulnerability_scan")
+        for name, record in (
+            ("payload", specialized),
+            ("general payload", general),
+            ("vulnerability", vulnerability),
+        ):
+            if not isinstance(record, dict) or re.fullmatch(
+                r"[0-9a-f]{64}", str(record.get("report_sha256") or "")
+            ) is None:
+                raise RuntimeError(f"Content Agents accepted {name} scan is invalid")
+        accepted_payload_counts = {
+            "specialized": {
+                "archives_scanned": int(specialized.get("archives_scanned") or 0),
+                "findings": int(specialized.get("findings") or 0),
+            },
+            "general": {
+                key: int(general.get(key) or 0)
+                for key in (
+                    "entries_scanned",
+                    "payload_hits",
+                    "history_hits",
+                    "weight_shaped_paths",
+                )
+            },
+        }
+        if (
+            accepted_payload_counts["specialized"]["archives_scanned"] <= 1
+            or accepted_payload_counts["specialized"]["findings"] != 0
+            or accepted_payload_counts["general"]["entries_scanned"] <= 0
+            or accepted_payload_counts["general"]["payload_hits"] != 0
+            or accepted_payload_counts["general"]["history_hits"] != 0
+        ):
+            raise RuntimeError("Content Agents accepted payload counts are unsafe")
+        expected_source_sha = str(accepted.get("implementation_revision") or "")
+        if re.fullmatch(r"[0-9a-f]{40}", expected_source_sha) is None:
+            raise RuntimeError("Content Agents accepted implementation revision is invalid")
+        live_payload_counts = _scan_content_agents_payload_exact_digest(
+            f"{repository}@{index_digest}", expected_source_sha=expected_source_sha
+        )
+        if live_payload_counts != accepted_payload_counts:
+            raise RuntimeError(
+                "Content Agents live payload scans disagree with accepted counts: "
+                f"live={live_payload_counts}, accepted={accepted_payload_counts}"
+            )
+        live_vulnerability = _scan_content_agents_trivy_exact_digest(
+            f"{repository}@{index_digest}"
+        )
+        accepted_vulnerability = {
+            key: int(vulnerability.get(key) or 0)
+            for key in ("critical_total", "critical_with_fix", "secrets")
+        }
+        if live_vulnerability != accepted_vulnerability:
+            raise RuntimeError(
+                "Content Agents live Trivy result disagrees with accepted counts: "
+                f"live={live_vulnerability}, accepted={accepted_vulnerability}"
+            )
+        return (
+            True,
+            f"exact accepted digest {index_digest}; two payload scans and live Trivy "
+            f"clean; SPDX+SLSA v0.2 bound to {platform_digest}; RTX renders "
+            f"{proof['material_render_count']}/{proof['physics_render_count']}/"
+            f"{proof['validation_render_count']}",
+        )
+    except (KeyError, StopIteration, TypeError, ValueError, RuntimeError) as exc:
+        return False, str(exc)
+
+
 def verify_bootstrap_publication_source(item: PublishItem) -> tuple[bool, str]:
     """Require a digest-bound SkyPilot attestation before any public tag write."""
 
@@ -590,6 +923,9 @@ def preflight_sources(plan: list[PublishItem]) -> list[tuple[PublishItem, str]]:
         if ok and item.tool == "wan2-2":
             ok, detail = verify_wan_publication_source(item)
             detail = f"WAN GATE — {detail}"
+        if ok and item.tool == "content-agents":
+            ok, detail = verify_content_agents_publication_source(item)
+            detail = f"CONTENT AGENTS GATE — {detail}"
         print(f"  {item.source_ref}  {'ok' if ok else f'UNREADABLE — {detail}'}")
         if not ok:
             failures.append((item, detail))

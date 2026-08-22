@@ -514,8 +514,10 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
         ),
+        requires_token_factory=True,
+        image_tool="content-agents",
         notes=(
-            "Operator-built restricted NVIDIA Content Agents v0.5.2 runtime: "
+            "Public zero-vendor-payload NVIDIA Content Agents v0.5.2 adapter: "
             "generated/customer USD -> real OVRTX material + physics pipelines -> "
             "Validation Agent profiles -> rigid-ready USD/USDZ and Isaac Stage-2 manifest."
         ),

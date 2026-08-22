@@ -354,8 +354,9 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     # --- NVIDIA Content Agents rigid-object enrichment ----------------------
     # These adapters invoke the real v0.5.2 material-agent, physics-agent, and
-    # validation-agent entrypoints in the restricted operator-built image. NPA
-    # owns only the object-store handoff and the narrow Isaac Stage-2 manifest.
+    # validation-agent entrypoints in the public zero-vendor-payload image. OVRTX
+    # is delivered by NVIDIA into the operator's runtime cache. NPA owns only the
+    # downloader, object-store handoff, and narrow Isaac Stage-2 manifest.
     "workbench.content_agents.acquire": ToolEntry(
         name="workbench.content_agents.acquire",
         description="Acquire/generate and normalize one self-contained USD object.",

@@ -65,6 +65,45 @@ containers:
       timeout_seconds: 300
       status: blocked-on-upstream
 
+  content-agents:
+    image: npa-content-agents
+    dockerfile: npa/docker/workbench/content-agents/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Enriches one self-contained rigid USD object with real NVIDIA Material,
+        Physics, OVRTX rendering, and Validation Agent stages before an Isaac
+        rigid-object handoff.
+    safety:
+      runs_as: ubuntu
+      base_image: nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04
+      network: >-
+        anonymous NVIDIA OVRTX runtime fetch; workflow Token Factory and S3 I/O
+      external_fetch:
+        - github-content-agents-build
+        - pypi-build
+        - nvidia-ovrtx-runtime
+        - token-factory-runtime
+        - s3-runtime
+      notes: >-
+        The public image contains the pinned Apache-2.0 Content Agents source,
+        reviewed OVRTX lock, and downloader, but zero proprietary OVRTX runtime
+        bytes. The golden eval fetches exact OVRTX 0.3.0.312915 anonymously into
+        the operator cache, authors real rigid physics from a fixed prediction,
+        runs the upstream Validation Agent with a real OVRTX render, and checks a
+        non-empty result. It needs no HF, NGC, Token Factory, or S3 credential.
+        NVIDIA terms are linked for operator review; NPA adds no acceptance flag.
+    golden_eval:
+      kind: container-smoke
+      command: >-
+        python -m npa.workflows.content_agents local-smoke
+        --output-dir /tmp/npa-content-agents-golden
+      artifact: /tmp/npa-content-agents-golden/smoke.json
+      serverless_gpu: rtx6000
+      gpu: required
+      timeout_seconds: 1800
+      status: gpu-gated
+
   groot:
     image: npa-groot
     dockerfile: npa/docker/workbench/groot/Dockerfile

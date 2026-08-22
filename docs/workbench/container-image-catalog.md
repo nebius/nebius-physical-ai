@@ -17,10 +17,11 @@ docker pull ghcr.io/nebius/nebius-physical-ai/npa-retargeting:0.1.1
 existing saved `container_registry` overrides remain compatible.
 
 The catalog was verified against the public GHCR tag and OCI manifest APIs on
-2026-08-21. All 26 images selected by the repository's public publishing plan
-resolved anonymously. **Built** is the UTC build date of the newest listed
-variant; reproducible images that intentionally zero their OCI `created` field
-use the timestamp in the immutable tag and `npa.build_ts` label.
+2026-08-22. All 27 images in the active publication plan resolved anonymously;
+the separately quarantined LTX-2.5 candidate remains absent. **Built** is the
+UTC build date of the newest listed variant; reproducible images that
+intentionally zero their OCI `created` field use the timestamp in the immutable
+tag and `npa.build_ts` label.
 
 Prefer a full timestamped tag when selecting a hardware-specific variant. OCI
 tags can be moved, so resolve and retain the manifest digest as well when strict
@@ -45,9 +46,27 @@ LTX-2.5 remains excluded because its required GPU validation is not complete;
 `cosmos3-serving` and `sonic-mujoco` remain excluded by the redistribution
 guard.
 
+## 2026-08-22 Content Agents publication
+
+`npa-content-agents:0.5.2-npa2` was published as OCI index
+`sha256:c64aaf6201bdaa013f9d16e8497290cf166907932f036297d7abaa430cbad7db`,
+containing one `linux/amd64` manifest and one bound attestation manifest. An
+independent unauthenticated manifest and config read resolved that exact digest,
+the `ubuntu` user, and the `public` / `runtime-fetch` packaging labels.
+
+The exact published bytes passed the Content Agents scanner across three nested
+archives with zero findings, the general layer/history scanner across 28,471
+entries with zero payload or history hits, and Trivy with zero critical
+vulnerabilities and zero secrets. A digest-pinned RTX PRO 6000 workflow produced
+6 material, 6 physics, and 1 validation render; upstream validation passed, all
+rigid-physics checks were non-null, and both the USD and USDZ reopened
+independently. These measurements establish built, payload-clean, GPU-validated,
+published, and anonymously pullable status for this exact digest only.
+
 | Friendly name | Image (`ghcr.io/nebius/nebius-physical-ai/...`) | Published tag(s) | Built | What it does |
 | --- | --- | --- | --- | --- |
 | Alpamayo 2 Super 34B | `npa-alpamayo2-super` | `0.1.0-cu128` | 2026-08-18 | Real surround-view VLA trajectory inference through NVIDIA's Apache-2.0 source. OpenMDW-1.1 weights and the separately gated/non-transferable PhysicalAI-AV sample data are fetched only at runtime under the operator's Hugging Face identity. The payload-clean image and real workflow were validated independently on B200 and RTX PRO 6000. See the [operator guide](alpamayo2-super.md). |
+| NVIDIA Content Agents 0.5.2 | `npa-content-agents` | `0.5.2-npa2` | 2026-08-22 | Public rigid-object material/physics/validation adapter containing Apache-2.0 source and zero OVRTX payload. Exact OVRTX 0.3.0.312915 is fetched directly from NVIDIA into the operator runtime cache. The exact public digest passed byte/layer scanning, anonymous resolution, and a real RTX PRO 6000 workflow. See [Content Agents](content-agents.md). |
 | SONIC Retargeting 0.1.1 | `npa-retargeting` | `0.1.1` | 2026-06-16 | CPU-only motion retargeting and motion-library conversion feeding SONIC locomotion training. A slim `python:3.11` image for the inexpensive preprocessing stage before GPU work. |
 | Rerun 0.31.4 | `npa-rerun-viewer` | `0.31.4` | 2026-07-01 | Rerun viewer/server on port 9090 for `.rrd` robotics traces produced by workflow stages. Uses `python:3.11-slim` and runs as `nobody`. |
 | LeRobot Policy Server 0.1.1 | `npa-lerobot-policy` | `0.1.1` | 2026-07-10 | Serves a trained LeRobot policy over HTTP for closed-loop inference (default `lerobot/diffusion_pusht`). This is the BYO-policy contract endpoint called by other workflow stages. |
@@ -98,12 +117,6 @@ redistribution eligibility are not evidence of publication.
   the thin wrapper and anonymous GHCR distribution do not establish that
   license's derived-distribution conditions. Operators build it into their own
   registry; see [Cosmos3-Super serving](cosmos3-super-serving.md).
-- **`npa-content-agents`** is `restricted` and build-your-own only. The pinned
-  Content Agents source is Apache-2.0, but the image contains hash-locked OVRTX
-  0.3.0.312915 under NVIDIA proprietary terms. Operators must explicitly accept
-  the named NVIDIA terms and build it only into their private registry. It
-  contains no Scene Optimizer Core, OvPhysX, model weights, material library,
-  customer data, or credentials; see [Content Agents](content-agents.md).
 - **`npa-sonic-mujoco`** is a SONIC variant, not a separate public-publish tool.
   It ships through the `sonic` tool and SONIC image manifest rather than getting
   an independent row in the public publishing plan.
