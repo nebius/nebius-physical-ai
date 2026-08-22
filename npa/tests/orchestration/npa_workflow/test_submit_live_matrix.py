@@ -144,6 +144,22 @@ def test_submit_live_matrix_specs_exist() -> None:
     assert not missing, f"matrix references missing specs: {missing}"
 
 
+def test_sim2real_live_matrix_exercises_public_seed_preset() -> None:
+    case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == "sim2real.yaml")
+    assert case.preset == "public-franka-lift"
+    argv = _load_live_argv().runtime_submit_args(
+        Path("/tmp/sim2real.yaml"),
+        run_id="matrix-preset",
+        registry="registry.example/workbench",
+        project=None,
+        poll_seconds=2,
+        max_wait_seconds=30,
+        cancel_on_timeout=True,
+        preset=case.preset,
+    )
+    assert argv[argv.index("--preset") + 1] == "public-franka-lift"
+
+
 def test_every_shipped_catalog_spec_has_one_live_matrix_case() -> None:
     """A shipped spec without a matrix case is unobserved, not passing."""
 

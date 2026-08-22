@@ -259,6 +259,7 @@ def test_npa_workflow_submit_live_reaches_terminal(
         registry=e2e_registry,
         project=e2e_project,
         assume_decision=assume,
+        preset=case.preset,
         image_args=_image_args(case, e2e_registry),
         skypilot_config_args=_skypilot_config_args(),
     )
@@ -280,6 +281,7 @@ def test_npa_workflow_submit_live_reaches_terminal(
         registry=e2e_registry,
         project=e2e_project,
         assume_decision=assume,
+        preset=case.preset,
         image_args=_image_args(case, e2e_registry),
         secret_env_args=_secret_env_args(case),
         skypilot_config_args=_skypilot_config_args(),
@@ -449,6 +451,7 @@ def test_npa_workflow_runtime_live_reaches_terminal(
                 max_wait_seconds=_case_max_wait(case),
                 cancel_on_timeout=_cancel_on_timeout(),
                 config_vars=case.config_vars,
+                preset=case.preset,
                 image_args=_image_args(case, e2e_registry),
                 secret_env_args=_secret_env_args(case),
                 skypilot_config_args=_skypilot_config_args(),
@@ -720,6 +723,7 @@ def _assert_status_and_zero_launch_resume(
         max_wait_seconds=_case_max_wait(case),
         cancel_on_timeout=_cancel_on_timeout(),
         config_vars=case.config_vars,
+        preset=case.preset,
         image_args=_image_args(case, registry),
         secret_env_args=_secret_env_args(case),
         skypilot_config_args=_skypilot_config_args(),
@@ -820,6 +824,7 @@ def test_npa_workflow_submit_plan_only_matrix_no_leak(
         registry=e2e_registry,
         project=e2e_project,
         assume_decision=assume,
+        preset=case.preset,
     )
     result = RUNNER.invoke(app, args)
     payload = parse_json_payload(result, forbidden_markers)

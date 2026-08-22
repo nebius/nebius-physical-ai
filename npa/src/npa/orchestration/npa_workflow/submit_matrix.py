@@ -48,6 +48,8 @@ class SubmitLiveCase:
     #: the one-shot serial path. Required for specs with a ``parallel:`` group or
     #: a loop that must early-exit on the real decision artifact.
     runtime: bool = False
+    #: Explicit workflow preset passed through the same CLI used by operators.
+    preset: str = ""
     #: Config overrides applied at submit time (``--var k=v``), e.g. to drive a
     #: gate threshold in one live run.
     config_vars: tuple[tuple[str, str], ...] = ()
@@ -717,6 +719,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
         runtime=True,
+        preset="public-franka-lift",
         expected_parallel_tasks=2,
         rotation_skip=True,
         skip_reason=(
@@ -724,8 +727,9 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "digests, a prewarmed Isaac cache PVC, and task-aligned trigger data."
         ),
         notes=(
-            "Canonical compositional 14-stage Sim2Real runtime. Repository CI "
-            "validates the dynamic plan; an operator live run supplies six "
+            "Canonical compositional 14-stage Sim2Real runtime using the explicit "
+            "public-franka-lift preset. Repository CI validates the dynamic plan; "
+            "an operator live run first stages the pinned public seed and supplies six "
             "registry-qualified immutable component images, an Isaac cache PVC, "
             "and task-aligned trigger data. The reduced real-GPU proof is archived "
             "separately because the component images are project-local."

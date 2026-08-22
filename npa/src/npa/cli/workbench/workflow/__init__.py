@@ -265,6 +265,14 @@ def submit_cmd(
             "${KEY}; for npa.workflow specs this merges into config."
         ),
     ),
+    preset: str = typer.Option(
+        "",
+        "--preset",
+        help=(
+            "Explicit shipped workflow seed/config preset. Preset-owned dataset, "
+            "task, and trigger keys cannot be replaced with --var."
+        ),
+    ),
     assume_decision: str = typer.Option(
         "",
         "--assume-decision",
@@ -615,11 +623,21 @@ def submit_cmd(
         _fail(str(exc))
         return
     is_npa_spec = is_npa_workflow_spec(yaml_path)
+    if preset and not is_npa_spec:
+        _fail("--preset is supported only for npa.workflow/v0.0.1 specs")
+        return
     merged_npa_spec = None
     if is_npa_spec:
+        from npa.orchestration.npa_workflow.presets import preset_overrides
+        from npa.orchestration.npa_workflow.spec import load_spec
         from npa.orchestration.npa_workflow.submit import load_spec_for_submit
 
         try:
+            substitutions = preset_overrides(
+                workflow_name=load_spec(yaml_path).name,
+                preset=preset,
+                explicit=substitutions,
+            )
             # This is the authoritative spec for every later preflight.  It is
             # intentionally loaded before credentials, images, ledgers, input
             # staging, provisioning, or accelerator discovery.
@@ -6200,16 +6218,35 @@ def validate_spec_cmd(
         help="NPA workflow spec (apiVersion: npa.workflow/v0.0.1)."
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON result."),
+    preset: str = typer.Option(
+        "", "--preset", help="Explicit shipped workflow seed/config preset."
+    ),
 ) -> None:
     """Validate an NPA workflow specification file."""
 
+    from npa.orchestration.npa_workflow.presets import preset_overrides
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
+
     spec = _load_npa_workflow(yaml_path)
+    try:
+        spec = merge_config_overrides(
+            spec,
+            preset_overrides(workflow_name=spec.name, preset=preset),
+        )
+    except Exception as exc:
+        _fail(str(exc))
+        return
     payload = {
         "status": "valid",
         "apiVersion": spec.api_version,
         "name": spec.name,
         "states": sorted(spec.states),
         "initial": spec.initial,
+        "preset": str(spec.config.get("workflow_preset") or ""),
+        "dataset_id": str(spec.config.get("dataset_id") or ""),
+        "task_id": str(spec.config.get("task_id") or ""),
+        "trigger_uri": str(spec.config.get("trigger_uri") or ""),
+        "seed_manifest_uri": str(spec.config.get("seed_manifest_uri") or ""),
     }
     if json_output:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
@@ -6236,6 +6273,9 @@ def plan_spec_cmd(
             "plan uses the spec's `example-bucket` placeholder."
         ),
     ),
+    preset: str = typer.Option(
+        "", "--preset", help="Explicit shipped workflow seed/config preset."
+    ),
     waves: bool = typer.Option(
         False,
         "--waves",
@@ -6253,7 +6293,16 @@ def plan_spec_cmd(
 
     spec = _load_npa_workflow(yaml_path)
     try:
-        spec = merge_config_overrides(spec, _parse_submit_vars(var))
+        from npa.orchestration.npa_workflow.presets import preset_overrides
+
+        spec = merge_config_overrides(
+            spec,
+            preset_overrides(
+                workflow_name=spec.name,
+                preset=preset,
+                explicit=_parse_submit_vars(var),
+            ),
+        )
     except NpaWorkflowError as exc:
         _fail(str(exc))
         return
@@ -6330,6 +6379,9 @@ def run_spec_cmd(
             "run uses the spec's `example-bucket` placeholder."
         ),
     ),
+    preset: str = typer.Option(
+        "", "--preset", help="Explicit shipped workflow seed/config preset."
+    ),
     persist_state: bool = typer.Option(
         False,
         "--persist-state",
@@ -6358,7 +6410,16 @@ def run_spec_cmd(
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
     spec = _load_npa_workflow(yaml_path)
-    spec = merge_config_overrides(spec, _parse_submit_vars(var))
+    from npa.orchestration.npa_workflow.presets import preset_overrides
+
+    spec = merge_config_overrides(
+        spec,
+        preset_overrides(
+            workflow_name=spec.name,
+            preset=preset,
+            explicit=_parse_submit_vars(var),
+        ),
+    )
     _warn_placeholder_bucket(spec.config, quiet=json_output)
     resolved_run_id = run_id or f"{spec.name}-{int(time.time())}"
     resolved_assume = assume_decision or str(

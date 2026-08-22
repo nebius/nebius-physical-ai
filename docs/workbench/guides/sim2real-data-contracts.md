@@ -149,6 +149,7 @@ schemas above on stdout files:
 ```text
 # INPUT (customer)
 s3://<bucket>/sim2real-triggers/<run-id>/<task>/           # task-aligned seed dataset + manifest
+# explicit public preset: <task> = public-franka-lift; staged at runtime, never vendored
 
 # OPTIONAL BYO (customer)
 s3://<bucket>/sim2real-assets/<task>/                       # meshes, scene-spec.json, robot-spec.json

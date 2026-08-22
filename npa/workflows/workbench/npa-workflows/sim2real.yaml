@@ -15,6 +15,9 @@ metadata:
     evaluation, an honest external seam, and Rerun plus MCAP finalization.
 
 config:
+  # Explicit workflow presets are opt-in through `workflow ... --preset`.
+  # Empty preserves the production/custom dataset behavior below.
+  workflow_preset: ""
   source_sha: ""
   require_baked_npa: "1"
   bucket: example-bucket
