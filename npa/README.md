@@ -87,7 +87,7 @@ requires redeploying the endpoint.
 npa workbench cosmos -p eu-north1 -n cosmos-sl deploy \
   --runtime serverless \
   --project-id project-... \
-  --image cr.eu-north1.nebius.cloud/npa/cosmos:cuda12 \
+  --image ghcr.io/nebius/nebius-physical-ai/npa-cosmos:cu128-torch27-sm100-1.0.9-20260803T002017Z \
   --platform gpu-h200-sxm \
   --preset 1gpu-16vcpu-200gb \
   --server-port 8080 \

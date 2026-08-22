@@ -215,6 +215,17 @@ skills:
       - type: cli_help
         args: ["--help"]
         contains: "workbench"
+  - name: secure-image-build
+    category: atomic
+    when_to_use: "Build, tag, push, copy, or promote any NPA container image, especially immutable public development images and supported GHCR releases."
+    path: skills/atomic/secure-image-build/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/docker/workbench/packaging-contract.yaml
+      - type: file_exists
+        path: npa/src/npa/deploy/publish_public.py
+      - type: file_exists
+        path: .github/workflows/publish-public-images.yml
   - name: submit-workflow
     category: atomic
     when_to_use: "Submit, validate, or debug SkyPilot workflow YAML and runner paths."
@@ -335,7 +346,7 @@ skills:
         contains: "ttl-hours"
   - name: burst
     category: tools
-    when_to_use: "Run one gang-scheduled multi-node GPU job through SkyPilot without authoring a workflow: `npa burst submit` wires torchrun rendezvous across nodes, `submit-yaml` submits a single-task YAML with `${VAR}` substitution and Nebius registry login."
+    when_to_use: "Run one gang-scheduled multi-node GPU job through SkyPilot without authoring a workflow: `npa burst submit` wires torchrun rendezvous across nodes, while `submit-yaml` supports one task, `${VAR}` substitution, and optional generic registry credentials."
     path: skills/tools/burst/SKILL.md
     smoke:
       - type: cli_help
@@ -735,7 +746,7 @@ skills:
         contains: "guardrails"
   - name: contribute-workbench-image
     category: workflows
-    when_to_use: "Carry an external or maintainer-authored NPA image change from a fork PR through license classification, trusted build, private registry validation, and incremental GHCR publication."
+    when_to_use: "Carry an external or maintainer-authored NPA image change from a fork PR through license classification, trusted build, immutable public-dev validation, and incremental GHCR publication."
     path: skills/workflows/contribute-workbench-image/SKILL.md
     smoke:
       - type: file_exists

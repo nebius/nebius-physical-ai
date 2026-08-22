@@ -1065,11 +1065,6 @@ def _patch_launch(monkeypatch):
         "npa.cli.workbench.leisaac._acquire_run_lifecycle_lease",
         lambda *_args: _FakeLifecycleLease(),
     )
-    registry_refreshes = []
-    monkeypatch.setattr(
-        "npa.cli.workbench.leisaac.ensure_registry_pull_secret_for_images",
-        lambda *args, **kwargs: registry_refreshes.append((args, kwargs)),
-    )
     monkeypatch.setattr(
         "npa.cli.workbench.leisaac._kubectl",
         lambda *_args, **_kwargs: SimpleNamespace(
@@ -1186,7 +1181,6 @@ def _patch_launch(monkeypatch):
         install_calls,
         manifests,
         ssh,
-        registry_refreshes,
         selections,
     )
 
@@ -1456,7 +1450,6 @@ def test_launch_defaults_to_agent_relay_and_rejects_undiscoverable_public_lb(
         _install,
         manifests,
         _ssh,
-        _registry,
         _selections,
     ) = _patch_launch(monkeypatch)
     default_args = _args()
@@ -1504,11 +1497,6 @@ def test_launch_refuses_accept_eula_opt_out_before_mutation(monkeypatch, value) 
         "npa.cli.workbench.leisaac._acquire_run_lifecycle_lease",
         lambda *_args, **_kwargs: mutations.append("lock"),
     )
-    monkeypatch.setattr(
-        "npa.cli.workbench.leisaac.ensure_registry_pull_secret_for_images",
-        lambda *_args, **_kwargs: mutations.append("registry"),
-    )
-
     result = runner.invoke(app, _args())
 
     assert result.exit_code == 1
@@ -1544,7 +1532,6 @@ def test_launch_agent_relay_wires_private_cluster_public_agent_and_manifest(
         install_calls,
         manifests,
         ssh,
-        registry_refreshes,
         selections,
     ) = _patch_launch(monkeypatch)
 
@@ -1553,16 +1540,8 @@ def test_launch_agent_relay_wires_private_cluster_public_agent_and_manifest(
     assert result.exit_code == 0, result.output
     assert "transport: agent-relay" in result.output
     assert "public_agent_url: https://8.8.4.4/" in result.output
-    assert registry_refreshes == [
-        (
-            (IMAGE,),
-            {
-                "secret_name": "npa-registry",
-                "namespace": "leisaac",
-                "k8s_context": "cluster",
-            },
-        )
-    ]
+    deployment = next(item for item in applied if item.get("kind") == "Deployment")
+    assert "imagePullSecrets" not in deployment["spec"]["template"]["spec"]
     services = [item for item in applied if item.get("kind") == "Service"]
     assert len(services) == 1
     assert services[0]["spec"]["type"] == "ClusterIP"
@@ -1822,28 +1801,30 @@ def test_successful_launch_warns_when_only_lifecycle_release_fails(monkeypatch) 
     assert deleted == []
 
 
-def test_launch_fails_closed_before_deployment_when_registry_refresh_fails(
+def test_launch_fails_closed_when_explicit_byof_pull_secret_is_missing(
     monkeypatch,
 ) -> None:
     applied, *_rest = _patch_launch(monkeypatch)
     monkeypatch.setattr(
-        "npa.cli.workbench.leisaac.ensure_registry_pull_secret_for_images",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            RuntimeError("registry credential refresh failed")
+        "npa.cli.workbench.leisaac._kubectl",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1, stdout="", stderr="not found"
         ),
     )
 
-    result = runner.invoke(app, _args())
+    result = runner.invoke(
+        app, [*_args(), "--image-pull-secret", "customer-registry"]
+    )
 
     assert result.exit_code == 1
-    assert "registry credential refresh failed" in result.output
+    assert "image pull secret 'customer-registry' is missing" in result.output
     assert applied == []
 
 
 def test_launch_rejects_invalid_readiness_timeout_before_lock_or_mutation(
     monkeypatch,
 ) -> None:
-    applied, *_middle, registry_refreshes, _selections = _patch_launch(monkeypatch)
+    applied, *_middle, _selections = _patch_launch(monkeypatch)
     lease_calls = []
     deleted = []
     monkeypatch.setenv("NPA_LEISAAC_READY_TIMEOUT_SECONDS", "not-a-duration")
@@ -1861,7 +1842,6 @@ def test_launch_rejects_invalid_readiness_timeout_before_lock_or_mutation(
     assert result.exit_code == 1
     assert "must be a positive number of seconds" in result.output
     assert lease_calls == []
-    assert registry_refreshes == []
     assert applied == []
     assert deleted == []
 
@@ -1869,7 +1849,7 @@ def test_launch_rejects_invalid_readiness_timeout_before_lock_or_mutation(
 def test_launch_refuses_a_same_run_lifecycle_lock_before_any_mutation(
     monkeypatch,
 ) -> None:
-    applied, *_middle, registry_refreshes, _selections = _patch_launch(monkeypatch)
+    applied, *_middle, _selections = _patch_launch(monkeypatch)
     deleted = []
     monkeypatch.setattr(
         "npa.cli.workbench.leisaac._acquire_run_lifecycle_lease",
@@ -1889,7 +1869,6 @@ def test_launch_refuses_a_same_run_lifecycle_lock_before_any_mutation(
     assert result.exit_code == 1
     assert "already holds the selected run lock" in result.output
     assert applied == []
-    assert registry_refreshes == []
     assert deleted == []
 
 
@@ -1929,7 +1908,6 @@ def test_failed_agent_relay_launch_removes_partial_relay_ingress_and_kubernetes(
         _install,
         _manifests,
         _ssh,
-        _registry,
         _selections,
     ) = _patch_launch(monkeypatch)
     monkeypatch.setattr(
@@ -2026,7 +2004,6 @@ def test_relaunch_migrates_and_removes_only_the_prior_gpu_egress_rule(
         _relay,
         _manifests,
         _ssh,
-        _registry,
         _selections,
     ) = _patch_launch(monkeypatch)
     monkeypatch.setattr(

@@ -1,7 +1,7 @@
 """Prove a workflow's images can actually be pulled before any GPU time is spent.
 
-A present registry token is not evidence that a pull will succeed. Nebius
-Container Registry speaks the standard Docker Registry v2 auth flow: an
+A present registry token is not evidence that a pull will succeed. OCI
+registries use the standard Docker Registry v2 auth flow: an
 unauthenticated request returns ``401`` with a ``WWW-Authenticate: Bearer`` realm,
 the client exchanges its credentials there for a scoped token, and only the final
 manifest request enforces the permission. The token endpoint hands out tokens
@@ -113,9 +113,6 @@ def parse_image_reference(image: str) -> ImageReference:
         )
     if "@" in remainder:
         repository, reference = remainder.split("@", 1)
-        # A canonical Docker reference may retain its human-readable tag before
-        # the immutable digest (``repository:tag@sha256:...``).  The Registry
-        # HTTP API repository path must not include that tag.
         if ":" in repository.rsplit("/", 1)[-1]:
             repository = repository.rsplit(":", 1)[0]
     elif ":" in remainder.rsplit("/", 1)[-1]:
@@ -149,22 +146,39 @@ def fetch_image_config_metadata(
     headers = {"Accept": MANIFEST_ACCEPT}
     status, response_headers, body = fetch(reference.manifest_url, headers, timeout)
     if status == 401:
-        challenge = _parse_www_authenticate(response_headers.get("www-authenticate", ""))
+        challenge = _parse_www_authenticate(
+            response_headers.get("www-authenticate", "")
+        )
         realm = challenge.get("realm", "")
         if not realm:
-            raise RegistryPreflightError("registry authentication challenge has no realm")
+            raise RegistryPreflightError(
+                "registry authentication challenge has no realm"
+            )
         parsed_realm = urllib.parse.urlsplit(realm)
         query = dict(urllib.parse.parse_qsl(parsed_realm.query, keep_blank_values=True))
         query.update(
-            {"service": challenge.get("service", reference.registry), "scope": reference.pull_scope}
+            {
+                "service": challenge.get("service", reference.registry),
+                "scope": reference.pull_scope,
+            }
         )
-        token_url = urllib.parse.urlunsplit(parsed_realm._replace(query=urllib.parse.urlencode(query)))
-        token_headers = {"Authorization": _basic_auth(username or "iam", password)} if password else {}
+        token_url = urllib.parse.urlunsplit(
+            parsed_realm._replace(query=urllib.parse.urlencode(query))
+        )
+        token_headers = (
+            {"Authorization": _basic_auth(username or "iam", password)}
+            if password
+            else {}
+        )
         token_status, _, token_body = fetch(token_url, token_headers, timeout)
         if token_status >= 400:
-            raise RegistryPreflightError(f"registry token request failed with HTTP {token_status}")
+            raise RegistryPreflightError(
+                f"registry token request failed with HTTP {token_status}"
+            )
         token_payload = json.loads(token_body.decode("utf-8", errors="replace") or "{}")
-        bearer = str(token_payload.get("token") or token_payload.get("access_token") or "")
+        bearer = str(
+            token_payload.get("token") or token_payload.get("access_token") or ""
+        )
         if not bearer:
             raise RegistryPreflightError("registry token response contains no token")
         headers = {"Accept": MANIFEST_ACCEPT, "Authorization": f"Bearer {bearer}"}
@@ -181,7 +195,8 @@ def fetch_image_config_metadata(
                 for item in manifests
                 if isinstance(item, dict)
                 and str((item.get("platform") or {}).get("os") or "") == "linux"
-                and str((item.get("platform") or {}).get("architecture") or "") == "amd64"
+                and str((item.get("platform") or {}).get("architecture") or "")
+                == "amd64"
             ),
             None,
         )
@@ -191,7 +206,9 @@ def fetch_image_config_metadata(
         selected_url = f"https://{reference.registry}/v2/{reference.repository}/manifests/{selected_digest}"
         status, selected_headers, body = fetch(selected_url, headers, timeout)
         if not 200 <= status < 300:
-            raise RegistryPreflightError(f"platform manifest fetch failed with HTTP {status}")
+            raise RegistryPreflightError(
+                f"platform manifest fetch failed with HTTP {status}"
+            )
         manifest = json.loads(body.decode("utf-8", errors="replace") or "{}")
         # Pin the index digest when the original reference resolves to a
         # multi-platform index. Kubernetes then selects the platform manifest,
@@ -204,15 +221,23 @@ def fetch_image_config_metadata(
     config_digest = str(config.get("digest") or "") if isinstance(config, dict) else ""
     if not config_digest:
         raise RegistryPreflightError("image manifest contains no config digest")
-    config_url = f"https://{reference.registry}/v2/{reference.repository}/blobs/{config_digest}"
+    config_url = (
+        f"https://{reference.registry}/v2/{reference.repository}/blobs/{config_digest}"
+    )
     status, _, config_body = fetch(config_url, headers, timeout)
     if not 200 <= status < 300:
         raise RegistryPreflightError(f"image config fetch failed with HTTP {status}")
     config_payload = json.loads(config_body.decode("utf-8", errors="replace") or "{}")
     labels_raw = (config_payload.get("config") or {}).get("Labels") or {}
-    labels = {str(key): str(value) for key, value in labels_raw.items()} if isinstance(labels_raw, dict) else {}
+    labels = (
+        {str(key): str(value) for key, value in labels_raw.items()}
+        if isinstance(labels_raw, dict)
+        else {}
+    )
     if not top_digest:
-        top_digest = reference.reference if reference.reference.startswith("sha256:") else ""
+        top_digest = (
+            reference.reference if reference.reference.startswith("sha256:") else ""
+        )
     return top_digest, labels
 
 
@@ -358,8 +383,9 @@ def check_image_pull(
                     http_status=token_status,
                     detail="registry requires authentication and no credentials were supplied",
                     remedy=(
-                        "export SKYPILOT_DOCKER_PASSWORD (or make `nebius iam get-access-token` "
-                        "work) so submit can mint a pull token"
+                        "export exact-host SKYPILOT_DOCKER_USERNAME and "
+                        "SKYPILOT_DOCKER_PASSWORD credentials supplied by the "
+                        "operator-controlled registry"
                     ),
                 )
             return ImagePullCheck(
@@ -370,8 +396,8 @@ def check_image_pull(
                 or "registry rejected the supplied credentials",
                 remedy=(
                     "the credentials this run injects are not valid for "
-                    f"{reference.registry}; re-mint them (`nebius iam get-access-token`) "
-                    "and confirm the active profile is the one that owns the registry"
+                    f"{reference.registry}; refresh them through that registry's "
+                    "standard authentication flow and confirm the exact host scope"
                 ),
             )
         try:
@@ -407,7 +433,11 @@ def check_image_pull(
             image=reference.raw,
             status="ok",
             http_status=status,
-            digest=(reference.reference if reference.reference.startswith("sha256:") else digest),
+            digest=(
+                reference.reference
+                if reference.reference.startswith("sha256:")
+                else digest
+            ),
         )
     if status == 403:
         return ImagePullCheck(
@@ -429,7 +459,10 @@ def check_image_pull(
             status="unauthorized",
             http_status=status,
             detail=detail or "registry rejected the pull token",
-            remedy="re-mint registry credentials and confirm the active Nebius profile",
+            remedy=(
+                f"authenticate to {reference.registry} with that registry's normal "
+                "credential and configure the exact-server SkyPilot/NPA Docker variables"
+            ),
         )
     if status == 404:
         return ImagePullCheck(
@@ -470,50 +503,17 @@ def _missing_image_remedy(reference: ImageReference) -> str:
     if not command:
         return f"{base}; build and push it, or pin a tag that exists.{copy_hint}"
     return (
-        f"{base}. This is an NPA workbench image. Authenticate with "
-        f"`printf '%s' \"$(nebius iam get-access-token)\" | docker login "
-        f"{reference.registry} -u iam --password-stdin`, then either copy it "
-        f"server-side (preferred) or build it:{copy_hint}\n    {command}"
+        f"{base}. This is an NPA workbench image. For the official public GHCR "
+        "channel, select a published release tag. For an operator-controlled "
+        f"registry, authenticate with `docker login {reference.registry}` (or that "
+        f"registry's equivalent) and build it:{copy_hint}\n    {command}"
     )
 
 
 def _server_side_copy_hint(reference: ImageReference) -> str:
-    """Suggest a registry-to-registry copy before a local rebuild.
-
-    These images run to tens of GB. Building or `docker pull`+`push` moves every
-    layer through the local machine, where a long transfer gets killed; `crane
-    copy` moves them registry-to-registry and never materializes them locally. If
-    the tag exists anywhere already, copying is both faster and far more likely to
-    finish.
-    """
-
-    try:
-        from npa.deploy.images import (
-            DEFAULT_SOURCE_CONTAINER_REGISTRY,
-            backup_container_registry,
-        )
-    except Exception:  # noqa: BLE001 - the hint must never be what fails
-        return ""
-    target = f"{reference.registry}/{reference.repository}:{reference.reference}"
-    sources = []
-    for candidate in (
-        DEFAULT_SOURCE_CONTAINER_REGISTRY,
-        backup_container_registry(),
-    ):
-        source_registry = str(candidate or "").rstrip("/")
-        if not source_registry:
-            continue
-        repository = reference.repository.rsplit("/", 1)[-1]
-        source = f"{source_registry}/{repository}:{reference.reference}"
-        if source != target and source not in sources:
-            sources.append(source)
-    if not sources:
-        return ""
-    lines = "".join(f"\n    crane copy {source} {target}" for source in sources)
-    return (
-        "\n  If the tag already exists in another registry, copy it server-side "
-        "instead of moving tens of GB through this machine:" + lines
-    )
+    """Do not invent an official source for a missing image."""
+    del reference
+    return ""
 
 
 def _registry_host(value: str) -> str:
@@ -522,18 +522,16 @@ def _registry_host(value: str) -> str:
     return cleaned.split("/", 1)[0].rstrip("/")
 
 
-def _is_nebius_registry(host: str) -> bool:
-    return host.startswith("cr.") and host.endswith(".nebius.cloud")
-
-
 def resolve_registry_credentials(
     registry: str = "", *, mint: bool = True
 ) -> tuple[str, str]:
-    """Return the (username, password) a submit injects for Nebius registry pulls.
+    """Return explicit credentials scoped to the selected registry host.
 
-    Preflight is only meaningful if it uses the very credentials the run will use,
-    so the render path and the preflight path both resolve them here.
+    NPA never mints cloud-provider registry tokens. Official public GHCR tags
+    use anonymous pulls; operator-controlled registries must supply an exact-
+    server username/password through the documented environment.
     """
+    del mint
 
     import os
 
@@ -547,32 +545,15 @@ def resolve_registry_credentials(
     username = (
         os.environ.get("SKYPILOT_DOCKER_USERNAME")
         or os.environ.get("NPA_REGISTRY_USERNAME")
-        or "iam"
+        or ""
     )
     password = (
         os.environ.get("SKYPILOT_DOCKER_PASSWORD")
         or os.environ.get("NPA_REGISTRY_PASSWORD")
         or ""
     )
-    # Never send a Nebius IAM token to GHCR (or any unrelated token realm). A
-    # public GHCR image then gets the anonymous scoped token Kubernetes gets;
-    # a private foreign registry opts in by naming its server (or NPA_REGISTRY).
-    if target and not _is_nebius_registry(target):
-        if not configured_server or configured_server != target:
-            return username, ""
-    if target and configured_server and configured_server != target:
-        # Never send a credential scoped to a different server. For another
-        # Nebius registry, however, mint a fresh IAM token for the requested
-        # host instead of degrading an explicit --registry/--image-override to
-        # an anonymous pull merely because NPA_REGISTRY names another project.
-        password = ""
-        username = "iam"
-        if not _is_nebius_registry(target):
-            return username, ""
-    if not password and mint and (not target or _is_nebius_registry(target)):
-        from npa.workflows.sim2real.registry_auth import mint_nebius_registry_token
-
-        password = mint_nebius_registry_token()
+    if target and configured_server != target:
+        return "", ""
     return username, password
 
 

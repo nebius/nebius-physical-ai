@@ -13,8 +13,8 @@ Build the local image:
 npa/docker/workbench/lancedb/build.sh
 ```
 
-The public runtime default is
-`ghcr.io/nebius/nebius-physical-ai/npa-lancedb:cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z`.
+The first-party registry default is
+`<your-registry>/<namespace>/npa-lancedb:cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z`.
 
 Start a local container-backed service:
 
@@ -24,7 +24,7 @@ npa workbench lancedb deploy \
   --storage-path /tmp/npa-lancedb \
   --port 8686 \
   --auth-mode none \
-  --image ghcr.io/nebius/nebius-physical-ai/npa-lancedb:cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z
+  --image <your-registry>/<namespace>/npa-lancedb:cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z
 ```
 
 Create a table from local JSON, JSONL, parquet, or a directory of parquet

@@ -53,7 +53,7 @@
 #                          (default: 1)
 #   NPA_DAILY_E2E_SHARDS   how many days to spread the S3 e2e suite over
 #                          (default: 7)
-#   NPA_REGISTRY_ID        Nebius registry id for the daily all-image reachability
+#   NPA_REGISTRY        Full registry prefix for the daily all-image reachability
 #                          check (unset => that check is skipped with a warning)
 #   NPA_DAILY_ENABLE_GPU=1 run one rotating real-GPU workflow submit as part of
 #                          the e2e-daily tier (default off). gpu-daily always runs it.

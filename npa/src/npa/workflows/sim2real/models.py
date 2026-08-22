@@ -134,9 +134,7 @@ class Sim2RealLoopConfig:
     rerun_enabled: bool = True
     k8s_namespace: str = ""
     k8s_service_account: str = "agent-sa"
-    k8s_image_pull_secrets: str = (
-        "agent-sa,ngc-nvcr-imagepullsecret,npa-nebius-registry"
-    )
+    k8s_image_pull_secrets: str = "ngc-nvcr-imagepullsecret"
     k8s_env_secret_names: str = "hf-ngc-tokens,npa-storage-credentials"
     k8s_isaac_cache_pvc: str = "npa-sim2real-isaac-cache"
     k8s_gpu_resource: str = "nvidia.com/gpu"

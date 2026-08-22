@@ -281,13 +281,9 @@ def test_paidf_placement_fails_before_storage_or_staging_without_explicit_infra(
     exact_access = mocker.patch(
         "npa.workbench.cosmos.checkpoint_access.preflight_control_checkpoint_access"
     )
-    mocker.patch(
-        "npa.cli.workbench.workflow._preflight_submit_images", return_value={}
-    )
+    mocker.patch("npa.cli.workbench.workflow._preflight_submit_images", return_value={})
     storage = mocker.patch("npa.clients.storage_validation.probe_storage_write")
-    prepare_input = mocker.patch(
-        "npa.workflows.data_factory_input.prepare_paidf_input"
-    )
+    prepare_input = mocker.patch("npa.workflows.data_factory_input.prepare_paidf_input")
     stage_source = mocker.patch(
         "npa.orchestration.npa_workflow.src_staging.stage_npa_source"
     )
@@ -448,9 +444,7 @@ def test_sim2real_submit_propagates_explicit_kubernetes_target(
     assert result.exit_code == 1
     assert calls
     assert all(call[1]["context"] == "sim2real-review" for call in calls)
-    assert all(
-        call[1]["kubeconfig"] == "/tmp/sim2real-kubeconfig" for call in calls
-    )
+    assert all(call[1]["kubeconfig"] == "/tmp/sim2real-kubeconfig" for call in calls)
 
 
 def test_submit_preflight_clears_as_prerequisites_are_met(
@@ -1043,7 +1037,7 @@ def _mock_sky_bin_ok(monkeypatch: pytest.MonkeyPatch) -> None:
 
 # A registry-pinned image satisfies the npa-source requirement, isolating the
 # kube-context check.
-_PINNED_IMAGE = "cr.eu-north1.nebius.cloud/reg/npa-lerobot:tag"
+_PINNED_IMAGE = "registry.example/reg/npa-lerobot:tag"
 
 
 def test_infra_kube_context_extracts_only_a_pinned_k8s_context() -> None:

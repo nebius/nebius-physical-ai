@@ -41,7 +41,7 @@ resources:
   cpus: 4
   memory: 16
   # Pinned first-party LanceDB image; override image_id only for BYO registries.
-  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z"
+  image_id: "docker:<your-registry>/<namespace>/npa-lancedb:cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z"
 envs:
   NPA_PIPELINE_RUN_ID: "<your-run-id>"
   S3_BUCKET: "${NPA_S3_BUCKET}"

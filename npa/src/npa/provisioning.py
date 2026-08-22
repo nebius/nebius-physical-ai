@@ -13,7 +13,7 @@ from typing import Any, Iterator
 from urllib.parse import urlparse
 
 from npa.clients import config as config_module
-from npa.clients.config import ConfigError, EnvironmentConfig, StorageConfig
+from npa.clients.config import EnvironmentConfig, StorageConfig
 from npa.cluster.gpu_driver import DEFAULT_MANAGED_DRIVER_PRESET
 from npa.cluster.gpu_health import (
     DEFAULT_CUDA_SMOKE_IMAGE,
@@ -1114,21 +1114,11 @@ def _runtime_env(
     storage: StorageConfig,
     registry: str,
 ) -> Iterator[None]:
-    yml = config_module._load_yaml()
-    registry_id = ""
-    try:
-        proj = config_module._resolve_project_section(yml, alias)
-        if isinstance(proj, dict):
-            registry_id = str(proj.get("registry_id", "") or "")
-    except ConfigError:
-        pass
-
     values = {
         "NPA_PROJECT_ID": environment.project_id,
         "NPA_TENANT_ID": environment.tenant_id,
         "NPA_REGION": environment.region,
         "NPA_REGISTRY": registry,
-        "NPA_REGISTRY_ID": registry_id,
         # Consumers of NPA_S3_BUCKET pass it as the provider Bucket argument;
         # keep URI/prefix forms in checkpoint_bucket only.
         "NPA_S3_BUCKET": _bucket_name(storage.checkpoint_bucket),

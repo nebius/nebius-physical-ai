@@ -26,7 +26,7 @@ PROJECT_ID = "project-test-00000000000"
 BUCKET = "your-bucket-name"
 ENDPOINT_URL = "https://storage.eu-north1.nebius.cloud"
 IMAGE = (
-    "cr.eu-north1.nebius.cloud/your-registry-id/"
+    "ghcr.io/nebius/nebius-physical-ai/"
     "npa-cosmos:cu128-torch27-sm100-1.0.9-20260803T002017Z"
 )
 MODEL_ID = "nvidia/Cosmos-1.0-Diffusion-7B-Text2World"

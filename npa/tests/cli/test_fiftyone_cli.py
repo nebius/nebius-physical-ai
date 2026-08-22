@@ -32,7 +32,7 @@ from npa.clients.config import (
     WorkbenchConfig,
 )
 from npa.clients.serverless import EndpointNotFoundError
-from npa.deploy.images import public_mirror_tag_for_tool
+from npa.deploy.images import public_release_tag_for_tool
 
 
 runner = CliRunner()
@@ -555,7 +555,7 @@ def test_fiftyone_deploy_runtime_container_starts_image(tmp_path: Path, mocker) 
     deploy_container.assert_called_once()
     assert deploy_container.call_args.kwargs["container_name"] == "npa-fiftyone"
     assert deploy_container.call_args.kwargs["image_ref"].endswith(
-        f"/npa-fiftyone:{public_mirror_tag_for_tool('fiftyone')}"
+        f"/npa-fiftyone:{public_release_tag_for_tool('fiftyone')}"
     )
     assert deploy_container.call_args.kwargs["gpu"] is False
     assert deploy_container.call_args.kwargs["command"] == (

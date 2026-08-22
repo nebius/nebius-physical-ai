@@ -4,13 +4,13 @@
 # Usage:
 #   ./npa/scripts/build_golden_eval_images.sh retargeting lancedb
 #   ./npa/scripts/build_golden_eval_images.sh --all --push
-#   REGISTRY=cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw ./npa/scripts/build_golden_eval_images.sh --all --push
+#   REGISTRY=registry.example/operator ./npa/scripts/build_golden_eval_images.sh --all --push
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NPA_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PYTHON="${NPA_ROOT}/npa/.venv/bin/python"
-REGISTRY="${REGISTRY:-cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw}"
+REGISTRY="${REGISTRY:-npa-local}"
 PUSH=0
 BUILD_ALL=0
 TOOLS=()
@@ -50,7 +50,20 @@ if [[ ${#TOOLS[@]} -eq 0 ]]; then
 fi
 
 if [[ "${PUSH}" == "1" ]]; then
-  bash "${SCRIPT_DIR}/nebius_registry_docker_login.sh"
+  if [[ "${REGISTRY}" == "npa-local" ]]; then
+    echo "ERROR: --push requires --registry <operator-controlled-registry>" >&2
+    exit 2
+  fi
+  case "${REGISTRY%/}" in
+    ghcr.io/nebius/nebius-physical-ai)
+      echo "ERROR: official GHCR publication is guarded by the public image workflow" >&2
+      exit 2
+      ;;
+  esac
+  registry_host="${REGISTRY%%/*}"
+  if ! docker manifest inspect "${REGISTRY}/__npa-auth-preflight__:missing" >/dev/null 2>&1; then
+    echo "INFO: ensure 'docker login ${registry_host}' has been completed before push" >&2
+  fi
 fi
 
 tool_version() {

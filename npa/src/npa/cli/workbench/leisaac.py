@@ -78,8 +78,6 @@ from npa.workbench.leisaac.paidf import (
     export_episode_to_paidf,
     materialize_paidf_dataset,
 )
-from npa.workflows.sim2real.registry_auth import ensure_registry_pull_secret_for_images
-
 app = typer.Typer(
     name="leisaac",
     help="LeIsaac SO101 browser teleoperation on the RTX PRO 6000 Kubernetes pool.",
@@ -1654,7 +1652,9 @@ def launch_cmd(
         help="Optional operator-chosen ISO-8601 expiry for UI discovery; omitted sessions remain live until destroyed.",
     ),
     image_pull_secret: str = typer.Option(
-        "npa-registry", "--image-pull-secret", help="Existing registry pull secret."
+        "",
+        "--image-pull-secret",
+        help="Optional existing pull secret for a customer-supplied private image.",
     ),
     transport: Transport = typer.Option(
         Transport.agent_relay,
@@ -1721,15 +1721,10 @@ def launch_cmd(
         lifecycle_lease = _acquire_run_lifecycle_lease(context, namespace, name)
         nonce = secrets.token_hex(32)
         if image_pull_secret:
-            # Nebius IAM-backed registry credentials are intentionally short lived. Refresh
-            # the named secret for every launch so a pod scheduled onto a cold GPU node does
-            # not depend on an old node cache or somebody else's credential-refresh cycle.
-            ensure_registry_pull_secret_for_images(
-                image,
-                secret_name=image_pull_secret,
-                namespace=namespace,
-                k8s_context=context,
-            )
+            # Repository-selected LeIsaac releases are anonymously pullable from
+            # public GHCR and need no secret. Keep an explicit, generic escape hatch
+            # for an operator who deliberately supplies a private BYOF image, but do
+            # not synthesize vendor-specific registry credentials here.
             secret = _kubectl(
                 context, namespace, ["get", "secret", image_pull_secret, "-o", "name"]
             )

@@ -61,6 +61,13 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def test_official_build_helper_only_pushes_full_sha_development_tags() -> None:
+    build = (DOCKER_DIR / "build.sh").read_text(encoding="utf-8")
+    assert '"${REGISTRY%/}" == "ghcr.io/nebius/nebius-physical-ai"' in build
+    assert '"$TAG" == "dev-${SOURCE_COMMIT}"' in build
+    assert "promote releases by digest" in build
+
+
 @pytest.fixture
 def image(tmp_path: Path) -> Path:
     """Reproduce the parts of the image layout the script actually depends on."""
@@ -116,6 +123,18 @@ def nothing_was_fetched(image: Path) -> bool:
         if cache.exists() and any(cache.iterdir()):
             return False
     return True
+
+
+def test_runtime_sync_uses_the_final_checkout_path() -> None:
+    """Editable package paths must survive publication of the runtime tree."""
+
+    script = (DOCKER_DIR / "ltx_runtime.sh").read_text(encoding="utf-8")
+    move = script.index('mv "$tmp" "$tree"')
+    sync = script.index('( cd "$tree" && uv sync --extra "$UV_EXTRA" )')
+    marker = script.index(': > "$tree/.complete"')
+
+    assert move < sync < marker
+    assert '( cd "$tmp" && uv sync' not in script
 
 
 class TestTheBuildTimeRefusalProof:
@@ -413,12 +432,10 @@ class TestTheNvidiaGateIsSeparate:
 class TestTheEntrypointDispatch:
     """`docker run <image> ltx-runtime <mode>` must reach <mode>.
 
-    The entrypoint funnels every invocation through ``ltx-runtime`` so the
-    entitlement checks cannot be sidestepped, which means its argv handling is
-    load-bearing: the runbook, the golden eval, and the live re-proof of the
-    refusal all invoke it in exactly that form. A first build of the image showed
-    the ``ltx-runtime`` arm forwarding the literal word as the mode, so every one
-    of those commands died as "unknown mode" instead of running.
+    Explicit LTX modes go through ``ltx-runtime``. Other argv must remain
+    available to the container orchestrator before task secrets are injected;
+    that cannot expose LTX bytes because the image carries none. The runbook,
+    golden eval, and live refusal proof invoke the explicit form.
     """
 
     @pytest.fixture
@@ -468,14 +485,18 @@ class TestTheEntrypointDispatch:
     def test_a_bare_mode_still_dispatches(self, entrypoint: Path, mode: str) -> None:
         assert self._dispatch(entrypoint, mode) == f"MODE:{mode}"
 
-    def test_an_arbitrary_command_is_funnelled_through_the_fetch_path(
+    def test_an_infrastructure_bootstrap_command_runs_without_a_fetch(
         self, entrypoint: Path
     ) -> None:
-        """Anything else runs under `exec`, which fetches only when entitled."""
+        """SkyPilot bootstrap runs before its task-level secrets are present."""
 
-        assert self._dispatch(entrypoint, "python", "-c", "pass") == (
-            "MODE:exec python -c pass"
-        )
+        assert self._dispatch(entrypoint, "printf", "BOOTSTRAP_OK") == "BOOTSTRAP_OK"
+
+
+def test_prebuilt_image_carries_only_runtime_fetch_metadata() -> None:
+    dockerfile = (DOCKER_DIR / "Dockerfile").read_text(encoding="utf-8")
+    assert '"source":"operator-runtime-fetch"' in dockerfile
+    assert "> /opt/byof/npa_source_metadata.json" in dockerfile
 
 
 class TestTheRunbookCommandsReachTheModeTheyClaim:

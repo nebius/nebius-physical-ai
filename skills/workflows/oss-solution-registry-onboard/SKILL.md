@@ -164,7 +164,7 @@ Registry admission requires all of:
 
 | Check | Pass criteria |
 | --- | --- |
-| Build/push | Image in Nebius registry with `npa_source_metadata.json` |
+| Build/push | Image in the authorized registry with `npa_source_metadata.json` |
 | K8s pull | Pod starts from pushed image (`sky launch --down` path) |
 | Capability smoke | `smoke_command` exit 0 |
 | Artifact | Named JSON present under smoke output dir and uploaded to S3 |
@@ -476,7 +476,7 @@ A solution is registry-ready only after all applicable gates pass:
 | Documentation | Upstream docs read and cited for every claimed capability |
 | License | Upstream license and asset/model/data restrictions recorded, and the image's redistribution class set per `skills/atomic/solution-licensing/SKILL.md` |
 | Packaging | BYOF image builds and includes `npa_source_metadata.json` |
-| Registry | Image pushed to the resolved Nebius registry; no hardcoded registry IDs |
+| Registry | Redistributable candidate pushed to private GHCR with an immutable dev SHA, or restricted image pushed only to an operator-controlled registry |
 | Contract | Inputs, outputs, runtime, GPU, credentials, and failure modes documented |
 | Workflow | NPA workflow validates/plans if a workflow is part of the registry entry |
 | Smoke | Capability-level smoke commands pass in the container or service |

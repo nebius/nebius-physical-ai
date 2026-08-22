@@ -383,7 +383,7 @@ def check_registry(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> Check
             status=WARN,
             summary="Some images are not fully qualified for a pull check.",
             remedy=(
-                "Set NPA_REGISTRY (or NPA_REGISTRY_ID) or pass fully-qualified "
+                "Set NPA_REGISTRY or pass fully-qualified "
                 "<registry>/<image>:<tag> values so the agent-sa pull path can be verified."
             ),
             details=tuple(sorted(set(not_actionable))),
@@ -410,8 +410,8 @@ def check_registry(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> Check
             status=FAIL,
             summary=f"{len(unreachable)} image(s) are not pullable.",
             remedy=(
-                "Push the image or refresh the registry pull secret (the "
-                "npa-nebius-registry / agent-sa pull path expires silently)."
+                "Use a published public GHCR release, or configure exact-host "
+                "credentials for an operator-controlled registry."
             ),
             details=tuple(unreachable),
         )

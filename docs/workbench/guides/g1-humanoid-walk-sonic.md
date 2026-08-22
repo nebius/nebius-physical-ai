@@ -48,7 +48,7 @@ npa workbench workflow submit \
   npa/workflows/workbench/npa-workflows/sonic-locomotion-finetuning.yaml \
   --tool sonic \
   --run-id sonic-g1-$(date -u +%Y%m%dT%H%M%SZ) \
-  --registry cr.eu-north1.nebius.cloud/<registry-id> \
+  --registry <your-registry>/<namespace> \
   --gpu-target h100 \
   --region eu-north1 \
   --use-spot \
@@ -76,7 +76,7 @@ from npa.sdk.workbench import sonic
 plan = sonic.materialize_workflow(
     Path("npa/workflows/workbench/npa-workflows/sonic-locomotion-finetuning.yaml"),
     run_id="sonic-g1-proof",
-    registry="cr.eu-north1.nebius.cloud/<registry-id>",
+    registry="<your-registry>/<namespace>",
     gpu_target="h100",
     region="eu-north1",
     use_spot=True,

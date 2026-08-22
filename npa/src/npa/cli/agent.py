@@ -1061,10 +1061,8 @@ server {{
         os.environ.get("NPA_AGENT_LICHTBLICK_IMAGE", "").strip()
         or "npa-lichtblick:1.26.0"
     )
-    # Region-agnostic image acquisition: the Lichtblick image is mirrored to both
-    # the eu-north1 and us-central1 registries, so a fresh VM in any region pulls
-    # from whichever registry is reachable instead of depending on a locally-built
-    # image. Candidates = primary + mirror registry (see deploy.images).
+    # Region-agnostic image acquisition uses the anonymous public release. An
+    # explicit customer registry override remains available through deploy.images.
     lichtblick_pull_candidates = " ".join(
         shlex.quote(ref)
         for ref in container_image_candidates("lichtblick", preferred_region=region)
@@ -3053,10 +3051,10 @@ def _agent_system_prompt() -> str:
             "Before Sim2Real submit, confirm scene/robot/camera selection.",
             "Always use real registry-qualified images: supported defaults resolve from",
             "public GHCR, while `NPA_REGISTRY` or a legacy `container_registry` value selects",
-            "custom/private images. Never keep `<your-registry-id>` placeholders in runnable workflows.",
+            "custom/private images. Never keep registry placeholders in runnable workflows.",
             "For BYOF solution onboarding, use `npa workbench byof run`",
             "(or `npa/scripts/run_byof_repo.py`) to containerize an OSS repo,",
-            "push to an explicitly selected Nebius registry, then launch a real Isaac-Lab run",
+            "push to an explicitly selected customer registry, then launch a real Isaac-Lab run",
             "with `--image` override on RT-core GPUs (L40S / RTX PRO 6000).",
             "See docs/architecture/oss-onboarding-ladder.md for Tier 0→2 promotion.",
             "For live infra runs, verify GPU compatibility first (`sky check`, `sky gpus list`)",
@@ -8996,16 +8994,11 @@ sudo systemctl reset-failed npa-agent-backend npa-rerun nginx || true
 sudo systemctl enable --now npa-agent-backend npa-rerun nginx
 sudo systemctl restart npa-rerun nginx
 sudo systemctl restart npa-agent-backend
-# Region-agnostic Lichtblick image acquisition: pull from whichever mirror
-# registry (eu-north1 or us-central1) is reachable and retag to the sidecar's
-# image, so a fresh VM in any region works without a locally-built image. Falls
-# back to any local image. Best-effort — never blocks the deploy.
+# Region-agnostic Lichtblick image acquisition: anonymously pull the public
+# release (or an explicitly configured customer override) and retag it to the
+# sidecar image. Best-effort — never blocks the deploy.
 for lb_cand in {lichtblick_pull_candidates}; do
   lb_host="${{lb_cand%%/*}}"
-  if command -v nebius >/dev/null 2>&1; then
-    lb_tok="$(nebius iam get-access-token 2>/dev/null || true)"
-    [ -n "$lb_tok" ] && printf '%s' "$lb_tok" | sudo docker login "$lb_host" -u iam --password-stdin >/dev/null 2>&1 || true
-  fi
   if sudo docker pull "$lb_cand" >/dev/null 2>&1; then
     sudo docker tag "$lb_cand" {lichtblick_image} >/dev/null 2>&1 || true
     echo "npa-lichtblick image acquired from $lb_host"

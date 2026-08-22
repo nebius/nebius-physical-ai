@@ -1054,8 +1054,6 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.service_client_cpus}}",
             "--client-memory",
             "{{config.service_client_memory}}",
-            "--pull-secret",
-            "{{config.service_image_pull_secret}}",
             "--liveness-initial-delay-seconds",
             "{{config.service_liveness_initial_delay_seconds}}",
             "--gpu-node-selector-key",

@@ -10,6 +10,7 @@ from typing import Any, Callable
 class PostprocessContext:
     run_prefix_uri: str
     project: str | None
+    wan_acceptance_candidate_image: str = ""
 
 
 Postprocessor = Callable[[PostprocessContext], dict[str, Any]]
@@ -19,7 +20,10 @@ def _wan_single(context: PostprocessContext) -> dict[str, Any]:
     from npa.solutions.wan2_2.rerun import publish_wan_rrd_from_s3
 
     return publish_wan_rrd_from_s3(
-        context.run_prefix_uri, variant="single", project=context.project
+        context.run_prefix_uri,
+        variant="single",
+        project=context.project,
+        acceptance_candidate_image=context.wan_acceptance_candidate_image,
     )
 
 
@@ -27,7 +31,10 @@ def _wan_multigpu(context: PostprocessContext) -> dict[str, Any]:
     from npa.solutions.wan2_2.rerun import publish_wan_rrd_from_s3
 
     return publish_wan_rrd_from_s3(
-        context.run_prefix_uri, variant="multigpu", project=context.project
+        context.run_prefix_uri,
+        variant="multigpu",
+        project=context.project,
+        acceptance_candidate_image=context.wan_acceptance_candidate_image,
     )
 
 

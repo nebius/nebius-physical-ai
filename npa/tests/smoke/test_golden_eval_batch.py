@@ -171,12 +171,12 @@ def test_run_container_eval_forwards_registry_and_tag(monkeypatch) -> None:
     result = batch.run_container_eval(
         "lerobot",
         serverless=True,
-        registry="cr.eu-north1.nebius.cloud/example",
+        registry="registry.example/example",
         tag="0.5.1-rtfetch-rc3",
     )
 
     assert result.ok
-    assert seen["registry"] == "cr.eu-north1.nebius.cloud/example"
+    assert seen["registry"] == "registry.example/example"
     assert seen["tag"] == "0.5.1-rtfetch-rc3"
 
 

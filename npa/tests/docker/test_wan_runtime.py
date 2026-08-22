@@ -29,6 +29,18 @@ BAKED_CONSTRAINTS = (
 )
 WAN_DOCKERFILE = ROOT / "npa" / "docker" / "workbench" / "wan2-2" / "Dockerfile"
 WAN_SMOKE = ROOT / "npa" / "docker" / "workbench" / "wan2-2" / "smoke.sh"
+WAN_ENTRYPOINT = ROOT / "npa" / "docker" / "workbench" / "wan2-2" / "entrypoint.sh"
+
+
+def test_entrypoint_allows_skypilot_bootstrap_without_runtime_fetch() -> None:
+    completed = subprocess.run(
+        ["bash", str(WAN_ENTRYPOINT), "printf", "BOOTSTRAP_OK"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == "BOOTSTRAP_OK"
 
 
 def test_runtime_requirements_are_hash_locked() -> None:
@@ -60,6 +72,7 @@ def test_security_fixed_runtime_and_baked_image_are_fully_pinned() -> None:
     assert "torchaudio" not in runtime
     assert "pillow==12.3.0" in baked
     assert "diffusers==0.38.0" in baked
+    assert "peft==0.20.0" in baked
     assert "transformers==5.5.0" in baked
     assert "sentencepiece==0.2.1" in baked
     assert "pip==26.1.2" in baked
@@ -78,7 +91,8 @@ def test_security_fixed_runtime_and_baked_image_are_fully_pinned() -> None:
     assert "-e '/\"flash_attn\",/d'" in dockerfile
     assert "pip install --no-cache-dir --no-deps -e /opt/byof" in dockerfile
     assert "-m compileall -q --invalidation-mode checked-hash" in dockerfile
-    assert "-type d -name __pycache__ -prune" not in dockerfile
+    assert "find /opt/wan-base -type d -name __pycache__ -prune" in dockerfile
+    assert "find /opt/wan-base -type f -name '*.pyc'" in dockerfile
     assert '"$tree/venv/bin/python" -m pip check' in RUNTIME_SCRIPT.read_text(
         encoding="utf-8"
     )

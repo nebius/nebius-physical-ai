@@ -16,7 +16,7 @@ resources:
   cpus: 16+
   memory: 192+
   disk_size: 500
-  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-byof:<your-run-id>"
+  image_id: "docker:ghcr.io/nebius/nebius-physical-ai/npa-ltx2:dev-<full-git-sha>"
 envs:
   NPA_BYOF_RUN_ID: "<your-run-id>"
   BYOF_REPO_ROOT: "/opt/byof"

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Build a workbench image *in the Kubernetes cluster* with kaniko and push it to the
-# Nebius registry — no local docker pull, no local disk pressure.
+# selected operator registry — no local docker pull, no local disk pressure.
 #
 # Why this exists: the operator/dev VM cannot always pull a workbench base image
 # (npa-isaac-lab is ~8 GB compressed, and the VM regularly runs at >90% disk). The
-# cluster nodes already cache these layers, and the cluster already holds a registry
-# pull secret, so building there is both faster and disk-safe.
+# cluster nodes may already cache these layers, making the build disk-safe for the
+# operator VM. Private targets require an explicit operator-managed pull secret.
 #
 # Two modes:
 #
@@ -29,7 +29,7 @@ TAG=""
 DOCKERFILE=""
 RUN_SNIPPET=""
 NAMESPACE="${NPA_BUILD_NAMESPACE:-default}"
-PULL_SECRET="${NPA_BUILD_PULL_SECRET:-npa-nebius-registry}"
+PULL_SECRET="${NPA_BUILD_PULL_SECRET:-}"
 # Pinned by digest: an unpinned build tool undermines the reproducibility this
 # script exists for, and the repo pins its own base images the same way.
 # Refresh with: crane digest gcr.io/kaniko-project/executor:<version>
@@ -55,6 +55,10 @@ done
 
 if [[ -z "$TAG" ]]; then
   echo "ERROR: --tag <registry>/<image>:<tag> is required" >&2
+  exit 2
+fi
+if [[ -z "$PULL_SECRET" ]]; then
+  echo "ERROR: --pull-secret <registry secret> is required to push the requested image" >&2
   exit 2
 fi
 if ! [[ "$TIMEOUT_SECONDS" =~ ^[0-9]+$ ]]; then
@@ -172,15 +176,9 @@ if [[ "$phase" != "Succeeded" ]]; then
   echo "ERROR: image build did not succeed (phase=${phase:-unknown})" >&2
   cat >&2 <<'HINT'
 
-If the log says UNAUTHORIZED / "authentication required", the cluster's registry
-secret has expired - Nebius IAM tokens are short-lived, so a long-lived pull secret
-goes stale. Refresh it with the same identity and retry:
-
-  TOKEN=$(npa/.venv/bin/python -c \
-    'from npa.workflows.sim2real.registry_auth import mint_nebius_registry_token; print(mint_nebius_registry_token())')
-  kubectl create secret docker-registry <pull-secret> -n <namespace> \
-    --docker-server=<registry-host> --docker-username=iam --docker-password="$TOKEN" \
-    --dry-run=client -o yaml | kubectl apply -f -
+If the log says UNAUTHORIZED / "authentication required", replace the explicitly
+named pull secret using credentials issued by the selected operator-controlled
+registry, then retry. NPA does not mint or refresh registry credentials.
 HINT
   exit 1
 fi

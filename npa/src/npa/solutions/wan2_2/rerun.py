@@ -163,7 +163,9 @@ def _load_json(path: Path) -> dict[str, Any]:
     return payload
 
 
-def _validate_container_image(summary: dict[str, Any]) -> dict[str, str]:
+def _validate_container_image(
+    summary: dict[str, Any], *, acceptance_candidate_image: str = ""
+) -> dict[str, str]:
     """Bind run/RRD evidence to the repository's accepted immutable image."""
 
     reference = str(summary.get("image") or "").strip()
@@ -182,14 +184,29 @@ def _validate_container_image(summary: dict[str, Any]) -> dict[str, str]:
         bool(re.fullmatch(r"sha256:[0-9a-f]{64}", accepted_digest)),
         "accepted Wan image digest is invalid",
     )
+    live_candidate = bool(acceptance_candidate_image) and reference == str(
+        acceptance_candidate_image
+    ).strip()
+    if live_candidate:
+        _require(
+            re.fullmatch(
+                r"ghcr\.io/nebius/nebius-physical-ai/"
+                r"npa-wan2-2@sha256:[0-9a-f]{64}",
+                reference,
+            )
+            is not None,
+            "Wan acceptance candidate is not an official immutable digest",
+        )
     _require(
-        match.group(2) == accepted_digest, "BYOF summary image digest is not accepted"
+        match.group(2) == accepted_digest or live_candidate,
+        "BYOF summary image digest is not accepted",
     )
     _require(bool(accepted_tag), "accepted Wan image tag is invalid")
     return {
         "reference": reference,
-        "oci_digest": accepted_digest,
-        "accepted_tag": accepted_tag,
+        "oci_digest": match.group(2),
+        "accepted_tag": accepted_tag if not live_candidate else "",
+        "validation_state": "candidate" if live_candidate else "accepted",
     }
 
 
@@ -717,11 +734,18 @@ def _validate_single_gpu(
     return {"distributed": None, "topology": topology, "ranks": []}
 
 
-def validate_wan_run(run_dir: Path, layout: WanRunLayout) -> dict[str, Any]:
+def validate_wan_run(
+    run_dir: Path,
+    layout: WanRunLayout,
+    *,
+    acceptance_candidate_image: str = "",
+) -> dict[str, Any]:
     """Validate immutable Wan output artifacts and return sanitized evidence."""
 
     summary = _load_json(run_dir / "npa_byof_summary.json")
-    container_image = _validate_container_image(summary)
+    container_image = _validate_container_image(
+        summary, acceptance_candidate_image=acceptance_candidate_image
+    )
     primary_path = _primary_path(run_dir, layout, summary)
     primary = _load_json(primary_path)
     inventory = _load_json(run_dir / layout.inventory_filename)
@@ -1358,11 +1382,19 @@ def verify_wan_rrd(
 
 
 def build_wan_rrd(
-    run_dir: Path, output_path: Path, *, layout: WanRunLayout
+    run_dir: Path,
+    output_path: Path,
+    *,
+    layout: WanRunLayout,
+    acceptance_candidate_image: str = "",
 ) -> dict[str, Any]:
     """Build and fully verify a local RRD from a materialized Wan run directory."""
 
-    evidence = validate_wan_run(run_dir, layout)
+    evidence = validate_wan_run(
+        run_dir,
+        layout,
+        acceptance_candidate_image=acceptance_candidate_image,
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     _log_recording(output_path, evidence)
     verification = verify_wan_rrd(
@@ -1507,6 +1539,7 @@ def publish_wan_rrd_from_s3(
     variant: str,
     project: str | None = None,
     s3_client: Any | None = None,
+    acceptance_candidate_image: str = "",
 ) -> dict[str, Any]:
     """Materialize, verify, upload, download, and re-verify a Wan RRD + manifest."""
 
@@ -1556,7 +1589,12 @@ def publish_wan_rrd_from_s3(
             source_objects.append(source_object)
 
         local_rrd = Path(tmp) / layout.rrd_filename
-        build = build_wan_rrd(run_dir, local_rrd, layout=layout)
+        build = build_wan_rrd(
+            run_dir,
+            local_rrd,
+            layout=layout,
+            acceptance_candidate_image=acceptance_candidate_image,
+        )
         rrd_key = prefix + layout.rrd_filename
         rrd_uri = normalized_prefix + layout.rrd_filename
         rrd_bytes = local_rrd.read_bytes()

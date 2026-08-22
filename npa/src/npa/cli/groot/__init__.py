@@ -2991,7 +2991,6 @@ def deploy_cmd(
                                 f"--host 0.0.0.0 --port {server_port}"
                             )
                         ),
-                        registry_token=merged_vars.get("iam_token", ""),
                     )
                     if verify_env and not no_shared_creds:
                         failed_keys = audit_remote_env(

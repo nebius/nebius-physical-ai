@@ -2215,7 +2215,6 @@ def deploy_cmd(
                         "/opt/genesis/outputs:/opt/genesis/outputs",
                     ],
                     work_dirs=["/opt/genesis/outputs"],
-                    registry_token=merged_vars.get("iam_token", ""),
                 )
                 write_manifest(ssh, tool="genesis", version=image_ref.rsplit(":", 1)[-1], deployed_by=f"npa deploy --runtime {runtime.value}")
                 update_workbench_app_status(proj_alias, wb_name, "healthy")

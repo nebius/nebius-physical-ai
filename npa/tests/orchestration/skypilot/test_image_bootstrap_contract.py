@@ -164,7 +164,7 @@ def test_probe_attaches_declared_image_pull_secrets() -> None:
         image=IMAGE,
         digest=DIGEST,
         context="ctx-exact",
-        image_pull_secrets=("npa-nebius-registry", "npa-nebius-registry"),
+        image_pull_secrets=("operator-registry-secret", "operator-registry-secret"),
         runner=_successful_runner(calls),
         terminal_observer=_terminal_observer(),
         nonce_factory=lambda: "c" * 16,
@@ -177,7 +177,7 @@ def test_probe_attaches_declared_image_pull_secrets() -> None:
         if item.startswith("--overrides=")
     )
     assert json.loads(raw_overrides)["spec"]["imagePullSecrets"] == [
-        {"name": "npa-nebius-registry"}
+        {"name": "operator-registry-secret"}
     ]
 
 
