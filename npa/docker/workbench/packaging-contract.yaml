@@ -409,7 +409,17 @@ images:
     dockerfile: rerun-viewer/Dockerfile
     tier: job
     ports: [9090]
-    final_user: nobody
+    final_user: ubuntu
+    passwordless_root_exemption: >-
+      SkyPilot's Kubernetes bootstrap uses passwordless sudo from the non-root
+      ubuntu user to create its ephemeral in-pod SSH runtime. The image does not
+      start sshd by default, permit password login, expose public ingress, or
+      bake credentials; the standard-workflow task pod is the trust boundary.
+    notes: >-
+      Purpose-built standard-workflow Stage 14 image with exact NPA source,
+      resolver-closed Rerun/MCAP dependencies, and SkyPilot Kubernetes bootstrap
+      prerequisites. It remains usable as a Rerun viewer through an explicit
+      command.
     redistribution: public
   foxglove-embed:
     dockerfile: foxglove-embed/Dockerfile

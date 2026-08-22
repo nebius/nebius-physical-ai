@@ -24,6 +24,7 @@ _EXACT_SOURCE_DOCKERFILES = (
     "cosmos3-reason/Dockerfile",
     "isaac-lab/Dockerfile",
     "lerobot-vlm-rl/Dockerfile",
+    "rerun-viewer/Dockerfile",
     "sim2real-envgen/Dockerfile",
     "sim2real-eval/Dockerfile",
     "sim2real-control/Dockerfile",
@@ -32,6 +33,7 @@ _EXACT_SOURCE_DOCKERFILES = (
 _STANDARD_WORKFLOW_PASSTHROUGH_DOCKERFILES = (
     "cosmos3-reason/Dockerfile",
     "isaac-lab/Dockerfile",
+    "rerun-viewer/Dockerfile",
     "sim2real-control/Dockerfile",
     "sim2real-envgen/Dockerfile",
     "sim2real-eval/Dockerfile",
@@ -193,6 +195,32 @@ def test_standard_workflow_entrypoint_execs_orchestrator_argv() -> None:
         text=True,
     )
     assert result.stdout == "standard-workflow-ready"
+
+
+def test_rerun_viewer_is_exact_source_stage14_runtime() -> None:
+    root = Path(__file__).resolve().parents[2] / "docker" / "workbench"
+    dockerfile = (root / "rerun-viewer" / "Dockerfile").read_text(encoding="utf-8")
+    requirements = (root / "common" / "sim2real-viewer-requirements.txt").read_text(
+        encoding="utf-8"
+    )
+    assert 'org.opencontainers.image.revision="${NPA_SOURCE_SHA}"' in dockerfile
+    assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in dockerfile
+    assert "NPA_BAKED_PYTHON=/usr/local/bin/python" in dockerfile
+    assert "npa-exact-source.pth" in dockerfile
+    assert "sim2real-viewer-requirements.txt" in dockerfile
+    assert "--no-deps" in dockerfile
+    assert "pip check" in dockerfile
+    assert 'ENTRYPOINT ["/usr/local/bin/npa-workflow-entrypoint"]' in dockerfile
+    for prerequisite in ("openssh-server", "rsync", "sudo", "netcat-openbsd"):
+        assert prerequisite in dockerfile
+    lines = [
+        line.strip()
+        for line in requirements.splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    assert all(line.count("==") == 1 for line in lines)
+    for dependency in ("boto3==1.43.62", "mcap==1.4.0", "rerun-sdk==0.31.4"):
+        assert dependency in lines
 
 
 @pytest.mark.parametrize("relative_path", _STANDARD_WORKFLOW_PASSTHROUGH_DOCKERFILES)

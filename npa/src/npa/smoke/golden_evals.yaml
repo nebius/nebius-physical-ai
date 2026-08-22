@@ -804,13 +804,14 @@ containers:
       role: >-
         Generic Rerun log viewer server used by Sim2Real and agent visualization paths.
     safety:
-      runs_as: nobody
-      base_image: python:3.11-slim-bookworm
+      runs_as: ubuntu
+      base_image: python:3.11-slim-trixie (digest-pinned)
       network: internal (viewer port 9090)
       external_fetch: [pypi]
       notes: >-
-        Minimal rerun-sdk image; no persistent storage or outbound calls at
-        runtime beyond the viewer bind.
+        Exact-source standard-workflow Stage 14 image with resolver-closed
+        Rerun/MCAP dependencies and baked SkyPilot Kubernetes prerequisites;
+        no models, datasets, credentials, or runtime caches are baked.
     golden_eval:
       kind: build-import
       command: 'python -c "import rerun; assert rerun.__version__"'
