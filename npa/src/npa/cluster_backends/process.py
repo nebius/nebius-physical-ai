@@ -242,6 +242,9 @@ def run_stream(
             raise BackendCommandError(
                 f"Command timed out after {timeout} seconds: {_command_text(args)}"
             ) from exc
+        except KeyboardInterrupt:
+            _stop_process(process)
+            raise
         finally:
             for reader in readers:
                 reader.join(timeout=5)

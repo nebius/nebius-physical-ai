@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import subprocess
 import time
 
 import pytest
@@ -127,6 +128,29 @@ def test_stream_timeout_stops_descendant_process_group(tmp_path: Path) -> None:
         time.sleep(0.02)
     else:
         pytest.fail("stream timeout left a descendant process running")
+
+
+def test_default_stream_interrupt_stops_process_group(monkeypatch) -> None:
+    from io import StringIO
+
+    import npa.cluster_backends.process as process_module
+
+    class InterruptedProcess:
+        pid = 123
+        stdout = StringIO("")
+        stderr = StringIO("")
+
+        def wait(self, **_kwargs):  # noqa: ANN001
+            raise KeyboardInterrupt
+
+    process = InterruptedProcess()
+    stopped = []
+    monkeypatch.setattr(subprocess, "Popen", lambda *_a, **_k: process)
+    monkeypatch.setattr(process_module, "_stop_process", stopped.append)
+
+    with pytest.raises(KeyboardInterrupt):
+        run_stream(["terraform", "apply"])
+    assert stopped == [process]
 
 
 def test_explicit_executable_path_wins_over_path_lookup(tmp_path: Path) -> None:
