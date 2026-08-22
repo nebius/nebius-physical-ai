@@ -140,6 +140,9 @@ and GPU guidance.
 Use NEBIUS_TENANT_ID, NEBIUS_PROJECT_ID, NEBIUS_REGION, HF_TOKEN, NGC_API_KEY,
 and NEBIUS_TOKEN_FACTORY_KEY from the private process environment. Never print
 secret values, put them in command arguments, or write them into the repository.
+Never run `env`, `printenv`, `set`, `export -p`, or another command that dumps
+the process environment; inspect only allowlisted names and report present or
+missing. Do not read credential files except through npa's credential APIs.
 Use NPA_PROJECT_ALIAS if it is set; otherwise use "workbench" as the local alias.
 
 Install or verify npa and its reported host prerequisites, including Terraform
@@ -193,6 +196,10 @@ configured Nebius project, region, writable bucket, and credentials. Use the
 attached local H.264 MP4, or PAIDF_INPUT_URI if it is set; if neither is
 available, ask me only for the input video before continuing. Keep all input and
 artifact locations private.
+
+Never run `env`, `printenv`, `set`, `export -p`, or another command that dumps
+the process environment. Inspect only allowlisted variable names and report
+present or missing; do not print secret values or read credential files directly.
 
 Re-run the credential and model-access gates for paidf,cosmos3. Validate and
 plan the spec with the real bucket and input, starting with one variant and one
