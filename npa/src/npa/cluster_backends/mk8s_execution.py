@@ -1064,17 +1064,49 @@ def _reconcile_tainted_node_groups(
             env=cli_env,
             check=False,
         )
+        expected_node_count = (
+            pool.count
+            if pool.is_gpu() and gpu_state_instance_count == 1
+            else (gpu_nodes_per_group if pool.is_gpu() else pool.count)
+        )
+        if result.returncode != 0 and _is_not_found_result(result):
+            state_only_payload = {
+                "metadata": {
+                    "id": attributes.get("id"),
+                    "name": attributes.get("name"),
+                    "parent_id": cluster_id,
+                },
+                "spec": {
+                    "fixed_node_count": attributes.get("fixed_node_count"),
+                    "template": attributes.get("template"),
+                },
+                "status": {"state": "PROVISIONING"},
+            }
+            if not _tainted_node_group_matches_desired(
+                provider_payload=state_only_payload,
+                state_attributes=attributes,
+                pool=pool,
+                cluster=cluster,
+                cluster_id=cluster_id,
+                subnet_id=subnet_id,
+                expected_node_count=expected_node_count,
+            ):
+                raise RuntimeError(
+                    "refusing to retain an absent node-group taint because Terraform "
+                    "state does not match the exact desired topology"
+                )
+            _log(
+                on_status,
+                f"retained provider-confirmed absent node-group taint at {address} "
+                "for replacement",
+            )
+            continue
         try:
             payload = json.loads(result.stdout or "{}")
         except json.JSONDecodeError as exc:
             raise RuntimeError(
                 "refusing to reconcile a tainted node group with unreadable provider state"
             ) from exc
-        expected_node_count = (
-            pool.count
-            if pool.is_gpu() and gpu_state_instance_count == 1
-            else (gpu_nodes_per_group if pool.is_gpu() else pool.count)
-        )
         if result.returncode != 0 or not isinstance(payload, dict) or not (
             _tainted_node_group_matches_desired(
                 provider_payload=payload,
@@ -1315,6 +1347,9 @@ def _repair_exact_stopped_placeholder(
             and (item.get("metadata") or {}).get("name") == expected_name
             and (item.get("metadata") or {}).get("parent_id") == cluster_id
         ]
+        if not candidates:
+            _log(on_status, "split node group is absent from both state and provider")
+            return {"status": "split-group-absent"}
         if len(candidates) != 1:
             raise RuntimeError(
                 "refusing split-orphan repair without one exact provider node group"

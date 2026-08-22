@@ -1710,6 +1710,82 @@ def test_failed_split_one_node_group_retains_taint_for_exact_replacement(
     assert all("untaint" not in call for call in calls)
 
 
+def test_provider_absent_exact_split_group_retains_taint_for_recreation(
+    monkeypatch, tmp_path
+) -> None:
+    from copy import deepcopy
+
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, _provider, cluster = _tainted_gpu_reconciliation_fixture()
+    first = state["resources"][1]["instances"][0]
+    first.pop("status")
+    first["attributes"]["fixed_node_count"] = 1
+    absent = deepcopy(first)
+    absent["index_key"] = 1
+    absent["status"] = "tainted"
+    absent["attributes"]["id"] = "mk8snodegroup-absent"
+    absent["attributes"]["name"] = "cluster-test-gpu-1"
+    state["resources"][1]["instances"].append(absent)
+    calls: list[list[str]] = []
+
+    class NotFound(_Cap):
+        stderr = "rpc error: code = NotFound desc = requested resource not found"
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        calls.append(args)
+        if args[1:3] == ["state", "pull"]:
+            return _Cap(json.dumps(state), 0)
+        if "node-group" in args and "get" in args:
+            return NotFound("", 13)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(execution, "_run_capture", run)
+    assert execution._reconcile_tainted_node_groups(
+        terraform_bin="terraform",
+        workdir=tmp_path,
+        env={},
+        cluster=as_mk8s_desired(cluster),
+        project_id="project-test",
+        subnet_id="vpcsubnet-test",
+        nebius_bin="nebius",
+        profile="tenant-profile",
+        on_status=None,
+    ) == {}
+    assert all("untaint" not in call for call in calls)
+
+
+def test_provider_get_error_does_not_retain_tainted_group(monkeypatch, tmp_path) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, _provider, cluster = _tainted_gpu_reconciliation_fixture()
+
+    class PermissionDenied(_Cap):
+        stderr = "rpc error: code = PermissionDenied desc = access denied"
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        if args[1:3] == ["state", "pull"]:
+            return _Cap(json.dumps(state), 0)
+        if "node-group" in args and "get" in args:
+            return PermissionDenied("", 7)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(execution, "_run_capture", run)
+    with pytest.raises(RuntimeError, match="live identity or desired topology"):
+        execution._reconcile_tainted_node_groups(
+            terraform_bin="terraform",
+            workdir=tmp_path,
+            env={},
+            cluster=as_mk8s_desired(cluster),
+            subnet_id="vpcsubnet-test",
+            nebius_bin="nebius",
+            profile="tenant-profile",
+            on_status=None,
+        )
+
+
 def _stopped_placeholder_workers(provider: dict) -> tuple[dict, dict]:
     template = provider["spec"]["template"]
 
