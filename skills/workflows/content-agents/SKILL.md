@@ -50,8 +50,10 @@ rootfs, every layer, nested archives, and OCI history before publication.
 Use the standard model/runtime-cache wiring. The immutable identity includes
 OVRTX version, architecture, and complete lock digest; use one filesystem
 writer lock, a unique sibling temporary install, verification, and atomic ready
-publication. A configured ReadWriteMany cache is shared across render jobs. The
-fallback beneath XDG cache is pod/node-ephemeral and may download once per job.
+publication. A configured durable PVC is shared across render jobs: ReadWriteOnce
+is sufficient for this sequential workflow, and ReadWriteMany is needed only for
+concurrent cross-node readers. The fallback beneath XDG cache is
+pod/node-ephemeral and may download once per job.
 Never include credentials in cache paths, markers, metadata, logs, or artifacts.
 
 ## Operate

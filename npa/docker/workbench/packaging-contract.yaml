@@ -313,6 +313,7 @@ images:
   content-agents:
     dockerfile: content-agents/Dockerfile
     ovrtx_runtime_fetch: true
+    accepted_image_manifest: npa/src/npa/deploy/content_agents_image_manifest.json
     tier: job
     passwordless_root_exemption: >-
       SkyPilot Kubernetes bootstrap only; the final task process is uid 1000,

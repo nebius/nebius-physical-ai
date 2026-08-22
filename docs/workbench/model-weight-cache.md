@@ -308,6 +308,9 @@ contains none of its bytes. Its version/architecture/lock-bound identity, writer
 lock, unique temporary installation, and atomic ready marker keep it separate from
 mutable model aliases. Without a mounted cache it falls back to XDG cache, which is
 pod/node-ephemeral under SkyPilot and can be downloaded again by the next Job.
+A durable ReadWriteOnce claim works for the sequential Content Agents render
+stages; use ReadWriteMany only when jobs on different nodes must read the cache
+concurrently.
 
 The BYOF video images also fetch a CUDA PyTorch runtime into
 their own trees (`NPA_WAN_RUNTIME_CACHE`, `NPA_LTX_RUNTIME_CACHE`), which are still

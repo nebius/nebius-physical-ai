@@ -32,6 +32,7 @@ DEFAULT_VLM_IMAGE_ENV = "NPA_VLM_IMAGE"
 DEFAULT_WORKBENCH_IMAGE_ENV = "NPA_WORKBENCH_IMAGE"
 SONIC_IMAGE_MANIFEST_RESOURCE = "sonic_image_manifest.json"
 WAN_IMAGE_MANIFEST_RESOURCE = "wan2_2_image_manifest.json"
+CONTENT_AGENTS_IMAGE_MANIFEST_RESOURCE = "content_agents_image_manifest.json"
 
 CONTAINER_IMAGE_NAMES = {
     "lerobot": "npa-lerobot",
@@ -291,6 +292,27 @@ def wan_accepted_image_manifest() -> dict[str, Any]:
     if payload.get("tag") != SUPPORTED_TOOL_VERSIONS["wan2-2"]:
         raise RuntimeError(
             "Wan accepted image manifest tag drifted from the supported tag"
+        )
+    return payload
+
+
+@lru_cache(maxsize=1)
+def content_agents_accepted_image_manifest() -> dict[str, Any]:
+    """Return the immutable Content Agents image/runtime/RTX proof tuple."""
+
+    text = (
+        resources.files(__package__)
+        .joinpath(CONTENT_AGENTS_IMAGE_MANIFEST_RESOURCE)
+        .read_text(encoding="utf-8")
+    )
+    payload = json.loads(text)
+    if not isinstance(payload, dict):
+        raise RuntimeError("Content Agents accepted image manifest must be a JSON object")
+    if payload.get("format") != "npa_content_agents_accepted_image_manifest_v1":
+        raise RuntimeError("Unsupported Content Agents accepted image manifest format")
+    if payload.get("tag") != SUPPORTED_TOOL_VERSIONS["content-agents"]:
+        raise RuntimeError(
+            "Content Agents accepted image manifest tag drifted from the supported tag"
         )
     return payload
 

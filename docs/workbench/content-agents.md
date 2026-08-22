@@ -104,12 +104,15 @@ Invalid content at that identity is never overwritten and render execution
 fails closed.
 
 The standard NPA cache wiring sets `NPA_CONTENT_AGENTS_RUNTIME_CACHE` beneath
-`/opt/npa-model-cache/runtimes/content-agents`. With the shipped ReadWriteMany
-`npa-model-cache` PVC configured, material, physics, and validation jobs share
-one durable verified runtime. Without a mounted cache, the fallback is beneath
-`$XDG_CACHE_HOME/npa/runtime-cache/content-agents`; in a SkyPilot pod this is
-node/pod-ephemeral, so later jobs may download again. NPA never stores a token or
-credential in the ready marker or cache metadata.
+`/opt/npa-model-cache/runtimes/content-agents`. A configured durable PVC is
+shared by the material, physics, and validation jobs: ReadWriteOnce is sufficient
+for this sequential workflow, while a ReadWriteMany claim also supports
+concurrent readers on multiple nodes. The accepted RTX run used one bound
+ReadWriteOnce claim and retained one unchanged ready identity across all three
+jobs. Without a mounted cache, the fallback is beneath
+`$XDG_CACHE_HOME/npa/runtime-cache/content-agents`; in a SkyPilot pod that is
+node/pod-ephemeral, so a later job may download again. NPA never stores a token
+or credential in the ready marker or cache metadata.
 
 OVRTX is anonymous and uses neither `HF_TOKEN` nor `NGC_API_KEY`. Those
 credentials remain relevant only to capabilities that actually fetch gated HF
