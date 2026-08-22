@@ -707,6 +707,17 @@ def latest_phase_states(
         grouped.setdefault(phase, []).append(event)
     states: dict[str, dict[str, Any]] = {}
     for phase, events in grouped.items():
+        if project_id:
+            exact_events = [
+                event
+                for event in events
+                if str(event.get("project_id") or "") == project_id
+            ]
+            if exact_events:
+                # An alias receipt can acquire a project ID from a later event.
+                # That must not retroactively give its older alias-only events
+                # equal authority to events directly scoped to the immutable ID.
+                events = exact_events
         unresolved = [
             event
             for event in events

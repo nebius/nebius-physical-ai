@@ -198,6 +198,165 @@ def test_full_cleanup_accepts_exact_receipt_scope_after_alias_removal(
     assert __import__("json").loads(result.output)["verification_unresolved"] is False
 
 
+def test_alias_free_full_cleanup_records_not_submitted_audit_for_exact_project(
+    monkeypatch,
+) -> None:
+    import json
+
+    from npa import teardown_receipts
+    from npa.clients.project_credential_store import (
+        project_credential_residue,
+        write_project_credentials,
+    )
+    from npa.orchestration.npa_workflow.submission_state import (
+        update_submission_state,
+    )
+
+    monkeypatch.setattr("npa.clients.config.resolve_environment", lambda _project: None)
+    monkeypatch.setattr(
+        cleanup_cli,
+        "_storage_iam_full_check",
+        lambda *_a, **_k: ("verified absent", False, "verified_absent", "owned"),
+    )
+    write_project_credentials(
+        "project-a",
+        {
+            "terraform_state": {
+                "access_key": "run-access",
+                "secret_key": "run-secret",
+            }
+        },
+    )
+    update_submission_state(
+        "project-a",
+        "planned-only",
+        {
+            "launch_state": "reserved",
+            "workflow": {"name": "cleanup-proof"},
+        },
+    )
+    teardown_receipts.record_teardown_event(
+        phase="workflow_audit",
+        resource="all-managed-jobs",
+        terminal_state="verification_failed",
+        project_alias="project-a",
+    )
+    teardown_receipts.record_teardown_event(
+        phase="provision-configure",
+        resource="configured-project",
+        terminal_state="completed",
+        project_alias="project-a",
+        project_id="project-a",
+    )
+    teardown_receipts.record_teardown_event(
+        phase="workflow",
+        resource="planned-only",
+        terminal_state="verification_failed",
+        project_alias="project-a",
+        project_id="project-a",
+    )
+    for phase, state in (
+        ("agent", "verified_deleted"),
+        ("bucket", "verified_absent"),
+        ("storage_iam", "completed"),
+    ):
+        teardown_receipts.record_teardown_event(
+            phase=phase,
+            resource=f"{phase}-fixture",
+            terminal_state=state,
+            project_id="project-a",
+        )
+
+    result = runner.invoke(
+        app,
+        [
+            "cleanup",
+            "--project",
+            "project-a",
+            "--full",
+            "--yes",
+            "--keep-sky",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["result"] == "fully_cleaned"
+    assert payload["operational_residue_present"] is False
+    assert payload["verification_unresolved"] is False
+    assert project_credential_residue("project-a") == []
+    workflow = teardown_receipts.latest_phase_states(project_id="project-a")[
+        "workflow_audit"
+    ]
+    assert workflow["terminal_state"] == "not_submitted"
+    assert workflow["project_alias"] == ""
+    assert workflow["project_id"] == "project-a"
+
+
+def test_newer_terminal_equivalent_phase_supersedes_older_failed_audit() -> None:
+    terminal_cloud_phases = {
+        "workflow": {
+            "terminal_state": "verification_failed",
+            "recorded_at": "2026-08-22T10:00:00Z",
+        },
+        "workflow_audit": {
+            "terminal_state": "not_submitted",
+            "recorded_at": "2026-08-22T10:01:00Z",
+        },
+        "agent": {
+            "terminal_state": "verified_deleted",
+            "recorded_at": "2026-08-22T10:00:00Z",
+        },
+        "bucket": {
+            "terminal_state": "verified_absent",
+            "recorded_at": "2026-08-22T10:00:00Z",
+        },
+        "storage_iam": {
+            "terminal_state": "completed",
+            "recorded_at": "2026-08-22T10:00:00Z",
+        },
+    }
+
+    assert cleanup_cli._cloud_cleanup_receipts_are_terminal(terminal_cloud_phases)
+
+    terminal_cloud_phases["workflow"]["recorded_at"] = "2026-08-22T10:02:00Z"
+    assert not cleanup_cli._cloud_cleanup_receipts_are_terminal(
+        terminal_cloud_phases
+    )
+
+
+def test_exact_project_phase_state_prefers_immutable_event_scope() -> None:
+    from npa import teardown_receipts
+
+    teardown_receipts.record_teardown_event(
+        phase="workflow_audit",
+        resource="all-managed-jobs",
+        terminal_state="verification_failed",
+        project_alias="project-a",
+    )
+    # A later command can enrich the alias receipt with the immutable project
+    # identity without retroactively making its older alias-only event exact.
+    teardown_receipts.record_teardown_event(
+        phase="workflow",
+        resource="planned-only",
+        terminal_state="verification_failed",
+        project_alias="project-a",
+        project_id="project-a",
+    )
+    teardown_receipts.record_teardown_event(
+        phase="workflow_audit",
+        resource="all-managed-jobs",
+        terminal_state="not_submitted",
+        project_id="project-a",
+    )
+
+    states = teardown_receipts.latest_phase_states(project_id="project-a")
+
+    assert states["workflow_audit"]["terminal_state"] == "not_submitted"
+    assert states["workflow_audit"]["project_id"] == "project-a"
+
+
 def test_project_cleanup_preserves_global_runtime_and_provider_cache(
     monkeypatch,
 ) -> None:

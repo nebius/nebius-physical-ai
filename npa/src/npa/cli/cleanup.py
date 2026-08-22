@@ -672,50 +672,73 @@ def _storage_iam_full_check(
     return "\n".join(messages), partial, status, ownership_state
 
 
-def _cloud_cleanup_receipts_are_terminal(
-    phase_states: dict[str, dict[str, object]],
-) -> bool:
-    """Accept monolithic or equivalent atomic receipts for exact cloud cleanup."""
-
-    terminal = {
+_CLOUD_CLEANUP_TERMINAL_STATES = frozenset(
+    {
         "already_absent",
         "cancelled",
         "completed",
         "deleted",
         "not_submitted",
+        "operator_attested",
         "terminal",
         "verified_absent",
         "verified_deleted",
     }
+)
+_CLOUD_CLEANUP_REQUIRED_GROUPS = (
+    ("workflow_audit", "workflow", "project_destroy_workflows"),
+    ("agent", "project_destroy_agents"),
+    ("bucket", "project_destroy_bucket"),
+    ("storage_iam", "project_destroy_storage_iam"),
+)
+_CLOUD_CLEANUP_OPTIONAL_GROUPS = (
+    ("controller", "project_destroy_controller"),
+    ("cluster", "project_destroy_clusters"),
+)
+_CLOUD_CLEANUP_PHASE_GROUPS = (
+    *_CLOUD_CLEANUP_REQUIRED_GROUPS,
+    *_CLOUD_CLEANUP_OPTIONAL_GROUPS,
+)
 
-    def group_is_terminal(*names: str) -> bool:
-        return any(
-            str((phase_states.get(name) or {}).get("terminal_state") or "").lower()
-            in terminal
-            for name in names
-        )
 
-    required_groups = (
-        ("workflow_audit", "workflow", "project_destroy_workflows"),
-        ("agent", "project_destroy_agents"),
-        ("bucket", "project_destroy_bucket"),
-        ("storage_iam", "project_destroy_storage_iam"),
+def _phase_group_events(
+    phase_states: dict[str, dict[str, object]], names: tuple[str, ...]
+) -> list[dict[str, object]]:
+    return [phase_states[name] for name in names if phase_states.get(name)]
+
+
+def _newest_phase_group_is_terminal(
+    phase_states: dict[str, dict[str, object]], names: tuple[str, ...]
+) -> bool:
+    events = _phase_group_events(phase_states, names)
+    if not events:
+        return False
+    newest_at = max(str(event.get("recorded_at") or "") for event in events)
+    return any(
+        str(event.get("recorded_at") or "") == newest_at
+        and str(event.get("terminal_state") or "").lower()
+        in _CLOUD_CLEANUP_TERMINAL_STATES
+        for event in events
     )
-    if not all(group_is_terminal(*names) for names in required_groups):
+
+
+def _cloud_cleanup_receipts_are_terminal(
+    phase_states: dict[str, dict[str, object]],
+) -> bool:
+    """Accept the newest monolithic or equivalent exact cleanup evidence."""
+
+    if not all(
+        _newest_phase_group_is_terminal(phase_states, names)
+        for names in _CLOUD_CLEANUP_REQUIRED_GROUPS
+    ):
         return False
     # Optional controller/cluster phases are not applicable to an agent-only
     # fresh-config run. If NPA has any such evidence, however, uncertainty must
     # still block credential and alias retirement.
-    cloud_phases = {name for group in required_groups for name in group} | {
-        "controller",
-        "cluster",
-        "project_destroy_controller",
-        "project_destroy_clusters",
-    }
     return all(
-        str(event.get("terminal_state") or "").lower() in terminal
-        for name, event in phase_states.items()
-        if name in cloud_phases
+        not _phase_group_events(phase_states, names)
+        or _newest_phase_group_is_terminal(phase_states, names)
+        for names in _CLOUD_CLEANUP_OPTIONAL_GROUPS
     )
 
 
@@ -1210,10 +1233,28 @@ def cleanup_cmd(
             local_state not in {"fully_clean", "fully_cleaned", "preserved_shared_sky"}
             or project_credential_residue_items
         )
-        unresolved_receipts = any(
-            str(event.get("terminal_state") or "") not in TERMINAL_STATES
-            for event in receipt_phases.values()
-        )
+        if receipt_project_id:
+            cloud_phase_names = {
+                name for group in _CLOUD_CLEANUP_PHASE_GROUPS for name in group
+            }
+            unresolved_receipts = bool(
+                any(
+                    _phase_group_events(receipt_phases, group)
+                    and not _newest_phase_group_is_terminal(receipt_phases, group)
+                    for group in _CLOUD_CLEANUP_PHASE_GROUPS
+                )
+                or any(
+                    name not in cloud_phase_names
+                    and str(event.get("terminal_state") or "")
+                    not in TERMINAL_STATES
+                    for name, event in receipt_phases.items()
+                )
+            )
+        else:
+            unresolved_receipts = any(
+                str(event.get("terminal_state") or "") not in TERMINAL_STATES
+                for event in receipt_phases.values()
+            )
         verification_unresolved = bool(
             iam_partial
             or job_note
@@ -1409,8 +1450,9 @@ def cleanup_cmd(
                 if job_ids
                 else "verification_failed"
             ),
-            project_alias=project,
-            project_id=str(getattr(environment, "project_id", "") or ""),
+            project_alias=receipt_alias,
+            project_id=receipt_project_id
+            or str(getattr(environment, "project_id", "") or ""),
             precheck={"skip_requested": skip_jobs},
             action={"kind": "read_only_managed_job_audit"},
             verification={
@@ -1556,7 +1598,8 @@ def cleanup_cmd(
             phase="local_cleanup",
             resource="npa-local-state",
             terminal_state="in_progress",
-            project_alias=project,
+            project_alias=receipt_alias,
+            project_id=receipt_project_id,
             precheck={"managed_jobs_verified_terminal_or_absent": sky_audit_safe},
             action={
                 "kind": "local_cleanup",
@@ -1739,7 +1782,8 @@ def cleanup_cmd(
             phase="local_cleanup",
             resource="npa-local-state",
             terminal_state="completed" if local_terminal else "partial",
-            project_alias=project,
+            project_alias=receipt_alias,
+            project_id=receipt_project_id,
             precheck={"managed_jobs_verified_terminal_or_absent": sky_audit_safe},
             action={
                 "kind": "local_cleanup",
