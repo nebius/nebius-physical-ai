@@ -118,6 +118,20 @@ def test_leisaac_dockerfile_removes_parent_imageio_ffmpeg_payload() -> None:
     assert 'test ! -e /home/"${NPA_RUNTIME_USER}"/.cache' in dockerfile
 
 
+def test_isaac_lab_dockerfile_excludes_bundled_imageio_ffmpeg_payload() -> None:
+    dockerfile = (
+        REPO_ROOT / "npa" / "docker" / "workbench" / "isaac-lab" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
+    runtime_base_layer = dockerfile.split(
+        "COPY --chmod=0755 docker/workbench/isaac-lab/npa_cli.sh", 1
+    )[0].rsplit("RUN ", 1)[1]
+    assert "apt-get install -y --no-install-recommends ffmpeg" in runtime_base_layer
+    assert "*/imageio_ffmpeg/binaries/ffmpeg*" in runtime_base_layer
+    assert "-delete" in runtime_base_layer
+    assert "imageio_ffmpeg.get_ffmpeg_exe()" in runtime_base_layer
+
+
 @pytest.mark.parametrize("path", PAYLOAD_PATHS)
 def test_scanner_flags_real_kit_payload(path: str) -> None:
     why = scanner.classify_path(path)

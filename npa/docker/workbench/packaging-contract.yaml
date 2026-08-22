@@ -328,6 +328,11 @@ images:
     dockerfile: isaac-lab/Dockerfile
     isaac_runtime_fetch: true
     tier: interactive
+    notes: >-
+      Bakes OSS dependencies only and uses Debian FFmpeg at runtime. The image
+      removes imageio-ffmpeg's wheel-bundled static executable in the same layer
+      that installs the Python environment. Isaac Sim/Lab and task assets remain
+      cryptographically verified runtime fetches after EULA preflight.
     redistribution: public
   leisaac:
     dockerfile: leisaac/Dockerfile
