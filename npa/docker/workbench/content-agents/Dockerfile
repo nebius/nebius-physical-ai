@@ -166,8 +166,7 @@ RUN set -eux; \
     # installs the reviewed prebuilt OVRTX wheel and never compiles native code;
     # retaining linux-libc-dev would only expose an avoidable fixed CVE.
     dpkg --purge --force-depends linux-libc-dev; \
-    rm -rf /usr/local/cuda-*/compat /root/.cache /home/ubuntu/.cache/*; \
-    rm -f /usr/local/bin/uv
+    rm -rf /usr/local/cuda-*/compat /root/.cache /home/ubuntu/.cache/*
 
 # The CUDA base's driver-compatibility directory is useful on unmanaged hosts,
 # but NPA GPU pods receive their graphics/display stack from the host. Assemble

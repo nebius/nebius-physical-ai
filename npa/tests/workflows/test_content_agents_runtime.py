@@ -131,3 +131,10 @@ def test_bootstrap_source_contains_single_writer_and_atomic_publication() -> Non
         "READY_MARKER",
     ):
         assert required in source
+
+
+def test_image_inspection_fails_closed_without_uv(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(runtime.shutil, "which", lambda _name: None)
+
+    with pytest.raises(runtime.ContentAgentsRuntimeError, match="lacks the pinned uv"):
+        runtime.inspect_image()

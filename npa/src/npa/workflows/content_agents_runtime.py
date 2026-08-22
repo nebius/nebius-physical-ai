@@ -281,6 +281,13 @@ def bootstrap_runtime(
 def inspect_image() -> dict[str, Any]:
     """Prove source pins are installed while OVRTX itself is absent."""
 
+    # Upstream uses uv's PEP 751 support to install the complete reviewed lock.
+    # Treat the downloader as part of image readiness: a byte-clean image that
+    # cannot perform its promised runtime fetch is not ready.
+    if shutil.which("uv") is None:
+        raise ContentAgentsRuntimeError(
+            "public image lacks the pinned uv runtime bootstrap executable"
+        )
     versions = {
         name: importlib.metadata.version(name)
         for name in (

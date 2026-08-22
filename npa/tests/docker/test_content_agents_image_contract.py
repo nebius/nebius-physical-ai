@@ -77,7 +77,8 @@ def test_image_excludes_optional_restricted_payloads_and_samples() -> None:
     assert "rm -rf /usr/local/cuda-*/compat" in dockerfile
     assert "dpkg --purge --force-depends linux-libc-dev" in dockerfile
     assert "-type d ! -name s3 -exec rm -rf" in dockerfile
-    assert "rm -f /usr/local/bin/uv" in dockerfile
+    assert "COPY --from=uv-bin /uv /usr/local/bin/uv" in dockerfile
+    assert "rm -f /usr/local/bin/uv" not in dockerfile
     assert 'find_spec("ovphysx") is None' in dockerfile
     assert 'find_spec("ovrtx") is None' in dockerfile
     assert "test ! -e .build-resources/scene_optimizer_core" in dockerfile
