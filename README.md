@@ -142,11 +142,13 @@ and NEBIUS_TOKEN_FACTORY_KEY from the private process environment. Never print
 secret values, put them in command arguments, or write them into the repository.
 Use NPA_PROJECT_ALIAS if it is set; otherwise use "workbench" as the local alias.
 
-Install or verify npa, verify the active Nebius CLI identity, and configure the
-known tenant, project, and region non-interactively. Persist supported environment
-credentials with npa configure --save-env-credentials and provision or reuse
-writable project object storage. Confirm the active identity can create the
-tenant IAM objects that secure that storage. Then run npa configure --show,
+Install or verify npa and its reported host prerequisites, including Terraform
+and, for SkyPilot Kubernetes on Debian/Ubuntu, socat. Verify the active Nebius
+CLI identity and configure the known tenant, project, and region
+non-interactively. Persist supported environment credentials with npa configure
+--save-env-credentials and provision or reuse writable project object storage.
+Confirm the active identity can create the tenant IAM objects that secure that
+storage. Then run npa configure --show,
 npa workbench health preflight --json, and
 npa workbench health access --capability paidf,cosmos3 --json.
 

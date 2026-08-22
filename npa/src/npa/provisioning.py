@@ -656,7 +656,10 @@ def provision_if_absent(
     needs_gpu_setup = bool(requested_accelerator or sky_smoke)
     if needs_gpu_setup and k8s_ready and not skip_k8s and not dry_run:
         from npa.controller_ownership import ensure_controller_owner
-        from npa.cli.cluster.terraform_lifecycle import _run_skypilot_smoke
+        from npa.cli.cluster.terraform_lifecycle import (
+            _check_skypilot_kubernetes,
+            _run_skypilot_smoke,
+        )
         from npa.orchestration.skypilot.k8s_gpu_catalog import (
             wait_for_kubernetes_accelerators,
         )
@@ -666,6 +669,13 @@ def provision_if_absent(
             actions.append(
                 f"controller:bound {owner.project_alias}/{owner.context}/{owner.cluster_id}"
             )
+
+            _check_skypilot_kubernetes(
+                Path(kubeconfig_path),
+                context,
+                sky_bin=sky_bin,
+            )
+            actions.append("skypilot:kubernetes-enabled")
 
             def report_gpu_status(message: str) -> None:
                 actions.append(f"gpu:{message}")
@@ -692,6 +702,7 @@ def provision_if_absent(
                     cluster_name,
                     requested_accelerator,
                     sky_bin=sky_bin,
+                    credentials_checked=True,
                 )
                 actions.append("sky-smoke:passed")
         except Exception as exc:  # noqa: BLE001 - return a resumable partial result
