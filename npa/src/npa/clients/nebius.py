@@ -2195,13 +2195,11 @@ def bucket_name_for(tenant_id: str, project_id: str) -> str:
 
 
 def _list_project_buckets(project_id: str) -> list[dict[str, Any]]:
-    """Return every bucket in *project_id*.
+    """Return every bucket in *project_id* for explicit inventory commands.
 
-    Uses ``--all`` so existing buckets are never missed behind the CLI's default
-    pagination (matching the orphan-instance/tenant/project listers). Without it,
-    a project with many buckets returned only the first page, so ``bucket_exists``
-    reported ``False`` for a real bucket and ``npa configure`` wrongly prompted to
-    create a new one.
+    Uses ``--all`` so explicit list/audit surfaces never omit a page. Exact-name
+    existence and teardown checks use ``get_bucket_by_name`` instead and must not
+    enumerate unrelated project buckets.
     """
     data = _run_json(
         [
@@ -2218,12 +2216,37 @@ def _list_project_buckets(project_id: str) -> list[dict[str, Any]]:
 
 
 def get_bucket_by_name(project_id: str, bucket_name: str) -> dict[str, Any] | None:
-    """Return the bucket list item for *bucket_name*, or ``None``."""
+    """Return the exact parent-scoped bucket, or ``None`` on verified NotFound."""
 
-    for item in _list_project_buckets(project_id):
-        if item.get("metadata", {}).get("name") == bucket_name:
-            return item
-    return None
+    exact_project = str(project_id or "").strip()
+    exact_name = str(bucket_name or "").strip()
+    if not exact_project or not exact_name:
+        return None
+    try:
+        item = _run_json(
+            [
+                "storage",
+                "bucket",
+                "get-by-name",
+                "--parent-id",
+                exact_project,
+                "--name",
+                exact_name,
+            ]
+        )
+    except NebiusError as exc:
+        if _is_not_found(str(exc)):
+            return None
+        raise
+    metadata = item.get("metadata")
+    if not isinstance(metadata, dict):
+        raise NebiusError("exact bucket lookup returned no resource metadata")
+    if str(metadata.get("name") or "").strip() != exact_name:
+        raise NebiusError("exact bucket lookup returned an unexpected resource name")
+    returned_parent = str(metadata.get("parent_id") or "").strip()
+    if returned_parent and returned_parent != exact_project:
+        raise NebiusError("exact bucket lookup returned an unexpected parent")
+    return item
 
 
 def delete_bucket(bucket_id: str, *, ttl: str = "") -> None:
@@ -2245,10 +2268,7 @@ def delete_bucket(bucket_id: str, *, ttl: str = "") -> None:
 
 def bucket_exists(project_id: str, bucket_name: str) -> bool:
     """Return True when *bucket_name* already exists in the project."""
-    return any(
-        item.get("metadata", {}).get("name") == bucket_name
-        for item in _list_project_buckets(project_id)
-    )
+    return get_bucket_by_name(project_id, bucket_name) is not None
 
 
 def ensure_bucket(
