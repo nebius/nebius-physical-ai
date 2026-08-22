@@ -1398,9 +1398,11 @@ def _persist_quality_disposition(
         reasons.append("one or more required checks did not pass")
 
     accepted = not reasons
+    decision = "promote_checkpoint" if accepted else "loop_back"
     payload = {
         "schema": "npa.data_factory.quality_disposition.v1",
         "quality_status": "accepted" if accepted else "rejected",
+        "decision": decision,
         "evaluator_status": evaluator_status,
         "score": score,
         "threshold": numeric_threshold,
@@ -1429,11 +1431,8 @@ def write_quality_disposition(
     from npa.orchestration.npa_workflow.decisions import write_decision
 
     payload = _persist_quality_disposition(scores_uri, disposition_uri, threshold)
-    decision = (
-        "promote_checkpoint" if payload["quality_status"] == "accepted" else "loop_back"
-    )
+    decision = str(payload["decision"])
     write_decision(decision_uri, decision)
-    payload["decision"] = decision
     print(
         json.dumps(
             {

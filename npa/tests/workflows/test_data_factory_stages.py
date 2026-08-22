@@ -1283,7 +1283,9 @@ def test_write_quality_disposition_routes_without_raising(
 
     assert result["quality_status"] == expected_status
     assert result["decision"] == expected_decision
-    assert json.loads(disposition.read_text())["quality_status"] == expected_status
+    persisted = json.loads(disposition.read_text())
+    assert persisted["quality_status"] == expected_status
+    assert persisted["decision"] == expected_decision
     assert decisions == [("s3://example/grade/decision.json", expected_decision)]
 
 
@@ -1406,7 +1408,9 @@ def test_dynamic_quality_disposition_persists_strict_route(
     assert result["quality_status"] == expected_status
     assert result["decision"] == expected_decision
     assert decisions == [("s3://example-bucket/run/decision.json", expected_decision)]
-    assert json.loads(disposition.read_text())["quality_status"] == expected_status
+    persisted = json.loads(disposition.read_text())
+    assert persisted["quality_status"] == expected_status
+    assert persisted["decision"] == expected_decision
 
 
 @pytest.mark.parametrize("contents", [None, "not-json", "[]"])
