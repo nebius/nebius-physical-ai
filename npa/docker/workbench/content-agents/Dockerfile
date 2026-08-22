@@ -162,6 +162,10 @@ RUN set -eux; \
     test ! -e /opt/content-agents/.ovrtx_venv; \
     find /opt/content-agents /opt/npa-runtime -type d -name __pycache__ \
       -prune -exec rm -rf -- {} +; \
+    # Header-only build input inherited through build-essential. Runtime fetch
+    # installs the reviewed prebuilt OVRTX wheel and never compiles native code;
+    # retaining linux-libc-dev would only expose an avoidable fixed CVE.
+    dpkg --purge --force-depends linux-libc-dev; \
     rm -rf /usr/local/cuda-*/compat /root/.cache /home/ubuntu/.cache/*; \
     rm -f /usr/local/bin/uv
 

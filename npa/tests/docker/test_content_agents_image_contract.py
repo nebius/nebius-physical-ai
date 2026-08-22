@@ -75,6 +75,7 @@ def test_image_excludes_optional_restricted_payloads_and_samples() -> None:
     assert "FROM scratch AS public-image" in dockerfile
     assert "COPY --from=assembled / /" in dockerfile
     assert "rm -rf /usr/local/cuda-*/compat" in dockerfile
+    assert "dpkg --purge --force-depends linux-libc-dev" in dockerfile
     assert "-type d ! -name s3 -exec rm -rf" in dockerfile
     assert "rm -f /usr/local/bin/uv" in dockerfile
     assert 'find_spec("ovphysx") is None' in dockerfile
