@@ -447,7 +447,7 @@ def purge_agent_iam(leftovers: dict[str, Any], *, on_status: StatusFn) -> list[s
 
 def report_destroyed_agent_iam(
     project: str, name: str, *, record: dict[str, Any] | None, purge: bool = True
-) -> None:
+) -> str:
     """Surface the npa-agent service account/keys that outlive the destroyed VM."""
     import typer
 
@@ -459,13 +459,16 @@ def report_destroyed_agent_iam(
         saved_env = resolve_environment(project)
         project_id = str(getattr(saved_env, "project_id", "") or "")
     remaining = len([key for key in resolve_project_agents(project) if key != name])
+    dispositions: list[str] = []
     report_agent_iam(
         project_id=project_id,
         remaining_agents=remaining,
         purge=purge,
         on_status=lambda message: typer.echo(f"  {message}", err=True),
+        on_disposition=dispositions.append,
         strict=purge,
     )
+    return dispositions[-1] if dispositions else "absent"
 
 
 def report_agent_iam(
@@ -474,6 +477,7 @@ def report_agent_iam(
     remaining_agents: int,
     purge: bool,
     on_status: StatusFn,
+    on_disposition: StatusFn | None = None,
     strict: bool = False,
 ) -> list[str]:
     """Report (and optionally delete) the IAM the agent VM left behind.
@@ -483,6 +487,8 @@ def report_agent_iam(
     """
     leftovers = agent_iam_leftovers(project_id)
     if not leftovers.get("inventory_verified"):
+        if on_disposition is not None:
+            on_disposition("verification_unresolved")
         on_status(
             "Keeping the npa-agent service account: exact provider dependency "
             "inventory is unresolved ("
@@ -496,13 +502,20 @@ def report_agent_iam(
             )
         return []
     if not leftovers.get("service_account_id"):
+        if on_disposition is not None:
+            on_disposition("absent")
         return []
     provider_dependents = list(leftovers.get("dependents") or [])
     last_agent = remaining_agents == 0 and not provider_dependents
     owned = bool(leftovers.get("owned_by_npa"))
     if purge and last_agent and owned:
-        return purge_agent_iam(leftovers, on_status=on_status)
+        deleted = purge_agent_iam(leftovers, on_status=on_status)
+        if on_disposition is not None:
+            on_disposition("deleted")
+        return deleted
     if purge and last_agent and not owned:
+        if on_disposition is not None:
+            on_disposition("retained_unowned")
         on_status(
             "Keeping the npa-agent service account: its familiar name is not proof "
             "that NPA created it. No IAM resources were deleted."
@@ -513,19 +526,23 @@ def report_agent_iam(
             )
     if purge and not last_agent:
         if provider_dependents:
+            if on_disposition is not None:
+                on_disposition("retained_shared")
             on_status(
                 "Keeping the npa-agent service account: exact provider inventory "
                 "shows dependent VM(s): " + ", ".join(provider_dependents) + "."
             )
         else:
+            if on_disposition is not None:
+                on_disposition("retained_local_dependents")
             on_status(
                 "Keeping the npa-agent service account: "
                 f"{remaining_agents} other local agent record(s) still use it."
             )
-        if strict and provider_dependents:
-            raise AgentIAMCleanupError(
-                "agent IAM remains because exact provider inventory reports dependent VM(s)"
-            )
+        # Exact dependent VMs prove this identity is shared. Preserving it is a
+        # successful teardown disposition, not a partial cleanup failure.
+    elif not purge and on_disposition is not None:
+        on_disposition("retained_by_request")
     for line in format_iam_leftovers(
         leftovers, project_id=project_id, last_agent=last_agent
     ):

@@ -76,6 +76,9 @@ class _StorageIamObservation:
     ownership: str = "unverified"
     ownership_note: str = ""
     detail: str = ""
+    access_key_ids: tuple[str, ...] = ()
+    access_permit_id: str = ""
+    group_id: str = ""
 
     @property
     def present(self) -> bool:
@@ -84,6 +87,14 @@ class _StorageIamObservation:
     @property
     def verified_absent(self) -> bool:
         return self.outcome == "verified_absent"
+
+    @property
+    def retained_account_access_resolved(self) -> bool:
+        return self.outcome == "retained_account_access_resolved"
+
+    @property
+    def retained_account_access_delete_planned(self) -> bool:
+        return self.outcome == "retained_account_access_delete_planned"
 
 
 @bucket_app.command("list")
@@ -556,8 +567,14 @@ def _remove_storage_service_account_record(account_id: str) -> bool:
     return removed
 
 
-def _untrusted_storage_account_ids() -> set[str]:
-    """Return exact saved IDs that are evidence, but not ownership proof."""
+def _untrusted_storage_account_ids(project_id: str = "") -> set[str]:
+    """Return saved storage IDs that are evidence, but not ownership proof.
+
+    Project-scoped ``storage_iam`` is authoritative for lifecycle selection even
+    when it deliberately carries no NPA-create ownership.  The compatibility
+    ``nebius`` view may instead name the shared agent principal, so it is a
+    legacy fallback only when no project-scoped storage identity exists.
+    """
 
     import yaml
 
@@ -569,14 +586,58 @@ def _untrusted_storage_account_ids() -> set[str]:
         return set()
     if not isinstance(data, dict):
         return set()
-    ids: set[str] = set()
-    for section_name in ("storage_iam", "nebius"):
-        section = data.get(section_name)
-        if isinstance(section, dict):
-            account_id = str(section.get("service_account_id", "") or "").strip()
+    exact = str(project_id or "").strip()
+    project_ids: set[str] = set()
+    store = data.get("project_credentials")
+    projects = store.get("projects") if isinstance(store, dict) else None
+    selected = (
+        {exact: projects.get(exact)}
+        if exact and isinstance(projects, dict)
+        else projects
+        if isinstance(projects, dict)
+        else {}
+    )
+    for project_record in selected.values():
+        if not isinstance(project_record, dict):
+            continue
+        iam = project_record.get("storage_iam")
+        if not isinstance(iam, dict):
+            continue
+        active = str(iam.get("active_service_account_id") or "").strip()
+        if active:
+            project_ids.add(active)
+        generations = iam.get("generations")
+        records = generations if isinstance(generations, list) else [iam]
+        project_ids.update(
+            str(item.get("service_account_id") or "").strip()
+            for item in records
+            if isinstance(item, dict)
+            and str(item.get("service_account_id") or "").strip()
+        )
+    if project_ids:
+        return project_ids
+    if isinstance(projects, dict) and projects:
+        # An exact project store exists but has no storage identity for this
+        # selection. Its compatibility view may point at another project and
+        # must not become a cross-project lifecycle fallback.
+        return set()
+
+    storage_iam = data.get("storage_iam")
+    if isinstance(storage_iam, dict):
+        account_id = str(storage_iam.get("service_account_id") or "").strip()
+        if account_id:
+            return {account_id}
+
+    # Before the project credential store existed, ``nebius`` was the only
+    # saved evidence.  Keep that recovery path only for documents with no
+    # project-scoped store, because current agent bootstrap also writes it.
+    if not isinstance(projects, dict) or not projects:
+        nebius = data.get("nebius")
+        if isinstance(nebius, dict):
+            account_id = str(nebius.get("service_account_id") or "").strip()
             if account_id:
-                ids.add(account_id)
-    return ids
+                return {account_id}
+    return set()
 
 
 def _resolve_storage_iam_context(
@@ -638,6 +699,146 @@ def _resolve_storage_iam_context(
         account_id=str(identity.get("service_account_id") or "").strip(),
         identity_source=identity.source,
         receipt_id=identity.receipt_id,
+    )
+
+
+def _retained_storage_access_observation(
+    context: _StorageIamContext,
+    *,
+    account_id: str,
+    account_name: str,
+    ownership_note: str,
+) -> _StorageIamObservation | None:
+    """Resolve run-scoped access state while preserving an unowned account.
+
+    A project-scoped storage identity proves which account the bucket lifecycle
+    used, but it does not prove NPA owns that account.  Once the bucket is gone,
+    only access keys and bindings with explicit create provenance may be
+    removed.  If those exact resources are already absent, cleanup is terminal
+    even though the pre-existing/shared service account remains present.
+    """
+
+    import yaml
+
+    from npa.clients.config import storage_iam_residue
+    from npa.clients.credentials import CREDENTIALS_PATH
+    from npa.clients.nebius import NebiusError, list_access_keys_for_service_account
+
+    if not context.alias:
+        return None
+    marker = storage_iam_residue(context.alias)
+    if not (
+        str(marker.get("project_id") or "").strip() == context.project_id
+        and str(marker.get("service_account_id") or "").strip() == account_id
+        and str(marker.get("bucket_cleanup_state") or "").strip() == "complete"
+    ):
+        return None
+    try:
+        data = yaml.safe_load(CREDENTIALS_PATH.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        raise NebiusError(
+            f"Could not read project-scoped storage access provenance: {exc}"
+        ) from exc
+    if not isinstance(data, dict):
+        raise NebiusError("Project-scoped storage access provenance is not a mapping")
+
+    store = data.get("project_credentials")
+    projects = store.get("projects") if isinstance(store, dict) else None
+    project_record = (
+        projects.get(context.project_id) if isinstance(projects, dict) else None
+    )
+    project_record = project_record if isinstance(project_record, dict) else {}
+    project_iam = project_record.get("storage_iam")
+    project_iam = project_iam if isinstance(project_iam, dict) else {}
+    generations = project_iam.get("generations")
+    records = generations if isinstance(generations, list) else [project_iam]
+    matching = [
+        item
+        for item in records
+        if isinstance(item, dict)
+        and str(item.get("service_account_id") or "").strip() == account_id
+    ]
+    if not matching:
+        return None
+
+    created_key_ids = {
+        str(item).strip()
+        for generation in matching
+        for item in (
+            generation.get("access_key_ids")
+            if isinstance(generation.get("access_key_ids"), list)
+            else []
+        )
+        if str(item).strip()
+    }
+    marker_created = marker.get("created_access_key_ids")
+    if isinstance(marker_created, list):
+        created_key_ids.update(
+            str(item).strip() for item in marker_created if str(item).strip()
+        )
+    candidate_key_ids = {
+        str(item).strip()
+        for item in marker.get("access_key_ids") or []
+        if str(item).strip()
+    }
+    candidate_key_ids.update(created_key_ids)
+
+    group_ids: set[str] = set()
+    permit_ids: set[str] = set()
+    for generation in matching:
+        binding = generation.get("binding")
+        binding = binding if isinstance(binding, dict) else {}
+        if binding.get("group_managed_by") == "npa" and binding.get("group_id"):
+            group_ids.add(str(binding["group_id"]).strip())
+        if binding.get("access_permit_managed_by") == "npa" and binding.get(
+            "access_permit_id"
+        ):
+            permit_ids.add(str(binding["access_permit_id"]).strip())
+    if len(group_ids) > 1 or len(permit_ids) > 1:
+        return None
+
+    keys = list_access_keys_for_service_account(
+        context.project_id,
+        account_id,
+        strict=True,
+        profile=context.profile,
+    )
+    provider_key_ids = {
+        str((item or {}).get("id") or "").strip()
+        for item in keys
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
+    }
+    present_candidates = candidate_key_ids & provider_key_ids
+    if present_candidates - created_key_ids:
+        # A configured/reused key has no create provenance.  Keep it and the
+        # account unresolved; a familiar name or bucket association is not
+        # permission to delete user-managed access.
+        return None
+    deletable_keys = tuple(sorted(present_candidates & created_key_ids))
+    group_id = next(iter(group_ids), "")
+    permit_id = next(iter(permit_ids), "")
+    outcome = (
+        "retained_account_access_delete_planned"
+        if deletable_keys or group_id or permit_id
+        else "retained_account_access_resolved"
+    )
+    detail = (
+        "Exact NPA-created access state can be removed while the unowned service "
+        "account is preserved."
+        if outcome == "retained_account_access_delete_planned"
+        else "All exact run-scoped access state is absent; the unowned service account is preserved."
+    )
+    return _StorageIamObservation(
+        outcome=outcome,
+        context=context,
+        account_id=account_id,
+        account_name=account_name,
+        ownership="retained_unowned",
+        ownership_note=ownership_note,
+        detail=detail,
+        access_key_ids=deletable_keys,
+        access_permit_id=permit_id,
+        group_id=group_id,
     )
 
 
@@ -705,15 +906,6 @@ def _observe_storage_iam(
         receipt_id=context.receipt_id,
     )
     expected_name = record.name if record is not None else DEFAULT_SERVICE_ACCOUNT_NAME
-    if context.account_id and record is None:
-        return _StorageIamObservation(
-            outcome="verification_failed",
-            context=context,
-            account_id=context.account_id,
-            ownership="unverified",
-            ownership_note=ownership_note,
-            detail=ownership_note,
-        )
     if record is not None and record.project_id != context.project_id:
         return _StorageIamObservation(
             outcome="verification_failed",
@@ -731,18 +923,19 @@ def _observe_storage_iam(
         if context.account_id
         else {record.account_id}
         if record is not None
-        else set(_untrusted_storage_account_ids())
+        else set(_untrusted_storage_account_ids(context.project_id))
     )
     marker = storage_iam_residue(context.alias) if context.alias else {}
     if record is None:
         marker_id = str(marker.get("service_account_id", "") or "").strip()
-        if marker_id:
+        if marker_id and (not candidates or marker_id in candidates):
             candidates.add(marker_id)
         marker_candidates = marker.get("candidate_service_account_ids")
         if isinstance(marker_candidates, list):
-            candidates.update(
+            saved = {
                 str(item).strip() for item in marker_candidates if str(item).strip()
-            )
+            }
+            candidates.update(saved if not candidates else saved & candidates)
     if len(candidates) > 1:
         return _StorageIamObservation(
             outcome="verification_failed",
@@ -831,7 +1024,7 @@ def _observe_storage_iam(
                 + ", ".join(provider_mismatches)
             ),
         )
-    return _StorageIamObservation(
+    observation = _StorageIamObservation(
         outcome="present",
         context=context,
         account_id=identity.account_id,
@@ -844,6 +1037,27 @@ def _observe_storage_iam(
         ownership_note=ownership_note,
         detail="Exact ID, name, project, tenant, and CLI profile context were verified.",
     )
+    if record is None:
+        try:
+            retained = _retained_storage_access_observation(
+                context,
+                account_id=identity.account_id,
+                account_name=identity.name,
+                ownership_note=ownership_note,
+            )
+        except NebiusError as exc:
+            return _StorageIamObservation(
+                outcome="verification_failed",
+                context=context,
+                account_id=identity.account_id,
+                account_name=identity.name,
+                ownership="unverified",
+                ownership_note=ownership_note,
+                detail=str(exc),
+            )
+        if retained is not None:
+            return retained
+    return observation
 
 
 def _persist_storage_iam_observation(observation: _StorageIamObservation) -> None:
@@ -893,12 +1107,12 @@ def _persist_storage_iam_observation(observation: _StorageIamObservation) -> Non
         )
         return
     if observation.verified_absent:
-        # An immutable NPA creation record is authoritative over an older
-        # project residue marker. Collapse that historical marker even when it
-        # names a stale candidate; unowned evidence retains the exact-ID guard.
+        # Even NPA-owned evidence retains the exact-ID guard. A mismatched
+        # marker is a separate lifecycle generation, not stale data that this
+        # observation may silently discard.
         clear_storage_iam_residue(
             alias,
-            account_id="" if observation.ownership == "npa" else observation.account_id,
+            account_id=observation.account_id,
         )
         return
     status = (
@@ -906,6 +1120,9 @@ def _persist_storage_iam_observation(observation: _StorageIamObservation) -> Non
         if observation.present and observation.ownership == "npa"
         else "present_unverified_ownership"
         if observation.present
+        else observation.outcome
+        if observation.retained_account_access_resolved
+        or observation.retained_account_access_delete_planned
         else "verification_failed"
     )
     evidence = {
@@ -918,6 +1135,9 @@ def _persist_storage_iam_observation(observation: _StorageIamObservation) -> Non
         "service_account_id": observation.account_id,
         "service_account_name": observation.account_name,
         "ownership": observation.ownership,
+        "access_key_ids": list(observation.access_key_ids),
+        "access_permit_id": observation.access_permit_id,
+        "group_id": observation.group_id,
         "last_checked_at": datetime.now(timezone.utc).isoformat(),
         "detail": observation.detail,
     }
@@ -939,6 +1159,9 @@ def _observation_dict(observation: _StorageIamObservation) -> dict[str, object]:
         "service_account_id": observation.account_id,
         "service_account_name": observation.account_name,
         "ownership": observation.ownership,
+        "access_key_ids": list(observation.access_key_ids),
+        "access_permit_id": observation.access_permit_id,
+        "group_id": observation.group_id,
         "detail": observation.detail,
     }
 
@@ -1068,18 +1291,56 @@ def _begin_bucket_iam_cleanup_tombstone(
     account_ids: set[str] = set()
     account_name = ""
     access_key_ids: set[str] = set()
+    created_access_key_ids: set[str] = set()
     creation_status = ""
     creation_phase = ""
     creation_attempt = ""
-    for section_name in ("storage_iam", "nebius"):
-        section = data.get(section_name)
-        if not isinstance(section, dict):
+    project_store = data.get("project_credentials")
+    project_records = (
+        project_store.get("projects") if isinstance(project_store, dict) else None
+    )
+    project_record = (
+        project_records.get(project_id) if isinstance(project_records, dict) else None
+    )
+    project_record = project_record if isinstance(project_record, dict) else {}
+    project_iam = project_record.get("storage_iam")
+    project_iam = project_iam if isinstance(project_iam, dict) else {}
+    active_storage_id = str(project_iam.get("active_service_account_id") or "").strip()
+    if active_storage_id:
+        account_ids.add(active_storage_id)
+    generations = project_iam.get("generations")
+    generation_records = generations if isinstance(generations, list) else [project_iam]
+    for generation in generation_records:
+        if not isinstance(generation, dict):
             continue
-        account_id = str(section.get("service_account_id", "") or "").strip()
+        account_id = str(generation.get("service_account_id") or "").strip()
         if account_id:
             account_ids.add(account_id)
-        if section_name == "storage_iam":
-            account_name = str(section.get("service_account_name", "") or "").strip()
+        account_name = (
+            account_name or str(generation.get("service_account_name") or "").strip()
+        )
+        generation_keys = generation.get("access_key_ids")
+        if isinstance(generation_keys, list):
+            created_access_key_ids.update(
+                str(item).strip() for item in generation_keys if str(item).strip()
+            )
+
+    # Only a dedicated project storage record may override the compatibility
+    # views.  In current documents ``nebius`` is the agent principal and must
+    # never become the storage cleanup target merely because it was written
+    # after configure.
+    if not account_ids:
+        for section_name in ("storage_iam", "nebius"):
+            section = data.get(section_name)
+            if not isinstance(section, dict):
+                continue
+            account_id = str(section.get("service_account_id", "") or "").strip()
+            if account_id:
+                account_ids.add(account_id)
+            if section_name == "storage_iam":
+                account_name = str(
+                    section.get("service_account_name", "") or ""
+                ).strip()
 
     setup = data.get("storage_setup")
     setup_projects = setup.get("projects") if isinstance(setup, dict) else None
@@ -1102,11 +1363,13 @@ def _begin_bucket_iam_cleanup_tombstone(
                 )
             keys = resources.get("access_keys")
             if isinstance(keys, dict):
-                access_key_ids.update(
+                created_access_key_ids.update(
                     str(key).strip() for key in keys if str(key).strip()
                 )
 
-    storage = data.get("storage")
+    storage = project_record.get("storage")
+    if not isinstance(storage, dict):
+        storage = data.get("storage")
     saved_bucket = ""
     if isinstance(storage, dict):
         saved_bucket = _bucket_name_from_uri(
@@ -1121,6 +1384,7 @@ def _begin_bucket_iam_cleanup_tombstone(
             value = str(storage.get(key, "") or "").strip()
             if value:
                 access_key_ids.add(value)
+    access_key_ids.update(created_access_key_ids)
 
     setup_bucket = ""
     if isinstance(setup_record, dict):
@@ -1142,7 +1406,9 @@ def _begin_bucket_iam_cleanup_tombstone(
     ):
         return "", {}
 
-    owned_record, ownership_note = _storage_service_account_record()
+    owned_record, ownership_note = _storage_service_account_record(
+        project_id=project_id
+    )
     if owned_record is not None and owned_record.project_id == project_id:
         # A generic ``nebius.service_account_id`` may belong to the agent. Once
         # the dedicated storage journal proves one immutable identity, it is the
@@ -1154,7 +1420,10 @@ def _begin_bucket_iam_cleanup_tombstone(
         and owned_record.account_id in account_ids
     )
     existing_id = str(existing.get("service_account_id", "") or "").strip()
-    if existing_id:
+    # A stale marker predating the project store migration is not allowed to
+    # reintroduce the generic agent identity.  It remains relevant only when no
+    # dedicated storage identity was selected above, or when it agrees.
+    if existing_id and (not account_ids or existing_id in account_ids):
         account_ids.add(existing_id)
     if len(account_ids) > 1:
         account_id = ""
@@ -1184,6 +1453,7 @@ def _begin_bucket_iam_cleanup_tombstone(
         "service_account_name": account_name,
         "candidate_service_account_ids": sorted(account_ids),
         "access_key_ids": sorted(access_key_ids),
+        "created_access_key_ids": sorted(created_access_key_ids),
         "bucket_name": bucket_name,
         "bucket_cleanup_state": "pending",
         "creation_outcome": creation_status,
@@ -1334,6 +1604,145 @@ def delete_service_account_cmd(
     payload = _observation_dict(observation)
     if not output_json:
         typer.echo(f"identity_source: {context.identity_source}")
+    if (
+        observation.retained_account_access_resolved
+        or observation.retained_account_access_delete_planned
+    ):
+        payload["result"] = (
+            "access_cleanup_planned"
+            if observation.retained_account_access_delete_planned
+            else "access_state_already_absent"
+        )
+        payload["service_account_preserved"] = True
+        if dry_run:
+            if output_json:
+                typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                typer.echo(
+                    "Verified retained account: only exact NPA-created access state "
+                    "is eligible for cleanup; the service account will be preserved."
+                )
+            return
+
+        from npa.cli.destructive import require_destructive_confirmation
+
+        require_destructive_confirmation(
+            yes=yes,
+            prompt=(
+                "Remove only exact NPA-created storage access state and preserve "
+                f"service account {observation.account_id}?"
+            ),
+            output_json=output_json,
+            payload=payload,
+        )
+        failed = False
+        profile_kwargs = {"profile": context.profile} if context.profile else {}
+        for key_id in observation.access_key_ids:
+            try:
+                delete_access_key(key_id, **profile_kwargs)
+            except NebiusError as exc:
+                if not is_not_found(str(exc)):
+                    failed = True
+                    progress(
+                        f"Warning: could not delete exact NPA-created access key "
+                        f"{key_id}: {exc}",
+                        err=True,
+                    )
+        if observation.access_permit_id:
+            try:
+                delete_access_permit(observation.access_permit_id, **profile_kwargs)
+            except NebiusError as exc:
+                if not is_not_found(str(exc)):
+                    failed = True
+                    progress(
+                        "Warning: could not delete exact NPA-created storage access "
+                        f"permit {observation.access_permit_id}: {exc}",
+                        err=True,
+                    )
+        if observation.group_id:
+            try:
+                delete_group(observation.group_id, **profile_kwargs)
+            except NebiusError as exc:
+                if not is_not_found(str(exc)):
+                    failed = True
+                    progress(
+                        "Warning: could not delete exact NPA-created storage group "
+                        f"{observation.group_id}: {exc}",
+                        err=True,
+                    )
+        if not failed and observation.access_key_ids:
+            try:
+                remaining_keys = list_access_keys_for_service_account(
+                    context.project_id,
+                    observation.account_id,
+                    strict=True,
+                    profile=context.profile,
+                )
+            except NebiusError as exc:
+                _partial_cleanup(
+                    "access-key deletion returned, but exact provider verification "
+                    f"failed; the service account was preserved: {exc}",
+                    output_json=output_json,
+                    payload=payload,
+                )
+            remaining_ids = {
+                str((item or {}).get("id") or "").strip()
+                for item in remaining_keys
+                if isinstance(item, dict)
+            }
+            if remaining_ids.intersection(observation.access_key_ids):
+                failed = True
+        if failed:
+            payload["result"] = "partial_access_cleanup"
+            payload["mutated"] = True
+            if output_json:
+                typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+            raise typer.Exit(code=1)
+        if not _remove_storage_service_account_record(observation.account_id):
+            _partial_cleanup(
+                "provider access state is absent, but the exact local storage "
+                "generation could not be retired; fix file permissions and retry.",
+                output_json=output_json,
+                payload=payload,
+            )
+        try:
+            from npa.clients.config import clear_storage_iam_residue
+
+            if context.alias:
+                clear_storage_iam_residue(
+                    context.alias, account_id=observation.account_id
+                )
+        except ConfigError as exc:
+            _partial_cleanup(
+                f"access cleanup completed, but its local residue marker could not "
+                f"be cleared: {exc}",
+                output_json=output_json,
+                payload=payload,
+            )
+        _record_storage_iam_teardown(
+            observation,
+            terminal_state="completed",
+            action="preserve_unowned_account_remove_npa_access",
+            access_key_ids=observation.access_key_ids,
+        )
+        payload.update(
+            {
+                "result": "access_state_resolved",
+                "mutated": bool(
+                    observation.access_key_ids
+                    or observation.access_permit_id
+                    or observation.group_id
+                ),
+            }
+        )
+        if output_json:
+            typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            typer.echo(
+                "Verified access cleanup: the pre-existing/shared storage service "
+                "account was preserved."
+            )
+        return
     if observation.outcome == "verification_failed":
         _record_storage_iam_teardown(
             observation,
@@ -1662,7 +2071,9 @@ def delete_service_account_cmd(
                 from npa.clients.config import clear_storage_iam_residue
 
                 if context.alias:
-                    clear_storage_iam_residue(context.alias, account_id="")
+                    clear_storage_iam_residue(
+                        context.alias, account_id=record.account_id
+                    )
             except ConfigError as marker_exc:
                 failed = True
                 progress(
@@ -1706,7 +2117,7 @@ def delete_service_account_cmd(
             from npa.clients.config import clear_storage_iam_residue
 
             if context.alias:
-                clear_storage_iam_residue(context.alias, account_id="")
+                clear_storage_iam_residue(context.alias, account_id=record.account_id)
         except ConfigError as exc:
             failed = True
             progress(
@@ -1801,7 +2212,7 @@ def reconcile_service_account_cmd(
             "or configured project context before attesting ownership."
         )
     marker = storage_iam_residue(context.alias) if context.alias else {}
-    saved_ids = _untrusted_storage_account_ids()
+    saved_ids = _untrusted_storage_account_ids(context.project_id)
     marker_id = str(marker.get("service_account_id", "") or "").strip()
     if marker_id:
         saved_ids.add(marker_id)
@@ -2114,7 +2525,7 @@ def delete_bucket_cmd(
                 verification={"bucket_absent": True},
             )
             if prune_config:
-                _prune_local_state(bucket_name)
+                _prune_local_state(bucket_name, project_id=resolved_project)
             _complete_bucket_iam_cleanup_tombstone(iam_alias, iam_marker)
             if output_json:
                 import json
@@ -2193,7 +2604,7 @@ def delete_bucket_cmd(
                 verification={"bucket_absent": verified_gone},
             )
             if prune_config and bucket_name and (not wait or verified_gone):
-                _prune_local_state(bucket_name)
+                _prune_local_state(bucket_name, project_id=resolved_project)
             if not wait or verified_gone:
                 _complete_bucket_iam_cleanup_tombstone(iam_alias, iam_marker)
             if wait and not verified_gone:
@@ -2263,7 +2674,7 @@ def delete_bucket_cmd(
         verification={"bucket_absent": verified_gone},
     )
     if prune_config and bucket_name and (not wait or verified_gone):
-        _prune_local_state(bucket_name)
+        _prune_local_state(bucket_name, project_id=resolved_project)
     if not wait or verified_gone:
         _complete_bucket_iam_cleanup_tombstone(iam_alias, iam_marker)
     if wait and not verified_gone:
@@ -2456,7 +2867,7 @@ def _bucket_name_from_uri(value: str) -> str:
     return str(value or "").strip().removeprefix("s3://").strip("/").split("/", 1)[0]
 
 
-def _prune_local_state(bucket_name: str) -> None:
+def _prune_local_state(bucket_name: str, *, project_id: str = "") -> None:
     """Drop every on-disk secret tied to a now-deleted bucket.
 
     Two files hold them: ``credentials.yaml`` (the object-storage access key) and
@@ -2465,7 +2876,7 @@ def _prune_local_state(bucket_name: str) -> None:
     former left live-looking HMAC keys for the deleted bucket in config.yaml.
     """
     try:
-        _prune_storage_credentials(bucket_name)
+        _prune_storage_credentials(bucket_name, project_id=project_id)
     except (OSError, ValueError) as exc:
         _partial_cleanup(
             f"bucket deletion/absence was recorded, but the atomic credential rewrite "
@@ -2522,7 +2933,7 @@ _STORAGE_SECRET_KEYS = (
 _STORAGE_SECTION_KEYS = ("storage", "s3", "object-storage", "object_storage")
 
 
-def _prune_storage_credentials(bucket_name: str) -> None:
+def _prune_storage_credentials(bucket_name: str, *, project_id: str = "") -> None:
     """Drop saved S3 credentials that point at a bucket that no longer exists.
 
     Leaving them behind means the next `npa configure` / deploy reuses an access
@@ -2535,6 +2946,7 @@ def _prune_storage_credentials(bucket_name: str) -> None:
     from copy import deepcopy
 
     from npa.clients.credentials import CREDENTIALS_PATH, update_private_yaml
+    from npa.clients.project_credential_store import _compatibility_views, _root
 
     removed: list[str] = []
 
@@ -2567,6 +2979,46 @@ def _prune_storage_credentials(bucket_name: str) -> None:
                 else:
                     data.pop(section_key, None)
 
+        # Project-scoped credentials are authoritative.  The top-level storage
+        # compatibility view may already have been replaced by the agent's
+        # generic ``nebius`` view, so pruning only top-level sections leaves the
+        # exact project's stale bucket key live.  Retain ``storage_iam`` for its
+        # separately guarded access/account lifecycle.
+        root, projects = _root(data)
+        project_store_changed = False
+        exact_project_id = str(project_id or "").strip()
+        selected_projects = (
+            {exact_project_id: projects.get(exact_project_id)}
+            if exact_project_id
+            else projects
+        )
+        for exact_project, project_record in list(selected_projects.items()):
+            if not isinstance(project_record, dict):
+                continue
+            project_storage = project_record.get("storage")
+            if not isinstance(project_storage, dict):
+                continue
+            project_bucket = ""
+            for bucket_key in ("bucket", "checkpoint_bucket", "s3_bucket"):
+                project_bucket = _bucket_name_from_uri(
+                    str(project_storage.get(bucket_key) or "")
+                )
+                if project_bucket:
+                    break
+            if project_bucket != bucket_name:
+                continue
+            for key in _STORAGE_SECRET_KEYS:
+                if project_storage.get(key) not in (None, ""):
+                    removed.append(f"project-storage:{key}")
+            project_record.pop("storage", None)
+            project_record["storage_selected"] = False
+            projects[exact_project] = project_record
+            project_store_changed = True
+        if project_store_changed:
+            root["projects"] = projects
+            data["project_credentials"] = root
+            _compatibility_views(data, root)
+
         # The setup journal is durable ownership evidence, but a provider-verified
         # bucket deletion must retire that bucket's exact entry.  Preserve the
         # service-account/access-key records until their separately guarded IAM
@@ -2575,7 +3027,14 @@ def _prune_storage_credentials(bucket_name: str) -> None:
         setup = data.get("storage_setup")
         projects = setup.get("projects") if isinstance(setup, dict) else None
         if isinstance(setup, dict) and isinstance(projects, dict):
-            for project_id, project_record in list(projects.items()):
+            selected_setup_projects = (
+                {exact_project_id: projects.get(exact_project_id)}
+                if exact_project_id
+                else projects
+            )
+            for setup_project_id, project_record in list(
+                selected_setup_projects.items()
+            ):
                 resources = (
                     project_record.get("resources")
                     if isinstance(project_record, dict)
@@ -2590,16 +3049,16 @@ def _prune_storage_credentials(bucket_name: str) -> None:
                     and isinstance(bucket, dict)
                     and str(bucket.get("name", "") or "").strip() == bucket_name
                     and str(bucket.get("project_id", "") or "").strip()
-                    == str(project_id)
+                    == str(setup_project_id)
                 ):
                     continue
                 resources = dict(resources)
                 resources.pop("bucket", None)
                 if resources:
                     project_record["resources"] = resources
-                    projects[project_id] = project_record
+                    projects[setup_project_id] = project_record
                 else:
-                    projects.pop(project_id, None)
+                    projects.pop(setup_project_id, None)
             if projects:
                 setup["projects"] = projects
                 data["storage_setup"] = setup

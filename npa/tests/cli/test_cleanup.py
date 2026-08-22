@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 from typer.testing import CliRunner
 
@@ -594,6 +595,241 @@ def test_cleanup_full_prunes_provenance_after_verified_absence(
     assert result.exit_code == 0, result.output
     assert "verified absence" in result.output
     assert not credentials_module.CREDENTIALS_PATH.exists()
+
+
+def test_full_check_clears_terminal_shared_storage_marker_without_name_search(
+    monkeypatch,
+) -> None:
+    from npa import teardown_receipts
+    from npa.cli import storage as storage_cli
+    from npa.clients.config import mark_storage_iam_residue, storage_iam_residue
+
+    _seed_project_config()
+    mark_storage_iam_residue(
+        "prod",
+        {
+            "service_account_id": "serviceaccount-storage",
+            "status": "present_unverified_ownership",
+        },
+    )
+    teardown_receipts.record_teardown_event(
+        phase="storage_iam",
+        resource="storage-service-account",
+        terminal_state="completed",
+        project_alias="prod",
+        project_id="project-a",
+        identity={"service_account_id": "serviceaccount-storage"},
+        action={"kind": "preserve_unowned_account_remove_npa_access"},
+    )
+    monkeypatch.setattr(
+        storage_cli,
+        "_resolve_storage_iam_context",
+        lambda *_a, **_k: storage_cli._StorageIamContext(
+            alias="prod",
+            project_id="project-a",
+            tenant_id="tenant-a",
+            profile="operator",
+        ),
+    )
+    monkeypatch.setattr(
+        storage_cli, "_storage_service_account_record", lambda **_k: (None, "")
+    )
+    monkeypatch.setattr(
+        storage_cli, "_untrusted_storage_account_ids", lambda *_a: set()
+    )
+    monkeypatch.setattr(
+        storage_cli,
+        "_observe_storage_iam",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError(
+                "a terminal shared identity must not be rediscovered by name"
+            )
+        ),
+    )
+
+    message, partial, status, ownership = cleanup_cli._storage_iam_full_check(
+        "prod", prune_verified_absence=True
+    )
+
+    assert partial is False
+    assert status == "fully_cleaned"
+    assert ownership == "retained_shared"
+    assert "shared account remains" in message
+    assert storage_iam_residue("prod") == {}
+
+
+def test_full_check_does_not_clear_marker_after_newer_storage_iam_attempt(
+    monkeypatch,
+) -> None:
+    from npa import teardown_receipts
+    from npa.cli import storage as storage_cli
+    from npa.clients.config import mark_storage_iam_residue, storage_iam_residue
+
+    _seed_project_config()
+    mark_storage_iam_residue(
+        "prod",
+        {
+            "service_account_id": "serviceaccount-storage",
+            "status": "present_unverified_ownership",
+        },
+    )
+    path = teardown_receipts.record_teardown_event(
+        phase="storage_iam",
+        resource="storage-service-account",
+        terminal_state="completed",
+        project_alias="prod",
+        project_id="project-a",
+        identity={"service_account_id": "serviceaccount-storage"},
+        action={"kind": "preserve_unowned_account_remove_npa_access"},
+    )
+    teardown_receipts.record_teardown_event(
+        phase="storage_iam",
+        resource="storage-service-account",
+        terminal_state="in_progress",
+        project_alias="prod",
+        project_id="project-a",
+        identity={"service_account_id": "serviceaccount-storage"},
+        action={"kind": "new_storage_access_generation"},
+    )
+    payload = teardown_receipts.load_teardown_receipt(path.stem)
+    storage_events = [
+        event for event in payload["events"] if event.get("phase") == "storage_iam"
+    ]
+    storage_events[-2]["recorded_at"] = "2026-08-22T00:00:00Z"
+    storage_events[-1]["recorded_at"] = "2026-08-22T00:00:01Z"
+    teardown_receipts._write_atomic(path, payload)
+    monkeypatch.setattr(
+        storage_cli,
+        "_resolve_storage_iam_context",
+        lambda *_a, **_k: storage_cli._StorageIamContext(
+            alias="prod",
+            project_id="project-a",
+            tenant_id="tenant-a",
+            profile="operator",
+        ),
+    )
+    monkeypatch.setattr(
+        storage_cli, "_storage_service_account_record", lambda **_k: (None, "")
+    )
+    monkeypatch.setattr(
+        storage_cli, "_untrusted_storage_account_ids", lambda *_a: set()
+    )
+    monkeypatch.setattr(
+        storage_cli,
+        "_observe_storage_iam",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            RuntimeError("newer access generation must be observed")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="newer access generation"):
+        cleanup_cli._storage_iam_full_check("prod", prune_verified_absence=True)
+    assert storage_iam_residue("prod")["service_account_id"] == (
+        "serviceaccount-storage"
+    )
+
+
+def test_full_check_with_no_storage_identity_does_not_search_provider_by_name(
+    monkeypatch,
+) -> None:
+    from npa.cli import storage as storage_cli
+
+    _seed_project_config()
+    monkeypatch.setattr(
+        storage_cli,
+        "_resolve_storage_iam_context",
+        lambda *_a, **_k: storage_cli._StorageIamContext(
+            alias="prod",
+            project_id="project-a",
+            tenant_id="tenant-a",
+            profile="operator",
+        ),
+    )
+    monkeypatch.setattr(
+        storage_cli, "_storage_service_account_record", lambda **_k: (None, "")
+    )
+    monkeypatch.setattr(
+        storage_cli, "_untrusted_storage_account_ids", lambda *_a: set()
+    )
+    monkeypatch.setattr(
+        storage_cli,
+        "_observe_storage_iam",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("provider name search must require saved lifecycle evidence")
+        ),
+    )
+
+    message, partial, status, ownership = cleanup_cli._storage_iam_full_check(
+        "prod", prune_verified_absence=False
+    )
+
+    assert partial is False
+    assert status == "fully_clean"
+    assert ownership == "verified_terminal"
+    assert "unrelated provider identities were not searched by name" in message
+
+
+def test_full_cleanup_accepts_atomic_terminal_receipts_and_forgets_exact_alias(
+    monkeypatch,
+) -> None:
+    import json
+
+    from npa import teardown_receipts
+    from npa.clients import config as config_module
+    from npa.clients.project_credential_store import (
+        project_credential_residue,
+        write_project_credentials,
+    )
+
+    _seed_project_config()
+    write_project_credentials(
+        "project-a",
+        {
+            "storage": {
+                "aws_access_key_id": "run-key",
+                "aws_secret_access_key": "run-secret",
+            }
+        },
+        alias="prod",
+    )
+    for phase, state in (
+        ("workflow_audit", "verified_absent"),
+        ("agent", "verified_deleted"),
+        ("bucket", "verified_absent"),
+        ("storage_iam", "completed"),
+    ):
+        teardown_receipts.record_teardown_event(
+            phase=phase,
+            resource=f"{phase}-fixture",
+            terminal_state=state,
+            project_alias="prod",
+            project_id="project-a",
+        )
+    monkeypatch.setattr(cleanup_cli, "_nonterminal_jobs", lambda _sky: ([], ""))
+
+    result = runner.invoke(
+        app,
+        [
+            "cleanup",
+            "--project",
+            "prod",
+            "--full",
+            "--yes",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["result"] == "fully_cleaned"
+    assert payload["operational_residue_present"] is False
+    assert project_credential_residue("project-a") == []
+    saved = (
+        yaml.safe_load(config_module.CONFIG_PATH.read_text()) or {}
+        if config_module.CONFIG_PATH.exists()
+        else {}
+    )
+    assert "prod" not in (saved.get("projects") or {})
 
 
 def test_cleanup_full_json_repeats_monotonically_while_iam_is_unresolved(

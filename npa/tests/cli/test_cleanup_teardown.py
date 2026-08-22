@@ -322,6 +322,74 @@ def test_storage_credential_prune_refuses_nonowned_destination(
     assert path.read_text(encoding="utf-8") == original
 
 
+def test_storage_credential_prune_removes_exact_project_storage_not_agent_identity(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.cli import storage as storage_cli
+    from npa.clients import credentials as credentials_module
+
+    path = tmp_path / "credentials.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "nebius": {"service_account_id": "serviceaccount-agent"},
+                "project_credentials": {
+                    "schema_version": "npa.project-credentials.v2",
+                    "current_project_id": "project-a",
+                    "projects": {
+                        "project-a": {
+                            "project_id": "project-a",
+                            "storage_selected": True,
+                            "storage": {
+                                "bucket": "s3://gone/",
+                                "aws_access_key_id": "accesskey-storage",
+                                "aws_secret_access_key": "secret",
+                            },
+                            "storage_iam": {
+                                "active_service_account_id": "serviceaccount-storage",
+                                "generations": [
+                                    {
+                                        "service_account_id": "serviceaccount-storage",
+                                        "service_account_project_id": "project-a",
+                                    }
+                                ],
+                            },
+                            "nebius": {
+                                "service_account_id": "serviceaccount-agent",
+                                "service_account_project_id": "project-a",
+                            },
+                        },
+                        "project-b": {
+                            "project_id": "project-b",
+                            "storage_selected": True,
+                            "storage": {
+                                "bucket": "s3://gone/",
+                                "aws_access_key_id": "accesskey-other",
+                                "aws_secret_access_key": "other-secret",
+                            },
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", path)
+
+    storage_cli._prune_storage_credentials("gone", project_id="project-a")
+
+    saved = yaml.safe_load(path.read_text(encoding="utf-8"))
+    record = saved["project_credentials"]["projects"]["project-a"]
+    assert "storage" not in record
+    assert record["storage_selected"] is False
+    assert record["storage_iam"]["active_service_account_id"] == (
+        "serviceaccount-storage"
+    )
+    assert record["nebius"]["service_account_id"] == "serviceaccount-agent"
+    other = saved["project_credentials"]["projects"]["project-b"]
+    assert other["storage"]["aws_access_key_id"] == "accesskey-other"
+
+
 def test_bucket_delete_keeps_npa_ownership_proof_for_explicit_iam_teardown(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -863,13 +931,20 @@ def test_agent_iam_purge_protects_same_project_peer_missing_from_local_config(
         },
     )
     lines: list[str] = []
+    dispositions: list[str] = []
 
     report_agent_iam(
-        project_id="project-a", remaining_agents=0, purge=True, on_status=lines.append
+        project_id="project-a",
+        remaining_agents=0,
+        purge=True,
+        on_status=lines.append,
+        on_disposition=dispositions.append,
+        strict=True,
     )
 
     assert deleted == []
     assert any("agent-peer (instance-peer)" in line for line in lines)
+    assert dispositions == ["retained_shared"]
 
 
 def test_agent_iam_purge_fails_closed_when_provider_inventory_is_forbidden(

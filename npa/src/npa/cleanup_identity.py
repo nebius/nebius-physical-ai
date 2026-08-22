@@ -222,9 +222,35 @@ def _flatten_receipt_identity(
             value=exact_instance_id or resource,
         )
         values.update(_clean(item))
-        operation = _matching_item(
-            values.get("operations"), key="requested_name", value=resource
-        )
+        exact_operation_id = str((selectors or {}).get("operation_id") or "").strip()
+        operations = values.get("operations")
+        operation_items = operations if isinstance(operations, (list, tuple)) else []
+        matching_operations = [
+            dict(candidate)
+            for candidate in operation_items
+            if isinstance(candidate, Mapping)
+            and (
+                str(candidate.get("operation_id") or "") == exact_operation_id
+                if exact_operation_id
+                else str(candidate.get("requested_name") or "") == resource
+            )
+        ]
+        if len(matching_operations) > 1 and (
+            exact_operation_id or not values.get("instance_id")
+        ):
+            selector = (
+                f"operation_id={exact_operation_id!r}"
+                if exact_operation_id
+                else f"requested_name={resource!r}"
+            )
+            raise CleanupIdentityError(
+                f"receipt contains ambiguous {selector} cleanup identities"
+            )
+        # Several setup/retry/teardown journals can legitimately share one
+        # agent name.  Once the agent generation is selected by its unique
+        # immutable instance ID, those operation records are complementary and
+        # need not be guessed.  An explicit operation ID remains exact/strict.
+        operation = matching_operations[0] if len(matching_operations) == 1 else {}
         values.update(_clean(operation))
     elif phase in {"cluster", "controller"} and resource:
         exact_cluster_id = str((selectors or {}).get("cluster_id") or "").strip()
