@@ -1270,19 +1270,13 @@ def _repair_exact_stopped_placeholder(
         if isinstance(item, dict) and isinstance(item.get("attributes"), dict)
     ]
     _nodes_per_group, expected_group_count = gpu_node_group_layout(cluster)
-    if len(cluster_instances) == 1 and len(group_instances) == expected_group_count > 1:
-        # The split strict-reserved layout has no multi-node group element for
-        # this legacy repair to touch. Explicit invocation stays idempotent.
-        return {"status": "not-applicable-split-layout"}
-    if len(cluster_instances) != 1 or len(group_instances) != 1:
+    if len(cluster_instances) != 1:
         raise RuntimeError(
-            "placeholder repair requires one exact Terraform cluster and GPU node group"
+            "placeholder repair requires one exact Terraform cluster"
         )
     cluster_id = str(cluster_instances[0]["attributes"].get("id") or "")
-    attributes = group_instances[0]["attributes"]
-    node_group_id = str(attributes.get("id") or "")
-    if not cluster_id or not node_group_id:
-        raise RuntimeError("placeholder repair requires exact Terraform resource IDs")
+    if not cluster_id:
+        raise RuntimeError("placeholder repair requires exact Terraform cluster identity")
     cli = _nebius_argv(nebius_bin, profile)
 
     def provider_json(args: list[str], message: str) -> dict[str, Any]:
@@ -1295,6 +1289,123 @@ def _repair_exact_stopped_placeholder(
             raise RuntimeError(message)
         return payload
 
+    if len(cluster_instances) == 1 and len(group_instances) == expected_group_count > 1:
+        # The split strict-reserved layout has no multi-node group element for
+        # this legacy repair to touch. Explicit invocation stays idempotent.
+        return {"status": "not-applicable-split-layout"}
+    if (
+        len(group_instances) == 1
+        and expected_group_count == 2
+        and str(group_instances[0]["attributes"].get("fixed_node_count")) == "1"
+    ):
+        # An interrupted create can leave the second provider group live after
+        # Terraform has removed its state entry. Prove the exact recipe name,
+        # template, zero-ready status, worker failure, and idle operation set
+        # before deleting only that orphan so the next apply can recreate it.
+        existing = group_instances[0]["attributes"]
+        live_groups = provider_json(
+            ["mk8s", "node-group", "list", "--parent-id", cluster_id, "--all"],
+            "could not audit live node groups before split-orphan repair",
+        )
+        expected_name = f"{cluster.name}-ng-gpu-1"
+        candidates = [
+            item
+            for item in live_groups.get("items", [])
+            if isinstance(item, dict)
+            and (item.get("metadata") or {}).get("name") == expected_name
+            and (item.get("metadata") or {}).get("parent_id") == cluster_id
+        ]
+        if len(candidates) != 1:
+            raise RuntimeError(
+                "refusing split-orphan repair without one exact provider node group"
+            )
+        orphan = candidates[0]
+        orphan_id = str((orphan.get("metadata") or {}).get("id") or "")
+        orphan_state = {
+            **existing,
+            "id": orphan_id,
+            "name": expected_name,
+            "fixed_node_count": 1,
+        }
+        orphan_status = orphan.get("status") or {}
+        if not orphan_id or not _tainted_node_group_matches_desired(
+            provider_payload=orphan,
+            state_attributes=orphan_state,
+            pool=pool,
+            cluster=cluster,
+            cluster_id=cluster_id,
+            subnet_id=subnet_id,
+            expected_node_count=1,
+        ) or not (
+            orphan_status.get("state") == "PROVISIONING"
+            and str(orphan_status.get("target_node_count")) == "1"
+            and orphan_status.get("ready_node_count") in (None, 0, "0")
+        ):
+            raise RuntimeError(
+                "refusing split-orphan repair: provider group is not exact and zero-ready"
+            )
+        operations = provider_json(
+            [
+                "mk8s",
+                "node-group",
+                "operation",
+                "list",
+                "--resource-id",
+                orphan_id,
+                "--all",
+            ],
+            "could not audit split-orphan operations",
+        )
+        if operations.get("items"):
+            raise RuntimeError("refusing split-orphan repair while an operation exists")
+        inventory = provider_json(
+            ["compute", "instance", "list", "--parent-id", project_id, "--all"],
+            "could not audit split-orphan worker inventory",
+        )
+        workers = [
+            item
+            for item in inventory.get("items", [])
+            if isinstance(item, dict)
+            and ((item.get("metadata") or {}).get("labels") or {}).get(
+                "mk8s-node-group-id"
+            )
+            == orphan_id
+        ]
+        failed_worker = len(workers) == 1 and (
+            (workers[0].get("status") or {}).get("state") == "STOPPED"
+            and not (workers[0].get("status") or {}).get("reservation_id")
+            and not (workers[0].get("status") or {}).get("disk_attachments")
+        )
+        if workers and not failed_worker:
+            raise RuntimeError(
+                "refusing split-orphan repair without exact failed-worker evidence"
+            )
+        deleted = _run_capture(
+            [
+                *cli,
+                "mk8s",
+                "node-group",
+                "delete",
+                "--id",
+                orphan_id,
+                "--format",
+                "json",
+            ],
+            env=env,
+            check=False,
+        )
+        if deleted.returncode != 0:
+            raise RuntimeError("provider could not delete the exact failed split orphan")
+        _log(on_status, "removed one exact failed split node-group orphan")
+        return {"status": "split-orphan-removed"}
+    if len(cluster_instances) != 1 or len(group_instances) != 1:
+        raise RuntimeError(
+            "placeholder repair requires one exact Terraform cluster and GPU node group"
+        )
+    attributes = group_instances[0]["attributes"]
+    node_group_id = str(attributes.get("id") or "")
+    if not cluster_id or not node_group_id:
+        raise RuntimeError("placeholder repair requires exact Terraform resource IDs")
     live_group = provider_json(
         ["mk8s", "node-group", "get", "--id", node_group_id],
         "could not read the exact node group before placeholder repair",

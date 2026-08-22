@@ -1869,6 +1869,58 @@ def test_stopped_placeholder_with_disk_fails_before_delete(monkeypatch, tmp_path
     assert all("delete" not in call for call in calls)
 
 
+def test_explicit_repair_removes_exact_failed_split_group_orphan(
+    monkeypatch, tmp_path
+) -> None:
+    from copy import deepcopy
+
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, provider, cluster = _tainted_gpu_reconciliation_fixture()
+    state_group = state["resources"][1]["instances"][0]
+    state_group.pop("status")
+    state_group["attributes"]["fixed_node_count"] = 1
+    orphan = deepcopy(provider)
+    orphan["metadata"]["id"] = "mk8snodegroup-orphan"
+    orphan["metadata"]["name"] = "cluster-test-ng-gpu-1"
+    orphan["spec"]["fixed_node_count"] = 1
+    orphan["status"] = {"state": "PROVISIONING", "target_node_count": 1}
+    _running, stopped = _stopped_placeholder_workers(provider)
+    stopped["metadata"]["labels"]["mk8s-node-group-id"] = "mk8snodegroup-orphan"
+    calls: list[list[str]] = []
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        calls.append(args)
+        if args[1:3] == ["state", "pull"]:
+            return _Cap(json.dumps(state), 0)
+        if "node-group" in args and "list" in args and "operation" not in args:
+            return _Cap(json.dumps({"items": [provider, orphan]}), 0)
+        if "operation" in args:
+            return _Cap(json.dumps({"items": []}), 0)
+        if "compute" in args and "list" in args:
+            return _Cap(json.dumps({"items": [stopped]}), 0)
+        if "node-group" in args and "delete" in args:
+            return _Cap("{}", 0)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(execution, "_run_capture", run)
+    assert execution._repair_exact_stopped_placeholder(
+        terraform_bin="terraform",
+        workdir=tmp_path,
+        env={},
+        cluster=as_mk8s_desired(cluster),
+        project_id="project-test",
+        subnet_id="vpcsubnet-test",
+        nebius_bin="nebius",
+        profile="tenant-profile",
+        on_status=None,
+    ) == {"status": "split-orphan-removed"}
+    deletes = [call for call in calls if "delete" in call]
+    assert len(deletes) == 1
+    assert deletes[0][deletes[0].index("--id") + 1] == "mk8snodegroup-orphan"
+
+
 def test_existing_terraform_state_audit_failure_refuses_apply(
     monkeypatch, tmp_path
 ) -> None:
