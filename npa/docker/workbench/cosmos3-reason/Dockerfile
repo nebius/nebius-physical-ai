@@ -44,6 +44,7 @@ RUN mkdir -p /tmp/hf_home/cosmos-reason2 /tmp/hf_home/cosmos-reason2-2b \
     && find /opt/npa/src /opt/npa/workflows -type f -exec chmod a+r {} + \
     && chmod a+r /opt/npa/pyproject.toml \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
+    && python -m pip uninstall -y npa \
     && python -m pip install --no-deps \
       "tomli==2.4.1" \
       "accelerate==1.14.0" \

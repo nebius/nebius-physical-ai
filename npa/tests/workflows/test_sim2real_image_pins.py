@@ -321,6 +321,7 @@ def test_cosmos3_baked_runtime_survives_skypilot_pythonpath_scrubbing() -> None:
         / "Dockerfile"
     ).read_text(encoding="utf-8")
     assert "NPA_BAKED_PYTHON=/opt/npa/venv/bin/python" in dockerfile
+    assert "python -m pip uninstall -y npa" in dockerfile
     assert "npa-exact-source.pth" in dockerfile
     assert "env -u PYTHONPATH /opt/npa/venv/bin/python -c" in dockerfile
     assert "from npa.workflows.sim2real.workflow_stage import main" in dockerfile
