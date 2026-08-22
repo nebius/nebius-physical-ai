@@ -468,6 +468,63 @@ def test_extract_frames_reports_missing_ffmpeg_as_domain_error(
         c3._extract_frames(tmp_path / "video.mp4", tmp_path / "frames")
 
 
+@pytest.mark.parametrize("source_weight", [-0.1, 1.0, 1.1])
+def test_preserve_source_motion_rejects_out_of_range_weights(
+    tmp_path: Path, source_weight: float
+) -> None:
+    with pytest.raises(
+        c3.PaidfCosmos3Error,
+        match="source motion weight must be strictly between 0 and 1",
+    ):
+        c3._preserve_source_motion(
+            tmp_path / "source.mp4",
+            tmp_path / "generated.mp4",
+            tmp_path / "output.mp4",
+            source_weight=source_weight,
+        )
+
+
+def test_preserve_source_motion_reports_missing_ffmpeg(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(c3.shutil, "which", lambda _binary: None)
+
+    with pytest.raises(
+        c3.PaidfCosmos3Error,
+        match="ffmpeg is required for source-motion-preserving publication",
+    ):
+        c3._preserve_source_motion(
+            tmp_path / "source.mp4",
+            tmp_path / "generated.mp4",
+            tmp_path / "output.mp4",
+            source_weight=0.5,
+        )
+
+
+def test_preserve_source_motion_reports_ffmpeg_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(c3.shutil, "which", lambda _binary: "/usr/bin/ffmpeg")
+    monkeypatch.setattr(
+        c3.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=["ffmpeg"], returncode=1, stdout="", stderr="blend failed"
+        ),
+    )
+
+    with pytest.raises(
+        c3.PaidfCosmos3Error,
+        match="source-motion-preserving publication failed: blend failed",
+    ):
+        c3._preserve_source_motion(
+            tmp_path / "source.mp4",
+            tmp_path / "generated.mp4",
+            tmp_path / "output.mp4",
+            source_weight=0.5,
+        )
+
+
 @requires_ffmpeg
 def test_generate_variants_requires_s3_publication_before_generation(
     tmp_path: Path,
