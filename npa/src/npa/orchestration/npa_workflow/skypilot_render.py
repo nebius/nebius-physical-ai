@@ -836,6 +836,15 @@ def render_run_preamble_for_tool(tool_ref: str, *, config: Mapping[str, Any]) ->
     shells — a server started in setup is gone by the time the command runs.
     """
 
+    content_agents_pythonpath = (
+        'if [ -n "$PYTHONPATH" ]; then\n'
+        '  export PYTHONPATH="/opt/npa-runtime:/opt/content-agents:'
+        '/opt/content-agents/apps:$PYTHONPATH"\n'
+        "else\n"
+        '  export PYTHONPATH="/opt/npa-runtime:/opt/content-agents:'
+        '/opt/content-agents/apps"\n'
+        "fi\n"
+    )
     if tool_ref in {
         "workbench.content_agents.materials",
         "workbench.content_agents.physics",
@@ -846,7 +855,7 @@ def render_run_preamble_for_tool(tool_ref: str, *, config: Mapping[str, Any]) ->
         # then restore Xvfb in the shell that actually invokes OVRTX. Fail before
         # the expensive upstream pipeline if the node exposes CUDA devices without
         # the host-mounted graphics userspace OVRTX requires.
-        return (
+        return content_agents_pythonpath + (
             "/opt/venv/bin/python -m npa.workflows.content_agents bootstrap-runtime\n"
             "if ! python3 -c 'import ctypes; "
             'ctypes.CDLL("libGLX_nvidia.so.0")' "' >/dev/null 2>&1; then\n"
@@ -875,6 +884,11 @@ def render_run_preamble_for_tool(tool_ref: str, *, config: Mapping[str, Any]) ->
             "  trap npa_cleanup_ovrtx_display EXIT\n"
             "fi\n"
         )
+    if tool_ref.startswith("workbench.content_agents."):
+        # SkyPilot starts setup/run through login shells that may discard Docker
+        # ENV values. Keep the narrow baked adapter importable on CPU stages too,
+        # without invoking the render-only runtime bootstrap above.
+        return content_agents_pythonpath
     if not tool_ref.startswith("workbench.vlm_eval"):
         return ""
     # #236 skipped the benchmark toolRef here, correctly for the twin it had: a `sample`
@@ -1455,6 +1469,13 @@ def render_setup_for_tool(
         return (
             "set -e\n"
             'npa_baked_python="/opt/venv/bin/python"\n'
+            'if [ -n "$PYTHONPATH" ]; then\n'
+            '  export PYTHONPATH="/opt/npa-runtime:/opt/content-agents:'
+            '/opt/content-agents/apps:$PYTHONPATH"\n'
+            "else\n"
+            '  export PYTHONPATH="/opt/npa-runtime:/opt/content-agents:'
+            '/opt/content-agents/apps"\n'
+            "fi\n"
             'if [ ! -x "$npa_baked_python" ]; then\n'
             '  echo "Content Agents baked interpreter is unavailable" >&2\n'
             "  exit 69\n"
