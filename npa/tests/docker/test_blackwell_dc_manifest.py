@@ -359,6 +359,10 @@ def test_content_agents_validation_is_bound_to_clean_bytes_and_rtx(
     assert accepted["general_payload_scan"]["history_hits"] == 0
     assert accepted["vulnerability_scan"]["critical_total"] == 0
     assert accepted["vulnerability_scan"]["secrets"] == 0
+    publication = accepted["anonymous_publication"]
+    assert publication["verified"] is True
+    assert publication["oci_digest"] == accepted["oci_digest"]
+    assert publication["oci_user"] == "ubuntu"
     proof = accepted["rtx_proof"]
     assert proof["record_id"] == item["validation_run"]
     assert proof["observed_image_id_digest"] == accepted["oci_digest"]

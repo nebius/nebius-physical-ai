@@ -60,6 +60,13 @@ def test_public_image_has_immutable_accepted_live_evidence() -> None:
     assert accepted["payload_scan"]["findings"] == 0
     assert accepted["general_payload_scan"]["payload_hits"] == 0
     assert accepted["general_payload_scan"]["history_hits"] == 0
+    publication = accepted["anonymous_publication"]
+    assert publication["verified"] is True
+    assert publication["oci_digest"] == accepted["oci_digest"]
+    assert publication["platform_manifests"] == 1
+    assert publication["attestation_manifests"] == 1
+    assert publication["redistribution_label"] == "public"
+    assert publication["ovrtx_delivery_label"] == "runtime-fetch"
     assert 'npa.redistribution="public"' in DOCKERFILE.read_text(encoding="utf-8")
 
 

@@ -78,6 +78,24 @@ npa/.venv/bin/python npa/scripts/scan_content_agents_image.py \
   <candidate-image>@sha256:<digest> --expected-npa-source-sha "$(git rev-parse HEAD)"
 ```
 
+The accepted public image is
+`ghcr.io/nebius/nebius-physical-ai/npa-content-agents:0.5.2-npa2`, OCI index
+`sha256:c64aaf6201bdaa013f9d16e8497290cf166907932f036297d7abaa430cbad7db`.
+An unauthenticated manifest/config read found one `linux/amd64` manifest, one
+bound attestation manifest, the `ubuntu` user, and the expected `public` and
+`runtime-fetch` labels. The exact digest's specialized scan covered three nested
+archives with zero findings; the general scanner covered 28,471 entries with
+zero payload/history hits; Trivy reported zero critical vulnerabilities and
+zero secrets.
+
+The same digest completed the five-stage workflow on one NVIDIA RTX PRO 6000
+Blackwell Server Edition. It emitted 6 material, 6 physics, and 1 validation
+render plus 37 artifacts (1,808,557 bytes); upstream validation passed, rigid
+body/collision/mass/friction checks were non-null, and both USD and USDZ reopened
+independently. The immutable numeric record lives in
+`npa/src/npa/deploy/content_agents_image_manifest.json`; future image changes
+need a new additive tag and new evidence.
+
 The scanner walks the final root filesystem, every individual image layer,
 nested archives, and OCI history. It fails on OVRTX/Omniverse runtime bytes,
 graphics-driver userspace, model weights, samples, populated caches,

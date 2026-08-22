@@ -89,6 +89,14 @@
   "anonymous_publication": {
     "registry": "ghcr.io/nebius/nebius-physical-ai/npa-content-agents",
     "tag": "0.5.2-npa2",
-    "verified": false
+    "verified": true,
+    "verified_at": "2026-08-22",
+    "verification": "unauthenticated-manifest-and-config-by-digest",
+    "oci_digest": "sha256:c64aaf6201bdaa013f9d16e8497290cf166907932f036297d7abaa430cbad7db",
+    "platform_manifests": 1,
+    "attestation_manifests": 1,
+    "oci_user": "ubuntu",
+    "redistribution_label": "public",
+    "ovrtx_delivery_label": "runtime-fetch"
   }
 }
