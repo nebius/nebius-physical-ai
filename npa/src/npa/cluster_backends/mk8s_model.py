@@ -9,6 +9,7 @@ from typing import Any
 from npa.cluster.gpu_driver import (
     DEFAULT_MANAGED_DRIVER_PRESET,
     GpuDriverStrategyError,
+    is_fabric_capable_topology,
     resolve_gpu_driver_strategy,
 )
 from npa.cluster.gpu_health import (
@@ -172,8 +173,17 @@ class MK8sDesired:
                     "with a GPU-count preset"
                 )
         if self.resolved_enable_gpu_cluster():
-            if not (gpu and gpu.preset.startswith("8gpu-")):
-                raise ValueError("mk8s enable_gpu_cluster requires an 8-GPU preset")
+            if not (
+                gpu
+                and is_fabric_capable_topology(
+                    platform=gpu.platform,
+                    preset=gpu.preset,
+                )
+            ):
+                raise ValueError(
+                    "mk8s enable_gpu_cluster requires a fabric-capable 8-GPU "
+                    "SXM/NVL preset"
+                )
             if not self.infiniband_fabric:
                 raise ValueError("mk8s enable_gpu_cluster requires infiniband_fabric")
         if self.enable_filestore:
@@ -246,7 +256,14 @@ class MK8sDesired:
         if self.enable_gpu_cluster is not None:
             return self.enable_gpu_cluster
         gpu = self.gpu_nodes
-        return bool(gpu and gpu.count > 0 and gpu.preset.startswith("8gpu-"))
+        return bool(
+            gpu
+            and gpu.count > 0
+            and is_fabric_capable_topology(
+                platform=gpu.platform,
+                preset=gpu.preset,
+            )
+        )
 
     def gpu_count(self) -> int:
         return self.gpu_nodes.count if self.gpu_nodes else 0

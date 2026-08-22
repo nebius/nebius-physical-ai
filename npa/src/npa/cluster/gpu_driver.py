@@ -83,6 +83,21 @@ def gpus_per_node(preset: str) -> int:
     return int(match.group(1)) if match else 0
 
 
+def is_fabric_capable_topology(*, platform: str, preset: str) -> bool:
+    """Whether a preset can participate in a Nebius GPU cluster fabric.
+
+    The k8s-training GPU-cluster surface is for 8-GPU SXM/NVL systems.  An
+    8-GPU count alone is insufficient: RTX PRO 6000 PCIe presets expose eight
+    devices per node but do not accept the InfiniBand GPU-cluster settings.
+    """
+
+    normalized = str(platform or "").strip().lower()
+    return bool(
+        gpus_per_node(preset) == 8
+        and ("-sxm" in normalized or "-nvl" in normalized)
+    )
+
+
 def is_nvswitch_topology(
     *, platform: str, preset: str, enable_gpu_cluster: bool = False
 ) -> bool:

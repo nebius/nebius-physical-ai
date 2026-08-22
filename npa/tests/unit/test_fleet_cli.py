@@ -142,6 +142,37 @@ def test_single_gpu_preset_auto_disables_gpu_cluster() -> None:
     assert cluster.resolved_enable_gpu_cluster() is False
 
 
+def test_rtx_8gpu_preset_auto_disables_gpu_cluster() -> None:
+    cluster = ClusterSpec(
+        name="rtx",
+        gpu_nodes=NodePoolSpec(
+            count=2,
+            platform="gpu-rtx6000",
+            preset="8gpu-192vcpu-1744gb",
+        ),
+    )
+    cluster.validate()
+
+    assert cluster.resolved_enable_gpu_cluster() is False
+    assert "enable_gpu_cluster = false" in render_tfvars(cluster)
+
+
+def test_rtx_8gpu_preset_rejects_explicit_gpu_cluster() -> None:
+    cluster = ClusterSpec(
+        name="rtx",
+        gpu_nodes=NodePoolSpec(
+            count=2,
+            platform="gpu-rtx6000",
+            preset="8gpu-192vcpu-1744gb",
+        ),
+        enable_gpu_cluster=True,
+        infiniband_fabric="fabric-a",
+    )
+
+    with pytest.raises(FleetSpecError, match="fabric-capable 8-GPU SXM/NVL"):
+        cluster.validate()
+
+
 def test_enable_gpu_cluster_requires_8gpu_preset_and_fabric() -> None:
     cluster = ClusterSpec(
         name="c",
@@ -150,7 +181,7 @@ def test_enable_gpu_cluster_requires_8gpu_preset_and_fabric() -> None:
         ),
         enable_gpu_cluster=True,
     )
-    with pytest.raises(FleetSpecError, match="8-GPU preset"):
+    with pytest.raises(FleetSpecError, match="fabric-capable 8-GPU SXM/NVL"):
         cluster.validate()
 
 
