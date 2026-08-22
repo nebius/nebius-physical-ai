@@ -898,6 +898,34 @@ def test_write_agent_nebius_env_omits_operator_iam_token(monkeypatch) -> None:
     assert all("agent-bootstrap" not in cmd for cmd in commands)
 
 
+def test_write_agent_llm_env_without_token_stages_fingerprintable_config(
+    monkeypatch,
+) -> None:
+    staged: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        agent_module,
+        "_stage_private_text",
+        lambda _ssh, *, content, target: staged.append((content, target)),
+    )
+
+    agent_module._write_agent_llm_env(
+        object(),
+        tf_api_key="",
+        llm_provider="token_factory",
+        llm_model="model/default",
+        llm_models=("model/default", "model/reasoning"),
+    )
+
+    content, target = staged[0]
+    assert target == "/opt/npa-agent/llm.env"
+    assert "NPA_AGENT_LLM_PROVIDER=token_factory\n" in content
+    assert "NPA_AGENT_LLM_PROVIDERS=token_factory\n" in content
+    assert "NPA_AGENT_LLM_MODEL=model/default\n" in content
+    assert "model/default" in content and "model/reasoning" in content
+    assert "NEBIUS_TOKEN_FACTORY_KEY" not in staged[0][0]
+
+
 def test_agent_operator_profile_scopes_foxglove_token_to_private_credentials() -> None:
     from npa.cli.agent import _write_agent_operator_profile
 

@@ -56,6 +56,7 @@ def _subprocess_environment(home: Path) -> dict[str, str]:
     return {
         "HOME": str(home),
         "PATH": os.environ["PATH"],
+        "NPA_CONFIG_DIR": str(home / ".npa"),
         "HF_TOKEN": "hf_synthetic_process_secret",
         "NGC_API_KEY": "nvapi-synthetic-process-secret",
         "NPA_OPERATION_JOURNAL_DIR": str(home / "operation-state"),

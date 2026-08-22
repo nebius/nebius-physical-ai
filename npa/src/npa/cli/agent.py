@@ -771,27 +771,34 @@ def _write_agent_llm_env(
     llm_providers: list[str] | tuple[str, ...] = (DEFAULT_LLM_PROVIDER,),
     llm_models: list[str] | tuple[str, ...] = DEFAULT_LLM_MODELS,
 ) -> None:
-    """Stage Token Factory credentials on the VM (chmod 600, not baked into image)."""
-    if not tf_api_key.strip():
-        return
+    """Stage agent model configuration and any Token Factory credential.
+
+    The agent is intentionally deployable without a Token Factory key so its
+    grounded, non-LLM routes remain usable.  The restart-safe convergence
+    contract still fingerprints ``llm.env`` in that mode, so always create the
+    file and include the credential only when one was supplied.
+    """
     models_csv = ",".join(_normalize_llm_models(list(llm_models)))
-    providers_csv = ",".join(
-        _normalize_llm_models(
-            [str(item) for item in llm_providers if str(item).strip()]
-        )
-        or [DEFAULT_LLM_PROVIDER]
+    providers = list(
+        dict.fromkeys(str(item).strip() for item in llm_providers if str(item).strip())
     )
-    env_content = (
-        f"NEBIUS_TOKEN_FACTORY_KEY={tf_api_key.strip()}\n"
-        f"NPA_AGENT_LLM_PROVIDER={llm_provider.strip() or DEFAULT_LLM_PROVIDER}\n"
-        f"NPA_AGENT_LLM_PROVIDERS={providers_csv}\n"
-        f"NPA_AGENT_LLM_MODEL={llm_model}\n"
-        f"NPA_AGENT_LLM_MODELS={models_csv}\n"
+    providers_csv = ",".join(providers or [DEFAULT_LLM_PROVIDER])
+    env_lines = []
+    if tf_api_key.strip():
+        env_lines.append(f"NEBIUS_TOKEN_FACTORY_KEY={tf_api_key.strip()}")
+    env_lines.extend(
+        [
+            f"NPA_AGENT_LLM_PROVIDER={llm_provider.strip() or DEFAULT_LLM_PROVIDER}",
+            f"NPA_AGENT_LLM_PROVIDERS={providers_csv}",
+            f"NPA_AGENT_LLM_MODEL={llm_model}",
+            f"NPA_AGENT_LLM_MODELS={models_csv}",
+            "",
+        ]
     )
-    env_b64 = base64.b64encode(env_content.encode("utf-8")).decode("ascii")
-    ssh.run_or_raise(
-        f"echo {shlex.quote(env_b64)} | base64 -d | sudo tee /opt/npa-agent/llm.env >/dev/null "
-        "&& sudo chmod 600 /opt/npa-agent/llm.env"
+    _stage_private_text(
+        ssh,
+        content="\n".join(env_lines),
+        target="/opt/npa-agent/llm.env",
     )
 
 

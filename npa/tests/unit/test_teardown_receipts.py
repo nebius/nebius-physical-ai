@@ -10,6 +10,16 @@ import pytest
 from npa import teardown_receipts as receipts
 
 
+def test_receipt_root_follows_isolated_npa_config_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("NPA_TEARDOWN_RECEIPT_DIR", raising=False)
+    isolated = tmp_path / "isolated-npa"
+    monkeypatch.setenv("NPA_CONFIG_DIR", str(isolated))
+
+    assert receipts.receipt_root() == isolated / "teardown-receipts"
+
+
 def _root(monkeypatch, tmp_path: Path) -> Path:  # noqa: ANN001
     root = tmp_path / "audit"
     monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(root))

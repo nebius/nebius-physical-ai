@@ -76,11 +76,11 @@ def utc_now() -> str:
 
 def receipt_root() -> Path:
     override = os.environ.get("NPA_TEARDOWN_RECEIPT_DIR", "").strip()
-    return (
-        Path(override).expanduser()
-        if override
-        else Path.home() / ".npa" / "teardown-receipts"
-    )
+    if override:
+        return Path(override).expanduser()
+    config_dir = os.environ.get("NPA_CONFIG_DIR", "").strip()
+    root = Path(config_dir).expanduser() if config_dir else Path.home() / ".npa"
+    return root / "teardown-receipts"
 
 
 def _journal_key(project_alias: str, project_id: str) -> str:

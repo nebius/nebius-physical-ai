@@ -93,9 +93,11 @@ def utc_now() -> str:
 
 def operation_root() -> Path:
     override = os.environ.get("NPA_OPERATION_JOURNAL_DIR", "").strip()
-    return (
-        Path(override).expanduser() if override else Path.home() / ".npa" / "operations"
-    )
+    if override:
+        return Path(override).expanduser()
+    config_dir = os.environ.get("NPA_CONFIG_DIR", "").strip()
+    root = Path(config_dir).expanduser() if config_dir else Path.home() / ".npa"
+    return root / "operations"
 
 
 def _slug(value: str, *, fallback: str = "operation") -> str:
