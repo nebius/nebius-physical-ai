@@ -21,6 +21,7 @@ from npa.cluster_backends.process import (
     require_bin as _require_bin,
     run_capture as _run_capture,
     run_stream as _run_stream,
+    terraform_plugin_cache_lock,
     terraform_env as _terraform_env,
 )
 from npa.cluster_backends.mk8s_model import (
@@ -1209,13 +1210,14 @@ def _deploy_one_cluster(
             on_status,
             f"[{label}] terraform init" + (f" (-> {log_path})" if log_path else ""),
         )
-        _tf_run(
-            [terraform_bin, "init", "-input=false"],
-            cwd=workdir,
-            env=env,
-            timeout=900,
-            log_path=log_path,
-        )
+        with terraform_plugin_cache_lock(env):
+            _tf_run(
+                [terraform_bin, "init", "-input=false"],
+                cwd=workdir,
+                env=env,
+                timeout=900,
+                log_path=log_path,
+            )
         _log(
             on_status,
             f"[{label}] terraform apply (cpu={cluster.cpu_count()} gpu={cluster.gpu_count()} "
