@@ -582,6 +582,13 @@ def _prepare_install_dir(
                 '    fi\n'
             )
             patched = patched.replace(success_check, fallback + success_check)
+        mount_tag_marker = 'MOUNT_TAG="${MOUNT_TAG:-data}"'
+        mount_tag_replacement = (
+            'if [[ -z "${MOUNT_TAG:-}" ]]; then\n'
+            f"  MOUNT_TAG={shlex.quote(cluster.filestore_mount_tag)}\n"
+            "fi"
+        )
+        patched = patched.replace(mount_tag_marker, mount_tag_replacement)
         if patched != original:
             verifier.write_text(patched)
             _log(on_status, "patched filesystem verifier for kubectl debug compatibility")

@@ -1084,6 +1084,7 @@ def _add_attach_racy_filesystem_verifier(recipe_root: Path) -> Path:
     verifier.parent.mkdir(parents=True, exist_ok=True)
     verifier.write_text(
         "#!/usr/bin/env bash\n"
+        'MOUNT_TAG="${MOUNT_TAG:-data}"\n'
         'if kubectl debug "${node}" 2>&1 | tee "${output_file}"; then\n'
         "    if ! grep -Fq \\\n"
         '      "[result] PASS: shared filesystem host mount is writable '
@@ -1183,11 +1184,39 @@ def test_prepare_install_dir_recovers_kubectl_debug_attach_race(tmp_path) -> Non
     ).read_text()
     assert "waiting for detached debugger evidence" not in source.read_text()
     assert "waiting for detached debugger evidence" in installed
+    assert 'MOUNT_TAG="${MOUNT_TAG:-data}"' not in installed
+    assert 'if [[ -z "${MOUNT_TAG:-}" ]]; then' in installed
+    assert "MOUNT_TAG=data" in installed
     assert "--for=jsonpath='{.status.phase}'=Succeeded" in installed
     assert 'kubectl logs -n "${TEST_NAMESPACE}" "${debug_pod_name}"' in installed
     assert installed.index("waiting for detached debugger evidence") < installed.index(
         "    if ! grep -Fq \\\n"
     )
+
+
+def test_prepare_install_dir_binds_custom_filesystem_mount_tag(tmp_path) -> None:
+    from npa.fleet import lifecycle as L
+
+    root = _fake_recipe(
+        tmp_path, 'provider "nebius" { domain = "api.eu.nebius.cloud:443" }\n'
+    )
+    _add_attach_racy_filesystem_verifier(root)
+    workdir = L._prepare_install_dir(
+        tmp_path / "install",
+        recipe_root=root,
+        region="us-central1",
+        cluster=ClusterSpec(
+            name="c",
+            cpu_nodes=NodePoolSpec(count=1),
+            filestore_mount_tag="shared storage",
+        ),
+        ssh_public_key="k",
+    )
+
+    installed = (
+        workdir / "filesystem-csi-validation" / "01-verify-node-filesystem-mounts.sh"
+    ).read_text()
+    assert "MOUNT_TAG='shared storage'" in installed
 
 
 def test_prepare_install_dir_patches_fetched_recipe_debug_quiet(
