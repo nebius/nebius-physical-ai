@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shlex
+import socket
 import subprocess
 import sys
 import time
@@ -26,8 +27,19 @@ from typing import Any
 from npa.benchmarks.sim2real_success import VerificationError, verify_artifact_tree
 
 
-TASK_TEXT = """From a clean checkout on the dev VM, operate the canonical npa/workflows/workbench/npa-workflows/sim2real.yaml through the standard runtime. Validate, plan, submit, monitor, diagnose, and make necessary fixes until the Franka arm grasps the cube, lifts it at least 5 cm, and holds it for 2 seconds. Do not weaken evaluation thresholds, replace real components, or fabricate success. Preserve unrelated changes. Finish with run IDs, commands, code changes, measured success metrics, and artifact locations."""
+TASK_TEXT = """From a clean checkout on the dev VM, first validate and plan the canonical public-franka-lift preset for npa/workflows/workbench/npa-workflows/sim2real.yaml, submit it through the standard runtime, and monitor that run to terminal completion. Diagnose and make necessary fixes if it fails. Do not weaken the canonical workflow, its real components, or the strict requirement that the Franka arm grasp the cube, lift it at least 5 cm, and hold it for 2 seconds. Preserve unrelated changes. Finish with the run ID, commands, code changes, measured stage and grasp metrics, and artifact locations."""
 CHECKPOINT_MARKER = "BENCHMARK_CONTEXT_CHECKPOINT_V1"
+RECOVERY_MARKER = "BENCHMARK_MALFORMED_RESPONSE_RECOVERY_V1"
+
+DEFAULT_STREAM_SAFEGUARDS = {
+    # These are per-response semantic-progress safeguards, not benchmark budgets.
+    "idle_timeout_seconds": 180.0,
+    "no_tool_progress_seconds": 900.0,
+    "no_tool_progress_characters": 65_536,
+    "tool_assembly_seconds": 300.0,
+    "tool_assembly_characters": 65_536,
+    "max_identical_malformed_responses": 3,
+}
 
 
 TOOLS: list[dict[str, Any]] = [
@@ -122,10 +134,21 @@ class RequestTelemetry:
     total_tokens: int | None
     completion_tokens_per_second: float | None
     finish_reason: str | None
+    observed_tokens_lower_bound: int
+    observed_characters_lower_bound: int
 
 
 class EmptyStreamError(RuntimeError):
     """The server closed a streaming response without a usable event."""
+
+
+class StreamRecoveryError(RuntimeError):
+    """A response made no usable tool-call progress and must be discarded."""
+
+    def __init__(self, reason: str, telemetry: dict[str, Any]) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.telemetry = telemetry
 
 
 def _utc() -> str:
@@ -277,8 +300,13 @@ exec bash -c "$5"
 
 
 def _stream_chat(
-    endpoint: str, api_key: str, payload: dict[str, Any]
+    endpoint: str,
+    api_key: str,
+    payload: dict[str, Any],
+    *,
+    safeguards: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], RequestTelemetry]:
+    policy = {**DEFAULT_STREAM_SAFEGUARDS, **(safeguards or {})}
     started_at = _utc()
     body = json.dumps(payload).encode()
     request = urllib.request.Request(
@@ -292,53 +320,160 @@ def _stream_chat(
     )
     started = time.monotonic()
     first: float | None = None
+    tool_started: float | None = None
+    tool_started_characters = 0
     content: list[str] = []
     reasoning: list[str] = []
     tool_calls: dict[int, dict[str, Any]] = {}
     usage: dict[str, Any] = {}
     finish_reason: str | None = None
-    with urllib.request.urlopen(request) as response:
-        for raw in response:
-            line = raw.decode("utf-8", errors="replace").strip()
-            if not line.startswith("data:"):
-                continue
-            data = line[5:].strip()
-            if data == "[DONE]":
-                break
-            chunk = json.loads(data)
-            if chunk.get("usage"):
-                usage = chunk["usage"]
-            choices = chunk.get("choices") or []
-            if not choices:
-                continue
-            choice = choices[0]
-            delta = choice.get("delta") or {}
-            if first is None and any(
-                delta.get(key)
-                for key in ("content", "reasoning", "reasoning_content", "tool_calls")
-            ):
-                first = time.monotonic() - started
-            if delta.get("content"):
-                content.append(delta["content"])
-            if delta.get("reasoning") or delta.get("reasoning_content"):
-                reasoning.append(
-                    delta.get("reasoning") or delta.get("reasoning_content")
+    observed_tokens_lower_bound = 0
+    observed_characters_lower_bound = 0
+
+    def progress_record(reason: str) -> dict[str, Any]:
+        return {
+            "started_at": started_at,
+            "elapsed_seconds": time.monotonic() - started,
+            "time_to_first_token_seconds": first,
+            "observed_tokens_lower_bound": observed_tokens_lower_bound,
+            "observed_characters_lower_bound": observed_characters_lower_bound,
+            "reason": reason,
+            "finish_reason": finish_reason,
+            "has_content": bool(content),
+            "has_reasoning": bool(reasoning),
+            "tool_call_fragments_observed": bool(tool_calls),
+            "tool_call_indexes_observed": sorted(tool_calls),
+        }
+
+    def append_fragment(target: list[str], value: Any, field: str) -> None:
+        nonlocal observed_characters_lower_bound
+        if value in (None, ""):
+            return
+        if not isinstance(value, str):
+            raise StreamRecoveryError(
+                f"non_string_{field}_fragment", progress_record("malformed_stream_shape")
+            )
+        target.append(value)
+        observed_characters_lower_bound += len(value)
+
+    try:
+        with urllib.request.urlopen(
+            request, timeout=float(policy["idle_timeout_seconds"])
+        ) as response:
+            for raw in response:
+                line = raw.decode("utf-8", errors="replace").strip()
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                chunk = json.loads(data)
+                if chunk.get("usage"):
+                    usage = chunk["usage"]
+                choices = chunk.get("choices") or []
+                if not choices:
+                    continue
+                choice = choices[0]
+                delta = choice.get("delta") or {}
+                if any(
+                    delta.get(key)
+                    for key in (
+                        "content",
+                        "reasoning",
+                        "reasoning_content",
+                        "tool_calls",
+                    )
+                ):
+                    # A token-bearing streamed delta proves at least one generated
+                    # token without assuming a tokenizer or chunks-per-token ratio.
+                    observed_tokens_lower_bound += 1
+                if first is None and any(
+                    delta.get(key)
+                    for key in (
+                        "content",
+                        "reasoning",
+                        "reasoning_content",
+                        "tool_calls",
+                    )
+                ):
+                    first = time.monotonic() - started
+                append_fragment(content, delta.get("content"), "content")
+                append_fragment(
+                    reasoning,
+                    delta.get("reasoning") or delta.get("reasoning_content"),
+                    "reasoning",
                 )
-            for call in delta.get("tool_calls") or []:
-                index = int(call.get("index", 0))
-                current = tool_calls.setdefault(
-                    index,
-                    {
-                        "id": "",
-                        "type": "function",
-                        "function": {"name": "", "arguments": ""},
-                    },
-                )
-                current["id"] += call.get("id") or ""
-                function = call.get("function") or {}
-                current["function"]["name"] += function.get("name") or ""
-                current["function"]["arguments"] += function.get("arguments") or ""
-            finish_reason = choice.get("finish_reason") or finish_reason
+                for call in delta.get("tool_calls") or []:
+                    if tool_started is None:
+                        tool_started = time.monotonic()
+                        tool_started_characters = observed_characters_lower_bound
+                    try:
+                        index = int(call.get("index", 0))
+                    except (TypeError, ValueError) as exc:
+                        raise StreamRecoveryError(
+                            "invalid_tool_call_index",
+                            progress_record("malformed_stream_shape"),
+                        ) from exc
+                    current = tool_calls.setdefault(
+                        index,
+                        {
+                            "id": "",
+                            "type": "function",
+                            "function": {"name": "", "arguments": ""},
+                        },
+                    )
+                    for target, value, field in (
+                        (current, call.get("id"), "tool_call_id"),
+                        (
+                            current["function"],
+                            (call.get("function") or {}).get("name"),
+                            "tool_name",
+                        ),
+                        (
+                            current["function"],
+                            (call.get("function") or {}).get("arguments"),
+                            "tool_arguments",
+                        ),
+                    ):
+                        key = "id" if field == "tool_call_id" else (
+                            "name" if field == "tool_name" else "arguments"
+                        )
+                        fragments: list[str] = []
+                        append_fragment(fragments, value, field)
+                        if fragments:
+                            target[key] += fragments[0]
+                finish_reason = choice.get("finish_reason") or finish_reason
+                if finish_reason == "tool_calls":
+                    continue
+                elapsed = time.monotonic() - started
+                if not tool_calls and (
+                    elapsed >= float(policy["no_tool_progress_seconds"])
+                    or observed_characters_lower_bound
+                    >= int(policy["no_tool_progress_characters"])
+                ):
+                    raise StreamRecoveryError(
+                        "no_usable_tool_call_progress",
+                        progress_record("no_usable_tool_call_progress"),
+                    )
+                if tool_started is not None and (
+                    time.monotonic() - tool_started
+                    >= float(policy["tool_assembly_seconds"])
+                    or observed_characters_lower_bound - tool_started_characters
+                    >= int(policy["tool_assembly_characters"])
+                ):
+                    raise StreamRecoveryError(
+                        "tool_call_boundary_not_completed",
+                        progress_record("tool_call_boundary_not_completed"),
+                    )
+    except (TimeoutError, socket.timeout) as exc:
+        if finish_reason != "tool_calls":
+            raise StreamRecoveryError(
+                "stream_idle_timeout", progress_record("stream_idle_timeout")
+            ) from exc
+    except json.JSONDecodeError as exc:
+        raise StreamRecoveryError(
+            "malformed_sse_json", progress_record("malformed_sse_json")
+        ) from exc
     if not any((content, reasoning, tool_calls, usage, finish_reason, first)):
         raise EmptyStreamError(
             "OpenAI-compatible endpoint returned an empty event stream"
@@ -368,8 +503,164 @@ def _stream_chat(
             else None
         ),
         finish_reason=finish_reason,
+        observed_tokens_lower_bound=observed_tokens_lower_bound,
+        observed_characters_lower_bound=observed_characters_lower_bound,
     )
     return message, telemetry
+
+
+def _tool_argument_contract(name: str) -> tuple[set[str], set[str]]:
+    contracts = {
+        "run_command": ({"command"}, {"command"}),
+        "read_file": ({"path"}, {"path"}),
+        "write_file": ({"path", "content"}, {"path", "content"}),
+        "list_files": ({"pattern"}, {"pattern"}),
+        "complete_workflow": ({"run_id"}, {"run_id"}),
+    }
+    try:
+        return contracts[name]
+    except KeyError as exc:
+        raise ValueError(f"unknown tool name: {name}") from exc
+
+
+def _validated_tool_calls(
+    assistant: dict[str, Any], *, finish_reason: str | None
+) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    calls = assistant.get("tool_calls") or []
+    if not isinstance(calls, list) or not calls:
+        raise ValueError("response contains no tool calls")
+    if finish_reason != "tool_calls":
+        raise ValueError("response ended without a tool_calls finish boundary")
+    validated: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    seen_ids: set[str] = set()
+    for call in calls:
+        if not isinstance(call, dict) or call.get("type") != "function":
+            raise ValueError("tool call must be a function object")
+        call_id = call.get("id")
+        if not isinstance(call_id, str) or not call_id or call_id in seen_ids:
+            raise ValueError("tool call id must be non-empty and unique")
+        seen_ids.add(call_id)
+        function = call.get("function")
+        if not isinstance(function, dict) or not isinstance(function.get("name"), str):
+            raise ValueError("tool call function name is missing")
+        name = function["name"]
+        allowed, required = _tool_argument_contract(name)
+        raw_arguments = function.get("arguments")
+        if not isinstance(raw_arguments, str):
+            raise ValueError("tool arguments must be a JSON string")
+        try:
+            arguments = json.loads(raw_arguments)
+        except json.JSONDecodeError as exc:
+            raise ValueError("tool arguments are incomplete or invalid JSON") from exc
+        if not isinstance(arguments, dict):
+            raise ValueError("tool arguments must decode to an object")
+        keys = set(arguments)
+        if not required <= keys or not keys <= allowed:
+            raise ValueError("tool arguments do not match the declared schema")
+        if any(not isinstance(arguments[key], str) for key in keys):
+            raise ValueError("tool argument values must be strings")
+        validated.append((call, arguments))
+    return validated
+
+
+def _response_shape(assistant: dict[str, Any]) -> dict[str, Any]:
+    calls = assistant.get("tool_calls") or []
+    return {
+        "has_content": bool(assistant.get("content")),
+        "has_reasoning": bool(assistant.get("reasoning_content")),
+        "tool_call_count": len(calls) if isinstance(calls, list) else None,
+        "tool_names": [
+            str((call.get("function") or {}).get("name") or "")
+            for call in calls
+            if isinstance(call, dict)
+        ],
+    }
+
+
+def _malformation_fingerprint(reason: str, response_shape: dict[str, Any]) -> str:
+    return _sha({"reason": reason, "response_shape": response_shape})
+
+
+def _load_malformation_streak(path: Path) -> tuple[str | None, int]:
+    fingerprint: str | None = None
+    count = 0
+    if not path.exists():
+        return fingerprint, count
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        if record.get("classification") == "response_completed":
+            fingerprint, count = None, 0
+        elif record.get("classification") == "malformed_response":
+            observed = str(record.get("malformation_fingerprint") or "")
+            if observed and observed == fingerprint:
+                count += 1
+            else:
+                fingerprint, count = observed or None, 1
+    return fingerprint, count
+
+
+def _next_malformation_streak(
+    previous_fingerprint: str | None,
+    previous_count: int,
+    fingerprint: str,
+) -> tuple[str, int]:
+    return (
+        (fingerprint, previous_count + 1)
+        if fingerprint == previous_fingerprint
+        else (fingerprint, 1)
+    )
+
+
+def _malformation_recovery_action(count: int, maximum: int) -> str:
+    return (
+        "terminate_repeated_identical_malformed_response"
+        if count >= maximum
+        else "discard_partial_response_rebuild_context_and_retry"
+    )
+
+
+def _malformation_telemetry_record(
+    recovery: dict[str, Any],
+    *,
+    request_index: int,
+    response_shape: dict[str, Any],
+    fingerprint: str,
+    identical_count: int,
+    action: str,
+) -> dict[str, Any]:
+    return {
+        **recovery,
+        "request_index": request_index,
+        "classification": "malformed_response",
+        "response_shape": response_shape,
+        "malformation_fingerprint": fingerprint,
+        "identical_malformation_count": identical_count,
+        "recovery_action": action,
+        "at": _utc(),
+    }
+
+
+def _terminal_malformation_failure(
+    *,
+    request_index: int,
+    fingerprint: str,
+    identical_count: int,
+    reason: str,
+    run_identifiers: list[str],
+) -> dict[str, Any]:
+    return {
+        "schema": "npa.sim2real.model_agent_benchmark.failure.v2",
+        "classification": "repeated_identical_malformed_response",
+        "request_index": request_index,
+        "malformation_fingerprint": fingerprint,
+        "identical_malformation_count": identical_count,
+        "last_reason": reason,
+        "workflow_submitted": bool(run_identifiers),
+        "workflow_run_identifiers": run_identifiers,
+        "completed_at": _utc(),
+    }
 
 
 def _load_transcript(path: Path) -> list[dict[str, Any]]:
@@ -432,8 +723,74 @@ def _latest_prompt_tokens(path: Path) -> int | None:
     return latest
 
 
+def _safe_message_groups(messages: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    groups: list[list[dict[str, Any]]] = []
+    index = 0
+    while index < len(messages):
+        message = messages[index]
+        if message.get("role") == "tool":
+            index += 1
+            continue
+        if message.get("role") != "assistant" or not message.get("tool_calls"):
+            groups.append([message])
+            index += 1
+            continue
+        expected = {
+            str(call.get("id"))
+            for call in message.get("tool_calls") or []
+            if isinstance(call, dict) and call.get("id")
+        }
+        group = [message]
+        observed: set[str] = set()
+        cursor = index + 1
+        while cursor < len(messages) and messages[cursor].get("role") == "tool":
+            group.append(messages[cursor])
+            observed.add(str(messages[cursor].get("tool_call_id") or ""))
+            cursor += 1
+        if expected and observed == expected:
+            groups.append(group)
+        index = cursor
+    return groups
+
+
+def _collect_run_identifiers(messages: list[dict[str, Any]]) -> list[str]:
+    found: set[str] = set()
+
+    def visit(value: Any, key: str | None = None) -> None:
+        if isinstance(value, dict):
+            for child_key, child in value.items():
+                visit(child, str(child_key))
+        elif isinstance(value, list):
+            for child in value:
+                visit(child, key)
+        elif key in {"run_id", "workflow_run_id"} and isinstance(value, str):
+            if _RUN_ID_RE.fullmatch(value):
+                found.add(value)
+
+    for message in messages:
+        content = message.get("content")
+        if message.get("role") == "tool" and isinstance(content, str):
+            try:
+                visit(json.loads(content))
+            except json.JSONDecodeError:
+                continue
+        elif message.get("role") == "user" and isinstance(content, str):
+            for line in content.splitlines():
+                if not line.startswith("Durable workflow run identifiers: "):
+                    continue
+                try:
+                    visit(json.loads(line.split(": ", 1)[1]), "run_id")
+                except json.JSONDecodeError:
+                    continue
+    return sorted(found)
+
+
 def _context_checkpoint(
-    messages: list[dict[str, Any]], *, max_recent_chars: int
+    messages: list[dict[str, Any]],
+    *,
+    max_recent_chars: int,
+    workspace_status: str = "",
+    recovery_reason: str | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     recent_candidates = [
         message
@@ -443,28 +800,47 @@ def _context_checkpoint(
             and str(message.get("content") or "").startswith(CHECKPOINT_MARKER)
         )
     ]
-    recent: list[dict[str, Any]] = []
+    groups = _safe_message_groups(recent_candidates)
+    recent_groups: list[list[dict[str, Any]]] = []
     used = 0
-    for message in reversed(recent_candidates):
-        size = len(json.dumps(message, sort_keys=True, separators=(",", ":")))
-        if recent and used + size > max_recent_chars:
+    for group in reversed(groups):
+        size = len(json.dumps(group, sort_keys=True, separators=(",", ":")))
+        if used + size > max_recent_chars:
             break
-        recent.append(message)
+        recent_groups.append(group)
         used += size
-    recent.reverse()
+    recent_groups.reverse()
+    recent = [message for group in recent_groups for message in group]
+    run_ids = _collect_run_identifiers(messages[2:])
+    workspace_lines = workspace_status.splitlines()
+    recovery = (
+        f"{RECOVERY_MARKER}\nDiscarded response reason: {recovery_reason}. "
+        "The incomplete assistant response was not added to history and none of "
+        "its tool arguments were executed.\n"
+        if recovery_reason
+        else ""
+    )
     checkpoint = {
         "role": "user",
         "content": (
             f"{CHECKPOINT_MARKER}\n"
+            + recovery
+            +
             "The standalone benchmark controller deterministically compacted "
-            "earlier context because the configured model context was nearly "
-            "full. The full append-only transcript remains private evidence. "
+            "earlier complete message groups at a safe boundary. The full "
+            "append-only transcript remains private evidence. "
             "Do not infer success from this checkpoint. Re-read durable workspace "
             "and runtime state with tools as needed, then continue the original "
             "task.\n"
             f"Prior active-context SHA256: {_sha(messages[2:])}\n"
             f"Prior messages: {len(messages) - 2}; verbatim recent messages: "
             f"{len(recent)}\n"
+            f"Durable workflow run identifiers: {json.dumps(run_ids)}\n"
+            f"Workspace status SHA256: {hashlib.sha256(workspace_status.encode()).hexdigest()}; "
+            f"status lines: {len(workspace_lines)}\n"
+            "Workspace status follows:\n"
+            + "\n".join(workspace_lines[:200])
+            + "\n"
             "Verbatim recent transcript JSON follows:\n"
             + json.dumps(recent, sort_keys=True, separators=(",", ":"))
         ),
@@ -478,11 +854,14 @@ def _maybe_checkpoint(
     *,
     prompt_tokens: int | None,
     context_limit: int,
+    workspace_status: str = "",
 ) -> list[dict[str, Any]]:
     if prompt_tokens is None or prompt_tokens < int(context_limit * 0.85):
         return messages
     compacted, checkpoint = _context_checkpoint(
-        messages, max_recent_chars=max(16_384, int(context_limit * 1.5))
+        messages,
+        max_recent_chars=max(16_384, int(context_limit * 1.5)),
+        workspace_status=workspace_status,
     )
     with transcript_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(checkpoint, sort_keys=True) + "\n")
@@ -554,6 +933,23 @@ def run(config_path: Path) -> int:
     messages.extend(_load_transcript(transcript_path))
     request_index = _last_request_index(telemetry_path)
     context_limit = int(config["serving"]["context_limit"])
+    stream_safeguards = {
+        **DEFAULT_STREAM_SAFEGUARDS,
+        **(config.get("stream_safeguards") or {}),
+    }
+    unknown_safeguards = set(stream_safeguards) - set(DEFAULT_STREAM_SAFEGUARDS)
+    if unknown_safeguards:
+        raise ValueError(
+            f"unknown stream safeguards: {sorted(unknown_safeguards)}"
+        )
+    for key, value in stream_safeguards.items():
+        if not isinstance(value, (int, float)) or value <= 0:
+            raise ValueError(f"stream safeguard {key} must be positive")
+    if not isinstance(stream_safeguards["max_identical_malformed_responses"], int):
+        raise ValueError("max_identical_malformed_responses must be an integer")
+    stream_safeguards["max_identical_malformed_responses"] = int(
+        stream_safeguards["max_identical_malformed_responses"]
+    )
     meta = {
         "schema": "npa.sim2real.model_agent_benchmark.run.v1",
         "model": config["model"],
@@ -565,6 +961,7 @@ def run(config_path: Path) -> int:
         "tool_schema_sha256": _sha(TOOLS),
         "completion_mode": completion_mode,
         "serving": config["serving"],
+        "stream_safeguards": stream_safeguards,
         "started_at": _utc(),
     }
     if meta_path.exists():
@@ -579,6 +976,7 @@ def run(config_path: Path) -> int:
             "tool_schema_sha256",
             "completion_mode",
             "serving",
+            "stream_safeguards",
         ):
             if existing_meta.get(key) != meta.get(key):
                 raise ValueError(f"resume metadata mismatch: {key}")
@@ -621,6 +1019,10 @@ def run(config_path: Path) -> int:
         transcript_path,
         prompt_tokens=_latest_prompt_tokens(telemetry_path),
         context_limit=context_limit,
+        workspace_status=workspace_status,
+    )
+    malformed_fingerprint, identical_malformed_count = _load_malformation_streak(
+        telemetry_path
     )
     consecutive_stream_failures = 0
     while True:
@@ -635,13 +1037,47 @@ def run(config_path: Path) -> int:
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        recovery: dict[str, Any] | None = None
+        validated_calls: list[tuple[dict[str, Any], dict[str, Any]]] = []
         try:
-            assistant, telemetry = _stream_chat(endpoint, api_key, payload)
-        except (
-            urllib.error.URLError,
-            json.JSONDecodeError,
-            EmptyStreamError,
-        ) as exc:
+            assistant, telemetry = _stream_chat(
+                endpoint,
+                api_key,
+                payload,
+                safeguards=stream_safeguards,
+            )
+        except StreamRecoveryError as exc:
+            recovery = {
+                **exc.telemetry,
+                "reason": exc.reason,
+                "response_shape": {
+                    "has_content": bool(exc.telemetry.get("has_content")),
+                    "has_reasoning": bool(exc.telemetry.get("has_reasoning")),
+                    "tool_call_fragments_observed": bool(
+                        exc.telemetry.get("tool_call_fragments_observed")
+                    ),
+                    "tool_call_indexes_observed": exc.telemetry.get(
+                        "tool_call_indexes_observed"
+                    ),
+                },
+            }
+        except EmptyStreamError:
+            recovery = {
+                "started_at": _utc(),
+                "elapsed_seconds": 0.0,
+                "time_to_first_token_seconds": None,
+                "observed_tokens_lower_bound": 0,
+                "observed_characters_lower_bound": 0,
+                "reason": "empty_event_stream",
+                "finish_reason": None,
+                "response_shape": {
+                    "has_content": False,
+                    "has_reasoning": False,
+                    "tool_call_fragments_observed": False,
+                    "tool_call_indexes_observed": [],
+                },
+            }
+        except urllib.error.URLError as exc:
             with telemetry_path.open("a", encoding="utf-8") as handle:
                 handle.write(
                     json.dumps(
@@ -656,19 +1092,103 @@ def run(config_path: Path) -> int:
             consecutive_stream_failures += 1
             time.sleep(min(30.0, float(2 ** min(consecutive_stream_failures, 5))))
             continue
+        if recovery is None:
+            calls = assistant.get("tool_calls") or []
+            if calls:
+                try:
+                    validated_calls = _validated_tool_calls(
+                        assistant, finish_reason=telemetry.finish_reason
+                    )
+                except ValueError as exc:
+                    recovery = {
+                        **asdict(telemetry),
+                        "elapsed_seconds": telemetry.latency_seconds,
+                        "reason": str(exc),
+                        "response_shape": _response_shape(assistant),
+                    }
+            elif (
+                not assistant.get("content")
+                or telemetry.finish_reason in {"length", "content_filter"}
+            ):
+                recovery = {
+                    **asdict(telemetry),
+                    "elapsed_seconds": telemetry.latency_seconds,
+                    "reason": (
+                        "reasoning_only_response_without_tool_call"
+                        if assistant.get("reasoning_content")
+                        else "response_without_usable_content_or_tool_call"
+                    ),
+                    "response_shape": _response_shape(assistant),
+                }
+        if recovery is not None:
+            response_shape = dict(recovery.pop("response_shape"))
+            reason = str(recovery.get("reason") or "malformed_model_response")
+            fingerprint = _malformation_fingerprint(reason, response_shape)
+            malformed_fingerprint, identical_malformed_count = (
+                _next_malformation_streak(
+                    malformed_fingerprint,
+                    identical_malformed_count,
+                    fingerprint,
+                )
+            )
+            action = _malformation_recovery_action(
+                identical_malformed_count,
+                int(stream_safeguards["max_identical_malformed_responses"]),
+            )
+            terminal = action == "terminate_repeated_identical_malformed_response"
+            record = _malformation_telemetry_record(
+                recovery,
+                request_index=request_index,
+                response_shape=response_shape,
+                fingerprint=fingerprint,
+                identical_count=identical_malformed_count,
+                action=action,
+            )
+            with telemetry_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, sort_keys=True) + "\n")
+            if terminal:
+                failure = _terminal_malformation_failure(
+                    request_index=request_index,
+                    fingerprint=fingerprint,
+                    identical_count=identical_malformed_count,
+                    reason=reason,
+                    run_identifiers=_collect_run_identifiers(messages[2:]),
+                )
+                (evidence / "failure.json").write_text(
+                    json.dumps(failure, indent=2, sort_keys=True), encoding="utf-8"
+                )
+                return 2
+            current_workspace_status = subprocess.check_output(
+                ["git", "status", "--porcelain"], cwd=workspace, text=True
+            )
+            messages, checkpoint = _context_checkpoint(
+                messages,
+                max_recent_chars=max(16_384, int(context_limit * 1.5)),
+                workspace_status=current_workspace_status,
+                recovery_reason=reason,
+            )
+            with transcript_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(checkpoint, sort_keys=True) + "\n")
+            time.sleep(min(30.0, float(2**identical_malformed_count)))
+            continue
         consecutive_stream_failures = 0
+        malformed_fingerprint, identical_malformed_count = None, 0
         telemetry.request_index = request_index
         with telemetry_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(asdict(telemetry), sort_keys=True) + "\n")
+            handle.write(
+                json.dumps(
+                    {**asdict(telemetry), "classification": "response_completed"},
+                    sort_keys=True,
+                )
+                + "\n"
+            )
         messages.append(assistant)
         with transcript_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(assistant, sort_keys=True) + "\n")
-        calls = assistant.get("tool_calls") or []
-        if calls:
+        if validated_calls:
             terminal_completion: dict[str, Any] | None = None
-            for call in calls:
+            for call, arguments in validated_calls:
                 try:
-                    arguments = json.loads(call["function"]["arguments"] or "{}")
                     result = _run_tool(
                         call["function"]["name"],
                         arguments,
@@ -711,6 +1231,9 @@ def run(config_path: Path) -> int:
                 transcript_path,
                 prompt_tokens=telemetry.prompt_tokens,
                 context_limit=context_limit,
+                workspace_status=subprocess.check_output(
+                    ["git", "status", "--porcelain"], cwd=workspace, text=True
+                ),
             )
             continue
 
@@ -738,6 +1261,9 @@ def run(config_path: Path) -> int:
                 transcript_path,
                 prompt_tokens=telemetry.prompt_tokens,
                 context_limit=context_limit,
+                workspace_status=subprocess.check_output(
+                    ["git", "status", "--porcelain"], cwd=workspace, text=True
+                ),
             )
             continue
         verification["end_to_end_wall_seconds"] = _elapsed_since(meta["started_at"])

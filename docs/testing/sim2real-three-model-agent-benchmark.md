@@ -42,8 +42,11 @@ workers are functional. The model must not manage this benchmark-owned server.
   serving only; Isaac rendering remains on an RT-core GPU supported by the
   canonical workflow.
 - Do not impose model-turn, token, workflow-job, cost, or wall-clock budgets.
-  Transport failures are recorded and retried; a model that stops before the
-  verifier passes receives the same verifier feedback and continues.
+  Per-response semantic-progress safeguards may discard a malformed or stalled
+  response that has not completed a usable tool-call boundary; these are
+  recovery boundaries, not overall benchmark limits. Transport failures are
+  recorded and retried; a model that stops before the verifier passes receives
+  the same verifier feedback and continues.
 
 `npa/benchmarks/sim2real-three-model/models.json` records the immutable model
 revisions, container-image digests, parser choices, and serving parameters used
@@ -129,12 +132,23 @@ same detached commit but preserves model-authored changes, recording a hash and
 line count of the workspace status in private `resumes.jsonl` evidence.
 When prompt telemetry reaches 85% of the configured context window, the
 controller appends a deterministic, hash-linked checkpoint and continues from
-that checkpoint plus a bounded verbatim tail. The complete append-only
-transcript remains in private evidence. A checkpoint is continuity evidence,
-not success evidence: it explicitly requires the model to re-read durable state
-and forbids inferring success. Transport and empty-stream failures use capped
-exponential retry backoff without imposing a completion, time, token, or job
-limit.
+that checkpoint plus a bounded verbatim tail. Compaction retains only complete
+assistant/tool-result groups, the original task, current workspace-status
+evidence, and discovered workflow run identifiers. A malformed or stalled
+stream is closed when it crosses its recorded no-tool-progress, incomplete-tool
+assembly, or idle boundary. The partial assistant message is never put in
+history and no unvalidated arguments execute; recovery starts from the same safe
+checkpoint mechanism. Each interruption records request index, elapsed time,
+observed character and token-event lower bounds, reason, fingerprint, and action
+in append-only `requests.jsonl`. Three identical consecutive malformations
+terminate with `repeated_identical_malformed_response` in machine-readable
+`failure.json`; any complete response resets that streak. These per-response
+guards do not impose an overall completion, time, token, cost, or job limit.
+
+The complete append-only transcript remains in private evidence. A checkpoint
+is continuity evidence, not success evidence: it explicitly requires the model
+to re-read durable state and forbids inferring success. Transport failures use
+capped exponential retry backoff.
 
 The evidence directory receives `run.json`, append-only `transcript.jsonl`,
 per-request telemetry in `requests.jsonl`, and `success.json` only after strict

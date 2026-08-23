@@ -10,12 +10,19 @@ import pytest
 from npa.benchmarks.sim2real_model_agent import (
     CHECKPOINT_MARKER,
     EmptyStreamError,
+    StreamRecoveryError,
     _context_checkpoint,
     _inside,
     _last_request_index,
+    _load_malformation_streak,
     _load_transcript,
+    _malformation_recovery_action,
+    _malformation_telemetry_record,
+    _next_malformation_streak,
     _run_tool,
     _stream_chat,
+    _terminal_malformation_failure,
+    _validated_tool_calls,
     _workspace_preflight,
 )
 from npa.benchmarks.sim2real_model_server import render_server_resources
@@ -169,9 +176,148 @@ def test_empty_stream_is_a_retryable_error(monkeypatch: pytest.MonkeyPatch) -> N
         def __iter__(self):
             return iter(())
 
-    monkeypatch.setattr(urllib.request, "urlopen", lambda _request: EmptyResponse())
+    monkeypatch.setattr(
+        urllib.request, "urlopen", lambda _request, **_kwargs: EmptyResponse()
+    )
     with pytest.raises(EmptyStreamError, match="empty event stream"):
         _stream_chat("http://model.example/v1", "key", {"messages": []})
+
+
+class _StreamingResponse:
+    def __init__(self, chunks: list[dict | str]) -> None:
+        self.chunks = chunks
+        self.closed = False
+
+    def __enter__(self) -> _StreamingResponse:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.closed = True
+
+    def __iter__(self):
+        for chunk in self.chunks:
+            data = chunk if isinstance(chunk, str) else json.dumps(chunk)
+            yield f"data: {data}\n".encode()
+
+
+def test_valid_fragmented_glm_tool_call_is_preserved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = _StreamingResponse(
+        [
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "reasoning_content": "I should inspect first.",
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call_1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "run_",
+                                        "arguments": '{"command":"git ',
+                                    },
+                                }
+                            ],
+                        },
+                        "finish_reason": None,
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "function": {
+                                        "name": "command",
+                                        "arguments": 'status"}',
+                                    },
+                                }
+                            ]
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ]
+            },
+            {
+                "choices": [],
+                "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 6,
+                    "total_tokens": 16,
+                },
+            },
+            "[DONE]",
+        ]
+    )
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *_a, **_k: response)
+
+    assistant, telemetry = _stream_chat(
+        "http://model.example/v1", "key", {"messages": []}
+    )
+    calls = _validated_tool_calls(
+        assistant, finish_reason=telemetry.finish_reason
+    )
+
+    assert calls[0][1] == {"command": "git status"}
+    assert assistant["tool_calls"][0]["id"] == "call_1"
+    assert telemetry.finish_reason == "tool_calls"
+    assert telemetry.completion_tokens == 6
+    assert telemetry.observed_tokens_lower_bound == 2
+    assert response.closed is True
+
+
+def test_reasoning_only_runaway_is_interrupted_with_progress_telemetry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = _StreamingResponse(
+        [
+            {
+                "choices": [
+                    {
+                        "delta": {"reasoning_content": "abcdef"},
+                        "finish_reason": None,
+                    }
+                ]
+            }
+        ]
+    )
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *_a, **_k: response)
+
+    with pytest.raises(StreamRecoveryError) as raised:
+        _stream_chat(
+            "http://model.example/v1",
+            "key",
+            {"messages": []},
+            safeguards={"no_tool_progress_characters": 6},
+        )
+
+    assert raised.value.reason == "no_usable_tool_call_progress"
+    assert raised.value.telemetry["observed_characters_lower_bound"] == 6
+    assert raised.value.telemetry["observed_tokens_lower_bound"] == 1
+    assert raised.value.telemetry["elapsed_seconds"] >= 0
+    assert response.closed is True
+
+
+def test_unvalidated_or_partial_tool_arguments_are_rejected() -> None:
+    assistant = {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "run_command", "arguments": '{"command":'},
+            }
+        ],
+    }
+    with pytest.raises(ValueError, match="incomplete or invalid JSON"):
+        _validated_tool_calls(assistant, finish_reason="tool_calls")
 
 
 def test_resume_loads_transcript_and_request_index(tmp_path: Path) -> None:
@@ -229,6 +375,132 @@ def test_context_checkpoint_is_bounded_and_becomes_resume_boundary(
     )
     loaded = _load_transcript(transcript)
     assert loaded == [checkpoint, {"role": "assistant", "content": "after"}]
+
+
+def test_recovery_checkpoint_keeps_only_complete_tool_boundaries_and_state() -> None:
+    complete_assistant = {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "complete-call",
+                "type": "function",
+                "function": {"name": "run_command", "arguments": "{}"},
+            }
+        ],
+    }
+    complete_result = {
+        "role": "tool",
+        "tool_call_id": "complete-call",
+        "content": json.dumps({"run_id": "durable-run-1", "status": "RUNNING"}),
+    }
+    incomplete_assistant = {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "partial-call",
+                "type": "function",
+                "function": {"name": "run_command", "arguments": '{"command":'},
+            }
+        ],
+    }
+    messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "original task"},
+        complete_assistant,
+        complete_result,
+        incomplete_assistant,
+    ]
+
+    compacted, checkpoint = _context_checkpoint(
+        messages,
+        max_recent_chars=10_000,
+        workspace_status=" M durable.txt\n",
+        recovery_reason="tool_call_boundary_not_completed",
+    )
+
+    assert compacted[:2] == messages[:2]
+    assert compacted[2] == checkpoint
+    assert "durable-run-1" in checkpoint["content"]
+    assert "durable.txt" in checkpoint["content"]
+    assert "complete-call" in checkpoint["content"]
+    assert "partial-call" not in checkpoint["content"]
+    assert "incomplete assistant response was not added" in checkpoint["content"]
+
+
+def test_repeated_identical_malformation_has_terminal_classification(
+    tmp_path: Path,
+) -> None:
+    fingerprint: str | None = None
+    count = 0
+    for expected in (1, 2, 3):
+        fingerprint, count = _next_malformation_streak(
+            fingerprint, count, "same-fingerprint"
+        )
+        assert count == expected
+    assert (
+        _malformation_recovery_action(count, 3)
+        == "terminate_repeated_identical_malformed_response"
+    )
+
+    telemetry = tmp_path / "requests.jsonl"
+    telemetry.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "request_index": index,
+                        "classification": "malformed_response",
+                        "malformation_fingerprint": "same-fingerprint",
+                        "elapsed_seconds": 1.0,
+                        "observed_tokens_lower_bound": index,
+                        "observed_characters_lower_bound": index * 4,
+                        "reason": "no_usable_tool_call_progress",
+                        "recovery_action": (
+                            "discard_partial_response_rebuild_context_and_retry"
+                        ),
+                    }
+                )
+                for index in (1, 2)
+            ]
+        )
+        + "\n"
+    )
+    assert _load_malformation_streak(telemetry) == ("same-fingerprint", 2)
+
+    record = _malformation_telemetry_record(
+        {
+            "started_at": "2026-08-23T00:00:00Z",
+            "elapsed_seconds": 12.5,
+            "observed_tokens_lower_bound": 7,
+            "observed_characters_lower_bound": 42,
+            "reason": "no_usable_tool_call_progress",
+        },
+        request_index=3,
+        response_shape={"has_reasoning": True},
+        fingerprint="same-fingerprint",
+        identical_count=3,
+        action="terminate_repeated_identical_malformed_response",
+    )
+    assert {
+        "request_index",
+        "elapsed_seconds",
+        "observed_tokens_lower_bound",
+        "observed_characters_lower_bound",
+        "reason",
+        "recovery_action",
+    } <= set(record)
+
+    failure = _terminal_malformation_failure(
+        request_index=3,
+        fingerprint="same-fingerprint",
+        identical_count=3,
+        reason="no_usable_tool_call_progress",
+        run_identifiers=[],
+    )
+    assert failure["classification"] == "repeated_identical_malformed_response"
+    assert failure["workflow_submitted"] is False
 
 
 def test_workspace_resume_preserves_dirty_detached_checkout(tmp_path: Path) -> None:

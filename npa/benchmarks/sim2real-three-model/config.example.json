@@ -16,6 +16,14 @@
   "minimum_lift_m": 0.05,
   "minimum_hold_seconds": 2.0,
   "rerun_bin": "/path/to/npa/.venv/bin/rerun",
+  "stream_safeguards": {
+    "idle_timeout_seconds": 180,
+    "no_tool_progress_seconds": 900,
+    "no_tool_progress_characters": 65536,
+    "tool_assembly_seconds": 300,
+    "tool_assembly_characters": 65536,
+    "max_identical_malformed_responses": 3
+  },
   "serving": {
     "engine": "sglang-or-vllm",
     "image": "IMAGE_REFERENCE_AT_IMMUTABLE_DIGEST",
