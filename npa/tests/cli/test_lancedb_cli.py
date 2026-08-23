@@ -15,7 +15,9 @@ from npa.cli.workbench.lancedb.import_lerobot import resolve_lerobot_dataset_fil
 runner = CliRunner()
 
 
-@pytest.mark.xfail(reason="Parent Workbench registration requires editing npa/src/npa/cli/workbench/__init__.py outside this run allowlist.")
+@pytest.mark.xfail(
+    reason="Parent Workbench registration requires editing npa/src/npa/cli/workbench/__init__.py outside this run allowlist."
+)
 def test_lancedb_registered_under_workbench() -> None:
     from npa.cli.main import app as main_app
 
@@ -69,7 +71,9 @@ def test_lancedb_deploy_vm_blocked_message_is_actionable() -> None:
     assert "run allowlist" not in normalized
 
 
-def test_lancedb_deploy_cloud_requires_endpoint_and_api_key_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_lancedb_deploy_cloud_requires_endpoint_and_api_key_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("LANCEDB_API_KEY", raising=False)
 
     result = runner.invoke(
@@ -125,7 +129,9 @@ def test_lancedb_deploy_validates_port_range() -> None:
     assert "--port must be between" in result.output
 
 
-def test_lancedb_container_s3_path_requires_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_lancedb_container_s3_path_requires_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # storage_env drops empty S3 values; an s3:// storage path with no creds
     # must fail up front instead of only once the container hits the bucket.
     from npa.cli.workbench.lancedb import deploy as lancedb_deploy
@@ -147,7 +153,9 @@ def test_lancedb_container_s3_path_requires_credentials(monkeypatch: pytest.Monk
     assert "S3 credentials are incomplete" in result.output
 
 
-def test_lancedb_container_s3_path_ok_with_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_lancedb_container_s3_path_ok_with_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from npa.cli.workbench.lancedb import deploy as lancedb_deploy
 
     monkeypatch.setattr(
@@ -174,7 +182,9 @@ def test_lancedb_container_s3_path_ok_with_credentials(monkeypatch: pytest.Monke
     assert result.exit_code == 0, result.output
 
 
-def test_lancedb_container_local_path_skips_s3_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_lancedb_container_local_path_skips_s3_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # A local storage path needs no S3 credentials, so the guard must not fire.
     from npa.cli.workbench.lancedb import deploy as lancedb_deploy
 
@@ -337,7 +347,9 @@ def test_lancedb_import_bdd100k_local_outputs_json(tmp_path: Path) -> None:
     assert payload["manifest_sha256"]
 
 
-def test_lancedb_import_bdd100k_service_calls_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_lancedb_import_bdd100k_service_calls_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import_module = importlib.import_module("npa.cli.workbench.lancedb.import_bdd100k")
     seen = {}
 
@@ -387,8 +399,7 @@ def test_lancedb_import_bdd100k_service_calls_endpoint(monkeypatch: pytest.Monke
 
 def test_lancedb_container_image_name_resolves() -> None:
     assert (
-        DEFAULT_CONTAINER_IMAGE
-        == "ghcr.io/nebius/nebius-physical-ai/npa-lancedb:"
+        DEFAULT_CONTAINER_IMAGE == "ghcr.io/nebius/nebius-physical-ai/npa-lancedb:"
         "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z"
     )
 

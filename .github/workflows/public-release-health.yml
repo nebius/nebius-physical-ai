@@ -1,0 +1,45 @@
+name: Public release health
+
+on:
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Public GHCR release availability
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install NPA
+        run: python -m pip install -e ./npa
+
+      - name: Verify anonymous public releases
+        id: verify
+        run: |
+          python -m npa.deploy.publish_public \
+            --target "ghcr.io/nebius/nebius-physical-ai" \
+            --verify-accepted-releases 2>&1 | tee "$RUNNER_TEMP/public-release-health.txt"
+
+      - name: Summarise
+        if: always()
+        run: |
+          {
+            echo "## Public GHCR release health"
+            echo
+            if [ "${{ steps.verify.outcome }}" = "success" ]; then
+              echo "Every accepted release tag is anonymous and matches its recorded digest."
+            else
+              echo "**One or more accepted public releases is unavailable or byte-drifted.**"
+              echo "Repair the exact immutable public development digest and rerun the"
+              echo "guarded release promotion; never overwrite a supported release blindly."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

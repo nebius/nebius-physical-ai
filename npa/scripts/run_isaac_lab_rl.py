@@ -236,9 +236,13 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
             if not result.ok or result.status != "SUBMITTED":
                 return_code = result.returncode or 1
             else:
-                deadline = time.monotonic() + args.wait_timeout
+                deadline = (
+                    None
+                    if args.wait_timeout < 0
+                    else time.monotonic() + args.wait_timeout
+                )
                 final = result
-                while time.monotonic() < deadline:
+                while deadline is None or time.monotonic() < deadline:
                     final = workflow_status(
                         result.job_id,
                         isolated_config_dir=args.isolated_config_dir,
@@ -325,7 +329,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--config-path", type=Path, default=None, help="SkyPilot global config YAML (e.g. kubernetes pod_config).")
     parser.add_argument("--isolated-config-dir", type=Path, default=None)
     parser.add_argument("--submit-timeout", type=int, default=1800)
-    parser.add_argument("--wait-timeout", type=int, default=21600)
+    parser.add_argument(
+        "--wait-timeout",
+        type=int,
+        default=21600,
+        help="Seconds to wait for completion; negative waits indefinitely.",
+    )
     parser.add_argument("--poll-interval", type=int, default=60)
     parser.add_argument("--cleanup", action="store_true")
     parser.add_argument("--render-only", action="store_true")

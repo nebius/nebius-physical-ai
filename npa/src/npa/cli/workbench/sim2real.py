@@ -234,7 +234,7 @@ def run_command(
         "agent-sa", "--k8s-service-account", help="Service account for sibling Jobs."
     ),
     k8s_image_pull_secrets: str = typer.Option(
-        "agent-sa,ngc-nvcr-imagepullsecret,npa-nebius-registry",
+        "ngc-nvcr-imagepullsecret",
         "--k8s-image-pull-secrets",
         help="Comma-separated imagePullSecrets for sibling Jobs.",
     ),

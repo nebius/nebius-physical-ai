@@ -23,7 +23,7 @@ tags = ["nebius", "location"]
 
 [[rules]]
 id = "nebius-private-registry-location"
-description = "Task-specific private Nebius registry location"
+description = "Legacy task-specific Nebius registry location"
 regex = '''(?i)\bcr\.[a-z0-9-]+\.nebius\.cloud/[a-z0-9][a-z0-9._-]*-(?:[0-9a-f]{8,}|(?:19|20)[0-9]{6})(?:[/:\s`'"]|$)'''
 tags = ["nebius", "location"]
 
@@ -69,6 +69,10 @@ regexes = [
     # Public content-addressable digest of the pinned SymPy 1.14.0 wheel. The
     # custom Nebius identifier rule matches it only because the hash starts e09.
     '''e091cc3e99d2141a0ba2847328f5479b05d94a6635cb96148ccb3f34671bd8f5''',
+    # Public wheel hashes in the generated Cosmos3 serving requirements lock.
+    # The custom Nebius identifier rule matches only their coincidental e00 prefix.
+    '''e00820e192c8dbebcafb383ebbf99030895f09905e7a0eb2e0340a0bcc2bc825''',
+    '''e006d3a974c4ee19512e5f058abedb6eef36a5e553c14812bdeba1758d812e6d''',
     # Public Hugging Face revision of nvidia/Cosmos3-Super. The custom Nebius
     # identifier rule matches it only because the Git SHA happens to start e02.
     '''e0262be9d8f7586bc24c069a2aed2b665bdff266''',

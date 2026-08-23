@@ -7,7 +7,6 @@ import argparse
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -17,7 +16,10 @@ from typing import Any
 
 from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import storage_env_for_project
-from npa.deploy.images import container_image_for_tool, wan_accepted_image_manifest
+from npa.deploy.images import (
+    container_image_for_tool,
+    wan_accepted_image_manifest,
+)
 from npa.workflows.byof.live import resolve_byof_kubernetes_target
 from npa.workflows.byof.openpi import is_openpi_request, require_openpi_terms
 from npa.workflows.byof.postprocess import (
@@ -107,14 +109,36 @@ def _required_postprocess_key(
         return requested if has_registered_postprocess(requested) else None
 
     accepted_digest = str(wan_accepted_image_manifest()["oci_digest"])
+    acceptance_candidate = str(
+        getattr(args, "wan_acceptance_candidate_image", "") or ""
+    ).strip()
+    if acceptance_candidate:
+        if (
+            acceptance_candidate != base_image
+            or not getattr(args, "skip_build", False)
+            or re.fullmatch(
+                r"ghcr\.io/nebius/nebius-physical-ai/"
+                r"npa-wan2-2@sha256:[0-9a-f]{64}",
+                acceptance_candidate,
+            )
+            is None
+        ):
+            raise ValueError(
+                "--wan-acceptance-candidate-image requires --skip-build and must "
+                "exactly match the official digest-pinned Wan --base-image"
+            )
     if (
         not base_is_wan
         or base_profile != "prebuilt"
-        or not base_image.endswith(f"@{accepted_digest}")
+        or (
+            not base_image.endswith(f"@{accepted_digest}")
+            and base_image != acceptance_candidate
+        )
     ):
         raise ValueError(
-            "Wan solution-smoke requires the exact GPU-accepted prebuilt image digest "
-            f"{accepted_digest}"
+            "Wan solution-smoke requires the exact GPU-accepted prebuilt image "
+            f"digest {accepted_digest}, or the explicitly digest-pinned candidate "
+            "inside the gated live acceptance path"
         )
     contract = WAN_POSTPROCESS_CONTRACTS.get(capability)
     if contract is None:
@@ -259,32 +283,6 @@ def _live_runner_env(project: str) -> dict[str, str]:
     return env
 
 
-def _refresh_registry_pull_secrets(image: str, project: str) -> None:
-    if os.environ.get("NPA_BYOF_SKIP_REGISTRY_REFRESH") == "1":
-        return
-    registry_server = _registry_server(image)
-    if "nebius.cloud" not in registry_server:
-        return
-    try:
-        from npa.workflows.sim2real.registry_auth import (
-            ensure_nebius_registry_pull_secret,
-        )
-
-        target = resolve_byof_kubernetes_target(project or None)
-        namespaces = {target.namespace or "default", "default"}
-        for namespace in sorted(namespaces):
-            for secret_name in ("agent-sa", "npa-nebius-registry"):
-                ensure_nebius_registry_pull_secret(
-                    registry_server=registry_server,
-                    secret_name=secret_name,
-                    namespace=namespace,
-                    kubeconfig=target.kubeconfig,
-                    k8s_context=target.context,
-                )
-    except Exception as exc:
-        print(f"WARN: skipped registry pull-secret refresh: {exc}", file=sys.stderr)
-
-
 def _registry_path(image_ref: str) -> str:
     ref = image_ref.removeprefix("docker:")
     without_digest = ref.split("@", 1)[0]
@@ -292,32 +290,6 @@ def _registry_path(image_ref: str) -> str:
     if last_slash <= 0:
         return ""
     return without_digest[:last_slash]
-
-
-def _docker_login_nebius(server: str, *, env: dict[str, str] | None = None) -> None:
-    # Keep registry write authority separate from the profile used by kubeconfig
-    # exec plugins.  A registry-only service account may intentionally have no
-    # Kubernetes RBAC, so reusing NPA_NEBIUS_PROFILE for both operations can make
-    # an otherwise valid build fail when pull secrets are refreshed.
-    merged = {**os.environ, **(env or {})}
-    profile = (
-        merged.get("NEBIUS_REGISTRY_PROFILE", "").strip()
-        or merged.get("NPA_NEBIUS_PROFILE", "").strip()
-        or merged.get("NEBIUS_PROFILE", "").strip()
-    )
-    token_cmd = ["nebius"]
-    if profile:
-        token_cmd.extend(["--profile", profile])
-    token_cmd.extend(["iam", "get-access-token"])
-    token_proc = _run(token_cmd, capture=True)
-    token = token_proc.stdout.strip()
-    if not token:
-        raise RuntimeError("nebius iam get-access-token returned empty token")
-    _run(
-        ["docker", "login", "-u", "iam", "--password-stdin", server],
-        stdin=token,
-        env=env,
-    )
 
 
 def _dockerfile_text() -> str:
@@ -498,6 +470,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         default=os.environ.get("NPA_BYOF_SMOKE_ARTIFACT_NAME", ""),
     )
     parser.add_argument(
+        "--wan-acceptance-candidate-image",
+        default="",
+        help=(
+            "Explicit official digest-pinned Wan image permitted only for this "
+            "skip-build acceptance run; never read from ambient environment."
+        ),
+    )
+    parser.add_argument(
         "--num-envs", type=int, default=4, help="Parallel sim envs (datagen workload)."
     )
     parser.add_argument(
@@ -595,7 +575,9 @@ def main(argv: list[str] | None = None) -> int:
         "smoke_artifact_name": args.smoke_artifact_name,
     }
 
-    docker_config_dir: str | None = None
+    # BYOF registries are standards-based operator interoperability. Authentication
+    # must already exist in the caller's Docker config; NPA never mints provider IAM
+    # registry tokens or creates a hidden registry-specific credential directory.
     docker_env: dict[str, str] = {}
     try:
         postprocess_key = _required_postprocess_key(
@@ -612,10 +594,6 @@ def main(argv: list[str] | None = None) -> int:
                 "because verified postprocessing is mandatory"
             )
         if not skip_build:
-            if not skip_push:
-                docker_config_dir = tempfile.mkdtemp(prefix="npa-docker-auth-")
-                docker_env = {"DOCKER_CONFIG": docker_config_dir}
-                _docker_login_nebius(_registry_server(image), env=docker_env)
             with tempfile.TemporaryDirectory(prefix="npa-byof-build-") as tmp:
                 context = Path(tmp)
                 (context / "Dockerfile").write_text(
@@ -763,8 +741,6 @@ def main(argv: list[str] | None = None) -> int:
                 cmd.extend(["--config-path", args.config_path])
             if args.cleanup:
                 cmd.append("--cleanup")
-            if args.workload in {"container-verify", "solution-smoke"}:
-                _refresh_registry_pull_secrets(image, args.project)
             run_proc = _run(cmd, capture=True, env=_live_runner_env(args.project))
             sys.stdout.write(run_proc.stdout)
             if run_proc.stderr:
@@ -778,6 +754,9 @@ def main(argv: list[str] | None = None) -> int:
                     PostprocessContext(
                         run_prefix_uri=f"{args.output_root.rstrip('/')}/{args.run_id}/",
                         project=args.project or None,
+                        wan_acceptance_candidate_image=(
+                            args.wan_acceptance_candidate_image.strip()
+                        ),
                     ),
                 )
                 if postprocess is None:
@@ -814,9 +793,6 @@ def main(argv: list[str] | None = None) -> int:
         if hint:
             print(f"HINT: {hint}", file=sys.stderr)
         return 1
-    finally:
-        if docker_config_dir:
-            shutil.rmtree(docker_config_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

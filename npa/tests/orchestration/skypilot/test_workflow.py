@@ -436,7 +436,7 @@ def test_submit_workflow_replaces_stale_kubernetes_context_allowlist(
         "  pod_config:\n"
         "    spec:\n"
         "      imagePullSecrets:\n"
-        "        - name: npa-nebius-registry\n",
+        "        - name: customer-registry-auth\n",
         encoding="utf-8",
     )
     sky_bin = _fake_sky(tmp_path)
@@ -461,7 +461,7 @@ def test_submit_workflow_replaces_stale_kubernetes_context_allowlist(
     rendered = yaml.safe_load(Path(result.log_paths["config"]).read_text())
     assert rendered["kubernetes"]["allowed_contexts"] == ["run-owned-context"]
     assert rendered["kubernetes"]["pod_config"]["spec"]["imagePullSecrets"] == [
-        {"name": "npa-nebius-registry"}
+        {"name": "customer-registry-auth"}
     ]
 
 
@@ -1195,8 +1195,8 @@ def test_launch_failure_pod_config_kubernetes_bug_gets_a_fix_hint() -> None:
 def test_submission_dir_and_secret_files_are_owner_only(tmp_path) -> None:
     """The submission dir + its secret-bearing files must not be world-readable.
 
-    The rendered task YAML / generated SkyPilot config can carry a registry IAM
-    token (SKYPILOT_DOCKER_PASSWORD) and S3 creds; write_text/mkdir honor the
+    The rendered task YAML / generated SkyPilot config can carry an operator's
+    registry password and S3 creds; write_text/mkdir honor the
     umask, so submit tightens them explicitly (security bug 9).
     """
     import shutil

@@ -26,7 +26,7 @@
         }
       ],
       "build": {
-        "command": "npa/docker/workbench/sonic/build.sh --registry ${NPA_REGISTRY} --push --variant baked",
+        "command": "disabled: quarantined bytes must not be rebuilt or pushed",
         "dockerfile": "npa/docker/workbench/sonic/Dockerfile",
         "driver_coupled_packages": [
           "libnvidia-cfg1-580",
@@ -47,8 +47,8 @@
       "tag": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "purpose": "SONIC runtime for GPU-operator-managed Kubernetes nodes where the NVIDIA host driver is mounted into the container.",
       "base": {
-        "cuda": "13.0",
-        "torch": "2.9.0+cu130",
+        "cuda": "12.8 wheel closure",
+        "torch": "2.9.0",
         "isaac_lab": "2.3.2.post1",
         "isaac_sim": "5.1.0",
         "image": "npa-base:cuda13-b300-sm80-sm90-sm100-sm103-sm120-v2-latest"
@@ -67,7 +67,7 @@
         }
       ],
       "build": {
-        "command": "npa/docker/workbench/sonic/build.sh --registry ${NPA_REGISTRY} --push --variant k8s --tag cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+        "command": "official releases use .github/workflows/publish-public-images.yml; build.sh is BYOF-only",
         "dockerfile": "npa/docker/workbench/sonic/Dockerfile",
         "driver_coupled_packages": []
       },
@@ -101,7 +101,7 @@
         }
       ],
       "build": {
-        "command": "npa/docker/workbench/sonic/build.sh --registry ${NPA_REGISTRY} --push --variant mujoco --tag 0.1.3-mvp",
+        "command": "disabled: quarantined bytes must not be rebuilt or pushed",
         "dockerfile": "npa/docker/workbench/sonic/Dockerfile.mujoco",
         "driver_coupled_packages": [
           "inherited from npa-sonic:0.1.2"
@@ -109,10 +109,58 @@
         "additional_packages": [
           "mujoco>=3.3,<3.4",
           "boto3",
-          "headless EGL/GL runtime libraries"
+          "inherited public parent EGL/GL runtime libraries"
         ]
       },
       "digest": "sha256:a9939d92106757e70b7b5ef94c7428aad0be0d000358634348f7e2184cf50f7d"
+    },
+    {
+      "id": "sonic-mujoco-runtime-fetch",
+      "status": "active",
+      "redistribution": "public-runtime-fetch",
+      "name": "npa-sonic-mujoco",
+      "tag": "0.2.0-runtime",
+      "purpose": "Public SONIC runtime plus pinned headless MuJoCo evaluation, with Isaac retained as operator-consented runtime fetch only.",
+      "headless_geometry": "Upstream dynamics with primitive collision proxies when public checkout mesh paths are Git-LFS pointers; no LFS asset is baked.",
+      "base": {
+        "cuda": "12.8 wheel closure",
+        "torch": "2.9.0+cu128",
+        "isaac_lab": "runtime-fetch 2.3.2.post1",
+        "isaac_sim": "runtime-fetch 5.1.0",
+        "image": "python:3.11.14-slim-bookworm@sha256:65a93d69fa75478d554f4ad27c85c1e69fa184956261b4301ebaf6dbb0a3543d"
+      },
+      "driver_provisioning": "host-mounted",
+      "gpu_compatibility": [
+        {
+          "gpu": "B200",
+          "provider_model": "Nebius GPU node with host driver injection",
+          "why": "The exact PyTorch CUDA 12.8 wheel closure supports Blackwell; MuJoCo uses EGL/headless physics without Omniverse or RT-core rendering."
+        },
+        {
+          "gpu": "RTX PRO 6000 Blackwell",
+          "provider_model": "Nebius Kubernetes with NVIDIA GPU Operator",
+          "why": "The exact PyTorch CUDA 12.8 wheel closure supports sm_120 and receives driver userspace from the host rather than baking it."
+        }
+      ],
+      "build": {
+        "command": "gh workflow run publish-public-images.yml --ref <prepared-branch> -f development_sha=<full-git-sha> -f build_development_tools=sonic-mujoco -f dry_run=true",
+        "dockerfile": "npa/docker/workbench/sonic/Dockerfile.mujoco",
+        "driver_coupled_packages": [],
+        "additional_packages": [
+          "mujoco==3.11.0",
+          "boto3==1.43.62",
+          "PyYAML==6.0.3",
+          "redistributable CUDA Toolkit runtime libraries under their included NVIDIA SDK terms",
+          "public Debian EGL/GL runtime libraries"
+        ]
+      },
+      "digest": "sha256:2388d9e97269afaa414966e83a27f676a3f44d4271e9828c57bc13fbdce80f57",
+      "validation": {
+        "hardware": "B200 (compute capability 10.0)",
+        "capability": "real Unitree G1 SONIC MuJoCo rollout",
+        "result": "64 finite simulation steps; fall rate 0; metrics artifact verified",
+        "payload": "filesystem, layer, history, Omniverse, secret, SBOM, vulnerability, and provenance gates passed"
+      }
     }
   ],
   "gpu_selection": [
@@ -126,6 +174,14 @@
         "sm_120",
         "gpu-rtx6000",
         "gpu-rtx-pro-6000"
+      ]
+    },
+    {
+      "variant": "sonic-mujoco-runtime-fetch",
+      "matches": [
+        "b200",
+        "gpu-b200",
+        "mujoco-b200"
       ]
     }
   ]

@@ -26,8 +26,8 @@ MANIFEST_PATH = WORKBENCH_DOCKER / "blackwell-dc-images.json"
 CONTRACT_PATH = WORKBENCH_DOCKER / "packaging-contract.yaml"
 
 EXPECTED_FORMAT = "npa_blackwell_dc_image_manifest_v1"
-# A concrete Nebius registry id must never be baked into the manifest; callers
-# resolve it through npa.deploy.images / npa configure.
+# A legacy provider-registry location must never be baked into the manifest;
+# callers resolve public GHCR or an explicit operator registry through NPA.
 REGISTRY_ID_RE = re.compile(r"cr\.[a-z0-9-]+\.nebius\.cloud/[a-z0-9]+")
 
 
@@ -54,7 +54,7 @@ def test_manifest_format_and_target(manifest: dict) -> None:
     assert target["rt_cores"] is False
 
 
-def test_manifest_does_not_hardcode_a_registry_id(manifest: dict) -> None:
+def test_manifest_does_not_hardcode_a_live_nebius_identifier(manifest: dict) -> None:
     raw = MANIFEST_PATH.read_text(encoding="utf-8")
     found = REGISTRY_ID_RE.findall(raw)
     assert not found, f"manifest hardcodes registry ids {found}; use ${{NPA_REGISTRY}}"
@@ -184,18 +184,32 @@ def test_published_tags_are_additive_and_arch_labelled(entries: list[dict]) -> N
     for entry in published:
         tag = entry["published_tag"]
         name = entry["name"]
-        assert tag.startswith(("cuda13-b300-", "cu128-torch27-sm100-")), (
-            f"{name} tag {tag!r} is outside the published Blackwell tag families"
-        )
-        assert re.search(r"-\d{8}T\d{6}Z$", tag), (
-            f"{name} tag {tag!r} has no UTC stamp, so a rebuild would overwrite it"
-        )
-        assert "sm100" in tag, f"{name} tag {tag!r} does not advertise sm_100"
+        if entry.get("publication_model") == "exact-digest-promoted":
+            from npa.deploy.images import (
+                CONTAINER_IMAGE_NAMES,
+                GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS,
+                SUPPORTED_TOOL_VERSIONS,
+            )
+
+            tool = next(tool for tool, image in CONTAINER_IMAGE_NAMES.items() if image == name)
+            assert tag == SUPPORTED_TOOL_VERSIONS[tool]
+            assert entry["published_digest"] == GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS[tool]
+        else:
+            assert tag.startswith(("cuda13-b300-", "cu128-torch27-sm100-")), (
+                f"{name} tag {tag!r} is outside the published Blackwell tag families"
+            )
+            assert re.search(r"-\d{8}T\d{6}Z$", tag), (
+                f"{name} tag {tag!r} has no UTC stamp, so a rebuild would overwrite it"
+            )
+            assert "sm100" in tag, f"{name} tag {tag!r} does not advertise sm_100"
         assert re.fullmatch(r"sha256:[0-9a-f]{64}", entry["published_digest"]), (
             f"{name} has a malformed digest"
         )
-        assert set(entry["published_registries"]) == {"primary", "mirror"}, (
-            f"{name} must be pushed to both registries"
+        expected_registries = {"public-release"}
+        if entry.get("publication_model") == "exact-digest-promoted":
+            expected_registries.add("public-development")
+        assert set(entry["published_registries"]) == expected_registries, (
+            f"{name} must record only registries where this exact artifact was published"
         )
 
 
@@ -309,28 +323,28 @@ def test_wan_validation_is_bound_to_an_immutable_accepted_tuple(
 
     assert accepted["format"] == "npa_wan_accepted_image_manifest_v1"
     assert re.fullmatch(r"sha256:[0-9a-f]{64}", accepted["oci_digest"])
-    assert re.fullmatch(r"sha256:[0-9a-f]{64}", accepted["amd64_manifest"])
+    assert re.fullmatch(r"[0-9a-f]{40}", accepted["development_sha"])
     assert re.fullmatch(r"[0-9a-f]{64}", accepted["runtime_requirements_sha256"])
+    assert re.fullmatch(r"[0-9a-f]{64}", accepted["baked_constraints_sha256"])
     for identity_name in ("source", "model", "tokenizer"):
         assert re.fullmatch(r"[0-9a-f]{40}", accepted[identity_name]["revision"])
-    assert re.fullmatch(
-        r"[0-9a-f]{64}", accepted["runtime_acceptance"]["manifest_sha256"]
-    )
-    for proof_name, count in (("single_gpu_proof", 1), ("distributed_proof", 4)):
-        proof = accepted[proof_name]
-        assert proof["gpu_count"] == count
-        assert proof["observed_image_id_digest"] == accepted["oci_digest"]
-        for key in ("mp4_sha256", "rrd_sha256", "rrd_manifest_sha256"):
-            assert re.fullmatch(r"[0-9a-f]{64}", proof[key])
-    assert accepted["distributed_proof"]["run_id"] == wan["validation_run"]
-    assert re.fullmatch(r"[0-9a-f]{64}", accepted["payload_scan"]["report_sha256"])
-    assert accepted["payload_scan"]["archives_scanned"] == 20
+    proof = accepted["single_gpu_proof"]
+    assert proof["gpu_count"] == 1
+    assert proof["observed_image_digest"] == accepted["oci_digest"]
+    for key in (
+        "artifact_sha256",
+        "runtime_inventory_sha256",
+        "mp4_sha256",
+        "rrd_sha256",
+        "rrd_manifest_sha256",
+    ):
+        assert re.fullmatch(r"[0-9a-f]{64}", proof[key])
+    assert proof["record"] == wan["validation_run"]
+    assert accepted["payload_scan"]["archives_scanned"] == 21
     assert accepted["payload_scan"]["findings"] == 0
-    assert re.fullmatch(
-        r"[0-9a-f]{64}", accepted["vulnerability_scan"]["report_sha256"]
-    )
     assert accepted["vulnerability_scan"]["critical_total"] == 27
     assert accepted["vulnerability_scan"]["critical_with_fix"] == 0
+    assert accepted["vulnerability_scan"]["critical_unfixed"] == 27
     assert accepted["vulnerability_scan"]["secrets"] == 0
 
 
@@ -377,6 +391,38 @@ def test_content_agents_validation_is_bound_to_clean_bytes_and_rtx(
     assert proof["rigid_physics"]["fixed"] is False
     assert proof["rigid_physics"]["mass_or_density"] > 0
     assert 0.1 <= proof["rigid_physics"]["friction"] <= 2.0
+
+
+def test_ltx_validation_is_bound_to_zero_payload_bytes_and_gpu_evidence(
+    entries: list[dict],
+) -> None:
+    ltx = next(entry for entry in entries if entry["name"] == "npa-ltx2")
+    accepted = json.loads(
+        (ROOT / ltx["accepted_image_manifest"]).read_text(encoding="utf-8")
+    )
+
+    assert accepted["format"] == "npa_ltx2_accepted_image_manifest_v1"
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", accepted["oci_digest"])
+    assert re.fullmatch(r"[0-9a-f]{40}", accepted["development_sha"])
+    assert accepted["payload_scan"] == {
+        "scanner": "npa/scripts/scan_image_ltx_payload.py",
+        "findings": 0,
+        "source_baked": False,
+        "weights_baked": False,
+        "credentials_baked": False,
+    }
+    assert re.fullmatch(r"[0-9a-f]{40}", accepted["source"]["revision"])
+    assert re.fullmatch(r"[0-9a-f]{40}", accepted["weights"]["resolved_revision"])
+    proof = accepted["gpu_proof"]
+    assert proof["observed_image_digest"] == accepted["oci_digest"]
+    assert proof["gpu_count"] == 1
+    assert proof["deferred"] == []
+    assert proof["source_baked"] is False
+    assert proof["weights_baked"] is False
+    for key in ("artifact_sha256", "refusal_sha256"):
+        assert re.fullmatch(r"[0-9a-f]{64}", proof[key])
+    assert re.fullmatch(r"[0-9a-f]{64}", proof["video"]["sha256"])
+    assert proof["video"]["frame_count"] >= 24
 
 
 def test_base_image_covers_both_blackwell_majors(entries: list[dict]) -> None:

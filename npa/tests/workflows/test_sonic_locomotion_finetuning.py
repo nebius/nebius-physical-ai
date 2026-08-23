@@ -6,8 +6,8 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
-EXPECTED_WORKBENCH_IMAGE = "cr.eu-north1.nebius.cloud/<your-registry-id>/npa-genesis:0.4.6"
-EXPECTED_RETARGETING_IMAGE = "cr.eu-north1.nebius.cloud/<your-registry-id>/npa-retargeting:0.1.1"
+EXPECTED_WORKBENCH_IMAGE = "<your-registry>/npa-genesis:0.4.6"
+EXPECTED_RETARGETING_IMAGE = "<your-registry>/npa-retargeting:0.1.1"
 # Frozen raw-task fixtures, not shipped templates: the three materializer tests below
 # exercise the submit WRAPPER, which still accepts a customer's own SkyPilot YAML.
 # See npa/tests/fixtures/skypilot/README.md.
@@ -15,7 +15,9 @@ PIPELINE_YAML = ROOT / "npa/tests/fixtures/skypilot/sonic-locomotion-finetuning.
 # The raw sonic-export / sonic-eval / sonic-export-eval templates are retired; their
 # npa.workflow specs are the surface now (each live-verified — see EVIDENCE §R4/§R5).
 NPA_WORKFLOWS = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
-SONIC_TRAIN_STANDALONE_YAML = ROOT / "npa/tests/fixtures/skypilot/sonic-train-standalone.yaml"
+SONIC_TRAIN_STANDALONE_YAML = (
+    ROOT / "npa/tests/fixtures/skypilot/sonic-train-standalone.yaml"
+)
 EXPECTED_SONIC_IMAGE = (
     "registry.example/workbench/npa-sonic:cuda13-b300-0.1.2-k8s-runtime-"
     "sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
@@ -28,8 +30,6 @@ def _docs(path: Path) -> list[dict]:
         for doc in yaml.safe_load_all(path.read_text(encoding="utf-8"))
         if doc is not None
     ]
-
-
 
 
 def test_sonic_workflow_materializer_resolves_images_and_s3_literals() -> None:
@@ -49,29 +49,37 @@ def test_sonic_workflow_materializer_resolves_images_and_s3_literals() -> None:
     docs = [doc for doc in yaml.safe_load_all(plan.yaml_text) if doc is not None]
     retarget, train, eval_task = docs[1:]
 
-    assert retarget["resources"]["image_id"] == "docker:registry.example/workbench/npa-retargeting:0.1.1"
+    assert (
+        retarget["resources"]["image_id"]
+        == "docker:registry.example/workbench/npa-retargeting:0.1.1"
+    )
     assert train["resources"]["image_id"] == f"docker:{EXPECTED_SONIC_IMAGE}"
     assert retarget["envs"]["AWS_PROFILE"] == "nebius"
     assert retarget["envs"]["AWS_ENDPOINT_URL"] == "https://storage.example"
     assert train["resources"]["cloud"] == "kubernetes"
-    assert train["resources"]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
-    assert eval_task["resources"]["image_id"] == (
-        f"docker:{EXPECTED_SONIC_IMAGE}"
+    assert (
+        train["resources"]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
     )
+    assert eval_task["resources"]["image_id"] == (f"docker:{EXPECTED_SONIC_IMAGE}")
     assert eval_task["resources"]["cloud"] == "kubernetes"
-    assert eval_task["resources"]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+    assert (
+        eval_task["resources"]["accelerators"]
+        == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+    )
     assert train["envs"]["SONIC_GPU_TYPE"] == "gpu-rtx6000"
     assert train["envs"]["SONIC_IMAGE_VARIANT"] == "sonic-k8s-host-mounted"
     assert train["envs"]["AWS_PROFILE"] == "nebius"
-    assert train["envs"]["POLICY_IMAGE"] == (
-        EXPECTED_SONIC_IMAGE
-    )
-    assert eval_task["envs"]["POLICY_IMAGE"] == (
-        EXPECTED_SONIC_IMAGE
-    )
+    assert train["envs"]["POLICY_IMAGE"] == (EXPECTED_SONIC_IMAGE)
+    assert eval_task["envs"]["POLICY_IMAGE"] == (EXPECTED_SONIC_IMAGE)
     assert eval_task["envs"]["AWS_PROFILE"] == "nebius"
-    assert train["envs"]["SONIC_TRAIN_OUTPUT_URI"] == "s3://proof-bucket/sonic-proof/sonic-run/training/"
-    assert train["envs"]["RETARGETED_MOTION_URI"] == "s3://proof-bucket/sonic-proof/sonic-run/retargeted/"
+    assert (
+        train["envs"]["SONIC_TRAIN_OUTPUT_URI"]
+        == "s3://proof-bucket/sonic-proof/sonic-run/training/"
+    )
+    assert (
+        train["envs"]["RETARGETED_MOTION_URI"]
+        == "s3://proof-bucket/sonic-proof/sonic-run/retargeted/"
+    )
     assert eval_task["envs"]["SONIC_FINE_TUNED_CHECKPOINT_URI"] == (
         "s3://proof-bucket/sonic-proof/sonic-run/training/checkpoints/last.pt"
     )
@@ -169,6 +177,7 @@ def test_sonic_locomotion_spec_runs_the_three_stages_in_order() -> None:
     # scheduler launches them one wave at a time in this order.
     assert [step.group for step in steps] == ["", "", ""]
 
+
 def test_retargeting_spec_invokes_the_real_cli_surface() -> None:
     """Replaces the retired retargeting template's raw-YAML assertions.
 
@@ -192,7 +201,6 @@ def test_retargeting_spec_invokes_the_real_cli_surface() -> None:
         assert flag in argv
 
 
-
 def test_mjlab_eval_spec_invokes_the_real_cli_surface() -> None:
     """Replaces the retired mjlab-eval template's raw-YAML assertions."""
 
@@ -206,8 +214,14 @@ def test_mjlab_eval_spec_invokes_the_real_cli_surface() -> None:
     assert step.tool_ref == "workbench.mjlab.eval"
     assert "npa workbench mjlab eval" in argv
     assert spec.resources[step.resources]["accelerators"] == "H100:1"
-    for flag in ("--input-path", "--checkpoint", "--output-path", "--suite",
-                 "--embodiment", "--episodes"):
+    for flag in (
+        "--input-path",
+        "--checkpoint",
+        "--output-path",
+        "--suite",
+        "--embodiment",
+        "--episodes",
+    ):
         assert flag in argv
 
 

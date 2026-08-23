@@ -436,7 +436,7 @@ def test_configure_show_prints_the_saved_configuration(monkeypatch, tmp_path) ->
                         "project_id": "project-1",
                         "tenant_id": "tenant-1",
                         "region": "us-central1",
-                        "container_registry": "cr.eu-north1.nebius.cloud/registry",
+                        "container_registry": "registry.example/customer",
                     },
                     "other": {"project_id": "project-2"},
                 },
@@ -468,7 +468,7 @@ def test_configure_show_prints_the_saved_configuration(monkeypatch, tmp_path) ->
     assert "project-1" in result.output
     assert "tenant-1" in result.output
     assert "us-central1" in result.output
-    assert "cr.eu-north1.nebius.cloud/registry" not in result.output
+    assert "registry.example/customer" not in result.output
     assert "s3://npa-bucket-test/" in result.output
     assert "other" in result.output  # the non-default alias is listed too
     # Secrets are reported as present, never echoed.
@@ -496,7 +496,7 @@ def test_configure_show_env_emits_shell_assignments(monkeypatch, tmp_path) -> No
                         "project_id": "project-1",
                         "tenant_id": "tenant-1",
                         "region": "us-central1",
-                        "container_registry": "cr.eu-north1.nebius.cloud/registry",
+                        "container_registry": "registry.example/customer",
                     }
                 },
             }
@@ -1540,7 +1540,7 @@ def _prepopulate_config(monkeypatch, tmp_path):
                         "project_id": "project-existing",
                         "tenant_id": "tenant-existing",
                         "region": "eu-north1",
-                        "container_registry": "cr.eu-north1.nebius.cloud/registry-existing",
+                        "container_registry": "registry.example/customer-existing",
                     }
                 },
             }
@@ -1606,7 +1606,7 @@ def test_configure_rerun_all_defaults_is_idempotent(monkeypatch, tmp_path) -> No
     assert prod["project_id"] == "project-existing"
     assert prod["tenant_id"] == "tenant-existing"
     assert prod["region"] == "eu-north1"
-    assert prod["container_registry"] == "cr.eu-north1.nebius.cloud/registry-existing"
+    assert prod["container_registry"] == "registry.example/customer-existing"
 
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["tokens"]["HF_TOKEN"] == "hf_existing"

@@ -138,10 +138,11 @@ redistribution:
         the registry (internal R&D, build-your-own), but hosting it PREBUILT on a
         public/anonymous registry would make us the third-party redistributor,
         which requires an NVIDIA AI Enterprise license.
-        Restricted membership is deliberate: cosmos3-serving remains
-        build-your-own under the NVIDIA Deep Learning Container License, and the
-        stale sonic-mujoco variant is quarantined because it inherits restricted
-        baked bytes. Credentials or runtime consent do not alter either result.
+        Membership is deliberately generic and may be empty. Historical
+        Cosmos3-serving and SONIC-MuJoCo digests remain quarantined because they
+        inherited restricted baked bytes; new zero-payload/independent builds do
+        not alter the classification of those old artifacts. Credentials or
+        runtime consent never repair already baked restricted bytes.
       reason: bakes-a-non-redistributable-runtime
 
 # Relative to npa/docker/workbench/
@@ -199,9 +200,10 @@ images:
       Agreement above $10M revenue) and Attachment A(18) (no training other
       models on Outputs for commercial use) govern the operator's own conduct and
       artifacts, and are their responsibility rather than something this image
-      certifies. Byte/layer scanning
-      with scripts/scan_image_ltx_payload.py is mandatory before publication.
-      NOT YET BUILT OR GPU-VALIDATED; see ltx2/REDISTRIBUTION.md.
+      certifies. Byte/layer scanning with scripts/scan_image_ltx_payload.py is
+      mandatory before publication. The supported release must resolve to the
+      exact zero-payload digest in ltx2_image_manifest.json, whose operator-only
+      runtime fetch and real GPU generation evidence are bound to the same bytes.
   alpamayo2-super:
     dockerfile: alpamayo2-super/Dockerfile
     tier: service
@@ -226,11 +228,12 @@ images:
   sonic-mujoco:
     dockerfile: sonic/Dockerfile.mujoco
     tier: job
-    redistribution: restricted
+    redistribution: public
     notes: >-
-      Quarantined legacy variant: its default parent is the old npa-sonic:0.1.2
-      image containing restricted NVIDIA bytes. Credentials or runtime consent
-      cannot make an already-baked payload redistributable.
+      Rebuilt independently on a digest-pinned official Python base from pinned
+      Apache-2.0 SONIC source plus an exact public PyPI CUDA/MuJoCo closure;
+      Isaac Sim, Isaac Lab, Omniverse Kit, models, credentials, and accepted terms
+      remain absent. Isaac-facing inherited modes retain runtime-fetch refusal.
   sim2real-eval:
     dockerfile: sim2real-eval/Dockerfile
     tier: job
@@ -308,14 +311,13 @@ images:
     tier: service
     ports: [8000]
     notes: >-
-      Build-your-own only. The vLLM-Omni source is Apache-2.0 and no model or
-      guardrail weights are baked, but the pinned base image embeds NVIDIA's
-      Deep Learning Container License. Its derived-container distribution grant
-      requires material added primary functionality and downstream terms at
-      least as protective; this thin serving wrapper and anonymous GHCR do not
-      establish those conditions. Operators build into their own registry and
-      fetch gated weights at runtime using a token whose account has upstream access.
-    redistribution: restricted
+      Zero-payload bootstrap on a digest-pinned official Python base. The exact
+      vLLM-Omni source and CUDA/PyTorch closure are fetched directly at runtime
+      only after the operator explicitly accepts the NVIDIA Software License.
+      It contains no NLC/NGC runtime, model or guardrail weights, credentials,
+      accepted terms, or gated assets. Both gated model repositories are probed
+      before the documented 8-GPU service starts.
+    redistribution: public
   content-agents:
     dockerfile: content-agents/Dockerfile
     ovrtx_runtime_fetch: true

@@ -39,9 +39,11 @@ npa workbench detection-training deploy --project <alias> --destroy
 
 `--gpu-type` is `h100` or `l40s`. Auth defaults to `token` (the token comes from
 the variable named by `--token-env`, default `DETECTION_TRAINING_TOKEN`);
-`--insecure-no-auth` exists but should not be used. Private registries need
-`--image-pull-secret` (default `npa-nebius-registry`). Always `--dry-run` first
-and read the manifest.
+`--insecure-no-auth` exists but should not be used. Official NPA GHCR images
+pull anonymously, so `--image-pull-secret` defaults to empty. For an optional
+operator-controlled private registry, pass the name of an existing standard
+Kubernetes pull secret explicitly. Always `--dry-run` first and read the
+manifest.
 
 ## Train
 

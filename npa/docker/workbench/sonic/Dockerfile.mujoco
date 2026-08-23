@@ -1,104 +1,111 @@
-# npa-sonic-mujoco: SONIC + MuJoCo eval, derived from npa-sonic.
-#
-# Inherits the runtime-Isaac architecture from its parent and adds no Isaac of its own, so
-# it ships no NVIDIA Isaac bytes either. Its own capability - the MuJoCo eval - needs no
-# Isaac Sim at all, which is why `/entrypoint.sh mujoco-eval` runs on the baked venv and
-# requires neither the ~4.5 GB download nor EULA acceptance. That is a deliberate property
-# of the entrypoint's per-mode interpreter selection, not an accident.
-ARG BASE_IMAGE=cr.eu-north1.nebius.cloud/your-registry-id/npa-sonic:0.1.2
+# Public SONIC MuJoCo evaluator. This image is intentionally independent of the
+# historical SONIC container lineage: no NGC/NLC base, private-registry layer,
+# Isaac/Omniverse payload, model weights, driver userspace, terms, or credentials.
+ARG BASE_IMAGE=python:3.11.14-slim-bookworm@sha256:65a93d69fa75478d554f4ad27c85c1e69fa184956261b4301ebaf6dbb0a3543d
+ARG DEBIAN_SNAPSHOT=20260817T000000Z
+
+FROM ${BASE_IMAGE} AS sonic-source
+ARG DEBIAN_SNAPSHOT
+ARG SONIC_REPO_URL=https://github.com/NVlabs/GR00T-WholeBodyControl.git
+ARG SONIC_REPO_REF=0a87181c9106d0e49293400714b157676e0ec664
+RUN sed -ri \
+      -e "s|https?://deb.debian.org/debian-security|https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
+      -e "s|https?://deb.debian.org/debian|https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
+      /etc/apt/sources.list.d/debian.sources \
+    && printf 'Acquire::Check-Valid-Until "false";\n' >/etc/apt/apt.conf.d/99snapshot \
+    && apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+       ca-certificates git \
+    && rm -rf /var/lib/apt/lists/* \
+    && GIT_LFS_SKIP_SMUDGE=1 git clone --filter=blob:none --no-checkout \
+       "${SONIC_REPO_URL}" /opt/sonic \
+    && cd /opt/sonic \
+    && git sparse-checkout init --no-cone \
+    && git sparse-checkout set \
+       '/download_from_hf.py' '/gear_sonic/**' '/gear_sonic_deploy/**' \
+       '/decoupled_wbc/**' '!/decoupled_wbc/dexmg/**' '/LICENSE' \
+    && git checkout "${SONIC_REPO_REF}" \
+    && test "$(git rev-parse HEAD)" = "${SONIC_REPO_REF}" \
+    && rm -rf /opt/sonic/.git
+
 FROM ${BASE_IMAGE}
+ARG DEBIAN_SNAPSHOT
+ARG SONIC_MUJOCO_VERSION=0.2.0-runtime
+ARG SONIC_REPO_REF=0a87181c9106d0e49293400714b157676e0ec664
+ARG ISAAC_LAB_VERSION=2.3.2.post1
+ARG ISAAC_SIM_VERSION=5.1.0.0
+ARG ISAAC_LAB_SRC_COMMIT=37ddf626871758333d6ed89cf64ad702aef127d0
+ARG NPA_ISAAC_COMPAT_ROOT=/isaac-sim
+ARG SONIC_MUJOCO_CLOSURE_SHA256=8e9d45902ade1e881545ae6f2ddb5d1d42b420505984aca3479895e5d4002d60
 
-ARG NPA_RUNTIME_USER=ubuntu
-ARG SONIC_MUJOCO_VERSION=0.1.3-mvp
-# CRITICAL: pip must run with the IMAGE's python, never with ISAAC_LAB_PYTHON.
-# ISAAC_LAB_PYTHON is /isaac-sim/python.sh, which since the re-architecture is a bootstrap
-# shim: using it here would download 4.5 GB of NVIDIA Isaac Sim during the BUILD and bake
-# it into this image's layers - reintroducing exactly the problem the parent image was
-# rebuilt to remove, in the one place nobody would think to look.
-ARG NPA_IMAGE_PYTHON=/opt/npa/sim/venv/bin/python
-
-LABEL npa.tool="sonic-mujoco" \
+LABEL org.opencontainers.image.licenses="Apache-2.0 AND LicenseRef-NVIDIA-CUDA-Toolkit" \
+      npa.tool="sonic-mujoco" \
       npa.version="${SONIC_MUJOCO_VERSION}" \
-      npa.isaac_provisioning="runtime-fetch-inherited" \
-      npa.architecture="sonic-plus-mujoco"
+      npa.sonic.revision="${SONIC_REPO_REF}" \
+      npa.closure.sha256="${SONIC_MUJOCO_CLOSURE_SHA256}" \
+      npa.isaac_provisioning="runtime-fetch" \
+      npa.architecture="oss-sonic-mujoco-no-vendor-container"
 
-ENV MUJOCO_GL=egl \
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    SONIC_HOME=/opt/sonic \
+    PYTHONPATH=/opt/sonic \
+    NPA_IMAGE_PYTHON=/opt/npa/venv/bin/python \
+    NPA_ISAAC_BASE_PYTHON=/opt/npa/venv/bin/python \
+    NPA_ISAAC_CACHE_DIR=/opt/isaac-cache \
+    NPA_ISAAC_WHEELS_FILE=/opt/npa/docker/workbench/common/isaac-nvidia-wheels.txt \
+    ISAAC_LAB_PYTHON=/isaac-sim/python.sh \
+    ISAAC_LAB_VERSION=${ISAAC_LAB_VERSION} \
+    ISAAC_SIM_VERSION=${ISAAC_SIM_VERSION} \
+    NPA_ISAAC_LAB_SRC_COMMIT=${ISAAC_LAB_SRC_COMMIT} \
+    NPA_SONIC_MUJOCO_CLOSURE_SHA256=${SONIC_MUJOCO_CLOSURE_SHA256} \
+    MUJOCO_GL=egl \
     PYOPENGL_PLATFORM=egl \
-    NVIDIA_DRIVER_CAPABILITIES=all \
-    NPA_IMAGE_PYTHON=${NPA_IMAGE_PYTHON}
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
-SHELL ["/bin/bash", "-lc"]
 USER root
+RUN sed -ri \
+      -e "s|https?://deb.debian.org/debian-security|https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
+      -e "s|https?://deb.debian.org/debian|https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
+      /etc/apt/sources.list.d/debian.sources \
+    && printf 'Acquire::Check-Valid-Until "false";\n' >/etc/apt/apt.conf.d/99snapshot \
+    && apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+       ca-certificates curl libegl1 libgl1 libglvnd0 libgnutls30 libssl3 openssl \
+    && rm -rf /var/lib/apt/lists/* \
+    && python -m venv /opt/npa/venv
 
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      libegl1 \
-      libgl1 \
-      libgles2 \
-      libglvnd0 \
-      libosmesa6 \
-      libx11-6 \
-      libxcb1 \
-      libxcursor1 \
-      libxext6 \
-      libxfixes3 \
-      libxi6 \
-      libxinerama1 \
-      libxrandr2 \
-      libxrender1 \
-    && rm -rf /var/lib/apt/lists/*
+COPY --chmod=0644 docker/workbench/sonic/mujoco-requirements.lock /opt/npa/manifest/mujoco-requirements.lock
+RUN /opt/npa/venv/bin/python -m pip install --no-cache-dir --require-hashes --only-binary=:all: \
+      -r /opt/npa/manifest/mujoco-requirements.lock \
+    && /opt/npa/venv/bin/python -m pip check
 
-COPY docker/workbench/sonic/entrypoint.sh /entrypoint.sh
-COPY docker/workbench/sonic/mujoco_eval.py /opt/npa/docker/workbench/sonic/mujoco_eval.py
-RUN chmod +x /entrypoint.sh \
-    && "${NPA_IMAGE_PYTHON}" -m pip install --no-cache-dir \
-      "mujoco>=3.3,<3.4" \
-      boto3 \
-      pyyaml
+COPY --from=sonic-source /opt/sonic /opt/sonic
+COPY --chmod=0755 docker/workbench/common/isaac_bootstrap.sh /opt/npa/bin/isaac-bootstrap
+COPY --chmod=0755 docker/workbench/common/isaac_python.sh /opt/npa/bin/isaac-python
+# Compatibility interpreter only; the target directory contains no vendor bytes.
+COPY --chmod=0755 docker/workbench/common/isaac_python.sh ${NPA_ISAAC_COMPAT_ROOT}/python.sh
+COPY --chmod=0644 docker/workbench/common/isaac-nvidia-wheels.txt /opt/npa/docker/workbench/common/isaac-nvidia-wheels.txt
+COPY --chmod=0644 docker/workbench/common/isaac-oss-deps.txt /opt/npa/docker/workbench/common/isaac-oss-deps.txt
+COPY --chmod=0755 docker/workbench/sonic/entrypoint.sh /entrypoint.sh
+COPY --chmod=0644 docker/workbench/sonic/mujoco_eval.py /opt/npa/docker/workbench/sonic/mujoco_eval.py
+COPY --chmod=0644 docker/workbench/sonic/verify_mujoco_image.py /opt/npa/docker/workbench/sonic/verify_mujoco_image.py
 
-# Build-time verification. `import gear_sonic` is safe to assert here: gear_sonic does not
-# depend on Isaac Lab (its own pyproject says "Isaac Lab must be installed separately"),
-# and gear_sonic/__init__.py is empty. Asserting `import isaaclab` would be wrong by
-# construction in a runtime-fetch image.
-RUN "${NPA_IMAGE_PYTHON}" - <<'PY'
-import importlib
-import pathlib
-import tempfile
-from importlib import metadata
-
-import mujoco
-
-for module in ("gear_sonic", "torch", "mujoco"):
-    importlib.import_module(module)
-
-leaked = sorted(
-    dist.metadata["Name"]
-    for dist in metadata.distributions()
-    if (dist.metadata["Name"] or "").lower().replace("_", "-").startswith(("isaacsim", "isaaclab"))
-)
-if leaked:
-    raise SystemExit(f"FATAL: Isaac packages baked into the image: {leaked}")
-
-xml = """
-<mujoco>
-  <worldbody>
-    <body name="body" pos="0 0 1">
-      <freejoint/>
-      <geom type="sphere" size="0.05" mass="1"/>
-    </body>
-  </worldbody>
-</mujoco>
-"""
-with tempfile.TemporaryDirectory() as tmp:
-    path = pathlib.Path(tmp) / "scene.xml"
-    path.write_text(xml, encoding="utf-8")
-    model = mujoco.MjModel.from_xml_path(str(path))
-    data = mujoco.MjData(model)
-    for _ in range(4):
-        mujoco.mj_step(model, data)
-print("NPA_SONIC_MUJOCO_BUILD_IMPORTS_OK no baked Isaac")
-PY
+RUN useradd -m -s /bin/bash -u 1000 ubuntu \
+    && mkdir -p /isaac-sim /opt/isaac-cache /tmp/npa-sonic-output \
+    && chmod 0755 /opt/npa/manifest /opt/npa/docker \
+       /opt/npa/docker/workbench /opt/npa/docker/workbench/common \
+       /opt/npa/docker/workbench/sonic \
+    && chmod 0644 /opt/npa/manifest/mujoco-requirements.lock \
+       /opt/npa/docker/workbench/common/*.txt \
+       /opt/npa/docker/workbench/sonic/*.py \
+    && chown -R ubuntu:ubuntu /opt/isaac-cache /tmp/npa-sonic-output /home/ubuntu \
+    && su -s /bin/sh -c 'test -r /opt/npa/docker/workbench/sonic/mujoco_eval.py' ubuntu \
+    && /opt/npa/venv/bin/python /opt/npa/docker/workbench/sonic/verify_mujoco_image.py
 
 WORKDIR /opt/sonic
-USER ${NPA_RUNTIME_USER}
+USER ubuntu
+ENV HOME=/home/ubuntu
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["smoke"]
+CMD ["mujoco-eval"]

@@ -390,10 +390,10 @@ under `npa/src/npa/workflows/skypilot/`.
   `/root`), and repoints the absolute symlink `cp -a` copies verbatim. The build
   asserts each of those and exercises `distutils.sysconfig`, which is the import path
   that actually broke.
-- The workflow submit path refreshes the cluster's Nebius registry pull secret before
-  launching, since that secret holds a short-lived IAM token and a stale one fails
-  every private image pull with a 401 that SkyPilot reports as
-  resources-unavailable.
+- Historical workflow submission refreshed a provider-specific pull secret before
+  launching. That behavior was later removed when NPA-owned images moved to the
+  anonymous public GHCR release channel; generic operator-managed BYOF credentials
+  remain explicit inputs only.
 - `grade_gate` reads `cosmos_evaluator.json` and still accepts the older `vlm_eval`
   report, so runs in flight keep grading. The FiftyOne review report gains a
   `cosmos_curator` block with the curator's run-level summary.

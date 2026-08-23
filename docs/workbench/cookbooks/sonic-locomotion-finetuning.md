@@ -28,7 +28,7 @@ Prepare these S3 prefixes before submission:
 
 SkyPilot 0.12.2 does not expand same-block environment variables inside `envs`.
 For raw `sky` runs, replace `<your-bucket-name>`, `<run-id>`,
-`<your-registry-id>`, and image tags with literal values before launch. For CLI
+`<your-registry>`, and image tags with literal values before launch. For CLI
 or SDK submission, pass the values to the SONIC materializer and it writes the
 literal YAML before calling SkyPilot.
 
@@ -37,7 +37,7 @@ Retargeting uses `NPA_RETARGETING_IMAGE`, which defaults to the CPU
 CPU Python dependencies, and the pinned upstream
 `NVlabs/GR00T-WholeBodyControl` data-process scripts. MJLab still uses
 `NPA_WORKBENCH_IMAGE`, which defaults to the pushed generic Workbench image
-`cr.eu-north1.nebius.cloud/<your-registry-id>/npa-genesis:0.4.6`.
+`<your-registry>/<namespace>/npa-genesis:0.4.6`.
 
 ## Tool Templates
 
@@ -88,8 +88,8 @@ export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
 npa workbench workflow submit \
   npa/workflows/workbench/npa-workflows/sonic-locomotion-finetuning.yaml \
   --run-id sonic-locomotion-<run-id> \
-  --registry cr.eu-north1.nebius.cloud/<registry-id> \
-  --npa-image cr.eu-north1.nebius.cloud/<registry-id>/npa:<tag> \
+  --registry <your-registry>/<namespace> \
+  --npa-image <your-registry>/<namespace>/npa:<tag> \
   --gpu-target l40s \
   --s3-endpoint https://storage.eu-north1.nebius.cloud \
   --s3-bucket <bucket> \
@@ -143,9 +143,9 @@ from npa.sdk.workbench import sonic
 sonic.submit_workflow(
     Path("npa/workflows/workbench/npa-workflows/sonic-locomotion-finetuning.yaml"),
     run_id="sonic-locomotion-run",
-    registry="cr.eu-north1.nebius.cloud/<registry-id>",
-    npa_image="cr.eu-north1.nebius.cloud/<registry-id>/npa:<tag>",
-    gpu_target="gpu-rtx6000",
+    registry="<your-registry>/<namespace>",
+    npa_image="<your-registry>/<namespace>/npa:<tag>",
+    gpu_target="l40s",
     s3_endpoint="https://storage.eu-north1.nebius.cloud",
     s3_bucket="<bucket>",
     s3_prefix="sonic-locomotion/sonic-locomotion-run",

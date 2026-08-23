@@ -96,15 +96,13 @@ successful `npa skypilot verify --cluster <exact-context>`:
   nodes exist. `workflow gpus` prints the requestable quantity per node; submit
   rejects anything above it. Multi-GPU fan-out docs assume N GPUs per pod, which is
   a different cluster shape from "N single-GPU node presets".
-- **Supported workflow images default to the anonymous GHCR mirror.** `npa
-  configure` does not set up a registry. If you select a custom/private registry,
-  NPA does not mirror images into it, so a spec that pins them needs them built
-  and pushed once per registry. Run
+- **A workflow's images resolve from GHCR releases unless explicitly overridden.**
+  `npa configure` records the public release namespace by default. Run
   `npa workbench workflow preflight-images <spec.yaml>` — it reports each image as
   `ok`/`not_found`/`forbidden` and prints the build command for the tag
   `npa/src/npa/deploy/images.py` pins (the guide's tags are pinned to those by
   `tests/guardrails/test_paidf_image_tags_match_code.py`). `submit` runs the same
-  check **before `deployIfAbsent`**, so a registry without the images costs no
+  check **before `deployIfAbsent`**, so a missing release costs no
   cluster time.
 - **Multi-tool validation images stay distinct.** Repeat
   `--image-override TOOL_REF=IMAGE` on preflight and submit. Exact tool refs take

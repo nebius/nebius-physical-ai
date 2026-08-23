@@ -21,8 +21,8 @@
 #
 # USAGE
 #   1. Pick a volume (see the two options below) and set NPA_ISAAC_CACHE_DIR to its mount.
-#   2. Replace <your-registry-id> and the image digest with the exact image built
-#      from the controller SHA. Tags are not accepted as runtime provenance.
+#   2. Replace the image digest with the exact validated GHCR release digest.
+#      Tags are not accepted as runtime provenance.
 #   3. kubectl apply -f warm-isaac-cache.yaml
 #      kubectl wait --for=condition=complete job/npa-warm-isaac-cache --timeout=-1s
 #      kubectl logs job/npa-warm-isaac-cache
@@ -94,7 +94,7 @@ spec:
             capabilities:
               drop: ["ALL"]
           # Any of the Isaac images works; they share the bootstrap.
-          image: cr.us-central1.nebius.cloud/<your-registry-id>/npa-isaac-lab@sha256:<64-hex-digest>
+          image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:<64-hex-digest>
           command: ["/opt/npa/bin/isaac-bootstrap", "warm"]
           env:
             # Explicitly documents the default; set empty/N/NO/0/FALSE to opt out.

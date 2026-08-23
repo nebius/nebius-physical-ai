@@ -540,7 +540,7 @@ def test_sdk_workflow_submit_delegates_to_orchestrator(mocker, monkeypatch) -> N
         / "tokenfactory-scene-to-rollout-judge.yaml",
         run_id="rj-test",
         secret_env=["NEBIUS_TOKEN_FACTORY_KEY", "AWS_ACCESS_KEY_ID"],
-        # Clear the workbench image pins: resolving them would mint a registry token.
+        # Clear the workbench image pins: this test is not exercising image preflight.
         image="none",
         resolve_accelerators=False,
         # This asserts delegation, not prerequisites; the spec ships the placeholder

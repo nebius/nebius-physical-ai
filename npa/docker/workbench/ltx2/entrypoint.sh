@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# Every path into the container funnels through ltx-runtime, so the entitlement
-# checks cannot be sidestepped by passing a command. A bare shell is still
-# available for debugging, but it has no LTX code or weights to reach.
+# Explicit LTX modes funnel through ltx-runtime. Infrastructure bootstrap
+# commands must run unchanged: SkyPilot injects task secrets only after its pod
+# bootstrap, so gating arbitrary argv here would refuse before the operator's
+# scoped entitlement can exist in the task environment. This remains safe
+# because the image contains no LTX source or weights; the workflow invokes
+# ltx-runtime explicitly before it can use either payload.
 set -euo pipefail
 
 case "${1:-}" in
@@ -20,6 +23,6 @@ case "${1:-}" in
     exec /bin/bash
     ;;
   *)
-    exec /usr/local/bin/ltx-runtime exec "$@"
+    exec "$@"
     ;;
 esac

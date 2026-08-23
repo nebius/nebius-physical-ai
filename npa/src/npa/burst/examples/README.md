@@ -5,8 +5,8 @@ templates.
 
 `npa.burst.core.submit_yaml()` is deliberately scoped to *one* executable SkyPilot task: it
 loads the document, substitutes `${VAR}` placeholders from `--var`, refuses to submit while any
-placeholder is unresolved, and injects a Nebius registry login when the submitter can mint an
-IAM token. That is a different capability from the workflow surface — there is no plan, no
+placeholder is unresolved, and forwards explicit exact-host registry credentials when
+the operator supplies them. That is a different capability from the workflow surface — there is no plan, no
 stage graph, no decision artifact, and nothing for a `toolRef` to describe.
 
 These files live here rather than in the retired raw SkyPilot workflow catalog so that burst

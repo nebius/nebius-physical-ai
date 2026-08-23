@@ -1597,7 +1597,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--server-memory", default="96Gi")
     parser.add_argument("--client-cpu", default="2")
     parser.add_argument("--client-memory", default="8Gi")
-    parser.add_argument("--pull-secret", default="npa-nebius-registry")
+    parser.add_argument(
+        "--pull-secret",
+        default="",
+        help="Optional operator-managed Kubernetes pull secret for a BYOF registry.",
+    )
     parser.add_argument("--liveness-initial-delay-seconds", type=int, default=600)
     parser.add_argument("--gpu-node-selector-key", default="nebius.com/gpu-name")
     parser.add_argument("--gpu-node-selector-value", default="B200")

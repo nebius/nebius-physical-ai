@@ -507,17 +507,17 @@ def resolve_credentials() -> CredentialsConfig:
 
 
 def resolve_container_registry(project: str | None = None) -> str:
-    """Resolve an image registry override, then fall back to public GHCR."""
+    """Return the environment, project, global, or default registry in order."""
     yml = _load_yaml()
     try:
         proj = _resolve_project_section(yml, project)
     except ConfigError:
         proj = {}
 
-    # Explicit environment configuration wins over legacy saved values, matching
-    # the repository-wide explicit > env > config precedence contract. Honor both
-    # supported registry env vars so NPA_REGISTRY_ID behaves consistently across
-    # tool-deploy paths (lerobot/fiftyone/sonic/detection-training/sim2real).
+    # An explicit execution override must win over legacy project registry
+    # configuration. This is especially important for digest-pinned public
+    # development images, which must not silently resolve back to a provider
+    # registry saved in ~/.npa/config.yaml.
     from npa.deploy.images import registry_from_env
 
     value = registry_from_env()

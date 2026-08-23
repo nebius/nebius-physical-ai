@@ -538,22 +538,29 @@ def test_deploy_insecure_no_auth_opt_out(monkeypatch: pytest.MonkeyPatch) -> Non
     assert "DETECTION_TRAINING_TOKEN" not in secret["data"]
 
 
-def test_deploy_can_build_registry_pull_secret_from_docker_auth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from npa.cli.workbench import detection_training
-
-    docker_dir = tmp_path / ".docker"
-    docker_dir.mkdir()
-    (docker_dir / "config.json").write_text(
-        json.dumps({"auths": {"cr.example.test": {"auth": "dXNlcjpwYXNz"}}}),
-        encoding="utf-8",
+def test_deploy_uses_only_an_explicit_operator_managed_pull_secret() -> None:
+    result = runner.invoke(
+        detection_training_app,
+        [
+            "deploy",
+            "--image",
+            "registry.example/operator/image:tag",
+            "--image-pull-secret",
+            "operator-registry",
+            "--output-path",
+            "s3://bucket/out",
+            "--insecure-no-auth",
+            "--dry-run",
+        ],
     )
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
-    assert detection_training._image_registry("cr.example.test/project/image:tag") == "cr.example.test"
-    assert detection_training._image_registry("npa-detection-training:dev") == ""
-    assert detection_training._docker_auth_config("cr.example.test") == {
-        "auths": {"cr.example.test": {"auth": "dXNlcjpwYXNz"}}
-    }
+    assert result.exit_code == 0, result.output
+    deployment = next(
+        item for item in json.loads(result.output)["items"] if item["kind"] == "Deployment"
+    )
+    assert deployment["spec"]["template"]["spec"]["imagePullSecrets"] == [
+        {"name": "operator-registry"}
+    ]
 
 
 def test_token_auth_rejects_missing_and_invalid_tokens() -> None:

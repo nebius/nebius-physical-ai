@@ -66,6 +66,9 @@ COPY --chmod=0444 src/npa/solutions/wan2_2/dependency_closure.py /opt/npa/wan2-2
 # packages such as Accelerate and PEFT cannot pull Torch/CUDA into an image
 # layer. ImageIO-FFmpeg is installed from source first to avoid its bundled
 # executable; the later exact requirements pass recognizes it as satisfied.
+# Dependency bytecode embeds standard credential-parser/help literals and is
+# not reproducible evidence across Python patch releases. Keep audited source,
+# remove only third-party caches, and scan the stable source bytes instead.
 RUN python -m venv /opt/wan-base \
     && /opt/wan-base/bin/python -m pip install --no-cache-dir --upgrade \
       "pip==26.1.2" "setuptools==83.0.0" "wheel==0.46.2" \
@@ -112,6 +115,8 @@ RUN python -m venv /opt/wan-base \
     && /opt/wan-base/bin/python -m compileall -q --invalidation-mode checked-hash \
       /opt/byof /opt/npa/wan2-2/dependency_closure.py \
     && test -n "$(find /opt/byof/wan -type f -path '*/__pycache__/*.pyc' -print -quit)" \
+    && find /opt/wan-base -type d -name __pycache__ -prune -exec rm -rf {} + \
+    && test -z "$(find /opt/wan-base -type f -name '*.pyc' -print -quit)" \
     && rm -rf /root/.cache /tmp/pip-* \
     && ln -s /workspace/.cache/npa/wan2-2/runtime/current/venv /opt/byof/.venv
 

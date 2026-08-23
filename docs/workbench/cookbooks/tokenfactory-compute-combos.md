@@ -73,8 +73,8 @@ export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
 npa workbench workflow submit \
   npa/workflows/workbench/npa-workflows/tokenfactory-rollout-judge-combo.yaml \
   --run-id rollout-judge \
-  --var NPA_LEROBOT_IMAGE=cr.eu-north1.nebius.cloud/<registry>/npa-lerobot:0.5.1 \
-  --var NPA_TOKEN_FACTORY_IMAGE=cr.eu-north1.nebius.cloud/<registry>/npa-cosmos:cu128-torch27-sm100-1.0.9-20260803T002017Z \
+  --var NPA_LEROBOT_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-lerobot:0.5.1 \
+  --var NPA_TOKEN_FACTORY_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-cosmos:cu128-torch27-sm100-1.0.9-20260803T002017Z \
   --var ROLLOUTS_URI=s3://your-bucket/tokenfactory/<run-id>/rollouts/ \
   --var JUDGE_URI=s3://your-bucket/tokenfactory/<run-id>/vlm-judge/
 ```
@@ -134,8 +134,8 @@ npa skypilot bootstrap
 npa workbench workflow submit \
   npa/workflows/workbench/npa-workflows/tokenfactory-scene-to-rollout-judge.yaml \
   --run-id scene-judge \
-  --var NPA_LEROBOT_IMAGE=cr.eu-north1.nebius.cloud/<registry>/npa-lerobot:0.5.1 \
-  --var NPA_TOKEN_FACTORY_IMAGE=cr.eu-north1.nebius.cloud/<registry>/npa-cosmos:cu128-torch27-sm100-1.0.9-20260803T002017Z \
+  --var NPA_LEROBOT_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-lerobot:0.5.1 \
+  --var NPA_TOKEN_FACTORY_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-cosmos:cu128-torch27-sm100-1.0.9-20260803T002017Z \
   --var SCENE_URI=s3://your-bucket/tokenfactory/<run-id>/scene/ \
   --var PLAN_URI=s3://your-bucket/tokenfactory/<run-id>/plan/ \
   --var ROLLOUTS_URI=s3://your-bucket/tokenfactory/<run-id>/rollouts/ \

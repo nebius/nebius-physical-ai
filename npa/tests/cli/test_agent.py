@@ -1476,11 +1476,11 @@ def test_bootstrap_embeds_lichtblick_viewer() -> None:
     assert "npa-lichtblick.service" in source
     # verify() probes the embed plumbing.
     assert "lichtblick embed probe" in source
-    # Region-agnostic image acquisition: the sidecar pulls from whichever mirror
-    # registry (eu-north1 or us-central1) is reachable, not a locally-built image.
+    # Region-agnostic image acquisition uses the anonymous public GHCR release.
     assert "lichtblick_pull_candidates" in source
     assert "for lb_cand in {lichtblick_pull_candidates}" in source
     assert "npa-lichtblick image acquired from" in source
+    assert "docker login" not in source
 
 
 def test_lichtblick_recordings_grant_no_cross_origin_read() -> None:
@@ -1837,7 +1837,7 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "npa workbench byof run" in source or "run_byof_repo.py" in source
     assert "For BYOF solution onboarding" in source
     assert "Always use real registry-qualified images" in source
-    assert "`<your-registry-id>` placeholders" in source
+    assert "registry placeholders" in source
     assert "sky gpus list" in source
     bootstrap_split = '        const lines = String(text || "").split(/\\r?\\n/);'
     assert "\r" not in bootstrap_split

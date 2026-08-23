@@ -30,13 +30,6 @@ the SONIC C++ deploy source and build tools, but leaves `gear_sonic_deploy`
 compilation opt-in with `BUILD_SONIC_DEPLOY=1` because TensorRT and ONNX Runtime
 discovery are platform-sensitive.
 
-Build and publish the required first-party image from the repo root:
-
-```bash
-export NPA_REGISTRY=cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}
-npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push
-```
-
 SONIC publishes one active first-party runtime-fetch image. The compatibility source of
 truth is `npa/src/npa/deploy/sonic_image_manifest.json`, with the human catalog
 in `docs/workbench/sonic-image-catalog.md`. Use the exact active tag there for
@@ -45,6 +38,7 @@ RTX PRO 6000 Blackwell Kubernetes. Legacy L40S and MuJoCo variants are quarantin
 Verify the pushed image before launch with:
 
 ```bash
+export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
 docker manifest inspect "${NPA_REGISTRY}/npa-sonic:<active-runtime-fetch-tag>"
 ```
 

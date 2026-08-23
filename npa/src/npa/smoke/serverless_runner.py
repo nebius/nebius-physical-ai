@@ -18,7 +18,7 @@ import yaml
 
 from npa.clients.credentials import load_credentials
 from npa.clients.serverless import ServerlessClient, ServerlessClientError
-from npa.deploy.images import container_image_for_tool, primary_container_registry
+from npa.deploy.images import container_image_for_tool, execution_container_registry
 from npa.serverless_common.env import ISAAC_EULA_VARS, isaac_eula_env  # noqa: F401 (re-exported)
 from npa.serverless_common import (
     build_serverless_job_env,
@@ -43,7 +43,7 @@ def resolve_golden_image(
 
     spec = container(tool)
     if spec.internal:
-        resolved_registry = (registry or primary_container_registry()).rstrip("/")
+        resolved_registry = (registry or execution_container_registry()).rstrip("/")
         resolved_tag = tag or spec.default_tag
         if not resolved_tag:
             raise RuntimeError(

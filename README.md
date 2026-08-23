@@ -308,7 +308,7 @@ npa workbench workflow plan-spec     npa/workflows/workbench/npa-workflows/vlm-e
 
 # Launch on Nebius (after npa configure)
 npa workbench workflow submit npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml \
-  --run-id demo --registry cr.eu-north1.nebius.cloud/<your-registry-id>
+  --run-id demo --registry registry.example/customer
 
 # Inspect the plan without launching
 npa workbench workflow submit npa/workflows/workbench/npa-workflows/token-factory-caption.yaml \
@@ -363,8 +363,8 @@ The GHCR mirror is the runtime default; no registry setup is required in
 locally modified images, and select it with `NPA_REGISTRY` or an explicit image:
 
 ```bash
-REGISTRY_HOST=cr.eu-north1.nebius.cloud npa/scripts/nebius_registry_docker_login.sh
-export NPA_REGISTRY=cr.eu-north1.nebius.cloud/<your-registry-id>
+docker login registry.example
+export NPA_REGISTRY=registry.example/customer
 npa/docker/workbench/lerobot/build.sh --registry "$NPA_REGISTRY" --push
 ```
 

@@ -36,16 +36,18 @@ def test_retired_catalog_does_not_reappear_for_image_check() -> None:
 
 
 def test_registry_placeholder_resolution_is_local_check_ready() -> None:
-    image = "cr.eu-north1.nebius.cloud/<your-registry-id>/npa:tag"
+    image = "<your-registry>/npa:tag"
 
-    resolved = resolve_workflow_image(image, registry_id="registry-test")
+    resolved = resolve_workflow_image(image, registry="registry.example/operator")
 
-    assert resolved == "cr.eu-north1.nebius.cloud/registry-test/npa:tag"
+    assert resolved == "registry.example/operator/npa:tag"
     assert not unresolved_image_placeholders(resolved)
 
 
 def test_image_check_classifies_operator_placeholders_as_seam() -> None:
-    assert unresolved_image_placeholders("cr.eu-north1.nebius.cloud/<your-registry-id>/npa:<tag>")
+    assert unresolved_image_placeholders(
+        "<your-registry>/npa:<tag>"
+    )
     assert unresolved_image_placeholders("${POLICY_IMAGE}")
 
 

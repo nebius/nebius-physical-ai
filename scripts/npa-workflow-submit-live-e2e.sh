@@ -4,7 +4,7 @@
 # Run on an operator/dev VM that already has:
 #   - npa configured (npa configure --interactive)
 #   - SkyPilot bootstrapped (npa skypilot bootstrap)
-#   - NPA_REGISTRY (or NPA_E2E_REGISTRY) pointing at a reachable Nebius registry
+#   - NPA_REGISTRY (or NPA_E2E_REGISTRY) pointing at a reachable registry prefix
 #   - Optional: NEBIUS_TOKEN_FACTORY_KEY for cpu-tier twins
 #   - Optional: HF_TOKEN / NGC_API_KEY for SONIC / Cosmos3 twins
 #
