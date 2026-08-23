@@ -45,7 +45,7 @@ class RefinementStateError(RuntimeError):
 APPEARANCE_PROFILES: tuple[dict[str, str], ...] = (
     {
         "lighting": "bright diffuse daylight",
-        "background": "solid light-gray backdrop",
+        "background": "neutral gray backdrop",
         "color_grade": "neutral balanced color palette",
         "surface_finish": "matte low-gloss backdrop finish",
     },
@@ -63,7 +63,7 @@ APPEARANCE_PROFILES: tuple[dict[str, str], ...] = (
     },
     {
         "lighting": "dim soft evening illumination",
-        "background": "solid charcoal backdrop",
+        "background": "neutral gray backdrop",
         "color_grade": "high-contrast color palette",
         "surface_finish": "matte uniform backdrop finish",
     },
@@ -87,13 +87,25 @@ APPEARANCE_PROFILES: tuple[dict[str, str], ...] = (
     },
     {
         "lighting": "low-key even studio illumination",
-        "background": "solid dark-gray backdrop",
+        "background": "neutral gray backdrop",
         "color_grade": "muted neutral color palette",
         "surface_finish": "satin uniform backdrop finish",
     },
+    {
+        # A coherent low-key treatment for wrist-mounted manipulation cameras:
+        # a matte work surface can remain light while the foreground task object
+        # contributes a warm palette under dim, even scene illumination.
+        "lighting": "dim soft evening illumination",
+        "background": "neutral gray backdrop",
+        "color_grade": "warm amber color palette",
+        "surface_finish": "matte uniform backdrop finish",
+    },
 )
 APPEARANCE_VARIABLES = {
-    key: [profile[key] for profile in APPEARANCE_PROFILES]
+    # A coherent profile may intentionally reuse one attribute from another.
+    # Keep the evaluator's multiple-choice pool unique so equivalent profiles
+    # cannot produce two indistinguishable correct-answer letters.
+    key: list(dict.fromkeys(profile[key] for profile in APPEARANCE_PROFILES))
     for key in APPEARANCE_PROFILES[0]
 }
 

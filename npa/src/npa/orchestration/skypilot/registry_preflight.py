@@ -113,6 +113,11 @@ def parse_image_reference(image: str) -> ImageReference:
         )
     if "@" in remainder:
         repository, reference = remainder.split("@", 1)
+        # A canonical Docker reference may retain its human-readable tag before
+        # the immutable digest (``repository:tag@sha256:...``).  The Registry
+        # HTTP API repository path must not include that tag.
+        if ":" in repository.rsplit("/", 1)[-1]:
+            repository = repository.rsplit(":", 1)[0]
     elif ":" in remainder.rsplit("/", 1)[-1]:
         repository, reference = remainder.rsplit(":", 1)
     else:

@@ -177,6 +177,29 @@ def test_generate_configs_supports_a_shared_controlled_comparison_seed(
     assert baseline["augmentation_seed"] == "controlled-comparison-v1"
 
 
+def test_generate_configs_includes_coherent_low_key_wrist_camera_profile(
+    tmp_path: Path,
+) -> None:
+    result = dfs.generate_configs(
+        str(tmp_path / "wrist-camera.json"),
+        n_augmentations=1,
+        seed="run-specific",
+        augmentation_seed="8",
+    )
+
+    candidate = result["augmentations"][0]
+    assert {key: candidate[key] for key in dfs.APPEARANCE_VARIABLES} == {
+        "lighting": "dim soft evening illumination",
+        "background": "neutral gray backdrop",
+        "color_grade": "warm amber color palette",
+        "surface_finish": "matte uniform backdrop finish",
+    }
+    assert all(
+        len(options) == len(set(options))
+        for options in dfs.APPEARANCE_VARIABLES.values()
+    )
+
+
 def test_generate_configs_derives_first_search_candidate_from_passing_evidence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1283,9 +1306,9 @@ def test_write_quality_disposition_routes_without_raising(
 
     assert result["quality_status"] == expected_status
     assert result["decision"] == expected_decision
-    persisted = json.loads(disposition.read_text())
-    assert persisted["quality_status"] == expected_status
-    assert persisted["decision"] == expected_decision
+    durable = json.loads(disposition.read_text())
+    assert durable["quality_status"] == expected_status
+    assert durable["decision"] == expected_decision
     assert decisions == [("s3://example/grade/decision.json", expected_decision)]
 
 
@@ -1408,9 +1431,9 @@ def test_dynamic_quality_disposition_persists_strict_route(
     assert result["quality_status"] == expected_status
     assert result["decision"] == expected_decision
     assert decisions == [("s3://example-bucket/run/decision.json", expected_decision)]
-    persisted = json.loads(disposition.read_text())
-    assert persisted["quality_status"] == expected_status
-    assert persisted["decision"] == expected_decision
+    durable = json.loads(disposition.read_text())
+    assert durable["quality_status"] == expected_status
+    assert durable["decision"] == expected_decision
 
 
 @pytest.mark.parametrize("contents", [None, "not-json", "[]"])

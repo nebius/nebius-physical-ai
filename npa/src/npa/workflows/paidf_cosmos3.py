@@ -616,6 +616,76 @@ def _caption_text(payload: Any) -> str:
     return " ".join(captions[:4])
 
 
+def _preserve_source_motion(
+    source: Path,
+    generated: Path,
+    destination: Path,
+    *,
+    source_weight: float,
+) -> None:
+    """Composite Cosmos appearance onto the source motion and camera geometry.
+
+    Cosmos 3 Nano can produce a useful appearance treatment while drifting the
+    camera or foreground trajectory.  This post-process retains the generated
+    pixels, but anchors them to the source stream's resolution, frame cadence,
+    and motion.  The unmodified framework artifact is published beside the
+    composite so the transformation remains independently auditable.
+    """
+
+    if not 0.0 < source_weight < 1.0:
+        raise PaidfCosmos3Error(
+            "source motion weight must be strictly between 0 and 1"
+        )
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise PaidfCosmos3Error(
+            "ffmpeg is required for source-motion-preserving publication"
+        )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    cosmos_weight = 1.0 - source_weight
+    filter_graph = (
+        "[1:v][0:v]scale2ref[model][source];"
+        f"[source][model]blend=all_expr='A*{source_weight:.6f}+"
+        f"B*{cosmos_weight:.6f}':shortest=1[out]"
+    )
+    completed = subprocess.run(
+        [
+            ffmpeg,
+            "-y",
+            "-v",
+            "error",
+            "-i",
+            str(source),
+            "-i",
+            str(generated),
+            "-filter_complex",
+            filter_graph,
+            "-map",
+            "[out]",
+            "-an",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            str(destination),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if (
+        completed.returncode
+        or not destination.is_file()
+        or destination.stat().st_size <= 0
+    ):
+        detail = str(
+            completed.stderr or completed.stdout or "ffmpeg produced no output"
+        )[:300]
+        raise PaidfCosmos3Error(
+            f"source-motion-preserving publication failed: {detail}"
+        )
+
+
 def _publish_variant(
     *,
     result: Mapping[str, Any],
@@ -624,15 +694,38 @@ def _publish_variant(
     variables: Mapping[str, Any],
     metadata: Mapping[str, Any],
     storage: Any,
+    source_video: Path,
+    source_motion_weight: float,
 ) -> dict[str, Any]:
     if not _is_s3(output_uri):
         raise PaidfCosmos3Error(
             "PAIDF Cosmos 3 variant publication requires an s3:// output URI"
         )
     base = output_uri.rstrip("/") + f"/{clip}/"
-    artifact = Path(str(result["output_path"]))
-    if not artifact.is_file() or artifact.stat().st_size <= 0:
+    raw_artifact = Path(str(result["output_path"]))
+    if not raw_artifact.is_file() or raw_artifact.stat().st_size <= 0:
         raise PaidfCosmos3Error("Cosmos 3 returned an empty video artifact")
+    artifact = raw_artifact
+    postprocess: dict[str, Any] | None = None
+    if source_motion_weight:
+        artifact = raw_artifact.with_name("motion-preserved.mp4")
+        _preserve_source_motion(
+            source_video,
+            raw_artifact,
+            artifact,
+            source_weight=source_motion_weight,
+        )
+        raw_uri = base + "raw_cosmos_video.mp4"
+        storage.upload_file(str(raw_artifact), raw_uri)
+        postprocess = {
+            "engine": "ffmpeg-source-motion-composite",
+            "source_weight": source_motion_weight,
+            "cosmos_weight": 1.0 - source_motion_weight,
+            "raw_cosmos_video_uri": raw_uri,
+            "raw_cosmos_video_bytes": raw_artifact.stat().st_size,
+            "raw_cosmos_video_sha256": _sha256(raw_artifact),
+            "published_video_sha256": _sha256(artifact),
+        }
     storage.upload_file(str(artifact), base + "augmented_video.mp4")
     with tempfile.TemporaryDirectory(prefix="npa-paidf-c3-publish-") as tmp:
         frames = _extract_frames(artifact, Path(tmp) / "frames")
@@ -659,6 +752,7 @@ def _publish_variant(
             "lineage": {"input_provenance_uri": str(metadata["input_provenance_uri"])},
             "video_bytes": artifact.stat().st_size,
             "frame_count": len(frames),
+            "motion_preservation": postprocess,
         }
         _write_json(clip_meta, base + "metadata.json", storage=storage)
     return {
@@ -670,6 +764,7 @@ def _publish_variant(
         "guidance": clip_meta["guidance"],
         "steps": clip_meta["steps"],
         "variables": dict(variables),
+        "motion_preservation": postprocess,
     }
 
 
@@ -696,6 +791,7 @@ def generate_variants(
     parallelism_preset: str,
     guardrails: str | bool,
     run_id: str,
+    source_motion_weight: str | float = 0.0,
     *,
     storage: Any | None = None,
     environ: Mapping[str, str] | None = None,
@@ -721,6 +817,7 @@ def generate_variants(
         seed_stride = int(retry_seed_stride)
         guidance_delta = float(retry_guidance_delta)
         steps_delta = int(retry_steps_delta)
+        motion_weight = float(source_motion_weight)
     except (TypeError, ValueError) as exc:
         raise PaidfCosmos3Error(
             "Cosmos 3 generation and retry settings must be numeric"
@@ -728,6 +825,10 @@ def generate_variants(
     if count < 1 or requested_parallelism < 1 or base_steps < 1:
         raise PaidfCosmos3Error(
             "variant count, parallelism, and steps must be positive"
+        )
+    if motion_weight and not 0.0 < motion_weight < 1.0:
+        raise PaidfCosmos3Error(
+            "source motion weight must be zero or strictly between 0 and 1"
         )
     client = storage or _storage()
     attempt, prior = _load_attempt(attempt_uri, scores_uri, storage=client)
@@ -821,6 +922,8 @@ def generate_variants(
                         "input_provenance_uri": input_provenance_uri,
                     },
                     storage=client,
+                    source_video=Path(local_input),
+                    source_motion_weight=motion_weight,
                 )
             )
     finally:
@@ -847,6 +950,12 @@ def generate_variants(
             "captions_uri": captions_uri,
         },
         "run_id": run_id,
+        "motion_preservation": {
+            "enabled": bool(motion_weight),
+            "source_weight": motion_weight,
+            "cosmos_weight": 1.0 - motion_weight if motion_weight else 1.0,
+            "raw_cosmos_outputs_preserved": bool(motion_weight),
+        },
     }
     _write_json(manifest, output_uri.rstrip("/") + "/manifest.json", storage=client)
     attempt_payload = {
@@ -911,7 +1020,17 @@ def route_quality_disposition(disposition_uri: str, decision_uri: str) -> str:
     expected = (
         "promote_checkpoint" if quality_status == "accepted" else "loop_back"
     )
-    if quality_status not in {"accepted", "rejected"} or recorded_decision != expected:
+    if quality_status not in {"accepted", "rejected"}:
+        raise PaidfCosmos3Error("quality disposition has an inconsistent decision")
+    if recorded_decision is None:
+        # Runs started by the pre-decision disposition writer can reach this state
+        # after an operator repairs and resumes the driver.  Persist the uniquely
+        # derivable route before continuing so downstream acceptance checks still
+        # consume one durable, self-consistent disposition.  A present conflicting
+        # value remains a hard failure below.
+        disposition["decision"] = expected
+        _write_json(disposition, disposition_uri)
+    elif recorded_decision != expected:
         raise PaidfCosmos3Error("quality disposition has an inconsistent decision")
     write_decision(decision_uri, expected)
     return expected

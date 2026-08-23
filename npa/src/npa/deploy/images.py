@@ -73,6 +73,7 @@ CONTAINER_IMAGE_NAMES = {
 SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
     {
         "cosmos2-transfer",
+        "cosmos3",
         "cosmos-curate",
         "cosmos-evaluator",
         "content-agents",
@@ -218,17 +219,23 @@ SUPPORTED_TOOL_VERSIONS = {
     "leisaac": "0.4.0-20260817T231825Z",
     "cosmos": "cu128-torch27-sm100-1.0.9-20260803T002017Z",
     "cosmos2-transfer": "2.5.1-sam2-multigpu-20260817-r2",
-    # Additive r2 release of cosmos-framework 1.2.2 (pinned commit 5e67049c) +
-    # torch cu130. The immutable 1.2.2-cu130 tag remains rollback provenance.
-    # No weights baked; gated Cosmos3 checkpoints download at runtime.
-    "cosmos3": "1.2.2-cu130-r2",
+    # Additive r5 release of cosmos-framework 1.2.2 (pinned commit 5e67049c) +
+    # torch cu130 with the attested SkyPilot 0.12.2 Kubernetes bootstrap closure
+    # and a durable no-argv worker lifecycle. It uses distro FFmpeg instead of
+    # imageio-ffmpeg's redundant bundled binary.
+    # Earlier tags remain immutable provenance. No weights are baked; gated
+    # Cosmos3 checkpoints download at runtime.
+    "cosmos3": "1.2.2-cu130-r6",
     "cosmos3-reason": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     # Additive image releases that preserve the tool versions while including
     # the immutable SkyPilot 0.12.2 Kubernetes bootstrap closure. The original
     # semantic-version tags remain valid for direct container use, but cannot be
     # workflow-worker defaults because their published bytes predate that closure.
     "cosmos-curate": "0.1.2-skypilot-v1-20260813T164700Z",
-    "cosmos-evaluator": "0.1.2-skypilot-v1-20260813T164700Z",
+    # Additive r2 release includes the evaluator CLI's deterministic
+    # --attribute-sample-policy contract used by PAIDF ranking/holdout stages.
+    # The original tag remains immutable provenance.
+    "cosmos-evaluator": "0.1.2-skypilot-v1-20260813T164700Z-r2",
     "groot": "0.1.0",
     "fiftyone": "1.15.0-post1-skypilot-v1-20260815-review5",
     "sonic": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",

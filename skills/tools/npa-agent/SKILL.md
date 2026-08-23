@@ -95,6 +95,14 @@ Token Factory model selection is configurable via `--llm-model` and `--llm-model
 ## Customer HTTPS Access
 
 - Public URL: `https://<public_ip>/` (self-signed cert on VM IP)
+- `npa agent status` may print that canonical HTTPS endpoint in local operator
+  output or an explicitly requested handoff only after its authenticated probe
+  succeeds and an unauthenticated request returns `401`, proving HTTP Basic Auth
+  is enforced. The status payload records `endpoint_disclosure_allowed=true` and
+  `basic_auth_enforced=true` when this narrow exception applies.
+- This exception never covers `direct_url`, credential-bearing URLs, usernames,
+  passwords, auth-file contents, or an endpoint whose protection was not just
+  verified. Keep those values in the owner-only `0600` credential store.
 - Sign-in form at `/login-help.html` and `/welcome` (mobile-safe XHR/fetch sign-in; URL-embed fallback on desktop only)
 - On phones: open `/healthz` first to accept the self-signed certificate, then sign in at `/login-help.html`
 - Mobile chat uses `sessionStorage` basic-auth fallback — sign out by clearing site data or use `/login-help.html` again
@@ -446,5 +454,7 @@ Submits workflow with current selection; updates `latest_submit` and `sim_viz.ru
 ## Security / Guardrails
 
 - Never leak credentials, auth env, or opaque secrets into chat or workflow YAML.
+- A canonical agent `https://<public_ip>/` is shareable only under the verified
+  Basic Auth endpoint exception above; do not infer protection from a saved URL.
 - Use same-origin HTTPS paths (`/api/...`) for browser actions; avoid localhost guidance.
 - Do not hardcode project IDs, tenant IDs, bucket names, registry IDs, usernames, or public IPs in examples.
