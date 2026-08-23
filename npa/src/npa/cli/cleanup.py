@@ -699,6 +699,16 @@ _CLOUD_CLEANUP_PHASE_GROUPS = (
     *_CLOUD_CLEANUP_REQUIRED_GROUPS,
     *_CLOUD_CLEANUP_OPTIONAL_GROUPS,
 )
+_AGENT_TERRAFORM_GRAPH = frozenset(
+    {
+        "compute_instance",
+        "boot_disk",
+        "network",
+        "subnet",
+        "security_group",
+        "public_ip",
+    }
+)
 
 
 def _phase_group_events(
@@ -740,6 +750,237 @@ def _cloud_cleanup_receipts_are_terminal(
         or _newest_phase_group_is_terminal(phase_states, names)
         for names in _CLOUD_CLEANUP_OPTIONAL_GROUPS
     )
+
+
+def _agent_lifecycle_allows_project_retirement(
+    project_alias: str, project_id: str
+) -> tuple[bool, str]:
+    """Reconcile surviving agent generations before forgetting their credentials.
+
+    Receipts are historical evidence, not an inventory. A reused alias/name may
+    already have a newer agent record, provisioning operation, or Terraform
+    state. Only one immutable state identity that matches complete graph-absence
+    evidence and an exact provider NotFound may be treated as stale.
+    """
+
+    import json
+    from collections.abc import Mapping
+
+    from npa.cli import agent as agent_module
+    from npa.cli.agent_terraform import AgentTerraformStateIdentityError
+    from npa.clients.nebius import NebiusError, get_compute_instance_identity
+    from npa.deploy import provisioner
+    from npa.provisioning_journal import operation_root
+    from npa.teardown_receipts import list_teardown_receipts
+
+    alias = str(project_alias or "").strip()
+    exact_project = str(project_id or "").strip()
+    if not exact_project:
+        return False, "an exact immutable project ID is required"
+
+    if not alias:
+        # Once an alias is gone, an unbound local Terraform tree cannot be
+        # proven unrelated to the exact project. Preserve its credentials. A
+        # completely absent tree, by contrast, is positive local evidence that
+        # there is no surviving alias/name generation to reconcile.
+        workbench_base = provisioner.working_dir_path(
+            "", ".cleanup-inventory"
+        ).parent
+        try:
+            if workbench_base.exists():
+                if workbench_base.is_symlink() or not workbench_base.is_dir():
+                    return False, "the agent Terraform root is not a regular directory"
+                if any(workbench_base.iterdir()):
+                    return False, (
+                        "alias-free agent Terraform state cannot be bound to the "
+                        "exact project"
+                    )
+        except OSError as exc:
+            return False, f"agent Terraform state inventory is unreadable: {exc}"
+
+        root = operation_root()
+        try:
+            if root.exists():
+                if root.is_symlink() or not root.is_dir():
+                    return False, (
+                        "the provisioning journal root is not a regular directory"
+                    )
+                for journal in sorted(root.glob("*/journal.json")):
+                    try:
+                        payload = json.loads(journal.read_text(encoding="utf-8"))
+                    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                        return False, f"a provisioning journal is unreadable: {exc}"
+                    if not isinstance(payload, Mapping):
+                        return False, "a provisioning journal is schema-invalid"
+                    if (
+                        str(payload.get("resource_type") or "") == "agent"
+                        and str(payload.get("project_id") or "") == exact_project
+                        and str(payload.get("phase") or "")
+                        not in {"destroyed", "rolled-back"}
+                    ):
+                        return False, (
+                            "alias-free agent provisioning state remains for the "
+                            "exact project"
+                        )
+        except OSError as exc:
+            return False, f"provisioning journal inventory is unreadable: {exc}"
+        return True, "no alias-bound agent lifecycle evidence survives"
+
+    try:
+        records = agent_module.resolve_project_agents(alias)
+    except (OSError, RuntimeError, ValueError) as exc:
+        return False, f"saved agent records are unreadable: {exc}"
+    if not isinstance(records, dict):
+        return False, "saved agent records are schema-invalid"
+
+    names = {str(name).strip() for name in records if str(name).strip()}
+    local_names: set[str] = set()
+    workbench_root = provisioner.working_dir_path(alias, ".cleanup-inventory").parent
+    try:
+        if workbench_root.exists():
+            if workbench_root.is_symlink() or not workbench_root.is_dir():
+                return False, "the agent Terraform root is not a regular directory"
+            for child in workbench_root.iterdir():
+                if child.is_symlink():
+                    return False, "an agent Terraform path is a symlink"
+                if child.is_dir() and any(child.iterdir()):
+                    local_names.add(child.name)
+    except OSError as exc:
+        return False, f"agent Terraform state inventory is unreadable: {exc}"
+    names.update(local_names)
+
+    operations_by_name: dict[str, list[dict[str, object]]] = {}
+    root = operation_root()
+    try:
+        if root.exists():
+            if root.is_symlink() or not root.is_dir():
+                return False, "the provisioning journal root is not a regular directory"
+            for journal in sorted(root.glob("*/journal.json")):
+                try:
+                    payload = json.loads(journal.read_text(encoding="utf-8"))
+                except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                    return False, f"a provisioning journal is unreadable: {exc}"
+                if not isinstance(payload, Mapping):
+                    return False, "a provisioning journal is schema-invalid"
+                if str(payload.get("resource_type") or "") != "agent":
+                    continue
+                saved_alias = str(payload.get("project_alias") or "")
+                saved_project = str(payload.get("project_id") or "")
+                if saved_alias != alias and saved_project != exact_project:
+                    continue
+                if saved_alias and saved_alias != alias:
+                    return False, "an agent journal conflicts with the selected alias"
+                if saved_project and saved_project != exact_project:
+                    return False, "an agent journal conflicts with the selected project"
+                name = str(payload.get("requested_name") or "").strip()
+                if not name:
+                    return False, "an agent journal has no requested deployment name"
+                names.add(name)
+                operations_by_name.setdefault(name, []).append(dict(payload))
+    except OSError as exc:
+        return False, f"provisioning journal inventory is unreadable: {exc}"
+
+    terminal_graphs: dict[tuple[str, str], dict[str, object]] = {}
+    try:
+        receipts = list_teardown_receipts(project_id=exact_project, legacy="exclude")
+    except (OSError, RuntimeError, ValueError) as exc:
+        return False, f"agent teardown receipts are unreadable: {exc}"
+    for receipt in receipts:
+        for event in receipt.get("events") or []:
+            if not isinstance(event, Mapping) or event.get("phase") != "agent":
+                continue
+            identity = event.get("identity")
+            identity = identity if isinstance(identity, Mapping) else {}
+            verification = event.get("verification")
+            verification = verification if isinstance(verification, Mapping) else {}
+            action = event.get("action")
+            action = action if isinstance(action, Mapping) else {}
+            name = str(identity.get("agent_name") or event.get("resource") or "").strip()
+            instance_id = str(identity.get("instance_id") or "").strip()
+            if not (
+                name
+                and instance_id
+                and str(event.get("terminal_state") or "").lower()
+                in {"verified_absent", "verified_deleted"}
+                and action.get("kind") == "terraform_agent_destroy"
+                and verification.get("exact_instance_absent") is True
+                and verification.get("terraform_destroy_completed") is True
+                and _AGENT_TERRAFORM_GRAPH.issubset(
+                    set(verification.get("terraform_dependency_graph") or [])
+                )
+            ):
+                continue
+            key = (name, instance_id)
+            prior = terminal_graphs.get(key, {})
+            if str(event.get("recorded_at") or "") > str(prior.get("recorded_at") or ""):
+                terminal_graphs[key] = dict(event)
+
+    for name in sorted(names):
+        record = records.get(name, {})
+        if record and not isinstance(record, Mapping):
+            return False, f"saved agent record {name!r} is schema-invalid"
+        record = record if isinstance(record, Mapping) else {}
+        record_project = str(record.get("project_id") or "").strip()
+        if record_project and record_project != exact_project:
+            return False, f"saved agent record {name!r} conflicts with the project"
+
+        try:
+            state_exists = agent_module._agent_terraform_state_exists(alias, name)
+        except (OSError, RuntimeError, ValueError) as exc:
+            return False, f"agent {name!r} Terraform inventory is unreadable: {exc}"
+        instance_ids = {
+            value
+            for value in (str(record.get("instance_id") or "").strip(),)
+            if value
+        }
+        if state_exists:
+            try:
+                instance_ids.add(
+                    agent_module._agent_terraform_instance_id(alias, name)
+                )
+            except AgentTerraformStateIdentityError as exc:
+                return False, f"agent {name!r} Terraform identity is ambiguous: {exc}"
+
+        operations = operations_by_name.get(name, [])
+        active_operations = [
+            operation
+            for operation in operations
+            if str(operation.get("phase") or "") not in {"destroyed", "rolled-back"}
+        ]
+        has_local_files = name in local_names
+        if not (record or state_exists or active_operations or has_local_files):
+            continue
+        if len(instance_ids) != 1:
+            return False, f"agent {name!r} has no single immutable instance identity"
+        instance_id = next(iter(instance_ids))
+        terminal = terminal_graphs.get((name, instance_id))
+        if not terminal:
+            return False, (
+                f"agent {name!r} has surviving lifecycle state without matching "
+                "complete terminal graph evidence"
+            )
+        terminal_at = str(terminal.get("recorded_at") or "")
+        if any(
+            str(operation.get("updated_at") or "") >= terminal_at
+            for operation in active_operations
+        ):
+            return False, f"agent {name!r} has a newer provisioning generation"
+
+        identity = terminal.get("identity")
+        identity = identity if isinstance(identity, Mapping) else {}
+        try:
+            remote = get_compute_instance_identity(
+                instance_id,
+                project_id=exact_project,
+                expected_name=f"agent-{alias}-{name}",
+                profile=str(identity.get("profile") or "") or None,
+            )
+        except NebiusError as exc:
+            return False, f"agent {name!r} provider absence is unresolved: {exc}"
+        if remote is not None:
+            return False, f"agent {name!r} is still present at the provider"
+
+    return True, "surviving agent lifecycle evidence is absent or exactly stale"
 
 
 def cleanup_phase_model(
@@ -1706,6 +1947,14 @@ def cleanup_cmd(
     cleared_credentials: list[str] = []
     pruned_state: list[tuple[str, Path]] = []
     if full:
+        agent_retirement_safe = True
+        agent_retirement_detail = "no exact-project credential retirement requested"
+        if project_credential_residue_items:
+            agent_retirement_safe, agent_retirement_detail = (
+                _agent_lifecycle_allows_project_retirement(
+                    receipt_alias, receipt_project_id
+                )
+            )
         cleared_credentials = _clear_full_credentials()
         if cleared_credentials:
             emit("Removed locally stored " + ", ".join(cleared_credentials) + ".")
@@ -1725,7 +1974,9 @@ def cleanup_cmd(
             project_alias=receipt_alias, project_id=receipt_project_id
         )
         cloud_absent = bool(
-            receipt_project_id and _cloud_cleanup_receipts_are_terminal(phase_states)
+            receipt_project_id
+            and _cloud_cleanup_receipts_are_terminal(phase_states)
+            and agent_retirement_safe
         )
         if project_credential_residue_items and not iam_partial and cloud_absent:
             from npa.clients.config import forget_project, resolve_environment
@@ -1763,6 +2014,13 @@ def cleanup_cmd(
                         "class": "project_alias_or_default",
                     }
                 )
+        if project_credential_residue_items and not agent_retirement_safe:
+            cleanup_failed = True
+            emit(
+                "Warning: exact-project credentials and alias were preserved because "
+                f"agent lifecycle verification is unresolved: {agent_retirement_detail}.",
+                err=True,
+            )
         if project_credential_residue_items:
             cleanup_failed = True
             emit(

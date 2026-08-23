@@ -1056,11 +1056,62 @@ def is_permission_denied(message: str) -> bool:
     return _is_permission_denied(message)
 
 
+_PROVIDER_NOT_FOUND_CODE = r"(?:not_?found|resourcenotfound)"
+_PROVIDER_UNRESOLVED_CODE = (
+    r"(?:permission_?denied|unauthenticated|unauthorized|access_?denied|forbidden|"
+    r"invalid_?argument|failed_?precondition|unavailable|deadline_?exceeded|internal|"
+    r"unknown|data_?loss|unimplemented|resource_?exhausted|aborted|cancelled)"
+)
+_PROVIDER_NOT_FOUND_PATTERNS = (
+    re.compile(
+        rf"^\s*{_PROVIDER_NOT_FOUND_CODE}\s*(?::|$)",
+        re.IGNORECASE | re.MULTILINE,
+    ),
+    re.compile(
+        rf"\b(?:code|status(?:\.code)?|reason)\s*[:=]\s*[\"']?"
+        rf"{_PROVIDER_NOT_FOUND_CODE}\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"[\"'](?:code|status|reason)[\"']\s*:\s*[\"']"
+        rf"{_PROVIDER_NOT_FOUND_CODE}[\"']",
+        re.IGNORECASE,
+    ),
+)
+_PROVIDER_UNRESOLVED_PATTERNS = (
+    re.compile(
+        rf"^\s*{_PROVIDER_UNRESOLVED_CODE}\s*(?::|$)",
+        re.IGNORECASE | re.MULTILINE,
+    ),
+    re.compile(
+        rf"\b(?:code|status(?:\.code)?|reason)\s*[:=]\s*[\"']?"
+        rf"{_PROVIDER_UNRESOLVED_CODE}\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"[\"'](?:code|status|reason)[\"']\s*:\s*[\"']"
+        rf"{_PROVIDER_UNRESOLVED_CODE}[\"']",
+        re.IGNORECASE,
+    ),
+)
+
+
 def _is_not_found(message: str) -> bool:
-    lowered = message.lower()
-    return (
-        "notfound" in lowered or "not found" in lowered or "resourcenotfound" in lowered
-    )
+    """Accept only a provider-shaped resource-absence status code.
+
+    Generic prose containing ``not found`` is not trustworthy absence evidence:
+    it also describes missing executables, profiles, credentials, schema fields,
+    and transport dependencies. Exact teardown callers may converge only when
+    the provider exposes its typed NotFound status.
+    """
+
+    text = str(message or "").strip()
+    if any(
+        pattern.search(text) is not None
+        for pattern in _PROVIDER_UNRESOLVED_PATTERNS
+    ):
+        return False
+    return any(pattern.search(text) is not None for pattern in _PROVIDER_NOT_FOUND_PATTERNS)
 
 
 def is_not_found(message: str) -> bool:
@@ -2447,7 +2498,7 @@ def get_service_account_id_by_name(
         sa_id = _resource_id_from_nebius_error(message, prefix="serviceaccount-")
         if sa_id:
             return sa_id
-        if "notfound" in message.lower() or "not found" in message.lower():
+        if _is_not_found(message):
             return None
         if _is_permission_denied(message):
             return None

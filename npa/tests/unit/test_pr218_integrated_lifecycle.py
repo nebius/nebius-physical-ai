@@ -1401,6 +1401,288 @@ def test_old_agent_receipt_cannot_terminalize_fresh_state_or_enable_cleanup(
     assert "demo" in (saved.get("projects") or {})
 
 
+def test_direct_full_cleanup_blocks_old_receipt_with_fresh_agent_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Cleanup must inspect live lifecycle state without an intervening destroy."""
+
+    from npa.cli import cleanup as cleanup_cli
+    from npa.cli.main import app
+    from npa.clients import config
+    from npa.clients.project_credential_store import (
+        project_credential_residue,
+        write_project_credentials,
+    )
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "demo",
+                "projects": {
+                    "demo": {
+                        "project_id": "project-a",
+                        "tenant_id": "tenant-a",
+                        "region": "eu-test1",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "CONFIG_PATH", config_path)
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    write_project_credentials(
+        "project-a",
+        {
+            "terraform_state": {
+                "access_key": "test-access",
+                "secret_key": "test-secret",
+            }
+        },
+        alias="demo",
+    )
+    for phase, state in (
+        ("workflow_audit", "verified_absent"),
+        ("bucket", "verified_absent"),
+        ("storage_iam", "completed"),
+    ):
+        teardown_receipts.record_teardown_event(
+            phase=phase,
+            resource=f"{phase}-fixture",
+            terminal_state=state,
+            project_alias="demo",
+            project_id="project-a",
+        )
+    teardown_receipts.record_teardown_event(
+        phase="agent",
+        resource="agent",
+        terminal_state="verified_deleted",
+        project_alias="demo",
+        project_id="project-a",
+        identity={
+            "project_alias": "demo",
+            "project_id": "project-a",
+            "agent_name": "agent",
+            "instance_id": "instance-old",
+        },
+        action={"kind": "terraform_agent_destroy"},
+        verification={
+            "exact_instance_absent": True,
+            "terraform_destroy_completed": True,
+            "terraform_dependency_graph": [
+                "compute_instance",
+                "boot_disk",
+                "network",
+                "subnet",
+                "security_group",
+                "public_ip",
+            ],
+        },
+    )
+    tf_dir = provisioner.working_dir_path("demo", "agent")
+    tf_dir.mkdir(parents=True)
+    state_path = tf_dir / "terraform.tfstate"
+    state_path.write_text(
+        json.dumps(
+            {
+                "version": 4,
+                "outputs": {"instance_id": {"value": "instance-fresh"}},
+                "resources": [
+                    {
+                        "mode": "managed",
+                        "type": "nebius_compute_v1_instance",
+                        "name": "workbench",
+                        "instances": [
+                            {"attributes": {"id": "instance-fresh"}}
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cleanup_cli, "_nonterminal_jobs", lambda _sky: ([], ""))
+    monkeypatch.setattr(
+        cleanup_cli,
+        "_storage_iam_full_check",
+        lambda *_a, **_k: ("verified absent", False, "verified_absent", "owned"),
+    )
+    monkeypatch.setattr(
+        "npa.clients.nebius.get_compute_instance_identity",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("conflicting state must block before a provider lookup")
+        ),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["cleanup", "--project", "demo", "--full", "--yes", "--keep-sky", "--json"],
+    )
+
+    assert result.exit_code != 0, result.output
+    assert state_path.exists()
+    assert project_credential_residue("project-a")
+    saved = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    assert "demo" in (saved.get("projects") or {})
+
+
+def test_cleanup_historical_agent_state_needs_exact_provider_absence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.cli import cleanup as cleanup_cli
+    from npa.cli.main import app
+    from npa.clients import config, nebius
+    from npa.clients.project_credential_store import (
+        project_credential_residue,
+        write_project_credentials,
+    )
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "demo",
+                "projects": {
+                    "demo": {
+                        "project_id": "project-a",
+                        "tenant_id": "tenant-a",
+                        "region": "eu-test1",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "CONFIG_PATH", config_path)
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    write_project_credentials(
+        "project-a",
+        {
+            "terraform_state": {
+                "access_key": "test-access",
+                "secret_key": "test-secret",
+            }
+        },
+        alias="demo",
+    )
+    for phase, state in (
+        ("workflow_audit", "verified_absent"),
+        ("bucket", "verified_absent"),
+        ("storage_iam", "completed"),
+    ):
+        teardown_receipts.record_teardown_event(
+            phase=phase,
+            resource=f"{phase}-fixture",
+            terminal_state=state,
+            project_alias="demo",
+            project_id="project-a",
+        )
+    teardown_receipts.record_teardown_event(
+        phase="agent",
+        resource="agent",
+        terminal_state="verified_deleted",
+        project_alias="demo",
+        project_id="project-a",
+        identity={
+            "project_alias": "demo",
+            "project_id": "project-a",
+            "agent_name": "agent",
+            "instance_id": "instance-old",
+            "profile": "operator",
+        },
+        action={"kind": "terraform_agent_destroy"},
+        verification={
+            "exact_instance_absent": True,
+            "terraform_destroy_completed": True,
+            "terraform_dependency_graph": [
+                "compute_instance",
+                "boot_disk",
+                "network",
+                "subnet",
+                "security_group",
+                "public_ip",
+            ],
+        },
+    )
+    tf_dir = provisioner.working_dir_path("demo", "agent")
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfstate").write_text(
+        json.dumps(
+            {
+                "version": 4,
+                "outputs": {"instance_id": {"value": "instance-old"}},
+                "resources": [
+                    {
+                        "mode": "managed",
+                        "type": "nebius_compute_v1_instance",
+                        "instances": [
+                            {"attributes": {"id": "instance-old"}}
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    real_get_compute_instance_identity = nebius.get_compute_instance_identity
+    monkeypatch.setattr(
+        nebius,
+        "get_compute_instance_identity",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            nebius.NebiusError(
+                "profile 'operator' not found in the Nebius configuration"
+            )
+        ),
+    )
+
+    safe, detail = cleanup_cli._agent_lifecycle_allows_project_retirement(
+        "demo", "project-a"
+    )
+
+    assert safe is False
+    assert "provider absence is unresolved" in detail
+
+    monkeypatch.setattr(
+        nebius, "get_compute_instance_identity", real_get_compute_instance_identity
+    )
+    monkeypatch.setattr("shutil.which", lambda _binary: None)
+    monkeypatch.setattr(cleanup_cli, "_nonterminal_jobs", lambda _sky: ([], ""))
+    monkeypatch.setattr(
+        cleanup_cli,
+        "_storage_iam_full_check",
+        lambda *_a, **_k: ("verified absent", False, "verified_absent", "owned"),
+    )
+
+    cleanup_result = CliRunner().invoke(
+        app,
+        ["cleanup", "--project", "demo", "--full", "--yes", "--keep-sky", "--json"],
+    )
+
+    assert cleanup_result.exit_code != 0, cleanup_result.output
+    assert project_credential_residue("project-a")
+    saved = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    assert "demo" in (saved.get("projects") or {})
+
+    calls: list[tuple[str, str, str]] = []
+
+    def exact_absence(instance_id, *, project_id, profile, **_kwargs):  # noqa: ANN001, ANN202
+        calls.append((instance_id, project_id, profile))
+        return None
+
+    monkeypatch.setattr(nebius, "get_compute_instance_identity", exact_absence)
+
+    safe, detail = cleanup_cli._agent_lifecycle_allows_project_retirement(
+        "demo", "project-a"
+    )
+
+    assert safe is True
+    assert "exactly stale" in detail
+    assert calls == [("instance-old", "project-a", "operator")]
+
+
 def test_destroyed_agent_operation_needs_no_deleted_backend_credentials(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

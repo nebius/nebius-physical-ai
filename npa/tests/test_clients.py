@@ -1594,6 +1594,89 @@ def test_is_permission_denied_matches_access_denied() -> None:
     assert not nebius.is_permission_denied("NotFound: bucket missing")
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "nebius CLI not found on PATH",
+        "profile 'operator' not found in the Nebius configuration",
+        "Unauthenticated: credential file not found",
+        "PermissionDenied: required role binding was not found",
+        "transport dependency not found while dialing the API",
+        "invalid JSON: metadata field not found",
+        "PermissionDenied: inventory failed; nested code = NotFound",
+    ],
+)
+def test_nebius_not_found_classifier_rejects_non_resource_failures(message) -> None:
+    assert nebius.is_not_found(message) is False
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "NotFound",
+        "NotFound: compute instance does not exist",
+        "rpc error: code = NotFound desc = requested resource is absent",
+        '{"code":"NOT_FOUND","message":"resource is absent"}',
+        "status.code: ResourceNotFound",
+    ],
+)
+def test_nebius_not_found_classifier_accepts_provider_status_codes(message) -> None:
+    assert nebius.is_not_found(message) is True
+
+
+def test_compute_identity_missing_nebius_cli_is_unresolved(mocker) -> None:
+    mocker.patch("shutil.which", return_value=None)
+
+    with pytest.raises(NebiusError, match="CLI not found"):
+        nebius.get_compute_instance_identity(
+            "instance-a",
+            project_id="project-a",
+            expected_name="agent-demo-agent",
+        )
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "profile 'operator' not found in the Nebius configuration",
+        "Unauthenticated: credential file not found",
+        "PermissionDenied: required role binding was not found",
+    ],
+)
+def test_compute_identity_provider_prerequisite_failure_is_unresolved(
+    mocker, message
+) -> None:
+    mocker.patch(
+        "npa.clients.nebius._run_json", side_effect=nebius.NebiusError(message)
+    )
+
+    with pytest.raises(NebiusError, match="not found"):
+        nebius.get_compute_instance_identity(
+            "instance-a",
+            project_id="project-a",
+            expected_name="agent-demo-agent",
+            profile="operator",
+        )
+
+
+def test_compute_identity_exact_provider_not_found_is_absent(mocker) -> None:
+    mocker.patch(
+        "npa.clients.nebius._run_json",
+        side_effect=nebius.NebiusError(
+            "rpc error: code = NotFound desc = compute instance is absent"
+        ),
+    )
+
+    assert (
+        nebius.get_compute_instance_identity(
+            "instance-a",
+            project_id="project-a",
+            expected_name="agent-demo-agent",
+        )
+        is None
+    )
+
+
 def test_nebius_bucket_exact_lookup_does_not_enumerate_project(mocker) -> None:
     """Existence checks query only the requested bucket name.
 
