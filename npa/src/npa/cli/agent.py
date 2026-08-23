@@ -76,6 +76,7 @@ from npa.cli.agent_setup_convergence import (
     reconcile_agent_setup as _reconcile_agent_setup,
 )
 from npa.cli.agent_terraform import (
+    _agent_terraform_instance_id,  # noqa: F401 - recovery hook re-export
     _agent_terraform_state_exists,  # noqa: F401 - recovery hook re-export
     _apply_agent_terraform,
     _cleanup_orphan_agent_instances,  # noqa: F401 - recovery hook re-export

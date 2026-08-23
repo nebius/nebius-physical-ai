@@ -7,6 +7,14 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+- Agent teardown receipt retries are generation-safe: a terminal receipt can
+  reconcile IAM around surviving Terraform state only when every state copy
+  names the receipt's exact immutable VM and the provider freshly verifies it
+  absent. Ambiguous, unreadable, missing, conflicting, present, or unverifiable
+  state records a nonterminal failure and retains project credentials and alias.
+- Provider-confirmed dependent VMs make agent IAM retention a successful destroy
+  result (`retained_shared`, exit 0), because the shared identity remains needed.
+  Unresolved or unverifiable IAM inventory remains a nonzero partial teardown.
 - Agent artifact loading now requires a discovered `run_id`/`run_ref` inventory
   context with every S3 URI. URI-only requests return structured error
   `npa.agent.api_error/v1` (`run_id_required_for_s3_uri`) instead of reading an

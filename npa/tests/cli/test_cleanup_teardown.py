@@ -950,7 +950,7 @@ def test_agent_iam_purge_protects_same_project_peer_missing_from_local_config(
 def test_agent_iam_purge_fails_closed_when_provider_inventory_is_forbidden(
     monkeypatch,
 ) -> None:
-    from npa.cli.agent_iam import report_agent_iam
+    from npa.cli.agent_iam import AgentIAMCleanupError, report_agent_iam
     from npa.clients import nebius as nebius_module
 
     deleted = _iam_stubs(monkeypatch)
@@ -972,6 +972,18 @@ def test_agent_iam_purge_fails_closed_when_provider_inventory_is_forbidden(
     assert any(
         "inventory is unresolved" in line and "RBAC forbidden" in line for line in lines
     )
+    dispositions: list[str] = []
+    with pytest.raises(AgentIAMCleanupError, match="inventory.*unresolved"):
+        report_agent_iam(
+            project_id="project-a",
+            remaining_agents=0,
+            purge=True,
+            on_status=lines.append,
+            on_disposition=dispositions.append,
+            strict=True,
+        )
+    assert dispositions == ["verification_unresolved"]
+    assert deleted == []
 
 
 def test_agent_iam_schema_invalid_inventory_uses_exact_terminal_graph_receipt(

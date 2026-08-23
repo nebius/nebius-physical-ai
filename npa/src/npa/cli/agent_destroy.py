@@ -191,7 +191,73 @@ def destroy_cmd(
         )
     ):
         from npa.cli.agent_iam import AgentIAMCleanupError, report_destroyed_agent_iam
+        from npa.cli.agent_terraform import AgentTerraformStateIdentityError
         from npa.cli.destructive import require_destructive_confirmation
+
+        def fail_closed(message: str) -> None:
+            agent_module._record_agent_destroy_event(
+                alias,
+                name,
+                terminal_state="verification_failed",
+                terraform_state_present=state_exists,
+                error=message,
+                identity=identity.values,
+                project_id=exact_project,
+                identity_source=identity.source,
+            )
+            _emit(
+                {
+                    **identity.to_dict(),
+                    "outcome": "verification_failed",
+                    "verified": False,
+                    "infrastructure_absent": False,
+                    "iam_cleanup_complete": False,
+                    "message": message,
+                },
+                output_json=output_json,
+            )
+            raise typer.Exit(code=2)
+
+        if state_exists:
+            try:
+                state_instance = agent_module._agent_terraform_instance_id(alias, name)
+            except AgentTerraformStateIdentityError as exc:
+                fail_closed(
+                    "The terminal receipt cannot authorize IAM reconciliation because "
+                    "surviving Terraform state has no single trustworthy immutable "
+                    f"instance identity: {exc}. Credentials and local state were retained."
+                )
+            if state_instance != exact_instance:
+                fail_closed(
+                    "The terminal receipt names a different immutable instance than "
+                    "the surviving Terraform state. The state may belong to a current "
+                    "deployment; credentials and local state were retained."
+                )
+            if not exact_project:
+                fail_closed(
+                    "The terminal receipt and surviving Terraform state cannot be "
+                    "provider-verified without an exact project identity. Credentials "
+                    "and local state were retained."
+                )
+            try:
+                remote = get_compute_instance_identity(
+                    state_instance,
+                    project_id=exact_project,
+                    expected_name=(f"agent-{alias}-{name}" if alias else ""),
+                    profile=str(identity.get("profile") or "") or None,
+                )
+            except NebiusError as exc:
+                fail_closed(
+                    "The terminal receipt matches surviving Terraform state, but exact "
+                    f"provider absence verification is unresolved: {exc}. Credentials "
+                    "and local state were retained."
+                )
+            if remote is not None:
+                fail_closed(
+                    "The exact instance in the terminal receipt and surviving Terraform "
+                    "state is present at the provider. Credentials and local state were "
+                    "retained."
+                )
 
         require_destructive_confirmation(
             yes=yes,
@@ -207,6 +273,16 @@ def destroy_cmd(
                 alias, name, record=dict(identity.values), purge=purge_iam
             )
         except AgentIAMCleanupError as exc:
+            agent_module._record_agent_destroy_event(
+                alias,
+                name,
+                terminal_state="partial",
+                error=str(exc),
+                identity=identity.values,
+                project_id=exact_project,
+                identity_source=identity.source,
+                terraform_graph_absent=True,
+            )
             _emit(
                 {
                     **identity.to_dict(),

@@ -85,6 +85,14 @@ receipt, then live configuration. Any overlapping mismatch is unsafe and fails
 before provider or Terraform mutation. NPA never substitutes a default alias, a
 current Kubernetes context, or an unrelated SkyPilot profile.
 
+A terminal agent receipt cannot override surviving Terraform state merely
+because the local agent record or deployment journal is missing. Receipt-only
+IAM reconciliation proceeds only when every surviving state copy names the same
+immutable instance as the receipt and the provider freshly verifies that exact
+instance absent. Missing, unreadable, ambiguous, conflicting, or provider-present
+evidence exits nonzero and keeps project credentials, the alias, and local state
+for recovery.
+
 ## The confirmation contract
 
 `agent destroy`, `storage bucket delete`, and `storage service-account delete`
@@ -100,6 +108,19 @@ share one contract:
 A `--json` confirmation refusal contains one machine-readable document.
 
 ## What each phase guards
+
+### Agent IAM
+
+`npa agent destroy` removes NPA-owned agent IAM by default after the exact agent
+infrastructure is verified absent. When exact provider inventory finds other VMs
+that depend on the same service account, preserving that shared identity is a
+successful destroy outcome: JSON reports `iam_disposition: retained_shared` and
+the command exits 0 because deleting it would break those dependents.
+
+This success contract applies only to provider-confirmed dependents. Unresolved
+or unverifiable dependency inventory, missing trustworthy ownership, and failed
+IAM deletion remain partial teardown results and exit nonzero. `--keep-iam` is a
+separate explicit request to retain IAM.
 
 ### Deleting a project
 
