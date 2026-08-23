@@ -120,11 +120,11 @@ A conclusion in a PR description is not a control. Encode it:
 - `npa/docker/workbench/packaging-contract.yaml` — set `redistribution: public`
   or `restricted` on the image entry.
 - `npa/src/npa/deploy/images.py` — add restricted tools to
-  `OMNIVERSE_RESTRICTED_TOOLS` so `publicly_publishable_tools()` and `publish_public`
-  exclude them, and so resolving them from a public registry fails loudly. That set is
-  currently contains the build-your-own `cosmos3-serving` image. The name is retained
-  for compatibility with the original Omniverse guard; membership covers any vendor
-  runtime whose public redistribution conditions are not satisfied.
+  `RESTRICTED_PUBLICATION_TOOLS` so `publicly_publishable_tools()` and
+  `publish_public` exclude them, and so resolving them from a public registry
+  fails loudly. Compatibility aliases retain the original Omniverse-named API,
+  but new code must use the general inventory because any vendor runtime can be
+  non-redistributable.
 - `npa/src/npa/deploy/images.py` — add tools that are licence-eligible but have
   no built, byte-scanned artifact yet to `UNVALIDATED_PUBLICATION_TOOLS`.
   "Restricted" and "unproven" are different answers to different questions, and
@@ -277,9 +277,11 @@ bytes at all**. On first run they download Isaac Sim and Isaac Lab from
 NVIDIA still delivers the runtime directly to each operator; we redistribute no Isaac
 bytes, so the redistribution conclusion does not depend on the EULA UX default.
 The clean runtime-fetch `isaac-lab`, `sonic`, and `groot` images may therefore be
-classified `redistribution: public`. Historical SONIC L40S and MuJoCo images remain
-restricted and quarantined because their built layers contain the old payload; a new
-runtime-fetch build must be scanned before it can replace them.
+classified `redistribution: public`. Historical SONIC L40S and inherited MuJoCo
+images remain restricted and quarantined because their built layers contain the
+old payload. The replacement MuJoCo architecture is built independently from a
+digest-pinned public Python base and must pass exact-layer scans plus real GPU
+validation before its digest can replace the quarantined variant.
 
 Three things made that verdict defensible rather than merely plausible, and a new
 solution should expect to produce all three:

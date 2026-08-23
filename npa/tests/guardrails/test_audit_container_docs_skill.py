@@ -5,7 +5,7 @@ import re
 
 from npa.deploy.images import (
     CONTAINER_IMAGE_NAMES,
-    public_mirror_tag_for_tool,
+    public_release_tag_for_tool,
     publicly_publishable_tools,
 )
 
@@ -42,8 +42,8 @@ def test_public_catalog_matches_the_repository_publish_inventory() -> None:
     assert set(rows) == expected_images
     for tool in tools:
         image = CONTAINER_IMAGE_NAMES[tool]
-        assert f"`{public_mirror_tag_for_tool(tool)}`" in rows[image], (
-            f"{image} catalog row does not contain the current public-mirror pin"
+        assert f"`{public_release_tag_for_tool(tool)}`" in rows[image], (
+            f"{image} catalog row does not contain the current public-release pin"
         )
 
 
@@ -54,6 +54,7 @@ def test_skill_names_each_authoritative_inventory_layer() -> None:
         "npa/src/npa/deploy/images.py",
         "npa/pyproject.toml",
         "npa/src/npa/deploy/*_image_manifest.json",
+        "npa/src/npa/deploy/public_release_manifest.json",
         "npa/src/npa/deploy/publish_public.py",
         "publicly_publishable_tools()",
         "docker buildx imagetools inspect",

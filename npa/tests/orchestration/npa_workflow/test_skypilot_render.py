@@ -370,13 +370,12 @@ def test_submit_time_accelerator_override_preserves_profile_gpu_count() -> None:
     )
 
 
-def test_nebius_cloud_render_injects_docker_secrets(
+def test_nebius_cloud_render_injects_exact_host_docker_secrets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "test-token")
     monkeypatch.setenv("SKYPILOT_DOCKER_USERNAME", "iam")
-    # Use a GPU twin that resolves a Nebius registry image (Token Factory no
-    # longer pins npa-cosmos — it is API-only and uses SkyPilot's default image).
+    monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "registry.example")
     path = NPA_SPECS / "vlm-eval-single.yaml"
     spec = load_spec(path)
     for profile in spec.resources.values():
@@ -387,13 +386,13 @@ def test_nebius_cloud_render_injects_docker_secrets(
         spec,
         plan,
         run_id="demo",
-        options=SkypilotRenderOptions(registry="cr.eu-north1.nebius.cloud/reg"),
+        options=SkypilotRenderOptions(registry="registry.example/reg"),
     )
     docs = [doc for doc in yaml.safe_load_all(rendered) if doc is not None]
     task = docs[1]
     assert task["resources"]["cloud"] == "nebius"
     assert "image_id" in task["resources"]
-    assert task["secrets"]["SKYPILOT_DOCKER_SERVER"] == "cr.eu-north1.nebius.cloud"
+    assert task["secrets"]["SKYPILOT_DOCKER_SERVER"] == "registry.example"
     assert task["secrets"]["SKYPILOT_DOCKER_USERNAME"] == "iam"
     assert task["secrets"]["SKYPILOT_DOCKER_PASSWORD"] == "test-token"
 
@@ -410,19 +409,44 @@ def _nebius_gpu_spec():
 def test_render_errors_on_registry_credentials_mismatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Image pinned to us-central1 but Docker creds authenticate to eu-north1 →
-    # a 403 ErrImagePull for EVERY stage image. Must fail fast at render, not stall.
     monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "test-token")
     monkeypatch.setenv("SKYPILOT_DOCKER_USERNAME", "iam")
-    monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "cr.eu-north1.nebius.cloud")
+    monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "registry.example")
     spec, plan = _nebius_gpu_spec()
-    with pytest.raises(NpaWorkflowRenderError, match="registry mismatch"):
+    with pytest.raises(NpaWorkflowRenderError) as exc_info:
         render_skypilot_yaml(
             spec,
             plan,
             run_id="demo",
-            options=SkypilotRenderOptions(registry="cr.us-central1.nebius.cloud/reg"),
+            options=SkypilotRenderOptions(registry="registry-us.example/reg"),
         )
+
+    message = str(exc_info.value)
+    assert "registry mismatch" in message
+    assert "registry-us.example" in message
+    assert "registry.example" in message
+    assert "test-token" not in message
+
+
+def test_render_public_image_ignores_unrelated_private_registry_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "test-token")
+    monkeypatch.setenv("SKYPILOT_DOCKER_USERNAME", "operator")
+    monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "registry.example")
+    spec, plan = _nebius_gpu_spec()
+
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="demo",
+        options=SkypilotRenderOptions(
+            registry="ghcr.io/nebius/nebius-physical-ai"
+        ),
+    )
+
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc is not None][1]
+    assert "secrets" not in task or "SKYPILOT_DOCKER_PASSWORD" not in task["secrets"]
 
 
 def test_render_ok_when_registry_matches_credentials(
@@ -430,16 +454,16 @@ def test_render_ok_when_registry_matches_credentials(
 ) -> None:
     monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "test-token")
     monkeypatch.setenv("SKYPILOT_DOCKER_USERNAME", "iam")
-    monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "cr.eu-north1.nebius.cloud")
+    monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "registry.example")
     spec, plan = _nebius_gpu_spec()
     rendered = render_skypilot_yaml(
         spec,
         plan,
         run_id="demo",
-        options=SkypilotRenderOptions(registry="cr.eu-north1.nebius.cloud/reg"),
+        options=SkypilotRenderOptions(registry="registry.example/reg"),
     )
     task = [doc for doc in yaml.safe_load_all(rendered) if doc is not None][1]
-    assert task["secrets"]["SKYPILOT_DOCKER_SERVER"] == "cr.eu-north1.nebius.cloud"
+    assert task["secrets"]["SKYPILOT_DOCKER_SERVER"] == "registry.example"
 
 
 def test_kubernetes_private_image_references_the_refreshed_pull_secret(
@@ -453,24 +477,24 @@ def test_kubernetes_private_image_references_the_refreshed_pull_secret(
         spec,
         plan,
         run_id="demo",
-        options=SkypilotRenderOptions(registry="cr.eu-north1.nebius.cloud/reg"),
+        options=SkypilotRenderOptions(registry="registry.example/reg"),
     )
     task = [doc for doc in yaml.safe_load_all(rendered) if doc is not None][1]
 
-    assert task["config"]["kubernetes"]["pod_config"]["spec"]["imagePullSecrets"] == [
-        {"name": "npa-nebius-registry"}
-    ]
+    assert "config" not in task or "imagePullSecrets" not in (
+        ((task.get("config") or {}).get("kubernetes") or {}).get("pod_config") or {}
+    ).get("spec", {})
 
     authorities = plan_image_pull_secrets(
         spec,
         plan.steps,
         run_id="demo",
-        options=SkypilotRenderOptions(registry="cr.eu-north1.nebius.cloud/reg"),
+        options=SkypilotRenderOptions(registry="registry.example/reg"),
     )
-    assert set(authorities.values()) == {("npa-nebius-registry",)}
+    assert set(authorities.values()) == {()}
 
 
-def test_nebius_plan_exposes_implicit_kubernetes_pull_authority() -> None:
+def test_public_plan_has_no_implicit_kubernetes_pull_authority() -> None:
     spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
     plan = build_plan(spec, run_id="demo")
 
@@ -478,10 +502,10 @@ def test_nebius_plan_exposes_implicit_kubernetes_pull_authority() -> None:
         spec,
         plan.steps,
         run_id="demo",
-        options=SkypilotRenderOptions(registry="cr.eu-north1.nebius.cloud/reg"),
+        options=SkypilotRenderOptions(registry="registry.example/customer"),
     )
 
-    assert set(authorities.values()) == {("npa-nebius-registry",)}
+    assert set(authorities.values()) == {()}
 
 
 def test_nurec_plan_exposes_its_ngc_pull_authority_to_preflight() -> None:
@@ -958,6 +982,7 @@ def test_plan_only_registry_secrets_use_placeholder(
 
     monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "live-should-not-appear")
     monkeypatch.setenv("SKYPILOT_DOCKER_USERNAME", "iam")
+    monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "registry.example")
     path = NPA_SPECS / "vlm-eval-single.yaml"
     spec = load_spec(path)
     for profile in spec.resources.values():
@@ -969,7 +994,7 @@ def test_plan_only_registry_secrets_use_placeholder(
         plan,
         run_id="demo",
         options=SkypilotRenderOptions(
-            registry="cr.eu-north1.nebius.cloud/reg",
+            registry="registry.example/reg",
             materialize_registry_secrets=False,
         ),
     )
@@ -977,6 +1002,30 @@ def test_plan_only_registry_secrets_use_placeholder(
     task = docs[1]
     assert task["secrets"]["SKYPILOT_DOCKER_PASSWORD"] == "<SKYPILOT_DOCKER_PASSWORD>"
     assert "live-should-not-appear" not in rendered
+
+
+def test_plan_only_anonymous_public_registry_omits_empty_username(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "ghcr.io")
+    monkeypatch.delenv("SKYPILOT_DOCKER_USERNAME", raising=False)
+    monkeypatch.delenv("SKYPILOT_DOCKER_PASSWORD", raising=False)
+    monkeypatch.delenv("NPA_REGISTRY_USERNAME", raising=False)
+    monkeypatch.delenv("NPA_REGISTRY_PASSWORD", raising=False)
+    spec, plan = _nebius_gpu_spec()
+
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="demo",
+        options=SkypilotRenderOptions(
+            registry="ghcr.io/nebius/nebius-physical-ai",
+            materialize_registry_secrets=False,
+        ),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc is not None][1]
+    assert "secrets" not in task
+    assert "SKYPILOT_DOCKER_USERNAME: ''" not in rendered
 
 
 def test_render_bdd100k_task_count() -> None:
@@ -1018,7 +1067,7 @@ def test_resolve_task_image_uses_override() -> None:
 def test_first_party_image_rejects_uid_zero_pod_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("NPA_REGISTRY", "cr.us-central1.nebius.cloud/project")
+    monkeypatch.setenv("NPA_REGISTRY", "registry-us.example/project")
     spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
     for profile in spec.resources.values():
         if isinstance(profile, dict):
@@ -1041,7 +1090,7 @@ def test_first_party_image_rejects_uid_zero_pod_override(
             run_id="no-root",
             options=SkypilotRenderOptions(
                 image_overrides={
-                    "*": "cr.us-central1.nebius.cloud/project/npa-fiftyone:validation"
+                    "*": "registry-us.example/project/npa-fiftyone:validation"
                 },
                 materialize_registry_secrets=False,
             ),
@@ -1181,6 +1230,8 @@ def test_workbench_workflow_submit_plan_only_redacts_registry_password(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "live-plan-only-token")
+    monkeypatch.setenv("SKYPILOT_DOCKER_USERNAME", "operator")
+    monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "registry.example")
     result = RUNNER.invoke(
         app,
         [
@@ -1193,7 +1244,7 @@ def test_workbench_workflow_submit_plan_only_redacts_registry_password(
             "--plan-only",
             "--details",
             "--registry",
-            "cr.eu-north1.nebius.cloud/reg",
+            "registry.example/reg",
             "--skip-preflight",
         ],
     )

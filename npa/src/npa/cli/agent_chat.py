@@ -948,9 +948,9 @@ def format_tools_catalog(tool_refs: list[str], *, sample_size: int = 16) -> str:
 
 
 def _image_for_tool(tool: str) -> str:
-    from npa.deploy.images import primary_container_registry
+    from npa.deploy.images import execution_container_registry
 
-    registry = primary_container_registry()
+    registry = execution_container_registry()
     image_name, tag = _DEFAULT_TOOL_IMAGE_TAGS.get(tool, (f"npa-{tool}", "<tag>"))
     return f"{registry.rstrip('/')}/{image_name}:{tag}"
 
@@ -1036,7 +1036,7 @@ def format_groot_capabilities(tool_refs: list[str]) -> str:
         prefixes=("groot",),
         bullets=[
             "**Train / eval / inference** via `npa workbench groot …`.",
-            "Use workbench images from your Nebius registry; avoid hardcoded registry IDs.",
+            "Use public GHCR releases or an explicit operator registry override; avoid hardcoded live infrastructure identifiers.",
         ],
     )
 
@@ -1127,7 +1127,7 @@ def format_live_infra_loop_guidance() -> str:
     return "\n".join(
         [
             "**Live infra loop guidance (DEV VM + tmux)**:",
-            "- Resolve registry images from your actual Nebius registry (no placeholders):",
+            "- Resolve NPA-owned images from public GHCR releases or an explicit operator override:",
             f"  - Isaac Lab: `{isaac_image}`",
             f"  - LanceDB: `{lancedb_image}`",
             f"  - Cosmos: `{cosmos_image}`",

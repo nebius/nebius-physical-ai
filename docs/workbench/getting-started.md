@@ -33,14 +33,11 @@ Operator-required prerequisites:
 - H100 capacity for the headless sim-to-real quickstart.
 - Provisioned RT-core GPU capacity for Isaac Lab, normally L40S in
   `eu-north1`. H100 and H200 do not satisfy Isaac Lab rendering requirements.
-- A registry pull secret is needed only when you select a private image. The
-  default GHCR workbench images are anonymously pullable.
 - An S3 bucket in `eu-north1`. The access keys for that bucket should already be
   in `~/.npa/credentials.yaml` under `storage.aws_access_key_id`,
   `storage.aws_secret_access_key`, `storage.endpoint_url`, and `storage.bucket`
   if the workflow needs explicit storage credentials.
-- Optional: a private container registry namespace for locally modified or
-  non-public images.
+- Official GHCR development and release tags pull anonymously.
 
 Partner-specific values to collect before starting:
 
@@ -56,7 +53,7 @@ Constants for the primary workbench environment:
 ```bash
 eu-north1
 https://storage.eu-north1.nebius.cloud
-cr.eu-north1.nebius.cloud
+ghcr.io/nebius/nebius-physical-ai
 ```
 
 ## Install Workbench Tools
@@ -119,6 +116,7 @@ Export the non-secret resource identifiers used by commands and examples:
 export NEBIUS_PROJECT_ID=<your-project-id>
 export NEBIUS_TENANT_ID=<your-tenant-id>
 export NPA_S3_BUCKET=<your-bucket>
+export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
 export AWS_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud
 export NPA_STORAGE_ENDPOINT=storage.eu-north1.nebius.cloud
 ```
@@ -144,25 +142,16 @@ Gate: the command lists the bucket or exits successfully with an empty listing.
 `NoSuchBucket` usually means the bucket name, endpoint, or region is wrong.
 `AccessDenied` means the access key lacks bucket access.
 
-## Choose the Default or a Custom Registry
+## Verify the Image Channel
 
-Workbench images resolve from the anonymously pullable
-`ghcr.io/nebius/nebius-physical-ai` mirror by default. No registry export,
-login, or Kubernetes pull secret is needed for those images.
+The default execution channel is the anonymously pullable public release
+namespace `ghcr.io/nebius/nebius-physical-ai`. `NPA_REGISTRY` may override it
+with a full operator registry prefix.
 
-When you need private or locally modified images, select your own registry
-explicitly and verify its login:
-
-```bash
-export NPA_REGISTRY=cr.<region>.nebius.cloud/<your-registry-id>
-printf '%s' "$(nebius iam get-access-token)" | \
-  docker login "${NPA_REGISTRY%%/*}" -u iam --password-stdin
-```
-
-Existing `projects.<alias>.container_registry` values remain supported for
-compatibility. `NPA_REGISTRY` is the recommended new override; explicit image
-options take precedence where a command offers one. If private login fails,
-refresh the registry credential before building or submitting that image.
+Pre-release validation uses immutable `dev-<full-git-sha>` tags in the same
+public packages. Operator-controlled private registries may require exact-host
+SkyPilot credentials or a pre-created Kubernetes Docker config secret; NPA does
+not mint registry credentials or refresh that secret.
 
 ## Verify Kubernetes Access
 
@@ -183,14 +172,11 @@ Verify the account can create SkyPilot pods in `default`:
 kubectl auth can-i create pods -n default
 kubectl get nodes
 kubectl get namespace workbench
-kubectl get secret npa-nebius-registry -n default  # private images only
 ```
 
 Gate: `kubectl auth can-i` prints `yes`, `kubectl get nodes` lists the cluster
-nodes, and the `workbench` namespace exists for deployed services. When using a
-private image, the registry secret must also exist in the SkyPilot namespace. If
-SkyPilot later reports HTTP 403 as an anonymous user, the kube context is not
-authenticated for the cluster.
+nodes and the `workbench` namespace exists for deployed services. If SkyPilot later reports HTTP 403 as
+an anonymous user, the kube context is not authenticated for the cluster.
 
 ## Bootstrap SkyPilot
 
@@ -263,7 +249,7 @@ manifest from S3.
 | S3 upload logs contain literal `${AWS_ENDPOINT_URL}` | SkyPilot 0.12.2 does not interpolate variables inside YAML `envs` blocks at submission time. | Use `npa/scripts/run_isaac_lab_rl.py`, which materializes endpoint values before submission, or substitute `https://storage.eu-north1.nebius.cloud` in the YAML. |
 | `NoSuchBucket` from AWS CLI or a workflow upload | Wrong bucket name, endpoint, or region. | Confirm `storage.bucket` and `storage.endpoint_url` in `~/.npa/credentials.yaml`, then re-export `NPA_S3_BUCKET` without `s3://` and `AWS_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud`. |
 | `AccessDenied` from AWS CLI or a workflow upload | The access key does not have read/write access to the bucket. | Confirm `storage.aws_access_key_id` and `storage.aws_secret_access_key` in `~/.npa/credentials.yaml` are for the target bucket. |
-| Image pull returns `401 Unauthorized` | The Kubernetes registry pull secret expired. | Ask the operator to refresh `npa-nebius-registry` in the SkyPilot namespace. |
+| An official GHCR tag is not anonymously pullable | The package visibility or tag is wrong. | Stop before launch or promotion and repair the official public package; do not add pull credentials as a workaround. |
 | L40S scheduling backoff | The cluster has no available L40S capacity or the preset is too small for the CPU request. | Ask the operator to provision an L40S node group with sufficient CPU, or use a documented RT-core alternative. |
 
 ## Next Docs

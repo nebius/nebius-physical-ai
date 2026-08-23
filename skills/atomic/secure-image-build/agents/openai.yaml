@@ -1,0 +1,4 @@
+interface:
+  display_name: "Secure Image Build"
+  short_description: "Guard NPA image builds and public promotion"
+  default_prompt: "Use $secure-image-build to build, validate, publish, or promote an NPA container image safely."

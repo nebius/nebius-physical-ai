@@ -89,9 +89,9 @@ the existing workflow artifact uploader.
 Export the registry namespace and choose an image tag:
 
 ```bash
-export NPA_REGISTRY_ID=<your-registry-id>
 export BYOF_BUILD_ID="w10-byof-image-$(date -u +%Y%m%dT%H%M%SZ)"
-export BYOF_IMAGE="cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}/isaac-lab-byof-test:${BYOF_BUILD_ID}"
+export BYOF_REGISTRY=<your-registry>/<namespace>
+export BYOF_IMAGE="${BYOF_REGISTRY}/isaac-lab-byof-test:${BYOF_BUILD_ID}"
 ```
 
 Build from the repo root:
@@ -99,7 +99,6 @@ Build from the repo root:
 ```bash
 docker build \
   --platform linux/amd64 \
-  --build-arg NPA_REGISTRY_ID="${NPA_REGISTRY_ID}" \
   --build-arg BYOF_RUN_ID="${BYOF_BUILD_ID}" \
   -f docs/workbench/cookbooks/byof-isaac-lab/Dockerfile.example \
   -t "${BYOF_IMAGE}" \
@@ -135,7 +134,7 @@ docker buildx imagetools inspect "${BYOF_IMAGE}"
 ```
 
 W10 pushed
-`cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}/isaac-lab-byof-test:w10-byof-image-20260520T223706Z`.
+`ghcr.io/nebius/nebius-physical-ai/isaac-lab-byof-test:w10-byof-image-20260520T223706Z`.
 The pushed manifest-list digest was
 `sha256:c3e104601e31afaa833e3e73558ec9f0c6478f1dce59261fa45073a4d03518bf`;
 the linux/amd64 platform digest was
@@ -343,7 +342,8 @@ successful `--cleanup` run. The shared jobs controller may remain up.
 - The current path does not run Omniverse interactive rendering.
 - Omniverse rendering support is roadmap work, not part of this BYOF smoke.
 - The runner exposes image override directly but command override through YAML.
-- Nebius registry pull secrets can expire and may need refresh.
+- Private-registry credentials can expire; rotate only the explicitly configured
+  operator-managed secret. Public GHCR releases need no pull secret.
 - S3 access must be configured for the target bucket and endpoint.
 - The example uses a synthetic image, not a real customer image.
 - Multi-GPU and multi-iteration validation are separate prompts.

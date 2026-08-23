@@ -1,0 +1,52 @@
+{
+  "format": "npa_ltx2_accepted_image_manifest_v1",
+  "tag": "2.5-rtfetch-20260817",
+  "oci_digest": "sha256:c04b5b4e4c7f1c26e21671b3826ce8da75755c98bab2c54cd46137c609c2410b",
+  "development_sha": "072952df62d23e8bc10d7e083230b3e2f2aeac52",
+  "source": {
+    "repository": "https://github.com/Lightricks/LTX-2.git",
+    "revision": "fd4ded7f2d88d3da713abcdd4ad41ecc4a9314ca",
+    "delivery": "operator-entitled-runtime-fetch"
+  },
+  "weights": {
+    "repository": "Lightricks/LTX-2.5",
+    "resolved_revision": "da86602791e888542b1c755f0b5df376fdb1a3af",
+    "delivery": "operator-entitled-runtime-fetch"
+  },
+  "payload_scan": {
+    "scanner": "npa/scripts/scan_image_ltx_payload.py",
+    "findings": 0,
+    "source_baked": false,
+    "weights_baked": false,
+    "credentials_baked": false
+  },
+  "attestations": {
+    "required_predicates": [
+      "https://spdx.dev/Document/v2.3",
+      "https://slsa.dev/provenance/v1"
+    ]
+  },
+  "gpu_proof": {
+    "record": "operator-single-gpu-validation-record",
+    "gpu_model": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "gpu_count": 1,
+    "observed_image_digest": "sha256:c04b5b4e4c7f1c26e21671b3826ce8da75755c98bab2c54cd46137c609c2410b",
+    "capabilities_exercised": [
+      "ltx2_5_text_to_video",
+      "ltx2_5_decoded_mp4_validation"
+    ],
+    "artifact_sha256": "cca065e5fc5e1f8ee4e93114ffaddf5524a7aa7f5f3a9dd8ccc45b26677cc310",
+    "refusal_sha256": "37720ec2a85f8673b143384ca5de719928eb25f74297e899631c46f892b35feb",
+    "video": {
+      "sha256": "8899f722b746da93bf79a5fd3bf81d1fdb8b64ea70c5ae3b9fa97a8aac779724",
+      "size_bytes": 1994625,
+      "codec": "h264",
+      "width": 1536,
+      "height": 1024,
+      "frame_count": 121
+    },
+    "source_baked": false,
+    "weights_baked": false,
+    "deferred": []
+  }
+}

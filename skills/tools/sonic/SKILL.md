@@ -46,6 +46,10 @@ workflow composition with retargeting or MJLab.
 
 - The legacy baked L40S and inherited MuJoCo variants are quarantined because
   their built bytes contain restricted NVIDIA payloads; resolvers must reject them.
+- `sonic-mujoco-runtime-fetch` is an independently rebuilt public release on
+  a digest-pinned Python base and hash-locked CUDA Toolkit/MuJoCo closure. It is
+  not derived from either quarantined image; release promotion is bound to its
+  exact clean, GPU-accepted public development digest.
 - Use the active host-mounted runtime-fetch image selected by
   `npa/src/npa/deploy/sonic_image_manifest.json` for RTX PRO 6000 Blackwell
   Kubernetes targets with NVIDIA GPU Operator mounted drivers. The CUDA 13

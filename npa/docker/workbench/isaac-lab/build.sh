@@ -43,7 +43,7 @@ reproducible from the repo alone; change it there (and in the CI base-image CVE 
 matrix) per docs/security/image-reproducibility.md.
 
 Publish to your own registry:
-  build.sh --registry cr.<region>.nebius.cloud/<your-registry-id> --push
+  build.sh --registry <your-registry>/<namespace> --push
 
 No NGC credentials are needed: this image contains no NVIDIA Isaac bytes. Isaac Sim and
 Isaac Lab are downloaded on first RUN, under your own EULA acceptance

@@ -44,9 +44,8 @@ for env_file in "${HOME}/.npa/sim2real-operator.env" "${HOME}/.npa/live-e2e.env"
     set +a
   fi
 done
-# Some local env files can carry a short-lived NEBIUS_IAM_TOKEN. If it is
-# stale, the Nebius CLI refuses to mint a fresh registry token. Let the CLI use
-# its durable configured profile instead.
+# Some local env files can carry a short-lived NEBIUS_IAM_TOKEN. A stale value
+# poisons provider API calls, so let the CLI use its durable configured profile.
 unset NEBIUS_IAM_TOKEN
 
 CONFIG_JSON="${OUT}/launcher-config.json"
@@ -189,37 +188,6 @@ echo "  vlm=${VLM_IMAGE}"
 echo "  augment=${AUGMENT_IMAGE}"
 echo "  rerun=${RERUN_IMAGE}"
 
-refresh_registry_pull_secrets() {
-  local operator_registry_lib="/home/ubuntu/npa-sim2real-demo-walkthrough/operator/sim2real-rtxpro/lib/registry-pull-secret.sh"
-  if [ -f "${operator_registry_lib}" ]; then
-    export NEBIUS_REGISTRY_PROFILE="${NEBIUS_REGISTRY_PROFILE:-agent-sa}"
-    # shellcheck disable=SC1090
-    source "${operator_registry_lib}"
-    registry_refresh_for_images "${CTX}" \
-      "${ORCHESTRATOR_IMAGE}" "${TRAINER_IMAGE}" "${POLICY_IMAGE}" "${EVAL_IMAGE}" \
-      "${ISAAC_IMAGE}" "${VLM_IMAGE}" "${AUGMENT_IMAGE}" "${RERUN_IMAGE}"
-    return
-  fi
-  "${PY}" - "${KUBECONFIG_PATH}" "${CTX}" \
-    "${ORCHESTRATOR_IMAGE}" "${TRAINER_IMAGE}" "${POLICY_IMAGE}" "${EVAL_IMAGE}" \
-    "${ISAAC_IMAGE}" "${VLM_IMAGE}" "${AUGMENT_IMAGE}" "${RERUN_IMAGE}" <<'PY'
-import sys
-from npa.workflows.sim2real.registry_auth import ensure_registry_pull_secret_for_images
-
-kubeconfig, context, *images = sys.argv[1:]
-ensure_registry_pull_secret_for_images(
-    *images,
-    namespace="default",
-    kubeconfig=kubeconfig,
-    k8s_context=context,
-)
-print("registry_pull_secret_refreshed=true")
-PY
-}
-
-echo "=== preflight: refresh registry pull secrets ==="
-refresh_registry_pull_secrets
-
 echo "=== preflight: sim2real health ==="
 "${PY}" -m npa.cli.main workbench health sim2real \
   --run-id "${RUN_ID}" \
@@ -245,12 +213,9 @@ echo "=== preflight: sim2real health ==="
   --warn-only \
   --json | tee "${OUT}/health.json"
 
-echo "=== preflight: refresh registry pull secrets again before submit ==="
-refresh_registry_pull_secrets
-
 echo "=== preflight: cluster quick view ==="
 kubectl --context "${CTX}" -n default get nodes -o wide | tee "${OUT}/nodes.txt"
-kubectl --context "${CTX}" -n default get secret npa-storage-credentials hf-ngc-tokens npa-nebius-registry | tee "${OUT}/required-secrets.txt"
+kubectl --context "${CTX}" -n default get secret npa-storage-credentials hf-ngc-tokens | tee "${OUT}/required-secrets.txt"
 
 BYO_TRAINER_COMMAND="${BYO_TRAINER_COMMAND:-NPA_BYO_ISAAC_ITERATIONS=1000 NPA_BYO_ISAAC_NUM_ENVS=1024 python3 -m npa.workflows.sim2real.byo_isaac_trainer}"
 BYO_POLICY_COMMAND="${BYO_POLICY_COMMAND:-python3 -m npa.workflows.sim2real.byo_isaac_policy_rollout}"
@@ -351,7 +316,7 @@ common_args=(
   --k8s-max-parallel-gpus "${NPA_SIM2REAL_K8S_MAX_PARALLEL_GPUS:-16}"
   --k8s-namespace "${NPA_SIM2REAL_K8S_NAMESPACE:-default}"
   --k8s-service-account "${NPA_SIM2REAL_K8S_SERVICE_ACCOUNT:-agent-sa}"
-  --k8s-image-pull-secrets "${NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS:-agent-sa,ngc-nvcr-imagepullsecret,npa-nebius-registry}"
+  --k8s-image-pull-secrets "${NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS:-ngc-nvcr-imagepullsecret}"
   --k8s-env-secret-names "${NPA_SIM2REAL_K8S_ENV_SECRET_NAMES:-hf-ngc-tokens,npa-storage-credentials}"
   --k8s-gpu-resource "${NPA_SIM2REAL_K8S_GPU_RESOURCE:-nvidia.com/gpu}"
   --k8s-gpu-product "${NPA_SIM2REAL_K8S_GPU_PRODUCT:-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition}"
@@ -431,14 +396,13 @@ run_env = [
     env_entry("NPA_SIM2REAL_VLM_DUAL_REASON", env.get("NPA_SIM2REAL_VLM_DUAL_REASON", "1")),
     env_entry("NPA_SIM2REAL_RERUN", "1"),
     env_entry("NPA_SIM2REAL_RERUN_SERVE", "0"),
-    env_entry("NPA_SIM2REAL_SKIP_REGISTRY_REFRESH", "1"),
     env_entry("NPA_SIM2REAL_COMPONENT_DOWNLOAD_RETRIES", env.get("NPA_SIM2REAL_COMPONENT_DOWNLOAD_RETRIES", "24")),
     env_entry("NPA_SIM2REAL_HELDOUT_UPLOAD_GRACE_S", env.get("NPA_SIM2REAL_HELDOUT_UPLOAD_GRACE_S", "20")),
     env_entry("NPA_BYO_ISAAC_JOB_TIMEOUT_S", env.get("NPA_BYO_ISAAC_JOB_TIMEOUT_S", "7200")),
     env_entry("NPA_BYO_ISAAC_SUCCESS_DIST_M", env.get("NPA_BYO_ISAAC_SUCCESS_DIST_M", "0.10")),
     env_entry("NPA_SIM2REAL_K8S_NAMESPACE", "default"),
     env_entry("NPA_SIM2REAL_K8S_SERVICE_ACCOUNT", "agent-sa"),
-    env_entry("NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS", "agent-sa,ngc-nvcr-imagepullsecret,npa-nebius-registry"),
+    env_entry("NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS", "ngc-nvcr-imagepullsecret"),
     env_entry("NPA_SIM2REAL_K8S_ENV_SECRET_NAMES", "hf-ngc-tokens,npa-storage-credentials"),
     env_entry("NPA_SIM2REAL_K8S_GPU_RESOURCE", "nvidia.com/gpu"),
     env_entry("NPA_SIM2REAL_K8S_GPU_PRODUCT", env.get("NPA_SIM2REAL_K8S_GPU_PRODUCT", "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition")),
@@ -472,9 +436,7 @@ manifest = {
                 "restartPolicy": "Never",
                 "serviceAccountName": "agent-sa",
                 "imagePullSecrets": [
-                    {"name": "agent-sa"},
                     {"name": "ngc-nvcr-imagepullsecret"},
-                    {"name": "npa-nebius-registry"},
                 ],
                 "containers": [
                     {
@@ -514,20 +476,6 @@ kubectl --context "${CTX}" -n default apply -f "${MANIFEST}" | tee "${OUT}/kubec
 echo "job=${JOB}"
 echo "manifest=${MANIFEST}"
 echo "run_prefix=s3://${BUCKET}/sim2real-b/${RUN_ID}/"
-
-(
-  while true; do
-    sleep "${REGISTRY_REFRESH_INTERVAL_SECONDS:-2700}"
-    echo "periodic_registry_refresh started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    refresh_registry_pull_secrets || echo "periodic_registry_refresh_failed=true"
-  done
-) &
-REGISTRY_REFRESH_PID="$!"
-echo "${REGISTRY_REFRESH_PID}" > "${OUT}/registry-refresh.pid"
-cleanup_refresh_loop() {
-  kill "${REGISTRY_REFRESH_PID}" >/dev/null 2>&1 || true
-}
-trap cleanup_refresh_loop EXIT
 
 POD=""
 for _ in $(seq 1 90); do

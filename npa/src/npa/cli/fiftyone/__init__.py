@@ -2795,7 +2795,7 @@ def deploy_cmd(
     kubeconfig: str = typer.Option("", "--kubeconfig", help="Kubeconfig path override when using Kubernetes."),
     namespace: str = typer.Option(FIFTYONE_K8S_DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace."),
     service_name: str = typer.Option(FIFTYONE_K8S_DEFAULT_NAME, "--service-name", help="Kubernetes deployment/service name."),
-    image_pull_secret: str = typer.Option("npa-nebius-registry", "--image-pull-secret", help="Kubernetes imagePullSecret name."),
+    image_pull_secret: str = typer.Option("", "--image-pull-secret", help="Existing operator-managed Kubernetes imagePullSecret for a private registry."),
     host: str = typer.Option("", "--host", help="BYOVM SSH host/IP. Used only with --runtime byovm."),
     ssh_key: str = typer.Option("", "--ssh-key", help="BYOVM SSH private key path. Used only with --runtime byovm."),
     ssh_user: str = typer.Option("", "--ssh-user", help="BYOVM SSH username. Defaults to ubuntu."),
@@ -3400,7 +3400,6 @@ def deploy_cmd(
                             + shlex.quote(f"exec {FIFTYONE_VENV}/bin/python {FIFTYONE_HOME}/app.py")
                         ),
                         gpu=uses_gpu,
-                        registry_token=merged_vars.get("iam_token", ""),
                     )
                     if verify_env and not no_shared_creds:
                         failed_keys = audit_remote_env(

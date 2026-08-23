@@ -106,7 +106,7 @@ Include this compact evidence block in the PR:
 ```text
 Upstream: <repo>@<immutable-ref>
 Capability: <upstream capability name>
-Image: <candidate tag/digest, if any>
+Image: <public development tag/digest, if any>
 Hardware: <CPU or GPU model/architecture/count>
 Command: <exact command, secrets removed>
 Result: <exit status and key measured output>
@@ -135,18 +135,17 @@ build-time credential statement, and known risks.
 
 After review, the Nebius Physical AI team will:
 
-1. rebuild the exact trusted commit and push the approved additive tag to the
-   private source registry;
+1. run all pre-publication gates, rebuild the exact trusted commit, and push
+   `dev-<full-git-sha>` to the public image package in official GHCR;
 2. scan the pushed bytes for secrets, vulnerabilities, restricted payloads,
    weights, caches, and non-root/runtime-contract violations;
 3. pull that digest through the real NPA path and repeat the required CPU/GPU
    capability tests; and
-4. after explicit authorization, mirror only a `public` image to GHCR and
-   verify anonymous pulls.
+4. after explicit authorization, promote only the validated public-development
+   digest to the supported release tag and verify anonymous digest identity.
 
-Fork CI never publishes official images. New GHCR packages need one manual
-administrator visibility change; later unchanged images are skipped by the
-incremental publisher.
+Fork CI never publishes official images. Public development bytes are
+irreversibly disclosed even if a failed tag is later deleted.
 
 Related policy:
 

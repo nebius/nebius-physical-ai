@@ -131,7 +131,7 @@ npa/.venv/bin/npa workbench workflow validate-spec \
 npa/.venv/bin/npa workbench workflow plan-spec \
   npa/workflows/workbench/npa-workflows/openpi-pi05-four-mode.yaml \
   --run-id openpi-four-mode-plan \
-  --var runtime_image=cr.<region>.nebius.cloud/<registry>/openpi@sha256:<digest>
+  --var runtime_image=registry.example.invalid/operator/openpi@sha256:<digest>
 ```
 
 On a fresh isolated B200 MK8s context, the canonical E2E builds the source,
@@ -146,7 +146,7 @@ NPA_BYOF_OPENPI_LIVE_B200=1 \
 NPA_E2E_PROJECT=<project-alias> \
 NPA_E2E_S3_BUCKET=<existing-project-bucket> \
 NPA_BYOF_S3_ENDPOINT=https://storage.<bucket-region>.nebius.cloud \
-NPA_BYOF_OPENPI_PROJECT_REGISTRY=cr.<region>.nebius.cloud/<project-registry> \
+NPA_BYOF_OPENPI_REGISTRY=<operator-registry>/<namespace> \
 NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES \
 npa/.venv/bin/python -m pytest -q -s \
   npa/tests/e2e/test_byof_openpi_polaris_live_e2e.py
@@ -157,7 +157,7 @@ the builder. Source staging is automatic; `--stage-src` makes the branch-code
 dependency explicit. `--max-wait-seconds 0` waits indefinitely.
 
 ```bash
-export OPENPI_IMAGE='cr.<region>.nebius.cloud/<registry>/openpi@sha256:<digest>'
+export OPENPI_IMAGE='registry.example.invalid/operator/openpi@sha256:<digest>'
 export OPENPI_RUN_ID="openpi-four-mode-$(date -u +%Y%m%dT%H%M%SZ)"
 export OPENPI_NAMESPACE=default
 export OPENPI_KUBECONFIG='<task-owned-kubeconfig>'
@@ -189,7 +189,7 @@ npa/.venv/bin/npa workbench workflow submit \
   --stage-src \
   --infra "k8s/${OPENPI_CONTEXT}" \
   --project '<project-alias>' \
-  --registry 'cr.<region>.nebius.cloud/<registry>' \
+  --registry 'registry.example.invalid/operator' \
   --config-path '<task-owned-skypilot-config.yaml>' \
   --var 'bucket=<operator-project-bucket>' \
   --var "prefix=oss-solutions/openpi/${OPENPI_RUN_ID}" \

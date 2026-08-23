@@ -145,7 +145,7 @@ The sequence has five fail-fast gates:
 | Credentials | S3 and Token Factory checks pass |
 | Model terms | Cosmos Transfer reports `HF access ok` |
 | Cluster | one CPU node fits the controller plus a PAIDF CPU stage; one GPU node fits Transfer |
-| Images | every manifest is pullable; private Nebius credentials refresh `npa-nebius-registry` |
+| Images | every public manifest is anonymously pullable; customer BYOF images use an explicitly configured registry credential |
 | Submit secrets | Token Factory, S3, and `HF_TOKEN` are forwarded without entering YAML |
 
 Stop at the first nonzero command; it prints the remedy. Detailed recovery is

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import os
 import random
 import subprocess
@@ -62,7 +61,6 @@ from npa.workflows.sim2real.reference_helpers import (
 )
 from npa.workflows.sim2real.utils import (
     _artifact_root_uri,
-    _bool_value,
     _serviceaccount_namespace,
     _split_csv,
     _utc_now,
@@ -859,43 +857,6 @@ def _pod_info_from_snapshot(snapshot: Any) -> dict[str, Any]:
     }
 
 
-def _refresh_registry_pull_secret_for_sibling_job(
-    image: str,
-    *,
-    config: Sim2RealLoopConfig,
-    namespace: str,
-) -> None:
-    """Compatibility-only refresh before an archived sibling Job apply.
-
-    Pre-standard-runtime runs refreshed during the retired ``k8s_submit`` path,
-    but later sibling Jobs could outlive IAM registry tokens. The standard
-    compositional workflow does not import or call this helper.
-    """
-
-    if _bool_value(os.environ.get("NPA_SIM2REAL_SKIP_REGISTRY_REFRESH", "0")):
-        return
-
-    from npa.workflows.sim2real.registry_auth import (
-        ensure_registry_pull_secret_for_images,
-    )
-
-    try:
-        ensure_registry_pull_secret_for_images(
-            image,
-            namespace=namespace,
-            kubeconfig=config.k8s_kubeconfig,
-            k8s_context=config.k8s_context,
-        )
-    except Exception as exc:
-        if os.environ.get("NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS", "").strip() == "1":
-            raise Sim2RealLoopError(
-                f"could not refresh the registry pull secret for {image}"
-            ) from exc
-        logging.getLogger(__name__).warning(
-            "sibling registry pull-secret refresh skipped for %s: %s", image, exc
-        )
-
-
 def _run_kubernetes_indexed_image_component(
     image: str,
     *,
@@ -911,9 +872,6 @@ def _run_kubernetes_indexed_image_component(
         config.run_id,
         component,
         identity=env.get("NPA_SIM2REAL_OUTPUT_URI", ""),
-    )
-    _refresh_registry_pull_secret_for_sibling_job(
-        image, config=config, namespace=namespace
     )
 
     def manifest_factory(product: str, job_name: str) -> dict[str, Any]:
@@ -1006,9 +964,6 @@ def _run_kubernetes_image_component(
         config.run_id,
         component,
         identity=output_uri or env.get("NPA_SIM2REAL_OUTPUT_URI", ""),
-    )
-    _refresh_registry_pull_secret_for_sibling_job(
-        image, config=config, namespace=namespace
     )
 
     def manifest_factory(product: str, job_name: str) -> dict[str, Any]:
@@ -1760,7 +1715,6 @@ __all__ = [
     "_reference_adapter_env_score",
     "_reference_heldout_payload",
     "_reference_vlm_payload_from_rollout",
-    "_refresh_registry_pull_secret_for_sibling_job",
     "_run_component_command",
     "_run_image_component",
     "_run_kubernetes_image_component",

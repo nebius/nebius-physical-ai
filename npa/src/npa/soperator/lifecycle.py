@@ -1383,7 +1383,7 @@ _NODECONFIGURATOR_USERNS_VALUES = (
     "              # replaces arrays rather than merging individual list entries.\n"
     "              initContainers:\n"
     "                - name: node-sysctl-params\n"
-    "                  image: cr.eu-north1.nebius.cloud/soperator/busybox\n"
+    "                  image: docker.io/library/busybox:stable\n"
     "                  securityContext:\n"
     "                    privileged: true\n"
     "                    runAsUser: 0\n"

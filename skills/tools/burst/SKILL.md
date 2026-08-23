@@ -1,6 +1,6 @@
 ---
 name: burst
-description: Use to run one gang-scheduled multi-node GPU job through SkyPilot without authoring a workflow — `npa burst submit` wires torchrun rendezvous across nodes, `submit-yaml` submits a single-task YAML with `${VAR}` substitution and Nebius registry login.
+description: Use to run one gang-scheduled multi-node GPU job through SkyPilot without authoring a workflow — `npa burst submit` wires torchrun rendezvous across nodes, while `submit-yaml` supports one task, `${VAR}` substitution, and optional generic registry credentials.
 ---
 
 # Burst (one coupled multi-node GPU job)
@@ -71,13 +71,14 @@ bucket name, or run id is ever baked in:
 
 ## Registry authentication
 
-Docker access on your dev VM does not authenticate freshly created SkyPilot
-worker VMs. `submit-yaml` injects a Nebius registry login for `cr.*.nebius.cloud`
-images by minting a short-lived IAM token when the submitter can mint one. If
-pulls fail with `401`/`403`, that mint is what failed — see the registry-token
-section of `skills/tools/nebius-infra/SKILL.md`. Kubernetes retries image pulls
-forever, so a bad pull presents as a job that never starts rather than one that
-fails.
+Official NPA GHCR development and release images pull anonymously. Docker access
+on your dev VM does not authenticate freshly created SkyPilot worker VMs to an
+optional operator-controlled private registry. For that BYOF case, set
+`SKYPILOT_DOCKER_SERVER`, `SKYPILOT_DOCKER_USERNAME`, and
+`SKYPILOT_DOCKER_PASSWORD` for the image's exact registry host; `submit-yaml`
+forwards only that explicit credential set. NPA never mints a provider registry
+token. Kubernetes retries image pulls indefinitely, so bad BYOF credentials can
+look like a job that never starts rather than one that fails.
 
 ## Watch and collect
 

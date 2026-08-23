@@ -2720,7 +2720,6 @@ def deploy_cmd(
                                 f"exec /opt/cosmos/venv/bin/python -m uvicorn server:app --host 0.0.0.0 --port {server_port}"
                             )
                         ),
-                        registry_token=merged_vars.get("iam_token", ""),
                     )
                     model_slug = _model_slug(model)
                     download_cmd = (

@@ -155,7 +155,6 @@ def _assert_configure_provision_dry_run(
                         "project_id": "project-ci",
                         "tenant_id": "tenant-ci",
                         "region": "eu-north1",
-                        "registry_id": "registry-ci",
                         "storage": {
                             "checkpoint_bucket": "s3://ci-bucket/checkpoints/",
                             "endpoint_url": "https://storage.eu-north1.nebius.cloud",

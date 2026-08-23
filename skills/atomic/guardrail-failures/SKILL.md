@@ -91,7 +91,8 @@ Treat every failure here as blocking. Do not add an exemption to make one pass.
 | `test_workbench_image_k8s_prereqs` | An image lacks what SkyPilot needs on Kubernetes (python3, rsync, sudo with NOPASSWD, or the Isaac group/PATH rules). Update the Dockerfile and the shared install script together. |
 | `test_unbuilt_image_records_agree` | The four files that record whether an image is built disagree. Make them agree; do not mark an image built that is not. |
 | `test_trivy_policy` | `trivy.yaml` no longer matches the current nested schema. Update the config. |
-| `test_public_mirror_workflows` | The public-mirror workflows stopped sharing one credential path, or the health check gained write behavior. Route through `npa/scripts/ci_source_registry_login.sh`. |
+| `test_public_release_workflows` | The single public GHCR channel drifted: development tags must be immutable full-SHA references, all pre-publication gates must precede the push, promotion must remain exact-digest-bound, failed-build cleanup must refuse shared digests, and release health must stay anonymous/read-only. Restore those contracts in the public publication workflows; never recreate a private candidate channel. |
+| `test_secure_image_build_skill` | The secure image procedure no longer names every irreversible publication gate or its governing licensing, build, validation, and confidentiality procedures. Restore the missing gate or delegation in `skills/atomic/secure-image-build/SKILL.md`; do not weaken the test or substitute labels for artifact evidence. |
 | `test_paidf_starter_asset` | The PAIDF starter asset was bundled instead of runtime-fetched, or its contract drifted. Keep the runtime-fetch model. |
 
 ## Retired Surfaces And Example Boundaries

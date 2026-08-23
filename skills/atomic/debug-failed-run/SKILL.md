@@ -80,13 +80,14 @@ npa workbench workflow preflight-images <spec.yaml> --project <alias> --json
 This reproduces the exact manifest fetch a worker performs, with the credentials
 the run injects, and reports each image `ok` / `not_found` / `forbidden`.
 
-- `not_found` → the image was never built and pushed into *this* project's
-  registry. Nothing mirrors workbench images into a registry created by
-  `npa configure`; see `skills/atomic/build-and-push-image/SKILL.md`.
-- `forbidden` → Nebius IAM registry tokens expire. Refresh the pull secret in the
-  namespace that owns the pod rather than hand-minting per run; the canonical
-  helper is `npa.clients.nebius_auth.mint_nebius_iam_token` and, for Kubernetes,
-  `npa.workflows.sim2real.registry_auth.ensure_registry_pull_secret_for_images`.
+- `not_found` → the selected tag or digest was not published in that registry.
+  Official NPA release images come from public GHCR; an operator-supplied BYOF
+  image must be built and pushed to the registry named in its reference.
+- `forbidden` → the image is private or the operator-supplied registry
+  credentials do not authorize that repository. Official public GHCR images use
+  anonymous pulls. For a private/BYOF image, configure credentials for the
+  image's exact registry host before submitting; NPA does not mint provider IAM
+  registry tokens or manage Kubernetes pull secrets.
 
 ## 5. Scheduling problems
 

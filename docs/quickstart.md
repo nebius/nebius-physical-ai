@@ -702,9 +702,11 @@ kubectl config use-context <your-workbench-context>
 
 `403`/`denied` when pushing or pulling a container image
 
-Check that you are logged in to the registry. Nebius registries use a Docker
-credential helper; confirm `~/.docker/config.json` references your registry
-host and that `nebius iam get-access-token` succeeds.
+Supported NPA images pull anonymously from
+`ghcr.io/nebius/nebius-physical-ai`. If an explicit BYOF override points at an
+operator-owned registry, authenticate to that exact host using the registry's
+documented standards-based mechanism and confirm the same immutable reference
+can be pulled from the execution environment.
 
 Capacity, quota, or `Not enough resources` errors
 

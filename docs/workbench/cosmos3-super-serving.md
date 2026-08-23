@@ -16,37 +16,42 @@ an OpenAI-compatible endpoint against resident weights, on one 8-GPU node.
 | Build script | `npa/docker/workbench/cosmos3-serving/build.sh` |
 | Image contract tests | `npa/tests/docker/test_cosmos3_serving_image_contract.py` |
 
-The image wraps NVIDIA's own `vllm/vllm-omni` serving runtime, pinned by digest,
-and adds a preflight entrypoint and a build gate.
+The public image is a zero-payload bootstrap. It contains no vLLM, PyTorch,
+CUDA Python runtime, NVIDIA container layer, model, guardrail, credential, or
+accepted term. Runtime provisioning and model access happen only after the
+operator supplies the relevant credential and explicit run-scoped acceptance.
 
 ## Packaging and deployment surface
 
-The image is recorded in the packaging contract as a `restricted` service and
-is intentionally excluded from `CONTAINER_IMAGE_NAMES` and the public mirror.
-Operators may build `npa-cosmos3-serving:0.1.0` into their own registry with the
-checked-in build script.
+The packaging contract records the bootstrap as `public`. Supported release
+resolution is bound to the exact public development digest that passed its
+layer/history scan and real guarded eight-GPU serving acceptance. A new digest
+must earn the same evidence before promotion.
 
-The restriction comes from the pinned base image, not the model weights. Although
-vLLM-Omni source is Apache-2.0, the base embeds NVIDIA's Deep Learning Container
-License. Its derived-container distribution grant requires material additional
-primary functionality and downstream terms at least as protective as that
-license, and prohibits distributing the container as a standalone product. This
-thin configuration wrapper and anonymous GHCR do not establish those conditions.
-The built image therefore stays build-your-own unless legal review approves a
-different base or distribution mechanism.
+The old `vllm/vllm-omni` parent is prohibited because its built filesystem
+contained the NVIDIA Deep Learning Container license. A source rebuild also
+proved insufficient: its CUDA Python closure includes `cuda-bindings` under the
+NVIDIA Software License (v. May 12, 2021), whose downstream-terms requirements
+are not established by anonymous GHCR. The public image therefore carries only
+the digest-pinned official Python base, bootstrap scripts, and a hash-locked
+package manifest. The operator reviews those upstream terms and opts into the
+runtime download with
+`NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE=YES`; NPA never bakes or persists
+that value.
 
 ## Weights are never in the image
 
-The base runtime carries no checkpoint bytes and this layer adds none. The
+The bootstrap carries no checkpoint or serving-runtime bytes. The
 `Cosmos3-Super` checkpoint, the guardrail models, and every other gated artifact
 download **at run time** with the operator's own Hugging Face token, under that
 operator's own license acceptance. That is the same posture `npa-cosmos3` holds,
 and the reason the built image carries no gated weight bytes to redistribute.
-Redistribution of the base runtime itself follows its own upstream license; this
-layer adds only the entrypoint, the build gate, and configuration.
+Credentials are used only for authenticated access probes and runtime downloads.
 
-`verify_env.py` runs at build time and fails the build if a weight file larger
-than 50 MB landed in any layer, the same guarantee `npa-cosmos3` enforces.
+`verify_env.py` proves the exact manifest checksum and absence of serving
+modules in the final image. `scan_image_cosmos3_serving_payload.py` independently
+walks every saved layer plus config/history and rejects the old vendor bases,
+NLC markers, CUDA/vLLM/PyTorch payloads, models, tokens, or baked acceptance.
 
 ## Access preflight
 
@@ -67,76 +72,62 @@ revoked; authenticated `403` means the identity is valid but unauthorized
 because of repo approval/license, fine-grained scope, or organization policy.
 An anonymous `401` is not a token discriminator.
 
-**The base image's pinned Hugging Face client pair breaks the guardrail
-download.** `HF_HUB_DISABLE_XET=1` is set in the image, which is a departure
-from `npa workbench cosmos3 generate`, where the same condition only produces a
-warning. The difference is ownership of the pins. That path runs in whatever
-environment the operator built, so setting the variable on their behalf would
-silently disable a faster download path for environments that do not need it.
-This Dockerfile chose its own base image, and that base pins `hf-xet` 1.5.1 with
-`huggingface_hub` 1.23.0, the exact pair
-[huggingface/xet-core#895](https://github.com/huggingface/xet-core/issues/895)
-reproduces on. `verify_env.py` re-reads the installed pair at build time and
-fails the build once a base bump moves off it, naming the line to delete, so the
-workaround cannot outlive the defect it works around.
-
 ## Build
 
 No GPU is needed to build.
 
 ```bash
-bash npa/docker/workbench/cosmos3-serving/build.sh --registry <your-registry>
-bash npa/docker/workbench/cosmos3-serving/build.sh --registry <your-registry> --push
+bash npa/docker/workbench/cosmos3-serving/build.sh
 ```
 
-The build runs `verify_env.py` inside the image, which checks four things: the
-vLLM-Omni serving stack imports, the xet workaround still matches the installed
-pins, the entrypoint assembles the serve command it advertises, and no weight
-file is present in a layer. The third check executes the real entrypoint in
-dry-run mode rather than restating its expected argv, so a change to the script
-that breaks the serve command fails the build rather than the first 8-GPU boot.
+Official development publication uses the guarded public-image workflow and an
+immutable `dev-<full-git-sha>` tag. The build alone does not authorize a push or
+release promotion.
 
 ## Run
 
 ```bash
 docker run -d --name cosmos3-serving --gpus all --ipc=host --shm-size 32g \
   --ulimit nofile=1048576:1048576 \
+  -v <runtime-dir>:/opt/npa-cosmos3-serving/runtime \
   -v <hf-cache-dir>:/opt/npa-cosmos3-serving/hf-cache \
+  -e NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE=YES \
   -e HF_TOKEN=<your-token> \
   -p 8000:8000 \
-  <your-registry>/npa-cosmos3-serving:<tag>
+  ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-serving@sha256:<validated-digest>
 ```
 
-The mounted cache must be writable by uid 1000: the image runs as a non-root
+Both mounted directories must be writable by uid 1000: the image runs as a non-root
 user, and a cache mounted from a root-owned host directory is readable but not
-writable. The entrypoint checks this before any download starts, because
-otherwise the failure surfaces as a lock error partway through fetching 17 GB of
-guardrail weights.
+writable. The runtime volume retains the hash-locked serving closure across pod
+replacement; the Hugging Face volume retains operator-entitled models.
 
 Budget the cache before first start: the `Cosmos3-Super` checkpoint is about
 124 GB on disk plus 17 GB of guardrail weights, so plan roughly 145 GB. The
 first-ever download is its own cost, separate from and larger than the
 readiness figures below, which were measured with weights already on disk.
 
-`--ipc=host` and the `nofile` ulimit are the vendor runtime's requirements, not
-this layer's. To run the vendor runtime bare, without this image's preflights,
-the serve command the Dockerfile assembles works directly against
-`vllm/vllm-omni:cosmos3`; the measured behavior on this page applies to both,
-because they run the same server.
+`--ipc=host` and the `nofile` ulimit are serving-runtime requirements. Guardrails
+remain on by default, and authenticated access to both model repositories is
+confirmed before distributed workers or checkpoint downloads start.
+
+On Kubernetes, mount a memory-backed `emptyDir` with `sizeLimit: 32Gi` at
+`/dev/shm`. The container runtime's default 64 MiB shared-memory filesystem is
+not the documented topology: an eight-GPU process group can finish diffusion
+and then lose a worker while returning the decoded response.
 
 ### Configuration surface
 
 | Variable | Default | Effect |
 | --- | --- | --- |
+| `NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE` | unset | Exact `YES` opts this run into direct installation of the pinned CUDA Python serving closure; otherwise bootstrap refuses with exit 78 |
 | `NPA_COSMOS3_SERVE_MODEL` | `nvidia/Cosmos3-Super` | Model to serve |
 | `NPA_COSMOS3_SERVE_HOST` | `0.0.0.0` | Bind address |
 | `NPA_COSMOS3_SERVE_PORT` | `8000` | Bind port |
-| `NPA_COSMOS3_SERVE_GUARDRAILS` | `on` | `off` passes `--no-guardrails` and drops the token requirement |
+| `NPA_COSMOS3_SERVE_GUARDRAILS` | `on` | `off` passes `--no-guardrails` and skips only the separate guardrail-repository access probe |
 | `NPA_COSMOS3_SERVE_INIT_TIMEOUT` | `1800` | Passed through as `--init-timeout` |
 | `NPA_COSMOS3_SERVE_GPUS` | `8` | GPU count the preflight requires |
 | `NPA_COSMOS3_SERVE_EXTRA_ARGS` | empty | Appended verbatim to the serve command |
-| `NPA_COSMOS3_SERVE_DRY_RUN` | `0` | Print the serve command and exit |
-| `NPA_COSMOS3_SERVE_SKIP_GPU_CHECK` | `0` | Bypass the GPU-count preflight |
 
 The parallel configuration is **pinned**, not exposed:
 `--cfg-parallel-size 2 --ulysses-degree 4 --use-hsdp --hsdp-shard-size 8`. That
@@ -193,14 +184,19 @@ on a single boot, reached readiness in about 90 seconds warm, so anyone
 overriding the parallel configuration through `NPA_COSMOS3_SERVE_EXTRA_ARGS`
 should re-measure readiness rather than inherit these numbers.
 
-This image's own validation run reached readiness in 592 seconds on a cold cache,
-which is the number to plan against for a node that has just been started.
+The quarantined predecessor image's validation run reached readiness in 592
+seconds on a cold cache. The exact accepted zero-payload image took about 1,325
+seconds from vLLM startup to `Application startup complete` on 8x B200 with the
+checkpoint on network storage. Its runtime bootstrap installs the pinned OSS
+serving closure before vLLM starts, so total cold-container startup takes longer.
 
-The image's `HEALTHCHECK` therefore carries a 20 minute `start-period`. A
+The image's `HEALTHCHECK` therefore carries a 30 minute `start-period`. A
 readiness probe tuned for an ordinary web service reports a healthy boot as a
 failure and restarts it into another one, which is a loop that never converges.
-A probe tuned even for the warm figure would have failed the 592 second boot
-above. Orchestrators driving this image need the same allowance.
+A probe tuned even for the historical cold-cache figure would have failed the
+accepted image's 1,325-second vLLM boot above. Orchestrators driving this image
+need the same allowance, plus time for the runtime closure bootstrap when that
+cache is cold.
 
 Memory during that load, with `--hsdp-shard-size 8`: 17.3 GiB per GPU at model
 load, and roughly 43 GiB per GPU resident while serving.
@@ -255,7 +251,12 @@ to 8 concurrent requests are under 10% and nearly all collected at concurrency
 this server above concurrency 2 unless the marginal 9.8% of throughput is worth
 a 7.2x median-latency cost.
 
-## Validated on real GPUs
+## Historical baseline (quarantined predecessor; not release evidence)
+
+The measurements below describe the former vendor-based image only. That image
+is prohibited from public publication and this section is not acceptance
+evidence for the zero-payload release. New evidence must name the exact public
+development digest built from this architecture.
 
 Built and run on 8x H200 SXM (143,771 MiB each, driver 580.126.09), guardrails on,
 against base digest `sha256:6d2630c7d637b699557573f2c3fee8df5d4d0cd718977aa22549ed6a6ef30587`.

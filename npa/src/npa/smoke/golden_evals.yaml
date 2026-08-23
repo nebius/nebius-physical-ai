@@ -395,30 +395,30 @@ containers:
   cosmos3-serving:
     image: npa-cosmos3-serving
     dockerfile: npa/docker/workbench/cosmos3-serving/Dockerfile
-    foundation: true
-    external_build: true
     physical_ai:
       useful: true
       role: >-
-        Build-your-own persistent Cosmos3-Super serving runtime for repeated
+        Persistent Cosmos3-Super serving runtime for repeated
         OpenAI-compatible video-generation requests on one 8-GPU node.
     safety:
       runs_as: ubuntu
-      base_image: vllm/vllm-omni (digest-pinned; restricted distribution)
+      base_image: digest-pinned official Python slim (zero serving payload)
       network: OpenAI-compatible service on :8000 (/v1/models, /v1/videos)
-      external_fetch: [huggingface-runtime]
+      external_fetch: [vllm-omni-source-and-runtime, huggingface-models]
       notes: >-
-        Restricted and excluded from the public mirror because of the pinned
-        vendor base's distribution terms. No model or guardrail weights are
-        baked; the operator supplies its own Hugging Face token at runtime. The
-        build gate checks the serving stack, pin-specific Xet workaround, real
-        entrypoint argv, and absence of checkpoint files. A separate documented
-        live validation generated and decoded a real video on 8xH200.
+        Public zero-payload image containing no serving/CUDA runtime, model,
+        guardrail, token, or accepted terms. The pinned vLLM-Omni source and
+        hash-locked runtime closure are fetched only after explicit operator
+        acceptance; model and guardrail access is checked with the caller's
+        Hugging Face token. The supported release is bound to the exact digest
+        that passed a guarded eight-B200 boot and real H.264 inference.
     golden_eval:
-      kind: build-import
-      command: python3 /opt/npa-cosmos3-serving/verify_env.py
-      gpu: none
-      timeout_seconds: 300
+      kind: entrypoint-smoke
+      command: /opt/npa-cosmos3-serving/smoke_serving.sh
+      artifact: cosmos3_serving_smoke.json
+      serverless_gpu: b200
+      gpu: required
+      timeout_seconds: 3600
       status: ready
 
   cosmos3-reason:
@@ -552,6 +552,34 @@ containers:
       timeout_seconds: 900
       status: gpu-gated
 
+  sonic-mujoco:
+    image: npa-sonic-mujoco
+    dockerfile: npa/docker/workbench/sonic/Dockerfile.mujoco
+    physical_ai:
+      useful: true
+      role: >-
+        Headless Unitree G1 SONIC checkpoint evaluation through the real MuJoCo
+        physics adapter, without requiring Isaac Sim or Omniverse.
+    safety:
+      runs_as: ubuntu
+      base_image: digest-pinned official Python slim with hash-locked torch cu128 and MuJoCo closure
+      network: none for MuJoCo evaluation; Isaac-facing modes fetch only after caller acceptance
+      external_fetch: [pypi-build-closure, optional-isaac-runtime]
+      notes: >-
+        Independently built from pinned Apache-2.0 SONIC source. Contains no
+        Isaac, Omniverse Kit, NGC/NLC runtime, driver userspace, model weights,
+        credentials, or accepted terms. The golden eval creates a minimal policy
+        checkpoint, loads the real G1 XML/config, advances MuJoCo physics, records
+        rollout metrics, and proves the CUDA-visible PyTorch device.
+    golden_eval:
+      kind: entrypoint-smoke
+      command: /entrypoint.sh mujoco-smoke
+      artifact: mujoco_eval_metrics.json
+      serverless_gpu: b200
+      gpu: required
+      timeout_seconds: 600
+      status: ready
+
   retargeting:
     image: npa-retargeting
     dockerfile: npa/docker/workbench/retargeting/Dockerfile
@@ -674,9 +702,9 @@ containers:
       notes: >-
         Ships no CUDA/NVIDIA Python distribution or model bytes. The no-GPU
         golden eval proves source/health, the current Torch 2.13.0/CUDA 13.0
-        metadata closure, and refusal. The prior Torch 2.7.1/CUDA 12.8 live
-        evidence is historical; current CUDA execution remains a dedicated
-        operator-accepted live workflow gate.
+        metadata closure, and refusal. The exact public-dev digest has accepted
+        Torch 2.13.0/CUDA 13.0 single-GPU evidence on RTX PRO 6000. The current
+        four-GPU B200 path remains a separate unqualified live gate.
     golden_eval:
       kind: container-smoke
       command: bash /opt/npa/wan2-2/smoke.sh
@@ -709,10 +737,7 @@ containers:
       command: bash /opt/npa/ltx2/smoke.sh
       gpu: none
       timeout_seconds: 120
-      # The image has not been built or pushed yet, so there is nothing to run
-      # this against. Flipping to `ready` is part of the dev-VM build runbook in
-      # docs/workbench/ltx2.md, not something to assume here.
-      status: needs-image-update
+      status: ready
 
   alpamayo2-super:
     image: npa-alpamayo2-super

@@ -20,12 +20,12 @@ from npa.orchestration.skypilot.registry_preflight import (
 )
 
 
-REGISTRY = "cr.us-central1.nebius.cloud"
+REGISTRY = "registry-us.example"
 REPOSITORY = "u00j7q4jjkahvsx0jy/npa-cosmos2-transfer"
 TAG = "2.5.1-golden-eval-smoke-20260616T033000Z"
 IMAGE = f"{REGISTRY}/{REPOSITORY}:{TAG}"
 MANIFEST_URL = f"https://{REGISTRY}/v2/{REPOSITORY}/manifests/{TAG}"
-# Verbatim challenge from the live Nebius Container Registry.
+# Representative Docker Registry v2 bearer challenge.
 CHALLENGE = {
     "www-authenticate": (
         f'Bearer realm="https://{REGISTRY}/v2/token/",service="{REGISTRY}"'
@@ -35,7 +35,7 @@ CHALLENGE = {
 
 def test_registry_redirect_strips_authorization_cross_origin() -> None:
     request = urllib.request.Request(
-        "https://cr.us-central1.nebius.cloud/v2/repo/blobs/sha256:a",
+        "https://registry-us.example/v2/repo/blobs/sha256:a",
         headers={"Authorization": "Bearer secret", "Accept": "application/json"},
     )
     redirected = _RegistryRedirectHandler().redirect_request(
@@ -199,12 +199,13 @@ def test_rejected_credentials_are_reported_as_unauthorized() -> None:
     assert check.status == "unauthorized"
     assert check.http_status == 401
     assert "UNAUTHORIZED" in check.detail
-    assert "profile" in check.remedy
+    assert "registry's standard authentication flow" in check.remedy
+    assert "profile" not in check.remedy
 
 
 def test_a_challenge_without_credentials_tries_an_anonymous_token_first() -> None:
     # Previously this reported no_credentials outright, which is wrong for any
-    # registry that grants anonymous pulls -- the public mirror among them.
+    # registry that grants anonymous pulls -- the public release channel among them.
     registry = FakeRegistry(manifest_status=200)
 
     check = check_image_pull(IMAGE, fetcher=registry)
@@ -290,7 +291,7 @@ def test_credentials_come_from_the_same_env_the_render_path_injects(
     assert resolve_registry_credentials(mint=False) == ("svc", "injected-token")
 
 
-def test_credentials_default_to_the_iam_user_and_do_not_mint_when_asked_not_to(
+def test_credentials_default_to_anonymous_and_never_mint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("SKYPILOT_DOCKER_USERNAME", raising=False)
@@ -298,7 +299,7 @@ def test_credentials_default_to_the_iam_user_and_do_not_mint_when_asked_not_to(
     monkeypatch.delenv("NPA_REGISTRY_USERNAME", raising=False)
     monkeypatch.delenv("NPA_REGISTRY_PASSWORD", raising=False)
 
-    assert resolve_registry_credentials(mint=False) == ("iam", "")
+    assert resolve_registry_credentials(mint=False) == ("", "")
 
 
 # --- public registries issue anonymous pull tokens ----------------------------
@@ -327,7 +328,7 @@ class AnonymousRegistry:
 
 def test_a_public_image_is_pullable_without_credentials() -> None:
     # "No credentials" is not "cannot pull": GHCR/Docker Hub hand a pull token to
-    # an anonymous caller, and the public mirror is exactly how a consumer avoids
+    # an anonymous caller, and the public release channel is exactly how a consumer avoids
     # building multi-GB images at all.
     registry = AnonymousRegistry()
 
@@ -393,22 +394,13 @@ def test_npa_registry_itself_scopes_private_credentials(
     assert registry.calls[1][1]["Authorization"].startswith("Basic ")
 
 
-def test_other_nebius_registry_mints_fresh_token_instead_of_using_ambient_password(
+def test_other_registry_never_receives_mismatched_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv(
-        "NPA_REGISTRY", "cr.eu-north1.nebius.cloud/project-repository"
-    )
+    monkeypatch.setenv("NPA_REGISTRY", "registry.example/project-repository")
     monkeypatch.setenv("NPA_REGISTRY_USERNAME", "wrong-user")
     monkeypatch.setenv("NPA_REGISTRY_PASSWORD", "wrong-project-token")
-    monkeypatch.setattr(
-        "npa.workflows.sim2real.registry_auth.mint_nebius_registry_token",
-        lambda: "fresh-target-token",
-    )
-
-    assert resolve_registry_credentials(
-        "cr.us-central1.nebius.cloud", mint=True
-    ) == ("iam", "fresh-target-token")
+    assert resolve_registry_credentials("registry-us.example", mint=True) == ("", "")
 
 
 def test_a_private_registry_that_refuses_an_anonymous_token_still_says_so() -> None:

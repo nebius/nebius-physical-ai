@@ -52,16 +52,6 @@ class ProjectIdentity:
 
 
 @dataclass(frozen=True)
-class RegistryIdentity:
-    """Allowlisted immutable identity for guarded registry teardown."""
-
-    registry_id: str
-    name: str
-    project_id: str
-    profile: str = ""
-
-
-@dataclass(frozen=True)
 class ProjectDefaultNetworkIdentity:
     """Exact provider-created default topology in one disposable project."""
 
@@ -784,49 +774,6 @@ def delete_project(project_id: str, *, profile: str | None = None) -> None:
         raise
 
 
-def get_registry_identity(
-    registry_id: str, *, profile: str | None = None
-) -> RegistryIdentity | None:
-    """Strictly get one registry by immutable ID; exact NotFound is absence."""
-
-    exact_id = str(registry_id or "").strip()
-    if not exact_id:
-        raise NebiusError("exact registry ID is required")
-    profile_args, resolved_profile = _iam_profile_args(profile)
-    try:
-        payload = _run_json([*profile_args, "registry", "get", "--id", exact_id])
-    except NebiusError as exc:
-        if _is_not_found(str(exc)):
-            return None
-        raise
-    metadata = payload.get("metadata") if isinstance(payload, dict) else None
-    if not isinstance(metadata, dict):
-        raise NebiusError("Nebius returned schema-invalid registry identity")
-    returned_id = str(metadata.get("id") or "").strip()
-    project_id = str(
-        metadata.get("parent_id") or metadata.get("parentId") or ""
-    ).strip()
-    name = str(metadata.get("name") or "").strip()
-    if returned_id != exact_id or not project_id or not name:
-        raise NebiusError("Nebius returned incomplete or mismatched registry identity")
-    return RegistryIdentity(exact_id, name, project_id, resolved_profile)
-
-
-def delete_registry(registry_id: str, *, profile: str | None = None) -> None:
-    """Delete one exact container registry through the supported provider adapter."""
-
-    exact_id = str(registry_id or "").strip()
-    if not exact_id:
-        raise NebiusError("exact registry ID is required")
-    profile_args, _resolved_profile = _iam_profile_args(profile)
-    try:
-        _run([*profile_args, "registry", "delete", "--id", exact_id])
-    except NebiusError as exc:
-        if _is_not_found(str(exc)):
-            return
-        raise
-
-
 def get_project_default_network_identity(
     project_id: str, *, profile: str | None = None
 ) -> ProjectDefaultNetworkIdentity | None:
@@ -948,96 +895,6 @@ def delete_network(network_id: str, *, profile: str | None = None) -> None:
             raise
 
 
-def list_registry_image_ids(
-    registry_id: str, *, profile: str | None = None
-) -> tuple[str, ...]:
-    """List immutable image IDs under one exact registry, failing on bad schema."""
-
-    exact_id = str(registry_id or "").strip()
-    if not exact_id:
-        raise NebiusError("exact registry ID is required")
-    profile_args, _resolved_profile = _iam_profile_args(profile)
-    payload = _run_json(
-        [
-            *profile_args,
-            "registry",
-            "image",
-            "list",
-            "--parent-id",
-            exact_id,
-            "--all",
-        ]
-    )
-    if payload == {} or payload == {"items": None}:
-        items: Any = []
-    else:
-        items = payload.get("items") if isinstance(payload, dict) else None
-    if not isinstance(items, list):
-        raise NebiusError("Nebius returned schema-invalid registry image inventory")
-    image_ids: list[tuple[bool, str]] = []
-    for item in items:
-        # Registry image list rows are a flat Artifact API projection. They do
-        # not repeat parent_id; the exact --parent-id selector is the parent
-        # boundary, while every returned row must still carry an immutable ID.
-        image_id = str((item.get("id") or "") if isinstance(item, dict) else "").strip()
-        if not image_id:
-            raise NebiusError(
-                "Nebius returned a registry image without immutable identity"
-            )
-        image_ids.append((bool(item.get("tags")), image_id))
-    # Tagged manifests are repository roots and therefore depend on their
-    # untagged platform/config manifests. Delete roots first.
-    return tuple(
-        image_id
-        for tagged, image_id in sorted(image_ids, key=lambda row: (not row[0], row[1]))
-    )
-
-
-def delete_registry_image(image_id: str, *, profile: str | None = None) -> None:
-    """Delete one registry image by exact immutable ID."""
-
-    exact_id = str(image_id or "").strip()
-    if not exact_id:
-        raise NebiusError("exact registry image ID is required")
-    profile_args, _resolved_profile = _iam_profile_args(profile)
-    try:
-        _run([*profile_args, "registry", "image", "delete", "--id", exact_id])
-    except NebiusError as exc:
-        if _is_not_found(str(exc)):
-            return
-        raise
-
-
-def delete_all_registry_images(
-    registry_id: str, *, profile: str | None = None
-) -> tuple[str, ...]:
-    """Delete the exact registry's artifact DAG and verify it becomes empty."""
-
-    removed: list[str] = []
-    while True:
-        remaining = list_registry_image_ids(registry_id, profile=profile)
-        if not remaining:
-            return tuple(removed)
-        progress = False
-        dependency_errors: list[str] = []
-        for image_id in remaining:
-            try:
-                delete_registry_image(image_id, profile=profile)
-            except NebiusError as exc:
-                detail = str(exc).lower()
-                if "resources that depends on the artifact" in detail:
-                    dependency_errors.append(image_id)
-                    continue
-                raise
-            removed.append(image_id)
-            progress = True
-        if not progress:
-            raise NebiusError(
-                "registry artifact dependency cleanup made no progress for exact IDs: "
-                + ", ".join(dependency_errors)
-            )
-
-
 def list_quota_allowances(tenant_id: str) -> dict[str, Any]:
     """Return one provider quota snapshot for *tenant_id*.
 
@@ -1143,42 +1000,16 @@ def get_compute_instance_quota(
 
 
 def discover_container_registry(
-    project_id: str, *, preferred_region: str = "eu-north1"
+    project_id: str, *, preferred_region: str = ""
 ) -> str:
-    """Best-effort container registry URL for *project_id*, or "".
+    """Compatibility seam for callers that previously discovered a registry.
 
-    Returns ``<registry_fqdn>/<registry-id>``. A project can hold registries in
-    several regions, and the API list order is not stable, so prefer a registry
-    in *preferred_region* (``eu-north1``, the maintainer source-registry region)
-    and fall back to the first registry otherwise. Any failure resolves to "" so
-    callers can choose their own fallback.
+    Official execution defaults to public GHCR and configuration no longer
+    discovers or persists a provider registry. Customer BYOF registries must be
+    selected explicitly.
     """
-    if not project_id:
-        return ""
-    try:
-        data = _run_json(["registry", "list", "--parent-id", project_id])
-    except Exception:
-        return ""
 
-    def _url(item: dict[str, Any]) -> str:
-        fqdn = item.get("status", {}).get("registry_fqdn", "")
-        registry_id = item.get("metadata", {}).get("id", "")
-        if fqdn and registry_id:
-            return f"{fqdn}/{registry_id.removeprefix('registry-')}"
-        return ""
-
-    items = data.get("items", [])
-    if preferred_region:
-        for item in items:
-            fqdn = item.get("status", {}).get("registry_fqdn", "")
-            if f".{preferred_region}." in fqdn:
-                url = _url(item)
-                if url:
-                    return url
-    for item in items:
-        url = _url(item)
-        if url:
-            return url
+    del project_id, preferred_region
     return ""
 
 
