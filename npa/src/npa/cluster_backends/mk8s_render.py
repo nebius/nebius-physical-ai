@@ -226,10 +226,15 @@ def render_tfvars(
     )
     lines.append(f"filestore_mount_path = {_tfstr(cluster.filestore_mount_path)}")
     lines.append(f"filestore_mount_tag = {_tfstr(cluster.filestore_mount_tag)}")
+    filesystem_csi_repository = (
+        f"chart_repository = {_tfstr(cluster.filesystem_csi_chart_repository)}, "
+        if cluster.filesystem_csi_chart_repository
+        else ""
+    )
     lines.append(
-        'filesystem_csi = { chart_version = "0.1.6", namespace = "kube-system", '
-        "make_default_storage_class = true, previous_default_storage_class_name = "
-        '"compute-csi-default-sc" }'
+        f"filesystem_csi = {{ {filesystem_csi_repository}chart_version = \"0.1.6\", "
+        'namespace = "kube-system", make_default_storage_class = true, '
+        'previous_default_storage_class_name = "compute-csi-default-sc" }'
     )
 
     # Keep the fleet cheap and quiet: no observability/logging/ray/gatekeeper.

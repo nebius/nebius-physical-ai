@@ -283,6 +283,22 @@ def test_render_tfvars_rtx_single_gpu() -> None:
     assert 'ssh_public_key = { key = "ssh-ed25519 AAAA me" }' in tf
 
 
+def test_render_tfvars_uses_operator_filesystem_csi_repository() -> None:
+    cluster = ClusterSpec(
+        name="storage",
+        cpu_nodes=NodePoolSpec(count=1),
+        enable_filestore=True,
+        filesystem_csi_chart_repository="oci://charts.example.invalid/nebius",
+    )
+
+    tf = render_tfvars(cluster, ssh_public_key="ssh-ed25519 test")
+
+    assert (
+        'filesystem_csi = { chart_repository = '
+        '"oci://charts.example.invalid/nebius", chart_version = "0.1.6"' in tf
+    )
+
+
 def test_render_tfvars_8gpu_cluster_emits_fabric() -> None:
     cluster = ClusterSpec(
         name="train",
@@ -504,6 +520,9 @@ def test_plan_reports_strict_reservation_without_echoing_capacity_block_id() -> 
     data["defaults"]["gpu_nodes"]["capacity_block_group"] = (
         "capacityblockgroup-runtime-only"
     )
+    data["defaults"]["filesystem_csi_chart_repository"] = (
+        "oci://private.example.invalid/operator-only"
+    )
     plan = plan_fleet(spec_from_mapping(data))
     cluster_plan = plan["projects"][0]["clusters"][0]
     assert cluster_plan["gpu_reservation"] == "strict"
@@ -511,7 +530,9 @@ def test_plan_reports_strict_reservation_without_echoing_capacity_block_id() -> 
     assert cluster_plan["filestore_disk_size_gibibytes"] == 1024
     assert cluster_plan["filestore_mount_path"] == "/mnt/data"
     assert cluster_plan["filestore_mount_tag"] == "data"
+    assert cluster_plan["filesystem_csi_enabled"] is True
     assert "capacityblockgroup-runtime-only" not in json.dumps(plan)
+    assert "private.example.invalid" not in json.dumps(plan)
 
 
 def test_load_spec_from_yaml(tmp_path) -> None:

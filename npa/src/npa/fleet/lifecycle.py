@@ -994,6 +994,9 @@ def plan_fleet(
                 ],
                 "filestore_mount_path": backend_plan["filestore_mount_path"],
                 "filestore_mount_tag": backend_plan["filestore_mount_tag"],
+                "filesystem_csi_enabled": backend_plan[
+                    "filesystem_csi_enabled"
+                ],
                 "k8s_version": backend_plan["k8s_version"],
                 "mig": backend_plan["mig"],
             }

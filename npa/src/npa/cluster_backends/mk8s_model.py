@@ -91,6 +91,7 @@ class MK8sDesired:
     subnet_id: str = ""
     filestore_mount_path: str = "/mnt/data"
     filestore_mount_tag: str = "data"
+    filesystem_csi_chart_repository: str = ""
     gpu_driver_mode: str = "auto"
     managed_driver_preset: str = DEFAULT_MANAGED_DRIVER_PRESET
     allow_unsafe_nvswitch_operator: bool = False
@@ -196,6 +197,10 @@ class MK8sDesired:
             ):
                 raise ValueError(
                     "mk8s filestore mount tag must not contain whitespace or commas"
+                )
+            if any(char.isspace() for char in self.filesystem_csi_chart_repository):
+                raise ValueError(
+                    "mk8s filesystem CSI chart repository must not contain whitespace"
                 )
         if gpu and gpu.count > 0 and self.resolved_gpu_disk_size_gib() <= 0:
             raise ValueError("mk8s GPU disk size must be positive")

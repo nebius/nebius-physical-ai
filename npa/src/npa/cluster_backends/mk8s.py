@@ -133,6 +133,7 @@ def desired_state(cluster: MK8sDesired) -> dict[str, Any]:
         "filestore_disk_size_gibibytes": cluster.filestore_disk_size_gibibytes,
         "filestore_mount_path": cluster.filestore_mount_path,
         "filestore_mount_tag": cluster.filestore_mount_tag,
+        "filesystem_csi_enabled": bool(cluster.filesystem_csi_chart_repository),
         "k8s_version": cluster.resolved_k8s_version() or "backend-default",
         "mig": (
             {"strategy": cluster.mig.strategy, "config": cluster.mig.config}

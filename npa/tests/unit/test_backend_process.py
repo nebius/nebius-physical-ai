@@ -123,7 +123,12 @@ def test_stream_timeout_stops_descendant_process_group(tmp_path: Path) -> None:
         except ProcessLookupError:
             break
         stat_path = Path(f"/proc/{child_pid}/stat")
-        if stat_path.is_file() and stat_path.read_text().split()[2] == "Z":
+        try:
+            state = stat_path.read_text().split()[2]
+        except (FileNotFoundError, ProcessLookupError):
+            # The descendant exited between kill(0) and procfs inspection.
+            break
+        if state == "Z":
             break
         time.sleep(0.02)
     else:

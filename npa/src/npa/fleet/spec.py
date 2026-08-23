@@ -74,6 +74,7 @@ _MK8S_ENVELOPE_FIELDS = {
     "subnet_id",
     "filestore_mount_path",
     "filestore_mount_tag",
+    "filesystem_csi_chart_repository",
     "gpu_driver_mode",
     "managed_driver_preset",
     "allow_unsafe_nvswitch_operator",
@@ -150,6 +151,9 @@ class ClusterSpec:
     # cloud-init fstab entry must agree on one stable virtiofs tag and mount.
     filestore_mount_path: str = "/mnt/data"
     filestore_mount_tag: str = "data"
+    # Runtime/operator-supplied chart source. Keep private registry endpoints
+    # out of committed specs and never surface this value in plan JSON.
+    filesystem_csi_chart_repository: str = ""
     # Stable cross-path GPU driver contract. Auto selects Nebius's managed
     # driver-full node image for every requested GPU pool when the active recipe
     # supports it; operator is the explicit legacy/debug escape hatch.
@@ -339,6 +343,11 @@ class ClusterSpec:
                 raise FleetSpecError(
                     f"cluster {self.name!r}: filestore_mount_tag must be a non-empty "
                     "value without whitespace or commas"
+                )
+            if any(ch.isspace() for ch in self.filesystem_csi_chart_repository):
+                raise FleetSpecError(
+                    f"cluster {self.name!r}: filesystem_csi_chart_repository must "
+                    "not contain whitespace"
                 )
         if (
             gpu
@@ -549,6 +558,9 @@ def _cluster_from(
         subnet_id=str(data.get("subnet_id", "") or ""),
         filestore_mount_path=str(data.get("filestore_mount_path", "/mnt/data") or ""),
         filestore_mount_tag=str(data.get("filestore_mount_tag", "data") or ""),
+        filesystem_csi_chart_repository=str(
+            data.get("filesystem_csi_chart_repository", "") or ""
+        ).strip(),
         gpu_driver_mode=str(data.get("gpu_driver_mode", "auto") or "auto"),
         managed_driver_preset=str(
             data.get("managed_driver_preset", DEFAULT_MANAGED_DRIVER_PRESET)
