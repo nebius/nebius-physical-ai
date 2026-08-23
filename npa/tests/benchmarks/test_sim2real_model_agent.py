@@ -32,6 +32,8 @@ from npa.benchmarks.sim2real_model_agent import (
     _terminal_malformation_failure,
     _transport_telemetry_record,
     _validated_tool_calls,
+    _workflow_submission_block_reason,
+    _workflow_submit_command_kind,
     _workspace_preflight,
 )
 from npa.benchmarks.sim2real_model_server import render_server_resources
@@ -920,6 +922,109 @@ def test_submission_state_excludes_plan_only_run_identifiers() -> None:
         True,
         ["submitted-1"],
     )
+
+
+def test_submission_state_excludes_help_and_classifies_real_submit() -> None:
+    help_assistant = {
+        "role": "assistant",
+        "tool_calls": [
+            {
+                "id": "help",
+                "type": "function",
+                "function": {
+                    "name": "run_command",
+                    "arguments": json.dumps(
+                        {
+                            "command": (
+                                "npa/.venv/bin/npa workbench workflow submit --help"
+                            )
+                        }
+                    ),
+                },
+            }
+        ],
+    }
+    help_result = {
+        "role": "tool",
+        "tool_call_id": "help",
+        "content": json.dumps({"exit_code": 0, "stdout": "Usage: submit"}),
+    }
+
+    assert _submitted_workflow_state([help_assistant, help_result]) == (False, [])
+    assert (
+        _workflow_submit_command_kind(
+            "npa/.venv/bin/npa workbench workflow submit --help"
+        )
+        == "introspection"
+    )
+    assert (
+        _workflow_submit_command_kind(
+            "npa/.venv/bin/npa workbench workflow submit spec.yaml --plan-only"
+        )
+        == "introspection"
+    )
+    assert (
+        _workflow_submit_command_kind(
+            "npa/.venv/bin/npa workbench workflow submit spec.yaml"
+        )
+        == "standalone"
+    )
+    submitted_assistant = json.loads(json.dumps(help_assistant))
+    submitted_assistant["tool_calls"][0]["function"]["arguments"] = json.dumps(
+        {"command": "npa/.venv/bin/npa workbench workflow submit spec.yaml"}
+    )
+    submitted_result = {
+        **help_result,
+        "content": json.dumps({"exit_code": 0, "stdout": "submitted"}),
+    }
+    history = [submitted_assistant, submitted_result]
+    assert _workflow_submission_block_reason(
+        history,
+        tool_name="run_command",
+        arguments={
+            "command": "npa/.venv/bin/npa workbench workflow submit spec.yaml"
+        },
+    ) == "DuplicateWorkflowSubmissionBlocked"
+    assert _workflow_submission_block_reason(
+        history,
+        tool_name="run_command",
+        arguments={"command": "npa/.venv/bin/npa workbench workflow submit --help"},
+    ) is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "npa workbench workflow submit a.yaml; npa workbench workflow submit b.yaml",
+        "bash -lc 'npa workbench workflow submit a.yaml'",
+        "echo workbench workflow submit",
+        "true || npa workbench workflow submit a.yaml",
+        "npa workbench workflow submit a.yaml && npa workflow status run-1",
+        "npa workbench workflow submit a.yaml > submit.log",
+    ],
+)
+def test_compound_or_wrapped_workflow_submit_is_blocked(command: str) -> None:
+    assert _workflow_submit_command_kind(command) == "unsafe"
+    assert (
+        _workflow_submission_block_reason(
+            [], tool_name="run_command", arguments={"command": command}
+        )
+        == "UnsafeWorkflowSubmissionCommandBlocked"
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "npa 'workbench' 'workflow' 'submit' spec.yaml",
+        "npa workbench workflow 'submit' spec.yaml",
+        r"npa workbench workflow submi\t spec.yaml",
+    ],
+)
+def test_quoted_or_escaped_standalone_submit_is_still_classified(
+    command: str,
+) -> None:
+    assert _workflow_submit_command_kind(command) == "standalone"
 
 
 def test_remote_disconnect_telemetry_records_safe_recovery_action() -> None:

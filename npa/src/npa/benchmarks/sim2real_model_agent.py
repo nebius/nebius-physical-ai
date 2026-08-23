@@ -1112,14 +1112,10 @@ def _submitted_workflow_state(
                 continue
             try:
                 arguments = json.loads(str(function.get("arguments") or ""))
-                command = shlex.split(str(arguments.get("command") or ""))
-            except (json.JSONDecodeError, ValueError):
+                command = str(arguments.get("command") or "")
+            except json.JSONDecodeError:
                 continue
-            is_submit = any(
-                command[index : index + 3] == ["workbench", "workflow", "submit"]
-                for index in range(max(0, len(command) - 2))
-            )
-            if not is_submit or "--plan-only" in command:
+            if _workflow_submit_command_kind(command) != "standalone":
                 continue
             result_message = tool_results.get(str(call.get("id") or ""))
             if result_message is None:
@@ -1139,6 +1135,58 @@ def _submitted_workflow_state(
             submitted = True
             collect(result)
     return submitted, sorted(run_ids)
+
+
+def _workflow_submit_command_kind(command: str) -> str:
+    """Classify submit-like shell text without permitting compound side effects."""
+
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return (
+            "unsafe"
+            if re.search(r"\bworkbench\s+workflow\s+submit\b", command)
+            else "none"
+        )
+    sequences = [
+        index
+        for index in range(max(0, len(tokens) - 2))
+        if tokens[index : index + 3] == ["workbench", "workflow", "submit"]
+    ]
+    raw_submit_like = bool(
+        re.search(r"\bworkbench\s+workflow\s+submit\b", command)
+    )
+    if not sequences and not raw_submit_like:
+        return "none"
+    if re.search(r"[;&|`$<>()\n\r#]", command):
+        return "unsafe"
+    if len(sequences) != 1:
+        return "unsafe"
+    index = sequences[0]
+    if index != 1 or Path(tokens[0]).name != "npa":
+        return "unsafe"
+    suffix = tokens[index + 3 :]
+    if "--help" in suffix or "-h" in suffix or "--plan-only" in suffix:
+        return "introspection"
+    if not suffix or suffix[0].startswith("-"):
+        return "unsafe"
+    return "standalone"
+
+
+def _workflow_submission_block_reason(
+    messages: list[dict[str, Any]],
+    *,
+    tool_name: str,
+    arguments: dict[str, Any],
+) -> str | None:
+    if tool_name != "run_command":
+        return None
+    kind = _workflow_submit_command_kind(str(arguments.get("command") or ""))
+    if kind == "unsafe":
+        return "UnsafeWorkflowSubmissionCommandBlocked"
+    if kind == "standalone" and _submitted_workflow_state(messages)[0]:
+        return "DuplicateWorkflowSubmissionBlocked"
+    return None
 
 
 def _context_checkpoint(
@@ -1625,18 +1673,34 @@ def run(config_path: Path) -> int:
                         )
                         + "\n"
                     )
-                try:
-                    result = _run_tool(
-                        call["function"]["name"],
-                        arguments,
-                        workspace,
-                        env,
-                        isolation,
-                    )
-                except (
-                    Exception
-                ) as exc:  # tool errors are observations, not controller failures
-                    result = {"error": type(exc).__name__, "message": str(exc)}
+                submission_block_reason = _workflow_submission_block_reason(
+                    [*messages, assistant, *tool_messages],
+                    tool_name=call["function"]["name"],
+                    arguments=arguments,
+                )
+                if submission_block_reason:
+                    result = {
+                        "error": submission_block_reason,
+                        "message": (
+                            "Workflow submission must be one direct standalone NPA "
+                            "command, and only one successful non-plan submission is "
+                            "allowed. Use separate read-only tool calls for help, "
+                            "planning, monitoring, or diagnostics."
+                        ),
+                    }
+                else:
+                    try:
+                        result = _run_tool(
+                            call["function"]["name"],
+                            arguments,
+                            workspace,
+                            env,
+                            isolation,
+                        )
+                    except (
+                        Exception
+                    ) as exc:  # tool errors are observations, not controller failures
+                        result = {"error": type(exc).__name__, "message": str(exc)}
                 tool_message = {
                     "role": "tool",
                     "tool_call_id": call["id"],
