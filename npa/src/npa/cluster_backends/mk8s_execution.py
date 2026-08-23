@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import shutil
 import stat
 import tempfile
@@ -43,6 +44,7 @@ _MODULES_SUBDIR = "modules"
 _FILESYSTEM_VERIFIER = (
     Path("filesystem-csi-validation") / "01-verify-node-filesystem-mounts.sh"
 )
+_FILESYSTEM_VALIDATION_COMMON = Path("filesystem-csi-validation") / "common.sh"
 _ENV_SIDECAR = ".npa-fleet-env.json"
 _PROVIDER_FIELD_MISSING = object()
 
@@ -556,6 +558,27 @@ def _prepare_install_dir(
         if patched != original:
             verifier.write_text(patched)
             _log(on_status, "patched filesystem verifier for kubectl debug output")
+
+    # The upstream verifier tries to infer the mount path by parsing the
+    # cloud-init Terraform template. That template intentionally contains the
+    # unresolved token ``${filestore_mount_path}``, so the parser can return the
+    # token literally and make every real mount check fail before reaching
+    # fstab, df, or the write probe. Bind the materialized validation scripts to
+    # the already-validated fleet value while preserving an explicit runtime
+    # MOUNT_POINT override.
+    validation_common = workdir / _FILESYSTEM_VALIDATION_COMMON
+    if validation_common.is_file():
+        original = validation_common.read_text()
+        marker = 'MOUNT_POINT="${MOUNT_POINT:-$(default_mount_point)}"'
+        replacement = (
+            'if [[ -z "${MOUNT_POINT:-}" ]]; then\n'
+            f"  MOUNT_POINT={shlex.quote(cluster.filestore_mount_path)}\n"
+            "fi"
+        )
+        patched = original.replace(marker, replacement)
+        if patched != original:
+            validation_common.write_text(patched)
+            _log(on_status, "bound filesystem verifier to rendered mount path")
 
     provider_tf = workdir / "provider.tf"
     if provider_tf.exists():

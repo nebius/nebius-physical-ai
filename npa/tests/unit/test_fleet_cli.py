@@ -1074,6 +1074,21 @@ def _add_quiet_filesystem_verifier(recipe_root: Path) -> Path:
     return verifier
 
 
+def _add_filesystem_validation_common(recipe_root: Path) -> Path:
+    common = (
+        recipe_root
+        / "k8s-training"
+        / "filesystem-csi-validation"
+        / "common.sh"
+    )
+    common.parent.mkdir(parents=True, exist_ok=True)
+    common.write_text(
+        'MOUNT_POINT="${MOUNT_POINT:-$(default_mount_point)}"\n'
+        'MOUNT_POINT="${MOUNT_POINT:-/mnt/data}"\n'
+    )
+    return common
+
+
 def test_prepare_install_dir_patches_external_recipe_debug_quiet(tmp_path) -> None:
     from npa.fleet import lifecycle as L
 
@@ -1095,6 +1110,35 @@ def test_prepare_install_dir_patches_external_recipe_debug_quiet(tmp_path) -> No
     )
     assert "--quiet" in source.read_text()
     assert "--quiet" not in installed.read_text()
+
+
+def test_prepare_install_dir_binds_filesystem_verifier_mount_path(tmp_path) -> None:
+    from npa.fleet import lifecycle as L
+
+    root = _fake_recipe(
+        tmp_path, 'provider "nebius" { domain = "api.eu.nebius.cloud:443" }\n'
+    )
+    source = _add_filesystem_validation_common(root)
+    workdir = L._prepare_install_dir(
+        tmp_path / "install",
+        recipe_root=root,
+        region="us-central1",
+        cluster=ClusterSpec(
+            name="c",
+            cpu_nodes=NodePoolSpec(count=1),
+            filestore_mount_path="/mnt/shared data",
+        ),
+        ssh_public_key="k",
+    )
+
+    installed = (
+        workdir / "filesystem-csi-validation" / "common.sh"
+    ).read_text()
+    assert "$(default_mount_point)" in source.read_text()
+    assert "$(default_mount_point)" not in installed
+    assert "if [[ -z \"${MOUNT_POINT:-}\" ]]; then" in installed
+    assert "MOUNT_POINT='/mnt/shared data'" in installed
+    assert 'MOUNT_POINT="${MOUNT_POINT:-/mnt/data}"' in installed
 
 
 def test_prepare_install_dir_patches_fetched_recipe_debug_quiet(
