@@ -1074,6 +1074,28 @@ def _add_quiet_filesystem_verifier(recipe_root: Path) -> Path:
     return verifier
 
 
+def _add_attach_racy_filesystem_verifier(recipe_root: Path) -> Path:
+    verifier = (
+        recipe_root
+        / "k8s-training"
+        / "filesystem-csi-validation"
+        / "01-verify-node-filesystem-mounts.sh"
+    )
+    verifier.parent.mkdir(parents=True, exist_ok=True)
+    verifier.write_text(
+        "#!/usr/bin/env bash\n"
+        'if kubectl debug "${node}" 2>&1 | tee "${output_file}"; then\n'
+        "    if ! grep -Fq \\\n"
+        '      "[result] PASS: shared filesystem host mount is writable '
+        'virtiofs with reboot-safe nofail at ${MOUNT_POINT} on this node" \\\n'
+        '      "${output_file}"; then\n'
+        "      FAILED=1\n"
+        "    fi\n"
+        "fi\n"
+    )
+    return verifier
+
+
 def _add_filesystem_validation_common(recipe_root: Path) -> Path:
     common = (
         recipe_root
@@ -1139,6 +1161,33 @@ def test_prepare_install_dir_binds_filesystem_verifier_mount_path(tmp_path) -> N
     assert "if [[ -z \"${MOUNT_POINT:-}\" ]]; then" in installed
     assert "MOUNT_POINT='/mnt/shared data'" in installed
     assert 'MOUNT_POINT="${MOUNT_POINT:-/mnt/data}"' in installed
+
+
+def test_prepare_install_dir_recovers_kubectl_debug_attach_race(tmp_path) -> None:
+    from npa.fleet import lifecycle as L
+
+    root = _fake_recipe(
+        tmp_path, 'provider "nebius" { domain = "api.eu.nebius.cloud:443" }\n'
+    )
+    source = _add_attach_racy_filesystem_verifier(root)
+    workdir = L._prepare_install_dir(
+        tmp_path / "install",
+        recipe_root=root,
+        region="us-central1",
+        cluster=ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1)),
+        ssh_public_key="k",
+    )
+
+    installed = (
+        workdir / "filesystem-csi-validation" / "01-verify-node-filesystem-mounts.sh"
+    ).read_text()
+    assert "waiting for detached debugger evidence" not in source.read_text()
+    assert "waiting for detached debugger evidence" in installed
+    assert "--for=jsonpath='{.status.phase}'=Succeeded" in installed
+    assert 'kubectl logs -n "${TEST_NAMESPACE}" "${debug_pod_name}"' in installed
+    assert installed.index("waiting for detached debugger evidence") < installed.index(
+        "    if ! grep -Fq \\\n"
+    )
 
 
 def test_prepare_install_dir_patches_fetched_recipe_debug_quiet(

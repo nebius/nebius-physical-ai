@@ -555,9 +555,36 @@ def _prepare_install_dir(
         original = verifier.read_text()
         patched = re.sub(r"(?m)^[ \t]*--quiet[ \t]*\\\n", "", original)
         patched = patched.replace("kubectl debug --quiet ", "kubectl debug ")
+        success_check = (
+            '    if ! grep -Fq \\\n'
+            '      "[result] PASS: shared filesystem host mount is writable '
+            'virtiofs with reboot-safe nofail at ${MOUNT_POINT} on this node" \\\n'
+            '      "${output_file}"; then'
+        )
+        if success_check in patched and "waiting for detached debugger evidence" not in patched:
+            # kubectl 1.36 can win the pod-creation request but lose the
+            # immediate attach race ("container debugger not found") and still
+            # return success. Wait for the one-shot pod to terminate and append
+            # its logs before deciding that the required marker is absent.
+            fallback = (
+                '    debug_pod_name="$(awk \'/Creating debugging pod / '
+                '{ print $4 }\' "${output_file}" | tail -n 1)"\n'
+                '    if ! grep -Fq "[result] PASS: shared filesystem host mount is '
+                'writable virtiofs with reboot-safe nofail at ${MOUNT_POINT} on this '
+                'node" "${output_file}" && [[ -n "${debug_pod_name}" ]]; then\n'
+                '      echo "[check] waiting for detached debugger evidence" | '
+                'tee -a "${output_file}"\n'
+                '      kubectl wait -n "${TEST_NAMESPACE}" '
+                '--for=jsonpath=\'{.status.phase}\'=Succeeded '
+                '"pod/${debug_pod_name}" >/dev/null 2>&1 || true\n'
+                '      kubectl logs -n "${TEST_NAMESPACE}" "${debug_pod_name}" '
+                '| tee -a "${output_file}" || true\n'
+                '    fi\n'
+            )
+            patched = patched.replace(success_check, fallback + success_check)
         if patched != original:
             verifier.write_text(patched)
-            _log(on_status, "patched filesystem verifier for kubectl debug output")
+            _log(on_status, "patched filesystem verifier for kubectl debug compatibility")
 
     # The upstream verifier tries to infer the mount path by parsing the
     # cloud-init Terraform template. That template intentionally contains the
