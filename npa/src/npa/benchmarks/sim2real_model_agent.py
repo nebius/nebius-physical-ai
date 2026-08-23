@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -30,6 +31,7 @@ from npa.benchmarks.sim2real_success import VerificationError, verify_artifact_t
 TASK_TEXT = """From a clean checkout on the dev VM, first validate and plan the canonical public-franka-lift preset for npa/workflows/workbench/npa-workflows/sim2real.yaml, submit it through the standard runtime, and monitor that run to terminal completion. Diagnose and make necessary fixes if it fails. Do not weaken the canonical workflow, its real components, or the strict requirement that the Franka arm grasp the cube, lift it at least 5 cm, and hold it for 2 seconds. Preserve unrelated changes. Finish with the run ID, commands, code changes, measured stage and grasp metrics, and artifact locations."""
 CHECKPOINT_MARKER = "BENCHMARK_CONTEXT_CHECKPOINT_V1"
 RECOVERY_MARKER = "BENCHMARK_MALFORMED_RESPONSE_RECOVERY_V1"
+MAX_CONTEXT_TOOL_RESULT_CHARACTERS = 4_096
 
 DEFAULT_STREAM_SAFEGUARDS = {
     # These are per-response semantic-progress safeguards, not benchmark budgets.
@@ -40,6 +42,13 @@ DEFAULT_STREAM_SAFEGUARDS = {
     "tool_assembly_characters": 65_536,
     "max_identical_malformed_responses": 3,
 }
+
+_TRANSIENT_TRANSPORT_ERRORS = (
+    urllib.error.URLError,
+    http.client.HTTPException,
+    ConnectionError,
+    TimeoutError,
+)
 
 
 TOOLS: list[dict[str, Any]] = [
@@ -141,6 +150,10 @@ class RequestTelemetry:
 class EmptyStreamError(RuntimeError):
     """The server closed a streaming response without a usable event."""
 
+    def __init__(self, message: str, telemetry: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.telemetry = telemetry
+
 
 class StreamRecoveryError(RuntimeError):
     """A response made no usable tool-call progress and must be discarded."""
@@ -149,6 +162,15 @@ class StreamRecoveryError(RuntimeError):
         super().__init__(reason)
         self.reason = reason
         self.telemetry = telemetry
+
+
+class IndeterminateToolExecutionError(RuntimeError):
+    """A write-ahead tool intent has no durable result after restart."""
+
+    def __init__(self, response_id: str, tool_call_ids: list[str]) -> None:
+        super().__init__("tool execution may have completed before its result was journaled")
+        self.response_id = response_id
+        self.tool_call_ids = tool_call_ids
 
 
 def _utc() -> str:
@@ -356,6 +378,30 @@ def _stream_chat(
         target.append(value)
         observed_characters_lower_bound += len(value)
 
+    def enforce_semantic_progress() -> None:
+        if finish_reason == "tool_calls":
+            return
+        elapsed = time.monotonic() - started
+        if not tool_calls and (
+            elapsed >= float(policy["no_tool_progress_seconds"])
+            or observed_characters_lower_bound
+            >= int(policy["no_tool_progress_characters"])
+        ):
+            raise StreamRecoveryError(
+                "no_usable_tool_call_progress",
+                progress_record("no_usable_tool_call_progress"),
+            )
+        if tool_started is not None and (
+            time.monotonic() - tool_started
+            >= float(policy["tool_assembly_seconds"])
+            or observed_characters_lower_bound - tool_started_characters
+            >= int(policy["tool_assembly_characters"])
+        ):
+            raise StreamRecoveryError(
+                "tool_call_boundary_not_completed",
+                progress_record("tool_call_boundary_not_completed"),
+            )
+
     try:
         with urllib.request.urlopen(
             request, timeout=float(policy["idle_timeout_seconds"])
@@ -363,18 +409,59 @@ def _stream_chat(
             for raw in response:
                 line = raw.decode("utf-8", errors="replace").strip()
                 if not line.startswith("data:"):
+                    enforce_semantic_progress()
                     continue
                 data = line[5:].strip()
                 if data == "[DONE]":
                     break
                 chunk = json.loads(data)
-                if chunk.get("usage"):
-                    usage = chunk["usage"]
+                if not isinstance(chunk, dict):
+                    raise StreamRecoveryError(
+                        "malformed_stream_shape",
+                        progress_record("malformed_stream_shape"),
+                    )
+                chunk_usage = chunk.get("usage")
+                if chunk_usage:
+                    if not isinstance(chunk_usage, dict):
+                        raise StreamRecoveryError(
+                            "malformed_stream_shape",
+                            progress_record("malformed_stream_shape"),
+                        )
+                    if any(
+                        key in chunk_usage
+                        and chunk_usage[key] is not None
+                        and not isinstance(chunk_usage[key], dict)
+                        for key in (
+                            "prompt_tokens_details",
+                            "completion_tokens_details",
+                        )
+                    ):
+                        raise StreamRecoveryError(
+                            "malformed_stream_shape",
+                            progress_record("malformed_stream_shape"),
+                        )
+                    usage = chunk_usage
                 choices = chunk.get("choices") or []
+                if not isinstance(choices, list):
+                    raise StreamRecoveryError(
+                        "malformed_stream_shape",
+                        progress_record("malformed_stream_shape"),
+                    )
                 if not choices:
+                    enforce_semantic_progress()
                     continue
                 choice = choices[0]
+                if not isinstance(choice, dict):
+                    raise StreamRecoveryError(
+                        "malformed_stream_shape",
+                        progress_record("malformed_stream_shape"),
+                    )
                 delta = choice.get("delta") or {}
+                if not isinstance(delta, dict):
+                    raise StreamRecoveryError(
+                        "malformed_stream_shape",
+                        progress_record("malformed_stream_shape"),
+                    )
                 if any(
                     delta.get(key)
                     for key in (
@@ -403,7 +490,15 @@ def _stream_chat(
                     delta.get("reasoning") or delta.get("reasoning_content"),
                     "reasoning",
                 )
-                for call in delta.get("tool_calls") or []:
+                streamed_calls = delta.get("tool_calls") or []
+                if not isinstance(streamed_calls, list) or any(
+                    not isinstance(call, dict) for call in streamed_calls
+                ):
+                    raise StreamRecoveryError(
+                        "malformed_stream_shape",
+                        progress_record("malformed_stream_shape"),
+                    )
+                for call in streamed_calls:
                     if tool_started is None:
                         tool_started = time.monotonic()
                         tool_started_characters = observed_characters_lower_bound
@@ -422,16 +517,22 @@ def _stream_chat(
                             "function": {"name": "", "arguments": ""},
                         },
                     )
+                    streamed_function = call.get("function") or {}
+                    if not isinstance(streamed_function, dict):
+                        raise StreamRecoveryError(
+                            "malformed_stream_shape",
+                            progress_record("malformed_stream_shape"),
+                        )
                     for target, value, field in (
                         (current, call.get("id"), "tool_call_id"),
                         (
                             current["function"],
-                            (call.get("function") or {}).get("name"),
+                            streamed_function.get("name"),
                             "tool_name",
                         ),
                         (
                             current["function"],
-                            (call.get("function") or {}).get("arguments"),
+                            streamed_function.get("arguments"),
                             "tool_arguments",
                         ),
                     ):
@@ -445,26 +546,7 @@ def _stream_chat(
                 finish_reason = choice.get("finish_reason") or finish_reason
                 if finish_reason == "tool_calls":
                     continue
-                elapsed = time.monotonic() - started
-                if not tool_calls and (
-                    elapsed >= float(policy["no_tool_progress_seconds"])
-                    or observed_characters_lower_bound
-                    >= int(policy["no_tool_progress_characters"])
-                ):
-                    raise StreamRecoveryError(
-                        "no_usable_tool_call_progress",
-                        progress_record("no_usable_tool_call_progress"),
-                    )
-                if tool_started is not None and (
-                    time.monotonic() - tool_started
-                    >= float(policy["tool_assembly_seconds"])
-                    or observed_characters_lower_bound - tool_started_characters
-                    >= int(policy["tool_assembly_characters"])
-                ):
-                    raise StreamRecoveryError(
-                        "tool_call_boundary_not_completed",
-                        progress_record("tool_call_boundary_not_completed"),
-                    )
+                enforce_semantic_progress()
     except (TimeoutError, socket.timeout) as exc:
         if finish_reason != "tool_calls":
             raise StreamRecoveryError(
@@ -474,9 +556,17 @@ def _stream_chat(
         raise StreamRecoveryError(
             "malformed_sse_json", progress_record("malformed_sse_json")
         ) from exc
+    except _TRANSIENT_TRANSPORT_ERRORS as exc:
+        if any((first, content, reasoning, tool_calls, usage, finish_reason)):
+            raise StreamRecoveryError(
+                "stream_transport_interrupted",
+                progress_record("stream_transport_interrupted"),
+            ) from exc
+        raise
     if not any((content, reasoning, tool_calls, usage, finish_reason, first)):
         raise EmptyStreamError(
-            "OpenAI-compatible endpoint returned an empty event stream"
+            "OpenAI-compatible endpoint returned an empty event stream",
+            progress_record("empty_event_stream"),
         )
     details = usage.get("prompt_tokens_details") or {}
     completion_details = usage.get("completion_tokens_details") or {}
@@ -561,6 +651,82 @@ def _validated_tool_calls(
             raise ValueError("tool argument values must be strings")
         validated.append((call, arguments))
     return validated
+
+
+def _bounded_tool_result(
+    result: dict[str, Any],
+    *,
+    max_characters: int = MAX_CONTEXT_TOOL_RESULT_CHARACTERS,
+) -> dict[str, Any]:
+    """Keep full evidence off-context while preserving a hash-bound useful preview."""
+
+    serialized = json.dumps(result, sort_keys=True, separators=(",", ":"))
+    if len(serialized) <= max_characters:
+        return result
+    run_identifiers: set[str] = set()
+
+    def collect_run_identifiers(value: Any, key: str | None = None) -> None:
+        if isinstance(value, dict):
+            for child_key, child in value.items():
+                collect_run_identifiers(child, str(child_key))
+        elif isinstance(value, list):
+            for child in value:
+                collect_run_identifiers(child, key)
+        elif isinstance(value, str):
+            if key in {"run_id", "workflow_run_id"} and _RUN_ID_RE.fullmatch(value):
+                run_identifiers.add(value)
+                return
+            if value[:1] in {"{", "["}:
+                try:
+                    collect_run_identifiers(json.loads(value), key)
+                except json.JSONDecodeError:
+                    pass
+
+    collect_run_identifiers(result)
+    preserved = {
+        key: result[key]
+        for key in ("exit_code", "status", "terminal", "workflow_succeeded")
+        if key in result
+        and isinstance(result[key], (bool, int, float, str))
+        and (not isinstance(result[key], str) or len(result[key]) <= 256)
+    }
+    if run_identifiers:
+        preserved["run_identifiers"] = [
+            {"run_id": run_id} for run_id in sorted(run_identifiers)[:8]
+        ]
+
+    head_characters = min(2_048, max(256, max_characters // 2))
+    tail_characters = min(512, max(128, max_characters // 8))
+    bounded = {
+        "_npa_context_truncated": True,
+        "full_result_sha256": hashlib.sha256(serialized.encode()).hexdigest(),
+        "full_result_characters": len(serialized),
+        **preserved,
+        "preview_head": serialized[:head_characters],
+        "preview_tail": serialized[-tail_characters:],
+        "recovery_guidance": (
+            "The full result is retained in private append-only evidence. "
+            "Use run_command with rg or sed for a targeted excerpt; do not repeat "
+            "the same broad read_file or list_files call."
+        ),
+    }
+    while (
+        len(json.dumps(bounded, sort_keys=True, separators=(",", ":")))
+        > max_characters
+    ):
+        if len(bounded["preview_head"]) > 256:
+            bounded["preview_head"] = bounded["preview_head"][:-256]
+        elif len(bounded["preview_tail"]) > 128:
+            bounded["preview_tail"] = bounded["preview_tail"][:-128]
+        else:
+            break
+    return bounded
+
+
+def _serialize_bounded_tool_result(result: dict[str, Any]) -> str:
+    return json.dumps(
+        _bounded_tool_result(result), sort_keys=True, separators=(",", ":")
+    )
 
 
 def _response_shape(assistant: dict[str, Any]) -> dict[str, Any]:
@@ -648,6 +814,7 @@ def _terminal_malformation_failure(
     fingerprint: str,
     identical_count: int,
     reason: str,
+    workflow_submitted: bool,
     run_identifiers: list[str],
 ) -> dict[str, Any]:
     return {
@@ -657,22 +824,61 @@ def _terminal_malformation_failure(
         "malformation_fingerprint": fingerprint,
         "identical_malformation_count": identical_count,
         "last_reason": reason,
-        "workflow_submitted": bool(run_identifiers),
+        "workflow_submitted": workflow_submitted,
         "workflow_run_identifiers": run_identifiers,
         "completed_at": _utc(),
     }
 
 
-def _load_transcript(path: Path) -> list[dict[str, Any]]:
+def _transport_telemetry_record(
+    exc: BaseException,
+    *,
+    request_index: int,
+    elapsed_seconds: float,
+    recovery_action: str,
+) -> dict[str, Any]:
+    return {
+        "request_index": request_index,
+        "classification": "transport_error",
+        "elapsed_seconds": elapsed_seconds,
+        "observed_tokens_lower_bound": 0,
+        "observed_characters_lower_bound": 0,
+        "reason": type(exc).__name__,
+        "transport_error": repr(exc),
+        "recovery_action": recovery_action,
+        "at": _utc(),
+    }
+
+
+def _is_permanent_model_http_error(exc: BaseException) -> bool:
+    return (
+        isinstance(exc, urllib.error.HTTPError)
+        and 400 <= exc.code < 500
+        and exc.code not in {408, 409, 425, 429}
+    )
+
+
+def _load_transcript(
+    path: Path, tool_results_path: Path | None = None
+) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = []
     if not path.exists():
-        return messages
-    for line_number, line in enumerate(
-        path.read_text(encoding="utf-8").splitlines(), 1
-    ):
+        transcript_lines: list[str] = []
+    else:
+        transcript_lines = path.read_text(encoding="utf-8").splitlines()
+    last_transcript_line = max(
+        (index for index, line in enumerate(transcript_lines, 1) if line.strip()),
+        default=0,
+    )
+    for line_number, line in enumerate(transcript_lines, 1):
         if not line.strip():
             continue
-        message = json.loads(line)
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            if line_number == last_transcript_line:
+                break
+            raise
         if not isinstance(message, dict) or message.get("role") not in {
             "assistant",
             "tool",
@@ -680,6 +886,12 @@ def _load_transcript(path: Path) -> list[dict[str, Any]]:
         }:
             raise ValueError(f"invalid transcript entry at line {line_number}")
         messages.append(message)
+    complete_response_ids = {
+        str(group[0].get("_npa_response_id") or "")
+        for group in _safe_message_groups(messages)
+        if group and group[0].get("role") == "assistant" and group[0].get("tool_calls")
+    }
+    complete_response_ids.discard("")
     checkpoint_indexes = [
         index
         for index, message in enumerate(messages)
@@ -688,6 +900,75 @@ def _load_transcript(path: Path) -> list[dict[str, Any]]:
     ]
     if checkpoint_indexes:
         messages = messages[checkpoint_indexes[-1] :]
+    messages = [message for group in _safe_message_groups(messages) for message in group]
+    if tool_results_path is None or not tool_results_path.exists():
+        return messages
+
+    journal_groups: dict[str, dict[str, Any]] = {}
+    journal_lines = tool_results_path.read_text(encoding="utf-8").splitlines()
+    last_journal_line = max(
+        (index for index, line in enumerate(journal_lines, 1) if line.strip()),
+        default=0,
+    )
+    for line_number, line in enumerate(journal_lines, 1):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            if line_number == last_journal_line:
+                break
+            raise
+        if record.get("schema") != "npa.sim2real.tool_execution.v2":
+            continue
+        response_id = str(record.get("response_id") or "")
+        if not response_id:
+            raise ValueError(f"invalid tool journal entry at line {line_number}")
+        group = journal_groups.setdefault(
+            response_id,
+            {"assistant": record.get("assistant"), "intents": set(), "results": {}},
+        )
+        phase = record.get("phase")
+        call_id = str(record.get("tool_call_id") or "")
+        if phase == "intent" and call_id:
+            group["intents"].add(call_id)
+        elif phase == "result" and call_id:
+            group["results"][call_id] = record.get("tool_message")
+        elif phase == "transcript_committed":
+            group["committed"] = True
+
+    for response_id, group in journal_groups.items():
+        if group.get("committed") or response_id in complete_response_ids:
+            continue
+        assistant = group.get("assistant")
+        if not isinstance(assistant, dict):
+            raise ValueError(f"tool journal response {response_id} has no assistant")
+        unresolved = sorted(group["intents"] - set(group["results"]))
+        if unresolved:
+            raise IndeterminateToolExecutionError(response_id, unresolved)
+        tool_messages: list[dict[str, Any]] = []
+        for call in assistant.get("tool_calls") or []:
+            call_id = str(call.get("id") or "") if isinstance(call, dict) else ""
+            has_result = call_id in group["results"]
+            tool_message = group["results"].get(call_id)
+            if has_result and not isinstance(tool_message, dict):
+                raise IndeterminateToolExecutionError(response_id, [call_id])
+            if not has_result:
+                tool_message = {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": _serialize_bounded_tool_result(
+                        {
+                            "error": "ControllerRecovery",
+                            "message": (
+                                "This tool call was not executed before the controller "
+                                "stopped. Inspect durable state before retrying it."
+                            ),
+                        }
+                    ),
+                }
+            tool_messages.append(tool_message)
+        messages.extend([assistant, *tool_messages])
     return messages
 
 
@@ -701,6 +982,11 @@ def _last_request_index(path: Path) -> int:
         if not line.strip():
             continue
         record = json.loads(line)
+        if (
+            record.get("classification") == "telemetry_correction"
+            and "request_index" not in record
+        ):
+            continue
         try:
             last = max(last, int(record["request_index"]))
         except (KeyError, TypeError, ValueError) as exc:
@@ -783,6 +1069,76 @@ def _collect_run_identifiers(messages: list[dict[str, Any]]) -> list[str]:
                 except json.JSONDecodeError:
                     continue
     return sorted(found)
+
+
+def _submitted_workflow_state(
+    messages: list[dict[str, Any]],
+) -> tuple[bool, list[str]]:
+    """Return only run IDs backed by a successful non-plan workflow submit."""
+
+    tool_results = {
+        str(message.get("tool_call_id") or ""): message
+        for message in messages
+        if message.get("role") == "tool" and message.get("tool_call_id")
+    }
+    submitted = False
+    run_ids: set[str] = set()
+
+    def collect(value: Any, key: str | None = None) -> None:
+        if isinstance(value, dict):
+            for child_key, child in value.items():
+                collect(child, str(child_key))
+        elif isinstance(value, list):
+            for child in value:
+                collect(child, key)
+        elif isinstance(value, str):
+            if key in {"run_id", "workflow_run_id"} and _RUN_ID_RE.fullmatch(value):
+                run_ids.add(value)
+                return
+            if value[:1] in {"{", "["}:
+                try:
+                    collect(json.loads(value), key)
+                except json.JSONDecodeError:
+                    pass
+
+    for message in messages:
+        if message.get("role") != "assistant":
+            continue
+        for call in message.get("tool_calls") or []:
+            if not isinstance(call, dict):
+                continue
+            function = call.get("function")
+            if not isinstance(function, dict) or function.get("name") != "run_command":
+                continue
+            try:
+                arguments = json.loads(str(function.get("arguments") or ""))
+                command = shlex.split(str(arguments.get("command") or ""))
+            except (json.JSONDecodeError, ValueError):
+                continue
+            is_submit = any(
+                command[index : index + 3] == ["workbench", "workflow", "submit"]
+                for index in range(max(0, len(command) - 2))
+            )
+            if not is_submit or "--plan-only" in command:
+                continue
+            result_message = tool_results.get(str(call.get("id") or ""))
+            if result_message is None:
+                continue
+            try:
+                result = json.loads(str(result_message.get("content") or ""))
+            except json.JSONDecodeError:
+                continue
+            try:
+                if "exit_code" not in result:
+                    continue
+                exit_code = int(result["exit_code"])
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if exit_code != 0:
+                continue
+            submitted = True
+            collect(result)
+    return submitted, sorted(run_ids)
 
 
 def _context_checkpoint(
@@ -930,7 +1286,22 @@ def run(config_path: Path) -> int:
     api_key = str(config.get("api_key") or "benchmark-local")
     transcript_path = evidence / "transcript.jsonl"
     telemetry_path = evidence / "requests.jsonl"
-    messages.extend(_load_transcript(transcript_path))
+    tool_results_path = evidence / "tool-results.jsonl"
+    try:
+        messages.extend(_load_transcript(transcript_path, tool_results_path))
+    except IndeterminateToolExecutionError as exc:
+        failure = {
+            "schema": "npa.sim2real.model_agent_benchmark.failure.v2",
+            "classification": "indeterminate_tool_execution_after_restart",
+            "response_id": exc.response_id,
+            "tool_call_ids": exc.tool_call_ids,
+            "recovery_action": "terminate_without_reexecuting_possible_side_effect",
+            "completed_at": _utc(),
+        }
+        (evidence / "failure.json").write_text(
+            json.dumps(failure, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        return 3
     request_index = _last_request_index(telemetry_path)
     context_limit = int(config["serving"]["context_limit"])
     stream_safeguards = {
@@ -1027,9 +1398,17 @@ def run(config_path: Path) -> int:
     consecutive_stream_failures = 0
     while True:
         request_index += 1
+        request_started = time.monotonic()
         payload = {
             "model": config["served_model_name"],
-            "messages": messages,
+            "messages": [
+                {
+                    key: value
+                    for key, value in message.items()
+                    if not key.startswith("_npa_")
+                }
+                for message in messages
+            ],
             "tools": TOOLS,
             "tool_choice": "auto",
             "temperature": 0,
@@ -1061,15 +1440,9 @@ def run(config_path: Path) -> int:
                     ),
                 },
             }
-        except EmptyStreamError:
+        except EmptyStreamError as exc:
             recovery = {
-                "started_at": _utc(),
-                "elapsed_seconds": 0.0,
-                "time_to_first_token_seconds": None,
-                "observed_tokens_lower_bound": 0,
-                "observed_characters_lower_bound": 0,
-                "reason": "empty_event_stream",
-                "finish_reason": None,
+                **exc.telemetry,
                 "response_shape": {
                     "has_content": False,
                     "has_reasoning": False,
@@ -1077,19 +1450,62 @@ def run(config_path: Path) -> int:
                     "tool_call_indexes_observed": [],
                 },
             }
-        except urllib.error.URLError as exc:
+        except _TRANSIENT_TRANSPORT_ERRORS as exc:
+            if _is_permanent_model_http_error(exc):
+                record = _transport_telemetry_record(
+                    exc,
+                    request_index=request_index,
+                    elapsed_seconds=time.monotonic() - request_started,
+                    recovery_action="terminate_permanent_model_endpoint_http_error",
+                )
+                with telemetry_path.open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(record, sort_keys=True) + "\n")
+                failure = {
+                    "schema": "npa.sim2real.model_agent_benchmark.failure.v2",
+                    "classification": "permanent_model_endpoint_http_error",
+                    "request_index": request_index,
+                    "http_status": exc.code,
+                    "workflow_submitted": _submitted_workflow_state(messages[2:])[0],
+                    "workflow_run_identifiers": _submitted_workflow_state(
+                        messages[2:]
+                    )[1],
+                    "completed_at": _utc(),
+                }
+                (evidence / "failure.json").write_text(
+                    json.dumps(failure, indent=2, sort_keys=True), encoding="utf-8"
+                )
+                return 3
+            consecutive_stream_failures += 1
+            recovery_action = (
+                "discard_incomplete_response_rebuild_context_and_retry"
+                if consecutive_stream_failures == 1
+                else "retry_from_last_safe_checkpoint"
+            )
             with telemetry_path.open("a", encoding="utf-8") as handle:
                 handle.write(
                     json.dumps(
-                        {
-                            "request_index": request_index,
-                            "transport_error": repr(exc),
-                            "at": _utc(),
-                        }
+                        _transport_telemetry_record(
+                            exc,
+                            request_index=request_index,
+                            elapsed_seconds=time.monotonic() - request_started,
+                            recovery_action=recovery_action,
+                        ),
+                        sort_keys=True,
                     )
                     + "\n"
                 )
-            consecutive_stream_failures += 1
+            if consecutive_stream_failures == 1:
+                current_workspace_status = subprocess.check_output(
+                    ["git", "status", "--porcelain"], cwd=workspace, text=True
+                )
+                messages, checkpoint = _context_checkpoint(
+                    messages,
+                    max_recent_chars=16_384,
+                    workspace_status=current_workspace_status,
+                    recovery_reason=f"transport_error:{type(exc).__name__}",
+                )
+                with transcript_path.open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(checkpoint, sort_keys=True) + "\n")
             time.sleep(min(30.0, float(2 ** min(consecutive_stream_failures, 5))))
             continue
         if recovery is None:
@@ -1147,12 +1563,16 @@ def run(config_path: Path) -> int:
             with telemetry_path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(record, sort_keys=True) + "\n")
             if terminal:
+                workflow_submitted, submitted_run_ids = _submitted_workflow_state(
+                    messages[2:]
+                )
                 failure = _terminal_malformation_failure(
                     request_index=request_index,
                     fingerprint=fingerprint,
                     identical_count=identical_malformed_count,
                     reason=reason,
-                    run_identifiers=_collect_run_identifiers(messages[2:]),
+                    workflow_submitted=workflow_submitted,
+                    run_identifiers=submitted_run_ids,
                 )
                 (evidence / "failure.json").write_text(
                     json.dumps(failure, indent=2, sort_keys=True), encoding="utf-8"
@@ -1182,12 +1602,29 @@ def run(config_path: Path) -> int:
                 )
                 + "\n"
             )
-        messages.append(assistant)
-        with transcript_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(assistant, sort_keys=True) + "\n")
         if validated_calls:
             terminal_completion: dict[str, Any] | None = None
+            tool_messages: list[dict[str, Any]] = []
+            assistant_hash = _sha(assistant)
+            response_id = f"request-{request_index}-{assistant_hash}"
+            assistant["_npa_response_id"] = response_id
             for call, arguments in validated_calls:
+                journal_base = {
+                    "schema": "npa.sim2real.tool_execution.v2",
+                    "response_id": response_id,
+                    "assistant_sha256": assistant_hash,
+                    "assistant": assistant,
+                    "tool_call_id": call["id"],
+                    "tool_name": call["function"]["name"],
+                }
+                with tool_results_path.open("a", encoding="utf-8") as handle:
+                    handle.write(
+                        json.dumps(
+                            {**journal_base, "at": _utc(), "phase": "intent"},
+                            sort_keys=True,
+                        )
+                        + "\n"
+                    )
                 try:
                     result = _run_tool(
                         call["function"]["name"],
@@ -1203,17 +1640,52 @@ def run(config_path: Path) -> int:
                 tool_message = {
                     "role": "tool",
                     "tool_call_id": call["id"],
-                    "content": json.dumps(result),
+                    "content": _serialize_bounded_tool_result(result),
                 }
-                messages.append(tool_message)
-                with transcript_path.open("a", encoding="utf-8") as handle:
-                    handle.write(json.dumps(tool_message, sort_keys=True) + "\n")
+                with tool_results_path.open("a", encoding="utf-8") as handle:
+                    handle.write(
+                        json.dumps(
+                            {
+                                **journal_base,
+                                "schema": "npa.sim2real.tool_execution.v2",
+                                "at": _utc(),
+                                "phase": "result",
+                                "result": result,
+                                "tool_message": tool_message,
+                            },
+                            sort_keys=True,
+                        )
+                        + "\n"
+                    )
+                tool_messages.append(tool_message)
                 if (
                     completion_mode == "workflow_terminal"
                     and call["function"]["name"] == "complete_workflow"
                     and result.get("terminal") is True
                 ):
                     terminal_completion = result
+            messages.extend([assistant, *tool_messages])
+            with transcript_path.open("a", encoding="utf-8") as handle:
+                handle.write(
+                    "".join(
+                        json.dumps(message, sort_keys=True) + "\n"
+                        for message in (assistant, *tool_messages)
+                    )
+                )
+            with tool_results_path.open("a", encoding="utf-8") as handle:
+                handle.write(
+                    json.dumps(
+                        {
+                            "schema": "npa.sim2real.tool_execution.v2",
+                            "response_id": response_id,
+                            "assistant": assistant,
+                            "at": _utc(),
+                            "phase": "transcript_committed",
+                        },
+                        sort_keys=True,
+                    )
+                    + "\n"
+                )
             if terminal_completion is not None:
                 verification = {
                     "schema": "npa.sim2real.model_agent_benchmark.workflow_terminal.v1",
@@ -1236,6 +1708,10 @@ def run(config_path: Path) -> int:
                 ),
             )
             continue
+
+        messages.append(assistant)
+        with transcript_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(assistant, sort_keys=True) + "\n")
 
         artifact_root = workspace / str(
             config.get("artifact_root", "benchmark-artifacts")

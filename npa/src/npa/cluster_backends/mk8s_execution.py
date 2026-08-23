@@ -1533,13 +1533,14 @@ def _destroy_one_cluster(
     try:
         if log_path is not None:
             _ensure_private_log_parent(log_path, fleet_root)
-        _tf_run(
-            [terraform_bin, "init", "-input=false"],
-            cwd=workdir,
-            env=env,
-            timeout=900,
-            log_path=log_path,
-        )
+        with terraform_plugin_cache_lock(env):
+            _tf_run(
+                [terraform_bin, "init", "-input=false"],
+                cwd=workdir,
+                env=env,
+                timeout=900,
+                log_path=log_path,
+            )
         _tf_run(
             [terraform_bin, "destroy", "-auto-approve", "-input=false"],
             cwd=workdir,

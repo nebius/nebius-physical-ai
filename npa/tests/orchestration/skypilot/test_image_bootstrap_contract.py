@@ -157,6 +157,27 @@ def test_root_and_compliant_non_root_probe_share_exact_contract() -> None:
     ]
 
 
+def test_probe_allows_cold_workbench_image_pull_to_finish() -> None:
+    calls: list[list[str]] = []
+    observed: list[list[str]] = []
+
+    def observe(argv, _env):
+        observed.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "Succeeded", "")
+
+    evidence = probe_image_capabilities(
+        image=IMAGE,
+        digest=DIGEST,
+        context="ctx-exact",
+        runner=_successful_runner(calls),
+        terminal_observer=observe,
+        nonce_factory=lambda: "a" * 16,
+    )
+
+    assert evidence.ok
+    assert "--request-timeout=900s" in observed[0]
+
+
 def test_probe_attaches_declared_image_pull_secrets() -> None:
     calls: list[list[str]] = []
 

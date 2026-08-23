@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import http.client
 import json
 import subprocess
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -10,9 +12,13 @@ import pytest
 from npa.benchmarks.sim2real_model_agent import (
     CHECKPOINT_MARKER,
     EmptyStreamError,
+    IndeterminateToolExecutionError,
     StreamRecoveryError,
+    _TRANSIENT_TRANSPORT_ERRORS,
+    _bounded_tool_result,
     _context_checkpoint,
     _inside,
+    _is_permanent_model_http_error,
     _last_request_index,
     _load_malformation_streak,
     _load_transcript,
@@ -20,8 +26,11 @@ from npa.benchmarks.sim2real_model_agent import (
     _malformation_telemetry_record,
     _next_malformation_streak,
     _run_tool,
+    _serialize_bounded_tool_result,
     _stream_chat,
+    _submitted_workflow_state,
     _terminal_malformation_failure,
+    _transport_telemetry_record,
     _validated_tool_calls,
     _workspace_preflight,
 )
@@ -134,6 +143,52 @@ def test_tool_schema_round_trips_json_arguments(tmp_path: Path) -> None:
     assert json.loads(result["content"]) == {"ok": True}
 
 
+def test_large_tool_result_is_hash_bound_and_context_bounded() -> None:
+    result = {"path": "large.txt", "content": "abcdef" * 2_000}
+
+    bounded = _bounded_tool_result(result, max_characters=4_096)
+
+    assert bounded["_npa_context_truncated"] is True
+    assert bounded["full_result_characters"] > 10_000
+    assert len(bounded["full_result_sha256"]) == 64
+    assert "abcdef" in bounded["preview_head"]
+    assert "targeted excerpt" in bounded["recovery_guidance"]
+    assert len(_serialize_bounded_tool_result(result)) <= 4_096
+    assert _bounded_tool_result({"ok": True}) == {"ok": True}
+
+
+def test_bounded_submit_result_preserves_success_and_run_identifier() -> None:
+    run_id = "submitted-large-result-1"
+    assistant = {
+        "role": "assistant",
+        "tool_calls": [
+            {
+                "id": "submit",
+                "type": "function",
+                "function": {
+                    "name": "run_command",
+                    "arguments": json.dumps(
+                        {
+                            "command": "npa/.venv/bin/npa workbench workflow submit spec.yaml"
+                        }
+                    ),
+                },
+            }
+        ],
+    }
+    content = _serialize_bounded_tool_result(
+        {
+            "exit_code": 0,
+            "stdout": json.dumps({"run_id": run_id, "details": "x" * 12_000}),
+        }
+    )
+    tool = {"role": "tool", "tool_call_id": "submit", "content": content}
+
+    assert len(content) <= 4_096
+    assert json.loads(content)["exit_code"] == 0
+    assert _submitted_workflow_state([assistant, tool]) == (True, [run_id])
+
+
 def test_complete_workflow_uses_authoritative_terminal_status(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -179,8 +234,14 @@ def test_empty_stream_is_a_retryable_error(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(
         urllib.request, "urlopen", lambda _request, **_kwargs: EmptyResponse()
     )
-    with pytest.raises(EmptyStreamError, match="empty event stream"):
+    moments = iter((10.0, 15.0))
+    monkeypatch.setattr(
+        "npa.benchmarks.sim2real_model_agent.time.monotonic", lambda: next(moments)
+    )
+    with pytest.raises(EmptyStreamError, match="empty event stream") as raised:
         _stream_chat("http://model.example/v1", "key", {"messages": []})
+    assert raised.value.telemetry["elapsed_seconds"] == 5.0
+    assert raised.value.telemetry["reason"] == "empty_event_stream"
 
 
 class _StreamingResponse:
@@ -304,6 +365,92 @@ def test_reasoning_only_runaway_is_interrupted_with_progress_telemetry(
     assert response.closed is True
 
 
+def test_usage_only_heartbeat_cannot_bypass_semantic_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = _StreamingResponse([{"choices": [], "usage": {"total_tokens": 1}}])
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *_a, **_k: response)
+    moments = iter((0.0, 2.0, 2.0))
+    monkeypatch.setattr(
+        "npa.benchmarks.sim2real_model_agent.time.monotonic", lambda: next(moments)
+    )
+
+    with pytest.raises(StreamRecoveryError) as raised:
+        _stream_chat(
+            "http://model.example/v1",
+            "key",
+            {"messages": []},
+            safeguards={"no_tool_progress_seconds": 1},
+        )
+
+    assert raised.value.reason == "no_usable_tool_call_progress"
+    assert raised.value.telemetry["observed_tokens_lower_bound"] == 0
+
+
+def test_midstream_disconnect_preserves_observed_progress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class DisconnectingResponse(_StreamingResponse):
+        def __iter__(self):
+            yield (
+                b'data: {"choices":[{"delta":{"reasoning_content":"abc"},'
+                b'"finish_reason":null}]}\n'
+            )
+            raise http.client.RemoteDisconnected("peer closed")
+
+    response = DisconnectingResponse([])
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *_a, **_k: response)
+
+    with pytest.raises(StreamRecoveryError) as raised:
+        _stream_chat("http://model.example/v1", "key", {"messages": []})
+
+    assert raised.value.reason == "stream_transport_interrupted"
+    assert raised.value.telemetry["observed_tokens_lower_bound"] == 1
+    assert raised.value.telemetry["observed_characters_lower_bound"] == 3
+    assert response.closed is True
+
+
+def test_non_object_sse_chunk_is_malformed_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = _StreamingResponse(["[]"])
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *_a, **_k: response)
+
+    with pytest.raises(StreamRecoveryError) as raised:
+        _stream_chat("http://model.example/v1", "key", {"messages": []})
+
+    assert raised.value.reason == "malformed_stream_shape"
+
+
+@pytest.mark.parametrize(
+    "chunk",
+    [
+        {
+            "choices": [
+                {
+                    "delta": {"tool_calls": [{"index": 0, "function": "bad"}]},
+                    "finish_reason": None,
+                }
+            ]
+        },
+        {
+            "choices": [],
+            "usage": {"prompt_tokens_details": "bad"},
+        },
+    ],
+)
+def test_nested_non_object_sse_shape_is_malformed_recovery(
+    monkeypatch: pytest.MonkeyPatch, chunk: dict
+) -> None:
+    response = _StreamingResponse([chunk])
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *_a, **_k: response)
+
+    with pytest.raises(StreamRecoveryError) as raised:
+        _stream_chat("http://model.example/v1", "key", {"messages": []})
+
+    assert raised.value.reason == "malformed_stream_shape"
+
+
 def test_unvalidated_or_partial_tool_arguments_are_rejected() -> None:
     assistant = {
         "role": "assistant",
@@ -335,6 +482,8 @@ def test_resume_loads_transcript_and_request_index(tmp_path: Path) -> None:
     requests = tmp_path / "requests.jsonl"
     requests.write_text(
         json.dumps({"request_index": 3})
+        + "\n"
+        + json.dumps({"classification": "telemetry_correction"})
         + "\n"
         + json.dumps({"request_index": 8, "transport_error": "empty"})
         + "\n"
@@ -375,6 +524,216 @@ def test_context_checkpoint_is_bounded_and_becomes_resume_boundary(
     )
     loaded = _load_transcript(transcript)
     assert loaded == [checkpoint, {"role": "assistant", "content": "after"}]
+
+
+def test_resume_discards_incomplete_assistant_tool_group(tmp_path: Path) -> None:
+    transcript = tmp_path / "transcript.jsonl"
+    checkpoint = {"role": "user", "content": CHECKPOINT_MARKER + " safe"}
+    incomplete = {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "not-journaled",
+                "type": "function",
+                "function": {
+                    "name": "run_command",
+                    "arguments": json.dumps({"command": "git status --short"}),
+                },
+            }
+        ],
+    }
+    transcript.write_text(
+        "\n".join(json.dumps(message) for message in (checkpoint, incomplete)) + "\n"
+    )
+
+    assert _load_transcript(transcript) == [checkpoint]
+
+
+def test_resume_reconstructs_journaled_tool_group_without_reexecution(
+    tmp_path: Path,
+) -> None:
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text("")
+    journal = tmp_path / "tool-results.jsonl"
+    assistant = {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "submitted",
+                "type": "function",
+                "function": {
+                    "name": "run_command",
+                    "arguments": json.dumps({"command": "submit-command"}),
+                },
+            },
+            {
+                "id": "not-started",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": json.dumps({"path": "status.json"}),
+                },
+            },
+        ],
+    }
+    result_message = {
+        "role": "tool",
+        "tool_call_id": "submitted",
+        "content": _serialize_bounded_tool_result(
+            {"exit_code": 0, "stdout": json.dumps({"run_id": "durable-run-1"})}
+        ),
+    }
+    response_id = "response-1"
+    records = [
+        {
+            "schema": "npa.sim2real.tool_execution.v2",
+            "response_id": response_id,
+            "assistant": assistant,
+            "tool_call_id": "submitted",
+            "phase": "intent",
+        },
+        {
+            "schema": "npa.sim2real.tool_execution.v2",
+            "response_id": response_id,
+            "assistant": assistant,
+            "tool_call_id": "submitted",
+            "phase": "result",
+            "tool_message": result_message,
+        },
+    ]
+    journal.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+
+    loaded = _load_transcript(transcript, journal)
+
+    assert loaded[0] == assistant
+    assert loaded[1] == result_message
+    assert json.loads(loaded[2]["content"])["error"] == "ControllerRecovery"
+
+
+def test_resume_terminates_for_indeterminate_journaled_tool_execution(
+    tmp_path: Path,
+) -> None:
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text("")
+    journal = tmp_path / "tool-results.jsonl"
+    assistant = {
+        "role": "assistant",
+        "tool_calls": [
+            {
+                "id": "possibly-executed",
+                "type": "function",
+                "function": {"name": "run_command", "arguments": "{}"},
+            }
+        ],
+    }
+    journal.write_text(
+        json.dumps(
+            {
+                "schema": "npa.sim2real.tool_execution.v2",
+                "response_id": "response-2",
+                "assistant": assistant,
+                "tool_call_id": "possibly-executed",
+                "phase": "intent",
+            }
+        )
+        + "\n"
+    )
+
+    with pytest.raises(IndeterminateToolExecutionError) as error:
+        _load_transcript(transcript, journal)
+    assert error.value.tool_call_ids == ["possibly-executed"]
+
+
+def test_resume_does_not_merge_identical_response_occurrences(tmp_path: Path) -> None:
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text("")
+    journal = tmp_path / "tool-results.jsonl"
+    assistant = {
+        "role": "assistant",
+        "tool_calls": [
+            {
+                "id": "same-call",
+                "type": "function",
+                "function": {"name": "run_command", "arguments": "{}"},
+            }
+        ],
+    }
+    result_message = {
+        "role": "tool",
+        "tool_call_id": "same-call",
+        "content": _serialize_bounded_tool_result({"exit_code": 0}),
+    }
+    records = [
+        {
+            "schema": "npa.sim2real.tool_execution.v2",
+            "response_id": "request-1-same-hash",
+            "assistant": assistant,
+            "tool_call_id": "same-call",
+            "phase": "intent",
+        },
+        {
+            "schema": "npa.sim2real.tool_execution.v2",
+            "response_id": "request-1-same-hash",
+            "assistant": assistant,
+            "tool_call_id": "same-call",
+            "tool_message": result_message,
+            "phase": "result",
+        },
+        {
+            "schema": "npa.sim2real.tool_execution.v2",
+            "response_id": "request-1-same-hash",
+            "assistant": assistant,
+            "phase": "transcript_committed",
+        },
+        {
+            "schema": "npa.sim2real.tool_execution.v2",
+            "response_id": "request-2-same-hash",
+            "assistant": assistant,
+            "tool_call_id": "same-call",
+            "phase": "intent",
+        },
+    ]
+    journal.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+
+    with pytest.raises(IndeterminateToolExecutionError) as error:
+        _load_transcript(transcript, journal)
+    assert error.value.response_id == "request-2-same-hash"
+
+
+def test_resume_treats_torn_final_journal_record_as_uncommitted_intent(
+    tmp_path: Path,
+) -> None:
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text('{"role":"user","content":"safe"}\n{"role":"assistant"')
+    journal = tmp_path / "tool-results.jsonl"
+    assistant = {
+        "role": "assistant",
+        "tool_calls": [
+            {
+                "id": "uncertain",
+                "type": "function",
+                "function": {"name": "run_command", "arguments": "{}"},
+            }
+        ],
+    }
+    journal.write_text(
+        json.dumps(
+            {
+                "schema": "npa.sim2real.tool_execution.v2",
+                "response_id": "request-3-hash",
+                "assistant": assistant,
+                "tool_call_id": "uncertain",
+                "phase": "intent",
+            }
+        )
+        + '\n{"schema":"npa.sim2real.tool_execution.v2","phase":"result"'
+    )
+
+    with pytest.raises(IndeterminateToolExecutionError) as error:
+        _load_transcript(transcript, journal)
+    assert error.value.tool_call_ids == ["uncertain"]
 
 
 def test_recovery_checkpoint_keeps_only_complete_tool_boundaries_and_state() -> None:
@@ -497,10 +856,100 @@ def test_repeated_identical_malformation_has_terminal_classification(
         fingerprint="same-fingerprint",
         identical_count=3,
         reason="no_usable_tool_call_progress",
+        workflow_submitted=False,
         run_identifiers=[],
     )
     assert failure["classification"] == "repeated_identical_malformed_response"
     assert failure["workflow_submitted"] is False
+
+
+def test_submission_state_excludes_plan_only_run_identifiers() -> None:
+    assistant = {
+        "role": "assistant",
+        "tool_calls": [
+            {
+                "id": "plan",
+                "type": "function",
+                "function": {
+                    "name": "run_command",
+                    "arguments": json.dumps(
+                        {
+                            "command": "npa/.venv/bin/npa workbench workflow submit spec.yaml --plan-only"
+                        }
+                    ),
+                },
+            },
+            {
+                "id": "submit",
+                "type": "function",
+                "function": {
+                    "name": "run_command",
+                    "arguments": json.dumps(
+                        {
+                            "command": "npa/.venv/bin/npa workbench workflow submit spec.yaml"
+                        }
+                    ),
+                },
+            },
+        ],
+    }
+    plan = {
+        "role": "tool",
+        "tool_call_id": "plan",
+        "content": json.dumps(
+            {"exit_code": 0, "stdout": json.dumps({"run_id": "plan-only-1"})}
+        ),
+    }
+    failed_submit = {
+        "role": "tool",
+        "tool_call_id": "submit",
+        "content": json.dumps(
+            {"exit_code": 1, "stdout": json.dumps({"run_id": "not-submitted-1"})}
+        ),
+    }
+
+    assert _submitted_workflow_state([assistant, plan, failed_submit]) == (False, [])
+
+    succeeded_submit = {
+        **failed_submit,
+        "content": json.dumps(
+            {"exit_code": 0, "stdout": json.dumps({"run_id": "submitted-1"})}
+        ),
+    }
+    assert _submitted_workflow_state([assistant, plan, succeeded_submit]) == (
+        True,
+        ["submitted-1"],
+    )
+
+
+def test_remote_disconnect_telemetry_records_safe_recovery_action() -> None:
+    disconnect = http.client.RemoteDisconnected("peer closed before response")
+    assert isinstance(disconnect, _TRANSIENT_TRANSPORT_ERRORS)
+
+    record = _transport_telemetry_record(
+        disconnect,
+        request_index=2,
+        elapsed_seconds=35.5,
+        recovery_action="discard_incomplete_response_rebuild_context_and_retry",
+    )
+
+    assert record["classification"] == "transport_error"
+    assert record["request_index"] == 2
+    assert record["elapsed_seconds"] == 35.5
+    assert record["observed_tokens_lower_bound"] == 0
+    assert record["observed_characters_lower_bound"] == 0
+    assert record["reason"] == "RemoteDisconnected"
+    assert record["recovery_action"].startswith("discard_incomplete_response")
+
+
+def test_only_client_http_errors_are_permanent() -> None:
+    client = urllib.error.HTTPError("http://model", 401, "unauthorized", {}, None)
+    server = urllib.error.HTTPError("http://model", 503, "unavailable", {}, None)
+    throttled = urllib.error.HTTPError("http://model", 429, "throttled", {}, None)
+
+    assert _is_permanent_model_http_error(client) is True
+    assert _is_permanent_model_http_error(server) is False
+    assert _is_permanent_model_http_error(throttled) is False
 
 
 def test_workspace_resume_preserves_dirty_detached_checkout(tmp_path: Path) -> None:

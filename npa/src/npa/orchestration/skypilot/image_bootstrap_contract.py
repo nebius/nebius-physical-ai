@@ -19,7 +19,10 @@ CONTRACT_VERSION = "skypilot-0.12.2-v1"
 ATTESTATION_LABEL = "org.nebius.npa.skypilot-bootstrap-contract"
 FIRST_PARTY_REPOSITORY_PREFIX = "npa-"
 CANONICAL_PUBLIC_REGISTRY = "ghcr.io/nebius/nebius-physical-ai"
-PROBE_TIMEOUT_SECONDS = 180
+# A cold Workbench image pull can spend several minutes downloading and
+# extracting layers before the capability process starts. Keep this bounded,
+# but leave enough room for the real multi-GB images the preflight protects.
+PROBE_TIMEOUT_SECONDS = 900
 _KUBERNETES_NAME_RE = re.compile(r"^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?$")
 
 
