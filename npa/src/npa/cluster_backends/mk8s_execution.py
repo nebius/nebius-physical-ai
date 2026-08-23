@@ -45,6 +45,10 @@ _FILESYSTEM_VERIFIER = (
     Path("filesystem-csi-validation") / "01-verify-node-filesystem-mounts.sh"
 )
 _FILESYSTEM_VALIDATION_COMMON = Path("filesystem-csi-validation") / "common.sh"
+_FILESYSTEM_SMOKE_MANIFEST = (
+    Path("filesystem-csi-validation") / "manifests" / "01-csi-smoke-test.yaml"
+)
+_FILESYSTEM_STORAGE_CLASS = "csi-mounted-fs-path-sc"
 _ENV_SIDECAR = ".npa-fleet-env.json"
 _PROVIDER_FIELD_MISSING = object()
 
@@ -613,6 +617,24 @@ def _prepare_install_dir(
         if patched != original:
             validation_common.write_text(patched)
             _log(on_status, "bound filesystem verifier to rendered mount path")
+
+    # Some managed control planes do not admission-default a classless PVC even
+    # while this recipe's filesystem class is correctly annotated as the sole
+    # default. A smoke probe must exercise the intended CSI driver rather than
+    # wait forever on a classless claim. The validation script separately
+    # asserts the bound PVC uses this exact class; cluster-basics validation
+    # proves the same class carries the default annotation.
+    smoke_manifest = workdir / _FILESYSTEM_SMOKE_MANIFEST
+    if smoke_manifest.is_file():
+        original = smoke_manifest.read_text()
+        marker = "spec:\n  accessModes:\n"
+        replacement = (
+            f"spec:\n  storageClassName: {_FILESYSTEM_STORAGE_CLASS}\n  accessModes:\n"
+        )
+        patched = original.replace(marker, replacement, 1)
+        if patched != original:
+            smoke_manifest.write_text(patched)
+            _log(on_status, "pinned filesystem smoke PVC to the verified CSI class")
 
     provider_tf = workdir / "provider.tf"
     if provider_tf.exists():

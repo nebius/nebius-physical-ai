@@ -1112,6 +1112,30 @@ def _add_filesystem_validation_common(recipe_root: Path) -> Path:
     return common
 
 
+def _add_classless_filesystem_smoke_manifest(recipe_root: Path) -> Path:
+    manifest = (
+        recipe_root
+        / "k8s-training"
+        / "filesystem-csi-validation"
+        / "manifests"
+        / "01-csi-smoke-test.yaml"
+    )
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(
+        "apiVersion: v1\n"
+        "kind: PersistentVolumeClaim\n"
+        "spec:\n"
+        "  accessModes:\n"
+        "    - ReadWriteMany\n"
+        "---\n"
+        "apiVersion: v1\n"
+        "kind: Pod\n"
+        "spec:\n"
+        "  containers: []\n"
+    )
+    return manifest
+
+
 def test_prepare_install_dir_patches_external_recipe_debug_quiet(tmp_path) -> None:
     from npa.fleet import lifecycle as L
 
@@ -1162,6 +1186,33 @@ def test_prepare_install_dir_binds_filesystem_verifier_mount_path(tmp_path) -> N
     assert "if [[ -z \"${MOUNT_POINT:-}\" ]]; then" in installed
     assert "MOUNT_POINT='/mnt/shared data'" in installed
     assert 'MOUNT_POINT="${MOUNT_POINT:-/mnt/data}"' in installed
+
+
+def test_prepare_install_dir_pins_filesystem_smoke_storage_class(tmp_path) -> None:
+    from npa.fleet import lifecycle as L
+
+    root = _fake_recipe(
+        tmp_path, 'provider "nebius" { domain = "api.eu.nebius.cloud:443" }\n'
+    )
+    source = _add_classless_filesystem_smoke_manifest(root)
+    workdir = L._prepare_install_dir(
+        tmp_path / "install",
+        recipe_root=root,
+        region="us-central1",
+        cluster=ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1)),
+        ssh_public_key="k",
+    )
+
+    installed = (
+        workdir
+        / "filesystem-csi-validation"
+        / "manifests"
+        / "01-csi-smoke-test.yaml"
+    ).read_text()
+    assert "storageClassName:" not in source.read_text()
+    assert installed.count("storageClassName: csi-mounted-fs-path-sc") == 1
+    assert installed.index("storageClassName:") < installed.index("accessModes:")
+    assert installed.index("storageClassName:") < installed.index("kind: Pod")
 
 
 def test_prepare_install_dir_recovers_kubectl_debug_attach_race(tmp_path) -> None:
