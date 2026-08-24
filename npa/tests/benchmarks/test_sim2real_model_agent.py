@@ -11,8 +11,10 @@ import pytest
 
 from npa.benchmarks.sim2real_model_agent import (
     CHECKPOINT_MARKER,
+    EFFECTIVE_CONTEXT_CHECKPOINT_PROMPT_TOKENS,
     EmptyStreamError,
     IndeterminateToolExecutionError,
+    RequestTelemetry,
     StreamRecoveryError,
     _TRANSIENT_TRANSPORT_ERRORS,
     _bounded_tool_result,
@@ -24,8 +26,10 @@ from npa.benchmarks.sim2real_model_agent import (
     _load_transcript,
     _malformation_recovery_action,
     _malformation_telemetry_record,
+    _maybe_checkpoint,
     _next_malformation_streak,
     _run_tool,
+    _request_active_token_estimate,
     _serialize_bounded_tool_result,
     _stream_chat,
     _submitted_workflow_state,
@@ -526,6 +530,146 @@ def test_context_checkpoint_is_bounded_and_becomes_resume_boundary(
     )
     loaded = _load_transcript(transcript)
     assert loaded == [checkpoint, {"role": "assistant", "content": "after"}]
+
+
+def test_effective_context_checkpoint_precedes_observed_sparse_prefill_oom(
+    tmp_path: Path,
+) -> None:
+    messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "task"},
+        *(
+            {"role": "assistant", "content": f"group-{index}-" + "x" * 4_000}
+            for index in range(20)
+        ),
+    ]
+    transcript = tmp_path / "transcript.jsonl"
+
+    compacted = _maybe_checkpoint(
+        messages,
+        transcript,
+        active_tokens_upper_bound=EFFECTIVE_CONTEXT_CHECKPOINT_PROMPT_TOKENS,
+        context_limit=262_144,
+        workspace_status="",
+    )
+
+    assert len(compacted) < len(messages)
+    assert compacted[2]["content"].startswith(CHECKPOINT_MARKER)
+    assert len(compacted[2]["content"]) < 20_000
+    assert transcript.read_text().count(CHECKPOINT_MARKER) == 1
+
+    unchanged = _maybe_checkpoint(
+        messages,
+        transcript,
+        active_tokens_upper_bound=EFFECTIVE_CONTEXT_CHECKPOINT_PROMPT_TOKENS - 1,
+        context_limit=262_144,
+    )
+    assert unchanged == messages
+
+    repeated = _maybe_checkpoint(
+        compacted,
+        transcript,
+        active_tokens_upper_bound=EFFECTIVE_CONTEXT_CHECKPOINT_PROMPT_TOKENS,
+        context_limit=262_144,
+    )
+    assert repeated == compacted
+    assert transcript.read_text().count(CHECKPOINT_MARKER) == 1
+
+    advertised_transcript = tmp_path / "advertised.jsonl"
+    advertised = _maybe_checkpoint(
+        messages,
+        advertised_transcript,
+        active_tokens_upper_bound=8_500,
+        context_limit=10_000,
+    )
+    assert advertised[2]["content"].startswith(CHECKPOINT_MARKER)
+
+    crash_resume_transcript = tmp_path / "crash-resume.jsonl"
+    crash_resume = _maybe_checkpoint(
+        messages,
+        crash_resume_transcript,
+        context_limit=262_144,
+    )
+    assert crash_resume[2]["content"].startswith(CHECKPOINT_MARKER)
+
+
+def test_checkpoint_preserves_durable_successful_submission_state(
+    tmp_path: Path,
+) -> None:
+    assistant = {
+        "role": "assistant",
+        "tool_calls": [
+            {
+                "id": "submit",
+                "type": "function",
+                "function": {
+                    "name": "run_command",
+                    "arguments": json.dumps(
+                        {"command": "npa workbench workflow submit spec.yaml"}
+                    ),
+                },
+            }
+        ],
+    }
+    result = {
+        "role": "tool",
+        "tool_call_id": "submit",
+        "content": json.dumps({"exit_code": 0, "run_id": "run-123"}),
+    }
+    messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "task"},
+        assistant,
+        result,
+        {"role": "assistant", "content": "x" * 20_000},
+    ]
+
+    compacted, checkpoint = _context_checkpoint(
+        messages, max_recent_chars=128, workspace_status=""
+    )
+
+    assert assistant not in compacted
+    assert '"submitted":true' in checkpoint["content"]
+    assert _submitted_workflow_state(compacted[2:]) == (True, ["run-123"])
+
+
+def test_active_token_estimate_counts_completion_and_character_fallback() -> None:
+    common = {
+        "request_index": 1,
+        "started_at": "2026-08-24T00:00:00Z",
+        "latency_seconds": 1.0,
+        "time_to_first_token_seconds": 0.1,
+        "cached_tokens": None,
+        "reasoning_tokens": None,
+        "completion_tokens_per_second": None,
+        "finish_reason": "tool_calls",
+        "observed_tokens_lower_bound": 0,
+    }
+    with_usage = RequestTelemetry(
+        **common,
+        prompt_tokens=59_999,
+        completion_tokens=10,
+        total_tokens=60_009,
+        observed_characters_lower_bound=40,
+    )
+    fallback = RequestTelemetry(
+        **common,
+        prompt_tokens=59_999,
+        completion_tokens=None,
+        total_tokens=None,
+        observed_characters_lower_bound=40,
+    )
+
+    one_tool = [{"role": "tool", "content": "x" * 4_096}]
+    two_tools = one_tool + [{"role": "tool", "content": "y" * 4_096}]
+
+    with_usage_estimate = _request_active_token_estimate(with_usage, one_tool)
+    fallback_estimate = _request_active_token_estimate(fallback, two_tools)
+
+    assert with_usage_estimate is not None
+    assert with_usage_estimate >= 60_009 + 4_096
+    assert fallback_estimate is not None
+    assert fallback_estimate >= 59_999 + 40 + 8_192
 
 
 def test_resume_discards_incomplete_assistant_tool_group(tmp_path: Path) -> None:

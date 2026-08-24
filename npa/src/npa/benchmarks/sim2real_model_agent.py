@@ -32,6 +32,11 @@ TASK_TEXT = """From a clean checkout on the dev VM, first validate and plan the 
 CHECKPOINT_MARKER = "BENCHMARK_CONTEXT_CHECKPOINT_V1"
 RECOVERY_MARKER = "BENCHMARK_MALFORMED_RESPONSE_RECOVERY_V1"
 MAX_CONTEXT_TOOL_RESULT_CHARACTERS = 4_096
+# The pinned sparse-prefill deployment exhausted rank memory near 72k prompt
+# tokens despite a larger advertised model context. This is an active-context
+# compaction boundary, not a benchmark time, token, cost, or job budget.
+EFFECTIVE_CONTEXT_CHECKPOINT_PROMPT_TOKENS = 60_000
+MAX_CHECKPOINT_RECENT_CHARACTERS = 16_384
 
 DEFAULT_STREAM_SAFEGUARDS = {
     # These are per-response semantic-progress safeguards, not benchmark budgets.
@@ -996,19 +1001,6 @@ def _last_request_index(path: Path) -> int:
     return last
 
 
-def _latest_prompt_tokens(path: Path) -> int | None:
-    latest: int | None = None
-    if not path.exists():
-        return latest
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        value = json.loads(line).get("prompt_tokens")
-        if isinstance(value, int):
-            latest = value
-    return latest
-
-
 def _safe_message_groups(messages: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     groups: list[list[dict[str, Any]]] = []
     index = 0
@@ -1083,6 +1075,25 @@ def _submitted_workflow_state(
     }
     submitted = False
     run_ids: set[str] = set()
+
+    for message in messages:
+        content = str(message.get("content") or "")
+        if message.get("role") != "user" or not content.startswith(
+            CHECKPOINT_MARKER
+        ):
+            continue
+        for line in content.splitlines():
+            if not line.startswith("Durable workflow submission state: "):
+                continue
+            try:
+                state = json.loads(line.split(": ", 1)[1])
+            except json.JSONDecodeError:
+                continue
+            if state.get("submitted") is True:
+                submitted = True
+            for run_id in state.get("run_ids") or []:
+                if isinstance(run_id, str) and _RUN_ID_RE.fullmatch(run_id):
+                    run_ids.add(run_id)
 
     def collect(value: Any, key: str | None = None) -> None:
         if isinstance(value, dict):
@@ -1215,7 +1226,10 @@ def _context_checkpoint(
         used += size
     recent_groups.reverse()
     recent = [message for group in recent_groups for message in group]
-    run_ids = _collect_run_identifiers(messages[2:])
+    workflow_submitted, submitted_run_ids = _submitted_workflow_state(messages[2:])
+    run_ids = sorted(
+        set(_collect_run_identifiers(messages[2:])) | set(submitted_run_ids)
+    )
     workspace_lines = workspace_status.splitlines()
     recovery = (
         f"{RECOVERY_MARKER}\nDiscarded response reason: {recovery_reason}. "
@@ -1240,6 +1254,13 @@ def _context_checkpoint(
             f"Prior messages: {len(messages) - 2}; verbatim recent messages: "
             f"{len(recent)}\n"
             f"Durable workflow run identifiers: {json.dumps(run_ids)}\n"
+            "Durable workflow submission state: "
+            + json.dumps(
+                {"submitted": workflow_submitted, "run_ids": submitted_run_ids},
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
             f"Workspace status SHA256: {hashlib.sha256(workspace_status.encode()).hexdigest()}; "
             f"status lines: {len(workspace_lines)}\n"
             "Workspace status follows:\n"
@@ -1256,20 +1277,54 @@ def _maybe_checkpoint(
     messages: list[dict[str, Any]],
     transcript_path: Path,
     *,
-    prompt_tokens: int | None,
     context_limit: int,
     workspace_status: str = "",
+    active_tokens_upper_bound: int | None = None,
 ) -> list[dict[str, Any]]:
-    if prompt_tokens is None or prompt_tokens < int(context_limit * 0.85):
+    checkpoint_tokens = min(
+        int(context_limit * 0.85), EFFECTIVE_CONTEXT_CHECKPOINT_PROMPT_TOKENS
+    )
+    active = messages[2:]
+    if (
+        len(active) == 1
+        and active[0].get("role") == "user"
+        and str(active[0].get("content") or "").startswith(CHECKPOINT_MARKER)
+    ):
+        return messages
+    if active_tokens_upper_bound is None:
+        active_tokens_upper_bound = _message_token_upper_bound(messages)
+    if active_tokens_upper_bound < checkpoint_tokens:
         return messages
     compacted, checkpoint = _context_checkpoint(
         messages,
-        max_recent_chars=max(16_384, int(context_limit * 1.5)),
+        max_recent_chars=MAX_CHECKPOINT_RECENT_CHARACTERS,
         workspace_status=workspace_status,
     )
     with transcript_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(checkpoint, sort_keys=True) + "\n")
     return compacted
+
+
+def _message_token_upper_bound(messages: list[dict[str, Any]]) -> int:
+    # json.dumps escapes non-ASCII by default. One token per serialized ASCII
+    # character is deliberately conservative for crash-resume context safety.
+    return len(json.dumps(messages, sort_keys=True, separators=(",", ":")))
+
+
+def _request_active_token_estimate(
+    telemetry: RequestTelemetry,
+    appended_messages: list[dict[str, Any]],
+) -> int | None:
+    if telemetry.total_tokens is not None:
+        base = telemetry.total_tokens
+    elif telemetry.prompt_tokens is not None:
+        completion = telemetry.completion_tokens
+        if completion is None:
+            completion = telemetry.observed_characters_lower_bound
+        base = telemetry.prompt_tokens + completion
+    else:
+        return None
+    return base + _message_token_upper_bound(appended_messages)
 
 
 def _workspace_preflight(
@@ -1436,7 +1491,6 @@ def run(config_path: Path) -> int:
     messages = _maybe_checkpoint(
         messages,
         transcript_path,
-        prompt_tokens=_latest_prompt_tokens(telemetry_path),
         context_limit=context_limit,
         workspace_status=workspace_status,
     )
@@ -1767,10 +1821,12 @@ def run(config_path: Path) -> int:
             messages = _maybe_checkpoint(
                 messages,
                 transcript_path,
-                prompt_tokens=telemetry.prompt_tokens,
                 context_limit=context_limit,
                 workspace_status=subprocess.check_output(
                     ["git", "status", "--porcelain"], cwd=workspace, text=True
+                ),
+                active_tokens_upper_bound=_request_active_token_estimate(
+                    telemetry, tool_messages
                 ),
             )
             continue
@@ -1801,10 +1857,12 @@ def run(config_path: Path) -> int:
             messages = _maybe_checkpoint(
                 messages,
                 transcript_path,
-                prompt_tokens=telemetry.prompt_tokens,
                 context_limit=context_limit,
                 workspace_status=subprocess.check_output(
                     ["git", "status", "--porcelain"], cwd=workspace, text=True
+                ),
+                active_tokens_upper_bound=_request_active_token_estimate(
+                    telemetry, [feedback]
                 ),
             )
             continue
