@@ -1051,6 +1051,98 @@ def test_agent_destroy_shared_iam_preservation_is_successful_and_terminal(
     assert teardown.read()["phase"] == "destroyed"
 
 
+def test_agent_destroy_local_only_iam_retention_is_partial(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.cli import agent as agent_module
+    from npa.cli.main import app
+    from npa.clients import config
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "demo",
+                "projects": {
+                    "demo": {
+                        "project_id": "project-a",
+                        "tenant_id": "tenant-a",
+                        "region": "eu-test1",
+                        "agents": {
+                            "agent": {
+                                "project_id": "project-a",
+                                "instance_id": "instance-agent",
+                            },
+                            "peer": {
+                                "project_id": "project-a",
+                                "instance_id": "instance-peer",
+                            },
+                        },
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "CONFIG_PATH", config_path)
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    ProvisioningOperation.prepare(
+        command="npa agent deploy",
+        project_alias="demo",
+        project_id="project-a",
+        tenant_id="tenant-a",
+        region="eu-test1",
+        resource_type="agent",
+        requested_name="agent",
+        resume_command="npa agent deploy --project demo",
+    )
+    monkeypatch.setattr(
+        agent_module, "_destroy_agent_terraform", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        agent_module, "_cleanup_agent_local_files", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        "npa.clients.nebius.get_compute_instance_identity", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent_iam.agent_iam_leftovers",
+        lambda _project: {
+            "project_id": "project-a",
+            "service_account_id": "serviceaccount-agent",
+            "service_account_name": "npa-agent",
+            "access_keys": [{"id": "accesskey-agent"}],
+            "owned_by_npa": True,
+            "inventory_verified": True,
+            "inventory_error": "",
+            "dependents": [],
+        },
+    )
+    deleted: list[str] = []
+    monkeypatch.setattr("npa.clients.nebius.delete_access_key", deleted.append)
+    monkeypatch.setattr("npa.clients.nebius.delete_service_account", deleted.append)
+
+    result = CliRunner().invoke(
+        app, ["agent", "destroy", "--project", "demo", "--yes", "--json"]
+    )
+
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
+    assert payload["outcome"] == "partial_iam_cleanup"
+    assert payload["infrastructure_absent"] is True
+    assert payload["iam_cleanup_complete"] is False
+    assert deleted == []
+    saved = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    assert set(saved["projects"]["demo"]["agents"]) == {"peer"}
+    assert (
+        teardown_receipts.latest_phase_states(project_id="project-a")["agent"][
+            "terminal_state"
+        ]
+        == "partial"
+    )
+
+
 def test_agent_destroy_receipt_retry_reconciles_iam_without_reopening_terraform(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1247,6 +1339,97 @@ def test_agent_destroy_receipt_retry_unresolved_iam_stays_nonterminal(
         ]
         == "partial"
     )
+
+
+@pytest.mark.parametrize(
+    "saved_record",
+    [
+        pytest.param({}, id="empty-mapping"),
+        pytest.param(None, id="null"),
+        pytest.param(False, id="false"),
+        pytest.param(0, id="zero"),
+        pytest.param("", id="empty-string"),
+        pytest.param([], id="empty-list"),
+    ],
+)
+def test_agent_destroy_receipt_fails_closed_for_present_falsey_record(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    saved_record: object,
+) -> None:
+    from npa.cli.main import app
+    from npa.clients import config
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "demo",
+                "projects": {
+                    "demo": {
+                        "project_id": "project-a",
+                        "tenant_id": "tenant-a",
+                        "region": "eu-test1",
+                        "agents": {"agent": saved_record},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "CONFIG_PATH", config_path)
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    receipt = teardown_receipts.record_teardown_event(
+        phase="agent",
+        resource="agent",
+        terminal_state="verified_deleted",
+        project_alias="demo",
+        project_id="project-a",
+        identity={
+            "project_alias": "demo",
+            "project_id": "project-a",
+            "agent_name": "agent",
+            "instance_id": "instance-old",
+        },
+        action={"kind": "terraform_agent_destroy"},
+        verification={
+            "exact_instance_absent": True,
+            "terraform_destroy_completed": True,
+            "terraform_dependency_graph": [
+                "compute_instance",
+                "boot_disk",
+                "network",
+                "subnet",
+                "security_group",
+                "public_ip",
+            ],
+        },
+    )
+    iam_calls: list[str] = []
+    monkeypatch.setattr(
+        "npa.cli.agent_iam.report_destroyed_agent_iam",
+        lambda *_a, **_k: iam_calls.append("called") or "deleted",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "agent",
+            "destroy",
+            "--receipt",
+            receipt.stem,
+            "--name",
+            "agent",
+            "--yes",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code != 0, result.output
+    assert iam_calls == []
+    saved = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    assert saved["projects"]["demo"]["agents"]["agent"] == saved_record
 
 
 def test_old_agent_receipt_cannot_terminalize_fresh_state_or_enable_cleanup(
@@ -1528,6 +1711,141 @@ def test_direct_full_cleanup_blocks_old_receipt_with_fresh_agent_state(
     assert "demo" in (saved.get("projects") or {})
 
 
+@pytest.mark.parametrize(
+    "saved_record",
+    [
+        pytest.param({}, id="empty-mapping"),
+        pytest.param(None, id="null"),
+        pytest.param(False, id="false"),
+        pytest.param(0, id="zero"),
+        pytest.param("", id="empty-string"),
+        pytest.param([], id="empty-list"),
+        pytest.param(["malformed"], id="nonempty-list"),
+        pytest.param({"project_id": "project-a"}, id="missing-instance-id"),
+        pytest.param({"instance_id": "instance-old"}, id="missing-project-id"),
+        pytest.param(
+            {"project_id": "project-a", "instance_id": ["instance-old"]},
+            id="non-string-instance-id",
+        ),
+    ],
+)
+def test_direct_full_cleanup_fails_closed_for_present_invalid_agent_record(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    saved_record: object,
+) -> None:
+    """A present agent key is lifecycle evidence even when its value is falsey."""
+
+    from npa.cli import cleanup as cleanup_cli
+    from npa.cli.main import app
+    from npa.clients import config
+    from npa.clients.project_credential_store import (
+        project_credential_residue,
+        write_project_credentials,
+    )
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "demo",
+                "projects": {
+                    "demo": {
+                        "project_id": "project-a",
+                        "tenant_id": "tenant-a",
+                        "region": "eu-test1",
+                        "agents": {"agent": saved_record},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "CONFIG_PATH", config_path)
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    write_project_credentials(
+        "project-a",
+        {
+            "terraform_state": {
+                "access_key": "test-access",
+                "secret_key": "test-secret",
+            }
+        },
+        alias="demo",
+    )
+    for phase, state in (
+        ("workflow_audit", "verified_absent"),
+        ("bucket", "verified_absent"),
+        ("storage_iam", "completed"),
+    ):
+        teardown_receipts.record_teardown_event(
+            phase=phase,
+            resource=f"{phase}-fixture",
+            terminal_state=state,
+            project_alias="demo",
+            project_id="project-a",
+        )
+    teardown_receipts.record_teardown_event(
+        phase="agent",
+        resource="agent",
+        terminal_state="verified_deleted",
+        project_alias="demo",
+        project_id="project-a",
+        identity={
+            "project_alias": "demo",
+            "project_id": "project-a",
+            "agent_name": "agent",
+            "instance_id": "instance-old",
+        },
+        action={"kind": "terraform_agent_destroy"},
+        verification={
+            "exact_instance_absent": True,
+            "terraform_destroy_completed": True,
+            "terraform_dependency_graph": [
+                "compute_instance",
+                "boot_disk",
+                "network",
+                "subnet",
+                "security_group",
+                "public_ip",
+            ],
+        },
+    )
+    monkeypatch.setattr(cleanup_cli, "_nonterminal_jobs", lambda _sky: ([], ""))
+    monkeypatch.setattr(
+        cleanup_cli,
+        "_storage_iam_full_check",
+        lambda *_a, **_k: ("verified absent", False, "verified_absent", "owned"),
+    )
+    provider_calls: list[str] = []
+    monkeypatch.setattr(
+        "npa.clients.nebius.get_compute_instance_identity",
+        lambda instance_id, **_kwargs: provider_calls.append(instance_id) or None,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["cleanup", "--project", "demo", "--full", "--yes", "--keep-sky", "--json"],
+    )
+
+    assert result.exit_code != 0, result.output
+    assert provider_calls == []
+    assert project_credential_residue("project-a")
+    saved = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    assert saved["projects"]["demo"]["agents"]["agent"] == saved_record
+    receipts = teardown_receipts.list_teardown_receipts(
+        project_id="project-a", legacy="exclude"
+    )
+    assert len(receipts) == 1
+    assert (
+        teardown_receipts.latest_phase_states(project_id="project-a")[
+            "local_cleanup"
+        ]["terminal_state"]
+        == "partial"
+    )
+
+
 def test_cleanup_historical_agent_state_needs_exact_provider_absence(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1549,6 +1867,12 @@ def test_cleanup_historical_agent_state_needs_exact_provider_absence(
                         "project_id": "project-a",
                         "tenant_id": "tenant-a",
                         "region": "eu-test1",
+                        "agents": {
+                            "agent": {
+                                "project_id": "project-a",
+                                "instance_id": "instance-old",
+                            }
+                        },
                     }
                 },
             }

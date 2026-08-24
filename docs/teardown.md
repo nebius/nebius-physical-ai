@@ -93,6 +93,13 @@ instance absent. Missing, unreadable, ambiguous, conflicting, or provider-presen
 evidence exits nonzero and keeps project credentials, the alias, and local state
 for recovery.
 
+The same fail-closed rule applies to saved agent records. An explicitly present
+agent key is lifecycle evidence even when its value is empty or otherwise
+falsey. Empty, malformed, incomplete, unreadable, or ambiguous records block
+full local credential/alias retirement; only an actually absent key means no
+saved agent record. Valid immutable identity plus exact provider-confirmed
+absence continues to converge normally.
+
 ## The confirmation contract
 
 `agent destroy`, `storage bucket delete`, and `storage service-account delete`
@@ -112,15 +119,18 @@ A `--json` confirmation refusal contains one machine-readable document.
 ### Agent IAM
 
 `npa agent destroy` removes NPA-owned agent IAM by default after the exact agent
-infrastructure is verified absent. When exact provider inventory finds other VMs
-that depend on the same service account, preserving that shared identity is a
-successful destroy outcome: JSON reports `iam_disposition: retained_shared` and
-the command exits 0 because deleting it would break those dependents.
+infrastructure is verified absent. Preserving the shared identity is a successful
+strict-purge outcome only when exact provider inventory and saved local lifecycle
+records agree on the immutable IDs of every dependent VM. JSON then reports
+`iam_disposition: retained_shared` and the command exits 0 because deleting the
+identity would break those provider-confirmed dependents.
 
-This success contract applies only to provider-confirmed dependents. Unresolved
-or unverifiable dependency inventory, missing trustworthy ownership, and failed
-IAM deletion remain partial teardown results and exit nonzero. `--keep-iam` is a
-separate explicit request to retain IAM.
+Local-only dependency evidence reports `retained_local_dependents`; provider-only
+evidence or mismatched dependency identities report
+`retained_dependency_disagreement`. Both retain the identity but remain partial
+teardown results and exit nonzero. Unavailable or unverifiable provider inventory,
+missing trustworthy ownership, and failed IAM deletion are likewise nonzero.
+`--keep-iam` is a separate explicit request to retain IAM.
 
 ### Deleting a project
 

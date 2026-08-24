@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import json
 from typing import Any
 
@@ -114,36 +115,70 @@ def destroy_cmd(
     alias = project.strip()
     if not selectors:
         alias = agent_module._resolve_project_alias(alias)
-    saved = resolve_environment(alias) if alias else None
-    live = {
-        "project_alias": alias,
-        "project_id": str(getattr(saved, "project_id", "") or ""),
-        "tenant_id": str(getattr(saved, "tenant_id", "") or ""),
-        "region": str(getattr(saved, "region", "") or ""),
-    }
-    record = agent_module._agent_record(alias, name) if alias else {}
-    if record:
-        live.update(
-            {
-                "agent_name": name,
-                "instance_id": str(record.get("instance_id") or ""),
-                "project_id": str(record.get("project_id") or live["project_id"]),
-                "region": str(record.get("region") or live["region"]),
-                "service_account_id": str(record.get("service_account_id") or ""),
-            }
+
+    def read_saved_record(selected_alias: str) -> tuple[bool, dict[str, Any]]:
+        saved_records = (
+            agent_module.resolve_project_agents(selected_alias)
+            if selected_alias
+            else {}
         )
+        present = bool(selected_alias and name in saved_records)
+        saved_value = saved_records[name] if present else {}
+        if present and (not isinstance(saved_value, Mapping) or not saved_value):
+            raise typer.BadParameter(
+                f"Saved agent record {name!r} is present but empty or schema-invalid; "
+                "refusing receipt or IAM reconciliation until the lifecycle record "
+                "is recovered or explicitly repaired."
+            )
+        return present, (
+            dict(saved_value) if isinstance(saved_value, Mapping) else {}
+        )
+
+    def live_identity(
+        selected_alias: str, saved_record: dict[str, Any]
+    ) -> dict[str, str]:
+        saved_environment = (
+            resolve_environment(selected_alias) if selected_alias else None
+        )
+        values = {
+            "project_alias": selected_alias,
+            "project_id": str(
+                getattr(saved_environment, "project_id", "") or ""
+            ),
+            "tenant_id": str(getattr(saved_environment, "tenant_id", "") or ""),
+            "region": str(getattr(saved_environment, "region", "") or ""),
+        }
+        if saved_record:
+            values.update(
+                {
+                    "agent_name": name,
+                    "instance_id": str(saved_record.get("instance_id") or ""),
+                    "project_id": str(
+                        saved_record.get("project_id") or values["project_id"]
+                    ),
+                    "region": str(saved_record.get("region") or values["region"]),
+                    "service_account_id": str(
+                        saved_record.get("service_account_id") or ""
+                    ),
+                }
+            )
+        return values
+
+    explicit_identity = {
+        "project_alias": alias,
+        "project_id": project_id,
+        "tenant_id": tenant_id,
+        "region": region,
+        "agent_name": name,
+        "instance_id": instance_id,
+        "operation_id": operation_id,
+        "profile": profile,
+    }
+    record_present, record = read_saved_record(alias)
+    live = live_identity(alias, record)
     try:
         identity = resolve_cleanup_identity(
-            explicit={
-                "project_alias": alias,
-                "project_id": project_id,
-                "tenant_id": tenant_id,
-                "region": region,
-                "agent_name": name,
-                "instance_id": instance_id,
-                "operation_id": operation_id,
-                "profile": profile,
-            },
+            explicit=explicit_identity,
             receipt_id=receipt,
             live=live,
             phase="agent",
@@ -151,6 +186,20 @@ def destroy_cmd(
         )
     except (CleanupIdentityError, RuntimeError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
+    resolved_alias = str(identity.get("project_alias") or alias)
+    if resolved_alias and resolved_alias != alias:
+        record_present, record = read_saved_record(resolved_alias)
+        live = live_identity(resolved_alias, record)
+        try:
+            identity = resolve_cleanup_identity(
+                explicit=explicit_identity,
+                receipt_id=receipt,
+                live=live,
+                phase="agent",
+                resource=name,
+            )
+        except (CleanupIdentityError, RuntimeError, ValueError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
     alias = str(identity.get("project_alias") or alias)
     exact_project = str(identity.get("project_id") or "")
     exact_instance = str(identity.get("instance_id") or "")
@@ -428,7 +477,7 @@ def destroy_cmd(
         alias,
         name,
         terminal_state="in_progress",
-        record_present=bool(record),
+        record_present=record_present,
         terraform_state_present=state_exists,
         purge_iam=purge_iam,
         identity=identity.values,
@@ -555,7 +604,7 @@ def destroy_cmd(
         identity_source=identity.source,
         terraform_graph_absent=True,
     )
-    if record:
+    if record_present:
         agent_module._remove_agent_record(alias, name)
     agent_module._cleanup_agent_local_files(alias, name)
     iam_error = ""

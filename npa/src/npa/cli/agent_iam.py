@@ -13,6 +13,7 @@ either way, and deletes it when the caller opts in.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Callable
 
 StatusFn = Callable[[str], None]
@@ -458,11 +459,45 @@ def report_destroyed_agent_iam(
     if not project_id:
         saved_env = resolve_environment(project)
         project_id = str(getattr(saved_env, "project_id", "") or "")
-    remaining = len([key for key in resolve_project_agents(project) if key != name])
+    remaining_records = {
+        key: value
+        for key, value in resolve_project_agents(project).items()
+        if key != name
+    }
+    remaining = len(remaining_records)
+    local_dependent_instance_ids: set[str] | None = None
+    if purge:
+        local_dependent_instance_ids = set()
+        for peer_name, peer_record in remaining_records.items():
+            if not isinstance(peer_record, Mapping) or not peer_record:
+                raise AgentIAMCleanupError(
+                    f"local agent dependency record {peer_name!r} is empty or "
+                    "schema-invalid"
+                )
+            peer_project = peer_record.get("project_id")
+            if not isinstance(peer_project, str) or peer_project.strip() != project_id:
+                raise AgentIAMCleanupError(
+                    f"local agent dependency record {peer_name!r} has no matching "
+                    "immutable project ID"
+                )
+            peer_instance = peer_record.get("instance_id")
+            if not isinstance(peer_instance, str) or not peer_instance.strip():
+                raise AgentIAMCleanupError(
+                    f"local agent dependency record {peer_name!r} has no immutable "
+                    "instance ID"
+                )
+            peer_instance = peer_instance.strip()
+            if peer_instance in local_dependent_instance_ids:
+                raise AgentIAMCleanupError(
+                    "local agent dependency records reuse immutable instance ID "
+                    f"{peer_instance!r}"
+                )
+            local_dependent_instance_ids.add(peer_instance)
     dispositions: list[str] = []
     report_agent_iam(
         project_id=project_id,
         remaining_agents=remaining,
+        local_dependent_instance_ids=local_dependent_instance_ids,
         purge=purge,
         on_status=lambda message: typer.echo(f"  {message}", err=True),
         on_disposition=dispositions.append,
@@ -475,6 +510,7 @@ def report_agent_iam(
     *,
     project_id: str,
     remaining_agents: int,
+    local_dependent_instance_ids: set[str] | None = None,
     purge: bool,
     on_status: StatusFn,
     on_disposition: StatusFn | None = None,
@@ -506,7 +542,31 @@ def report_agent_iam(
             on_disposition("absent")
         return []
     provider_dependents = list(leftovers.get("dependents") or [])
-    last_agent = remaining_agents == 0 and not provider_dependents
+    provider_dependency_count = len(provider_dependents)
+    local_dependency_count = max(remaining_agents, 0)
+    provider_dependent_instance_ids: set[str] = set()
+    provider_dependency_ids_valid = True
+    for dependent in provider_dependents:
+        rendered = str(dependent).strip()
+        marker = rendered.rfind(" (")
+        if marker <= 0 or not rendered.endswith(")"):
+            provider_dependency_ids_valid = False
+            continue
+        instance_id = rendered[marker + 2 : -1].strip()
+        if not instance_id or instance_id in provider_dependent_instance_ids:
+            provider_dependency_ids_valid = False
+            continue
+        provider_dependent_instance_ids.add(instance_id)
+    dependency_inventory_agrees = bool(
+        provider_dependency_count == local_dependency_count
+        and local_dependent_instance_ids is not None
+        and (
+            provider_dependency_ids_valid
+            and len(provider_dependent_instance_ids) == provider_dependency_count
+            and local_dependent_instance_ids == provider_dependent_instance_ids
+        )
+    )
+    last_agent = local_dependency_count == 0 and provider_dependency_count == 0
     owned = bool(leftovers.get("owned_by_npa"))
     if purge and last_agent and owned:
         deleted = purge_agent_iam(leftovers, on_status=on_status)
@@ -525,22 +585,46 @@ def report_agent_iam(
                 "agent IAM remains because exact NPA creation ownership is unproven"
             )
     if purge and not last_agent:
-        if provider_dependents:
+        if provider_dependents and dependency_inventory_agrees:
             if on_disposition is not None:
                 on_disposition("retained_shared")
             on_status(
                 "Keeping the npa-agent service account: exact provider inventory "
-                "shows dependent VM(s): " + ", ".join(provider_dependents) + "."
+                "and local lifecycle records agree on exact dependent VM(s): "
+                + ", ".join(provider_dependents)
+                + "."
             )
-        else:
+        elif not provider_dependents:
             if on_disposition is not None:
                 on_disposition("retained_local_dependents")
             on_status(
                 "Keeping the npa-agent service account: "
-                f"{remaining_agents} other local agent record(s) still use it."
+                f"{local_dependency_count} other local agent record(s) still use it, "
+                "but exact provider inventory reports no dependent VM."
             )
-        # Exact dependent VMs prove this identity is shared. Preserving it is a
-        # successful teardown disposition, not a partial cleanup failure.
+            if strict:
+                raise AgentIAMCleanupError(
+                    "agent IAM remains on local-only dependency evidence; exact "
+                    "provider inventory reports no dependent VM"
+                )
+        else:
+            if on_disposition is not None:
+                on_disposition("retained_dependency_disagreement")
+            on_status(
+                "Keeping the npa-agent service account: provider/local dependency "
+                "inventories disagree ("
+                f"provider={provider_dependency_count}, local={local_dependency_count}); "
+                "provider-dependent VM(s): "
+                + ", ".join(provider_dependents)
+                + "."
+            )
+            if strict:
+                raise AgentIAMCleanupError(
+                    "agent IAM remains because provider/local dependency inventories "
+                    "disagree"
+                )
+        # Only exact provider dependents corroborated by local lifecycle records
+        # make intentional IAM retention a successful strict purge disposition.
     elif not purge and on_disposition is not None:
         on_disposition("retained_by_request")
     for line in format_iam_leftovers(

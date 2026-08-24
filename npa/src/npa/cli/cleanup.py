@@ -833,7 +833,15 @@ def _agent_lifecycle_allows_project_retirement(
     if not isinstance(records, dict):
         return False, "saved agent records are schema-invalid"
 
-    names = {str(name).strip() for name in records if str(name).strip()}
+    names: set[str] = set()
+    for saved_name in records:
+        if (
+            not isinstance(saved_name, str)
+            or not saved_name.strip()
+            or saved_name != saved_name.strip()
+        ):
+            return False, "a saved agent record has an invalid deployment name"
+        names.add(saved_name)
     local_names: set[str] = set()
     workbench_root = provisioner.working_dir_path(alias, ".cleanup-inventory").parent
     try:
@@ -916,13 +924,26 @@ def _agent_lifecycle_allows_project_retirement(
                 terminal_graphs[key] = dict(event)
 
     for name in sorted(names):
-        record = records.get(name, {})
-        if record and not isinstance(record, Mapping):
+        record_present = name in records
+        saved_record = records[name] if record_present else {}
+        if record_present and not isinstance(saved_record, Mapping):
             return False, f"saved agent record {name!r} is schema-invalid"
-        record = record if isinstance(record, Mapping) else {}
-        record_project = str(record.get("project_id") or "").strip()
+        record = saved_record if isinstance(saved_record, Mapping) else {}
+        if record_present and not record:
+            return False, f"saved agent record {name!r} is empty and incomplete"
+        saved_project = record.get("project_id")
+        if record_present and (
+            not isinstance(saved_project, str) or not saved_project.strip()
+        ):
+            return False, f"saved agent record {name!r} has no immutable project ID"
+        record_project = str(saved_project or "").strip()
         if record_project and record_project != exact_project:
             return False, f"saved agent record {name!r} conflicts with the project"
+        saved_instance = record.get("instance_id")
+        if record_present and (
+            not isinstance(saved_instance, str) or not saved_instance.strip()
+        ):
+            return False, f"saved agent record {name!r} has no immutable instance ID"
 
         try:
             state_exists = agent_module._agent_terraform_state_exists(alias, name)
@@ -930,7 +951,7 @@ def _agent_lifecycle_allows_project_retirement(
             return False, f"agent {name!r} Terraform inventory is unreadable: {exc}"
         instance_ids = {
             value
-            for value in (str(record.get("instance_id") or "").strip(),)
+            for value in (str(saved_instance or "").strip(),)
             if value
         }
         if state_exists:
@@ -948,7 +969,9 @@ def _agent_lifecycle_allows_project_retirement(
             if str(operation.get("phase") or "") not in {"destroyed", "rolled-back"}
         ]
         has_local_files = name in local_names
-        if not (record or state_exists or active_operations or has_local_files):
+        if not (
+            record_present or state_exists or active_operations or has_local_files
+        ):
             continue
         if len(instance_ids) != 1:
             return False, f"agent {name!r} has no single immutable instance identity"

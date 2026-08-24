@@ -908,10 +908,128 @@ def test_agent_iam_purge_keeps_an_account_other_agents_use(monkeypatch) -> None:
     assert any("2 other local agent record(s)" in line for line in lines)
 
 
-def test_agent_iam_purge_protects_same_project_peer_missing_from_local_config(
+@pytest.mark.parametrize("strict", [False, True], ids=["report", "strict-purge"])
+@pytest.mark.parametrize(
+    (
+        "case",
+        "remaining_agents",
+        "local_dependent_instance_ids",
+        "service_account_id",
+        "provider_dependents",
+        "inventory_verified",
+        "expected_disposition",
+        "strict_fails",
+    ),
+    [
+        (
+            "provider-confirmed-shared",
+            1,
+            {"instance-peer"},
+            "serviceaccount-agent",
+            ["agent-peer (instance-peer)"],
+            True,
+            "retained_shared",
+            False,
+        ),
+        (
+            "local-only",
+            1,
+            {"instance-peer"},
+            "serviceaccount-agent",
+            [],
+            True,
+            "retained_local_dependents",
+            True,
+        ),
+        (
+            "provider-local-disagreement",
+            1,
+            {"instance-other"},
+            "serviceaccount-agent",
+            ["agent-peer (instance-peer)"],
+            True,
+            "retained_dependency_disagreement",
+            True,
+        ),
+        (
+            "provider-local-identities-unavailable",
+            1,
+            None,
+            "serviceaccount-agent",
+            ["agent-peer (instance-peer)"],
+            True,
+            "retained_dependency_disagreement",
+            True,
+        ),
+        ("absent", 0, set(), "", [], True, "absent", False),
+        (
+            "provider-failure",
+            1,
+            {"instance-peer"},
+            "serviceaccount-agent",
+            [],
+            False,
+            "verification_unresolved",
+            True,
+        ),
+    ],
+)
+def test_agent_iam_retention_disposition_and_strictness_matrix(
+    monkeypatch,
+    strict: bool,
+    case: str,
+    remaining_agents: int,
+    local_dependent_instance_ids: set[str] | None,
+    service_account_id: str,
+    provider_dependents: list[str],
+    inventory_verified: bool,
+    expected_disposition: str,
+    strict_fails: bool,
+) -> None:
+    from npa.cli.agent_iam import AgentIAMCleanupError, report_agent_iam
+
+    leftovers = {
+        "project_id": "project-a",
+        "service_account_id": service_account_id,
+        "service_account_name": "npa-agent",
+        "access_keys": [{"id": "accesskey-agent"}] if service_account_id else [],
+        "owned_by_npa": True,
+        "inventory_verified": inventory_verified,
+        "inventory_error": "RBAC forbidden" if not inventory_verified else "",
+        "dependents": provider_dependents,
+    }
+    monkeypatch.setattr(
+        "npa.cli.agent_iam.agent_iam_leftovers", lambda _project: leftovers
+    )
+    deleted: list[str] = []
+    monkeypatch.setattr("npa.clients.nebius.delete_access_key", deleted.append)
+    monkeypatch.setattr("npa.clients.nebius.delete_service_account", deleted.append)
+    dispositions: list[str] = []
+    lines: list[str] = []
+
+    call = lambda: report_agent_iam(  # noqa: E731 - exercised twice by matrix
+        project_id="project-a",
+        remaining_agents=remaining_agents,
+        local_dependent_instance_ids=local_dependent_instance_ids,
+        purge=True,
+        on_status=lines.append,
+        on_disposition=dispositions.append,
+        strict=strict,
+    )
+    if strict and strict_fails:
+        with pytest.raises(AgentIAMCleanupError):
+            call()
+    else:
+        assert call() == []
+
+    assert dispositions == [expected_disposition], case
+    assert deleted == []
+
+
+def test_agent_iam_purge_marks_provider_peer_missing_locally_as_disagreement(
     monkeypatch,
 ) -> None:
-    from npa.cli.agent_iam import report_agent_iam
+    from npa.cli.agent_iam import AgentIAMCleanupError, report_agent_iam
     from npa.clients import nebius as nebius_module
 
     deleted = _iam_stubs(monkeypatch)
@@ -933,18 +1051,38 @@ def test_agent_iam_purge_protects_same_project_peer_missing_from_local_config(
     lines: list[str] = []
     dispositions: list[str] = []
 
-    report_agent_iam(
-        project_id="project-a",
-        remaining_agents=0,
-        purge=True,
-        on_status=lines.append,
-        on_disposition=dispositions.append,
-        strict=True,
-    )
+    with pytest.raises(AgentIAMCleanupError, match="provider/local.*disagree"):
+        report_agent_iam(
+            project_id="project-a",
+            remaining_agents=0,
+            purge=True,
+            on_status=lines.append,
+            on_disposition=dispositions.append,
+            strict=True,
+        )
 
     assert deleted == []
     assert any("agent-peer (instance-peer)" in line for line in lines)
-    assert dispositions == ["retained_shared"]
+    assert dispositions == ["retained_dependency_disagreement"]
+
+
+def test_destroyed_agent_iam_rejects_malformed_local_peer_record(
+    monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from npa.cli.agent_iam import AgentIAMCleanupError, report_destroyed_agent_iam
+
+    monkeypatch.setattr(
+        "npa.cli.agent.resolve_project_agents", lambda _project: {"peer": {}}
+    )
+    monkeypatch.setattr(
+        "npa.clients.config.resolve_environment",
+        lambda _project: SimpleNamespace(project_id="project-a"),
+    )
+
+    with pytest.raises(AgentIAMCleanupError, match="dependency record.*empty"):
+        report_destroyed_agent_iam("prod", "agent", record=None, purge=True)
 
 
 def test_agent_iam_purge_fails_closed_when_provider_inventory_is_forbidden(
