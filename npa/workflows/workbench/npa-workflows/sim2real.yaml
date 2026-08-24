@@ -91,6 +91,17 @@ resources:
             kueue.x-k8s.io/queue-name: "{{config.gpu_queue}}"
         spec:
           priorityClassName: "{{config.gpu_priority_class}}"
+          # The immutable Cosmos Transfer image keeps its model cache under /opt,
+          # but SkyPilot bootstraps uv as its non-root runtime user before the task
+          # starts. Keep only bootstrap caches in writable ephemeral storage; model
+          # weights and task outputs retain their existing attested locations.
+          containers:
+            - name: ray-node
+              env:
+                - name: UV_CACHE_DIR
+                  value: /tmp/npa-skypilot-uv-cache
+                - name: XDG_CACHE_HOME
+                  value: /tmp/npa-skypilot-xdg-cache
   envgen-gpu:
     cloud: kubernetes
     accelerators: RTXPRO6000:1

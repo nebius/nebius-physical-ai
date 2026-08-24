@@ -677,6 +677,30 @@ def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> N
         }
         assert pod_config["spec"]["priorityClassName"] == "sim2real-production"
 
+    transfer_pod = spec.resources["transfer-gpu"]["kubernetes"]["pod_config"][
+        "spec"
+    ]
+    transfer_env = {
+        item["name"]: item["value"]
+        for item in transfer_pod["containers"][0]["env"]
+    }
+    assert transfer_env == {
+        "UV_CACHE_DIR": "/tmp/npa-skypilot-uv-cache",
+        "XDG_CACHE_HOME": "/tmp/npa-skypilot-xdg-cache",
+    }
+    rendered_transfer_tasks = [
+        task
+        for task in tasks
+        if task["envs"]["NPA_WORKFLOW_STATE"] == "stage-03-transfer"
+    ]
+    assert len(rendered_transfer_tasks) == 1
+    assert (
+        rendered_transfer_tasks[0]["config"]["kubernetes"]["pod_config"]["spec"][
+            "containers"
+        ][0]["env"]
+        == transfer_pod["containers"][0]["env"]
+    )
+
     isaac_pod = spec.resources["isaac-gpu"]["kubernetes"]["pod_config"]["spec"]
     assert isaac_pod.get("securityContext", {}).get("runAsUser") != 0
     assert isaac_pod["containers"][0].get("securityContext", {}).get("runAsUser") != 0
