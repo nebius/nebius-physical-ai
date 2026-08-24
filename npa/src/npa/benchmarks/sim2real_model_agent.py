@@ -30,6 +30,7 @@ from npa.benchmarks.sim2real_success import VerificationError, verify_artifact_t
 
 TASK_TEXT = """From a clean checkout on the dev VM, first validate and plan the canonical public-franka-lift preset for npa/workflows/workbench/npa-workflows/sim2real.yaml, submit it through the standard runtime, and monitor that run to terminal completion. Diagnose and make necessary fixes if it fails. Do not weaken the canonical workflow, its real components, or the strict requirement that the Franka arm grasp the cube, lift it at least 5 cm, and hold it for 2 seconds. Preserve unrelated changes. Finish with the run ID, commands, code changes, measured stage and grasp metrics, and artifact locations."""
 CHECKPOINT_MARKER = "BENCHMARK_CONTEXT_CHECKPOINT_V1"
+CHECKPOINT_SUBMIT_ATTEMPT_MARKER = "Recent standalone workflow submit attempts: "
 RECOVERY_MARKER = "BENCHMARK_MALFORMED_RESPONSE_RECOVERY_V1"
 MAX_CONTEXT_TOOL_RESULT_CHARACTERS = 4_096
 # The pinned sparse-prefill deployment exhausted rank memory near 72k prompt
@@ -863,9 +864,7 @@ def _is_permanent_model_http_error(exc: BaseException) -> bool:
     )
 
 
-def _load_transcript(
-    path: Path, tool_results_path: Path | None = None
-) -> list[dict[str, Any]]:
+def _read_transcript_messages(path: Path) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = []
     if not path.exists():
         transcript_lines: list[str] = []
@@ -891,6 +890,13 @@ def _load_transcript(
         }:
             raise ValueError(f"invalid transcript entry at line {line_number}")
         messages.append(message)
+    return messages
+
+
+def _load_transcript(
+    path: Path, tool_results_path: Path | None = None
+) -> list[dict[str, Any]]:
+    messages = _read_transcript_messages(path)
     complete_response_ids = {
         str(group[0].get("_npa_response_id") or "")
         for group in _safe_message_groups(messages)
@@ -1200,12 +1206,137 @@ def _workflow_submission_block_reason(
     return None
 
 
+def _recent_standalone_submit_attempts(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return the two latest complete direct submit attempts, successful or not."""
+
+    recent: list[dict[str, Any]] = []
+    for group in _safe_message_groups(messages):
+        message = group[0]
+        content = str(message.get("content") or "")
+        if message.get("role") == "user" and content.startswith(CHECKPOINT_MARKER):
+            for line in content.splitlines():
+                if not line.startswith(CHECKPOINT_SUBMIT_ATTEMPT_MARKER):
+                    continue
+                try:
+                    candidates = json.loads(
+                        line.removeprefix(CHECKPOINT_SUBMIT_ATTEMPT_MARKER)
+                    )
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(candidates, dict):
+                    candidates = [candidates]
+                if isinstance(candidates, list):
+                    recent = [
+                        _bounded_submit_attempt(
+                            candidate.get("command"),
+                            candidate.get("result"),
+                            occurrence_id=candidate.get("occurrence_id"),
+                        )
+                        for candidate in candidates[-2:]
+                        if isinstance(candidate, dict)
+                    ]
+            continue
+        assistant = message
+        if assistant.get("role") != "assistant":
+            continue
+        results = {
+            str(item.get("tool_call_id") or ""): item
+            for item in group[1:]
+            if item.get("role") == "tool"
+        }
+        for call in assistant.get("tool_calls") or []:
+            if not isinstance(call, dict):
+                continue
+            function = call.get("function")
+            if not isinstance(function, dict) or function.get("name") != "run_command":
+                continue
+            try:
+                arguments = json.loads(str(function.get("arguments") or ""))
+                command = str(arguments.get("command") or "")
+            except (AttributeError, json.JSONDecodeError):
+                continue
+            if _workflow_submit_command_kind(command) != "standalone":
+                continue
+            result_message = results.get(str(call.get("id") or ""))
+            if result_message is None:
+                continue
+            result_content = str(result_message.get("content") or "")
+            try:
+                result: Any = json.loads(result_content)
+            except json.JSONDecodeError:
+                result = result_content
+            response_id = str(assistant.get("_npa_response_id") or "")
+            tool_call_id = str(call.get("id") or "")
+            occurrence_id = _sha(
+                {
+                    "response": response_id or assistant,
+                    "tool_call_id": tool_call_id,
+                }
+            )
+            recent.append(
+                _bounded_submit_attempt(command, result, occurrence_id=occurrence_id)
+            )
+            recent = recent[-2:]
+    return recent
+
+
+def _bounded_submit_attempt(
+    command: Any, result: Any, *, occurrence_id: Any = None
+) -> dict[str, Any]:
+    command_text = (
+        command
+        if isinstance(command, str)
+        else json.dumps(command, sort_keys=True, separators=(",", ":"))
+    )
+    if len(command_text) > 2_048:
+        command_value: Any = {
+            "sha256": hashlib.sha256(command_text.encode()).hexdigest(),
+            "characters": len(command_text),
+            "preview_head": command_text[:1_536],
+            "preview_tail": command_text[-256:],
+        }
+    else:
+        command_value = command
+    if isinstance(result, dict):
+        result_value = _bounded_tool_result(result)
+    elif len(str(result)) > MAX_CONTEXT_TOOL_RESULT_CHARACTERS:
+        result_value = _bounded_tool_result({"content": str(result)})
+    else:
+        result_value = result
+    attempt = {"command": command_value, "result": result_value}
+    if isinstance(occurrence_id, str) and occurrence_id:
+        attempt["occurrence_id"] = (
+            occurrence_id
+            if re.fullmatch(r"[0-9a-f]{64}", occurrence_id)
+            else _sha({"legacy_occurrence_id": occurrence_id})
+        )
+    return attempt
+
+
+def _merge_submit_attempts(
+    preserved: list[dict[str, Any]], active: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for attempt in (*preserved, *active):
+        occurrence_id = str(attempt.get("occurrence_id") or "")
+        key = f"occurrence:{occurrence_id}" if occurrence_id else f"content:{_sha(attempt)}"
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(attempt)
+    return merged[-2:]
+
+
 def _context_checkpoint(
     messages: list[dict[str, Any]],
     *,
     max_recent_chars: int,
     workspace_status: str = "",
     recovery_reason: str | None = None,
+    preserved_submit_attempts: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     recent_candidates = [
         message
@@ -1227,6 +1358,10 @@ def _context_checkpoint(
     recent_groups.reverse()
     recent = [message for group in recent_groups for message in group]
     workflow_submitted, submitted_run_ids = _submitted_workflow_state(messages[2:])
+    active_submit_attempts = _recent_standalone_submit_attempts(messages[2:])
+    submit_attempts = _merge_submit_attempts(
+        preserved_submit_attempts or [], active_submit_attempts
+    )
     run_ids = sorted(
         set(_collect_run_identifiers(messages[2:])) | set(submitted_run_ids)
     )
@@ -1243,8 +1378,7 @@ def _context_checkpoint(
         "content": (
             f"{CHECKPOINT_MARKER}\n"
             + recovery
-            +
-            "The standalone benchmark controller deterministically compacted "
+            + "The standalone benchmark controller deterministically compacted "
             "earlier complete message groups at a safe boundary. The full "
             "append-only transcript remains private evidence. "
             "Do not infer success from this checkpoint. Re-read durable workspace "
@@ -1261,7 +1395,14 @@ def _context_checkpoint(
                 separators=(",", ":"),
             )
             + "\n"
-            f"Workspace status SHA256: {hashlib.sha256(workspace_status.encode()).hexdigest()}; "
+            + (
+                CHECKPOINT_SUBMIT_ATTEMPT_MARKER
+                + json.dumps(submit_attempts, sort_keys=True, separators=(",", ":"))
+                + "\n"
+                if submit_attempts
+                else ""
+            )
+            + f"Workspace status SHA256: {hashlib.sha256(workspace_status.encode()).hexdigest()}; "
             f"status lines: {len(workspace_lines)}\n"
             "Workspace status follows:\n"
             + "\n".join(workspace_lines[:200])
@@ -1285,20 +1426,39 @@ def _maybe_checkpoint(
         int(context_limit * 0.85), EFFECTIVE_CONTEXT_CHECKPOINT_PROMPT_TOKENS
     )
     active = messages[2:]
+    preserved_submit_attempts = _recent_standalone_submit_attempts(
+        _read_transcript_messages(transcript_path)
+    )
+    active_has_submit_attempt = any(
+        message.get("role") == "user"
+        and CHECKPOINT_SUBMIT_ATTEMPT_MARKER in str(message.get("content") or "")
+        for message in active
+    )
+    needs_submit_attempt_upgrade = (
+        bool(preserved_submit_attempts)
+        and any(
+            message.get("role") == "user"
+            and str(message.get("content") or "").startswith(CHECKPOINT_MARKER)
+            for message in active
+        )
+        and not active_has_submit_attempt
+    )
     if (
         len(active) == 1
         and active[0].get("role") == "user"
         and str(active[0].get("content") or "").startswith(CHECKPOINT_MARKER)
+        and not needs_submit_attempt_upgrade
     ):
         return messages
     if active_tokens_upper_bound is None:
         active_tokens_upper_bound = _message_token_upper_bound(messages)
-    if active_tokens_upper_bound < checkpoint_tokens:
+    if active_tokens_upper_bound < checkpoint_tokens and not needs_submit_attempt_upgrade:
         return messages
     compacted, checkpoint = _context_checkpoint(
         messages,
         max_recent_chars=MAX_CHECKPOINT_RECENT_CHARACTERS,
         workspace_status=workspace_status,
+        preserved_submit_attempts=preserved_submit_attempts,
     )
     with transcript_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(checkpoint, sort_keys=True) + "\n")

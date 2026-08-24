@@ -11,6 +11,7 @@ import pytest
 
 from npa.benchmarks.sim2real_model_agent import (
     CHECKPOINT_MARKER,
+    CHECKPOINT_SUBMIT_ATTEMPT_MARKER,
     EFFECTIVE_CONTEXT_CHECKPOINT_PROMPT_TOKENS,
     EmptyStreamError,
     IndeterminateToolExecutionError,
@@ -631,6 +632,298 @@ def test_checkpoint_preserves_durable_successful_submission_state(
     assert assistant not in compacted
     assert '"submitted":true' in checkpoint["content"]
     assert _submitted_workflow_state(compacted[2:]) == (True, ["run-123"])
+
+
+def test_checkpoint_preserves_latest_failed_standalone_submit_attempt() -> None:
+    assistant = {
+        "role": "assistant",
+        "tool_calls": [
+            {
+                "id": "submit",
+                "type": "function",
+                "function": {
+                    "name": "run_command",
+                    "arguments": json.dumps(
+                        {"command": "npa workbench workflow submit spec.yaml"}
+                    ),
+                },
+            }
+        ],
+    }
+    result = {
+        "role": "tool",
+        "tool_call_id": "submit",
+        "content": json.dumps(
+            {"exit_code": 1, "stderr": "required credential preflight failed"}
+        ),
+    }
+    messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "task"},
+        assistant,
+        result,
+        {"role": "assistant", "content": "x" * 20_000},
+    ]
+
+    compacted, checkpoint = _context_checkpoint(messages, max_recent_chars=128)
+
+    assert assistant not in compacted
+    assert CHECKPOINT_SUBMIT_ATTEMPT_MARKER in checkpoint["content"]
+    assert "required credential preflight failed" in checkpoint["content"]
+    assert '"exit_code":1' in checkpoint["content"]
+    assert '"submitted":false' in checkpoint["content"]
+
+
+def test_resume_upgrades_old_checkpoint_with_historical_submit_attempt(
+    tmp_path: Path,
+) -> None:
+    transcript = tmp_path / "transcript.jsonl"
+    assistant = {
+        "role": "assistant",
+        "tool_calls": [
+            {
+                "id": "submit",
+                "type": "function",
+                "function": {
+                    "name": "run_command",
+                    "arguments": json.dumps(
+                        {"command": "npa workbench workflow submit spec.yaml"}
+                    ),
+                },
+            }
+        ],
+    }
+    result = {
+        "role": "tool",
+        "tool_call_id": "submit",
+        "content": json.dumps({"exit_code": 1, "stderr": "preflight failed"}),
+    }
+    old_checkpoint = {
+        "role": "user",
+        "content": CHECKPOINT_MARKER + "\nold checkpoint without submit attempt",
+    }
+    later = {"role": "assistant", "content": "continued diagnosis"}
+    transcript.write_text(
+        "".join(
+            json.dumps(message, sort_keys=True) + "\n"
+            for message in (assistant, result, old_checkpoint, later)
+        )
+    )
+    messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "task"},
+        old_checkpoint,
+        later,
+    ]
+
+    upgraded = _maybe_checkpoint(
+        messages,
+        transcript,
+        context_limit=262_144,
+        active_tokens_upper_bound=1,
+    )
+
+    assert len(upgraded) == 3
+    assert CHECKPOINT_SUBMIT_ATTEMPT_MARKER in upgraded[2]["content"]
+    assert "preflight failed" in upgraded[2]["content"]
+    assert transcript.read_text().count(CHECKPOINT_SUBMIT_ATTEMPT_MARKER) == 1
+
+
+def test_checkpoint_merges_historical_and_active_submit_attempts(
+    tmp_path: Path,
+) -> None:
+    def attempt(index: int) -> tuple[dict, dict]:
+        assistant = {
+            "role": "assistant",
+            "_npa_response_id": f"request-{index}-hash",
+            "tool_calls": [
+                {
+                    "id": f"submit-{index}",
+                    "type": "function",
+                    "function": {
+                        "name": "run_command",
+                        "arguments": json.dumps(
+                            {
+                                "command": (
+                                    "npa workbench workflow submit "
+                                    f"spec-{index}.yaml"
+                                )
+                            }
+                        ),
+                    },
+                }
+            ],
+        }
+        result = {
+            "role": "tool",
+            "tool_call_id": f"submit-{index}",
+            "content": json.dumps({"exit_code": index, "stderr": f"failure-{index}"}),
+        }
+        return assistant, result
+
+    first = attempt(1)
+    second = attempt(2)
+    legacy_checkpoint = {
+        "role": "user",
+        "content": CHECKPOINT_MARKER + "\nlegacy checkpoint",
+    }
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text(
+        "".join(
+            json.dumps(message, sort_keys=True) + "\n"
+            for message in (*first, legacy_checkpoint, *second)
+        )
+    )
+    active = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "task"},
+        legacy_checkpoint,
+        *second,
+    ]
+
+    upgraded = _maybe_checkpoint(
+        active,
+        transcript,
+        context_limit=262_144,
+        active_tokens_upper_bound=1,
+    )
+    marker_line = next(
+        line
+        for line in upgraded[2]["content"].splitlines()
+        if line.startswith(CHECKPOINT_SUBMIT_ATTEMPT_MARKER)
+    )
+    preserved = json.loads(marker_line.removeprefix(CHECKPOINT_SUBMIT_ATTEMPT_MARKER))
+    assert [item["result"]["exit_code"] for item in preserved] == [1, 2]
+
+    third = attempt(3)
+    compacted, checkpoint = _context_checkpoint(
+        [*upgraded[:2], upgraded[2], *second, *third], max_recent_chars=1
+    )
+    marker_line = next(
+        line
+        for line in checkpoint["content"].splitlines()
+        if line.startswith(CHECKPOINT_SUBMIT_ATTEMPT_MARKER)
+    )
+    preserved = json.loads(marker_line.removeprefix(CHECKPOINT_SUBMIT_ATTEMPT_MARKER))
+    assert [item["result"]["exit_code"] for item in preserved] == [2, 3]
+    assert len(compacted) == 3
+
+
+def test_checkpoint_merges_journal_reconstructed_attempt_without_duplicate(
+    tmp_path: Path,
+) -> None:
+    command = "npa workbench workflow submit spec.yaml"
+    assistant = {
+        "role": "assistant",
+        "_npa_response_id": "request-2-hash",
+        "tool_calls": [
+            {
+                "id": "submit-2",
+                "type": "function",
+                "function": {
+                    "name": "run_command",
+                    "arguments": json.dumps({"command": command}),
+                },
+            }
+        ],
+    }
+    result = {
+        "role": "tool",
+        "tool_call_id": "submit-2",
+        "content": json.dumps({"exit_code": 2}),
+    }
+    historical = {
+        "command": "npa workbench workflow submit first.yaml",
+        "result": {"exit_code": 1},
+        "occurrence_id": "request-1-hash:submit-1",
+    }
+    checkpoint = {
+        "role": "user",
+        "content": (
+            CHECKPOINT_MARKER
+            + "\n"
+            + CHECKPOINT_SUBMIT_ATTEMPT_MARKER
+            + json.dumps([historical], separators=(",", ":"))
+        ),
+    }
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text(json.dumps(checkpoint) + "\n")
+    active = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "task"},
+        checkpoint,
+        assistant,
+        result,
+    ]
+
+    upgraded = _maybe_checkpoint(
+        active,
+        transcript,
+        context_limit=262_144,
+        active_tokens_upper_bound=EFFECTIVE_CONTEXT_CHECKPOINT_PROMPT_TOKENS,
+    )
+    marker_line = next(
+        line
+        for line in upgraded[2]["content"].splitlines()
+        if line.startswith(CHECKPOINT_SUBMIT_ATTEMPT_MARKER)
+    )
+    preserved = json.loads(marker_line.removeprefix(CHECKPOINT_SUBMIT_ATTEMPT_MARKER))
+    occurrence_ids = [item["occurrence_id"] for item in preserved]
+    assert len(set(occurrence_ids)) == 2
+    assert all(len(item) == 64 for item in occurrence_ids)
+    repeated = _maybe_checkpoint(
+        upgraded,
+        transcript,
+        context_limit=262_144,
+        active_tokens_upper_bound=EFFECTIVE_CONTEXT_CHECKPOINT_PROMPT_TOKENS,
+    )
+    assert repeated == upgraded
+    assert transcript.read_text().count(CHECKPOINT_SUBMIT_ATTEMPT_MARKER) == 2
+
+
+def test_submit_attempt_checkpoint_bounds_model_supplied_tool_call_id() -> None:
+    huge_call_id = "call-" + "x" * 100_000
+    assistant = {
+        "role": "assistant",
+        "_npa_response_id": "request-1-hash",
+        "tool_calls": [
+            {
+                "id": huge_call_id,
+                "type": "function",
+                "function": {
+                    "name": "run_command",
+                    "arguments": json.dumps(
+                        {"command": "npa workbench workflow submit spec.yaml"}
+                    ),
+                },
+            }
+        ],
+    }
+    result = {
+        "role": "tool",
+        "tool_call_id": huge_call_id,
+        "content": json.dumps({"exit_code": 1, "stderr": "preflight failed"}),
+    }
+
+    _, checkpoint = _context_checkpoint(
+        [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "task"},
+            assistant,
+            result,
+        ],
+        max_recent_chars=1,
+    )
+
+    assert len(checkpoint["content"]) < 10_000
+    assert huge_call_id not in checkpoint["content"]
+    marker_line = next(
+        line
+        for line in checkpoint["content"].splitlines()
+        if line.startswith(CHECKPOINT_SUBMIT_ATTEMPT_MARKER)
+    )
+    preserved = json.loads(marker_line.removeprefix(CHECKPOINT_SUBMIT_ATTEMPT_MARKER))
+    assert len(preserved[0]["occurrence_id"]) == 64
 
 
 def test_active_token_estimate_counts_completion_and_character_fallback() -> None:
