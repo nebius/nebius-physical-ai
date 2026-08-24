@@ -30,6 +30,7 @@ from npa.benchmarks.sim2real_model_agent import (
     _maybe_checkpoint,
     _next_malformation_streak,
     _run_tool,
+    _sha,
     _request_active_token_estimate,
     _serialize_bounded_tool_result,
     _stream_chat,
@@ -40,6 +41,7 @@ from npa.benchmarks.sim2real_model_agent import (
     _workflow_submission_block_reason,
     _workflow_submit_command_kind,
     _workspace_preflight,
+    _write_recovery_checkpoint,
 )
 from npa.benchmarks.sim2real_model_server import render_server_resources
 from npa.benchmarks.sim2real_success import VerificationError, _lift_evidence
@@ -592,6 +594,167 @@ def test_effective_context_checkpoint_precedes_observed_sparse_prefill_oom(
         context_limit=262_144,
     )
     assert crash_resume[2]["content"].startswith(CHECKPOINT_MARKER)
+
+
+def test_startup_rebuilds_oversized_legacy_checkpoint_from_full_transcript(
+    tmp_path: Path,
+) -> None:
+    transcript = tmp_path / "transcript.jsonl"
+    diagnostic = {"role": "assistant", "content": "safe diagnostic result"}
+    oversized = {
+        "role": "user",
+        "content": CHECKPOINT_MARKER + "\n" + "x" * 153_520,
+    }
+    transcript.write_text(
+        json.dumps(diagnostic) + "\n" + json.dumps(oversized) + "\n"
+    )
+    resumed = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "task"},
+        *_load_transcript(transcript),
+    ]
+
+    rebuilt = _maybe_checkpoint(
+        resumed,
+        transcript,
+        context_limit=262_144,
+        active_tokens_upper_bound=1,
+    )
+
+    assert len(rebuilt) == 3
+    assert len(rebuilt[2]["content"]) < 20_000
+    assert "safe diagnostic result" in rebuilt[2]["content"]
+    assert transcript.read_text().count(CHECKPOINT_MARKER) == 2
+
+
+def test_checkpoint_bounds_workspace_status_excerpt() -> None:
+    messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "task"},
+        {"role": "assistant", "content": "recent"},
+    ]
+
+    _, checkpoint = _context_checkpoint(
+        messages,
+        max_recent_chars=16_384,
+        workspace_status=" M " + "x" * 100_000,
+    )
+
+    assert len(checkpoint["content"]) < 20_000
+    assert "status lines: 1" in checkpoint["content"]
+    assert "Workspace status SHA256:" in checkpoint["content"]
+
+
+def test_checkpoint_bounds_many_historical_run_identifiers() -> None:
+    history: list[dict] = []
+    for index in range(1_200):
+        call_id = f"call-{index}"
+        history.extend(
+            [
+                {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": "run_command",
+                                "arguments": json.dumps({"command": "true"}),
+                            },
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": json.dumps(
+                        {"run_id": f"run-{index:04d}-" + "x" * 110}
+                    ),
+                },
+            ]
+        )
+
+    _, checkpoint = _context_checkpoint(
+        [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "task"},
+            *history,
+        ],
+        max_recent_chars=1,
+    )
+
+    assert len(checkpoint["content"]) < 20_000
+    ids_line = next(
+        line
+        for line in checkpoint["content"].splitlines()
+        if line.startswith("Durable workflow run identifiers: ")
+    )
+    assert len(json.loads(ids_line.split(": ", 1)[1])) == 16
+    assert '"total_count":1200' in checkpoint["content"]
+
+
+def test_repeated_checkpoint_preserves_full_run_identifier_summary(
+    tmp_path: Path,
+) -> None:
+    def group(index: int) -> list[dict]:
+        call_id = f"call-{index}"
+        return [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": "run_command",
+                            "arguments": json.dumps({"command": "true"}),
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": json.dumps({"run_id": f"run-{index:03d}"}),
+            },
+        ]
+
+    transcript = tmp_path / "transcript.jsonl"
+    history = [message for index in range(30) for message in group(index)]
+    transcript.write_text(
+        "".join(json.dumps(message) + "\n" for message in history)
+    )
+    messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "task"},
+        *history,
+    ]
+    first = _maybe_checkpoint(
+        messages,
+        transcript,
+        context_limit=262_144,
+        active_tokens_upper_bound=EFFECTIVE_CONTEXT_CHECKPOINT_PROMPT_TOKENS,
+    )
+    new_group = group(30)
+    with transcript.open("a", encoding="utf-8") as handle:
+        for message in new_group:
+            handle.write(json.dumps(message) + "\n")
+
+    second = _maybe_checkpoint(
+        [*first, *new_group],
+        transcript,
+        context_limit=262_144,
+        active_tokens_upper_bound=EFFECTIVE_CONTEXT_CHECKPOINT_PROMPT_TOKENS,
+    )
+
+    summary_line = next(
+        line
+        for line in second[2]["content"].splitlines()
+        if line.startswith("Durable workflow run identifier summary: ")
+    )
+    summary = json.loads(summary_line.split(": ", 1)[1])
+    all_ids = [f"run-{index:03d}" for index in range(31)]
+    assert summary == {"total_count": 31, "all_sha256": _sha(all_ids)}
 
 
 def test_checkpoint_preserves_durable_successful_submission_state(
@@ -1225,6 +1388,52 @@ def test_recovery_checkpoint_keeps_only_complete_tool_boundaries_and_state() -> 
     assert "complete-call" in checkpoint["content"]
     assert "partial-call" not in checkpoint["content"]
     assert "incomplete assistant response was not added" in checkpoint["content"]
+
+
+def test_live_malformed_recovery_uses_fixed_bounded_checkpoint_window(
+    tmp_path: Path,
+) -> None:
+    transcript = tmp_path / "transcript.jsonl"
+    messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "task"},
+        *(
+            {"role": "assistant", "content": f"old-{index}-" + "x" * 5_000}
+            for index in range(100)
+        ),
+    ]
+
+    compacted = _write_recovery_checkpoint(
+        messages,
+        transcript,
+        workspace_status="",
+        reason="no_usable_tool_call_progress",
+    )
+
+    assert len(compacted) == 3
+    checkpoint = compacted[2]
+    assert len(checkpoint["content"]) < 20_000
+    assert "no_usable_tool_call_progress" in checkpoint["content"]
+    assert transcript.read_text().count(CHECKPOINT_MARKER) == 1
+    assert "old-99" in checkpoint["content"]
+
+    transport_recovery = _write_recovery_checkpoint(
+        compacted,
+        transcript,
+        workspace_status="",
+        reason="transport_error:HTTPError",
+    )
+    repeated_malformed_recovery = _write_recovery_checkpoint(
+        transport_recovery,
+        transcript,
+        workspace_status="",
+        reason="no_usable_tool_call_progress",
+    )
+
+    assert transport_recovery == compacted
+    assert repeated_malformed_recovery == compacted
+    assert "old-99" in repeated_malformed_recovery[2]["content"]
+    assert transcript.read_text().count(CHECKPOINT_MARKER) == 1
 
 
 def test_repeated_identical_malformation_has_terminal_classification(

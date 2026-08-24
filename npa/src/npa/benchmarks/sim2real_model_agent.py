@@ -38,6 +38,8 @@ MAX_CONTEXT_TOOL_RESULT_CHARACTERS = 4_096
 # compaction boundary, not a benchmark time, token, cost, or job budget.
 EFFECTIVE_CONTEXT_CHECKPOINT_PROMPT_TOKENS = 60_000
 MAX_CHECKPOINT_RECENT_CHARACTERS = 16_384
+MAX_CHECKPOINT_WORKSPACE_STATUS_CHARACTERS = 8_192
+MAX_CHECKPOINT_RUN_IDENTIFIERS = 16
 
 DEFAULT_STREAM_SAFEGUARDS = {
     # These are per-response semantic-progress safeguards, not benchmark budgets.
@@ -1337,6 +1339,7 @@ def _context_checkpoint(
     workspace_status: str = "",
     recovery_reason: str | None = None,
     preserved_submit_attempts: list[dict[str, Any]] | None = None,
+    preserved_run_identifiers: list[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     recent_candidates = [
         message
@@ -1362,10 +1365,32 @@ def _context_checkpoint(
     submit_attempts = _merge_submit_attempts(
         preserved_submit_attempts or [], active_submit_attempts
     )
-    run_ids = sorted(
-        set(_collect_run_identifiers(messages[2:])) | set(submitted_run_ids)
+    all_run_ids = sorted(
+        set(_collect_run_identifiers(messages[2:]))
+        | set(submitted_run_ids)
+        | set(preserved_run_identifiers or [])
     )
+    checkpoint_run_ids: list[str] = []
+    for run_id in (*submitted_run_ids, *all_run_ids):
+        if run_id not in checkpoint_run_ids:
+            checkpoint_run_ids.append(run_id)
+        if len(checkpoint_run_ids) >= MAX_CHECKPOINT_RUN_IDENTIFIERS:
+            break
+    checkpoint_submitted_run_ids = [
+        run_id for run_id in checkpoint_run_ids if run_id in submitted_run_ids
+    ]
     workspace_lines = workspace_status.splitlines()
+    workspace_excerpt_lines: list[str] = []
+    workspace_excerpt_characters = 0
+    for line in workspace_lines[:200]:
+        added = len(line) + 1
+        if (
+            workspace_excerpt_characters + added
+            > MAX_CHECKPOINT_WORKSPACE_STATUS_CHARACTERS
+        ):
+            break
+        workspace_excerpt_lines.append(line)
+        workspace_excerpt_characters += added
     recovery = (
         f"{RECOVERY_MARKER}\nDiscarded response reason: {recovery_reason}. "
         "The incomplete assistant response was not added to history and none of "
@@ -1387,10 +1412,23 @@ def _context_checkpoint(
             f"Prior active-context SHA256: {_sha(messages[2:])}\n"
             f"Prior messages: {len(messages) - 2}; verbatim recent messages: "
             f"{len(recent)}\n"
-            f"Durable workflow run identifiers: {json.dumps(run_ids)}\n"
+            f"Durable workflow run identifiers: {json.dumps(checkpoint_run_ids)}\n"
+            "Durable workflow run identifier summary: "
+            + json.dumps(
+                {
+                    "total_count": len(all_run_ids),
+                    "all_sha256": _sha(all_run_ids),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
             "Durable workflow submission state: "
             + json.dumps(
-                {"submitted": workflow_submitted, "run_ids": submitted_run_ids},
+                {
+                    "submitted": workflow_submitted,
+                    "run_ids": checkpoint_submitted_run_ids,
+                },
                 sort_keys=True,
                 separators=(",", ":"),
             )
@@ -1405,7 +1443,7 @@ def _context_checkpoint(
             + f"Workspace status SHA256: {hashlib.sha256(workspace_status.encode()).hexdigest()}; "
             f"status lines: {len(workspace_lines)}\n"
             "Workspace status follows:\n"
-            + "\n".join(workspace_lines[:200])
+            + "\n".join(workspace_excerpt_lines)
             + "\n"
             "Verbatim recent transcript JSON follows:\n"
             + json.dumps(recent, sort_keys=True, separators=(",", ":"))
@@ -1426,8 +1464,9 @@ def _maybe_checkpoint(
         int(context_limit * 0.85), EFFECTIVE_CONTEXT_CHECKPOINT_PROMPT_TOKENS
     )
     active = messages[2:]
+    transcript_messages = _read_transcript_messages(transcript_path)
     preserved_submit_attempts = _recent_standalone_submit_attempts(
-        _read_transcript_messages(transcript_path)
+        transcript_messages
     )
     active_has_submit_attempt = any(
         message.get("role") == "user"
@@ -1443,22 +1482,78 @@ def _maybe_checkpoint(
         )
         and not active_has_submit_attempt
     )
-    if (
+    checkpoint_only = (
         len(active) == 1
         and active[0].get("role") == "user"
         and str(active[0].get("content") or "").startswith(CHECKPOINT_MARKER)
+    )
+    if (
+        checkpoint_only
         and not needs_submit_attempt_upgrade
+        and _message_token_upper_bound(messages) < checkpoint_tokens
     ):
         return messages
     if active_tokens_upper_bound is None:
         active_tokens_upper_bound = _message_token_upper_bound(messages)
+    elif checkpoint_only:
+        active_tokens_upper_bound = max(
+            active_tokens_upper_bound, _message_token_upper_bound(messages)
+        )
     if active_tokens_upper_bound < checkpoint_tokens and not needs_submit_attempt_upgrade:
         return messages
+    checkpoint_source = (
+        messages[:2] + transcript_messages
+        if checkpoint_only
+        else messages
+    )
     compacted, checkpoint = _context_checkpoint(
-        messages,
+        checkpoint_source,
         max_recent_chars=MAX_CHECKPOINT_RECENT_CHARACTERS,
         workspace_status=workspace_status,
         preserved_submit_attempts=preserved_submit_attempts,
+        preserved_run_identifiers=_collect_run_identifiers(transcript_messages),
+    )
+    with transcript_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(checkpoint, sort_keys=True) + "\n")
+    return compacted
+
+
+def _write_recovery_checkpoint(
+    messages: list[dict[str, Any]],
+    transcript_path: Path,
+    *,
+    workspace_status: str,
+    reason: str,
+) -> list[dict[str, Any]]:
+    active = messages[2:]
+    transcript_messages = _read_transcript_messages(transcript_path)
+    checkpoint_only = (
+        len(active) == 1
+        and active[0].get("role") == "user"
+        and str(active[0].get("content") or "").startswith(CHECKPOINT_MARKER)
+    )
+    if (
+        checkpoint_only
+        and _message_token_upper_bound(messages)
+        < EFFECTIVE_CONTEXT_CHECKPOINT_PROMPT_TOKENS
+    ):
+        # The new recovery reason is already durable in request telemetry.
+        # Recompacting a checkpoint-only history would erase its safe suffix.
+        return messages
+    checkpoint_source = (
+        messages[:2] + transcript_messages
+        if checkpoint_only
+        else messages
+    )
+    compacted, checkpoint = _context_checkpoint(
+        checkpoint_source,
+        max_recent_chars=MAX_CHECKPOINT_RECENT_CHARACTERS,
+        workspace_status=workspace_status,
+        recovery_reason=reason,
+        preserved_submit_attempts=_recent_standalone_submit_attempts(
+            transcript_messages
+        ),
+        preserved_run_identifiers=_collect_run_identifiers(transcript_messages),
     )
     with transcript_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(checkpoint, sort_keys=True) + "\n")
@@ -1760,14 +1855,12 @@ def run(config_path: Path) -> int:
                 current_workspace_status = subprocess.check_output(
                     ["git", "status", "--porcelain"], cwd=workspace, text=True
                 )
-                messages, checkpoint = _context_checkpoint(
+                messages = _write_recovery_checkpoint(
                     messages,
-                    max_recent_chars=16_384,
+                    transcript_path,
                     workspace_status=current_workspace_status,
-                    recovery_reason=f"transport_error:{type(exc).__name__}",
+                    reason=f"transport_error:{type(exc).__name__}",
                 )
-                with transcript_path.open("a", encoding="utf-8") as handle:
-                    handle.write(json.dumps(checkpoint, sort_keys=True) + "\n")
             time.sleep(min(30.0, float(2 ** min(consecutive_stream_failures, 5))))
             continue
         if recovery is None:
@@ -1843,14 +1936,12 @@ def run(config_path: Path) -> int:
             current_workspace_status = subprocess.check_output(
                 ["git", "status", "--porcelain"], cwd=workspace, text=True
             )
-            messages, checkpoint = _context_checkpoint(
+            messages = _write_recovery_checkpoint(
                 messages,
-                max_recent_chars=max(16_384, int(context_limit * 1.5)),
+                transcript_path,
                 workspace_status=current_workspace_status,
-                recovery_reason=reason,
+                reason=reason,
             )
-            with transcript_path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(checkpoint, sort_keys=True) + "\n")
             time.sleep(min(30.0, float(2**identical_malformed_count)))
             continue
         consecutive_stream_failures = 0
