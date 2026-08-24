@@ -1158,12 +1158,12 @@ def _workflow_submit_command_kind(command: str) -> str:
     )
     if not sequences and not raw_submit_like:
         return "none"
-    if re.search(r"[;&|`$<>()\n\r#]", command):
-        return "unsafe"
     if len(sequences) != 1:
         return "unsafe"
     index = sequences[0]
     if index != 1 or Path(tokens[0]).name != "npa":
+        return "unsafe"
+    if re.search(r"[;&|`$<>()\n\r#]", command):
         return "unsafe"
     suffix = tokens[index + 3 :]
     if "--help" in suffix or "-h" in suffix or "--plan-only" in suffix:
@@ -1684,8 +1684,10 @@ def run(config_path: Path) -> int:
                         "message": (
                             "Workflow submission must be one direct standalone NPA "
                             "command, and only one successful non-plan submission is "
-                            "allowed. Use separate read-only tool calls for help, "
-                            "planning, monitoring, or diagnostics."
+                            "allowed. Rerun help, --plan-only, or the real submit with "
+                            "no pipes, redirects, wrappers, shell interpolation, or "
+                            "compound diagnostics; use separate read-only tool calls "
+                            "for output inspection and monitoring."
                         ),
                     }
                 else:

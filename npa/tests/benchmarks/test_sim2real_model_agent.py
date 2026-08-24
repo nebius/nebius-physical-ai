@@ -1027,6 +1027,19 @@ def test_quoted_or_escaped_standalone_submit_is_still_classified(
     assert _workflow_submit_command_kind(command) == "standalone"
 
 
+def test_plan_only_pipeline_remains_blocked_shell_composition() -> None:
+    command = (
+        "npa workbench workflow submit spec.yaml --plan-only 2>&1 | sed -n '1,20p'"
+    )
+    assert _workflow_submit_command_kind(command) == "unsafe"
+    assert (
+        _workflow_submission_block_reason(
+            [], tool_name="run_command", arguments={"command": command}
+        )
+        == "UnsafeWorkflowSubmissionCommandBlocked"
+    )
+
+
 def test_remote_disconnect_telemetry_records_safe_recovery_action() -> None:
     disconnect = http.client.RemoteDisconnected("peer closed before response")
     assert isinstance(disconnect, _TRANSIENT_TRANSPORT_ERRORS)
