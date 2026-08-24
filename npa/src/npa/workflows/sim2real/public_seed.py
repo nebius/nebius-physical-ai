@@ -117,15 +117,21 @@ def _write(path: Path, payload: bytes) -> None:
     path.write_bytes(payload)
 
 
-def _decode_frames(video_path: Path, *, camera: str, output_dir: Path) -> list[Path]:
+def _decode_frames(
+    video_path: Path, *, frame_count: int, output_dir: Path
+) -> list[Path]:
     decoded: list[Path] = []
     try:
         with av.open(str(video_path)) as container:
             stream = container.streams.video[0]
             for index, frame in enumerate(container.decode(stream)):
-                if index >= 2:
+                if index >= frame_count:
                     break
-                target = output_dir / f"camera-{camera}-{index:03d}.png"
+                # Stage 3 deliberately consumes the canonical Isaac frame naming
+                # contract (camera-<integer>.png).  Keep source-camera identity in
+                # the manifest rather than encoding it into the filename, because
+                # names such as camera-image-000.png are not valid transfer input.
+                target = output_dir / f"camera-{index:03d}.png"
                 frame.to_image().save(target, format="PNG")
                 if target.stat().st_size <= 0:
                     raise PublicSeedError(f"decoded empty frame from {video_path.name}")
@@ -134,9 +140,10 @@ def _decode_frames(video_path: Path, *, camera: str, output_dir: Path) -> list[P
         raise
     except Exception as exc:  # noqa: BLE001 - normalize decoder failures
         raise PublicSeedError(f"could not decode {video_path.name}: {exc}") from exc
-    if len(decoded) != 2:
+    if len(decoded) != frame_count:
         raise PublicSeedError(
-            f"{video_path.name} yielded {len(decoded)} frames; expected at least 2"
+            f"{video_path.name} yielded {len(decoded)} frames; "
+            f"expected at least {frame_count}"
         )
     return decoded
 
@@ -242,10 +249,13 @@ def stage_public_franka_lift(
 
         frames_dir = work / "frames"
         frames_dir.mkdir()
-        frames = [
-            *_decode_frames(source_files["main_video"], camera="image", output_dir=frames_dir),
-            *_decode_frames(source_files["wrist_video"], camera="wrist-image", output_dir=frames_dir),
+        main_frames = _decode_frames(
+            source_files["main_video"], frame_count=4, output_dir=frames_dir
+        )
+        frame_sources = [
+            ("image", index, frame) for index, frame in enumerate(main_frames)
         ]
+        frames = [frame for _camera, _index, frame in frame_sources]
         if len(frames) < 4:
             raise PublicSeedError("public seed decode produced fewer than four camera frames")
 
@@ -265,9 +275,13 @@ def stage_public_franka_lift(
         )
         staged.append(actions_evidence)
         frame_evidence = []
-        for frame in frames:
+        for source_camera, source_frame_index, frame in frame_sources:
             record = _upload(
                 client, local=frame, uri=prefix + "frames/" + frame.name
+            )
+            record.update(
+                source_camera=source_camera,
+                source_frame_index=source_frame_index,
             )
             staged.append(record)
             frame_evidence.append(record)

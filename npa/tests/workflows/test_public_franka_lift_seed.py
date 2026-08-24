@@ -52,7 +52,7 @@ def _video_bytes(tmp_path: Path, name: str) -> bytes:
         stream.width = 16
         stream.height = 16
         stream.pix_fmt = "yuv420p"
-        for value in (25, 125, 225):
+        for value in (25, 75, 125, 225):
             array = np.full((16, 16, 3), value, dtype=np.uint8)
             for packet in stream.encode(av.VideoFrame.from_ndarray(array, format="rgb24")):
                 container.mux(packet)
@@ -112,8 +112,36 @@ def test_stage_public_franka_lift_derives_real_subset_counts_and_hashes(
     assert result["dataset_id"] == PUBLIC_FRANKA_LIFT_DATASET_ID
     assert result["action_count"] == 3
     assert result["camera_observation_count"] == 4
-    assert sum("/frames/camera-" in uri for uri in storage.objects) == 4
+    frame_names = sorted(
+        uri.rsplit("/", 1)[-1]
+        for uri in storage.objects
+        if "/frames/" in uri
+    )
+    assert frame_names == [
+        "camera-000.png",
+        "camera-001.png",
+        "camera-002.png",
+        "camera-003.png",
+    ]
+    assert all(
+        name.removeprefix("camera-").removesuffix(".png").isdigit()
+        for name in frame_names
+    )
     manifest = json.loads(storage.objects[result["seed_manifest_uri"]])
+    frame_records = [
+        record
+        for record in manifest["source_provenance"]["objects"]
+        if "/frames/" in record["uri"]
+    ]
+    assert [
+        (record["source_camera"], record["source_frame_index"])
+        for record in frame_records
+    ] == [
+        ("image", 0),
+        ("image", 1),
+        ("image", 2),
+        ("image", 3),
+    ]
     assert manifest["source_provenance"]["repository"] == PUBLIC_FRANKA_LIFT_DATASET_REPOSITORY
     assert manifest["source_provenance"]["revision"] == PUBLIC_FRANKA_LIFT_DATASET_REVISION
     assert manifest["source_contract"]["action"]["dimensions"] == 7
