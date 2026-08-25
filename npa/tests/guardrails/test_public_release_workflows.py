@@ -84,8 +84,8 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
         "scan_image_ltx_payload.py",
         "scan_image_wan_payload.py",
         "test_ltx_runtime_bootstrap.py",
-        "scanners: vuln,secret,license",
-        "format: spdx-json",
+        "--scanners vuln,secret,license",
+        "--format spdx-json",
         "non-root runtime required",
         "cached EULA acceptance",
     ):
@@ -93,6 +93,19 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
         assert text.index(required) < push
     assert "organisation policy and post-push anonymous verification apply" in text
     assert "if matrix and head != sha" in text
+
+
+def test_large_image_scan_reclaims_only_build_cache_and_reuses_trivy_cache() -> None:
+    text = PUBLISH.read_text(encoding="utf-8")
+    scan = text.index("Pre-publication vulnerability, secret, and license scan")
+    sbom = text.index("Generate pre-publication SBOM")
+    push = text.index("Push only after every pre-publication gate passes")
+    assert scan < sbom < push
+    assert "docker builder prune --all --force" in text[scan:sbom]
+    assert text[scan:push].count("--cache-dir /tmp/trivy/cache") == 2
+    trivy = "aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image"
+    assert text[scan:push].count(trivy) == 2
+    assert "docker image prune" not in text[scan:push]
 
 
 def test_post_push_and_promotion_gates_are_digest_bound() -> None:

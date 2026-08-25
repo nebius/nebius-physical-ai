@@ -292,22 +292,46 @@ jobs:
           fi
 
       - name: Pre-publication vulnerability, secret, and license scan
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: ${{ matrix.image }}
-          scanners: vuln,secret,license
-          severity: CRITICAL
-          exit-code: "1"
-          ignore-unfixed: true
-          format: table
+        # buildx retains an unpacked build cache in addition to the tagged
+        # image. Reclaim only that ephemeral cache before Trivy exports large
+        # workbench layers; the exact tagged artifact remains present.
+        env:
+          TRIVY_TEMP_DIR: ${{ runner.temp }}/trivy
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker builder prune --all --force
+          mkdir -p "$TRIVY_TEMP_DIR"
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$TRIVY_TEMP_DIR:/tmp/trivy" \
+            -v "$GITHUB_WORKSPACE/.trivyignore:/.trivyignore:ro" \
+            aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image \
+              --cache-dir /tmp/trivy/cache \
+              --scanners vuln,secret,license \
+              --severity CRITICAL \
+              --exit-code 1 \
+              --ignore-unfixed \
+              --ignorefile /.trivyignore \
+              --format table \
+              "$IMAGE"
 
       - name: Generate pre-publication SBOM
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: ${{ matrix.image }}
-          scanners: vuln
-          format: spdx-json
-          output: ${{ runner.temp }}/${{ matrix.tool }}-sbom.spdx.json
+        env:
+          TRIVY_TEMP_DIR: ${{ runner.temp }}/trivy
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$TRIVY_TEMP_DIR:/tmp/trivy" \
+            -v "$RUNNER_TEMP:/output" \
+            aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image \
+              --cache-dir /tmp/trivy/cache \
+              --scanners vuln \
+              --format spdx-json \
+              --output "/output/${TOOL}-sbom.spdx.json" \
+              "$IMAGE"
 
       - uses: docker/login-action@v3
         with:
