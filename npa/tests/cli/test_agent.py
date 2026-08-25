@@ -5415,7 +5415,7 @@ def test_cleanup_agent_local_files_refuses_symlink_without_touching_target(
     assert tf_dir.exists()
 
 
-def test_cleanup_agent_local_files_failure_preserves_later_targets(
+def test_cleanup_agent_local_files_retires_terraform_before_auth(
     monkeypatch, tmp_path
 ) -> None:
     from npa.cli import agent as agent_module
@@ -5441,7 +5441,7 @@ def test_cleanup_agent_local_files_failure_preserves_later_targets(
         agent_module._cleanup_agent_local_files("p", "agent")
 
     assert agent_dir.exists()
-    assert tf_dir.exists()
+    assert not tf_dir.exists()
 
 
 def test_destroy_agent_rejects_multiple_nonterminal_same_name_generations(

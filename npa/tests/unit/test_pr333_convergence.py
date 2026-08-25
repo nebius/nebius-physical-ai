@@ -256,6 +256,36 @@ def test_failed_terraform_retirement_preserves_credentials_until_final_inventory
     assert cleared == []
 
 
+def test_agent_terraform_delete_failure_preserves_auth_and_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli.agent_local_state import (
+        AgentLocalRetirementError,
+        cleanup_agent_local_files,
+    )
+    from npa.deploy import provisioner
+
+    agent_dir = Path.home() / ".npa" / "agents" / "demo" / "agent"
+    agent_dir.mkdir(parents=True)
+    auth = agent_dir / "auth.env"
+    auth.write_text("AGENT_PASSWORD=fixture-only\n", encoding="utf-8")
+    tf_dir = provisioner.working_dir_path("demo", "agent")
+    tf_dir.mkdir(parents=True)
+    state = tf_dir / "terraform.tfstate"
+    state.write_text("{}\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "npa.cli.agent_local_state.shutil.rmtree",
+        lambda _path: (_ for _ in ()).throw(OSError("injected deletion failure")),
+    )
+
+    with pytest.raises(AgentLocalRetirementError, match="injected deletion failure"):
+        cleanup_agent_local_files("demo", "agent")
+
+    assert auth.exists()
+    assert state.exists()
+
+
 def test_agent_record_project_must_match_parent_project_stanza() -> None:
     from npa.cli.agent_records import AgentRecordState, decode_agent_record
     from npa.clients import config as config_module
