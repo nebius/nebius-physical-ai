@@ -3,8 +3,11 @@
 # the remaining common Python closure is inherited from a digest-pinned base.
 cryptography==50.0.0
 cffi==2.1.1
+certifi==2026.7.22
+charset-normalizer==3.4.9
 durationpy==0.10
 google-auth==2.56.3
+idna==3.18
 kubernetes==33.1.0
 lz4==4.4.5
 mcap==1.4.0
@@ -12,6 +15,8 @@ oauthlib==3.3.1
 pyasn1==0.6.4
 pyasn1-modules==0.4.2
 pycparser==3.0
+PyYAML==6.0.3
+requests==2.34.2
 requests-oauthlib==2.0.0
 websocket-client==1.9.0
 zstandard==0.25.0

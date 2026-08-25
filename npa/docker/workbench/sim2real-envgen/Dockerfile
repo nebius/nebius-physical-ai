@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=npa-genesis:cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z
+ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-genesis@sha256:80cd1c4c7f7a5466533de29ee5cad1213202f348545346fea9ed6746fa03b1ca
 FROM ${BASE_IMAGE}
 
 ARG NPA_SOURCE_SHA

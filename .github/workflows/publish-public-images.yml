@@ -223,6 +223,17 @@ jobs:
 
       - uses: imjasonh/setup-crane@v0.4
 
+      # Some public workbench Dockerfiles inherit other immutable public NPA
+      # packages. Authenticate pulls here because setup-crane installs an
+      # intentionally invalid placeholder credential; no registry write occurs
+      # until the separately gated push step below.
+      - name: Authenticate immutable public base pulls
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       # Build locally first. Every gate below inspects these exact bytes; no registry write
       # occurs until the final explicit docker push.
       - name: Build immutable development image locally

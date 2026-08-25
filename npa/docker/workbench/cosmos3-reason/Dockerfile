@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=npa-base:cuda13-b300-sm80-sm90-sm100-sm103-sm120-v2-latest
+ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-reason@sha256:e708aa32b9247eaedf1a7a5b0d82adbe65b95a9af50721b9d09fddbfd508bbc9
 FROM ${BASE_IMAGE}
 
 ARG COSMOS3_REASON_VERSION=cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z

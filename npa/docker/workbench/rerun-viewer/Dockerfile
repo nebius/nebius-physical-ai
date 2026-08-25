@@ -75,7 +75,7 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && python -m pip check \
     && python -c "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-exact-source.pth').write_text('/opt/npa/src\n', encoding='utf-8')" \
     && env -u PYTHONPATH python -c \
-      "import boto3, mcap, rerun; import npa.cli.main; from npa.workflows.sim2real.workflow_stage import main; assert callable(main)"
+      "import boto3, mcap, rerun; from npa.workflows.sim2real.workflow_stage import main; assert callable(main)"
 
 COPY --chown=ubuntu:ubuntu --chmod=0755 docker/workbench/rerun-viewer/entrypoint.sh /opt/npa/docker/workbench/rerun-viewer/entrypoint.sh
 

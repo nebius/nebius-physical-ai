@@ -95,6 +95,17 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
     assert "if matrix and head != sha" in text
 
 
+def test_public_base_pull_authentication_precedes_local_build() -> None:
+    spec = _spec(PUBLISH)
+    steps = spec["jobs"]["build-development"]["steps"]
+    names = [str(step.get("name") or "") for step in steps]
+    auth = names.index("Authenticate immutable public base pulls")
+    build = names.index("Build immutable development image locally")
+    push = names.index("Push only after every pre-publication gate passes")
+    assert steps[auth]["uses"] == "docker/login-action@v3"
+    assert auth < build < push
+
+
 def test_post_push_and_promotion_gates_are_digest_bound() -> None:
     text = PUBLISH.read_text(encoding="utf-8")
     for required in (
