@@ -303,6 +303,7 @@ jobs:
           docker buildx prune --all --force
           mkdir -p "$TRIVY_TEMP_DIR"
           docker run --rm \
+            -e TMPDIR=/tmp/trivy \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v "$TRIVY_TEMP_DIR:/tmp/trivy" \
             -v "$GITHUB_WORKSPACE/.trivyignore:/.trivyignore:ro" \
@@ -323,6 +324,7 @@ jobs:
         run: |
           set -euo pipefail
           docker run --rm \
+            -e TMPDIR=/tmp/trivy \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v "$TRIVY_TEMP_DIR:/tmp/trivy" \
             -v "$RUNNER_TEMP:/output" \
