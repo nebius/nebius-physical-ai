@@ -100,7 +100,7 @@ def test_isaac_lab_deploy_requires_gpu_selection(tmp_path: Path) -> None:
     assert "H100/H200" in result.output
 
 
-def test_isaac_lab_deploy_installs_expected_package(tmp_path: Path, mocker) -> None:
+def test_isaac_lab_deploy_defaults_to_reproducible_container(tmp_path: Path, mocker) -> None:
     ssh = mocker.MagicMock()
     ssh.run.return_value = (0, "connected", "")
     ssh.run_or_raise.return_value = (0, "ISAAC_LAB_ENV_SMOKE_OK", "")
@@ -122,6 +122,13 @@ def test_isaac_lab_deploy_installs_expected_package(tmp_path: Path, mocker) -> N
     update_status = mocker.patch("npa.cli.isaac_lab.update_workbench_app_status")
     mocker.patch("npa.cli.isaac_lab.write_manifest")
     mocker.patch("npa.cli.isaac_lab.list_projects", return_value={})
+    mocker.patch("npa.cli.isaac_lab.resolve_container_registry", return_value="registry.example")
+    mocker.patch(
+        "npa.cli.isaac_lab.container_image_for_tool",
+        return_value="registry.example/npa-isaac-lab:3.0.0b2.post1",
+    )
+    write_env = mocker.patch("npa.deploy.configurator.write_remote_docker_env_file")
+    deploy_container = mocker.patch("npa.deploy.configurator.deploy_workbench_container")
 
     result = runner.invoke(
         app,
@@ -155,19 +162,40 @@ def test_isaac_lab_deploy_installs_expected_package(tmp_path: Path, mocker) -> N
     tf_vars = apply.call_args.kwargs["tf_vars"]
     assert tf_vars["gpu_platform"] == "gpu-l40s-a"
     assert tf_vars["gpu_preset"] == "1gpu-40vcpu-160gb"
-    assert "boot_disk_size_gb" not in tf_vars
+    assert tf_vars["boot_disk_size_gb"] == "250"
 
-    install_cmd = ssh.run_or_raise.call_args.args[0]
-    assert "python3.12 -m venv /opt/isaac-lab/venv" in install_cmd
-    assert "/opt/isaac-lab/venv/bin/python -m pip install --pre" in install_cmd
-    assert '"isaaclab[isaacsim,all,newton,rsl-rl]==3.0.0b2.post1"' in install_cmd
-    assert "--extra-index-url https://pypi.nvidia.com" in install_cmd
-    assert "ISAAC_LAB_ENV_SMOKE_OK" in install_cmd
+    write_env.assert_called_once()
+    deploy_container.assert_called_once()
+    assert (
+        deploy_container.call_args.kwargs["image_ref"]
+        == "registry.example/npa-isaac-lab:3.0.0b2.post1"
+    )
     write_config.assert_called()
     wb_cfg = write_config.call_args.args[0]["projects"]["proj"]["workbenches"]["isaac"]
     assert wb_cfg["app_status"] == "provisioned"
     assert update_status.call_args_list[0].args == ("proj", "isaac", "installing")
     assert update_status.call_args_list[-1].args == ("proj", "isaac", "healthy")
+
+
+def test_isaac_lab_deploy_rejects_unpinned_native_vm_install() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "deploy",
+            "--runtime",
+            "vm",
+            "--gpu-type",
+            "gpu-l40s-a",
+            "--gpu-preset",
+            "1gpu-40vcpu-160gb",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Native VM installation is not supported for Isaac Lab 3" in result.output
+    assert "--runtime container" in result.output
 
 
 def _isaac_existing_config() -> dict:
@@ -485,7 +513,7 @@ def test_isaac_lab_deploy_runtime_container_starts_image(tmp_path: Path, mocker)
     assert tf_vars["boot_disk_size_gb"] == "250"
     deploy_container.assert_called_once()
     assert deploy_container.call_args.kwargs["container_name"] == "npa-isaac-lab"
-    assert deploy_container.call_args.kwargs["image_ref"].endswith("/npa-isaac-lab:2.3.2.post1")
+    assert deploy_container.call_args.kwargs["image_ref"].endswith("/npa-isaac-lab:3.0.0b2.post1")
     wb_cfg = write_config.call_args.args[0]["projects"]["proj"]["workbenches"]["isaac-container"]
     assert wb_cfg["runtime"] == "container"
     assert update_status.call_args_list[0].args == ("proj", "isaac-container", "installing")

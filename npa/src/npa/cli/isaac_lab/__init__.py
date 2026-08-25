@@ -126,7 +126,6 @@ ISAAC_LAB_SOURCE = f"{ISAAC_LAB_HOME}/source"
 ISAAC_LAB_SITE_PACKAGES = f"{ISAAC_LAB_VENV}/lib/python3.12/site-packages"
 ISAAC_LAB_PKG = f"{ISAAC_LAB_SITE_PACKAGES}/isaaclab"
 ISAAC_LAB_RSL_RL_TRAIN_REL = "scripts/reinforcement_learning/rsl_rl/train.py"
-PIP_EXTRA_INDEX_URL = "https://pypi.nvidia.com"
 
 
 class OutputFormat(str, Enum):
@@ -720,59 +719,13 @@ def _validate_gpu_selection(gpu_type: str, gpu_preset: str) -> None:
 
 
 def _build_install_command() -> str:
-    _require_isaac_consent(
-        "Isaac Lab installation", "npa workbench isaac-lab deploy ..."
+    _fail(
+        "Native VM installation is not supported for Isaac Lab 3 because its "
+        "third-party runtime cannot be reproduced from the public image's "
+        "hash-pinned, payload-clean build contract. Use --runtime container "
+        "for a managed VM, or --runtime byovm for an existing host."
     )
-    script = f"""\
-set -euo pipefail
-export DEBIAN_FRONTEND=noninteractive
-export ACCEPT_EULA=Y
-sudo apt-get update
-sudo apt-get install -y software-properties-common build-essential git curl libglu1-mesa
-if ! command -v python3.12 >/dev/null 2>&1; then
-  sudo add-apt-repository -y ppa:deadsnakes/ppa || true
-  sudo apt-get update
-fi
-sudo apt-get install -y python3.12 python3.12-venv python3.12-dev
-sudo mkdir -p {ISAAC_LAB_HOME}
-sudo chown -R "$USER:$USER" {ISAAC_LAB_HOME}
-python3.12 -m venv {ISAAC_LAB_VENV}
-{ISAAC_LAB_VENV}/bin/python -m pip install --upgrade pip setuptools wheel
-{ISAAC_LAB_VENV}/bin/python -m pip install --pre \
-  "isaaclab[isaacsim,all,newton,rsl-rl]=={ISAAC_LAB_VERSION}" \
-  --extra-index-url {PIP_EXTRA_INDEX_URL}
-rm -rf {ISAAC_LAB_SOURCE}
-git clone --filter=blob:none --no-checkout https://github.com/isaac-sim/IsaacLab.git {ISAAC_LAB_SOURCE}
-git -C {ISAAC_LAB_SOURCE} checkout --detach {ISAAC_LAB_SRC_COMMIT}
-test "$(git -C {ISAAC_LAB_SOURCE} rev-parse HEAD)" = "{ISAAC_LAB_SRC_COMMIT}"
-source {ISAAC_LAB_VENV}/bin/activate
-python - <<'PY'
-from importlib import metadata
-
-from isaaclab.app import AppLauncher
-
-version = metadata.version("isaaclab")
-if version != "{ISAAC_LAB_VERSION}":
-    raise RuntimeError(f"expected isaaclab {ISAAC_LAB_VERSION}, found {{version}}")
-
-simulation_app = None
-try:
-    simulation_app = AppLauncher(visualizer="none").app
-    if simulation_app is None:
-        raise RuntimeError("AppLauncher.app is None")
-    update = getattr(simulation_app, "update", None)
-    if callable(update):
-        update()
-finally:
-    if simulation_app is not None:
-        close = getattr(simulation_app, "close", None)
-        if callable(close):
-            close()
-
-print("ISAAC_LAB_ENV_SMOKE_OK")
-PY
-"""
-    return _remote_bash(script)
+    raise AssertionError("unreachable")
 
 
 def _activate_prefix() -> str:
@@ -1675,7 +1628,7 @@ def deploy_cmd(
         True, "--preemptible/--no-preemptible", help="Preemptible (spot) instance."
     ),
     runtime: WorkbenchRuntime = typer.Option(
-        WorkbenchRuntime.vm, "--runtime", help=RUNTIME_HELP
+        WorkbenchRuntime.container, "--runtime", help=RUNTIME_HELP
     ),
     host: str = typer.Option(
         "", "--host", help="BYOVM SSH host/IP. Used only with --runtime byovm."
@@ -1714,6 +1667,8 @@ def deploy_cmd(
         _fail(
             "Isaac Lab deploy does not use --runtime serverless; use `npa workbench isaac-lab train --runtime serverless`."
         )
+    if runtime == WorkbenchRuntime.vm and not destroy:
+        _build_install_command()
     if not destroy and not byovm:
         _validate_gpu_selection(gpu_type, gpu_preset)
 
