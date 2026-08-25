@@ -375,6 +375,37 @@ def test_exit_zero_without_authoritative_run_identity_is_indeterminate(
     assert result["error"]["classification"] == "workflow_submit_response_invalid"
 
 
+def test_nonzero_authoritative_terminal_failure_is_an_accepted_submission(
+    prepared: dict[str, object]
+) -> None:
+    def runner(argv, **kwargs):
+        return subprocess.CompletedProcess(
+            argv,
+            1,
+            json.dumps({"run_id": "prepared-run-1", "status": "failed"}),
+            "private terminal failure detail",
+        )
+
+    result = execute_prepared_action(
+        prepared["receipt_path"],
+        requested_action_id="submit-prepared-run-1",
+        occurrence_id="terminal-failure",
+        context=prepared["context"],
+        runner=runner,
+    )
+
+    assert result["submission_accepted"] is True
+    assert result["action_consumed"] is True
+    assert result["safe_run_reference"] == "prepared-run-1"
+    assert result["status"] == "FAILED"
+    assert result["error"] == {
+        "classification": "workflow_terminal_failure",
+        "retryable": False,
+        "action": "inspect the terminal workflow failure and private evidence; do not replay this prepared action",
+    }
+    assert "private terminal failure detail" not in json.dumps(result)
+
+
 def test_crash_before_and_after_exec_recovery_never_replays(
     prepared: dict[str, object]
 ) -> None:

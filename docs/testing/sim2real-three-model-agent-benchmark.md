@@ -198,7 +198,10 @@ A restart may recover a durably finished result, may retry an occurrence proven
 not to have started, and must stop on an indeterminate started occurrence. A
 finished action cannot be submitted again, including through generic shell after
 a WAL loss. Exit zero alone is insufficient: the bounded JSON result must
-authoritatively identify the receipt-bound run. Existing NPA workflow launch
+authoritatively identify the receipt-bound run. Conversely, an authoritative
+receipt-bound run remains an accepted submission when monitoring returns a
+nonzero exit for a terminal workflow failure; acceptance and terminal outcome
+are reported separately. Existing NPA workflow launch
 transactions, runtime resume, and durable submission records remain the source
 of orchestration truth; the controller does not duplicate them.
 

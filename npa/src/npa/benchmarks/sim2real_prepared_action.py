@@ -923,7 +923,7 @@ def _safe_result(
         payload = json.loads(completed.stdout)
     except json.JSONDecodeError:
         payload = None
-    if completed.returncode == 0 and isinstance(payload, dict):
+    if isinstance(payload, dict):
         returned_run_id = payload.get("run_id") or payload.get("workflow_run_id")
         candidate = str(payload.get("status") or "").strip().upper()
         if (
@@ -953,7 +953,19 @@ def _safe_result(
             "bounded_view_sha256": canonical_sha256(safe_view),
         },
     }
-    if not accepted:
+    terminal_failure = accepted and (
+        status.startswith("FAILED")
+        or status.startswith("CANCELLED")
+        or status.startswith("CANCELED")
+        or status == "ERROR"
+    )
+    if terminal_failure:
+        result["error"] = {
+            "classification": "workflow_terminal_failure",
+            "retryable": False,
+            "action": "inspect the terminal workflow failure and private evidence; do not replay this prepared action",
+        }
+    elif not accepted:
         result["error"] = {
             "classification": (
                 "workflow_submit_response_invalid"
