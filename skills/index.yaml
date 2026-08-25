@@ -41,6 +41,13 @@ skills:
       - type: cli_help
         args: ["agent", "deploy", "--help"]
         contains: "llm-model"
+  - name: agent-run-data-collection
+    category: atomic
+    when_to_use: "Collect NPA agent work for fine-tuning or evaluation so every goal-level episode emits a sanitized, outcome-linked trajectory to an append-only S3 dataset in an operator-specified tenant and bucket."
+    path: skills/atomic/agent-run-data-collection/SKILL.md
+    smoke:
+      - type: file_exists
+        path: skills/atomic/agent-run-data-collection/references/trajectory-schema.md
   - name: architecture
     category: atomic
     when_to_use: "Platform architecture, tool-layer scope, orchestrator decisions, partner model, and validation state."
