@@ -99,7 +99,15 @@ def static_prerequisites(
                 [
                     "nvidia/Cosmos-Transfer2.5-2B",
                     str(config.get("reason2_model") or "").strip(),
-                    str(config.get("reason3_model") or "").strip(),
+                    str(
+                        config.get("cosmos3_model")
+                        or (
+                            "nvidia/Cosmos3-Edge"
+                            if config.get("reason3_model")  # archived key compatibility
+                            else ""
+                        )
+                        or ""
+                    ).strip(),
                 ]
             )
         )

@@ -1,4 +1,4 @@
-"""Unit tests for workbench-hosted Cosmos Reason2/3 helpers."""
+"""Unit tests for workbench-hosted Cosmos Reason2/Cosmos3 helpers."""
 
 from __future__ import annotations
 
@@ -12,15 +12,16 @@ from npa.workbench.cosmos import reason as reason_module
 from npa.workbench.cosmos.reason import (
     DEFAULT_REASON2_CACHE,
     DEFAULT_REASON2_MODEL,
-    DEFAULT_REASON3_CACHE,
-    DEFAULT_REASON3_MODEL,
+    DEFAULT_COSMOS3_CACHE,
+    DEFAULT_COSMOS3_MODEL,
     DEFAULT_REASON_EVENT_FRAMES,
     DEFAULT_REASON_MAX_NEW_TOKENS,
     apply_cosmos_reason_kubernetes_env,
     cosmos_reason_k8s_shell_preamble,
     cosmos_reason_runtime_env,
     default_reason_cache_dir,
-    merge_dual_reason_evaluations,
+    cosmos_reason_family,
+    merge_reason_evaluations,
     prepare_cosmos_reason_cache,
     resolve_cosmos_reason_model_id,
     task_description_from_manifest,
@@ -52,9 +53,9 @@ def test_resolve_cosmos_reason_alias_defaults_to_reason2() -> None:
 
 def test_default_reason_cache_dir_uses_writable_tmp_hf_home(monkeypatch) -> None:
     monkeypatch.delenv("NPA_COSMOS_REASON2_CACHE", raising=False)
-    monkeypatch.delenv("NPA_COSMOS_REASON3_CACHE", raising=False)
+    monkeypatch.delenv("NPA_COSMOS3_EDGE_CACHE", raising=False)
     assert default_reason_cache_dir(DEFAULT_REASON2_MODEL) == DEFAULT_REASON2_CACHE
-    assert default_reason_cache_dir(DEFAULT_REASON3_MODEL) == DEFAULT_REASON3_CACHE
+    assert default_reason_cache_dir(DEFAULT_COSMOS3_MODEL) == DEFAULT_COSMOS3_CACHE
     assert DEFAULT_REASON2_CACHE.startswith("/tmp/hf_home/")
 
 
@@ -71,7 +72,7 @@ def test_cosmos_reason_runtime_env_prefers_the_durable_cache(monkeypatch) -> Non
         "HF_HOME",
         "NPA_COSMOS_REASON_CACHE",
         "NPA_COSMOS_REASON2_CACHE",
-        "NPA_COSMOS_REASON3_CACHE",
+        "NPA_COSMOS3_EDGE_CACHE",
     ):
         monkeypatch.delenv(name, raising=False)
     # The renderer exports the resolved root into the container; a claim name is
@@ -86,8 +87,8 @@ def test_cosmos_reason_runtime_env_prefers_the_durable_cache(monkeypatch) -> Non
         == "/opt/npa-model-cache/huggingface/cosmos-reason2"
     )
     assert (
-        runtime["NPA_COSMOS_REASON3_CACHE"]
-        == "/opt/npa-model-cache/huggingface/cosmos-reason2-2b"
+        runtime["NPA_COSMOS3_EDGE_CACHE"]
+        == "/opt/npa-model-cache/huggingface/cosmos3-edge"
     )
 
 
@@ -101,7 +102,7 @@ def test_apply_cosmos_reason_kubernetes_env_preserves_existing_values() -> None:
         {"HF_HOME": "/custom/hf", "NPA_SIM2REAL_RUN_ID": "r1"}
     )
     assert safe["HF_HOME"] == "/custom/hf"
-    assert safe["NPA_COSMOS_REASON3_CACHE"] == DEFAULT_REASON3_CACHE
+    assert safe["NPA_COSMOS3_EDGE_CACHE"] == DEFAULT_COSMOS3_CACHE
 
 
 def test_prepare_cosmos_reason_cache_creates_directory(tmp_path, monkeypatch) -> None:
@@ -122,6 +123,7 @@ def test_vlm_k8s_shell_preamble_creates_hf_home() -> None:
     assert 'export HF_HOME="${HF_HOME:-/tmp/hf_home}"' in preamble
     assert "mkdir -p" in preamble
     assert vlm_k8s_component("vlm_eval_reason2")
+    assert vlm_k8s_component("vlm_eval_cosmos3")
     assert not vlm_k8s_component("policy_actions")
 
 
@@ -137,7 +139,51 @@ def test_engine_vlm_job_script_prepares_hf_cache(monkeypatch) -> None:
     assert 'export HF_HOME="${HF_HOME:-/tmp/hf_home}"' in script
     safe = _kubernetes_component_env({}, Sim2RealLoopConfig(run_id="r"))
     assert safe["HF_HOME"] == "/tmp/hf_home"
-    assert safe["NPA_COSMOS_REASON3_CACHE"] == DEFAULT_REASON3_CACHE
+    assert safe["NPA_COSMOS3_EDGE_CACHE"] == DEFAULT_COSMOS3_CACHE
+
+
+def test_model_family_distinguishes_real_cosmos3_edge_from_reason2() -> None:
+    assert cosmos_reason_family(DEFAULT_REASON2_MODEL) == "reason2"
+    assert cosmos_reason_family(DEFAULT_COSMOS3_MODEL) == "cosmos3"
+    assert cosmos_reason_family("nvidia/Cosmos-Reason2-2B") == "reason2"
+
+
+def test_cosmos3_processor_path_consumes_rollout_images_without_qwen_adapter() -> None:
+    captured = {}
+
+    class Inputs:
+        def to(self, device):
+            captured["device"] = device
+            return self
+
+    class Processor:
+        def apply_chat_template(self, messages, **kwargs):
+            captured["messages"] = messages
+            captured["kwargs"] = kwargs
+            return Inputs()
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "judge"},
+                {"type": "image", "url": "/rollout/camera-000.png"},
+            ],
+        }
+    ]
+    result = reason_module._prepare_reason_inputs(
+        family="cosmos3", processor=Processor(), messages=messages, device="cuda:0"
+    )
+
+    assert isinstance(result, Inputs)
+    assert captured["messages"][0]["content"][1]["url"].endswith("camera-000.png")
+    assert captured["kwargs"] == {
+        "tokenize": True,
+        "add_generation_prompt": True,
+        "return_dict": True,
+        "return_tensors": "pt",
+    }
+    assert captured["device"] == "cuda:0"
 
 
 def test_task_description_from_manifest_prefers_task_description() -> None:
@@ -164,9 +210,9 @@ def test_merge_dual_reason_evaluations_averages_scores_and_requires_both_success
         ],
         "summary": "reason2 ok",
     }
-    reason3 = {
+    cosmos3 = {
         "rollout_id": "rollout-0000",
-        "model": DEFAULT_REASON3_MODEL,
+        "model": DEFAULT_COSMOS3_MODEL,
         "success": False,
         "score": 0.4,
         "per_step": [
@@ -178,18 +224,20 @@ def test_merge_dual_reason_evaluations_averages_scores_and_requires_both_success
                 "camera_observation": "camera-000.ppm",
             }
         ],
-        "summary": "reason3 miss",
+        "summary": "cosmos3 miss",
     }
 
-    merged = merge_dual_reason_evaluations(reason2, reason3, threshold=0.75)
+    merged = merge_reason_evaluations(reason2, cosmos3, threshold=0.75)
 
-    assert merged["dual_reason"] is True
-    assert merged["component_source"] == "cosmos_dual_reason_vlm"
+    assert merged["two_evaluator"] is True
+    assert merged["component_source"] == "cosmos_reason2_cosmos3_vlm"
     assert merged["score"] == 0.6
     assert merged["success"] is False
     assert merged["per_step"][0]["error_tags"] == ["ok", "late_grasp"]
     assert "reason2_critique" in merged["per_step"][0]
-    assert "reason3_critique" in merged["per_step"][0]
+    assert "cosmos3_critique" in merged["per_step"][0]
+    assert "cosmos3_tags" in merged["per_step"][0]
+    assert merged["cosmos3"]["model"] == DEFAULT_COSMOS3_MODEL
 
 
 def test_summary_only_output_is_rejected_without_temporal_broadcast() -> None:
@@ -241,7 +289,7 @@ def test_single_array_wrapped_evaluation_preserves_event_local_critiques() -> No
         ],
         rollout_id="rollout-array-wrapper",
         threshold=0.5,
-        family="reason3",
+        family="cosmos3",
     )
 
     assert payload["summary"] == "no stable grasp"
@@ -306,7 +354,7 @@ def test_malformed_step_is_rejected_instead_of_copying_summary() -> None:
         actions=[{"step": 0, "action": [0.0]}],
         rollout_id="rollout-0002",
         threshold=0.5,
-        family="reason3",
+        family="cosmos3",
     )
 
     step = payload["per_step"][0]
@@ -361,9 +409,9 @@ def test_dual_reason_rejects_missing_local_model_label() -> None:
             }
         ],
     }
-    reason3 = {
+    cosmos3 = {
         **base,
-        "model": DEFAULT_REASON3_MODEL,
+        "model": DEFAULT_COSMOS3_MODEL,
         "per_step": [
             {
                 "step": 0,
@@ -375,7 +423,7 @@ def test_dual_reason_rejects_missing_local_model_label() -> None:
         ],
     }
 
-    merged = merge_dual_reason_evaluations(reason2, reason3, threshold=0.5)
+    merged = merge_reason_evaluations(reason2, cosmos3, threshold=0.5)
 
     assert merged["per_step"][0]["critique_source"] == "model_missing"
     assert merged["per_step"][0]["confidence"] == 0.0

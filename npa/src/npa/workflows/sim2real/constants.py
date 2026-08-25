@@ -7,13 +7,13 @@ from __future__ import annotations
 # unrelated lancedb/pyarrow/fiftyone dependencies.
 DEFAULT_COSMOS_REASON_CACHE = "/tmp/hf_home/cosmos-reason2"
 DEFAULT_COSMOS_REASON2_CACHE = "/tmp/hf_home/cosmos-reason2"
-DEFAULT_COSMOS_REASON3_CACHE = "/tmp/hf_home/cosmos-reason2-2b"
+DEFAULT_COSMOS3_EDGE_CACHE = "/tmp/hf_home/cosmos3-edge"
 
 DEFAULT_S3_ENDPOINT = ""
 DEFAULT_BUCKET = ""
 DEFAULT_PREFIX = "sim2real-b"
 DEFAULT_COSMOS2_TRANSFER_TAG = "2.5.1-skypilot-ready-20260801T053000Z"
-DEFAULT_VLM_IMAGE_TAG = "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+DEFAULT_VLM_IMAGE_TAG = "cuda13-b300-3.1.0-sm80-sm90-sm100-sm103-sm120-20260825T212327Z"
 # Reference-image pins. Canonical source of truth is pyproject.toml
 # ([tool.npa.supported-tools], mirrored in npa/src/npa/deploy/images.py); keep
 # these no-registry fallbacks in sync so the staged engine (models.py) and the
@@ -53,7 +53,7 @@ DEFAULT_ACTION_ENV_LIMIT = 256
 DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE = 0.08
 DEFAULT_REFERENCE_VLM_MODEL = "nvidia/Cosmos-Reason2-8B"
 DEFAULT_REASON2_MODEL = "nvidia/Cosmos-Reason2-8B"
-DEFAULT_REASON3_MODEL = "nvidia/Cosmos-Reason2-2B"
+DEFAULT_COSMOS3_MODEL = "nvidia/Cosmos3-Edge"
 DEFAULT_LEROBOT_DATASET_ID = "npa/isaac-lift-cube-franka-seed-v1"
 REFERENCE_VLM_ALIASES = {
     "",
@@ -61,14 +61,14 @@ REFERENCE_VLM_ALIASES = {
     "cosmos3-reason",
     "cosmos-reason",
     "reason2",
-    "reason3",
+    "cosmos3",
 }
 DEFAULT_VLM_SEAM_EVIDENCE = (
-    f"Dual self-hosted VLM defaults: {DEFAULT_REASON2_MODEL} (Reason2) and "
-    f"{DEFAULT_REASON3_MODEL} (Reason3 sibling). Accept gated Hugging Face "
+    f"Two self-hosted evaluator defaults: {DEFAULT_REASON2_MODEL} (Reason2) and "
+    f"{DEFAULT_COSMOS3_MODEL} (Cosmos3-Edge). Verify Hugging Face access "
     "licenses before launch; see sim2real-workflow.md."
 )
-SCHEMA_VLM_EVAL = "npa.sim2real.vlm_eval.v1"
+SCHEMA_VLM_EVAL = "npa.sim2real.vlm_eval.v2"
 SCHEMA_RL_SIGNAL = "npa.sim2real.rl_signal.v1"
 SCHEMA_HELDOUT_REPORT = "npa.sim2real.heldout_eval.v1"
 SCHEMA_THRESHOLD_DECISION = "npa.sim2real.threshold_decision.v1"

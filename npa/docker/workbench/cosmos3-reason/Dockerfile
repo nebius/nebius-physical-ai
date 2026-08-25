@@ -1,12 +1,13 @@
 ARG BASE_IMAGE=npa-base:cuda13-b300-sm80-sm90-sm100-sm103-sm120-v2-latest
 FROM ${BASE_IMAGE}
 
-ARG COSMOS3_REASON_VERSION=cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z
+ARG COSMOS3_REASON_VERSION=cuda13-b300-3.1.0-sm80-sm90-sm100-sm103-sm120-20260825T212327Z
 ARG NPA_SOURCE_SHA
 ARG UBUNTU_SNAPSHOT=20260801T053000Z
 
 LABEL npa.tool="cosmos3-reason" \
       npa.version="${COSMOS3_REASON_VERSION}" \
+      npa.runtime-model-license="OpenMDW-1.1" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
 
 ENV PYTHONUNBUFFERED=1 \
@@ -15,10 +16,10 @@ ENV PYTHONUNBUFFERED=1 \
     NPA_COSMOS3_TRANSFER_MODEL=nvidia/Cosmos-Transfer2.5-2B \
     NPA_COSMOS_GUARDRAIL_MODEL=nvidia/Cosmos-Guardrail1 \
     NPA_COSMOS_REASON2_MODEL_ID=nvidia/Cosmos-Reason2-8B \
-    NPA_COSMOS_REASON3_MODEL_ID=nvidia/Cosmos-Reason2-2B \
+    NPA_COSMOS3_EDGE_MODEL_ID=nvidia/Cosmos3-Edge \
     NPA_COSMOS_REASON_MODEL_ID=nvidia/Cosmos-Reason2-8B \
     NPA_COSMOS_REASON2_CACHE=/tmp/hf_home/cosmos-reason2 \
-    NPA_COSMOS_REASON3_CACHE=/tmp/hf_home/cosmos-reason2-2b \
+    NPA_COSMOS3_EDGE_CACHE=/tmp/hf_home/cosmos3-edge \
     NPA_COSMOS_REASON_CACHE=/tmp/hf_home/cosmos-reason2 \
     NPA_SKIP_EAGER_IMPORTS=1 \
     NPA_BAKED_PYTHON=/opt/npa/venv/bin/python \
@@ -39,7 +40,7 @@ USER root
 
 # Do not recursively chown the inherited /opt/npa/venv: overlayfs would copy
 # the complete CUDA/PyTorch environment into this child layer.
-RUN mkdir -p /tmp/hf_home/cosmos-reason2 /tmp/hf_home/cosmos-reason2-2b \
+RUN mkdir -p /tmp/hf_home/cosmos-reason2 /tmp/hf_home/cosmos3-edge \
     && find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
     && find /opt/npa/src /opt/npa/workflows -type f -exec chmod a+r {} + \
     && chmod a+r /opt/npa/pyproject.toml \
@@ -48,13 +49,16 @@ RUN mkdir -p /tmp/hf_home/cosmos-reason2 /tmp/hf_home/cosmos-reason2-2b \
     && python -m pip install --no-deps \
       "tomli==2.4.1" \
       "accelerate==1.14.0" \
-      "huggingface_hub==0.36.0" \
+      "huggingface_hub==1.28.0" \
       "qwen-vl-utils==0.0.14" \
+      "regex==2026.7.19" \
       "safetensors==0.8.0" \
-      "transformers==4.57.6" \
+      "tokenizers==0.23.0" \
+      "transformers==5.15.1" \
     && python -m pip check \
     && python -c "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-exact-source.pth').write_text('/opt/npa/src\\n', encoding='utf-8')" \
     && python -c 'import npa.workflows.sim2real.runtime_attestation' \
+    && python -c 'from transformers import AutoModelForImageTextToText, AutoProcessor, Cosmos3EdgeForConditionalGeneration, Qwen3VLForConditionalGeneration' \
     && env -u PYTHONPATH /opt/npa/venv/bin/python -c \
       'import boto3; from npa.workflows.sim2real.workflow_stage import main; assert callable(main)' \
     && python -m py_compile /opt/npa/src/npa/workflows/sim2real_loop.py \

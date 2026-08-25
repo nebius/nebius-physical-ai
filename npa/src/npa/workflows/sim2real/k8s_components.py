@@ -159,7 +159,7 @@ def _component_job_manifest(
 def _component_job_script(
     component: str, *, sim_backend: str = DEFAULT_SIM_BACKEND
 ) -> str:
-    if component in {"vlm_eval", "vlm_eval_reason2", "vlm_eval_reason3"}:
+    if component in {"vlm_eval", "vlm_eval_reason2", "vlm_eval_cosmos3"}:
         subcommand = (
             "component-vlm-eval "
             '--input-uri "${NPA_SIM2REAL_ROLLOUT_URI}" '

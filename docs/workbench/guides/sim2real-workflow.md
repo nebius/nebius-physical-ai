@@ -9,12 +9,13 @@ creates a run or launches work.
 ## 1. Accept the exact third-party terms
 
 The runtime downloads three gated checkpoints under the operator's Hugging Face
-account. Sign in, review the NVIDIA Open Model License, and request/accept access
+account. Sign in, review the applicable model terms, and request/accept access
 on all three pages:
 
 - [`nvidia/Cosmos-Transfer2.5-2B`](https://huggingface.co/nvidia/Cosmos-Transfer2.5-2B)
 - [`nvidia/Cosmos-Reason2-8B`](https://huggingface.co/nvidia/Cosmos-Reason2-8B)
-- [`nvidia/Cosmos-Reason2-2B`](https://huggingface.co/nvidia/Cosmos-Reason2-2B)
+- [`nvidia/Cosmos3-Edge`](https://huggingface.co/nvidia/Cosmos3-Edge) — OpenMDW-1.1;
+  retain the NVIDIA origin notice and license when distributing model materials.
 
 Isaac runtime warming and execution additionally require the operator to review
 the [NVIDIA Omniverse terms](https://docs.omniverse.nvidia.com/usd/latest/common/NVIDIA_Omniverse_License_Agreement.html),

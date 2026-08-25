@@ -167,7 +167,7 @@ cosmos2-transfer = "2.5.1-skypilot-ready-20260801T053000Z"
 # cu130. The immutable 1.2.2-cu130 tag remains available for rollback; weights
 # stay out of both images.
 cosmos3 = "1.2.2-cu130-r2"
-cosmos3-reason = "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+cosmos3-reason = "cuda13-b300-3.1.0-sm80-sm90-sm100-sm103-sm120-20260825T212327Z"
 # Cosmos Curator: NVIDIA upstream checkout + GPU-free curation stage deps.
 cosmos-curate = "0.1.2-skypilot-v1-20260813T164700Z"
 # Cosmos Evaluator: NVIDIA upstream checkout; no model weights (CV + hosted VLM).
@@ -203,7 +203,7 @@ terraform-cli = "1.13.3"
 lerobot = "0.5.1"
 genesis = "0.4.6"
 cosmos = "1.0.9"
-cosmos3-reason = "3.0.1"
+cosmos3-reason = "3.1.0"
 sonic = "0.1.2"
 envgen = "0.1.2"
 reference-policy = "0.1.2"

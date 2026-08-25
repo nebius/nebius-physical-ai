@@ -138,7 +138,7 @@ Open `s3://<bucket>/<prefix>/<pre-staged-run-id>/`.
 | --- | --- |
 | Rollout frames | `actions/train/outer-01/iter-01/rollout-0000/` |
 | VLM Job spawned | `kubectl get jobs -l sim2real.local/run-id=<live-run-id>` |
-| Critique schema | `vlm_eval/.../rollout-0000.json` — `npa.sim2real.vlm_eval.v1` |
+| Critique schema | `vlm_eval/.../rollout-0000.json` — `npa.sim2real.vlm_eval.v2` |
 | Trainer evidence | `inner_loop/outer-01/evidence.json` — policy delta, `reward_trend` |
 
 > "Inner loop is VLM → signal → trainer, repeated `INNER_ITERATIONS` times. Policy,

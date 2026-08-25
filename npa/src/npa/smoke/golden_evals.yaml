@@ -388,8 +388,8 @@ containers:
     physical_ai:
       useful: true
       role: >-
-        Cosmos-Reason1 VLM reasoning stage of the sim-to-real inner loop
-        (rollout scoring / reasoning).
+        Cosmos Reason2 and Cosmos3-Edge VLM evaluator stage of the sim-to-real
+        inner loop (rollout scoring / reasoning).
     safety:
       runs_as: ubuntu
       base_image: npa-base:cuda13-b300
@@ -399,8 +399,8 @@ containers:
         B300/CUDA13 family currently blocked-on-upstream; inherits base-image
         posture. The golden eval runs a real Cosmos-Reason VLM inference (the same
         run_cosmos_reason_vlm path the sim2real VLM-eval uses) over synthetic
-        frames and asserts a structured judgment; gated Cosmos-Reason weights
-        auto-download on first use (HF_TOKEN + NVIDIA license).
+        frames and asserts a structured judgment; gated Reason2/Cosmos3 weights
+        download at runtime with HF_TOKEN. Cosmos3-Edge is OpenMDW-1.1.
     golden_eval:
       kind: container-smoke
       module: npa.smoke.test_cosmos3_reason_functional

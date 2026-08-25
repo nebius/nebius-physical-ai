@@ -97,7 +97,7 @@ def publish_stage8_join(
     work: Path,
     lane_base: str,
     reason2: dict[str, Any],
-    reason3: dict[str, Any],
+    cosmos3: dict[str, Any],
     merged_uri: str,
     rollout_count: int,
     outer_iteration: int,
@@ -111,21 +111,21 @@ def publish_stage8_join(
             f"{lane}-o{outer_iteration}-i{inner_iteration}.json",
             directory=work / f"lane-{lane}",
         )
-        for lane in ("reason2", "reason3")
+        for lane in ("reason2", "cosmos3")
     ]
     expected_lanes = [
         f"{lane}-o{outer_iteration}-i{inner_iteration}"
-        for lane in ("reason2", "reason3")
+        for lane in ("reason2", "cosmos3")
     ]
     if [item.get("lane") for item in lane_records] != expected_lanes or any(
         item.get("artifacts", {}).get("result") != lane_base + f"{lane}.json"
-        for item, lane in zip(lane_records, ("reason2", "reason3"), strict=True)
+        for item, lane in zip(lane_records, ("reason2", "cosmos3"), strict=True)
     ):
         raise RuntimeError(
             "Stage 8 lane records do not match the declared Reason fan-out"
         )
     provenance = aggregate_parallel_provenance(
-        [reason2["provenance"], reason3["provenance"]], stage=8
+        [reason2["provenance"], cosmos3["provenance"]], stage=8
     )
     publish_component_record(
         root_uri=root,
@@ -135,10 +135,10 @@ def publish_stage8_join(
         evidence="Two parallel real Cosmos Reason lanes evaluated event-local Isaac observations and were deterministically merged.",
         artifacts={
             "reason2": lane_base + "reason2.json",
-            "reason3": lane_base + "reason3.json",
+            "cosmos3": lane_base + "cosmos3.json",
             "merged": merged_uri,
             "rollout_count": rollout_count,
-            "reason_lane_provenance": [reason2["provenance"], reason3["provenance"]],
+            "reason_lane_provenance": [reason2["provenance"], cosmos3["provenance"]],
             "lane_records": lane_records,
         },
         require_gpu=True,

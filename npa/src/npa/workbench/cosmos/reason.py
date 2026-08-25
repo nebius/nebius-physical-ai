@@ -1,4 +1,4 @@
-"""Self-hosted Cosmos Reason2 and Reason3 inference for workbench and sim2real."""
+"""Self-hosted Cosmos Reason2 and Cosmos3 inference for workbench and sim2real."""
 
 from __future__ import annotations
 
@@ -10,16 +10,16 @@ from typing import Any
 
 DEFAULT_REASON1_MODEL = "nvidia/Cosmos-Reason1-7B"
 DEFAULT_REASON2_MODEL = "nvidia/Cosmos-Reason2-8B"
-DEFAULT_REASON3_MODEL = "nvidia/Cosmos-Reason2-2B"
+DEFAULT_COSMOS3_MODEL = "nvidia/Cosmos3-Edge"
 DEFAULT_REASON1_CACHE = "/tmp/hf_home/cosmos-reason1"
 DEFAULT_REASON2_CACHE = "/tmp/hf_home/cosmos-reason2"
-DEFAULT_REASON3_CACHE = "/tmp/hf_home/cosmos-reason2-2b"
+DEFAULT_COSMOS3_CACHE = "/tmp/hf_home/cosmos3-edge"
 DEFAULT_REASON_EVENT_FRAMES = 32
 DEFAULT_REASON_MAX_NEW_TOKENS = 8192
 REFERENCE_VLM_ALIASES = frozenset(
-    {"", "npa-cosmos3-reason", "cosmos3-reason", "cosmos-reason", "reason2", "reason3"}
+    {"", "npa-cosmos3-reason", "cosmos3-reason", "cosmos-reason", "reason2", "cosmos3"}
 )
-VLM_EVAL_SCHEMA = "npa.sim2real.vlm_eval.v1"
+VLM_EVAL_SCHEMA = "npa.sim2real.vlm_eval.v2"
 
 ERROR_SEVERITY = {
     "collision": 0.95,
@@ -36,11 +36,11 @@ class CosmosReasonError(RuntimeError):
 
 
 def cosmos_reason_family(model_id: str) -> str:
-    """Return ``reason1``, ``reason2``, or ``reason3`` for a Hugging Face model id."""
+    """Return the real model family for a Hugging Face model id."""
 
     mid = str(model_id or "").strip().lower()
-    if "super-reasoner" in mid or "cosmos3-super" in mid:
-        return "reason3"
+    if "cosmos3-edge" in mid:
+        return "cosmos3"
     if "reason2" in mid or "cosmos-reason2" in mid:
         return "reason2"
     if "reason1" in mid or "cosmos-reason1" in mid:
@@ -50,18 +50,15 @@ def cosmos_reason_family(model_id: str) -> str:
 
 def default_reason_cache_dir(model_id: str) -> str:
     resolved = resolve_cosmos_reason_model_id(model_id)
-    mid = resolved.lower()
-    if "reason2-2b" in mid:
-        return os.environ.get("NPA_COSMOS_REASON3_CACHE", DEFAULT_REASON3_CACHE)
     family = cosmos_reason_family(resolved)
-    if family == "reason3":
-        return os.environ.get("NPA_COSMOS_REASON3_CACHE", DEFAULT_REASON3_CACHE)
+    if family == "cosmos3":
+        return os.environ.get("NPA_COSMOS3_EDGE_CACHE", DEFAULT_COSMOS3_CACHE)
     if family == "reason2":
         return os.environ.get("NPA_COSMOS_REASON2_CACHE", DEFAULT_REASON2_CACHE)
     return os.environ.get("NPA_COSMOS_REASON_CACHE", DEFAULT_REASON1_CACHE)
 
 
-_VLM_K8S_COMPONENTS = frozenset({"vlm_eval", "vlm_eval_reason2", "vlm_eval_reason3"})
+_VLM_K8S_COMPONENTS = frozenset({"vlm_eval", "vlm_eval_reason2", "vlm_eval_cosmos3"})
 
 
 def cosmos_reason_runtime_env() -> dict[str, str]:
@@ -89,8 +86,8 @@ def cosmos_reason_runtime_env() -> dict[str, str]:
         "NPA_COSMOS_REASON2_CACHE": resolved(
             "NPA_COSMOS_REASON2_CACHE", DEFAULT_REASON2_CACHE
         ),
-        "NPA_COSMOS_REASON3_CACHE": resolved(
-            "NPA_COSMOS_REASON3_CACHE", DEFAULT_REASON3_CACHE
+        "NPA_COSMOS3_EDGE_CACHE": resolved(
+            "NPA_COSMOS3_EDGE_CACHE", DEFAULT_COSMOS3_CACHE
         ),
         "NPA_COSMOS_REASON_CACHE": resolved(
             "NPA_COSMOS_REASON_CACHE", DEFAULT_REASON2_CACHE
@@ -114,7 +111,7 @@ def cosmos_reason_k8s_shell_preamble() -> str:
         'export HF_HOME="${HF_HOME:-/tmp/hf_home}"\n'
         'mkdir -p "${HF_HOME}" '
         '"${NPA_COSMOS_REASON2_CACHE:-/tmp/hf_home/cosmos-reason2}" '
-        '"${NPA_COSMOS_REASON3_CACHE:-/tmp/hf_home/cosmos-reason2-2b}" '
+        '"${NPA_COSMOS3_EDGE_CACHE:-/tmp/hf_home/cosmos3-edge}" '
         '"${NPA_COSMOS_REASON_CACHE:-/tmp/hf_home/cosmos-reason2}"\n'
     )
 
@@ -169,7 +166,7 @@ def resolve_cosmos_reason_model_id(
     candidate = str(model or "").strip()
     if candidate in REFERENCE_VLM_ALIASES:
         env_default = (
-            os.environ.get("NPA_COSMOS_REASON3_MODEL_ID", "")
+            os.environ.get("NPA_COSMOS3_EDGE_MODEL_ID", "")
             or os.environ.get("NPA_COSMOS_REASON2_MODEL_ID", "")
             or os.environ.get("NPA_COSMOS_REASON_MODEL_ID", "")
             or default
@@ -178,18 +175,18 @@ def resolve_cosmos_reason_model_id(
     return candidate
 
 
-def merge_dual_reason_evaluations(
+def merge_reason_evaluations(
     reason2_eval: dict[str, Any],
-    reason3_eval: dict[str, Any],
+    cosmos3_eval: dict[str, Any],
     *,
     threshold: float,
 ) -> dict[str, Any]:
-    """Fuse Reason2 and Reason3 judgments into one sim2real VLM eval payload."""
+    """Fuse Reason2 and Cosmos3 judgments into one sim2real VLM eval payload."""
 
     score2 = float(reason2_eval.get("score", 0.0))
-    score3 = float(reason3_eval.get("score", 0.0))
+    score3 = float(cosmos3_eval.get("score", 0.0))
     score = round((score2 + score3) / 2.0, 6)
-    success = bool(reason2_eval.get("success")) and bool(reason3_eval.get("success"))
+    success = bool(reason2_eval.get("success")) and bool(cosmos3_eval.get("success"))
     if not success and score >= threshold:
         success = score >= threshold
     steps2 = {
@@ -198,7 +195,7 @@ def merge_dual_reason_evaluations(
     }
     steps3 = {
         int(item.get("step", index)): item
-        for index, item in enumerate(reason3_eval.get("per_step") or [])
+        for index, item in enumerate(cosmos3_eval.get("per_step") or [])
     }
     merged_steps: list[dict[str, Any]] = []
     for step in sorted(set(steps2) | set(steps3)):
@@ -245,9 +242,9 @@ def merge_dual_reason_evaluations(
                     or f"camera-{step:03d}.ppm"
                 ),
                 "reason2_critique": left.get("critique_text", ""),
-                "reason3_critique": right.get("critique_text", ""),
+                "cosmos3_critique": right.get("critique_text", ""),
                 "reason2_tags": left_tags,
-                "reason3_tags": right_tags,
+                "cosmos3_tags": right_tags,
                 "model_disagreement": disagreement,
                 "confidence": round(max(0.0, min(1.0, confidence)), 6),
                 "critique_source": (
@@ -267,32 +264,45 @@ def merge_dual_reason_evaluations(
         )
     summary_parts = [
         str(reason2_eval.get("summary") or "").strip(),
-        str(reason3_eval.get("summary") or "").strip(),
+        str(cosmos3_eval.get("summary") or "").strip(),
     ]
     return {
         "schema": VLM_EVAL_SCHEMA,
         "rollout_id": str(
-            reason2_eval.get("rollout_id") or reason3_eval.get("rollout_id") or ""
+            reason2_eval.get("rollout_id") or cosmos3_eval.get("rollout_id") or ""
         ),
         "success": success,
         "score": score,
         "per_step": merged_steps,
         "summary": " ".join(part for part in summary_parts if part),
-        "model": f"{reason2_eval.get('model')} + {reason3_eval.get('model')}",
-        "component_source": "cosmos_dual_reason_vlm",
+        "model": f"{reason2_eval.get('model')} + {cosmos3_eval.get('model')}",
+        "component_source": "cosmos_reason2_cosmos3_vlm",
         "reason2": {
             "model": reason2_eval.get("model"),
             "score": reason2_eval.get("score"),
             "success": reason2_eval.get("success"),
         },
-        "reason3": {
-            "model": reason3_eval.get("model"),
-            "score": reason3_eval.get("score"),
-            "success": reason3_eval.get("success"),
+        "cosmos3": {
+            "model": cosmos3_eval.get("model"),
+            "score": cosmos3_eval.get("score"),
+            "success": cosmos3_eval.get("success"),
         },
-        "dual_reason": True,
+        "two_evaluator": True,
         "threshold": threshold,
     }
+
+
+def merge_dual_reason_evaluations(
+    reason2_eval: dict[str, Any],
+    legacy_reason3_eval: dict[str, Any],
+    *,
+    threshold: float,
+) -> dict[str, Any]:
+    """Compatibility alias for archived callers; new payloads are Cosmos3-named."""
+
+    return merge_reason_evaluations(
+        reason2_eval, legacy_reason3_eval, threshold=threshold
+    )
 
 
 def run_cosmos_reason_vlm(
@@ -311,12 +321,11 @@ def run_cosmos_reason_vlm(
     try:
         import torch
         from PIL import Image
-        from qwen_vl_utils import process_vision_info
         from transformers import AutoModelForImageTextToText, AutoProcessor
     except Exception as exc:
         raise CosmosReasonError(
-            "Cosmos Reason inference requires torch, Pillow, transformers, "
-            f"and qwen-vl-utils in the image: {exc}"
+            "Cosmos Reason inference requires torch, Pillow, and transformers "
+            f"in the image: {exc}"
         ) from exc
 
     if not image_paths:
@@ -343,7 +352,10 @@ def run_cosmos_reason_vlm(
         frame_names=[path.name for path in selected_paths],
     )
     content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
-    content.extend({"type": "image", "image": str(path)} for path in selected_paths)
+    image_key = "url" if family == "cosmos3" else "image"
+    content.extend(
+        {"type": "image", image_key: str(path.resolve())} for path in selected_paths
+    )
     messages = [{"role": "user", "content": content}]
 
     print(
@@ -361,32 +373,22 @@ def run_cosmos_reason_vlm(
     processor = AutoProcessor.from_pretrained(
         resolved_model,
         cache_dir=cache_dir,
-        trust_remote_code=True,
     )
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     model_cls = _reason_model_class(family, AutoModelForImageTextToText)
     model = model_cls.from_pretrained(
         resolved_model,
         cache_dir=cache_dir,
-        torch_dtype=dtype,
+        dtype=dtype,
         device_map="auto",
-        trust_remote_code=True,
-    )
-    text = processor.apply_chat_template(
-        messages,
-        tokenize=False,
-        add_generation_prompt=True,
-    )
-    image_inputs, video_inputs = process_vision_info(messages)
-    inputs = processor(
-        text=[text],
-        images=image_inputs,
-        videos=video_inputs,
-        padding=True,
-        return_tensors="pt",
     )
     first_device = next(model.parameters()).device
-    inputs = inputs.to(first_device)
+    inputs = _prepare_reason_inputs(
+        family=family,
+        processor=processor,
+        messages=messages,
+        device=first_device,
+    )
     # A compact 32-entry JSON response does not reliably fit in the old 768-token
     # budget. Truncation caused otherwise valid models to fall back to a single
     # rollout summary. Keep this parameterized but make the real default large
@@ -439,7 +441,7 @@ def run_cosmos_reason_vlm(
 
 
 def _reason_model_class(family: str, fallback: Any) -> Any:
-    if family in {"reason2", "reason3"}:
+    if family == "reason2":
         try:
             from transformers import Qwen3VLForConditionalGeneration
 
@@ -447,6 +449,41 @@ def _reason_model_class(family: str, fallback: Any) -> Any:
         except ImportError:
             return fallback
     return fallback
+
+
+def _prepare_reason_inputs(
+    *, family: str, processor: Any, messages: list[dict[str, Any]], device: Any
+) -> Any:
+    """Apply the released model family's official multimodal processor path."""
+
+    if family == "cosmos3":
+        return processor.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=True,
+            return_dict=True,
+            return_tensors="pt",
+        ).to(device)
+
+    try:
+        from qwen_vl_utils import process_vision_info
+    except ImportError as exc:
+        raise CosmosReasonError(
+            "Cosmos Reason2 inference requires qwen-vl-utils in the image"
+        ) from exc
+    text = processor.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True,
+    )
+    image_inputs, video_inputs = process_vision_info(messages)
+    return processor(
+        text=[text],
+        images=image_inputs,
+        videos=video_inputs,
+        padding=True,
+        return_tensors="pt",
+    ).to(device)
 
 
 def _cosmos_reason_prompt(
@@ -477,7 +514,7 @@ def _cosmos_reason_prompt(
     label = {
         "reason1": "Cosmos-Reason1",
         "reason2": "Cosmos-Reason2",
-        "reason3": "Cosmos3-Super-Reasoner",
+        "cosmos3": "Cosmos3-Edge Reasoner",
     }.get(family, "Cosmos Reason")
     return (
         f"You are NVIDIA {label} evaluating a physical robot rollout.\n"

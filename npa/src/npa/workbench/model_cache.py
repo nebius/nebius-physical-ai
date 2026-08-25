@@ -163,7 +163,7 @@ MODEL_CACHE_LAYOUT: tuple[tuple[str, str], ...] = (
     ("COSMOS_DOWNLOAD_CACHE_DIR", "cosmos3/downloads"),
     ("NPA_COSMOS_REASON_CACHE", "huggingface/cosmos-reason2"),
     ("NPA_COSMOS_REASON2_CACHE", "huggingface/cosmos-reason2"),
-    ("NPA_COSMOS_REASON3_CACHE", "huggingface/cosmos-reason2-2b"),
+    ("NPA_COSMOS3_EDGE_CACHE", "huggingface/cosmos3-edge"),
     ("NPA_COSMOS_CURATE_WEIGHTS_DIR", "cosmos-curate/models"),
     ("HF_LEROBOT_HOME", "lerobot"),
     ("LEROBOT_HF_HOME", "lerobot"),

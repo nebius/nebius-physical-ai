@@ -81,7 +81,7 @@ def test_non_sonic_workbench_images_resolve_from_supported_tools() -> None:
     assert (
         container_image_for_tool("cosmos3-reason")
         == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-cosmos3-reason:"
-        "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+        "cuda13-b300-3.1.0-sm80-sm90-sm100-sm103-sm120-20260825T212327Z"
     )
     assert (
         container_image_for_tool("envgen")

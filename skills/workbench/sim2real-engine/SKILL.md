@@ -27,7 +27,7 @@ or spawn sibling Jobs.
 | 5 | `stage_05_envs_train` | sealed train/validation/gold split |
 | 6 | `stage_06_tokens` | explicit S3 token/scenario manifest |
 | 7 | `stage_07_actions_train` | real Isaac multi-camera rollout |
-| 8 | `stage_08_vlm_eval_train` | parallel real Reason2/Reason3 lanes |
+| 8 | `stage_08_vlm_eval_train` | parallel real Reason2/Cosmos3-Edge lanes |
 | 9 | `stage_09_training_signal` | temporal merge, real PPO, validation selection |
 | 10 | `stage_10_eval_heldout` | exact-checkpoint untouched-gold Isaac eval |
 | 11 | `stage_11_outer_loop` | strict metric + standard decision artifact |

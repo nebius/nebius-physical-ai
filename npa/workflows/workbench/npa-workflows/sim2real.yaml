@@ -55,7 +55,7 @@ config:
   capture_height: "480"
   png_compress_level: "2"
   reason2_model: nvidia/Cosmos-Reason2-8B
-  reason3_model: nvidia/Cosmos-Reason2-2B
+  cosmos3_model: nvidia/Cosmos3-Edge
 
   # Required live inputs. The controller image is the purpose-built CPU-only
   # stage adapter, never a Genesis/trainer runtime. Empty defaults keep this
@@ -291,7 +291,7 @@ states:
 
   stage-08-wave:
     description: Stage 8 - parallel real Cosmos Reason lanes over the exact Stage 7 events.
-    parallel: [stage-08-reason2, stage-08-reason3]
+    parallel: [stage-08-reason2, stage-08-cosmos3]
     maxConcurrency: 2
 
   stage-08-reason2:
@@ -301,18 +301,18 @@ states:
     run:
       argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "8", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --outer-iteration, "{{config.outer_iteration}}", --inner-iteration, "{{config.inner_iteration}}", --reason-lane, reason2, --reason-model, "{{config.reason2_model}}", --threshold, "{{config.threshold}}"]
     outputs:
-      - {uri: "{{config.root_uri}}/vlm_eval/train/outer-{{loop.outer-loop}}/iter-{{loop.inner-loop}}/reason2.json", schema: npa.sim2real.cosmos_reason_lane.v1}
+      - {uri: "{{config.root_uri}}/vlm_eval/train/outer-{{loop.outer-loop}}/iter-{{loop.inner-loop}}/reason2.json", schema: npa.sim2real.cosmos_reason_lane.v2}
       - {uri: "{{config.root_uri}}/components/lanes/stage_08/reason2-o{{loop.outer-loop}}-i{{loop.inner-loop}}.json", schema: npa.sim2real.component_lane_record.v1}
 
-  stage-08-reason3:
-    description: Real Cosmos Reason3 evaluation lane.
+  stage-08-cosmos3:
+    description: Real NVIDIA Cosmos3-Edge multimodal Reasoner evaluation lane.
     resources: reason-gpu
     params: {outer_iteration: "{{loop.outer-loop}}", inner_iteration: "{{loop.inner-loop}}"}
     run:
-      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "8", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --outer-iteration, "{{config.outer_iteration}}", --inner-iteration, "{{config.inner_iteration}}", --reason-lane, reason3, --reason-model, "{{config.reason3_model}}", --threshold, "{{config.threshold}}"]
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "8", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --outer-iteration, "{{config.outer_iteration}}", --inner-iteration, "{{config.inner_iteration}}", --reason-lane, cosmos3, --reason-model, "{{config.cosmos3_model}}", --threshold, "{{config.threshold}}"]
     outputs:
-      - {uri: "{{config.root_uri}}/vlm_eval/train/outer-{{loop.outer-loop}}/iter-{{loop.inner-loop}}/reason3.json", schema: npa.sim2real.cosmos_reason_lane.v1}
-      - {uri: "{{config.root_uri}}/components/lanes/stage_08/reason3-o{{loop.outer-loop}}-i{{loop.inner-loop}}.json", schema: npa.sim2real.component_lane_record.v1}
+      - {uri: "{{config.root_uri}}/vlm_eval/train/outer-{{loop.outer-loop}}/iter-{{loop.inner-loop}}/cosmos3.json", schema: npa.sim2real.cosmos_reason_lane.v2}
+      - {uri: "{{config.root_uri}}/components/lanes/stage_08/cosmos3-o{{loop.outer-loop}}-i{{loop.inner-loop}}.json", schema: npa.sim2real.component_lane_record.v1}
 
   stage-09-ppo:
     description: Stage 9 - merge Reason signals, run genuine BYO Isaac RSL-RL PPO, and select with validation only.

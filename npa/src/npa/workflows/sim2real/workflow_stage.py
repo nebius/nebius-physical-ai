@@ -524,7 +524,7 @@ def _stage8(args: argparse.Namespace) -> None:
     if not results:
         raise RuntimeError("Stage 8 found no real Stage 7 rollouts")
     payload = {
-        "schema": "npa.sim2real.cosmos_reason_lane.v1",
+        "schema": "npa.sim2real.cosmos_reason_lane.v2",
         "lane": args.reason_lane,
         "model": args.reason_model,
         "evaluations": results,
@@ -592,7 +592,10 @@ def _run_eval(
 
 
 def _stage9(args: argparse.Namespace) -> None:
-    from npa.workbench.cosmos.reason import merge_dual_reason_evaluations
+    from npa.workbench.cosmos.reason import (
+        cosmos_reason_family,
+        merge_reason_evaluations,
+    )
     from npa.workflows.sim2real import byo_isaac_trainer
     from npa.workflows.sim2real.checkpoint_selection import select_best_checkpoint
     from npa.workflows.sim2real.temporal_credit import convert_evaluation
@@ -603,18 +606,29 @@ def _stage9(args: argparse.Namespace) -> None:
         f"iter-{args.inner_iteration:02d}/"
     )
     reason2 = read_json(lane_base + "reason2.json", directory=work / "r2")
-    reason3 = read_json(lane_base + "reason3.json", directory=work / "r3")
+    cosmos3 = read_json(lane_base + "cosmos3.json", directory=work / "cosmos3")
+    if (
+        reason2.get("lane") != "reason2"
+        or cosmos3.get("lane") != "cosmos3"
+        or cosmos_reason_family(str(reason2.get("model") or "")) != "reason2"
+        or cosmos_reason_family(str(cosmos3.get("model") or "")) != "cosmos3"
+        or not reason2.get("provenance")
+        or not cosmos3.get("provenance")
+    ):
+        raise RuntimeError(
+            "Stage 8 requires genuine Reason2 and Cosmos3 lane identity, model family, and provenance"
+        )
     left = {item["rollout_id"]: item for item in reason2["evaluations"]}
-    right = {item["rollout_id"]: item for item in reason3["evaluations"]}
+    right = {item["rollout_id"]: item for item in cosmos3["evaluations"]}
     if set(left) != set(right) or not left:
-        raise RuntimeError("Stage 8 Reason lanes do not cover the same rollouts")
+        raise RuntimeError("Stage 8 Reason2 and Cosmos3 lanes do not cover the same rollouts")
     merged_dir, signal_dir = work / "merged", work / "signals"
     merged_dir.mkdir()
     signal_dir.mkdir()
     merged: list[dict[str, Any]] = []
     signals: list[dict[str, Any]] = []
     for rollout_id in sorted(left):
-        evaluation = merge_dual_reason_evaluations(
+        evaluation = merge_reason_evaluations(
             left[rollout_id], right[rollout_id], threshold=args.threshold
         )
         signal = convert_evaluation(evaluation)
@@ -650,7 +664,7 @@ def _stage9(args: argparse.Namespace) -> None:
             work=work,
             lane_base=lane_base,
             reason2=reason2,
-            reason3=reason3,
+            cosmos3=cosmos3,
             merged_uri=merged_uri,
             rollout_count=len(merged),
             outer_iteration=args.outer_iteration,
@@ -774,7 +788,7 @@ def _stage9(args: argparse.Namespace) -> None:
         work=work,
         lane_base=lane_base,
         reason2=reason2,
-        reason3=reason3,
+        cosmos3=cosmos3,
         merged_uri=merged_uri,
         rollout_count=len(merged),
         outer_iteration=args.outer_iteration,
@@ -985,7 +999,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rollout-count", type=int, default=1)
     parser.add_argument("--steps-per-rollout", type=int, default=32)
     parser.add_argument(
-        "--reason-lane", choices=("reason2", "reason3"), default="reason2"
+        "--reason-lane", choices=("reason2", "cosmos3"), default="reason2"
     )
     parser.add_argument("--reason-model", default="nvidia/Cosmos-Reason2-8B")
     parser.add_argument("--threshold", type=float, default=0.5)

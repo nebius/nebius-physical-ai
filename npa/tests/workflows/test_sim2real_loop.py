@@ -338,8 +338,8 @@ class _FakeComponentStorage:
             payload = self.downloads.get("vlm_eval_reason2") or self.downloads.get(
                 "vlm_eval"
             )
-        if payload is None and "vlm-eval-reason3" in bucket_uri:
-            payload = self.downloads.get("vlm_eval_reason3") or self.downloads.get(
+        if payload is None and "vlm-eval-cosmos3" in bucket_uri:
+            payload = self.downloads.get("vlm_eval_cosmos3") or self.downloads.get(
                 "vlm_eval"
             )
         if payload is None and "/heldout-eval/" in bucket_uri:
@@ -472,7 +472,7 @@ def test_image_vlm_eval_launches_sibling_job_and_parses_output(
     container = manifest["spec"]["template"]["spec"]["containers"][0]
 
     assert evaluation["score"] == 0.512345
-    assert evaluation["component_invocation"]["mode"] == "kubernetes_job_dual_reason"
+    assert evaluation["component_invocation"]["mode"] == "kubernetes_job_two_evaluator"
     assert evaluation["component_invocation"]["reason2_image"]
     assert convert_vlm_eval_to_rl_signal(evaluation)["score"] == 0.512345
     assert storage.uploaded_directories
@@ -1282,7 +1282,7 @@ def test_default_augment_image_uses_cosmos2_transfer_contract(monkeypatch) -> No
         == "npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z"
     )
     assert config.vlm_image == (
-        "npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+        "npa-cosmos3-reason:cuda13-b300-3.1.0-sm80-sm90-sm100-sm103-sm120-20260825T212327Z"
     )
     assert "cosmos3" not in config.augment_image
 
@@ -1299,7 +1299,7 @@ def test_default_augment_image_uses_first_party_cosmos2_registry(monkeypatch) ->
     )
     assert (
         config.vlm_image
-        == "registry.example/workbench/npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+        == "registry.example/workbench/npa-cosmos3-reason:cuda13-b300-3.1.0-sm80-sm90-sm100-sm103-sm120-20260825T212327Z"
     )
 
 
@@ -1499,7 +1499,7 @@ def test_loop_component_records_require_real_kubernetes_evidence(
                 "trainer_source": "byo_command",
                 "sample_vlm_eval": {
                     "component_invocation": {
-                        "mode": "kubernetes_job_dual_reason",
+                        "mode": "kubernetes_job_two_evaluator",
                         "gpu_provenance": {
                             "selected_products": ["NVIDIA-L40S"],
                             "image_digests": ["sha256:reason"],
@@ -2635,7 +2635,7 @@ def test_parallel_vlm_eval_caps_sibling_job_concurrency(
         steps_per_rollout=1,
         inner_iterations=1,
         k8s_max_parallel_gpus=2,
-        vlm_dual_reason=False,
+        vlm_two_evaluator=False,
         k8s_namespace="default",
     )
     rollouts = generate_action_rollouts(

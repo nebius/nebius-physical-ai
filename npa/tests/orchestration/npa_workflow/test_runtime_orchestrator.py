@@ -1351,7 +1351,7 @@ def test_canonical_resume_replays_stage8_wave_then_restarts_at_stage9() -> None:
     assert first_report.status == "failed"
     assert first_submitter.calls[-2]["tasks"] == [
         "stage-08-reason2",
-        "stage-08-reason3",
+        "stage-08-cosmos3",
     ]
     assert first_submitter.calls[-1]["tasks"] == ["stage-09-ppo"]
 

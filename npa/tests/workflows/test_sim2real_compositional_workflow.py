@@ -71,7 +71,7 @@ def test_canonical_is_one_standard_compositional_workflow() -> None:
             "/components/lanes/stage_04/" in output["uri"]
             for output in payload["states"][state]["outputs"]
         )
-    for state in ("stage-08-reason2", "stage-08-reason3"):
+    for state in ("stage-08-reason2", "stage-08-cosmos3"):
         assert any(
             "/components/lanes/stage_08/" in output["uri"]
             for output in payload["states"][state]["outputs"]
@@ -119,7 +119,7 @@ def test_reduced_plan_preserves_all_real_solution_boundaries() -> None:
         "stage-06-tokens",
         "stage-07-rollouts",
         "stage-08-reason2",
-        "stage-08-reason3",
+        "stage-08-cosmos3",
         "stage-09-ppo",
         "stage-10-gold",
         "stage-11-decision",
@@ -215,8 +215,8 @@ def test_loop_outputs_preserve_canonical_lineage_and_runtime_checkpoint(
             1,
         ),
         (
-            "stage-08-reason3",
-            "s3://unit/run/vlm_eval/train/outer-01/iter-01/reason3.json",
+            "stage-08-cosmos3",
+            "s3://unit/run/vlm_eval/train/outer-01/iter-01/cosmos3.json",
             1,
             1,
         ),
@@ -424,8 +424,18 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
     )
     lane_base = f"{root}/vlm_eval/train/outer-01/iter-01/"
     lanes = {
-        lane_base + "reason2.json": {"evaluations": [{"rollout_id": "rollout-1"}]},
-        lane_base + "reason3.json": {"evaluations": [{"rollout_id": "rollout-1"}]},
+        lane_base + "reason2.json": {
+            "lane": "reason2",
+            "model": "nvidia/Cosmos-Reason2-8B",
+            "provenance": {"image": "reason2"},
+            "evaluations": [{"rollout_id": "rollout-1"}],
+        },
+        lane_base + "cosmos3.json": {
+            "lane": "cosmos3",
+            "model": "nvidia/Cosmos3-Edge",
+            "provenance": {"image": "cosmos3"},
+            "evaluations": [{"rollout_id": "rollout-1"}],
+        },
     }
 
     work = tmp_path / "stage9"
@@ -439,9 +449,7 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
             evidence if uri.endswith("/evidence.json") else lanes[uri]
         ),
     )
-    monkeypatch.setattr(
-        reason, "merge_dual_reason_evaluations", lambda *_a, **_k: sample_eval
-    )
+    monkeypatch.setattr(reason, "merge_reason_evaluations", lambda *_a, **_k: sample_eval)
     monkeypatch.setattr(
         temporal_credit, "convert_evaluation", lambda _item: sample_signal
     )

@@ -21,7 +21,7 @@ def _config(**overrides):
         "viewer_image": digest,
         "isaac_cache_pvc": "npa-isaac-cache",
         "reason2_model": "nvidia/Cosmos-Reason2-8B",
-        "reason3_model": "nvidia/Cosmos-Reason2-2B",
+        "cosmos3_model": "nvidia/Cosmos3-Edge",
         "gpu_queue": "sim2real-gpu",
         "gpu_priority_class": "sim2real-production",
     }
@@ -46,12 +46,34 @@ def test_static_preflight_checks_all_three_gated_models_and_secret_forwarding():
     assert checked == [
         "nvidia/Cosmos-Transfer2.5-2B",
         "nvidia/Cosmos-Reason2-8B",
-        "nvidia/Cosmos-Reason2-2B",
+        "nvidia/Cosmos3-Edge",
     ]
     rendered = "\n".join(item for item, _ in issues)
     assert "Cosmos-Transfer2.5-2B" in rendered
     assert "AWS_ACCESS_KEY_ID" in rendered
     assert "AWS_SECRET_ACCESS_KEY" in rendered
+
+
+def test_archived_reason3_config_key_upgrades_to_cosmos3_access_probe():
+    checked = []
+    config = _config()
+    config.pop("cosmos3_model")
+    config["reason3_model"] = "nvidia/Cosmos-Reason2-2B"
+
+    static_prerequisites(
+        config,
+        requested_secret_envs=[
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+        ],
+        secret_values={"HF_TOKEN": "redacted"},
+        hf_validator=lambda _token, repo: checked.append(repo)
+        or SimpleNamespace(ok=True),
+    )
+
+    assert "nvidia/Cosmos3-Edge" in checked
+    assert "nvidia/Cosmos-Reason2-2B" not in checked
 
 
 def test_static_preflight_rejects_mutable_images_without_manual_eula_inputs():
