@@ -1947,9 +1947,7 @@ def test_verify_public_with_skip_missing_ignores_the_unpublished(
     # and IS readable, so a substring check would fail for the wrong reason.
     listed = set(re.findall(r"- \[ \] \[workbench/([^\]]+)\]", captured.out))
     assert "npa-cosmos3" not in listed
-    assert "npa-cosmos3-reason" in listed, (
-        "a readable image whose name shares a prefix stays"
-    )
+    assert "npa-cosmos3-reason" not in listed
     assert listed.isdisjoint(
         {
             "npa-cosmos3",

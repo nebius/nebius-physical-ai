@@ -13,7 +13,9 @@ DEFAULT_S3_ENDPOINT = ""
 DEFAULT_BUCKET = ""
 DEFAULT_PREFIX = "sim2real-b"
 DEFAULT_COSMOS2_TRANSFER_TAG = "2.5.1-skypilot-ready-20260801T053000Z"
-DEFAULT_VLM_IMAGE_TAG = "cuda13-b300-3.1.0-sm80-sm90-sm100-sm103-sm120-20260825T212327Z"
+DEFAULT_VLM_IMAGE_TAG = (
+    "cuda13-b300-3.1.0-sm80-sm90-sm100-sm103-sm120-20260825T212327Z-unbuilt"
+)
 # Reference-image pins. Canonical source of truth is pyproject.toml
 # ([tool.npa.supported-tools], mirrored in npa/src/npa/deploy/images.py); keep
 # these no-registry fallbacks in sync so the staged engine (models.py) and the

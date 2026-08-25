@@ -24,7 +24,7 @@ from npa.workflows.sim2real_health import FAIL, PASS, WARN, CheckResult, has_fai
 
 HF = "huggingface"
 NGC = "ngc"
-HF_GATING_LAST_VERIFIED = "2026-08-17"
+HF_GATING_LAST_VERIFIED = "2026-08-25"
 
 
 @dataclass(frozen=True)

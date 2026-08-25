@@ -25,6 +25,16 @@ reproducibility is required.
 
 Rows are ordered by **Built** date, then by friendly name.
 
+`npa-cosmos3-reason` 3.1.0 is listed as an explicitly unbuilt candidate, not as
+a published image.
+Its released Transformers 5.15.1 runtime supports both Cosmos-Reason2-8B and
+the real 4B `nvidia/Cosmos3-Edge` Reasoner, but the exact new image could not be
+built or pushed because the available operator identity could not pull its
+required base image. The prior 3.0.1 image remains historical registry state;
+it is not the current Stage 8 second-evaluator contract. Publication remains
+fail-closed until the 3.1.0 image is built, byte-scanned, and passes a real
+Cosmos3-Edge VLM smoke.
+
 ## 2026-08-19 main publication audit
 
 The main-branch publishing plan was compared with GHCR without credentials. Its
@@ -53,13 +63,13 @@ guard.
 | GR00T N1.7-3B | `npa-groot` | `0.1.0` | 2026-08-01 | NVIDIA Isaac-GR00T humanoid foundation-model inference using public `nvidia/GR00T-N1.7-3B`; weights are pulled anonymously at runtime by default, with an optional Hugging Face token for rate limits or private overrides. GR00T inference itself does not require Isaac or EULA acceptance. |
 | Isaac Lab 2.3.2 (Isaac Sim 5.1) | `npa-isaac-lab` | `2.3.2.post1` | 2026-08-01 | Isaac Lab RL simulation. Contains no NVIDIA Isaac bytes: Isaac Sim and Isaac Lab are fetched from `pypi.nvidia.com` on first use. Isaac startup defaults the documented run-scoped `ACCEPT_EULA` value to `Y` and preserves explicit opt-out; expect an approximately 4.5 GB first-run download. |
 | Cosmos 1.0 Diffusion 7B (Predict) | `npa-cosmos` | `1.0.9`, `cu128-torch27-sm100-1.0.9-20260803T002017Z` | 2026-08-03 | Cosmos world-model generation with `Cosmos-1.0-Diffusion-7B-Text2World`, plus the default self-hosted VLM image for workflows. Uses Torch 2.7 and CUDA 12.8 with flash-attn, NATTEN, and Transformer Engine. |
-| Cosmos Reason 2 / Predict 2.5 (3.0.1) | `npa-cosmos3-reason` | `3.0.1-genuine-sm120`, `cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | 2026-08-03 | VLM reasoning over video/images with `Cosmos-Reason2-8B` or `Cosmos-Reason2-2B`, serving as a judge/critic stage. Also wires Predict 2.5, Transfer 2.5, and Cosmos-Guardrail1 model IDs on a Blackwell-capable CUDA 13 base. |
 | Cosmos Transfer 2.5 | `npa-cosmos2-transfer` | `2.5.1-skypilot-ready-20260801T053000Z` | 2026-08-03 | Cosmos Transfer 2.5 Sim2Real video augmentation, built from source at an immutable commit with hash-locked dependencies. Gated weights are fetched at runtime with `HF_TOKEN`; baked-byte scans are a release gate. |
 | Foxglove Embed SDK 0.58.0 | `npa-foxglove-embed` | `0.58.0` | 2026-08-03 | Static host for the pinned `@foxglove/embed` browser SDK (MIT) and shared NPA glue module used by the agent UI, on port 8099. Serves operator-mounted MCAP/bag recordings with CORS and byte ranges; the Foxglove app is not redistributed. |
 | Genesis 0.4.6 | `npa-genesis` | `0.4.6`, `cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | 2026-08-03 | Genesis physics simulator for interactive simulation and development. It is the base image for the Sim2Real family: environment generation, evaluation, policies, and VLM-RL. |
 | LanceDB 0.30.3 + CLIP | `npa-lancedb` | `0.30.3`, `cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z` | 2026-08-03 | CLIP embedding and LanceDB vector service on port 8686: the query index behind dataset-of-record search. It uses a thin FastAPI layer on the shared CUDA/PyTorch base. |
 | LeRobot 0.5.1 | `npa-lerobot` | `0.5.1`, `cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | 2026-08-03 | Hugging Face LeRobot training/evaluation service on port 8080 for manipulation policies. Includes CUDA and MuJoCo/EGL headless rendering; checkpoints and job state live on mounted volumes. |
 | LTX-2.5 2.5 | `npa-ltx2` | `2.5-rtfetch-unbuilt` | not yet published | Lightricks LTX-2.5 text-to-video, shipped with zero Lightricks bytes: the container fetches upstream source at a pinned ref and the gated weights at run time under the operator's own Hugging Face entitlement, and refuses both without one. Built and byte-scanned; no GPU result yet, so it is excluded from publication. |
+| Cosmos Reason2 + Cosmos3-Edge | `npa-cosmos3-reason` | `cuda13-b300-3.1.0-sm80-sm90-sm100-sm103-sm120-20260825T212327Z-unbuilt` | not yet published | Stage 8 leaf evaluator runtime for the gated Reason2-8B and 4B Cosmos3-Edge models. The image contains no weights and uses the operator's Hugging Face credential with durable runtime caches. The candidate is excluded from publication until it is built, byte-scanned, and passes a real Cosmos3-Edge VLM smoke. |
 | LeRobot VLM-RL 0.1.1 | `npa-lerobot-vlm-rl` | `0.1.1`, `cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | 2026-08-03 | RL loop in which a VLM supplies reward or shaping signals for LeRobot policies. It is built on the Genesis image so simulation and policy execution share one container. |
 | Sim2Real EnvGen 0.1.2 | `npa-envgen` | `0.1.2`, `cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | 2026-08-03 | Generates randomized Sim2Real environments and scenes on the Genesis base. Exact-source workflow builds also bake the snapshot-pinned non-root SkyPilot Kubernetes bootstrap closure (`sudo`, SSH, and rsync); this is required before a standard workflow task can start. It is the parent image for BYO policy containers and is built from `sim2real-envgen/Dockerfile`. |
 | Sim2Real Loop Eval 0.1.3 | `npa-loop-eval` | `0.1.3-genuine-sm120`, `cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | 2026-08-03 | Batched closed-loop policy evaluation in Genesis (default 16 environments and 240 steps), providing the scoring stage of the Sim2Real loop. Exact-source workflow builds bake the same snapshot-pinned non-root SkyPilot Kubernetes bootstrap closure as EnvGen so Stage 14 can start without a privileged or moving bootstrap image. Built from `sim2real-eval/Dockerfile`; the tool key is `loop-eval`. |

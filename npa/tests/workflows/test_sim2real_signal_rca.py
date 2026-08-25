@@ -114,7 +114,7 @@ def test_signal_diversity_report_accepts_varied_batch() -> None:
     ("image", "expected"),
     [
         (
-            "npa-cosmos3-reason:cuda13-b300-3.1.0-sm80-sm90-sm100-sm103-sm120-20260825T212327Z",
+            "npa-cosmos3-reason:cuda13-b300-3.1.0-sm80-sm90-sm100-sm103-sm120-20260825T212327Z-unbuilt",
             "IfNotPresent",
         ),
         (
@@ -134,7 +134,7 @@ def test_image_pull_policy_env_override(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("NPA_SIM2REAL_IMAGE_PULL_POLICY", "Never")
     assert (
         _image_pull_policy(
-            "npa-cosmos3-reason:cuda13-b300-3.1.0-sm80-sm90-sm100-sm103-sm120-20260825T212327Z"
+            "npa-cosmos3-reason:cuda13-b300-3.1.0-sm80-sm90-sm100-sm103-sm120-20260825T212327Z-unbuilt"
         )
         == "Never"
     )
