@@ -300,7 +300,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker builder prune --all --force
+          docker buildx prune --all --force
           mkdir -p "$TRIVY_TEMP_DIR"
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \

@@ -101,7 +101,7 @@ def test_large_image_scan_reclaims_only_build_cache_and_reuses_trivy_cache() -> 
     sbom = text.index("Generate pre-publication SBOM")
     push = text.index("Push only after every pre-publication gate passes")
     assert scan < sbom < push
-    assert "docker builder prune --all --force" in text[scan:sbom]
+    assert "docker buildx prune --all --force" in text[scan:sbom]
     assert text[scan:push].count("--cache-dir /tmp/trivy/cache") == 2
     trivy = "aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image"
     assert text[scan:push].count(trivy) == 2
