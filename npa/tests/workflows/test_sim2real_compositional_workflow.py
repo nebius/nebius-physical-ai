@@ -106,7 +106,7 @@ def test_stage8_scores_every_rollout_once_with_hosted_cosmos3(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from npa.workbench.cosmos import reason
-    from npa.workflows.sim2real import workflow_stage
+    from npa.workflows.sim2real import stage8_cosmos3
 
     work = tmp_path / "stage8"
     work.mkdir()
@@ -154,20 +154,23 @@ def test_stage8_scores_every_rollout_once_with_hosted_cosmos3(
 
     writes = []
     records = []
-    monkeypatch.setattr(workflow_stage, "_work", lambda _stage: work)
-    monkeypatch.setattr(workflow_stage, "storage", lambda: Store())
+    monkeypatch.setattr(
+        stage8_cosmos3.tempfile, "mkdtemp", lambda **_kwargs: str(work)
+    )
+    monkeypatch.setattr(stage8_cosmos3, "storage", lambda: Store())
     monkeypatch.setattr(reason, "run_token_factory_rollout_vlm", evaluate)
     monkeypatch.setattr(
-        "npa.workflows.sim2real.workflow_io.image_provenance",
+        stage8_cosmos3,
+        "image_provenance",
         lambda **kwargs: {"gpu_required": kwargs["require_gpu"]},
     )
     monkeypatch.setattr(
-        workflow_stage,
+        stage8_cosmos3,
         "write_loop_output",
         lambda uri, payload, *_args: writes.append((uri, payload)),
     )
     monkeypatch.setattr(
-        workflow_stage,
+        stage8_cosmos3,
         "publish_component_record",
         lambda **kwargs: records.append(kwargs),
     )
