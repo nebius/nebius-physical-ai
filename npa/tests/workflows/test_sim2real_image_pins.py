@@ -116,8 +116,8 @@ def test_exact_source_images_copy_forced_workflow_package_data(
     assert "pyproject.toml /opt/npa/pyproject.toml" in dockerfile
 
 
-def test_isaac_exact_source_image_uses_light_package_imports() -> None:
-    """Isaac's purpose-built venv must not require unrelated NPA SDK extras."""
+def test_isaac_exact_source_image_imports_the_runtime_cli() -> None:
+    """Isaac's purpose-built venv must satisfy the exact SkyPilot setup probe."""
 
     dockerfile = (
         Path(__file__).resolve().parents[2]
@@ -131,7 +131,8 @@ def test_isaac_exact_source_image_uses_light_package_imports() -> None:
     assert "npa-exact-source.pth" in dockerfile
     assert "env -u PYTHONPATH /opt/npa/sim/venv/bin/python -c" in dockerfile
     assert (
-        "import boto3, kubernetes, mcap, npa.workflows.sim2real.runtime_attestation"
+        "import boto3, kubernetes, mcap, npa.cli.main, "
+        "npa.workflows.sim2real.runtime_attestation"
         in (dockerfile)
     )
 
@@ -336,6 +337,10 @@ def test_sim2real_control_plane_requirement_closure_is_exact() -> None:
         "google-auth==2.56.3",
         "cryptography==50.0.0",
         "cffi==2.1.1",
+        "bcrypt==5.0.0",
+        "invoke==3.0.3",
+        "paramiko==5.0.0",
+        "PyNaCl==1.6.2",
         "pycparser==3.0",
         "lz4==4.4.5",
         "zstandard==0.25.0",
@@ -359,6 +364,7 @@ def test_sim2real_control_plane_requirement_closure_is_exact() -> None:
     )
     assert "chmod -R" not in isaac_dockerfile
     assert "PYTHONPATH=/opt/npa/src" in isaac_dockerfile
+    assert "import boto3, kubernetes, mcap, npa.cli.main" in isaac_dockerfile
 
     genesis_requirements = (
         root / "common" / "sim2real-genesis-requirements.txt"
