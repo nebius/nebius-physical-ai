@@ -65,6 +65,19 @@ def test_envgen_removes_unrelated_nonredistributable_parent_binary() -> None:
         assert runtime_contract in text
 
 
+def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
+    installer = (WORKBENCH / "common/install_workflow_runtime_prereqs.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "linux-libc-dev=5.15.0-187.197" in installer
+    for relative in (
+        "sim2real-envgen/Dockerfile",
+        "sim2real-eval/Dockerfile",
+    ):
+        text = (WORKBENCH / relative).read_text(encoding="utf-8")
+        assert "ARG UBUNTU_SNAPSHOT=20260820T000000Z" in text, relative
+
+
 def test_isaac_runtime_uses_system_ffmpeg_without_wheel_bundled_binary() -> None:
     installer = (WORKBENCH / "common/install_isaac_runtime_base.sh").read_text(
         encoding="utf-8"
