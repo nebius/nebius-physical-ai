@@ -2216,6 +2216,13 @@ def _forget_project(alias: str) -> None:
         configured_project_found=environment is not None,
         full_identity=identity,
     )
+    if receipt_path is None and environment is not None:
+        typer.echo(
+            "Partial cleanup: project configuration and Terraform recovery state "
+            "were preserved because no durable teardown receipt could be written.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
     if receipt_path is not None:
         typer.echo(
             f"Durable cleanup identity: {receipt_path.stem}. Resume after config removal "

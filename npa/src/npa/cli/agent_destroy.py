@@ -482,17 +482,41 @@ def destroy_cmd(
                         raise agent_module.AgentLocalRetirementError(
                             "exact provider instance reappeared during teardown"
                         )
-                agent_module._cleanup_agent_local_files(
-                    alias,
-                    name,
-                    operation_ids=operation_ids_snapshot,
-                )
+                removed_record: dict[str, Any] = {}
                 if record_present:
+                    removed_record = dict(current_record.record)
                     agent_module._remove_agent_record(alias, name)
                     if agent_module.decode_agent_record(alias, name).present:
                         raise agent_module.AgentLocalRetirementError(
                             "saved agent record remains after removal"
                         )
+                try:
+                    agent_module._cleanup_agent_local_files(
+                        alias,
+                        name,
+                        operation_ids=operation_ids_snapshot,
+                    )
+                except (OSError, RuntimeError, ValueError) as exc:
+                    if removed_record:
+                        try:
+                            agent_module._store_agent_record(
+                                alias, name, removed_record
+                            )
+                            restored = agent_module.decode_agent_record(alias, name)
+                            if (
+                                not restored.present
+                                or restored.record.get("project_id") != exact_project
+                                or restored.record.get("instance_id") != exact_instance
+                            ):
+                                raise agent_module.AgentLocalRetirementError(
+                                    "saved agent recovery record did not restore"
+                                )
+                        except (OSError, RuntimeError, ValueError) as restore_exc:
+                            raise agent_module.AgentLocalRetirementError(
+                                "local retirement failed and the saved agent recovery "
+                                f"record could not be restored: {restore_exc}"
+                            ) from exc
+                    raise
                 if finalize and str(transaction.read().get("phase") or "") not in {
                     "committed",
                     "destroyed",
@@ -580,56 +604,100 @@ def destroy_cmd(
             output_json=output_json,
             payload=identity.to_dict(),
         )
-        try:
-            retire_local_state_under_lease(
-                prepare_teardown_operation(), finalize=True
-            )
-        except (OSError, RuntimeError, ValueError) as exc:
-            fail_closed(
-                "Exact cloud absence is proven, but local agent retirement is "
-                f"incomplete: {exc}. Alias and project credentials were retained."
-            )
-        try:
-            iam_disposition = report_destroyed_agent_iam(
-                alias, name, record=dict(identity.values), purge=purge_iam
-            )
-        except AgentIAMCleanupError as exc:
-            agent_module._record_agent_destroy_event(
-                alias,
-                name,
-                terminal_state="partial",
-                error=str(exc),
-                identity=identity.values,
-                project_id=exact_project,
-                identity_source=identity.source,
-                terraform_graph_absent=True,
-                iam_cleanup_complete=False,
-                iam_disposition="verification_unresolved",
-            )
-            _emit(
-                {
-                    **identity.to_dict(),
-                    "outcome": "partial_iam_cleanup",
-                    "verified": False,
-                    "infrastructure_absent": True,
-                    "iam_cleanup_complete": False,
-                    "message": str(exc),
-                },
-                output_json=output_json,
-            )
-            raise typer.Exit(code=2) from exc
-        agent_module._record_agent_destroy_event(
-            alias,
-            name,
-            terminal_state="verified_deleted",
-            identity=identity.values,
-            project_id=exact_project,
-            identity_source=identity.source,
-            terraform_graph_absent=True,
-            purge_iam=purge_iam,
-            iam_cleanup_complete=iam_disposition in {"absent", "deleted"},
-            iam_disposition=iam_disposition,
-        )
+        retirement_operation = prepare_teardown_operation()
+        with operation_context(retirement_operation):
+            if str(retirement_operation.read().get("phase") or "") == "prepared":
+                retirement_operation.transition("mutating")
+            try:
+                iam_disposition = report_destroyed_agent_iam(
+                    alias, name, record=dict(identity.values), purge=purge_iam
+                )
+            except AgentIAMCleanupError as exc:
+                retirement_operation.transition(
+                    "recovery-required", error="agent IAM cleanup did not converge"
+                )
+                agent_module._record_agent_destroy_event(
+                    alias,
+                    name,
+                    terminal_state="partial",
+                    error=str(exc),
+                    identity=identity.values,
+                    project_id=exact_project,
+                    identity_source=identity.source,
+                    terraform_graph_absent=True,
+                    iam_cleanup_complete=False,
+                    iam_disposition="verification_unresolved",
+                )
+                _emit(
+                    {
+                        **identity.to_dict(),
+                        "outcome": "partial_iam_cleanup",
+                        "verified": False,
+                        "infrastructure_absent": True,
+                        "iam_cleanup_complete": False,
+                        "message": str(exc),
+                    },
+                    output_json=output_json,
+                )
+                raise typer.Exit(code=2) from exc
+            try:
+                agent_module._record_agent_destroy_event(
+                    alias,
+                    name,
+                    terminal_state="verified_deleted",
+                    identity=identity.values,
+                    project_id=exact_project,
+                    identity_source=identity.source,
+                    terraform_graph_absent=True,
+                    purge_iam=purge_iam,
+                    iam_cleanup_complete=iam_disposition in {"absent", "deleted"},
+                    iam_disposition=iam_disposition,
+                )
+            except (OSError, RuntimeError, ValueError) as exc:
+                retirement_operation.transition(
+                    "recovery-required",
+                    error="terminal agent teardown receipt was not durable",
+                )
+                _emit(
+                    {
+                        **identity.to_dict(),
+                        "outcome": "partial_receipt_cleanup",
+                        "verified": False,
+                        "infrastructure_absent": True,
+                        "iam_cleanup_complete": iam_disposition
+                        in {"absent", "deleted"},
+                        "message": (
+                            "Agent cloud and IAM convergence was verified, but the "
+                            "terminal teardown receipt was not durable. Local "
+                            "credentials and recovery state were retained."
+                        ),
+                    },
+                    output_json=output_json,
+                )
+                raise typer.Exit(code=2) from exc
+            try:
+                retire_local_state_under_lease(
+                    retirement_operation, finalize=True
+                )
+            except (OSError, RuntimeError, ValueError) as exc:
+                agent_module._record_agent_destroy_event(
+                    alias,
+                    name,
+                    terminal_state="partial",
+                    error=str(exc),
+                    identity=identity.values,
+                    project_id=exact_project,
+                    identity_source=identity.source,
+                    terraform_graph_absent=True,
+                    purge_iam=purge_iam,
+                    iam_cleanup_complete=iam_disposition in {"absent", "deleted"},
+                    iam_disposition=iam_disposition,
+                )
+                fail_closed(
+                    "Exact cloud and IAM absence is proven, but local agent "
+                    f"retirement is incomplete: {exc}. Alias and project "
+                    "credentials were retained."
+                )
         _emit(
             {
                 **identity.to_dict(),
@@ -670,6 +738,7 @@ def destroy_cmd(
                 f"Exact instance {exact_instance} is present, but no complete Terraform "
                 "ownership/state graph is available. NPA refused a VM-only deletion."
             )
+        absence_receipt_recorded = False
         if alias:
             from npa.cli.destructive import require_destructive_confirmation
 
@@ -679,23 +748,60 @@ def destroy_cmd(
                 output_json=output_json,
                 payload=identity.to_dict(),
             )
-            try:
-                retire_local_state_under_lease(
-                    prepare_teardown_operation(), finalize=True
-                )
-            except (OSError, RuntimeError, ValueError) as exc:
-                raise typer.BadParameter(
-                    "Provider verified the exact instance absent, but local agent "
-                    f"retirement is incomplete: {exc}"
-                ) from exc
-        agent_module._record_agent_destroy_event(
-            alias,
-            name,
-            terminal_state="verified_absent",
-            identity=identity.values,
-            project_id=exact_project,
-            identity_source=identity.source,
-        )
+            retirement_operation = prepare_teardown_operation()
+            with operation_context(retirement_operation):
+                if (
+                    str(retirement_operation.read().get("phase") or "")
+                    == "prepared"
+                ):
+                    retirement_operation.transition("mutating")
+                try:
+                    agent_module._record_agent_destroy_event(
+                        alias,
+                        name,
+                        terminal_state="verified_absent",
+                        identity=identity.values,
+                        project_id=exact_project,
+                        identity_source=identity.source,
+                    )
+                    absence_receipt_recorded = True
+                except (OSError, RuntimeError, ValueError) as exc:
+                    retirement_operation.transition(
+                        "recovery-required",
+                        error="terminal agent absence receipt was not durable",
+                    )
+                    raise typer.BadParameter(
+                        "Provider verified the exact instance absent, but the "
+                        "terminal receipt was not durable. Local credentials and "
+                        "recovery state were retained."
+                    ) from exc
+                try:
+                    retire_local_state_under_lease(
+                        retirement_operation, finalize=True
+                    )
+                except (OSError, RuntimeError, ValueError) as exc:
+                    agent_module._record_agent_destroy_event(
+                        alias,
+                        name,
+                        terminal_state="partial",
+                        error=str(exc),
+                        identity=identity.values,
+                        project_id=exact_project,
+                        identity_source=identity.source,
+                    )
+                    raise typer.BadParameter(
+                        "Provider verified the exact instance absent, but local agent "
+                        f"retirement is incomplete: {exc}"
+                    ) from exc
+        if not absence_receipt_recorded:
+            agent_module._record_agent_destroy_event(
+                alias,
+                name,
+                terminal_state="verified_absent",
+                identity=identity.values,
+                project_id=exact_project,
+                identity_source=identity.source,
+            )
         payload = {
             **identity.to_dict(),
             "outcome": "already_absent",
@@ -850,92 +956,128 @@ def destroy_cmd(
                 identity_source=identity.source,
             )
             agent_module._fail(message)
-    try:
-        retire_local_state_under_lease(teardown_operation)
-    except (OSError, RuntimeError, ValueError) as exc:
-        message = (
-            "Provider verified the exact agent infrastructure absent, but exact "
-            f"local state retirement failed: {exc}. IAM, alias, and project "
-            "credentials were retained."
-        )
-        agent_module._record_agent_destroy_event(
-            alias,
-            name,
-            terminal_state="partial",
-            error=message,
-            identity=identity.values,
-            project_id=exact_project,
-            identity_source=identity.source,
-            terraform_graph_absent=True,
-        )
-        agent_module._fail(message)
-    agent_module._record_agent_destroy_event(
-        alias,
-        name,
-        terminal_state="verified_deleted",
-        identity=identity.values,
-        project_id=exact_project,
-        identity_source=identity.source,
-        terraform_graph_absent=True,
-        purge_iam=purge_iam,
-        iam_cleanup_complete=False,
-        iam_disposition="pending",
-    )
-    iam_error = ""
     iam_disposition = "not_applicable"
-    if alias:
-        from npa.cli.agent_iam import AgentIAMCleanupError, report_destroyed_agent_iam
+    with operation_context(teardown_operation):
+        if alias:
+            from npa.cli.agent_iam import (
+                AgentIAMCleanupError,
+                report_destroyed_agent_iam,
+            )
+
+            try:
+                iam_disposition = report_destroyed_agent_iam(
+                    alias, name, record=recovery_record or None, purge=purge_iam
+                )
+            except AgentIAMCleanupError as exc:
+                iam_error = str(exc)
+                if (
+                    str(teardown_operation.read().get("phase") or "")
+                    not in TERMINAL_PHASES
+                ):
+                    teardown_operation.transition(
+                        "recovery-required",
+                        error="agent IAM cleanup did not converge",
+                    )
+                agent_module._record_agent_destroy_event(
+                    alias,
+                    name,
+                    terminal_state="partial",
+                    error=iam_error,
+                    identity=identity.values,
+                    project_id=exact_project,
+                    identity_source=identity.source,
+                    terraform_graph_absent=True,
+                    purge_iam=purge_iam,
+                    iam_cleanup_complete=False,
+                    iam_disposition="verification_unresolved",
+                )
+                _emit(
+                    {
+                        **identity.to_dict(),
+                        "outcome": "partial_iam_cleanup",
+                        "verified": False,
+                        "infrastructure_absent": True,
+                        "iam_cleanup_complete": False,
+                        "message": iam_error,
+                    },
+                    output_json=output_json,
+                )
+                raise typer.Exit(code=2) from exc
 
         try:
-            iam_disposition = report_destroyed_agent_iam(
-                alias, name, record=recovery_record or None, purge=purge_iam
-            )
-        except AgentIAMCleanupError as exc:
-            iam_error = str(exc)
             agent_module._record_agent_destroy_event(
                 alias,
                 name,
-                terminal_state="partial",
-                error=iam_error,
+                terminal_state="verified_deleted",
                 identity=identity.values,
                 project_id=exact_project,
                 identity_source=identity.source,
                 terraform_graph_absent=True,
                 purge_iam=purge_iam,
-                iam_cleanup_complete=False,
-                iam_disposition="verification_unresolved",
+                iam_cleanup_complete=iam_disposition in {"absent", "deleted"},
+                iam_disposition=iam_disposition,
             )
-    # The exact agent's infrastructure has already been provider-verified absent.
-    # Shared project IAM may intentionally remain while other agents depend on it;
-    # that degraded cleanup result must not leave the project lifecycle lease open
-    # and prevent a fresh deployment of this agent name.
-    if str(teardown_operation.read().get("phase") or "") not in TERMINAL_PHASES:
-        teardown_operation.transition("destroyed")
-    if iam_error:
-        _emit(
-            {
-                **identity.to_dict(),
-                "outcome": "partial_iam_cleanup",
-                "verified": False,
-                "infrastructure_absent": True,
-                "iam_cleanup_complete": False,
-                "message": iam_error,
-            },
-            output_json=output_json,
-        )
-        raise typer.Exit(code=2)
-    agent_module._record_agent_destroy_event(
-        alias,
-        name,
-        terminal_state="verified_deleted",
-        identity=identity.values,
-        project_id=exact_project,
-        identity_source=identity.source,
-        terraform_graph_absent=True,
-        purge_iam=purge_iam,
-        iam_cleanup_complete=iam_disposition in {"absent", "deleted"},
-        iam_disposition=iam_disposition,
-    )
+        except (OSError, RuntimeError, ValueError) as exc:
+            if (
+                str(teardown_operation.read().get("phase") or "")
+                not in TERMINAL_PHASES
+            ):
+                teardown_operation.transition(
+                    "recovery-required",
+                    error="terminal agent teardown receipt was not durable",
+                )
+            _emit(
+                {
+                    **identity.to_dict(),
+                    "outcome": "partial_receipt_cleanup",
+                    "verified": False,
+                    "infrastructure_absent": True,
+                    "iam_cleanup_complete": iam_disposition
+                    in {"absent", "deleted"},
+                    "message": (
+                        "Agent cloud and IAM convergence was verified, but the "
+                        "terminal teardown receipt was not durable. Local "
+                        "credentials and recovery state were retained."
+                    ),
+                },
+                output_json=output_json,
+            )
+            raise typer.Exit(code=2) from exc
+
+        try:
+            retire_local_state_under_lease(teardown_operation, finalize=True)
+        except (OSError, RuntimeError, ValueError) as exc:
+            message = (
+                "Provider and IAM convergence was verified, but exact local state "
+                f"retirement failed: {exc}. Credentials and recovery evidence "
+                "were retained."
+            )
+            agent_module._record_agent_destroy_event(
+                alias,
+                name,
+                terminal_state="partial",
+                error=message,
+                identity=identity.values,
+                project_id=exact_project,
+                identity_source=identity.source,
+                terraform_graph_absent=True,
+                purge_iam=purge_iam,
+                iam_cleanup_complete=iam_disposition in {"absent", "deleted"},
+                iam_disposition=iam_disposition,
+            )
+            _emit(
+                {
+                    **identity.to_dict(),
+                    "outcome": "partial_local_cleanup",
+                    "verified": False,
+                    "infrastructure_absent": True,
+                    "iam_cleanup_complete": iam_disposition
+                    in {"absent", "deleted"},
+                    "message": message,
+                },
+                output_json=output_json,
+            )
+            raise typer.Exit(code=2) from exc
     _emit(
         {
             **identity.to_dict(),

@@ -516,6 +516,272 @@ def test_agent_terraform_delete_failure_preserves_auth_and_recovery(
     assert state.exists()
 
 
+def test_agent_credential_retirement_restores_auth_after_partial_directory_delete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli.agent_local_state import (
+        AgentLocalRetirementError,
+        cleanup_agent_local_files,
+    )
+    from npa.deploy import provisioner
+
+    agent_dir = Path.home() / ".npa" / "agents" / "demo" / "agent"
+    agent_dir.mkdir(parents=True)
+    auth = agent_dir / "auth.env"
+    auth.write_text("AGENT_PASSWORD=fixture-only\n", encoding="utf-8")
+    recovery = agent_dir / "recovery.json"
+    recovery.write_text('{"instance_id":"instance-a"}\n', encoding="utf-8")
+    tf_dir = provisioner.working_dir_path("demo", "agent")
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfstate").write_text("{}\n", encoding="utf-8")
+    real_rmtree = __import__("shutil").rmtree
+
+    def partially_delete_then_fail(path: Path) -> None:
+        if Path(path) == agent_dir:
+            auth.unlink()
+            raise OSError("injected partial credential-directory deletion")
+        real_rmtree(path)
+
+    monkeypatch.setattr(
+        "npa.cli.agent_local_state.shutil.rmtree", partially_delete_then_fail
+    )
+
+    with pytest.raises(
+        AgentLocalRetirementError,
+        match="injected partial credential-directory deletion",
+    ):
+        cleanup_agent_local_files("demo", "agent")
+
+    assert auth.read_text(encoding="utf-8") == "AGENT_PASSWORD=fixture-only\n"
+    assert recovery.exists()
+
+
+def test_agent_destroy_iam_failure_preserves_auth_and_agent_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli import agent as agent_module
+    from npa.cli.agent_iam import AgentIAMCleanupError
+    from npa.clients import config as config_module
+    from npa.provisioning_journal import ProvisioningOperation
+
+    _write_project_config(
+        config_module.CONFIG_PATH,
+        project={
+            "agents": {
+                "agent": {
+                    "schema_version": 1,
+                    "project_id": "project-a",
+                    "instance_id": "instance-a",
+                }
+            }
+        },
+    )
+    ProvisioningOperation.prepare(
+        command="npa agent deploy",
+        project_alias="demo",
+        project_id="project-a",
+        tenant_id="tenant-a",
+        region="eu-test1",
+        resource_type="agent",
+        requested_name="agent",
+        resume_command="npa agent deploy --project demo --name agent",
+    )
+    auth = Path.home() / ".npa" / "agents" / "demo" / "agent" / "auth.env"
+    auth.parent.mkdir(parents=True)
+    auth.write_text("AGENT_PASSWORD=fixture-only\n", encoding="utf-8")
+    monkeypatch.setattr(
+        agent_module, "_destroy_agent_terraform", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        "npa.clients.nebius.get_compute_instance_identity", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent_iam.report_destroyed_agent_iam",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AgentIAMCleanupError("injected IAM convergence failure")
+        ),
+    )
+
+    result = runner.invoke(
+        app, ["agent", "destroy", "--project", "demo", "--yes", "--json"]
+    )
+
+    assert result.exit_code == 2, result.output
+    assert auth.exists()
+    configured = yaml.safe_load(config_module.CONFIG_PATH.read_text(encoding="utf-8"))
+    assert configured["projects"]["demo"]["agents"]["agent"]["instance_id"] == (
+        "instance-a"
+    )
+    event = teardown_receipts.latest_phase_states(project_id="project-a")["agent"]
+    assert event["terminal_state"] == "partial"
+
+
+def test_agent_destroy_terminal_receipt_failure_preserves_auth_and_agent_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli import agent as agent_module
+    from npa.clients import config as config_module
+    from npa.provisioning_journal import ProvisioningOperation
+
+    _write_project_config(
+        config_module.CONFIG_PATH,
+        project={
+            "agents": {
+                "agent": {
+                    "schema_version": 1,
+                    "project_id": "project-a",
+                    "instance_id": "instance-a",
+                }
+            }
+        },
+    )
+    ProvisioningOperation.prepare(
+        command="npa agent deploy",
+        project_alias="demo",
+        project_id="project-a",
+        tenant_id="tenant-a",
+        region="eu-test1",
+        resource_type="agent",
+        requested_name="agent",
+        resume_command="npa agent deploy --project demo --name agent",
+    )
+    auth = Path.home() / ".npa" / "agents" / "demo" / "agent" / "auth.env"
+    auth.parent.mkdir(parents=True)
+    auth.write_text("AGENT_PASSWORD=fixture-only\n", encoding="utf-8")
+    monkeypatch.setattr(
+        agent_module, "_destroy_agent_terraform", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        "npa.clients.nebius.get_compute_instance_identity", lambda *_a, **_k: None
+    )
+    iam_calls: list[str] = []
+    monkeypatch.setattr(
+        "npa.cli.agent_iam.report_destroyed_agent_iam",
+        lambda *_a, **_k: iam_calls.append("verified") or "deleted",
+    )
+    real_record = teardown_receipts.record_teardown_event
+    states: list[str] = []
+
+    def fail_terminal_agent_receipt(**kwargs):  # noqa: ANN003, ANN202
+        if kwargs.get("phase") == "agent":
+            state = str(kwargs.get("terminal_state") or "")
+            states.append(state)
+            if state == "verified_deleted":
+                raise OSError("injected terminal agent receipt failure")
+        return real_record(**kwargs)
+
+    monkeypatch.setattr(
+        teardown_receipts, "record_teardown_event", fail_terminal_agent_receipt
+    )
+
+    result = runner.invoke(
+        app, ["agent", "destroy", "--project", "demo", "--yes", "--json"]
+    )
+
+    assert result.exit_code != 0, result.output
+    assert iam_calls == ["verified"]
+    assert states == ["in_progress", "verified_deleted"]
+    assert auth.exists()
+    configured = yaml.safe_load(config_module.CONFIG_PATH.read_text(encoding="utf-8"))
+    assert configured["projects"]["demo"]["agents"]["agent"]["instance_id"] == (
+        "instance-a"
+    )
+
+
+def test_agent_record_retirement_failure_cannot_delete_auth_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli import agent as agent_module
+    from npa.clients import config as config_module
+    from npa.provisioning_journal import ProvisioningOperation
+
+    _write_project_config(
+        config_module.CONFIG_PATH,
+        project={
+            "agents": {
+                "agent": {
+                    "schema_version": 1,
+                    "project_id": "project-a",
+                    "instance_id": "instance-a",
+                }
+            }
+        },
+    )
+    ProvisioningOperation.prepare(
+        command="npa agent deploy",
+        project_alias="demo",
+        project_id="project-a",
+        tenant_id="tenant-a",
+        region="eu-test1",
+        resource_type="agent",
+        requested_name="agent",
+        resume_command="npa agent deploy --project demo --name agent",
+    )
+    auth = Path.home() / ".npa" / "agents" / "demo" / "agent" / "auth.env"
+    auth.parent.mkdir(parents=True)
+    auth.write_text("AGENT_PASSWORD=fixture-only\n", encoding="utf-8")
+    monkeypatch.setattr(
+        agent_module, "_destroy_agent_terraform", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        "npa.clients.nebius.get_compute_instance_identity", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent_iam.report_destroyed_agent_iam",
+        lambda *_a, **_k: "deleted",
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "_remove_agent_record",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            OSError("injected agent-record write failure")
+        ),
+    )
+
+    result = runner.invoke(
+        app, ["agent", "destroy", "--project", "demo", "--yes", "--json"]
+    )
+
+    assert result.exit_code != 0, result.output
+    assert auth.exists()
+    configured = yaml.safe_load(config_module.CONFIG_PATH.read_text(encoding="utf-8"))
+    assert configured["projects"]["demo"]["agents"]["agent"]["instance_id"] == (
+        "instance-a"
+    )
+
+
+def test_forget_project_requires_durable_recovery_receipt_before_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.clients import config as config_module
+
+    _write_project_config(
+        config_module.CONFIG_PATH,
+        project={
+            "terraform_state": {
+                "bucket": "fixture-state-bucket",
+                "access_key": "fixture-access-key",
+                "secret_key": "fixture-secret-key",
+            }
+        },
+    )
+    monkeypatch.setattr(
+        teardown_receipts,
+        "record_teardown_event",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            OSError("injected receipt store failure")
+        ),
+    )
+
+    result = runner.invoke(app, ["configure", "--forget-project", "demo"])
+
+    assert result.exit_code != 0, result.output
+    configured = yaml.safe_load(config_module.CONFIG_PATH.read_text(encoding="utf-8"))
+    assert configured["projects"]["demo"]["terraform_state"]["access_key"] == (
+        "fixture-access-key"
+    )
+
+
 def test_agent_record_project_must_match_parent_project_stanza() -> None:
     from npa.cli.agent_records import AgentRecordState, decode_agent_record
     from npa.clients import config as config_module

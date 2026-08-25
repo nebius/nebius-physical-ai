@@ -1295,7 +1295,9 @@ def test_agent_destroy_local_only_iam_retention_is_partial(
     assert payload["iam_cleanup_complete"] is False
     assert deleted == []
     saved = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    assert set(saved["projects"]["demo"]["agents"]) == {"peer"}
+    # Unresolved IAM keeps the destroyed generation's local recovery identity;
+    # removing it here would let project/config retirement outrun IAM evidence.
+    assert set(saved["projects"]["demo"]["agents"]) == {"agent", "peer"}
     assert (
         teardown_receipts.latest_phase_states(project_id="project-a")["agent"][
             "terminal_state"
