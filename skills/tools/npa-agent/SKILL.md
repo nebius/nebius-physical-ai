@@ -149,6 +149,11 @@ Rules:
 
 ## Workflow Draft / Validate / Plan / Submit Loop
 
+These workflow operations are provider-neutral: the caller owns its model or
+reasoning configuration, while NPA owns validation, translation, and execution.
+The complete bounded lifecycle is documented in
+`docs/workbench/agent-workflow-operations.md`.
+
 Use the VM as a grounded drafting surface, then run operator-machine commands for real workflow execution:
 
 ```bash
