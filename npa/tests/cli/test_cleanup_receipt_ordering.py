@@ -152,6 +152,7 @@ def test_final_audit_uses_receipts_after_config_and_resources_are_removed(
             {"kind": "terraform_agent_destroy"},
             {
                 "exact_instance_absent": True,
+                "local_state_retired": True,
                 "terraform_destroy_completed": True,
                 "terraform_dependency_graph": sorted(
                     cleanup_cli._AGENT_TERRAFORM_GRAPH

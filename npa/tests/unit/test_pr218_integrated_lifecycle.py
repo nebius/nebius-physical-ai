@@ -566,6 +566,7 @@ def test_partial_agent_status_requires_exact_project_and_agent_receipt(
         action={"kind": "terraform_agent_destroy", "purge_iam": True},
         verification={
             "exact_instance_absent": True,
+            "local_state_retired": True,
             "terraform_destroy_completed": True,
             "terraform_dependency_graph": sorted(
                 {
@@ -628,6 +629,7 @@ def test_terminal_agent_receipt_overrides_only_older_successful_operations(
         action={"kind": "terraform_agent_destroy", "purge_iam": True},
         verification={
             "exact_instance_absent": True,
+            "local_state_retired": True,
             "terraform_destroy_completed": True,
             "terraform_dependency_graph": sorted(
                 {

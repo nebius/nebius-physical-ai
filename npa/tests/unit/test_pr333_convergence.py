@@ -56,6 +56,7 @@ def _agent_terminal_verification(*, iam_complete: bool = True) -> dict[str, obje
                 "public_ip",
             }
         ),
+        "local_state_retired": True,
         "iam_cleanup_complete": iam_complete,
         "iam_disposition": "deleted" if iam_complete else "verification_unresolved",
     }
@@ -122,6 +123,29 @@ def test_unresolved_agent_iam_cannot_authorize_dependent_retirement() -> None:
     }
 
     assert cleanup_cli._event_authorizes_cloud_absence(event) is False
+
+
+def test_agent_receipt_without_local_retirement_cannot_authorize_convergence() -> None:
+    from npa.teardown_receipts import teardown_event_authorizes_convergence
+
+    verification = _agent_terminal_verification()
+    verification.pop("local_state_retired")
+    event = {
+        "phase": "agent",
+        "resource": "agent",
+        "terminal_state": "verified_deleted",
+        "project_id": "project-a",
+        "identity": {
+            "project_id": "project-a",
+            "agent_name": "agent",
+            "instance_id": "instance-a",
+        },
+        "action": {"kind": "terraform_agent_destroy", "purge_iam": True},
+        "verification": verification,
+        "errors": [],
+    }
+
+    assert teardown_event_authorizes_convergence(event) is False
 
 
 def test_unresolved_agent_iam_blocks_project_destroy_execution(
@@ -556,6 +580,46 @@ def test_agent_credential_retirement_restores_auth_after_partial_directory_delet
     assert recovery.exists()
 
 
+def test_agent_credential_retirement_restores_recovery_after_parent_prune_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli.agent_local_state import (
+        AgentLocalRetirementError,
+        cleanup_agent_local_files,
+    )
+    from npa.deploy import provisioner
+
+    agent_dir = Path.home() / ".npa" / "agents" / "demo" / "agent"
+    agent_dir.mkdir(parents=True)
+    auth = agent_dir / "auth.env"
+    auth.write_text("AGENT_PASSWORD=fixture-only\n", encoding="utf-8")
+    recovery = agent_dir / "recovery.json"
+    recovery.write_text('{"instance_id":"instance-a"}\n', encoding="utf-8")
+    tf_dir = provisioner.working_dir_path("demo", "agent")
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfstate").write_text("{}\n", encoding="utf-8")
+    real_rmdir = Path.rmdir
+
+    def fail_agent_parent_prune(path: Path) -> None:
+        if path == agent_dir.parent:
+            raise OSError("injected empty-parent prune failure")
+        real_rmdir(path)
+
+    monkeypatch.setattr(Path, "rmdir", fail_agent_parent_prune)
+
+    with pytest.raises(
+        AgentLocalRetirementError,
+        match="injected empty-parent prune failure",
+    ):
+        cleanup_agent_local_files("demo", "agent")
+
+    assert auth.read_text(encoding="utf-8") == "AGENT_PASSWORD=fixture-only\n"
+    assert recovery.read_text(encoding="utf-8") == (
+        '{"instance_id":"instance-a"}\n'
+    )
+    assert agent_dir.is_dir()
+
+
 def test_agent_destroy_iam_failure_preserves_auth_and_agent_record(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -680,12 +744,156 @@ def test_agent_destroy_terminal_receipt_failure_preserves_auth_and_agent_record(
 
     assert result.exit_code != 0, result.output
     assert iam_calls == ["verified"]
-    assert states == ["in_progress", "verified_deleted"]
+    assert states == ["in_progress", "verified_deleted", "partial"]
     assert auth.exists()
     configured = yaml.safe_load(config_module.CONFIG_PATH.read_text(encoding="utf-8"))
     assert configured["projects"]["demo"]["agents"]["agent"]["instance_id"] == (
         "instance-a"
     )
+    latest = teardown_receipts.latest_phase_states(project_id="project-a")["agent"]
+    assert latest["terminal_state"] == "partial"
+
+
+def test_agent_destroy_interruption_cannot_leave_authoritative_terminal_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli import agent as agent_module
+    from npa.clients import config as config_module
+    from npa.provisioning_journal import ProvisioningOperation
+    from npa.teardown_receipts import teardown_event_authorizes_convergence
+
+    _write_project_config(
+        config_module.CONFIG_PATH,
+        project={
+            "agents": {
+                "agent": {
+                    "schema_version": 1,
+                    "project_id": "project-a",
+                    "instance_id": "instance-a",
+                }
+            }
+        },
+    )
+    ProvisioningOperation.prepare(
+        command="npa agent deploy",
+        project_alias="demo",
+        project_id="project-a",
+        tenant_id="tenant-a",
+        region="eu-test1",
+        resource_type="agent",
+        requested_name="agent",
+        resume_command="npa agent deploy --project demo --name agent",
+    )
+    auth = Path.home() / ".npa" / "agents" / "demo" / "agent" / "auth.env"
+    auth.parent.mkdir(parents=True)
+    auth.write_text("AGENT_PASSWORD=fixture-only\n", encoding="utf-8")
+    monkeypatch.setattr(
+        agent_module, "_destroy_agent_terraform", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        "npa.clients.nebius.get_compute_instance_identity", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent_iam.report_destroyed_agent_iam", lambda *_a, **_k: "deleted"
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "_cleanup_agent_local_files",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            KeyboardInterrupt("injected local retirement interruption")
+        ),
+    )
+
+    result = runner.invoke(
+        app, ["agent", "destroy", "--project", "demo", "--yes", "--json"]
+    )
+
+    assert result.exit_code != 0, result.output
+    assert auth.exists()
+    configured = yaml.safe_load(config_module.CONFIG_PATH.read_text(encoding="utf-8"))
+    assert configured["projects"]["demo"]["agents"]["agent"]["instance_id"] == (
+        "instance-a"
+    )
+    event = teardown_receipts.latest_phase_states(project_id="project-a")["agent"]
+    assert event["terminal_state"] != "verified_deleted"
+    assert teardown_event_authorizes_convergence(event) is False
+
+
+def test_cleanup_agent_receipt_failure_restores_credentials_and_saved_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli import cleanup as cleanup_cli
+    from npa.clients import config as config_module
+    from npa.teardown_receipts import teardown_event_authorizes_convergence
+
+    _write_project_config(
+        config_module.CONFIG_PATH,
+        project={
+            "agents": {
+                "agent": {
+                    "schema_version": 1,
+                    "project_id": "project-a",
+                    "instance_id": "instance-a",
+                }
+            }
+        },
+    )
+    auth = Path.home() / ".npa" / "agents" / "demo" / "agent" / "auth.env"
+    auth.parent.mkdir(parents=True)
+    auth.write_text("AGENT_PASSWORD=fixture-only\n", encoding="utf-8")
+    recovery = auth.parent / "recovery.json"
+    recovery.write_text('{"instance_id":"instance-a"}\n', encoding="utf-8")
+    verification = _agent_terminal_verification()
+    verification.pop("local_state_retired")
+    teardown_receipts.record_teardown_event(
+        phase="agent",
+        resource="agent",
+        terminal_state="verified_deleted",
+        project_alias="demo",
+        project_id="project-a",
+        identity={
+            "project_id": "project-a",
+            "agent_name": "agent",
+            "instance_id": "instance-a",
+        },
+        action={"kind": "terraform_agent_destroy", "purge_iam": True},
+        verification=verification,
+    )
+    monkeypatch.setattr(
+        "npa.clients.nebius.get_compute_instance_identity", lambda *_a, **_k: None
+    )
+    real_record = teardown_receipts.record_teardown_event
+
+    def fail_local_terminal_receipt(**kwargs):  # noqa: ANN003, ANN202
+        event_verification = kwargs.get("verification")
+        if (
+            kwargs.get("phase") == "agent"
+            and kwargs.get("terminal_state") == "verified_deleted"
+            and isinstance(event_verification, dict)
+            and event_verification.get("local_state_retired") is True
+        ):
+            raise OSError("injected cleanup terminal receipt failure")
+        return real_record(**kwargs)
+
+    monkeypatch.setattr(
+        teardown_receipts, "record_teardown_event", fail_local_terminal_receipt
+    )
+
+    safe, detail = cleanup_cli._agent_lifecycle_allows_project_retirement(
+        "demo", "project-a", retire=True
+    )
+
+    assert safe is False
+    assert "receipt failure" in detail
+    assert auth.read_text(encoding="utf-8") == "AGENT_PASSWORD=fixture-only\n"
+    assert recovery.exists()
+    configured = yaml.safe_load(config_module.CONFIG_PATH.read_text(encoding="utf-8"))
+    assert configured["projects"]["demo"]["agents"]["agent"]["instance_id"] == (
+        "instance-a"
+    )
+    event = teardown_receipts.latest_phase_states(project_id="project-a")["agent"]
+    assert event["terminal_state"] == "partial"
+    assert teardown_event_authorizes_convergence(event) is False
 
 
 def test_agent_record_retirement_failure_cannot_delete_auth_first(

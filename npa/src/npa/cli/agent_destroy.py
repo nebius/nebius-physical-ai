@@ -410,7 +410,7 @@ def destroy_cmd(
 
     def retire_local_state_under_lease(
         transaction: Any, *, finalize: bool = False
-    ) -> None:
+    ) -> tuple[Any, dict[str, Any]]:
         """Revalidate one generation under its project lease, then retire it."""
 
         try:
@@ -491,12 +491,12 @@ def destroy_cmd(
                             "saved agent record remains after removal"
                         )
                 try:
-                    agent_module._cleanup_agent_local_files(
+                    retired_snapshot = agent_module._cleanup_agent_local_files(
                         alias,
                         name,
                         operation_ids=operation_ids_snapshot,
                     )
-                except (OSError, RuntimeError, ValueError) as exc:
+                except BaseException as exc:
                     if removed_record:
                         try:
                             agent_module._store_agent_record(
@@ -523,13 +523,117 @@ def destroy_cmd(
                     "rolled-back",
                 }:
                     transaction.transition("destroyed")
-        except (OSError, RuntimeError, ValueError):
+                return retired_snapshot, removed_record
+        except BaseException:
             phase = str(transaction.read().get("phase") or "")
             if phase not in {"committed", "destroyed", "rolled-back"}:
                 transaction.transition(
                     "recovery-required",
                     error="exact local agent retirement did not converge",
                 )
+            raise
+
+    def restore_retired_local_state(
+        retired_snapshot: Any, removed_record: dict[str, Any]
+    ) -> None:
+        """Restore credentials and the exact saved identity after receipt failure."""
+
+        errors: list[str] = []
+        if retired_snapshot is not None:
+            try:
+                retired_snapshot.restore()
+            except (OSError, RuntimeError, ValueError) as exc:
+                errors.append(f"agent recovery files: {exc}")
+        if removed_record:
+            try:
+                agent_module._store_agent_record(alias, name, removed_record)
+                restored = agent_module.decode_agent_record(alias, name)
+                if (
+                    not restored.present
+                    or restored.record.get("project_id") != exact_project
+                    or restored.record.get("instance_id") != exact_instance
+                ):
+                    raise agent_module.AgentLocalRetirementError(
+                        "saved agent recovery record did not restore"
+                    )
+            except (OSError, RuntimeError, ValueError) as exc:
+                errors.append(f"saved agent record: {exc}")
+        if errors:
+            raise agent_module.AgentLocalRetirementError(
+                "could not restore local recovery state after receipt failure: "
+                + "; ".join(errors)
+            )
+
+    def finalize_local_retirement(
+        transaction: Any,
+        *,
+        terminal_state: str,
+        terraform_graph_absent: bool = False,
+        iam_disposition: str = "",
+    ) -> None:
+        """Retire local state before publishing terminal convergence evidence."""
+
+        retired_snapshot, removed_record = retire_local_state_under_lease(
+            transaction, finalize=True
+        )
+        try:
+            agent_module._record_agent_destroy_event(
+                alias,
+                name,
+                terminal_state=terminal_state,
+                identity=identity.values,
+                project_id=exact_project,
+                identity_source=identity.source,
+                terraform_graph_absent=terraform_graph_absent,
+                purge_iam=purge_iam if terraform_graph_absent else None,
+                iam_cleanup_complete=(
+                    iam_disposition in {"absent", "deleted"}
+                    if terraform_graph_absent
+                    else None
+                ),
+                iam_disposition=iam_disposition,
+                local_state_retired=True,
+            )
+        except BaseException as receipt_exc:
+            recovery_error = ""
+            try:
+                restore_retired_local_state(retired_snapshot, removed_record)
+            except (OSError, RuntimeError, ValueError) as exc:
+                recovery_error = str(exc)
+            partial_error = (
+                "terminal agent teardown receipt was not durable"
+                + (
+                    f"; local recovery restoration failed: {recovery_error}"
+                    if recovery_error
+                    else ""
+                )
+            )
+            try:
+                agent_module._record_agent_destroy_event(
+                    alias,
+                    name,
+                    terminal_state="partial",
+                    error=partial_error,
+                    identity=identity.values,
+                    project_id=exact_project,
+                    identity_source=identity.source,
+                    terraform_graph_absent=terraform_graph_absent,
+                    purge_iam=purge_iam if terraform_graph_absent else None,
+                    iam_cleanup_complete=(
+                        iam_disposition in {"absent", "deleted"}
+                        if terraform_graph_absent
+                        else None
+                    ),
+                    iam_disposition=iam_disposition,
+                )
+            except (OSError, RuntimeError, ValueError) as partial_exc:
+                if recovery_error:
+                    raise agent_module.AgentLocalRetirementError(
+                        partial_error
+                        + f"; unresolved receipt write failure: {partial_exc}"
+                    ) from receipt_exc
+            if recovery_error:
+                raise agent_module.AgentLocalRetirementError(partial_error) from receipt_exc
             raise
     # A prior attempt may have destroyed and provider-verified the full exact
     # Terraform graph, then returned partial only because IAM inventory was
@@ -641,23 +745,13 @@ def destroy_cmd(
                 )
                 raise typer.Exit(code=2) from exc
             try:
-                agent_module._record_agent_destroy_event(
-                    alias,
-                    name,
+                finalize_local_retirement(
+                    retirement_operation,
                     terminal_state="verified_deleted",
-                    identity=identity.values,
-                    project_id=exact_project,
-                    identity_source=identity.source,
                     terraform_graph_absent=True,
-                    purge_iam=purge_iam,
-                    iam_cleanup_complete=iam_disposition in {"absent", "deleted"},
                     iam_disposition=iam_disposition,
                 )
             except (OSError, RuntimeError, ValueError) as exc:
-                retirement_operation.transition(
-                    "recovery-required",
-                    error="terminal agent teardown receipt was not durable",
-                )
                 _emit(
                     {
                         **identity.to_dict(),
@@ -675,29 +769,6 @@ def destroy_cmd(
                     output_json=output_json,
                 )
                 raise typer.Exit(code=2) from exc
-            try:
-                retire_local_state_under_lease(
-                    retirement_operation, finalize=True
-                )
-            except (OSError, RuntimeError, ValueError) as exc:
-                agent_module._record_agent_destroy_event(
-                    alias,
-                    name,
-                    terminal_state="partial",
-                    error=str(exc),
-                    identity=identity.values,
-                    project_id=exact_project,
-                    identity_source=identity.source,
-                    terraform_graph_absent=True,
-                    purge_iam=purge_iam,
-                    iam_cleanup_complete=iam_disposition in {"absent", "deleted"},
-                    iam_disposition=iam_disposition,
-                )
-                fail_closed(
-                    "Exact cloud and IAM absence is proven, but local agent "
-                    f"retirement is incomplete: {exc}. Alias and project "
-                    "credentials were retained."
-                )
         _emit(
             {
                 **identity.to_dict(),
@@ -738,7 +809,6 @@ def destroy_cmd(
                 f"Exact instance {exact_instance} is present, but no complete Terraform "
                 "ownership/state graph is available. NPA refused a VM-only deletion."
             )
-        absence_receipt_recorded = False
         if alias:
             from npa.cli.destructive import require_destructive_confirmation
 
@@ -756,44 +826,16 @@ def destroy_cmd(
                 ):
                     retirement_operation.transition("mutating")
                 try:
-                    agent_module._record_agent_destroy_event(
-                        alias,
-                        name,
+                    finalize_local_retirement(
+                        retirement_operation,
                         terminal_state="verified_absent",
-                        identity=identity.values,
-                        project_id=exact_project,
-                        identity_source=identity.source,
-                    )
-                    absence_receipt_recorded = True
-                except (OSError, RuntimeError, ValueError) as exc:
-                    retirement_operation.transition(
-                        "recovery-required",
-                        error="terminal agent absence receipt was not durable",
-                    )
-                    raise typer.BadParameter(
-                        "Provider verified the exact instance absent, but the "
-                        "terminal receipt was not durable. Local credentials and "
-                        "recovery state were retained."
-                    ) from exc
-                try:
-                    retire_local_state_under_lease(
-                        retirement_operation, finalize=True
                     )
                 except (OSError, RuntimeError, ValueError) as exc:
-                    agent_module._record_agent_destroy_event(
-                        alias,
-                        name,
-                        terminal_state="partial",
-                        error=str(exc),
-                        identity=identity.values,
-                        project_id=exact_project,
-                        identity_source=identity.source,
-                    )
                     raise typer.BadParameter(
                         "Provider verified the exact instance absent, but local agent "
                         f"retirement is incomplete: {exc}"
                     ) from exc
-        if not absence_receipt_recorded:
+        else:
             agent_module._record_agent_destroy_event(
                 alias,
                 name,
@@ -1005,48 +1047,13 @@ def destroy_cmd(
                 raise typer.Exit(code=2) from exc
 
         try:
-            agent_module._record_agent_destroy_event(
-                alias,
-                name,
+            finalize_local_retirement(
+                teardown_operation,
                 terminal_state="verified_deleted",
-                identity=identity.values,
-                project_id=exact_project,
-                identity_source=identity.source,
                 terraform_graph_absent=True,
-                purge_iam=purge_iam,
-                iam_cleanup_complete=iam_disposition in {"absent", "deleted"},
                 iam_disposition=iam_disposition,
             )
-        except (OSError, RuntimeError, ValueError) as exc:
-            if (
-                str(teardown_operation.read().get("phase") or "")
-                not in TERMINAL_PHASES
-            ):
-                teardown_operation.transition(
-                    "recovery-required",
-                    error="terminal agent teardown receipt was not durable",
-                )
-            _emit(
-                {
-                    **identity.to_dict(),
-                    "outcome": "partial_receipt_cleanup",
-                    "verified": False,
-                    "infrastructure_absent": True,
-                    "iam_cleanup_complete": iam_disposition
-                    in {"absent", "deleted"},
-                    "message": (
-                        "Agent cloud and IAM convergence was verified, but the "
-                        "terminal teardown receipt was not durable. Local "
-                        "credentials and recovery state were retained."
-                    ),
-                },
-                output_json=output_json,
-            )
-            raise typer.Exit(code=2) from exc
-
-        try:
-            retire_local_state_under_lease(teardown_operation, finalize=True)
-        except (OSError, RuntimeError, ValueError) as exc:
+        except agent_module.AgentLocalRetirementError as exc:
             message = (
                 "Provider and IAM convergence was verified, but exact local state "
                 f"retirement failed: {exc}. Credentials and recovery evidence "
@@ -1074,6 +1081,24 @@ def destroy_cmd(
                     "iam_cleanup_complete": iam_disposition
                     in {"absent", "deleted"},
                     "message": message,
+                },
+                output_json=output_json,
+            )
+            raise typer.Exit(code=2) from exc
+        except (OSError, RuntimeError, ValueError) as exc:
+            _emit(
+                {
+                    **identity.to_dict(),
+                    "outcome": "partial_receipt_cleanup",
+                    "verified": False,
+                    "infrastructure_absent": True,
+                    "iam_cleanup_complete": iam_disposition
+                    in {"absent", "deleted"},
+                    "message": (
+                        "Agent cloud, IAM, and local retirement converged, but the "
+                        "terminal teardown receipt was not durable. Local credentials "
+                        "and recovery identity were restored."
+                    ),
                 },
                 output_json=output_json,
             )

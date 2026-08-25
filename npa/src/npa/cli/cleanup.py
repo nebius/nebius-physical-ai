@@ -912,7 +912,10 @@ def _phase_group_events(
 
 
 def _newest_phase_group_is_terminal(
-    phase_states: dict[str, dict[str, object]], names: tuple[str, ...]
+    phase_states: dict[str, dict[str, object]],
+    names: tuple[str, ...],
+    *,
+    allow_agent_local_retirement_pending: bool = False,
 ) -> bool:
     events = _phase_group_events(phase_states, names)
     if not events:
@@ -929,7 +932,15 @@ def _newest_phase_group_is_terminal(
         ]
     # Across receipt files there is no shared sequence clock: every current
     # generation must converge independently.
-    return all(_event_authorizes_cloud_absence(event) for event in events)
+    return all(
+        (
+            _agent_event_authorizes_prelocal_retirement(event)
+            if allow_agent_local_retirement_pending
+            and str(event.get("phase") or "") == "agent"
+            else _event_authorizes_cloud_absence(event)
+        )
+        for event in events
+    )
 
 
 def _event_authorizes_cloud_absence(event: Mapping[str, object]) -> bool:
@@ -939,13 +950,52 @@ def _event_authorizes_cloud_absence(event: Mapping[str, object]) -> bool:
     return teardown_event_authorizes_convergence(event)
 
 
+def _agent_event_authorizes_prelocal_retirement(
+    event: Mapping[str, object],
+) -> bool:
+    """Allow exact local retirement from complete cloud/IAM evidence only."""
+
+    action = event.get("action")
+    action = action if isinstance(action, Mapping) else {}
+    verification = event.get("verification")
+    verification = verification if isinstance(verification, Mapping) else {}
+    identity = event.get("identity")
+    identity = identity if isinstance(identity, Mapping) else {}
+    graph = verification.get("terraform_dependency_graph")
+    errors = event.get("errors")
+    return bool(
+        str(event.get("phase") or "") == "agent"
+        and str(event.get("terminal_state") or "").lower()
+        in {"verified_absent", "verified_deleted"}
+        and action.get("kind") == "terraform_agent_destroy"
+        and bool(str(identity.get("project_id") or "").strip())
+        and bool(str(identity.get("instance_id") or "").strip())
+        and verification.get("exact_instance_absent") is True
+        and verification.get("terraform_destroy_completed") is True
+        and isinstance(graph, list)
+        and _AGENT_TERRAFORM_GRAPH.issubset(graph)
+        and verification.get("iam_cleanup_complete") is True
+        and verification.get("iam_disposition") in {"absent", "deleted"}
+        and isinstance(errors, list)
+        and not errors
+    )
+
+
 def _cloud_cleanup_receipts_are_terminal(
     phase_states: dict[str, dict[str, object]],
+    *,
+    allow_agent_local_retirement_pending: bool = False,
 ) -> bool:
     """Accept the newest monolithic or equivalent exact cleanup evidence."""
 
     if not all(
-        _newest_phase_group_is_terminal(phase_states, names)
+        _newest_phase_group_is_terminal(
+            phase_states,
+            names,
+            allow_agent_local_retirement_pending=(
+                allow_agent_local_retirement_pending and names[0] == "agent"
+            ),
+        )
         for names in _CLOUD_CLEANUP_REQUIRED_GROUPS
     ):
         return False
@@ -1126,7 +1176,9 @@ def _agent_lifecycle_allows_project_retirement(
             if int(event.get("sequence") or 0) > int(prior.get("sequence") or 0):
                 terminal_graphs[key] = dict(event)
 
-    retirements: list[tuple[str, str, bool, tuple[str, ...], str]] = []
+    retirements: list[
+        tuple[str, str, bool, tuple[str, ...], str, dict[str, object]]
+    ] = []
     for name in sorted(names):
         record_present = name in records
         if record_present:
@@ -1238,11 +1290,19 @@ def _agent_lifecycle_allows_project_retirement(
                     if str(operation.get("_operation_id") or "")
                 ),
                 str(identity.get("profile") or ""),
+                dict(terminal),
             )
         )
 
     if retire:
-        for name, instance_id, expected_record, operation_ids, profile in retirements:
+        for (
+            name,
+            instance_id,
+            expected_record,
+            operation_ids,
+            profile,
+            terminal_event,
+        ) in retirements:
             transaction = ProvisioningOperation.prepare(
                 command="npa cleanup agent-local-retirement",
                 project_alias=alias,
@@ -1260,6 +1320,8 @@ def _agent_lifecycle_allows_project_retirement(
                     "--yes",
                 ),
             )
+            retired_snapshot = None
+            removed_record: dict[str, Any] = {}
             try:
                 with operation_context(transaction):
                     if str(transaction.read().get("phase") or "") == "prepared":
@@ -1311,22 +1373,92 @@ def _agent_lifecycle_allows_project_retirement(
                         raise RuntimeError(
                             "exact provider instance reappeared during retirement"
                         )
-                    agent_module._cleanup_agent_local_files(
+                    retired_snapshot = agent_module._cleanup_agent_local_files(
                         alias, name, operation_ids=operation_ids
                     )
                     if expected_record:
+                        removed_record = dict(current.record)
                         agent_module._remove_agent_record(alias, name)
                         if agent_module.decode_agent_record(alias, name).present:
                             raise RuntimeError(f"saved agent record {name!r} remains")
                     transaction.transition("destroyed")
-            except (OSError, RuntimeError, ValueError) as exc:
+                    terminal_verification = terminal_event.get("verification")
+                    terminal_verification = (
+                        terminal_verification
+                        if isinstance(terminal_verification, Mapping)
+                        else {}
+                    )
+                    terminal_action = terminal_event.get("action")
+                    terminal_action = (
+                        terminal_action if isinstance(terminal_action, Mapping) else {}
+                    )
+                    agent_module._record_agent_destroy_event(
+                        alias,
+                        name,
+                        terminal_state=str(
+                            terminal_event.get("terminal_state") or "verified_deleted"
+                        ),
+                        identity=dict(terminal_event.get("identity") or {}),
+                        project_id=exact_project,
+                        identity_source="cleanup_exact_terminal_generation",
+                        terraform_graph_absent=True,
+                        purge_iam=(
+                            bool(terminal_action.get("purge_iam"))
+                            if "purge_iam" in terminal_action
+                            else None
+                        ),
+                        iam_cleanup_complete=(
+                            terminal_verification.get("iam_cleanup_complete") is True
+                        ),
+                        iam_disposition=str(
+                            terminal_verification.get("iam_disposition") or ""
+                        ),
+                        local_state_retired=True,
+                    )
+            except BaseException as exc:
+                recovery_errors: list[str] = []
+                if retired_snapshot is not None:
+                    try:
+                        retired_snapshot.restore()
+                    except (OSError, RuntimeError, ValueError) as restore_exc:
+                        recovery_errors.append(f"agent recovery files: {restore_exc}")
+                if removed_record:
+                    try:
+                        agent_module._store_agent_record(alias, name, removed_record)
+                    except (OSError, RuntimeError, ValueError) as restore_exc:
+                        recovery_errors.append(f"saved agent record: {restore_exc}")
+                if retired_snapshot is not None:
+                    try:
+                        agent_module._record_agent_destroy_event(
+                            alias,
+                            name,
+                            terminal_state="partial",
+                            error="cleanup local retirement did not converge",
+                            identity=dict(terminal_event.get("identity") or {}),
+                            project_id=exact_project,
+                            identity_source="cleanup_exact_terminal_generation",
+                            terraform_graph_absent=True,
+                            iam_cleanup_complete=False,
+                            iam_disposition="verification_unresolved",
+                        )
+                    except (OSError, RuntimeError, ValueError) as receipt_exc:
+                        recovery_errors.append(
+                            f"unresolved receipt write: {receipt_exc}"
+                        )
                 phase = str(transaction.read().get("phase") or "")
                 if phase not in {"committed", "destroyed", "rolled-back"}:
                     transaction.transition(
                         "recovery-required",
                         error="exact local agent retirement did not converge",
                     )
-                return False, f"agent {name!r} local retirement failed: {exc}"
+                if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                    raise
+                detail = f"agent {name!r} local retirement failed: {exc}"
+                if recovery_errors:
+                    detail += "; recovery restoration failed: " + "; ".join(
+                        recovery_errors
+                    )
+                return False, detail
         try:
             present, detail = _agent_operational_state_present(alias, exact_project)
         except (OSError, RuntimeError, ValueError) as exc:
@@ -2389,18 +2521,58 @@ def cleanup_cmd(
                     receipt_alias, receipt_project_id, retire=False
                 )
             )
-        credentials_retirement_safe = bool(
-            (
-                unscoped_scope_verified_absent
-                if not receipt_project_id
-                else agent_retirement_safe
-            )
-            and not remaining_terraform
-        )
         phase_states = latest_phase_states(
             project_alias=receipt_alias,
             project_id=receipt_project_id,
             strict=True,
+        )
+        agent_retirement_prerequisites = bool(
+            receipt_project_id
+            and agent_operational_state_present
+            and agent_retirement_safe
+            and not remaining_terraform
+            and not cleanup_failed
+            and not iam_partial
+            and _cloud_cleanup_receipts_are_terminal(
+                phase_states,
+                allow_agent_local_retirement_pending=True,
+            )
+        )
+        if agent_retirement_prerequisites:
+            recovery_state_mutated = True
+            agent_retirement_safe, agent_retirement_detail = (
+                _agent_lifecycle_allows_project_retirement(
+                    receipt_alias, receipt_project_id, retire=True
+                )
+            )
+            if agent_retirement_safe:
+                try:
+                    (
+                        agent_operational_state_present,
+                        agent_operational_state_detail,
+                    ) = _agent_operational_state_present(
+                        receipt_alias, receipt_project_id
+                    )
+                except (OSError, RuntimeError, ValueError) as exc:
+                    agent_retirement_safe = False
+                    agent_operational_state_present = True
+                    agent_retirement_detail = (
+                        f"final agent local-state inventory failed: {exc}"
+                    )
+            if not agent_retirement_safe or agent_operational_state_present:
+                cleanup_failed = True
+            phase_states = latest_phase_states(
+                project_alias=receipt_alias,
+                project_id=receipt_project_id,
+                strict=True,
+            )
+        credentials_retirement_safe = bool(
+            (
+                unscoped_scope_verified_absent
+                if not receipt_project_id
+                else agent_retirement_safe and not agent_operational_state_present
+            )
+            and not remaining_terraform
         )
         cloud_absent = bool(
             unscoped_scope_verified_absent
@@ -2439,39 +2611,6 @@ def cleanup_cmd(
             credentials_retirement_safe
             and cloud_absent
             and not iam_partial
-            and not cleanup_failed
-        )
-        if (
-            convergence_safe
-            and receipt_project_id
-            and agent_operational_state_present
-        ):
-            recovery_state_mutated = True
-            agent_retirement_safe, agent_retirement_detail = (
-                _agent_lifecycle_allows_project_retirement(
-                    receipt_alias, receipt_project_id, retire=True
-                )
-            )
-            if agent_retirement_safe:
-                try:
-                    (
-                        agent_operational_state_present,
-                        agent_operational_state_detail,
-                    ) = _agent_operational_state_present(
-                        receipt_alias, receipt_project_id
-                    )
-                except (OSError, RuntimeError, ValueError) as exc:
-                    agent_retirement_safe = False
-                    agent_operational_state_present = True
-                    agent_retirement_detail = (
-                        f"final agent local-state inventory failed: {exc}"
-                    )
-            if not agent_retirement_safe or agent_operational_state_present:
-                cleanup_failed = True
-        convergence_safe = bool(
-            convergence_safe
-            and agent_retirement_safe
-            and not agent_operational_state_present
             and not cleanup_failed
         )
         if project_credential_residue_items and convergence_safe:

@@ -990,6 +990,7 @@ def teardown_event_authorizes_convergence(event: Mapping[str, Any]) -> bool:
             and str(identity.get("agent_name") or event.get("resource") or "")
             == str(event.get("resource") or "")
             and verification.get("exact_instance_absent") is True
+            and verification.get("local_state_retired") is True
             and verification.get("terraform_destroy_completed") is True
             and isinstance(graph, list)
             and _AGENT_TERRAFORM_GRAPH.issubset(graph)

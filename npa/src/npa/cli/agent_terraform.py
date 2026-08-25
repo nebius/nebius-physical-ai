@@ -478,6 +478,7 @@ def _record_agent_destroy_event(
     terraform_graph_absent: bool = False,
     iam_cleanup_complete: bool | None = None,
     iam_disposition: str = "",
+    local_state_retired: bool = False,
 ) -> None:
     """Persist agent destroy evidence outside the removable project record."""
 
@@ -506,6 +507,7 @@ def _record_agent_destroy_event(
     }
     if terminal_state in {"verified_deleted", "verified_absent"}:
         verification["exact_instance_absent"] = True
+        verification["local_state_retired"] = local_state_retired is True
         if terraform_graph_absent:
             verification.update(
                 {
