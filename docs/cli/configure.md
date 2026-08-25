@@ -27,6 +27,8 @@ Options
 --project-alias  <str>  Local NPA alias to write for the known project (prompt-free configure).
 --allow-visible-secret-input  Explicitly allow --interactive secret prompts on non-TTY stdin. Values may be visible; prefer --save-env-credentials for automation.
     Equivalent explicit opt-in: NPA_ALLOW_VISIBLE_SECRET_INPUT=1.
+--bucket-storage-class  <str>  Storage class for a newly created known-project bucket: standard, enhanced, or intelligent.
+--bucket-size-gb  <str>  GiB cap for a newly created known-project bucket; 0 means unlimited.
 --help  Show this message and exit.
 ```
 
@@ -46,6 +48,8 @@ Options
 | `--region` | <str>  Known Nebius project region for prompt-free configure. |
 | `--project-alias` | <str>  Local NPA alias to write for the known project (prompt-free configure). |
 | `--allow-visible-secret-input` | Explicitly allow --interactive secret prompts on non-TTY stdin. Values may be visible; prefer --save-env-credentials for automation. Equivalent explicit opt-in: NPA_ALLOW_VISIBLE_SECRET_INPUT=1. |
+| `--bucket-storage-class` | <str>  Storage class for a newly created known-project bucket: standard, enhanced, or intelligent. |
+| `--bucket-size-gb` | <str>  GiB cap for a newly created known-project bucket; 0 means unlimited. |
 | `--help` | Show this message and exit. |
 
 ## Subcommands
