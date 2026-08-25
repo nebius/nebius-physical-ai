@@ -315,6 +315,10 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
           format: table
+          # Trivy otherwise imposes its own five-minute deadline. Match the
+          # hosted runner's outer six-hour job ceiling so this gate adds no
+          # earlier time limit for large GPU images.
+          timeout: 6h0m0s
 
       - name: Generate pre-publication SBOM
         uses: aquasecurity/trivy-action@v0.36.0
@@ -323,6 +327,7 @@ jobs:
           scanners: vuln
           format: spdx-json
           output: ${{ runner.temp }}/${{ matrix.tool }}-sbom.spdx.json
+          timeout: 6h0m0s
 
       - uses: docker/login-action@v3
         with:

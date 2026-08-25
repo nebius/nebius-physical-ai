@@ -57,6 +57,9 @@ def test_source_base_uv_and_python_are_immutable() -> None:
     assert "https://github.com/facebookresearch/sam2.git" in text
     assert 'version("SAM-2") == "1.0"' in text
     assert "apt-get upgrade -y" in text
+    assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in text
+    assert "imageio_ffmpeg/binaries/ffmpeg*" in text
+    assert "imageio_ffmpeg.get_ffmpeg_exe()" in text
 
 
 def test_lfs_media_models_and_build_credentials_are_excluded() -> None:

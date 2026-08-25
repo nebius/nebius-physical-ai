@@ -121,6 +121,17 @@ def test_large_image_scan_reclaims_only_disposable_build_cache_and_tar() -> None
     assert 'rm -f "$RUNNER_TEMP/${TOOL}.tar"' in script
 
 
+def test_large_image_security_gates_have_no_early_scanner_deadline() -> None:
+    steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
+    trivy_steps = [
+        step
+        for step in steps
+        if step.get("uses") == "aquasecurity/trivy-action@v0.36.0"
+    ]
+    assert len(trivy_steps) == 2
+    assert all(step["with"]["timeout"] == "6h0m0s" for step in trivy_steps)
+
+
 def test_post_push_and_promotion_gates_are_digest_bound() -> None:
     text = PUBLISH.read_text(encoding="utf-8")
     for required in (
