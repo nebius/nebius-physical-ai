@@ -77,6 +77,7 @@ apt-get update
 apt-get install -y --no-install-recommends \
   ca-certificates \
   curl \
+  ffmpeg \
   git \
   git-lfs \
   libegl1 \
@@ -168,9 +169,27 @@ else
 fi
 
 log "OSS dependency closure for Isaac Sim / Isaac Lab"
+sed -E '/^imageio-ffmpeg==/d' "${COMMON_DIR}/isaac-oss-deps.txt" \
+  > /tmp/npa-isaac-oss-deps.txt
 "$ISAAC_VENV/bin/python" -m pip install --no-cache-dir \
   --no-deps \
-  -r "${COMMON_DIR}/isaac-oss-deps.txt"
+  -r /tmp/npa-isaac-oss-deps.txt
+# PyPI's ordinary imageio-ffmpeg wheel embeds a static FFmpeg executable. The
+# package itself is BSD-2-Clause, but that bundled executable is not admissible
+# in NPA's public image contract. Build its pure-Python wheel from the sdist and
+# route execution to Ubuntu's snapshot-pinned system FFmpeg instead.
+"$ISAAC_VENV/bin/python" -m pip install --no-cache-dir --no-deps \
+  --no-binary imageio-ffmpeg \
+  "imageio-ffmpeg==0.6.0"
+rm -f /tmp/npa-isaac-oss-deps.txt
+IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg "$ISAAC_VENV/bin/python" - <<'PY'
+import imageio_ffmpeg
+
+executable = imageio_ffmpeg.get_ffmpeg_exe()
+if executable != "/usr/bin/ffmpeg":
+    raise SystemExit(f"imageio-ffmpeg resolved unexpected executable: {executable}")
+PY
+test -z "$(find "$ISAAC_VENV" -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)"
 # wheel is a build tool, not part of the runtime. Removing it resolves the
 # otherwise impossible wheel>=24 / Isaac-Lab<24 packaging constraint without
 # weakening Isaac Lab's declared runtime contract.

@@ -39,3 +39,14 @@ def test_cosmos_reason_replaces_parent_npa_metadata_before_pip_check() -> None:
 def test_envgen_removes_unrelated_nonredistributable_parent_binary() -> None:
     text = (WORKBENCH / "sim2real-envgen/Dockerfile").read_text(encoding="utf-8")
     assert "pip uninstall -y transformers imageio-ffmpeg" in text
+
+
+def test_isaac_runtime_uses_system_ffmpeg_without_wheel_bundled_binary() -> None:
+    installer = (WORKBENCH / "common/install_isaac_runtime_base.sh").read_text(
+        encoding="utf-8"
+    )
+    dockerfile = (WORKBENCH / "isaac-lab/Dockerfile").read_text(encoding="utf-8")
+    assert "  ffmpeg \\" in installer
+    assert "--no-binary imageio-ffmpeg" in installer
+    assert "imageio_ffmpeg/binaries/ffmpeg*" in installer
+    assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile

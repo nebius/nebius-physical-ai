@@ -66,6 +66,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     OMNI_LOG_DIR=/tmp/isaac-sim-cache/logs \
     XDG_RUNTIME_DIR=/tmp/xdg-runtime \
     NVIDIA_DRIVER_CAPABILITIES=all \
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/opt/npa/src
 
