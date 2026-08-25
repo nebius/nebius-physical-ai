@@ -95,10 +95,27 @@ system_packages=(
 )
 if [ "$UBUNTU_SUITE" = jammy ]; then
   system_packages+=(linux-libc-dev=5.15.0-186.196)
+elif [ "$UBUNTU_SUITE" = noble ]; then
+  # Fixed for CVE-2026-53215 in the repository's immutable Noble snapshot.
+  # Keep the exact build here so a future base/snapshot change cannot silently
+  # reintroduce the vulnerable userspace headers.
+  system_packages+=(linux-libc-dev=6.8.0-138.138)
 else
   system_packages+=(linux-libc-dev)
 fi
 apt-get install -y --no-install-recommends "${system_packages[@]}"
+
+# CUDA's development base includes Nsight Compute, but Isaac Lab training neither
+# invokes nor needs it.  Its optional EFA metrics helper is a statically linked Go
+# binary inherited from the base and cannot be patched independently.  Remove the
+# owning packages (rather than deleting an untracked path) while retaining nvcc and
+# the CUDA development toolchain this image does need.
+if dpkg-query -W -f='${db:Status-Abbrev}' nsight-compute-2025.1.1 2>/dev/null \
+    | grep -q '^ii '; then
+  apt-get purge -y nsight-compute-2025.1.1 cuda-nsight-compute-12-8
+fi
+test ! -e /opt/nvidia/nsight-compute
+command -v nvcc >/dev/null
 
 # Isaac needs python3.11 exactly; Ubuntu 22.04 ships 3.10. Do not add the
 # moving deadsnakes apt repository. Fetch the reviewed version's immutable

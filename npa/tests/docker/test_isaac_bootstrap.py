@@ -676,9 +676,25 @@ def test_base_installer_upgrades_linux_headers_from_the_fixed_snapshot() -> None
     installer = BASE_INSTALLER.read_text(encoding="utf-8")
     assert 'UBUNTU_SNAPSHOT="${NPA_UBUNTU_SNAPSHOT:-20260801T053000Z}"' in installer
     assert "linux-libc-dev=5.15.0-186.196" in installer
+    assert "linux-libc-dev=6.8.0-138.138" in installer
     assert 'NPA_UBUNTU_SUITE:-jammy' in installer
     assert 'NPA_ISAAC_PYTHON_MINOR:-3.11' in installer
     assert '"$ISAAC_PYTHON_MINOR" = 3.12' in installer
+
+
+def test_isaac3_image_uses_fixed_noble_snapshot_and_removes_optional_nsight() -> None:
+    """The published image must not inherit either trusted-build critical CVE."""
+
+    dockerfile = (COMMON.parent / "isaac-lab" / "Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    installer = BASE_INSTALLER.read_text(encoding="utf-8")
+
+    assert "NPA_UBUNTU_SNAPSHOT=20260825T000000Z" in dockerfile
+    assert "linux-libc-dev=6.8.0-138.138" in installer
+    assert "apt-get purge -y nsight-compute-2025.1.1 cuda-nsight-compute-12-8" in installer
+    assert "test ! -e /opt/nvidia/nsight-compute" in installer
+    assert "command -v nvcc >/dev/null" in installer
 
 
 # --------------------------------------------------------------------------------------

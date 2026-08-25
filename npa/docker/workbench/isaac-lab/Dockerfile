@@ -99,6 +99,7 @@ RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && NPA_RUNTIME_USER="${NPA_RUNTIME_USER}" \
        NPA_ISAAC_VENV=/opt/npa/sim/venv \
+       NPA_UBUNTU_SNAPSHOT=20260825T000000Z \
        NPA_UBUNTU_SUITE=noble \
        NPA_ISAAC_PYTHON_MINOR=3.12 \
        TORCH_VERSION=2.11.0 \
