@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import subprocess
+import time
 
 import pytest
 
@@ -101,6 +103,59 @@ def test_capture_normalizes_launch_and_timeout_errors(tmp_path: Path) -> None:
         run_capture([str(tmp_path / "absent")])
     with pytest.raises(BackendCommandError, match="timed out"):
         run_capture(["/bin/sh", "-c", "sleep 2"], timeout=0.01)
+
+
+def test_stream_timeout_stops_descendant_process_group(tmp_path: Path) -> None:
+    pid_path = tmp_path / "child.pid"
+    with pytest.raises(BackendCommandError, match="timed out"):
+        run_stream(
+            [
+                "/bin/sh",
+                "-c",
+                f"sleep 30 & echo $! > {pid_path}; wait",
+            ],
+            timeout=0.2,
+        )
+    child_pid = int(pid_path.read_text())
+    for _ in range(50):
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            break
+        stat_path = Path(f"/proc/{child_pid}/stat")
+        try:
+            state = stat_path.read_text().split()[2]
+        except (FileNotFoundError, ProcessLookupError):
+            # The descendant exited between kill(0) and procfs inspection.
+            break
+        if state == "Z":
+            break
+        time.sleep(0.02)
+    else:
+        pytest.fail("stream timeout left a descendant process running")
+
+
+def test_default_stream_interrupt_stops_process_group(monkeypatch) -> None:
+    from io import StringIO
+
+    import npa.cluster_backends.process as process_module
+
+    class InterruptedProcess:
+        pid = 123
+        stdout = StringIO("")
+        stderr = StringIO("")
+
+        def wait(self, **_kwargs):  # noqa: ANN001
+            raise KeyboardInterrupt
+
+    process = InterruptedProcess()
+    stopped = []
+    monkeypatch.setattr(subprocess, "Popen", lambda *_a, **_k: process)
+    monkeypatch.setattr(process_module, "_stop_process", stopped.append)
+
+    with pytest.raises(KeyboardInterrupt):
+        run_stream(["terraform", "apply"])
+    assert stopped == [process]
 
 
 def test_explicit_executable_path_wins_over_path_lookup(tmp_path: Path) -> None:

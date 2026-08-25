@@ -38,6 +38,7 @@ import yaml  # type: ignore[import-untyped]
 from npa.cluster.gpu_driver import (
     DEFAULT_MANAGED_DRIVER_PRESET,
     GpuDriverStrategyError,
+    is_fabric_capable_topology,
     resolve_gpu_driver_strategy,
 )
 from npa.cluster.gpu_health import (
@@ -73,6 +74,7 @@ _MK8S_ENVELOPE_FIELDS = {
     "subnet_id",
     "filestore_mount_path",
     "filestore_mount_tag",
+    "filesystem_csi_chart_repository",
     "gpu_driver_mode",
     "managed_driver_preset",
     "allow_unsafe_nvswitch_operator",
@@ -149,6 +151,9 @@ class ClusterSpec:
     # cloud-init fstab entry must agree on one stable virtiofs tag and mount.
     filestore_mount_path: str = "/mnt/data"
     filestore_mount_tag: str = "data"
+    # Runtime/operator-supplied chart source. Keep private registry endpoints
+    # out of committed specs and never surface this value in plan JSON.
+    filesystem_csi_chart_repository: str = ""
     # Stable cross-path GPU driver contract. Auto selects Nebius's managed
     # driver-full node image for every requested GPU pool when the active recipe
     # supports it; operator is the explicit legacy/debug escape hatch.
@@ -207,9 +212,14 @@ class ClusterSpec:
         if self.enable_gpu_cluster is not None:
             return self.enable_gpu_cluster
         gpu = self.gpu_nodes
-        # GPU clustering (InfiniBand fabric) is only valid on fabric-capable
-        # 8-GPU SXM presets; auto-off otherwise so single-GPU presets deploy.
-        return bool(gpu and gpu.count > 0 and gpu.preset.startswith("8gpu-"))
+        return bool(
+            gpu
+            and gpu.count > 0
+            and is_fabric_capable_topology(
+                platform=gpu.platform,
+                preset=gpu.preset,
+            )
+        )
 
     def gpu_count(self) -> int:
         return self.gpu_nodes.count if self.gpu_nodes else 0
@@ -301,11 +311,17 @@ class ClusterSpec:
             )
         if self.resolved_enable_gpu_cluster():
             gpu = self.gpu_nodes
-            if not (gpu and gpu.preset.startswith("8gpu-")):
+            if not (
+                gpu
+                and is_fabric_capable_topology(
+                    platform=gpu.platform,
+                    preset=gpu.preset,
+                )
+            ):
                 preset = gpu.preset if gpu else ""
                 raise FleetSpecError(
-                    f"cluster {self.name!r}: enable_gpu_cluster requires an 8-GPU "
-                    f"preset (got {preset!r} if any)"
+                    f"cluster {self.name!r}: enable_gpu_cluster requires a "
+                    f"fabric-capable 8-GPU SXM/NVL preset (got {preset!r} if any)"
                 )
             if not self.infiniband_fabric:
                 raise FleetSpecError(
@@ -327,6 +343,11 @@ class ClusterSpec:
                 raise FleetSpecError(
                     f"cluster {self.name!r}: filestore_mount_tag must be a non-empty "
                     "value without whitespace or commas"
+                )
+            if any(ch.isspace() for ch in self.filesystem_csi_chart_repository):
+                raise FleetSpecError(
+                    f"cluster {self.name!r}: filesystem_csi_chart_repository must "
+                    "not contain whitespace"
                 )
         if (
             gpu
@@ -537,6 +558,9 @@ def _cluster_from(
         subnet_id=str(data.get("subnet_id", "") or ""),
         filestore_mount_path=str(data.get("filestore_mount_path", "/mnt/data") or ""),
         filestore_mount_tag=str(data.get("filestore_mount_tag", "data") or ""),
+        filesystem_csi_chart_repository=str(
+            data.get("filesystem_csi_chart_repository", "") or ""
+        ).strip(),
         gpu_driver_mode=str(data.get("gpu_driver_mode", "auto") or "auto"),
         managed_driver_preset=str(
             data.get("managed_driver_preset", DEFAULT_MANAGED_DRIVER_PRESET)

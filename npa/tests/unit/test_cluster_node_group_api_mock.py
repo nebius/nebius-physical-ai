@@ -10,6 +10,13 @@ from npa.cluster.config import NodeGroupConfig
 from npa.cluster.exceptions import ClusterError, NodeGroupNotFoundError
 
 
+@pytest.fixture(autouse=True)
+def _isolate_nebius_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep command-shape mocks independent of the operator's live profile."""
+    monkeypatch.delenv("NPA_NEBIUS_PROFILE", raising=False)
+    monkeypatch.delenv("NEBIUS_PROFILE", raising=False)
+
+
 def _result(payload: dict | None = None, *, returncode: int = 0, stderr: str = ""):
     return subprocess.CompletedProcess(
         args=["nebius"],

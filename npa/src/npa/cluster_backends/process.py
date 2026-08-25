@@ -144,23 +144,36 @@ def run_capture(
 
 
 def _stop_process(process: subprocess.Popen[str]) -> None:
+    def group_exists() -> bool:
+        try:
+            os.killpg(process.pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
     for signal_name, grace in (("interrupt", 30.0), ("terminate", 10.0)):
-        if process.poll() is not None:
+        if not group_exists():
             return
         try:
             if signal_name == "interrupt":
-                process.send_signal(signal.SIGINT)
+                os.killpg(process.pid, signal.SIGINT)
             else:
-                process.terminate()
+                os.killpg(process.pid, signal.SIGTERM)
         except OSError:
             return
         try:
             process.wait(timeout=grace)
-            return
         except subprocess.TimeoutExpired:
-            continue
-    if process.poll() is None:
-        process.kill()
+            pass
+        if not group_exists():
+            return
+    if group_exists():
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except OSError:
+            pass
 
 
 def run_stream(
@@ -184,6 +197,7 @@ def run_stream(
                 bufsize=1,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                start_new_session=True,
             )
         except OSError as exc:
             raise BackendCommandError(
@@ -228,6 +242,9 @@ def run_stream(
             raise BackendCommandError(
                 f"Command timed out after {timeout} seconds: {_command_text(args)}"
             ) from exc
+        except KeyboardInterrupt:
+            _stop_process(process)
+            raise
         finally:
             for reader in readers:
                 reader.join(timeout=5)
@@ -256,6 +273,7 @@ def run_stream(
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            start_new_session=True,
         )
     except OSError as exc:
         raise BackendCommandError(
