@@ -15,11 +15,21 @@ repo owns only infrastructure and orchestration.
 
 ## Prerequisites
 
+The [official Nebius CLI installer](https://docs.nebius.com/cli/install) supports
+Ubuntu and macOS. Install and verify the CLI:
+
 ```bash
-brew install nebius/tap/nebius   # Nebius CLI
-brew install jq                  # JSON parser
-brew install terraform           # Infrastructure
-nebius config init               # Authenticate
+curl -sSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
+exec -l "$SHELL"
+nebius version
+```
+
+Install [jq](https://jqlang.org/download/) and
+[Terraform 1.x](https://developer.hashicorp.com/terraform/install) for your
+operating system, then authenticate and create an SSH key if needed:
+
+```bash
+nebius profile create            # Authenticate
 ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519  # SSH key (if needed)
 ```
 
