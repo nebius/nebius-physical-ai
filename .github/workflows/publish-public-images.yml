@@ -265,10 +265,12 @@ jobs:
           if any(value in history for value in forbidden):
               raise SystemExit("cached EULA acceptance found in layer history")
           PY
-          docker save --output "$RUNNER_TEMP/${TOOL}.tar" "$IMAGE"
           npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
-            --tarball "$RUNNER_TEMP/${TOOL}.tar" \
+            --docker-image "$IMAGE" \
             --json "$RUNNER_TEMP/${TOOL}-payload.json"
+          if [[ "$TOOL" =~ ^(ltx2|wan2-2|cosmos3-serving)$ ]]; then
+            docker save --output "$RUNNER_TEMP/${TOOL}.tar" "$IMAGE"
+          fi
           if [ "$TOOL" = ltx2 ]; then
             npa/.venv/bin/python npa/scripts/scan_image_ltx_payload.py \
               --docker-save "$RUNNER_TEMP/${TOOL}.tar" \

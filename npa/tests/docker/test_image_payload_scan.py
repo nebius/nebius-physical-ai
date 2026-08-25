@@ -268,6 +268,44 @@ def test_oci_layout_tarball_scans_root_level_blob_layers(tmp_path: Path) -> None
     assert scanner.classify_path(paths[0])
 
 
+def test_streamed_docker_save_scans_nested_layers_without_seek() -> None:
+    layer_stream = io.BytesIO()
+    with tarfile.open(fileobj=layer_stream, mode="w") as layer:
+        member = tarfile.TarInfo("isaac-sim/kit/libcarb.so")
+        member.size = 3
+        layer.addfile(member, io.BytesIO(b"kit"))
+    image_stream = io.BytesIO()
+    with tarfile.open(fileobj=image_stream, mode="w") as outer:
+        payload = layer_stream.getvalue()
+        member = tarfile.TarInfo("blobs/sha256/exact-layer")
+        member.size = len(payload)
+        outer.addfile(member, io.BytesIO(payload))
+    image_stream.seek(0)
+
+    paths = list(scanner._iter_saved_image(image_stream, mode="r|*"))
+
+    assert "isaac-sim/kit/libcarb.so" in paths
+
+
+def test_local_docker_scan_combines_streamed_layers_and_history(monkeypatch) -> None:
+    monkeypatch.setattr(
+        scanner,
+        "_iter_docker_save",
+        lambda image: iter(["isaac-sim/kit/libcarb.so"]),
+    )
+    monkeypatch.setattr(
+        scanner,
+        "_local_image_history",
+        lambda image: ["RUN pip install isaacsim==6.0.1.0"],
+    )
+
+    report = scanner.scan(None, None, docker_image="local:test")
+
+    assert report.source == "local-docker-stream"
+    assert report.payload_hits
+    assert report.history_hits
+
+
 # --------------------------------------------------------------------------------------
 # Gated model weights are a separate licence axis from Omniverse Kit, and the workbench
 # rule is the same: never baked. The distinction that matters is a git-LFS POINTER (a
