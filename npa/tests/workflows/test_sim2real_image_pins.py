@@ -45,6 +45,7 @@ _STANDARD_WORKFLOW_PASSTHROUGH_DOCKERFILES = (
         ("DEFAULT_REFERENCE_POLICY_TAG", "reference-policy"),
         ("DEFAULT_TRAINER_TAG", "lerobot-vlm-rl"),
         ("DEFAULT_EVAL_TAG", "loop-eval"),
+        ("DEFAULT_ISAAC_TAG", "isaac-lab"),
     ],
 )
 def test_sim2real_constant_matches_supported_tool_version(
