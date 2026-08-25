@@ -476,6 +476,8 @@ def _record_agent_destroy_event(
     project_id: str = "",
     identity_source: str = "live_configuration",
     terraform_graph_absent: bool = False,
+    iam_cleanup_complete: bool | None = None,
+    iam_disposition: str = "",
 ) -> None:
     """Persist agent destroy evidence outside the removable project record."""
 
@@ -518,6 +520,11 @@ def _record_agent_destroy_event(
                     ],
                 }
             )
+    if terraform_graph_absent:
+        verification["iam_cleanup_complete"] = iam_cleanup_complete is True
+        verification["iam_disposition"] = (
+            str(iam_disposition or "verification_unresolved")
+        )
     record_teardown_event(
         phase="agent",
         resource=name,

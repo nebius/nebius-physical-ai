@@ -487,16 +487,22 @@ def test_receipts_filter_by_immutable_project_and_quarantine_corrupt_legacy(
     teardown_receipts.record_teardown_event(
         phase="cluster",
         resource="old",
-        terminal_state="completed",
+        terminal_state="verified_deleted",
         project_alias="reused",
         project_id="project-old",
+        identity={"cluster_id": "cluster-old"},
+        action={"kind": "terraform_full_cluster_destroy"},
+        verification={"terraform_destroy": "completed"},
     )
     teardown_receipts.record_teardown_event(
         phase="cluster",
         resource="new",
-        terminal_state="completed",
+        terminal_state="verified_deleted",
         project_alias="reused",
         project_id="project-new",
+        identity={"cluster_id": "cluster-new"},
+        action={"kind": "terraform_full_cluster_destroy"},
+        verification={"terraform_destroy": "completed"},
     )
     (root / "corrupt.json").write_text("not json")
 
@@ -552,6 +558,28 @@ def test_partial_agent_status_requires_exact_project_and_agent_receipt(
         terminal_state="verified_absent",
         project_alias="reused",
         project_id="project-new",
+        identity={
+            "project_id": "project-new",
+            "agent_name": "target",
+            "instance_id": "instance-new",
+        },
+        action={"kind": "terraform_agent_destroy", "purge_iam": True},
+        verification={
+            "exact_instance_absent": True,
+            "terraform_destroy_completed": True,
+            "terraform_dependency_graph": sorted(
+                {
+                    "compute_instance",
+                    "boot_disk",
+                    "network",
+                    "subnet",
+                    "security_group",
+                    "public_ip",
+                }
+            ),
+            "iam_cleanup_complete": True,
+            "iam_disposition": "deleted",
+        },
     )
     result = agent_status.partial_agent_status("reused", "target")
     assert result["classification"] == "VERIFIED_ABSENT"
@@ -592,7 +620,28 @@ def test_terminal_agent_receipt_overrides_only_older_successful_operations(
         terminal_state="verified_deleted",
         project_alias="demo",
         project_id="project-demo",
-        verification={"exact_instance_absent": True},
+        identity={
+            "project_id": "project-demo",
+            "agent_name": "agent",
+            "instance_id": "instance-demo",
+        },
+        action={"kind": "terraform_agent_destroy", "purge_iam": True},
+        verification={
+            "exact_instance_absent": True,
+            "terraform_destroy_completed": True,
+            "terraform_dependency_graph": sorted(
+                {
+                    "compute_instance",
+                    "boot_disk",
+                    "network",
+                    "subnet",
+                    "security_group",
+                    "public_ip",
+                }
+            ),
+            "iam_cleanup_complete": True,
+            "iam_disposition": "deleted",
+        },
     )
 
     terminal = agent_status.partial_agent_status("demo", "agent")
@@ -2124,7 +2173,11 @@ def test_cleanup_historical_agent_state_needs_exact_provider_absence(
         project_alias="demo",
         project_id="project-a",
         action={"kind": "exact_provider_check"},
-        verification={"provider_outcome": "verified_absent"},
+        identity={"service_account_id": "storage-iam-fixture"},
+        verification={
+            "provider_outcome": "verified_absent",
+            "exact_service_account_absent": True,
+        },
     )
     teardown_receipts.record_teardown_event(
         phase="agent",
@@ -2151,6 +2204,8 @@ def test_cleanup_historical_agent_state_needs_exact_provider_absence(
                 "security_group",
                 "public_ip",
             ],
+            "iam_cleanup_complete": True,
+            "iam_disposition": "deleted",
         },
     )
     tf_dir = provisioner.working_dir_path("demo", "agent")
@@ -3152,6 +3207,9 @@ def test_incident_end_to_end_recovers_iam_then_deletes_owned_project_from_receip
     )
     monkeypatch.setattr("npa.cli.agent_iam.remove_agent_iam_resource", lambda *_a: True)
     monkeypatch.setattr("npa.cli.agent_iam.clear_agent_iam_record", lambda *_a: True)
+    monkeypatch.setattr(
+        "npa.cli.agent_iam._provider_agent_dependents", lambda *_a: []
+    )
     report_agent_iam(
         project_id="project-a",
         remaining_agents=0,

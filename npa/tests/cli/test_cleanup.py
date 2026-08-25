@@ -252,13 +252,6 @@ def test_alias_free_full_cleanup_records_not_submitted_audit_for_exact_project(
         project_alias="project-a",
         project_id="project-a",
     )
-    teardown_receipts.record_teardown_event(
-        phase="workflow",
-        resource="planned-only",
-        terminal_state="verification_failed",
-        project_alias="project-a",
-        project_id="project-a",
-    )
     for phase, state, action, verification in (
         (
             "agent",
@@ -270,6 +263,8 @@ def test_alias_free_full_cleanup_records_not_submitted_audit_for_exact_project(
                 "terraform_dependency_graph": sorted(
                     cleanup_cli._AGENT_TERRAFORM_GRAPH
                 ),
+                "iam_cleanup_complete": True,
+                "iam_disposition": "deleted",
             },
         ),
         (
@@ -280,9 +275,12 @@ def test_alias_free_full_cleanup_records_not_submitted_audit_for_exact_project(
         ),
         (
             "storage_iam",
-            "completed",
+            "verified_absent",
             {"kind": "exact_provider_check"},
-            {"provider_outcome": "verified_absent"},
+            {
+                "provider_outcome": "verified_absent",
+                "exact_service_account_absent": True,
+            },
         ),
     ):
         teardown_receipts.record_teardown_event(
@@ -292,6 +290,17 @@ def test_alias_free_full_cleanup_records_not_submitted_audit_for_exact_project(
             project_id="project-a",
             action=action,
             verification=verification,
+            identity=(
+                {
+                    "project_id": "project-a",
+                    "agent_name": "agent-fixture",
+                    "instance_id": "instance-fixture",
+                }
+                if phase == "agent"
+                else {"service_account_id": "storage_iam-fixture"}
+                if phase == "storage_iam"
+                else {}
+            ),
         )
 
     result = runner.invoke(
@@ -339,15 +348,23 @@ def test_structured_equivalent_phase_supersedes_failed_sibling() -> None:
         },
         "agent": {
             "phase": "agent",
+            "resource": "agent-fixture",
             "sequence": 3,
             "terminal_state": "verified_deleted",
             "action": {"kind": "terraform_agent_destroy"},
+            "identity": {
+                "project_id": "project-a",
+                "agent_name": "agent-fixture",
+                "instance_id": "instance-fixture",
+            },
             "verification": {
                 "exact_instance_absent": True,
                 "terraform_destroy_completed": True,
                 "terraform_dependency_graph": sorted(
                     cleanup_cli._AGENT_TERRAFORM_GRAPH
                 ),
+                "iam_cleanup_complete": True,
+                "iam_disposition": "deleted",
             },
             "errors": [],
         },
@@ -361,10 +378,15 @@ def test_structured_equivalent_phase_supersedes_failed_sibling() -> None:
         },
         "storage_iam": {
             "phase": "storage_iam",
+            "resource": "storage-account-fixture",
             "sequence": 5,
-            "terminal_state": "completed",
+            "terminal_state": "verified_absent",
             "action": {"kind": "exact_provider_check"},
-            "verification": {"provider_outcome": "verified_absent"},
+            "identity": {"service_account_id": "storage-account-fixture"},
+            "verification": {
+                "provider_outcome": "verified_absent",
+                "exact_service_account_absent": True,
+            },
             "errors": [],
         },
     }
@@ -813,7 +835,7 @@ def test_cleanup_full_distinguishes_provider_verification_failure(
     assert credentials_module.CREDENTIALS_PATH.exists()
 
 
-def test_cleanup_full_prunes_provenance_after_verified_absence(
+def test_unscoped_cleanup_preserves_provenance_without_project_convergence(
     monkeypatch,
 ) -> None:
     from npa.clients import credentials as credentials_module
@@ -840,9 +862,9 @@ def test_cleanup_full_prunes_provenance_after_verified_absence(
 
     result = runner.invoke(app, ["cleanup", "--full", "--yes", "--skip-jobs"])
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code != 0, result.output
     assert "verified absence" in result.output
-    assert not credentials_module.CREDENTIALS_PATH.exists()
+    assert credentials_module.CREDENTIALS_PATH.exists()
 
 
 def test_full_check_clears_terminal_shared_storage_marker_without_name_search(
@@ -868,6 +890,12 @@ def test_full_check_clears_terminal_shared_storage_marker_without_name_search(
         project_id="project-a",
         identity={"service_account_id": "serviceaccount-storage"},
         action={"kind": "preserve_unowned_account_remove_npa_access"},
+        verification={
+            "provider_outcome": "retained_account_access_resolved",
+            "service_account_preserved": True,
+            "access_state_absent": True,
+            "retained_account_dependents_verified": True,
+        },
     )
     monkeypatch.setattr(
         storage_cli,
@@ -929,6 +957,12 @@ def test_full_check_does_not_clear_marker_after_newer_storage_iam_attempt(
         project_id="project-a",
         identity={"service_account_id": "serviceaccount-storage"},
         action={"kind": "preserve_unowned_account_remove_npa_access"},
+        verification={
+            "provider_outcome": "retained_account_access_resolved",
+            "service_account_preserved": True,
+            "access_state_absent": True,
+            "retained_account_dependents_verified": True,
+        },
     )
     teardown_receipts.record_teardown_event(
         phase="storage_iam",
@@ -1057,6 +1091,8 @@ def test_full_cleanup_accepts_atomic_terminal_receipts_and_forgets_exact_alias(
                 "terraform_dependency_graph": sorted(
                     cleanup_cli._AGENT_TERRAFORM_GRAPH
                 ),
+                "iam_cleanup_complete": True,
+                "iam_disposition": "deleted",
             },
         ),
         (
@@ -1067,9 +1103,12 @@ def test_full_cleanup_accepts_atomic_terminal_receipts_and_forgets_exact_alias(
         ),
         (
             "storage_iam",
-            "completed",
+            "verified_absent",
             {"kind": "exact_provider_check"},
-            {"provider_outcome": "verified_absent"},
+            {
+                "provider_outcome": "verified_absent",
+                "exact_service_account_absent": True,
+            },
         ),
     ):
         teardown_receipts.record_teardown_event(
@@ -1080,6 +1119,17 @@ def test_full_cleanup_accepts_atomic_terminal_receipts_and_forgets_exact_alias(
             project_id="project-a",
             action=action,
             verification=verification,
+            identity=(
+                {
+                    "project_id": "project-a",
+                    "agent_name": "agent-fixture",
+                    "instance_id": "instance-fixture",
+                }
+                if phase == "agent"
+                else {"service_account_id": "storage_iam-fixture"}
+                if phase == "storage_iam"
+                else {}
+            ),
         )
     monkeypatch.setattr(cleanup_cli, "_nonterminal_jobs", lambda _sky: ([], ""))
 
@@ -1113,6 +1163,7 @@ def test_cleanup_full_json_repeats_monotonically_while_iam_is_unresolved(
 ) -> None:
     import json
 
+    from npa import teardown_receipts
     from npa.clients import config as config_module
     from npa.clients import credentials as credentials_module
     from npa.clients import nebius as nebius_module
@@ -1139,8 +1190,57 @@ def test_cleanup_full_json_repeats_monotonically_while_iam_is_unresolved(
             account_id, "lerobot-training", "project-a", "tenant-a", ""
         ),
     )
+    for phase, resource, action, verification, identity in (
+        (
+            "agent",
+            "agent-fixture",
+            {"kind": "terraform_agent_destroy", "purge_iam": True},
+            {
+                "exact_instance_absent": True,
+                "terraform_destroy_completed": True,
+                "terraform_dependency_graph": sorted(
+                    cleanup_cli._AGENT_TERRAFORM_GRAPH
+                ),
+                "iam_cleanup_complete": True,
+                "iam_disposition": "deleted",
+            },
+            {
+                "project_id": "project-a",
+                "agent_name": "agent-fixture",
+                "instance_id": "instance-fixture",
+            },
+        ),
+        (
+            "bucket",
+            "bucket-fixture",
+            {"kind": "none"},
+            {"bucket_absent": True},
+            {},
+        ),
+    ):
+        teardown_receipts.record_teardown_event(
+            phase=phase,
+            resource=resource,
+            terminal_state=(
+                "verified_deleted" if phase == "agent" else "verified_absent"
+            ),
+            project_alias="prod",
+            project_id="project-a",
+            action=action,
+            verification=verification,
+            identity=identity,
+        )
+    monkeypatch.setattr(cleanup_cli, "_nonterminal_jobs", lambda _sky: ([], ""))
 
-    command = ["cleanup", "--full", "--yes", "--skip-jobs", "--json"]
+    command = [
+        "cleanup",
+        "--project",
+        "prod",
+        "--full",
+        "--yes",
+        "--keep-sky",
+        "--json",
+    ]
     first = runner.invoke(app, command)
     second = runner.invoke(app, command)
 
@@ -1191,6 +1291,19 @@ def test_cleanup_full_json_repeats_monotonically_while_iam_is_unresolved(
     monkeypatch.setattr(
         nebius_module, "get_service_account_identity", lambda *_args, **_kwargs: None
     )
+    teardown_receipts.record_teardown_event(
+        phase="storage_iam",
+        resource="serviceaccount-storage",
+        terminal_state="verified_absent",
+        project_alias="prod",
+        project_id="project-a",
+        identity={"service_account_id": "serviceaccount-storage"},
+        action={"kind": "exact_provider_check"},
+        verification={
+            "provider_outcome": "verified_absent",
+            "exact_service_account_absent": True,
+        },
+    )
     resolved = runner.invoke(app, command)
     assert resolved.exit_code == 0, resolved.output
     resolved_payload = json.loads(resolved.output)
@@ -1208,5 +1321,9 @@ def test_cleanup_full_json_repeats_monotonically_while_iam_is_unresolved(
         if phase["resource"] == "local caches and known credentials"
     )
     assert local_phase["operator_action_required"] is False
-    config = yaml.safe_load(config_module.CONFIG_PATH.read_text())
-    assert "storage_iam_verification_required" not in config["projects"]["prod"]
+    config = (
+        yaml.safe_load(config_module.CONFIG_PATH.read_text()) or {}
+        if config_module.CONFIG_PATH.exists()
+        else {}
+    )
+    assert "prod" not in (config.get("projects") or {})

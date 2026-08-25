@@ -5,7 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from npa.provisioning_journal import list_operations
-from npa.teardown_receipts import TERMINAL_STATES, list_teardown_receipts
+from npa.teardown_receipts import (
+    latest_resource_generation_events,
+    teardown_event_authorizes_convergence,
+)
 
 
 def _verify_created_resources(
@@ -112,31 +115,52 @@ def partial_agent_status(project: str, name: str) -> dict[str, Any]:
         default="",
     )
     if project_id:
-        for receipt in list_teardown_receipts(project_id=project_id, legacy="exclude"):
-            for event in reversed(receipt.get("events") or []):
-                if not isinstance(event, dict):
-                    continue
-                if str(event.get("phase") or "") != "agent":
-                    continue
-                if str(event.get("resource") or "") != name:
-                    continue
-                terminal = str(event.get("terminal_state") or "").lower()
-                recorded_at = str(event.get("recorded_at") or "")
-                if terminal in TERMINAL_STATES and (
-                    not newest_operation_at or recorded_at > newest_operation_at
-                ):
-                    return {
-                        "project": project,
-                        "project_id": project_id,
-                        "name": name,
-                        "classification": "VERIFIED_ABSENT",
-                        "receipt_id": str(receipt.get("receipt_id") or ""),
-                        "phase": terminal,
-                        "lifecycle": "succeeded",
-                        "resources": [],
-                        "recovery": {},
-                        "current_verification": "terminal_exact_agent_receipt",
-                    }
+        receipt_events = latest_resource_generation_events(
+            project_id=project_id,
+            phase="agent",
+            resource=name,
+            strict=True,
+        )
+        exact_events: list[dict[str, Any]] = []
+        for event in receipt_events:
+            identity = event.get("identity")
+            identity = identity if isinstance(identity, dict) else {}
+            if (
+                identity.get("project_id") != project_id
+                or identity.get("agent_name") != name
+                or not isinstance(identity.get("instance_id"), str)
+                or not str(identity.get("instance_id") or "").strip()
+            ):
+                exact_events = []
+                break
+            exact_events.append(event)
+        if (
+            exact_events
+            and all(teardown_event_authorizes_convergence(event) for event in exact_events)
+            and all(
+                str(event.get("recorded_at") or "")
+                and (
+                    not newest_operation_at
+                    or str(event.get("recorded_at") or "") > newest_operation_at
+                )
+                for event in exact_events
+            )
+        ):
+            newest = max(
+                exact_events, key=lambda event: str(event.get("recorded_at") or "")
+            )
+            return {
+                "project": project,
+                "project_id": project_id,
+                "name": name,
+                "classification": "VERIFIED_ABSENT",
+                "receipt_id": str(newest.get("_receipt_id") or ""),
+                "phase": str(newest.get("terminal_state") or "").lower(),
+                "lifecycle": "succeeded",
+                "resources": [],
+                "recovery": {},
+                "current_verification": "terminal_exact_agent_receipt",
+            }
     if operations:
         summary = operations[0].recovery_summary()
         phase = str(summary.get("phase") or "")

@@ -34,8 +34,9 @@ class DecodedAgentRecord:
     detail: str = ""
 
 
-def resolve_project_agents(project_alias: str) -> dict[str, Any]:
-    projects = list_projects()
+def _project_agents_from_snapshot(
+    projects: Mapping[str, Any], project_alias: str
+) -> dict[str, Any]:
     if project_alias not in projects:
         return {}
     project = projects[project_alias]
@@ -53,10 +54,20 @@ def resolve_project_agents(project_alias: str) -> dict[str, Any]:
     return dict(agents)
 
 
+def resolve_project_agents(project_alias: str) -> dict[str, Any]:
+    return _project_agents_from_snapshot(list_projects(), project_alias)
+
+
 def decode_agent_record(project_alias: str, name: str) -> DecodedAgentRecord:
     """Decode one record without collapsing invalid presence into absence."""
 
-    records = resolve_project_agents(project_alias)
+    projects = list_projects()
+    parent = projects.get(project_alias)
+    if parent is not None and not isinstance(parent, Mapping):
+        raise AgentRecordError(
+            f"project {project_alias!r} is present but schema-invalid"
+        )
+    records = _project_agents_from_snapshot(projects, project_alias)
     if name not in records:
         return DecodedAgentRecord(AgentRecordState.ABSENT, False, {})
     raw = records[name]
@@ -92,6 +103,21 @@ def decode_agent_record(project_alias: str, name: str) -> DecodedAgentRecord:
                 record,
                 f"required immutable field {field!r} is missing or invalid",
             )
+    parent_project_id = parent.get("project_id") if isinstance(parent, Mapping) else None
+    if not isinstance(parent_project_id, str) or not parent_project_id.strip():
+        return DecodedAgentRecord(
+            AgentRecordState.INVALID,
+            True,
+            record,
+            "parent project stanza has no valid immutable project_id",
+        )
+    if record["project_id"].strip() != parent_project_id.strip():
+        return DecodedAgentRecord(
+            AgentRecordState.CONFLICTING,
+            True,
+            record,
+            "immutable project_id conflicts with the parent project stanza",
+        )
     contextual = (("project_alias", project_alias), ("name", name))
     for field, expected in contextual:
         if field not in record:

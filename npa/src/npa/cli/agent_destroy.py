@@ -603,6 +603,8 @@ def destroy_cmd(
                 project_id=exact_project,
                 identity_source=identity.source,
                 terraform_graph_absent=True,
+                iam_cleanup_complete=False,
+                iam_disposition="verification_unresolved",
             )
             _emit(
                 {
@@ -624,6 +626,9 @@ def destroy_cmd(
             project_id=exact_project,
             identity_source=identity.source,
             terraform_graph_absent=True,
+            purge_iam=purge_iam,
+            iam_cleanup_complete=iam_disposition in {"absent", "deleted"},
+            iam_disposition=iam_disposition,
         )
         _emit(
             {
@@ -872,6 +877,9 @@ def destroy_cmd(
         project_id=exact_project,
         identity_source=identity.source,
         terraform_graph_absent=True,
+        purge_iam=purge_iam,
+        iam_cleanup_complete=False,
+        iam_disposition="pending",
     )
     iam_error = ""
     iam_disposition = "not_applicable"
@@ -893,6 +901,9 @@ def destroy_cmd(
                 project_id=exact_project,
                 identity_source=identity.source,
                 terraform_graph_absent=True,
+                purge_iam=purge_iam,
+                iam_cleanup_complete=False,
+                iam_disposition="verification_unresolved",
             )
     # The exact agent's infrastructure has already been provider-verified absent.
     # Shared project IAM may intentionally remain while other agents depend on it;
@@ -913,6 +924,18 @@ def destroy_cmd(
             output_json=output_json,
         )
         raise typer.Exit(code=2)
+    agent_module._record_agent_destroy_event(
+        alias,
+        name,
+        terminal_state="verified_deleted",
+        identity=identity.values,
+        project_id=exact_project,
+        identity_source=identity.source,
+        terraform_graph_absent=True,
+        purge_iam=purge_iam,
+        iam_cleanup_complete=iam_disposition in {"absent", "deleted"},
+        iam_disposition=iam_disposition,
+    )
     _emit(
         {
             **identity.to_dict(),

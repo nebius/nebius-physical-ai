@@ -156,6 +156,8 @@ def test_final_audit_uses_receipts_after_config_and_resources_are_removed(
                 "terraform_dependency_graph": sorted(
                     cleanup_cli._AGENT_TERRAFORM_GRAPH
                 ),
+                "iam_cleanup_complete": True,
+                "iam_disposition": "deleted",
             },
         ),
         "cluster": (
@@ -186,6 +188,17 @@ def test_final_audit_uses_receipts_after_config_and_resources_are_removed(
             terminal_state=state,
             action=action,
             verification=verification,
+            identity=(
+                {
+                    "project_id": "project-fixture",
+                    "agent_name": "agent-fixture",
+                    "instance_id": "instance-fixture",
+                }
+                if phase == "agent"
+                else {"cluster_id": "cluster-fixture"}
+                if phase == "cluster"
+                else {}
+            ),
         )
     monkeypatch.setattr(
         cleanup_cli,

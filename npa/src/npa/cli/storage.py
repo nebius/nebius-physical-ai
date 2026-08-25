@@ -886,28 +886,9 @@ def _observe_storage_iam(
             latest = max(
                 matching, key=lambda item: int(item.get("sequence") or 0)
             )
-            verification = latest.get("verification")
-            verification = verification if isinstance(verification, dict) else {}
-            action = latest.get("action")
-            action = action if isinstance(action, dict) else {}
-            errors = latest.get("errors")
-            if (
-                str(latest.get("terminal_state") or "").lower()
-                in {"verified_absent", "verified_deleted"}
-                and action.get("kind")
-                in {
-                    "delete_npa_owned_service_account",
-                    "exact_provider_check",
-                    "none",
-                    "remove_verified_absent_local_evidence",
-                }
-                and isinstance(errors, list)
-                and not errors
-                and (
-                    verification.get("provider_outcome") == "verified_absent"
-                    or verification.get("exact_service_account_absent") is True
-                )
-            ):
+            from npa.teardown_receipts import teardown_event_authorizes_convergence
+
+            if teardown_event_authorizes_convergence(latest):
                 return _StorageIamObservation(
                     outcome="verified_absent",
                     context=context,
@@ -1119,7 +1100,10 @@ def _persist_storage_iam_observation(observation: _StorageIamObservation) -> Non
             },
             precheck={"identity_source": observation.context.identity_source},
             action={"kind": "exact_provider_check", "mutation": False},
-            verification={"provider_outcome": observation.outcome},
+            verification={
+                "provider_outcome": observation.outcome,
+                "exact_service_account_absent": observation.verified_absent,
+            },
             errors=[observation.detail]
             if observation.outcome == "verification_failed"
             else [],
@@ -1195,6 +1179,29 @@ def _record_storage_iam_teardown(
 ) -> None:
     from npa.teardown_receipts import record_teardown_event
 
+    verification: dict[str, object] = {"provider_outcome": observation.outcome}
+    if action in {"none", "exact_provider_check", "remove_verified_absent_local_evidence"}:
+        verification["exact_service_account_absent"] = observation.verified_absent
+    elif action == "delete_npa_owned_service_account":
+        verification.update(
+            {
+                "provider_outcome": observation.outcome,
+                "exact_service_account_absent": observation.verified_absent,
+                "access_keys_absent": observation.verified_absent,
+                "local_recovery_retired": observation.verified_absent,
+            }
+        )
+    elif action == "preserve_unowned_account_remove_npa_access":
+        verification.update(
+            {
+                "provider_outcome": "retained_account_access_resolved",
+                "service_account_preserved": observation.present,
+                "access_state_absent": observation.retained_account_access_resolved,
+                "retained_account_dependents_verified": (
+                    observation.retained_account_access_resolved
+                ),
+            }
+        )
     record_teardown_event(
         phase="storage_iam",
         resource=observation.account_id or observation.account_name or "storage-iam",
@@ -1216,7 +1223,7 @@ def _record_storage_iam_teardown(
             "account_id": observation.account_id,
         },
         action={"kind": action},
-        verification={"provider_outcome": observation.outcome},
+        verification=verification,
         errors=errors,
     )
 
@@ -1604,6 +1611,7 @@ def delete_service_account_cmd(
         delete_access_permit,
         delete_group,
         delete_service_account,
+        get_service_account_identity,
         is_not_found,
         list_access_keys_for_service_account,
     )
@@ -1727,6 +1735,24 @@ def delete_service_account_cmd(
             if output_json:
                 typer.echo(json.dumps(payload, indent=2, sort_keys=True))
             raise typer.Exit(code=1)
+        postcheck = _observe_storage_iam(context)
+        if not postcheck.retained_account_access_resolved:
+            _record_storage_iam_teardown(
+                postcheck,
+                terminal_state="verification_failed",
+                action="preserve_unowned_account_remove_npa_access",
+                errors=(
+                    "exact retained-account access post-delete verification did not converge",
+                ),
+            )
+            _partial_cleanup(
+                "access cleanup returned, but exact retained-account verification "
+                "did not prove all NPA-created access state absent; local recovery "
+                "evidence was preserved.",
+                output_json=output_json,
+                payload=payload,
+            )
+        observation = postcheck
         if not _remove_storage_service_account_record(observation.account_id):
             _partial_cleanup(
                 "provider access state is absent, but the exact local storage "
@@ -1991,6 +2017,12 @@ def delete_service_account_cmd(
             output_json=output_json,
             payload=payload,
         )
+    if not isinstance(keys, list) or any(not isinstance(key, dict) for key in keys):
+        _partial_cleanup(
+            "access-key inventory returned invalid schema; nothing was deleted.",
+            output_json=output_json,
+            payload=payload,
+        )
     mismatched_keys = [
         str((key or {}).get("id", "") or "").strip() or "<missing-id>"
         for key in keys
@@ -2007,7 +2039,13 @@ def delete_service_account_cmd(
             payload=payload,
         )
     key_ids = [str((key or {}).get("id", "") or "").strip() for key in keys]
-    key_ids = [key_id for key_id in key_ids if key_id]
+    if any(not key_id for key_id in key_ids) or len(key_ids) != len(set(key_ids)):
+        _partial_cleanup(
+            "access-key inventory has missing or duplicate immutable identities; "
+            "nothing was deleted.",
+            output_json=output_json,
+            payload=payload,
+        )
     if dry_run:
         payload.update(
             {
@@ -2057,7 +2095,41 @@ def delete_service_account_cmd(
                 )
         else:
             progress(f"Deleted access key {key_id}.")
-    if record.binding_managed_by_npa:
+    if not failed:
+        try:
+            remaining_keys = list_access_keys_for_service_account(
+                record.project_id,
+                record.account_id,
+                strict=True,
+                profile=context.profile,
+            )
+        except NebiusError as exc:
+            failed = True
+            progress(
+                "Warning: access-key post-delete inventory is unresolved: " + str(exc),
+                err=True,
+            )
+        else:
+            remaining_ids = [
+                str(item.get("id") or "").strip()
+                for item in remaining_keys
+                if isinstance(item, dict)
+                and str(item.get("service_account_id") or "").strip()
+                == record.account_id
+            ]
+            if (
+                len(remaining_ids) != len(remaining_keys)
+                or any(not key_id for key_id in remaining_ids)
+                or len(remaining_ids) != len(set(remaining_ids))
+                or remaining_ids
+            ):
+                failed = True
+                progress(
+                    "Warning: authoritative post-delete key inventory is not empty "
+                    "or is schema-invalid; service-account deletion was blocked.",
+                    err=True,
+                )
+    if not failed and record.binding_managed_by_npa:
         permit_deleted = True
         try:
             delete_access_permit(record.access_permit_id, **profile_kwargs)
@@ -2081,65 +2153,63 @@ def delete_service_account_cmd(
                         f"{record.group_id}: {exc}",
                         err=True,
                     )
-    try:
-        delete_service_account(record.account_id, **profile_kwargs)
-    except NebiusError as exc:
-        if is_not_found(exc):
-            progress(
-                f"Verified absence: NPA-owned service account {record.name} "
-                f"({record.account_id}) is already absent."
+    account_delete_not_found = False
+    if not failed:
+        try:
+            delete_service_account(record.account_id, **profile_kwargs)
+        except NebiusError as exc:
+            if is_not_found(exc):
+                account_delete_not_found = True
+            else:
+                failed = True
+                progress(
+                    "Warning: exact service-account deletion failed: " + str(exc),
+                    err=True,
+                )
+    provider_absent = False
+    if not failed:
+        try:
+            remaining_account = get_service_account_identity(
+                record.account_id,
+                project_id=record.project_id,
+                tenant_id=context.tenant_id,
+                expected_name=record.name,
+                profile=context.profile or None,
             )
-            if not _remove_storage_service_account_record(record.account_id):
-                failed = True
-                progress(
-                    "Warning: the stale local service-account ownership record could "
-                    "not be removed; retry after fixing its file permissions.",
-                    err=True,
-                )
-            try:
-                from npa.clients.config import clear_storage_iam_residue
-
-                if context.alias:
-                    clear_storage_iam_residue(
-                        context.alias, account_id=record.account_id
-                    )
-            except ConfigError as marker_exc:
-                failed = True
-                progress(
-                    f"Warning: exact IAM absence was verified, but its residue marker "
-                    f"could not be cleared: {marker_exc}",
-                    err=True,
-                )
-        else:
+        except NebiusError as exc:
             failed = True
             progress(
-                f"Warning: could not delete NPA-owned service account {record.account_id}: {exc}",
+                "Warning: exact service-account post-delete verification is "
+                f"unresolved: {exc}",
                 err=True,
             )
-    else:
-        progress(
-            f"Verified deletion: NPA-owned service account {record.name} "
-            f"({record.account_id}) was deleted."
-        )
-        deleted_observation = _StorageIamObservation(
-            outcome="verified_absent",
-            context=context,
-            account_id=record.account_id,
-            account_name=record.name,
-            ownership="npa",
-            detail="provider delete completed",
-        )
-        _record_storage_iam_teardown(
-            deleted_observation,
-            terminal_state="verified_deleted",
-            action="delete_npa_owned_service_account",
-            access_key_ids=tuple(key_ids),
-        )
+        else:
+            provider_absent = remaining_account is None
+            if not provider_absent:
+                failed = True
+                progress(
+                    "Warning: provider still reports the exact service account after "
+                    "deletion; local ownership evidence was preserved.",
+                    err=True,
+                )
+    deleted_observation = _StorageIamObservation(
+        outcome="verified_absent" if provider_absent else "verification_failed",
+        context=context,
+        account_id=record.account_id,
+        account_name=record.name,
+        ownership="npa",
+        detail=(
+            "exact provider post-delete readback returned NotFound"
+            if provider_absent
+            else "exact provider post-delete absence was not verified"
+        ),
+    )
+    if provider_absent:
         if not _remove_storage_service_account_record(record.account_id):
             failed = True
             progress(
                 "Warning: the service account is gone, but its local ownership record "
-                "could not be removed; retry after fixing its file permissions.",
+                "could not be removed; retry after fixing file permissions.",
                 err=True,
             )
         try:
@@ -2150,10 +2220,31 @@ def delete_service_account_cmd(
         except ConfigError as exc:
             failed = True
             progress(
-                f"Warning: the service account is gone, but IAM residue could not "
-                f"be cleared: {exc}",
+                "Warning: provider IAM is absent, but local residue could not be "
+                f"cleared: {exc}",
                 err=True,
             )
+    if provider_absent and not failed:
+        _record_storage_iam_teardown(
+            deleted_observation,
+            terminal_state="verified_deleted",
+            action="delete_npa_owned_service_account",
+            access_key_ids=tuple(key_ids),
+        )
+        progress(
+            f"Verified {'absence' if account_delete_not_found else 'deletion'}: "
+            f"NPA-owned service account {record.name} ({record.account_id}) "
+            f"{'is already absent' if account_delete_not_found else 'was deleted'}; "
+            "exact absence was read back."
+        )
+    elif failed:
+        _record_storage_iam_teardown(
+            deleted_observation,
+            terminal_state="verification_failed",
+            action="delete_npa_owned_service_account",
+            errors=("storage IAM deletion or exact post-delete verification failed",),
+            access_key_ids=tuple(key_ids),
+        )
     if failed:
         if output_json:
             payload["result"] = "partial"

@@ -1221,6 +1221,26 @@ def test_agent_iam_nonmapping_inventory_never_deletes(
     assert deleted == []
 
 
+def _verified_direct_agent_iam_inventory(monkeypatch):  # noqa: ANN001, ANN202
+    inventory = {
+        "project_id": "project-a",
+        "service_account_id": "serviceaccount-agent",
+        "service_account_name": "npa-agent",
+        "access_keys": [{"id": "accesskey-agent"}],
+        "owned_by_npa": True,
+        "inventory_verified": True,
+        "inventory_error": "",
+        "dependents": [],
+    }
+    monkeypatch.setattr(
+        "npa.cli.agent_iam.agent_iam_leftovers", lambda _project: inventory
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent_iam._provider_agent_dependents", lambda *_args: []
+    )
+    return inventory
+
+
 def test_agent_iam_key_postcheck_survival_blocks_account_and_journal_removal(
     monkeypatch,
 ) -> None:
@@ -1250,12 +1270,7 @@ def test_agent_iam_key_postcheck_survival_blocks_account_and_journal_removal(
 
     with pytest.raises(AgentIAMCleanupError, match="still reports deleted access"):
         purge_agent_iam(
-            {
-                "project_id": "project-a",
-                "service_account_id": "serviceaccount-agent",
-                "service_account_name": "npa-agent",
-                "access_keys": [{"id": "accesskey-agent"}],
-            },
+            _verified_direct_agent_iam_inventory(monkeypatch),
             on_status=lambda _message: None,
         )
 
@@ -1293,12 +1308,7 @@ def test_agent_iam_key_postcheck_invalid_schema_blocks_account_retirement(
 
     with pytest.raises(AgentIAMCleanupError, match="post-delete verification"):
         purge_agent_iam(
-            {
-                "project_id": "project-a",
-                "service_account_id": "serviceaccount-agent",
-                "service_account_name": "npa-agent",
-                "access_keys": [{"id": "accesskey-agent"}],
-            },
+            _verified_direct_agent_iam_inventory(monkeypatch),
             on_status=lambda _message: None,
         )
 
@@ -1341,12 +1351,7 @@ def test_agent_iam_account_postcheck_survival_keeps_owner_record(
 
     with pytest.raises(AgentIAMCleanupError, match="still reports service account"):
         purge_agent_iam(
-            {
-                "project_id": "project-a",
-                "service_account_id": "serviceaccount-agent",
-                "service_account_name": "npa-agent",
-                "access_keys": [{"id": "accesskey-agent"}],
-            },
+            _verified_direct_agent_iam_inventory(monkeypatch),
             on_status=lambda _message: None,
         )
 
@@ -1372,12 +1377,7 @@ def test_agent_iam_local_key_record_failure_blocks_account_delete(monkeypatch) -
 
     with pytest.raises(AgentIAMCleanupError, match="local key ownership"):
         purge_agent_iam(
-            {
-                "project_id": "project-a",
-                "service_account_id": "serviceaccount-agent",
-                "service_account_name": "npa-agent",
-                "access_keys": [{"id": "accesskey-agent"}],
-            },
+            _verified_direct_agent_iam_inventory(monkeypatch),
             on_status=lambda _message: None,
         )
 
@@ -1404,12 +1404,7 @@ def test_agent_iam_generic_not_found_text_is_failure_and_redacted(
 
     with pytest.raises(AgentIAMCleanupError) as raised:
         purge_agent_iam(
-            {
-                "project_id": "project-a",
-                "service_account_id": "serviceaccount-agent",
-                "service_account_name": "npa-agent",
-                "access_keys": [{"id": "accesskey-agent"}],
-            },
+            _verified_direct_agent_iam_inventory(monkeypatch),
             on_status=lambda _message: None,
         )
 

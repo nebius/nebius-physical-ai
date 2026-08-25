@@ -172,6 +172,9 @@ def test_prune_is_explicit_age_gated_and_preserves_uncertainty(
         resource="cluster-demo",
         terminal_state="verified_deleted",
         project_alias="terminal",
+        identity={"cluster_id": "cluster-demo"},
+        action={"kind": "terraform_full_cluster_destroy"},
+        verification={"terraform_destroy": "completed"},
     )
     unresolved = receipts.record_teardown_event(
         phase="controller",

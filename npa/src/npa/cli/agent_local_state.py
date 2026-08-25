@@ -35,7 +35,7 @@ def cleanup_agent_local_files(
     from npa.deploy import provisioner
 
     tf_dir = provisioner.working_dir_path(project_alias, name)
-    targets = ((agent_dir, agent_root), (tf_dir, tf_dir.parent.parent))
+    targets = ((tf_dir, tf_dir.parent.parent), (agent_dir, agent_root))
     for target, root in targets:
         try:
             if not target.resolve(strict=False).is_relative_to(root.resolve()):
@@ -46,11 +46,13 @@ def cleanup_agent_local_files(
             raise AgentLocalRetirementError(
                 f"could not verify agent local-state path {target}: {exc}"
             ) from exc
+        if os.path.lexists(target) and (target.is_symlink() or not target.is_dir()):
+            raise AgentLocalRetirementError(
+                f"agent local-state path is not a regular directory: {target}"
+            )
+
+    def retire_directory(target: Path) -> None:
         if os.path.lexists(target):
-            if target.is_symlink() or not target.is_dir():
-                raise AgentLocalRetirementError(
-                    f"agent local-state path is not a regular directory: {target}"
-                )
             try:
                 shutil.rmtree(target)
             except OSError as exc:
@@ -61,6 +63,11 @@ def cleanup_agent_local_files(
             raise AgentLocalRetirementError(
                 f"agent local-state path remains after retirement: {target}"
             )
+
+    # Terraform and durable operation evidence must converge before the auth
+    # directory is removed. Any injected or real failure therefore preserves
+    # credentials and the remaining recovery material.
+    retire_directory(tf_dir)
 
     if operation_ids:
         from npa.provisioning_journal import OperationJournalError, load_operation
@@ -82,6 +89,8 @@ def cleanup_agent_local_files(
                 raise AgentLocalRetirementError(
                     f"could not retire exact operation state {operation_id}: {exc}"
                 ) from exc
+
+    retire_directory(agent_dir)
 
     # Empty alias parents are residue too. A sibling keeps the parent non-empty.
     for parent in (agent_dir.parent, tf_dir.parent):
