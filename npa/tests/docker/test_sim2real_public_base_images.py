@@ -27,3 +27,10 @@ def test_sim2real_gpu_overlays_use_immutable_public_bases() -> None:
             "ghcr.io/nebius/nebius-physical-ai/"
         ), dockerfile
         assert re.search(r"@sha256:[0-9a-f]{64}$", base), dockerfile
+
+
+def test_cosmos_reason_replaces_parent_npa_metadata_before_pip_check() -> None:
+    text = (WORKBENCH / "cosmos3-reason/Dockerfile").read_text(encoding="utf-8")
+    assert text.index("python -m pip uninstall -y npa") < text.index(
+        "python -m pip check"
+    )

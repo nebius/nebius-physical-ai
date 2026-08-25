@@ -38,12 +38,16 @@ COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh \
 USER root
 
 # Do not recursively chown the inherited /opt/npa/venv: overlayfs would copy
-# the complete CUDA/PyTorch environment into this child layer.
+# the complete CUDA/PyTorch environment into this child layer. The public
+# parent also carries its historical editable NPA distribution; this child
+# supplies an exact-source .pth, so remove stale package metadata before pip
+# check instead of inheriting dependencies for unrelated tools.
 RUN mkdir -p /tmp/hf_home/cosmos-reason2 /tmp/hf_home/cosmos-reason2-2b \
     && find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
     && find /opt/npa/src /opt/npa/workflows -type f -exec chmod a+r {} + \
     && chmod a+r /opt/npa/pyproject.toml \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
+    && python -m pip uninstall -y npa \
     && python -m pip install --no-deps \
       "tomli==2.4.1" \
       "accelerate==1.14.0" \
