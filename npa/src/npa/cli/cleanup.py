@@ -37,6 +37,16 @@ class _Residue:
 
 
 @dataclass(frozen=True)
+class _PrivateYamlSnapshot:
+    """Secret-bearing local recovery document held only in memory."""
+
+    label: str
+    path: Path
+    existed: bool
+    document: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class CleanupPhase:
     """One ordered, machine-readable NPA-only cleanup recommendation."""
 
@@ -59,6 +69,90 @@ class CleanupPhase:
             "operator_action_required": self.operator_action_required,
             "operator_action_remains": self.operator_action_required,
         }
+
+
+def _snapshot_cleanup_recovery_documents() -> tuple[_PrivateYamlSnapshot, ...]:
+    """Capture config/credentials before the final retirement transaction."""
+
+    import yaml
+
+    from npa.clients import config, credentials
+
+    snapshots: list[_PrivateYamlSnapshot] = []
+    for label, path in (
+        ("project configuration", config.CONFIG_PATH),
+        ("credential store", credentials.CREDENTIALS_PATH),
+    ):
+        if path.is_symlink():
+            raise RuntimeError(f"{label} is a symlink")
+        if not path.exists():
+            snapshots.append(_PrivateYamlSnapshot(label, path, False, {}))
+            continue
+        try:
+            loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError) as exc:
+            raise RuntimeError(f"{label} cannot be snapshotted safely") from exc
+        if loaded is None:
+            loaded = {}
+        if not isinstance(loaded, dict):
+            raise RuntimeError(f"{label} is schema-invalid")
+        snapshots.append(_PrivateYamlSnapshot(label, path, True, loaded))
+    return tuple(snapshots)
+
+
+def _restore_cleanup_recovery_documents(
+    snapshots: tuple[_PrivateYamlSnapshot, ...],
+    *,
+    project_alias: str,
+    project_id: str,
+) -> tuple[list[str], list[dict[str, str]], bool, str]:
+    """Restore recovery documents and return their refreshed safe inventory."""
+
+    from copy import deepcopy
+
+    from npa.clients.credentials import update_private_yaml
+
+    failures: list[str] = []
+    for snapshot in snapshots:
+        try:
+            update_private_yaml(
+                snapshot.path,
+                lambda _current, saved=snapshot: (
+                    deepcopy(saved.document) if saved.existed else None
+                ),
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            failures.append(f"{snapshot.label}: {type(exc).__name__}")
+    if not project_id:
+        return failures, [], False, "no exact project recovery inventory requested"
+
+    from npa.clients.config import ConfigError, resolve_environment
+    from npa.clients.project_credential_store import project_credential_residue
+
+    try:
+        residue = project_credential_residue(project_id)
+        restored_environment = (
+            resolve_environment(project_alias) if project_alias else None
+        )
+        if (
+            restored_environment is not None
+            and str(restored_environment.project_id or "") == project_id
+        ):
+            residue.append(
+                {
+                    "path": f"config.projects.{project_alias}",
+                    "class": "project_alias_or_default",
+                }
+            )
+    except (ConfigError, OSError, RuntimeError, ValueError) as exc:
+        failures.append(f"recovery inventory: {type(exc).__name__}")
+        return failures, [], True, "restored recovery inventory is unresolved"
+    try:
+        present, detail = _agent_operational_state_present(project_alias, project_id)
+    except (OSError, RuntimeError, ValueError) as exc:
+        present = True
+        detail = f"restored inventory unresolved: {exc}"
+    return failures, residue, present, detail
 
 
 def _dir_size(path: Path) -> int:
@@ -2147,6 +2241,8 @@ def cleanup_cmd(
 
     removed_bin = False
     cleanup_failed = False
+    recovery_snapshots: tuple[_PrivateYamlSnapshot, ...] = ()
+    recovery_state_mutated = False
     sky_audit_safe = (
         not skip_jobs and not job_ids and not job_note
     ) or attestation_safe
@@ -2176,6 +2272,19 @@ def cleanup_cmd(
         if output_json:
             emit_json("partial_cleanup", "residue_present", cleanup_failed=True)
         raise typer.Exit(code=1) from exc
+    if full:
+        try:
+            recovery_snapshots = _snapshot_cleanup_recovery_documents()
+        except (OSError, RuntimeError, ValueError) as exc:
+            cleanup_failed = True
+            emit(
+                "Preserved local state because recovery credentials/configuration "
+                f"could not be snapshotted before retirement: {exc}",
+                err=True,
+            )
+            if output_json:
+                emit_json("partial_cleanup", "residue_present", cleanup_failed=True)
+            raise typer.Exit(code=1) from exc
     for residue_item in residue:
         if project and residue_item.label in {
             "SkyPilot venv",
@@ -2277,28 +2386,14 @@ def cleanup_cmd(
         if receipt_project_id and agent_operational_state_present:
             agent_retirement_safe, agent_retirement_detail = (
                 _agent_lifecycle_allows_project_retirement(
-                    receipt_alias, receipt_project_id, retire=True
+                    receipt_alias, receipt_project_id, retire=False
                 )
             )
-            if agent_retirement_safe:
-                try:
-                    (
-                        agent_operational_state_present,
-                        agent_operational_state_detail,
-                    ) = _agent_operational_state_present(
-                        receipt_alias, receipt_project_id
-                    )
-                except (OSError, RuntimeError, ValueError) as exc:
-                    agent_retirement_safe = False
-                    agent_operational_state_present = True
-                    agent_retirement_detail = (
-                        f"final agent local-state inventory failed: {exc}"
-                    )
         credentials_retirement_safe = bool(
             (
                 unscoped_scope_verified_absent
                 if not receipt_project_id
-                else agent_retirement_safe and not agent_operational_state_present
+                else agent_retirement_safe
             )
             and not remaining_terraform
         )
@@ -2313,7 +2408,6 @@ def cleanup_cmd(
             else (
                 _cloud_cleanup_receipts_are_terminal(phase_states)
                 and agent_retirement_safe
-                and not agent_operational_state_present
             )
         )
         if receipt_project_id and not cloud_absent:
@@ -2347,6 +2441,39 @@ def cleanup_cmd(
             and not iam_partial
             and not cleanup_failed
         )
+        if (
+            convergence_safe
+            and receipt_project_id
+            and agent_operational_state_present
+        ):
+            recovery_state_mutated = True
+            agent_retirement_safe, agent_retirement_detail = (
+                _agent_lifecycle_allows_project_retirement(
+                    receipt_alias, receipt_project_id, retire=True
+                )
+            )
+            if agent_retirement_safe:
+                try:
+                    (
+                        agent_operational_state_present,
+                        agent_operational_state_detail,
+                    ) = _agent_operational_state_present(
+                        receipt_alias, receipt_project_id
+                    )
+                except (OSError, RuntimeError, ValueError) as exc:
+                    agent_retirement_safe = False
+                    agent_operational_state_present = True
+                    agent_retirement_detail = (
+                        f"final agent local-state inventory failed: {exc}"
+                    )
+            if not agent_retirement_safe or agent_operational_state_present:
+                cleanup_failed = True
+        convergence_safe = bool(
+            convergence_safe
+            and agent_retirement_safe
+            and not agent_operational_state_present
+            and not cleanup_failed
+        )
         if project_credential_residue_items and convergence_safe:
             from npa.clients.config import forget_project, resolve_environment
             from npa.clients.project_credential_store import (
@@ -2355,6 +2482,7 @@ def cleanup_cmd(
             )
 
             try:
+                recovery_state_mutated = True
                 removed_credentials = forget_project_credentials(receipt_project_id)
                 environment = (
                     resolve_environment(receipt_alias) if receipt_alias else None
@@ -2428,6 +2556,7 @@ def cleanup_cmd(
             and not remaining_terraform
         )
         if final_credentials_safe:
+            recovery_state_mutated = True
             cleared_credentials = _clear_full_credentials()
             if cleared_credentials:
                 emit(
@@ -2455,12 +2584,36 @@ def cleanup_cmd(
                 "unresolved.",
                 err=True,
             )
+        if final_credentials_safe:
+            recovery_state_mutated = True
         pruned_state = _prune_full_empty_state(npa_dir) if final_credentials_safe else []
         for label, path in pruned_state:
             if label == "empty NPA home":
                 emit(f"Removed empty NPA home: {path}")
             else:
                 emit(f"Removed {label}: {path}")
+    if full and cleanup_failed and recovery_state_mutated:
+        (
+            restore_failures,
+            project_credential_residue_items,
+            agent_operational_state_present,
+            agent_operational_state_detail,
+        ) = _restore_cleanup_recovery_documents(
+            recovery_snapshots,
+            project_alias=receipt_alias,
+            project_id=receipt_project_id,
+        )
+        if restore_failures:
+            emit(
+                "Warning: recovery credential/config restoration was incomplete: "
+                + ", ".join(restore_failures),
+                err=True,
+            )
+        else:
+            emit(
+                "Restored recovery credentials/configuration because local "
+                "retirement did not converge."
+            )
     # Terminal state is derived from the final inventory, never from mutation
     # attempts that preceded it.
     remaining_terraform = collect_terraform_residue()
@@ -2493,6 +2646,28 @@ def cleanup_cmd(
     except (OSError, RuntimeError, ValueError) as exc:
         cleanup_failed = True
         emit(f"Warning: local cleanup receipt could not be written: {exc}", err=True)
+        if full and recovery_state_mutated:
+            (
+                restore_failures,
+                project_credential_residue_items,
+                agent_operational_state_present,
+                agent_operational_state_detail,
+            ) = _restore_cleanup_recovery_documents(
+                recovery_snapshots,
+                project_alias=receipt_alias,
+                project_id=receipt_project_id,
+            )
+            if restore_failures:
+                emit(
+                    "Warning: recovery credential/config restoration was incomplete: "
+                    + ", ".join(restore_failures),
+                    err=True,
+                )
+            else:
+                emit(
+                    "Restored recovery credentials/configuration because the "
+                    "terminal cleanup receipt was not durable."
+                )
     emit("")
     if full and not cleanup_failed and not iam_partial:
         emit(

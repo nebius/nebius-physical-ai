@@ -2335,6 +2335,7 @@ def test_cleanup_historical_agent_state_needs_exact_provider_absence(
     assert calls == [
         ("instance-old", "project-a", "operator"),
         ("instance-old", "project-a", "operator"),
+        ("instance-old", "project-a", "operator"),
     ]
 
 
@@ -2856,8 +2857,10 @@ def test_destroy_plan_never_emits_identityless_storage_iam_delete(
     )
 
     phases = project_destroy.build_project_destroy_plan("demo")
+    controller = next(phase for phase in phases if phase.name == "controller")
     storage = next(phase for phase in phases if phase.name == "storage_iam")
 
+    assert "agents" in controller.requires
     assert storage.commands == ()
     assert storage.metadata["generation_ids"] == []
 
@@ -2942,7 +2945,7 @@ def test_destroy_retry_rechecks_bucket_receipt_and_deletes_present_replacement(
     assert calls == [["npa", "bucket-delete"]]
 
 
-def test_incident_cleanup_order_continues_independent_phases_and_project_delete(
+def test_incident_cleanup_order_blocks_dependent_phases_and_project_delete(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from npa import project_destroy
@@ -3007,18 +3010,12 @@ def test_incident_cleanup_order_continues_independent_phases_and_project_delete(
     )
     result = execute_project_destroy("demo", phases, runner=runner)
 
-    assert order == [
-        "workflow-list",
-        "agent-destroy",
-        "bucket-delete",
-        "storage-iam",
-        "project-delete",
-    ]
+    assert order == ["workflow-list", "agent-destroy"]
     statuses = {item["phase"]: item["status"] for item in result["phases"]}
-    assert statuses["agents"] == "degraded"
-    assert statuses["bucket"] == "completed"
-    assert statuses["storage_iam"] == "completed"
-    assert statuses["delete_project"] == "completed"
+    assert statuses["agents"] == "partial"
+    assert statuses["bucket"] == "skipped_dependency"
+    assert statuses["storage_iam"] == "skipped_dependency"
+    assert statuses["delete_project"] == "skipped_dependency"
 
 
 def test_project_creation_proof_survives_local_alias_change(
@@ -3058,7 +3055,7 @@ def test_project_creation_proof_survives_local_alias_change(
     )
 
 
-def test_incident_end_to_end_recovers_iam_then_deletes_owned_project_from_receipt(
+def test_incident_retains_alias_until_iam_recovers_then_deletes_project_from_receipt(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from npa import project_destroy
@@ -3105,6 +3102,7 @@ def test_incident_end_to_end_recovers_iam_then_deletes_owned_project_from_receip
         },
     )
     order: list[str] = []
+    iam_resolved = False
     phases = [
         DestroyPhase("workflows", (("npa", "workflow-list"),), "inventory"),
         DestroyPhase("agents", (("npa", "agent-destroy"),), "agent"),
@@ -3132,6 +3130,18 @@ def test_incident_end_to_end_recovers_iam_then_deletes_owned_project_from_receip
                 stderr="Warning: SkyPilot update check skipped",
             )
         if cmd[1] == "agent-destroy":
+            if iam_resolved:
+                return subprocess.CompletedProcess(
+                    cmd,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "infrastructure_absent": True,
+                            "iam_cleanup_complete": True,
+                        }
+                    ),
+                    stderr="",
+                )
             return subprocess.CompletedProcess(
                 cmd,
                 2,
@@ -3147,31 +3157,16 @@ def test_incident_end_to_end_recovers_iam_then_deletes_owned_project_from_receip
 
     initial = execute_project_destroy("demo", phases, runner=runner)
     assert initial["status"] == "partial"
-    assert order == [
-        "workflow-list",
-        "agent-destroy",
-        "bucket-delete",
-        "storage-iam",
-        "local-cleanup",
-        "forget-alias",
-    ]
+    assert order == ["workflow-list", "agent-destroy", "local-cleanup"]
+    initial_statuses = {
+        item["phase"]: item["status"] for item in initial["phases"]
+    }
+    assert initial_statuses["agents"] == "partial"
+    assert initial_statuses["bucket"] == "skipped_dependency"
+    assert initial_statuses["storage_iam"] == "skipped_dependency"
+    assert initial_statuses["forget_alias"] == "skipped_dependency"
+    assert "demo" in yaml.safe_load(config_path.read_text())["projects"]
 
-    # Model the guarded alias removal while preserving the unrelated project and
-    # the durable receipt/operation journal used by the recovery commands.
-    config_path.write_text(
-        yaml.safe_dump(
-            {
-                "projects": {
-                    "unrelated": {
-                        "project_id": "project-b",
-                        "tenant_id": "tenant-a",
-                        "region": "eu-test1",
-                    }
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
     monkeypatch.setattr(
         "npa.cli.agent_iam.agent_iam_leftovers",
         lambda _project: {
@@ -3216,6 +3211,35 @@ def test_incident_end_to_end_recovers_iam_then_deletes_owned_project_from_receip
         purge=True,
         strict=True,
         on_status=lambda _message: None,
+    )
+    iam_resolved = True
+    before_retry = len(order)
+    retried = execute_project_destroy("demo", phases, runner=runner)
+    assert retried["status"] == "success"
+    assert order[before_retry:] == [
+        "workflow-list",
+        "agent-destroy",
+        "bucket-delete",
+        "storage-iam",
+        "local-cleanup",
+        "forget-alias",
+    ]
+
+    # Model the guarded alias removal while preserving the unrelated project and
+    # the durable receipt/operation journal used by the recovery commands.
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {
+                    "unrelated": {
+                        "project_id": "project-b",
+                        "tenant_id": "tenant-a",
+                        "region": "eu-test1",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
     )
     teardown_receipts.record_teardown_event(
         phase="project_destroy_network",
@@ -3273,11 +3297,12 @@ def test_incident_end_to_end_recovers_iam_then_deletes_owned_project_from_receip
         ],
     )
     assert deleted.exit_code == 0, deleted.output
-    assert order[-3:] == [
-        "purge-key:accesskey-agent",
-        "purge-agent-iam:serviceaccount-agent",
-        "delete-project:project-a",
-    ]
+    assert order.count("purge-key:accesskey-agent") == 1
+    assert order.count("purge-agent-iam:serviceaccount-agent") == 1
+    assert order[-1] == "delete-project:project-a"
+    assert order.index("purge-key:accesskey-agent") < order.index(
+        "purge-agent-iam:serviceaccount-agent"
+    ) < order.index("delete-project:project-a")
     assert yaml.safe_load(config_path.read_text())["projects"] == {
         "unrelated": {
             "project_id": "project-b",

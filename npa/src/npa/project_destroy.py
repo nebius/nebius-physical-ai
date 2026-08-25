@@ -489,7 +489,7 @@ def build_project_destroy_plan(
             "controller",
             controller_commands,
             "Remove the exact bound shared controller.",
-            ("workflows",),
+            ("workflows", "agents"),
         ),
         DestroyPhase(
             "clusters",
@@ -1164,7 +1164,7 @@ def execute_project_destroy(
                     and parsed.get("outcome") == "degraded_local_metadata"
                     and parsed.get("remote_absence_verified") is True
                 )
-                infrastructure_only_converged = bool(
+                agent_iam_unresolved = bool(
                     phase.name == "agents"
                     and isinstance(parsed, dict)
                     and parsed.get("infrastructure_absent") is True
@@ -1175,10 +1175,11 @@ def execute_project_destroy(
                         "exact remote controller absence verified; stale local "
                         "metadata remains for idempotent reconciliation"
                     )
-                elif infrastructure_only_converged:
-                    phase_warnings.append(
-                        "exact agent infrastructure absence verified; agent IAM cleanup remains partial"
+                elif agent_iam_unresolved:
+                    phase_errors.append(
+                        "exact agent infrastructure absence was verified, but agent IAM cleanup remains unresolved"
                     )
+                    recovery_commands.append(list(command))
                 elif completed.returncode != 0:
                     phase_errors.append(_command_failure_detail(completed))
                     recovery_commands.append(list(command))

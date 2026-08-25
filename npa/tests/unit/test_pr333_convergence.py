@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
 import pytest
 import yaml
 from typer.testing import CliRunner
 
 from npa import teardown_receipts
 from npa.cli.main import app
+from npa.project_destroy import DestroyPhase
 
 
 runner = CliRunner()
@@ -120,6 +122,116 @@ def test_unresolved_agent_iam_cannot_authorize_dependent_retirement() -> None:
     }
 
     assert cleanup_cli._event_authorizes_cloud_absence(event) is False
+
+
+def test_unresolved_agent_iam_blocks_project_destroy_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa import project_destroy
+    from npa.clients import config as config_module
+
+    _write_project_config(config_module.CONFIG_PATH)
+    order: list[str] = []
+    phases = [
+        DestroyPhase("workflows", (("npa", "workflow-list"),), "workflows"),
+        DestroyPhase(
+            "agents", (("npa", "agent-destroy"),), "agents", ("workflows",)
+        ),
+        DestroyPhase(
+            "controller",
+            (("npa", "controller-delete"),),
+            "controller",
+            ("workflows", "agents"),
+        ),
+        DestroyPhase(
+            "clusters",
+            (("npa", "cluster-delete"),),
+            "clusters",
+            ("workflows", "controller"),
+        ),
+        DestroyPhase(
+            "bucket",
+            (("npa", "bucket-delete"),),
+            "bucket",
+            ("workflows", "agents", "controller", "clusters"),
+        ),
+        DestroyPhase(
+            "storage_iam",
+            (("npa", "storage-iam-delete"),),
+            "storage IAM",
+            ("workflows", "agents", "controller", "clusters", "bucket"),
+        ),
+        DestroyPhase(
+            "delete_project",
+            (),
+            "project",
+            (
+                "workflows",
+                "agents",
+                "controller",
+                "clusters",
+                "bucket",
+                "storage_iam",
+            ),
+        ),
+        DestroyPhase(
+            "forget_alias",
+            (("npa", "forget-alias"),),
+            "config",
+            (
+                "workflows",
+                "agents",
+                "controller",
+                "clusters",
+                "bucket",
+                "storage_iam",
+            ),
+        ),
+    ]
+
+    def run(command, **_kwargs):  # noqa: ANN001, ANN202
+        order.append(command[1])
+        if command[1] == "workflow-list":
+            return subprocess.CompletedProcess(
+                command, 0, stdout='{"runs": []}', stderr=""
+            )
+        if command[1] == "agent-destroy":
+            return subprocess.CompletedProcess(
+                command,
+                2,
+                stdout=json.dumps(
+                    {
+                        "infrastructure_absent": True,
+                        "iam_cleanup_complete": False,
+                    }
+                ),
+                stderr="agent IAM remains",
+            )
+        return subprocess.CompletedProcess(command, 0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(
+        project_destroy,
+        "_delete_owned_empty_project",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("project deletion must remain blocked")
+        ),
+    )
+
+    result = project_destroy.execute_project_destroy("demo", phases, runner=run)
+
+    assert order == ["workflow-list", "agent-destroy"]
+    statuses = {item["phase"]: item["status"] for item in result["phases"]}
+    assert statuses == {
+        "workflows": "completed",
+        "agents": "partial",
+        "controller": "skipped_dependency",
+        "clusters": "skipped_dependency",
+        "bucket": "skipped_dependency",
+        "storage_iam": "skipped_dependency",
+        "delete_project": "skipped_dependency",
+        "forget_alias": "skipped_dependency",
+    }
+    assert result["status"] == "partial"
 
 
 def test_direct_forget_preserves_project_with_unresolved_agent_iam(
@@ -254,6 +366,124 @@ def test_failed_terraform_retirement_preserves_credentials_until_final_inventory
 
     assert result.exit_code != 0
     assert cleared == []
+
+
+def test_final_cleanup_receipt_failure_restores_credentials_and_project_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli import cleanup as cleanup_cli
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    from npa.clients.project_credential_store import write_project_credentials
+
+    _write_project_config(config_module.CONFIG_PATH)
+    write_project_credentials(
+        "project-a",
+        {
+            "storage": {
+                "aws_access_key_id": "fixture-access-key",
+                "aws_secret_access_key": "fixture-secret-key",
+            }
+        },
+        alias="demo",
+    )
+    saved = yaml.safe_load(
+        credentials_module.CREDENTIALS_PATH.read_text(encoding="utf-8")
+    )
+    saved["tokens"] = {"HF_TOKEN": "fixture-hf-token"}
+    credentials_module.CREDENTIALS_PATH.write_text(
+        yaml.safe_dump(saved), encoding="utf-8"
+    )
+    _record_terminal_cloud_receipts()
+    monkeypatch.setattr(
+        cleanup_cli,
+        "_storage_iam_full_check",
+        lambda *_a, **_k: ("verified absent", False, "fully_clean", "verified_terminal"),
+    )
+    monkeypatch.setattr(
+        cleanup_cli, "_nonterminal_jobs", lambda _sky: ([], "", "verified_empty")
+    )
+    real_record = teardown_receipts.record_teardown_event
+    local_receipt_calls = 0
+
+    def fail_final_local_receipt(**kwargs):  # noqa: ANN003, ANN202
+        nonlocal local_receipt_calls
+        if kwargs.get("phase") == "local_cleanup":
+            local_receipt_calls += 1
+            if local_receipt_calls == 2:
+                raise OSError("injected final receipt failure")
+        return real_record(**kwargs)
+
+    monkeypatch.setattr(
+        teardown_receipts, "record_teardown_event", fail_final_local_receipt
+    )
+
+    result = runner.invoke(
+        app,
+        ["cleanup", "--project", "demo", "--full", "--yes", "--keep-sky", "--json"],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert local_receipt_calls == 2
+    retained = yaml.safe_load(
+        credentials_module.CREDENTIALS_PATH.read_text(encoding="utf-8")
+    )
+    assert retained["tokens"]["HF_TOKEN"] == "fixture-hf-token"
+    assert "project-a" in retained["project_credentials"]["projects"]
+    configured = yaml.safe_load(config_module.CONFIG_PATH.read_text(encoding="utf-8"))
+    assert "demo" in configured["projects"]
+    event = teardown_receipts.latest_phase_states(
+        project_alias="demo", project_id="project-a"
+    )["local_cleanup"]
+    assert event["terminal_state"] == "in_progress"
+
+
+def test_project_config_retirement_failure_restores_project_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli import cleanup as cleanup_cli
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    from npa.clients.project_credential_store import write_project_credentials
+
+    _write_project_config(config_module.CONFIG_PATH)
+    write_project_credentials(
+        "project-a",
+        {
+            "storage": {
+                "aws_access_key_id": "fixture-access-key",
+                "aws_secret_access_key": "fixture-secret-key",
+            }
+        },
+        alias="demo",
+    )
+    _record_terminal_cloud_receipts()
+    monkeypatch.setattr(
+        cleanup_cli,
+        "_storage_iam_full_check",
+        lambda *_a, **_k: ("verified absent", False, "fully_clean", "verified_terminal"),
+    )
+    monkeypatch.setattr(
+        cleanup_cli, "_nonterminal_jobs", lambda _sky: ([], "", "verified_empty")
+    )
+    monkeypatch.setattr(
+        config_module,
+        "forget_project",
+        lambda _alias: (_ for _ in ()).throw(OSError("injected config write failure")),
+    )
+
+    result = runner.invoke(
+        app,
+        ["cleanup", "--project", "demo", "--full", "--yes", "--keep-sky", "--json"],
+    )
+
+    assert result.exit_code == 1, result.output
+    retained = yaml.safe_load(
+        credentials_module.CREDENTIALS_PATH.read_text(encoding="utf-8")
+    )
+    assert "project-a" in retained["project_credentials"]["projects"]
+    configured = yaml.safe_load(config_module.CONFIG_PATH.read_text(encoding="utf-8"))
+    assert "demo" in configured["projects"]
 
 
 def test_agent_terraform_delete_failure_preserves_auth_and_recovery(
