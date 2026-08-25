@@ -8,6 +8,7 @@ records an append-only transcript suitable for private benchmark evidence.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import http.client
 import json
@@ -25,6 +26,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from npa.benchmarks.sim2real_prepared_action import (
+    PreparedActionContext,
+    PreparedActionError,
+    _append_private_jsonl,
+    _prior_execution_state,
+    create_receipt_from_request,
+    execute_prepared_action,
+    recover_occurrence,
+    rejected_result,
+    validate_receipt,
+)
 from npa.benchmarks.sim2real_success import VerificationError, verify_artifact_tree
 
 
@@ -32,6 +44,7 @@ TASK_TEXT = """From a clean checkout on the dev VM, first stage the canonical pu
 CHECKPOINT_MARKER = "BENCHMARK_CONTEXT_CHECKPOINT_V1"
 CHECKPOINT_SUBMIT_ATTEMPT_MARKER = "Recent standalone workflow submit attempts: "
 RECOVERY_MARKER = "BENCHMARK_MALFORMED_RESPONSE_RECOVERY_V1"
+PREPARED_ACTION_MARKER = "BENCHMARK_PREPARED_WORKFLOW_ACTION_V1"
 MAX_CONTEXT_TOOL_RESULT_CHARACTERS = 4_096
 # The pinned sparse-prefill deployment exhausted rank memory near 72k prompt
 # tokens despite a larger advertised model context. This is an active-context
@@ -59,7 +72,7 @@ _TRANSIENT_TRANSPORT_ERRORS = (
 )
 
 
-TOOLS: list[dict[str, Any]] = [
+BASE_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
@@ -133,6 +146,32 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
 ]
+
+PREPARED_ACTION_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "submit_prepared_workflow",
+        "description": (
+            "Execute one operator-prepared, private, immutable NPA workflow action. "
+            "Pass only the advertised action_id; do not reconstruct shell syntax or "
+            "repeat private project, image, input, EULA, resume, or secret settings."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {"action_id": {"type": "string"}},
+            "required": ["action_id"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+TOOLS: list[dict[str, Any]] = [*BASE_TOOLS, PREPARED_ACTION_TOOL]
+
+
+def _active_tools(prepared_receipt_path: Path | None) -> list[dict[str, Any]]:
+    """Preserve legacy tool metadata unless a prepared action is configured."""
+
+    return TOOLS if prepared_receipt_path is not None else BASE_TOOLS
 
 
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -212,8 +251,26 @@ def _run_tool(
     workspace: Path,
     env: dict[str, str],
     isolation: dict[str, Path] | None = None,
+    *,
+    prepared_receipt_path: Path | None = None,
+    prepared_context: PreparedActionContext | None = None,
+    occurrence_id: str = "",
 ) -> dict[str, Any]:
     started = time.monotonic()
+    if name == "submit_prepared_workflow":
+        action_id = str(arguments.get("action_id") or "").strip()
+        if prepared_receipt_path is None or prepared_context is None:
+            return rejected_result(
+                action_id=action_id,
+                classification="prepared_action_unavailable",
+                message="no prepared workflow action is configured for this trial",
+            )
+        return execute_prepared_action(
+            prepared_receipt_path,
+            requested_action_id=action_id,
+            occurrence_id=occurrence_id,
+            context=prepared_context,
+        )
     if name == "complete_workflow":
         run_id = str(arguments.get("run_id") or "").strip()
         project = str(env.get("NPA_PROJECT") or "").strip()
@@ -614,6 +671,7 @@ def _tool_argument_contract(name: str) -> tuple[set[str], set[str]]:
         "write_file": ({"path", "content"}, {"path", "content"}),
         "list_files": ({"pattern"}, {"pattern"}),
         "complete_workflow": ({"run_id"}, {"run_id"}),
+        "submit_prepared_workflow": ({"action_id"}, {"action_id"}),
     }
     try:
         return contracts[name]
@@ -896,7 +954,9 @@ def _read_transcript_messages(path: Path) -> list[dict[str, Any]]:
 
 
 def _load_transcript(
-    path: Path, tool_results_path: Path | None = None
+    path: Path,
+    tool_results_path: Path | None = None,
+    prepared_state_path: Path | None = None,
 ) -> list[dict[str, Any]]:
     messages = _read_transcript_messages(path)
     complete_response_ids = {
@@ -939,12 +999,12 @@ def _load_transcript(
             raise ValueError(f"invalid tool journal entry at line {line_number}")
         group = journal_groups.setdefault(
             response_id,
-            {"assistant": record.get("assistant"), "intents": set(), "results": {}},
+            {"assistant": record.get("assistant"), "intents": {}, "results": {}},
         )
         phase = record.get("phase")
         call_id = str(record.get("tool_call_id") or "")
         if phase == "intent" and call_id:
-            group["intents"].add(call_id)
+            group["intents"][call_id] = record
         elif phase == "result" and call_id:
             group["results"][call_id] = record.get("tool_message")
         elif phase == "transcript_committed":
@@ -956,14 +1016,55 @@ def _load_transcript(
         assistant = group.get("assistant")
         if not isinstance(assistant, dict):
             raise ValueError(f"tool journal response {response_id} has no assistant")
-        unresolved = sorted(group["intents"] - set(group["results"]))
-        if unresolved:
-            raise IndeterminateToolExecutionError(response_id, unresolved)
+        unresolved = sorted(set(group["intents"]) - set(group["results"]))
+        recovered_results: dict[str, dict[str, Any]] = {}
+        still_indeterminate: list[str] = []
+        for call_id in unresolved:
+            intent = group["intents"][call_id]
+            if (
+                intent.get("tool_name") != "submit_prepared_workflow"
+                or prepared_state_path is None
+            ):
+                still_indeterminate.append(call_id)
+                continue
+            occurrence_id = str(intent.get("occurrence_id") or "")
+            action_id = str(intent.get("prepared_action_id") or "")
+            recovery, recovered = recover_occurrence(
+                prepared_state_path,
+                action_id=action_id,
+                occurrence_id=occurrence_id,
+            )
+            if recovery == "indeterminate":
+                still_indeterminate.append(call_id)
+            elif recovery == "finished" and recovered is not None:
+                recovered_results[call_id] = {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": _serialize_bounded_tool_result(recovered),
+                }
+            else:
+                recovered_results[call_id] = {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": _serialize_bounded_tool_result(
+                        {
+                            "error": "ControllerRecovery",
+                            "classification": "prepared_action_not_started",
+                            "message": (
+                                "The controller stopped before the prepared action "
+                                "crossed its durable execution boundary; it is safe "
+                                "to invoke the same typed action again."
+                            ),
+                        }
+                    ),
+                }
+        if still_indeterminate:
+            raise IndeterminateToolExecutionError(response_id, still_indeterminate)
         tool_messages: list[dict[str, Any]] = []
         for call in assistant.get("tool_calls") or []:
             call_id = str(call.get("id") or "") if isinstance(call, dict) else ""
-            has_result = call_id in group["results"]
-            tool_message = group["results"].get(call_id)
+            has_result = call_id in group["results"] or call_id in recovered_results
+            tool_message = group["results"].get(call_id) or recovered_results.get(call_id)
             if has_result and not isinstance(tool_message, dict):
                 raise IndeterminateToolExecutionError(response_id, [call_id])
             if not has_result:
@@ -1049,7 +1150,7 @@ def _collect_run_identifiers(messages: list[dict[str, Any]]) -> list[str]:
         elif isinstance(value, list):
             for child in value:
                 visit(child, key)
-        elif key in {"run_id", "workflow_run_id"} and isinstance(value, str):
+        elif key in {"run_id", "workflow_run_id", "safe_run_reference"} and isinstance(value, str):
             if _RUN_ID_RE.fullmatch(value):
                 found.add(value)
 
@@ -1111,7 +1212,7 @@ def _submitted_workflow_state(
             for child in value:
                 collect(child, key)
         elif isinstance(value, str):
-            if key in {"run_id", "workflow_run_id"} and _RUN_ID_RE.fullmatch(value):
+            if key in {"run_id", "workflow_run_id", "safe_run_reference"} and _RUN_ID_RE.fullmatch(value):
                 run_ids.add(value)
                 return
             if value[:1] in {"{", "["}:
@@ -1127,7 +1228,23 @@ def _submitted_workflow_state(
             if not isinstance(call, dict):
                 continue
             function = call.get("function")
-            if not isinstance(function, dict) or function.get("name") != "run_command":
+            if not isinstance(function, dict):
+                continue
+            result_message = tool_results.get(str(call.get("id") or ""))
+            if function.get("name") == "submit_prepared_workflow":
+                if result_message is None:
+                    continue
+                try:
+                    prepared_result = json.loads(
+                        str(result_message.get("content") or "")
+                    )
+                except json.JSONDecodeError:
+                    continue
+                if prepared_result.get("submission_accepted") is True:
+                    submitted = True
+                    collect(prepared_result)
+                continue
+            if function.get("name") != "run_command":
                 continue
             try:
                 arguments = json.loads(str(function.get("arguments") or ""))
@@ -1136,7 +1253,6 @@ def _submitted_workflow_state(
                 continue
             if _workflow_submit_command_kind(command) != "standalone":
                 continue
-            result_message = tool_results.get(str(call.get("id") or ""))
             if result_message is None:
                 continue
             try:
@@ -1154,6 +1270,34 @@ def _submitted_workflow_state(
             submitted = True
             collect(result)
     return submitted, sorted(run_ids)
+
+
+def _prepared_action_consumed_state(messages: list[dict[str, Any]]) -> bool:
+    for message in messages:
+        content = str(message.get("content") or "")
+        if message.get("role") == "user":
+            for line in content.splitlines():
+                if not line.startswith("Durable prepared action state: "):
+                    continue
+                try:
+                    state = json.loads(line.split(": ", 1)[1])
+                except json.JSONDecodeError:
+                    continue
+                if state.get("consumed") is True:
+                    return True
+        if message.get("role") != "tool":
+            continue
+        try:
+            result = json.loads(content)
+        except json.JSONDecodeError:
+            continue
+        if (
+            result.get("schema")
+            == "npa.sim2real.prepared_workflow_action.result.v1"
+            and result.get("action_consumed") is True
+        ):
+            return True
+    return False
 
 
 def _workflow_submit_command_kind(command: str) -> str:
@@ -1197,13 +1341,25 @@ def _workflow_submission_block_reason(
     *,
     tool_name: str,
     arguments: dict[str, Any],
+    durable_prepared_state: str = "unused",
 ) -> str | None:
+    prepared_consumed = durable_prepared_state != "unused"
+    if tool_name == "submit_prepared_workflow":
+        if _submitted_workflow_state(messages)[0] or _prepared_action_consumed_state(
+            messages
+        ) or prepared_consumed:
+            return "DuplicateWorkflowSubmissionBlocked"
+        return None
     if tool_name != "run_command":
         return None
     kind = _workflow_submit_command_kind(str(arguments.get("command") or ""))
     if kind == "unsafe":
         return "UnsafeWorkflowSubmissionCommandBlocked"
-    if kind == "standalone" and _submitted_workflow_state(messages)[0]:
+    if kind == "standalone" and (
+        _submitted_workflow_state(messages)[0]
+        or _prepared_action_consumed_state(messages)
+        or prepared_consumed
+    ):
         return "DuplicateWorkflowSubmissionBlocked"
     return None
 
@@ -1340,6 +1496,7 @@ def _context_checkpoint(
     recovery_reason: str | None = None,
     preserved_submit_attempts: list[dict[str, Any]] | None = None,
     preserved_run_identifiers: list[str] | None = None,
+    durable_prepared_state: str = "unused",
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     recent_candidates = [
         message
@@ -1361,6 +1518,10 @@ def _context_checkpoint(
     recent_groups.reverse()
     recent = [message for group in recent_groups for message in group]
     workflow_submitted, submitted_run_ids = _submitted_workflow_state(messages[2:])
+    prepared_action_consumed = (
+        durable_prepared_state != "unused"
+        or _prepared_action_consumed_state(messages[2:])
+    )
     active_submit_attempts = _recent_standalone_submit_attempts(messages[2:])
     submit_attempts = _merge_submit_attempts(
         preserved_submit_attempts or [], active_submit_attempts
@@ -1398,6 +1559,16 @@ def _context_checkpoint(
         if recovery_reason
         else ""
     )
+    prepared_checkpoints = [
+        str(message.get("content") or "")
+        for message in messages[2:]
+        if message.get("role") == "user"
+        and str(message.get("content") or "").startswith(PREPARED_ACTION_MARKER)
+    ]
+    prepared_action_id = ""
+    if prepared_checkpoints:
+        match = re.search(r"Action ID: ([A-Za-z0-9._-]+)", prepared_checkpoints[-1])
+        prepared_action_id = match.group(1) if match else ""
     checkpoint = {
         "role": "user",
         "content": (
@@ -1433,11 +1604,32 @@ def _context_checkpoint(
                 separators=(",", ":"),
             )
             + "\n"
+            + "Durable prepared action state: "
+            + json.dumps(
+                {
+                    "consumed": prepared_action_consumed,
+                    "available": bool(prepared_action_id) and not prepared_action_consumed,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
             + (
                 CHECKPOINT_SUBMIT_ATTEMPT_MARKER
                 + json.dumps(submit_attempts, sort_keys=True, separators=(",", ":"))
                 + "\n"
                 if submit_attempts
+                else ""
+            )
+            + (
+                f"{PREPARED_ACTION_MARKER}\n"
+                + (
+                    "Typed action available: none; the prepared action is already consumed.\n"
+                    if prepared_action_consumed
+                    else "Typed action available: submit_prepared_workflow. "
+                    f"Action ID: {prepared_action_id}.\n"
+                )
+                if prepared_action_id
                 else ""
             )
             + f"Workspace status SHA256: {hashlib.sha256(workspace_status.encode()).hexdigest()}; "
@@ -1459,6 +1651,7 @@ def _maybe_checkpoint(
     context_limit: int,
     workspace_status: str = "",
     active_tokens_upper_bound: int | None = None,
+    durable_prepared_state: str = "unused",
 ) -> list[dict[str, Any]]:
     checkpoint_tokens = min(
         int(context_limit * 0.85), EFFECTIVE_CONTEXT_CHECKPOINT_PROMPT_TOKENS
@@ -1482,6 +1675,12 @@ def _maybe_checkpoint(
         )
         and not active_has_submit_attempt
     )
+    needs_prepared_state_upgrade = durable_prepared_state != "unused" and any(
+        "Typed action available: submit_prepared_workflow"
+        in str(message.get("content") or "")
+        for message in active
+        if message.get("role") == "user"
+    )
     checkpoint_only = (
         len(active) == 1
         and active[0].get("role") == "user"
@@ -1490,6 +1689,7 @@ def _maybe_checkpoint(
     if (
         checkpoint_only
         and not needs_submit_attempt_upgrade
+        and not needs_prepared_state_upgrade
         and _message_token_upper_bound(messages) < checkpoint_tokens
     ):
         return messages
@@ -1499,7 +1699,11 @@ def _maybe_checkpoint(
         active_tokens_upper_bound = max(
             active_tokens_upper_bound, _message_token_upper_bound(messages)
         )
-    if active_tokens_upper_bound < checkpoint_tokens and not needs_submit_attempt_upgrade:
+    if (
+        active_tokens_upper_bound < checkpoint_tokens
+        and not needs_submit_attempt_upgrade
+        and not needs_prepared_state_upgrade
+    ):
         return messages
     checkpoint_source = (
         messages[:2] + transcript_messages
@@ -1512,6 +1716,7 @@ def _maybe_checkpoint(
         workspace_status=workspace_status,
         preserved_submit_attempts=preserved_submit_attempts,
         preserved_run_identifiers=_collect_run_identifiers(transcript_messages),
+        durable_prepared_state=durable_prepared_state,
     )
     with transcript_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(checkpoint, sort_keys=True) + "\n")
@@ -1524,6 +1729,7 @@ def _write_recovery_checkpoint(
     *,
     workspace_status: str,
     reason: str,
+    durable_prepared_state: str = "unused",
 ) -> list[dict[str, Any]]:
     active = messages[2:]
     transcript_messages = _read_transcript_messages(transcript_path)
@@ -1532,8 +1738,15 @@ def _write_recovery_checkpoint(
         and active[0].get("role") == "user"
         and str(active[0].get("content") or "").startswith(CHECKPOINT_MARKER)
     )
+    needs_prepared_state_upgrade = durable_prepared_state != "unused" and any(
+        "Typed action available: submit_prepared_workflow"
+        in str(message.get("content") or "")
+        for message in active
+        if message.get("role") == "user"
+    )
     if (
         checkpoint_only
+        and not needs_prepared_state_upgrade
         and _message_token_upper_bound(messages)
         < EFFECTIVE_CONTEXT_CHECKPOINT_PROMPT_TOKENS
     ):
@@ -1554,6 +1767,7 @@ def _write_recovery_checkpoint(
             transcript_messages
         ),
         preserved_run_identifiers=_collect_run_identifiers(transcript_messages),
+        durable_prepared_state=durable_prepared_state,
     )
     with transcript_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(checkpoint, sort_keys=True) + "\n")
@@ -1604,6 +1818,109 @@ def _workspace_preflight(
     return status
 
 
+def _prepared_action_settings(config: dict[str, Any]) -> tuple[Path | None, str]:
+    value = config.get("prepared_action")
+    if value in (None, {}):
+        return None, ""
+    if not isinstance(value, dict) or set(value) != {"receipt", "intervention_reason"}:
+        raise ValueError("prepared_action must contain receipt and intervention_reason")
+    receipt = Path(str(value["receipt"])).resolve()
+    reason = str(value["intervention_reason"] or "").strip()
+    if reason != "typed_prepared_workflow_action":
+        raise ValueError("prepared_action intervention_reason is invalid")
+    return receipt, reason
+
+
+def _record_tool_schema_intervention(
+    *,
+    evidence: Path,
+    request_index: int,
+    existing_hash: str,
+    current_hash: str,
+    receipt_path: Path,
+) -> None:
+    interventions = evidence / "interventions.jsonl"
+    if interventions.exists():
+        for line in interventions.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            if (
+                record.get("classification") == "typed_prepared_workflow_action"
+                and record.get("new_tool_schema_sha256") == current_hash
+            ):
+                return
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    _append_private_jsonl(
+        interventions,
+        {
+            "schema": "npa.sim2real.model_agent_benchmark.intervention.v1",
+            "classification": "typed_prepared_workflow_action",
+            "attribution": "benchmark_intervention",
+            "request_index": request_index,
+            "prior_tool_schema_sha256": existing_hash,
+            "new_tool_schema_sha256": current_hash,
+            "receipt_sha256": receipt.get("receipt_sha256"),
+            "at": _utc(),
+        },
+    )
+
+
+def _inject_prepared_action_checkpoint(
+    messages: list[dict[str, Any]],
+    transcript_path: Path,
+    *,
+    receipt: dict[str, Any],
+    durable_prepared_state: str = "unused",
+) -> list[dict[str, Any]]:
+    action_id = str(receipt["action_id"])
+    consumed = durable_prepared_state != "unused" or _prepared_action_consumed_state(
+        messages[2:]
+    )
+    expected_availability = "Typed action available: none" if consumed else "Typed action available: submit_prepared_workflow"
+    if any(
+        message.get("role") == "user"
+        and str(message.get("content") or "").startswith(PREPARED_ACTION_MARKER)
+        and f"Action ID: {action_id}" in str(message.get("content") or "")
+        and expected_availability in str(message.get("content") or "")
+        for message in messages
+    ):
+        return messages
+    submitted, run_ids = _submitted_workflow_state(messages[2:])
+    checkpoint = {
+        "role": "user",
+        "content": (
+            f"{PREPARED_ACTION_MARKER}\n"
+            "Completed preflights (receipt-bound): "
+            + ", ".join(item["name"] for item in receipt["preflights"])
+            + ".\n"
+            + (
+                "Current blocker: none; the workflow has a durable submission.\n"
+                if submitted
+                else "Current blocker: the prepared workflow has not crossed its real submission boundary.\n"
+            )
+            + "Durable submitted state: "
+            + json.dumps(
+                {"submitted": submitted, "run_id_count": len(run_ids)},
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+            + (
+                "Typed action available: none; the prepared action is already consumed."
+                if consumed
+                else f"Typed action available: submit_prepared_workflow. Action ID: {action_id}. "
+                "Invoke it directly with only this action ID. Do not reconstruct or repeat "
+                "the private command, project, image, input, EULA, resume, or secret settings."
+            )
+        ),
+    }
+    messages.append(checkpoint)
+    with transcript_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(checkpoint, sort_keys=True) + "\n")
+    return messages
+
+
 def _require_descendant(path: Path, parent: Path, label: str) -> None:
     try:
         path.resolve().relative_to(parent.resolve())
@@ -1619,6 +1936,15 @@ def run(config_path: Path) -> int:
     controller_repo = Path(config["controller_repo_root"]).resolve()
     _require_descendant(workspace, private_root, "workspace")
     _require_descendant(evidence, private_root, "evidence directory")
+    prepared_receipt_path, _intervention_reason = _prepared_action_settings(config)
+    active_tools = _active_tools(prepared_receipt_path)
+    prepared_control_dir = (
+        prepared_receipt_path.parent if prepared_receipt_path is not None else None
+    )
+    if prepared_receipt_path is not None:
+        _require_descendant(
+            prepared_receipt_path, private_root, "prepared action receipt"
+        )
     evidence.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(evidence, 0o700)
     meta_path = evidence / "run.json"
@@ -1646,7 +1972,17 @@ def run(config_path: Path) -> int:
     telemetry_path = evidence / "requests.jsonl"
     tool_results_path = evidence / "tool-results.jsonl"
     try:
-        messages.extend(_load_transcript(transcript_path, tool_results_path))
+        messages.extend(
+            _load_transcript(
+                transcript_path,
+                tool_results_path,
+                (
+                    prepared_control_dir / "prepared-action-state.jsonl"
+                    if prepared_control_dir is not None
+                    else None
+                ),
+            )
+        )
     except IndeterminateToolExecutionError as exc:
         failure = {
             "schema": "npa.sim2real.model_agent_benchmark.failure.v2",
@@ -1687,7 +2023,7 @@ def run(config_path: Path) -> int:
         "seed": config["seed"],
         "system_prompt_sha256": hashlib.sha256(system.encode()).hexdigest(),
         "task_sha256": hashlib.sha256(task_text.encode()).hexdigest(),
-        "tool_schema_sha256": _sha(TOOLS),
+        "tool_schema_sha256": _sha(active_tools),
         "completion_mode": completion_mode,
         "serving": config["serving"],
         "stream_safeguards": stream_safeguards,
@@ -1707,8 +2043,31 @@ def run(config_path: Path) -> int:
             "serving",
             "stream_safeguards",
         ):
-            if existing_meta.get(key) != meta.get(key):
-                raise ValueError(f"resume metadata mismatch: {key}")
+            if existing_meta.get(key) == meta.get(key):
+                continue
+            if (
+                key == "tool_schema_sha256"
+                and prepared_receipt_path is not None
+                and existing_meta.get(key) == _sha(BASE_TOOLS)
+                and meta.get(key) == _sha(active_tools)
+            ):
+                _record_tool_schema_intervention(
+                    evidence=evidence,
+                    request_index=request_index,
+                    existing_hash=str(existing_meta[key]),
+                    current_hash=str(meta[key]),
+                    receipt_path=prepared_receipt_path,
+                )
+                continue
+            if key == "tool_schema_sha256" and prepared_receipt_path is not None:
+                interventions_path = evidence / "interventions.jsonl"
+                if interventions_path.exists() and any(
+                    json.loads(line).get("new_tool_schema_sha256") == meta.get(key)
+                    for line in interventions_path.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ):
+                    continue
+            raise ValueError(f"resume metadata mismatch: {key}")
         meta = existing_meta
     else:
         meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
@@ -1735,6 +2094,14 @@ def run(config_path: Path) -> int:
     }
     env["NPA_PRIVATE_EVIDENCE"] = "/tmp/npa-private-evidence"
     env["HOME"] = "/tmp/npa-private-evidence/home"
+    prepared_context = PreparedActionContext(
+        workspace=workspace,
+        evidence=evidence,
+        control_dir=prepared_control_dir or evidence,
+        private_root=private_root,
+        environment=env,
+        isolation=isolation,
+    )
     isolation_check = _run_tool(
         "run_command", {"command": "true"}, workspace, env, isolation
     )
@@ -1743,11 +2110,43 @@ def run(config_path: Path) -> int:
             "trial mount-namespace isolation preflight failed: "
             + isolation_check["stderr"].strip()
         )
+    def current_prepared_state() -> str:
+        if prepared_control_dir is None or prepared_receipt_path is None:
+            return "unused"
+        return _prior_execution_state(
+            prepared_control_dir / "prepared-action-state.jsonl"
+        )
+
+    if prepared_receipt_path is not None:
+        try:
+            receipt = validate_receipt(
+                prepared_receipt_path,
+                requested_action_id=str(
+                    json.loads(
+                        prepared_receipt_path.read_text(encoding="utf-8")
+                    ).get("action_id")
+                    or ""
+                ),
+                context=prepared_context,
+                require_secrets=False,
+            )
+        except PreparedActionError as exc:
+            raise ValueError(
+                f"prepared action preflight failed: {exc.classification}"
+            ) from exc
+        durable_prepared_state = current_prepared_state()
+        messages = _inject_prepared_action_checkpoint(
+            messages,
+            transcript_path,
+            receipt=receipt,
+            durable_prepared_state=durable_prepared_state,
+        )
     messages = _maybe_checkpoint(
         messages,
         transcript_path,
         context_limit=context_limit,
         workspace_status=workspace_status,
+        durable_prepared_state=current_prepared_state(),
     )
     malformed_fingerprint, identical_malformed_count = _load_malformation_streak(
         telemetry_path
@@ -1766,7 +2165,7 @@ def run(config_path: Path) -> int:
                 }
                 for message in messages
             ],
-            "tools": TOOLS,
+            "tools": active_tools,
             "tool_choice": "auto",
             "temperature": 0,
             "seed": config["seed"],
@@ -1860,6 +2259,7 @@ def run(config_path: Path) -> int:
                     transcript_path,
                     workspace_status=current_workspace_status,
                     reason=f"transport_error:{type(exc).__name__}",
+                    durable_prepared_state=current_prepared_state(),
                 )
             time.sleep(min(30.0, float(2 ** min(consecutive_stream_failures, 5))))
             continue
@@ -1941,6 +2341,7 @@ def run(config_path: Path) -> int:
                 transcript_path,
                 workspace_status=current_workspace_status,
                 reason=reason,
+                durable_prepared_state=current_prepared_state(),
             )
             time.sleep(min(30.0, float(2**identical_malformed_count)))
             continue
@@ -1962,6 +2363,9 @@ def run(config_path: Path) -> int:
             response_id = f"request-{request_index}-{assistant_hash}"
             assistant["_npa_response_id"] = response_id
             for call, arguments in validated_calls:
+                occurrence_id = _sha(
+                    {"response_id": response_id, "tool_call_id": call["id"]}
+                )
                 journal_base = {
                     "schema": "npa.sim2real.tool_execution.v2",
                     "response_id": response_id,
@@ -1969,65 +2373,124 @@ def run(config_path: Path) -> int:
                     "assistant": assistant,
                     "tool_call_id": call["id"],
                     "tool_name": call["function"]["name"],
+                    "occurrence_id": occurrence_id,
                 }
-                with tool_results_path.open("a", encoding="utf-8") as handle:
-                    handle.write(
-                        json.dumps(
-                            {**journal_base, "at": _utc(), "phase": "intent"},
-                            sort_keys=True,
-                        )
-                        + "\n"
-                    )
-                submission_block_reason = _workflow_submission_block_reason(
-                    [*messages, assistant, *tool_messages],
-                    tool_name=call["function"]["name"],
-                    arguments=arguments,
+                if call["function"]["name"] == "submit_prepared_workflow":
+                    journal_base["prepared_action_id"] = arguments["action_id"]
+                _append_private_jsonl(
+                    tool_results_path,
+                    {**journal_base, "at": _utc(), "phase": "intent"},
                 )
-                if submission_block_reason:
-                    result = {
-                        "error": submission_block_reason,
-                        "message": (
-                            "Workflow submission must be one direct standalone NPA "
-                            "command, and only one successful non-plan submission is "
-                            "allowed. Rerun help, --plan-only, or the real submit with "
-                            "no pipes, redirects, wrappers, shell interpolation, or "
-                            "compound diagnostics; use separate read-only tool calls "
-                            "for output inspection and monitoring."
-                        ),
-                    }
-                else:
-                    try:
-                        result = _run_tool(
-                            call["function"]["name"],
-                            arguments,
-                            workspace,
-                            env,
-                            isolation,
+                tool_name = call["function"]["name"]
+                generic_real_submit = (
+                    tool_name == "run_command"
+                    and _workflow_submit_command_kind(
+                        str(arguments.get("command") or "")
+                    )
+                    == "standalone"
+                    and prepared_control_dir is not None
+                    and prepared_receipt_path is not None
+                )
+                submission_lock = None
+                try:
+                    if generic_real_submit:
+                        lock_path = prepared_control_dir / "prepared-action.lock"
+                        submission_lock = lock_path.open("a+", encoding="utf-8")
+                        os.chmod(lock_path, 0o600)
+                        fcntl.flock(submission_lock.fileno(), fcntl.LOCK_EX)
+                    durable_prepared_state = (
+                        _prior_execution_state(
+                            prepared_control_dir / "prepared-action-state.jsonl"
                         )
-                    except (
-                        Exception
-                    ) as exc:  # tool errors are observations, not controller failures
-                        result = {"error": type(exc).__name__, "message": str(exc)}
+                        if prepared_control_dir is not None
+                        and prepared_receipt_path is not None
+                        else "unused"
+                    )
+                    submission_block_reason = _workflow_submission_block_reason(
+                        [*messages, assistant, *tool_messages],
+                        tool_name=tool_name,
+                        arguments=arguments,
+                        durable_prepared_state=durable_prepared_state,
+                    )
+                    if submission_block_reason:
+                        if tool_name == "submit_prepared_workflow":
+                            result = rejected_result(
+                                action_id=arguments["action_id"],
+                                classification="duplicate_submission_prevented",
+                                message="one durable workflow submission already exists",
+                            )
+                        else:
+                            result = {
+                                "error": submission_block_reason,
+                                "message": (
+                                    "Workflow submission must be one direct standalone NPA "
+                                    "command, and only one successful non-plan submission is "
+                                    "allowed. Rerun help, --plan-only, or the real submit with "
+                                    "no pipes, redirects, wrappers, shell interpolation, or "
+                                    "compound diagnostics; use separate read-only tool calls "
+                                    "for output inspection and monitoring."
+                                ),
+                            }
+                    else:
+                        if generic_real_submit:
+                            _append_private_jsonl(
+                                prepared_control_dir
+                                / "prepared-action-state.jsonl",
+                                {
+                                    "schema": "npa.sim2real.prepared_workflow_action.state.v1",
+                                    "phase": "execution_started",
+                                    "action_id": str(receipt["action_id"]),
+                                    "occurrence_id": occurrence_id,
+                                    "transition": "generic_workflow_submit",
+                                    "at": _utc(),
+                                },
+                            )
+                        try:
+                            result = _run_tool(
+                                tool_name,
+                                arguments,
+                                workspace,
+                                env,
+                                isolation,
+                                prepared_receipt_path=prepared_receipt_path,
+                                prepared_context=prepared_context,
+                                occurrence_id=occurrence_id,
+                            )
+                        except Exception as exc:
+                            result = {"error": type(exc).__name__, "message": str(exc)}
+                        if generic_real_submit:
+                            _append_private_jsonl(
+                                prepared_control_dir
+                                / "prepared-action-state.jsonl",
+                                {
+                                    "schema": "npa.sim2real.prepared_workflow_action.state.v1",
+                                    "phase": "execution_finished",
+                                    "action_id": str(receipt["action_id"]),
+                                    "occurrence_id": occurrence_id,
+                                    "transition": "generic_workflow_submit",
+                                    "result_sha256": _sha(result),
+                                    "at": _utc(),
+                                },
+                            )
+                finally:
+                    if submission_lock is not None:
+                        submission_lock.close()
                 tool_message = {
                     "role": "tool",
                     "tool_call_id": call["id"],
                     "content": _serialize_bounded_tool_result(result),
                 }
-                with tool_results_path.open("a", encoding="utf-8") as handle:
-                    handle.write(
-                        json.dumps(
-                            {
-                                **journal_base,
-                                "schema": "npa.sim2real.tool_execution.v2",
-                                "at": _utc(),
-                                "phase": "result",
-                                "result": result,
-                                "tool_message": tool_message,
-                            },
-                            sort_keys=True,
-                        )
-                        + "\n"
-                    )
+                _append_private_jsonl(
+                    tool_results_path,
+                    {
+                        **journal_base,
+                        "schema": "npa.sim2real.tool_execution.v2",
+                        "at": _utc(),
+                        "phase": "result",
+                        "result": result,
+                        "tool_message": tool_message,
+                    },
+                )
                 tool_messages.append(tool_message)
                 if (
                     completion_mode == "workflow_terminal"
@@ -2043,20 +2506,16 @@ def run(config_path: Path) -> int:
                         for message in (assistant, *tool_messages)
                     )
                 )
-            with tool_results_path.open("a", encoding="utf-8") as handle:
-                handle.write(
-                    json.dumps(
-                        {
-                            "schema": "npa.sim2real.tool_execution.v2",
-                            "response_id": response_id,
-                            "assistant": assistant,
-                            "at": _utc(),
-                            "phase": "transcript_committed",
-                        },
-                        sort_keys=True,
-                    )
-                    + "\n"
-                )
+            _append_private_jsonl(
+                tool_results_path,
+                {
+                    "schema": "npa.sim2real.tool_execution.v2",
+                    "response_id": response_id,
+                    "assistant": assistant,
+                    "at": _utc(),
+                    "phase": "transcript_committed",
+                },
+            )
             if terminal_completion is not None:
                 verification = {
                     "schema": "npa.sim2real.model_agent_benchmark.workflow_terminal.v1",
@@ -2079,6 +2538,7 @@ def run(config_path: Path) -> int:
                 active_tokens_upper_bound=_request_active_token_estimate(
                     telemetry, tool_messages
                 ),
+                durable_prepared_state=current_prepared_state(),
             )
             continue
 
@@ -2115,6 +2575,7 @@ def run(config_path: Path) -> int:
                 active_tokens_upper_bound=_request_active_token_estimate(
                     telemetry, [feedback]
                 ),
+                durable_prepared_state=current_prepared_state(),
             )
             continue
         verification["end_to_end_wall_seconds"] = _elapsed_since(meta["started_at"])
@@ -2140,11 +2601,40 @@ def verify_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def prepare_action_command(args: argparse.Namespace) -> int:
+    try:
+        receipt = create_receipt_from_request(args.request, args.output)
+    except (OSError, ValueError, PreparedActionError) as exc:
+        classification = getattr(exc, "classification", type(exc).__name__)
+        print(
+            json.dumps(
+                {"created": False, "classification": classification},
+                sort_keys=True,
+            )
+        )
+        return 1
+    print(
+        json.dumps(
+            {
+                "created": True,
+                "action_id": receipt["action_id"],
+                "receipt_sha256": receipt["receipt_sha256"],
+                "argv_sha256": receipt["argv_sha256"],
+            },
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     run_parser = sub.add_parser("run")
     run_parser.add_argument("--config", type=Path, required=True)
+    prepare_parser = sub.add_parser("prepare-action")
+    prepare_parser.add_argument("--request", type=Path, required=True)
+    prepare_parser.add_argument("--output", type=Path, required=True)
     verify_parser = sub.add_parser("verify")
     verify_parser.add_argument("--artifact-root", type=Path, required=True)
     verify_parser.add_argument("--minimum-lift-m", type=float, default=0.05)
@@ -2153,6 +2643,8 @@ def main() -> int:
     args = parser.parse_args()
     if args.command == "run":
         return run(args.config)
+    if args.command == "prepare-action":
+        return prepare_action_command(args)
     return verify_command(args)
 
 

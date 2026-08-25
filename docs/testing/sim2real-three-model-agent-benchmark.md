@@ -8,7 +8,8 @@ machine-verifiable success predicate, and writes its transcript outside Git.
 
 The controller is `python -m npa.benchmarks.sim2real_model_agent`. It talks to
 an OpenAI-compatible endpoint, maintains the full message/tool context, and
-offers four workspace-scoped tools: shell, file read, file write, and file glob.
+offers workspace-scoped shell, file read, file write, and file glob tools, plus
+typed controller actions described below.
 It does not import or call `npa.agent_backend` or any `npa agent` command.
 Every shell call runs in a fresh user/mount namespace that masks the controller
 repository and the entire private benchmark root, then bind-mounts only that
@@ -156,6 +157,58 @@ verification passes. Capture server `/metrics`, GPU samples, provider billing,
 workflow status/logs, commands, diffs, run IDs, artifact hashes, and teardown
 receipts beside these files. Publish only generic roles, non-identifying
 measurements, and hashes.
+
+## Prepared irreversible actions
+
+Generic shell access remains available for diagnosis, targeted inspection, and
+non-mutating preflights. For an irreversible workflow transition, prefer the
+`submit_prepared_workflow` tool. It accepts only an operator-advertised
+`action_id`; the model does not repeat private values or reconstruct shell
+syntax.
+
+An operator creates the action with the controller's `prepare-action`
+subcommand from a mode-0600 request stored in an operator-only control directory
+under the private root. That directory must be outside the trial evidence path
+mounted into generic shell calls:
+
+```bash
+npa/.venv/bin/python -m npa.benchmarks.sim2real_model_agent prepare-action \
+  --request /private/prepared-action-request.json \
+  --output /private/prepared-action-receipt.json
+```
+
+The prepared tool is advertised only when such a receipt is configured; the
+schema is identical for GLM, Qwen, and GPT-OSS trials. The closed receipt schema
+binds the canonical spec path and digest, source and
+benchmark-base commits, exact detached workspace state (including content hashes
+for every tracked or untracked change), run identity,
+project selection, staged-input manifest and identity, six immutable component
+image digests, runtime/resume/no-deadline policy, scoped Isaac EULA acceptance,
+required secret environment names (never values), the paths and hashes of eight
+completed, passing preflight receipts, and the exact argv-array digest. The controller requires the
+receipt to be an owner-owned regular file with mode 0600 under the configured
+private root and outside the agent-visible evidence mount. It reopens, rehashes,
+and verifies the pass state of every preflight immediately before execution.
+
+Execution uses a closed option grammar and the receipt's argv array without
+interpreting model-authored shell text. Help, version, plan-only, opt-out, and
+unknown flags fail closed. The controller writes and fsyncs an occurrence-unique intent to the existing
+tool WAL, then an append-only `execution_started` record before spawning NPA.
+A restart may recover a durably finished result, may retry an occurrence proven
+not to have started, and must stop on an indeterminate started occurrence. A
+finished action cannot be submitted again, including through generic shell after
+a WAL loss. Exit zero alone is insufficient: the bounded JSON result must
+authoritatively identify the receipt-bound run. Existing NPA workflow launch
+transactions, runtime resume, and durable submission records remain the source
+of orchestration truth; the controller does not duplicate them.
+
+The model receives only a concise result: accepted/rejected, safe run reference,
+status, duration, and a typed error when applicable. Full stdout/stderr stays in
+operator-control append-only `prepared-action-output.jsonl`; the result carries its
+SHA-256 plus a bounded safe view. Safe context checkpoints state completed
+preflights, the current blocker, durable submitted state, and the exact typed
+action available. Adding the tool to an in-progress benchmark is recorded in
+append-only `interventions.jsonl` and does not change the task or claim success.
 
 For the narrower submission/monitoring benchmark, set `completion_mode` to
 `workflow_terminal` and provide the identical shortened `task_text` in every
