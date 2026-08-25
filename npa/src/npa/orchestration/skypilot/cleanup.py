@@ -514,6 +514,7 @@ def _record_remote_controller_absence(identity: Any, cleanup: CleanupResult) -> 
             project_alias=identity.project_alias,
             project_id=identity.project_id,
             context=identity.context,
+            identity=identity.receipt_identity(),
             precheck={"identity_verified": True, **identity.receipt_identity()},
             action={"kind": "checkpoint_before_local_state_removal"},
             verification={"remote_controller_pods": [], "remote_absence": True},
