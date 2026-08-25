@@ -393,7 +393,10 @@ def test_sim2real_staged_chat_parameters_validate_and_plan() -> None:
     assert spec["config"]["env_count"] == "12000"
     assert spec["config"]["threshold"] == "0.82"
     assert spec["config"]["task_id"] == "Isaac-Lift-Cube-Franka-v0"
-    assert len(spec["states"]) == 20
+    assert len(spec["states"]) == 18
+    assert "stage-08-cosmos3" in spec["states"]
+    assert "stage-08-wave" not in spec["states"]
+    assert "stage-08-reason2" not in spec["states"]
     assert "run-sim2real" not in spec["states"]
     validation = validate_workflow_yaml_text(workflow)
     assert validation["ok"] is True
