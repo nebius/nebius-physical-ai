@@ -627,8 +627,8 @@ def test_base_installer_upgrades_linux_headers_from_the_fixed_snapshot() -> None
     """
 
     installer = BASE_INSTALLER.read_text(encoding="utf-8")
-    assert 'UBUNTU_SNAPSHOT="${NPA_UBUNTU_SNAPSHOT:-20260801T053000Z}"' in installer
-    assert "linux-libc-dev=5.15.0-186.196" in installer
+    assert 'UBUNTU_SNAPSHOT="${NPA_UBUNTU_SNAPSHOT:-20260820T000000Z}"' in installer
+    assert "linux-libc-dev=5.15.0-187.197" in installer
 
 
 # --------------------------------------------------------------------------------------
@@ -745,7 +745,7 @@ def test_base_installer_proves_the_refusal_at_build_time() -> None:
 def test_base_installer_uses_immutable_system_and_bootstrap_inputs() -> None:
     """The GPU image build must not resolve Python or packaging from moving indexes."""
     text = BASE_INSTALLER.read_text(encoding="utf-8")
-    assert "NPA_UBUNTU_SNAPSHOT:-20260801T053000Z" in text
+    assert "NPA_UBUNTU_SNAPSHOT:-20260820T000000Z" in text
     assert "https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/" in text
     assert "add-apt-repository" not in text
     assert "sha256sum --check --strict" in text
