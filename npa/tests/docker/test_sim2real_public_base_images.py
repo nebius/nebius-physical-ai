@@ -69,7 +69,7 @@ def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
     installer = (WORKBENCH / "common/install_workflow_runtime_prereqs.sh").read_text(
         encoding="utf-8"
     )
-    assert "linux-libc-dev=5.15.0-187.197" in installer
+    assert "linux-libc-dev=5.15.0-190.200" in installer
     for relative in (
         "sim2real-envgen/Dockerfile",
         "sim2real-eval/Dockerfile",

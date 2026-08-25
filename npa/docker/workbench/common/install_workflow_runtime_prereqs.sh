@@ -52,7 +52,7 @@ apt-get install -y --no-install-recommends \
   ca-certificates \
   curl \
   ffmpeg \
-  linux-libc-dev=5.15.0-187.197 \
+  linux-libc-dev=5.15.0-190.200 \
   netcat-openbsd \
   openssh-client \
   openssh-server \
