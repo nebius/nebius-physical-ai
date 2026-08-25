@@ -1170,6 +1170,12 @@ def execute_project_destroy(
                     and parsed.get("infrastructure_absent") is True
                     and parsed.get("iam_cleanup_complete") is False
                 )
+                agent_converged = bool(
+                    phase.name == "agents"
+                    and isinstance(parsed, dict)
+                    and parsed.get("infrastructure_absent") is True
+                    and parsed.get("iam_cleanup_complete") is True
+                )
                 if remote_only_converged:
                     phase_warnings.append(
                         "exact remote controller absence verified; stale local "
@@ -1178,6 +1184,12 @@ def execute_project_destroy(
                 elif agent_iam_unresolved:
                     phase_errors.append(
                         "exact agent infrastructure absence was verified, but agent IAM cleanup remains unresolved"
+                    )
+                    recovery_commands.append(list(command))
+                elif phase.name == "agents" and not agent_converged:
+                    phase_errors.append(
+                        "agent teardown did not return parseable, complete "
+                        "infrastructure and IAM convergence evidence"
                     )
                     recovery_commands.append(list(command))
                 elif completed.returncode != 0:

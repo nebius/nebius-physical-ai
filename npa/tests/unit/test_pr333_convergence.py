@@ -258,6 +258,42 @@ def test_unresolved_agent_iam_blocks_project_destroy_execution(
     assert result["status"] == "partial"
 
 
+def test_malformed_agent_destroy_output_blocks_dependent_retirement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa import project_destroy
+    from npa.clients import config as config_module
+
+    _write_project_config(config_module.CONFIG_PATH)
+    order: list[str] = []
+    phases = [
+        DestroyPhase("agents", (("npa", "agent-destroy"),), "agents"),
+        DestroyPhase(
+            "controller",
+            (("npa", "controller-delete"),),
+            "controller",
+            ("agents",),
+        ),
+    ]
+
+    def run(command, **_kwargs):  # noqa: ANN001, ANN202
+        order.append(command[1])
+        if command[1] == "agent-destroy":
+            return subprocess.CompletedProcess(
+                command, 0, stdout="not-json", stderr=""
+            )
+        return subprocess.CompletedProcess(command, 0, stdout="{}", stderr="")
+
+    result = project_destroy.execute_project_destroy("demo", phases, runner=run)
+
+    assert order == ["agent-destroy"]
+    assert result["status"] == "partial"
+    assert [item["status"] for item in result["phases"]] == [
+        "partial",
+        "skipped_dependency",
+    ]
+
+
 def test_direct_forget_preserves_project_with_unresolved_agent_iam(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -460,6 +496,67 @@ def test_final_cleanup_receipt_failure_restores_credentials_and_project_config(
         project_alias="demo", project_id="project-a"
     )["local_cleanup"]
     assert event["terminal_state"] == "in_progress"
+
+
+def test_cleanup_recovery_merge_preserves_concurrent_config_and_credentials() -> None:
+    from npa.cli import cleanup as cleanup_cli
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    from npa.clients.credentials import update_private_yaml
+
+    _write_project_config(config_module.CONFIG_PATH)
+    credentials_module.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    credentials_module.CREDENTIALS_PATH.write_text(
+        yaml.safe_dump(
+            {
+                "tokens": {"HF_TOKEN": "fixture-original-token"},
+                "recovery": {"project-a": {"key": "fixture-original-key"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    snapshots = cleanup_cli._snapshot_cleanup_recovery_documents()
+
+    def concurrent_config(current):  # noqa: ANN001, ANN202
+        projects = current.setdefault("projects", {})
+        projects.pop("demo")
+        projects["peer"] = {
+            "project_id": "project-peer",
+            "tenant_id": "tenant-peer",
+        }
+        current["default_project"] = "peer"
+        return current
+
+    def concurrent_credentials(current):  # noqa: ANN001, ANN202
+        current.setdefault("tokens", {}).pop("HF_TOKEN")
+        current["tokens"]["PEER_TOKEN"] = "fixture-peer-token"
+        current.setdefault("recovery", {}).pop("project-a")
+        current["recovery"]["project-peer"] = {"key": "fixture-peer-key"}
+        return current
+
+    config_module.update_config_document(concurrent_config)
+    update_private_yaml(
+        credentials_module.CREDENTIALS_PATH, concurrent_credentials
+    )
+
+    failures, _residue, _agent_present, _detail = (
+        cleanup_cli._restore_cleanup_recovery_documents(
+            snapshots, project_alias="", project_id=""
+        )
+    )
+
+    assert failures == []
+    configured = yaml.safe_load(config_module.CONFIG_PATH.read_text(encoding="utf-8"))
+    assert set(configured["projects"]) == {"demo", "peer"}
+    assert configured["default_project"] == "peer"
+    credentials = yaml.safe_load(
+        credentials_module.CREDENTIALS_PATH.read_text(encoding="utf-8")
+    )
+    assert credentials["tokens"] == {
+        "HF_TOKEN": "fixture-original-token",
+        "PEER_TOKEN": "fixture-peer-token",
+    }
+    assert set(credentials["recovery"]) == {"project-a", "project-peer"}
 
 
 def test_project_config_retirement_failure_restores_project_credentials(
@@ -990,6 +1087,61 @@ def test_forget_project_requires_durable_recovery_receipt_before_mutation(
     )
 
 
+def test_forget_project_terminal_receipt_failure_restores_without_clobbering_writer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.clients import config as config_module
+
+    _write_project_config(
+        config_module.CONFIG_PATH,
+        project={
+            "terraform_state": {
+                "bucket": "fixture-state-bucket",
+                "access_key": "fixture-access-key",
+                "secret_key": "fixture-secret-key",
+            }
+        },
+    )
+    real_record = teardown_receipts.record_teardown_event
+    receipt_calls = 0
+
+    def fail_terminal_receipts(**kwargs):  # noqa: ANN003, ANN202
+        nonlocal receipt_calls
+        if kwargs.get("phase") != "project_config":
+            return real_record(**kwargs)
+        receipt_calls += 1
+        if receipt_calls == 1:
+            return real_record(**kwargs)
+        if receipt_calls == 2:
+            config_module.write_config(
+                {
+                    "default_project": "peer",
+                    "projects": {
+                        "peer": {
+                            "project_id": "project-peer",
+                            "tenant_id": "tenant-peer",
+                        }
+                    },
+                }
+            )
+        raise OSError("injected terminal receipt failure")
+
+    monkeypatch.setattr(
+        teardown_receipts, "record_teardown_event", fail_terminal_receipts
+    )
+
+    result = runner.invoke(app, ["configure", "--forget-project", "demo"])
+
+    assert result.exit_code != 0, result.output
+    assert receipt_calls == 3
+    configured = yaml.safe_load(config_module.CONFIG_PATH.read_text(encoding="utf-8"))
+    assert set(configured["projects"]) == {"demo", "peer"}
+    assert configured["default_project"] == "peer"
+    assert configured["projects"]["demo"]["terraform_state"]["access_key"] == (
+        "fixture-access-key"
+    )
+
+
 def test_agent_record_project_must_match_parent_project_stanza() -> None:
     from npa.cli.agent_records import AgentRecordState, decode_agent_record
     from npa.clients import config as config_module
@@ -1145,6 +1297,50 @@ def test_receipt_aggregation_preserves_unresolved_siblings_and_cross_file_confli
     assert cleanup_cli._event_authorizes_cloud_absence(states["storage_iam"]) is False
 
 
+def test_receipt_aggregation_ignores_alias_after_immutable_project_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli import cleanup as cleanup_cli
+
+    times = iter(("2099-01-01T00:00:00Z", "2099-01-01T00:00:01Z"))
+    monkeypatch.setattr(teardown_receipts, "utc_now", lambda: next(times))
+    common = {
+        "phase": "agent",
+        "resource": "agent",
+        "project_id": "project-a",
+        "identity": {
+            "project_id": "project-a",
+            "agent_name": "agent",
+            "instance_id": "instance-a",
+        },
+        "action": {"kind": "terraform_agent_destroy", "purge_iam": True},
+    }
+    teardown_receipts.record_teardown_event(
+        project_alias="alpha",
+        terminal_state="verified_deleted",
+        verification=_agent_terminal_verification(),
+        **common,
+    )
+    teardown_receipts.record_teardown_event(
+        project_alias="beta",
+        terminal_state="verification_failed",
+        verification={
+            **_agent_terminal_verification(),
+            "iam_cleanup_complete": False,
+            "iam_disposition": "verification_unresolved",
+        },
+        errors=["newer verification failed"],
+        **common,
+    )
+
+    states = teardown_receipts.latest_phase_states(
+        project_alias="alpha", project_id="project-a"
+    )
+
+    assert states["agent"]["terminal_state"] == "verification_failed"
+    assert cleanup_cli._event_authorizes_cloud_absence(states["agent"]) is False
+
+
 def test_storage_delete_requires_exact_provider_absence_readback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1196,6 +1392,75 @@ def test_storage_delete_requires_exact_provider_absence_readback(
     assert credentials_module.CREDENTIALS_PATH.exists()
     events = teardown_receipts.latest_phase_states(project_id="project-a")
     assert not cleanup_cli_event_authorizes_storage(events.get("storage_iam", {}))
+
+
+def test_storage_delete_receipt_failure_blocks_before_provider_and_local_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    from npa.clients import nebius as nebius_module
+
+    _write_project_config(config_module.CONFIG_PATH)
+    credentials_module.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    credentials_module.CREDENTIALS_PATH.write_text(
+        yaml.safe_dump(
+            {
+                "storage_iam": {
+                    "service_account_id": "storage-account-a",
+                    "service_account_name": "lerobot-training",
+                    "service_account_project_id": "project-a",
+                    "service_account_managed_by": "npa",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    identity = nebius_module.ServiceAccountIdentity(
+        account_id="storage-account-a",
+        name="lerobot-training",
+        project_id="project-a",
+        tenant_id="tenant-a",
+        profile="",
+    )
+    deleted = False
+
+    def get_identity(*_args, **_kwargs):  # noqa: ANN202
+        return None if deleted else identity
+
+    def delete_identity(*_args, **_kwargs):  # noqa: ANN202
+        nonlocal deleted
+        deleted = True
+
+    monkeypatch.setattr(nebius_module, "get_service_account_identity", get_identity)
+    monkeypatch.setattr(
+        nebius_module,
+        "get_service_account_id_by_name",
+        lambda *_a, **_k: "storage-account-a",
+    )
+    monkeypatch.setattr(
+        nebius_module, "list_access_keys_for_service_account", lambda *_a, **_k: []
+    )
+    monkeypatch.setattr(nebius_module, "delete_service_account", delete_identity)
+    monkeypatch.setattr(
+        teardown_receipts,
+        "record_teardown_event",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            OSError("injected storage receipt failure")
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        ["storage", "service-account", "delete", "--project", "demo", "--yes"],
+    )
+
+    assert result.exit_code != 0, result.output
+    assert deleted is False
+    retained = yaml.safe_load(
+        credentials_module.CREDENTIALS_PATH.read_text(encoding="utf-8")
+    )
+    assert retained["storage_iam"]["service_account_id"] == "storage-account-a"
 
 
 def cleanup_cli_event_authorizes_storage(event: dict[str, object]) -> bool:
@@ -1311,3 +1576,43 @@ def test_agent_status_later_failure_wins_over_older_complete_destroy(
 
     assert result["classification"] != "VERIFIED_ABSENT"
     assert result["current_verification"] != "terminal_exact_agent_receipt"
+
+
+def test_destroyed_agent_operation_provider_failure_is_not_verified_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa import agent_status
+    from npa.clients import config as config_module
+    from npa.provisioning_journal import ProvisioningOperation
+
+    _write_project_config(config_module.CONFIG_PATH)
+    operation = ProvisioningOperation.prepare(
+        command="npa agent deploy",
+        project_alias="demo",
+        project_id="project-a",
+        tenant_id="tenant-a",
+        region="eu-test1",
+        resource_type="agent",
+        requested_name="agent",
+        resume_command="npa agent deploy --project demo --name agent",
+    )
+    operation.record_resource(
+        resource_type="compute_instance",
+        requested_name="agent-demo-agent",
+        provider_id="instance-a",
+        project_id="project-a",
+        ownership="created_by_this_operation",
+        ownership_source="terraform-output",
+    )
+    operation.transition("destroyed")
+    monkeypatch.setattr(
+        "npa.clients.nebius.get_compute_instance_identity",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            RuntimeError("injected provider verification failure")
+        ),
+    )
+
+    result = agent_status.partial_agent_status("demo", "agent")
+
+    assert result["classification"] != "VERIFIED_ABSENT"
+    assert result["current_verification"] == "provider_verification_incomplete"

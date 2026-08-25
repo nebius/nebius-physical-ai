@@ -1639,6 +1639,31 @@ def delete_service_account_cmd(
     except ConfigError as exc:
         _partial_cleanup(str(exc), output_json=output_json)
     payload = _observation_dict(observation)
+
+    def begin_mutation_receipt(
+        current: _StorageIamObservation,
+        *,
+        action: str,
+        access_key_ids: tuple[str, ...] = (),
+    ) -> None:
+        """Persist exact recovery identity before any provider or local mutation."""
+
+        try:
+            _record_storage_iam_teardown(
+                current,
+                terminal_state="in_progress",
+                action=action,
+                access_key_ids=access_key_ids,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            _partial_cleanup(
+                "the durable storage-IAM teardown transaction could not be "
+                "started; provider and local ownership state were preserved: "
+                f"{type(exc).__name__}: {exc}",
+                output_json=output_json,
+                payload=payload,
+            )
+
     if not output_json:
         typer.echo(f"identity_source: {context.identity_source}")
     if (
@@ -1671,6 +1696,11 @@ def delete_service_account_cmd(
             ),
             output_json=output_json,
             payload=payload,
+        )
+        begin_mutation_receipt(
+            observation,
+            action="preserve_unowned_account_remove_npa_access",
+            access_key_ids=observation.access_key_ids,
         )
         failed = False
         profile_kwargs = {"profile": context.profile} if context.profile else {}
@@ -1845,6 +1875,10 @@ def delete_service_account_cmd(
                 output_json=output_json,
                 payload=payload,
             )
+            begin_mutation_receipt(
+                observation,
+                action="remove_verified_absent_local_evidence",
+            )
             try:
                 _persist_storage_iam_observation(observation)
             except ConfigError as exc:
@@ -1983,6 +2017,10 @@ def delete_service_account_cmd(
                     output_json=output_json,
                     payload=recheck_payload,
                 )
+                begin_mutation_receipt(
+                    recheck,
+                    action="remove_verified_absent_local_evidence",
+                )
                 try:
                     _persist_storage_iam_observation(recheck)
                 except ConfigError as marker_exc:
@@ -2078,6 +2116,11 @@ def delete_service_account_cmd(
         ),
         output_json=output_json,
         payload=payload,
+    )
+    begin_mutation_receipt(
+        observation,
+        action="delete_npa_owned_service_account",
+        access_key_ids=tuple(key_ids),
     )
 
     failed = False

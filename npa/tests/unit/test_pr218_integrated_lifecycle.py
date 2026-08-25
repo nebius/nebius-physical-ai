@@ -2745,7 +2745,17 @@ def test_destroy_resume_replays_recreated_resources_before_project_delete(
 
     def run(command, **_kwargs):  # noqa: ANN001, ANN202
         calls.append(command[1])
-        stdout = '{"runs": []}' if command[1] == "workflow-list" else "{}"
+        if command[1] == "workflow-list":
+            stdout = '{"runs": []}'
+        elif command[1] == "agent-destroy":
+            stdout = json.dumps(
+                {
+                    "infrastructure_absent": True,
+                    "iam_cleanup_complete": True,
+                }
+            )
+        else:
+            stdout = "{}"
         return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
 
     monkeypatch.setattr(
@@ -3755,7 +3765,17 @@ def test_full_mocked_project_lifecycle_is_exact_isolated_and_idempotent(
             provider["access_keys"].discard("accesskey-target")
         elif command[1:3] == ["configure", "--forget-project"]:
             main_module._forget_project("target")
-        return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
+        stdout = (
+            json.dumps(
+                {
+                    "infrastructure_absent": True,
+                    "iam_cleanup_complete": True,
+                }
+            )
+            if command[1:3] == ["agent", "destroy"]
+            else "{}"
+        )
+        return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
 
     real_execute = project_destroy.execute_project_destroy
     monkeypatch.setattr(

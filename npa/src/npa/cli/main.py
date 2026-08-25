@@ -2156,7 +2156,15 @@ def _configured_summary() -> str:
 
 def _forget_project(alias: str) -> None:
     """Remove a project stanza from ~/.npa/config.yaml (the configure inverse)."""
-    from npa.clients.config import ConfigError, forget_project, resolve_environment
+    from copy import deepcopy
+
+    from npa.clients.config import (
+        ConfigError,
+        _load_yaml,
+        forget_project,
+        resolve_environment,
+        update_config_document,
+    )
     from npa.cleanup_identity import project_cleanup_identity_snapshot
     from npa.teardown_receipts import record_teardown_event
 
@@ -2209,6 +2217,10 @@ def _forget_project(alias: str) -> None:
     cleaned = alias.strip()
     environment = resolve_environment(cleaned)
     project_id = str(getattr(environment, "project_id", "") or "")
+    config_before = _load_yaml()
+    projects_before = config_before.get("projects")
+    projects_before = projects_before if isinstance(projects_before, dict) else {}
+    saved_project = deepcopy(projects_before.get(cleaned))
     identity = project_cleanup_identity_snapshot(cleaned)
     # The intent/evidence lands outside config before the destructive rewrite.
     receipt_path = persist_receipt(
@@ -2241,11 +2253,75 @@ def _forget_project(alias: str) -> None:
         )
     else:
         typer.echo(f"No project '{cleaned}' in ~/.npa/config.yaml; nothing to remove.")
-    persist_receipt(
+    config_after_forget = _load_yaml()
+    terminal_receipt = persist_receipt(
         terminal_state="completed",
         configured_project_found=bool(forgotten),
         full_identity=identity,
     )
+    if terminal_receipt is None and forgotten:
+
+        def restore_removed_project(current: dict[str, Any]) -> dict[str, Any]:
+            """CAS-restore only forget-project fields; preserve concurrent writes."""
+
+            projects = current.get("projects")
+            projects = dict(projects) if isinstance(projects, dict) else {}
+            if cleaned not in projects and isinstance(saved_project, dict):
+                projects[cleaned] = deepcopy(saved_project)
+            current["projects"] = projects
+
+            before_has_default = "default_project" in config_before
+            after_has_default = "default_project" in config_after_forget
+            current_has_default = "default_project" in current
+            default_unchanged_since_forget = (
+                current_has_default == after_has_default
+                and (
+                    not after_has_default
+                    or current.get("default_project")
+                    == config_after_forget.get("default_project")
+                )
+            )
+            if default_unchanged_since_forget:
+                if before_has_default:
+                    current["default_project"] = deepcopy(
+                        config_before.get("default_project")
+                    )
+                else:
+                    current.pop("default_project", None)
+
+            before_sky = config_before.get("skypilot")
+            after_sky = config_after_forget.get("skypilot")
+            current_sky = current.get("skypilot")
+            before_sky = before_sky if isinstance(before_sky, dict) else {}
+            after_sky = after_sky if isinstance(after_sky, dict) else {}
+            current_sky = dict(current_sky) if isinstance(current_sky, dict) else {}
+            saved_owner = before_sky.get("controller_owner")
+            owner_after = after_sky.get("controller_owner")
+            owner_current = current_sky.get("controller_owner")
+            if (
+                isinstance(saved_owner, dict)
+                and owner_current == owner_after
+                and owner_current != saved_owner
+            ):
+                current_sky["controller_owner"] = deepcopy(saved_owner)
+                current["skypilot"] = current_sky
+            return current
+
+        try:
+            update_config_document(restore_removed_project)
+        except (OSError, RuntimeError, ValueError) as exc:
+            typer.echo(
+                "Partial cleanup: terminal receipt failed and project recovery "
+                f"restoration is unresolved: {type(exc).__name__}: {exc}",
+                err=True,
+            )
+        else:
+            typer.echo(
+                "Partial cleanup: restored project configuration because the "
+                "terminal cleanup receipt was not durable.",
+                err=True,
+            )
+        raise typer.Exit(code=2)
 
 
 def _store_src_s3_uri(uri: str) -> None:

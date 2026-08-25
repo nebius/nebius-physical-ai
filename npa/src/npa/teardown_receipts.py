@@ -1166,7 +1166,7 @@ def latest_resource_generation_events(
         receipt_alias = str(receipt.get("project_alias") or "")
         if project_id and receipt_project_id != project_id:
             continue
-        if project_alias and receipt_alias != project_alias:
+        if project_alias and not project_id and receipt_alias != project_alias:
             continue
         receipt_id = str(receipt.get("receipt_id") or "")
         for event in receipt.get("events") or []:
@@ -1202,7 +1202,7 @@ def latest_phase_states(
         receipt_alias = str(receipt.get("project_alias") or "")
         if project_id and receipt_project_id != project_id:
             continue
-        if project_alias and receipt_alias != project_alias:
+        if project_alias and not project_id and receipt_alias != project_alias:
             continue
         for event in receipt.get("events") or []:
             if not isinstance(event, dict):

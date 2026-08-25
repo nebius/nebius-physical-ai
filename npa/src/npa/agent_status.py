@@ -173,7 +173,11 @@ def partial_agent_status(project: str, name: str) -> dict[str, Any]:
         if provider_present:
             classification = "CLEANUP_REQUIRED"
         elif phase in {"destroyed", "rolled-back"}:
-            classification = "VERIFIED_ABSENT"
+            classification = (
+                "VERIFIED_ABSENT"
+                if current_verification == "provider_verified_absent"
+                else "PARTIAL"
+            )
         elif phase == "rollback-incomplete":
             classification = "ROLLBACK_REQUIRED"
         elif phase == "prepared" and not resources:
@@ -185,7 +189,9 @@ def partial_agent_status(project: str, name: str) -> dict[str, Any]:
         if current_verification == "provider_verified_absent":
             classification = "VERIFIED_ABSENT"
         effective_lifecycle = (
-            "partial" if classification == "CLEANUP_REQUIRED" else lifecycle
+            "partial"
+            if classification in {"CLEANUP_REQUIRED", "PARTIAL"}
+            else lifecycle
         )
         residual_service_accounts = [
             item

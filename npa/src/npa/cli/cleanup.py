@@ -113,12 +113,32 @@ def _restore_cleanup_recovery_documents(
     from npa.clients.credentials import update_private_yaml
 
     failures: list[str] = []
+
+    def merge_missing(
+        current: Mapping[str, Any], saved: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """Restore deleted values without replacing concurrent successful writes."""
+
+        merged = deepcopy(dict(current))
+        for key, saved_value in saved.items():
+            if key not in merged:
+                merged[key] = deepcopy(saved_value)
+                continue
+            current_value = merged[key]
+            if isinstance(current_value, Mapping) and isinstance(
+                saved_value, Mapping
+            ):
+                merged[key] = merge_missing(current_value, saved_value)
+        return merged
+
     for snapshot in snapshots:
         try:
             update_private_yaml(
                 snapshot.path,
-                lambda _current, saved=snapshot: (
-                    deepcopy(saved.document) if saved.existed else None
+                lambda current, saved=snapshot: (
+                    merge_missing(current, saved.document)
+                    if saved.existed
+                    else (current or None)
                 ),
             )
         except (OSError, RuntimeError, ValueError) as exc:
