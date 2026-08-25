@@ -3,13 +3,19 @@
 FROM python:3.11-slim-trixie@sha256:a3ab0b966bc4e91546a033e22093cb840908979487a9fc0e6e38295747e49ac0
 
 ARG RERUN_SDK_VERSION=0.31.4
+ARG NPA_SOURCE_SHA
 
 LABEL npa.tool="rerun-viewer" \
       npa.version="${RERUN_SDK_VERSION}" \
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
       org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PATH=/opt/rerun/venv/bin:$PATH \
+    NPA_BAKED_PYTHON=/opt/rerun/venv/bin/python \
+    NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
+    NPA_SKIP_EAGER_IMPORTS=1 \
+    PYTHONPATH=/opt/npa/src \
     PYTHONUNBUFFERED=1 \
     RERUN_SDK_VERSION=${RERUN_SDK_VERSION}
 
@@ -42,6 +48,7 @@ RUN useradd -m -s /bin/bash -u 1000 ubuntu \
     && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
     && install -d -m 0755 -o ubuntu -g ubuntu \
       /opt/npa/docker/workbench/rerun-viewer \
+      /opt/npa \
       /opt/rerun \
       /opt/rerun/venv
 
@@ -52,6 +59,23 @@ RUN python -m venv /opt/rerun/venv \
     && python -m pip install --upgrade pip setuptools wheel \
     && python -m pip install --no-cache-dir "rerun-sdk==${RERUN_SDK_VERSION}" \
     && python -c 'import os, rerun; assert rerun.__version__ == os.environ["RERUN_SDK_VERSION"]'
+
+COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
+COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
+COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
+COPY docker/workbench/common/sim2real-controller-requirements.txt \
+    /opt/npa/sim2real-controller-requirements.txt
+COPY docker/workbench/common/sim2real-control-requirements.txt \
+    /opt/npa/sim2real-control-requirements.txt
+
+RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
+    && python -m pip install --no-cache-dir --no-deps \
+      -r /opt/npa/sim2real-controller-requirements.txt \
+      -r /opt/npa/sim2real-control-requirements.txt \
+    && python -m pip check \
+    && python -c "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-exact-source.pth').write_text('/opt/npa/src\n', encoding='utf-8')" \
+    && env -u PYTHONPATH python -c \
+      "import boto3, mcap, rerun; import npa.cli.main; from npa.workflows.sim2real.workflow_stage import main; assert callable(main)"
 
 COPY --chown=ubuntu:ubuntu --chmod=0755 docker/workbench/rerun-viewer/entrypoint.sh /opt/npa/docker/workbench/rerun-viewer/entrypoint.sh
 

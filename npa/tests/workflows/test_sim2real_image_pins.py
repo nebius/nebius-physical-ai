@@ -27,6 +27,7 @@ _EXACT_SOURCE_DOCKERFILES = (
     "sim2real-envgen/Dockerfile",
     "sim2real-eval/Dockerfile",
     "sim2real-control/Dockerfile",
+    "rerun-viewer/Dockerfile",
 )
 
 _STANDARD_WORKFLOW_PASSTHROUGH_DOCKERFILES = (
@@ -36,6 +37,21 @@ _STANDARD_WORKFLOW_PASSTHROUGH_DOCKERFILES = (
     "sim2real-envgen/Dockerfile",
     "sim2real-eval/Dockerfile",
 )
+
+
+def test_rerun_viewer_bakes_exact_stage14_runtime() -> None:
+    dockerfile = (
+        Path(__file__).resolve().parents[2]
+        / "docker"
+        / "workbench"
+        / "rerun-viewer"
+        / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in dockerfile
+    assert "NPA_BAKED_PYTHON=/opt/rerun/venv/bin/python" in dockerfile
+    assert "sim2real-controller-requirements.txt" in dockerfile
+    assert "sim2real-control-requirements.txt" in dockerfile
+    assert "env -u PYTHONPATH python -c" in dockerfile
 
 
 @pytest.mark.parametrize(

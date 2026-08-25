@@ -459,6 +459,9 @@ images:
     notes: >-
       Command-passthrough entrypoint supports SkyPilot Kubernetes setup as the
       non-root ubuntu user; an empty argv starts the interactive Rerun server.
+      The image also bakes the exact NPA source revision and resolver-closed
+      Stage 14 S3/MCAP dependencies so the canonical no-overlay workflow can
+      finalize Rerun and MCAP artifacts with source attestation.
     passwordless_root_exemption: >-
       SkyPilot's Kubernetes bootstrap installs and starts its in-pod SSH runtime
       as the non-root ubuntu user. The image deletes all build-time SSH host keys,
