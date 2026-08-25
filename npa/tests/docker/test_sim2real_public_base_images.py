@@ -53,6 +53,10 @@ def test_envgen_removes_unrelated_nonredistributable_parent_binary() -> None:
     assert text.index("FROM scratch AS runtime") < text.index(
         'LABEL npa.tool="envgen"'
     )
+    assert (
+        'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"'
+        in text
+    )
     for runtime_contract in (
         "NVIDIA_VISIBLE_DEVICES=all",
         "NVIDIA_DRIVER_CAPABILITIES=compute,graphics,utility",

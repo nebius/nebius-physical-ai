@@ -50,7 +50,8 @@ FROM scratch AS runtime
 
 ARG NPA_SOURCE_SHA
 LABEL npa.tool="envgen" \
-      org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 COPY --from=sanitized / /
 
