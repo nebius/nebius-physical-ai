@@ -33,7 +33,7 @@ a full URDF plus minimal config.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -156,6 +156,18 @@ class RobotSpec:
     local_path: str = ""
     sha256: str = ""
     loaded: bool = False
+    # Stage-2 immutable contract fields. Empty on every legacy/stock path.
+    asset_root_uri: str = ""
+    source_sha256: str = ""
+    source_tree_sha256: str = ""
+    source_relative_path: str = ""
+    source_format: str = ""
+    embodiment_digest: str = ""
+    expected_action_dim: int = 0
+    expected_observation_dim: int = 0
+    task_config: dict[str, Any] = field(default_factory=dict)
+    resolved_usd_uri: str = ""
+    resolved_manifest_uri: str = ""
 
     @property
     def dof_count(self) -> int:
@@ -212,7 +224,10 @@ class RobotSpec:
                     f"{label} must have dof_count ({self.dof_count}) entries, "
                     f"got {len(gain)}"
                 )
-        if len(self.force_lower) != self.dof_count or len(self.force_upper) != self.dof_count:
+        if (
+            len(self.force_lower) != self.dof_count
+            or len(self.force_upper) != self.dof_count
+        ):
             raise RobotSpecError(
                 f"force_lower/force_upper must have dof_count ({self.dof_count}) "
                 "entries"
@@ -230,7 +245,9 @@ class RobotSpec:
                     f"robot_source={self.robot_source} requires a non-empty robot_uri"
                 )
             _validate_articulated_uri(self.robot_uri, self.robot_source)
-        elif self.robot_source == ROBOT_SOURCE_GENESIS_BUILTIN and not self.builtin_path:
+        elif (
+            self.robot_source == ROBOT_SOURCE_GENESIS_BUILTIN and not self.builtin_path
+        ):
             raise RobotSpecError("genesis_builtin robot requires builtin_path")
 
 
@@ -475,6 +492,25 @@ def parse_robot_spec(doc: dict[str, Any]) -> RobotSpec:
         spec.gripper_close = float(doc["gripper_close"])
     if doc.get("isaac_robot_hint"):
         spec.isaac_robot_hint = str(doc["isaac_robot_hint"]).strip()
+    for name in (
+        "asset_root_uri",
+        "source_sha256",
+        "source_tree_sha256",
+        "source_relative_path",
+        "source_format",
+        "embodiment_digest",
+        "resolved_usd_uri",
+        "resolved_manifest_uri",
+    ):
+        if doc.get(name) is not None:
+            setattr(spec, name, str(doc[name]).strip())
+    for name in ("expected_action_dim", "expected_observation_dim"):
+        if doc.get(name) is not None:
+            setattr(spec, name, int(doc[name]))
+    if doc.get("task_config") is not None:
+        if not isinstance(doc["task_config"], dict):
+            raise RobotSpecError("task_config must be a JSON object")
+        spec.task_config = dict(doc["task_config"])
 
     # Minimal-spec joint-count inference: when the counts are omitted but joint
     # names are supplied, derive them so the customer need not restate the

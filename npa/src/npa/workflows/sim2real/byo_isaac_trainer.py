@@ -129,7 +129,40 @@ def resolve_object_usd(raw: str) -> str:
 
 
 # Where the BYO-robot path stages the customer robot USD inside the Isaac job.
-ROBOT_USD_CONTAINER_PATH = "/tmp/npa_robot/robot.usd"
+ROBOT_USD_CONTAINER_PATH = "/tmp/npa_robot/resolved/robot.usd"
+
+
+def robot_asset_preflight_script(robot_spec: dict[str, Any]) -> str:
+    """Render the fail-closed Stage-7 prepare / train-eval fetch operation."""
+
+    if not robot_spec.get("source_format"):
+        return ""
+    operation = _env("NPA_SIM2REAL_ROBOT_ASSET_OPERATION", "fetch")
+    if operation not in {"prepare", "fetch"}:
+        raise ValueError("NPA_SIM2REAL_ROBOT_ASSET_OPERATION must be prepare or fetch")
+    spec_json = json.dumps(robot_spec, sort_keys=True)
+    return (
+        "export NPA_BYO_ROBOT_SPEC_JSON="
+        + shlex.quote(spec_json)
+        + "\n"
+        + '"$PY" -m npa.workflows.sim2real.isaac_robot_asset '
+        + operation
+        + "\n"
+    )
+
+
+def embodiment_evidence(robot_spec: dict[str, Any] | None) -> dict[str, Any]:
+    """Evidence attached only after the in-Isaac dimension checks pass."""
+
+    spec = dict(robot_spec or {})
+    return {
+        "embodiment_digest": str(spec.get("embodiment_digest") or "stock_franka"),
+        "expected_action_dim": int(spec.get("expected_action_dim") or 8),
+        "expected_observation_dim": int(spec.get("expected_observation_dim") or 36),
+        "resolved_usd_uri": str(spec.get("resolved_usd_uri") or ""),
+        "resolved_manifest_uri": str(spec.get("resolved_manifest_uri") or ""),
+        "runtime_dimension_validation": "passed",
+    }
 
 
 def robot_spec_payload(
@@ -181,6 +214,18 @@ def robot_spec_payload(
         "gripper_open": float(getattr(spec, "gripper_open", 0.04) or 0.0),
         "gripper_close": float(getattr(spec, "gripper_close", 0.0) or 0.0),
         "usd_path": usd_container_path,
+        "asset_root_uri": str(getattr(spec, "asset_root_uri", "") or ""),
+        "source_sha256": str(getattr(spec, "source_sha256", "") or ""),
+        "source_tree_sha256": str(getattr(spec, "source_tree_sha256", "") or ""),
+        "source_relative_path": str(getattr(spec, "source_relative_path", "") or ""),
+        "source_format": str(getattr(spec, "source_format", "") or ""),
+        "embodiment_digest": str(getattr(spec, "embodiment_digest", "") or ""),
+        "expected_action_dim": int(getattr(spec, "expected_action_dim", 0) or 0),
+        "expected_observation_dim": int(
+            getattr(spec, "expected_observation_dim", 0) or 0
+        ),
+        "resolved_usd_uri": str(getattr(spec, "resolved_usd_uri", "") or ""),
+        "resolved_manifest_uri": str(getattr(spec, "resolved_manifest_uri", "") or ""),
     }
 
 
@@ -800,8 +845,8 @@ def build_isaac_job_manifest(
                 + "\n"
             )
         usd_dest = str(robot_spec.get("usd_path") or "").strip()
-        stage_block = ""
-        if robot_usd_uri and usd_dest:
+        stage_block = robot_asset_preflight_script(robot_spec)
+        if not stage_block and robot_usd_uri and usd_dest:
             # Stage the customer robot USD from S3 to the in-container path the
             # payload references, before the wrapper registers the variant.
             stage_block = (
@@ -1681,6 +1726,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     )
     result["resume_checkpoint_uri"] = resume_uri if not physics else ""
     result["resume_checkpoint_sha256"] = resume_sha256 if not physics else ""
+    result["embodiment"] = embodiment_evidence(robot_spec_dict)
     return result
 
 

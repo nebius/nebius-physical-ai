@@ -744,6 +744,7 @@ def _log_summary_documents(
             stage_components, run_metadata=run_metadata
         ),
         "summary/policy_access": _policy_access_markdown(run_metadata),
+        "summary/embodiment": _embodiment_markdown(run_metadata),
         "summary/augmentation": _augmentation_markdown(index),
         "summary/artifacts": _artifacts_markdown(index),
     }
@@ -969,6 +970,24 @@ def _policy_access_markdown(run_metadata: dict[str, Any]) -> str:
                 run_metadata.get("runtime_parameters") or {}, indent=2, sort_keys=True
             ),
             "```",
+        ]
+    )
+
+
+def _embodiment_markdown(run_metadata: dict[str, Any]) -> str:
+    embodiment = dict(run_metadata.get("embodiment") or {})
+    if not embodiment:
+        return "# Robot embodiment\n\n- Contract: `stock_franka`"
+    return "\n".join(
+        [
+            "# Robot embodiment",
+            "",
+            f"- Digest: `{embodiment.get('embodiment_digest', '')}`",
+            f"- Action dimension: `{embodiment.get('expected_action_dim', '')}`",
+            "- Observation dimension: "
+            f"`{embodiment.get('expected_observation_dim', '')}`",
+            f"- Resolved USD: `{embodiment.get('resolved_usd_uri', '')}`",
+            f"- Runtime parity: `{embodiment.get('runtime_dimension_validation', '')}`",
         ]
     )
 

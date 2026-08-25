@@ -4,6 +4,7 @@ Use the single canonical spec and complete the operator runbook before submit:
 
 - [onboarding, preflight, submit, and remediation](../../../../docs/workbench/guides/sim2real-workflow.md)
 - [data and customer-asset contracts](../../../../docs/workbench/guides/sim2real-customer-assets.md)
+- [canonical RobotSpec and URDF example](../../../../docs/workbench/guides/sim2real-robot-spec.md)
 - [architecture and durable resume](../../../../docs/architecture/sim2real-compositional-workflow.md)
 
 Configured operators submit through the standard durable runtime:
@@ -13,6 +14,7 @@ npa workbench workflow submit \
   npa/workflows/workbench/npa-workflows/sim2real.yaml \
   --runtime --run-id <run-id> \
   --var bucket=<bucket> \
+  --var robot_spec_uri=<exact-s3-object-or-empty> \
   --var controller_image=<immutable-ref> \
   --var transfer_image=<immutable-ref> \
   --var envgen_image=<immutable-ref> \
