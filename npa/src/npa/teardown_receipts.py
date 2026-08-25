@@ -1185,6 +1185,63 @@ def latest_resource_generation_events(
     return [_latest_generation_event(events) for events in grouped.values()]
 
 
+def latest_matching_resource_generation_event(
+    event: Mapping[str, Any],
+    *,
+    receipt_id: str,
+    strict: bool = False,
+) -> dict[str, Any]:
+    """Return authoritative cross-receipt evidence for ``event``'s generation.
+
+    A selected receipt is an identity selector, not an evidence snapshot.  Once
+    it identifies an immutable resource generation, every receipt for that
+    project and generation participates in convergence.  This prevents an
+    operator-selected older receipt from hiding a newer unresolved observation.
+    """
+
+    selected_receipt_id = str(receipt_id or "").strip()
+    selected = dict(event)
+    selected["_receipt_id"] = selected_receipt_id
+    identity = selected.get("identity")
+    identity = identity if isinstance(identity, Mapping) else {}
+    project_id = str(
+        selected.get("project_id") or identity.get("project_id") or ""
+    ).strip()
+    phase = str(selected.get("phase") or "").strip()
+    if not selected_receipt_id or not project_id or not phase:
+        return {}
+    generation = _event_generation_key(selected, receipt_id=selected_receipt_id)
+    matching: list[dict[str, Any]] = []
+    for receipt in list_teardown_receipts(
+        project_id=project_id, legacy="exclude", strict=strict
+    ):
+        candidate_receipt_id = str(receipt.get("receipt_id") or "")
+        for candidate in receipt.get("events") or []:
+            if not isinstance(candidate, dict):
+                continue
+            candidate_identity = candidate.get("identity")
+            candidate_identity = (
+                candidate_identity if isinstance(candidate_identity, Mapping) else {}
+            )
+            candidate_project_id = str(
+                candidate.get("project_id")
+                or candidate_identity.get("project_id")
+                or ""
+            ).strip()
+            if candidate_project_id != project_id:
+                continue
+            annotated = dict(candidate)
+            annotated["_receipt_id"] = candidate_receipt_id
+            if (
+                _event_generation_key(
+                    annotated, receipt_id=candidate_receipt_id
+                )
+                == generation
+            ):
+                matching.append(annotated)
+    return _latest_generation_event(matching) if matching else {}
+
+
 def latest_phase_states(
     *, project_alias: str = "", project_id: str = "", strict: bool = False
 ) -> dict[str, dict[str, Any]]:

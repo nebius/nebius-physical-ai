@@ -906,22 +906,85 @@ def _unscoped_project_state_present() -> tuple[bool, str]:
     if not isinstance(loaded, dict):
         raise RuntimeError("unscoped credential inventory is schema-invalid")
     agent_iam = loaded.get("agent_iam")
+    if "agent_iam" in loaded and not isinstance(agent_iam, dict):
+        raise RuntimeError("unscoped agent IAM inventory is schema-invalid")
     agent_projects = (
         agent_iam.get("projects") if isinstance(agent_iam, dict) else None
     )
+    if agent_projects is not None and not isinstance(agent_projects, dict):
+        raise RuntimeError("unscoped agent IAM project inventory is schema-invalid")
     if isinstance(agent_projects, dict) and agent_projects:
         return True, "agent IAM recovery records exist without selected project scope"
     project_credentials = loaded.get("project_credentials")
+    if "project_credentials" in loaded and not isinstance(project_credentials, dict):
+        raise RuntimeError("unscoped project credential inventory is schema-invalid")
     credential_projects = (
         project_credentials.get("projects")
         if isinstance(project_credentials, dict)
         else None
     )
+    if credential_projects is not None and not isinstance(credential_projects, dict):
+        raise RuntimeError("unscoped project credential records are schema-invalid")
     if isinstance(credential_projects, dict) and credential_projects:
         return True, "project credential records exist without selected project scope"
+    legacy_unscoped = (
+        project_credentials.get("legacy_unscoped")
+        if isinstance(project_credentials, dict)
+        else None
+    )
+    if legacy_unscoped is not None and not isinstance(legacy_unscoped, dict):
+        raise RuntimeError("unscoped legacy credential inventory is schema-invalid")
+    if isinstance(legacy_unscoped, dict) and legacy_unscoped:
+        return True, "legacy credential records exist without selected project scope"
     storage_iam = loaded.get("storage_iam")
+    if "storage_iam" in loaded and not isinstance(storage_iam, dict):
+        raise RuntimeError("unscoped storage IAM inventory is schema-invalid")
     if isinstance(storage_iam, dict) and storage_iam:
         return True, "storage IAM recovery records exist without selected project scope"
+    tokens = loaded.get("tokens")
+    if "tokens" in loaded and not isinstance(tokens, dict):
+        raise RuntimeError("unscoped credential token inventory is schema-invalid")
+    storage_fields = {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_ENDPOINT_URL",
+        "NEBIUS_S3_ENDPOINT",
+        "NEBIUS_S3_BUCKET",
+        "NPA_CHECKPOINT_BUCKET",
+        "NPA_STORAGE_ENDPOINT",
+        "access_key",
+        "access_key_id",
+        "aws_access_key_id",
+        "aws_secret_access_key",
+        "bucket",
+        "checkpoint_bucket",
+        "endpoint",
+        "endpoint_url",
+        "nebius_api_key",
+        "nebius_secret_key",
+        "s3_bucket",
+        "s3_endpoint",
+        "secret_access_key",
+        "secret_key",
+    }
+
+    def contains_storage_state(mapping: Mapping[str, object]) -> bool:
+        return any(
+            mapping.get(key) not in (None, "") for key in storage_fields
+        )
+
+    if contains_storage_state(loaded) or (
+        isinstance(tokens, dict) and contains_storage_state(tokens)
+    ):
+        return True, "legacy storage credentials exist without selected project scope"
+    for section_name in ("storage", "s3", "object-storage", "object_storage"):
+        section = loaded.get(section_name)
+        if section_name in loaded and not isinstance(section, dict):
+            raise RuntimeError(
+                f"unscoped storage section {section_name!r} is schema-invalid"
+            )
+        if isinstance(section, dict) and contains_storage_state(section):
+            return True, "legacy storage credentials exist without selected project scope"
     return False, "no project-scoped local state exists"
 
 
@@ -1049,7 +1112,7 @@ def _agent_lifecycle_allows_project_retirement(
         list_operations,
         operation_context,
     )
-    from npa.teardown_receipts import list_teardown_receipts
+    from npa.teardown_receipts import latest_resource_generation_events
 
     alias = str(project_alias or "").strip()
     exact_project = str(project_id or "").strip()
@@ -1158,43 +1221,20 @@ def _agent_lifecycle_allows_project_retirement(
 
     terminal_graphs: dict[tuple[str, str], dict[str, object]] = {}
     try:
-        receipts = list_teardown_receipts(
-            project_id=exact_project, legacy="exclude", strict=True
+        receipt_events = latest_resource_generation_events(
+            project_id=exact_project, phase="agent", strict=True
         )
     except (OSError, RuntimeError, ValueError) as exc:
         return False, f"agent teardown receipts are unreadable: {exc}"
-    for receipt in receipts:
-        for event in receipt.get("events") or []:
-            if not isinstance(event, Mapping) or event.get("phase") != "agent":
-                continue
-            identity = event.get("identity")
-            identity = identity if isinstance(identity, Mapping) else {}
-            verification = event.get("verification")
-            verification = verification if isinstance(verification, Mapping) else {}
-            action = event.get("action")
-            action = action if isinstance(action, Mapping) else {}
-            graph = verification.get("terraform_dependency_graph")
-            errors = event.get("errors")
-            name = str(identity.get("agent_name") or event.get("resource") or "").strip()
-            instance_id = str(identity.get("instance_id") or "").strip()
-            if not (
-                name
-                and instance_id
-                and str(event.get("terminal_state") or "").lower()
-                in {"verified_absent", "verified_deleted"}
-                and action.get("kind") == "terraform_agent_destroy"
-                and verification.get("exact_instance_absent") is True
-                and verification.get("terraform_destroy_completed") is True
-                and isinstance(graph, list)
-                and _AGENT_TERRAFORM_GRAPH.issubset(graph)
-                and isinstance(errors, list)
-                and not errors
-            ):
-                continue
-            key = (name, instance_id)
-            prior = terminal_graphs.get(key, {})
-            if int(event.get("sequence") or 0) > int(prior.get("sequence") or 0):
-                terminal_graphs[key] = dict(event)
+    for event in receipt_events:
+        if not _agent_event_authorizes_prelocal_retirement(event):
+            continue
+        identity = event.get("identity")
+        identity = identity if isinstance(identity, Mapping) else {}
+        name = str(identity.get("agent_name") or event.get("resource") or "").strip()
+        instance_id = str(identity.get("instance_id") or "").strip()
+        if name and instance_id:
+            terminal_graphs[(name, instance_id)] = dict(event)
 
     retirements: list[
         tuple[str, str, bool, tuple[str, ...], str, dict[str, object]]

@@ -38,7 +38,10 @@ def _terminal_agent_graph_event(
 
     if not receipt_id or not instance_id:
         return {}
-    from npa.teardown_receipts import load_teardown_receipt
+    from npa.teardown_receipts import (
+        latest_matching_resource_generation_event,
+        load_teardown_receipt,
+    )
 
     candidates: list[dict[str, Any]] = []
     for event in load_teardown_receipt(receipt_id).get("events") or []:
@@ -46,6 +49,19 @@ def _terminal_agent_graph_event(
             continue
         identity = event.get("identity")
         identity = identity if isinstance(identity, dict) else {}
+        if (
+            event.get("phase") == "agent"
+            and str(event.get("resource") or "") == name
+            and str(identity.get("instance_id") or "") == instance_id
+        ):
+            candidates.append(event)
+    selected = max(
+        candidates, key=lambda item: int(item.get("sequence") or 0), default={}
+    )
+    if not selected:
+        return {}
+    graph_candidates: list[dict[str, Any]] = []
+    for event in candidates:
         verification = event.get("verification")
         verification = verification if isinstance(verification, dict) else {}
         action = event.get("action")
@@ -53,21 +69,43 @@ def _terminal_agent_graph_event(
         graph = verification.get("terraform_dependency_graph")
         errors = event.get("errors")
         if (
-            event.get("phase") == "agent"
-            and str(event.get("resource") or "") == name
-            and str(identity.get("instance_id") or "") == instance_id
-            and str(event.get("terminal_state") or "").lower()
+            str(event.get("terminal_state") or "").lower()
             in {"verified_absent", "verified_deleted"}
+            and action.get("kind") == "terraform_agent_destroy"
             and verification.get("exact_instance_absent") is True
             and verification.get("terraform_destroy_completed") is True
-            and action.get("kind") == "terraform_agent_destroy"
             and isinstance(graph, list)
             and _AGENT_TERRAFORM_GRAPH.issubset(graph)
             and isinstance(errors, list)
             and not errors
         ):
-            candidates.append(event)
-    return max(candidates, key=lambda item: int(item.get("sequence") or 0), default={})
+            graph_candidates.append(event)
+    if not graph_candidates:
+        return {}
+    authoritative = latest_matching_resource_generation_event(
+        selected, receipt_id=receipt_id, strict=True
+    )
+    if not authoritative:
+        return {}
+    identity = authoritative.get("identity")
+    identity = identity if isinstance(identity, dict) else {}
+    action = authoritative.get("action")
+    action = action if isinstance(action, dict) else {}
+    verification = authoritative.get("verification")
+    verification = verification if isinstance(verification, dict) else {}
+    if not (
+        str(authoritative.get("phase") or "") == "agent"
+        and str(authoritative.get("resource") or "") == name
+        and str(identity.get("instance_id") or "") == instance_id
+        and action.get("kind") == "terraform_agent_destroy"
+        and verification.get("exact_instance_absent") is not False
+        and verification.get("terraform_destroy_completed") is not False
+    ):
+        return {}
+    # Preserve the newest event's unresolved state while retaining the older
+    # immutable Terraform-graph facet solely for a provider-rechecked IAM retry.
+    # Callers must never mistake the graph proof for full teardown convergence.
+    return authoritative
 
 
 @resolve_typer_defaults

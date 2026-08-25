@@ -377,6 +377,52 @@ def test_unscoped_full_cleanup_fails_closed_on_agent_scope_and_auth_residue(
     assert auth.exists()
 
 
+def test_unscoped_full_cleanup_fails_closed_on_legacy_storage_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli import cleanup as cleanup_cli
+    from npa.clients import credentials as credentials_module
+
+    credentials_module.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    credentials_module.CREDENTIALS_PATH.write_text(
+        yaml.safe_dump(
+            {
+                "storage": {
+                    "bucket": "fixture-bucket",
+                    "endpoint": "https://storage.example.invalid",
+                    "aws_access_key_id": "fixture-access-key",
+                    "aws_secret_access_key": "fixture-secret-key",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        cleanup_cli,
+        "_storage_iam_full_check",
+        lambda *_a, **_k: ("verified absent", False, "fully_clean", "verified_terminal"),
+    )
+    monkeypatch.setattr(
+        cleanup_cli,
+        "_nonterminal_jobs",
+        lambda _sky: ([], "", "verified_empty"),
+    )
+
+    result = runner.invoke(
+        app, ["cleanup", "--full", "--yes", "--keep-sky", "--json"]
+    )
+
+    assert result.exit_code != 0, result.output
+    payload = json.loads(result.output)
+    assert payload["result"] != "fully_cleaned"
+    assert payload["verification_unresolved"] is True
+    retained = yaml.safe_load(
+        credentials_module.CREDENTIALS_PATH.read_text(encoding="utf-8")
+    )
+    assert retained["storage"]["aws_access_key_id"] == "fixture-access-key"
+    assert retained["storage"]["aws_secret_access_key"] == "fixture-secret-key"
+
+
 def test_failed_terraform_retirement_preserves_credentials_until_final_inventory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1339,6 +1385,197 @@ def test_receipt_aggregation_ignores_alias_after_immutable_project_resolution(
 
     assert states["agent"]["terminal_state"] == "verification_failed"
     assert cleanup_cli._event_authorizes_cloud_absence(states["agent"]) is False
+
+
+def test_selected_agent_receipt_cannot_bypass_newer_generation_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli.agent_destroy import _terminal_agent_graph_event
+
+    times = iter(("2099-01-01T00:00:00Z", "2099-01-01T00:00:01Z"))
+    monkeypatch.setattr(teardown_receipts, "utc_now", lambda: next(times))
+    common = {
+        "phase": "agent",
+        "resource": "agent",
+        "project_id": "project-a",
+        "identity": {
+            "project_id": "project-a",
+            "agent_name": "agent",
+            "instance_id": "instance-a",
+        },
+        "action": {"kind": "terraform_agent_destroy", "purge_iam": True},
+    }
+    selected = teardown_receipts.record_teardown_event(
+        project_alias="alpha",
+        terminal_state="verified_deleted",
+        verification=_agent_terminal_verification(),
+        **common,
+    )
+    teardown_receipts.record_teardown_event(
+        project_alias="beta",
+        terminal_state="verification_failed",
+        verification={
+            **_agent_terminal_verification(),
+            "iam_cleanup_complete": False,
+            "iam_disposition": "verification_unresolved",
+        },
+        errors=["newer verification failed"],
+        **common,
+    )
+
+    current = _terminal_agent_graph_event(
+        selected.stem, name="agent", instance_id="instance-a"
+    )
+    assert current["terminal_state"] == "verification_failed"
+    assert teardown_receipts.teardown_event_authorizes_convergence(current) is False
+
+
+def test_cleanup_local_agent_retirement_uses_current_generation_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli import cleanup as cleanup_cli
+    from npa.clients import config as config_module
+
+    _write_project_config(
+        config_module.CONFIG_PATH,
+        project={
+            "agents": {
+                "agent": {
+                    "schema_version": 1,
+                    "project_id": "project-a",
+                    "instance_id": "instance-a",
+                }
+            }
+        },
+    )
+    times = iter(("2099-01-01T00:00:00Z", "2099-01-01T00:00:01Z"))
+    monkeypatch.setattr(teardown_receipts, "utc_now", lambda: next(times))
+    verification = _agent_terminal_verification()
+    verification.pop("local_state_retired")
+    common = {
+        "phase": "agent",
+        "resource": "agent",
+        "project_id": "project-a",
+        "identity": {
+            "project_id": "project-a",
+            "agent_name": "agent",
+            "instance_id": "instance-a",
+        },
+        "action": {"kind": "terraform_agent_destroy", "purge_iam": True},
+    }
+    teardown_receipts.record_teardown_event(
+        project_alias="alpha",
+        terminal_state="verified_deleted",
+        verification=verification,
+        **common,
+    )
+    teardown_receipts.record_teardown_event(
+        project_alias="beta",
+        terminal_state="verification_failed",
+        verification={
+            **verification,
+            "iam_cleanup_complete": False,
+            "iam_disposition": "verification_unresolved",
+        },
+        errors=["newer IAM verification failed"],
+        **common,
+    )
+    provider_calls: list[str] = []
+    monkeypatch.setattr(
+        "npa.clients.nebius.get_compute_instance_identity",
+        lambda instance_id, **_kwargs: provider_calls.append(instance_id) or None,
+    )
+
+    safe, _detail = cleanup_cli._agent_lifecycle_allows_project_retirement(
+        "demo", "project-a"
+    )
+
+    assert safe is False
+    assert provider_calls == []
+
+
+def test_selected_storage_receipt_cannot_bypass_newer_generation_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli import storage as storage_module
+    from npa.clients.nebius import NebiusError
+
+    times = iter(("2099-01-01T00:00:00Z", "2099-01-01T00:00:01Z"))
+    monkeypatch.setattr(teardown_receipts, "utc_now", lambda: next(times))
+    identity = {
+        "project_id": "project-a",
+        "tenant_id": "tenant-a",
+        "service_account_id": "storage-account-a",
+        "service_account_name": "lerobot-training",
+        "ownership": "npa",
+    }
+    selected = teardown_receipts.record_teardown_event(
+        phase="storage_iam",
+        resource="storage-account-a",
+        terminal_state="verified_absent",
+        project_alias="alpha",
+        project_id="project-a",
+        identity=identity,
+        action={"kind": "exact_provider_check"},
+        verification={
+            "provider_outcome": "verified_absent",
+            "exact_service_account_absent": True,
+        },
+    )
+    teardown_receipts.record_teardown_event(
+        phase="storage_iam",
+        resource="storage-account-a",
+        terminal_state="verification_failed",
+        project_alias="beta",
+        project_id="project-a",
+        identity=identity,
+        action={"kind": "exact_provider_check"},
+        verification={"provider_outcome": "verification_failed"},
+        errors=["newer provider inventory failed"],
+    )
+    monkeypatch.setattr(
+        "npa.clients.nebius.get_service_account_identity",
+        lambda *_a, **_k: (_ for _ in ()).throw(NebiusError("authentication failed")),
+    )
+
+    context = storage_module._resolve_storage_iam_context(receipt=selected.stem)
+    observation = storage_module._observe_storage_iam(context)
+
+    assert observation.outcome == "verification_failed"
+    assert not observation.verified_absent
+
+
+def test_selected_bucket_receipt_cannot_bypass_newer_generation_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli.storage import _receipt_proves_bucket_cleanup
+
+    times = iter(("2099-01-01T00:00:00Z", "2099-01-01T00:00:01Z"))
+    monkeypatch.setattr(teardown_receipts, "utc_now", lambda: next(times))
+    identity = {"project_id": "project-a", "bucket_name": "bucket-a"}
+    selected = teardown_receipts.record_teardown_event(
+        phase="bucket",
+        resource="bucket-a",
+        terminal_state="verified_absent",
+        project_alias="alpha",
+        project_id="project-a",
+        identity=identity,
+        action={"kind": "bucket_delete"},
+        verification={"bucket_absent": True},
+    )
+    teardown_receipts.record_teardown_event(
+        phase="bucket",
+        resource="bucket-a",
+        terminal_state="verification_failed",
+        project_alias="beta",
+        project_id="project-a",
+        identity=identity,
+        action={"kind": "bucket_delete"},
+        verification={"bucket_absent": False},
+        errors=["newer provider inventory failed"],
+    )
+
+    assert not _receipt_proves_bucket_cleanup(selected.stem, "project-a")
 
 
 def test_storage_delete_requires_exact_provider_absence_readback(

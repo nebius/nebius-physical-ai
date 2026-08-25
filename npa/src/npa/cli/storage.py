@@ -886,9 +886,15 @@ def _observe_storage_iam(
             latest = max(
                 matching, key=lambda item: int(item.get("sequence") or 0)
             )
-            from npa.teardown_receipts import teardown_event_authorizes_convergence
+            from npa.teardown_receipts import (
+                latest_matching_resource_generation_event,
+                teardown_event_authorizes_convergence,
+            )
 
-            if teardown_event_authorizes_convergence(latest):
+            authoritative = latest_matching_resource_generation_event(
+                latest, receipt_id=context.receipt_id, strict=True
+            )
+            if teardown_event_authorizes_convergence(authoritative):
                 return _StorageIamObservation(
                     outcome="verified_absent",
                     context=context,
@@ -1233,7 +1239,11 @@ def _receipt_proves_bucket_cleanup(receipt_id: str, project_id: str) -> bool:
 
     if not receipt_id:
         return False
-    from npa.teardown_receipts import load_teardown_receipt
+    from npa.teardown_receipts import (
+        latest_matching_resource_generation_event,
+        load_teardown_receipt,
+        teardown_event_authorizes_convergence,
+    )
 
     receipt = load_teardown_receipt(receipt_id)
     if str(receipt.get("project_id") or "") != project_id:
@@ -1246,20 +1256,10 @@ def _receipt_proves_bucket_cleanup(receipt_id: str, project_id: str) -> bool:
     latest = max(
         matching, key=lambda item: int(item.get("sequence") or 0), default={}
     )
-    action = latest.get("action")
-    verification = latest.get("verification")
-    errors = latest.get("errors")
-    return bool(
-        isinstance(action, dict)
-        and isinstance(verification, dict)
-        and isinstance(errors, list)
-        and not errors
-        and str(latest.get("terminal_state") or "").lower()
-        in {"verified_absent", "verified_deleted"}
-        and action.get("kind")
-        in {"none", "bucket_delete", "scheduled_bucket_purge"}
-        and verification.get("bucket_absent") is True
+    authoritative = latest_matching_resource_generation_event(
+        latest, receipt_id=receipt_id, strict=True
     )
+    return teardown_event_authorizes_convergence(authoritative)
 
 
 def _partial_cleanup(
