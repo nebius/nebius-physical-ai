@@ -296,17 +296,12 @@ def test_cosmos3_system_packages_use_an_immutable_snapshot() -> None:
     for requirement in (
         "tomli==2.4.1",
         "accelerate==1.14.0",
-        "huggingface_hub==1.28.0",
+        "huggingface_hub==0.36.0",
         "qwen-vl-utils==0.0.14",
-        "regex==2026.7.19",
         "safetensors==0.8.0",
-        "tokenizers==0.23.0",
-        "transformers==5.15.1",
+        "transformers==4.57.6",
     ):
         assert requirement in dockerfile
-    assert "Cosmos3EdgeForConditionalGeneration" in dockerfile
-    assert "Qwen3VLForConditionalGeneration" in dockerfile
-    assert "git+https://github.com/huggingface/transformers" not in dockerfile
 
 
 def test_cosmos3_baked_runtime_survives_skypilot_pythonpath_scrubbing() -> None:

@@ -24,6 +24,7 @@ from npa.workflows.sim2real_health import FAIL, PASS, WARN, CheckResult, has_fai
 
 HF = "huggingface"
 NGC = "ngc"
+TOKEN_FACTORY = "token_factory"
 HF_GATING_LAST_VERIFIED = "2026-08-25"
 
 
@@ -77,11 +78,14 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
     GatedAsset("nvidia/Cosmos-Reason2-2B", HF, ("groot",), True),
     GatedAsset("nvidia/Cosmos-Reason2-8B", HF, ("sim2real",), True),
     GatedAsset(
-        "nvidia/Cosmos3-Edge",
-        HF,
-        ("sim2real",),
-        True,
-        note="OpenMDW-1.1; retain the NVIDIA origin and license notices.",
+        "nvidia/Cosmos3-Super-Reasoner",
+        TOKEN_FACTORY,
+        ("sim2real", "token_factory"),
+        False,
+        note=(
+            "Hosted OpenMDW-1.1 model; verify key/project availability and balance "
+            "through Token Factory, not Hugging Face."
+        ),
     ),
     GatedAsset("nvidia/Cosmos-Reason1-7B", HF, ("cosmos",), False),
     GatedAsset("nvidia/Cosmos3-Nano", HF, ("cosmos3",), False),

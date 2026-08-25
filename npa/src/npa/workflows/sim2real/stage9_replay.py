@@ -132,7 +132,7 @@ def publish_stage8_join(
         stage=8,
         name="stage_08_vlm_eval_train",
         tier="WORKS",
-        evidence="Two parallel real Cosmos Reason lanes evaluated event-local Isaac observations and were deterministically merged.",
+        evidence="Parallel self-hosted Reason2 and hosted Token Factory Cosmos3 lanes evaluated event-local Isaac observations and were deterministically merged.",
         artifacts={
             "reason2": lane_base + "reason2.json",
             "cosmos3": lane_base + "cosmos3.json",
@@ -140,6 +140,10 @@ def publish_stage8_join(
             "rollout_count": rollout_count,
             "reason_lane_provenance": [reason2["provenance"], cosmos3["provenance"]],
             "lane_records": lane_records,
+            "evaluator_usage": {
+                "reason2": reason2.get("evaluator_usage"),
+                "cosmos3": cosmos3.get("evaluator_usage"),
+            },
         },
         require_gpu=True,
         execution_provenance=provenance,

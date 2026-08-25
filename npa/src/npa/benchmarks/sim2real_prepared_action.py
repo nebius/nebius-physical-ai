@@ -31,6 +31,9 @@ IMAGE_ROLES = (
     "isaac",
     "viewer",
 )
+CANONICAL_SECRET_ENV_NAMES = frozenset(
+    {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"}
+)
 REQUIRED_PREFLIGHTS = (
     "health_preflight",
     "model_access",
@@ -503,6 +506,11 @@ def _validate_argv_contract(receipt: Mapping[str, Any]) -> None:
     ):
         raise PreparedActionError(
             "argv_contract_invalid", "argv secret names do not match the receipt"
+        )
+    if set(receipt["required_secret_env_names"]) != CANONICAL_SECRET_ENV_NAMES:
+        raise PreparedActionError(
+            "argv_contract_invalid",
+            "prepared Sim2Real action must declare the canonical runtime secret names",
         )
     variables = _option_values(argv, "--var")
     variable_mapping: dict[str, str] = {}

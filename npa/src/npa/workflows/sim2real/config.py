@@ -265,7 +265,6 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
                 else ""
             )
             or os.environ.get("VLM_COSMOS3_MODEL")
-            or os.environ.get("NPA_COSMOS3_EDGE_MODEL_ID")
             or DEFAULT_COSMOS3_MODEL
         ),
         vlm_two_evaluator=_bool_value(

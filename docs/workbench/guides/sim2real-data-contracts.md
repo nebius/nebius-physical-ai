@@ -107,7 +107,7 @@ Every JSON artifact should include a top-level `"schema"` string. Constants live
 | `npa.sim2real.reference_actions.v1` | policy job output | 7 | Reference policy contract |
 | `npa.sim2real.actions_summary.v1` | policy job summary | 7 | |
 | `npa.sim2real.policy_image_contract.v1` | policy job metadata | 7 | |
-| `npa.sim2real.vlm_eval.v2` | `vlm_eval/…/*.json` | 8 | Per-rollout Reason2 + Cosmos3 critique; v1 remains read-compatible for archived artifacts |
+| `npa.sim2real.vlm_eval.v2` | `vlm_eval/…/*.json` | 8 | Per-rollout Reason2 + Cosmos3 critique; hosted Cosmos3 records provider/backend, request IDs, tokens, latency, retries, and authoritative response cost or explicit null; v1 remains read-compatible for archived artifacts |
 | `npa.sim2real.rl_signal.v1` | `training_signal/…/*.json` | 9 | Converted RL training signal |
 | `npa.sim2real.inner_loop_evidence.v1` | `inner_loop/outer-XX/evidence.json` | 9 | Reward trend, trainer deltas |
 

@@ -8,14 +8,18 @@ creates a run or launches work.
 
 ## 1. Accept the exact third-party terms
 
-The runtime downloads three gated checkpoints under the operator's Hugging Face
+The runtime downloads two gated checkpoints under the operator's Hugging Face
 account. Sign in, review the applicable model terms, and request/accept access
-on all three pages:
+on both pages:
 
 - [`nvidia/Cosmos-Transfer2.5-2B`](https://huggingface.co/nvidia/Cosmos-Transfer2.5-2B)
 - [`nvidia/Cosmos-Reason2-8B`](https://huggingface.co/nvidia/Cosmos-Reason2-8B)
-- [`nvidia/Cosmos3-Edge`](https://huggingface.co/nvidia/Cosmos3-Edge) — OpenMDW-1.1;
-  retain the NVIDIA origin notice and license when distributing model materials.
+
+Stage 8's second evaluator is the hosted `nvidia/Cosmos3-Super-Reasoner` through
+Nebius Token Factory. Its model classification is OpenMDW-1.1; retain NVIDIA
+Cosmos origin and attribution notices when distributing model materials. NPA
+does not distribute or cache those hosted model weights and does not add a
+second EULA boolean.
 
 Isaac runtime warming and execution additionally require the operator to review
 the [NVIDIA Omniverse terms](https://docs.omniverse.nvidia.com/usd/latest/common/NVIDIA_Omniverse_License_Agreement.html),
@@ -26,15 +30,20 @@ NPA's non-interactive Isaac policy defaults the public `ACCEPT_EULA` value to
 `--no-accept-eula` (or a recognized negative `ACCEPT_EULA` value) to opt out;
 privacy and telemetry consent remain independent and disabled by default.
 
-Create a read token and verify the same token can access every Sim2Real model:
+Create a read token and verify the same token can access both self-hosted models.
+Configure `NEBIUS_TOKEN_FACTORY_KEY` only in the private credential store or
+runtime environment, then verify the key-specific hosted model list and a
+minimal inference (which also fails closed for an unusable balance):
 
 ```bash
 export HF_TOKEN='<hugging-face-read-token>'
 npa/.venv/bin/npa configure --no-interactive --save-env-credentials
 npa/.venv/bin/npa workbench health access --capability sim2real
+npa/.venv/bin/npa workbench token-factory models
 ```
 
-Expected: three `HF access ok` lines and a zero exit status. A `401` means the
+Expected: two `HF access ok` lines, the exact
+`nvidia/Cosmos3-Super-Reasoner` model ID, and zero exit statuses. A `401` means the
 token is invalid or did not reach the check; a `403` means the account has not
 accepted access or a fine-grained token omits that repository. See
 [Hugging Face setup](../huggingface-token.md). `NGC_API_KEY` is not required by
@@ -66,9 +75,10 @@ If the kubeconfig path differs, use the path printed by `npa cluster status`.
 Clear stale ambient bearer tokens if authentication disagrees with the Nebius
 CLI: `unset NEBIUS_IAM_TOKEN NPA_NEBIUS_IAM_TOKEN`.
 
-The workflow runtime needs its storage credentials inside every wave. Request
-their propagation explicitly at submit time even when values come from the
-selected project's private NPA credential store; never put values in YAML.
+The workflow runtime needs its storage credentials inside every wave and the
+Token Factory key in the hosted Stage 8 leaf. Request propagation by secret
+name even when values come from the selected project's private NPA credential
+store; never put values in YAML, receipts, logs, or reports.
 
 ## 3. Add a schedulable CPU pool before GPU work
 
@@ -305,7 +315,8 @@ npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
   --var isaac_cache_pvc=npa-isaac-cache \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY \
-  --secret-env HF_TOKEN
+  --secret-env HF_TOKEN \
+  --secret-env NEBIUS_TOKEN_FACTORY_KEY
 ```
 
 Before any launch, submit now fails with one consolidated prerequisite report if

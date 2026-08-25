@@ -1075,6 +1075,7 @@ def submit_cmd(
                 )
             if not plan_only and workflow_identity == "sim2real":
                 from npa.clients.huggingface import validate_hf_access
+                from npa.clients.token_factory import validate_model_access
                 from npa.clients.kube import run_kubectl
                 from npa.orchestration.npa_workflow.sim2real_preflight import (
                     kubernetes_prerequisites,
@@ -1087,6 +1088,7 @@ def submit_cmd(
                         requested_secret_envs=secret_env,
                         secret_values=extra_env,
                         hf_validator=validate_hf_access,
+                        token_factory_validator=validate_model_access,
                     )
                 )
                 kubeconfig = os.environ.get("KUBECONFIG", "")

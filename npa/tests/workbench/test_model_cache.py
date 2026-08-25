@@ -168,7 +168,7 @@ def test_the_whole_hugging_face_cache_family_lands_under_one_root() -> None:
         "NPA_COSMOS3_CACHE",
         "COSMOS_DOWNLOAD_CACHE_DIR",
         "NPA_COSMOS_REASON2_CACHE",
-        "NPA_COSMOS3_EDGE_CACHE",
+        "NPA_COSMOS_REASON3_CACHE",
         "NPA_COSMOS_CURATE_WEIGHTS_DIR",
         "HF_LEROBOT_HOME",
         "LEROBOT_HF_HOME",

@@ -1,8 +1,10 @@
-"""Self-hosted Cosmos Reason2 and Cosmos3 inference for workbench and sim2real."""
+"""Cosmos Reason2 and hosted Cosmos3 rollout evaluation."""
 
 from __future__ import annotations
 
+import base64
 import json
+import mimetypes
 import os
 import re
 from pathlib import Path
@@ -10,10 +12,11 @@ from typing import Any
 
 DEFAULT_REASON1_MODEL = "nvidia/Cosmos-Reason1-7B"
 DEFAULT_REASON2_MODEL = "nvidia/Cosmos-Reason2-8B"
-DEFAULT_COSMOS3_MODEL = "nvidia/Cosmos3-Edge"
+DEFAULT_COSMOS3_MODEL = "nvidia/Cosmos3-Super-Reasoner"
 DEFAULT_REASON1_CACHE = "/tmp/hf_home/cosmos-reason1"
 DEFAULT_REASON2_CACHE = "/tmp/hf_home/cosmos-reason2"
-DEFAULT_COSMOS3_CACHE = "/tmp/hf_home/cosmos3-edge"
+DEFAULT_REASON3_CACHE = "/tmp/hf_home/cosmos-reason2-2b"
+DEFAULT_HOSTED_EVENT_FRAMES = 8
 DEFAULT_REASON_EVENT_FRAMES = 32
 DEFAULT_REASON_MAX_NEW_TOKENS = 8192
 REFERENCE_VLM_ALIASES = frozenset(
@@ -39,7 +42,7 @@ def cosmos_reason_family(model_id: str) -> str:
     """Return the real model family for a Hugging Face model id."""
 
     mid = str(model_id or "").strip().lower()
-    if "cosmos3-edge" in mid:
+    if "cosmos3-edge" in mid or "cosmos3-super" in mid or "super-reasoner" in mid:
         return "cosmos3"
     if "reason2" in mid or "cosmos-reason2" in mid:
         return "reason2"
@@ -51,8 +54,10 @@ def cosmos_reason_family(model_id: str) -> str:
 def default_reason_cache_dir(model_id: str) -> str:
     resolved = resolve_cosmos_reason_model_id(model_id)
     family = cosmos_reason_family(resolved)
+    if "reason2-2b" in resolved.lower():
+        return os.environ.get("NPA_COSMOS_REASON3_CACHE", DEFAULT_REASON3_CACHE)
     if family == "cosmos3":
-        return os.environ.get("NPA_COSMOS3_EDGE_CACHE", DEFAULT_COSMOS3_CACHE)
+        raise CosmosReasonError("hosted Cosmos3 models do not use a local weight cache")
     if family == "reason2":
         return os.environ.get("NPA_COSMOS_REASON2_CACHE", DEFAULT_REASON2_CACHE)
     return os.environ.get("NPA_COSMOS_REASON_CACHE", DEFAULT_REASON1_CACHE)
@@ -86,8 +91,8 @@ def cosmos_reason_runtime_env() -> dict[str, str]:
         "NPA_COSMOS_REASON2_CACHE": resolved(
             "NPA_COSMOS_REASON2_CACHE", DEFAULT_REASON2_CACHE
         ),
-        "NPA_COSMOS3_EDGE_CACHE": resolved(
-            "NPA_COSMOS3_EDGE_CACHE", DEFAULT_COSMOS3_CACHE
+        "NPA_COSMOS_REASON3_CACHE": resolved(
+            "NPA_COSMOS_REASON3_CACHE", DEFAULT_REASON3_CACHE
         ),
         "NPA_COSMOS_REASON_CACHE": resolved(
             "NPA_COSMOS_REASON_CACHE", DEFAULT_REASON2_CACHE
@@ -111,7 +116,7 @@ def cosmos_reason_k8s_shell_preamble() -> str:
         'export HF_HOME="${HF_HOME:-/tmp/hf_home}"\n'
         'mkdir -p "${HF_HOME}" '
         '"${NPA_COSMOS_REASON2_CACHE:-/tmp/hf_home/cosmos-reason2}" '
-        '"${NPA_COSMOS3_EDGE_CACHE:-/tmp/hf_home/cosmos3-edge}" '
+        '"${NPA_COSMOS_REASON3_CACHE:-/tmp/hf_home/cosmos-reason2-2b}" '
         '"${NPA_COSMOS_REASON_CACHE:-/tmp/hf_home/cosmos-reason2}"\n'
     )
 
@@ -166,8 +171,7 @@ def resolve_cosmos_reason_model_id(
     candidate = str(model or "").strip()
     if candidate in REFERENCE_VLM_ALIASES:
         env_default = (
-            os.environ.get("NPA_COSMOS3_EDGE_MODEL_ID", "")
-            or os.environ.get("NPA_COSMOS_REASON2_MODEL_ID", "")
+            os.environ.get("NPA_COSMOS_REASON2_MODEL_ID", "")
             or os.environ.get("NPA_COSMOS_REASON_MODEL_ID", "")
             or default
         )
@@ -318,6 +322,11 @@ def run_cosmos_reason_vlm(
 
     resolved_model = resolve_cosmos_reason_model_id(model_id)
     family = cosmos_reason_family(resolved_model)
+    if family == "cosmos3":
+        raise CosmosReasonError(
+            "Cosmos3-Super-Reasoner is hosted by Token Factory; use the "
+            "token_factory Stage 8 backend instead of the self-hosted loader"
+        )
     try:
         import torch
         from PIL import Image
@@ -352,10 +361,7 @@ def run_cosmos_reason_vlm(
         frame_names=[path.name for path in selected_paths],
     )
     content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
-    image_key = "url" if family == "cosmos3" else "image"
-    content.extend(
-        {"type": "image", image_key: str(path.resolve())} for path in selected_paths
-    )
+    content.extend({"type": "image", "image": str(path.resolve())} for path in selected_paths)
     messages = [{"role": "user", "content": content}]
 
     print(
@@ -373,18 +379,19 @@ def run_cosmos_reason_vlm(
     processor = AutoProcessor.from_pretrained(
         resolved_model,
         cache_dir=cache_dir,
+        trust_remote_code=True,
     )
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     model_cls = _reason_model_class(family, AutoModelForImageTextToText)
     model = model_cls.from_pretrained(
         resolved_model,
         cache_dir=cache_dir,
-        dtype=dtype,
+        torch_dtype=dtype,
         device_map="auto",
+        trust_remote_code=True,
     )
     first_device = next(model.parameters()).device
     inputs = _prepare_reason_inputs(
-        family=family,
         processor=processor,
         messages=messages,
         device=first_device,
@@ -440,6 +447,114 @@ def run_cosmos_reason_vlm(
     return payload
 
 
+def select_hosted_event_frames(
+    image_paths: list[Path], *, max_frames: int = DEFAULT_HOSTED_EVENT_FRAMES
+) -> list[Path]:
+    """Select bounded, deterministic, rollout-wide keyframes."""
+
+    if max_frames <= 0:
+        raise CosmosReasonError("hosted max_frames must be positive")
+    paths = list(image_paths)
+    if len(paths) <= max_frames:
+        return paths
+    if max_frames == 1:
+        return [paths[-1]]
+    last = len(paths) - 1
+    indices = [(index * last) // (max_frames - 1) for index in range(max_frames)]
+    return [paths[index] for index in indices]
+
+
+def run_token_factory_rollout_vlm(
+    *,
+    model_id: str,
+    image_paths: list[Path],
+    actions: list[dict[str, Any]],
+    task_description: str,
+    rollout_id: str,
+    threshold: float,
+    client: Any | None = None,
+    max_frames: int = DEFAULT_HOSTED_EVENT_FRAMES,
+) -> dict[str, Any]:
+    """Score one real rollout with hosted Cosmos3 and retain request telemetry."""
+
+    from npa.clients.token_factory import TokenFactoryClient, TokenFactoryError, split_reasoning
+
+    resolved_model = str(model_id or DEFAULT_COSMOS3_MODEL).strip()
+    if cosmos_reason_family(resolved_model) != "cosmos3":
+        raise CosmosReasonError("token_factory backend requires a Cosmos3 model")
+    selected_paths = select_hosted_event_frames(image_paths, max_frames=max_frames)
+    if not selected_paths:
+        raise CosmosReasonError("hosted Cosmos3 evaluation requires at least one frame")
+    content: list[dict[str, Any]] = [
+        {
+            "type": "text",
+            "text": _cosmos_reason_prompt(
+                family="cosmos3",
+                task_description=task_description,
+                actions=actions,
+                frame_names=[path.name for path in selected_paths],
+            ),
+        }
+    ]
+    for path in selected_paths:
+        if not path.is_file():
+            raise CosmosReasonError(f"rollout frame is missing: {path.name}")
+        mime = mimetypes.guess_type(path.name)[0] or "image/png"
+        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+        content.append(
+            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}}
+        )
+    active = client or TokenFactoryClient()
+    try:
+        response = active.chat_completion(
+            model=resolved_model,
+            messages=[{"role": "user", "content": content}],
+            temperature=0.0,
+            max_tokens=DEFAULT_REASON_MAX_NEW_TOKENS,
+        )
+        message = response["choices"][0]["message"]
+        model_text, _reasoning = split_reasoning(message)
+    except (TokenFactoryError, KeyError, IndexError, TypeError) as exc:
+        raise CosmosReasonError(f"hosted Cosmos3 rollout evaluation failed: {exc}") from exc
+    if not model_text:
+        raise CosmosReasonError("hosted Cosmos3 returned no visible structured evaluation")
+    payload = _parse_cosmos_reason_output(
+        model_text,
+        actions=actions,
+        rollout_id=rollout_id,
+        threshold=threshold,
+        family="cosmos3",
+    )
+    raw_usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
+    transport = getattr(active, "last_request_metrics", {}) or {}
+    cost_value = raw_usage.get("cost")
+    if not isinstance(cost_value, (int, float)):
+        cost_value = raw_usage.get("cost_usd")
+    cost = float(cost_value) if isinstance(cost_value, (int, float)) else None
+    payload.update(
+        {
+            "component_source": "token_factory_cosmos3_rollout_vlm",
+            "provider": "nebius",
+            "backend": "token_factory",
+            "model": resolved_model,
+            "reason_family": "cosmos3",
+            "frame_count": len(selected_paths),
+            "selected_frames": [path.name for path in selected_paths],
+            "request": {
+                "request_id": str(response.get("id") or "") or None,
+                "input_tokens": int(raw_usage.get("prompt_tokens") or 0),
+                "output_tokens": int(raw_usage.get("completion_tokens") or 0),
+                "total_tokens": int(raw_usage.get("total_tokens") or 0),
+                "latency_seconds": transport.get("latency_seconds"),
+                "retries": int(transport.get("retries") or 0),
+                "cost_usd": cost,
+                "cost_source": "response_usage" if cost is not None else "unavailable",
+            },
+        }
+    )
+    return payload
+
+
 def _reason_model_class(family: str, fallback: Any) -> Any:
     if family == "reason2":
         try:
@@ -452,18 +567,9 @@ def _reason_model_class(family: str, fallback: Any) -> Any:
 
 
 def _prepare_reason_inputs(
-    *, family: str, processor: Any, messages: list[dict[str, Any]], device: Any
+    *, processor: Any, messages: list[dict[str, Any]], device: Any
 ) -> Any:
-    """Apply the released model family's official multimodal processor path."""
-
-    if family == "cosmos3":
-        return processor.apply_chat_template(
-            messages,
-            tokenize=True,
-            add_generation_prompt=True,
-            return_dict=True,
-            return_tensors="pt",
-        ).to(device)
+    """Apply the released self-hosted Reason processor path."""
 
     try:
         from qwen_vl_utils import process_vision_info
@@ -514,7 +620,7 @@ def _cosmos_reason_prompt(
     label = {
         "reason1": "Cosmos-Reason1",
         "reason2": "Cosmos-Reason2",
-        "cosmos3": "Cosmos3-Edge Reasoner",
+        "cosmos3": "Cosmos3-Super-Reasoner",
     }.get(family, "Cosmos Reason")
     return (
         f"You are NVIDIA {label} evaluating a physical robot rollout.\n"

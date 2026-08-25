@@ -493,11 +493,17 @@ def _stage7(args: argparse.Namespace) -> None:
 def _stage8(args: argparse.Namespace) -> None:
     from npa.workbench.cosmos.reason import (
         run_cosmos_reason_vlm,
+        run_token_factory_rollout_vlm,
         task_description_from_manifest,
     )
     from npa.workflows.sim2real.workflow_io import image_provenance
 
     root, work = _root(args), _work(8)
+    expected_backend = "token_factory" if args.reason_lane == "cosmos3" else "self_hosted"
+    if args.reason_backend != expected_backend:
+        raise RuntimeError(
+            f"Stage 8 {args.reason_lane} lane requires {expected_backend} backend"
+        )
     source = (
         f"{root}/actions/train/outer-{args.outer_iteration:02d}/"
         f"iter-{args.inner_iteration:02d}/"
@@ -512,7 +518,12 @@ def _stage8(args: argparse.Namespace) -> None:
         frames = [path for path in frames if path.is_file()]
         if not frames:
             frames = sorted(manifest_path.parent.glob("camera-*.png"))
-        evaluation = run_cosmos_reason_vlm(
+        evaluator = (
+            run_token_factory_rollout_vlm
+            if args.reason_backend == "token_factory"
+            else run_cosmos_reason_vlm
+        )
+        evaluation = evaluator(
             model_id=args.reason_model,
             image_paths=frames,
             actions=list(manifest.get("actions") or []),
@@ -523,12 +534,41 @@ def _stage8(args: argparse.Namespace) -> None:
         results.append(evaluation)
     if not results:
         raise RuntimeError("Stage 8 found no real Stage 7 rollouts")
+    requests = [dict(item.get("request") or {}) for item in results]
+    evaluator_usage = {
+        "provider": "nebius" if args.reason_backend == "token_factory" else "self_hosted",
+        "backend": args.reason_backend,
+        "model": args.reason_model,
+        "request_count": len(requests) if args.reason_backend == "token_factory" else 0,
+        "input_tokens": sum(int(item.get("input_tokens") or 0) for item in requests),
+        "output_tokens": sum(int(item.get("output_tokens") or 0) for item in requests),
+        "total_tokens": sum(int(item.get("total_tokens") or 0) for item in requests),
+        "aggregate_latency_seconds": round(
+            sum(float(item.get("latency_seconds") or 0.0) for item in requests), 6
+        ),
+        "per_request_latency_seconds": [item.get("latency_seconds") for item in requests],
+        "retries": sum(int(item.get("retries") or 0) for item in requests),
+        "request_ids": [item.get("request_id") for item in requests if item.get("request_id")],
+        "cost_usd": (
+            round(sum(float(item["cost_usd"]) for item in requests), 8)
+            if requests and all(item.get("cost_usd") is not None for item in requests)
+            else None
+        ),
+        "cost_source": (
+            "response_usage"
+            if requests and all(item.get("cost_usd") is not None for item in requests)
+            else "unavailable"
+        ),
+    }
     payload = {
         "schema": "npa.sim2real.cosmos_reason_lane.v2",
         "lane": args.reason_lane,
         "model": args.reason_model,
+        "provider": evaluator_usage["provider"],
+        "backend": args.reason_backend,
         "evaluations": results,
-        "provenance": image_provenance(require_gpu=True),
+        "evaluator_usage": evaluator_usage,
+        "provenance": image_provenance(require_gpu=args.reason_backend != "token_factory"),
     }
     output_uri = (
         f"{root}/vlm_eval/train/outer-{args.outer_iteration:02d}/"
@@ -545,6 +585,9 @@ def _stage8(args: argparse.Namespace) -> None:
         artifacts={
             "result": output_uri,
             "model": args.reason_model,
+            "provider": evaluator_usage["provider"],
+            "backend": args.reason_backend,
+            "evaluator_usage": evaluator_usage,
             "rollout_count": len(results),
             "outer_iteration": args.outer_iteration,
             "inner_iteration": args.inner_iteration,
@@ -612,6 +655,9 @@ def _stage9(args: argparse.Namespace) -> None:
         or cosmos3.get("lane") != "cosmos3"
         or cosmos_reason_family(str(reason2.get("model") or "")) != "reason2"
         or cosmos_reason_family(str(cosmos3.get("model") or "")) != "cosmos3"
+        or cosmos3.get("backend") != "token_factory"
+        or cosmos3.get("provider") != "nebius"
+        or reason2.get("backend", "self_hosted") != "self_hosted"
         or not reason2.get("provenance")
         or not cosmos3.get("provenance")
     ):
@@ -620,7 +666,21 @@ def _stage9(args: argparse.Namespace) -> None:
         )
     left = {item["rollout_id"]: item for item in reason2["evaluations"]}
     right = {item["rollout_id"]: item for item in cosmos3["evaluations"]}
-    if set(left) != set(right) or not left:
+    cosmos3_usage = dict(cosmos3.get("evaluator_usage") or {})
+    if (
+        set(left) != set(right)
+        or not left
+        or len(left) != len(reason2["evaluations"])
+        or len(right) != len(cosmos3["evaluations"])
+        or int(cosmos3_usage.get("request_count") or 0) != len(right)
+        or any(
+            item.get("backend") != "token_factory"
+            or item.get("provider") != "nebius"
+            or item.get("model") != cosmos3.get("model")
+            or not isinstance(item.get("request"), dict)
+            for item in right.values()
+        )
+    ):
         raise RuntimeError("Stage 8 Reason2 and Cosmos3 lanes do not cover the same rollouts")
     merged_dir, signal_dir = work / "merged", work / "signals"
     merged_dir.mkdir()
@@ -765,6 +825,10 @@ def _stage9(args: argparse.Namespace) -> None:
                 "update": update,
                 "sample_vlm_eval": merged[0],
                 "sample_signal": signals[0],
+                "evaluator_usage": {
+                    "reason2": reason2.get("evaluator_usage"),
+                    "cosmos3": cosmos3.get("evaluator_usage"),
+                },
             }
         ],
         "checkpoint_candidates": candidates,
@@ -1002,6 +1066,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--reason-lane", choices=("reason2", "cosmos3"), default="reason2"
     )
     parser.add_argument("--reason-model", default="nvidia/Cosmos-Reason2-8B")
+    parser.add_argument(
+        "--reason-backend",
+        choices=("self_hosted", "token_factory"),
+        default="self_hosted",
+    )
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--ppo-num-envs", type=int, default=64)
     parser.add_argument("--ppo-iterations", type=int, default=10)

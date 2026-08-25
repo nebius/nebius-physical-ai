@@ -6,13 +6,14 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 from npa.workbench.cosmos import reason as reason_module
 
 from npa.workbench.cosmos.reason import (
     DEFAULT_REASON2_CACHE,
     DEFAULT_REASON2_MODEL,
-    DEFAULT_COSMOS3_CACHE,
+    DEFAULT_REASON3_CACHE,
     DEFAULT_COSMOS3_MODEL,
     DEFAULT_REASON_EVENT_FRAMES,
     DEFAULT_REASON_MAX_NEW_TOKENS,
@@ -25,6 +26,8 @@ from npa.workbench.cosmos.reason import (
     prepare_cosmos_reason_cache,
     resolve_cosmos_reason_model_id,
     task_description_from_manifest,
+    run_token_factory_rollout_vlm,
+    select_hosted_event_frames,
     vlm_k8s_component,
 )
 
@@ -53,9 +56,9 @@ def test_resolve_cosmos_reason_alias_defaults_to_reason2() -> None:
 
 def test_default_reason_cache_dir_uses_writable_tmp_hf_home(monkeypatch) -> None:
     monkeypatch.delenv("NPA_COSMOS_REASON2_CACHE", raising=False)
-    monkeypatch.delenv("NPA_COSMOS3_EDGE_CACHE", raising=False)
+    monkeypatch.delenv("NPA_COSMOS_REASON3_CACHE", raising=False)
     assert default_reason_cache_dir(DEFAULT_REASON2_MODEL) == DEFAULT_REASON2_CACHE
-    assert default_reason_cache_dir(DEFAULT_COSMOS3_MODEL) == DEFAULT_COSMOS3_CACHE
+    assert default_reason_cache_dir("nvidia/Cosmos-Reason2-2B") == DEFAULT_REASON3_CACHE
     assert DEFAULT_REASON2_CACHE.startswith("/tmp/hf_home/")
 
 
@@ -72,7 +75,7 @@ def test_cosmos_reason_runtime_env_prefers_the_durable_cache(monkeypatch) -> Non
         "HF_HOME",
         "NPA_COSMOS_REASON_CACHE",
         "NPA_COSMOS_REASON2_CACHE",
-        "NPA_COSMOS3_EDGE_CACHE",
+        "NPA_COSMOS_REASON3_CACHE",
     ):
         monkeypatch.delenv(name, raising=False)
     # The renderer exports the resolved root into the container; a claim name is
@@ -87,8 +90,8 @@ def test_cosmos_reason_runtime_env_prefers_the_durable_cache(monkeypatch) -> Non
         == "/opt/npa-model-cache/huggingface/cosmos-reason2"
     )
     assert (
-        runtime["NPA_COSMOS3_EDGE_CACHE"]
-        == "/opt/npa-model-cache/huggingface/cosmos3-edge"
+        runtime["NPA_COSMOS_REASON3_CACHE"]
+        == "/opt/npa-model-cache/huggingface/cosmos-reason2-2b"
     )
 
 
@@ -102,7 +105,7 @@ def test_apply_cosmos_reason_kubernetes_env_preserves_existing_values() -> None:
         {"HF_HOME": "/custom/hf", "NPA_SIM2REAL_RUN_ID": "r1"}
     )
     assert safe["HF_HOME"] == "/custom/hf"
-    assert safe["NPA_COSMOS3_EDGE_CACHE"] == DEFAULT_COSMOS3_CACHE
+    assert safe["NPA_COSMOS_REASON3_CACHE"] == DEFAULT_REASON3_CACHE
 
 
 def test_prepare_cosmos_reason_cache_creates_directory(tmp_path, monkeypatch) -> None:
@@ -139,7 +142,7 @@ def test_engine_vlm_job_script_prepares_hf_cache(monkeypatch) -> None:
     assert 'export HF_HOME="${HF_HOME:-/tmp/hf_home}"' in script
     safe = _kubernetes_component_env({}, Sim2RealLoopConfig(run_id="r"))
     assert safe["HF_HOME"] == "/tmp/hf_home"
-    assert safe["NPA_COSMOS3_EDGE_CACHE"] == DEFAULT_COSMOS3_CACHE
+    assert safe["NPA_COSMOS_REASON3_CACHE"] == DEFAULT_REASON3_CACHE
 
 
 def test_model_family_distinguishes_real_cosmos3_edge_from_reason2() -> None:
@@ -148,42 +151,65 @@ def test_model_family_distinguishes_real_cosmos3_edge_from_reason2() -> None:
     assert cosmos_reason_family("nvidia/Cosmos-Reason2-2B") == "reason2"
 
 
-def test_cosmos3_processor_path_consumes_rollout_images_without_qwen_adapter() -> None:
-    captured = {}
+def test_hosted_frame_selection_is_bounded_and_rollout_wide() -> None:
+    frames = [Path(f"camera-{index:03d}.png") for index in range(32)]
+    selected = select_hosted_event_frames(frames)
+    assert len(selected) == 8
+    assert selected[0] == frames[0]
+    assert selected[-1] == frames[-1]
+    assert selected == select_hosted_event_frames(frames)
 
-    class Inputs:
-        def to(self, device):
-            captured["device"] = device
-            return self
 
-    class Processor:
-        def apply_chat_template(self, messages, **kwargs):
-            captured["messages"] = messages
-            captured["kwargs"] = kwargs
-            return Inputs()
+def test_token_factory_rollout_evaluator_returns_event_local_contract(tmp_path) -> None:
+    frames = []
+    for index in range(10):
+        frame = tmp_path / f"camera-{index:03d}.png"
+        frame.write_bytes(b"public-synthetic-frame")
+        frames.append(frame)
 
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "judge"},
-                {"type": "image", "url": "/rollout/camera-000.png"},
-            ],
-        }
-    ]
-    result = reason_module._prepare_reason_inputs(
-        family="cosmos3", processor=Processor(), messages=messages, device="cuda:0"
+    class Client:
+        last_request_metrics = {"latency_seconds": 1.25, "retries": 1}
+
+        def chat_completion(self, **kwargs):
+            assert kwargs["model"] == DEFAULT_COSMOS3_MODEL
+            images = kwargs["messages"][0]["content"][1:]
+            assert len(images) == 8
+            assert all(item["image_url"]["url"].startswith("data:image/png;base64,") for item in images)
+            return {
+                "id": "request-public-1",
+                "choices": [{"message": {"content": json.dumps({
+                    "success": True,
+                    "score": 0.9,
+                    "summary": "stable cube grasp",
+                    "per_step": [
+                        {"step": index, "critique_text": f"event {index} stable", "error_tags": ["ok"], "confidence": 0.8}
+                        for index in range(10)
+                    ],
+                })}}],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+            }
+
+    result = run_token_factory_rollout_vlm(
+        model_id=DEFAULT_COSMOS3_MODEL,
+        image_paths=frames,
+        actions=[{"step": index, "action": [0.0]} for index in range(10)],
+        task_description="strict cube grasp",
+        rollout_id="rollout-0000",
+        threshold=0.5,
+        client=Client(),
     )
-
-    assert isinstance(result, Inputs)
-    assert captured["messages"][0]["content"][1]["url"].endswith("camera-000.png")
-    assert captured["kwargs"] == {
-        "tokenize": True,
-        "add_generation_prompt": True,
-        "return_dict": True,
-        "return_tensors": "pt",
+    assert len(result["per_step"]) == 10
+    assert result["backend"] == "token_factory"
+    assert result["request"] == {
+        "request_id": "request-public-1",
+        "input_tokens": 100,
+        "output_tokens": 50,
+        "total_tokens": 150,
+        "latency_seconds": 1.25,
+        "retries": 1,
+        "cost_usd": None,
+        "cost_source": "unavailable",
     }
-    assert captured["device"] == "cuda:0"
 
 
 def test_task_description_from_manifest_prefers_task_description() -> None:

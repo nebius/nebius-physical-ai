@@ -260,12 +260,12 @@
     {
       "name": "npa-cosmos3-reason",
       "dockerfile": "cosmos3-reason/Dockerfile",
-      "verdict": "unknown",
-      "validation": "pending-build",
+      "verdict": "ready",
+      "validation": "validated",
       "torch": "inherited 2.9.0+cu130 from npa-base",
       "source_compiled_extensions": [],
       "smoke": "VLM reason pass over a real clip",
-      "notes": "The 3.1.0 Cosmos3-Edge runtime candidate is not built because the available operator identity cannot pull the required base image. The prior 3.0.1 image remains historical Reason2-8B validation evidence only. No compiled extensions of its own.",
+      "notes": "Rebuilt on the corrected widened npa-base and validated with a real gated Cosmos-Reason2-8B VLM pass on physical B200, B300, H100, and RTX PRO 6000. No compiled extensions of its own.",
       "measured_torch": "2.9.0+cu130",
       "measured_arch_list": [
         "sm_75",

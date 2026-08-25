@@ -124,7 +124,12 @@ def prepared(tmp_path: Path) -> dict[str, object]:
     for role, image in images.items():
         argv.extend(["--var", f"{role}_image={image}"])
     argv.extend(["--var", "isaac_cache_pvc=private-cache-identity"])
-    secret_names = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"]
+    secret_names = [
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "HF_TOKEN",
+        "NEBIUS_TOKEN_FACTORY_KEY",
+    ]
     for name in secret_names:
         argv.extend(["--secret-env", name])
     request = {

@@ -68,11 +68,11 @@ def main() -> int:
 
     from npa.workbench.cosmos.reason import (
         CosmosReasonError,
-        DEFAULT_COSMOS3_MODEL,
+        DEFAULT_REASON2_MODEL,
         run_cosmos_reason_vlm,
     )
 
-    model_id = os.environ.get("COSMOS_REASON_MODEL", DEFAULT_COSMOS3_MODEL)
+    model_id = os.environ.get("COSMOS_REASON_MODEL", DEFAULT_REASON2_MODEL)
     frames = _synthetic_frames()
     actions = [{"step": i, "action": [0.0, 0.0, 0.0]} for i in range(len(frames))]
 

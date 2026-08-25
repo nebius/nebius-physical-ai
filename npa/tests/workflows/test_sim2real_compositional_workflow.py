@@ -82,6 +82,12 @@ def test_canonical_is_one_standard_compositional_workflow() -> None:
     ][0]["resources"]
     assert viewer["requests"]["ephemeral-storage"] == "8Gi"
     assert viewer["limits"]["ephemeral-storage"] == "16Gi"
+    cosmos3 = payload["states"]["stage-08-cosmos3"]
+    assert cosmos3["resources"] == "cosmos3-cpu"
+    assert "accelerators" not in payload["resources"]["cosmos3-cpu"]
+    assert payload["config"]["cosmos3_model"] == "nvidia/Cosmos3-Super-Reasoner"
+    assert "--reason-backend" in cosmos3["run"]["argv"]
+    assert "token_factory" in cosmos3["run"]["argv"]
 
 
 def test_retired_monolithic_toolrefs_are_not_catalog_surfaces() -> None:
@@ -428,13 +434,25 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
             "lane": "reason2",
             "model": "nvidia/Cosmos-Reason2-8B",
             "provenance": {"image": "reason2"},
+            "backend": "self_hosted",
             "evaluations": [{"rollout_id": "rollout-1"}],
         },
         lane_base + "cosmos3.json": {
             "lane": "cosmos3",
-            "model": "nvidia/Cosmos3-Edge",
+            "model": "nvidia/Cosmos3-Super-Reasoner",
+            "provider": "nebius",
+            "backend": "token_factory",
             "provenance": {"image": "cosmos3"},
-            "evaluations": [{"rollout_id": "rollout-1"}],
+            "evaluator_usage": {"request_count": 1},
+            "evaluations": [
+                {
+                    "rollout_id": "rollout-1",
+                    "model": "nvidia/Cosmos3-Super-Reasoner",
+                    "provider": "nebius",
+                    "backend": "token_factory",
+                    "request": {"request_id": "request-1"},
+                }
+            ],
         },
     }
 

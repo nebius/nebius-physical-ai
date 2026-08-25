@@ -211,6 +211,9 @@ def finalize_in_work(args: argparse.Namespace, *, root: str, work: Path) -> None
         "component_records": components,
         "outer_loop": {"decision": decision, "latest_heldout_report": gold},
         "checkpoint_selection": evidence.get("checkpoint_selection"),
+        "stage8_evaluator_usage": [
+            item.get("evaluator_usage") for item in evidence.get("iterations") or []
+        ],
         "strict_gold_success_rate": float(gold.get("success_rate") or 0.0),
         "policy_quality_is_pipeline_gate": False,
         "rrd_uri": rrd_uri,

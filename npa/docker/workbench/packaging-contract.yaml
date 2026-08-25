@@ -299,13 +299,6 @@ images:
     tier: job
     passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; non-root runtime user, no default sshd service, and no baked credentials."
     redistribution: public
-    notes: >-
-      Ships released Transformers 5.15.1 support for both the Qwen3-VL-backed
-      nvidia/Cosmos-Reason2-8B and the native nvidia/Cosmos3-Edge 4B Reasoner.
-      No weights or populated caches are baked. Both models are fetched at
-      runtime into the operator-selected immutable/durable Hugging Face cache;
-      Cosmos3-Edge model materials are OpenMDW-1.1 and retain the repository's
-      NVIDIA Cosmos3 license and origin notices.
   cosmos-curate:
     dockerfile: cosmos-curate/Dockerfile
     tier: job

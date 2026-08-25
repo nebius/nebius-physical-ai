@@ -41,7 +41,6 @@ def test_catalog_matches_current_nvidia_hf_gating() -> None:
     assert "nvidia/GR00T-N1.7-3B" in repos
     assert "nvidia/Alpamayo2-Super" in repos
     assert "nvidia/Cosmos-Reason2-8B" in repos
-    assert "nvidia/Cosmos3-Edge" in repos
     gated = {a.repo for a in WORKBENCH_ASSETS if a.gated}
     assert "nvidia/PhysicalAI-Autonomous-Vehicles" in gated
     assert "nvidia/GR00T-N1.7-3B" not in gated
@@ -49,7 +48,6 @@ def test_catalog_matches_current_nvidia_hf_gating() -> None:
     assert "nvidia/Cosmos3-Nano" not in gated
     assert "nvidia/PhysicalAI-NuRec-PPISP" not in gated
     assert "nvidia/Cosmos-Reason2-8B" in gated
-    assert "nvidia/Cosmos3-Edge" in gated
     assert "nvidia/Cosmos-Guardrail1" in gated
 
 

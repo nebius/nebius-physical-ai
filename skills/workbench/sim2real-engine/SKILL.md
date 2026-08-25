@@ -27,7 +27,7 @@ or spawn sibling Jobs.
 | 5 | `stage_05_envs_train` | sealed train/validation/gold split |
 | 6 | `stage_06_tokens` | explicit S3 token/scenario manifest |
 | 7 | `stage_07_actions_train` | real Isaac multi-camera rollout |
-| 8 | `stage_08_vlm_eval_train` | parallel real Reason2/Cosmos3-Edge lanes |
+| 8 | `stage_08_vlm_eval_train` | parallel self-hosted Reason2 GPU + hosted Token Factory Cosmos3 CPU lanes |
 | 9 | `stage_09_training_signal` | temporal merge, real PPO, validation selection |
 | 10 | `stage_10_eval_heldout` | exact-checkpoint untouched-gold Isaac eval |
 | 11 | `stage_11_outer_loop` | strict metric + standard decision artifact |
@@ -42,6 +42,10 @@ or spawn sibling Jobs.
   Canonical pointers have immutable content-addressed history.
 - GPU images are immutable and source-attested. Isaac rollout/train/eval use
   `NPA_SIM2REAL_INLINE_TASK=1` inside the workflow-owned GPU task.
+- The Cosmos3 lane uses `nvidia/Cosmos3-Super-Reasoner` through Token Factory,
+  receives `NEBIUS_TOKEN_FACTORY_KEY` by secret name, requests no GPU, and
+  publishes evaluator tokens/latency/retries/request IDs/cost separately from
+  model-agent accounting.
 - Train, validation, and gold digests are disjoint. Checkpoint ranking reads
   validation only; Stage 10 reads gold only and preserves exact render lineage.
 - Temporal rewards remain bounded and simulator-grounded. Strict success remains
