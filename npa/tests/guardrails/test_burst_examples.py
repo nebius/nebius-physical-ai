@@ -89,7 +89,7 @@ def test_burst_accepts_the_example_once_vars_are_supplied(name: str) -> None:
     task = _single_task_from_documents(_load_burst_yaml_documents(source), source)
     overrides = {
         "NPA_RUN_ID": "burst-guardrail",
-        "ISAAC_LAB_IMAGE": "example-registry/npa-isaac-lab:2.3.2.post1",
+        "ISAAC_LAB_IMAGE": "example-registry/npa-isaac-lab:3.0.0b2.post1",
         "NPA_OUTPUT_URI": "s3://example-bucket/burst/burst-guardrail/",
     }
     task = _replace_task_placeholders(task, overrides)
@@ -98,6 +98,9 @@ def test_burst_accepts_the_example_once_vars_are_supplied(name: str) -> None:
     assert not _unresolved_task_placeholders(task), task.get("envs")
     # Raises BurstConfigError if the task is not submittable.
     _validate_burst_yaml_runtime(task, source)
+    run = task["run"]
+    assert "VISUALIZER_ARGS=(--visualizer none)" in run
+    assert "2.*) VISUALIZER_ARGS=(--headless)" in run
 
 
 def test_examples_are_not_in_the_retiring_workflow_catalog() -> None:
